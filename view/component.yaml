@@ -1,0 +1,42 @@
+# The one view. Contract 06 §1 row 4, and §1 rule 7 for the unit name: this
+# component owns `agent-view.service`, the user unit that runs it on
+# the host.
+manifest_version: "0.4"
+name: ui
+repo: agent-control
+path: view
+kind: venv
+unit: agent-view.service
+runs_as: operator
+# `--no-editable`: contract 06 §8.2. The templates and the stylesheet under
+# `src/agent_view/` are read through `Path(__file__).parent`, and hatchling
+# packages both directories, so a non-editable tree carries them.
+build:
+  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable",
+     "--package", "agent-view"]
+install:
+  to: ~/.local/components/ui
+  prev: ~/.local/components/ui.prev
+provides: []
+requires:
+  # Contract 02: it reads sessions, turns and the event stream.
+  - { contract: session-api, major: 0, min_minor: 12 }
+  # Contract 05: it reads the per-family status document.
+  - { contract: manager-status, major: 0, min_minor: 16 }
+  # Contract 04: it reads the audit record and the grant a family holds.
+  - { contract: pep-grant, major: 0, min_minor: 11 }
+depends_on: [sessiond, managerd]
+verify:
+  # --env-file: the same file
+  # systemd/agent-view.service's own EnvironmentFile= names, read by the
+  # hook itself as the operator. Pinned equal by
+  # release/tests/test_release_r7r_verify_env.py.
+  command: ["~/.local/components/ui/bin/view-verify", "--json",
+            "--env-file", "/srv/agents/state/rework/view.env"]
+  user: operator
+  timeout_s: 60
+restore:
+  mode: automatic
+  keep: 3
+secrets: []
+release: yes

@@ -1,0 +1,12 @@
+# Rescan cadence for scope %i: the bound on both retrieval staleness and how
+# long an approved review-inbox move takes to become searchable.
+[Unit]
+Description=Periodic vault index build for scope %i
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

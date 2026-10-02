@@ -1,0 +1,106 @@
+# `!retest` as a PR comment restarts that PR's CI on its head commit.
+#
+# Why it exists: the release executor needs every workflow run on the PR
+# head to be a success (P5), and a run can end cancelled there, e.g. gate.yml
+# stops a run when the PR is closed and reopened while it runs. A re-run is
+# a new attempt of the SAME run, so a green attempt clears it.
+#
+#   a run still going         nothing restarts: comment again when it ends
+#   a failed run              its failed jobs run again
+#   a cancelled run           every job of it runs again
+#   every run passed          every job of the newest run runs again
+#
+# One run restarts per comment: two re-runs at once share gate.yml's
+# concurrency group, and the second would cancel the first.
+#
+# A re-run tests the same commit against the same base. To test against a
+# newer main, merge main into the branch.
+#
+# This workflow does not run on a PR head. `issue_comment` runs the file on
+# the default branch, on main's newest commit, so P5 never reads its runs,
+# and a change to it takes effect only once it is on main. It checks nothing
+# out and runs no code of the PR. Only a comment from the owner, a member or
+# a collaborator counts. bin/tests/test_retest_workflow.py pins all of it.
+name: retest
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write # re-run a workflow run
+  pull-requests: write # read the PR head, answer the comment
+
+jobs:
+  retest:
+    # Any other comment ends here and starts no runner.
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '!retest') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      # The comment arrives through the environment, never inside the script.
+      - name: restart the runs on the PR head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          COMMENT: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+
+          # The command is the whole comment: `!retest`, not `!retest later`.
+          if [[ "$(printf '%s' "$COMMENT" | tr -d '[:space:]')" != "!retest" ]]; then
+            echo "not the command: nothing to do"
+            exit 0
+          fi
+
+          answer() {
+            echo "$1"
+            gh pr comment "$PR" --body "$1"
+          }
+
+          sha="$(gh pr view "$PR" --json headRefOid --jq .headRefOid)"
+
+          # One line per run on the head, newest first:
+          # "<id> <status> <conclusion>".
+          runs="$(gh api "repos/$GH_REPO/actions/runs?head_sha=$sha&per_page=100" \
+            --jq '.workflow_runs[] | "\(.id) \(.status) \(.conclusion // "none")"')"
+
+          if [[ -z "$runs" ]]; then
+            answer "\`!retest\`: no run on ${sha:0:8}. Push a commit to start one."
+            exit 0
+          fi
+
+          # A re-run beside a run still going would cancel it (gate.yml's
+          # concurrency group), so nothing restarts until every run has ended.
+          if grep -qv ' completed ' <<< "$runs"; then
+            answer "\`!retest\`: a run on ${sha:0:8} is still going. Comment again when it ends."
+            exit 0
+          fi
+
+          # One run restarts per comment, for the same reason: the second of
+          # two re-runs would cancel the first. A red run goes first. When
+          # every run passed, the newest one runs again.
+          red="$(grep -v ' success$' <<< "$runs" || true)"
+          read -r id _status conclusion <<< "${red:-$runs}"
+
+          # A cancelled run holds jobs that never started, and a green one has
+          # no failed job: all of it runs again. Any other run: its failed jobs.
+          if [[ "$conclusion" == "cancelled" || "$conclusion" == "success" ]]; then
+            gh run rerun "$id"
+            what="every job"
+          else
+            gh run rerun "$id" --failed
+            what="its failed jobs"
+          fi
+
+          more=""
+          left="$(grep -c . <<< "$red" || true)"
+          if [[ "$left" -gt 1 ]]; then
+            more=" $((left - 1)) more red run(s) on this commit: comment again when this one ends."
+          fi
+
+          answer "\`!retest\`: restarted run $id on ${sha:0:8} ($what).$more"

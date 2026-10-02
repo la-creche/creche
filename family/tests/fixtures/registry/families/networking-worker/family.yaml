@@ -1,0 +1,34 @@
+# FIXTURE ONLY. See families/finance-worker/family.yaml for why these four
+# worker families exist in the fixture.
+name: networking-worker
+kind: autonomous
+description: Works one networking ticket per wake, on that epic only.
+
+model: { router: agent-router, budget_usd_per_day: 5 }
+
+files:
+  - { path: /srv/agents/vault/house, mode: ro }
+
+tools:
+  vikunja-networking:
+    - list_ready_tickets
+    - get_ticket
+    - start_ticket
+    - comment_on_ticket
+    - submit_for_verification
+
+verbs: {}
+delegates: []
+egress: []
+
+shell: false
+sandbox_tools: [read, grep, find, ls]
+sandbox: { cpus: 2, memory: 2g }
+
+skills: []
+
+triggers:
+  - webhook: networking-dispatch
+
+max_running_turns: 1
+approval: []

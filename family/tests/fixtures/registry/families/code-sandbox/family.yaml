@@ -1,0 +1,31 @@
+name: code-sandbox
+kind: thin
+description: Runs code for one chat, inside that chat's own directory.
+
+# This model is open. `fast` is the placeholder
+# that exists today; no `cheap` alias does.
+model: { router: fast, budget_usd_per_day: 5 }
+
+files:
+  # The work root, not one chat's directory: mounts are fixed when the sandbox
+  # is created, so the per-chat directory is made inside it and linked by the
+  # supervisor at job start (`spec.md` §7.2).
+  - { path: /srv/agents/work/code-sandbox, mode: rw }
+
+tools: {}
+verbs: {}
+delegates: []
+
+# "shell, no network" (spec.md §4.4) is these two lines together.
+egress: []
+
+shell: true
+sandbox_tools: [read, grep, find, ls, write, edit]
+# `egress: []` means this family can install nothing, so whatever it needs to
+# run code has to be in the image. `python` is the flavor that carries pandas,
+# numpy and matplotlib (§3.9).
+sandbox: { cpus: 4, memory: 8g, image: python }
+
+skills: []
+approval: []
+job: { timeout: 120s }

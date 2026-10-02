@@ -1,0 +1,160 @@
+"""YAML text to a model, or to issues. Never an exception (invariant 19).
+
+A parse failure is data: the caller gets `None` plus every issue pydantic and
+the YAML reader could see, and the family keeps its last good state."""
+
+from __future__ import annotations
+
+from typing import Any, Final, cast
+
+import yaml
+from pydantic import BaseModel, ValidationError
+
+from .grammar import closest_name
+from .model import (
+    FAMILY_FIELDS,
+    VERB_FIELDS,
+    EnqueueFence,
+    FamilyFile,
+    FileMount,
+    HaCallFence,
+    HaTriple,
+    JobBlock,
+    ModelBlock,
+    ReleaseFence,
+    SandboxBlock,
+    Trigger,
+)
+from .report import Issue, Severity
+from .server import (
+    INSTALL_FIELDS,
+    RUN_FIELDS,
+    SERVER_FIELDS,
+    FenceEntry,
+    McpServerFile,
+    ToolEntry,
+)
+
+#: A list index in a container path. The index does not change which fields
+#: the container knows, so every index collapses onto one key.
+ANY_INDEX: Final = "*"
+
+_FAMILY_CONTAINERS: Final[dict[tuple[str, ...], tuple[str, ...]]] = {
+    (): FAMILY_FIELDS,
+    ("model",): tuple(ModelBlock.model_fields),
+    ("sandbox",): tuple(SandboxBlock.model_fields),
+    ("job",): tuple(JobBlock.model_fields),
+    ("verbs",): VERB_FIELDS,
+    ("files", ANY_INDEX): tuple(FileMount.model_fields),
+    ("triggers", ANY_INDEX): tuple(Trigger.model_fields),
+    ("verbs", "ha_call"): tuple(HaCallFence.model_fields),
+    ("verbs", "ha_call", "allow", ANY_INDEX): tuple(HaTriple.model_fields),
+    ("verbs", "enqueue"): tuple(EnqueueFence.model_fields),
+    ("verbs", "release"): tuple(ReleaseFence.model_fields),
+}
+
+_SERVER_CONTAINERS: Final[dict[tuple[str, ...], tuple[str, ...]]] = {
+    (): SERVER_FIELDS,
+    ("install",): INSTALL_FIELDS,
+    ("run",): RUN_FIELDS,
+    ("tools", ANY_INDEX): tuple(ToolEntry.model_fields),
+    ("arg_allows", ANY_INDEX): tuple(FenceEntry.model_fields),
+    ("arg_denies", ANY_INDEX): tuple(FenceEntry.model_fields),
+}
+
+
+def fmt_loc(loc: tuple[int | str, ...]) -> str:
+    """Pydantic's tuple to the contract's field path: `tools.kagi[1]`."""
+    out = ""
+    for part in loc:
+        if isinstance(part, int):
+            out += f"[{part}]"
+            continue
+
+        out = f"{out}.{part}" if out else str(part)
+
+    return out or "<document>"
+
+
+def _container_key(loc: tuple[int | str, ...]) -> tuple[str, ...]:
+    return tuple(ANY_INDEX if isinstance(part, int) else part for part in loc)
+
+
+def _unknown_field_msg(
+    loc: tuple[int | str, ...], containers: dict[tuple[str, ...], tuple[str, ...]]
+) -> str:
+    """Contract 01 §7 rule 1: name the field and the closest known name."""
+    field = str(loc[-1]) if loc else "<document>"
+    known = containers.get(_container_key(loc[:-1]), ())
+    near = closest_name(field, known)
+    if near is not None:
+        return f"unknown field '{field}'; did you mean '{near}'?"
+
+    if known:
+        return f"unknown field '{field}'; known fields here are {', '.join(known)}"
+
+    return f"unknown field '{field}'"
+
+
+def _issues_from(
+    exc: ValidationError, containers: dict[tuple[str, ...], tuple[str, ...]]
+) -> list[Issue]:
+    issues: list[Issue] = []
+    for error in exc.errors():
+        loc = error["loc"]
+        msg = (
+            _unknown_field_msg(loc, containers)
+            if error["type"] == "extra_forbidden"
+            else error["msg"]
+        )
+        issues.append(Issue(Severity.ERROR, fmt_loc(loc), msg))
+
+    return issues
+
+
+def _one_document(text: str, issues: list[Issue]) -> dict[str, Any] | None:
+    """Contract 01 §1 rules 3 and 4: one YAML document, a mapping at the top."""
+    try:
+        documents = list(yaml.safe_load_all(text))
+    except yaml.YAMLError as exc:
+        issues.append(Issue(Severity.ERROR, "<document>", f"YAML will not parse: {exc}"))
+        return None
+
+    if len(documents) > 1:
+        issues.append(
+            Issue(Severity.ERROR, "<document>", "one YAML document per file; found more than one")
+        )
+        return None
+
+    body: object = documents[0] if documents else None
+    if not isinstance(body, dict):
+        found = type(body).__name__
+        issues.append(
+            Issue(Severity.ERROR, "<document>", f"the top level must be a mapping; found {found}")
+        )
+        return None
+
+    return cast("dict[str, Any]", body)
+
+
+def _load[T: BaseModel](
+    text: str, model: type[T], containers: dict[tuple[str, ...], tuple[str, ...]]
+) -> tuple[T | None, list[Issue]]:
+    issues: list[Issue] = []
+    body = _one_document(text, issues)
+    if body is None:
+        return None, issues
+
+    try:
+        return model.model_validate(body), issues
+    except ValidationError as exc:
+        issues.extend(_issues_from(exc, containers))
+        return None, issues
+
+
+def parse_family(text: str) -> tuple[FamilyFile | None, list[Issue]]:
+    return _load(text, FamilyFile, _FAMILY_CONTAINERS)
+
+
+def parse_server(text: str) -> tuple[McpServerFile | None, list[Issue]]:
+    return _load(text, McpServerFile, _SERVER_CONTAINERS)

@@ -1,0 +1,20 @@
+# The Python environment of every gate job that runs Python: uv, then the
+# workspace's venv. Written once, so the jobs of gate.yml cannot drift. A
+# job checks the repository out first: a local action is read from the
+# checkout.
+#
+# No cache, on a measurement: `uv sync` takes 6 to 7 s cold and 8 s with
+# setup-uv's cache restored. Jobs that start together also race to
+# save one key, and all but one end with a "Failed to save" warning.
+name: uv-sync
+description: Install uv and sync the workspace's virtual environment
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      with:
+        enable-cache: false
+
+    - run: uv sync
+      shell: bash

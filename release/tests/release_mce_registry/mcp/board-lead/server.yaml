@@ -1,0 +1,26 @@
+name: board-lead
+identity: "The Vikunja bot `bot-scrum-lead`, whole-board on the House project. It shapes tickets in every epic and classifies into home-assistant, agent-control, networking and finance. It cannot promote, close or re-open: those moves are the operator's and the binary serves no tool for them."
+
+install:
+  source: agent-mcp
+
+run:
+  entrypoint: board-lead-mcp
+  env:
+    VIKUNJA_URL: http://127.0.0.1:3456
+    VIKUNJA_TOKEN: secret:vikunja_token_scrum_lead
+    VIKUNJA_ACTOR: bot-scrum-lead
+    VIKUNJA_EPICS: home-assistant,agent-control,networking,finance
+    VIKUNJA_PROJECT: House
+
+tools:
+  - { name: survey_board, description: "List every ticket with its column, points, labels and epic.", write: false }
+  - { name: get_ticket, description: "Read one ticket in full.", write: false }
+  - { name: append_dev_notes, description: "Replace this bot's Dev Notes section on one ticket.", write: true }
+  - { name: set_points, description: "Set one ticket's story points, once.", write: true }
+  - { name: mark_refined, description: "Label one ticket refined, asserting it is researched and pointed.", write: true }
+  - { name: label_epic, description: "Put one ticket into one of the known epics.", write: true }
+  - { name: mark_blocked, description: "Move one ticket to BLOCKED with the reason the operator must answer.", write: true }
+  - { name: file_child_ticket, description: "Split an over-sized ticket by filing one child into TRIAGE.", write: true }
+  - { name: comment_on_ticket, description: "Comment on one ticket.", write: true }
+  - { name: file_ticket, description: "File a new ticket into TRIAGE under one known epic.", write: true }

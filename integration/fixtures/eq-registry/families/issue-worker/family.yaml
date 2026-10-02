@@ -1,0 +1,33 @@
+# The worker of packet EQ. One purpose, one way in.
+#
+# `triggers` carries the dispatch form and nothing else: no timer wakes it and
+# no webhook reaches it, so `scrum-lead`'s `enqueue` is the only thing that
+# ever starts a session here (contract 01 §3.13 rule 4).
+#
+# `max_running_turns: 1` is what the queue scenario needs: a second dispatch
+# while the first turn runs waits behind it (contract 02 §13 rules 2 and 3).
+name: issue-worker
+kind: autonomous
+description: Takes one ticket at a time and reports what it did.
+
+model: { router: agent-router, budget_usd_per_day: 2 }
+
+verbs:
+  embed: {}
+
+delegates: []
+
+egress: []
+
+shell: false
+sandbox_tools: [read, grep, find, ls]
+sandbox: { cpus: 2, memory: 4g }
+
+skills: []
+
+triggers:
+  - enqueue: true
+
+max_running_turns: 1
+
+approval: []

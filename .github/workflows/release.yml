@@ -1,0 +1,231 @@
+# Release on merge: the gate again, as the same jobs on separate runners,
+# then one tag and one Release per component the merge changed.
+#
+#   scope ──┬── lint                  ruff, ruff format, pyright, and on a
+#           │                         docs push the tests marked `docs`
+#           ├── tests (1..N)   code   the full suite, one shard per job
+#           └── supervisor     code   the TypeScript suite and its build
+#                                 └── release   tags + Releases, only when
+#                                               every job passed
+#
+# NO NUMBER LIVES IN A FILE (contract 06 §2.1). Two sessions that wrote the
+# same root version into two pull requests left main's tip untagged
+# (stage7-releases.md pain 1). The `release` job allocates instead: for each
+# component, the newest `<component>-vX.Y.Z` tag plus the level a `bump:`
+# label asks for. The logic is release/bin/allocate-tags.sh and the tested
+# library behind it (release/tests/test_release_allocate.py,
+# release/tests/test_release_tag_script.py). This file only calls it.
+#
+# A RUN CAN BE MISSED, and the script is built for it: a red main tags
+# nothing, and a pending `release` job gives way to a newer one. Each
+# component is tagged when its own paths changed since its OWN newest tag,
+# not since the last commit, so the next green run covers what the missed
+# one left. A component with no tag gets its first one, whatever the merge
+# changed.
+#
+# Only CI mints a Release — the default GITHUB_TOKEN makes
+# github-actions[bot] the author, which the host's releaser checks (P1). No
+# repo secret is involved. Only the `release` job may write: every other job
+# runs the merged code with a read-only token.
+#
+# THIS WORKFLOW FILES NO RELEASE REQUEST, and that is a decision rather than
+# a gap (stage7-releases.md §3.3, threat table row 20). What CI produces is
+# a Release. Naming it in a request stays a separate, deliberate act by
+# the operator or by the fenced `release` verb, and step 5's tap is unconditional.
+#
+# A docs-only push onto a commit whose own run passed runs only the tests
+# marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
+# runs.
+# The `tests` and `supervisor` jobs are gate.yml's, and
+# bin/tests/test_gate_workflow.py holds the two files to the same shard
+# command — diff the two when changing either.
+#
+# agent-mcp has a SIBLING of the `release` job, in its own
+# rework-component-tags.yml. `mcp-servers` is its component, not
+# agent-control's (contract 06 §1 row 6), and the planner scopes every
+# decision to one repository, so this run never tags it. That workflow
+# checks agent-control out at a pinned commit and runs the same script
+# against agent-mcp's tree.
+#
+# `workflow_dispatch` starts the same run by hand, for a commit a missed run
+# left behind. Read the plan first, from any checkout:
+#
+#   GITHUB_REPOSITORY=<owner>/agent-control GITHUB_SHA=$(git rev-parse HEAD) \
+#     release/bin/allocate-tags.sh --dry-run
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read # the scope job asks whether the previous push's run passed
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the docs rule diffs against the commit main held
+          # before this push.
+          fetch-depth: 0
+
+      # `docs` or `code`: what this push changes, from the commit main held
+      # before it. `docs` also needs that commit's own run of this workflow
+      # to have passed, so a docs merge never skips the suite over a tree
+      # whose code failed, or is still in, its own run. A push the rule
+      # cannot read answers `code`: a `before` this clone lacks, a run GitHub
+      # does not list, and a dispatch, which has no `before` at all.
+      - name: scope
+        id: scope
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          . bin/lib/docsrule.sh
+          scope=code
+          passed=0
+          if [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]]; then
+            passed="$(gh run list --workflow release.yml --commit "$BEFORE" \
+              --status success --limit 1 --json databaseId --jq length 2>/dev/null || echo 0)"
+          fi
+          if [[ "$passed" == 1 ]] && docs_only "$BEFORE" "$GITHUB_SHA"; then
+            scope=docs
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "scope: $scope"
+
+  lint:
+    needs: scope
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/uv-sync
+
+      # No flag: ruff, ruff format and pyright, no test. The shards test.
+      - run: bin/quality-gate.sh
+        if: needs.scope.outputs.scope == 'code'
+
+      # A docs push has no shard: the tests that read a doc run here.
+      - run: bin/quality-gate.sh --docs
+        if: needs.scope.outputs.scope == 'docs'
+
+  tests:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    strategy:
+      # A red shard does not stop the others: one run shows every failure.
+      fail-fast: false
+      matrix:
+        # Labels, and their count is N. The run line reads the job's index
+        # and the job total, so no edit here can leave a shard out.
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: some tests read git state.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/uv-sync
+
+      # `worksteal`: a runner has two workers, and under xdist's default
+      # one of them ends up holding the slow tests while the other idles.
+      # An idle worker that takes from the busy one's queue cut the
+      # slowest of six shards from 153 s to 121 s.
+      - run: uv run pytest -n auto --dist worksteal --shard "$((INDEX + 1))/$TOTAL"
+        env:
+          INDEX: ${{ strategy.job-index }}
+          TOTAL: ${{ strategy.job-total }}
+
+  # agent-control only. The supervisor is TypeScript and the Python gate
+  # never runs its suite. pnpm's version is supervisor/package.json's
+  # packageManager field; node matches supervisor/Dockerfile's NODE_TAG.
+  # `build` runs too: 120 integration tests skip when dist/ is absent, so
+  # a bundle that does not build has to fail HERE, not as a quiet skip.
+  supervisor:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    # `pnpm run build` fixes the LAN address in the bundle and refuses to
+    # build without one (supervisor/build.mjs). CI throws the bundle away,
+    # so the example site's TEST-NET-1 address does.
+    env:
+      AGENT_LAN_ADDRESS: 192.0.2.10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: supervisor/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: supervisor/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck && pnpm run build
+        working-directory: supervisor
+
+  # `always()`: on a docs push `tests` and `supervisor` are skipped, and a
+  # job that needs a skipped job is skipped by default. The verdict step is
+  # what holds the tags back when a job failed.
+  release:
+    needs: [scope, lint, tests, supervisor]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # tags + Releases
+      pull-requests: read # the merge SHA -> PR lookup, for labels and the body
+    # `cancel-in-progress: false` is the whole mechanism: one allocation at a
+    # time, and none stopped half way, so two merges never read the same
+    # newest tag. A pending job gives way to a newer one, and the newer run
+    # covers its range.
+    concurrency:
+      group: release-allocate
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and every tag: the newest <component>-v* tag is what
+          # the level is added to, and a shallow clone does not have it. A
+          # missing tag here is the one way the allocation can collide — and
+          # with the first-tag rule it is also how a component that already
+          # has a tag would wrongly be given another first one. That tag is
+          # also the base of the component's `git diff`, so a shallow clone
+          # would refuse it as "not an ancestor" instead.
+          fetch-depth: 0
+
+      # No `if` on the steps below: they run only when this one passed.
+      - name: every job passed
+        uses: ./.github/actions/verdict
+        with:
+          needs: ${{ toJSON(needs) }}
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+
+      # Idempotent: a component already tagged on this SHA is a no-op, and
+      # a tag is never moved or deleted (release/bin/allocate-tags.sh).
+      #
+      # TAG_REPO: the catalog's name for THIS repository, whatever its host
+      # calls it. Without it the script takes the name from
+      # GITHUB_REPOSITORY, and a hosted name the catalog does not hold
+      # stops the run.
+      - name: tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_REPO: agent-control
+        run: release/bin/allocate-tags.sh

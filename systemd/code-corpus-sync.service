@@ -1,0 +1,11 @@
+# Keep the oracle's code corpus current. Pull-only; indexing is the
+# separate index-code@<repo>.timer.
+[Unit]
+Description=Refresh the code corpus clones
+
+[Service]
+Type=oneshot
+Environment=HOME=%h
+NoNewPrivileges=yes
+UMask=0077
+ExecStart=/opt/agent-control/bin/sync-code-corpus.sh

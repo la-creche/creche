@@ -1,0 +1,11 @@
+# esbuild ships a platform binary and needs its postinstall script. Without
+# this list pnpm refuses with ERR_PNPM_IGNORED_BUILDS.
+#
+# The two false entries arrive with the real-pi dev dependency. The image
+# installs pi itself with `npm ci --omit=dev --ignore-scripts` (Dockerfile), so
+# pi already runs there with neither script, and the guard test only spawns
+# pi's CLI. Denying them keeps the two installs on the same footing.
+allowBuilds:
+  '@google/genai': false
+  esbuild: true
+  protobufjs: false

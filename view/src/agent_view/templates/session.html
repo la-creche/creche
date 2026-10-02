@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "macros.html" import problems, when %}
+{% set row = page.session %}
+{% block title %}{{ row.title if row else page.family }}{% endblock %}
+{% block main %}
+<h1>{{ row.title if row and row.title else page.family }}</h1>
+{{ problems(page.problems) }}
+
+{% if row %}
+<p class="foot">
+  <a href="/families/{{ row.family }}">{{ row.family }}</a> ·
+  {{ row.session }} · door {{ row.door or "—" }} · {{ row.state }} ·
+  last activity {{ when(row.last_activity) }} · journal line {{ row.journal_seq }}
+  {% if row.writer %} · writer {{ row.writer.holder }}
+    ({{ row.writer.door_instance }}, until {{ row.writer.expires_at }}){% endif %}
+</p>
+{% endif %}
+
+<h2>turns</h2>
+<table>
+<thead><tr><th>turn</th><th>state</th><th>sandbox</th><th>tokens</th>
+<th>cost</th><th>approvals</th><th>started</th></tr></thead>
+<tbody>
+{% for turn in page.turns %}
+<tr>
+  <td><code>{{ turn.turn }}</code></td>
+  <td>{{ turn.state }}{% if turn.reason %} ({{ turn.reason }}){% endif %}
+      {% if turn.persona_truncated %}<span class="flag">persona truncated</span>{% endif %}</td>
+  <td>{{ turn.sandbox or "—" }}</td>
+  <td>{{ turn.usage.tokens }}
+      <span class="foot">in {{ turn.usage.input }} / out {{ turn.usage.output }}</span></td>
+  <td>{% if turn.usage.cost_usd is not none %}${{ "%.4f"|format(turn.usage.cost_usd) }}
+      {% else %}—{% endif %}</td>
+  <td>{{ turn.approvals }}</td>
+  <td>{{ when(turn.started_at) }}</td>
+</tr>
+{% else %}
+<tr><td colspan="7">no turns</td></tr>
+{% endfor %}
+</tbody>
+</table>
+
+<h2>transcript</h2>
+<p class="foot">Read only. This view holds the `view-ro` token, which cannot
+write to a session.</p>
+<ol class="transcript">
+{% for entry in page.entries %}
+<li class="voice-{{ entry.voice.value }}">
+  <span class="who">{{ entry.voice.value }}</span>
+  {{ when(entry.ts) }}
+  <p>{{ entry.text }}</p>
+  {% if entry.truncated %}<p class="flag">cut at the display limit</p>{% endif %}
+  {% if entry.detail %}<p class="foot">{{ entry.detail }}</p>{% endif %}
+</li>
+{% else %}
+<li>nothing in this session's journal yet</li>
+{% endfor %}
+</ol>
+{% endblock %}

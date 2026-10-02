@@ -1,0 +1,43 @@
+name: code
+kind: attended
+description: Coding agent for every repository that is not the platform.
+
+model: { router: code-router, budget_usd_per_day: 100 }
+
+files:
+  # No mount under /srv/agents/work/platform. That is the file half of
+  # spec.md §4.4 and invariant 10, enforced by the fence in §5.5.
+  - { path: /srv/agents/work/projects, mode: rw }
+  - { path: /srv/agents/vault, mode: ro }
+  - { path: /srv/agents/code, mode: ro }
+
+tools:
+  kagi: [kagi_search_fetch, kagi_extract]
+  # The credential behind this server cannot reach the three platform repos
+  # (contract 01b §8.2): the credential half of `spec.md` §4.4.
+  github-code: all
+  vikunja-home-assistant: all
+  vikunja-networking: all
+
+verbs: {}
+
+delegates: [vault-oracle]
+
+egress:
+  - github.com
+  - api.github.com
+  - codeload.github.com
+  - objects.githubusercontent.com
+  - release-assets.githubusercontent.com
+  - registry.npmjs.org
+  - pypi.org
+  - files.pythonhosted.org
+  - security.ubuntu.com
+  - archive.ubuntu.com
+
+shell: true
+sandbox_tools: [read, grep, find, ls, write, edit]
+sandbox: { cpus: 8, memory: 16g }
+
+skills: []
+approval: []

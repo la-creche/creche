@@ -1,0 +1,27 @@
+name: vault-oracle
+kind: thin
+description: Retrieval. Searches the indexed corpora and answers with citations.
+
+model: { router: fast, budget_usd_per_day: 5 }
+
+files:
+  - { path: /srv/agents/vault, mode: ro }
+  - { path: /srv/agents/code, mode: ro }
+  - { path: /srv/agents/state/index, mode: ro }
+
+tools: {}
+
+verbs:
+  embed: {} # the semantic half of a vault search
+
+delegates: [] # required empty on a thin family (§3.6.4)
+
+egress: []
+
+shell: false
+sandbox_tools: [read, grep, find, ls] # grep is the fallback when search misses
+sandbox: { cpus: 2, memory: 4g }
+
+skills: []
+approval: []
+job: { timeout: 120s }

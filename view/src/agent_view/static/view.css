@@ -1,0 +1,110 @@
+/* Styling only. /static is keyless, because a proxy fetches assets
+   outside the header-injecting location block, so nothing that holds a
+   fact may live here. */
+
+:root {
+  --ink: #16181d;
+  --paper: #fbfbfa;
+  --line: #d8d6d1;
+  --quiet: #63666d;
+  --warn: #8a5a00;
+  --bad: #9b1c1c;
+  --good: #1f6b3a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.5 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+nav .where { margin-left: auto; color: var(--quiet); }
+
+main { padding: 1rem; max-width: 1400px; }
+
+h1 { font-size: 1.3rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.05rem; margin: 1.5rem 0 0.4rem; }
+
+a { color: #1a4fa0; }
+
+table { border-collapse: collapse; width: 100%; margin-bottom: 0.5rem; }
+th, td { border: 1px solid var(--line); padding: 0.35rem 0.5rem; text-align: left;
+         vertical-align: top; }
+th { background: #f1f0ed; font-weight: 600; }
+
+code { background: #f1f0ed; padding: 0 0.2em; }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 14rem;
+      overflow: auto; }
+
+.foot, .when { color: var(--quiet); font-size: 0.85em; }
+
+.badge { border: 1px solid var(--line); padding: 0 0.35em; }
+.state-in_sync .badge { border-color: var(--good); color: var(--good); }
+.state-reconciling .badge { border-color: var(--warn); color: var(--warn); }
+.state-invalid .badge,
+.state-degraded .badge,
+.state-unknown .badge,
+.state-unreadable .badge { border-color: var(--bad); color: var(--bad); }
+
+.reason { color: var(--warn); }
+.flag { color: var(--warn); border: 1px solid var(--warn); padding: 0 0.3em; }
+.fault { color: var(--bad); }
+.fault.blocking { font-weight: 700; }
+
+.problem, .problems {
+  border-left: 3px solid var(--bad);
+  background: #fdf3f3;
+  padding: 0.4rem 0.7rem;
+  margin: 0.4rem 0;
+}
+
+.notice { border-left: 3px solid var(--warn); background: #fdf8ef;
+          padding: 0.4rem 0.7rem; }
+.saved { border-left: 3px solid var(--good); background: #f1f8f3;
+         padding: 0.4rem 0.7rem; }
+
+.issues li.error { color: var(--bad); }
+.issues li.warning { color: var(--warn); }
+
+.lands-replace { background: #fdf8ef; }
+.lands-immutable { background: #fdf3f3; }
+
+.filters { display: flex; gap: 0.7rem; flex-wrap: wrap; align-items: end;
+           margin-bottom: 0.6rem; }
+.filters label { display: flex; flex-direction: column; font-size: 0.85em; }
+
+.field { display: flex; flex-direction: column; gap: 0.15rem; margin-bottom: 0.7rem;
+         max-width: 60rem; }
+.field label { font-weight: 600; }
+.field input[type="text"], .field textarea { font: inherit; padding: 0.3rem; width: 100%; }
+.field input:disabled, .field textarea:disabled { background: #eceae6; color: var(--quiet); }
+
+/* A field a rule forbids is disabled with the rule as its label. It is
+   never hidden: a missing control reads as a bug in the view. */
+.rule { color: var(--warn); margin: 0.1rem 0 0; }
+
+.verbs { display: flex; gap: 0.7rem; align-items: center; }
+button { font: inherit; padding: 0.3rem 0.8rem; }
+
+.transcript { list-style: none; padding: 0; }
+.transcript li { border-left: 3px solid var(--line); padding: 0.3rem 0.7rem;
+                 margin-bottom: 0.5rem; }
+.transcript p { margin: 0.2rem 0; white-space: pre-wrap; }
+.transcript .who { font-weight: 700; }
+.voice-prompt { border-left-color: #1a4fa0; }
+.voice-answer { border-left-color: var(--good); }
+.voice-failure { border-left-color: var(--bad); }
+.voice-approval { border-left-color: var(--warn); }
+
+.paging { display: flex; gap: 1rem; }

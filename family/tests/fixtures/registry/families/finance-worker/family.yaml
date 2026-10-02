@@ -1,0 +1,36 @@
+# FIXTURE ONLY. Contract 01 §8.6 gives `scrum-lead` four enqueue targets and
+# writes none of their files. §3.5 rule 3 needs each target to exist and to be
+# autonomous, so the fixture carries the four as the narrowest families that
+# satisfy the rule. They are not contract examples.
+name: finance-worker
+kind: autonomous
+description: Works one finance ticket per wake, on the finance epic only.
+
+model: { router: agent-router, budget_usd_per_day: 5 }
+
+files:
+  - { path: /srv/agents/vault/house, mode: ro }
+
+tools:
+  vikunja-finance:
+    - list_ready_tickets
+    - get_ticket
+    - start_ticket
+    - comment_on_ticket
+    - submit_for_verification
+
+verbs: {}
+delegates: []
+egress: []
+
+shell: false
+sandbox_tools: [read, grep, find, ls]
+sandbox: { cpus: 2, memory: 2g }
+
+skills: []
+
+triggers:
+  - webhook: finance-worker-dispatch
+
+max_running_turns: 1
+approval: []

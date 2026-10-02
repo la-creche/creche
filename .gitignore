@@ -1,0 +1,27 @@
+# environments and caches
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+dist/
+*.egg-info/
+
+# plaintext secrets, never commit
+*.plain
+*.dec
+.env
+.env.*
+keys.txt
+*.agekey
+.DS_Store
+
+# bin/tests/ scratch dirs (bin/tests/test_env_upsert.sh and friends use
+# mktemp under the system tmpdir by default, but a test invoked with
+# TMPDIR=bin/tests would land here)
+bin/tests/tmp*
+
+# node
+node_modules/
+# pnpm content-addressable store, created when pnpm runs from the repo root
+.pnpm-store/

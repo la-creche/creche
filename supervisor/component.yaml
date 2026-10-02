@@ -1,0 +1,36 @@
+# The image every family's microVM runs: pi, the supervisor and the PEP
+# bridge. Contract 06 §1 row 5. One release replaces every family's sandbox
+# (§1 rule 5), so a component has one live version and the manifest carries
+# no range (§2.2).
+#
+# `build` is absent, which contract 06 §8 reads as fetch-only. The two
+# commands that build this image carry the version in the image tag
+# (supervisor/README.md, "The image"), and §8's `build` is fixed argv with no
+# interpolation, so the version cannot be written here.
+# CONTRACT-QUESTION: contract 06 §8's `build` cannot carry this image's version.
+manifest_version: "0.4"
+name: sandbox-image
+repo: agent-control
+path: supervisor
+kind: oci-image
+unit: null
+runs_as: sandbox
+install:
+  to: /opt/components/sandbox-image
+  prev: /opt/components/sandbox-image.prev
+provides:
+  # Contract 03: start turn, events, stop, keep-alive, over one sbx exec.
+  - { contract: channel, major: 0, minor: 12 }
+requires:
+  # Contract 04: the bridge turns the family's manifest into pi tools.
+  - { contract: pep-grant, major: 0, min_minor: 11 }
+depends_on: []
+verify:
+  command: ["/opt/components/sandbox-image/bin/sandbox-image-verify", "--json"]
+  user: operator
+  timeout_s: 180
+restore:
+  mode: automatic
+  keep: 3
+secrets: []
+release: yes

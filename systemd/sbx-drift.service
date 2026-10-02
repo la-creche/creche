@@ -1,0 +1,11 @@
+# Global sbx policy drift check. USER unit.
+[Unit]
+Description=Assert the global sbx local-policy holds zero network allows
+
+[Service]
+Type=oneshot
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+NoNewPrivileges=yes
+UMask=0077
+ExecStart=/opt/agent-control/bin/sbx-drift-check.sh

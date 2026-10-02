@@ -1,0 +1,223 @@
+"""A family edit as one validated git commit.
+
+The property under test everywhere here: after a refused save, the bytes
+on disk and the git history are exactly what they were before.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from agent_view.registrywrite import COMMIT_TRAILER, head_sha, save_family
+from agent_view.yamlout import to_yaml
+from view_helpers import CHAT_FAMILY_YAML, commit_count, git, make_registry
+
+GOOD = CHAT_FAMILY_YAML.replace("the house assistant", "the house assistant, rewritten")
+
+#: `kind` is not one of contract 01's three, so the whole registry fails.
+BAD = CHAT_FAMILY_YAML.replace("kind: attended", "kind: wizard")
+
+
+def family_file(root: Path, name: str = "chat") -> Path:
+    return root / "families" / name / "family.yaml"
+
+
+def test_a_valid_edit_makes_exactly_one_commit(tmp_path: Path) -> None:
+    root = make_registry(tmp_path)
+    before = commit_count(root)
+
+    result = save_family(root, "chat", GOOD, "widen the description")
+
+    assert result.ok
+    assert result.problem == ""
+    assert commit_count(root) == before + 1
+    assert family_file(root).read_text(encoding="utf-8") == GOOD
+
+
+def test_the_commit_carries_the_via_agent_view_trailer(tmp_path: Path) -> None:
+    root = make_registry(tmp_path)
+
+    save_family(root, "chat", GOOD, "widen the description")
+
+    body = git(root, "log", "-1", "--format=%B").stdout
+    assert COMMIT_TRAILER in body
+    assert "widen the description" in body
+
+
+def test_the_commit_author_is_pinned_not_the_checkout(tmp_path: Path) -> None:
+    """The checkout's own user.name must not decide who wrote this."""
+    root = make_registry(tmp_path)
+
+    save_family(root, "chat", GOOD, "widen the description")
+
+    assert git(root, "log", "-1", "--format=%an").stdout.strip() == "agent-view"
+
+
+def test_the_commit_email_names_no_host(tmp_path: Path) -> None:
+    root = make_registry(tmp_path)
+
+    save_family(root, "chat", GOOD, "widen the description")
+
+    assert git(root, "log", "-1", "--format=%ae").stdout.strip() == "agent-view@localhost"
+
+
+def test_the_commit_is_scoped_to_one_family(tmp_path: Path) -> None:
+    """A stray edit beside the save must not ride along."""
+    root = make_registry(tmp_path)
+    stray = root / "families" / "scrum-lead" / "family.yaml"
+    stray.write_text(stray.read_text(encoding="utf-8") + "# edited by hand\n", encoding="utf-8")
+
+    save_family(root, "chat", GOOD, "widen the description")
+
+    changed = git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
+    assert changed == ["families/chat/family.yaml"]
+
+
+def test_an_invalid_edit_writes_nothing_and_commits_nothing(tmp_path: Path) -> None:
+    root = make_registry(tmp_path)
+    before = commit_count(root)
+    original = family_file(root).read_bytes()
+
+    result = save_family(root, "chat", BAD, "break it")
+
+    assert not result.ok
+    assert result.errors
+    assert commit_count(root) == before
+    assert family_file(root).read_bytes() == original
+
+
+def test_an_invalid_edit_leaves_the_tree_clean(tmp_path: Path) -> None:
+    """Restoring the bytes is not enough if the index still holds them."""
+    root = make_registry(tmp_path)
+
+    save_family(root, "chat", BAD, "break it")
+
+    assert git(root, "status", "--porcelain").stdout.strip() == ""
+
+
+def test_a_neighbour_broken_by_this_edit_refuses_the_save(tmp_path: Path) -> None:
+    """Validation covers the whole registry, not the edited file alone."""
+    root = make_registry(tmp_path)
+    scrum = root / "families" / "scrum-lead" / "family.yaml"
+    scrum.write_text(
+        scrum.read_text(encoding="utf-8") + 'delegates:\n  - "chat"\n  - "gone"\n',
+        encoding="utf-8",
+    )
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "name a family that does not exist")
+    before = commit_count(root)
+
+    result = save_family(root, "chat", GOOD, "widen the description")
+
+    assert not result.ok
+    assert commit_count(root) == before
+    assert family_file(root).read_text(encoding="utf-8") == CHAT_FAMILY_YAML
+
+
+def test_a_failed_save_of_a_new_family_removes_the_directory(tmp_path: Path) -> None:
+    root = make_registry(tmp_path)
+
+    result = save_family(root, "wizard", BAD.replace("name: chat", "name: wizard"), "add it")
+
+    assert not result.ok
+    assert not (root / "families" / "wizard").exists()
+
+
+def test_a_failed_save_leaves_the_whole_directory_as_it_was(tmp_path: Path) -> None:
+    """The snapshot covers the directory, not two known paths."""
+    root = make_registry(tmp_path)
+    base = root / "families" / "chat"
+    before = {one.name: one.read_bytes() for one in base.iterdir() if one.is_file()}
+
+    save_family(root, "chat", BAD, "break it")
+
+    after = {one.name: one.read_bytes() for one in base.iterdir() if one.is_file()}
+    assert after == before
+    assert "instructions.md" in after
+
+
+def test_a_concurrent_git_lock_rolls_the_save_back(tmp_path: Path) -> None:
+    """Git's index.lock is the only lock here. A blocked commit restores."""
+    root = make_registry(tmp_path)
+    (root / ".git" / "index.lock").write_text("", encoding="utf-8")
+    original = family_file(root).read_bytes()
+    before = head_sha(root)
+
+    result = save_family(root, "chat", GOOD, "widen the description")
+
+    assert not result.ok
+    assert "git" in result.problem
+    assert family_file(root).read_bytes() == original
+    assert head_sha(root) == before
+
+
+def test_an_unchanged_save_commits_nothing_and_says_so(tmp_path: Path) -> None:
+    root = make_registry(tmp_path)
+    before = commit_count(root)
+
+    result = save_family(root, "chat", CHAT_FAMILY_YAML, "no change")
+
+    assert result.ok
+    assert result.unchanged
+    assert commit_count(root) == before
+
+
+def test_a_name_that_is_not_a_family_name_is_refused(tmp_path: Path) -> None:
+    root = make_registry(tmp_path)
+
+    result = save_family(root, "../../etc", GOOD, "escape")
+
+    assert not result.ok
+    assert "not a family name" in result.problem
+
+
+def test_a_family_directory_pointing_out_of_the_registry_is_refused(tmp_path: Path) -> None:
+    root = make_registry(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (root / "families" / "sneaky").symlink_to(elsewhere, target_is_directory=True)
+
+    result = save_family(root, "sneaky", GOOD, "write through a link")
+
+    assert not result.ok
+    assert "outside the registry" in result.problem
+    assert not (elsewhere / "family.yaml").exists()
+
+
+def test_a_symlink_pointing_back_inside_the_registry_is_refused(tmp_path: Path) -> None:
+    """`resolve()` alone accepts this one, so the link check has to exist."""
+    root = make_registry(tmp_path)
+    (root / "families" / "sneaky").symlink_to(root / "families" / "chat", True)
+    original = family_file(root).read_bytes()
+
+    result = save_family(root, "sneaky", GOOD, "write through a link")
+
+    assert not result.ok
+    assert "symlink" in result.problem
+    assert family_file(root).read_bytes() == original
+
+
+def test_an_oversized_document_is_refused_before_any_write(tmp_path: Path) -> None:
+    root = make_registry(tmp_path)
+    original = family_file(root).read_bytes()
+
+    result = save_family(root, "chat", "x" * (300 * 1024), "flood it")
+
+    assert not result.ok
+    assert "over" in result.problem
+    assert family_file(root).read_bytes() == original
+
+
+def test_the_emitted_document_saves(tmp_path: Path) -> None:
+    """The form's output must be text this writer accepts."""
+    from agent_family import parse_family
+
+    root = make_registry(tmp_path)
+    family, _ = parse_family(CHAT_FAMILY_YAML)
+    assert family is not None
+    edited = family.model_copy(update={"description": "the house assistant, v2"})
+
+    result = save_family(root, "chat", to_yaml(edited.model_dump(mode="json")), "from the form")
+
+    assert result.ok, result.problem
+    assert "v2" in family_file(root).read_text(encoding="utf-8")

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# No commit lands unlinted. Never bypass with --no-verify — fix the code.
+#
+# A hook process inherits GIT_DIR (and, from a linked worktree, also
+# GIT_WORK_TREE; pre-commit additionally gets GIT_INDEX_FILE) from the git
+# command that invoked it. quality-gate.sh's pytest suite spawns its own
+# `git` subprocesses (view/tests/view_helpers.py,
+# bin/tests/test_rework_registry_sync.py,
+# release/tests/test_release_tag_script.py, ...), and
+# those subprocesses inherit the SAME variables — pointed at whichever
+# repo/worktree is running THIS hook, not at the tests' own throwaway
+# fixture repos. Reproduced: with GIT_DIR/GIT_INDEX_FILE pointing at repo A,
+# `git -C B add fixture.txt` stages fixture.txt into A's index instead —
+# silent index corruption in the DEVELOPER's repo, not a test failure.
+# Unset them before anything else runs.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+
+# Resolve the repo root from the worktree git is actually operating on, not
+# from this script's own location. core.hooksPath in this repo is an
+# ABSOLUTE path, so $0 always points at the primary checkout's githooks/ —
+# deriving ROOT from dirname($0) would silently run every worktree's quality
+# gate against the primary checkout's files instead of the worktree's own,
+# so a worktree commit would pass or fail on the wrong copy of a file.
+# githooks(5) guarantees a non-push hook's CWD is the root of the
+# working tree performing the operation, and the GIT_* vars that would
+# confuse that are already unset above, so `git rev-parse --show-toplevel`
+# here correctly names the invoking worktree, not wherever hooksPath lives.
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/bin/quality-gate.sh"

@@ -1,0 +1,19 @@
+# The PEP's BASE roster: the file systemd/agent-pep.service names as
+# PEP_UPSTREAMS. It holds no row, deliberately
+# (docs/rework/stage7-releases.md §4.4).
+#
+# Every MCP server the PEP runs is one file in agent-registry,
+# mcp/<name>/server.yaml (contract 01b). An `mcp-servers` release builds it
+# into /opt/mcp/<name> and names it in the roster root writes at
+# /var/lib/agent-release/upstreams.yaml, which is PEP_UPSTREAMS_GENERATED.
+# That roster is the ONLY source for a server the registry declares. A row
+# here would be a second source, naming a tree no release installed.
+#
+# A PEP that starts with no generated roster therefore serves no MCP server.
+# A family's granted MCP tool is left out of its manifest, and a call to it
+# answers 501 `not_implemented` naming the server, as for a failed probe.
+#
+# The file stays because the PEP builds its reloadable roster only when
+# PEP_UPSTREAMS names a file (agent_pep.__main__._roster). An empty mapping
+# parses as no rows. pep/tests/test_pep_ret_roster_only.py holds all of it.
+{}

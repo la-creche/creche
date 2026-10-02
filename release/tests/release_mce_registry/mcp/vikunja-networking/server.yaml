@@ -1,0 +1,23 @@
+name: vikunja-networking
+identity: "The Vikunja bot `bot-networking`. It writes as that actor, on the `networking` epic, in the House project, and cannot reach another epic."
+
+install:
+  source: agent-mcp
+
+run:
+  entrypoint: vikunja-mcp
+  env:
+    VIKUNJA_URL: http://127.0.0.1:3456
+    VIKUNJA_TOKEN: secret:vikunja_token_networking
+    VIKUNJA_ACTOR: bot-networking
+    VIKUNJA_EPIC: networking
+    VIKUNJA_PROJECT: House
+
+tools:
+  - { name: create_triage_ticket, description: File a new ticket into TRIAGE., write: true }
+  - { name: list_ready_tickets, description: List tickets ready to be worked., write: false }
+  - { name: list_my_tickets, description: List this bot's assigned tickets., write: false }
+  - { name: get_ticket, description: Read one ticket., write: false }
+  - { name: start_ticket, description: Move one ticket into progress., write: true }
+  - { name: submit_for_verification, description: Move one ticket to verification., write: true }
+  - { name: comment_on_ticket, description: Comment on one ticket., write: true }

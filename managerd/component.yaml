@@ -1,0 +1,47 @@
+# The family manager: the reconciler that converges every family to its
+# family.yaml. Contract 06 §1 row 3.
+manifest_version: "0.4"
+name: managerd
+repo: agent-control
+path: managerd
+kind: venv
+unit: agent-managerd.service
+runs_as: operator
+# `--no-editable` is what makes the installed tree self-contained (contract
+# 06 §8.2). Without it `uv sync` writes `_editable_impl_agent_managerd.pth`
+# and `_editable_impl_agent_family.pth` into the tree, and the reconciler
+# imports every first-party module from `/opt/agent-control/*/src` instead.
+build:
+  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable",
+     "--package", "agent-managerd"]
+install:
+  to: ~/.local/components/managerd
+  prev: ~/.local/components/managerd.prev
+provides:
+  # Contract 01: the family.yaml and mcp/<name>/server.yaml schemas.
+  - { contract: family-file, major: 0, minor: 13 }
+  # Contract 05: per-family status, sandbox state, switch-sandbox.
+  - { contract: manager-status, major: 0, minor: 16 }
+requires:
+  # Contract 04: it writes the PEP's grant file and mints the family token.
+  - { contract: pep-grant, major: 0, min_minor: 11 }
+  # Contract 03: supervisor.env carries the mount paths the channel fixes.
+  - { contract: channel, major: 0, min_minor: 12 }
+  # Contract 02: it asks sessiond to drain a session before a replacement.
+  - { contract: session-api, major: 0, min_minor: 12 }
+depends_on: [pep, infra]
+verify:
+  # --env-file: root's executor hands the hook none of the unit's
+  # environment (contract 06 §4 rule 7). The same file
+  # systemd/agent-managerd.service's own EnvironmentFile= names, read by
+  # the hook itself as the operator. Pinned equal by
+  # release/tests/test_release_r7r_verify_env.py.
+  command: ["~/.local/components/managerd/bin/managerd-verify", "--json",
+            "--env-file", "/srv/agents/state/rework/managerd.env"]
+  user: operator
+  timeout_s: 60
+restore:
+  mode: automatic
+  keep: 3
+secrets: []
+release: yes

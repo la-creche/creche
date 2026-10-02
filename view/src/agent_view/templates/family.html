@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% from "macros.html" import problem, problems, when %}
+{% set row = page.row %}
+{% block title %}{{ row.name }}{% endblock %}
+{% block main %}
+<h1>{{ row.name }} <span class="badge">{{ row.health.label }}</span></h1>
+{{ problem(row.problem) }}
+{% if row.reason %}<p class="reason">{{ row.reason }}</p>{% endif %}
+<p class="foot">
+  registry {{ row.registry_rev or "—" }}, applied {{ row.applied_rev or "—" }},
+  credentials epoch {{ row.epoch }}, written {{ row.written_at or "never" }}
+  <a href="/families/{{ row.name }}/edit">edit this family</a>
+</p>
+
+{% if row.validation and not row.validation.ok %}
+<h2>validation</h2>
+<p>{{ row.validation.error_count }} errors, {{ row.validation.warning_count }} warnings
+   at {{ row.validation.rev }}</p>
+{{ problem(page.issues_problem) }}
+<ul class="issues">
+{% for issue in page.issues %}
+  <li><code>{{ issue.get("loc", "") }}</code> {{ issue.get("msg", "") }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+
+<h2>sandboxes</h2>
+<table>
+{# No "turns" column: `managerd` cannot count a family's running turns.
+   The session table below carries the real number, per session, from
+   `sessiond`. #}
+<thead><tr><th>id</th><th>state</th><th>power</th><th>image</th><th>size</th>
+<th>channel</th><th>ready</th></tr></thead>
+<tbody>
+{% for box in row.live_sandboxes %}
+<tr>
+  <td>{{ box.id }}</td>
+  <td>{{ box.state }}{% if box.serves_new_turns %} <span class="flag">serving</span>{% endif %}</td>
+  <td>{{ box.power }}</td>
+  <td><code>{{ box.image }}</code></td>
+  <td>{{ box.cpus }} cpu, {{ box.memory }}</td>
+  <td>{{ box.channel }}{% if not box.has_supervisor_env %}
+      <span class="flag">no supervisor env</span>{% endif %}</td>
+  <td>{{ when(box.ready_at) }}</td>
+</tr>
+{% else %}
+<tr><td colspan="7">no sandboxes</td></tr>
+{% endfor %}
+</tbody>
+</table>
+
+<h2>sessions</h2>
+{{ problem(page.sessions.problem) }}
+<table>
+<thead><tr><th>title</th><th>door</th><th>state</th><th>turns</th>
+<th>last activity</th></tr></thead>
+<tbody>
+{% for one in page.sessions.rows %}
+<tr>
+  <td><a href="/sessions/{{ one.family }}/{{ one.session }}">{{ one.title or one.session }}</a></td>
+  <td>{{ one.door or "—" }}</td>
+  <td>{{ one.state }}</td>
+  <td>{{ one.turns_running }} of {{ one.turns_total }}</td>
+  <td>{{ when(one.last_activity) }}</td>
+</tr>
+{% else %}
+<tr><td colspan="5">no sessions</td></tr>
+{% endfor %}
+</tbody>
+</table>
+
+{% if page.autonomous %}
+<h2>outcomes</h2>
+<table>
+<thead><tr><th>id</th><th>trigger</th><th>status</th><th>turns</th>
+<th>spend</th><th>ended</th></tr></thead>
+<tbody>
+{% for one in page.outcomes %}
+<tr>
+  <td><code>{{ one.id }}</code>{% if one.problem %}
+      <span class="flag">{{ one.problem }}</span>{% endif %}</td>
+  <td>{{ one.trigger or "—" }}</td>
+  <td>{{ one.status or "—" }}{% if one.error %}: {{ one.error }}{% endif %}</td>
+  <td>{{ one.turns }}</td>
+  <td>{% if one.spend_usd is not none %}${{ "%.2f"|format(one.spend_usd) }}{% else %}—{% endif %}</td>
+  <td>{{ when(one.ended_at) }}</td>
+</tr>
+{% else %}
+<tr><td colspan="6">no outcome records</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+
+<h2>recent audit</h2>
+{% if page.audit %}
+{{ problems(page.audit.problems) }}
+<p class="foot">{{ args_notice }}</p>
+<table>
+<thead><tr><th>when</th><th>tool</th><th>decision</th><th>session</th></tr></thead>
+<tbody>
+{% for line in page.audit.rows %}
+<tr>
+  <td>{{ when(line.ts) }}</td>
+  <td><code>{{ line.tool }}</code></td>
+  <td>{{ line.decision }}{% if line.reason %} ({{ line.reason }}){% endif %}</td>
+  <td>{{ line.session_id or "—" }}</td>
+</tr>
+{% else %}
+<tr><td colspan="4">nothing recorded</td></tr>
+{% endfor %}
+</tbody>
+</table>
+<p><a href="/audit?family={{ row.name }}">every audit line for {{ row.name }}</a></p>
+{% endif %}
+{% endblock %}

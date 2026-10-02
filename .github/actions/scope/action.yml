@@ -1,0 +1,37 @@
+# `docs` or `code`: what the PR changes, from where it forks off its base
+# (bin/lib/docsrule.sh, the rule the pre-push hook reads too). A rule that
+# cannot read the change answers `code`. Written once: gate.yml's scope job
+# and its lint job both ask. It needs a full-history checkout, for the
+# merge-base.
+#
+# A merge group has no base ref. Its event names the commit the group sits
+# on, and the change is everything from there to the group's head.
+name: scope
+description: Say whether the pull request changes docs only or code
+
+outputs:
+  scope:
+    description: docs or code
+    value: ${{ steps.scope.outputs.scope }}
+
+runs:
+  using: composite
+  steps:
+    - id: scope
+      shell: bash
+      env:
+        GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+      run: |
+        set -euo pipefail
+        . bin/lib/docsrule.sh
+        base="$GROUP_BASE"
+        if [[ -z "$base" ]]; then
+          base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" || base=""
+        fi
+
+        scope=code
+        if docs_only "$base" HEAD; then
+          scope=docs
+        fi
+        echo "scope=$scope" >> "$GITHUB_OUTPUT"
+        echo "scope: $scope"

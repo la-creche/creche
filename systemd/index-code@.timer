@@ -1,0 +1,12 @@
+# Rescan cadence for repo %i. Slower than the vault's 15min: the corpus only
+# changes when something is pushed.
+[Unit]
+Description=Periodic code index build for repo %i
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

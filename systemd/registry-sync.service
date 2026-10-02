@@ -1,0 +1,56 @@
+# Pull the registry checkout onto agent-registry's `main`.
+# USER unit, as the operator. ONESHOT: one run per firing of registry-sync.timer.
+#
+# Installed, enabled and proven once by `bin/rework-cutover.sh up`, removed
+# by its `rollback`, and `bin/rework-cutover.sh status` prints the checkout's
+# HEAD and its age.
+#
+# WHY IT EXISTS. `managerd` reads the registry out of /srv/agents/registry
+# and applies a change within one pass, and nothing else on the host pulls
+# that checkout. Without this unit the checkout freezes while
+# agent-registry's `main` moves, and nothing on the host knows.
+#
+# NO Restart= AND NO START LIMIT, on purpose. THE REWORK RESTART POLICY in
+# `systemd/agent-managerd.service` is for always-on services. This one is
+# MEANT to exit, and it exits non-zero on a refusal so that
+# `systemctl --user status registry-sync` shows it. The timer is its retry:
+# restarting a refused run would repeat the same refusal a second sooner and
+# tell systemd nothing new.
+[Unit]
+Description=Fast-forward the registry checkout onto agent-registry's main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/agent-control
+# Every user unit in this repo carries both (systemd/AGENTS.md). HOME is
+# load-bearing here beyond that rule: the fetch is ssh as the operator, nothing
+# names a key, so ssh reads ~/.ssh/config and the operator's default identity out
+# of HOME. There is no SSH_AUTH_SOCK and no agent, so nothing can prompt.
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# The DEPLOYED checkout, not a component tree. This script is not part of
+# any component and must keep pulling while a release is mid-swap.
+ExecStart=/opt/agent-control/bin/rework-registry-sync.sh
+
+# A user unit on this host cannot use mount-namespace options
+# (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
+# options need no namespace (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+# 0022, NOT the other oneshots' 0077. git writes the checkout's files with
+# this mask, and /srv/agents/registry is a SHARED operator-owned tree that a hand
+# `git -C /srv/agents/registry pull` also writes (docs/rework/spec.md §11).
+# A tighter mask here would leave the files this unit touches at 0600 and
+# every other file at 0644 — a drift nobody would see until a reader moved
+# users. The script's own two files are written under their own `umask 077`
+# subshell, so they stay 0700/0600 whatever this line says.
+UMask=0022
+# The worst run is one 60 s fetch plus a 30 s git call, and the script caps
+# both itself. This is the ceiling above them, and it is deliberately ABOVE
+# the timer's minute: a fetch slower than a minute must finish rather than
+# be killed, and the script's `flock` is what keeps the next firing off it.
+TimeoutStartSec=120

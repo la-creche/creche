@@ -1,0 +1,59 @@
+# `docs/rework/spec.md` §4.4 and contract 01 §8.3, scaled down the same one
+# way as `code/family.yaml`: only the GitHub server stays in `tools`.
+#
+# The `files` list and the `release` verb are NOT scaled down. They are the
+# two grants contract 01 §5.5's fence governs, and this is the one family the
+# allowlist holds.
+name: agent-control
+kind: attended
+description: The only family that edits the platform.
+
+model: { router: code-router, budget_usd_per_day: 100 }
+
+files:
+  # The three platform repos, and nothing else (docs/rework/spec.md §4.4).
+  # This mount is the reason this family is in the platform allowlist (§5.5).
+  - { path: /srv/agents/work/platform, mode: rw }
+
+tools:
+  # The mirror of github-code: this credential reaches only the three
+  # platform repos (contract 01b §8.3).
+  github-platform: all
+
+verbs:
+  # The releasable component names of contract 06 §1. `registry-data` is
+  # absent because it never takes a release (contract 06 §6).
+  release:
+    components:
+      - pep
+      - sessiond
+      - managerd
+      - ui
+      - sandbox-image
+      - mcp-servers
+      - infra
+      - releasectl
+
+delegates: [vault-oracle]
+
+egress:
+  - github.com
+  - api.github.com
+  - codeload.github.com
+  - objects.githubusercontent.com
+  - release-assets.githubusercontent.com
+  - registry.npmjs.org
+  - pypi.org
+  - files.pythonhosted.org
+  - security.ubuntu.com
+  - archive.ubuntu.com
+
+shell: true
+sandbox_tools: [read, grep, find, ls, write, edit]
+sandbox: { cpus: 8, memory: 16g }
+
+skills: []
+# Invariant 10: a platform release waits for the operator's phone tap. The family is
+# attended, which is why approval is not autonomous-only (§3.11.3).
+# One tap per release, and it is the executor's own (contract 01 §3.11.3).
+approval: []

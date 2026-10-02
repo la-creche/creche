@@ -1,0 +1,49 @@
+# `docs/rework/spec.md` §4.4 and contract 01 §8.2, scaled down in ONE way:
+# the `tools` map keeps `github-code` and drops kagi and the two Vikunja
+# servers. Every MCP server needs an `mcp/<name>/server.yaml` (contract 01
+# §5.2), and the only server stage 4 asks a question about is GitHub.
+#
+# The `files` list is NOT scaled down. It is what stage 4 tests: no mount
+# under `/srv/agents/work/platform`, which is the file half of invariant 10.
+name: code
+kind: attended
+description: Coding agent for every repository that is not the platform.
+
+model: { router: code-router, budget_usd_per_day: 100 }
+
+files:
+  # No mount under /srv/agents/work/platform. The fence in contract 01 §5.5
+  # refuses one, and `test_i4_stage4.py` proves that refusal on this file.
+  - { path: /srv/agents/work/projects, mode: rw }
+  - { path: /srv/agents/vault, mode: ro }
+  - { path: /srv/agents/code, mode: ro }
+
+tools:
+  # The credential behind this server cannot reach the three platform repos
+  # (contract 01b §8.2). That is the credential half of the platform fence
+  # (docs/rework/spec.md §4.4), and the PEP half of it is that
+  # `github-platform` is not in this map.
+  github-code: all
+
+verbs: {}
+
+delegates: [vault-oracle]
+
+egress:
+  - github.com
+  - api.github.com
+  - codeload.github.com
+  - objects.githubusercontent.com
+  - release-assets.githubusercontent.com
+  - registry.npmjs.org
+  - pypi.org
+  - files.pythonhosted.org
+  - security.ubuntu.com
+  - archive.ubuntu.com
+
+shell: true
+sandbox_tools: [read, grep, find, ls, write, edit]
+sandbox: { cpus: 8, memory: 16g }
+
+skills: []
+approval: []

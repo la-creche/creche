@@ -1,0 +1,35 @@
+# The caller of stage 3, from `docs/rework/spec.md` §4.4 and contract 01 §8.1.
+#
+# Scaled down to what this harness can run, and in two ways only:
+#
+# 1. No `tools:`. Every MCP server needs an `mcp/<name>/server.yaml` and a
+#    running upstream (contract 01 §5.2). The delegate path uses none.
+# 2. No `verbs.enqueue`. Its target must be an existing autonomous family
+#    (§3.5.3), and stage 3 brings up no autonomous one.
+#
+# `delegates` and the work-root mount are NOT scaled down. They are what
+# stage 3 tests.
+name: chat
+kind: attended
+description: General assistant. Knows the operator, searches, delegates, asks for tickets.
+
+model: { router: agent-router, budget_usd_per_day: 15 }
+
+files:
+  # The per-chat code-sandbox work root, so no copy step stands between this
+  # family and its code-sandbox jobs (docs/rework/spec.md §7.2).
+  - { path: /srv/agents/work/code-sandbox, mode: rw }
+
+verbs:
+  embed: {}
+
+delegates: [vault-oracle, code-sandbox]
+
+egress: [] # every reach goes through the PEP, so every reach is audited
+
+shell: false
+sandbox_tools: [read, grep, find, ls, write, edit]
+sandbox: { cpus: 4, memory: 8g }
+
+skills: []
+approval: []

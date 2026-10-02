@@ -1,0 +1,17 @@
+# FIXTURE ONLY. The tool name comes from contract 01 §8.6's grants for
+# `scrum-lead`. No contract 01b example covers this server.
+name: mail
+identity: "One SMTP credential with one recipient compiled in. It sends the standup and nothing else, so the recipient is not an argument the sandbox chooses."
+
+install:
+  source: agent-mcp
+
+run:
+  entrypoint: mail-mcp
+  env:
+    SMTP_HOST: 127.0.0.1
+    SMTP_PASSWORD: secret:smtp_password_standup
+    MAIL_TO: operator@example.invalid
+
+tools:
+  - { name: send_standup_email, description: Send today's standup to the one recipient., write: true }

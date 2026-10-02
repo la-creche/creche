@@ -1,0 +1,76 @@
+# The trigger front door's webhook listener (rework contract 02 §3.1).
+# USER unit, as the operator.
+#
+# `agent-trigger serve` binds the LAN address, never loopback, so Node-RED
+# and Home Assistant automations elsewhere on the LAN can reach
+# POST /triggers/<family>/<name>. A route exists only when both hold:
+# managerd's published status says the family is autonomous and has
+# validated at least once, and the registry's own family file still
+# declares that webhook name right now. Every other request — unknown
+# family, unknown name, wrong token — answers the identical 404.
+#
+# Every default this process needs (the sessiond token file, the LAN
+# bind, the registry root, the webhook token directory) is a real path
+# already established elsewhere in this repo, so this unit sets no
+# environment beyond what sbx itself needs. See door-trigger/README.md's
+# configuration table to override any of them.
+#
+# Reload means "look now": SIGHUP refreshes the route table without
+# waiting for the next poll, best-effort (door-trigger/AGENTS.md — signal
+# handling needs the main thread, which this unit always runs on).
+[Unit]
+Description=agent-trigger serve, the trigger front door's webhook listener
+After=network-online.target agent-sessiond.service
+Wants=network-online.target
+# This door ships inside the `sessiond` component (contract 06 §1 rule 1)
+# and runs from its venv. A release restarts `agent-sessiond.service`
+# alone, and a running listener would hold the renamed tree open and go on
+# serving the old code. `PartOf` carries this unit with that restart.
+PartOf=agent-sessiond.service
+# THE REWORK RESTART POLICY, argued in full in
+# `systemd/agent-managerd.service`: no start limit, so a transient fault
+# cannot end this service for good, and a back-off so restarting for ever
+# stays cheap. `bin/rework-watchdog.sh` is what says the service is not well;
+# `systemctl --user status` still shows NRestarts.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-control
+# sbx panics without both, and this door's own dependency tree shells out
+# to it nowhere directly — every user unit in this repo carries them
+# regardless (systemd/AGENTS.md).
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# The site's AGENT_LAN_ADDRESS: the webhook listener's bind.
+EnvironmentFile=/etc/agent-control/site.env
+# The trigger door ships INSIDE the `sessiond` component (contract 06 §1
+# rule 1: a door cannot be at a different version from the session API it
+# serves), so it runs from that component's venv and moves with it. Not
+# /opt/agent-control's shared workspace venv, which no release swaps.
+ExecStart=%h/.local/components/sessiond/bin/agent-trigger serve
+ExecReload=/bin/kill -HUP $MAINPID
+# The rework restart policy (`systemd/agent-managerd.service`). `always`,
+# because systemd calls SIGHUP, SIGINT, SIGTERM and SIGPIPE clean exits and
+# this service has no clean exit that must stay down.
+Restart=always
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=120s
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# A user unit on this host cannot use mount-namespace options
+# (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
+# options need no namespace and apply fine (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+# 0077, not 0027: this process writes no file of its own, so there is no
+# group-read requirement to preserve (contrast agent-managerd.service,
+# which writes files the PEP must read).
+UMask=0077
+
+[Install]
+WantedBy=default.target

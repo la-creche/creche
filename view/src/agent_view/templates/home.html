@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% from "macros.html" import problem, when %}
+{% block title %}families{% endblock %}
+{% block main %}
+<h1>families</h1>
+{{ problem(page.problem) }}
+
+{# Spend is ONE number per family. The budget belongs to the family key,
+   never to a sandbox (contract 05 §7 rule 1), so it is on this row and
+   nowhere near the sandbox column. #}
+<table class="families">
+<thead>
+<tr>
+  <th>family</th><th>kind</th><th>status</th><th>serving</th>
+  <th>queue cap</th><th>spend today</th><th>faults</th>
+</tr>
+</thead>
+<tbody>
+{% for row in page.families %}
+<tr class="state-{{ row.health.value }}">
+  <td><a href="/families/{{ row.name }}">{{ row.name }}</a></td>
+  <td>{{ row.kind or "—" }}</td>
+  <td>
+    <span class="badge">{{ row.health.label }}</span>
+    {% if row.reason %}<span class="reason">{{ row.reason }}</span>{% endif %}
+    {% if row.stale %}<span class="flag">stale</span>{% endif %}
+  </td>
+  <td>
+    {% if row.serving %}{{ row.serving.id }} ({{ row.serving.state }}){% else %}none{% endif %}
+  </td>
+  {# No running count here: `managerd` cannot count a running turn. The
+     only true one is `sessiond`'s, and this
+     page reads files and never dials a service, so it still renders
+     when `sessiond` is down. The per-session count is on the family
+     page. The queue cap stays: it is true, and this is its one place. #}
+  <td>
+    {{ row.limits.max_queued_turns or "—" }}
+  </td>
+  <td>
+    {% if row.spend and row.spend.known %}
+      ${{ "%.2f"|format(row.spend.spend_usd) }}
+      {% if row.spend.budget_usd %} of ${{ "%.2f"|format(row.spend.budget_usd) }}{% endif %}
+      {% if row.spend.stale %}<span class="flag">spend is stale</span>{% endif %}
+    {% else %}
+      unknown
+    {% endif %}
+  </td>
+  <td>
+    {% if row.faults %}
+      {% for fault in row.faults %}
+      <div class="fault{% if fault.blocks_turns %} blocking{% endif %}">{{ fault.summary }}</div>
+      {% endfor %}
+    {% else %}none{% endif %}
+  </td>
+</tr>
+{% else %}
+<tr><td colspan="7">no families</td></tr>
+{% endfor %}
+</tbody>
+</table>
+<p class="foot">read at {{ when(page.now.isoformat()) }}</p>
+{% endblock %}

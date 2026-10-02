@@ -1,0 +1,47 @@
+[project]
+name = "agent-pep"
+version = "0.1.0"
+description = "Policy Enforcement Point: deterministic per-call authorization proxy for the action plane."
+requires-python = ">=3.12"
+# Deliberately minimal: no LLM code, no framework beyond the proxy's needs.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "mcp>=1.2",
+    # The `release` verb files the same request bytes the operator's own command
+    # files, through `agent_release.requester` (stage7-releases.md §2.3). One
+    # writer, so a refusal reads the same on both sides. `release_door.py`
+    # imports that subpackage and nothing else from this dependency; a test
+    # in `pep/tests/test_pep_r7i_release_verb.py` holds it to that.
+    "agent-release",
+]
+
+[project.scripts]
+agent-pep = "agent_pep.__main__:main"
+# The component's verify hook. `pep/component.yaml` names it, and
+# contract 06 §4 rule 6 says the hook ships inside this artifact.
+pep-verify = "agent_pep.verify:main"
+# The launcher every MCP upstream starts through: it drops the child to its
+# own `mcp-<name>` user before exec (contract 01b §9). In this artifact so
+# the PEP always runs the launcher its own release shipped.
+agent-pep-as = "agent_pep.run_as:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_pep"]
+
+[tool.uv.sources]
+agent-release = { workspace = true }
+
+[tool.uv]
+# uv rebuilds a local package only when pyproject.toml, setup.py or setup.cfg
+# changes, and every first-party package stays at one version. Without the
+# source in the key, a non-editable build installs the FIRST wheel uv ever
+# cached for this directory, for ever, so a new commit's tree runs old code
+# (release/tests/test_release_ced_uv_guard.py).
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]

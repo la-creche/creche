@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  // The integration driver imports src/, and esbuild bundles it with no type
+  // check. Listing it here makes a changed src/ signature fail typecheck, not
+  // the integration tests. The image build copies no integration/, so this
+  // entry matches nothing there.
+  "include": ["src", "bridge", "test", "../integration/tests_manager/node"]
+}
