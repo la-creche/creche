@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Nothing leaves this machine failing lint, types, or the tests of the
+# packages it touches. CI runs the full suite on Linux and is the merge gate.
+# This hook is the fast local catch of a regression in what the push changes.
+# A push of nothing but docs runs only the tests that read a doc, as CI does
+# (bin/lib/docsrule.sh).
+#
+# See githooks/pre-commit for why: a hook inherits GIT_DIR (worktrees: also
+# GIT_WORK_TREE) from the git command that invoked it, and quality-gate.sh's
+# pytest suite spawns `git` subprocesses of its own that would inherit the
+# same variables — pointed at the DEVELOPER's repo, not a test fixture
+# (reproduced). Unset them before anything else runs.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+set -uo pipefail
+
+# Resolve the repo root from the worktree git is actually operating on —
+# see githooks/pre-commit for why $0-based resolution would run every
+# worktree's quality gate against the primary checkout instead.
+ROOT="$(git rev-parse --show-toplevel)"
+GATE="$ROOT/bin/quality-gate.sh"
+
+#: The gate's scoped mode: `--tests-for PATH...` tests only the packages
+#: PATH... touch.
+SCOPED="--tests-for"
+
+#: The gate's docs-only mode: `--docs` runs only the tests that read a doc.
+DOCS="--docs"
+
+#: The docs-only rule, the one copy CI reads too. A worktree cut before it
+#: has none, and a push from there is never docs only.
+DOCS_RULE="$ROOT/bin/lib/docsrule.sh"
+
+#: A new branch's changes count from its fork point with this ref. The hook
+#: never fetches, so this is whatever the last fetch left.
+BASE_REF="refs/remotes/origin/main"
+
+#: An all-zero object name: a new branch on the remote side, a deleted one on
+#: the local side. Any length, for SHA-1 and SHA-256 alike.
+ZERO_RE='^0+$'
+
+# full REASON: run the full suite, and say why.
+full() {
+  echo "pre-push: full suite: $*"
+  exec "$GATE" --tests
+}
+
+# What the push is: `docs` until one ref changes more than prose, then
+# `code`.
+scope=code
+if [[ -r "$DOCS_RULE" ]]; then
+  . "$DOCS_RULE"
+  scope=docs
+fi
+
+# from_of REMOTE LOCAL: where a ref's changes count from. A new branch
+# counts from its fork point with main. An updated one counts from its old
+# head, unless the push merged main in: then from that fork point, because
+# main's own changes were tested where they were made. A remote sha this
+# clone never fetched stays, so the diff fails and runs the full suite.
+from_of() {
+  local remote="$1" head="$2" fork
+
+  if [[ "$remote" =~ $ZERO_RE ]]; then
+    git merge-base "$BASE_REF" "$head" 2>/dev/null
+    return
+  fi
+
+  if ! git cat-file -e "$remote^{commit}" 2>/dev/null; then
+    printf '%s\n' "$remote"
+    return 0
+  fi
+
+  if ! fork="$(git merge-base "$BASE_REF" "$head" 2>/dev/null)"; then
+    printf '%s\n' "$remote"
+    return 0
+  fi
+
+  # The old head already holds the fork point: main did not move in.
+  if git merge-base --is-ancestor "$fork" "$remote"; then
+    printf '%s\n' "$remote"
+    return 0
+  fi
+
+  printf '%s\n' "$fork"
+}
+
+# stdin: "<local ref> <local sha> <remote ref> <remote sha>", one line per
+# ref pushed (githooks(5)). What each ref changes on the remote:
+#   deleted  local sha zero    nothing, so no tests
+#   new      remote sha zero   merge-base(origin/main, local sha)..local sha
+#   updated                    remote sha..local sha, or from the
+#                              merge-base when the push merged main in
+# A rename counts as its old path and its new one, so a move out of a
+# package still tests that package. A path git quotes lands in no package,
+# which runs the full suite.
+changed=""
+while read -r _local_ref local_sha remote_ref remote_sha; do
+  if [[ "$local_sha" =~ $ZERO_RE ]]; then
+    echo "pre-push: $remote_ref is deleted: no tests for it"
+    continue
+  fi
+
+  from="$(from_of "$remote_sha" "$local_sha")" ||
+    full "$remote_ref is new and has no merge-base with $BASE_REF"
+
+  touched="$(git -c core.quotePath=false diff --name-only --no-renames \
+    "$from" "$local_sha" 2>/dev/null)" ||
+    full "cannot diff $remote_ref from ${from:0:12} to ${local_sha:0:12}"
+
+  changed+="$touched"$'\n'
+
+  if [[ "$scope" == docs ]] && ! docs_only "$from" "$local_sha"; then
+    scope=code
+  fi
+done
+
+paths=()
+while IFS= read -r path; do
+  if [[ -n "$path" ]]; then
+    paths+=("$path")
+  fi
+done < <(printf '%s' "$changed" | LC_ALL=C sort -u)
+
+if [[ ${#paths[@]} -eq 0 ]]; then
+  echo "pre-push: the push changes no path: no tests"
+  exit 0
+fi
+
+# Nothing but prose: the tests that read a doc, and no other. A gate that
+# predates --docs would refuse it, so that push runs the scoped suites.
+if [[ "$scope" == docs ]] && grep -q -e "$DOCS" "$GATE"; then
+  echo "pre-push: docs only: the tests marked docs"
+  exec "$GATE" "$DOCS"
+fi
+
+# core.hooksPath is absolute, so this hook also runs for a worktree cut
+# before the gate learned the scoped mode. That gate reads the flag as "lint
+# only" and passes without running a test.
+if ! grep -q -e "$SCOPED" "$GATE"; then
+  full "this tree's quality-gate.sh predates $SCOPED"
+fi
+
+exec "$GATE" "$SCOPED" "${paths[@]}"

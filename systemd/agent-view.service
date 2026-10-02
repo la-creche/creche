@@ -1,0 +1,68 @@
+# agent-view: the one view (invariant 20). USER unit, as the operator.
+#
+# One page shows every family, sandbox and session, and it is where the operator
+# edits a family. It reads managerd's status documents, the PEP's audit
+# files and sessiond as the principal `view-ro`, and it writes exactly one
+# thing: a validated git commit in the registry. It never applies anything.
+# managerd watches the registry and converges (contract 05 §5).
+#
+# LAN bind on the host's LAN address, port 8370, fronted by NPM + Authentik, which inject
+# X-View-Key. VIEW_ACCESS_KEY makes that header mandatory, so a direct LAN
+# hit without it is 403 and Authentik is the only working door. The service
+# REFUSES TO START with an empty key on a non-loopback bind: a "key not
+# configured, skip the check" branch would let an env wipe turn a LAN admin
+# surface into an open one.
+[Unit]
+Description=agent-view, the one view over every family, sandbox and session
+After=network-online.target
+Wants=network-online.target
+# THE REWORK RESTART POLICY, argued in full in
+# `systemd/agent-managerd.service`: no start limit, so a transient fault
+# cannot end this service for good, and a back-off so restarting for ever
+# stays cheap. `bin/rework-watchdog.sh` is what says the service is not well;
+# `systemctl --user status` still shows NRestarts.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-control
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# invariant 13: VIEW_ACCESS_KEY never rides on argv or in a log line. This
+# file is root-owned and mode 0600, and the unit only names it. Point
+# VIEW_ACCESS_KEY_FILE at a mode-0600 file to keep the value out of
+# `systemctl show` as well.
+EnvironmentFile=/srv/agents/state/rework/view.env
+# The site's AGENT_LAN_ADDRESS: the bind when view.env sets no VIEW_BIND.
+EnvironmentFile=/etc/agent-control/site.env
+# The component tree contract 06 §1 row 4 fixes (`ui`), not
+# /opt/agent-control's shared workspace venv. The release executor swaps
+# `<install.to>` and restarts this unit, so a unit that ran from anywhere
+# else would relaunch the old code after a release the ledger called a
+# success.
+ExecStart=%h/.local/components/ui/bin/agent-view
+# A deploy runs this before it swaps the unit. It opens no socket.
+ExecStartPre=%h/.local/components/ui/bin/agent-view --check
+# The rework restart policy (`systemd/agent-managerd.service`). `always`,
+# because systemd calls SIGHUP, SIGINT, SIGTERM and SIGPIPE clean exits and
+# this service has no clean exit that must stay down.
+Restart=always
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=120s
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# A user unit on this host cannot use mount-namespace options
+# (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
+# options need no namespace (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+# 0077: this service creates nothing another user reads. It only reads
+# files managerd and the PEP wrote, and commits in the registry checkout.
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "macros.html" import problems, when %}
+{% block title %}audit{% endblock %}
+{% block main %}
+<h1>audit</h1>
+{# The reader sees full tool arguments, and the page
+   says so in one line. A reader who does not know that is a reader who
+   could paste this page somewhere it does not belong. #}
+<p class="notice">{{ args_notice }}</p>
+{{ problems(page.problems) }}
+
+<form method="get" action="/audit" class="filters">
+  <label>family <input name="family" value="{{ wanted.family }}"></label>
+  <label>session <input name="session" value="{{ wanted.session }}"></label>
+  <label>tool <input name="tool" value="{{ wanted.tool }}"></label>
+  <label>decision <input name="decision" value="{{ wanted.decision }}"></label>
+  <button type="submit">filter</button>
+  <a href="/audit">clear</a>
+</form>
+
+<p class="foot">
+  {{ page.scanned }} records scanned across {{ page.days_read|length }} day files.
+  Days on disk: {% for day in days %}{{ day }}{% if not loop.last %}, {% endif %}{% else %}none
+  {% endfor %}
+</p>
+
+<table class="audit">
+<thead><tr><th>when</th><th>family</th><th>tool</th><th>decision</th>
+<th>claimed</th><th>arguments</th></tr></thead>
+<tbody>
+{% for line in page.rows %}
+<tr>
+  {% if line.problem %}
+  <td colspan="6" class="problem">{{ line.problem }}</td>
+  {% else %}
+  <td>{{ when(line.ts) }}<br><span class="foot">{{ line.latency_ms }}ms</span></td>
+  <td>{{ line.family }}<br><span class="foot">{{ line.sandbox_id }}
+      {% if not line.sandbox_id_trusted %}<span class="flag">untrusted</span>{% endif %}</span></td>
+  <td><code>{{ line.tool }}</code>
+      {% if line.chain %}<br><span class="foot">{{ line.chain|join(" → ") }}</span>{% endif %}</td>
+  <td>{{ line.decision }}
+      {% if line.reason %}<br><span class="foot">{{ line.reason }}</span>{% endif %}
+      {% if line.gated %}<br><span class="flag">gate {{ line.gate }}</span>{% endif %}</td>
+  <td class="foot">
+    session {{ line.session_id or "null" }}<br>
+    turn {{ line.turn_id or "null" }}
+    {% if line.delegation_id %}<br>delegation {{ line.delegation_id }}{% endif %}
+  </td>
+  <td><pre>{{ line.args }}</pre>
+      {% if line.args_truncated %}<span class="flag">cut at the display limit</span>{% endif %}</td>
+  {% endif %}
+</tr>
+{% else %}
+<tr><td colspan="6">nothing matched</td></tr>
+{% endfor %}
+</tbody>
+</table>
+
+<p class="paging">
+{% if page.offset %}
+  <a href="/audit?family={{ wanted.family }}&amp;session={{ wanted.session }}&amp;tool={{ wanted.tool }}&amp;decision={{ wanted.decision }}&amp;offset={{ page.previous_offset }}">newer</a>
+{% endif %}
+{% if page.has_more %}
+  <a href="/audit?family={{ wanted.family }}&amp;session={{ wanted.session }}&amp;tool={{ wanted.tool }}&amp;decision={{ wanted.decision }}&amp;offset={{ page.next_offset }}">older</a>
+{% endif %}
+</p>
+{% endblock %}

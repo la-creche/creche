@@ -1,0 +1,24 @@
+[project]
+name = "agent-indexer"
+version = "0.2.0"
+description = "Per-scope hybrid index builder: FTS5 + sqlite-vec, stored outside the scope."
+requires-python = ">=3.12"
+dependencies = ["httpx>=0.27", "pypdf>=5.0", "sqlite-vec>=0.1.6"]
+
+[project.scripts]
+index-scope = "agent_indexer.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_indexer"]
+
+[tool.uv]
+# uv rebuilds a local package only when pyproject.toml, setup.py or setup.cfg
+# changes, and every first-party package stays at one version. Without the
+# source in the key, a non-editable build installs the FIRST wheel uv ever
+# cached for this directory, for ever, so a new commit's tree runs old code
+# (release/tests/test_release_ced_uv_guard.py).
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]

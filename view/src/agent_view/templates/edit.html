@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "macros.html" import problem, csrf, rule %}
+{% block title %}edit {{ page.family }}{% endblock %}
+{% block main %}
+<h1>edit {{ page.family }}</h1>
+{{ problem(page.problem) }}
+
+{% if page.saved %}
+<p class="saved">Saved as {{ page.saved }}. <code>managerd</code> watches the
+registry and converges: this family reads <em>reconciling</em> and then
+<em>in sync</em>. Nothing was applied from here.</p>
+{% endif %}
+
+{% if page.issues %}
+<h2>the registry refused this</h2>
+<ul class="issues">
+{% for issue in page.issues %}
+  <li class="{{ issue.severity.value }}"><code>{{ issue.loc }}</code> {{ issue.msg }}</li>
+{% endfor %}
+</ul>
+<p>Nothing was written. The file on disk is unchanged.</p>
+{% endif %}
+
+{% if page.diff %}
+<h2>what this change would do</h2>
+{% if page.diff.changed %}
+<table>
+<thead><tr><th>field</th><th>lands</th><th>step</th><th>what</th></tr></thead>
+<tbody>
+{% for change in page.diff.changes %}
+<tr class="lands-{{ change.landing.value }}">
+  <td><code>{{ change.field }}</code></td>
+  <td>{{ change.landing.value }}</td>
+  <td>{{ change.step.value }}</td>
+  <td>{{ change.detail }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% if page.diff.needs_switch %}
+<p class="flag">This replaces the sandbox
+  ({{ page.diff.switch_mode.value }}).</p>
+{% else %}
+<p>Every change lands live. The sandbox keeps running.</p>
+{% endif %}
+{% else %}
+<p>No change.</p>
+{% endif %}
+{% endif %}
+
+<form method="post" action="/families/{{ page.family }}/edit">
+{{ csrf(csrf_token, csrf_field) }}
+<p class="notice">A save replaces only the fields you changed. Comments, key
+order and layout in the rest of the file are kept, and a save that changes
+nothing makes no commit.</p>
+
+{% for field in page.form.fields %}
+<div class="field">
+  <label for="f-{{ field.name }}">{{ field.name }}</label>
+  {% if field.control.value == "checkbox" %}
+    <input type="checkbox" id="f-{{ field.name }}" name="{{ field.name }}"
+           {% if field.checked %}checked{% endif %}
+           {% if field.locked %}disabled{% endif %}>
+  {% elif field.control.value == "lines" or field.control.value == "block" %}
+    <textarea id="f-{{ field.name }}" name="{{ field.name }}" rows="4"
+              {% if field.locked %}disabled{% endif %}>{{ field.value }}</textarea>
+  {% else %}
+    <input type="text" id="f-{{ field.name }}" name="{{ field.name }}"
+           value="{{ field.value }}"
+           {% if field.locked %}disabled{% endif %}>
+  {% endif %}
+  {% if field.note %}<span class="foot">{{ field.note }}</span>{% endif %}
+  {{ rule(field.locked) }}
+</div>
+{% endfor %}
+
+<div class="field">
+  <label for="f-subject">commit subject</label>
+  <input type="text" id="f-subject" name="subject" value="{{ page.posted.get('subject', '') }}">
+</div>
+
+<p class="verbs">
+  <button type="submit" name="verb" value="{{ verb_preview }}">preview</button>
+  <button type="submit" name="verb" value="{{ verb_save }}">save</button>
+  <a href="/families/{{ page.family }}">back</a>
+</p>
+</form>
+{% endblock %}

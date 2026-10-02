@@ -1,0 +1,19 @@
+name: mail
+identity: "One SMTP relay account at smtp.example.invalid. It sends as bot@example.invalid to operator@example.invalid and to nobody else, because both addresses are env here and neither is a tool argument."
+
+install:
+  source: agent-mcp
+
+run:
+  entrypoint: mail-mcp
+  env:
+    MAIL_SMTP_HOST: smtp.example.invalid
+    MAIL_SMTP_PORT: "587"
+    MAIL_STARTTLS: "yes"
+    MAIL_FROM: bot@example.invalid
+    MAIL_TO: operator@example.invalid
+    MAIL_SMTP_USER: smtp-user
+    MAIL_SMTP_PASSWORD: secret:smtp_password
+
+tools:
+  - { name: send_standup_email, description: "Send the operator one plain-text email. The subject and body are yours, the envelope is not.", write: true }

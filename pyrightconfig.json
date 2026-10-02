@@ -1,0 +1,8 @@
+{
+    "include": ["pep/src", "indexer/src", "family/src", "managerd/src", "sessiond/src", "door-owui/src", "door-tui/src", "door-trigger/src", "view/src", "release/src"],
+    "typeCheckingMode": "strict",
+    "pythonVersion": "3.12",
+    "venvPath": ".",
+    "venv": ".venv",
+    "reportMissingTypeStubs": false
+}

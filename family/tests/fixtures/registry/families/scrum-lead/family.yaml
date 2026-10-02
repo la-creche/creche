@@ -1,0 +1,64 @@
+name: scrum-lead
+kind: autonomous
+description: Refines, points and splits board tickets, dispatches workers, emails the standup.
+
+model: { router: agent-router, budget_usd_per_day: 10 }
+
+files:
+  - { path: /srv/agents/code, mode: ro }
+  - { path: /srv/agents/vault/house, mode: ro }
+  # The lead's own memory between wakes: dispatch ledger, standup timestamp.
+  - { path: /srv/agents/vault/house/scrum, mode: rw }
+
+tools:
+  # Named tools, not `all`: an autonomous family may not say `all` (§3.4.5).
+  board-lead:
+    - survey_board
+    - get_ticket
+    - append_dev_notes
+    - set_points
+    - mark_refined
+    - label_epic
+    - mark_blocked
+    - file_child_ticket
+    - comment_on_ticket
+    - file_ticket
+  mail: [send_standup_email]
+
+verbs:
+  embed: {}
+  ha_call:
+    allow:
+      - { domain: notify, service: mobile_app_example_phone }
+  enqueue:
+    targets:
+      - agent-control-worker
+      - finance-worker
+      - home-assistant-worker
+      - networking-worker
+  job_status: {} # reads back the jobs this family enqueued (§3.5.4)
+
+delegates: []
+
+egress: []
+
+shell: false
+sandbox_tools: [read, grep, find, ls, write, edit] # the ledger write lane
+sandbox: { cpus: 2, memory: 4g }
+
+skills: []
+
+triggers:
+  - cron: "@hourly"
+
+# One wake at a time. A second firing queues (§3.14).
+max_running_turns: 1
+
+# Most hourly firings find nothing changed. Code checks that first (§3.15).
+quiet:
+  board: board-lead
+  daily: { call: mail__send_standup_email, hour: 16, zone: America/Phoenix, weekdays_only: true }
+  floor_hours: 24
+
+# Every dispatch is one phone tap, as today.
+approval: [enqueue]

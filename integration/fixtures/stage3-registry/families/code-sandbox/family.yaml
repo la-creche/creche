@@ -1,0 +1,30 @@
+# The second delegate, from `docs/rework/spec.md` §4.4 and contract 01 §8.5.
+#
+# Two differences from contract 01 §8.5: the model alias, for the reason
+# `vault-oracle/family.yaml` gives, and the sandbox names no `image: python`.
+name: code-sandbox
+kind: thin
+description: Runs code for one chat, inside that chat's own directory.
+
+model: { router: agent-router, budget_usd_per_day: 5 }
+
+files:
+  # The work root, not one chat's directory: mounts are fixed when the sandbox
+  # is created, so the per-chat directory is made inside it and linked by the
+  # supervisor at job start (docs/rework/spec.md §7.2).
+  - { path: /srv/agents/work/code-sandbox, mode: rw }
+
+tools: {}
+verbs: {}
+delegates: []
+
+# "shell, no network" (docs/rework/spec.md §4.4) is these two lines together.
+egress: []
+
+shell: true
+sandbox_tools: [read, grep, find, ls, write, edit]
+sandbox: { cpus: 4, memory: 8g }
+
+skills: []
+approval: []
+job: { timeout: 120s }

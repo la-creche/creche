@@ -1,0 +1,171 @@
+# PR gate: lint, the full suite and the supervisor's vitest suite, as jobs
+# that run at once on separate runners.
+#
+#   scope ──┬── tests (1..N)   code   the full suite, one shard per job
+#           └── supervisor     code   the TypeScript suite and its build
+#   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
+#                                 │   docs PR the tests marked `docs`
+#                                 └── gate   red unless every job passed
+#
+# A job is billed in whole minutes, so a check of a few seconds rides in a
+# job that runs anyway: the docs tests in `lint`.
+#
+# No version rule: a pull request carries no number. release.yml allocates
+# each component's tag at the merge (contract 06 §2.1).
+#
+# It stays ONE workflow with ONE check named `gate`. The release executor
+# reads the workflow runs on the PR head, and every one must be a success
+# (release/src/agent_release/executor/provenance.py, P5): a second workflow
+# that can fail or be cancelled there would block a release. Sessions read
+# `gh pr checks` for `gate`.
+#
+# A PR of nothing but docs runs `bin/quality-gate.sh --docs` in the lint job,
+# lint and only the tests that read a doc: no shard and no supervisor job
+# (bin/lib/docsrule.sh, the rule the hook reads too).
+#
+# Every shard runs the whole of pyproject.toml's `testpaths` with
+# `--shard K/N` (conftest.py): a test's own id puts it in exactly one shard.
+# No shard names a path, so a suite added to `testpaths` runs here with no
+# change to this file. bin/tests/test_gate_workflow.py pins all of it.
+#
+# Actions are SHA-pinned with the tag as a comment, as agent-registry's
+# validate.yml does.
+# release.yml runs the same `tests` and `supervisor` jobs after the merge.
+# agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
+# changing one.
+name: gate
+
+# `merge_group`: a merge queue runs this file on the merged result of the
+# pull requests it groups, and merges on that run's `gate`. A repository
+# with no queue never sends the event.
+on: [pull_request, merge_group]
+
+permissions:
+  contents: read
+
+# A new push to a PR stops the run of its old head. P5 reads only the runs
+# on the merged PR head, so a run cancelled on an older head blocks nothing.
+# A run cancelled on the head itself does block, e.g. after a close and a
+# reopen while the gate runs: comment `!retest` on the PR (retest.yml).
+#
+# A merge group has no head ref. It runs on its own queue branch, e.g.
+# refs/heads/gh-readonly-queue/main/pr-12-<sha>, so its ref is the group:
+# with an empty one every group in the queue would cancel the others.
+concurrency:
+  group: gate-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the merge-base with the base branch.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/scope
+        id: scope
+
+  # It asks the scope itself, so it starts with the scope job and a docs PR
+  # does not wait for one job before the other.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the merge-base with the base branch.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/scope
+        id: scope
+
+      - uses: ./.github/actions/uv-sync
+
+      # No flag: ruff, ruff format and pyright, no test. The shards test.
+      - run: bin/quality-gate.sh
+        if: steps.scope.outputs.scope == 'code'
+
+      # A docs PR has no shard: the tests that read a doc run here.
+      - run: bin/quality-gate.sh --docs
+        if: steps.scope.outputs.scope == 'docs'
+
+  tests:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    strategy:
+      # A red shard does not stop the others: one run shows every failure.
+      fail-fast: false
+      matrix:
+        # Labels, and their count is N. The run line reads the job's index
+        # and the job total, so no edit here can leave a shard out.
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: some tests read git state.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/uv-sync
+
+      # `worksteal`: a runner has two workers, and under xdist's default
+      # one of them ends up holding the slow tests while the other idles.
+      # An idle worker that takes from the busy one's queue cut the
+      # slowest of six shards from 153 s to 121 s.
+      - run: uv run pytest -n auto --dist worksteal --shard "$((INDEX + 1))/$TOTAL"
+        env:
+          INDEX: ${{ strategy.job-index }}
+          TOTAL: ${{ strategy.job-total }}
+
+  # agent-control only. The supervisor is TypeScript and the Python gate
+  # never runs its suite. pnpm's version is supervisor/package.json's
+  # packageManager field; node matches supervisor/Dockerfile's NODE_TAG.
+  # `build` runs too: 120 integration tests skip when dist/ is absent, so
+  # a bundle that does not build has to fail HERE, not as a quiet skip.
+  supervisor:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    # `pnpm run build` fixes the LAN address in the bundle and refuses to
+    # build without one (supervisor/build.mjs). CI throws the bundle away,
+    # so the example site's TEST-NET-1 address does.
+    env:
+      AGENT_LAN_ADDRESS: 192.0.2.10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: supervisor/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: supervisor/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck && pnpm run build
+        working-directory: supervisor
+
+  # The one check a session reads. `always()`: a job that needs a failed job
+  # is skipped by default, and a skipped `gate` would not read as red.
+  gate:
+    needs: [scope, lint, tests, supervisor]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # The verdict is a local action, read from the checkout. Full history
+      # as in every job (bin/tests/test_gate_workflow.py).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: every job passed
+        uses: ./.github/actions/verdict
+        with:
+          needs: ${{ toJSON(needs) }}

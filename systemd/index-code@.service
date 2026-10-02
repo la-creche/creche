@@ -1,0 +1,22 @@
+# Code-corpus index build for repo %i. USER unit; %i = a
+# directory under /srv/agents/code. The sandbox index-code-%i must exist
+# (provision-indexer.sh <repo> code).
+[Unit]
+Description=Code index build for repo %i
+
+[Service]
+Type=oneshot
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# sbx phones home on every invocation and that, not the indexing, is
+# seconds of each run. This unit execs sbx itself, so it opts out here.
+Environment=SBX_NO_TELEMETRY=1
+NoNewPrivileges=yes
+UMask=0077
+# `code` profile: source suffixes, and node_modules/dist/build skipped.
+# `sleep 8` is load-bearing: sbx exec's attach races process exit.
+ExecStart=/usr/bin/timeout --signal=KILL 3000 sbx exec index-code-%i -- \
+  sh -c 'index-scope /srv/agents/code/%i /srv/agents/state/index/code-%i code; rc=$?; sleep 8; exit $rc'
+# Longer than the vault's 1500s: a first index of a large repo embeds every
+# file, and a run killed before the atomic publish makes no forward progress.
+TimeoutStartSec=3060

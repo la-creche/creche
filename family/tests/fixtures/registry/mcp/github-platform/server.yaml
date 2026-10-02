@@ -1,0 +1,64 @@
+name: github-platform
+identity: "Fine-grained PAT scoped to agent-control, agent-registry and agent-mcp, and to nothing else. Only the agent-control family is granted this server."
+
+install:
+  source: github-release
+  repo: github/github-mcp-server
+  version: 1.12.0
+  asset: github-mcp-server_Linux_x86_64.tar.gz
+  sha256: f34de295acd8f1012c7f2c0e3b909d87361d0993b9489b57ee92ac72b85d7cca
+
+run:
+  entrypoint: github-mcp-server
+  args:
+    - stdio
+    - --toolsets=context,repos,pull_requests,issues
+    - --lockdown-mode
+  env:
+    GITHUB_PERSONAL_ACCESS_TOKEN: secret:github_token_platform
+
+arg_allows:
+  # Deny by default: a call naming any other repository is denied, and so is a
+  # call that names no repository at all (§7.1.3).
+  - tools: all
+    arg: owner/repo
+    values:
+      - example-owner/agent-control
+      - example-owner/agent-registry
+      - example-owner/agent-mcp
+
+arg_denies:
+  - tools:
+      - push_files
+      - create_or_update_file
+      - delete_file
+      - create_branch
+      - update_pull_request_branch
+    arg: branch
+    values: [main, master]
+
+tools:
+  # The same list as github-code (§8.2), minus the four search tools, which
+  # carry no repository argument and are therefore unreachable under the allow
+  # above. `merge_pull_request` is registered and deliberately absent: the
+  # platform family proposes and the operator lands (contract 01 §5.5 rule 7).
+  - { name: get_file_contents, description: Read one file at a ref., write: false }
+  - { name: list_branches, description: List a repository's branches., write: false }
+  - { name: list_commits, description: List commits on a ref., write: false }
+  - { name: get_commit, description: Read one commit., write: false }
+  - { name: list_tags, description: List a repository's tags., write: false }
+  - { name: get_latest_release, description: Read the newest release., write: false }
+  - { name: get_label, description: Read one label., write: false }
+  - { name: pull_request_read, description: Read a pull request and its diff., write: false }
+  - { name: list_pull_requests, description: List pull requests., write: false }
+  - { name: create_branch, description: Create a branch from another branch., write: true }
+  - { name: push_files, description: Push several files in one commit., write: true }
+  - { name: create_or_update_file, description: Write one file., write: true }
+  - { name: delete_file, description: Delete one file., write: true }
+  - { name: create_pull_request, description: Open a pull request., write: true }
+  - { name: update_pull_request, description: Change a pull request's fields., write: true }
+  - { name: update_pull_request_branch, description: Update a pull request's branch., write: true }
+  - { name: pull_request_review_write, description: Submit a pull request review., write: true }
+  - { name: add_comment_to_pending_review, description: Add a comment to a pending review., write: true }
+  - { name: add_reply_to_pull_request_comment, description: Reply to a review comment., write: true }
+  - { name: add_issue_comment, description: Comment on an issue., write: true }

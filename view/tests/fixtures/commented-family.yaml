@@ -1,0 +1,42 @@
+# A family file with a comment of every shape a save must keep: this
+# header, one inside a list, one inside a mapping and one at a line's end.
+name: chat
+kind: attended
+description: General assistant. Knows the operator, searches, delegates, asks for tickets.
+
+# The chat router. The budget is 15 USD per day.
+model: { router: agent-router, budget_usd_per_day: 15 }
+
+files:
+  # The whole vault to read, and one memories directory per vault area to
+  # write. Explicit paths, not a glob.
+  - { path: /srv/agents/vault, mode: ro }
+  - { path: /srv/agents/vault/profile/memories, mode: rw }
+  - { path: /srv/agents/vault/house/memories, mode: rw }
+  # The per-chat code-sandbox work root, so no copy step stands between this
+  # family and its code-sandbox jobs.
+  - { path: /srv/agents/work/code-sandbox, mode: rw }
+
+tools:
+  kagi: [kagi_search_fetch, kagi_extract]
+  # The four reads contract 01 §8.1 names.
+  ha-read: [ha_get_state, ha_search, ha_get_overview, ha_get_history]
+  ha: all
+  vikunja-home-assistant: all
+  vikunja-finance: all
+
+verbs:
+  # One target: a ticket is asked for, never written.
+  enqueue:
+    targets: [scrum-lead]
+
+delegates: [vault-oracle, code-sandbox]
+
+egress: [] # every reach goes through the PEP, so every reach is audited
+
+shell: false
+sandbox_tools: [read, grep, find, ls, write, edit]
+sandbox: { cpus: 4, memory: 8g }
+
+skills: [grill-me, handoff, memory-writing]
+approval: []

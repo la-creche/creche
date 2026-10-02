@@ -1,0 +1,380 @@
+"""The door end to end: one HTTP request in, the right sessiond call and
+the right OpenAI-shaped answer out. `FakeSessiond` plays sessiond's part;
+`StatusFiles` is the real picker, pointed at a `tmp_path`."""
+
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+from typing import Any
+
+from agent_door_owui.app import create_app
+from agent_door_owui.config import DoorConfig
+from agent_door_owui.families import StatusFiles
+from agent_door_owui.headers import (
+    CHAT_ID_HEADER,
+    MESSAGE_ID_HEADER,
+    PARENT_ID_HEADER,
+    TASK_HEADER,
+    USER_MESSAGE_ID_HEADER,
+)
+from agent_door_owui.journal import JournalLine
+from agent_door_owui.sessiond import SessiondError, SettledTurn, StreamBroken
+from fake_sessiond import FakeSessiond
+from starlette.testclient import TestClient
+
+DOOR_KEY = "d" * 32
+CHAT = "3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
+MESSAGE = "b7c1e2d0-1f44-4c61-8a2b-9e0d3c5f7a11"
+
+
+def _config(tmp_path: Path) -> DoorConfig:
+    return DoorConfig(
+        bind_host="127.0.0.1",
+        bind_port=8340,
+        door_key=DOOR_KEY,
+        sessiond_token="t" * 32,
+        sessiond_url="http://sessiond",
+        sessiond_socket=None,
+        families_dir=tmp_path / "families",
+    )
+
+
+def _write_status(tmp_path: Path, family: str, **fields: Any) -> None:
+    directory = tmp_path / "families" / family
+    directory.mkdir(parents=True, exist_ok=True)
+    document: dict[str, Any] = {
+        "family": family,
+        "kind": "attended",
+        "state": "in_sync",
+        "written_at": "2026-09-18T19:20:11Z",
+    }
+    document.update(fields)
+    (directory / "status.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def _client(tmp_path: Path, fake: FakeSessiond) -> TestClient:
+    config = _config(tmp_path)
+    app = create_app(config, fake, StatusFiles(config.families_dir))
+    return TestClient(app)
+
+
+def _headers(**overrides: str) -> dict[str, str]:
+    base = {
+        "Authorization": f"Bearer {DOOR_KEY}",
+        CHAT_ID_HEADER: CHAT,
+        MESSAGE_ID_HEADER: MESSAGE,
+        USER_MESSAGE_ID_HEADER: "a1b2c3d4-5e6f-4071-8293-a4b5c6d7e8f9",
+        PARENT_ID_HEADER: "",
+        TASK_HEADER: "",
+    }
+    base.update(overrides)
+    return base
+
+
+def _body(*, stream: bool = False, text: str = "which sensor dropped out?") -> dict[str, Any]:
+    return {
+        "model": "agent:chat",
+        "messages": [{"role": "user", "content": text}],
+        "stream": stream,
+    }
+
+
+def _pi_text(delta: str) -> JournalLine:
+    return JournalLine(
+        kind="pi_event",
+        turn="01JBQ7WZ0X4T9V6K2H8M3N5PQR",
+        body={
+            "type": "message_update",
+            "assistantMessageEvent": {"type": "text_delta", "delta": delta},
+        },
+    )
+
+
+def _turn_settled() -> JournalLine:
+    return JournalLine(kind="turn_settled", turn="01JBQ7WZ0X4T9V6K2H8M3N5PQR", body={"usage": {}})
+
+
+def _turn_failed(reason: str) -> JournalLine:
+    return JournalLine(
+        kind="turn_failed", turn="01JBQ7WZ0X4T9V6K2H8M3N5PQR", body={"reason": reason}
+    )
+
+
+def _success_lines() -> list[JournalLine]:
+    return [_pi_text("Sensor kitchen_temp stopped reporting."), _turn_settled()]
+
+
+def test_the_picker_lists_attended_families(tmp_path: Path) -> None:
+    _write_status(tmp_path, "chat")
+    _write_status(tmp_path, "vault-oracle", kind="thin")
+    client = _client(tmp_path, FakeSessiond())
+
+    response = client.get("/v1/models", headers={"Authorization": f"Bearer {DOOR_KEY}"})
+
+    assert response.status_code == 200
+    assert [entry["id"] for entry in response.json()["data"]] == ["agent:chat"]
+
+
+def test_models_needs_the_doors_own_key(tmp_path: Path) -> None:
+    _write_status(tmp_path, "chat")
+    client = _client(tmp_path, FakeSessiond())
+
+    response = client.get("/v1/models")
+
+    assert response.status_code == 401
+
+
+def test_a_non_streamed_turn_answers_with_the_text(tmp_path: Path) -> None:
+    fake = FakeSessiond()
+    fake.settled = SettledTurn(
+        turn="01T",
+        state="settled",
+        text="Sensor kitchen_temp stopped reporting.",
+        usage={},
+        reason="",
+    )
+    client = _client(tmp_path, fake)
+
+    response = client.post("/v1/chat/completions", headers=_headers(), json=_body())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["message"]["content"] == "Sensor kitchen_temp stopped reporting."
+    assert body["object"] == "chat.completion"
+    assert fake.ensured == [("chat", f"owui-{CHAT}")]
+    assert fake.requests[0].idempotency_key == MESSAGE
+
+
+def test_a_streamed_turn_carries_the_answer_as_sse(tmp_path: Path) -> None:
+    fake = FakeSessiond(lines=_success_lines())
+    client = _client(tmp_path, fake)
+
+    with client.stream(
+        "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+    ) as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["x-accel-buffering"] == "no"
+        out = "".join(response.iter_text())
+
+    assert "Sensor kitchen_temp stopped reporting." in out
+    assert '"status":"done"' in out
+    assert out.endswith("data: [DONE]\n\n")
+
+
+def test_an_empty_chat_id_is_a_hard_refusal(tmp_path: Path) -> None:
+    fake = FakeSessiond()
+    client = _client(tmp_path, fake)
+
+    response = client.post(
+        "/v1/chat/completions", headers=_headers(**{CHAT_ID_HEADER: ""}), json=_body()
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "missing_chat_id"
+    assert fake.ensured == []
+
+
+def test_a_crafted_chat_id_is_refused(tmp_path: Path) -> None:
+    fake = FakeSessiond()
+    client = _client(tmp_path, fake)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_headers(**{CHAT_ID_HEADER: "../../etc/passwd"}),
+        json=_body(),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "bad_id"
+    assert fake.ensured == []
+
+
+def test_a_repeat_message_id_returns_the_existing_turn(tmp_path: Path) -> None:
+    # Contract 02 §6: a second `run turn` with the same key on the same
+    # session returns the existing turn rather than running it again. The
+    # door itself does not special-case this — the point of the test is
+    # that it does not get in the way of sessiond's own idempotency.
+    fake = FakeSessiond()
+    client = _client(tmp_path, fake)
+
+    first = client.post("/v1/chat/completions", headers=_headers(), json=_body())
+    second = client.post("/v1/chat/completions", headers=_headers(), json=_body())
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["choices"] == second.json()["choices"]
+    assert len(fake.requests) == 2  # the door called through both times...
+    assert fake.requests[0].idempotency_key == fake.requests[1].idempotency_key  # ...sessiond's job
+
+
+def test_a_repeat_with_a_different_prompt_is_refused(tmp_path: Path) -> None:
+    fake = FakeSessiond()
+    client = _client(tmp_path, fake)
+
+    client.post("/v1/chat/completions", headers=_headers(), json=_body(text="first question"))
+    second = client.post(
+        "/v1/chat/completions", headers=_headers(), json=_body(text="a different question")
+    )
+
+    assert second.status_code == 400
+    assert second.json()["error"]["code"] == "idempotency_mismatch"
+
+
+def test_a_second_writer_gets_409(tmp_path: Path) -> None:
+    fake = FakeSessiond()
+    fake.turn_error = SessiondError("session_busy", "another door holds the writer lease", 409)
+    client = _client(tmp_path, fake)
+
+    response = client.post("/v1/chat/completions", headers=_headers(), json=_body())
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "session_busy"
+
+
+def test_a_second_writer_gets_409_even_when_streaming(tmp_path: Path) -> None:
+    # This is the case that motivates priming the relay before returning a
+    # StreamingResponse: Starlette locks in the status code the instant
+    # the response object is constructed.
+    fake = FakeSessiond()
+    fake.turn_error = SessiondError("session_busy", "another door holds the writer lease", 409)
+    client = _client(tmp_path, fake)
+
+    response = client.post("/v1/chat/completions", headers=_headers(), json=_body(stream=True))
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "session_busy"
+
+
+def test_a_failed_non_streamed_turn_is_a_visible_error(tmp_path: Path) -> None:
+    fake = FakeSessiond()
+    fake.settled = SettledTurn(turn="01T", state="failed", text="", usage={}, reason="model_error")
+    client = _client(tmp_path, fake)
+
+    response = client.post("/v1/chat/completions", headers=_headers(), json=_body())
+
+    assert response.status_code >= 400
+    assert response.json()["error"]["code"] == "model_error"
+
+
+def test_a_failed_streamed_turn_is_a_visible_error(tmp_path: Path) -> None:
+    fake = FakeSessiond(lines=[_turn_failed("budget_exceeded")])
+    client = _client(tmp_path, fake)
+
+    with client.stream(
+        "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+    ) as response:
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert "budget_exceeded" in out
+    assert '"status":"failed"' in out
+
+
+def test_a_connection_dropped_mid_stream_is_a_visible_error(tmp_path: Path) -> None:
+    # Not a turn failure sessiond reported — the door's OWN read of the
+    # stream broke (sessiond.py turns a dropped httpx connection into
+    # StreamBroken). A failure is never silent, whoever's it is: the reader
+    # must still see a visible error, never a stream that quietly cuts off.
+    fake = FakeSessiond(
+        lines=[_pi_text("partial answer")],
+        stream_error=StreamBroken("connection reset"),
+    )
+    client = _client(tmp_path, fake)
+
+    with client.stream(
+        "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+    ) as response:
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert "partial answer" in out
+    assert '"status":"failed"' in out
+    assert out.endswith("data: [DONE]\n\n")
+
+
+def test_client_disconnect_leaves_the_turn_running(tmp_path: Path) -> None:
+    # A turn that never settles on its own: the only way this stream ends
+    # is the reader going away. SessiondClient has no "stop" or "abort"
+    # method at all, so nothing the door does here could end the turn even
+    # if it wanted to — the only observable effect is the fake's own
+    # stream context manager closing.
+    fake = FakeSessiond(lines=[_pi_text("partial answer, then nothing else ever arrives")])
+    client = _client(tmp_path, fake)
+
+    with client.stream(
+        "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+    ) as response:
+        assert response.status_code == 200
+        chunks = response.iter_text()
+        first = next(chunks)
+        assert "chat.completion.chunk" in first
+
+    for _ in range(100):
+        if fake.stream_closed:
+            break
+        time.sleep(0.02)
+
+    assert fake.stream_closed
+
+
+def test_a_background_task_request_never_starts_a_turn(tmp_path: Path) -> None:
+    fake = FakeSessiond()
+    client = _client(tmp_path, fake)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_headers(**{TASK_HEADER: "title_generation"}),
+        json=_body(),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "background_task_not_supported"
+    assert fake.ensured == []
+    assert fake.requests == []
+
+
+def test_chat_completions_needs_the_doors_own_key(tmp_path: Path) -> None:
+    fake = FakeSessiond()
+    client = _client(tmp_path, fake)
+    headers = _headers()
+    del headers["Authorization"]
+
+    response = client.post("/v1/chat/completions", headers=headers, json=_body())
+
+    assert response.status_code == 401
+    assert fake.ensured == []
+
+
+def test_a_wrong_key_is_refused(tmp_path: Path) -> None:
+    fake = FakeSessiond()
+    client = _client(tmp_path, fake)
+
+    response = client.post(
+        "/v1/chat/completions", headers=_headers(Authorization="Bearer wrong-key"), json=_body()
+    )
+
+    assert response.status_code == 401
+
+
+def test_the_branch_fallback_retries_without_the_parent(tmp_path: Path) -> None:
+    # Contract 02 §10.2: sessiond answering
+    # not_implemented for a request that carried parent_id falls back to a
+    # plain turn, once, rather than failing the chat.
+    fake = FakeSessiond()
+    fake.turn_error = SessiondError("not_implemented", "branching is not built yet", 501)
+    client = _client(tmp_path, fake)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_headers(**{PARENT_ID_HEADER: "9f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f"}),
+        json=_body(),
+    )
+
+    assert response.status_code == 200
+    # Two calls: the first attempt (with_parent=True) gets not_implemented,
+    # and the retry (with_parent=False) is what actually answers.
+    assert len(fake.requests) == 2
+    assert fake.with_parent_flags == [True, False]
+    assert fake.requests[0].parent_id == "9f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f"

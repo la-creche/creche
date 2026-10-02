@@ -1,0 +1,32 @@
+# Fires registry-sync.service every minute. USER timer, as the operator.
+#
+# Installed and enabled by `bin/rework-cutover.sh up`, removed by its
+# `rollback`.
+#
+# WHY A MINUTE. A poll cannot bring a merge to the host in seconds, and it
+# does not need to: the thing waiting at the other end is the operator, who merges a
+# family change and then
+# waits minutes for one `sbx create` and one handshake (docs/rework/spec.md
+# §11.1 step 4). A minute is also what the outage alarm costs already, so the
+# two together are two runs a minute rather than a new order of load, and an
+# unchanged run is one `git fetch` that transfers nothing.
+#
+# Ten seconds would buy nothing and cost a fetch every ten seconds against
+# GitHub for ever.
+[Unit]
+Description=Pull the registry checkout every minute
+
+[Timer]
+# Three minutes after boot: one minute behind the outage alarm, so a host
+# coming back does not fetch while the five units are still starting.
+OnBootSec=3min
+OnUnitActiveSec=1min
+# The default would spread these over a minute, which is the whole interval.
+AccuracySec=10s
+# NO Persistent=true. A missed run is a minute of not pulling, and OnBootSec
+# above already covers the reboot case. Catching up would only fire a second
+# run into the one the boot offset starts.
+Unit=registry-sync.service
+
+[Install]
+WantedBy=timers.target

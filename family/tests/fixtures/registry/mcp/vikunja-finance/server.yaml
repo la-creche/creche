@@ -1,0 +1,28 @@
+name: vikunja-finance
+identity: "The Vikunja bot `bot-finance`. It writes as that actor, on the `finance` epic, in the House project, and cannot reach another epic. One bot serves both the finance chat family and the finance worker."
+
+install:
+  # No version (contract 01b §3.3). The `mcp-servers` component tag this
+  # release deploys is this server's version.
+  source: agent-mcp
+
+run:
+  entrypoint: vikunja-mcp
+  env:
+    # Loopback: Vikunja runs on this host.
+    VIKUNJA_URL: http://127.0.0.1:3456
+    VIKUNJA_TOKEN: secret:vikunja_token_finance
+    # The three fields the sandbox can never set, which is what makes the
+    # actor, the epic and the project enforcement (§4.1.5).
+    VIKUNJA_ACTOR: bot-finance
+    VIKUNJA_EPIC: finance
+    VIKUNJA_PROJECT: House
+
+tools:
+  - { name: create_triage_ticket, description: File a new ticket into TRIAGE., write: true }
+  - { name: list_ready_tickets, description: List tickets ready to be worked., write: false }
+  - { name: list_my_tickets, description: List this bot's assigned tickets., write: false }
+  - { name: get_ticket, description: Read one ticket., write: false }
+  - { name: start_ticket, description: Move one ticket into progress., write: true }
+  - { name: submit_for_verification, description: Move one ticket to verification., write: true }
+  - { name: comment_on_ticket, description: Comment on one ticket., write: true }

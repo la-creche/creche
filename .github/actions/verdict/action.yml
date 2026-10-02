@@ -1,0 +1,43 @@
+# Whether every job a gate or a release needs did what its scope asks.
+# Written once: gate.yml's `gate` job and release.yml's `release` job both
+# ask, so a PR and its release cannot judge the same results differently.
+#
+# Every job must be a success, but for the ones its scope leaves out,
+# which must be skipped. A job skipped for any other reason is red:
+# e.g. `tests` skipped on a code change is a suite that did not run.
+name: verdict
+description: Fail unless every needed job passed, or was left out by the scope
+
+inputs:
+  needs:
+    description: toJSON(needs) of the calling job. It must need a job named scope
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: python3 {0}
+      env:
+        NEEDS: ${{ inputs.needs }}
+      run: |
+        import json
+        import os
+        import sys
+
+        # What a docs change leaves out. A code change leaves out nothing.
+        LEFT_OUT = {"docs": ["tests", "supervisor"]}
+
+        needs = json.loads(os.environ["NEEDS"])
+        scope = needs["scope"]["outputs"].get("scope")
+
+        red = []
+        for name, job in sorted(needs.items()):
+            want = "skipped" if name in LEFT_OUT.get(scope, []) else "success"
+            if job["result"] != want:
+                red.append(f"{name}: {job['result']}, not {want}")
+
+        for line in red:
+            print(f"::error::{line}")
+
+        print(f"scope {scope}: {len(needs) - len(red)} of {len(needs)} jobs as required")
+        sys.exit(1 if red else 0)

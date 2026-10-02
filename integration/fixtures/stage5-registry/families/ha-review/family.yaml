@@ -1,0 +1,47 @@
+# The autonomous family of stage 5, from `docs/rework/spec.md` §4.4 and
+# contract 01 §8.6.
+#
+# `ha-review` on the host, scaled down to what this harness can run, in three
+# ways only:
+#
+# 1. No `tools:`. Every MCP server needs an `mcp/<name>/server.yaml` and a
+#    running upstream (contract 01 §5.2). Stage 5 gates a VERB instead.
+# 2. No `verbs.enqueue` and no `verbs.job_status`. `enqueue` needs four more
+#    autonomous families as targets (§3.5.3), and none of them is what this
+#    packet runs together.
+# 3. `model.router` is `agent-router`, the one alias `FakeLiteLLMKeys` serves.
+#
+# `triggers`, `max_running_turns` and `approval` are NOT scaled down. They are
+# what stage 5 tests.
+name: ha-review
+kind: autonomous
+description: Reviews the house. Wakes on a timer or an alert, reports, asks before it acts.
+
+model: { router: agent-router, budget_usd_per_day: 2 }
+
+verbs:
+  embed: {} # the read half: look something up before reporting on it
+  ha_call:
+    allow:
+      - { domain: notify, service: mobile_app_example_phone }
+
+delegates: []
+
+egress: [] # every reach goes through the PEP, so every reach is audited
+
+shell: false
+sandbox_tools: [read, grep, find, ls]
+sandbox: { cpus: 2, memory: 4g }
+
+skills: []
+
+# One of each form contract 01 §3.13 allows, because stage 5 fires both.
+triggers:
+  - cron: "@hourly"
+  - webhook: boiler-alert
+
+# One wake at a time. A second firing queues (§3.14).
+max_running_turns: 1
+
+# The one gated action. Every `ha_call` waits for a phone tap (contract 04 §8).
+approval: [ha_call]

@@ -1,0 +1,108 @@
+[project]
+name = "agent-control-workspace"
+# Frozen. No number lives in a file: a version is a `<component>-vX.Y.Z` tag
+# that CI allocates at merge (.github/workflows/release.yml). uv needs the
+# field to resolve the workspace, so it stays, and nothing reads it.
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "agent-pep",
+    "agent-indexer",
+    "agent-family",
+    "agent-managerd",
+    "agent-sessiond",
+    "agent-door-owui",
+    "agent-door-tui",
+    "agent-door-trigger",
+    "agent-view",
+    "agent-release",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["pep", "indexer", "family", "managerd", "sessiond", "door-owui", "door-tui", "door-trigger", "view", "release"]
+
+[tool.uv.sources]
+agent-pep = { workspace = true }
+agent-indexer = { workspace = true }
+agent-family = { workspace = true }
+agent-managerd = { workspace = true }
+agent-sessiond = { workspace = true }
+agent-door-owui = { workspace = true }
+agent-door-tui = { workspace = true }
+agent-door-trigger = { workspace = true }
+agent-view = { workspace = true }
+agent-release = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+    "types-pyyaml>=6",
+    "pytest-asyncio>=0.24",
+    "pytest-xdist>=3.8.0",
+]
+
+[tool.pytest.ini_options]
+# bin/tests holds bash tests run by hand, plus one pytest module — the mode
+# check, which is about files rather than any one package (bin/AGENTS.md).
+# pytest collects only test_*.py there and ignores the .sh siblings.
+testpaths = [
+    "bin/tests",
+    "pep/tests",
+    "indexer/tests",
+    "family/tests",
+    "managerd/tests",
+    "sessiond/tests",
+    "door-owui/tests",
+    "door-tui/tests",
+    "door-trigger/tests",
+    "view/tests",
+    "release/tests",
+]
+addopts = "-q"
+asyncio_mode = "auto"
+markers = [
+    "slow: spawns real subprocesses",
+    "docs: reads a doc or checks one exists, so a docs-only change runs it (bin/lib/docsrule.sh)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# TC004 is load-bearing, not tidiness: `cli.py` imports the control plane
+# inside its handlers and keeps annotation-only names in a TYPE_CHECKING
+# block. pyright accepts a name from that block being used at run time —
+# verified — and the result is a NameError inside a subcommand. TC004 is the
+# only check that catches it. TC005 keeps the block from rotting to empty.
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "TC004", "TC005"]
+
+[tool.ruff.lint.per-file-ignores]
+"*/tests/*" = ["RUF059"]
+
+[tool.ruff.lint.isort]
+# The root conftest.py makes `conftest` look first-party. integration/tests
+# import their OWN conftest.py, a local helper like `stack` and `stage2`,
+# which isort files as third-party. Keep all three in that one block.
+known-third-party = ["conftest"]
+
+[tool.coverage.run]
+branch = true
+source = [
+    "agent_pep",
+    "agent_indexer",
+    "agent_family",
+    "agent_managerd",
+    "agent_sessiond",
+    "agent_door_owui",
+    "agent_door_tui",
+    "agent_door_trigger",
+    "agent_view",
+    "agent_release",
+]

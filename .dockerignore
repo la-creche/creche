@@ -1,0 +1,16 @@
+# The sandbox image builds from the repo root (supervisor/Dockerfile copies
+# the pi pin out of workbench/), so the context is the whole tree.
+# Without this, every build uploads .git — 40 MB on its own — plus every
+# node_modules and venv in the working copy.
+.git
+.gitignore
+.claude
+**/node_modules
+**/dist
+**/.venv
+**/.venv-*
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache

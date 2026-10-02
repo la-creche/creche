@@ -1,0 +1,32 @@
+# The first delegate, from `docs/rework/spec.md` §4.4 and contract 01 §8.4.
+#
+# Unchanged from the locked file except the model alias: `fast` is real on
+# the host and this harness mints no key, so the one alias the fake LiteLLM
+# knows is used instead (see `stage3.py`).
+name: vault-oracle
+kind: thin
+description: Retrieval. Searches the indexed corpora and answers with citations.
+
+model: { router: agent-router, budget_usd_per_day: 5 }
+
+files:
+  - { path: /srv/agents/vault, mode: ro }
+  - { path: /srv/agents/code, mode: ro }
+  - { path: /srv/agents/state/index, mode: ro }
+
+tools: {}
+
+verbs:
+  embed: {} # the semantic half of a vault search
+
+delegates: [] # required empty on a thin family (§3.6.4)
+
+egress: []
+
+shell: false
+sandbox_tools: [read, grep, find, ls] # grep is the fallback when search misses
+sandbox: { cpus: 2, memory: 4g }
+
+skills: []
+approval: []
+job: { timeout: 120s }

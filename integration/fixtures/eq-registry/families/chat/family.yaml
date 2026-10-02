@@ -1,0 +1,31 @@
+# The attended caller of packet EQ, from `docs/rework/spec.md` §4.4.
+#
+# It is stage 5's `chat` with two verbs added: `enqueue`, so a chat can start
+# a lead's job (contract 04 §4.1), and `job_status`, which contract 01 §3.5
+# rule 4 refuses without it.
+#
+# `ha-review` sits in `targets` on purpose. It declares no `enqueue: true`
+# trigger, so it is the case where the caller's grant is not enough
+# (contract 02 §13.4.1 rule 3).
+name: chat
+kind: attended
+description: General assistant. Starts a lead's job and reads what became of it.
+
+model: { router: agent-router, budget_usd_per_day: 15 }
+
+verbs:
+  embed: {}
+  enqueue:
+    targets: [scrum-lead, ha-review]
+  job_status: {}
+
+delegates: []
+
+egress: [] # every reach goes through the PEP, so every reach is audited
+
+shell: false
+sandbox_tools: [read, grep, find, ls, write, edit]
+sandbox: { cpus: 4, memory: 8g }
+
+skills: []
+approval: []

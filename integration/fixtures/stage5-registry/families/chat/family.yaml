@@ -1,0 +1,26 @@
+# The attended family of stage 5, from `docs/rework/spec.md` §4.4.
+#
+# Stage 5 needs it for two scenarios and nothing else: a trigger that names an
+# attended family is refused (contract 02 §3.1), and an attended family is
+# never queued (§13 rule 5). It is stage 3's `chat` with the `code-sandbox`
+# delegate and the work-root mount dropped, because neither is on stage 5's
+# path.
+name: chat
+kind: attended
+description: General assistant. Knows the operator, searches, delegates, asks for tickets.
+
+model: { router: agent-router, budget_usd_per_day: 15 }
+
+verbs:
+  embed: {}
+
+delegates: [vault-oracle]
+
+egress: []
+
+shell: false
+sandbox_tools: [read, grep, find, ls, write, edit]
+sandbox: { cpus: 4, memory: 8g }
+
+skills: []
+approval: []

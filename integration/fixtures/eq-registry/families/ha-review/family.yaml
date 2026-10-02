@@ -1,0 +1,31 @@
+# The family that may NOT be dispatched to, and says so by saying nothing.
+#
+# `chat` lists it in `verbs.enqueue.targets`, and `triggers` carries a cron
+# entry alone. Contract 01 §3.13 rule 6 makes that pair a warning and not an
+# error, precisely so the two files can land in either order. Contract 02
+# §13.4.1 rule 3 is what refuses the call: absence is denial (invariant 11).
+name: ha-review
+kind: autonomous
+description: Reviews the house on a timer. Nothing else may start it.
+
+model: { router: agent-router, budget_usd_per_day: 2 }
+
+verbs:
+  embed: {}
+
+delegates: []
+
+egress: []
+
+shell: false
+sandbox_tools: [read, grep, find, ls]
+sandbox: { cpus: 2, memory: 4g }
+
+skills: []
+
+triggers:
+  - cron: "@hourly"
+
+max_running_turns: 1
+
+approval: []

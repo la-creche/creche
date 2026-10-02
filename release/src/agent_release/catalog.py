@@ -1,0 +1,154 @@
+"""The fixed component list and the fixed contract owners (contract 06 §1, §3).
+
+Both lists live in code, not in a file a merge can lengthen. Contract 06 §10
+turns that into two refusals: a listed component with no `component.yaml`, and
+a `component.yaml` for a name this list does not hold. Contract 06 §7 says why
+the list is fixed: a manifest whose shape changes under the release tool is
+not a manifest.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+
+
+class Repo(StrEnum):
+    AGENT_CONTROL = "agent-control"
+    AGENT_MCP = "agent-mcp"
+    AGENT_REGISTRY = "agent-registry"
+
+
+class Kind(StrEnum):
+    VENV = "venv"
+    OCI_IMAGE = "oci-image"
+    COMPOSE = "compose"
+    DATA = "data"
+
+
+class RunsAs(StrEnum):
+    ROOT = "root"
+    #: The site's operator account (`site.py`). A manifest never names the
+    #: account itself: which one it is differs from one host to the next.
+    OPERATOR = "operator"
+    SANDBOX = "sandbox"
+    #: The one value that names no single user. `mcp-servers` is a FAMILY
+    #: of processes and each one runs as its own `mcp-<name>` (contract 01b
+    #: §9, `stage7-releases.md` §4.2), so a third-party package never runs
+    #: as root and never as the PEP's own user. Contract 06 §8.
+    MCP = "mcp"
+    NONE = "none"
+
+
+class VerifyUser(StrEnum):
+    ROOT = "root"
+    OPERATOR = "operator"
+
+
+class RestoreMode(StrEnum):
+    AUTOMATIC = "automatic"
+    MANUAL = "manual"
+
+
+class Action(StrEnum):
+    DEPLOY = "deploy"
+    UNCHANGED = "unchanged"
+    RESTORE = "restore"
+
+
+class ContractId(StrEnum):
+    FAMILY_FILE = "family-file"
+    SESSION_API = "session-api"
+    CHANNEL = "channel"
+    PEP_GRANT = "pep-grant"
+    MANAGER_STATUS = "manager-status"
+    COMPONENT_MANIFEST = "component-manifest"
+
+
+class Releases(StrEnum):
+    """Contract 06 §8's `release` field, as an enum rather than a bare bool."""
+
+    YES = "yes"
+    NO = "no"
+
+
+@dataclass(frozen=True)
+class CatalogRow:
+    """One row of contract 06 §1. `path` is repo-relative, `.` for a whole repo.
+
+    `bundles` is every other workspace directory the component's `build`
+    installs (contract 06 §1 rule 9). A change there changes the artifact,
+    so it moves the component's tag exactly as a change under `path` does.
+    """
+
+    name: str
+    repo: Repo
+    path: str
+    kind: Kind
+    releases: Releases
+    bundles: tuple[str, ...] = ()
+
+
+#: Contract 06 §1, in its own order. `managerd` sits at `managerd/`, `ui` at
+#: `view/` and `sandbox-image` at `supervisor/`.
+#:
+#: `bundles` follows each build through `uv.lock`: `sessiond` installs the
+#: doors, and `agent-door-trigger` brings `agent-family`; `agent-pep`
+#: imports the requester, so `agent-release` ships in `pep`'s tree.
+#: `test_each_component_bundles_what_its_build_installs` holds it equal.
+CATALOG: tuple[CatalogRow, ...] = (
+    CatalogRow("pep", Repo.AGENT_CONTROL, "pep", Kind.VENV, Releases.YES, ("release",)),
+    CatalogRow(
+        "sessiond",
+        Repo.AGENT_CONTROL,
+        "sessiond",
+        Kind.VENV,
+        Releases.YES,
+        ("door-owui", "door-tui", "door-trigger", "family"),
+    ),
+    CatalogRow("managerd", Repo.AGENT_CONTROL, "managerd", Kind.VENV, Releases.YES, ("family",)),
+    CatalogRow("ui", Repo.AGENT_CONTROL, "view", Kind.VENV, Releases.YES, ("family",)),
+    CatalogRow("sandbox-image", Repo.AGENT_CONTROL, "supervisor", Kind.OCI_IMAGE, Releases.YES),
+    CatalogRow("mcp-servers", Repo.AGENT_MCP, ".", Kind.VENV, Releases.YES),
+    CatalogRow("infra", Repo.AGENT_CONTROL, "infra", Kind.COMPOSE, Releases.YES),
+    CatalogRow("releasectl", Repo.AGENT_CONTROL, "release", Kind.VENV, Releases.YES),
+    CatalogRow("registry-data", Repo.AGENT_REGISTRY, ".", Kind.DATA, Releases.NO),
+)
+
+CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
+
+#: Components on their way out of the catalog. A checkout may carry such a
+#: component's manifest or not, and both read. A component leaves in two
+#: commits, this entry first and the directory's deletion second, so the
+#: requester a host already runs keeps planning across the second one. The
+#: row goes once no installed requester expects the file.
+RETIRING: frozenset[str] = frozenset({"infra"})
+
+#: Contract 06 §3's provider column. Rule C3 refuses any other claimant.
+CONTRACT_OWNER: dict[ContractId, str] = {
+    ContractId.FAMILY_FILE: "managerd",
+    ContractId.SESSION_API: "sessiond",
+    ContractId.CHANNEL: "sandbox-image",
+    ContractId.PEP_GRANT: "pep",
+    ContractId.MANAGER_STATUS: "managerd",
+    ContractId.COMPONENT_MANIFEST: "releasectl",
+}
+
+#: The `component-manifest` contract version this code speaks: contract 06's
+#: own `Version:` line, first two numbers (contract 06 §3). A manifest written
+#: against `0.MINOR` for MINOR at or below this one is accepted, which is what
+#: §3.1's `provides` means.
+MANIFEST_CONTRACT_MAJOR = 0
+MANIFEST_CONTRACT_MINOR = 6
+
+#: `releasectl` deploys last whatever `depends_on` says (contract 06 §1.1).
+LAST_IN_ORDER = "releasectl"
+
+#: stage7-releases.md §2.3: at most eight entries, the catalog minus
+#: `registry-data`, which never releases.
+MAX_REQUEST_COMPONENTS = 8
+
+
+def releasable_names() -> tuple[str, ...]:
+    """Every component a request may name, in catalog order."""
+    return tuple(row.name for row in CATALOG if row.releases is Releases.YES)
