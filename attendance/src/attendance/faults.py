@@ -2,10 +2,10 @@
 
 Five of contract 05 §3.3's faults are detected here (§3.3.1):
 `protocol_mismatch`, `protocol_violation`, `orphan_processes`,
-`sandbox_start_failed` and `audit_unreadable`. `managerd` also reports
+`sandbox_start_failed` and `audit_unreadable`. `caregiver` also reports
 `sandbox_start_failed`, for a sandbox its own apply could not create.
-`attendance` never asks `managerd` for anything. It
-reports what it sees in a file, and `managerd` decides whether to replace a
+`attendance` never asks `caregiver` for anything. It
+reports what it sees in a file, and `caregiver` decides whether to replace a
 sandbox.
 
 The file holds this writer's current open faults for one family. It is not an
@@ -119,7 +119,7 @@ class FaultReporter:
         return sorted(self._open.get(family, {}).values(), key=lambda fault: fault.code.value)
 
     def _publish(self, family: str) -> None:
-        # The one reader is `managerd`, which gets the file by group. The
+        # The one reader is `caregiver`, which gets the file by group. The
         # writing service owns it, the same pattern as the audit (contract 04 §6).
         ensure_dir(faults_dir(self._state_root), DIR_MODE_GROUP)
         payload: dict[str, Any] = {

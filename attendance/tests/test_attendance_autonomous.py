@@ -661,7 +661,7 @@ async def test_a_restart_keeps_an_unfinished_job(tmp_path: Path) -> None:
 
 
 def _pep_unreachable() -> dict[str, Any]:
-    """Contract 05 §3.3's fault, as `managerd` writes it. It blocks nothing."""
+    """Contract 05 §3.3's fault, as `caregiver` writes it. It blocks nothing."""
     return {
         "code": "pep_unreachable",
         "blocks_turns": False,
@@ -763,7 +763,7 @@ async def test_an_attended_turn_still_runs_during_the_outage(tmp_path: Path) -> 
 
 
 async def test_the_next_firing_runs_once_the_pep_answers(tmp_path: Path) -> None:
-    """Contract 05 §3.3 rule 5. `managerd` clears the fault by itself."""
+    """Contract 05 §3.3 rule 5. `caregiver` clears the fault by itself."""
     harness = await build(tmp_path)
     _set_faults(harness, (_pep_unreachable(),))
     harness.create()

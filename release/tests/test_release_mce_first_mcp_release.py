@@ -11,7 +11,7 @@ from.
 | `/srv/.../secrets` EMPTY, nine gaps open | no `<name>.enc`, nine `<name>.json` |
 | eleven `mcp/<name>/server.yaml` | **the eleven declarations, comments removed** |
 | `mcp-servers-v0.1.0` on agent-mcp `a1b2c3d` | one tag, one SHA, that tag |
-| `managerd`'s `mcp-servers=latest` request | the same body, alone in the spool |
+| `caregiver`'s `mcp-servers=latest` request | the same body, alone in the spool |
 | no `/opt/components/mcp-servers` | `releasectl` and `pep` only |
 
 The declarations in `release_mce_registry/` have the fields of a registry
@@ -133,8 +133,8 @@ TAG: Final = f"{COMPONENT}-v{FIRST_VERSION}"
 #: the 40 lowercase hex the manifest's pattern wants.
 AGENT_MCP_SHA: Final = "a1b2c3d" + "0" * 33
 
-#: The request `managerd` holds, as `mcp_release._file_request` writes one.
-MANAGERD_ID: Final = "01K5J8M2Q7V3X9R4T6N0B8C2DJ"
+#: The request `caregiver` holds, as `mcp_release._file_request` writes one.
+CAREGIVER_ID: Final = "01K5J8M2Q7V3X9R4T6N0B8C2DJ"
 
 #: The registry's `mcp/` directory, copied out of agent-registry's `main`
 #: on 2026-09-22. Eleven declarations, unedited.
@@ -172,7 +172,7 @@ OPEN_GAPS: Final = (
     "vikunja_token_scrum_lead",
 )
 
-#: Which server each open gap belongs to, as `managerd._write_gap` wrote
+#: Which server each open gap belongs to, as `caregiver._write_gap` wrote
 #: it on 2026-09-21. One file per secret, and the server name is what the
 #: phone push and the intake page show beside it.
 GAP_OWNER: Final = {
@@ -319,7 +319,7 @@ class Bench:
     # -- what the run left behind ---------------------------------------
 
     def ledger(self) -> dict[str, object]:
-        path = self.spool_root / DONE_DIR / f"{MANAGERD_ID}.json"
+        path = self.spool_root / DONE_DIR / f"{CAREGIVER_ID}.json"
         loaded: object = json.loads(path.read_text(encoding="utf-8"))
         assert isinstance(loaded, dict)
 
@@ -558,7 +558,7 @@ def bench(tmp_path: Path) -> Bench:
     gaps = tmp_path / "secret-gaps"
     gaps.mkdir()
     for secret in OPEN_GAPS:
-        # The three keys `gaps.GAP_KEYS` allows, as `managerd._write_gap`
+        # The three keys `gaps.GAP_KEYS` allows, as `caregiver._write_gap`
         # writes them. Root reads this directory as hostile input, so a
         # fixture with a key set of its own would test the refusal path
         # rather than the gap path.
@@ -595,8 +595,8 @@ def bench(tmp_path: Path) -> Bench:
     )
 
 
-def _release(bench: Bench, request_id: str = MANAGERD_ID) -> str:
-    """`managerd`'s own request, alone in the spool, through every step."""
+def _release(bench: Bench, request_id: str = CAREGIVER_ID) -> str:
+    """`caregiver`'s own request, alone in the spool, through every step."""
     write_request(
         bench.spool_root,
         request_id,
@@ -870,7 +870,7 @@ def test_an_open_secret_gap_installs_the_tree_and_rosters_the_name(
     Every server still has an OPEN gap: the secrets directory is empty.
     The release installs all eleven anyway and writes a roster row for
     each, carrying `secret:<name>` as a NAME. Nothing in the release reads
-    the secrets directory, and `managerd` takes the same reading: filing
+    the secrets directory, and `caregiver` takes the same reading: filing
     early is the better behaviour, and contract 01b §4.1
     rule 4 turns the missing value into a visible `running: false` rather
     than an invisible nothing.
@@ -928,7 +928,7 @@ def test_the_next_tag_needs_no_registry_edit(bench: Bench) -> None:
     """Why the rule is "no version" and not "the right version".
 
     Pinning the six at `mcp-servers-v0.1.0` would have worked once.
-    `managerd` files `{"mcp-servers": "latest"}` unattended, so the day
+    `caregiver` files `{"mcp-servers": "latest"}` unattended, so the day
     agent-mcp carries `mcp-servers-v0.1.1` the same request would refuse
     again, on the same line, until somebody edited six files in
     agent-registry. A pin that has to be rewritten on every release of
@@ -1408,7 +1408,7 @@ def test_today_s_host_is_refused_until_the_visit_makes_the_root(bench: Bench) ->
 # -- the drain, the restore and the modes --------------------------------
 
 
-def test_the_managerd_request_is_the_only_one_in_the_spool(bench: Bench) -> None:
+def test_the_caregiver_request_is_the_only_one_in_the_spool(bench: Bench) -> None:
     """§4.1 step 3's own request and nothing else. One drain, one entry,
     and `requests/` empty afterwards — the path unit is a
     `PathExistsGlob` and re-fires while any match remains."""
@@ -1418,7 +1418,7 @@ def test_the_managerd_request_is_the_only_one_in_the_spool(bench: Bench) -> None
     assert bench.ledger()["requested_by"] == "managerd"
     assert sorted((bench.spool_root / REQUESTS_DIR).glob("*.json")) == []
     assert sorted((bench.spool_root / DONE_DIR).glob("*.json")) == [
-        bench.spool_root / DONE_DIR / f"{MANAGERD_ID}.json"
+        bench.spool_root / DONE_DIR / f"{CAREGIVER_ID}.json"
     ]
 
 
@@ -1464,7 +1464,7 @@ def test_the_mcp_root_and_the_work_root_stay_traversable_under_the_umask(
     assert "succeeded" in result, bench.ledger()["reason"]
     assert _mode(bench.mcp_root) == OPEN_DIR_MODE
     assert _mode(bench.mcp_root / "kagi") == OPEN_DIR_MODE
-    assert _mode(bench.wiring.host.work_root / MANAGERD_ID) == OPEN_DIR_MODE
+    assert _mode(bench.wiring.host.work_root / CAREGIVER_ID) == OPEN_DIR_MODE
 
 
 def test_normalize_dir_is_the_pass_that_opens_one_directory(tmp_path: Path) -> None:

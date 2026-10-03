@@ -105,7 +105,7 @@ def test_job_status_takes_no_arguments_at_all() -> None:
 
 
 def test_release_schema_and_fence() -> None:
-    fence = VerbFence.model_validate({"components": ["pep", "managerd"]})
+    fence = VerbFence.model_validate({"components": ["pep", "caregiver"]})
     args: dict[str, object] = {"components": {"pep": "0.2.0"}}
     assert check_schema("release", args) is None
     assert check_fence("release", args, fence) is None

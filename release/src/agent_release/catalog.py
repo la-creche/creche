@@ -89,8 +89,8 @@ class CatalogRow:
     bundles: tuple[str, ...] = ()
 
 
-#: Contract 06 §1, in its own order. `managerd` sits at `managerd/`, `noticeboard` at
-#: `noticeboard/` and `playpen` at `playpen/`.
+#: Contract 06 §1, in its own order. `caregiver` sits at `caregiver/`,
+#: `noticeboard` at `noticeboard/` and `playpen` at `playpen/`.
 #:
 #: `bundles` follows each build through `uv.lock`: `attendance` installs the
 #: doors, and `agent-door-trigger` brings `agent-family`; `agent-pep`
@@ -106,7 +106,7 @@ CATALOG: tuple[CatalogRow, ...] = (
         Releases.YES,
         ("door-owui", "door-tui", "door-trigger", "family"),
     ),
-    CatalogRow("managerd", Repo.AGENT_CONTROL, "managerd", Kind.VENV, Releases.YES, ("family",)),
+    CatalogRow("caregiver", Repo.AGENT_CONTROL, "caregiver", Kind.VENV, Releases.YES, ("family",)),
     CatalogRow(
         "noticeboard", Repo.AGENT_CONTROL, "noticeboard", Kind.VENV, Releases.YES, ("family",)
     ),
@@ -128,11 +128,11 @@ RETIRING: frozenset[str] = frozenset({"infra"})
 
 #: Contract 06 §3's provider column. Rule C3 refuses any other claimant.
 CONTRACT_OWNER: dict[ContractId, str] = {
-    ContractId.FAMILY_FILE: "managerd",
+    ContractId.FAMILY_FILE: "caregiver",
     ContractId.SESSION_API: "attendance",
     ContractId.CHANNEL: "playpen",
     ContractId.PEP_GRANT: "pep",
-    ContractId.MANAGER_STATUS: "managerd",
+    ContractId.MANAGER_STATUS: "caregiver",
     ContractId.COMPONENT_MANIFEST: "releasectl",
 }
 

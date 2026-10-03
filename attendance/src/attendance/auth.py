@@ -47,7 +47,8 @@ class Principal(StrEnum):
     DOOR_DISPATCH = "door-dispatch"
     DOOR_TRIGGER = "door-trigger"
     VIEW_RO = "view-ro"
-    MANAGERD = "managerd"
+    #: The old name: the host minted `tokens/managerd.token` under it.
+    CAREGIVER = "managerd"
 
 
 #: The two token files the PEP reads as user `pep`, and the only ones rule 5's
@@ -89,7 +90,7 @@ _GRANTS: dict[Principal, Grant] = {
         Access.WRITE, Holder.TRIGGER, SessionPrefix.AUTO, SessionKind.AUTONOMOUS
     ),
     Principal.VIEW_RO: Grant(Access.READ, None, None, None),
-    Principal.MANAGERD: Grant(Access.INTERNAL, None, None, None),
+    Principal.CAREGIVER: Grant(Access.INTERNAL, None, None, None),
 }
 
 

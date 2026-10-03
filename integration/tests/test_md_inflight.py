@@ -1,13 +1,13 @@
 """Packet MD: the caller family's own cap on delegate calls in flight.
 
-`max_inflight_delegations` used to be a constant in `managerd` (contract 04
+`max_inflight_delegations` used to be a constant in `caregiver` (contract 04
 draft 5 §1.2), so no family file could raise it and the operator's stage 3 test of
 three delegate calls at once could not pass. Contract 01 §3.6.1 makes it a
 field of the family file, default 2, range 1 to 8, and this suite proves the
 whole path:
 
     families/chat/family.yaml   max_inflight_delegations: 3
-      │ managerd apply
+      │ caregiver apply
       ▼
     grants/chat.json            limits.max_inflight_delegations: 3
       │ the PEP re-reads per call (contract 04 §1.4)
@@ -29,10 +29,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from agent_managerd import paths as managerd_paths
 from conftest import chat_body, chat_id, message_id, owui_headers, session_of
 from stack import Stack, until
 from stage3 import CHAT, VAULT_ORACLE, Stage3, ToolCall, bridge_bundle_missing, serving_pep
+
+from caregiver import paths as caregiver_paths
 
 INVOKE_AGENT = "invoke_agent"
 CHAT_PATH = "/v1/chat/completions"
@@ -81,7 +82,7 @@ async def stage(roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> As
     built.build_fixture()
     ready = Stage3(built)
 
-    managerd_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
+    caregiver_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
     for result in ready.apply_all():
         assert result.ok, result.status.faults
 

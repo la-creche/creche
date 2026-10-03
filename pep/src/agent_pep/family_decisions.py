@@ -132,7 +132,7 @@ def _gate_denial(
 ) -> FamilyDecision | None:
     """Rows 8 and 9's refusals. None means the call may go on, gated or not.
 
-    `managerd` expanded `<server>__*` before it wrote the file, so the action
+    `caregiver` expanded `<server>__*` before it wrote the file, so the action
     name is compared whole.
     """
     if action not in grants.approval:

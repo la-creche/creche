@@ -26,7 +26,7 @@ forwarded to the container and never passes the `input` hook. The counter
 never moves, "never moved for five minutes" is always true, and the window
 opens at once while turns are running. That is fail OPEN, the one direction
 this window exists to prevent. A traffic counter is the wrong instrument even
-with the right hooks: `managerd` reads LiteLLM for spend and keys on every
+with the right hooks: `caregiver` reads LiteLLM for spend and keys on every
 pass, which would hold a correct counter moving for ever, and Open WebUI
 talks to LiteLLM inside the Docker network, where no host hook sees it.
 

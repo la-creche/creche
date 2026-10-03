@@ -59,8 +59,8 @@ if ! sbx ls 2>/dev/null | grep -q "^$SBX "; then
 fi
 sbx policy allow network --sandbox "$SBX" "$LAN_ADDRESS:8085" >/dev/null 2>&1 || true
 # The built-in `shell` kit attaches its own `allow openrouter.ai` to every
-# sandbox — a LiteLLM bypass `managerd` already denies for every family
-# (managerd/src/agent_managerd/driver.py, KIT_EXTRA_EGRESS). Deny beats
+# sandbox — a LiteLLM bypass `caregiver` already denies for every family
+# (caregiver/src/caregiver/driver.py, KIT_EXTRA_EGRESS). Deny beats
 # allow. Unguarded on purpose: a repeat deny exits 0 ("Already covered"), so
 # a failure here is real, and a sandbox left without it is exactly what
 # sbx-drift-check.sh alarms on.

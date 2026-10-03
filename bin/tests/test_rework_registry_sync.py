@@ -20,7 +20,7 @@ Six behaviours, each with its own reason to exist.
    touch (pinned below), which would leave somebody's half-finished edit
    sitting on top of a moved tree.
 4. **`live-manifest.json` is the one file that never blocks a merge.**
-   `managerd/src/agent_managerd/live_manifest.py` would write it INTO this
+   `caregiver/src/caregiver/live_manifest.py` would write it INTO this
    checkout, and nothing calls it today. A family change must not be held
    up by a derived file.
 5. **A failed fetch is a refusal, not a silent pass.** A wrong deploy key
@@ -55,7 +55,7 @@ import pytest
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO_ROOT / "bin" / "rework-registry-sync.sh"
 
-#: The derived file `managerd` would write into the checkout (contract 06 §3.4).
+#: The derived file `caregiver` would write into the checkout (contract 06 §3.4).
 MANIFEST: Final = "live-manifest.json"
 
 DIR_MODE: Final = 0o700
@@ -249,7 +249,7 @@ def test_the_line_counts_every_commit_it_brought_over(rig: Rig) -> None:
 
 
 def test_the_working_tree_carries_the_new_bytes(rig: Rig) -> None:
-    """`managerd` hashes the FILES, never the sha (`family/src/agent_family/
+    """`caregiver` hashes the FILES, never the sha (`family/src/agent_family/
     registry.py`'s `revision_of`), so a moved ref with stale bytes would
     reconcile nothing."""
     rig.merge_upstream(subject="the new body")
@@ -385,7 +385,7 @@ def test_a_rewritten_manifest_never_blocks_a_family_change(rig: Rig) -> None:
 
 def test_an_untracked_manifest_the_merge_adds_is_removed(rig: Rig) -> None:
     """The other half, and the one that is live TODAY: agent-registry does
-    not track the file, so `managerd`'s copy is untracked. The first commit
+    not track the file, so `caregiver`'s copy is untracked. The first commit
     that adds it upstream would otherwise abort every merge with "untracked
     working tree files would be overwritten"."""
     _git(rig.author, "rm", "-q", "--cached", MANIFEST)
@@ -405,7 +405,7 @@ def test_an_untracked_manifest_the_merge_adds_is_removed(rig: Rig) -> None:
 
 def test_a_rewritten_manifest_alone_is_not_a_reason_to_move(rig: Rig) -> None:
     """Restoring the file is a step of a merge, never a verb of its own. A
-    current checkout stays silent even when `managerd` has just rewritten
+    current checkout stays silent even when `caregiver` has just rewritten
     it."""
     (rig.registry / MANIFEST).write_text('{"managerd": "9.9.9"}\n', encoding="utf-8")
 

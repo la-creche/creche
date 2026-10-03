@@ -5,7 +5,7 @@
     POST /call {"tool": "job_status", "args": {"limit": 200}}  -> live, ended
 
 The token is `pep_token` in the family's `creds.json` (contract 03 §12.2),
-the file `managerd` writes and the sandbox reads. It rides in the
+the file `caregiver` writes and the sandbox reads. It rides in the
 Authorization header and nowhere else (invariant 13). The PEP audits both
 calls under the family, with no session.
 

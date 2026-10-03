@@ -44,7 +44,7 @@ SCRIPT: Final = REPO_ROOT / "bin" / "rework-watchdog.sh"
 #: The five units the script asks `systemctl --user is-failed` about.
 UNITS: Final = (
     "creche-attendance.service",
-    "agent-managerd.service",
+    "creche-caregiver.service",
     "creche-door-owui.service",
     "creche-trigger-webhooks.service",
     "creche-noticeboard.service",
@@ -150,7 +150,7 @@ def _write(path: Path, body: str) -> None:
 
 def _stamp(seconds_ago: int) -> str:
     """An RFC 3339 stamp that many seconds in the past, in the shape
-    `managerd/src/agent_managerd/clock.py` writes."""
+    `caregiver/src/caregiver/clock.py` writes."""
     import datetime
 
     moment = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=seconds_ago)
@@ -389,7 +389,7 @@ def test_a_dead_pep_is_found_and_pushed_once(rig: Rig) -> None:
 
 
 def test_a_manager_that_stopped_publishing_is_found(rig: Rig) -> None:
-    """A dead `managerd` leaves every status document saying `in_sync`,
+    """A dead `caregiver` leaves every status document saying `in_sync`,
     because a dead writer changes nothing. Only the AGE of the newest
     document says so. This still confirms in two runs, not one: the 180 s
     staleness floor already carries most of the slack, and an outage of
@@ -399,13 +399,13 @@ def test_a_manager_that_stopped_publishing_is_found(rig: Rig) -> None:
     done = rig.run()
 
     assert done.returncode == 1
-    assert rig.stored() == "managerd"
+    assert rig.stored() == "caregiver"
     assert "no status document written" in rig.posts()[0]
 
 
 def test_one_fresh_document_is_enough(rig: Rig) -> None:
     """The NEWEST stamp, not every stamp. A family that was deleted
-    leaves a stale document behind, and `managerd` is plainly alive."""
+    leaves a stale document behind, and `caregiver` is plainly alive."""
     rig.publish("chat", 4000)
     rig.publish("vault-oracle", 5)
 
@@ -419,7 +419,7 @@ def test_a_host_with_no_status_document_is_down(rig: Rig) -> None:
     done = rig.run()
 
     assert done.returncode == 1
-    assert rig.stored() == "managerd"
+    assert rig.stored() == "caregiver"
 
 
 def test_a_missing_socket_is_found(rig: Rig) -> None:
@@ -552,13 +552,13 @@ def test_a_sync_the_checkout_recovers_clears_the_verdict(rig: Rig) -> None:
 
 
 def test_two_things_down_are_one_push_that_names_both(rig: Rig) -> None:
-    rig.run(WD_PEP_CODE="000", WD_FAILED_UNITS="agent-managerd.service")
-    rig.run(WD_PEP_CODE="000", WD_FAILED_UNITS="agent-managerd.service")
+    rig.run(WD_PEP_CODE="000", WD_FAILED_UNITS="creche-caregiver.service")
+    rig.run(WD_PEP_CODE="000", WD_FAILED_UNITS="creche-caregiver.service")
 
     assert rig.stored() == "pep units"
     assert len(rig.posts()) == 1
     assert "healthz" in rig.posts()[0]
-    assert "agent-managerd.service" in rig.posts()[0]
+    assert "creche-caregiver.service" in rig.posts()[0]
 
 
 # --- one push per outage, and one per recovery --------------------------------
@@ -740,7 +740,7 @@ def test_the_real_date_of_this_machine_parses_a_stamp(rig: Rig) -> None:
     done = rig.run()
 
     assert done.returncode == 1
-    assert rig.stored() == "managerd"
+    assert rig.stored() == "caregiver"
     assert "could not read the time" not in done.stdout
 
 

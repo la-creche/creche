@@ -35,7 +35,7 @@ Four fakes, none of them under test:
 
 Two stand-ins that are NOT fakes of anything under test:
 
-1. The clock. `door-trigger` has no timer loop of its own: `managerd` writes
+1. The clock. `door-trigger` has no timer loop of its own: `caregiver` writes
    systemd timers that run `agent-trigger fire`, so systemd is the clock on
    the host and this harness is the clock here. The firing itself is the real
    door's own `fire_trigger`.
@@ -72,15 +72,14 @@ from agent_door_trigger.families import StatusFiles
 from agent_door_trigger.fire import FireOutcome, Firing, TriggerKind, fire_trigger
 from agent_door_trigger.routes import RouteTable
 from agent_door_trigger.webhooks import create_app as create_webhook_app
-from agent_managerd import paths as managerd_paths
-from agent_managerd.apply import ApplyResult, apply_once
-from agent_managerd.driver import FakeDriver
-from agent_managerd.litellm_keys import FakeLiteLLMKeys
 from agent_pep.gatekeeper import Gatekeeper, HttpApprovalNotifier
 from attendance.auth import Principal
 from attendance.config import Bind, Config
 from attendance.ids import new_ulid
 from attendance.service import SessionService
+from caregiver.apply import ApplyResult, apply_once
+from caregiver.driver import FakeDriver
+from caregiver.litellm_keys import FakeLiteLLMKeys
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from stack import FAMILY, LOCK_POLL_S, LOCK_STALE_S, Stack, repo_root
@@ -91,6 +90,8 @@ from stage3 import (
     ToolCall,
     _read_report,
 )
+
+from caregiver import paths as caregiver_paths
 
 #: `tests_manager/pep_harness.py` builds the real PEP through its real entry
 #: point. `stage3` puts that directory on the path when it is imported; this
@@ -307,7 +308,7 @@ class Stage5:
     """The stage 1 stack, with the real reconciler, the real PEP with a real
     approval gate, and the real trigger door in front of both.
 
-    `managerd` publishes all three families from the fixture registry, so
+    `caregiver` publishes all three families from the fixture registry, so
     every status document, grant file and `supervisor.env` on the path is the
     one the real reconciler writes (`AGENTS.md` 12 and 21).
     """
@@ -381,9 +382,9 @@ class Stage5:
     # --------------------------------------------------------- what to assert on
 
     def pep_token(self, family: str) -> str:
-        """The family token `managerd` minted, as the sandbox holds it."""
+        """The family token `caregiver` minted, as the sandbox holds it."""
         body = json.loads(
-            managerd_paths.creds_path(self.stack.state_root, family).read_text(encoding="utf-8")
+            caregiver_paths.creds_path(self.stack.state_root, family).read_text(encoding="utf-8")
         )
         return str(body["pep_token"])
 
@@ -453,7 +454,7 @@ class Stage5:
         §8.6, `attendance/approvals.py` rule 1).
         """
         path = (
-            managerd_paths.control_dir(self.stack.state_root, family, f"{family}-s1")
+            caregiver_paths.control_dir(self.stack.state_root, family, f"{family}-s1")
             / "sessions"
             / session
             / "turn.json"
@@ -597,7 +598,7 @@ class Stage5:
     ) -> FireOutcome:
         """One firing through the door's own `fire_trigger`.
 
-        This is the clock. `door-trigger` has no timer loop: `managerd` writes
+        This is the clock. `door-trigger` has no timer loop: `caregiver` writes
         a systemd timer per cron entry and the timer runs `agent-trigger
         fire`, so a harness that decides when to call this decides when the
         timer fired.
@@ -627,16 +628,16 @@ class Stage5:
             await asyncio.to_thread(client.close)
 
     def webhook_token(self, family: str, name: str) -> str:
-        """The bearer `managerd` minted for one declared webhook.
+        """The bearer `caregiver` minted for one declared webhook.
 
         Contract 05 §6.4, packet S5F item C: nothing here writes this file
         any more. `apply_all()` mints it from the family file alone, which
         is what invariant 16 asks for and what an operator now gets on a
         fresh host.
         """
-        path = managerd_paths.webhook_token_path(self.stack.state_root, family, name)
+        path = caregiver_paths.webhook_token_path(self.stack.state_root, family, name)
         if not path.is_file():
-            raise AssertionError(f"managerd minted no webhook token at {path}")
+            raise AssertionError(f"caregiver minted no webhook token at {path}")
 
         return path.read_text(encoding="utf-8").strip()
 
@@ -676,7 +677,7 @@ class Stage5:
     ) -> httpx.Response:
         """One external call on the real listener, exactly as Node-RED makes it.
 
-        With no `token`, it presents what `managerd` minted, which is what
+        With no `token`, it presents what `caregiver` minted, which is what
         Home Assistant would hold after the operator pasted the file's contents in.
         """
         token = token if token is not None else self.webhook_token(family, WEBHOOK_NAME)

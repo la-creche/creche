@@ -1,6 +1,6 @@
 """The bookkeeping behind one sandbox switch (contract 05 §5).
 
-`managerd` makes the call. This module holds the two facts the call needs and
+`caregiver` makes the call. This module holds the two facts the call needs and
 the service cannot keep anywhere else:
 
 1. Which sandbox a family's new turns go to, from the instant the call is
@@ -8,7 +8,7 @@ the service cannot keep anywhere else:
 2. What a repeat of the same call must answer (§5.3 rule 7).
 
 Both live in memory on purpose. A switch that a crash interrupts converges on
-the status document, which is the truth about which sandbox serves: `managerd`
+the status document, which is the truth about which sandbox serves: `caregiver`
 has by then published the incoming sandbox as the one to dial, and this
 service reads that document on every turn.
 """
@@ -97,7 +97,7 @@ class SwitchBook:
 
         §5.3 rule 7 makes a completed switch idempotent: a repeat answers
         the same and does nothing. A refused one has no outcome to repeat,
-        and `managerd` retries the same call on its next pass. Keeping the
+        and `caregiver` retries the same call on its next pass. Keeping the
         failed run would answer every one of those retries with the first
         refusal, so the family could never converge.
         """

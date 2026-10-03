@@ -22,7 +22,7 @@ Description=attendance, the rework session service
 After=network-online.target
 Wants=network-online.target
 # THE REWORK RESTART POLICY, argued in full in
-# `systemd/agent-managerd.service`: no start limit, so a transient fault
+# `systemd/creche-caregiver.service`: no start limit, so a transient fault
 # cannot end this service for good, and a back-off so restarting for ever
 # stays cheap. `bin/rework-watchdog.sh` is what says the service is not well;
 # `systemctl --user status` still shows NRestarts.
@@ -47,7 +47,7 @@ ExecStart=%h/.local/components/attendance/bin/python -m attendance
 # the service would bind, and exits. It opens no socket and touches no
 # sandbox, so a deploy may run it before it swaps this unit.
 ExecStartPre=%h/.local/components/attendance/bin/python -m attendance --check
-# The rework restart policy (`systemd/agent-managerd.service`). `always`,
+# The rework restart policy (`systemd/creche-caregiver.service`). `always`,
 # because systemd calls SIGHUP, SIGINT, SIGTERM and SIGPIPE clean exits and
 # this service has no clean exit that must stay down.
 Restart=always

@@ -1,6 +1,6 @@
 """The switch-sandbox handshake (contract 05 §5).
 
-`managerd` makes this one call. Every session survives it, the outgoing
+`caregiver` makes this one call. Every session survives it, the outgoing
 sandbox is drained or interrupted, and the old channel is shut down cleanly
 before this service reports the sandbox free.
 """
@@ -31,7 +31,7 @@ from attendance_harness import (
     write_status,
 )
 
-MANAGERD = Principal.MANAGERD
+CAREGIVER = Principal.CAREGIVER
 OWUI = Principal.DOOR_OWUI
 DOOR = "owui-1"
 
@@ -56,9 +56,9 @@ class SwitchHarness:
         self.service.start()
 
     def publish(self, *boxes: tuple[str, str]) -> None:
-        """Write the status document `managerd` would publish right now.
+        """Write the status document `caregiver` would publish right now.
 
-        One sandbox to begin with. `managerd` creates the replacement and
+        One sandbox to begin with. `caregiver` creates the replacement and
         then makes the call, so the second row appears with the switch.
         """
         rows = boxes if boxes else ((SANDBOX, "ready"),)
@@ -98,9 +98,9 @@ class SwitchHarness:
         )
 
     def switch(self, **over: Any) -> asyncio.Task[dict[str, Any]]:
-        """`managerd` publishes the replacement, then calls."""
+        """`caregiver` publishes the replacement, then calls."""
         self.publish((SANDBOX, "ready"), (NEXT_SANDBOX, "ready"))
-        return asyncio.create_task(self.service.switch_sandbox(MANAGERD, self.request(**over)))
+        return asyncio.create_task(self.service.switch_sandbox(CAREGIVER, self.request(**over)))
 
     def notes(self, session: str) -> list[dict[str, Any]]:
         return [
@@ -241,7 +241,7 @@ async def test_a_first_create_has_no_outgoing_sandbox(tmp_path: Path) -> None:
 
 
 async def test_a_repeat_answers_the_same_and_does_nothing(tmp_path: Path) -> None:
-    """§5.3 rule 7. `managerd` may retry after a timeout."""
+    """§5.3 rule 7. `caregiver` may retry after a timeout."""
     harness = SwitchHarness(tmp_path)
     harness.create(FIRST)
     live = await harness.start_turn(FIRST)
@@ -297,7 +297,7 @@ async def test_an_incoming_sandbox_that_cannot_serve_is_refused(tmp_path: Path, 
     harness.publish((SANDBOX, "ready"), (NEXT_SANDBOX, state))
 
     with pytest.raises(ApiError) as refused:
-        await harness.service.switch_sandbox(MANAGERD, harness.request())
+        await harness.service.switch_sandbox(CAREGIVER, harness.request())
 
     assert refused.value.code is ErrorCode.BAD_REQUEST
     await harness.stop()
@@ -308,7 +308,7 @@ async def test_an_incoming_sandbox_the_document_omits_is_refused(tmp_path: Path)
     harness.publish((SANDBOX, "ready"))
 
     with pytest.raises(ApiError) as refused:
-        await harness.service.switch_sandbox(MANAGERD, harness.request())
+        await harness.service.switch_sandbox(CAREGIVER, harness.request())
 
     assert refused.value.code is ErrorCode.BAD_REQUEST
     await harness.stop()
@@ -318,7 +318,7 @@ async def test_a_creating_incoming_sandbox_is_accepted(tmp_path: Path) -> None:
     """§4.2: a `creating` sandbox is dialled, because the handshake promotes it."""
     harness = SwitchHarness(tmp_path)
     harness.publish((SANDBOX, "ready"), (NEXT_SANDBOX, "creating"))
-    body = await asyncio.wait_for(harness.service.switch_sandbox(MANAGERD, harness.request()), 2.0)
+    body = await asyncio.wait_for(harness.service.switch_sandbox(CAREGIVER, harness.request()), 2.0)
 
     assert body["switched"] is True
 
@@ -343,7 +343,7 @@ async def test_a_malformed_pair_is_refused(tmp_path: Path, over: dict[str, Any])
     harness = SwitchHarness(tmp_path)
 
     with pytest.raises(ApiError) as refused:
-        await harness.service.switch_sandbox(MANAGERD, harness.request(**over))
+        await harness.service.switch_sandbox(CAREGIVER, harness.request(**over))
 
     assert refused.value.code is ErrorCode.BAD_REQUEST
     await harness.stop()
@@ -354,7 +354,7 @@ async def test_an_unknown_family_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(ApiError) as refused:
         await harness.service.switch_sandbox(
-            MANAGERD, harness.request(family="ghost", to="ghost-s1", outgoing=None)
+            CAREGIVER, harness.request(family="ghost", to="ghost-s1", outgoing=None)
         )
 
     assert refused.value.code is ErrorCode.FAMILY_UNKNOWN
@@ -362,7 +362,7 @@ async def test_an_unknown_family_is_refused(tmp_path: Path) -> None:
 
 
 async def test_no_door_may_switch(tmp_path: Path) -> None:
-    """Contract 02 §3.1. The `managerd` token reaches `/internal/*` alone."""
+    """Contract 02 §3.1. The `caregiver` token reaches `/internal/*` alone."""
     harness = SwitchHarness(tmp_path)
 
     with pytest.raises(ApiError) as refused:
@@ -377,7 +377,7 @@ async def test_a_crash_mid_switch_converges_on_the_document(tmp_path: Path) -> N
 
     The new channel is open and the old one has not closed when the service
     dies. Nothing about the switch is on disk, so the restart reads what
-    `managerd` published and moves every new turn onto the new sandbox.
+    `caregiver` published and moves every new turn onto the new sandbox.
     """
     harness = SwitchHarness(tmp_path)
     harness.create(FIRST)
@@ -391,7 +391,7 @@ async def test_a_crash_mid_switch_converges_on_the_document(tmp_path: Path) -> N
     switch.cancel()
     await harness.service.close()
 
-    # `managerd` has since retired the old sandbox.
+    # `caregiver` has since retired the old sandbox.
     harness.publish((SANDBOX, "stopping"), (NEXT_SANDBOX, "ready"))
     revived = SessionService(harness.config, factory=harness.fleet.factory, cold_start_wait_s=1.0)
     revived.start()
@@ -435,7 +435,7 @@ async def test_a_failed_handshake_keeps_the_family_serving(tmp_path: Path) -> No
     """Contract 05 §5.3 rule 8: nothing moves until the handshake passes.
 
     The incoming sandbox answers `fatal` instead of `ready`, so the call is
-    refused. No turn moves, the outgoing channel stays open, and `managerd`
+    refused. No turn moves, the outgoing channel stays open, and `caregiver`
     still owns both sandboxes.
     """
     harness = SwitchHarness(tmp_path)
@@ -460,7 +460,7 @@ async def test_a_failed_handshake_keeps_the_family_serving(tmp_path: Path) -> No
 async def test_a_refused_switch_is_retried_not_replayed(tmp_path: Path) -> None:
     """§5.3 rule 7 makes a completed switch idempotent, not a refused one.
 
-    `managerd` retries the same call on its next pass. Answering that retry
+    `caregiver` retries the same call on its next pass. Answering that retry
     from the remembered failure would leave the family on two sandboxes for
     ever.
     """

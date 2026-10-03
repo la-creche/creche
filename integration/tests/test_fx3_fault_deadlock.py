@@ -2,7 +2,7 @@
 
 Gate 1b's `up` failed on the host on 2026-09-20 with `state=degraded` over one
 fault: `grants_stale`, raised by the gate's OWN preflight minutes before
-`managerd` wrote the real grant file. `grants_stale` stops every turn
+`caregiver` wrote the real grant file. `grants_stale` stops every turn
 (contract 05 §3.3), and the PEP cleared it only when a CALL re-read a good
 grant file (contract 04 §1.6 rule 3). Those two rules closed a loop:
 
@@ -16,7 +16,7 @@ grant file (contract 04 §1.6 rule 3). Those two rules closed a loop:
 The orchestrator broke it by hand with one authenticated `GET /manifest`.
 
 Two scenarios, one for each half of the fix. Both run the REAL PEP, built
-through its own entry point, and the REAL `managerd`. Neither needs
+through its own entry point, and the REAL `caregiver`. Neither needs
 `attendance`: the deadlock is between these two.
 """
 
@@ -29,15 +29,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from agent_managerd import paths as managerd_paths
-from agent_managerd.apply import apply_once
-from agent_managerd.credentials import read_creds
-from agent_managerd.driver import FakeDriver
-from agent_managerd.faults import FAULT_CLOCK_SLACK_S
-from agent_managerd.litellm_keys import FakeLiteLLMKeys
+from caregiver.apply import apply_once
+from caregiver.credentials import read_creds
+from caregiver.driver import FakeDriver
+from caregiver.faults import FAULT_CLOCK_SLACK_S
+from caregiver.litellm_keys import FakeLiteLLMKeys
 from fastapi.testclient import TestClient
 from stack import FAMILY, repo_root
 from stage2 import IMAGE, write_registry
+
+from caregiver import paths as caregiver_paths
 
 #: `tests_manager/pep_harness.py` builds the real PEP through its real entry
 #: point, as `stage3.py` does. One copy of `main()`'s plumbing, not two.
@@ -92,20 +93,20 @@ class Host:
 
     @property
     def token(self) -> str:
-        """The family token `managerd` minted. A fixture value in a temp
+        """The family token `caregiver` minted. A fixture value in a temp
         directory: it authorizes nothing outside this test process."""
-        creds = read_creds(managerd_paths.creds_path(self.state_root, FAMILY))
+        creds = read_creds(caregiver_paths.creds_path(self.state_root, FAMILY))
         assert creds is not None, "apply_once wrote no creds.json"
         return creds.pep_token
 
     @property
     def grant_path(self) -> Path:
-        return managerd_paths.grant_path(self.state_root, FAMILY)
+        return caregiver_paths.grant_path(self.state_root, FAMILY)
 
     def pep_faults(self) -> list[dict[str, Any]]:
-        """What the PEP currently reports for this family, as `managerd`
+        """What the PEP currently reports for this family, as `caregiver`
         reads it (contract 05 §3.3.1). No file means no fault (rule 5)."""
-        path = managerd_paths.fault_path(self.state_root, "pep", FAMILY)
+        path = caregiver_paths.fault_path(self.state_root, "pep", FAMILY)
         if not path.is_file():
             return []
 
@@ -140,7 +141,7 @@ def raise_the_fault(host: Host, pep: TestClient) -> None:
 
 
 def test_an_apply_after_the_probe_publishes_in_sync(host: Host) -> None:
-    """Gate 1b, end to end. `managerd` writes the grant file the fault is no
+    """Gate 1b, end to end. `caregiver` writes the grant file the fault is no
     longer about, so the document says `in_sync` and no turn is refused."""
     with TestClient(host.build_pep()) as pep:
         raise_the_fault(host, pep)
@@ -158,7 +159,7 @@ def test_an_idle_familys_fault_clears_with_no_call(host: Host) -> None:
     with TestClient(host.build_pep()) as pep:
         raise_the_fault(host, pep)
 
-        # `managerd` puts the grant file back. From here nothing touches the
+        # `caregiver` puts the grant file back. From here nothing touches the
         # client: a call would clear the fault the old way and prove nothing.
         assert host.apply().ok
         cleared = _wait_until_cleared(host)

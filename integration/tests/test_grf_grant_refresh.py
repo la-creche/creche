@@ -14,7 +14,7 @@ both at once, plus the file between them:
                                      (contract 03 §7.3 rule 4)
 
 The PEP is the real one, built through its real entry point. The bridge is
-the real bundle. The grant file is written the way `managerd` writes it,
+the real bundle. The grant file is written the way `caregiver` writes it,
 atomically, with a fresh revision. Nothing here binds anything but loopback
 and nothing needs the host.
 """
@@ -78,7 +78,7 @@ def grant_file(rework: Path) -> Path:
 def write_grants(rework: Path, verbs: dict[str, Any]) -> str:
     """Contract 04 §1.3's atomic write, with §1.2's fresh opaque revision.
 
-    `managerd` mints `uuid4().hex` per write (`steps.py`, `grant_revision`),
+    `caregiver` mints `uuid4().hex` per write (`steps.py`, `grant_revision`),
     so this does too: a test that reused a revision would be testing a
     revision the real writer never produces.
     """

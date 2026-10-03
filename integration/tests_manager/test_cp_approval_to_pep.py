@@ -1,6 +1,6 @@
-"""Packet CP: the approval list, from `managerd`'s writer to the PEP's gate.
+"""Packet CP: the approval list, from `caregiver`'s writer to the PEP's gate.
 
-`managerd` expands a family file's `approval` entries and writes them into
+`caregiver` expands a family file's `approval` entries and writes them into
 `grants/<family>.json`. The PEP reads that list and holds a call open until a
 phone answers. Both sides were built from contract 04 by different agents.
 These tests put the real writer and the real reader on one temp root.
@@ -14,7 +14,7 @@ These tests put the real writer and the real reader on one temp root.
 
 The phone rail is the only fake: nothing here reaches Node-RED, Home
 Assistant or a phone. The revocation scenario is the one this packet cannot
-prove in `pep/tests`, where the writer is a fixture rather than `managerd`:
+prove in `pep/tests`, where the writer is a fixture rather than `caregiver`:
 contract 04 §1.5.3 says a gate on a removed action is cancelled and denied,
 and the only signal between the two processes is the grant file itself.
 """
@@ -121,11 +121,11 @@ async def pushed(rail: FakeRail) -> GateNotice:
         if rail.seen:
             return rail.seen[0]
         await asyncio.sleep(0)
-    raise AssertionError("managerd's approval list never reached the gate")
+    raise AssertionError("caregiver's approval list never reached the gate")
 
 
 async def test_the_written_approval_list_opens_a_gate(rig: Rig) -> None:
-    """Seam: `managerd` wrote `approval: ["ha_call"]` and the PEP gated on
+    """Seam: `caregiver` wrote `approval: ["ha_call"]` and the PEP gated on
     it. A tap then runs that exact call."""
     async with serving(rig) as client:
         call = asyncio.create_task(client.post("/call", json=HA_CALL, headers=auth(rig)))
@@ -142,7 +142,7 @@ async def test_the_written_approval_list_opens_a_gate(rig: Rig) -> None:
         assert (await call).status_code == HTTP_OK
 
 
-async def test_the_manifest_flags_what_managerd_gated(rig: Rig) -> None:
+async def test_the_manifest_flags_what_caregiver_gated(rig: Rig) -> None:
     async with serving(rig) as client:
         body = (await client.get("/manifest", headers=auth(rig))).json()
 
@@ -152,7 +152,7 @@ async def test_the_manifest_flags_what_managerd_gated(rig: Rig) -> None:
 
 
 async def test_a_reapply_cancels_a_held_gate(rig: Rig) -> None:
-    """Contract 04 §1.5.3, across two real processes. `managerd` rewrites the
+    """Contract 04 §1.5.3, across two real processes. `caregiver` rewrites the
     grant file without `ha_call` while the PEP is holding the gate. No signal
     passes between them: the PEP re-reads the file and denies."""
     async with serving(rig) as client:

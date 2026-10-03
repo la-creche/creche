@@ -1,6 +1,6 @@
 """Seam 3: the mounts `apply_once` wrote, read by the real playpen.
 
-`managerd` writes three directories that contract 03 §7.1 mounts into the
+`caregiver` writes three directories that contract 03 §7.1 mounts into the
 sandbox. The playpen reads all three when it starts a pi process. Until
 now the playpen's own tests wrote those directories themselves, so the
 two sides had never met.
@@ -95,7 +95,7 @@ def flag(args: list[str], name: str) -> str:
     return args[args.index(name) + 1]
 
 
-# --- what managerd wrote is what the playpen needs --------------------
+# --- what caregiver wrote is what the playpen needs --------------------
 
 
 def test_apply_writes_the_three_mounts(applied: Applied) -> None:
@@ -207,9 +207,9 @@ def test_the_turn_file_lives_under_the_control_mount(
 
 
 def test_the_two_plane_urls_are_the_ones_the_manager_allows(report: dict[str, Any]) -> None:
-    """The playpen's constants and `managerd`'s egress config have to
+    """The playpen's constants and `caregiver`'s egress config have to
     name the same two endpoints, or the sandbox reaches neither."""
-    from agent_managerd.egress import litellm_endpoint, pep_endpoint
+    from caregiver.egress import litellm_endpoint, pep_endpoint
 
     env = spawn(report)["env"]
     assert env["LITELLM_BASE_URL"] == f"http://{litellm_endpoint()}"

@@ -95,7 +95,7 @@ def test_c1_reports_a_contract_nobody_provides_and_does_not_refuse() -> None:
     Root cannot tell "nothing provides it" from "its provider is not a
     tree under an install root". `playpen` is live and provides
     `channel`, and it is an image and never a tree, so a refusal would
-    read `managerd requires channel 0.11, the set provides it nowhere`.
+    read `caregiver requires channel 0.11, the set provides it nowhere`.
 
     Refusing there refuses every release on this host for ever, for a
     reason the release neither causes nor can fix. So it is reported.
@@ -111,7 +111,7 @@ def test_c1_reports_a_contract_nobody_provides_and_does_not_refuse() -> None:
     assert table.unprovided[0].contract is ContractId.MANAGER_STATUS
     assert table.unprovided[0].line() == (
         "not verified: noticeboard requires manager-status 1.1, "
-        "and managerd is not a tree under an install root"
+        "and caregiver is not a tree under an install root"
     )
 
 
@@ -130,13 +130,13 @@ def test_a_provider_that_IS_in_the_set_is_still_refused() -> None:
 
 def test_c2_refuses_two_providers() -> None:
     manifests = _green_set()
-    manifests["managerd"] = _manifest("managerd", provides=provides_entry("pep-grant", 2, 1))
+    manifests["caregiver"] = _manifest("caregiver", provides=provides_entry("pep-grant", 2, 1))
 
     refusal = _refusal(manifests, frozenset({"pep"}), PEP_GRANT_LIVE)
 
     assert refusal.code is RefusalCode.C2
     assert "ambiguous provider for pep-grant" in refusal.detail
-    assert "managerd, pep" in refusal.detail
+    assert "caregiver, pep" in refusal.detail
 
 
 def test_c3_refuses_a_provider_that_owns_nothing() -> None:

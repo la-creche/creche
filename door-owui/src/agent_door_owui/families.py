@@ -1,6 +1,6 @@
-"""Which families the picker offers, read from `managerd`'s status files.
+"""Which families the picker offers, read from `caregiver`'s status files.
 
-Contract 05 §2: `managerd` writes
+Contract 05 §2: `caregiver` writes
 `/srv/agents/state/rework/families/<family>/status.json` and is its only
 writer. A reader lists that directory to find every family, so no index
 exists and no index can go stale.
@@ -45,7 +45,7 @@ class FamilyDirectory(Protocol):
 
 
 class StatusFiles:
-    """Reads the status documents `managerd` publishes."""
+    """Reads the status documents `caregiver` publishes."""
 
     def __init__(self, root: Path) -> None:
         self._root = root
@@ -82,7 +82,7 @@ class StatusFiles:
             raw = path.read_text(encoding="utf-8")
         except OSError:
             # A family directory with no readable status document is one
-            # `managerd` has not published yet.
+            # `caregiver` has not published yet.
             return None
 
         try:

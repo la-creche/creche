@@ -384,7 +384,7 @@ async def test_stopping_an_unknown_turn_is_turn_not_found(rig: Rig) -> None:
     assert answer.json()["error"]["code"] == "turn_not_found"
 
 
-async def test_switch_sandbox_takes_only_the_managerd_token(rig: Rig) -> None:
+async def test_switch_sandbox_takes_only_the_caregiver_token(rig: Rig) -> None:
     """Contract 02 §3.1: no door reaches `/internal/*`."""
     body = {"family": FAMILY, "from": SANDBOX, "to": "chat-s2", "mode": "drain", "reason": "x"}
     refused = await rig.client.post(
@@ -393,7 +393,7 @@ async def test_switch_sandbox_takes_only_the_managerd_token(rig: Rig) -> None:
     # The rig publishes one sandbox, so `to` is not one this service would
     # dial and contract 05 §5.3 rule 8 refuses it. The token reached it.
     reached = await rig.client.post(
-        "/internal/switch-sandbox", json=body, headers=rig.head(Principal.MANAGERD)
+        "/internal/switch-sandbox", json=body, headers=rig.head(Principal.CAREGIVER)
     )
 
     assert refused.status_code == HTTP_FORBIDDEN

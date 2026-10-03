@@ -1,4 +1,4 @@
-"""Reading `managerd`'s status document (contract 05 §2, §3, §4)."""
+"""Reading `caregiver`'s status document (contract 05 §2, §3, §4)."""
 
 from __future__ import annotations
 

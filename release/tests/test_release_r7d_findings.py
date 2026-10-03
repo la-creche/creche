@@ -86,7 +86,7 @@ def test_the_default_install_roots_hold_both_trees() -> None:
     assert Path(operator_install_root()) in roots
 
 
-@pytest.mark.parametrize("name", ["attendance", "managerd", "noticeboard"])
+@pytest.mark.parametrize("name", ["attendance", "caregiver", "noticeboard"])
 def test_a_user_venv_component_is_not_refused_by_containment(name: str) -> None:
     """`paths_of` must not refuse a component whose `install.to` sits
     under `~operator`, or `attendance` could not be released at all."""

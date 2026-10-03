@@ -7,7 +7,7 @@ bundle that would ship in the sandbox image is driven the way
 `playpen/test/bridge.test.ts` drives it -- with one thing swapped:
 
     bridge.test.ts:  bridge ──► test/fake-pep.ts   (no grants, no audit)
-    this file:       bridge ──► the real PEP       (managerd's grant file)
+    this file:       bridge ──► the real PEP       (caregiver's grant file)
 
 The PEP listens on 127.0.0.1, never on the host's LAN address, and nothing
 here needs the host.
@@ -220,7 +220,7 @@ def test_the_audit_line_names_the_grant_revision(
     node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
     """Contract 04 §6.1. The revision ties the decision to the exact grant
-    file `managerd` wrote."""
+    file `caregiver` wrote."""
     written = json.loads(applied.grant_path.read_text(encoding="utf-8"))["rev"]
     drive(node_bin, playpen_build, applied, pep_url, scratch)
     manifest = next(line for line in audit_lines(applied) if line["tool"] == "$manifest")

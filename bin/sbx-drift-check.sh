@@ -10,7 +10,7 @@
 #      attaches its own `kit:<name>` network rule set —
 #      non-editable, recreated on every `sbx create`, and invisible to
 #      check 1 and to the manager's own egress probes
-#      (managerd/src/agent_managerd/egress.py, and the driver that applies
+#      (caregiver/src/caregiver/egress.py, and the driver that applies
 #      it: both only probe the granted host and a fixed denied list). Today
 #      that kit rule includes an unconditional `allow openrouter.ai` on
 #      every sandbox — a bypass of LiteLLM (no budget, no model allow-list,

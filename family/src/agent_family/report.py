@@ -52,7 +52,7 @@ class Report:
 
     `state` and `applied` are what the validator can honestly say on its own:
     `invalid` when an error was found, else `reconciling`, and `applied: false`
-    because validating changes no live state. `managerd` stamps the real pair
+    because validating changes no live state. `caregiver` stamps the real pair
     with `stamped()` after it applies."""
 
     family: str

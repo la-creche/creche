@@ -149,9 +149,9 @@ def _flush(turn: str, entries: list[Entry], answers: dict[str, list[str]], ts: s
 
 
 def _prompt(turn: str, ts: str, body: Json, entries: list[Entry]) -> None:
-    # Contract 02 §5.1: `status_stale` says managerd's document was over
+    # Contract 02 §5.1: `status_stale` says caregiver's document was over
     # 90 s old when the turn started. The turn still ran.
-    stale = "managerd's status was stale when this turn started" if _stale(body) else ""
+    stale = "caregiver's status was stale when this turn started" if _stale(body) else ""
     entries.append(
         Entry(
             voice=Voice.PROMPT, turn=turn, ts=ts, text=jsonfiles.text(body, "prompt"), detail=stale

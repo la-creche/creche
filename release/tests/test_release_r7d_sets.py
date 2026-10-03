@@ -9,7 +9,7 @@
 3. a breaking contract change is refused when a consumer is missing from
    the set and accepted when it is present;
 4. a release run with every credential revoked still succeeds;
-5. `managerd` publishes `live-manifest.json` afterwards.
+5. `caregiver` publishes `live-manifest.json` afterwards.
 
 The whole executor runs here, as in `test_release_executor_steps.py`: a
 real `Spool` on real directories, the real resolver, the real ten steps.
@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from agent_managerd.live_manifest import publish
 from agent_release.catalog import CATALOG_BY_NAME
 from agent_release.executor.approval import Decision, Summary, Verdict
 from agent_release.executor.drain import Counter, handle
@@ -33,6 +32,7 @@ from agent_release.executor.live_state import installed_version, write_manifest_
 from agent_release.executor.quiet import QUIET_WINDOW_S, WATCHED_SERVICES, needs_window
 from agent_release.executor.spool import DONE_DIR, Spool
 from agent_release.executor.steps import Wiring
+from caregiver.live_manifest import publish
 from release_executor_fixtures import (
     REQUEST_ID,
     SHA_OF,
@@ -72,7 +72,7 @@ NOW = 1758153600.0
 SPEC: dict[str, tuple[str, str, str]] = {
     "pep": ("venv", "agent-pep.service", ""),
     "attendance": ("venv", "attendance.service", "pep"),
-    "managerd": ("venv", "agent-managerd.service", "pep"),
+    "caregiver": ("venv", "creche-caregiver.service", "pep"),
     "noticeboard": ("venv", "creche-noticeboard.service", ""),
     "infra": ("compose", "ai-stack.service", ""),
     "playpen": ("oci-image", "null", ""),
@@ -448,12 +448,12 @@ def test_a_release_with_no_git_credential_still_succeeds(two: SetBench) -> None:
     assert not any("https://" in line or "git@" in line for line in fetched)
 
 
-# -- 5. managerd publishes live-manifest.json afterwards -----------------
+# -- 5. caregiver publishes live-manifest.json afterwards -----------------
 
 
-def test_managerd_publishes_what_the_ledger_says_is_live(two: SetBench) -> None:
+def test_caregiver_publishes_what_the_ledger_says_is_live(two: SetBench) -> None:
     """Contract 06 §3.4: root writes the ledger and never a repository, so
-    `managerd` carries the resolved lock off the host. The whole loop is
+    `caregiver` carries the resolved lock off the host. The whole loop is
     proved here — a real release writes `done/`, and the publisher reads
     that same directory."""
     _run(two, {"pep": PEP_NEW, "attendance": ATTENDANCE_NEW})
@@ -461,29 +461,29 @@ def test_managerd_publishes_what_the_ledger_says_is_live(two: SetBench) -> None:
     checkout = two.tmp_path / "registry"
     found = publish(checkout, two.spool_root / DONE_DIR)
 
-    # This set left `managerd` alone, so there is nothing to name.
+    # This set left `caregiver` alone, so there is nothing to name.
     assert found is None
     assert not (checkout / "live-manifest.json").exists()
 
 
-def test_managerd_publishes_after_a_release_that_moves_it(tmp_path: Path) -> None:
-    managerd_live, managerd_new = "1.1.0", "1.2.0"
+def test_caregiver_publishes_after_a_release_that_moves_it(tmp_path: Path) -> None:
+    caregiver_live, caregiver_new = "1.1.0", "1.2.0"
     bench = _make_bench(
         tmp_path,
-        {"managerd": managerd_live, "pep": PEP_LIVE},
-        {"managerd": managerd_new},
-        _green_for(("managerd", managerd_new)),
+        {"caregiver": caregiver_live, "pep": PEP_LIVE},
+        {"caregiver": caregiver_new},
+        _green_for(("caregiver", caregiver_new)),
     )
-    _live_tree(bench, "managerd", managerd_live)
+    _live_tree(bench, "caregiver", caregiver_live)
     _live_tree(bench, "pep", PEP_LIVE)
-    _serve(bench, {"managerd": managerd_new})
+    _serve(bench, {"caregiver": caregiver_new})
 
-    _run(bench, {"managerd": managerd_new})
+    _run(bench, {"caregiver": caregiver_new})
 
     found = publish(tmp_path / "registry", bench.spool_root / DONE_DIR)
 
     assert found is not None
-    assert found.managerd == managerd_new
+    assert found.caregiver == caregiver_new
     assert found.release_id == REQUEST_ID
 
 

@@ -1,4 +1,4 @@
-"""A real `managerd` beside the running stack (packet I2, stage 2).
+"""A real `caregiver` beside the running stack (packet I2, stage 2).
 
 Stage 1's harness holds the door, `attendance` and the playpen. Stage 2
 adds the reconciler, so that a change to a family FILE is what drives the
@@ -29,18 +29,19 @@ from typing import Any
 import httpx
 import yaml
 from agent_family import load_registry
-from agent_managerd import paths as managerd_paths
-from agent_managerd import sandboxes
-from agent_managerd.driver import FakeDriver
-from agent_managerd.egress import EgressConfig
-from agent_managerd.litellm_keys import FakeLiteLLMKeys, key_alias
-from agent_managerd.reconcile import Actors, ReconcileResult, reconcile_family
-from agent_managerd.switch import HttpSwitchClient, SwitchClient, SwitchRequest, SwitchResult
-from agent_managerd.switch import read_token as read_managerd_token
-from agent_managerd.timers import FakeUnits
+from caregiver.driver import FakeDriver
+from caregiver.egress import EgressConfig
+from caregiver.litellm_keys import FakeLiteLLMKeys, key_alias
+from caregiver.reconcile import Actors, ReconcileResult, reconcile_family
+from caregiver.switch import HttpSwitchClient, SwitchClient, SwitchRequest, SwitchResult
+from caregiver.switch import read_token as read_caregiver_token
+from caregiver.timers import FakeUnits
 from stack import FAMILY, FIXTURE_LITELLM_KEY, Stack
 
-#: An obvious fixture. Contract 06 owns digest selection, and `managerd`
+from caregiver import paths as caregiver_paths
+from caregiver import sandboxes
+
+#: An obvious fixture. Contract 06 owns digest selection, and `caregiver`
 #: resolves none of its own (contract 05 §4.1).
 IMAGE = "sha256:" + "0" * 63 + "1"
 
@@ -74,7 +75,7 @@ def write_registry(root: Path, *, instructions: str = "Be helpful.\n", **overrid
 
 
 class Manager:
-    """One `managerd` wired to the running `attendance`.
+    """One `caregiver` wired to the running `attendance`.
 
     The switch client is the real one, over the same Unix socket the door
     uses, carrying the real token file `attendance` minted.
@@ -115,7 +116,7 @@ class Manager:
 
     def status(self) -> dict[str, Any]:
         """The status document as `attendance` and the noticeboard read it."""
-        path = managerd_paths.status_path(self.state_root, FAMILY)
+        path = caregiver_paths.status_path(self.state_root, FAMILY)
         body: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         return body
 
@@ -139,7 +140,7 @@ class Manager:
 
     def grants(self) -> bytes:
         """The grant file the PEP reads live, per call (contract 04 §1.1)."""
-        return managerd_paths.grant_path(self.state_root, FAMILY).read_bytes()
+        return caregiver_paths.grant_path(self.state_root, FAMILY).read_bytes()
 
 
 def http_switch_client(stack: Stack) -> SwitchClient:
@@ -149,7 +150,7 @@ def http_switch_client(stack: Stack) -> SwitchClient:
     if socket is None:
         raise AssertionError("the stack is not serving yet")
 
-    token = read_managerd_token(managerd_paths.managerd_token_path(stack.state_root))
+    token = read_caregiver_token(caregiver_paths.caregiver_token_path(stack.state_root))
 
     return HttpSwitchClient(
         "http://sessiond",
@@ -170,7 +171,7 @@ class BreakTheIncomingEnv:
     three mount paths, and a playpen that finds one unset answers
     `fatal` with `mount_dir_unset` rather than `ready` (contract 03 §5.7).
 
-    The moment matters: `managerd` writes the file during the create, and
+    The moment matters: `caregiver` writes the file during the create, and
     the create and the call are one pass. A test that broke the file before
     the pass would watch the create write it again.
 
@@ -179,7 +180,7 @@ class BreakTheIncomingEnv:
     reconciler cannot converge against a saboteur.
 
     Only a REPLACEMENT, which is what `from` being set means (contract 05
-    §5.1: it is "null on a first create"). `managerd` also calls §5 to ask
+    §5.1: it is "null on a first create"). `caregiver` also calls §5 to ask
     for the first handshake of a sandbox that is not yet `ready` (§4.3 step
     7), and that call comes first. Without this guard the one shot lands on
     the sandbox the stack is already serving on, and every scenario that
@@ -202,7 +203,7 @@ class BreakTheIncomingEnv:
 
 
 def _litellm_holding_the_fixture_key() -> FakeLiteLLMKeys:
-    """The stack's `creds.json` already names a key. `managerd` re-applying
+    """The stack's `creds.json` already names a key. `caregiver` re-applying
     onto a family it once minted for refreshes that key rather than minting
     a second one, so the fake has to know it — exactly as LiteLLM would."""
     fake = FakeLiteLLMKeys()

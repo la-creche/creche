@@ -23,7 +23,7 @@ class SandboxDial:
     """What it takes to open one channel (contract 03 §7.1).
 
     Two values, never one. `sbx exec` forwards no host environment, so the
-    playpen learns where its mounts are only from the env file `managerd`
+    playpen learns where its mounts are only from the env file `caregiver`
     wrote; the status document publishes that path per sandbox (contract 05
     §4.1). A dial without it starts a playpen that answers `fatal`.
     """

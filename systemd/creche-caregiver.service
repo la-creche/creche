@@ -1,0 +1,133 @@
+# The family manager (rework contract 05). USER unit, as the operator.
+#
+# It watches the rework registry and converges every family to its
+# family.yaml: the LiteLLM key, the PEP token, the grant file, the family
+# config mount, the sandbox and the trigger timers. Invariant 9 is the whole
+# point — "a permission change needs one action and no manual apply" — so
+# this runs as a daemon, not as a command anybody types.
+#
+# Installed by `bin/rework-cutover.sh up`.
+#
+# Reload means "look now": SIGHUP ends the poll wait early, so an edit that
+# cannot wait two seconds does not have to.
+[Unit]
+Description=caregiver, the rework family manager
+After=network-online.target
+Wants=network-online.target
+# THE REWORK RESTART POLICY. Decided once, argued here, and named by the
+# other five always-on rework units (`creche-attendance`, `creche-door-owui`,
+# `creche-noticeboard`, `creche-trigger-webhooks`, `agent-pep`). Change it here and
+# in all six, or `bin/tests/test_rework_unit_restart.py` fails.
+#
+# WHY NO START LIMIT. With StartLimitIntervalSec=120 and StartLimitBurst=5,
+# five crashes in 25 seconds and systemd gives up. A root script that leaves
+# /srv/agents/state/rework/releases/ root:root 0750 is enough: caregiver runs
+# as the operator, a PermissionError leaves the reconcile loop, five crashes, then
+# `failed`. Fixing the mode twenty minutes later starts nothing, so caregiver
+# stays dead until somebody notices, and every status document still says
+# `in_sync`, because a dead writer changes nothing.
+#
+# A start limit answers "is this service healthy?" with "stop trying". For
+# a service nothing else watches that is the worst available answer: it
+# turns a transient fault — a wrong mode for twenty minutes, LiteLLM
+# restarting, a full disk for a minute — into a permanent outage. So this
+# unit restarts for ever, and `bin/rework-watchdog.sh` is what says the
+# service is not well. `systemctl --user status` still shows NRestarts, so
+# a crash loop is as visible as it was.
+#
+# WHY always. systemd calls SIGHUP, SIGINT, SIGTERM and SIGPIPE clean
+# exits, so `Restart=on-failure` does not fire for them: a SIGHUP that
+# arrives before a handler is installed leaves the service down. There is
+# no clean exit of `caregiver serve` that must stay down — it runs until
+# systemd stops it, and systemd does not restart a unit it stopped itself.
+#
+# WHY the back-off. Restarting for ever is only affordable with one.
+# RestartSteps= and RestartMaxDelaySec= are systemd v254 and this host runs
+# 255. The delay grows from RestartSec to RestartMaxDelaySec over
+# RestartSteps steps, so a transient fault still recovers in five seconds
+# and a real crash loop settles at one start every two minutes: 30 an hour
+# rather than 720.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-control
+# sbx panics without both: its state is per-user and a user manager sets
+# neither (systemd/AGENTS.md). caregiver shells out to sbx for every sandbox.
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# invariant 13: the LiteLLM master key never rides on argv, in a URL or in a
+# log line. This file is root-owned and mode 0600; the unit only names it.
+EnvironmentFile=/srv/agents/state/rework/managerd.env
+# The site's AGENT_LAN_ADDRESS: where LiteLLM, attendance and the PEP answer.
+EnvironmentFile=/etc/agent-control/site.env
+# The component tree contract 06 §1 row 3 fixes, not /opt/agent-control's
+# shared workspace venv. The release executor swaps `<install.to>` and
+# restarts this unit, so a unit that ran from anywhere else would relaunch
+# the old code after a release the ledger called a success.
+# `--sessiond-socket`: `attendance` answers on its Unix socket and nowhere else
+# (its LAN listener is off), and `serve`'s default is a LAN URL. Without this
+# line every `ready` handshake is refused with ConnectError, and every sandbox
+# stays `creating` for ever: families `in_sync`, no fault, none `ready`.
+# `--image-python`: contract 01 §3.9's second flavor. `playpen/Dockerfile`
+# builds both targets and `bin/rework-cutover.sh` writes both values into
+# managerd.env. An empty value is allowed and means this host has no python
+# image: a family with `sandbox.image: python` then raises
+# `image_flavor_unconfigured` and gets no sandbox, rather than a base one.
+# `--pep-url`: contract 05 §3.3. The PEP is the one door to every action, and
+# an unwatched PEP can be down while every family's document reads
+# `in_sync`. The reconciler probes /healthz for the
+# whole fleet and raises `pep_unreachable` after 90 s of silence. The PEP
+# binds the LAN address and loopback answers NOTHING there, so this is the
+# LAN URL; `bin/rework-cutover.sh` writes the same value into managerd.env.
+# An empty value turns the watch off and every document then says so.
+# NO `--release-root`, and that is deliberate. Its default is
+# root's own root, /var/lib/agent-release, and `bin/rework-cutover.sh up`
+# installs THIS file over a caregiver a release installed: a caregiver older
+# than ROOTS would refuse the flag and crash-loop. Name it only in a run
+# whose `--state-root` is not this one.
+ExecStart=%h/.local/components/caregiver/bin/caregiver serve \
+  /srv/agents/registry \
+  --image ${AGENT_SANDBOX_IMAGE} \
+  --image-python ${AGENT_SANDBOX_PYTHON_IMAGE} \
+  --state-root /srv/agents/state/rework \
+  --sessiond-socket /srv/agents/state/rework/sock/sessiond.sock \
+  --pep-url ${AGENT_PEP_URL} \
+  --write
+ExecReload=/bin/kill -HUP $MAINPID
+# The rework restart policy, argued in [Unit] above.
+Restart=always
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=120s
+# SIGTERM stops the loop and lets the passes in flight finish the STEP they
+# are inside; none of them starts another one, and `serve` then returns.
+# 60 s is not enough for that: one step is `sbx create`, and a full
+# replacement measured 3.4 min on this host on 2026-09-21 (image pull
+# included; about 1 min for each family after it). caregiver's own ceiling
+# for that step is driver.py's CREATE_TIMEOUT_S, 300 s, plus the same step's
+# `sbx policy` calls at POLICY_TIMEOUT_S, 30 s each.
+#
+# So: 360 s here, and loop.py's STOP_GRACE_S is 330 s. The service gives up
+# on the step 30 s before systemd would, which is what makes the journal say
+# which family was still inside a step rather than leaving a SIGKILL to
+# guess. A step that outruns even that is safe to cut: a `planned` sandbox
+# row is retired and its id burnt on the next start (contract 05 §4.2), and
+# every other step is idempotent and repeated by the next pass.
+KillSignal=SIGTERM
+TimeoutStopSec=360
+
+# A user unit on this host cannot use mount-namespace options
+# (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
+# options need no namespace (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+# 0027, not 0077: the PEP (user `pep`, group `agents`) reads the grant files
+# this daemon writes. Every file it publishes is chmod'd explicitly anyway;
+# this only covers directories made with a bare mkdir.
+UMask=0027
+
+[Install]
+WantedBy=default.target

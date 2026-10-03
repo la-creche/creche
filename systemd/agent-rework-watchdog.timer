@@ -4,7 +4,7 @@
 # `rollback`.
 #
 # WHY A MINUTE. The brief is "tell the operator's phone within five minutes". The
-# slowest check is `managerd`'s freshness, which needs a document 180 s old
+# slowest check is `caregiver`'s freshness, which needs a document 180 s old
 # before it says anything, so a minute puts the first push at about three
 # minutes and the second sighting a minute after that. Ten seconds would buy
 # nothing: the thresholds, not the cadence, set how fast an outage is seen.

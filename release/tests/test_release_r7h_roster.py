@@ -12,7 +12,7 @@ upstream and answers with the pasted value — is
    supersedes a base one of the same name
    (`pep/tests/test_pep_mcf_roster_wins.py` holds the reason).
 
-The rule every case comes back to is WHO writes it. `managerd` runs as
+The rule every case comes back to is WHO writes it. `caregiver` runs as
 the operator, and the roster names commands the PEP executes, so a roster the operator
 could write is `stage7-releases.md` §6 row 9 with the fence removed.
 """
@@ -330,14 +330,14 @@ def _read(path: Path) -> dict[str, object]:
 
 
 def test_both_packages_name_the_same_roster_file() -> None:
-    """`managerd` reads what root writes, and the two packages share no
+    """`caregiver` reads what root writes, and the two packages share no
     module, so the path is spelled twice. A drift would make every pass
     ask for a release it does not need — harmless, and invisible until a
     reader wonders why `done/` is full."""
-    from agent_managerd.mcp_release import ROSTER_FILE as read_by_managerd
     from agent_release.executor.host import ROSTER_FILE as written_by_root
+    from caregiver.mcp_release import ROSTER_FILE as read_by_caregiver
 
-    assert str(read_by_managerd) == written_by_root
+    assert str(read_by_caregiver) == written_by_root
 
 
 # --- the restore the deploy loop could not reach -----------------------------

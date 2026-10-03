@@ -18,7 +18,7 @@ with `job_status` (contract 04 §4.1, contract 02 §13.4).
                           issue-worker's auto-<ulid> ◄────────────'
 
 It extends `stage5.py` by import rather than by edit. `Stage5`
-already holds the stack, the real `managerd`, the real PEP, the fake approval
+already holds the stack, the real `caregiver`, the real PEP, the fake approval
 transport and the bridge driver; `StageEq` changes two things and adds one.
 
 1. Its own fixture registry, `eq-registry`, with four families: an attended
@@ -31,7 +31,7 @@ transport and the bridge driver; `StageEq` changes two things and adds one.
 
 NO STAND-IN. Contract 02 §13.4.1 rule 3 makes `attendance` refuse every dispatch
 to a family whose status document lacks `triggers.enqueue: true` (contract 05
-§2.1). The real `managerd` publishes that key from the family file, and
+§2.1). The real `caregiver` publishes that key from the family file, and
 `published_dispatch_flags` only reads it back.
 """
 
@@ -44,9 +44,8 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from agent_managerd import paths as managerd_paths
-from agent_managerd.apply import ApplyResult, apply_once
 from attendance.auth import Principal
+from caregiver.apply import ApplyResult, apply_once
 from stack import repo_root
 from stage5 import (
     APPROVAL_LIMIT_S,
@@ -58,6 +57,8 @@ from stage5 import (
     Stage5,
     build_gatekeeper,
 )
+
+from caregiver import paths as caregiver_paths
 
 #: The four families of this packet's fixture registry.
 CHAT: Final = "chat"
@@ -96,22 +97,22 @@ class StageEq(Stage5):
             litellm=self.litellm,
         )
 
-    # ------------------------------------------- what managerd published
+    # ------------------------------------------- what caregiver published
 
     def published_dispatch_flags(self) -> tuple[str, ...]:
         """The families whose status document says `triggers.enqueue: true`
-        (contract 05 §2.1), exactly as the real `managerd` wrote it.
+        (contract 05 §2.1), exactly as the real `caregiver` wrote it.
 
         Contract 02 §13.4.1 rule 3 asks the TARGET's own document whether it
         may be dispatched to, because a caller's grant file cannot answer
         that about another family. This harness once wrote the key by hand:
-        `managerd` did not publish it, and every dispatch on a real host was
+        `caregiver` did not publish it, and every dispatch on a real host was
         refused. It publishes it now, so this only reads.
         """
         dispatchable: list[str] = []
 
         for family in EQ_FAMILIES:
-            path = managerd_paths.status_path(self.stack.state_root, family)
+            path = caregiver_paths.status_path(self.stack.state_root, family)
             body: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
             triggers: dict[str, Any] = dict(body.get("triggers") or {})
 

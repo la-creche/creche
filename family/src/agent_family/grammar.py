@@ -111,7 +111,7 @@ class SandboxFlavor(StrEnum):
     A CLOSED set, not an image reference. Invariant 10 says only the
     platform changes the platform, and a registry file that could name an
     image would choose what code runs inside the microVM. `playpen/
-    Dockerfile` has one target per member, and `managerd` is started with
+    Dockerfile` has one target per member, and `caregiver` is started with
     one image reference per member (contract 05 §4.1)."""
 
     BASE = "base"
@@ -130,7 +130,7 @@ DEFAULT_SANDBOX_IMAGE: Final = str(SandboxFlavor.BASE)
 DEFAULT_RESIDENT_PROCS: Final = 12
 DEFAULT_JOB_TIMEOUT: Final = "120s"
 DEFAULT_MAX_RUNNING_TURNS: Final = 1
-#: Contract 01 §3.6.1 and contract 04 §1.2. `managerd` copies it into the
+#: Contract 01 §3.6.1 and contract 04 §1.2. `caregiver` copies it into the
 #: grant file, so this is the one place the number 2 is written down on the
 #: writing side.
 DEFAULT_MAX_INFLIGHT_DELEGATIONS: Final = 2
@@ -192,7 +192,7 @@ ALLOWED_ROOTS: Final = (
 
 PLATFORM_ROOT: Final = "/srv/agents/work/platform"
 
-#: Contract 01 §5.5 rule 1: a constant in code, released with `managerd`, and
+#: Contract 01 §5.5 rule 1: a constant in code, released with `caregiver`, and
 #: never a registry file. A fence the fenced thing can edit is not a fence.
 PLATFORM_ALLOWLIST: Final = frozenset({"agent-control"})
 
@@ -213,7 +213,7 @@ PLATFORM_MIRRORS: Final = frozenset(
 
 #: Contract 01 §5.5 rule 7: the platform's own GitHub server, and the tools no
 #: family is ever granted from it. A registry's `main` may carry no branch
-#: protection, and a merge there lands a change `managerd` applies with nobody
+#: protection, and a merge there lands a change `caregiver` applies with nobody
 #: looking. The platform family proposes and the operator lands.
 PLATFORM_SERVER: Final = "github-platform"
 PLATFORM_WITHHELD: Final = frozenset({"merge_pull_request"})

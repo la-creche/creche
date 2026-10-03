@@ -1,4 +1,4 @@
-"""The fault file the PEP writes for `managerd` (contract 04 §1.6).
+"""The fault file the PEP writes for `caregiver` (contract 04 §1.6).
 
 The PEP is the only service that knows whether it is serving a family's current
 grants, so it reports that in a file instead of behind an endpoint — one
@@ -6,7 +6,7 @@ writer, one reader, and no new surface on the process that holds every upstream
 credential. Contract 05 §3.3.1 fixes the path, the mode, the group and the
 atomic write.
 
-`grants_stale` is the only code the PEP raises. `managerd` drops anything else
+`grants_stale` is the only code the PEP raises. `caregiver` drops anything else
 (contract 05 §3.3.1 rule 6).
 
 A write failure here never fails a call. The fault file reports a denial that
@@ -35,7 +35,7 @@ FAULT_DIR_MODE: Final = 0o750
 FAULT_FILE_MODE: Final = 0o640
 
 #: Contract 05 §3.3.1 rule 7 calls a file whose `written_at` is older than 90
-#: seconds stale, and `managerd` then marks every entry `stale: true`. The PEP
+#: seconds stale, and `caregiver` then marks every entry `stale: true`. The PEP
 #: rewrites an open fault on this interval so a live PEP never reads as a dead
 #: one.
 FAULT_REFRESH_S: Final = 30.0

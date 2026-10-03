@@ -1,6 +1,6 @@
-"""Reading `managerd`'s status document (contract 05 §2, §3, §4).
+"""Reading `caregiver`'s status document (contract 05 §2, §3, §4).
 
-`attendance` never calls `managerd`. Everything it needs about a family arrives
+`attendance` never calls `caregiver`. Everything it needs about a family arrives
 through this one file: the family's kind, whether it may serve turns, which
 sandbox is ready, and the credential epoch it must put on the channel.
 
@@ -26,7 +26,7 @@ from .states import SessionKind
 STALE_AFTER_S = 90.0
 FIRST_EPOCH = 1
 
-#: Contract 05 §3.3. `managerd` raises it when the PEP's `/healthz` has been
+#: Contract 05 §3.3. `caregiver` raises it when the PEP's `/healthz` has been
 #: silent for longer than the watch's threshold. `blocks_turns` is false, so
 #: `check_may_serve` lets every family serve, and one caller looks for this
 #: code by name: an autonomous firing, whose whole purpose is tool calls.
@@ -104,7 +104,7 @@ class FamilyStatus:
     sandboxes: list[SandboxInfo] = field(default_factory=list[SandboxInfo])
     max_running_turns: int | None = None
     job_timeout_s: int | None = None
-    #: Contract 02 §13.4.1 rule 3. `managerd` publishes `triggers.enqueue`
+    #: Contract 02 §13.4.1 rule 3. `caregiver` publishes `triggers.enqueue`
     #: when the family file carries contract 01 §3.13's dispatch form. A
     #: document without it reads `False`, and no family may be dispatched to:
     #: absence is denial (invariant 11).
@@ -115,7 +115,7 @@ class FamilyStatus:
         return code in self.fault_codes
 
     def is_stale(self, stale_after_s: float = STALE_AFTER_S) -> bool:
-        """True when `managerd` has not written for longer than the limit."""
+        """True when `caregiver` has not written for longer than the limit."""
         if self.written_at is None:
             return True
 
@@ -202,7 +202,7 @@ class StatusReader:
         return _status_from_file(raw, family)
 
     def families(self) -> list[str]:
-        """Every family `managerd` publishes. No index file exists to rot."""
+        """Every family `caregiver` publishes. No index file exists to rot."""
         base = families_dir(self._state_root)
 
         if not base.is_dir():

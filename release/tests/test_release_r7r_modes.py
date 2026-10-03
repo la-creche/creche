@@ -75,10 +75,10 @@ def test_a_tree_built_under_a_tight_umask_becomes_readable(tmp_path: Path) -> No
 def test_nothing_gains_a_write_bit(tmp_path: Path) -> None:
     """Readable and, where relevant, runnable by anyone — writable by root
     alone. Root built this tree and stays the only writer."""
-    tree = tmp_path / "managerd.new" / "bin"
+    tree = tmp_path / "caregiver.new" / "bin"
     with tight_umask():
         tree.mkdir(parents=True)
-        script = tree / "agent-managerd"
+        script = tree / "caregiver"
         script.write_text("#!/bin/sh\n", encoding="utf-8")
         script.chmod(0o700)
 

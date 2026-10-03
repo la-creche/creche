@@ -1,6 +1,6 @@
 """Family identity: the per-family grant file, re-read on every call.
 
-Contract 04 §1. `managerd` writes `/srv/agents/state/rework/grants/<family>.json`
+Contract 04 §1. `caregiver` writes `/srv/agents/state/rework/grants/<family>.json`
 atomically and deletes it to revoke. The PEP `stat`s the file on every call and
 re-parses on any change, so a permission change needs no restart, no signal and
 no apply command (invariant 9).
@@ -9,7 +9,7 @@ Fail closed, three ways (§1.4):
 
 1. Absent -> every call for that family is `unknown_token`.
 2. Malformed, or a `version` this PEP does not know -> the same.
-3. Either state raises `grants_stale` in the fault file (§1.6), so `managerd`
+3. Either state raises `grants_stale` in the fault file (§1.6), so `caregiver`
    can show that the PEP is not serving the family's current grants.
 
 A grant file is input from another process, so its size and shape are checked
@@ -47,7 +47,7 @@ MAX_GRANT_FILE_BYTES: Final = 256 * 1024
 MAX_TOKEN_DIGESTS: Final = 2
 
 #: What this PEP reads when a grant file carries no `limits` block, which a
-#: file written before contract 01 §3.6.1 landed does not. `managerd` writes
+#: file written before contract 01 §3.6.1 landed does not. `caregiver` writes
 #: all three on every file: `pep_rpm` and `max_open_gates` from its own
 #: defaults, `max_inflight_delegations` from the caller family's own field.
 DEFAULT_PEP_RPM: Final = 60
@@ -94,9 +94,9 @@ class FamilyLimits(_Strict):
 
 
 class FamilyGrants(_Strict):
-    """The on-disk contract between `managerd` (writer) and the PEP (reader).
+    """The on-disk contract between `caregiver` (writer) and the PEP (reader).
 
-    `managerd` expands `all` and `<server>__*` before it writes, so the PEP
+    `caregiver` expands `all` and `<server>__*` before it writes, so the PEP
     never reads a server file and never resolves a wildcard (contract 04 §1.2).
     """
 
@@ -289,7 +289,7 @@ class FamilyStore:
 
         Only the faulted families, because a call already re-reads the rest and
         a healthy fleet must cost nothing. A family whose file is still absent
-        keeps its fault: absence may be an accident, and `managerd` decides
+        keeps its fault: absence may be an accident, and `caregiver` decides
         what it means (contract 05 §3.3.1 rule 9).
         """
         if self._dir is None:

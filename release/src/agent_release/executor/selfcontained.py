@@ -5,8 +5,8 @@
 first-party module out of the repository it was built from:
 
 ```
-lib/python3.12/site-packages/_editable_impl_agent_managerd.pth
-    -> /opt/agent-control/managerd/src
+lib/python3.12/site-packages/_editable_impl_caregiver.pth
+    -> /opt/agent-control/caregiver/src
 ```
 
 Three consequences, each against the design.
@@ -110,7 +110,7 @@ def _pth_faults(site: Path, root: Path) -> list[str]:
     The reading follows `site.addpackage`: a blank line and a `#` line are
     skipped, an `import` line is executed rather than added, and every other
     line is a directory resolved AGAINST `site`. Relative matters — a line of
-    `../../../../opt/agent-control/managerd/src` escapes exactly as the
+    `../../../../opt/agent-control/caregiver/src` escapes exactly as the
     absolute form does.
     """
     faults: list[str] = []

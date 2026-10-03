@@ -22,7 +22,7 @@ Four rules this module keeps.
    body. Not in a journal line, not in an argv, not in a file. Every
    `print` here names a server and a secret, both of which passed their
    patterns, and never a token and never a value.
-2. **Root's own cooldown decides re-pushes.** `managerd` re-opens a gap
+2. **Root's own cooldown decides re-pushes.** `caregiver` re-opens a gap
    whose name still has no value on every reconcile pass, which is a few
    seconds apart, so the gap file cannot be what paces the phone. Root
    remembers what it pushed and when.
@@ -421,7 +421,7 @@ def main() -> int:
     if not _certificate_is_roots():
         return 1
 
-    # Whose files the gap directory holds: `managerd` runs as the operator.
+    # Whose files the gap directory holds: `caregiver` runs as the operator.
     try:
         writer_uid = pwd.getpwnam(operator_user()).pw_uid
         wiring = build_wiring(secrets, writer_uid, time.time)

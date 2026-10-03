@@ -2,8 +2,8 @@
 
 The host shipped an editable tree through FOUR gates. Every one of them put
 a fake `uv` on the `PATH`, so nothing ever ran the argv a manifest actually
-carries, and the fault — `_editable_impl_agent_managerd.pth` naming
-`/opt/agent-control/managerd/src` — reached production and stayed there.
+carries, and the fault — `_editable_impl_caregiver.pth` naming
+`/opt/agent-control/caregiver/src` — reached production and stayed there.
 
 So this module runs the manifest's OWN build argv, with the `uv` this
 machine has, and then asks the built tree two questions:

@@ -244,7 +244,7 @@ def _refuse_ha_call(args: Mapping[str, object], fence: VerbFence | None) -> Fenc
 
     if fence is None or fence.allow is None:
         # Contract 01 §3.5 says ha_call takes an `allow` fence, so a grant
-        # without one is a family file `managerd` should have refused.
+        # without one is a family file `caregiver` should have refused.
         # Matching nothing is the only reading that keeps invariant 11.
         return FenceDenial(ARG_VALIDATION, "ha_call was granted with no allow fence")
 

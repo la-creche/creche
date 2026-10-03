@@ -31,8 +31,8 @@ log = logging.getLogger("agent_pep.fault_sweep")
 
 #: Two bounds pick it. Above: contract 04 §1.6 rule 4 rewrites an open fault
 #: every 30 s, so a slower sweep would let the refresh, not the clear, decide
-#: how long a family stays blocked. Below: `managerd`'s reconcile loop looks
-#: every 2 s (`agent_managerd.loop.POLL_INTERVAL_S`), and a sweep faster than
+#: how long a family stays blocked. Below: `caregiver`'s reconcile loop looks
+#: every 2 s (`caregiver.loop.POLL_INTERVAL_S`), and a sweep faster than
 #: that would re-`stat` the same unchanged file several times per look. 5 s
 #: sits between them, so a family unblocks within one look of the grant file
 #: landing. `PEP_FAULT_SWEEP_INTERVAL_S` overrides it per host.

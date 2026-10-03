@@ -518,7 +518,7 @@ class PlaypenLink:
 
             # A counter that keeps moving is a live playpen. Its own
             # deadline ends it within `host_deadline_s` (§11.1 rule 1), so
-            # past that the sandbox is `managerd`'s to replace, not this
+            # past that the sandbox is `caregiver`'s to replace, not this
             # service's to dial (§11.4 rule 6).
             if time.monotonic() >= ceiling:
                 self._faults.raise_fault(

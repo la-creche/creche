@@ -247,7 +247,7 @@ export async function planLaunch(options: LaunchOptions): Promise<LaunchPlan> {
   }
 
   // A cold read of the credential mount, with no epoch to wait for: nothing
-  // here has a turn, so whatever `managerd` wrote last is the current one.
+  // here has a turn, so whatever `caregiver` wrote last is the current one.
   const creds = await new CredReader(mounts.dirs.creds).read(0);
   if (creds === null) {
     return refuse(LaunchState.NoCredentials, `no readable credential file under ${mounts.dirs.creds}`);

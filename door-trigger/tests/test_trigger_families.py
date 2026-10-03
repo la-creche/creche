@@ -1,5 +1,5 @@
 """`families.py`: which families' status makes them eligible for a
-webhook route at all, read from managerd's published status document."""
+webhook route at all, read from caregiver's published status document."""
 
 from __future__ import annotations
 

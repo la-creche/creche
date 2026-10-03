@@ -17,7 +17,7 @@ Three scenarios, one per promise packet CT makes.
 
 1. **A TUI terminal attaches to an Open WebUI chat's session**, and the
    `sbx` argv names the sandbox and the `supervisor.env` path that
-   `managerd`'s status document publishes (contract 05 §4.1.1). The
+   `caregiver`'s status document publishes (contract 05 §4.1.1). The
    terminal needs no `--force` and no wait: contract 02 draft 6 §7.3 rule
    5 hands an idle lease to another door, because no turn is running and
    nothing is lost. Draft 5 refused it for the 60 seconds after a chat

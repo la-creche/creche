@@ -17,7 +17,7 @@ the operator chose, or act on a planted switch note. Hash-pinned closures, the
 self-contained walk and the tap cover none of that. `/srv/agents` itself is
 the operator's (`bin/bootstrap-root.sh`), which is why the new root is not under it.
 
-`secret-gaps/` stays where it is. It is the operator's on purpose: `managerd` writes
+`secret-gaps/` stays where it is. It is the operator's on purpose: `caregiver` writes
 it and the intake reads it as hostile input (`intake/gaps.py`). So does
 `releases/requests/`, which two unprivileged accounts write — but its parent
 chain is root's, so nothing the operator owns can be renamed under it.

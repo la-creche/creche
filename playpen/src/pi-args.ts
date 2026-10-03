@@ -100,7 +100,7 @@ export function bridgeAt(path: string): string | null {
  *
  * `instructions.md` travels as a PATH, not as text. pi reads the file when the
  * argument is a path, which keeps a 64 KiB document off argv and lets
- * `managerd` rewrite the file without the playpen re-reading anything.
+ * `caregiver` rewrite the file without the playpen re-reading anything.
  *
  * Contract 03 §7.1 states the path form. It makes a rewrite reach a held
  * process on its NEXT turn rather than its next process, which is stronger

@@ -1,10 +1,10 @@
 # creche-noticeboard: the one board (invariant 20). USER unit, as the operator.
 #
 # One page shows every family, sandbox and session, and it is where the operator
-# edits a family. It reads managerd's status documents, the PEP's audit
+# edits a family. It reads caregiver's status documents, the PEP's audit
 # files and attendance as the principal `view-ro`, and it writes exactly one
 # thing: a validated git commit in the registry. It never applies anything.
-# managerd watches the registry and converges (contract 05 §5).
+# caregiver watches the registry and converges (contract 05 §5).
 #
 # LAN bind on the host's LAN address, port 8370, fronted by NPM + Authentik, which inject
 # X-View-Key. VIEW_ACCESS_KEY makes that header mandatory, so a direct LAN
@@ -17,7 +17,7 @@ Description=creche-noticeboard, the one board over every family, sandbox and ses
 After=network-online.target
 Wants=network-online.target
 # THE REWORK RESTART POLICY, argued in full in
-# `systemd/agent-managerd.service`: no start limit, so a transient fault
+# `systemd/creche-caregiver.service`: no start limit, so a transient fault
 # cannot end this service for good, and a back-off so restarting for ever
 # stays cheap. `bin/rework-watchdog.sh` is what says the service is not well;
 # `systemctl --user status` still shows NRestarts.
@@ -43,7 +43,7 @@ EnvironmentFile=/etc/agent-control/site.env
 ExecStart=%h/.local/components/noticeboard/bin/noticeboard
 # A deploy runs this before it swaps the unit. It opens no socket.
 ExecStartPre=%h/.local/components/noticeboard/bin/noticeboard --check
-# The rework restart policy (`systemd/agent-managerd.service`). `always`,
+# The rework restart policy (`systemd/creche-caregiver.service`). `always`,
 # because systemd calls SIGHUP, SIGINT, SIGTERM and SIGPIPE clean exits and
 # this service has no clean exit that must stay down.
 Restart=always
@@ -61,7 +61,7 @@ SystemCallArchitectures=native
 RestrictRealtime=yes
 LockPersonality=yes
 # 0077: this service creates nothing another user reads. It only reads
-# files managerd and the PEP wrote, and commits in the registry checkout.
+# files caregiver and the PEP wrote, and commits in the registry checkout.
 UMask=0077
 
 [Install]

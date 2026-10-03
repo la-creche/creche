@@ -5,7 +5,7 @@ action. So a save here is one commit or nothing at all, and the bytes on
 disk after a refused save are the bytes that were there before.
 
 The noticeboard never applies anything. It writes the registry and stops.
-`managerd` watches the registry and converges (contract 05 §5), so there
+`caregiver` watches the registry and converges (contract 05 §5), so there
 is no `agentctl`, no systemd call and no daemon verb in this module.
 
 The order is fixed, and every step after the write can undo it.

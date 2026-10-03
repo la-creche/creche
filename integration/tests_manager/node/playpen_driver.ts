@@ -8,7 +8,7 @@
 // solves that by building `Playpen` with the same constructor arguments
 // and its own temporary directories. This file is that harness with one
 // change: the directories are not invented here, they are the ones
-// `managerd` wrote.
+// `caregiver` wrote.
 //
 //   apply_once ──► families/chat/creds/   ──► CredReader
 //              ├─► families/chat/config/  ──► configDir (runtime.json, …)

@@ -27,7 +27,7 @@ from .grammar import (
 
 #: One tool grant: a list of tool names, or the literal `all` (contract 01
 #: §3.4). `all` resolves against the server file at read time, which is why
-#: `managerd` expands it before the PEP ever sees it (contract 04 §1.2).
+#: `caregiver` expands it before the PEP ever sees it (contract 04 §1.2).
 ToolGrant = list[str] | str
 
 
@@ -140,7 +140,7 @@ class FamilyFile(Strict):
     verbs: VerbsBlock = Field(default_factory=VerbsBlock)
     delegates: list[str] = Field(default_factory=list[str])
     # How many of those delegate calls may run at once (contract 01 §3.6.1).
-    # It sits beside the list it bounds, and `managerd` copies it into the
+    # It sits beside the list it bounds, and `caregiver` copies it into the
     # grant file the PEP re-reads per call (contract 04 §1.2).
     max_inflight_delegations: int = DEFAULT_MAX_INFLIGHT_DELEGATIONS
     egress: list[str] = Field(default_factory=list[str])

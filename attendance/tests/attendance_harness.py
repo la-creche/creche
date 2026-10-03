@@ -83,7 +83,7 @@ def write_status(
     config_rev: str = CONFIG_REV,
     accepts_dispatch: bool = False,
 ) -> None:
-    """One status document, as `managerd` writes it (contract 05 §2)."""
+    """One status document, as `caregiver` writes it (contract 05 §2)."""
     path = status_file(state_root, family)
     path.parent.mkdir(parents=True, exist_ok=True)
     limits: dict[str, Any] = {} if job_timeout_s is None else {"job_timeout_s": job_timeout_s}

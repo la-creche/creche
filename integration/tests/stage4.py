@@ -37,7 +37,7 @@ Two notes a reader needs.
    turn UNDER the TUI's lease runs it through `attendance` as `door-tui`. That
    is the only TUI-door turn a journal can hold, and it is what proves the
    lease and the ordering. `Stack.attendance_as` is the same argument packet
-   CS makes for `managerd`: no door sits in front of the call.
+   CS makes for `caregiver`: no door sits in front of the call.
 2. **The fake Open WebUI serves on its own thread.** `HttpChatApi` is
    synchronous, and `attendance` runs it on a worker thread (contract 02 §10.4
    rule 5). A fake on this test's event loop could not answer while such a
@@ -72,17 +72,18 @@ from agent_door_tui.config import TuiConfig
 from agent_door_tui.launch import TerminalRunner
 from agent_door_tui.picker import ScriptedTerminal
 from agent_door_tui.status import StatusFiles
-from agent_managerd import paths as managerd_paths
-from agent_managerd.apply import ApplyResult, apply_once
-from agent_managerd.driver import FakeDriver
-from agent_managerd.litellm_keys import FakeLiteLLMKeys
 from attendance.api import DOOR_INSTANCE_HEADER
 from attendance.auth import Principal
 from attendance.config import Config
+from caregiver.apply import ApplyResult, apply_once
+from caregiver.driver import FakeDriver
+from caregiver.litellm_keys import FakeLiteLLMKeys
 from conftest import chat_body, owui_headers
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from stack import FAMILY, LOCK_BEAT_MS, Stack, fake_pi_script, repo_root
+
+from caregiver import paths as caregiver_paths
 
 #: The two attended families stage 4 asks about, plus the delegate contract
 #: 01 §5.3 makes them name. `chat` is the stack's own family and is not in
@@ -502,7 +503,7 @@ class Stage4:
         return registry_root
 
     def mounts_of(self, family: str) -> tuple[str, ...]:
-        """Every path `managerd` told the driver to mount for one family.
+        """Every path `caregiver` told the driver to mount for one family.
 
         This is contract 05 §4.3's own argument list, which is as close to
         `sbx create` as a Mac reaches. What only the host can prove is that
@@ -520,9 +521,9 @@ class Stage4:
         return tuple(found)
 
     def family_token(self, family: str) -> str:
-        """The family token `managerd` minted, as the sandbox holds it."""
+        """The family token `caregiver` minted, as the sandbox holds it."""
         body = json.loads(
-            managerd_paths.creds_path(self.stack.state_root, family).read_text(encoding="utf-8")
+            caregiver_paths.creds_path(self.stack.state_root, family).read_text(encoding="utf-8")
         )
 
         return str(body["pep_token"])

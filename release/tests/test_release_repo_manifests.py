@@ -147,7 +147,7 @@ def test_every_venv_component_builds_a_self_contained_tree(found: ManifestSet) -
     a tree built without this flag holds the third-party packages and reads
     every first-party module out of the repository it was built from.
 
-    An editable tree names `/opt/agent-control/managerd/src` in its `.pth`
+    An editable tree names `/opt/agent-control/caregiver/src` in its `.pth`
     lines, so `agent-control-deploy` changes the code every rework service
     loads at its next restart, and `.prev` holds the same lines, so a
     rollback puts the old third-party packages back and keeps the NEW

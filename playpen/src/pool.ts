@@ -94,9 +94,9 @@ type SpawnOutcome =
 enum Staleness {
   /** Nothing moved. The process serves the turn. */
   None = "none",
-  /** `managerd` rewrote the family config mount and raised `config_rev`. */
+  /** `caregiver` rewrote the family config mount and raised `config_rev`. */
   Config = "config",
-  /** `managerd` rotated the family key and token (§12 rule 9). */
+  /** `caregiver` rotated the family key and token (§12 rule 9). */
   Credentials = "credentials",
   /** The cwd, the session store, the model, or the process itself. */
   Binding = "binding",

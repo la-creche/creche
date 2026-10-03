@@ -1,4 +1,4 @@
-"""Which sandbox serves a terminal, from `managerd`'s status document.
+"""Which sandbox serves a terminal, from `caregiver`'s status document.
 
 Contract 05 §2 and §4. The door needs two values before it can exec: the
 sandbox id and the host path of that sandbox's `supervisor.env`. It refuses
@@ -193,7 +193,7 @@ def test_a_huge_document_is_refused_unread(tmp_path: Path) -> None:
 
 
 def test_a_stale_document_warns_and_still_serves(tmp_path: Path) -> None:
-    """Contract 05 §2 rule 5. A stale document means `managerd` is not running."""
+    """Contract 05 §2 rule 5. A stale document means `caregiver` is not running."""
     write_status(tmp_path, written_at="2020-01-01T00:00:00Z")
 
     assert "stale" in read(tmp_path).warning

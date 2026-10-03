@@ -13,7 +13,7 @@ Gate 1 is what makes the severe case safe: a family that has never
 validated has no status document worth trusting, so it never reaches
 gate 2 at all. `README.md`'s Known gaps names the narrower race this
 does NOT close (an already-valid family edited to ADD a webhook name
-managerd has not yet re-validated).
+caregiver has not yet re-validated).
 
 A route also needs its own token file (`tokens.py`). Three ways to be
 "not a route" — unknown family, undeclared name, unconfigured token —

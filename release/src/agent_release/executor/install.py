@@ -224,7 +224,7 @@ SHORT_TIMEOUT_S: Final = 30.0
 #: Step 9's restart. `systemctl restart` answers once the unit has stopped
 #: and started again, and systemd bounds both (`TimeoutStopSec`, then
 #: SIGKILL; `TimeoutStartSec`). So this only has to sit above the largest
-#: sum a component unit allows: managerd's 360 s drain plus a 90 s start.
+#: sum a component unit allows: caregiver's 360 s drain plus a 90 s start.
 #: `SHORT_TIMEOUT_S` cut attendance's 60 s stop on 2026-10-01 and restored a
 #: healthy release. `test_a_restart_outlasts_every_units_own_stop_and_start`
 #: holds every unit under it.
@@ -1121,7 +1121,7 @@ def exec_start_programs(text: str) -> tuple[str, ...]:
 
 def _logical_lines(text: str) -> list[str]:
     """Unit-file lines with every backslash continuation joined onto one.
-    `agent-managerd.service` writes its arguments over four."""
+    `creche-caregiver.service` writes its arguments over four."""
     joined: list[str] = []
     carried = ""
     for line in text.splitlines():

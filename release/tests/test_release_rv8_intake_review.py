@@ -128,10 +128,10 @@ def test_a_second_fill_of_one_name_is_refused(secrets_dir: Path) -> None:
 
 
 def test_the_gap_directory_is_not_inside_the_secrets_directory() -> None:
-    """`managerd` writes the gap as the operator. If the gap directory sits inside
+    """`caregiver` writes the gap as the operator. If the gap directory sits inside
     the secrets directory, that directory cannot be root's alone, and the
     test above has nothing left to protect."""
-    from agent_managerd.mcp_release import GAPS_DIR, SECRETS_DIR
+    from caregiver.mcp_release import GAPS_DIR, SECRETS_DIR
 
     assert SECRETS_DIR not in GAPS_DIR.parents
 

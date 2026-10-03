@@ -8,9 +8,9 @@ that only a fake accepted would pass there and hang here.
 One scenario, contract 05 §5, `mode: drain` on an idle family:
 
 1. A chat answers on `chat-s1`. A real playpen holds its pi process.
-2. `managerd` publishes `chat-s2` and makes the one call.
+2. `caregiver` publishes `chat-s2` and makes the one call.
 3. The old playpen exits, so the sandbox is free the moment the answer
-   lands and `managerd` may run §4.4 on it.
+   lands and `caregiver` may run §4.4 on it.
 4. The same chat answers again, on a second real playpen, in `chat-s2`.
 """
 
@@ -48,7 +48,7 @@ async def test_a_drain_moves_a_live_chat_to_a_new_sandbox(stack: Stack) -> None:
 
     assert len(retiring) == 1, "the first turn should hold one playpen open"
 
-    # `managerd` publishes the replacement, then makes its one call.
+    # `caregiver` publishes the replacement, then makes its one call.
     stack.write_status(sandboxes=((SANDBOX, "ready"), (NEXT_SANDBOX, "ready")))
     body = await _switch(stack)
 
@@ -72,8 +72,8 @@ async def test_a_drain_moves_a_live_chat_to_a_new_sandbox(stack: Stack) -> None:
 
 
 async def _switch(stack: Stack) -> dict[str, Any]:
-    """`managerd`'s one call, with the one token that reaches `/internal/*`."""
-    client = stack.attendance_as(Principal.MANAGERD)
+    """`caregiver`'s one call, with the one token that reaches `/internal/*`."""
+    client = stack.attendance_as(Principal.CAREGIVER)
     response = await client.post(
         SWITCH_PATH,
         json={

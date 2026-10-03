@@ -258,7 +258,7 @@ def test_a_file_with_no_quiet_is_not_gated(tmp_path: Path) -> None:
 
 
 def test_an_invalid_file_is_not_gated(tmp_path: Path) -> None:
-    """`managerd` serves the last good definition. A check read from the
+    """`caregiver` serves the last good definition. A check read from the
     refused one is not one to trust, so the firing goes ahead."""
     _write(tmp_path, QUIET_ONLY.replace("floor_hours: 12", "floor_hours: 0"))
 

@@ -99,8 +99,8 @@ def test_a_declared_webhook_with_no_token_file_gets_no_route(tmp_path: Path) -> 
     assert table.get("scrum-lead", "deploy-notify") is None
 
 
-def test_a_token_managerd_mints_later_is_served_on_the_next_refresh(tmp_path: Path) -> None:
-    """`managerd` mints the file, and contract 05 §6.4 rule 6 makes a new
+def test_a_token_caregiver_mints_later_is_served_on_the_next_refresh(tmp_path: Path) -> None:
+    """`caregiver` mints the file, and contract 05 §6.4 rule 6 makes a new
     one live within `refresh_s`. A door that only read it at startup would
     answer 404 until the next restart."""
     registry_root = tmp_path / "registry"

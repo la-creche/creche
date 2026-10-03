@@ -40,7 +40,7 @@ describe("a stale config_rev", () => {
     expect(harness.of("turn_settled")[0]?.resident).toBe(true);
     expect(harness.of("process_exit")).toHaveLength(0);
 
-    // `managerd` rewrote the mount, so the held process holds the old
+    // `caregiver` rewrote the mount, so the held process holds the old
     // `runtime.json`, the old `instructions.md` and the old skills.
     harness.startTurn("owui-config", turnId(2), { config_rev: "reg-newrev" });
 

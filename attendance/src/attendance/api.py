@@ -1,7 +1,7 @@
 """The HTTP surface (contract 02 §3, §5).
 
 Eleven operations for the doors and the noticeboard, plus the single internal path
-`managerd` calls. The shapes come from the contract, not from a framework:
+`caregiver` calls. The shapes come from the contract, not from a framework:
 every body is parsed by `requests.py` so one refusal table serves every route.
 
 `attendance` never serves the OpenAI shape. A door does that (contract 02 §1).

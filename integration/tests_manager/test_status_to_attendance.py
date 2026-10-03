@@ -1,6 +1,6 @@
 """Seam 4: the status document `apply_once` wrote, read by the real `attendance`.
 
-`attendance` never calls `managerd`. One file carries everything it knows
+`attendance` never calls `caregiver`. One file carries everything it knows
 about a family (contract 05 §2), and `attendance`'s own tests have always
 hand-written that file. These tests hand it the real one.
 
@@ -20,8 +20,6 @@ import json
 from pathlib import Path
 
 import pytest
-from agent_managerd import paths as managerd_paths
-from agent_managerd.playpen_env import read_playpen_env
 from attendance.auth import Principal
 from attendance.channel import SandboxDial
 from attendance.config import Config
@@ -32,6 +30,9 @@ from attendance.requests import CreateRequest, RunTurnRequest
 from attendance.service import SessionService
 from attendance.states import SessionKind, TurnState
 from attendance_harness import FakeFleet, PlaypenPlan, make_config
+from caregiver.playpen_env import read_playpen_env
+
+from caregiver import paths as caregiver_paths
 
 from .conftest import FAMILY, Applied
 
@@ -110,19 +111,19 @@ def test_a_reapply_keeps_the_document_readable(reader: StatusReader, applied: Ap
     assert [box.id for box in status.sandboxes] == [SANDBOX]
 
 
-# --- the env file managerd wrote, carried by the command attendance builds --
+# --- the env file caregiver wrote, carried by the command attendance builds --
 
 
-def test_the_reader_finds_the_env_file_managerd_wrote(
+def test_the_reader_finds_the_env_file_caregiver_wrote(
     reader: StatusReader, applied: Applied
 ) -> None:
     """Contract 05 §4.1. The path travels in the status document and
-    nowhere else: `attendance` never calls `managerd`."""
+    nowhere else: `attendance` never calls `caregiver`."""
     status = reader.read(FAMILY)
     assert status is not None
     box = status.sandbox_by_id(SANDBOX)
     assert box is not None
-    env_path = managerd_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
+    env_path = caregiver_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
     assert box.playpen_env == str(env_path)
     assert Path(box.playpen_env).is_file()
 
@@ -131,7 +132,7 @@ def test_the_env_file_names_the_directories_apply_mounted(applied: Applied) -> N
     """The same three host paths `_sandbox_spec` handed `sbx create`. A
     mount's in-VM path IS its host path, so there is nothing to translate
     between the two sides (contract 03 §7.1)."""
-    env_path = managerd_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
+    env_path = caregiver_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
     values = read_playpen_env(env_path)
     spec = applied.driver.calls[0].args[0]
     mounted = [mount.path for mount in getattr(spec, "mounts", ())]
@@ -146,7 +147,7 @@ def test_the_default_command_carries_that_file_and_the_id(
     reader: StatusReader, applied: Applied
 ) -> None:
     """The end of the seam: what `attendance` would run on the host, built
-    from `managerd`'s own document with no value typed by hand.
+    from `caregiver`'s own document with no value typed by hand.
 
     `sbx exec` forwards no host environment, so a command without
     `--env-file` starts a playpen that finds none of its three mounts;
@@ -158,7 +159,7 @@ def test_the_default_command_carries_that_file_and_the_id(
     assert box is not None
 
     argv = build_argv(DEFAULT_COMMAND, SandboxDial(SANDBOX, box.playpen_env))
-    env_path = managerd_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
+    env_path = caregiver_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
 
     assert argv[:2] == ["sbx", "exec"]
     assert argv[argv.index("--env-file") + 1] == str(env_path)
@@ -169,7 +170,7 @@ def test_the_default_command_carries_that_file_and_the_id(
 
 
 def build_service(applied: Applied, tmp_path: Path) -> tuple[SessionService, FakeFleet]:
-    """A real `attendance` whose state root IS the one `managerd` wrote."""
+    """A real `attendance` whose state root IS the one `caregiver` wrote."""
     base = make_config(tmp_path / "attendance")
     config = Config(
         sessions_root=applied.sessions_root,
@@ -188,11 +189,11 @@ def build_service(applied: Applied, tmp_path: Path) -> tuple[SessionService, Fak
     return service, fleet
 
 
-async def test_a_turn_reaches_the_sandbox_managerd_created(
+async def test_a_turn_reaches_the_sandbox_caregiver_created(
     applied: Applied, tmp_path: Path
 ) -> None:
-    """The point of the seam: the document `managerd` wrote is enough for
-    `attendance` to dial the sandbox `managerd` created."""
+    """The point of the seam: the document `caregiver` wrote is enough for
+    `attendance` to dial the sandbox `caregiver` created."""
     service, fleet = build_service(applied, tmp_path)
     try:
         service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
@@ -204,7 +205,7 @@ async def test_a_turn_reaches_the_sandbox_managerd_created(
         assert fleet.dials == [SANDBOX]
         # Contract 03 §7.1: the dial carries the file, not only the id.
         assert fleet.env_files == [
-            str(managerd_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX))
+            str(caregiver_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX))
         ]
     finally:
         await service.close()

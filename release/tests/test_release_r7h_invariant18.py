@@ -13,7 +13,7 @@ This is the same seven steps with those three closed.
 |---|---|---|---|
 | 1 the operator writes one file | a human | the test writes it | a human |
 | 2 CI validates it | CI | `agent_family`, then root's own reader | CI |
-| 3 the reconciler files it | `managerd` | **`loop.look`, the real pass** | nothing |
+| 3 the reconciler files it | `caregiver` | **`loop.look`, the real pass** | nothing |
 | 4 the operator pastes | a human, ROOT seals | **the real intake, TLS, real `sops`** | a human |
 | 5 the operator taps | a human | a granting transport | a human |
 | 6 the PEP reloads | root writes the roster | **`executor.roster`, the real one** | nothing |
@@ -48,14 +48,6 @@ from urllib.parse import urlencode, urlsplit
 
 import pytest
 import yaml
-from agent_managerd.driver import FakeDriver
-from agent_managerd.egress import EgressConfig
-from agent_managerd.litellm_keys import FakeLiteLLMKeys
-from agent_managerd.loop import LoopConfig, LoopState, look
-from agent_managerd.mcp_release import MARKER_NAME, McpPaths
-from agent_managerd.reconcile import Actors
-from agent_managerd.switch import FakeSwitchClient
-from agent_managerd.timers import FakeUnits
 from agent_pep.family_decisions import decide_family
 from agent_pep.family_grants import FamilyGrants, token_digest
 from agent_pep.mcp_client import Launcher, StdioUpstreamPool
@@ -76,6 +68,14 @@ from agent_release.intake.run import Wiring as IntakeWiring
 from agent_release.intake.service import Intake
 from agent_release.intake.store import SecretStore
 from agent_release.intake.token import Tokens
+from caregiver.driver import FakeDriver
+from caregiver.egress import EgressConfig
+from caregiver.litellm_keys import FakeLiteLLMKeys
+from caregiver.loop import LoopConfig, LoopState, look
+from caregiver.mcp_release import MARKER_NAME, McpPaths
+from caregiver.reconcile import Actors
+from caregiver.switch import FakeSwitchClient
+from caregiver.timers import FakeUnits
 from release_executor_fixtures import (
     SHA_OF,
     FakeRun,
@@ -155,13 +155,13 @@ STUB_WRAPPER: Final = f'#!/bin/sh\nexec "{sys.executable}" "{STUB}" "$@"\n'
 
 
 class Bench:
-    """One host: a registry, `managerd`'s state, root's spool, root's
+    """One host: a registry, `caregiver`'s state, root's spool, root's
     secrets, root's MCP root and root's roster, all under `tmp_path`."""
 
     def __init__(self, tmp_path: Path) -> None:
         self.tmp = tmp_path
         self.registry = _made(tmp_path / "corpus" / "agent-registry")
-        self.state = _made(tmp_path / "managerd-state")
+        self.state = _made(tmp_path / "caregiver-state")
         self.spool = make_spool_dirs(tmp_path)
         self.secrets = _made(tmp_path / "secrets", mode=0o700)
         self.gaps = _made(tmp_path / "secret-gaps")
@@ -187,7 +187,7 @@ class Bench:
         )
 
     def reconcile(self) -> None:
-        """One real pass of `managerd`'s loop, registry read and all."""
+        """One real pass of `caregiver`'s loop, registry read and all."""
         config = LoopConfig(
             registry_root=self.registry,
             state_root=self.state,

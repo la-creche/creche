@@ -124,7 +124,7 @@ function sessionId(): string {
  * it (contract 03 §7.7).
  *
  * The file is rewritten only when the offered set MOVED, or when this is the
- * process's first manifest. `managerd` mints a fresh revision on every grant
+ * process's first manifest. `caregiver` mints a fresh revision on every grant
  * write, including a token rotation that changes no tool, and a file that
  * moved for that would have the playpen tell a reader about a change that
  * did not happen.

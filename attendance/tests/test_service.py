@@ -227,7 +227,7 @@ async def test_a_new_revision_reaches_the_next_turn(tmp_path: Path) -> None:
     harness.create()
     await harness.full_turn()
 
-    # `managerd` publishes a new revision under the running service.
+    # `caregiver` publishes a new revision under the running service.
     write_status(harness.config.state_root, config_rev=NEXT_CONFIG_REV)
     await harness.start_turn()
 
@@ -809,7 +809,7 @@ async def test_a_document_with_no_env_file_is_a_fault_not_a_guess(tmp_path: Path
 
 
 async def test_the_env_file_path_reaches_the_channel(tmp_path: Path) -> None:
-    """The path `managerd` published is what `attendance` dials with."""
+    """The path `caregiver` published is what `attendance` dials with."""
     harness = await build(tmp_path)
     harness.create()
     await harness.start_turn()

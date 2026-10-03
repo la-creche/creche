@@ -31,15 +31,16 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from agent_managerd import paths
-from agent_managerd.driver import FakeDriver, SandboxSpec
-from agent_managerd.egress import EgressConfig
-from agent_managerd.litellm_keys import FakeLiteLLMKeys
-from agent_managerd.loop import LoopConfig, LoopState, Passes, look
-from agent_managerd.reconcile import Actors
-from agent_managerd.switch import FakeSwitchClient
-from agent_managerd.timers import FakeUnits
 from attendance.family_status import FamilyState, StatusReader, check_may_serve
+from caregiver.driver import FakeDriver, SandboxSpec
+from caregiver.egress import EgressConfig
+from caregiver.litellm_keys import FakeLiteLLMKeys
+from caregiver.loop import LoopConfig, LoopState, Passes, look
+from caregiver.reconcile import Actors
+from caregiver.switch import FakeSwitchClient
+from caregiver.timers import FakeUnits
+
+from caregiver import paths
 
 from .conftest import CHAT_FAMILY, FAMILY, IMAGE, write_family
 

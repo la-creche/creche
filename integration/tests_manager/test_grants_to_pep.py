@@ -1,6 +1,6 @@
 """Seam 1: the grant file and the family token, against the real PEP.
 
-`managerd` writes `grants/<family>.json` and `creds.json`. The PEP reads the
+`caregiver` writes `grants/<family>.json` and `creds.json`. The PEP reads the
 first and authenticates with a digest of the token in the second. Both sides
 were built from contract 04 by different agents, and neither ever saw the
 other's output. These tests put the real writer and the real reader on the
@@ -57,7 +57,7 @@ def call(pep: TestClient, applied: Applied, tool: str, args: dict[str, Any]) -> 
     return pep.post("/call", json={"tool": tool, "args": args}, headers=auth(applied))
 
 
-# --- the token managerd minted -------------------------------------------
+# --- the token caregiver minted -------------------------------------------
 
 
 def test_the_minted_token_resolves_to_the_family(pep: TestClient, applied: Applied) -> None:
@@ -91,7 +91,7 @@ def test_the_manifest_carries_the_model_alias(pep: TestClient, applied: Applied)
     assert manifest(pep, applied)["model_alias"] == CHAT_FAMILY["model"]["router"]
 
 
-def test_the_manifest_rev_is_the_one_managerd_wrote(pep: TestClient, applied: Applied) -> None:
+def test_the_manifest_rev_is_the_one_caregiver_wrote(pep: TestClient, applied: Applied) -> None:
     written = json.loads(applied.grant_path.read_text(encoding="utf-8"))["rev"]
     assert manifest(pep, applied)["rev"] == written
 

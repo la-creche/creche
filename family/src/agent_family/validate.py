@@ -76,7 +76,7 @@ RELEASABLE: Final = frozenset(
     {
         "pep",
         "attendance",
-        "managerd",
+        "caregiver",
         "noticeboard",
         "playpen",
         "mcp-servers",
@@ -86,11 +86,12 @@ RELEASABLE: Final = frozenset(
 )
 
 #: Old names a family file may still list. `sandbox-image` became `playpen`,
-#: `ui` became `noticeboard` and `sessiond` became `attendance`. The
-#: registry's family file says the old names until its own change lands
-#: after these deploy. Each rename adds its old name. The set shrinks in
-#: one cleanup after the registry's family file names the new components.
-RETIRING_NAMES: Final = frozenset({"sandbox-image", "ui", "sessiond"})
+#: `ui` became `noticeboard`, `sessiond` became `attendance` and `managerd`
+#: became `caregiver`. The registry's family file says the old names until
+#: its own change lands after these deploy. Each rename adds its old name.
+#: The set shrinks in one cleanup after the registry's family file names
+#: the new components.
+RETIRING_NAMES: Final = frozenset({"sandbox-image", "ui", "sessiond", "managerd"})
 
 #: Probe 0a measured 155 to 170 MB per idle held-open pi process and 62 MB for
 #: the playpen (contract 01 §3.9). The warning uses the LOW end, so it fires
@@ -110,7 +111,7 @@ INVOKE_AGENT: Final = "invoke_agent"
 
 
 class HostFacts(Protocol):
-    """What only the host knows. `managerd` implements it against LiteLLM and
+    """What only the host knows. `caregiver` implements it against LiteLLM and
     the real filesystem. Tests implement it in three lines."""
 
     def model_aliases(self) -> frozenset[str]:
@@ -368,7 +369,7 @@ def _check_withheld(
 ) -> None:
     """§5.5 rule 7: the operator lands every platform change. `main` may carry no
     branch protection, so a family holding the platform server's merge could land
-    a registry change, its own grants included, that `managerd` then applies.
+    a registry change, its own grants included, that `caregiver` then applies.
     `all` is checked through its expansion: a server file that declares the
     merge again must not re-grant it quietly."""
     if server != PLATFORM_SERVER:

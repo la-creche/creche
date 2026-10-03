@@ -9,8 +9,8 @@ sees it (§8.2), and the prompt reaches the journal before `start_turn`
 reaches the channel, because a new pi session that dies before its first
 assistant message leaves no file on disk at all (§8.2).
 
-`attendance` never calls `managerd`. Everything it knows about a family comes
-from the status document `managerd` publishes (contract 05 §2).
+`attendance` never calls `caregiver`. Everything it knows about a family comes
+from the status document `caregiver` publishes (contract 05 §2).
 """
 
 from __future__ import annotations
@@ -964,9 +964,9 @@ class SessionService:
     # ------------------------------------------------------- sandbox switch
 
     async def switch_sandbox(self, principal: Principal, request: SwitchRequest) -> dict[str, Any]:
-        """Contract 05 §5. `managerd`'s one call into this service.
+        """Contract 05 §5. `caregiver`'s one call into this service.
 
-        The work runs in its own task, so a `managerd` that gives up and
+        The work runs in its own task, so a `caregiver` that gives up and
         retries joins the run it already started instead of tearing one
         sandbox down twice (§5.3 rule 7).
         """
@@ -1044,7 +1044,7 @@ class SessionService:
         one place that can prove the sandbox answers. It runs before rule
         1's pin, so a handshake that cannot pass moves no turn, drains
         nothing and destroys nothing: the family keeps serving on the
-        outgoing sandbox and a later `managerd` pass retries.
+        outgoing sandbox and a later `caregiver` pass retries.
 
         No pi process starts here. §5.3 rule 5 still holds — the first turn
         on the new sandbox pays its own cold start.
@@ -1244,7 +1244,7 @@ class SessionService:
                 "persona_hash": persona.digest or None,
                 # Contract 02 §5.1: a turn is served from a status document
                 # over 90 seconds old and says so here. Refusing would make a
-                # `managerd` restart a chat outage, which invariant 1 forbids.
+                # `caregiver` restart a chat outage, which invariant 1 forbids.
                 "status_stale": status.is_stale(),
             },
         )
@@ -1558,7 +1558,7 @@ class SessionService:
             # Two ways the sandbox cannot serve. An old playpen may still
             # be alive in the VM, so no second one may start there, and one
             # that answered `fatal` will answer the same way on every dial.
-            # `managerd` replaces the sandbox, not this service (§11.4 rule 6).
+            # `caregiver` replaces the sandbox, not this service (§11.4 rule 6).
             self._settle(live, TurnState.FAILED, TurnReason.SANDBOX_LOST, str(error))
             return
         except (ChannelClosed, HandshakeError, ValueError) as error:
@@ -1620,7 +1620,7 @@ class SessionService:
 
         Re-reading the document per turn instead would hand the family to a
         replacement with no switch at all. Contract 05 §4.3 step 5b has
-        `managerd` publish the incoming sandbox BEFORE it calls, so between
+        `caregiver` publish the incoming sandbox BEFORE it calls, so between
         the publish and the answer both sandboxes are `creating` and rule
         1's "the newest `creating` one" names the wrong one.
         """

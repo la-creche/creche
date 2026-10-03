@@ -249,7 +249,7 @@ def test_the_tree_itself_counts_as_inside_itself(bench: Bench) -> None:
 
 
 def test_an_operator_user_unit_is_read_from_its_own_directory(tmp_path: Path) -> None:
-    """`attendance`, `managerd` and the noticeboard are USER units, installed under
+    """`attendance`, `caregiver` and the noticeboard are USER units, installed under
     `~operator/.config/systemd/user` by `bin/rework-cutover.sh`. Root reads the
     FILE: `systemctl --user show` needs the operator's own bus."""
     bench = _make_bench(tmp_path, "noticeboard", NOTICEBOARD_UNIT)
@@ -381,10 +381,10 @@ def test_a_unit_with_no_exec_start_is_refused(bench: Bench) -> None:
 
 
 def test_a_continued_exec_start_line_is_one_line() -> None:
-    """`agent-managerd.service` writes its arguments over four lines."""
-    text = "[Service]\nExecStart=/a/bin/managerd serve \\\n  --registry /srv \\\n  --json\n"
+    """`creche-caregiver.service` writes its arguments over four lines."""
+    text = "[Service]\nExecStart=/a/bin/caregiver serve \\\n  --registry /srv \\\n  --json\n"
 
-    assert exec_start_programs(text) == ("/a/bin/managerd",)
+    assert exec_start_programs(text) == ("/a/bin/caregiver",)
 
 
 @pytest.mark.parametrize("prefix", ("", "-", "@", "+", "!", "!!", "-@"))

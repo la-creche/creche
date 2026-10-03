@@ -88,15 +88,15 @@ said "pep/tests, for pep/src/agent_pep/app.py and 1 more" \
   && pass "the gate says which path picked the suite" \
   || fail "no reason line for pep/tests: $(cat "$OUT")"
 
-gate --tests-for managerd/tests/managerd_mws_registry/registry.yaml
-[[ "$PYTEST" == "$FULL managerd/tests $ALWAYS" ]] \
+gate --tests-for caregiver/tests/caregiver_mws_registry/registry.yaml
+[[ "$PYTEST" == "$FULL caregiver/tests $ALWAYS" ]] \
   && pass "a test fixture directory counts as its package" \
   || fail "a fixture path: pytest line '$PYTEST'"
 
-gate --tests-for pep/pyproject.toml managerd/AGENTS.md bin/lib/docsrule.sh
+gate --tests-for pep/pyproject.toml caregiver/AGENTS.md bin/lib/docsrule.sh
 SCOPE="${PYTEST#"$FULL"}"
 [[ "$RC" == "0" && "$PYTEST" == "$FULL "* ]] \
-  && [[ "$(words "$SCOPE")" == "$(words "bin/tests managerd/tests pep/tests")" ]] \
+  && [[ "$(words "$SCOPE")" == "$(words "bin/tests caregiver/tests pep/tests")" ]] \
   && pass "three packages run three suites, bin/tests already holding $ALWAYS" \
   || fail "three packages: rc=$RC, pytest line '$PYTEST'"
 
@@ -183,18 +183,18 @@ push() {
 BASE="$(commit README.md)"
 git -C "$REPO" checkout -q -b topic
 PEP="$(commit pep/src/agent_pep/app.py)"
-MGR="$(commit managerd/src/agent_managerd/loop.py)"
+MGR="$(commit caregiver/src/caregiver/loop.py)"
 git -C "$REPO" checkout -q main
 DOCS="$(commit docs/later.md)"
 git -C "$REPO" update-ref refs/remotes/origin/main "$DOCS"
 
 push "refs/heads/topic $MGR refs/heads/topic $PEP"
-[[ "$RC" == "0" && "$ARGV" == "--tests-for managerd/src/agent_managerd/loop.py" ]] \
+[[ "$RC" == "0" && "$ARGV" == "--tests-for caregiver/src/caregiver/loop.py" ]] \
   && pass "an updated branch tests remote sha..local sha" \
   || fail "updated branch: rc=$RC, gate got '$ARGV'"
 
 push "refs/heads/topic $MGR refs/heads/topic $ZERO"
-[[ "$ARGV" == "--tests-for managerd/src/agent_managerd/loop.py pep/src/agent_pep/app.py" ]] \
+[[ "$ARGV" == "--tests-for caregiver/src/caregiver/loop.py pep/src/agent_pep/app.py" ]] \
   && pass "a new branch tests from its merge-base, not from origin/main's tip" \
   || fail "new branch: gate got '$ARGV'"
 
@@ -213,7 +213,7 @@ push "(delete) $ZERO refs/heads/topic $MGR"
 push "(delete) $ZERO refs/heads/old $PEP" \
   "refs/heads/a $MGR refs/heads/a $BASE" \
   "refs/heads/b $MGR refs/heads/b $PEP"
-[[ "$ARGV" == "--tests-for managerd/src/agent_managerd/loop.py pep/src/agent_pep/app.py" ]] \
+[[ "$ARGV" == "--tests-for caregiver/src/caregiver/loop.py pep/src/agent_pep/app.py" ]] \
   && pass "several refs test the union of their paths, once each" \
   || fail "several refs: gate got '$ARGV'"
 
@@ -302,7 +302,7 @@ done
 
 push "refs/heads/prose $PROSE refs/heads/prose $ZERO" \
   "refs/heads/topic $MGR refs/heads/topic $PEP"
-[[ "$ARGV" == "--tests-for README.md docs/rework/runbook.md managerd/src/agent_managerd/loop.py pep/AGENTS.md" ]] \
+[[ "$ARGV" == "--tests-for README.md caregiver/src/caregiver/loop.py docs/rework/runbook.md pep/AGENTS.md" ]] \
   && pass "one ref that is not docs only makes the whole push scoped" \
   || fail "docs and code refs: gate got '$ARGV'"
 
@@ -321,9 +321,9 @@ push "refs/heads/catchup $CAUGHT_UP refs/heads/catchup $PUSHED"
   && pass "a push that merged main in counts from main's tip, not its old head" \
   || fail "a push that merged main: gate got '$ARGV'"
 
-OWN="$(commit managerd/src/agent_managerd/own.py)"
+OWN="$(commit caregiver/src/caregiver/own.py)"
 push "refs/heads/catchup $OWN refs/heads/catchup $CAUGHT_UP"
-[[ "$ARGV" == "--tests-for managerd/src/agent_managerd/own.py" ]] \
+[[ "$ARGV" == "--tests-for caregiver/src/caregiver/own.py" ]] \
   && pass "the push after that merge counts from its old head again" \
   || fail "after the merge: gate got '$ARGV'"
 

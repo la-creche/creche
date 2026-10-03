@@ -7,7 +7,7 @@ removal applies at once." One action here means one edit to one registry
 file. Nothing else is touched, and every assertion reads something that
 crossed a process boundary.
 
-    family.yaml ──► managerd ──► grants, config mount, status.json
+    family.yaml ──► caregiver ──► grants, config mount, status.json
                           └────► POST /internal/switch-sandbox ──► attendance
                                                                       │
     Open WebUI ──► door-owui ──────────────────────────────────────►──┘
@@ -108,7 +108,7 @@ async def test_a_removed_tool_is_refused_on_the_next_call(stack: Stack, tmp_path
     """Invariant 9's last sentence: a removal applies at once.
 
     No sandbox is replaced and no process is restarted. The next `/call`
-    the PEP decides reads the file `managerd` has already rewritten.
+    the PEP decides reads the file `caregiver` has already rewritten.
     """
     both = {EMBED: {}, HA_CALL: {"allow": HA_ALLOW}}
     registry = write_registry(tmp_path / "registry", verbs=both)
@@ -248,7 +248,7 @@ async def test_a_switch_that_cannot_complete_keeps_serving(stack: Stack, tmp_pat
     already serving on, both sandboxes are accounted for, and the document
     says which sandbox could not start.
 
-    Until packet FX2, `managerd` dropped `attendance`'s `sandbox_start_failed`,
+    Until packet FX2, `caregiver` dropped `attendance`'s `sandbox_start_failed`,
     so this scenario could only assert the `reconcile` block: "an operator
     sees that a switch is outstanding, but not why". The fault now says why,
     and the family is `degraded` rather than `reconciling` because §3's
@@ -287,7 +287,7 @@ async def test_a_switch_that_cannot_complete_keeps_serving(stack: Stack, tmp_pat
 
 
 async def test_a_later_pass_completes_the_refused_switch(stack: Stack, tmp_path: Path) -> None:
-    """The converge half of scenario 6. `managerd` writes the env file at
+    """The converge half of scenario 6. `caregiver` writes the env file at
     every create, so the pass after the one that could not finish hands the
     playpen its mounts and the same call succeeds."""
     registry = write_registry(tmp_path / "registry")
@@ -310,7 +310,7 @@ async def test_a_later_pass_completes_the_refused_switch(stack: Stack, tmp_path:
     assert _sandboxes_of(stack, session_of(chat))[-1] == NEXT_SANDBOX
 
 
-async def test_the_managerd_token_clears_the_internal_check(stack: Stack, tmp_path: Path) -> None:
+async def test_the_caregiver_token_clears_the_internal_check(stack: Stack, tmp_path: Path) -> None:
     """Kept from packet CM's own test. A refusal for any reason raises the
     same `SwitchError`, so the scenarios above would pass even with a token
     `attendance` rejects. This asks `attendance` directly."""
@@ -318,7 +318,7 @@ async def test_the_managerd_token_clears_the_internal_check(stack: Stack, tmp_pa
     manager = Manager(stack, registry)
     await manager.pass_once()
 
-    response = await _switch_as_managerd(stack, to=SANDBOX)
+    response = await _switch_as_caregiver(stack, to=SANDBOX)
 
     # Not 401 and not 404: the token authenticates, the principal may make
     # an internal call, and the body parsed. Only the pair is refused,
@@ -358,13 +358,13 @@ async def test_an_invalid_file_reports_and_keeps_serving(stack: Stack, tmp_path:
     assert _sandboxes_of(stack, session_of(chat)) == [SANDBOX, SANDBOX]
 
 
-# --- 8. managerd killed mid-replacement -------------------------------------
+# --- 8. caregiver killed mid-replacement -------------------------------------
 
 
 async def test_a_kill_between_publish_and_destroy_converges(stack: Stack, tmp_path: Path) -> None:
     """Contract 05 §4.3 then §5 then §4.4, interrupted in the middle.
 
-    The first `managerd` publishes the replacement and dies before the
+    The first `caregiver` publishes the replacement and dies before the
     destroy. The second one adopts what it finds rather than building a
     third sandbox, and at no moment did either grant a sandbox more reach
     than the family file allows (invariant 9, narrowing before widening).
@@ -400,7 +400,7 @@ async def test_a_kill_between_publish_and_destroy_converges(stack: Stack, tmp_pa
 
 
 class _DieAfterPublish:
-    """A `managerd` that never reaches its own §5 call.
+    """A `caregiver` that never reaches its own §5 call.
 
     Contract 05 §4.3 step 5b publishes the replacement first, so this is
     the window between "new sandbox published" and "old sandbox destroyed"
@@ -412,9 +412,9 @@ class _DieAfterPublish:
         self._stack = stack
 
     def switch(self, request: object) -> object:
-        from agent_managerd.switch import SwitchError
+        from caregiver.switch import SwitchError
 
-        raise SwitchError("managerd was killed before the call was answered")
+        raise SwitchError("caregiver was killed before the call was answered")
 
 
 # --- reading what crossed a boundary ----------------------------------------
@@ -422,14 +422,14 @@ class _DieAfterPublish:
 
 def _family_reach() -> set[str]:
     """Every host an `egress: []` attended family may reach: the two plane
-    endpoints `managerd` adds itself (contract 05 §4.3 step 3)."""
-    from agent_managerd.egress import litellm_endpoint, pep_endpoint
+    endpoints `caregiver` adds itself (contract 05 §4.3 step 3)."""
+    from caregiver.egress import litellm_endpoint, pep_endpoint
 
     return {litellm_endpoint(), pep_endpoint()}
 
 
 def _grants(manager: Manager) -> Any:
-    """The PEP's own reader over the file `managerd` just wrote.
+    """The PEP's own reader over the file `caregiver` just wrote.
 
     Every lookup re-scans, which is what makes a tool change land per call
     (contract 04 §1.4). The HTTP path around it is proved in
@@ -438,7 +438,7 @@ def _grants(manager: Manager) -> Any:
     store = FamilyStore(manager.state_root / "grants", FaultWriter(manager.state_root / "pep-out"))
     found = store.lookup(FIXTURE_PEP_TOKEN)
 
-    assert found is not None, "the PEP does not recognise the token managerd published"
+    assert found is not None, "the PEP does not recognise the token caregiver published"
 
     return found
 
@@ -498,8 +498,8 @@ def _open_turns(stack: Stack, session: str) -> int:
     return kinds.count(TURN_STARTED) - sum(kinds.count(kind) for kind in TERMINAL_KINDS)
 
 
-async def _switch_as_managerd(stack: Stack, *, to: str) -> httpx.Response:
-    client = stack.attendance_as(Principal.MANAGERD)
+async def _switch_as_caregiver(stack: Stack, *, to: str) -> httpx.Response:
+    client = stack.attendance_as(Principal.CAREGIVER)
 
     return await client.post(
         SWITCH_PATH,

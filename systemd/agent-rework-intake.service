@@ -1,6 +1,6 @@
 # The secret intake (docs/rework/stage7-releases.md §4.3). SYSTEM unit, root.
 #
-# It watches /srv/agents/state/rework/secret-gaps/ for gaps managerd opened,
+# It watches /srv/agents/state/rework/secret-gaps/ for gaps caregiver opened,
 # mints one single-use fifteen-minute token per gap, pushes the operator one
 # link for each, and serves the one-field form over https on port 8380 of
 # the host's LAN address while a token is alive. A pasted value goes to
@@ -36,7 +36,7 @@
 Description=Accept one pasted secret for one open gap, over TLS on the LAN
 After=network-online.target
 Wants=network-online.target
-# The rework restart policy, argued in full in agent-managerd.service's
+# The rework restart policy, argued in full in creche-caregiver.service's
 # [Unit] comment: restart for ever, no start limit, back off in [Service]
 # instead. This directive belongs in [Unit], not [Service]: a MISPLACED copy
 # of this exact line makes this systemd version log "Unknown key name
@@ -53,7 +53,7 @@ Type=simple
 ExecStart=/usr/local/sbin/agent-rework-intake
 # A listener that died with a gap open leaves the operator unable to answer it.
 # The back-off is the shared rework policy: five seconds first, growing to
-# two minutes over five steps (agent-managerd.service's [Unit] comment).
+# two minutes over five steps (creche-caregiver.service's [Unit] comment).
 # The wrapper's own permanent refusal — root does not own the binary — is
 # exactly why the policy removes the start limit rather than sizing it: a
 # unit that gives up over a fault only the operator can fix is a unit that goes

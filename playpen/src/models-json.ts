@@ -32,7 +32,7 @@ const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
  *
  * `model.router` is a bare alias (contract 01 §3.2) and pi addresses a model
  * as `<provider>/<id>`. An alias that already carries the prefix is left
- * alone, so a `managerd` that writes either form lands on the same id.
+ * alone, so a `caregiver` that writes either form lands on the same id.
  * Contract 03 §4.1.1 makes that bridge the playpen's.
  */
 export function piModelId(alias: string): string {
