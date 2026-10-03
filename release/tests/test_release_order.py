@@ -14,8 +14,8 @@ from release_fixtures import manifest_text
 REPO_GRAPH: Graph = {
     "pep": (),
     "infra": (),
-    "sandbox-image": (),
-    "sessiond": ("pep", "sandbox-image"),
+    "playpen": (),
+    "sessiond": ("pep", "playpen"),
     "managerd": ("pep", "infra"),
     "ui": ("sessiond", "managerd"),
     "releasectl": (),
@@ -67,10 +67,10 @@ def test_an_acyclic_graph_passes() -> None:
 
 
 def test_dependencies_deploy_first() -> None:
-    order = deploy_order(REPO_GRAPH, frozenset({"ui", "sessiond", "pep", "sandbox-image"}))
+    order = deploy_order(REPO_GRAPH, frozenset({"ui", "sessiond", "pep", "playpen"}))
 
     assert order.index("pep") < order.index("sessiond")
-    assert order.index("sandbox-image") < order.index("sessiond")
+    assert order.index("playpen") < order.index("sessiond")
     assert order.index("sessiond") < order.index("ui")
 
 

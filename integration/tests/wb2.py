@@ -10,14 +10,14 @@ Packet WB2 needs the other one. So this module writes the entries a
 terminal's pi process would have written, into the store `fake-pi.mjs` keeps
 under `PI_CODING_AGENT_DIR`, and then ends the lease. Everything after that
 is the real path: `sessiond` sends contract 03 §4.8's `get_entries`, the real
-supervisor starts a real fake-pi process on that store, and the entries come
+playpen starts a real fake-pi process on that store, and the entries come
 back over the channel.
 
 ```
   this module        the real path under test
   -----------        ------------------------
   write e3,e4  --->  release the tui lease
-                     sessiond --get_entries--> supervisor --> fake pi
+                     sessiond --get_entries--> playpen --> fake pi
                      terminal_exchange line, owui_map rows, one append
 ```
 
@@ -34,7 +34,7 @@ from typing import Any
 from stack import FAMILY
 from stage4 import Stage4, in_thread
 
-#: `supervisor/test/fake-pi.mjs` keeps its entries here, beside the session
+#: `playpen/test/fake-pi.mjs` keeps its entries here, beside the session
 #: store pi itself would write. One file per session id.
 ENTRY_STORE = "fake-pi-entries-{session}.json"
 

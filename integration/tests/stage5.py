@@ -1,6 +1,6 @@
 """One autonomous family, run by a trigger and gated by a phone (packet I5).
 
-Stage 1 put the door, `sessiond` and the supervisor in one process. Stage 2
+Stage 1 put the door, `sessiond` and the playpen in one process. Stage 2
 added the reconciler and stage 3 the PEP. Stage 5 adds the two things nothing
 has ever run together: the trigger door that starts an autonomous job, and the
 PEP approval that holds a tool call open until a phone answers.
@@ -9,10 +9,10 @@ PEP approval that holds a tool call open until a phone answers.
       │ contract 02 §5.1 then §5.4, wait=accepted
       ▼
     the REAL sessiond ──► auto-<ulid> ──► one turn, queued past the limit
-      │ fake_sbx.py exec --env-file ──► node dist/agent-supervisor.js
+      │ fake_sbx.py exec --env-file ──► node dist/playpen.js
       ▼                                            │
     the job's model calls a GATED tool             ▼
-      │ POST /call, the REAL bridge       supervisor/test/fake-pi.mjs
+      │ POST /call, the REAL bridge       playpen/test/fake-pi.mjs
       ▼
     the REAL PEP family app ──► gate opened ──► the fake approval transport
       │      │                                            │
@@ -26,7 +26,7 @@ Four fakes, none of them under test:
 
 1. `FakeDriver`, because a Mac has no `sbx`.
 2. `FakeLiteLLMKeys`, because no test may mint a key.
-3. `fake-pi.mjs`, the supervisor package's own double.
+3. `fake-pi.mjs`, the playpen package's own double.
 4. `ApprovalTransport`, this module's stand-in for Node-RED and Home
    Assistant. It receives what the PEP's own `HttpApprovalNotifier` sends and
    answers the PEP's return leg the way contract 04 §8.4 rules 3 and 4 say the
@@ -41,7 +41,7 @@ Two stand-ins that are NOT fakes of anything under test:
    door's own `fire_trigger`.
 2. The model's tool call. `buildTurnEnv` hardcodes `PEP_URL` at
    the host's LAN address (right on the host, unreachable here), so a pi
-   child launched by the real supervisor cannot reach a PEP on loopback.
+   child launched by the real playpen cannot reach a PEP on loopback.
    `call_tool` runs the REAL bridge bundle in its own process instead, under
    the running job's own session and turn ids, which is what makes the PEP's
    audit record name a turn the host itself started. Stage 3 set this
@@ -181,7 +181,7 @@ HTTP_UNAVAILABLE: Final = 503
 
 
 def bridge_bundle_missing() -> bool:
-    """The PEP bridge is built by the same `pnpm build` as the supervisor."""
+    """The PEP bridge is built by the same `pnpm build` as the playpen."""
     return not BRIDGE_BUNDLE.is_file()
 
 
@@ -444,9 +444,9 @@ class Stage5:
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
     def live_turn(self, family: str, session: str) -> str | None:
-        """The turn the REAL supervisor is running, from its own turn file.
+        """The turn the REAL playpen is running, from its own turn file.
 
-        Contract 03 §7.4: the supervisor rewrites this at every `start_turn`,
+        Contract 03 §7.4: the playpen rewrites this at every `start_turn`,
         so it names the current turn of a held-open process. A tool call from
         inside the job has to carry that id, or the PEP's audit record names
         a turn the host never started and `sessiond` drops it (contract 04
@@ -502,7 +502,7 @@ class Stage5:
 
         The four variables are the ones `buildTurnEnv` gives a pi child
         (contract 03 §7), with `PEP_URL` pointed at this harness's PEP. No
-        `AGENT_TURN_FILE`: the supervisor owns that file for a live session,
+        `AGENT_TURN_FILE`: the playpen owns that file for a live session,
         and `turn-context.ts` falls back to `AGENT_TURN` when it is absent,
         which is the same turn id the host started.
         """

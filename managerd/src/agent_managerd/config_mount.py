@@ -44,7 +44,7 @@ class RuntimeConfig:
         the default: `config_mount_matches` compares bytes, so a key every
         family carried would rewrite every family's mount at the first pass
         after a release, and a swapped directory leaves a running sandbox's
-        read-only mount dead until that sandbox restarts. The supervisor
+        read-only mount dead until that sandbox restarts. The playpen
         reads a missing key as the default."""
         body: dict[str, Any] = {
             "shell": self.shell,

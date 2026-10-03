@@ -1,4 +1,4 @@
 {
-  "description": "Not a package. Makes tsc check supervisor_driver.ts as an ES module, the format conftest.py bundles it to.",
+  "description": "Not a package. Makes tsc check playpen_driver.ts as an ES module, the format conftest.py bundles it to.",
   "type": "module"
 }

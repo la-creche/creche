@@ -73,15 +73,20 @@ from .server import McpServerFile
 #: Contract 06 §1's releasable names. `registry-data` is absent: it never
 #: takes a release (contract 06 §6).
 RELEASABLE: Final = frozenset(
-    {"pep", "sessiond", "managerd", "ui", "sandbox-image", "mcp-servers", "infra", "releasectl"}
+    {"pep", "sessiond", "managerd", "ui", "playpen", "mcp-servers", "infra", "releasectl"}
 )
 
+#: Old names a family file may still list. `sandbox-image` became `playpen`,
+#: and the registry's family file says the old name until its own change
+#: lands after this one deploys. The entry leaves in the next rename.
+RETIRING_NAMES: Final = frozenset({"sandbox-image"})
+
 #: Probe 0a measured 155 to 170 MB per idle held-open pi process and 62 MB for
-#: the supervisor (contract 01 §3.9). The warning uses the LOW end, so it fires
+#: the playpen (contract 01 §3.9). The warning uses the LOW end, so it fires
 #: only when the budget cannot carry the count even optimistically. Used only
 #: for the §3.9 warning, never for a refusal.
 PI_PROCESS_MB: Final = 155
-SUPERVISOR_MB: Final = 62
+PLAYPEN_MB: Final = 62
 
 #: The approval grammar's wildcard: `<server>__*` (contract 01 §3.11).
 CALL_SEPARATOR: Final = "__"
@@ -481,7 +486,7 @@ def _check_release(family: FamilyFile, issues: Issues) -> None:
         return
 
     for position, component in enumerate(fence.components):
-        if component not in RELEASABLE:
+        if component not in RELEASABLE | RETIRING_NAMES:
             issues.error(
                 f"verbs.release.components[{position}]",
                 f"'{component}' is not a releasable component; contract 06 §1 names "
@@ -619,12 +624,12 @@ def _check_sandbox(family: FamilyFile, issues: Issues) -> None:
         return
 
     # §3.9: raising it above what `memory` can carry is a warning, not an
-    # error. The supervisor reaps under pressure either way.
-    carried = max(0, (megabytes - SUPERVISOR_MB) // PI_PROCESS_MB)
+    # error. The playpen reaps under pressure either way.
+    carried = max(0, (megabytes - PLAYPEN_MB) // PI_PROCESS_MB)
     if resident > carried:
         issues.warn(
             "sandbox.max_resident_processes",
-            f"{resident} held-open processes need about {resident * PI_PROCESS_MB + SUPERVISOR_MB}"
+            f"{resident} held-open processes need about {resident * PI_PROCESS_MB + PLAYPEN_MB}"
             f" MB; '{box.memory}' carries about {carried}",
         )
 

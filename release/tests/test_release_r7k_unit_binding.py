@@ -306,7 +306,7 @@ def test_the_home_specifier_in_a_system_unit_is_not_the_operators_home(bench: Be
 
 
 def test_a_component_with_no_unit_is_not_checked(tmp_path: Path) -> None:
-    """`releasectl` and `sandbox-image` carry `unit: null`. Nothing is
+    """`releasectl` and `playpen` carry `unit: null`. Nothing is
     restarted, so there is no unit to disagree with the tree."""
     bench = _make_bench(tmp_path, "pep", None)
     _serve(bench)

@@ -1,4 +1,4 @@
-"""The service end to end, with a fake supervisor on the far side."""
+"""The service end to end, with a fake playpen on the far side."""
 
 from __future__ import annotations
 
@@ -31,10 +31,10 @@ from sessiond_harness import (
     CONFIG_REV,
     EPOCH,
     FAMILY,
+    PLAYPEN_ENV,
     SANDBOX,
-    SUPERVISOR_ENV,
     FakeFleet,
-    SupervisorPlan,
+    PlaypenPlan,
     make_config,
     settle_now,
     wait_until,
@@ -80,14 +80,14 @@ class Harness:
             RunTurnRequest(prompt=prompt, idempotency_key=key, persona_text=persona, owui=owui),
             DOOR,
         )
-        await self.fleet.supervisor().next_start()
+        await self.fleet.playpen().next_start()
         return live
 
     async def full_turn(self, session: str = CHAT_SESSION) -> LiveTurn:
         live = await self.start_turn(session)
-        supervisor = self.fleet.supervisor()
-        await supervisor.play_turn(session, live.record.turn, ANSWER)
-        await supervisor.settle(session, live.record.turn)
+        playpen = self.fleet.playpen()
+        await playpen.play_turn(session, live.record.turn, ANSWER)
+        await playpen.settle(session, live.record.turn)
         await settle_now(live.done)
         return live
 
@@ -141,10 +141,10 @@ async def test_creating_a_session_pre_starts_its_pi_process(tmp_path: Path) -> N
     """Contract 03 §4.7 rules 8 and 9. The cold start is paid before the prompt."""
     harness = await build(tmp_path)
     harness.create()
-    await wait_until(lambda: bool(harness.fleet.supervisors))
-    await wait_until(lambda: bool(harness.fleet.supervisor().opens))
+    await wait_until(lambda: bool(harness.fleet.playpens))
+    await wait_until(lambda: bool(harness.fleet.playpen().opens))
 
-    opened = harness.fleet.supervisor().opens[0]
+    opened = harness.fleet.playpen().opens[0]
 
     assert opened["session"] == CHAT_SESSION
     assert opened["config_rev"] == CONFIG_REV
@@ -170,8 +170,8 @@ async def test_a_turn_works_when_the_pre_start_was_refused(tmp_path: Path) -> No
     """§4.7 rule 10. `start_turn` is always correct on its own."""
     harness = await build(tmp_path)
     harness.create()
-    await wait_until(lambda: bool(harness.fleet.supervisors))
-    await harness.fleet.supervisor().open_session(CHAT_SESSION, resident=False)
+    await wait_until(lambda: bool(harness.fleet.playpens))
+    await harness.fleet.playpen().open_session(CHAT_SESSION, resident=False)
     live = await harness.full_turn()
 
     assert live.record.state is TurnState.SETTLED
@@ -199,7 +199,7 @@ async def test_start_turn_carries_the_contract_fields(tmp_path: Path) -> None:
     harness = await build(tmp_path)
     harness.create()
     live = await harness.start_turn()
-    sent = harness.fleet.supervisor().started[-1]
+    sent = harness.fleet.playpen().started[-1]
 
     sessions = harness.config.sessions_root / FAMILY
 
@@ -219,9 +219,9 @@ async def test_a_new_revision_reaches_the_next_turn(tmp_path: Path) -> None:
     """The CURRENT `config_rev`, read per turn, not the one the session began on.
 
     Contract 03 §4.1 makes the field the revision of the family config mount,
-    and §6 rule 5 lets the supervisor replace a held-open process built under
+    and §6 rule 5 lets the playpen replace a held-open process built under
     an older one. A value cached at create would hide every later revision,
-    so the supervisor could never tell a stale process from a current one.
+    so the playpen could never tell a stale process from a current one.
     """
     harness = await build(tmp_path)
     harness.create()
@@ -231,7 +231,7 @@ async def test_a_new_revision_reaches_the_next_turn(tmp_path: Path) -> None:
     write_status(harness.config.state_root, config_rev=NEXT_CONFIG_REV)
     await harness.start_turn()
 
-    assert harness.fleet.supervisor().started[-1]["config_rev"] == NEXT_CONFIG_REV
+    assert harness.fleet.playpen().started[-1]["config_rev"] == NEXT_CONFIG_REV
     await harness.stop()
 
 
@@ -239,7 +239,7 @@ async def test_the_hello_answers_the_ready(tmp_path: Path) -> None:
     harness = await build(tmp_path)
     harness.create()
     await harness.start_turn()
-    hello = harness.fleet.supervisor().hello
+    hello = harness.fleet.playpen().hello
 
     assert hello is not None
     assert hello["protocol"] == "1.0"
@@ -260,13 +260,13 @@ async def test_five_sessions_run_at_once_over_one_channel(tmp_path: Path) -> Non
         harness.create(session)
 
     live = [await harness.start_turn(session) for session in sessions]
-    supervisor = harness.fleet.supervisor()
+    playpen = harness.fleet.playpen()
 
     for index, turn in enumerate(live):
-        await supervisor.emit_text(sessions[index], turn.record.turn, f"answer {index}")
+        await playpen.emit_text(sessions[index], turn.record.turn, f"answer {index}")
 
     for index, turn in enumerate(live):
-        await supervisor.settle(sessions[index], turn.record.turn)
+        await playpen.settle(sessions[index], turn.record.turn)
         await settle_now(turn.done)
 
         assert turn.record.state is TurnState.SETTLED
@@ -298,14 +298,14 @@ async def test_a_reader_that_leaves_changes_nothing(tmp_path: Path) -> None:
     harness = await build(tmp_path)
     harness.create()
     live = await harness.start_turn()
-    supervisor = harness.fleet.supervisor()
+    playpen = harness.fleet.playpen()
 
     stream = harness.service.stream(OWUI, FAMILY, CHAT_SESSION, turn=live.record.turn)
     await asyncio.wait_for(anext(stream), 2.0)
     await stream.aclose()
 
-    await supervisor.play_turn(CHAT_SESSION, live.record.turn, ANSWER)
-    await supervisor.settle(CHAT_SESSION, live.record.turn)
+    await playpen.play_turn(CHAT_SESSION, live.record.turn, ANSWER)
+    await playpen.settle(CHAT_SESSION, live.record.turn)
     await settle_now(live.done)
 
     assert live.record.state is TurnState.SETTLED
@@ -317,7 +317,7 @@ async def test_a_turn_stream_ends_after_the_turn_settles(tmp_path: Path) -> None
     harness = await build(tmp_path)
     harness.create()
     live = await harness.start_turn()
-    supervisor = harness.fleet.supervisor()
+    playpen = harness.fleet.playpen()
 
     stream = harness.service.stream(
         OWUI,
@@ -328,8 +328,8 @@ async def test_a_turn_stream_ends_after_the_turn_settles(tmp_path: Path) -> None
         end=StreamEnd.AFTER_TERMINAL,
     )
     reading = asyncio.create_task(collect(stream))
-    await supervisor.play_turn(CHAT_SESSION, live.record.turn, ANSWER)
-    await supervisor.settle(CHAT_SESSION, live.record.turn)
+    await playpen.play_turn(CHAT_SESSION, live.record.turn, ANSWER)
+    await playpen.settle(CHAT_SESSION, live.record.turn)
     lines = await asyncio.wait_for(reading, 2.0)
 
     assert lines[0].kind is LineKind.TURN_STARTED
@@ -350,7 +350,7 @@ async def test_an_idempotent_repeat_returns_the_same_turn(tmp_path: Path) -> Non
     )
 
     assert again is first
-    assert len(harness.fleet.supervisor().started) == 1
+    assert len(harness.fleet.playpen().started) == 1
     await harness.stop()
 
 
@@ -462,11 +462,11 @@ async def test_releasing_the_process_asks_the_sandbox(tmp_path: Path) -> None:
     await harness.full_turn()
 
     answer = await harness.service.release_process(OWUI, FAMILY, CHAT_SESSION, DOOR)
-    supervisor = harness.fleet.supervisor()
-    await wait_until(lambda: len(supervisor.stops) == 1)
+    playpen = harness.fleet.playpen()
+    await wait_until(lambda: len(playpen.stops) == 1)
 
     assert answer == {"released": True}
-    assert supervisor.stops[0]["session"] == CHAT_SESSION
+    assert playpen.stops[0]["session"] == CHAT_SESSION
     assert harness.service.store.load(FAMILY, CHAT_SESSION) is not None
     await harness.stop()
 
@@ -489,7 +489,7 @@ async def test_channel_loss_fails_the_turn_and_keeps_the_session(tmp_path: Path)
     harness = await build(tmp_path)
     harness.create()
     live = await harness.start_turn()
-    await harness.fleet.supervisor().drop()
+    await harness.fleet.playpen().drop()
     await settle_now(live.done)
 
     assert live.record.state is TurnState.FAILED
@@ -505,11 +505,11 @@ async def test_a_dead_pi_process_fails_only_its_turn(tmp_path: Path) -> None:
     harness.create("owui-b")
     first = await harness.start_turn("owui-a")
     second = await harness.start_turn("owui-b")
-    supervisor = harness.fleet.supervisor()
+    playpen = harness.fleet.playpen()
 
-    await supervisor.kill_process("owui-a", first.record.turn)
+    await playpen.kill_process("owui-a", first.record.turn)
     await settle_now(first.done)
-    await supervisor.settle("owui-b", second.record.turn)
+    await playpen.settle("owui-b", second.record.turn)
     await settle_now(second.done)
 
     assert first.record.reason is TurnReason.SANDBOX_LOST
@@ -522,7 +522,7 @@ async def test_a_sequence_gap_fails_that_turn(tmp_path: Path) -> None:
     harness = await build(tmp_path)
     harness.create()
     live = await harness.start_turn()
-    await harness.fleet.supervisor().skip_sequence(CHAT_SESSION, live.record.turn)
+    await harness.fleet.playpen().skip_sequence(CHAT_SESSION, live.record.turn)
     await settle_now(live.done)
 
     assert live.record.reason is TurnReason.PROTOCOL_VIOLATION
@@ -536,7 +536,7 @@ async def test_a_run_of_bad_lines_degrades_the_family(tmp_path: Path) -> None:
     live = await harness.start_turn()
 
     for _ in range(REFUSAL_BUDGET):
-        await harness.fleet.supervisor().send_malformed()
+        await harness.fleet.playpen().send_malformed()
 
     await settle_now(live.done)
 
@@ -552,7 +552,7 @@ async def test_a_healthy_handshake_clears_the_violation(tmp_path: Path) -> None:
     live = await harness.start_turn()
 
     for _ in range(REFUSAL_BUDGET):
-        await harness.fleet.supervisor().send_malformed()
+        await harness.fleet.playpen().send_malformed()
 
     await settle_now(live.done)
     assert FaultCode.PROTOCOL_VIOLATION.value in harness.faults()
@@ -567,7 +567,7 @@ async def test_a_healthy_handshake_clears_the_violation(tmp_path: Path) -> None:
 async def test_a_restart_clears_this_writers_faults(tmp_path: Path) -> None:
     """A fresh process has observed nothing, so it reports nothing."""
     harness = await build(tmp_path)
-    harness.fleet.plan(SANDBOX, SupervisorPlan(protocol="2.0"))
+    harness.fleet.plan(SANDBOX, PlaypenPlan(protocol="2.0"))
     harness.create()
     live = await harness.service.run_turn(
         OWUI, FAMILY, CHAT_SESSION, RunTurnRequest(prompt=PROMPT), DOOR
@@ -587,11 +587,11 @@ async def test_one_oversized_line_leaves_the_channel_usable(tmp_path: Path) -> N
     harness = await build(tmp_path)
     harness.create()
     live = await harness.start_turn()
-    supervisor = harness.fleet.supervisor()
+    playpen = harness.fleet.playpen()
 
-    await supervisor.send_oversized(MAX_LINE_BYTES + 1)
-    await supervisor.play_turn(CHAT_SESSION, live.record.turn, ANSWER)
-    await supervisor.settle(CHAT_SESSION, live.record.turn)
+    await playpen.send_oversized(MAX_LINE_BYTES + 1)
+    await playpen.play_turn(CHAT_SESSION, live.record.turn, ANSWER)
+    await playpen.settle(CHAT_SESSION, live.record.turn)
     await settle_now(live.done)
 
     assert live.record.state is TurnState.SETTLED
@@ -601,7 +601,7 @@ async def test_one_oversized_line_leaves_the_channel_usable(tmp_path: Path) -> N
 
 async def test_a_protocol_mismatch_writes_its_fault(tmp_path: Path) -> None:
     harness = await build(tmp_path)
-    harness.fleet.plan(SANDBOX, SupervisorPlan(protocol="2.0"))
+    harness.fleet.plan(SANDBOX, PlaypenPlan(protocol="2.0"))
     harness.create()
     live = await harness.service.run_turn(
         OWUI, FAMILY, CHAT_SESSION, RunTurnRequest(prompt=PROMPT), DOOR
@@ -615,20 +615,20 @@ async def test_a_protocol_mismatch_writes_its_fault(tmp_path: Path) -> None:
 
 async def test_orphan_processes_are_reported_then_cleared(tmp_path: Path) -> None:
     harness = await build(tmp_path)
-    harness.fleet.plan(SANDBOX, SupervisorPlan(foreign_pi_processes=2))
+    harness.fleet.plan(SANDBOX, PlaypenPlan(foreign_pi_processes=2))
     harness.create()
     live = await harness.start_turn()
 
     assert FaultCode.ORPHAN_PROCESSES.value in harness.faults()
 
-    await harness.fleet.supervisor().settle(CHAT_SESSION, live.record.turn)
+    await harness.fleet.playpen().settle(CHAT_SESSION, live.record.turn)
     await settle_now(live.done)
 
     # A clean sandbox on the next dial clears it: the file holds the open
     # faults, not a history (contract 05 §3.3.1).
-    await harness.fleet.supervisor().drop()
+    await harness.fleet.playpen().drop()
     await wait_until(lambda: harness.service.link(SANDBOX) is None)
-    harness.fleet.plan(SANDBOX, SupervisorPlan())
+    harness.fleet.plan(SANDBOX, PlaypenPlan())
     await harness.start_turn()
 
     assert harness.faults() == []
@@ -676,16 +676,16 @@ async def test_a_restart_keeps_the_journal_gapless(tmp_path: Path) -> None:
     assert after == list(range(1, len(after) + 1))
 
 
-async def test_steer_reaches_the_supervisor(tmp_path: Path) -> None:
+async def test_steer_reaches_the_playpen(tmp_path: Path) -> None:
     harness = await build(tmp_path)
     harness.create()
     live = await harness.start_turn()
     await harness.service.steer(
         OWUI, FAMILY, CHAT_SESSION, live.record.turn, "Check the logbook.", DOOR
     )
-    await wait_until(lambda: bool(harness.fleet.supervisor().steers))
+    await wait_until(lambda: bool(harness.fleet.playpen().steers))
 
-    assert harness.fleet.supervisor().steers[-1]["message"] == "Check the logbook."
+    assert harness.fleet.playpen().steers[-1]["message"] == "Check the logbook."
     await harness.stop()
 
 
@@ -708,10 +708,10 @@ async def test_stop_aborts_the_turn(tmp_path: Path) -> None:
     body = await harness.service.stop_turn(
         OWUI, FAMILY, CHAT_SESSION, live.record.turn, "user_stopped", DOOR
     )
-    await wait_until(lambda: bool(harness.fleet.supervisor().aborts))
+    await wait_until(lambda: bool(harness.fleet.playpen().aborts))
 
     assert body["state"] == TurnState.ABORTED.value
-    assert harness.fleet.supervisor().aborts[-1]["turn"] == live.record.turn
+    assert harness.fleet.playpen().aborts[-1]["turn"] == live.record.turn
     assert LineKind.TURN_ABORTED in harness.kinds()
     await harness.stop()
 
@@ -740,12 +740,12 @@ async def test_delete_stops_a_pre_started_process(tmp_path: Path) -> None:
     """
     harness = await build(tmp_path)
     harness.create()
-    await wait_until(lambda: bool(harness.fleet.supervisors))
-    await wait_until(lambda: bool(harness.fleet.supervisor().opens))
+    await wait_until(lambda: bool(harness.fleet.playpens))
+    await wait_until(lambda: bool(harness.fleet.playpen().opens))
     await harness.service.delete_session(OWUI, FAMILY, CHAT_SESSION)
-    await wait_until(lambda: bool(harness.fleet.supervisor().stops))
+    await wait_until(lambda: bool(harness.fleet.playpen().stops))
 
-    stopped = [str(stop["session"]) for stop in harness.fleet.supervisor().stops]
+    stopped = [str(stop["session"]) for stop in harness.fleet.playpen().stops]
 
     assert stopped == [CHAT_SESSION]
     await harness.stop()
@@ -755,7 +755,7 @@ async def test_a_persona_shapes_the_turn_and_grants_nothing(tmp_path: Path) -> N
     harness = await build(tmp_path)
     harness.create()
     await harness.start_turn(persona="You answer as the house assistant.")
-    sent = harness.fleet.supervisor().started[-1]
+    sent = harness.fleet.playpen().started[-1]
 
     assert "You answer as the house assistant." in sent["persona"]
     assert "no authority" in sent["persona"]
@@ -768,7 +768,7 @@ async def test_an_oversized_persona_is_truncated_not_refused(tmp_path: Path) -> 
     harness = await build(tmp_path)
     harness.create()
     live = await harness.start_turn(persona="p" * (BODY_BUDGET_BYTES + 500))
-    sent = harness.fleet.supervisor().started[-1]
+    sent = harness.fleet.playpen().started[-1]
 
     assert len(sent["persona"].encode("utf-8")) <= MAX_PERSONA_BYTES
     assert live.record.persona_truncated is True
@@ -791,10 +791,10 @@ async def test_no_ready_sandbox_answers_sandbox_unavailable(tmp_path: Path) -> N
 
 async def test_a_document_with_no_env_file_is_a_fault_not_a_guess(tmp_path: Path) -> None:
     """Contract 03 §7.1 and contract 05 §4.1. `sbx exec` forwards no host
-    environment, so a command without `--env-file` starts a supervisor that
+    environment, so a command without `--env-file` starts a playpen that
     finds none of its mounts. Dialling anyway would bury that in a log
     file; the fault names the cause where an operator reads it."""
-    harness = await build(tmp_path, supervisor_env="")
+    harness = await build(tmp_path, playpen_env="")
     harness.create()
 
     with pytest.raises(ApiError) as caught:
@@ -814,7 +814,7 @@ async def test_the_env_file_path_reaches_the_channel(tmp_path: Path) -> None:
     harness.create()
     await harness.start_turn()
 
-    assert harness.fleet.env_files == [SUPERVISOR_ENV]
+    assert harness.fleet.env_files == [PLAYPEN_ENV]
     await harness.stop()
 
 
@@ -892,7 +892,7 @@ async def test_the_owui_map_is_filled_from_the_turn(tmp_path: Path) -> None:
         parent_id=None,
     )
     live = await harness.start_turn(owui=refs)
-    await harness.fleet.supervisor().settle(CHAT_SESSION, live.record.turn)
+    await harness.fleet.playpen().settle(CHAT_SESSION, live.record.turn)
     await settle_now(live.done)
 
     stored = harness.service.store.load(FAMILY, CHAT_SESSION)
@@ -912,7 +912,7 @@ async def test_a_turn_past_its_deadline_times_out(tmp_path: Path) -> None:
         RunTurnRequest(prompt=PROMPT, deadline_s=1),
         DOOR,
     )
-    await harness.fleet.supervisor().next_start()
+    await harness.fleet.playpen().next_start()
     await settle_now(live.done, timeout=3.0)
 
     assert live.record.state is TurnState.FAILED

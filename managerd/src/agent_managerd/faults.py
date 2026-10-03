@@ -29,7 +29,7 @@ FAULT_CODES_BY_SOURCE: Final[dict[str, frozenset[str]]] = {
             "audit_unreadable",
             # The fourth code section 3.3.1 names for this writer, and the one
             # code two services may report. `sessiond` raises it for a sandbox
-            # whose supervisor answered `fatal` (contract 03 section 5.7), so
+            # whose playpen answered `fatal` (contract 03 section 5.7), so
             # the handshake it runs can never pass.
             "sandbox_start_failed",
         }
@@ -111,7 +111,7 @@ def read_fault_file(path: Path, source: str, *, now: datetime | None = None) -> 
     raised nothing" (rule 5) -- or unreadable or malformed. A single bad
     entry is dropped, never the whole file: this is input from another
     process, validated the way contract 03 section 13 validates a
-    supervisor line, not trusted the way this service's own state is."""
+    playpen line, not trusted the way this service's own state is."""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:

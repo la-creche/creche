@@ -101,7 +101,7 @@ class SandboxRow:
     created_at: str
     ready_at: str
     channel: str
-    has_supervisor_env: bool
+    has_playpen_env: bool
 
     @property
     def serves_new_turns(self) -> bool:
@@ -471,7 +471,7 @@ def _sandboxes(body: Json) -> tuple[SandboxRow, ...]:
             channel=jsonfiles.whole(one, "channel"),
             # Contract 05 §4.1.1 rule 4: a sandbox row without this path is
             # a fault, because `sessiond` cannot build a channel command.
-            has_supervisor_env=bool(jsonfiles.whole(one, "supervisor_env")),
+            has_playpen_env=bool(jsonfiles.whole(one, "supervisor_env")),
         )
         for one in jsonfiles.children(body, "sandboxes", MAX_SANDBOXES)
     )

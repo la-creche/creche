@@ -1,14 +1,14 @@
-"""Packet CV: `agent-pi-launch` against the real supervisor, off the host.
+"""Packet CV: `agent-pi-launch` against the real playpen, off the host.
 
 The stage 1 gate proves one channel. This proves the OTHER way into a
-sandbox, contract 03 §7.6: a terminal on a session the supervisor is already
+sandbox, contract 03 §7.6: a terminal on a session the playpen is already
 serving.
 
     fake_sbx.py exec --env-file <supervisor.env> chat-s1 -- \\
-      node supervisor/dist/agent-pi-launch.js --sandbox chat-s1 --session ...
+      node playpen/dist/agent-pi-launch.js --sandbox chat-s1 --session ...
 
 Nothing here is faked that is not faked in the gate. The door, `sessiond`, the
-supervisor bundle and the launcher bundle are all real, both bundles read the
+playpen bundle and the launcher bundle are all real, both bundles read the
 same `supervisor.env` through the same stand-in for `sbx exec`, and the pi
 shim is the gate's own.
 
@@ -17,8 +17,8 @@ Two scenarios, one per promise §7.6 makes:
 1. **It refuses while a live rpc process holds the session** (§7.5). Exit 8,
    with the session named. The gate's `sessiond` lease cannot see inside a
    sandbox, so this record is what stops two writers on one pi session store.
-2. **The terminal's pi command is the supervisor's, minus `--mode rpc`.** The
-   supervisor's own harness asserts that against its pool. This asserts it
+2. **The terminal's pi command is the playpen's, minus `--mode rpc`.** The
+   playpen's own harness asserts that against its pool. This asserts it
    against the BUILT bundles, where a build that shipped two different
    builders would still look right in unit tests.
 
@@ -51,12 +51,12 @@ RPC_MODE_ARGS = ["--mode", "rpc"]
 
 LAUNCH_TIMEOUT_S = 30.0
 
-_BUILD_HINT = "run `pnpm install && pnpm build` in supervisor/ first"
+_BUILD_HINT = "run `pnpm install && pnpm build` in playpen/ first"
 
 
 def launch_bundle() -> Path:
-    """The built launcher. `pnpm build` in `supervisor/` writes it."""
-    return repo_root() / "supervisor" / "dist" / "agent-pi-launch.js"
+    """The built launcher. `pnpm build` in `playpen/` writes it."""
+    return repo_root() / "playpen" / "dist" / "agent-pi-launch.js"
 
 
 @pytest.fixture(autouse=True)
@@ -102,7 +102,7 @@ def run_launcher(stack: Stack, session: str, *extra: str) -> subprocess.Complete
             str(fake_sbx_script()),
             "exec",
             "--env-file",
-            str(stack.supervisor_env),
+            str(stack.playpen_env),
             SANDBOX,
             "--",
             "node",
@@ -123,7 +123,7 @@ def run_launcher(stack: Stack, session: str, *extra: str) -> subprocess.Complete
 
 
 async def run_one_turn(stack: Stack, chat: str) -> None:
-    """One non-streamed turn, so the supervisor holds a pi process after it."""
+    """One non-streamed turn, so the playpen holds a pi process after it."""
     client = stack.client
     assert client is not None, "the stack fixture always serves before it yields"
 
@@ -137,7 +137,7 @@ async def run_one_turn(stack: Stack, chat: str) -> None:
 
 
 async def test_cv_launcher_refuses_a_held_session(stack: Stack) -> None:
-    """§7.6 rule 3. A terminal never joins a session the supervisor holds."""
+    """§7.6 rule 3. A terminal never joins a session the playpen holds."""
     chat = chat_id()
     session = session_of(chat)
     await run_one_turn(stack, chat)
@@ -161,7 +161,7 @@ async def test_cv_launcher_runs_the_pool_line_without_rpc(stack: Stack) -> None:
     await until(lambda: process_record(stack, session).exists(), "the §7.5 record")
 
     # Free the session the way §7.5 rule 4 describes: the pi process goes and
-    # the supervisor writes the release. Either alone makes the record stale.
+    # the playpen writes the release. Either alone makes the record stale.
     pid = read_record(stack, session)["pid"]
     assert isinstance(pid, int)
     os.kill(pid, signal.SIGKILL)

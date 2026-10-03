@@ -1,4 +1,4 @@
-"""Sets, order, the `infra` and `sandbox-image` kinds and the quiet window.
+"""Sets, order, the `infra` and `playpen` kinds and the quiet window.
 
 `bin/rework-release-gate.sh` section 2's list, all of it:
 
@@ -75,7 +75,7 @@ SPEC: dict[str, tuple[str, str, str]] = {
     "managerd": ("venv", "agent-managerd.service", "pep"),
     "ui": ("venv", "agent-view.service", ""),
     "infra": ("compose", "ai-stack.service", ""),
-    "sandbox-image": ("oci-image", "null", ""),
+    "playpen": ("oci-image", "null", ""),
     "releasectl": ("venv", "agent-release.service", ""),
     "mcp-servers": ("venv", "null", ""),
     "registry-data": ("data", "null", ""),
@@ -251,7 +251,7 @@ def _run(bench: SetBench, components: dict[str, str]) -> str:
 
 @pytest.fixture
 def two(tmp_path: Path) -> SetBench:
-    """`pep` and `sessiond`, which `depends_on: [pep, sandbox-image]` puts
+    """`pep` and `sessiond`, which `depends_on: [pep, playpen]` puts
     in that order."""
     bench = _make_bench(
         tmp_path,
@@ -406,27 +406,27 @@ def _log(bench: SetBench) -> list[str]:
     return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
 
 
-# -- 3. sandbox-image: one release replaces every family's sandbox --------
+# -- 3. playpen: one release replaces every family's sandbox --------
 
 
 def test_a_sandbox_image_release_lands(tmp_path: Path) -> None:
-    """Contract 06 §1 rule 5 and §2.2: `sandbox-image` is `kind: oci-image`
+    """Contract 06 §1 rule 5 and §2.2: `playpen` is `kind: oci-image`
     and has ONE live version, so the manifest carries no range, and it
     releases like any other kind."""
     version, live = "3.1.0", "3.0.0"
     bench = _make_bench(
         tmp_path,
-        {"sandbox-image": live},
-        {"sandbox-image": version},
-        _green_for(("sandbox-image", version)),
+        {"playpen": live},
+        {"playpen": version},
+        _green_for(("playpen", version)),
     )
-    _live_tree(bench, "sandbox-image", live)
-    _serve(bench, {"sandbox-image": version})
+    _live_tree(bench, "playpen", live)
+    _serve(bench, {"playpen": version})
 
-    result = _run(bench, {"sandbox-image": version})
+    result = _run(bench, {"playpen": version})
 
     assert "succeeded" in result
-    assert installed_version(bench.components / "sandbox-image") == version
+    assert installed_version(bench.components / "playpen") == version
     # `unit: null`, so nothing is restarted and no session is lost
     # (invariant 1: sessions live on the host).
     assert not bench.run.ran("restart")

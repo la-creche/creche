@@ -31,7 +31,7 @@ def rfc3339_ms(moment: datetime) -> str:
 def parse_rfc3339(text: str) -> datetime | None:
     """Read a timestamp that came from another process.
 
-    The status document and the supervisor lock file are written elsewhere, so
+    The status document and the playpen lock file are written elsewhere, so
     a bad value is expected rather than exceptional. It reads as None
     (contract 05 §3.3.1 rule 6, contract 03 §13).
     """

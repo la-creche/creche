@@ -4,8 +4,8 @@
 
     managerd.apply_once
         |-- grants/<family>.json + creds.json ----> the PEP family path
-        |-- config/ (runtime.json, instructions.md, skills/) -> the supervisor
-        |-- creds/ + control/ (mounts) -----------> the supervisor
+        |-- config/ (runtime.json, instructions.md, skills/) -> the playpen
+        |-- creds/ + control/ (mounts) -----------> the playpen
         `-- families/<family>/status.json --------> sessiond
 
 Every test here runs the REAL writer and the REAL reader. Only the two
@@ -51,10 +51,10 @@ IMAGE: Final = "sha256:000000000000000000000000000000000000000000000000000000000
 #: The repo root, four levels up from this file
 #: (integration/tests_manager/conftest.py).
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
-SUPERVISOR_DIR: Final = REPO_ROOT / "supervisor"
+PLAYPEN_DIR: Final = REPO_ROOT / "playpen"
 
 # `sessiond/tests/sessiond_harness.py` holds the far side of the channel: a
-# supervisor that speaks contract 03. Seam 4 reuses it rather than writing a
+# playpen that speaks contract 03. Seam 4 reuses it rather than writing a
 # second one that could disagree with it. pytest puts a test directory on
 # `sys.path` only when it collects from that directory, and a run of
 # `integration/tests_manager` alone collects nothing there.
@@ -218,26 +218,26 @@ def node_bin() -> str:
 
 #: The root conftest's example site address (TEST-NET-1, RFC 5737). The two
 #: session fixtures below build before any test's environment is set, so
-#: they pass it themselves: a supervisor bundle fixes it at build time.
+#: they pass it themselves: a playpen bundle fixes it at build time.
 EXAMPLE_LAN_ADDRESS = "192.0.2.10"
 
 
 @pytest.fixture(scope="session")
-def supervisor_build() -> Path:
-    """`supervisor/`, installed and built with its own documented commands
-    (`supervisor/README.md`: `pnpm install`, `pnpm build`). Session-scoped:
+def playpen_build() -> Path:
+    """`playpen/`, installed and built with its own documented commands
+    (`playpen/README.md`: `pnpm install`, `pnpm build`). Session-scoped:
     the install is the expensive part and nothing here mutates it."""
     _node_or_skip()
     pnpm = shutil.which("pnpm")
     if pnpm is None:
         pytest.skip("pnpm is not on PATH")
 
-    bundle = SUPERVISOR_DIR / "dist" / "pep-bridge.js"
-    _run([pnpm, "install", "--frozen-lockfile"], SUPERVISOR_DIR, "pnpm install")
+    bundle = PLAYPEN_DIR / "dist" / "pep-bridge.js"
+    _run([pnpm, "install", "--frozen-lockfile"], PLAYPEN_DIR, "pnpm install")
     build_env = {**os.environ, "AGENT_LAN_ADDRESS": EXAMPLE_LAN_ADDRESS}
-    _run([pnpm, "build"], SUPERVISOR_DIR, "pnpm build", build_env)
+    _run([pnpm, "build"], PLAYPEN_DIR, "pnpm build", build_env)
     assert bundle.is_file(), f"pnpm build wrote no {bundle}"
-    return SUPERVISOR_DIR
+    return PLAYPEN_DIR
 
 
 def _run(args: list[str], cwd: Path, what: str, env: dict[str, str] | None = None) -> None:
@@ -249,24 +249,24 @@ def _run(args: list[str], cwd: Path, what: str, env: dict[str, str] | None = Non
 
 
 @pytest.fixture(scope="session")
-def supervisor_driver(supervisor_build: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """`node/supervisor_driver.ts`, bundled with `supervisor/`'s own esbuild.
+def playpen_driver(playpen_build: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """`node/playpen_driver.ts`, bundled with `playpen/`'s own esbuild.
 
-    The supervisor's composition root hardcodes the three sandbox mount
+    The playpen's composition root hardcodes the three sandbox mount
     points, so it cannot be pointed anywhere else. The driver replaces that
-    one file and imports every other module from `supervisor/src/`. It is
+    one file and imports every other module from `playpen/src/`. It is
     bundled into a temporary directory, so this package writes nothing into
-    `supervisor/`.
+    `playpen/`.
 
-    esbuild checks no types. `supervisor/`'s `pnpm typecheck` checks this
+    esbuild checks no types. `playpen/`'s `pnpm typecheck` checks this
     driver: its `tsconfig.json` includes `node/`.
     """
-    esbuild = supervisor_build / "node_modules" / ".bin" / "esbuild"
+    esbuild = playpen_build / "node_modules" / ".bin" / "esbuild"
     if not esbuild.is_file():
-        pytest.skip("supervisor/node_modules holds no esbuild")
+        pytest.skip("playpen/node_modules holds no esbuild")
 
-    source = Path(__file__).parent / "node" / "supervisor_driver.ts"
-    bundle = tmp_path_factory.mktemp("supervisor-driver") / "supervisor_driver.mjs"
+    source = Path(__file__).parent / "node" / "playpen_driver.ts"
+    bundle = tmp_path_factory.mktemp("playpen-driver") / "playpen_driver.mjs"
     _run(
         [
             str(esbuild),
@@ -279,7 +279,7 @@ def supervisor_driver(supervisor_build: Path, tmp_path_factory: pytest.TempPathF
             f"--outfile={bundle}",
         ],
         REPO_ROOT,
-        "esbuild supervisor_driver.ts",
+        "esbuild playpen_driver.ts",
     )
     return bundle
 

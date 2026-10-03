@@ -110,7 +110,7 @@ class SandboxFlavor(StrEnum):
 
     A CLOSED set, not an image reference. Invariant 10 says only the
     platform changes the platform, and a registry file that could name an
-    image would choose what code runs inside the microVM. `supervisor/
+    image would choose what code runs inside the microVM. `playpen/
     Dockerfile` has one target per member, and `managerd` is started with
     one image reference per member (contract 05 §4.1)."""
 

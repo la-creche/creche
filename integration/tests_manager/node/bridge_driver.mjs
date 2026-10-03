@@ -2,13 +2,13 @@
 //
 //   node bridge_driver.mjs <pep-bridge.js> <report.json> [<tool> <args json>]
 //
-// `supervisor/test/bridge.test.ts` drives the bridge the same way: build a
+// `playpen/test/bridge.test.ts` drives the bridge the same way: build a
 // tiny pi that collects `registerTool`, call the default export, then execute
 // one registered tool. The only difference is the far side. There it is
 // `test/fake-pep.ts`, which has no grant file, no token check and no audit.
 // Here it is the PEP itself, reading the grant file `managerd` wrote.
 //
-// The environment carries what the supervisor would set (contract 03 §7):
+// The environment carries what the playpen would set (contract 03 §7):
 // PEP_URL, PEP_TOKEN, AGENT_SESSION, AGENT_TURN and AGENT_TURN_FILE.
 //
 // This file never writes to stdout except the report path, because the report

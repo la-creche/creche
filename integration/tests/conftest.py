@@ -11,9 +11,9 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
-from stack import MODEL, Stack, short_temp_dir, socket_dir_is_usable, supervisor_bundle
+from stack import MODEL, Stack, playpen_bundle, short_temp_dir, socket_dir_is_usable
 
-_BUILD_HINT = "run `pnpm install && pnpm build` in supervisor/ first"
+_BUILD_HINT = "run `pnpm install && pnpm build` in playpen/ first"
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -25,7 +25,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 @pytest.fixture(scope="session", autouse=True)
 def _require_bundle() -> None:
     """Skip rather than fail. A silent pass would be worse than either."""
-    bundle = supervisor_bundle()
+    bundle = playpen_bundle()
     if not bundle.exists():
         pytest.skip(f"{bundle} is missing: {_BUILD_HINT}")
 

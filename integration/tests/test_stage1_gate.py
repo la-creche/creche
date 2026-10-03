@@ -1,7 +1,7 @@
 """The stage 1 gate, rehearsed on a Mac.
 
 Thirteen scenarios, one per behaviour the operator will check on the host. Each drives
-the real door, the real `sessiond` and the real supervisor in one process.
+the real door, the real `sessiond` and the real playpen in one process.
 Read `integration/README.md` for what each one proves and how to read a
 failure.
 """
@@ -177,7 +177,7 @@ async def test_the_folder_persona_reaches_pi(stack: Stack) -> None:
     assert PERSONA_TAG in frames.text
 
 
-async def test_a_killed_supervisor_is_visible(stack: Stack) -> None:
+async def test_a_killed_playpen_is_visible(stack: Stack) -> None:
     """Scenario 9. The stream says so, the session lives, the next turn works."""
     stack.set_pi_env(events=60, delay_ms=30)
     chat = chat_id()
@@ -193,7 +193,7 @@ async def test_a_killed_supervisor_is_visible(stack: Stack) -> None:
         assert response.status_code == HTTP_OK
         chunks = response.aiter_text()
         opened = await _first_chunk(chunks)
-        _kill_supervisors(stack)
+        _kill_playpens(stack)
         body = opened + await _read_rest(chunks)
 
     frames = sse_read.parse(body)
@@ -204,16 +204,16 @@ async def test_a_killed_supervisor_is_visible(stack: Stack) -> None:
     assert TURN_FAILED in kinds
     assert (stack.session_dir(session) / "session.json").exists()
 
-    # The killed supervisor could not remove its own lock, and nothing here
+    # The killed playpen could not remove its own lock, and nothing here
     # removes it by hand. `sessiond` proves the writer is gone by watching the
     # beat counter stand still for `lock_stale_s` (M4, contract 03 §11.4).
-    assert stack.supervisor_lock().exists(), "a killed supervisor leaves its lock"
+    assert stack.playpen_lock().exists(), "a killed playpen leaves its lock"
     stack.set_pi_env(events=3, delay_ms=1)
 
     again = await _run_stream(stack, chat, "after the kill")
     assert again.ends_with_done
     assert again.error_chunks == []
-    assert stack.supervisor_lock().exists(), "the new supervisor took the lock"
+    assert stack.playpen_lock().exists(), "the new playpen took the lock"
 
     await _await_settled(stack, session)
     assert _kinds(stack, session).count(TURN_SETTLED) == 1
@@ -266,10 +266,10 @@ async def test_an_empty_chat_id_is_refused(stack: Stack) -> None:
 
 
 async def test_the_channel_command_carries_the_env_file_and_the_id(stack: Stack) -> None:
-    """Scenario 12. The supervisor is reached the way the host reaches it.
+    """Scenario 12. The playpen is reached the way the host reaches it.
 
     Contract 03 §7.1. `sbx exec` forwards no host environment, so the three
-    mount paths arrive only through `--env-file`, and the supervisor exits 2
+    mount paths arrive only through `--env-file`, and the playpen exits 2
     without `--sandbox`. Nothing in this harness puts those paths in the
     child's environment any other way, so a turn that settles is itself the
     proof that the file travelled. The two assertions on argv are what fails
@@ -285,11 +285,11 @@ async def test_the_channel_command_carries_the_env_file_and_the_id(stack: Stack)
     assert len(argv) == 1, argv
 
     command = argv[0]
-    assert command[command.index("--env-file") + 1] == str(stack.supervisor_env)
+    assert command[command.index("--env-file") + 1] == str(stack.playpen_env)
     assert command[command.index("--sandbox") + 1] == SANDBOX
 
 
-async def test_the_supervisor_reads_the_mounts_it_was_given(stack: Stack) -> None:
+async def test_the_playpen_reads_the_mounts_it_was_given(stack: Stack) -> None:
     """Scenario 13. The paths in the env file are the ones it used.
 
     The lock file lands in the control directory `supervisor.env` names, and
@@ -378,7 +378,7 @@ async def _await_settled(stack: Stack, session: str) -> None:
     """Wait for the host journal, which lands AFTER the client's `[DONE]`.
 
     The door closes its stream on pi's own `agent_settled` event.
-    `sessiond` writes the `turn_settled` LINE when the supervisor's
+    `sessiond` writes the `turn_settled` LINE when the playpen's
     `turn_settled` message arrives, which is later. A test that reads the
     journal the instant a stream ends is reading too early, and so is any
     other reader.
@@ -400,9 +400,9 @@ def _text(line: dict[str, Any], field: str) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _kill_supervisors(stack: Stack) -> None:
+def _kill_playpens(stack: Stack) -> None:
     pids = stack.channel_pids()
-    assert pids, "no supervisor process was open to kill"
+    assert pids, "no playpen process was open to kill"
 
     for pid in pids:
         os.kill(pid, signal.SIGKILL)

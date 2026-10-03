@@ -1,4 +1,4 @@
-"""A supervisor that speaks contract 03, and the fixtures around it.
+"""A playpen that speaks contract 03, and the fixtures around it.
 
 Every external thing has a fake behind a small protocol, so no test needs
 the host, `sbx`, LiteLLM or the PEP. This module is the far side of
@@ -30,7 +30,7 @@ SANDBOX = "chat-s1"
 # and `sessiond` refuses to dial without it. An obvious fixture path: nothing
 # in these tests opens the file, because `sbx exec --env-file` is what reads
 # it on the real host.
-SUPERVISOR_ENV = "/srv/agents/state/rework/families/chat/supervisor.env"
+PLAYPEN_ENV = "/srv/agents/state/rework/families/chat/supervisor.env"
 CHAT_SESSION = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 CONFIG_REV = "reg-9f21c4"
 EPOCH = 7
@@ -74,7 +74,7 @@ def write_status(
     kind: str = "attended",
     state: str = "in_sync",
     sandboxes: tuple[tuple[str, str], ...] = ((SANDBOX, "ready"),),
-    supervisor_env: str = SUPERVISOR_ENV,
+    playpen_env: str = PLAYPEN_ENV,
     never_valid: bool = False,
     faults: tuple[dict[str, Any], ...] = (),
     epoch: int = EPOCH,
@@ -99,7 +99,7 @@ def write_status(
         "validation": {"never_valid": never_valid},
         "faults": list(faults),
         "sandboxes": [
-            {"id": box, "state": box_state, "supervisor_env": supervisor_env}
+            {"id": box, "state": box_state, "supervisor_env": playpen_env}
             for box, box_state in sandboxes
         ],
         "credentials": {"epoch": epoch},
@@ -127,8 +127,8 @@ def make_config(tmp_path: Path) -> Config:
 
 
 @dataclass(slots=True)
-class SupervisorPlan:
-    """What one fake supervisor claims in its `ready` line."""
+class PlaypenPlan:
+    """What one fake playpen claims in its `ready` line."""
 
     protocol: str = PROTOCOL_VERSION
     sandbox: str | None = None
@@ -138,20 +138,20 @@ class SupervisorPlan:
     # Contract 03 §3. What this image says it serves. Drop `get_entries` to
     # stand in for a sandbox built before that message existed.
     caps: tuple[str, ...] = ("steer", "coalesce", "workspace_link", "get_entries")
-    # Contract 03 §5.7. A reason name here makes this supervisor send `fatal`
+    # Contract 03 §5.7. A reason name here makes this playpen send `fatal`
     # in place of `ready`, which is what an unwritable control mount does.
     fatal: str | None = None
     # Contract 03 §4.6: `shutdown` ends the process, and with it the stream.
-    # False stands in for a supervisor that never goes.
+    # False stands in for a playpen that never goes.
     exits_on_shutdown: bool = True
     # `ready` waits for this, standing in for a cold VM start (§10 rule 5).
     ready_gate: asyncio.Event | None = None
 
 
-class FakeSupervisor:
+class FakePlaypen:
     """The far side of one channel. It speaks contract 03 and nothing else."""
 
-    def __init__(self, channel: FakeChannel, plan: SupervisorPlan) -> None:
+    def __init__(self, channel: FakeChannel, plan: PlaypenPlan) -> None:
         self._channel = channel
         self._plan = plan
         self._sandbox = plan.sandbox if plan.sandbox is not None else channel.sandbox
@@ -385,7 +385,7 @@ class FakeSupervisor:
             return
 
         if kind == "open_session":
-            # Contract 03 §4.7 rule 1: the supervisor answers, whatever else
+            # Contract 03 §4.7 rule 1: the playpen answers, whatever else
             # happens. Nothing on the host waits for it.
             self.opens.append(message)
             await self._answer_open(str(message.get("session", "")))
@@ -477,33 +477,33 @@ class FakeSupervisor:
 class FakeFleet:
     """Hands the service a channel per sandbox and keeps the far side."""
 
-    plans: dict[str, SupervisorPlan] = field(default_factory=dict[str, SupervisorPlan])
+    plans: dict[str, PlaypenPlan] = field(default_factory=dict[str, PlaypenPlan])
     channels: dict[str, FakeChannel] = field(default_factory=dict[str, FakeChannel])
-    supervisors: dict[str, FakeSupervisor] = field(default_factory=dict[str, FakeSupervisor])
+    playpens: dict[str, FakePlaypen] = field(default_factory=dict[str, FakePlaypen])
     dials: list[str] = field(default_factory=list[str])
     env_files: list[str] = field(default_factory=list[str])
 
-    def plan(self, sandbox: str, plan: SupervisorPlan) -> None:
-        """Set what the supervisor in this sandbox will claim."""
+    def plan(self, sandbox: str, plan: PlaypenPlan) -> None:
+        """Set what the playpen in this sandbox will claim."""
         self.plans[sandbox] = plan
 
     def factory(self, dial: SandboxDial) -> Channel:
-        """A fresh channel per dial, with its supervisor already serving."""
+        """A fresh channel per dial, with its playpen already serving."""
         self.dials.append(dial.sandbox)
         self.env_files.append(dial.env_file)
         channel = FakeChannel(dial.sandbox)
-        supervisor = FakeSupervisor(channel, self.plans.get(dial.sandbox, SupervisorPlan()))
+        playpen = FakePlaypen(channel, self.plans.get(dial.sandbox, PlaypenPlan()))
         self.channels[dial.sandbox] = channel
-        self.supervisors[dial.sandbox] = supervisor
-        supervisor.serve()
+        self.playpens[dial.sandbox] = playpen
+        playpen.serve()
         return channel
 
-    def supervisor(self, sandbox: str = SANDBOX) -> FakeSupervisor:
-        return self.supervisors[sandbox]
+    def playpen(self, sandbox: str = SANDBOX) -> FakePlaypen:
+        return self.playpens[sandbox]
 
     async def stop(self) -> None:
-        for supervisor in self.supervisors.values():
-            await supervisor.stop()
+        for playpen in self.playpens.values():
+            await playpen.stop()
 
 
 async def settle_now(live_done: asyncio.Event, timeout: float = SETTLE_TIMEOUT_S) -> None:

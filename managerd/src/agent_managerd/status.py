@@ -115,9 +115,9 @@ class SandboxStatus:
     channel: ChannelState
     #: Contract 05 section 4.1: the host path of this sandbox's
     #: `supervisor.env`. `sessiond` hands it to `sbx exec --env-file`, which
-    #: is the only way the supervisor learns where its mounts are
+    #: is the only way the playpen learns where its mounts are
     #: (contract 03 section 7.1).
-    supervisor_env: str = ""
+    playpen_env: str = ""
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -131,7 +131,7 @@ class SandboxStatus:
             "created_at": self.created_at,
             "ready_at": self.ready_at,
             "channel": str(self.channel),
-            "supervisor_env": self.supervisor_env,
+            "supervisor_env": self.playpen_env,
         }
 
 

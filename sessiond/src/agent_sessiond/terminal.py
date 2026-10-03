@@ -2,7 +2,7 @@
 
 A terminal hands its tty to pi inside the sandbox (contract 03 §7.6), so its
 exchanges reach the pi store and never reach this service as turns. When the
-`tui` writer lease ends, `sessiond` asks the supervisor for the entries after
+`tui` writer lease ends, `sessiond` asks the playpen for the entries after
 the cursor it holds (contract 03 §4.8) and turns them into exchanges:
 
 ```

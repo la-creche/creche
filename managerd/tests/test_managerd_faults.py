@@ -235,7 +235,7 @@ def sessiond_file(path: Path, sandbox: str) -> None:
                     "blocks_turns": True,
                     "since": "2026-09-19T11:58:41Z",
                     "source": "sessiond",
-                    "message": "supervisor answered fatal: mount_dir_unset",
+                    "message": "playpen answered fatal: mount_dir_unset",
                     "sandbox": sandbox,
                 }
             ],
@@ -245,7 +245,7 @@ def sessiond_file(path: Path, sandbox: str) -> None:
 
 def test_sessiond_may_raise_sandbox_start_failed(tmp_path: Path) -> None:
     """Contract 05 section 3.3.1 names FOUR codes for this writer. The reader
-    allowed three, so a supervisor that answered `fatal` reached the status
+    allowed three, so a playpen that answered `fatal` reached the status
     document through nothing at all."""
     path = tmp_path / "chat.json"
     sessiond_file(path, "chat-s1")

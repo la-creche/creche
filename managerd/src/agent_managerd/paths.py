@@ -42,8 +42,8 @@ VALIDATION_FILE: Final = "validation.json"
 SANDBOX_SEQ_FILE: Final = "sandbox-seq"
 CREDS_FILE: Final = "creds.json"
 #: Contract 03 §7.1's file, one per sandbox: `supervisor-<family>-s<N>.env`.
-SUPERVISOR_ENV_PREFIX: Final = "supervisor-"
-SUPERVISOR_ENV_SUFFIX: Final = ".env"
+PLAYPEN_ENV_PREFIX: Final = "supervisor-"
+PLAYPEN_ENV_SUFFIX: Final = ".env"
 SANDBOXES_FILE: Final = "sandboxes.json"
 APPLIED_DIR: Final = "applied"
 APPLIED_FAMILY_FILE: Final = "family.yaml"
@@ -99,13 +99,13 @@ def control_dir(root: Path, family: str, sandbox: str) -> Path:
     return control_root(root, family) / sandbox
 
 
-def supervisor_env_path(root: Path, family: str, sandbox: str) -> Path:
-    """Contract 03 §7.1: what `sbx exec --env-file` hands the supervisor.
+def playpen_env_path(root: Path, family: str, sandbox: str) -> Path:
+    """Contract 03 §7.1: what `sbx exec --env-file` hands the playpen.
     One file per sandbox, because it names `AGENT_SANDBOX` and that
     sandbox's own control directory. BESIDE the control directory, never
     inside it — that one is emptied at every sandbox create and is mounted
     into the untrusted sandbox."""
-    name = f"{SUPERVISOR_ENV_PREFIX}{sandbox}{SUPERVISOR_ENV_SUFFIX}"
+    name = f"{PLAYPEN_ENV_PREFIX}{sandbox}{PLAYPEN_ENV_SUFFIX}"
     return family_dir(root, family) / name
 
 

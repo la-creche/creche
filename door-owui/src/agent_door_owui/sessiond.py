@@ -256,7 +256,7 @@ def _parsed(raw: bytes) -> JournalLine | None:
     try:
         return parse_line(raw)
     except BadLine as exc:
-        # Drop and count, the way the host treats a supervisor line
+        # Drop and count, the way the host treats a playpen line
         # (contract 03 §13 rule 1). A dropped terminal line still ends the
         # stream visibly, because the translator closes an unsettled turn.
         _LOG.warning("sessiond: dropped a line (%s)", exc)

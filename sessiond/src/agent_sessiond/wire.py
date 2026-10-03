@@ -1,6 +1,6 @@
 """The channel wire format (contract 03 §2, §4, §5, §8, §13).
 
-Every byte from the supervisor is untrusted. The supervisor runs inside the
+Every byte from the playpen is untrusted. The playpen runs inside the
 sandbox, and the agent process is untrusted by design (invariant 12), so this
 module validates shape and size before any value is used, and refuses rather
 than raises.
@@ -32,7 +32,7 @@ MAX_PROMPT_BYTES = 262_144
 MAX_PERSONA_BYTES = 16_384
 MAX_LOG_BYTES = 4_096
 
-# Contract 03 §8. The supervisor caps an entry's text at 64 KiB and an answer
+# Contract 03 §8. The playpen caps an entry's text at 64 KiB and an answer
 # at 64 entries. The host re-checks both, in characters for the text, because
 # a cap that only one side enforces is not a cap (invariant 12).
 MAX_ENTRY_CHARS = 65_536
@@ -46,11 +46,11 @@ PING_INTERVAL_S = 30
 MISSED_PONGS_ALLOWED = 2
 HOST_DEADLINE_S = 90
 
-# Contract 03 §11.4 rule 4. The supervisor rewrites `supervisor.lock` every
+# Contract 03 §11.4 rule 4. The playpen rewrites `supervisor.lock` every
 # `lock_beat_s` (5 by default) with a counter one higher. A counter that has
 # not moved for this long means nothing is writing the file, so the host may
 # remove it and dial. Four beat windows, the same ratio `host_deadline_s` has
-# to the ping interval, so one missed rewrite never unlocks a live supervisor.
+# to the ping interval, so one missed rewrite never unlocks a live playpen.
 LOCK_STALE_S = 20.0
 LOCK_POLL_S = 1.0
 COALESCE_MS = 50
@@ -68,7 +68,7 @@ _CR = "\r"
 
 
 class HostType(StrEnum):
-    """Host to supervisor (contract 03 §4)."""
+    """Host to playpen (contract 03 §4)."""
 
     HELLO = "hello"
     OPEN_SESSION = "open_session"
@@ -82,8 +82,8 @@ class HostType(StrEnum):
     SHUTDOWN = "shutdown"
 
 
-class SupervisorType(StrEnum):
-    """Supervisor to host (contract 03 §5)."""
+class PlaypenType(StrEnum):
+    """Playpen to host (contract 03 §5)."""
 
     READY = "ready"
     SESSION_OPENED = "session_opened"
@@ -98,7 +98,7 @@ class SupervisorType(StrEnum):
 
 
 class FatalReason(StrEnum):
-    """Why the supervisor cannot serve at all (contract 03 §5.7)."""
+    """Why the playpen cannot serve at all (contract 03 §5.7)."""
 
     CONTROL_MOUNT_UNWRITABLE = "control_mount_unwritable"
     # §3 version rule 2: neither side may make an unknown field fatal, so a
@@ -111,8 +111,8 @@ class FatalReason(StrEnum):
 OPEN_REASON_NOT_HELD = "not_held"
 
 
-class SupervisorReason(StrEnum):
-    """Why the supervisor failed a turn (contract 03 §5.3)."""
+class PlaypenReason(StrEnum):
+    """Why the playpen failed a turn (contract 03 §5.3)."""
 
     NO_RESIDENT_PROCESS = "no_resident_process"
     FORK_REFUSED = "fork_refused"
@@ -127,7 +127,7 @@ class SupervisorReason(StrEnum):
 
 
 class Refusal(StrEnum):
-    """Why a line from the supervisor was dropped (contract 03 §13)."""
+    """Why a line from the playpen was dropped (contract 03 §13)."""
 
     TOO_LARGE = "too_large"
     BAD_UTF8 = "bad_utf8"
@@ -139,38 +139,38 @@ class Refusal(StrEnum):
     SEQUENCE_GAP = "sequence_gap"
 
 
-# Contract 03 §5.3's right column. The host never forwards a supervisor reason
+# Contract 03 §5.3's right column. The host never forwards a playpen reason
 # to a door verbatim. Two reasons are retried by the host and never surface.
-_HOST_REASON: dict[SupervisorReason, TurnReason | None] = {
-    SupervisorReason.NO_RESIDENT_PROCESS: None,
-    SupervisorReason.FORK_REFUSED: None,
-    SupervisorReason.STALE_CREDENTIALS: TurnReason.INTERNAL,
-    SupervisorReason.PI_START_FAILED: TurnReason.SANDBOX_LOST,
-    SupervisorReason.PI_REJECTED_PROMPT: TurnReason.MODEL_ERROR,
-    SupervisorReason.PROCESS_DIED: TurnReason.SANDBOX_LOST,
-    SupervisorReason.DEADLINE_EXCEEDED: TurnReason.TURN_TIMEOUT,
-    SupervisorReason.SESSION_BUSY_IN_SANDBOX: TurnReason.INTERNAL,
-    SupervisorReason.LINE_TOO_LARGE: TurnReason.PROTOCOL_VIOLATION,
-    SupervisorReason.INTERNAL: TurnReason.INTERNAL,
+_HOST_REASON: dict[PlaypenReason, TurnReason | None] = {
+    PlaypenReason.NO_RESIDENT_PROCESS: None,
+    PlaypenReason.FORK_REFUSED: None,
+    PlaypenReason.STALE_CREDENTIALS: TurnReason.INTERNAL,
+    PlaypenReason.PI_START_FAILED: TurnReason.SANDBOX_LOST,
+    PlaypenReason.PI_REJECTED_PROMPT: TurnReason.MODEL_ERROR,
+    PlaypenReason.PROCESS_DIED: TurnReason.SANDBOX_LOST,
+    PlaypenReason.DEADLINE_EXCEEDED: TurnReason.TURN_TIMEOUT,
+    PlaypenReason.SESSION_BUSY_IN_SANDBOX: TurnReason.INTERNAL,
+    PlaypenReason.LINE_TOO_LARGE: TurnReason.PROTOCOL_VIOLATION,
+    PlaypenReason.INTERNAL: TurnReason.INTERNAL,
 }
 
-RETRIED_REASONS: frozenset[SupervisorReason] = frozenset(
-    {SupervisorReason.NO_RESIDENT_PROCESS, SupervisorReason.FORK_REFUSED}
+RETRIED_REASONS: frozenset[PlaypenReason] = frozenset(
+    {PlaypenReason.NO_RESIDENT_PROCESS, PlaypenReason.FORK_REFUSED}
 )
 
 
-def host_reason(reason: SupervisorReason) -> TurnReason | None:
-    """Map a supervisor reason onto contract 02 §14's turn reasons."""
+def host_reason(reason: PlaypenReason) -> TurnReason | None:
+    """Map a playpen reason onto contract 02 §14's turn reasons."""
     return _HOST_REASON[reason]
 
 
 @dataclass(slots=True)
 class Ready:
-    """The supervisor's first line (contract 03 §3)."""
+    """The playpen's first line (contract 03 §3)."""
 
     protocol: str
     sandbox: str
-    supervisor: str = ""
+    playpen: str = ""
     pi: str = ""
     node: str = ""
     max_resident_processes: int = MAX_RESIDENT_PROCESSES
@@ -215,7 +215,7 @@ class FailedLine:
     session: str
     turn: str
     turn_seq: int
-    reason: SupervisorReason
+    reason: PlaypenReason
     message: str = ""
 
 
@@ -289,13 +289,13 @@ class EntriesLine:
 
 @dataclass(slots=True)
 class FatalLine:
-    """The supervisor cannot serve and is about to exit (contract 03 §5.7)."""
+    """The playpen cannot serve and is about to exit (contract 03 §5.7)."""
 
     reason: FatalReason
     message: str = ""
 
 
-SupervisorMessage = (
+PlaypenMessage = (
     Ready
     | OpenedLine
     | EventLine
@@ -392,7 +392,7 @@ def encode(message: dict[str, Any], max_line_bytes: int = MAX_LINE_BYTES) -> str
     return body + _LF
 
 
-def parse(text: str) -> SupervisorMessage | Refusal:
+def parse(text: str) -> PlaypenMessage | Refusal:
     """Validate one inbound record (contract 03 §13 rule 1).
 
     Returns the typed message, or the reason it was refused. Nothing here
@@ -415,34 +415,34 @@ def parse(text: str) -> SupervisorMessage | Refusal:
         return Refusal.UNKNOWN_TYPE
 
     try:
-        kind = SupervisorType(type_text)
+        kind = PlaypenType(type_text)
     except ValueError:
         return Refusal.UNKNOWN_TYPE
 
     return _parse_typed(kind, record)
 
 
-def _parse_typed(kind: SupervisorType, record: dict[str, Any]) -> SupervisorMessage | Refusal:
-    if kind is SupervisorType.READY:
+def _parse_typed(kind: PlaypenType, record: dict[str, Any]) -> PlaypenMessage | Refusal:
+    if kind is PlaypenType.READY:
         return _parse_ready(record)
 
-    if kind is SupervisorType.PONG:
+    if kind is PlaypenType.PONG:
         nonce = _text(record.get("nonce"))
         return PongLine(nonce=nonce) if nonce is not None else Refusal.MALFORMED
 
-    if kind is SupervisorType.LOG:
+    if kind is PlaypenType.LOG:
         return _parse_log(record)
 
-    if kind is SupervisorType.PROCESS_EXIT:
+    if kind is PlaypenType.PROCESS_EXIT:
         return _parse_process_exit(record)
 
-    if kind is SupervisorType.SESSION_OPENED:
+    if kind is PlaypenType.SESSION_OPENED:
         return _parse_opened(record)
 
-    if kind is SupervisorType.ENTRIES:
+    if kind is PlaypenType.ENTRIES:
         return _parse_entries(record)
 
-    if kind is SupervisorType.FATAL:
+    if kind is PlaypenType.FATAL:
         return _parse_fatal(record)
 
     return _parse_turn_line(kind, record)
@@ -532,7 +532,7 @@ def _parse_ready(record: dict[str, Any]) -> Ready | Refusal:
     return Ready(
         protocol=protocol,
         sandbox=sandbox,
-        supervisor=_text(record.get("supervisor")) or "",
+        playpen=_text(record.get("supervisor")) or "",
         pi=_text(record.get("pi")) or "",
         node=_text(record.get("node")) or "",
         max_resident_processes=_count(record.get("max_resident_processes"), MAX_RESIDENT_PROCESSES),
@@ -568,7 +568,7 @@ def _parse_process_exit(record: dict[str, Any]) -> ProcessExitLine | Refusal:
 
 
 def _parse_turn_line(
-    kind: SupervisorType, record: dict[str, Any]
+    kind: PlaypenType, record: dict[str, Any]
 ) -> EventLine | SettledLine | FailedLine | Refusal:
     session = _text(record.get("session"))
     turn = _text(record.get("turn"))
@@ -580,14 +580,14 @@ def _parse_turn_line(
     if isinstance(turn_seq, bool) or not isinstance(turn_seq, int) or turn_seq < 1:
         return Refusal.MALFORMED
 
-    if kind is SupervisorType.EVENT:
+    if kind is PlaypenType.EVENT:
         event = as_object(record.get("event"))
         if event is None:
             return Refusal.MALFORMED
 
         return EventLine(session=session, turn=turn, turn_seq=turn_seq, event=cap_event(event))
 
-    if kind is SupervisorType.TURN_SETTLED:
+    if kind is PlaypenType.TURN_SETTLED:
         return SettledLine(
             session=session,
             turn=turn,
@@ -603,9 +603,9 @@ def _parse_turn_line(
     reason_text = _text(record.get("reason"))
 
     try:
-        reason = SupervisorReason(reason_text) if reason_text is not None else None
+        reason = PlaypenReason(reason_text) if reason_text is not None else None
     except ValueError:
-        reason = SupervisorReason.INTERNAL
+        reason = PlaypenReason.INTERNAL
 
     if reason is None:
         return Refusal.MALFORMED
@@ -634,7 +634,7 @@ def cap_event(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def read_usage(value: object) -> Usage:
-    """Usage from the supervisor is advisory (contract 03 §13 rule 7)."""
+    """Usage from the playpen is advisory (contract 03 §13 rule 7)."""
     record = as_object(value)
 
     if record is None:
@@ -781,7 +781,7 @@ def start_turn(
         message["branch"] = branch
 
     # §7.4 rule 4: `start_turn` carries an optional `delegation`, and the
-    # supervisor copies its two fields into the turn file. Absent means a
+    # playpen copies its two fields into the turn file. Absent means a
     # turn outside any chain, which is what every non-job turn is.
     if delegation is not None:
         message["delegation"] = delegation
@@ -814,7 +814,7 @@ def stop_process(session: str, grace_ms: int = STOP_GRACE_MS) -> dict[str, Any]:
 
 
 def ping(nonce: str) -> dict[str, Any]:
-    """Liveness probe (§4.6). Also the supervisor's own deadline signal."""
+    """Liveness probe (§4.6). Also the playpen's own deadline signal."""
     return {"type": HostType.PING.value, "nonce": nonce}
 
 

@@ -415,7 +415,7 @@ class Installer:
         Three narrowings, each with its reason.
 
         1. **`unit: null` is not checked.** Nothing restarts, so there is no
-           unit to disagree with the tree (`releasectl`, `sandbox-image`).
+           unit to disagree with the tree (`releasectl`, `playpen`).
         2. **Only `kind: venv`.** "The tree holds the program the unit
            starts" is a venv's property. A compose project's unit starts
            docker and is bound to its tree by `WorkingDirectory`; an image

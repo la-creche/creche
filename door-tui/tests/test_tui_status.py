@@ -49,7 +49,7 @@ def test_a_ready_sandbox_serves(tmp_path: Path) -> None:
     serving = read(tmp_path)
 
     assert serving.sandbox == "chat-s1"
-    assert serving.supervisor_env == ENV_PATH
+    assert serving.playpen_env == ENV_PATH
 
 
 def test_the_newest_ready_sandbox_wins(tmp_path: Path) -> None:

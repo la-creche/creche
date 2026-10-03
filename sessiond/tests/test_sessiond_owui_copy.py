@@ -29,8 +29,8 @@ from sessiond_harness import (
     FAMILY,
     SANDBOX,
     FakeFleet,
-    FakeSupervisor,
-    SupervisorPlan,
+    FakePlaypen,
+    PlaypenPlan,
     make_config,
     settle_now,
     wait_until,
@@ -274,19 +274,19 @@ class Rig:
         made. That is what invariant 3 asks for and what this reproduces.
 
         `entry_ids` names the two pi entries this turn left, for a test that
-        also writes them into the fake supervisor's store.
+        also writes them into the fake playpen's store.
         """
         live = await self.service.run_turn(
             principal, FAMILY, wanted, RunTurnRequest(prompt=PROMPT, owui=owui), DOOR
         )
-        supervisor = self.fleet.supervisor()
-        await supervisor.next_start()
-        await supervisor.play_turn(wanted, live.record.turn, ANSWER)
+        playpen = self.fleet.playpen()
+        await playpen.next_start()
+        await playpen.play_turn(wanted, live.record.turn, ANSWER)
 
         if entry_ids is None:
-            await supervisor.settle(wanted, live.record.turn)
+            await playpen.settle(wanted, live.record.turn)
         else:
-            await supervisor.settle(wanted, live.record.turn, *entry_ids)
+            await playpen.settle(wanted, live.record.turn, *entry_ids)
 
         await settle_now(live.done)
 
@@ -420,10 +420,10 @@ async def test_another_door_never_copies_a_chat_session(tmp_path: Path) -> None:
 # ---------------------------------------- a terminal's exchanges (§10.5)
 
 
-async def dialled(rig: Rig) -> FakeSupervisor:
-    """The sandbox's fake supervisor, once the pre-start has dialled it."""
-    await wait_until(lambda: SANDBOX in rig.fleet.supervisors)
-    return rig.fleet.supervisor()
+async def dialled(rig: Rig) -> FakePlaypen:
+    """The sandbox's fake playpen, once the pre-start has dialled it."""
+    await wait_until(lambda: SANDBOX in rig.fleet.playpens)
+    return rig.fleet.playpen()
 
 
 async def terminal_exchange(rig: Rig, session_id: str, prompt: str, answer: str) -> None:
@@ -433,12 +433,12 @@ async def terminal_exchange(rig: Rig, session_id: str, prompt: str, answer: str)
     so nothing of this passes `sessiond` as a turn. The host learns it when
     the lease it does hold is given back.
     """
-    supervisor = await dialled(rig)
-    supervisor.write_entry("user", prompt)
-    supervisor.write_entry("assistant", answer)
+    playpen = await dialled(rig)
+    playpen.write_entry("user", prompt)
+    playpen.write_entry("assistant", answer)
     rig.service.take_writer(TUI, FAMILY, session_id, WriterRequest(holder=Holder.TUI), "tui.4021")
     rig.service.release_writer(TUI, FAMILY, session_id, "tui.4021")
-    await wait_until(lambda: len(supervisor.reads) > 0)
+    await wait_until(lambda: len(playpen.reads) > 0)
 
 
 def exchanges(rig: Rig, session_id: str) -> list[dict[str, Any]]:
@@ -529,16 +529,16 @@ async def test_a_turn_is_never_read_back_as_a_terminal_exchange(tmp_path: Path) 
     refs = OwuiRefs(chat_id=CHAT_ID, message_id="b7c1e2d0", user_message_id="a1b2c3d4")
 
     rig.service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=CHAT_SESSION))
-    supervisor = await dialled(rig)
+    playpen = await dialled(rig)
     # The turn this service ran wrote its own two entries into the store.
-    ids = (supervisor.write_entry("user", PROMPT), supervisor.write_entry("assistant", ANSWER))
+    ids = (playpen.write_entry("user", PROMPT), playpen.write_entry("assistant", ANSWER))
 
     await rig.one_turn(OWUI, CHAT_SESSION, refs, entry_ids=ids)
     rig.service.take_writer(TUI, FAMILY, CHAT_SESSION, WriterRequest(holder=Holder.TUI), "tui.4021")
     rig.service.release_writer(TUI, FAMILY, CHAT_SESSION, "tui.4021")
-    await wait_until(lambda: len(supervisor.reads) > 0)
+    await wait_until(lambda: len(playpen.reads) > 0)
 
-    assert supervisor.reads[0]["since"] == ids[1]
+    assert playpen.reads[0]["since"] == ids[1]
     assert exchanges(rig, CHAT_SESSION) == []
     assert rig.chats.appended == []
     await rig.stop()
@@ -568,8 +568,8 @@ async def test_a_refused_read_leaves_the_cursor_where_it_was(tmp_path: Path) -> 
     rig = await build(tmp_path)
 
     rig.service.create_or_find(TUI, CreateRequest(family=FAMILY, session=TUI_SESSION))
-    supervisor = await dialled(rig)
-    supervisor.entries_ok = False
+    playpen = await dialled(rig)
+    playpen.entries_ok = False
     await terminal_exchange(rig, TUI_SESSION, "asked", "answered")
     record = rig.service.store.load(FAMILY, TUI_SESSION)
 
@@ -577,7 +577,7 @@ async def test_a_refused_read_leaves_the_cursor_where_it_was(tmp_path: Path) -> 
     assert record is not None
     assert record.pi_cursor is None
 
-    supervisor.entries_ok = True
+    playpen.entries_ok = True
     rig.service.take_writer(TUI, FAMILY, TUI_SESSION, WriterRequest(holder=Holder.TUI), "tui.4021")
     rig.service.release_writer(TUI, FAMILY, TUI_SESSION, "tui.4021")
     await wait_until(lambda: len(exchanges(rig, TUI_SESSION)) == 1)
@@ -595,19 +595,19 @@ async def test_a_capped_answer_is_read_again_at_once(tmp_path: Path) -> None:
     rig = await build(tmp_path)
 
     rig.service.create_or_find(TUI, CreateRequest(family=FAMILY, session=TUI_SESSION))
-    supervisor = await dialled(rig)
-    supervisor.entries_cap = 2
-    supervisor.write_entry("user", "first")
-    supervisor.write_entry("assistant", "one")
-    supervisor.write_entry("user", "second")
-    supervisor.write_entry("assistant", "two")
+    playpen = await dialled(rig)
+    playpen.entries_cap = 2
+    playpen.write_entry("user", "first")
+    playpen.write_entry("assistant", "one")
+    playpen.write_entry("user", "second")
+    playpen.write_entry("assistant", "two")
 
     rig.service.take_writer(TUI, FAMILY, TUI_SESSION, WriterRequest(holder=Holder.TUI), "tui.4021")
     rig.service.release_writer(TUI, FAMILY, TUI_SESSION, "tui.4021")
     await wait_until(lambda: len(exchanges(rig, TUI_SESSION)) == 2)
 
     assert [one["prompt"] for one in exchanges(rig, TUI_SESSION)] == ["first", "second"]
-    assert len(supervisor.reads) == 2
+    assert len(playpen.reads) == 2
     await rig.stop()
 
 
@@ -658,9 +658,9 @@ async def test_a_killed_terminal_is_read_when_its_lease_expires(
     rig = await build(tmp_path)
 
     rig.service.create_or_find(TUI, CreateRequest(family=FAMILY, session=TUI_SESSION))
-    supervisor = await dialled(rig)
-    supervisor.write_entry("user", "typed before the window closed")
-    supervisor.write_entry("assistant", "answered there")
+    playpen = await dialled(rig)
+    playpen.write_entry("user", "typed before the window closed")
+    playpen.write_entry("assistant", "answered there")
     rig.service.take_writer(TUI, FAMILY, TUI_SESSION, WriterRequest(holder=Holder.TUI), "tui.4021")
 
     # No release: the process is gone. Only the TTL ends this lease, so the
@@ -684,20 +684,20 @@ async def test_an_old_sandbox_image_is_named_rather_than_waited_on(tmp_path: Pat
     config = make_config(tmp_path)
     write_status(config.state_root)
     fleet = FakeFleet()
-    fleet.plan(SANDBOX, SupervisorPlan(caps=("steer", "coalesce", "workspace_link")))
+    fleet.plan(SANDBOX, PlaypenPlan(caps=("steer", "coalesce", "workspace_link")))
     service = SessionService(config, factory=fleet.factory, cold_start_wait_s=1.0, owui=FakeChats())
     service.start()
     service.start_upkeep()
     rig = Rig(service, fleet, FakeChats())
 
     service.create_or_find(TUI, CreateRequest(family=FAMILY, session=TUI_SESSION))
-    supervisor = await dialled(rig)
-    supervisor.write_entry("user", "asked")
-    supervisor.write_entry("assistant", "answered")
+    playpen = await dialled(rig)
+    playpen.write_entry("user", "asked")
+    playpen.write_entry("assistant", "answered")
     service.take_writer(TUI, FAMILY, TUI_SESSION, WriterRequest(holder=Holder.TUI), "tui.4021")
     service.release_writer(TUI, FAMILY, TUI_SESSION, "tui.4021")
     await asyncio.sleep(_OLD_IMAGE_GRACE_S)
 
-    assert supervisor.reads == []
+    assert playpen.reads == []
     assert exchanges(rig, TUI_SESSION) == []
     await rig.stop()

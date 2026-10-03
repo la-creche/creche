@@ -38,7 +38,7 @@ class SandboxImages:
     """What this `managerd` may create a sandbox from, by flavor.
 
     One field per member of `SandboxFlavor`, because a third flavor is a
-    third `supervisor/Dockerfile` target, a third build in the cutover
+    third `playpen/Dockerfile` target, a third build in the cutover
     and a third argument — a platform change, released together, never a
     mapping a caller can widen at runtime.
 

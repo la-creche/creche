@@ -1,6 +1,6 @@
 """One session in two UIs, and the platform fence (packet I4, stage 4).
 
-Stage 1's harness holds the Open WebUI door, `sessiond` and the supervisor.
+Stage 1's harness holds the Open WebUI door, `sessiond` and the playpen.
 Stage 4 puts the REAL TUI door beside them on the same session, and a fake
 Open WebUI chat API behind `sessiond`, so the operator's stage 4 test runs off the
 host:
@@ -12,7 +12,7 @@ host:
   door-owui  ───uds──►  sessiond  ──uds──►  (its own writer lease)
                            │  │ stdio, contract 03
                            │  ▼
-                           │  fake_sbx.py ─► agent-supervisor.js ─► fake-pi.mjs
+                           │  fake_sbx.py ─► playpen.js ─► fake-pi.mjs
                            │
                            └─http──►  FakeOwui, on loopback
                                       POST /api/v1/chats/new
@@ -533,7 +533,7 @@ class Stage4:
         """Stage 1's shim, plus one thing it has no reason to carry.
 
         `FAKE_PI_FORK_DIR` is how a branch scenario sees the `fork` call the
-        supervisor makes: no channel message reports it, and `buildTurnEnv`
+        playpen makes: no channel message reports it, and `buildTurnEnv`
         passes five names through, so the shim is the only way in. One file
         per pi process, so two shells never append to one file.
         """

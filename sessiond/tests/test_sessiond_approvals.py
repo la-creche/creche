@@ -44,7 +44,7 @@ OTHER_FAMILY = "ha-review"
 
 
 class Rig:
-    """One service, one fake supervisor, and the PEP's audit file."""
+    """One service, one fake playpen, and the PEP's audit file."""
 
     def __init__(
         self, service: SessionService, fleet: FakeFleet, audit: Path, state_root: Path
@@ -69,7 +69,7 @@ class Rig:
         live = await self.service.run_turn(
             OWUI, FAMILY, session, RunTurnRequest(prompt=PROMPT), DOOR
         )
-        await self.fleet.supervisor().next_start()
+        await self.fleet.playpen().next_start()
         return live.record.turn
 
     def append(self, **fields: Any) -> None:

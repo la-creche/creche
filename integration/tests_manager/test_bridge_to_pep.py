@@ -2,9 +2,9 @@
 
 Packet B6 coded the manifest's fields and `/call`'s response body from
 contract 04, never from the PEP, and said so in its own caveat. This file
-closes it. `supervisor/` is built with its documented commands, and the
+closes it. `playpen/` is built with its documented commands, and the
 bundle that would ship in the sandbox image is driven the way
-`supervisor/test/bridge.test.ts` drives it -- with one thing swapped:
+`playpen/test/bridge.test.ts` drives it -- with one thing swapped:
 
     bridge.test.ts:  bridge ──► test/fake-pep.ts   (no grants, no audit)
     this file:       bridge ──► the real PEP       (managerd's grant file)
@@ -43,7 +43,7 @@ def pep_url(applied: Applied, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
 
 def write_turn_file(control_dir: Path, delegation: str | None = None) -> Path:
-    """The per-session file the supervisor rewrites at each turn (contract
+    """The per-session file the playpen rewrites at each turn (contract
     03 §7.4). `apply_once` created the control directory this sits in."""
     directory = control_dir / "sessions" / SESSION
     directory.mkdir(parents=True, exist_ok=True)
@@ -55,7 +55,7 @@ def write_turn_file(control_dir: Path, delegation: str | None = None) -> Path:
 
 def drive(
     node_bin: str,
-    supervisor_build: Path,
+    playpen_build: Path,
     applied: Applied,
     pep_url: str,
     scratch: Path,
@@ -66,7 +66,7 @@ def drive(
 ) -> dict[str, Any]:
     """Run the bundle once and read its report."""
     report = scratch / "bridge-report.json"
-    argv = [node_bin, str(DRIVER), str(supervisor_build / "dist" / "pep-bridge.js"), str(report)]
+    argv = [node_bin, str(DRIVER), str(playpen_build / "dist" / "pep-bridge.js"), str(report)]
     if tool:
         argv += [tool, json.dumps(args or {})]
 
@@ -78,7 +78,7 @@ def drive(
         timeout=DRIVER_TIMEOUT_S,
         env={
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-            # Contract 03 §7: what the supervisor sets for each pi child.
+            # Contract 03 §7: what the playpen sets for each pi child.
             "PEP_URL": pep_url,
             "PEP_TOKEN": applied.token,
             "AGENT_SESSION": SESSION,
@@ -106,25 +106,25 @@ def audit_lines(applied: Applied) -> list[dict[str, Any]]:
 
 
 def test_the_bridge_registers_the_granted_tools(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
-    report = drive(node_bin, supervisor_build, applied, pep_url, scratch)
+    report = drive(node_bin, playpen_build, applied, pep_url, scratch)
     assert [tool["name"] for tool in report["tools"]] == ["embed", "ha_call"]
 
 
 def test_the_schema_reaches_pi_unchanged(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
     """The manifest's JSON Schema goes to pi as pi's `parameters`. B6 coded
     the field name from the contract; this proves the PEP fills it."""
-    report = drive(node_bin, supervisor_build, applied, pep_url, scratch)
+    report = drive(node_bin, playpen_build, applied, pep_url, scratch)
     embed = next(tool for tool in report["tools"] if tool["name"] == "embed")
     assert embed["parameters"]["required"] == ["input"]
     assert embed["description"]
 
 
 def test_a_narrowed_grant_reaches_the_next_process(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
     """The manifest is a snapshot per process (contract 04 §4 rule 2), so a
     narrowing shows up when the next pi process starts."""
@@ -132,7 +132,7 @@ def test_a_narrowed_grant_reaches_the_next_process(
 
     applied.reapply({**CHAT_FAMILY, "verbs": {"embed": {}}})
 
-    report = drive(node_bin, supervisor_build, applied, pep_url, scratch)
+    report = drive(node_bin, playpen_build, applied, pep_url, scratch)
     assert [tool["name"] for tool in report["tools"]] == ["embed"]
 
 
@@ -140,12 +140,12 @@ def test_a_narrowed_grant_reaches_the_next_process(
 
 
 def test_one_call_completes(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
     """`embed` needs no sandbox egress: the PEP reaches the local embedding
     service, which `pep/tests` already fakes."""
     report = drive(
-        node_bin, supervisor_build, applied, pep_url, scratch, tool="embed", args={"input": "hi"}
+        node_bin, playpen_build, applied, pep_url, scratch, tool="embed", args={"input": "hi"}
     )
     call = report["call"]
     assert call["ok"] is True, call["error"]
@@ -153,11 +153,11 @@ def test_one_call_completes(
 
 
 def test_the_result_reaches_the_model_inside_an_untrusted_block(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
     """Invariant 14. The PEP's body shape must survive the wrapper."""
     report = drive(
-        node_bin, supervisor_build, applied, pep_url, scratch, tool="embed", args={"input": "hi"}
+        node_bin, playpen_build, applied, pep_url, scratch, tool="embed", args={"input": "hi"}
     )
     text = report["call"]["text"]
     assert text.startswith('[untrusted output from "embed"')
@@ -166,10 +166,10 @@ def test_the_result_reaches_the_model_inside_an_untrusted_block(
 
 
 def test_a_denial_reaches_the_model_as_a_tool_error(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
     """Contract 04 §5. `input` is required, so the PEP refuses the shape."""
-    report = drive(node_bin, supervisor_build, applied, pep_url, scratch, tool="embed", args={})
+    report = drive(node_bin, playpen_build, applied, pep_url, scratch, tool="embed", args={})
     call = report["call"]
     assert call["ok"] is False
     assert "arg_validation" in call["error"]
@@ -179,9 +179,9 @@ def test_a_denial_reaches_the_model_as_a_tool_error(
 
 
 def test_the_audit_line_carries_the_session_and_turn(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
-    drive(node_bin, supervisor_build, applied, pep_url, scratch, tool="embed", args={"input": "hi"})
+    drive(node_bin, playpen_build, applied, pep_url, scratch, tool="embed", args={"input": "hi"})
     call = next(line for line in audit_lines(applied) if line["tool"] == "embed")
     assert call["claimed"]["session_id"] == SESSION
     assert call["claimed"]["turn_id"] == TURN
@@ -189,13 +189,13 @@ def test_the_audit_line_carries_the_session_and_turn(
 
 
 def test_the_audit_line_carries_the_delegation_id(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
-    """Contract 04 §3's third header. Stage 1's supervisor always writes
+    """Contract 04 §3's third header. Stage 1's playpen always writes
     null, so the bridge's own path is what this proves."""
     drive(
         node_bin,
-        supervisor_build,
+        playpen_build,
         applied,
         pep_url,
         scratch,
@@ -208,27 +208,27 @@ def test_the_audit_line_carries_the_delegation_id(
 
 
 def test_the_manifest_fetch_is_audited_too(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
-    drive(node_bin, supervisor_build, applied, pep_url, scratch)
+    drive(node_bin, playpen_build, applied, pep_url, scratch)
     manifest = next(line for line in audit_lines(applied) if line["tool"] == "$manifest")
     assert manifest["family"] == applied.family
     assert manifest["claimed"]["session_id"] == SESSION
 
 
 def test_the_audit_line_names_the_grant_revision(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
     """Contract 04 §6.1. The revision ties the decision to the exact grant
     file `managerd` wrote."""
     written = json.loads(applied.grant_path.read_text(encoding="utf-8"))["rev"]
-    drive(node_bin, supervisor_build, applied, pep_url, scratch)
+    drive(node_bin, playpen_build, applied, pep_url, scratch)
     manifest = next(line for line in audit_lines(applied) if line["tool"] == "$manifest")
     assert manifest["grants_rev"] == written
 
 
 def test_a_delegation_id_the_pep_will_not_take_is_dropped_not_denied(
-    node_bin: str, supervisor_build: Path, applied: Applied, pep_url: str, scratch: Path
+    node_bin: str, playpen_build: Path, applied: Applied, pep_url: str, scratch: Path
 ) -> None:
     """The two sides read the header differently: the bridge sends any
     session-shaped value up to 128 characters, the PEP takes a ULID only.
@@ -237,7 +237,7 @@ def test_a_delegation_id_the_pep_will_not_take_is_dropped_not_denied(
     """
     report = drive(
         node_bin,
-        supervisor_build,
+        playpen_build,
         applied,
         pep_url,
         scratch,

@@ -1,6 +1,6 @@
 """Which image a family's sandbox is created from.
 
-`supervisor/Dockerfile` builds two targets and the platform is started
+`playpen/Dockerfile` builds two targets and the platform is started
 with one image reference per flavor. The family file names the flavor;
 this module holds `managerd` to resolving it, to replacing the sandbox
 when it moves, and to raising a fault rather than falling back to `base`

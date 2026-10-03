@@ -1,6 +1,6 @@
 """Three families, one real PEP, one real `sessiond` (packet I3, stage 3).
 
-Stage 1's harness holds the door, `sessiond` and the supervisor. Stage 2 put
+Stage 1's harness holds the door, `sessiond` and the playpen. Stage 2 put
 the reconciler beside them. Stage 3 adds the PEP, and with it the first call
 that leaves one family's sandbox and lands in another's:
 
@@ -11,22 +11,22 @@ that leaves one family's sandbox and lands in another's:
       │ POST /delegate over sessiond's Unix socket, Bearer door-delegate
       ▼
     the REAL sessiond ──► job-<ulid> in the THIN family ──► one turn
-      │ fake_sbx.py exec --env-file ──► node dist/agent-supervisor.js
+      │ fake_sbx.py exec --env-file ──► node dist/playpen.js
       ▼                                             │
     {status, session_id, content}                   ▼
-      │                                    supervisor/test/fake-pi.mjs
+      │                                    playpen/test/fake-pi.mjs
       ▼
     {untrusted: true, source: "family:<target>", content: ...}
 
 Three fakes, none of them under test: `FakeDriver`, because a Mac has no
 `sbx`; `FakeLiteLLMKeys`, because no test may mint a key; and `fake-pi.mjs`,
-the supervisor package's own double. Everything from the family file to the
+the playpen package's own double. Everything from the family file to the
 wrapped answer is the real code.
 
 Why the bridge runs in its own process rather than inside `fake-pi.mjs`:
 `buildTurnEnv` hardcodes `PEP_URL` at the host's LAN address, which is right
 on the host and unreachable here, so a pi child launched by the real
-supervisor cannot reach a PEP on loopback. The driver stands in for the pi
+playpen cannot reach a PEP on loopback. The driver stands in for the pi
 process and carries the same five variables contract 03 §7 gives one. The
 bridge and the PEP on the path are the real ones either way, which is what
 packet I3 asks for.
@@ -84,7 +84,7 @@ DELEGATE_TOKEN_MODE: Final = 0o640
 #: `tests_manager`'s, unchanged: a second copy could drift from the one
 #: packet C2's seam 2 proves the PEP against.
 BRIDGE_DRIVER: Final = repo_root() / "integration" / "tests_manager" / "node" / "bridge_driver.mjs"
-BRIDGE_BUNDLE: Final = repo_root() / "supervisor" / "dist" / "pep-bridge.js"
+BRIDGE_BUNDLE: Final = repo_root() / "playpen" / "dist" / "pep-bridge.js"
 
 #: A driver run is one PEP call plus one job turn. The PEP's own limit is 120
 #: seconds (contract 04 §7.5), so this has to outlast it to observe it.
@@ -98,7 +98,7 @@ LEFT_BY_PREFIX: Final = "left-by-"
 _PI_LOG_FIELDS: Final = 3
 
 #: What `sbx exec` would leave in a child's environment, plus the three seams
-#: this harness needs. The supervisor mount paths are NOT here: they travel in
+#: this harness needs. The playpen mount paths are NOT here: they travel in
 #: `supervisor.env` through `--env-file`, as on the host (`AGENTS.md` 15).
 _IMAGE_SEAMS: Final = ("AGENT_PI_BIN", "AGENT_LOCK_BEAT_MS", "AGENT_CODE_SANDBOX_ROOT")
 
@@ -109,7 +109,7 @@ sys.path.insert(0, str(repo_root() / "integration" / "tests_manager"))
 
 
 def bridge_bundle_missing() -> bool:
-    """The PEP bridge is built by the same `pnpm build` as the supervisor."""
+    """The PEP bridge is built by the same `pnpm build` as the playpen."""
     return not BRIDGE_BUNDLE.is_file()
 
 
@@ -273,7 +273,7 @@ class Stage3:
     def job_turn_files(self, family: str) -> list[Path]:
         """Every live job's turn file in one thin family's control mount.
 
-        The supervisor writes it at `start_turn` and removes it with the
+        The playpen writes it at `start_turn` and removes it with the
         session (contract 03 §7.4), so a reader sees one only while a job
         still holds its pi process.
         """
@@ -296,7 +296,7 @@ class Stage3:
 
         The five variables are the ones `buildTurnEnv` sets for a pi child
         (contract 03 §7), with `PEP_URL` pointed at this harness's PEP. The
-        turn file is the supervisor's own per-turn record (§7.4), written
+        turn file is the playpen's own per-turn record (§7.4), written
         into that family's control mount. `delegation` is the id a DELEGATED
         sandbox runs inside, which the bridge sends as `X-Delegation-Id`.
         """
@@ -333,8 +333,8 @@ class Stage3:
     def _write_turn_file(
         self, family: str, session: str, turn: str, delegation: str | None
     ) -> Path:
-        """Contract 03 §7.4. The supervisor writes this per turn; the driver
-        stands in for the supervisor as well as for pi."""
+        """Contract 03 §7.4. The playpen writes this per turn; the driver
+        stands in for the playpen as well as for pi."""
         sandbox = f"{family}-s1"
         directory = (
             managerd_paths.control_dir(self.stack.state_root, family, sandbox)

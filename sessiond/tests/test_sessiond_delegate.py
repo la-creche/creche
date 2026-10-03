@@ -86,17 +86,17 @@ class DelegateHarness:
         sandbox: str = ORACLE_SANDBOX,
         answer: str = ANSWER,
     ) -> dict[str, object]:
-        """Run one job to settled, playing the supervisor's side."""
+        """Run one job to settled, playing the playpen's side."""
         task = asyncio.create_task(self.service.run_delegate(DELEGATE, request, DOOR))
         started = await self.next_start(sandbox)
-        supervisor = self.fleet.supervisor(sandbox)
-        await supervisor.play_turn(str(started["session"]), str(started["turn"]), answer)
-        await supervisor.settle(str(started["session"]), str(started["turn"]))
+        playpen = self.fleet.playpen(sandbox)
+        await playpen.play_turn(str(started["session"]), str(started["turn"]), answer)
+        await playpen.settle(str(started["session"]), str(started["turn"]))
         return await asyncio.wait_for(task, 2.0)
 
     async def next_start(self, sandbox: str = ORACLE_SANDBOX) -> dict[str, object]:
-        await wait_until(lambda: sandbox in self.fleet.supervisors)
-        return await self.fleet.supervisor(sandbox).next_start()
+        await wait_until(lambda: sandbox in self.fleet.playpens)
+        return await self.fleet.playpen(sandbox).next_start()
 
     def sessions_of(self, family: str) -> list[str]:
         return self.service.store.session_ids(family)
@@ -159,7 +159,7 @@ async def test_a_failed_turn_answers_failed(tmp_path: Path) -> None:
     request = harness.call()
     task = asyncio.create_task(harness.service.run_delegate(DELEGATE, request, DOOR))
     started = await harness.next_start()
-    await harness.fleet.supervisor(ORACLE_SANDBOX).fail(
+    await harness.fleet.playpen(ORACLE_SANDBOX).fail(
         str(started["session"]), str(started["turn"]), "pi_rejected_prompt", "the model refused"
     )
     body = await asyncio.wait_for(task, 2.0)
@@ -220,8 +220,8 @@ async def test_code_sandbox_works_in_the_calling_chats_directory(tmp_path: Path)
 
     assert started["workspace"] == {"kind": WORKSPACE_KIND, "owner_session": CHAT_SESSION}
 
-    supervisor = harness.fleet.supervisor(CODE_SANDBOX)
-    await supervisor.settle(str(started["session"]), str(started["turn"]))
+    playpen = harness.fleet.playpen(CODE_SANDBOX)
+    await playpen.settle(str(started["session"]), str(started["turn"]))
     await asyncio.wait_for(task, 2.0)
 
     assert owner_dir(harness.config.work_root, CHAT_SESSION).is_dir()
@@ -236,8 +236,8 @@ async def test_a_thin_family_without_a_work_root_carries_no_workspace(tmp_path: 
 
     assert "workspace" not in started
 
-    supervisor = harness.fleet.supervisor(ORACLE_SANDBOX)
-    await supervisor.settle(str(started["session"]), str(started["turn"]))
+    playpen = harness.fleet.playpen(ORACLE_SANDBOX)
+    await playpen.settle(str(started["session"]), str(started["turn"]))
     await asyncio.wait_for(task, 2.0)
 
     assert not (harness.config.work_root / CODE_SANDBOX_FAMILY).exists()
@@ -275,9 +275,9 @@ async def test_deleting_the_chat_session_removes_the_directory(tmp_path: Path) -
 
 
 async def test_the_delegation_reaches_the_channel(tmp_path: Path) -> None:
-    """Contract 03 §7.4 rule 4. Two fields, and the supervisor takes no other.
+    """Contract 03 §7.4 rule 4. Two fields, and the playpen takes no other.
 
-    `caller_family` was a third. The supervisor's reader keeps `id` and
+    `caller_family` was a third. The playpen's reader keeps `id` and
     `caller_session` and discards the rest, and no header carries a family,
     so it was weight on a per-turn message and nothing more.
     """
@@ -290,8 +290,8 @@ async def test_the_delegation_reaches_the_channel(tmp_path: Path) -> None:
 
     assert started["delegation"] == {"id": delegation_id, "caller_session": CHAT_SESSION}
 
-    supervisor = harness.fleet.supervisor(ORACLE_SANDBOX)
-    await supervisor.settle(str(started["session"]), str(started["turn"]))
+    playpen = harness.fleet.playpen(ORACLE_SANDBOX)
+    await playpen.settle(str(started["session"]), str(started["turn"]))
     await asyncio.wait_for(task, 2.0)
     await harness.stop()
 
@@ -303,7 +303,7 @@ async def test_a_call_with_no_caller_session_still_sends_the_delegation_id(
 
     Contract 04 §7.3 makes `claimed_session_id` advisory, so the PEP may send
     none. That is a delegation with no caller, not a malformed one: the id
-    still reaches the supervisor and the PEP's own chain (contract 04 §6.3)
+    still reaches the playpen and the PEP's own chain (contract 04 §6.3)
     still runs through this turn.
     """
     harness = DelegateHarness(tmp_path)
@@ -317,8 +317,8 @@ async def test_a_call_with_no_caller_session_still_sends_the_delegation_id(
 
     assert started["delegation"] == {"id": delegation_id, "caller_session": None}
 
-    supervisor = harness.fleet.supervisor(ORACLE_SANDBOX)
-    await supervisor.settle(str(started["session"]), str(started["turn"]))
+    playpen = harness.fleet.playpen(ORACLE_SANDBOX)
+    await playpen.settle(str(started["session"]), str(started["turn"]))
     await asyncio.wait_for(task, 2.0)
     await harness.stop()
 
@@ -333,10 +333,10 @@ async def test_two_jobs_share_the_thin_familys_sandbox(tmp_path: Path) -> None:
 
     assert started_first["session"] != started_second["session"]
 
-    supervisor = harness.fleet.supervisor(ORACLE_SANDBOX)
+    playpen = harness.fleet.playpen(ORACLE_SANDBOX)
 
     for started in (started_first, started_second):
-        await supervisor.settle(str(started["session"]), str(started["turn"]))
+        await playpen.settle(str(started["session"]), str(started["turn"]))
 
     bodies = await asyncio.wait_for(asyncio.gather(first, second), 2.0)
 
@@ -407,7 +407,7 @@ async def test_the_job_timeout_falls_back_to_the_contract_default(tmp_path: Path
 
     assert started["deadline_s"] == DEFAULT_JOB_TIMEOUT_S
 
-    supervisor = harness.fleet.supervisor(ORACLE_SANDBOX)
-    await supervisor.settle(str(started["session"]), str(started["turn"]))
+    playpen = harness.fleet.playpen(ORACLE_SANDBOX)
+    await playpen.settle(str(started["session"]), str(started["turn"]))
     await asyncio.wait_for(task, 2.0)
     await harness.stop()

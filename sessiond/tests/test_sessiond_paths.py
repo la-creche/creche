@@ -2,8 +2,8 @@
 
 Every path in `paths.py` is a host path, and these two are host paths as
 well: sbx mounts a host directory at that SAME path inside the VM, so the
-path this service sends is the path the supervisor opens. The one override
-exists because the integration harness runs the supervisor as a plain child
+path this service sends is the path the playpen opens. The one override
+exists because the integration harness runs the playpen as a plain child
 under a temp directory that no sbx mount put there.
 """
 

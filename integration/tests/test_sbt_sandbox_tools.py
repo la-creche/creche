@@ -1,17 +1,17 @@
-"""Packet SBT: the built supervisor writes pi's tool settings, end to end.
+"""Packet SBT: the built playpen writes pi's tool settings, end to end.
 
 Contract 01 §3.8 reaches pi as two instructions, and until 2026-09-21 only one
 of them was sent. `--exclude-tools` removes; nothing enabled anything; and pi
 activates four of its seven built-ins at startup, so every family granted
 `grep`, `find` or `ls` went without them.
 
-    door-owui ─► sessiond ─► fake_sbx exec --env-file ─► agent-supervisor.js
+    door-owui ─► sessiond ─► fake_sbx exec --env-file ─► playpen.js
                                                              │
                               <sessions>/<session>/pi/settings.json ◄┘
                               <sessions>/<session>/pi/models.json
 
-`supervisor/test/sandbox-tools.test.ts` asserts this against the SOURCE and
-`supervisor/test/real-pi.test.ts` asserts that pi honours it. What only this
+`playpen/test/sandbox-tools.test.ts` asserts this against the SOURCE and
+`playpen/test/real-pi.test.ts` asserts that pi honours it. What only this
 suite can add is the bundle: `settings.json` is written by the same
 `esbuild` output the image carries, into the session store `sessiond` named,
 inside a process that got its mounts from `--env-file` and from nothing else.
@@ -86,7 +86,7 @@ async def test_sbt_settings_reach_the_session_store(stack: Stack) -> None:
 
     assert read_settings(stack, session) == {"defaultTools": GRANTED_BUILTINS}
 
-    # The deny half, on the command line the supervisor actually spawned.
+    # The deny half, on the command line the playpen actually spawned.
     argv = stack.pi_starts()[-1].split()
     assert DENIED_BUILTINS in argv
     assert "--tools" not in argv
@@ -95,7 +95,7 @@ async def test_sbt_settings_reach_the_session_store(stack: Stack) -> None:
 
 
 async def test_sbt_a_left_behind_settings_file_is_replaced(stack: Stack) -> None:
-    """The session store is agent-writable, so the supervisor never trusts it.
+    """The session store is agent-writable, so the playpen never trusts it.
 
     pi reads a `settings.json` there as its GLOBAL settings file and no
     project-trust decision gates a global one, so what a session leaves would
@@ -113,7 +113,7 @@ async def test_sbt_a_left_behind_settings_file_is_replaced(stack: Stack) -> None
 
     await until(
         lambda: read_settings(stack, session) != LEFT_BEHIND,
-        "the supervisor to replace the settings file",
+        "the playpen to replace the settings file",
     )
 
     assert read_settings(stack, session) == {"defaultTools": GRANTED_BUILTINS}

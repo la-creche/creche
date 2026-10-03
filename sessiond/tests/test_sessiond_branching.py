@@ -15,7 +15,7 @@ from agent_sessiond.models import LineKind, OwuiRefs
 from agent_sessiond.requests import CreateRequest, RunTurnRequest
 from agent_sessiond.service import SessionService
 from agent_sessiond.states import TurnState
-from agent_sessiond.wire import SupervisorReason
+from agent_sessiond.wire import PlaypenReason
 from sessiond_harness import (
     CHAT_SESSION,
     FAMILY,
@@ -84,18 +84,18 @@ class Rig:
         live = await self.service.run_turn(
             OWUI, FAMILY, CHAT_SESSION, RunTurnRequest(prompt=PROMPT, owui=refs), DOOR
         )
-        await self.fleet.supervisor().next_start()
+        await self.fleet.playpen().next_start()
         return live.record.turn
 
     async def settle(self, turn: str, user_entry: str, leaf: str) -> None:
-        supervisor = self.fleet.supervisor()
-        await supervisor.settle(CHAT_SESSION, turn, user_entry_id=user_entry, leaf_id=leaf)
+        playpen = self.fleet.playpen()
+        await playpen.settle(CHAT_SESSION, turn, user_entry_id=user_entry, leaf_id=leaf)
         live = self.service.live_turn(FAMILY, CHAT_SESSION, turn)
         assert live is not None
         await settle_now(live.done)
 
     def starts(self) -> list[dict[str, Any]]:
-        return self.fleet.supervisor().started
+        return self.fleet.playpen().started
 
     def kinds(self) -> list[LineKind]:
         return [line.kind for line in self.service.store.journal.replay(FAMILY, CHAT_SESSION)]
@@ -164,10 +164,10 @@ async def test_a_refused_fork_runs_the_prompt_anyway(tmp_path: Path) -> None:
     await rig.settle(second, "e-u2", "e-a2")
     third = await rig.turn("a1", "a3", "u3")
 
-    await rig.fleet.supervisor().fail(
-        CHAT_SESSION, third, SupervisorReason.FORK_REFUSED.value, "entry is not on the branch"
+    await rig.fleet.playpen().fail(
+        CHAT_SESSION, third, PlaypenReason.FORK_REFUSED.value, "entry is not on the branch"
     )
-    await rig.fleet.supervisor().next_start()
+    await rig.fleet.playpen().next_start()
     live = rig.service.live_turn(FAMILY, CHAT_SESSION, third)
     lines = list(rig.service.store.journal.replay(FAMILY, CHAT_SESSION))
     fallbacks = [one for one in lines if one.kind is LineKind.BRANCH_FALLBACK]

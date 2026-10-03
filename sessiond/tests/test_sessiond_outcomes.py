@@ -1,7 +1,7 @@
 """What survives an autonomous job (contract 02 §13.1).
 
 `outcomes.build()` sums `spend_usd` from each turn's advisory usage
-(contract 03 §5.2's `turn_settled.usage`, folded by the supervisor from
+(contract 03 §5.2's `turn_settled.usage`, folded by the playpen from
 pi's own `cost.total`). A job with tool calls through the PEP and a model
 answer can still sum to `spend_usd: 0.0`. That fold is unverified against
 what pi actually sends, and contract 05 §7 names LiteLLM the one authority

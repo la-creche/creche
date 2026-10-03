@@ -209,12 +209,12 @@ def test_a_shard_names_no_path_and_no_number(jobs: dict[str, dict[str, Any]], la
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_docs_scope_runs_no_shard_and_no_supervisor(
+def test_the_docs_scope_runs_no_shard_and_no_playpen(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
 
-    assert {name for name, rule in by_scope.items() if rule == ONLY_CODE} == {"tests", "supervisor"}
+    assert {name for name, rule in by_scope.items() if rule == ONLY_CODE} == {"tests", "playpen"}
     assert {name for name, rule in by_scope.items() if rule is None} == {"scope", "lint"}
 
 
@@ -228,9 +228,9 @@ def test_lint_runs_the_docs_tests_on_a_docs_change_and_no_test_beside_the_shards
 
 
 def test_the_release_runs_the_gates_test_jobs() -> None:
-    """A change to one file's shards or supervisor steps that misses the
+    """A change to one file's shards or playpen steps that misses the
     other would let a merge pass a release its PR could not, or the reverse."""
-    for name in ("tests", "supervisor"):
+    for name in ("tests", "playpen"):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
 
 
@@ -344,7 +344,7 @@ def _needs(scope: str | None, results: dict[str, str]) -> str:
 
 
 #: What a docs PR skips. A code PR skips nothing.
-DOCS = {"tests": "skipped", "supervisor": "skipped"}
+DOCS = {"tests": "skipped", "playpen": "skipped"}
 
 #: (what the jobs did, whether `gate` is green)
 VERDICTS = [
@@ -352,7 +352,7 @@ VERDICTS = [
     (_needs("docs", DOCS), True),
     # One red shard makes the matrix job a failure.
     (_needs("code", {"tests": "failure"}), False),
-    (_needs("code", {"supervisor": "cancelled"}), False),
+    (_needs("code", {"playpen": "cancelled"}), False),
     (_needs("code", {"lint": "failure"}), False),
     (_needs("docs", DOCS | {"lint": "failure"}), False),
     # A suite that did not run on a code PR is red, not skipped.

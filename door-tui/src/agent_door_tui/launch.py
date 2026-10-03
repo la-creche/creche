@@ -79,7 +79,7 @@ class Terminal:
 def launch_argv(
     *,
     sbx: str,
-    supervisor_env: str,
+    playpen_env: str,
     sandbox: str,
     session: str,
     launcher: str,
@@ -91,7 +91,7 @@ def launch_argv(
         "exec",
         "-it",
         "--env-file",
-        supervisor_env,
+        playpen_env,
         sandbox,
         "--",
         NODE,

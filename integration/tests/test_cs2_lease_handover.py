@@ -133,7 +133,7 @@ async def test_cs2_a_terminal_releases_the_pi_process(stack: Stack) -> None:
 
     try:
         await call(lambda: door.take_writer(FAMILY, session, FIRST_TERMINAL))
-        # The turn settled, so the supervisor still holds this session's pi
+        # The turn settled, so the playpen still holds this session's pi
         # process. Asking for it back is one call, and never a session
         # delete: §5.11 rule 3 closes a process, invariant 1 keeps sessions.
         await call(lambda: door.release_process(FAMILY, session, FIRST_TERMINAL))

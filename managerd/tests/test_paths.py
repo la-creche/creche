@@ -15,12 +15,12 @@ from agent_managerd.paths import (
     family_dir,
     fault_path,
     grant_path,
+    playpen_env_path,
     read_sandbox_sequence,
     sandbox_id,
     sandbox_seq_path,
     session_dir,
     status_path,
-    supervisor_env_path,
     validation_path,
 )
 
@@ -56,11 +56,11 @@ def test_control_dir_is_per_sandbox() -> None:
     assert control_dir(ROOT, "chat", "chat-s2") == base / "chat-s2"
 
 
-def test_supervisor_env_path_is_per_sandbox() -> None:
+def test_playpen_env_path_is_per_sandbox() -> None:
     """It names AGENT_SANDBOX and that sandbox's control directory, so one
     file per family would misname the outgoing sandbox during a switch."""
     family = ROOT / "families" / "chat"
-    assert supervisor_env_path(ROOT, "chat", "chat-s2") == family / "supervisor-chat-s2.env"
+    assert playpen_env_path(ROOT, "chat", "chat-s2") == family / "supervisor-chat-s2.env"
 
 
 def test_sandbox_seq_path() -> None:
@@ -114,7 +114,7 @@ def test_every_family_path_lives_under_the_family_directory() -> None:
         creds_path(ROOT, "chat"),
         config_dir(ROOT, "chat"),
         control_dir(ROOT, "chat", "chat-s1"),
-        supervisor_env_path(ROOT, "chat", "chat-s1"),
+        playpen_env_path(ROOT, "chat", "chat-s1"),
         sandbox_seq_path(ROOT, "chat"),
     ):
         assert path.is_relative_to(base)

@@ -76,7 +76,7 @@ class SandboxInfo:
     # which this service hands to `sbx exec --env-file`. Empty means the
     # document did not publish one, which is a fault and never a guess
     # (contract 03 §7.1): no fixed in-VM mount path exists to fall back to.
-    supervisor_env: str = ""
+    playpen_env: str = ""
 
     @property
     def index(self) -> int:
@@ -356,7 +356,7 @@ def _sandboxes(value: object) -> list[SandboxInfo]:
             SandboxInfo(
                 id=box_id,
                 state=state,
-                supervisor_env=_text(box.get("supervisor_env")) or "",
+                playpen_env=_text(box.get("supervisor_env")) or "",
             )
         )
 

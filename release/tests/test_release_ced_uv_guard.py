@@ -53,7 +53,7 @@ BUILD_TIMEOUT_S: Final = 600.0
 #: worktree holds, and the build makes its own environment anyway.
 SKIP_COPY: Final = shutil.ignore_patterns(
     ".venv",
-    ".venv-workbench",
+    ".venv-toybox",
     ".git",
     "__pycache__",
     ".pytest_cache",

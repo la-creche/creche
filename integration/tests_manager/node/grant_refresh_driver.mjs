@@ -34,8 +34,8 @@ const polls = pollsArg === undefined ? 40 : Number(pollsArg);
 /**
  * pi 0.99.1's three tool-set methods, with pi's own semantics.
  *
- * `supervisor/test/fake-pep.ts` holds the same three and
- * `supervisor/test/real-pi.test.ts` measures them against the real pi. They
+ * `playpen/test/fake-pep.ts` holds the same three and
+ * `playpen/test/real-pi.test.ts` measures them against the real pi. They
  * are restated here because a driver cannot import a TypeScript test helper,
  * and getting one wrong would make a wrong bridge look right.
  */

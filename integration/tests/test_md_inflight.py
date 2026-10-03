@@ -64,7 +64,7 @@ SETTLE_TIMEOUT_S = 120.0
 
 pytestmark = pytest.mark.skipif(
     bridge_bundle_missing(),
-    reason="supervisor/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
+    reason="playpen/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
 )
 
 

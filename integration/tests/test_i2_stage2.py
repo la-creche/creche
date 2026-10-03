@@ -1,4 +1,4 @@
-"""Packet I2: stage 2, with the reconciler, `sessiond` and the supervisor
+"""Packet I2: stage 2, with the reconciler, `sessiond` and the playpen
 running together for the first time.
 
 This is the operator's stage 2 test, invariant 9 made runnable: "A permission
@@ -12,13 +12,13 @@ crossed a process boundary.
                                                                       │
     Open WebUI ──► door-owui ──────────────────────────────────────►──┘
                                                                       │
-                                              fake_sbx ──► agent-supervisor
+                                              fake_sbx ──► playpen
                                                                       │
                                                               fake-pi.mjs
 
 Two of the eight are replace-class: a sandbox is built beside the old one
 and the family moves onto it. Both sandboxes are real, each with its own
-control directory, its own `supervisor.env` and its own supervisor process
+control directory, its own `supervisor.env` and its own playpen process
 (contract 03 §7.1).
 """
 
@@ -169,7 +169,7 @@ async def test_new_instructions_recycle_at_the_turn_boundary(stack: Stack, tmp_p
 
 
 async def test_more_cpus_drains_onto_a_second_sandbox(stack: Stack, tmp_path: Path) -> None:
-    """Contract 05 §5.3 rule 2, end to end on two real supervisors.
+    """Contract 05 §5.3 rule 2, end to end on two real playpens.
 
     A running turn finishes on the outgoing sandbox. The next turn runs on
     the incoming one. The outgoing sandbox is destroyed, and the session and
@@ -242,7 +242,7 @@ async def test_a_switch_that_cannot_complete_keeps_serving(stack: Stack, tmp_pat
     """Contract 05 §5.3 rule 8, the case packet CM could only guess at.
 
     The incoming sandbox's `supervisor.env` names none of its mounts, so the
-    real supervisor answers `fatal` with `mount_dir_unset` instead of
+    real playpen answers `fatal` with `mount_dir_unset` instead of
     `ready` (contract 03 §5.7) and the handshake the switch asks for cannot
     pass. Nothing moves: the family keeps answering on the sandbox it was
     already serving on, both sandboxes are accounted for, and the document
@@ -289,7 +289,7 @@ async def test_a_switch_that_cannot_complete_keeps_serving(stack: Stack, tmp_pat
 async def test_a_later_pass_completes_the_refused_switch(stack: Stack, tmp_path: Path) -> None:
     """The converge half of scenario 6. `managerd` writes the env file at
     every create, so the pass after the one that could not finish hands the
-    supervisor its mounts and the same call succeeds."""
+    playpen its mounts and the same call succeeds."""
     registry = write_registry(tmp_path / "registry")
     breaking = BreakTheIncomingEnv(stack, http_switch_client(stack))
     manager = Manager(stack, registry, switch=breaking)
@@ -481,7 +481,7 @@ async def _await_every_turn_ended(stack: Stack, session: str) -> None:
     """Wait for the host journal, which lands AFTER the client's `[DONE]`.
 
     The door ends its stream at pi's own `agent_settled` event (contract 02
-    §8.2). `sessiond` writes the terminal line when the supervisor's message
+    §8.2). `sessiond` writes the terminal line when the playpen's message
     arrives, which is later: 5 ms in the run that caught this, under load. A
     test that counts `turn_settled` the instant a stream ends reads too early.
     """

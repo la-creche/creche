@@ -44,7 +44,7 @@ class Unprovided:
 
     Contract 06 §3.2, rule C1's second half. It is REPORTED and never
     refused, because root cannot tell "nothing provides it" from "its
-    provider is not a tree under an install root", and `sandbox-image`,
+    provider is not a tree under an install root", and `playpen`,
     an image and never a tree, is always the second.
     """
 
@@ -215,7 +215,7 @@ def _check_floors(
 
     **A contract with no provider in the set is reported, not refused.**
     Root learns a component's interface from a tree under an install root,
-    and a provider can be live without one: `sandbox-image` is an image
+    and a provider can be live without one: `playpen` is an image
     and never a tree. Refusing would answer `managerd requires channel
     0.11, the set provides it nowhere` for a set the host already runs.
 

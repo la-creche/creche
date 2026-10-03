@@ -82,7 +82,7 @@ UNIT = "agent-view.service"
 #: `bin/rework-release-visit.sh` made `releasectl`. None is stamped.
 #:
 #: The other five are live or absent and are NOT trees: `pep` runs out
-#: of the deployed checkout's venv, `sandbox-image` is an image, `infra`
+#: of the deployed checkout's venv, `playpen` is an image, `infra`
 #: is a compose project, `mcp-servers` is `/opt/mcp/<name>` and
 #: `registry-data` is a checkout. Root learns a component's manifest from
 #: a tree under an install root, so it can see none of them.
@@ -96,7 +96,7 @@ UNPROVIDED = "pep-grant"
 #: Every requirement root cannot check on the host, in the order
 #: `contracts._check_floors` walks the set: by component name, then in the
 #: order the manifest declares them. `pep` provides `pep-grant` and
-#: `sandbox-image` provides `channel`, and neither is a tree under an
+#: `playpen` provides `channel`, and neither is a tree under an
 #: install root. `releasectl` requires nothing, and `ui` gets `session-api`
 #: from `sessiond` and `manager-status` from `managerd`, which ARE trees.
 #:
@@ -128,8 +128,8 @@ def _not_verified(component: str, contract: str, owner: str) -> str:
 
 UNVERIFIED = [
     _not_verified("managerd", "pep-grant", "pep"),
-    _not_verified("managerd", "channel", "sandbox-image"),
-    _not_verified("sessiond", "channel", "sandbox-image"),
+    _not_verified("managerd", "channel", "playpen"),
+    _not_verified("sessiond", "channel", "playpen"),
     _not_verified("sessiond", "pep-grant", "pep"),
     _not_verified("ui", "pep-grant", "pep"),
 ]

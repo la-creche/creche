@@ -1,4 +1,4 @@
-"""One running stack: the real door, the real `sessiond`, the real supervisor.
+"""One running stack: the real door, the real `sessiond`, the real playpen.
 
     httpx  ──http/uds──►  door-owui  ──http/uds──►  sessiond
                                                        │ stdio (contract 03)
@@ -6,21 +6,21 @@
                                         fake_sbx.py exec --env-file ...
                                                        │ (execs)
                                                        ▼
-                                          node dist/agent-supervisor.js
+                                          node dist/playpen.js
                                                        │ stdio (pi rpc)
                                                        ▼
-                                           supervisor/test/fake-pi.mjs
+                                           playpen/test/fake-pi.mjs
 
 Nothing here is a mock of a thing under test. Both Python services run under
 their own uvicorn listener on a Unix socket, so the door speaks to `sessiond`
 over the transport it uses on the host. Two stand-ins: `fake-pi.mjs`, the
-supervisor package's own double for `pi --mode rpc`, reached through the
-`AGENT_PI_BIN` seam `supervisor/src/launcher.ts` already provides, and
+playpen package's own double for `pi --mode rpc`, reached through the
+`AGENT_PI_BIN` seam `playpen/src/launcher.ts` already provides, and
 `fake_sbx.py`, which reproduces what `sbx exec --env-file` does with an
 environment and nothing else.
 
 Temp directories stand in for the sandbox mounts, the sessions root and the
-state root, because a Mac has no /srv. The supervisor learns where they are
+state root, because a Mac has no /srv. The playpen learns where they are
 the same way it does on the host: from the `supervisor.env` `managerd` writes,
 handed to the channel command as `--env-file`.
 `SESSIOND_SANDBOX_SESSIONS_MOUNT` is the one remaining host-side seam.
@@ -48,7 +48,7 @@ from agent_door_owui.config import DoorConfig
 from agent_door_owui.families import StatusFiles
 from agent_door_owui.sessiond import HttpSessiond
 from agent_managerd import paths as managerd_paths
-from agent_managerd.supervisor_env import write_supervisor_env
+from agent_managerd.playpen_env import write_playpen_env
 from agent_sessiond.api import build_app
 from agent_sessiond.auth import Principal, TokenBook
 from agent_sessiond.config import Bind, Config
@@ -90,14 +90,14 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def supervisor_bundle() -> Path:
-    """The built supervisor. `pnpm build` in `supervisor/` writes it."""
-    return repo_root() / "supervisor" / "dist" / "agent-supervisor.js"
+def playpen_bundle() -> Path:
+    """The built playpen. `pnpm build` in `playpen/` writes it."""
+    return repo_root() / "playpen" / "dist" / "playpen.js"
 
 
 def fake_pi_script() -> Path:
-    """The supervisor package's own double for `pi --mode rpc`."""
-    return repo_root() / "supervisor" / "test" / "fake-pi.mjs"
+    """The playpen package's own double for `pi --mode rpc`."""
+    return repo_root() / "playpen" / "test" / "fake-pi.mjs"
 
 
 def fake_sbx_script() -> Path:
@@ -151,7 +151,7 @@ class Stack:
         """The four host directories `managerd` would mount for one sandbox.
 
         Each is built with `managerd`'s own path functions, so the fixture
-        and the file `write_supervisor_env` writes cannot disagree.
+        and the file `write_playpen_env` writes cannot disagree.
         """
         return Mounts(
             sessions=self.sessions_root / FAMILY,
@@ -165,18 +165,18 @@ class Stack:
         """The first sandbox's mounts. Most scenarios never see a second."""
         return self.mounts_of(SANDBOX)
 
-    def supervisor_env_of(self, sandbox: str) -> Path:
+    def playpen_env_of(self, sandbox: str) -> Path:
         """The env file `sbx exec --env-file` is handed (contract 03 §7.1).
 
         One per sandbox: it names `AGENT_SANDBOX` and that sandbox's own
         control directory, so the two live sandboxes of a switch cannot
         share it.
         """
-        return managerd_paths.supervisor_env_path(self.state_root, FAMILY, sandbox)
+        return managerd_paths.playpen_env_path(self.state_root, FAMILY, sandbox)
 
     @property
-    def supervisor_env(self) -> Path:
-        return self.supervisor_env_of(SANDBOX)
+    def playpen_env(self) -> Path:
+        return self.playpen_env_of(SANDBOX)
 
     def session_dir(self, session: str) -> Path:
         return self.sessions_root / FAMILY / session
@@ -192,7 +192,7 @@ class Stack:
         return [json.loads(line) for line in raw if line.strip()]
 
     def pi_starts(self) -> list[str]:
-        """One line per pi process the supervisor actually started."""
+        """One line per pi process the playpen actually started."""
         if not self.pi_spawn_log.exists():
             return []
 
@@ -250,7 +250,7 @@ class Stack:
                 {
                     "id": box,
                     "state": box_state,
-                    "supervisor_env": str(self.supervisor_env_of(box)),
+                    "supervisor_env": str(self.playpen_env_of(box)),
                 }
                 for box, box_state in rows
             ],
@@ -272,15 +272,15 @@ class Stack:
 
         It is idempotent, and it never empties a directory that already
         exists: a scenario writes the status document more than once and a
-        live supervisor's lock must survive that.
+        live playpen's lock must survive that.
         """
         self.mounts_of(sandbox).control.mkdir(parents=True, exist_ok=True)
 
-        if self.supervisor_env_of(sandbox).exists():
+        if self.playpen_env_of(sandbox).exists():
             return
 
-        write_supervisor_env(
-            self.supervisor_env_of(sandbox),
+        write_playpen_env(
+            self.playpen_env_of(sandbox),
             state_root=self.state_root,
             family=FAMILY,
             sandbox=sandbox,
@@ -324,7 +324,7 @@ class Stack:
            reads: a held-open process means a second message adds no line.
         2. Sources `pi-env.sh`, because `buildTurnEnv` passes five names
            through and no more, so `FAKE_PI_*` cannot reach the child any
-           other way. The supervisor's own harness adds the same variables
+           other way. The playpen's own harness adds the same variables
            the same way, outside the production environment logic.
         3. `exec`s, so this stays ONE process and stdin EOF and every signal
            reach the fake pi unchanged.
@@ -368,7 +368,7 @@ class Stack:
 
         The three mount paths are NOT here. They travel in `supervisor.env`,
         through `--env-file`, exactly as on the host: a `sessiond` that built
-        its command without that flag would start a supervisor with none of
+        its command without that flag would start a playpen with none of
         them, and every turn would fail (contract 03 §7.1).
 
         `AGENT_PI_BIN` and `AGENT_LOCK_BEAT_MS` stand in for what the sandbox
@@ -382,8 +382,8 @@ class Stack:
             "SESSIOND_SANDBOX_SESSIONS_MOUNT": str(self.mounts.sessions),
         }
 
-    def supervisor_lock(self, sandbox: str = SANDBOX) -> Path:
-        """The lease a killed supervisor leaves behind (contract 03 §11.1).
+    def playpen_lock(self, sandbox: str = SANDBOX) -> Path:
+        """The lease a killed playpen leaves behind (contract 03 §11.1).
 
         Per sandbox, because the control directory is (§7.1).
         """
@@ -474,7 +474,7 @@ class Stack:
         command = (
             f'"{sys.executable}" "{fake_sbx_script()}" exec '
             "--env-file {env_file} {sandbox} -- "
-            f'node "{supervisor_bundle()}" --sandbox {{sandbox}}'
+            f'node "{playpen_bundle()}" --sandbox {{sandbox}}'
         )
 
         return Config(
@@ -545,7 +545,7 @@ class Stack:
             await listener.stop()
 
     def channel_pids(self) -> list[int]:
-        """The supervisor processes `sessiond` is holding open, for a kill test."""
+        """The playpen processes `sessiond` is holding open, for a kill test."""
         return [process.pid for process in self._channel_processes()]
 
     def channel_argv(self) -> list[list[str]]:
@@ -631,9 +631,9 @@ def _live_channel_argv(service: SessionService) -> list[list[str]]:
 
 
 def _live_channel_procs(service: SessionService) -> list[asyncio.subprocess.Process]:
-    """Reach into the service for the supervisor children it opened.
+    """Reach into the service for the playpen children it opened.
 
-    A test that kills the supervisor needs the pid, and teardown needs to wait
+    A test that kills the playpen needs the pid, and teardown needs to wait
     for the child. No contract puts either on the wire. Reading the private
     link map is honest about that: it is a test reaching into one process it
     hosts, not a new interface.
@@ -652,7 +652,7 @@ def _live_channel_procs(service: SessionService) -> list[asyncio.subprocess.Proc
 
 
 async def _reap(children: list[asyncio.subprocess.Process]) -> None:
-    """End every supervisor child before the event loop goes."""
+    """End every playpen child before the event loop goes."""
     for child in children:
         if child.returncode is not None:
             continue

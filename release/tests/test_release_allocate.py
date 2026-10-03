@@ -238,15 +238,15 @@ def test_the_lock_file_moves_every_venv_component_and_no_other() -> None:
     venvs = {row.name for row in ours if row.kind is Kind.VENV}
 
     assert {plan.component for plan in plans} == venvs
-    assert "sandbox-image" not in venvs and "infra" not in venvs
+    assert "playpen" not in venvs and "infra" not in venvs
 
 
 def test_a_members_lock_file_is_not_the_roots() -> None:
     """Only the root `uv.lock` is read by every build. A file of that name
     deeper in the tree belongs to whatever directory holds it."""
-    plans = _plan(("supervisor/uv.lock",), tags=ALL_TAGGED)
+    plans = _plan(("playpen/uv.lock",), tags=ALL_TAGGED)
 
-    assert {plan.component for plan in plans} == {"sandbox-image"}
+    assert {plan.component for plan in plans} == {"playpen"}
 
 
 def test_a_merge_that_touches_nothing_plans_nothing() -> None:

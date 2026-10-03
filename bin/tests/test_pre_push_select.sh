@@ -101,7 +101,7 @@ SCOPE="${PYTEST#"$FULL"}"
   || fail "three packages: rc=$RC, pytest line '$PYTEST'"
 
 for stray in uv.lock pyproject.toml docs/host-release.md .github/workflows/gate.yml \
-  githooks/pre-push supervisor/package.json README.md pep-old/src/x.py; do
+  githooks/pre-push playpen/package.json README.md pep-old/src/x.py; do
   gate --tests-for pep/src/agent_pep/app.py "$stray"
   [[ "$RC" == "0" && "$PYTEST" == "$FULL" ]] && said "full suite, for $stray" \
     && pass "$stray is in no package: full suite" \

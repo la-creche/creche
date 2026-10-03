@@ -29,7 +29,7 @@ from .manifest import (
 #: `component.yaml` files is not the repository this tool knows.
 MAX_MANIFEST_FILES = 32
 
-#: Deep enough for `supervisor/bridge/...`, shallow enough that a crafted tree
+#: Deep enough for `playpen/bridge/...`, shallow enough that a crafted tree
 #: cannot make the walk expensive.
 MAX_WALK_DEPTH = 6
 

@@ -189,4 +189,4 @@ def test_no_workflow_names_a_path_the_deletion_removed(path: Path) -> None:
     for prefix in ("materializer", "runner", "shim", "statusboard", "ui", "models", "schema"):
         assert f"{prefix}/" not in body, f"{path.name} names {prefix}/"
 
-    assert "workbench/" not in body or (REPO / "workbench").exists()
+    assert "toybox/" not in body or (REPO / "toybox").exists()

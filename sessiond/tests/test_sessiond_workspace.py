@@ -90,7 +90,7 @@ def test_only_the_code_sandbox_family_gets_a_workspace() -> None:
 
 
 def test_the_workspace_carries_no_host_path() -> None:
-    """The supervisor derives the target from its own mount (§7.2)."""
+    """The playpen derives the target from its own mount (§7.2)."""
     body = workspace_of(CODE_SANDBOX_FAMILY, OWNER)
 
     assert body is not None

@@ -24,7 +24,7 @@ from sessiond_harness import (
     FAMILY,
     SANDBOX,
     FakeFleet,
-    SupervisorPlan,
+    PlaypenPlan,
     make_config,
     settle_now,
     wait_until,
@@ -44,7 +44,7 @@ NOT_YET_S = 0.05
 
 
 class SwitchHarness:
-    """One family, two sandboxes, and a fake supervisor in each."""
+    """One family, two sandboxes, and a fake playpen in each."""
 
     def __init__(self, tmp_path: Path) -> None:
         self.config = make_config(tmp_path)
@@ -71,13 +71,13 @@ class SwitchHarness:
         live = await self.service.run_turn(
             OWUI, FAMILY, session, RunTurnRequest(prompt="ping"), DOOR
         )
-        await self.fleet.supervisor(live.record.sandbox).next_start()
+        await self.fleet.playpen(live.record.sandbox).next_start()
         return live
 
     async def settle(self, live: LiveTurn) -> None:
-        supervisor = self.fleet.supervisor(live.record.sandbox)
-        await supervisor.play_turn(live.record.session, live.record.turn, ANSWER)
-        await supervisor.settle(live.record.session, live.record.turn)
+        playpen = self.fleet.playpen(live.record.sandbox)
+        await playpen.play_turn(live.record.session, live.record.turn, ANSWER)
+        await playpen.settle(live.record.session, live.record.turn)
         await settle_now(live.done)
 
     def request(
@@ -210,7 +210,7 @@ async def test_held_open_processes_close_before_the_channel(tmp_path: Path) -> N
         harness.create(session)
         await harness.settle(await harness.start_turn(session))
 
-    old = harness.fleet.supervisor(SANDBOX)
+    old = harness.fleet.playpen(SANDBOX)
     await asyncio.wait_for(harness.switch(), 2.0)
 
     assert sorted(str(stop["session"]) for stop in old.stops) == [FIRST, SECOND]
@@ -245,7 +245,7 @@ async def test_a_repeat_answers_the_same_and_does_nothing(tmp_path: Path) -> Non
     harness = SwitchHarness(tmp_path)
     harness.create(FIRST)
     live = await harness.start_turn(FIRST)
-    old = harness.fleet.supervisor(SANDBOX)
+    old = harness.fleet.playpen(SANDBOX)
     first = await asyncio.wait_for(harness.switch(mode=SwitchMode.INTERRUPT), 2.0)
     aborts = len(old.aborts)
     second = await asyncio.wait_for(harness.switch(mode=SwitchMode.INTERRUPT), 2.0)
@@ -422,7 +422,7 @@ async def test_a_switch_starts_no_process_of_its_own(tmp_path: Path) -> None:
     await asyncio.wait_for(harness.switch(), 2.0)
 
     assert harness.fleet.dials == [SANDBOX, NEXT_SANDBOX]
-    incoming = harness.fleet.supervisor(NEXT_SANDBOX)
+    incoming = harness.fleet.playpen(NEXT_SANDBOX)
 
     assert incoming.started == []
     assert incoming.opens == []
@@ -439,7 +439,7 @@ async def test_a_failed_handshake_keeps_the_family_serving(tmp_path: Path) -> No
     still owns both sandboxes.
     """
     harness = SwitchHarness(tmp_path)
-    harness.fleet.plan(NEXT_SANDBOX, SupervisorPlan(fatal="control_mount_unwritable"))
+    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan(fatal="control_mount_unwritable"))
     harness.create(FIRST)
     await harness.settle(await harness.start_turn(FIRST))
 
@@ -465,13 +465,13 @@ async def test_a_refused_switch_is_retried_not_replayed(tmp_path: Path) -> None:
     ever.
     """
     harness = SwitchHarness(tmp_path)
-    harness.fleet.plan(NEXT_SANDBOX, SupervisorPlan(fatal="control_mount_unwritable"))
+    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan(fatal="control_mount_unwritable"))
     harness.create(FIRST)
 
     with pytest.raises(ApiError):
         await asyncio.wait_for(harness.switch(), 2.0)
 
-    harness.fleet.plan(NEXT_SANDBOX, SupervisorPlan())
+    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan())
     body = await asyncio.wait_for(harness.switch(), 2.0)
 
     assert body["switched"] is True

@@ -93,7 +93,7 @@ def test_c1_reports_a_contract_nobody_provides_and_does_not_refuse() -> None:
     """A contract with no provider root can see is reported, not refused.
 
     Root cannot tell "nothing provides it" from "its provider is not a
-    tree under an install root". `sandbox-image` is live and provides
+    tree under an install root". `playpen` is live and provides
     `channel`, and it is an image and never a tree, so a refusal would
     read `managerd requires channel 0.11, the set provides it nowhere`.
 

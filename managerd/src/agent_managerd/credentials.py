@@ -43,7 +43,7 @@ class Credentials:
     """One family's current authority, as written to `creds.json`
     (contract 03 section 12, contract 05 section 6.2 step 3).
 
-    `epoch` increases on every write. The supervisor refuses a turn whose
+    `epoch` increases on every write. The playpen refuses a turn whose
     `env_epoch` is newer than what it can read here (contract 03 section
     12.5), which is what makes a rotation visible without a new sandbox."""
 

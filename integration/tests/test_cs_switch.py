@@ -1,17 +1,17 @@
-"""Packet CS: a sandbox switch, with the real supervisor on both sides.
+"""Packet CS: a sandbox switch, with the real playpen on both sides.
 
-The unit tests of `sessiond/` prove the switch against a fake supervisor.
+The unit tests of `sessiond/` prove the switch against a fake playpen.
 This proves it against the built bundle: `stop_process` and `shutdown` are
-messages the real supervisor parses, and it exits on the second one. A switch
+messages the real playpen parses, and it exits on the second one. A switch
 that only a fake accepted would pass there and hang here.
 
 One scenario, contract 05 §5, `mode: drain` on an idle family:
 
-1. A chat answers on `chat-s1`. A real supervisor holds its pi process.
+1. A chat answers on `chat-s1`. A real playpen holds its pi process.
 2. `managerd` publishes `chat-s2` and makes the one call.
-3. The old supervisor exits, so the sandbox is free the moment the answer
+3. The old playpen exits, so the sandbox is free the moment the answer
    lands and `managerd` may run §4.4 on it.
-4. The same chat answers again, on a second real supervisor, in `chat-s2`.
+4. The same chat answers again, on a second real playpen, in `chat-s2`.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ async def test_a_drain_moves_a_live_chat_to_a_new_sandbox(stack: Stack) -> None:
 
     retiring = stack.channel_pids()
 
-    assert len(retiring) == 1, "the first turn should hold one supervisor open"
+    assert len(retiring) == 1, "the first turn should hold one playpen open"
 
     # `managerd` publishes the replacement, then makes its one call.
     stack.write_status(sandboxes=((SANDBOX, "ready"), (NEXT_SANDBOX, "ready")))
@@ -59,7 +59,7 @@ async def test_a_drain_moves_a_live_chat_to_a_new_sandbox(stack: Stack) -> None:
 
     # The answer means the outgoing sandbox is free (§5.3 rule 9), so nothing
     # of this service may still be attached to it.
-    await until(lambda: _gone(retiring[0]), "the old supervisor to exit", EXIT_TIMEOUT_S)
+    await until(lambda: _gone(retiring[0]), "the old playpen to exit", EXIT_TIMEOUT_S)
 
     # Rule 6: the chat can be told why, and rule 4: it is still the same chat.
     assert _notes(stack, session) == [SWITCH_NOTE]

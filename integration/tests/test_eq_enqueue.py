@@ -3,7 +3,7 @@
 Stage 5 retires the job spool, and nothing could replace it while `enqueue`
 and `job_status` were seams in the PEP. This
 suite runs the replacement end to end: the real PEP, the real dispatch door,
-the real `sessiond`, the real supervisor and the real bridge.
+the real `sessiond`, the real playpen and the real bridge.
 
     chat's turn ──enqueue──► PEP ──► /dispatch ──► auto-<ulid> in scrum-lead
                      │                                    │
@@ -70,7 +70,7 @@ STATE_POLL_S = 0.05
 
 pytestmark = pytest.mark.skipif(
     bridge_bundle_missing(),
-    reason="supervisor/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
+    reason="playpen/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
 )
 
 
@@ -116,7 +116,7 @@ def dispatching(
 
 
 async def chat_turn(stage: StageEq) -> tuple[str, str]:
-    """One live attended turn, and the turn id the supervisor is running.
+    """One live attended turn, and the turn id the playpen is running.
 
     A tool call has to carry the turn the host started, or the PEP's audit
     record names a turn `sessiond` does not own (contract 04 §8.6).
@@ -127,7 +127,7 @@ async def chat_turn(stage: StageEq) -> tuple[str, str]:
 
     await until(
         lambda: stage.live_turn(CHAT, session) is not None,
-        f"the supervisor's turn file for {session}",
+        f"the playpen's turn file for {session}",
         timeout=SETTLE_TIMEOUT_S,
     )
     turn = stage.live_turn(CHAT, session)
@@ -143,11 +143,11 @@ async def lead_job(stage: StageEq) -> tuple[str, str]:
 
     await until(
         lambda: stage.live_turn(LEAD, fired.session) is not None,
-        f"the supervisor's turn file for {fired.session}",
+        f"the playpen's turn file for {fired.session}",
         timeout=SETTLE_TIMEOUT_S,
     )
     turn = stage.live_turn(LEAD, fired.session)
-    assert turn == fired.turn, "the supervisor is running a turn sessiond did not start"
+    assert turn == fired.turn, "the playpen is running a turn sessiond did not start"
 
     return fired.session, turn
 

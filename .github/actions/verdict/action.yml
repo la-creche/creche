@@ -25,7 +25,7 @@ runs:
         import sys
 
         # What a docs change leaves out. A code change leaves out nothing.
-        LEFT_OUT = {"docs": ["tests", "supervisor"]}
+        LEFT_OUT = {"docs": ["tests", "playpen"]}
 
         needs = json.loads(os.environ["NEEDS"])
         scope = needs["scope"]["outputs"].get("scope")
