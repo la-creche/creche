@@ -176,7 +176,7 @@ class LeaseBook:
     def clear_turn(self, family: str, session: str) -> None:
         """Forget which turn runs under the lease. The lease itself stays.
 
-        A settled turn must not stay named in the lease: the view would show
+        A settled turn must not stay named in the lease: the noticeboard would show
         a writer working on a turn that ended (contract 02 §7.1).
         """
         lease = self.get(family, session)

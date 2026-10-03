@@ -20,8 +20,8 @@ The last two are the only ones that leave the disk, and both arrive through
 `facts.sha` has to come from GitHub
 whatever happens — it is `provenance.tag_commit`, the same call P2 makes —
 so a `latest` read out of the operator-owned corpus would let a planted
-`ui-v9.9.9` tag name a version GitHub has no Release for. Every `request
-ui` with no version would then refuse at step 2, for ever, on one tag a
+`noticeboard-v9.9.9` tag name a version GitHub has no Release for. Every `request
+noticeboard` with no version would then refuse at step 2, for ever, on one tag a
 operator-side process wrote. Reading both from one authority closes that. The
 REQUESTER reads the corpus instead, because it is advisory, it runs as
 the operator, and it may hold no token: it says what it could not check rather
@@ -69,7 +69,7 @@ MAX_MANIFEST_BYTES: Final = 64 * 1024
 MAX_STAMP_BYTES: Final = 64
 
 #: Where components install (contract 06 §1). Root-owned components go under
-#: the first, and `sessiond`, `managerd` and `ui` under the second, because
+#: the first, and `sessiond`, `managerd` and `noticeboard` under the second, because
 #: their units are the operator's user units and a user unit reads a tree the operator
 #: owns. They are spelled HERE and not in `host.py`, which imports them,
 #: because they are where `live` is read from and the requester — which may
@@ -195,7 +195,7 @@ class LiveTree:
     #: Whether the install directory is there at all. It is a FIELD and not
     #: `version is not None`: a tree the cutover or the visit made carries
     #: no stamp, and read as "this component is not installed" it would get
-    #: contract 06 §10's "it declares nothing" while it runs. `ui` requires
+    #: contract 06 §10's "it declares nothing" while it runs. `noticeboard` requires
     #: three contracts, so nothing would provide them and step 4 would
     #: refuse with C1.
     present: bool = False

@@ -27,7 +27,7 @@ ExecStart=/usr/local/sbin/agent-rework-release
 TimeoutStartSec=7200
 # A system unit gets no HOME; uv's cache and git both want one.
 Environment=HOME=/root
-# 0027: the ledger is root:agents 0640 by fchmod, so the one view can read an
+# 0027: the ledger is root:agents 0640 by fchmod, so the noticeboard can read an
 # outcome (§2.6). This covers the rest.
 UMask=0027
 

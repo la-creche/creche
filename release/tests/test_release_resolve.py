@@ -20,7 +20,7 @@ from release_fixtures import manifest_text, provides_entry, requires_entry
 RELEASE_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
 RESOLVED_AT = 1758153600.0
 
-#: `pep` provides pep-grant 2.1. `sessiond` and `ui` call it at 2.0, and
+#: `pep` provides pep-grant 2.1. `sessiond` and `noticeboard` call it at 2.0, and
 #: `sessiond` deploys after `pep`.
 EDGES: dict[str, tuple[str, str, str]] = {
     "pep": (provides_entry("pep-grant", 2, 1), "", ""),
@@ -29,7 +29,7 @@ EDGES: dict[str, tuple[str, str, str]] = {
         requires_entry("pep-grant", 2, 0),
         "pep",
     ),
-    "ui": ("", requires_entry("pep-grant", 2, 0), "sessiond"),
+    "noticeboard": ("", requires_entry("pep-grant", 2, 0), "sessiond"),
     "managerd": ("", "", ""),
     "playpen": ("", "", ""),
     "infra": ("", "", ""),
@@ -41,7 +41,7 @@ EDGES: dict[str, tuple[str, str, str]] = {
 LIVE = {
     "pep": "2.0.3",
     "sessiond": "1.4.7",
-    "ui": "0.7.0",
+    "noticeboard": "0.7.0",
     "managerd": "1.2.0",
     "playpen": "3.1.2",
     "infra": "0.4.1",
@@ -196,7 +196,7 @@ def test_the_contract_table_names_every_consumer() -> None:
     grant = next(row for row in resolution.contracts if row.contract is ContractId.PEP_GRANT)
 
     assert grant.provider == "pep"
-    assert [item.name for item in grant.consumers] == ["sessiond", "ui"]
+    assert [item.name for item in grant.consumers] == ["noticeboard", "sessiond"]
 
 
 def _document(request: dict[str, str]) -> dict[str, object]:

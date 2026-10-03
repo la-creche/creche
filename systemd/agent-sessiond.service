@@ -2,7 +2,7 @@
 #
 # It owns every session, every turn and every journal on this host, and it
 # holds the four front doors' server side. Four processes dial it — the Open
-# WebUI door, the TUI, the trigger door and the view — and the PEP dials it
+# WebUI door, the TUI, the trigger door and the noticeboard — and the PEP dials it
 # too, over the Unix socket named below. So it starts FIRST and stops LAST.
 #
 # Installed and enabled by `bin/rework-cutover.sh up`. Never by a release:

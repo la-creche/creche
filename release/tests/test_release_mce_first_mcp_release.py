@@ -810,7 +810,7 @@ def test_the_seven_rows_the_operator_reads_before_the_tap(bench: Bench) -> None:
     — so step 9 restarts nothing and the reload is the only thing that
     moves.
 
-    `review` is `safe` and not `suspect`, unlike `ui`'s first release:
+    `review` is `safe` and not `suspect`, unlike `noticeboard`'s first release:
     root read no manifest at an unverified commit here. The unstamped
     agent-control trees land under `manual` instead, because an
     `mcp-servers` release fetches agent-mcp alone and root then has no

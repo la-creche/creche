@@ -43,7 +43,7 @@ unit's own `EnvironmentFile=`, and the hook reads `PEP_BIND`, else
 `AGENT_LAN_ADDRESS` on port 8300, from the merged environment (`site.py`),
 the way `__main__` does. With neither, the hook reports one failed check
 that names the variable. It never falls back to a default address. The
-flag has the same shape as in `view-verify`, `sessiond-verify` and
+flag has the same shape as in `noticeboard-verify`, `sessiond-verify` and
 `managerd-verify`.
 """
 

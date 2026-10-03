@@ -16,7 +16,7 @@ After=network-online.target
 Wants=network-online.target
 # THE REWORK RESTART POLICY. Decided once, argued here, and named by the
 # other five always-on rework units (`agent-sessiond`, `agent-door-owui`,
-# `agent-view`, `agent-trigger-webhooks`, `agent-pep`). Change it here and
+# `creche-noticeboard`, `agent-trigger-webhooks`, `agent-pep`). Change it here and
 # in all six, or `bin/tests/test_rework_unit_restart.py` fails.
 #
 # WHY NO START LIMIT. With StartLimitIntervalSec=120 and StartLimitBurst=5,

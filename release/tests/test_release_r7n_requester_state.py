@@ -25,7 +25,7 @@ from agent_release.executor.live_state import write_stamp
 from agent_release.executor.request import parse_request
 from release_fixtures import manifest_text, write_manifest
 
-COMPONENT = "ui"
+COMPONENT = "noticeboard"
 FIRST_VERSION = "0.1.0"
 
 
@@ -103,7 +103,7 @@ def _spool(tmp_path: Path) -> Path:
 def test_latest_comes_from_the_clones_own_tags(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`agent-releasectl request ui`, with no document anywhere.
+    """`agent-releasectl request noticeboard`, with no document anywhere.
 
     This is the first release's command, and `latest` resolves against
     the clone's own tags.
@@ -157,7 +157,7 @@ def test_an_unreadable_corpus_is_a_note_and_not_a_refusal(
 
     assert code == EXIT_OK
     assert len(sorted(spool.glob("*.json"))) == 1
-    assert "no commit for ui-v0.1.0" in capsys.readouterr().err
+    assert "no commit for noticeboard-v0.1.0" in capsys.readouterr().err
 
 
 def test_the_requester_still_prints_no_gate(

@@ -83,7 +83,7 @@ class DailyCall(Strict):
 
 class QuietBlock(Strict):
     """What a cron firing checks before it wakes the family (contract 01
-    §3.15). Every field is optional, so the one view can probe an empty
+    §3.15). Every field is optional, so the noticeboard can probe an empty
     block for the rule that forbids it."""
 
     board: str | None = None

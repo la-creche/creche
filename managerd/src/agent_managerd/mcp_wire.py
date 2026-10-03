@@ -83,7 +83,7 @@ from .mcp_release import (
 SECRET_TWICE: Final = "two servers name one secret"
 
 #: How much of a hostile name a report line carries. A registry file is
-#: operator-written and a report line reaches a log and the one view.
+#: operator-written and a report line reaches a log and the noticeboard.
 MAX_NAME_CHARS: Final = 64
 
 #: Contract 05 §3.3's code for rule 5. A declared MCP server is not
@@ -102,7 +102,7 @@ PAIR: Final = 2
 
 @dataclass(frozen=True)
 class McpReport:
-    """What one pass did, in the one view's terms.
+    """What one pass did, in the noticeboard's terms.
 
     `problems` is what a reader acts on. It is never an exception and never
     a traceback: a registry the loop cannot use is a report about the
@@ -277,7 +277,7 @@ def said(exc: OSError) -> str:
 
 def _broken(registry: Registry) -> tuple[str, ...]:
     """Rule 4. One line per server file that did not parse or did not
-    validate. The one view reads the same reports through
+    validate. The noticeboard reads the same reports through
     `Registry.all_reports`, so this line is a pointer and not a second
     copy of the issue list."""
     return tuple(
@@ -414,7 +414,7 @@ def _stamp(epoch: float) -> str:
 def safe(text: str) -> str:
     """A hostile name, made printable and capped.
 
-    A registry directory name reaches a log line and the one view. It has
+    A registry directory name reaches a log line and the noticeboard. It has
     already matched a pattern by the time a release reads it, but this
     runs BEFORE that: `load_registry` walks whatever directories exist.
     """

@@ -2,8 +2,8 @@
 
 Gate 1b passed on the host on 2026-09-19 with its status document saying
 `"state": "creating"` for a sandbox that had already answered a chat turn,
-because nothing in the system ever wrote `ready`. The one view shows that
-field, so the view was lying about a live family.
+because nothing in the system ever wrote `ready`. The noticeboard shows that
+field, so the noticeboard was lying about a live family.
 
 This is the cross-package half of the fix, which no unit test can reach:
 `managerd`'s §5 call has to run the REAL handshake against the REAL

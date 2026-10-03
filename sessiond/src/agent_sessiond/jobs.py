@@ -45,7 +45,7 @@ class Delegation:
     """One delegate call, as contract 04 §7.3 describes it.
 
     `caller_family` is trusted: the PEP read it from the family token.
-    `caller_session` is advisory and travels for the audit and the one view.
+    `caller_session` is advisory and travels for the audit and the noticeboard.
     """
 
     delegation_id: str

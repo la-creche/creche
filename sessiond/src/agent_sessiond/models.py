@@ -249,7 +249,7 @@ class Turn:
     persona_truncated: bool = False
     # File only, so §13.1's record can be built after a restart. Contract 02
     # §4.4's field table carries `approvals` and no second counter, and the
-    # one view reads the four numbers off the outcome record instead.
+    # the noticeboard reads the four numbers off the outcome record instead.
     gates: GateTally = field(default_factory=GateTally)
     # File only. A repeat of a known key with a different prompt must refuse
     # (contract 02 §6 rule 5), and that check has to survive a restart. The

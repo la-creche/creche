@@ -87,7 +87,7 @@ class DelegateStatus(Enum):
 class DelegateRequest:
     """Contract 04 §7.3's body. `caller_family` is trusted: the PEP read it
     from the bearer token. `claimed_session_id` is advisory and travels for
-    the audit and the one view only."""
+    the audit and the noticeboard only."""
 
     caller_family: str
     target_family: str

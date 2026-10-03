@@ -12,7 +12,7 @@ every first-party package for `Path(__file__)`, `importlib.resources` and
 
 | Package | File | How it reads it |
 |---|---|---|
-| `agent-view` | `templates/*.html`, `static/view.css` | `Path(__file__).parent` in `app.py` |
+| `noticeboard` | `templates/*.html`, `static/*.css` | `Path(__file__).parent` in `app.py` |
 
 The rule below names no package. It builds the wheel of every
 workspace member that ships a non-Python file and asks whether the wheel
@@ -114,7 +114,7 @@ def test_the_scan_finds_the_package_that_ships_data() -> None:
     pass forever and prove nothing, so the set is named once, here."""
     found = {member.name for member in _with_data()}
 
-    assert {"view"} <= found, found
+    assert {"noticeboard"} <= found, found
 
 
 @pytest.mark.parametrize("member", _with_data(), ids=lambda one: one.name)

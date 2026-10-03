@@ -73,7 +73,7 @@ SPEC: dict[str, tuple[str, str, str]] = {
     "pep": ("venv", "agent-pep.service", ""),
     "sessiond": ("venv", "sessiond.service", "pep"),
     "managerd": ("venv", "agent-managerd.service", "pep"),
-    "ui": ("venv", "agent-view.service", ""),
+    "noticeboard": ("venv", "creche-noticeboard.service", ""),
     "infra": ("compose", "ai-stack.service", ""),
     "playpen": ("oci-image", "null", ""),
     "releasectl": ("venv", "agent-release.service", ""),

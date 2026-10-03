@@ -3,7 +3,7 @@
 The release unit's `UMask=0027` makes root's per-request clone
 `root:root 0750`, and a user unit is installed as the operator. A step 9 that
 installed the unit file straight out of that clone, from
-`<work root>/<request id>/<name>/systemd/<unit>`, would fail every `ui`,
+`<work root>/<request id>/<name>/systemd/<unit>`, would fail every `noticeboard`,
 `sessiond` or `managerd` release whose unit file changed, at the refresh,
 with `Permission denied`. Root installing it instead would make root
 the operator's deputy (`release/AGENTS.md` rule 5a). So step 8 copies the unit
@@ -74,7 +74,7 @@ NEW_VERSION = "0.1.4"
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
 PEP_UNIT = "agent-pep.service"
-VIEW_UNIT = "agent-view.service"
+NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: `fake_host`'s two unit directories: `/etc/systemd/system`, and
 #: `~operator/.config/systemd/user`.
@@ -328,8 +328,8 @@ def _make_bench(tmp_path: Path, component: str, unit: str, units: str) -> Bench:
 
 
 def _user_bench(tmp_path: Path) -> Bench:
-    """`ui`, whose `agent-view.service` is a user unit of the operator's."""
-    return _make_bench(tmp_path, "ui", VIEW_UNIT, USER_UNITS)
+    """`noticeboard`, whose `creche-noticeboard.service` is a user unit of the operator's."""
+    return _make_bench(tmp_path, "noticeboard", NOTICEBOARD_UNIT, USER_UNITS)
 
 
 def _system_bench(tmp_path: Path) -> Bench:

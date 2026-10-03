@@ -378,9 +378,9 @@ def test_a_failed_verify_restores_and_the_previous_version_verifies(bench: Bench
 
 
 def test_a_failed_verifys_ledger_row_carries_its_report(bench: Bench) -> None:
-    """Every `verify` row carries `detail`. Without it `verify ui: exit 1:`
+    """Every `verify` row carries `detail`. Without it `verify noticeboard: exit 1:`
     is the whole line `done/<id>.json` holds — the exit code alone, with
-    the report `view-verify --json` printed to stdout nowhere in it."""
+    the report `noticeboard-verify --json` printed to stdout nowhere in it."""
     report = '{"ok": false, "checks": [{"name": "config", "ok": false}]}'
     calls = {"n": 0}
     bench.run.fails["pep-verify"] = 1
@@ -408,9 +408,9 @@ def test_a_restore_leaves_no_tree_behind(bench: Bench) -> None:
     """A restored release removes what it staged, and the ledger says it
     did.
 
-    A failed tree kept at `<install.to>.new` — `ui.new` in the operator's home,
+    A failed tree kept at `<install.to>.new` — `noticeboard.new` in the operator's home,
     `root:root 750` — stops the next `rework-cutover.sh up`, which stages
-    into the same name as the operator, at `rm: cannot remove 'ui.new':
+    into the same name as the operator, at `rm: cannot remove 'noticeboard.new':
     Permission denied`."""
     calls = {"n": 0}
     bench.run.fails["pep-verify"] = 1
@@ -450,7 +450,7 @@ def test_the_manifests_env_file_reaches_the_hooks_own_argv(bench: Bench) -> None
     """End to end: steps.py must not drop or mangle a
     manifest's `--env-file` words on their way to the child. The fake
     verify hook fails unless it sees the exact `--env-file` argv this
-    manifest names, the same way the operator's real `view-verify` needed its own
+    manifest names, the same way the operator's real `noticeboard-verify` needed its own
     unit's `EnvironmentFile=` to pass rather than a hand-run one."""
     env_path = str(bench.components / "pep.env")
     edits = {'"--json"]': f'"--json", "--env-file", "{env_path}"]'}

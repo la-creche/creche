@@ -16,7 +16,7 @@ from agent_release.errors import Refusal, RefusalCode
 from agent_release.manifest import MAX_MANIFEST_BYTES
 from release_fixtures import manifest_text, write_manifest
 
-CONTROL_NAMES = ("pep", "sessiond", "managerd", "ui", "playpen", "infra", "releasectl")
+CONTROL_NAMES = ("pep", "sessiond", "managerd", "noticeboard", "playpen", "infra", "releasectl")
 
 
 def _control_repo(root: Path) -> Path:

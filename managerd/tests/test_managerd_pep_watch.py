@@ -1,7 +1,7 @@
 """Something watches the PEP (contract 05 §3.3).
 
 A PEP that is down while nothing watches it leaves every family's status
-document `in_sync` with no fault and the one view showing a healthy
+document `in_sync` with no fault and the noticeboard showing a healthy
 fleet, while no tool call works. These tests hold the
 four rules that stop that happening quietly: one flap is not an outage,
 the fault clears itself, a probe that hangs or raises never kills the
@@ -362,8 +362,8 @@ def test_a_document_says_the_watch_is_off(tmp_path: Path) -> None:
 
 def test_no_sandbox_row_claims_a_running_turn(tmp_path: Path) -> None:
     """No row carries `turns_running`: `managerd` cannot count running
-    turns, and a 0 in every row would read as "0 running" on the one
-    view's front page."""
+    turns, and a 0 in every row would read as "0 running" on the
+    noticeboard's front page."""
     fleet = Fleet(tmp_path, None)
     write_registry(fleet.registry_root)
 

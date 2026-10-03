@@ -29,7 +29,7 @@ Two consumers, both named in contract 06 §3.4's table.
    `managerd` version in a committed file to know which agent-control to
    check out when it validates family files. `live-manifest.json` is that
    file, and its human writer is what this replaces.
-2. The one view reads the ledger directly and needs nothing from here.
+2. The noticeboard reads the ledger directly and needs nothing from here.
 
 Three rules this module keeps.
 

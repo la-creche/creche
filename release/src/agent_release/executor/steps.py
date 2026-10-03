@@ -161,7 +161,7 @@ def remove_staged(path: Path, name: str, entry: Entry) -> None:
     `manual` line carrying the exact command root must run, because the
     only thing worse than a leftover is a leftover nobody is told about:
     the next release stages into the same name and dies on it, and so
-    does the cutover, with `rm: cannot remove 'ui.new': Permission
+    does the cutover, with `rm: cannot remove 'noticeboard.new': Permission
     denied` and no ledger entry anywhere naming the path.
 
     Public, and not a method, because the crash repair leaves the same
@@ -394,7 +394,7 @@ class Release:
 
         A kept tree stops the next cutover, which stages into the same
         `<install.to>.new` as the operator: a `root:root 750` tree in the operator's home
-        is `rm: cannot remove 'ui.new': Permission denied`. Nothing here is
+        is `rm: cannot remove 'noticeboard.new': Permission denied`. Nothing here is
         unrecoverable: every tree is rebuilt from a SHA the ledger records.
 
         `keep` (contract 06 §5) is untouched. That is the `.prev` of a
@@ -600,7 +600,7 @@ class Release:
         first release met: `bin/rework-cutover.sh` installed every tree and
         stamped none.
         Without it, eight installed components read as "not installed",
-        declared nothing, and `ui` — which requires three contracts — was
+        declared nothing, and `noticeboard` — which requires three contracts — was
         refused at step 4 with C1, "the set provides it nowhere". The
         first release was impossible for that reason as well as for the
         missing document.

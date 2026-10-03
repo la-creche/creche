@@ -47,13 +47,13 @@ def _mode(path: Path) -> int:
 
 def test_a_tree_built_under_a_tight_umask_becomes_readable(tmp_path: Path) -> None:
     """The fault seen on the host, exactly: `uv sync` under the unit's umask left
-    `ui.new` `root:root 0750`, and `agent-view.service` (run as the operator)
+    `noticeboard.new` `root:root 0750`, and `creche-noticeboard.service` (run as the operator)
     could not exec its program out of it."""
-    tree = tmp_path / "ui.new"
+    tree = tmp_path / "noticeboard.new"
     with tight_umask():
         (tree / "bin").mkdir(parents=True)
         (tree / "lib" / "site-packages").mkdir(parents=True)
-        script = tree / "bin" / "agent-view"
+        script = tree / "bin" / "noticeboard"
         script.write_text("#!/bin/sh\n", encoding="utf-8")
         script.chmod(0o700)
         data = tree / "lib" / "site-packages" / "pkg.py"

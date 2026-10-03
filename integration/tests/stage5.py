@@ -468,7 +468,7 @@ class Stage5:
     async def session_state(self, family: str, session: str) -> str:
         """Contract 02 §4.2's session state, over the real API.
 
-        `view-ro` is the principal the one view uses, and it is the reader
+        `view-ro` is the principal the noticeboard uses, and it is the reader
         that contract 04 §8.6 is written for.
         """
         client = self.stack.sessiond_as(Principal.VIEW_RO)

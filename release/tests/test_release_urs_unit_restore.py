@@ -67,7 +67,7 @@ NEW_VERSION = "0.1.4"
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
 PEP_UNIT = "agent-pep.service"
-VIEW_UNIT = "agent-view.service"
+NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: `fake_host`'s two unit directories: `/etc/systemd/system`, and
 #: `~operator/.config/systemd/user`.
@@ -513,11 +513,11 @@ def test_a_repair_whose_copy_is_gone_says_so_under_manual(tmp_path: Path) -> Non
 
 
 def test_a_user_unit_is_kept_and_put_back_as_the_operator(tmp_path: Path) -> None:
-    """`ui`'s unit lives under `~operator/.config/systemd/user`. The copy is
+    """`noticeboard`'s unit lives under `~operator/.config/systemd/user`. The copy is
     kept beside it and put back by the identity that owns that directory,
     the one the refresh runs as: root never copies a file of the operator's by
     path into one the operator can read."""
-    bench = _make_bench(tmp_path, "ui", VIEW_UNIT, USER_UNITS)
+    bench = _make_bench(tmp_path, "noticeboard", NOTICEBOARD_UNIT, USER_UNITS)
     old = bench.installed().read_bytes()
     _serve(bench, _unit_text(bench, "Environment=A_NEW_SETTING=1"))
     _fail_verify_once(bench)
@@ -536,6 +536,6 @@ def test_a_user_units_manual_line_is_the_operators(tmp_path: Path) -> None:
     """What a person types for one of the operator's units: as the operator, with
     `systemctl --user`."""
     installer = Installer(fake_host(tmp_path, FakeRun()))
-    kept = tmp_path / USER_UNITS / f"{VIEW_UNIT}.prev"
+    kept = tmp_path / USER_UNITS / f"{NOTICEBOARD_UNIT}.prev"
 
     assert installer.unit_by_hand(kept) == _by_hand(kept, "operator", "systemctl --user")

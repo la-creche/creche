@@ -1,0 +1,30 @@
+{# Shared pieces. A problem is always rendered as a REPORT: the noticeboard
+   answers "what is running right now", and a stack trace is the worst
+   possible answer to that question. #}
+
+{% macro problem(text) %}
+{% if text %}<p class="problem">{{ text }}</p>{% endif %}
+{% endmacro %}
+
+{% macro problems(items) %}
+{% if items %}
+<ul class="problems">
+  {% for one in items %}<li>{{ one }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% endmacro %}
+
+{% macro csrf(token, field) %}
+<input type="hidden" name="{{ field }}" value="{{ token }}">
+{% endmacro %}
+
+{% macro when(stamp) %}
+<span class="when">{{ stamp or "—" }}</span>
+{% endmacro %}
+
+{# A field a rule forbids renders DISABLED with the rule as its label.
+   Never hidden: a missing control reads as a bug in the noticeboard, while a
+   control that explains itself teaches the rule. #}
+{% macro rule(text) %}
+{% if text %}<p class="rule">{{ text }}</p>{% endif %}
+{% endmacro %}

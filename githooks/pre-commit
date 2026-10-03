@@ -4,7 +4,7 @@
 # A hook process inherits GIT_DIR (and, from a linked worktree, also
 # GIT_WORK_TREE; pre-commit additionally gets GIT_INDEX_FILE) from the git
 # command that invoked it. quality-gate.sh's pytest suite spawns its own
-# `git` subprocesses (view/tests/view_helpers.py,
+# `git` subprocesses (noticeboard/tests/noticeboard_helpers.py,
 # bin/tests/test_rework_registry_sync.py,
 # release/tests/test_release_tag_script.py, ...), and
 # those subprocesses inherit the SAME variables — pointed at whichever

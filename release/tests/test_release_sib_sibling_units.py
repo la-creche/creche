@@ -57,7 +57,7 @@ NEW_VERSION = "0.1.4"
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
 PEP_UNIT = "agent-pep.service"
-VIEW_UNIT = "agent-view.service"
+NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: Sibling names, shaped like `sessiond`'s three doors.
 DOOR = "agent-door-a.service"
@@ -250,8 +250,8 @@ def system(tmp_path: Path) -> Bench:
 
 @pytest.fixture
 def user(tmp_path: Path) -> Bench:
-    """`ui`, with its unit in the operator's own unit directory."""
-    return _make_bench(tmp_path, "ui", VIEW_UNIT, USER_UNITS)
+    """`noticeboard`, with its unit in the operator's own unit directory."""
+    return _make_bench(tmp_path, "noticeboard", NOTICEBOARD_UNIT, USER_UNITS)
 
 
 def _sibling(bench: Bench, name: str, *, carried: str | None = None) -> bytes:
@@ -348,7 +348,7 @@ def _restarts(bench: Bench, name: str) -> list[int]:
     ("component", "unit", "units", "who"),
     [
         ("pep", PEP_UNIT, SYSTEM_UNITS, As.ROOT),
-        ("ui", VIEW_UNIT, USER_UNITS, As.OPERATOR),
+        ("noticeboard", NOTICEBOARD_UNIT, USER_UNITS, As.OPERATOR),
     ],
     ids=["system unit, as root", "user unit, as the operator"],
 )
@@ -536,8 +536,10 @@ def test_a_note_reads_siblings_tolerantly(
     tmp_path: Path, written: object, read: tuple[str, ...]
 ) -> None:
     root = make_spool_dirs(tmp_path)
-    body = {"component": "ui", "to": "/a", "prev": "/a.prev", "siblings_kept": written}
-    (root / RUNNING_DIR / f"{REQUEST_ID}-ui.switch").write_text(json.dumps(body), encoding="utf-8")
+    body = {"component": "noticeboard", "to": "/a", "prev": "/a.prev", "siblings_kept": written}
+    (root / RUNNING_DIR / f"{REQUEST_ID}-noticeboard.switch").write_text(
+        json.dumps(body), encoding="utf-8"
+    )
     spool = Spool(str(root), this_uid())
     try:
         found = spool.unfinished()

@@ -89,8 +89,8 @@ class CatalogRow:
     bundles: tuple[str, ...] = ()
 
 
-#: Contract 06 §1, in its own order. `managerd` sits at `managerd/`, `ui` at
-#: `view/` and `playpen` at `playpen/`.
+#: Contract 06 §1, in its own order. `managerd` sits at `managerd/`, `noticeboard` at
+#: `noticeboard/` and `playpen` at `playpen/`.
 #:
 #: `bundles` follows each build through `uv.lock`: `sessiond` installs the
 #: doors, and `agent-door-trigger` brings `agent-family`; `agent-pep`
@@ -107,7 +107,9 @@ CATALOG: tuple[CatalogRow, ...] = (
         ("door-owui", "door-tui", "door-trigger", "family"),
     ),
     CatalogRow("managerd", Repo.AGENT_CONTROL, "managerd", Kind.VENV, Releases.YES, ("family",)),
-    CatalogRow("ui", Repo.AGENT_CONTROL, "view", Kind.VENV, Releases.YES, ("family",)),
+    CatalogRow(
+        "noticeboard", Repo.AGENT_CONTROL, "noticeboard", Kind.VENV, Releases.YES, ("family",)
+    ),
     CatalogRow("playpen", Repo.AGENT_CONTROL, "playpen", Kind.OCI_IMAGE, Releases.YES),
     CatalogRow("mcp-servers", Repo.AGENT_MCP, ".", Kind.VENV, Releases.YES),
     CatalogRow("infra", Repo.AGENT_CONTROL, "infra", Kind.COMPOSE, Releases.YES),

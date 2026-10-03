@@ -11,8 +11,8 @@
 # MCP-server change the operator merges reaches nothing at all.
 #
 # TWO VERBS AND NOTHING ELSE: `fetch --prune`, then `merge --ff-only`. It
-# NEVER rebases, resets, cleans or pushes. The view commits here
-# (`view/src/agent_view/registrywrite.py`) and never pushes, so a local
+# NEVER rebases, resets, cleans or pushes. The noticeboard commits here
+# (`noticeboard/src/noticeboard/registrywrite.py`) and never pushes, so a local
 # commit in this checkout is the operator's own unpushed work — a normal Tuesday,
 # not corruption. Rebasing it under the operator from a timer is not recoverable, so a
 # checkout that has diverged is REPORTED and left exactly as it is.
@@ -90,7 +90,7 @@ set -uo pipefail
 TEST_PREFIX="${REGISTRY_SYNC_TEST_PREFIX:-}"
 
 # The REAL registry checkout. `managerd` watches it, the trigger door reads
-# it, and the view commits into it.
+# it, and the noticeboard commits into it.
 REGISTRY="$TEST_PREFIX/srv/agents/registry"
 STATE_ROOT="$TEST_PREFIX/srv/agents/state/rework"
 
@@ -265,7 +265,7 @@ fi
 # non-zero the moment this checkout carries something upstream does not.
 if ! reg_git "$GIT_TIMEOUT_S" merge-base --is-ancestor HEAD "$UPSTREAM" >/dev/null 2>&1; then
   refuse "$REGISTRY has local commit(s): $BEFORE is not an ancestor of $UPSTREAM. \
-The view commits here and never pushes. Push them, or move them aside, by hand"
+The noticeboard commits here and never pushes. Push them, or move them aside, by hand"
 fi
 
 # The one derived file, cleared BEFORE the working tree is judged. Two

@@ -1,4 +1,4 @@
-"""A FIRST release, `ui`, on a host where no release has run.
+"""A FIRST release, `noticeboard`, on a host where no release has run.
 
 Every other test in this package stands up a host where a previous release
 already ran: a stamped tree, a live version, a `latest` map somebody wrote.
@@ -16,8 +16,8 @@ So this module stands up that host and changes nothing else.
 
 The REAL `component.yaml` files of this repository are served, with their
 install paths moved under `tmp_path`. A fixture manifest would hide what
-decides it: `view/component.yaml` requires three contracts, and what the
-other eight components declare decides whether `ui` can be released at
+decides it: `noticeboard/component.yaml` requires three contracts, and what the
+other eight components declare decides whether `noticeboard` can be released at
 all.
 
 Fakes stand only at the edges the design puts them at: the GitHub API, the
@@ -74,8 +74,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FIRST_VERSION = "0.1.0"
 FIRST_SHA = "7c1b0d9a2e45f6837b0c4d1e9a53f2068d7be431"
 
-COMPONENT = "ui"
-UNIT = "agent-view.service"
+COMPONENT = "noticeboard"
+UNIT = "creche-noticeboard.service"
 
 #: Every component that is a tree under an install root on this host.
 #: `bin/rework-cutover.sh` made the three operator-owned ones and
@@ -86,10 +86,10 @@ UNIT = "agent-view.service"
 #: is a compose project, `mcp-servers` is `/opt/mcp/<name>` and
 #: `registry-data` is a checkout. Root learns a component's manifest from
 #: a tree under an install root, so it can see none of them.
-INSTALLED_TREES = ("managerd", "releasectl", "sessiond", "ui")
+INSTALLED_TREES = ("managerd", "releasectl", "sessiond", "noticeboard")
 
 #: What `pep` provides, and nobody in the resolved set does. `managerd`,
-#: `sessiond` and `ui` all require it, so it is the requirement root cannot
+#: `sessiond` and `noticeboard` all require it, so it is the requirement root cannot
 #: check on this host.
 UNPROVIDED = "pep-grant"
 
@@ -97,7 +97,7 @@ UNPROVIDED = "pep-grant"
 #: `contracts._check_floors` walks the set: by component name, then in the
 #: order the manifest declares them. `pep` provides `pep-grant` and
 #: `playpen` provides `channel`, and neither is a tree under an
-#: install root. `releasectl` requires nothing, and `ui` gets `session-api`
+#: install root. `releasectl` requires nothing, and `noticeboard` gets `session-api`
 #: from `sessiond` and `manager-status` from `managerd`, which ARE trees.
 #:
 #: The FLOORS are read from the manifests and never written here. A contract
@@ -105,7 +105,7 @@ UNPROVIDED = "pep-grant"
 #: into this list then fails a test that has nothing to do with that change
 #: (it did, the day this was written: `pep-grant` went 0.10 to 0.11 and
 #: `channel` 0.11 to 0.12 while this file was on its branch).
-_MANIFEST_DIR = {"managerd": "managerd", "sessiond": "sessiond", "ui": "view"}
+_MANIFEST_DIR = {"managerd": "managerd", "sessiond": "sessiond", "noticeboard": "noticeboard"}
 
 
 def _floor(component: str, contract: str) -> str:
@@ -129,9 +129,9 @@ def _not_verified(component: str, contract: str, owner: str) -> str:
 UNVERIFIED = [
     _not_verified("managerd", "pep-grant", "pep"),
     _not_verified("managerd", "channel", "playpen"),
+    _not_verified("noticeboard", "pep-grant", "pep"),
     _not_verified("sessiond", "channel", "playpen"),
     _not_verified("sessiond", "pep-grant", "pep"),
-    _not_verified("ui", "pep-grant", "pep"),
 ]
 
 #: The two rows the operator reads on the phone, exactly. Four contracts have a
@@ -147,10 +147,10 @@ CONTRACTS_ROW = "4 satisfied, 5 not verified"
 #: second.
 MANAGERD_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DM"
 
-#: What the one view's unit really execs on the host — `bin/rework-cutover.sh`
+#: What the noticeboard's unit really execs on the host — `bin/rework-cutover.sh`
 #: installed it under `~operator/.config/systemd/user` pointing at the tree
-#: `ui` releases, which is why the first release was this component.
-EXEC_START = "{tree}/bin/agent-view"
+#: `noticeboard` releases, which is why the first release was this component.
+EXEC_START = "{tree}/bin/noticeboard"
 
 
 @dataclass
@@ -246,7 +246,7 @@ def _serve_the_repository(bench: First, edit: EditFn | None = None) -> None:
 def _unit_text(bench: First) -> str:
     exec_start = EXEC_START.format(tree=bench.tree())
 
-    return f"[Unit]\nDescription=the one view\n\n[Service]\nExecStart={exec_start}\n"
+    return f"[Unit]\nDescription=the noticeboard\n\n[Service]\nExecStart={exec_start}\n"
 
 
 def _first_readers() -> Readers:
@@ -315,7 +315,7 @@ def _build_the_tree(bench: First) -> None:
     staged = bench.components / f"{COMPONENT}.new"
     (staged / "bin").mkdir(parents=True, exist_ok=True)
     (staged / "lib" / "python3.12" / "site-packages").mkdir(parents=True, exist_ok=True)
-    for script in ("view-verify", "agent-view"):
+    for script in ("noticeboard-verify", "noticeboard"):
         made = staged / "bin" / script
         made.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         made.chmod(0o755)
@@ -371,7 +371,7 @@ def _raise_the_floor(bench: First, consumer: str, contract: str, floor: str) -> 
 
 
 def test_the_first_ui_release_reaches_done_with_a_named_version(first: First) -> None:
-    """`agent-releasectl request ui@0.1.0`, then the tap, then `done`.
+    """`agent-releasectl request noticeboard@0.1.0`, then the tap, then `done`.
 
     This is the whole first release with fakes at the four edges.
     """
@@ -385,7 +385,7 @@ def test_the_first_ui_release_reaches_done_with_a_named_version(first: First) ->
 
 
 def test_the_first_ui_release_reaches_done_with_no_version_at_all(first: First) -> None:
-    """`agent-releasectl request ui`, which means `latest`.
+    """`agent-releasectl request noticeboard`, which means `latest`.
 
     Root reads the newest tag itself, so `latest` needs no document
     `managerd` would have to publish.
@@ -400,7 +400,7 @@ def test_the_first_ui_release_reaches_done_with_no_version_at_all(first: First) 
 def test_a_planted_live_state_document_changes_nothing(first: First) -> None:
     """The same release, with a hostile live-state document planted.
 
-    It claims `ui` is already at 9.9.9 — which would make the request a
+    It claims `noticeboard` is already at 9.9.9 — which would make the request a
     downgrade the monotonic rule refuses — and that `latest` means 9.9.9,
     which GitHub has no Release for. Root opens no such file, so the
     release is byte for byte the release above.
@@ -458,7 +458,7 @@ def test_the_unprovided_requirement_is_reported_and_never_refused(first: First) 
 
     `pep` was live out of `/opt/agent-control/.venv`, which is no tree
     under an install root, so root saw no provider for `pep-grant` —
-    which `managerd`, `sessiond` and `ui` all
+    which `managerd`, `sessiond` and `noticeboard` all
     require. Root cannot tell that from "nothing provides it", and
     refusing there refuses every release on this host for ever.
     """
@@ -473,20 +473,20 @@ def test_the_unprovided_requirement_is_reported_and_never_refused(first: First) 
 
 
 def test_a_provider_root_can_see_is_still_checked(first: First) -> None:
-    """The teeth stay where root can bite. `ui` requires `session-api`
+    """The teeth stay where root can bite. `noticeboard` requires `session-api`
     from `sessiond`, which IS a tree under an install root, so a floor the
     live `sessiond` does not meet refuses exactly as before."""
-    _raise_the_floor(first, "ui", "session-api", "9.9")
+    _raise_the_floor(first, "noticeboard", "session-api", "9.9")
 
     result = _release(first, {COMPONENT: FIRST_VERSION})
 
     assert "refused" in result
     assert first.ledger()["refused_check"] == "C1"
-    assert "ui requires session-api 9.9" in str(first.ledger()["reason"])
+    assert "noticeboard requires session-api 9.9" in str(first.ledger()["reason"])
 
 
 def test_the_phone_names_what_root_could_not_verify(first: First) -> None:
-    """What the operator reads before the tap, on the real host, for `ui`.
+    """What the operator reads before the tap, on the real host, for `noticeboard`.
 
     Two rows carry it. `review` counts the manifests root read at a
     commit rather than out of a tree it owns, and `contracts` counts the
@@ -553,7 +553,7 @@ def test_the_preview_and_root_give_one_answer(first: First) -> None:
 
 
 def test_two_requests_in_one_pass_each_get_their_own_entry(first: First) -> None:
-    """The real spool held two: the operator's `ui`, and `managerd`'s
+    """The real spool held two: the operator's `noticeboard`, and `managerd`'s
     `mcp-servers=latest`, which root correctly refuses because agent-mcp
     carries no `mcp-servers-v*` tag.
 
@@ -602,10 +602,10 @@ def test_a_switch_that_fails_leaves_no_new_tree(first: First) -> None:
     """A verify that fails: the restore puts the cutover's tree back and
     moves the new one aside to `<install.to>.new`, `root:root 750`. A tree
     kept there stops the next `rework-cutover.sh up`, which stages into
-    that same name as the operator, at `rm: cannot remove 'ui.new': Permission
+    that same name as the operator, at `rm: cannot remove 'noticeboard.new': Permission
     denied`, so the release removes it.
     """
-    first.run.fails["view-verify"] = 1
+    first.run.fails["noticeboard-verify"] = 1
 
     result = _release(first, {COMPONENT: FIRST_VERSION})
 
@@ -618,14 +618,14 @@ def test_a_switch_that_fails_leaves_no_new_tree(first: First) -> None:
 
 def test_a_failed_release_leaves_no_switch_note(first: First) -> None:
     """The same release, the other leftover. When its restore fails its
-    own verify too, a `<id>-ui.switch` left in `running/` — root-only,
+    own verify too, a `<id>-noticeboard.switch` left in `running/` — root-only,
     invisible to operator-side tooling — makes
     `bin/rework-release-visit.sh --rebuild-executor` refuse with "an
     unfinished switch is in .../running. Drain it first." The note is
     there to survive a CRASH between the swap and the verify, not a run
     that recorded itself.
     """
-    first.run.fails["view-verify"] = 1
+    first.run.fails["noticeboard-verify"] = 1
 
     _release(first, {COMPONENT: FIRST_VERSION})
 

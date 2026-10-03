@@ -6,7 +6,7 @@
 
 One file per UTC day, appended with `O_APPEND`, 0640 inside a 0750 directory.
 Every decision is recorded, allows and denials alike (invariant 15). The PEP
-serves no read endpoint for it: the one view reads the files, and an endpoint
+serves no read endpoint for it: the noticeboard reads the files, and an endpoint
 would be new surface on the process that holds every upstream credential.
 
 A request that names no family goes to the unidentified log instead, at its

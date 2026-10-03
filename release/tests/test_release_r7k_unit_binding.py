@@ -68,7 +68,7 @@ NEW_VERSION = "2.1.0"
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
 PEP_UNIT = "agent-pep.service"
-VIEW_UNIT = "agent-view.service"
+NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: The refusal code, as the ledger records it.
 UNIT_CODE = "unit"
@@ -249,24 +249,24 @@ def test_the_tree_itself_counts_as_inside_itself(bench: Bench) -> None:
 
 
 def test_an_operator_user_unit_is_read_from_its_own_directory(tmp_path: Path) -> None:
-    """`sessiond`, `managerd` and the view are USER units, installed under
+    """`sessiond`, `managerd` and the noticeboard are USER units, installed under
     `~operator/.config/systemd/user` by `bin/rework-cutover.sh`. Root reads the
     FILE: `systemctl --user show` needs the operator's own bus."""
-    bench = _make_bench(tmp_path, "ui", VIEW_UNIT)
-    _install_unit(bench, _unit_text("/opt/agent-control/.venv/bin/agent-ui"), user=True)
+    bench = _make_bench(tmp_path, "noticeboard", NOTICEBOARD_UNIT)
+    _install_unit(bench, _unit_text("/opt/agent-control/.venv/bin/noticeboard"), user=True)
     _serve(bench)
 
     result = _release(bench)
 
     assert "refused" in result
     assert bench.ledger()["refused_check"] == UNIT_CODE
-    assert VIEW_UNIT in bench.reason()
+    assert NOTICEBOARD_UNIT in bench.reason()
 
 
 def test_a_user_unit_that_starts_its_own_tree_releases(tmp_path: Path) -> None:
-    """`ui` is the safe first release: its user unit starts its own tree."""
-    bench = _make_bench(tmp_path, "ui", VIEW_UNIT)
-    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/agent-view"), user=True)
+    """`noticeboard` is the safe first release: its user unit starts its own tree."""
+    bench = _make_bench(tmp_path, "noticeboard", NOTICEBOARD_UNIT)
+    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/noticeboard"), user=True)
     _serve(bench)
 
     assert "succeeded" in _release(bench), bench.reason()
@@ -287,8 +287,8 @@ def home_is_the_bench(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_user_unit_reaches_its_tree_through_the_home_specifier(tmp_path: Path) -> None:
     """A unit file names no account. `%h/x` is `<the operator's home>/x`,
     which is what systemd's user manager makes of it."""
-    bench = _make_bench(tmp_path, "ui", VIEW_UNIT)
-    _install_unit(bench, _unit_text("%h/components/ui/bin/agent-view"), user=True)
+    bench = _make_bench(tmp_path, "noticeboard", NOTICEBOARD_UNIT)
+    _install_unit(bench, _unit_text("%h/components/noticeboard/bin/noticeboard"), user=True)
     _serve(bench)
 
     assert "succeeded" in _release(bench), bench.reason()
@@ -417,7 +417,7 @@ def test_a_quoted_program_is_unquoted() -> None:
 
 
 def test_exec_start_pre_is_not_exec_start() -> None:
-    """`agent-view.service` carries both. `ExecStartPre` is a check that
+    """`creche-noticeboard.service` carries both. `ExecStartPre` is a check that
     runs and exits, and it is not what the unit runs."""
     text = "[Service]\nExecStartPre=/a/bin/x --check\nExecStart=/a/bin/x\n"
 

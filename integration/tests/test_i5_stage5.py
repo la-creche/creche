@@ -480,7 +480,7 @@ async def test_the_audit_holds_the_two_records_of_one_gate(gated: Stage5) -> Non
 
 
 async def test_the_journal_names_the_gate_on_both_sides(gated: Stage5) -> None:
-    """Contract 02 §8.1's two lines, which is what the one view reads."""
+    """Contract 02 §8.1's two lines, which is what the noticeboard reads."""
     session, turn = await held_job(gated)
     call = asyncio.ensure_future(
         gated.call_tool(GATED_TOOL, GATED_ARGS, session=session, turn=turn)

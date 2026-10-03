@@ -246,14 +246,14 @@ def test_a_first_run_tags_every_component_that_has_none(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     """Item 1: a repository with no component tag gets them all at once, so
-    the operator has a `ui-v…` to name without waiting for a merge under `view/`."""
+    the operator has a `noticeboard-v…` to name without waiting for a merge under `noticeboard/`."""
     _commit(repo, "pep/src/one.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode == 0, done.stderr
     assert "released pep-v0.1.0" in done.stdout
-    assert "released ui-v0.1.0" in done.stdout
+    assert "released noticeboard-v0.1.0" in done.stdout
     assert _tags(repo) == FIRST_TAGS
 
 
@@ -468,36 +468,38 @@ def test_a_missed_dispatch_still_tags_the_earlier_merge(
     """A missed run, end to end.
 
     A red `main` tags nothing, so a missed run is a normal case. Merge A
-    changes `view/` and its run is missed. Merge B changes only `docs/`, and
+    changes `noticeboard/` and its run is missed. Merge B changes only `docs/`, and
     its run passes. The head commit's own diff names no
-    component, so a planner reading it alone would never tag `ui`, and
+    component, so a planner reading it alone would never tag `noticeboard`, and
     nothing would say so.
     """
     _seed_first_tags(repo)
-    _commit(repo, "view/src/one.py")
+    _commit(repo, "noticeboard/src/one.py")
     _commit(repo, "docs/rework/design.md")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "ui-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
 
 
 @pytest.mark.slow
 def test_each_component_reads_its_own_window(repo: Path, shims: Path, tmp_path: Path) -> None:
     """Two components, two different newest tags, two different ranges."""
     _seed_first_tags(repo)
-    _commit(repo, "view/src/one.py")
+    _commit(repo, "noticeboard/src/one.py")
     _commit(repo, "pep/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "ui-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "noticeboard-v0.1.1"])
 
-    # `ui`'s window now starts at ui-v0.1.1, so the earlier view/ change is
+    # `noticeboard`'s window now starts at noticeboard-v0.1.1, so the earlier noticeboard/ change is
     # behind it and only the new one counts. `pep` saw nothing at all.
-    _commit(repo, "view/src/two.py")
+    _commit(repo, "noticeboard/src/two.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "ui-v0.1.1", "ui-v0.1.2"])
+    assert _tags(repo) == sorted(
+        [*FIRST_TAGS, "pep-v0.1.1", "noticeboard-v0.1.1", "noticeboard-v0.1.2"]
+    )
 
 
 @pytest.mark.slow
@@ -513,13 +515,13 @@ def test_a_tag_that_is_not_an_ancestor_refuses_that_component(
     side = _commit(repo, "pep/src/side.py")
     _git(repo, "tag", "pep-v0.2.0", side)
     _git(repo, "checkout", "-q", "main")
-    _commit(repo, "pep/src/one.py", "view/src/one.py")
+    _commit(repo, "pep/src/one.py", "noticeboard/src/one.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode != 0
     assert "pep-v0.2.0 is not an ancestor" in done.stderr
-    assert "ui-v0.1.1" in _tags(repo)
+    assert "noticeboard-v0.1.1" in _tags(repo)
     assert "pep-v0.2.1" not in _tags(repo)
 
 
@@ -530,15 +532,15 @@ def test_the_dry_run_prints_the_range_per_component(
     """Item 5. What the operator reads before starting the real dispatch: every
     component's window, not only the ones that moved."""
     _seed_first_tags(repo)
-    _commit(repo, "view/src/one.py")
+    _commit(repo, "noticeboard/src/one.py")
     _commit(repo, "docs/rework/design.md")
 
     done = _run(repo, shims, tmp_path, "--dry-run")
 
     assert done.returncode == 0, done.stderr
-    assert "ui: 2 commit(s) since ui-v0.1.0" in done.stdout
+    assert "noticeboard: 2 commit(s) since noticeboard-v0.1.0" in done.stdout
     assert "releasectl: 2 commit(s) since releasectl-v0.1.0" in done.stdout
-    assert "would create ui-v0.1.1" in done.stdout
+    assert "would create noticeboard-v0.1.1" in done.stdout
     assert "would create releasectl" not in done.stdout
     # `pep` has no `pep/` here, but its build installs `release/`, which the
     # fixture holds (contract 06 §1 rule 9), so its range is read.
@@ -555,15 +557,15 @@ def test_the_release_body_names_the_range(repo: Path, shims: Path, tmp_path: Pat
     """Item 3. A tag made by a late dispatch covers more than its own
     commit, so the Release says how much more."""
     _seed_first_tags(repo)
-    _commit(repo, "view/src/one.py")
-    _commit(repo, "view/src/two.py")
+    _commit(repo, "noticeboard/src/one.py")
+    _commit(repo, "noticeboard/src/two.py")
 
     done = _run(repo, shims, tmp_path, pr="yes")
 
     assert done.returncode == 0, done.stderr
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
-    assert "ui-v0.1.1" in log
-    assert "2 commit(s) since ui-v0.1.0" in log
+    assert "noticeboard-v0.1.1" in log
+    assert "2 commit(s) since noticeboard-v0.1.0" in log
 
 
 @pytest.mark.slow
@@ -573,10 +575,10 @@ def test_the_body_names_the_pull_requests_in_the_range(
     """Item 2. A tag covers a range, so the body names every pull request
     the range holds."""
     _seed_first_tags(repo)
-    _commit(repo, "view/src/one.py")
-    _git(repo, "commit", "-q", "--amend", "-m", "Add the view (#12)")
-    _commit(repo, "view/src/two.py")
-    _git(repo, "commit", "-q", "--amend", "-m", "Fix the view (#14)")
+    _commit(repo, "noticeboard/src/one.py")
+    _git(repo, "commit", "-q", "--amend", "-m", "Add the noticeboard (#12)")
+    _commit(repo, "noticeboard/src/two.py")
+    _git(repo, "commit", "-q", "--amend", "-m", "Fix the noticeboard (#14)")
 
     done = _run(repo, shims, tmp_path, pr="yes")
 
