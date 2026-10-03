@@ -1,7 +1,7 @@
 """The intake's unit and its root wrapper, read as configuration.
 
-`systemd/agent-rework-intake.service` and `bin/agent-rework-intake` are the
-two files nothing in `release/tests/` can reach: they are what actually
+`systemd/creche-handover-intake.service` and `bin/creche-handover-intake` are the
+two files nothing in `handover/tests/` can reach: they are what actually
 decides which uid runs the listener, what it may touch, and which binary
 root execs. They are also the two files a future editor is most likely to
 loosen without noticing, so the properties are asserted here rather than
@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Final
 
 ROOT: Final = Path(__file__).resolve().parents[2]
-UNIT: Final = ROOT / "systemd" / "agent-rework-intake.service"
-WRAPPER: Final = ROOT / "bin" / "agent-rework-intake"
+UNIT: Final = ROOT / "systemd" / "creche-handover-intake.service"
+WRAPPER: Final = ROOT / "bin" / "creche-handover-intake"
 
 #: The three paths root either executes or decrypts. Each one that the
 #: operator could write is a path that decides what root runs.
@@ -57,7 +57,7 @@ def _wrapper() -> str:
 def test_the_unit_runs_the_wrapper_and_not_the_intake_directly() -> None:
     """The wrapper is what proves the three paths and decrypts the push
     hook. A unit that execed the intake would skip both."""
-    assert "ExecStart=/usr/local/sbin/agent-rework-intake" in _unit()
+    assert "ExecStart=/usr/local/sbin/creche-handover-intake" in _unit()
 
 
 def test_the_unit_names_no_environment_file() -> None:
@@ -142,7 +142,7 @@ def test_the_unit_does_not_hide_the_key_its_wrapper_reads() -> None:
     ]
 
     assert any(key.startswith(one) for one in given_back), (
-        f"ProtectHome hides {key}, which bin/agent-rework-intake decrypts with"
+        f"ProtectHome hides {key}, which bin/creche-handover-intake decrypts with"
     )
 
 
@@ -210,9 +210,9 @@ def test_the_wrapper_refuses_to_run_as_anything_but_root() -> None:
 
 
 def test_the_wrapper_execs_the_intake_console_script() -> None:
-    """The name in `release/pyproject.toml`'s `[project.scripts]`. A
+    """The name in `handover/pyproject.toml`'s `[project.scripts]`. A
     mismatch here is a unit that starts and does nothing."""
-    assert "/opt/components/releasectl/bin/agent-release-intake" in _wrapper()
+    assert "/opt/components/handover/bin/handover-intake" in _wrapper()
 
-    scripts = (ROOT / "release" / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'agent-release-intake = "agent_release.intake.run:main"' in scripts
+    scripts = (ROOT / "handover" / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'handover-intake = "handover.intake.run:main"' in scripts

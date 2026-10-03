@@ -11,7 +11,7 @@ kind: venv
 unit: creche-chaperone.service
 runs_as: root
 # `--no-editable`: contract 06 §8.2. This is the one unit that runs as its
-# own hardened user, so a tree reading its code out of `/opt/agent-control/
+# own hardened user, so a tree reading its code out of `/opt/creche/
 # */src` would put every upstream credential behind a deploy rather than
 # behind a release.
 build:

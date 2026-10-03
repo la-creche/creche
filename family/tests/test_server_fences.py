@@ -42,7 +42,7 @@ def test_missing_required_pin_field_is_an_error() -> None:
 
 def test_pypi_requires_a_committed_lock() -> None:
     """Contract 01b §3.4. The field was in the contract, in the design's
-    §4.2 table and in `agent_release`'s reader, and in no schema here, so
+    §4.2 table and in `handover`'s reader, and in no schema here, so
     this validator refused every real `pypi` file."""
     report = check_server_rules(
         "kagi", install={"source": "pypi", "package": "kagimcp", "version": "1.0.2"}
@@ -83,7 +83,7 @@ def test_agent_mcp_takes_no_pin_field_of_its_own() -> None:
 def test_a_shared_secret_must_be_one_this_file_names() -> None:
     """Contract 01b §4.3, the half one file can be read for. The
     agreement between the two files is registry-wide and root checks it
-    (`agent_release.mcpserver._one_upstream_per_secret`)."""
+    (`handover.mcpserver._one_upstream_per_secret`)."""
     report = check_server_rules(
         "ha-read", shared_secrets=[{"secret": "ha_token_write", "server": "ha"}]
     )

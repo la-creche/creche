@@ -1,8 +1,8 @@
 """Every entrypoint under bin/ must carry mode 100755 in git.
 
 bin/AGENTS.md's header rule: a file under bin/ with a `#!` shebang is
-executed, and `agent-control-deploy` syncs modes verbatim into
-/opt/agent-control/bin, where the units and the operator run them. A script
+executed, and `creche-deploy` syncs modes verbatim into
+/opt/creche/bin, where the units and the operator run them. A script
 committed 100644 therefore lands on the host unexecutable, and the exact
 command its own header documents fails. Nothing else in the repo catches
 it: quality-gate.sh lints Python, and bin/tests/*.sh test bash functions,

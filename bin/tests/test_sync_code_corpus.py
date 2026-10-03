@@ -2,7 +2,7 @@
 the line gives.
 
 A repository's directory in the corpus is the name the catalog knows it by
-(`/srv/agents/code/<repo>`, `release/src/agent_release/executor/source.py`).
+(`/srv/agents/code/<repo>`, `handover/src/handover/executor/source.py`).
 Where it is hosted may call it something else, so a line may name the
 directory: `<url> <name>`. Without a name the directory is the URL's own
 last part, as it always was.

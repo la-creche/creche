@@ -25,7 +25,7 @@ none of `creche-caregiver.service`'s own `EnvironmentFile=`. This host's
 documented default (`paths.STATE_ROOT`) covers the common case, and
 `--env-file <path>` — the same file the unit's own `EnvironmentFile=`
 names (`caregiver/component.yaml`'s `verify.command`, pinned to the unit by
-`release/tests/test_release_r7r_verify_env.py`) — is there for whenever it
+`handover/tests/test_handover_r7r_verify_env.py`) — is there for whenever it
 does not: read by this hook itself, as its own user, never by root.
 """
 

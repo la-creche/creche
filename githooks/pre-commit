@@ -6,7 +6,7 @@
 # command that invoked it. quality-gate.sh's pytest suite spawns its own
 # `git` subprocesses (noticeboard/tests/noticeboard_helpers.py,
 # bin/tests/test_rework_registry_sync.py,
-# release/tests/test_release_tag_script.py, ...), and
+# handover/tests/test_handover_tag_script.py, ...), and
 # those subprocesses inherit the SAME variables — pointed at whichever
 # repo/worktree is running THIS hook, not at the tests' own throwaway
 # fixture repos. Reproduced: with GIT_DIR/GIT_INDEX_FILE pointing at repo A,

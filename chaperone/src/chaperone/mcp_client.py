@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Final, Protocol, cast
 
 import yaml
-from agent_release.mcpserver import DEFAULT_PYTHON, ServerFile, ServerPin, Source
+from handover.mcpserver import DEFAULT_PYTHON, ServerFile, ServerPin, Source
 from mcp import ClientSession, MCPError, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import ListToolsResult, TextContent, ToolAnnotations

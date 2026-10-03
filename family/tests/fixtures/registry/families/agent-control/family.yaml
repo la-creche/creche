@@ -28,7 +28,7 @@ verbs:
       - playpen
       - mcp-servers
       - infra
-      - releasectl
+      - handover
 
 delegates: [vault-oracle]
 

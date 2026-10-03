@@ -20,14 +20,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_release.executor.request import parse_request
-from agent_release.executor.spool import MAX_PENDING_PER_REQUESTER
-from agent_release.requester import new_ulid
 from chaperone.app import PepConfig, create_app
 from chaperone.family_app import MANIFEST_ACTION
 from chaperone.release_door import SpoolReleaseDoor
 from chaperone_family_helpers import FAMILY_TOKEN, make_grants, write_grants
 from fastapi.testclient import TestClient
+from handover.executor.request import parse_request
+from handover.executor.spool import MAX_PENDING_PER_REQUESTER
+from handover.requester import new_ulid
 
 #: Contract 01 §3.5's `release` fence: the platform allowlist, nothing else.
 FENCE: dict[str, object] = {"release": {"components": ["chaperone", "attendance"]}}
@@ -244,15 +244,15 @@ def test_a_spool_that_is_not_there_is_an_execution_failure(tmp_path: Path) -> No
 
 
 def test_the_door_imports_no_root_side_module() -> None:
-    """`release_door.py` uses `agent_release.requester` and nothing else out
+    """`release_door.py` uses `handover.requester` and nothing else out
     of that package. The executor's own modules fetch, build, swap and
     restart, and none of them belongs inside the PEP's process."""
     source = (
         Path(__file__).resolve().parents[1] / "src" / "chaperone" / "release_door.py"
     ).read_text(encoding="utf-8")
 
-    assert "agent_release.requester" in source
-    assert "agent_release.executor" not in source
+    assert "handover.requester" in source
+    assert "handover.executor" not in source
 
 
 def test_the_verb_schema_and_the_executor_grammar_agree(tmp_path: Path) -> None:
@@ -274,7 +274,7 @@ def test_the_verb_schema_and_the_executor_grammar_agree(tmp_path: Path) -> None:
 
 
 def test_the_door_writes_the_same_bytes_the_cli_writes(tmp_path: Path) -> None:
-    """One writer. `agent-releasectl request` and this verb differ in exactly
+    """One writer. `handover request` and this verb differ in exactly
     one field: `requested_by`."""
     spool = _requests(tmp_path)
     door = SpoolReleaseDoor(str(spool))

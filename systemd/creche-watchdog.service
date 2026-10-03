@@ -1,0 +1,51 @@
+# The rework plane's outage alarm. USER unit, as the operator.
+# ONESHOT: one run per firing of creche-watchdog.timer, every minute.
+#
+# Installed and enabled by `bin/rework-cutover.sh up`, removed by its
+# `rollback`. `bin/rework-cutover.sh status` prints the last verdict.
+#
+# WHY IT IS ITS OWN UNIT. It must SHARE NO FATE with what it watches: a
+# rework service can die in silence, and a dead one reports nothing.
+# `caregiver` already watches the PEP from the inside (contract 05 §3.3's
+# `pep_unreachable`), which is no help when `caregiver` is the dead one. So
+# this unit holds no rework code, runs from the deployed checkout rather than
+# from a component tree, dials no rework service for permission, and works
+# when all five of them are down.
+#
+# NO Restart= AND NO START LIMIT, on purpose. THE REWORK RESTART POLICY in
+# `systemd/creche-caregiver.service` is for always-on services. This one is
+# meant to exit, and it exits NON-ZERO while something is down so that
+# `systemctl --user status creche-watchdog` shows the outage as well.
+# The timer is its retry: restarting a failed run would double the checks
+# and tell systemd nothing new.
+[Unit]
+Description=Check that every rework service is alive, and say so once when one is not
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/creche
+# sbx panics without both, and every user unit in this repo carries them
+# regardless (systemd/AGENTS.md). This script shells out to none.
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# The DEPLOYED checkout, not a component tree. A watchdog that lived inside
+# a component would be swapped and restarted by the very release it is meant
+# to watch, and would be missing for the window a bad release opens.
+ExecStart=/opt/creche/bin/rework-watchdog.sh
+
+# A user unit on this host cannot use mount-namespace options
+# (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
+# options need no namespace (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+# 0077: nothing reads what this writes. Its one file is the verdict, and
+# only this script reads it back.
+UMask=0077
+# Five checks at five seconds each, plus a ten-second notice. 60 s is
+# comfortably above the worst run and well below the timer's minute, so two
+# runs can never overlap.
+TimeoutStartSec=60

@@ -30,7 +30,7 @@ from yaml.reader import ReaderError
 
 log = logging.getLogger("chaperone.secrets")
 
-#: `release/src/agent_release/intake/store.py` writes `<name>.enc`. The
+#: `handover/src/handover/intake/store.py` writes `<name>.enc`. The
 #: pattern is contract 01b §4.1's secret name, checked here too: the file
 #: name is input to this process, whoever wrote it.
 SECRET_NAME_RE: Final = re.compile(r"[a-z][a-z0-9_]{1,62}")

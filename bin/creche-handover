@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# ROOT — run by systemd/creche-handover.service; by hand:
+#   sudo /usr/local/sbin/creche-handover
+#
+# The REWORK release executor's entry point (docs/rework/stage7-releases.md
+# §2.4).
+#
+# Installed to /usr/local/sbin BY HAND, never by a release. Contract 06 §1.1:
+# "the thing that deploys code is not deployed by code." A release may refresh
+# this file in place where one already exists. A release may never install one.
+#
+# All it does: decrypt the site's sops file with root's age key — the one
+# place RELEASE_GITHUB_TOKEN lives — and exec the executor under it. The
+# token reaches the executor in its environment, never in argv and never in a
+# URL (invariant 13).
+#
+# Without the token the executor still runs: it refuses every request into the
+# ledger with check P1 and DRAINS requests/. It must —
+# creche-handover.path is a PathExistsGlob, and one request left behind
+# re-fires the unit until systemd's start limit trips. So a fallback below
+# execs the executor rather than exiting.
+#
+# One exception, and it is deliberate: an $EXECUTOR root does not own is not
+# run at all. A start limit is loud and recoverable. Executing a binary
+# operator-side code can write is neither.
+set -euo pipefail
+[[ "$(id -u)" == "0" ]] || { echo "creche-handover: root only" >&2; exit 1; }
+
+SOPS=/usr/local/bin/sops
+# The site's own sops file. It is no file of this tree: the deployment puts
+# it at this path, or links this path to a file in its own tree. Root judges
+# and decrypts the file a link names, never the link, so the path is
+# resolved before `require_root_owned` sees it. The intake wrapper reads the
+# same file.
+SITE_SECRETS=/etc/agent-control/secrets.enc.env
+SECRETS="$(readlink -f "$SITE_SECRETS" 2>/dev/null)" || SECRETS="$SITE_SECRETS"
+EXECUTOR=/opt/components/handover/bin/handover-exec
+export SOPS_AGE_KEY_FILE=/root/.config/sops/age/keys.txt
+# Every path below is absolute, so the directory decides nothing.
+cd /
+
+# Root either EXECUTES or DECRYPTS three paths here, so a path operator-side
+# code can write is a path that decides what root runs. sops was <operator>:kvm
+# 0775 on the host, measured 2026-09-16.
+require_root_owned() {
+  local path="$1" info
+  info="$(stat -c '%U:%G %a' "$path" 2>/dev/null)" || return 1
+  [[ "${info%% *}" == "root:root" ]] || return 1
+  # No write bit for group or other. The three paths have three different
+  # modes, so the mode itself is not what is asserted.
+  (( (8#"${info##* }" & 8#22) == 0 )) || return 1
+  return 0
+}
+
+# require_root_chain PATH: every directory above PATH, up to /, is root's
+# and unwritable by others. A directory somebody else can write is a file
+# they can swap after `require_root_owned` looked at it.
+require_root_chain() {
+  local dir
+  dir="$(dirname -- "$1")"
+  while :; do
+    require_root_owned "$dir" || return 1
+    [[ "$dir" == "/" ]] && return 0
+    dir="$(dirname -- "$dir")"
+  done
+}
+
+# Root runs this one. There is no safe fallback: a wrapper that drains the
+# spool by executing a binary it does not own has already lost. Exiting
+# non-zero is loud, and leaves requests/ for the next verified run.
+# Its directories as well: a directory somebody else can write holds a
+# name they can swap after the guard looked at the file.
+if ! require_root_owned "$EXECUTOR" || ! require_root_chain "$EXECUTOR"; then
+  echo "creche-handover: $EXECUTOR or a directory above it is not root:root and unwritable by others; refusing to run it as root" >&2
+  exit 1
+fi
+
+if ! require_root_owned "$SOPS" || ! require_root_chain "$SOPS"; then
+  echo "creche-handover: $SOPS or a directory above it is not root:root and unwritable by others; not executing it as root. Requests will be refused." >&2
+  exec "$EXECUTOR"
+fi
+
+# Its contents become root's whole environment, and `sops exec-env` runs its
+# command under `sh -c`. A writer of this file picks names such as
+# LD_PRELOAD, so ownership is the control here, not the encryption: the
+# recipient is readable out of the file's own header.
+if ! require_root_owned "$SECRETS"; then
+  echo "creche-handover: $SECRETS is not root:root and unwritable by others; not decrypting it into root's environment. Requests will be refused." >&2
+  exec "$EXECUTOR"
+fi
+
+# The link's own directories as well: whoever can write one of them decides
+# what the path resolves to.
+if ! require_root_chain "$SECRETS" || ! require_root_chain "$SITE_SECRETS"; then
+  echo "creche-handover: a directory above $SECRETS is not root:root and unwritable by others; not decrypting it into root's environment. Requests will be refused." >&2
+  exec "$EXECUTOR"
+fi
+
+if ! "$SOPS" exec-env "$SECRETS" true; then
+  echo "creche-handover: cannot decrypt $SECRETS; requests will be refused" >&2
+  exec "$EXECUTOR"
+fi
+
+exec "$SOPS" exec-env "$SECRETS" "$EXECUTOR"

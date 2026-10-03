@@ -18,5 +18,5 @@ packages = ["src/agent_door_owui"]
 # changes, and every first-party package stays at one version. Without the
 # source in the key, a non-editable build installs the FIRST wheel uv ever
 # cached for this directory, for ever, so a new commit's tree runs old code
-# (release/tests/test_release_ced_uv_guard.py).
+# (handover/tests/test_handover_ced_uv_guard.py).
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]

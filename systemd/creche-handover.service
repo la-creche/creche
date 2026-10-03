@@ -1,0 +1,61 @@
+# The rework release executor (docs/rework/stage7-releases.md §2.4). SYSTEM
+# unit, root: it resolves, verifies provenance against api.github.com, asks
+# the operator's phone, stages, switches and restores. It is the only actor that
+# touches the host, which is what makes the design hold when the requester is
+# hostile (§2.1, §6).
+#
+# Started by creche-handover.path, never enabled on its own.
+#
+# Installed BY HAND, never by a release: contract 06 §1.1 keeps the path unit
+# and the root wrapper outside every release, so a hostile `handover`
+# cannot change how it is triggered or what decrypts its secrets (§6 row 16).
+[Unit]
+Description=Deploy verified component Releases from the rework spool
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The wrapper decrypts RELEASE_GITHUB_TOKEN with root's age key and execs the
+# executor. No EnvironmentFile: the token is in no env file, no argv and no
+# URL (invariant 13), and a child the executor starts inherits none of root's
+# environment either (executor/host.py rule 2).
+ExecStart=/usr/local/sbin/creche-handover
+# One run drains the spool. Per request: up to 900 s waiting for the tap
+# (§2.5), 180 s of quiesce (§2.4 row 7), then the build. Eight requests is
+# the per-requester cap, so the ceiling is generous rather than tight.
+TimeoutStartSec=7200
+# A system unit gets no HOME; uv's cache and git both want one.
+Environment=HOME=/root
+# 0027: the ledger is root:agents 0640 by fchmod, so the noticeboard can read an
+# outcome (§2.6). This covers the rest.
+UMask=0027
+
+# The switch IS the deploy: it writes /opt/components, refreshes unit files
+# in /etc/systemd/system and the operator's ~/.config/systemd/user, restarts
+# units, and runs git, uv and runuser. So no ProtectSystem, no ProtectHome,
+# no PrivateTmp, no CapabilityBoundingSet, no NoNewPrivileges.
+#
+# What is left costs nothing here. The Protect* lines below each take a
+# private mount or UTS namespace, and writes to paths they do not name still
+# reach the host, so /opt, /etc and /srv are unaffected.
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+# Nothing here sets the clock, loads a module, reads the kernel ring buffer,
+# writes a sysctl or sets a suid bit.
+ProtectClock=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Deliberately NOT set, each with its reason:
+#   RestrictNamespaces   — the `infra` and `playpen` components run
+#                          compose and an image build, and both make
+#                          namespaces.
+#   NoNewPrivileges      — runuser and sops. Untested against either.
+#   MemoryDenyWriteExecute — uv builds wheels. Untested.
+#   SystemCallFilter     — plausible as @system-service, untested against
+#                          runuser and systemctl. Measure before setting it.

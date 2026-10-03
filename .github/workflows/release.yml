@@ -12,9 +12,9 @@
 # same root version into two pull requests left main's tip untagged
 # (stage7-releases.md pain 1). The `release` job allocates instead: for each
 # component, the newest `<component>-vX.Y.Z` tag plus the level a `bump:`
-# label asks for. The logic is release/bin/allocate-tags.sh and the tested
-# library behind it (release/tests/test_release_allocate.py,
-# release/tests/test_release_tag_script.py). This file only calls it.
+# label asks for. The logic is handover/bin/allocate-tags.sh and the tested
+# library behind it (handover/tests/test_handover_allocate.py,
+# handover/tests/test_handover_tag_script.py). This file only calls it.
 #
 # A RUN CAN BE MISSED, and the script is built for it: a red main tags
 # nothing, and a pending `release` job gives way to a newer one. Each
@@ -51,7 +51,7 @@
 # left behind. Read the plan first, from any checkout:
 #
 #   GITHUB_REPOSITORY=<owner>/agent-control GITHUB_SHA=$(git rev-parse HEAD) \
-#     release/bin/allocate-tags.sh --dry-run
+#     handover/bin/allocate-tags.sh --dry-run
 name: release
 
 on:
@@ -218,7 +218,7 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       # Idempotent: a component already tagged on this SHA is a no-op, and
-      # a tag is never moved or deleted (release/bin/allocate-tags.sh).
+      # a tag is never moved or deleted (handover/bin/allocate-tags.sh).
       #
       # TAG_REPO: the catalog's name for THIS repository, whatever its host
       # calls it. Without it the script takes the name from
@@ -228,4 +228,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_REPO: agent-control
-        run: release/bin/allocate-tags.sh
+        run: handover/bin/allocate-tags.sh

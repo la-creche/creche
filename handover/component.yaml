@@ -1,0 +1,68 @@
+# The release tool itself. Contract 06 §1 row 8, and §1.1 for how it ships
+# without replacing the code under its own running process: the resolver
+# forces it last in `order`, its switch happens after the ledger is written
+# and the lock is released, and its verify hook then runs as a fresh process
+# out of the new tree. A failed hook puts the previous tree back.
+#
+# The path unit (creche-handover.path) and the root wrapper at
+# /usr/local/sbin/creche-handover stay outside every release. The thing
+# that deploys code is not deployed by code.
+#
+# `unit: null`, and it is the only answer this component can have. Step 9
+# refreshes a unit file in place, restarts the unit, then polls `is-active`
+# and `NRestarts` for twenty seconds. creche-handover.service is a
+# path-activated ONESHOT: restarting it re-enters the drain that is running
+# the release, and `is-active` on a oneshot that has exited is `inactive`, so
+# the poll would fail every handover release. The switch happens after the
+# ledger is written and the lock released (§1.1), and the hook below runs
+# right after it, as a child of the executor that swapped.
+manifest_version: "0.4"
+name: handover
+repo: agent-control
+path: handover
+kind: venv
+unit: null
+runs_as: root
+# `--no-editable`: contract 06 §8.2. This one matters twice over — the tree
+# holds the executor that performs every other release, so a tree reading its
+# own code out of a repository checkout would let a deploy change the release
+# tool with no release.
+build:
+  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable",
+     "--package", "handover"]
+install:
+  to: /opt/components/handover
+  prev: /opt/components/handover.prev
+# Contract 06 makes this component the provider of `component-manifest`
+# (`catalog.CONTRACT_OWNER`), and yet it provides nothing, for now. The
+# first `handover` release is installed by the old `releasectl` executor.
+# Its contract table would hold two providers of `component-manifest`: the
+# live `releasectl` tree's stamp and the deploying `handover`. It refuses
+# that with C2, and its requester refuses it with C3. A follow-up restores
+# `{ contract: component-manifest, major: 0, minor: 17 }` once `handover` is
+# live and `releasectl` is retired. Nothing requires the contract, so the
+# gap breaks no consumer
+# (`test_handover_provides_nothing_until_releasectl_retires`).
+provides: []
+requires: []
+depends_on: []
+verify:
+  # What it proves is what a venv release can break — that the renamed tree's
+  # console script still starts (`uv venv --relocatable`). `--root` names the
+  # tree itself, which holds no `component.yaml`: the hook inherits the
+  # executor's working directory, and a `check` with no root once read a
+  # manifest there and refused it (2026-09-24). `--partial`, because the tree
+  # holds none of contract 06 §1's components.
+  #
+  # `--site` reads every value the executor needs from the site file. A new
+  # executor that cannot start on this host's file fails here, while the old
+  # one is still there to be put back.
+  command: ["/opt/components/handover/bin/handover", "check", "--partial",
+            "--json", "--site", "--root", "/opt/components/handover"]
+  user: root
+  timeout_s: 60
+restore:
+  mode: automatic
+  keep: 3
+secrets: []
+release: yes

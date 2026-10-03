@@ -105,12 +105,12 @@ LINT_RUNS = {
 VERDICT_STEP = "every job passed"
 TAG_STEP = "tag and release"
 
-#: The catalog's name for this repository (`release/src/agent_release/catalog.py`).
+#: The catalog's name for this repository (`handover/src/handover/catalog.py`).
 THIS_REPOSITORY = "agent-control"
 
 #: The whole of the tag step: the allocator, which holds the logic and its
-#: own tests (release/tests/test_release_tag_script.py).
-TAG_RUN = "release/bin/allocate-tags.sh"
+#: own tests (handover/tests/test_handover_tag_script.py).
+TAG_RUN = "handover/bin/allocate-tags.sh"
 
 #: One allocation at a time, and none stopped half way.
 ALLOCATE_ONE_AT_A_TIME = {"group": "release-allocate", "cancel-in-progress": False}
@@ -256,7 +256,7 @@ def test_the_tag_step_runs_only_after_the_verdict() -> None:
 def test_the_tag_step_says_which_catalog_repository_it_tags() -> None:
     """The allocator would otherwise take the name from where the
     repository is hosted, and refuse a name the catalog does not hold
-    (`release/bin/allocate-tags.sh`, TAG_REPO)."""
+    (`handover/bin/allocate-tags.sh`, TAG_REPO)."""
     tag = _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)
 
     assert tag["env"]["TAG_REPO"] == THIS_REPOSITORY

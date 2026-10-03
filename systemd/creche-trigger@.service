@@ -21,7 +21,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/agent-control
+WorkingDirectory=/opt/creche
 # sbx panics without both (systemd/AGENTS.md): its state is per-user and a
 # user manager sets neither. Anything downstream that shells out to sbx
 # inherits the requirement.

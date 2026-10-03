@@ -24,7 +24,7 @@
 #
 # And it can arrive without a hand install. The release executor's `units`
 # step refreshes every ALREADY installed unit file from this directory, and
-# `sudo agent-control-deploy` restarts creche-chaperone. So a release carrying this
+# `sudo creche-deploy` restarts creche-chaperone. So a release carrying this
 # file plus any later deploy is enough to restart the PEP on it. Create the
 # directories before that pair, not after.
 #
@@ -57,12 +57,12 @@ StartLimitIntervalSec=0
 [Service]
 User=chaperone
 Group=agents
-# THE COMPONENT TREE, and not `/opt/agent-control/.venv`.
+# THE COMPONENT TREE, and not `/opt/creche/.venv`.
 # Contract 06 §1 rule 8: a release must be able to change what runs.
 # `chaperone/component.yaml` installs `/opt/components/chaperone`. A line naming the
 # deployed venv would let a `chaperone` release build a tree, swap it, restart
 # this unit, pass `chaperone-verify` out of the NEW tree and write `succeeded` —
-# over a PEP still running the code `agent-control-deploy` put in /opt. The
+# over a PEP still running the code `creche-deploy` put in /opt. The
 # executor refuses that at step 8 with the code `unit`.
 #
 # THE TREE MUST EXIST BEFORE THIS FILE IS INSTALLED. Nothing but
@@ -73,7 +73,7 @@ Group=agents
 # start, and the PEP is the one enforcement point.
 #
 # EVERY OTHER PATH IN THIS FILE IS ABSOLUTE AND OUTSIDE THE TREE:
-# PEP_UPSTREAMS stays in /opt/agent-control/chaperone/, SOPS_AGE_KEY_FILE in
+# PEP_UPSTREAMS stays in /opt/creche/chaperone/, SOPS_AGE_KEY_FILE in
 # /etc/agent-pep/, HOME in /var/lib/creche-chaperone/home, and every state path
 # under /srv/agents. A RELATIVE path anywhere here would resolve against a
 # different tree. PEP_SECRETS, the sops file, is the site's: this file names
@@ -104,9 +104,11 @@ RestartMaxDelaySec=120s
 
 # The site's values: AGENT_LAN_ADDRESS (the bind, and TEI on the same
 # address), AGENT_HA_URL when the site has a Home Assistant, and PEP_SECRETS.
+# /etc/agent-control keeps its name beside /opt/creche: every unit and root
+# wrapper reads it, so it moves in a later change of its own.
 EnvironmentFile=/etc/agent-control/site.env
 Environment=PEP_AUDIT_DIR=/srv/agents/state/pep/audit
-Environment=PEP_UPSTREAMS=/opt/agent-control/chaperone/upstreams.yaml
+Environment=PEP_UPSTREAMS=/opt/creche/chaperone/upstreams.yaml
 # Installed by bin/rework-release-visit.sh.
 #
 # PEP_RELEASE_REQUESTS_DIR turns the `release` verb from a named seam into a

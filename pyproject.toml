@@ -15,14 +15,14 @@ dependencies = [
     "agent-door-tui",
     "agent-door-trigger",
     "noticeboard",
-    "agent-release",
+    "handover",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["chaperone", "library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "noticeboard", "release"]
+members = ["chaperone", "library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "noticeboard", "handover"]
 
 [tool.uv.sources]
 chaperone = { workspace = true }
@@ -34,7 +34,7 @@ agent-door-owui = { workspace = true }
 agent-door-tui = { workspace = true }
 agent-door-trigger = { workspace = true }
 noticeboard = { workspace = true }
-agent-release = { workspace = true }
+handover = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -62,7 +62,7 @@ testpaths = [
     "door-tui/tests",
     "door-trigger/tests",
     "noticeboard/tests",
-    "release/tests",
+    "handover/tests",
 ]
 addopts = "-q"
 asyncio_mode = "auto"
@@ -104,5 +104,5 @@ source = [
     "agent_door_tui",
     "agent_door_trigger",
     "noticeboard",
-    "agent_release",
+    "handover",
 ]

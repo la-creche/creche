@@ -12,9 +12,9 @@ from typing import Final
 STATE_ROOT: Final = Path("/srv/agents/state/rework")
 
 #: Root's own root: the release spool, the sealed secrets and the roster,
-#: every ancestor root's. `agent_release.executor.layout`'s `RELEASE_ROOT`
+#: every ancestor root's. `handover.executor.layout`'s `RELEASE_ROOT`
 #: spelled a second time, because the two packages share no module.
-#: `release/tests/test_release_r7h_roster.py` holds the two equal.
+#: `handover/tests/test_handover_r7h_roster.py` holds the two equal.
 RELEASE_ROOT: Final = Path("/var/lib/agent-release")
 
 #: Contract 03 §7.1: outside

@@ -10,7 +10,7 @@
 # place and never runs an installer (contract 06 §5.1's reason).
 #
 # ExecStart points into the component tree contract 06 §1 row 2 fixes, not
-# into /opt/agent-control/.venv. That is where the release executor swaps an
+# into /opt/creche/.venv. That is where the release executor swaps an
 # `attendance` release, and a unit that ran from anywhere else would relaunch
 # the old code after a release the ledger called a success.
 #
@@ -30,7 +30,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/agent-control
+WorkingDirectory=/opt/creche
 # sbx panics without both: its state is per-user and a user manager sets
 # neither (systemd/AGENTS.md). attendance runs one `sbx exec` per family for
 # the channel, so it inherits the requirement.

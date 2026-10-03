@@ -37,7 +37,7 @@ from fastapi.testclient import TestClient
 from chaperone import __main__ as entry
 
 #: The base roster as this repository ships it. The deploy puts it at
-#: `/opt/agent-control/chaperone/upstreams.yaml`, which is the unit's
+#: `/opt/creche/chaperone/upstreams.yaml`, which is the unit's
 #: `PEP_UPSTREAMS`.
 COMMITTED: Final = Path(__file__).resolve().parents[1] / "upstreams.yaml"
 

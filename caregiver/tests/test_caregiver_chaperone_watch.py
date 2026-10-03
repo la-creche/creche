@@ -102,7 +102,7 @@ def test_a_healthy_pep_raises_nothing_and_stamps_the_check() -> None:
 
 
 def test_one_flap_is_not_an_outage() -> None:
-    """`agent-control-deploy` restarts the PEP on every deploy, about 10
+    """`creche-deploy` restarts the PEP on every deploy, about 10
     to 15 s until `/healthz` answers. One failed probe must not fault
     eleven families."""
     ticks = Ticks()

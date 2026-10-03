@@ -40,7 +40,7 @@ Five rules, each with the reason it is a rule.
    has changed: the set of servers the request is for, the registry
    revision, or `ANSWER_FLOOR_S`.
 4. **Every write is atomic and never leaves a `.json` behind.** §2.2:
-   `agent-release.path` is a `PathExistsGlob` that re-fires while any match
+   `creche-handover.path` is a `PathExistsGlob` that re-fires while any match
    remains, and `atomic_write`'s temporary name starts with a dot and ends
    with `.tmp`, so it neither matches the glob nor is touched.
 5. **The marker goes down BEFORE the request.** A request that lands with
@@ -122,7 +122,7 @@ MARKER_NAME: Final = "mcp-request.json"
 MARKER_FILE: Final = STATE_ROOT / MARKER_NAME
 
 #: What the PEP actually serves, as root last wrote it
-#: (`agent_release.executor.host.ROSTER_FILE`). Spelled twice on purpose:
+#: (`handover.executor.host.ROSTER_FILE`). Spelled twice on purpose:
 #: the two packages share no module, and a wrong path here costs one
 #: unnecessary release rather than anything unsafe.
 ROSTER_NAME: Final = "upstreams.yaml"
@@ -277,7 +277,7 @@ class McpPaths:
     installed_root: Path = INSTALLED_ROOT
     marker: Path = MARKER_FILE
     #: The roster root writes at the end of an `mcp-servers` release
-    #: (`agent_release.executor.roster`). Read-only here, and root's, so
+    #: (`handover.executor.roster`). Read-only here, and root's, so
     #: this process learns what is SERVED without asking the PEP anything.
     roster: Path = ROSTER_FILE
 
@@ -493,7 +493,7 @@ def _write_gap(paths: McpPaths, server: str, name: str, now: float) -> None:
 
     For a declared pair (contract 01b §4.3) `server` is the first name in
     sorted order, and the second name is NOT carried. Three fields is not
-    a habit, it is the far end's contract: `agent_release.intake.gaps`
+    a habit, it is the far end's contract: `handover.intake.gaps`
     holds a closed `GAP_KEYS` and refuses a body with any other key, and
     its `server` must be one name matching `SERVER_NAME_RE`. A gap that
     named the pair would reach the operator as no gap at all.

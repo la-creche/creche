@@ -7,11 +7,11 @@ committed; this pins WHAT they name.
 
 Three rules, each over a different shape of reference:
 
-1. **The deployed tree.** `/opt/agent-control/<path>`, `$TREE/<path>`,
+1. **The deployed tree.** `/opt/creche/<path>`, `$TREE/<path>`,
    `$DEPLOYED/<path>` and `$REPO/<path>` all mean "this repository, as root
    deployed it". Every literal one must exist here.
 2. **The workspace venv.** `<tree>/.venv/bin/<name>` is a console script,
-   and `agent-control-deploy` fills that venv from the workspace members'
+   and `creche-deploy` fills that venv from the workspace members'
    `[project.scripts]`. A name no member declares is a unit that dies with
    status 203/EXEC.
 3. **The two CI workflows.** `gate.yml` and `release.yml` must name no
@@ -40,7 +40,7 @@ UNRESOLVABLE = ("$", "<", "*", '"', "'", "%")
 #: Paths that are deliberately absent from the tree. Each is created on the
 #: host, out of band, by the operator.
 NOT_IN_THE_TREE = (
-    ".venv",  # agent-control-deploy builds it
+    ".venv",  # creche-deploy builds it
     ".git",  # the checkout's own
 )
 
@@ -54,12 +54,12 @@ VENV_ALWAYS = ("python", "python3")
 ORPHANED: frozenset[str] = frozenset()
 
 REFERENCE = re.compile(
-    r"(?:/opt/agent-control/|\$TREE/|\$DEPLOYED/|\$REPO/)"
+    r"(?:/opt/creche/|\$TREE/|\$DEPLOYED/|\$REPO/)"
     r"([A-Za-z0-9._@/+-]*(?:\{[A-Za-z0-9._,+-]+\}[A-Za-z0-9._@/+-]*)?)"
 )
 
 #: One shell brace list, `{a,b}`, in a referenced path. The deploy names
-#: `/opt/agent-control/{chaperone,library}/src` this way. A list that still names
+#: `/opt/creche/{chaperone,library}/src` this way. A list that still names
 #: a deleted directory stops the deploy on the host at `chmod`, and a scan
 #: that does not expand the list cannot see it.
 BRACES = re.compile(r"\{([A-Za-z0-9._,+-]+)\}")

@@ -23,7 +23,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/agent-control
+WorkingDirectory=/opt/creche
 # Every user unit in this repo carries both (systemd/AGENTS.md). HOME is
 # load-bearing here beyond that rule: the fetch is ssh as the operator, nothing
 # names a key, so ssh reads ~/.ssh/config and the operator's default identity out
@@ -32,7 +32,7 @@ Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
 # The DEPLOYED checkout, not a component tree. This script is not part of
 # any component and must keep pulling while a release is mid-swap.
-ExecStart=/opt/agent-control/bin/rework-registry-sync.sh
+ExecStart=/opt/creche/bin/rework-registry-sync.sh
 
 # A user unit on this host cannot use mount-namespace options
 # (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit

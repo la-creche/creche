@@ -15,7 +15,7 @@
 #
 # It stays ONE workflow with ONE check named `gate`. The release executor
 # reads the workflow runs on the PR head, and every one must be a success
-# (release/src/agent_release/executor/provenance.py, P5): a second workflow
+# (handover/src/handover/executor/provenance.py, P5): a second workflow
 # that can fail or be cancelled there would block a release. Sessions read
 # `gh pr checks` for `gate`.
 #
