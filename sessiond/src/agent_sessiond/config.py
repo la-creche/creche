@@ -89,9 +89,9 @@ class Config:
     def binds_lan(self) -> bool:
         return self.bind is Bind.SOCKET_AND_LAN
 
-    def supervisor_log(self, family: str) -> Path:
-        """Where one family's supervisor stderr lands (contract 03 §1 rule 4)."""
-        return self.log_dir / f"supervisor-{family}.log"
+    def playpen_log(self, family: str) -> Path:
+        """Where one family's playpen stderr lands (contract 03 §1 rule 4)."""
+        return self.log_dir / f"playpen-{family}.log"
 
 
 def from_env(environ: dict[str, str] | None = None) -> Config:

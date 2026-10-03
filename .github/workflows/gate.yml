@@ -1,8 +1,8 @@
-# PR gate: lint, the full suite and the supervisor's vitest suite, as jobs
+# PR gate: lint, the full suite and the playpen's vitest suite, as jobs
 # that run at once on separate runners.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
-#           └── supervisor     code   the TypeScript suite and its build
+#           └── playpen     code   the TypeScript suite and its build
 #   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
 #                                 │   docs PR the tests marked `docs`
 #                                 └── gate   red unless every job passed
@@ -20,7 +20,7 @@
 # `gh pr checks` for `gate`.
 #
 # A PR of nothing but docs runs `bin/quality-gate.sh --docs` in the lint job,
-# lint and only the tests that read a doc: no shard and no supervisor job
+# lint and only the tests that read a doc: no shard and no playpen job
 # (bin/lib/docsrule.sh, the rule the hook reads too).
 #
 # Every shard runs the whole of pyproject.toml's `testpaths` with
@@ -30,7 +30,7 @@
 #
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
-# release.yml runs the same `tests` and `supervisor` jobs after the merge.
+# release.yml runs the same `tests` and `playpen` jobs after the merge.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -120,17 +120,17 @@ jobs:
           INDEX: ${{ strategy.job-index }}
           TOTAL: ${{ strategy.job-total }}
 
-  # agent-control only. The supervisor is TypeScript and the Python gate
-  # never runs its suite. pnpm's version is supervisor/package.json's
-  # packageManager field; node matches supervisor/Dockerfile's NODE_TAG.
+  # agent-control only. The playpen is TypeScript and the Python gate
+  # never runs its suite. pnpm's version is playpen/package.json's
+  # packageManager field; node matches playpen/Dockerfile's NODE_TAG.
   # `build` runs too: 120 integration tests skip when dist/ is absent, so
   # a bundle that does not build has to fail HERE, not as a quiet skip.
-  supervisor:
+  playpen:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-latest
     # `pnpm run build` fixes the LAN address in the bundle and refuses to
-    # build without one (supervisor/build.mjs). CI throws the bundle away,
+    # build without one (playpen/build.mjs). CI throws the bundle away,
     # so the example site's TEST-NET-1 address does.
     env:
       AGENT_LAN_ADDRESS: 192.0.2.10
@@ -141,21 +141,21 @@ jobs:
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
-          package_json_file: supervisor/package.json
+          package_json_file: playpen/package.json
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: supervisor/pnpm-lock.yaml
+          cache-dependency-path: playpen/pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck && pnpm run build
-        working-directory: supervisor
+        working-directory: playpen
 
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, supervisor]
+    needs: [scope, lint, tests, playpen]
     if: always()
     runs-on: ubuntu-latest
     steps:

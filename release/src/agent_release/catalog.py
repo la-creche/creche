@@ -90,7 +90,7 @@ class CatalogRow:
 
 
 #: Contract 06 §1, in its own order. `managerd` sits at `managerd/`, `ui` at
-#: `view/` and `sandbox-image` at `supervisor/`.
+#: `view/` and `playpen` at `playpen/`.
 #:
 #: `bundles` follows each build through `uv.lock`: `sessiond` installs the
 #: doors, and `agent-door-trigger` brings `agent-family`; `agent-pep`
@@ -108,7 +108,7 @@ CATALOG: tuple[CatalogRow, ...] = (
     ),
     CatalogRow("managerd", Repo.AGENT_CONTROL, "managerd", Kind.VENV, Releases.YES, ("family",)),
     CatalogRow("ui", Repo.AGENT_CONTROL, "view", Kind.VENV, Releases.YES, ("family",)),
-    CatalogRow("sandbox-image", Repo.AGENT_CONTROL, "supervisor", Kind.OCI_IMAGE, Releases.YES),
+    CatalogRow("playpen", Repo.AGENT_CONTROL, "playpen", Kind.OCI_IMAGE, Releases.YES),
     CatalogRow("mcp-servers", Repo.AGENT_MCP, ".", Kind.VENV, Releases.YES),
     CatalogRow("infra", Repo.AGENT_CONTROL, "infra", Kind.COMPOSE, Releases.YES),
     CatalogRow("releasectl", Repo.AGENT_CONTROL, "release", Kind.VENV, Releases.YES),
@@ -128,7 +128,7 @@ RETIRING: frozenset[str] = frozenset({"infra"})
 CONTRACT_OWNER: dict[ContractId, str] = {
     ContractId.FAMILY_FILE: "managerd",
     ContractId.SESSION_API: "sessiond",
-    ContractId.CHANNEL: "sandbox-image",
+    ContractId.CHANNEL: "playpen",
     ContractId.PEP_GRANT: "pep",
     ContractId.MANAGER_STATUS: "managerd",
     ContractId.COMPONENT_MANIFEST: "releasectl",

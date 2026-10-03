@@ -62,6 +62,14 @@ from .models import (
 )
 from .paths import dispatch_file, outcome_file, sandbox_cwd, sandbox_session_dir
 from .persona import Persona, prepare
+from .playpen_link import (
+    ChannelFactory,
+    HandshakeError,
+    OrphanPlaypen,
+    PlaypenFatal,
+    PlaypenLink,
+    Violation,
+)
 from .queueing import Slot, TurnQueue, Waiting, slot_for
 from .requests import (
     CreateRequest,
@@ -78,14 +86,6 @@ from .requests import (
 from .states import SessionKind, TurnState, can_move, is_terminal
 from .store import SessionStore
 from .streams import Follow, StreamEnd, StreamHub
-from .supervisor_link import (
-    ChannelFactory,
-    HandshakeError,
-    OrphanSupervisor,
-    SupervisorFatal,
-    SupervisorLink,
-    Violation,
-)
 from .switching import SwitchBook, SwitchOutcome, SwitchTally, switch_key
 from .terminal import Exchange, pair
 from .turns import LiveTurn, TurnBook, text_delta
@@ -192,7 +192,7 @@ class SessionService:
         self._owui = owui_copy.ChatCopy(made, config.owui_folder_id, self._keep_owui_chat)
         self._forks: dict[tuple[str, str, str], Fork] = {}
         self._sessions: dict[tuple[str, str], Session] = {}
-        self._links: dict[str, SupervisorLink] = {}
+        self._links: dict[str, PlaypenLink] = {}
         # What `_report_audit` last published, so a once-a-second poll
         # rewrites no file while nothing changes.
         self._audit_fault: str | None = None
@@ -1053,7 +1053,7 @@ class SessionService:
 
         try:
             await self._link_for(family, status, sandbox)
-        except (OrphanSupervisor, SupervisorFatal, HandshakeError, ChannelClosed) as error:
+        except (OrphanPlaypen, PlaypenFatal, HandshakeError, ChannelClosed) as error:
             raise ApiError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
                 f"sandbox {sandbox} did not complete its handshake",
@@ -1476,7 +1476,7 @@ class SessionService:
 
         `start_turn` opens the process itself when this did not happen, so a
         family with no sandbox yet, a channel that would not open and an
-        orphaned supervisor all end the same way: one log line, no turn.
+        orphaned playpen all end the same way: one log line, no turn.
         """
         try:
             sandbox = await self._pick_sandbox(family, status)
@@ -1495,7 +1495,7 @@ class SessionService:
                     workspace=self._workspace(family, session),
                 )
             )
-        except (ApiError, OrphanSupervisor, HandshakeError, ChannelClosed, ValueError) as error:
+        except (ApiError, OrphanPlaypen, HandshakeError, ChannelClosed, ValueError) as error:
             _LOG.info("no pre-start for %s/%s: %s", family, session, error)
 
     async def _send_start(
@@ -1554,8 +1554,8 @@ class SessionService:
                     delegation=_delegation_of(request),
                 )
             )
-        except (OrphanSupervisor, SupervisorFatal) as error:
-            # Two ways the sandbox cannot serve. An old supervisor may still
+        except (OrphanPlaypen, PlaypenFatal) as error:
+            # Two ways the sandbox cannot serve. An old playpen may still
             # be alive in the VM, so no second one may start there, and one
             # that answered `fatal` will answer the same way on every dial.
             # `managerd` replaces the sandbox, not this service (§11.4 rule 6).
@@ -1568,7 +1568,7 @@ class SessionService:
         live.deadline_task = asyncio.create_task(self._watch_deadline(live))
 
     async def _watch_deadline(self, live: LiveTurn) -> None:
-        """Contract 02 §12 rule 4. The supervisor runs its own deadline too."""
+        """Contract 02 §12 rule 4. The playpen runs its own deadline too."""
         try:
             await asyncio.sleep(live.record.deadline_s)
         except asyncio.CancelledError:
@@ -1655,7 +1655,7 @@ class SessionService:
     def _workspace(self, family: str, session: str) -> dict[str, Any] | None:
         """Contract 03 §7.2's `workspace`, or None for every other family.
 
-        It names the owner and no host path: the supervisor derives the link
+        It names the owner and no host path: the playpen derives the link
         target from its own mount, so a host message cannot aim it elsewhere.
         """
         record = self._sessions.get((family, session))
@@ -1670,12 +1670,12 @@ class SessionService:
 
         A document that publishes no env file path is a fault, not a guess.
         `sbx exec` forwards no host environment, so a command built without
-        `--env-file` starts a supervisor that can find none of its three
+        `--env-file` starts a playpen that can find none of its three
         mounts and answers `fatal` (contract 03 §7.1). Saying so here names
         the cause; dialling anyway would bury it in a log file.
         """
         info = status.sandbox_by_id(sandbox)
-        env_file = info.supervisor_env if info is not None else ""
+        env_file = info.playpen_env if info is not None else ""
 
         if not env_file:
             self._faults.raise_fault(
@@ -1687,14 +1687,14 @@ class SessionService:
 
             raise ApiError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
-                f"family {family} has no supervisor env file for {sandbox}",
+                f"family {family} has no playpen env file for {sandbox}",
                 family=family,
                 detail={"sandbox": sandbox},
             )
 
         return SandboxDial(sandbox=sandbox, env_file=env_file)
 
-    async def _link_for(self, family: str, status: FamilyStatus, sandbox: str) -> SupervisorLink:
+    async def _link_for(self, family: str, status: FamilyStatus, sandbox: str) -> PlaypenLink:
         """The channel to one sandbox. Contract 03 §1: one channel per sandbox.
 
         Keyed by sandbox rather than by family, because a drain runs both at
@@ -1705,7 +1705,7 @@ class SessionService:
         link = self._links.get(sandbox)
 
         if link is None:
-            link = SupervisorLink(
+            link = PlaypenLink(
                 family=family,
                 kind=status.kind,
                 events=_SandboxEvents(self, family, sandbox),
@@ -1722,7 +1722,7 @@ class SessionService:
         await link.ensure_open(dial, status.epoch)
         return link
 
-    def _link_of(self, sandbox: str | None) -> SupervisorLink | None:
+    def _link_of(self, sandbox: str | None) -> PlaypenLink | None:
         """The channel serving one sandbox, or None."""
         if sandbox is None:
             return None
@@ -1735,7 +1735,7 @@ class SessionService:
         return ExecChannel(
             dial=dial,
             command=self._config.channel_command,
-            log_path=self._config.supervisor_log(family),
+            log_path=self._config.playpen_log(family),
         )
 
     async def _send_to(self, sandbox: str, family: str, message: dict[str, Any]) -> None:
@@ -1841,7 +1841,7 @@ class SessionService:
         if live is None or not live.is_active:
             return
 
-        if message.reason is wire.SupervisorReason.FORK_REFUSED and (
+        if message.reason is wire.PlaypenReason.FORK_REFUSED and (
             await self._retry_without_fork(live, message)
         ):
             return
@@ -1849,14 +1849,14 @@ class SessionService:
         mapped = wire.host_reason(message.reason)
 
         # A retried reason answers a message this stage never sends, so it is
-        # the supervisor that is confused, not the turn (contract 03 §5.3).
+        # the playpen that is confused, not the turn (contract 03 §5.3).
         if mapped is None:
             self._append(
                 family,
                 message.session,
                 LineKind.NOTE,
                 message.turn,
-                {"note": "unexpected_supervisor_reason", "reason": message.reason.value},
+                {"note": "unexpected_playpen_reason", "reason": message.reason.value},
             )
             mapped = TurnReason.INTERNAL
 
@@ -1896,7 +1896,7 @@ class SessionService:
             message.session,
             LineKind.NOTE,
             None,
-            {"note": "supervisor_log", "level": message.level, "message": message.message},
+            {"note": "playpen_log", "level": message.level, "message": message.message},
         )
 
     async def handle_session_opened(self, family: str, message: OpenedLine) -> None:
@@ -1976,7 +1976,7 @@ class SessionService:
                     workspace=self._workspace(family, session),
                 )
             )
-        except (ApiError, OrphanSupervisor, HandshakeError, ChannelClosed, ValueError) as error:
+        except (ApiError, OrphanPlaypen, HandshakeError, ChannelClosed, ValueError) as error:
             # The next lease release reads again, and the cursor did not
             # move, so nothing was lost.
             self._entry_reads.pop(request, None)
@@ -2601,7 +2601,7 @@ class SessionService:
         """How many turns wait for a slot (contract 02 §13 rule 3)."""
         return self._queue.depth(family)
 
-    def link(self, sandbox: str) -> SupervisorLink | None:
+    def link(self, sandbox: str) -> PlaypenLink | None:
         return self._links.get(sandbox)
 
     def live_turn(self, family: str, session: str, turn: str) -> LiveTurn | None:
@@ -2672,7 +2672,7 @@ def _wanted_entry(fork: Fork) -> str | None:
     return refs.parent_id if refs is not None else None
 
 
-def _serves_entries(link: SupervisorLink) -> bool:
+def _serves_entries(link: PlaypenLink) -> bool:
     """Contract 03 §3. Does this sandbox's image answer §4.8 at all?"""
     ready = link.ready
 

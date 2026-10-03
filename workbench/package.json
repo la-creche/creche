@@ -1,9 +1,0 @@
-{
-  "name": "agent-workbench",
-  "version": "0.4.1",
-  "private": true,
-  "description": "The ONE pi pin (supervisor/AGENTS.md rule 18). supervisor/Dockerfile copies these two files to build /opt/pi in the sandbox image, and supervisor/test/real-pi.test.ts asserts the dev copy matches this version. The name and version fields match package-lock.json, so npm ci accepts them: they are not an image tag.",
-  "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.99.1"
-  }
-}

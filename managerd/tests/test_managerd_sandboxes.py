@@ -94,11 +94,11 @@ def test_it_writes_the_counter_and_the_ledger(state_root: Path, family: FamilyFi
     assert records[0].state is SandboxLifecycle.CREATING
 
 
-def test_it_writes_supervisor_env_for_the_new_id(state_root: Path, family: FamilyFile) -> None:
+def test_it_writes_playpen_env_for_the_new_id(state_root: Path, family: FamilyFile) -> None:
     driver = FakeDriver()
     outcome = create(state_root, family, driver)
     assert outcome.record is not None
-    env_path = paths.supervisor_env_path(state_root, "chat", "chat-s1")
+    env_path = paths.playpen_env_path(state_root, "chat", "chat-s1")
     assert env_path.is_file()
     assert "AGENT_SANDBOX=chat-s1" in env_path.read_text(encoding="utf-8")
 
@@ -131,9 +131,9 @@ def test_a_failed_assert_destroys_the_sandbox(state_root: Path, family: FamilyFi
     assert driver.ops() == ("create", "set_egress", "assert_egress", "destroy")
 
 
-def test_a_failed_create_writes_no_supervisor_env(state_root: Path, family: FamilyFile) -> None:
+def test_a_failed_create_writes_no_playpen_env(state_root: Path, family: FamilyFile) -> None:
     create(state_root, family, FailingCreate())
-    assert not paths.supervisor_env_path(state_root, "chat", "chat-s1").exists()
+    assert not paths.playpen_env_path(state_root, "chat", "chat-s1").exists()
 
 
 def test_a_failed_create_burns_its_id(state_root: Path, family: FamilyFile) -> None:
@@ -172,7 +172,7 @@ def test_a_create_empties_its_own_control_directory(state_root: Path, family: Fa
 def test_a_replacement_leaves_the_live_lock(state_root: Path, family: FamilyFile) -> None:
     """Contract 05 §4.3 rule 5 with contract 03: the directory is
     per sandbox, so emptying the new one cannot touch the lock the outgoing
-    sandbox's supervisor is still beating."""
+    sandbox's playpen is still beating."""
     create(state_root, family, FakeDriver())
     live = paths.control_dir(state_root, "chat", "chat-s1") / "supervisor.lock"
     live.write_text("live\n", encoding="utf-8")
@@ -185,12 +185,12 @@ def test_a_replacement_leaves_the_live_lock(state_root: Path, family: FamilyFile
 
 def test_two_sandboxes_get_two_env_files(state_root: Path, family: FamilyFile) -> None:
     """Contract 03 §7.1 rule 1. One file per family would hand the outgoing
-    supervisor the incoming sandbox's id for the whole replacement."""
+    playpen the incoming sandbox's id for the whole replacement."""
     create(state_root, family, FakeDriver())
     create(state_root, family, FakeDriver())
 
-    first = paths.supervisor_env_path(state_root, "chat", "chat-s1")
-    second = paths.supervisor_env_path(state_root, "chat", "chat-s2")
+    first = paths.playpen_env_path(state_root, "chat", "chat-s1")
+    second = paths.playpen_env_path(state_root, "chat", "chat-s2")
 
     assert "AGENT_SANDBOX=chat-s1" in first.read_text(encoding="utf-8")
     assert "AGENT_SANDBOX=chat-s2" in second.read_text(encoding="utf-8")
@@ -206,7 +206,7 @@ def test_a_destroy_removes_its_control_directory(state_root: Path, family: Famil
     destroy_sandbox(state_root, "chat", outcome.record, driver)
 
     assert not paths.control_dir(state_root, "chat", "chat-s1").exists()
-    assert not paths.supervisor_env_path(state_root, "chat", "chat-s1").exists()
+    assert not paths.playpen_env_path(state_root, "chat", "chat-s1").exists()
 
 
 # --- destroy ------------------------------------------------------------------

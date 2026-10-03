@@ -1,6 +1,6 @@
 """The dispatch door: one family enqueues a job in another (contract 02 §13.4).
 
-Everything here runs against a fake supervisor and a temporary state root, so
+Everything here runs against a fake playpen and a temporary state root, so
 no test needs the host, `sbx` or the PEP.
 """
 
@@ -72,13 +72,13 @@ class DispatchHarness:
     async def settle(self, session: str) -> None:
         """Play the turn the target started, then wait for the job to end."""
         # `accepted` answers before the dial (contract 02 §5.4).
-        await wait_until(lambda: TARGET_SANDBOX in self.fleet.supervisors)
-        supervisor = self.fleet.supervisor(TARGET_SANDBOX)
-        started = await supervisor.next_start()
+        await wait_until(lambda: TARGET_SANDBOX in self.fleet.playpens)
+        playpen = self.fleet.playpen(TARGET_SANDBOX)
+        started = await playpen.next_start()
         turn = str(started["turn"])
         live = self.service.live_turn(TARGET, session, turn)
         assert live is not None
-        await supervisor.settle(session, turn)
+        await playpen.settle(session, turn)
         await settle_now(live.done)
 
     async def stop(self) -> None:

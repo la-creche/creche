@@ -11,7 +11,7 @@ contract 02 draft 6), the Open WebUI write-back and the edit-or-regenerate
 branch (the same packet), and the platform fence in `managerd` and the PEP
 (contract 01 §5.5). This file is the first time they run together.
 
-    the phone  ─http─► door-owui ─uds─► sessiond ─► supervisor ─► fake pi
+    the phone  ─http─► door-owui ─uds─► sessiond ─► playpen ─► fake pi
     the terminal ────► door-tui  ─uds─►    │
                                            └─http─► FakeOwui (the write-back)
 
@@ -425,7 +425,7 @@ async def test_i4_a_refused_copy_never_fails_a_turn(stage: Stage4) -> None:
 async def test_i4_release_process_frees_the_terminal(stage: Stage4) -> None:
     """Scenario 4. Contract 02 §5.11: the terminal waits out no timer.
 
-    The supervisor holds a session's pi process open after a turn settles,
+    The playpen holds a session's pi process open after a turn settles,
     and contract 03 §7.6 exits 8 rather than put a second writer on one
     store. Without §5.11 a person who moved from the phone to the terminal
     would wait `pi_idle_ttl_s` — 900 seconds for an attended family.
@@ -436,7 +436,7 @@ async def test_i4_release_process_frees_the_terminal(stage: Stage4) -> None:
     answer = await stage.owui_turn(chat, message_id(), "from the phone")
     assert answer.status_code == HTTP_OK, answer.text
     await settle(lambda: settled_count(stage, session) == 1, "the phone's turn")
-    assert len(stage.stack.pi_starts()) == 1, "the supervisor holds the process open"
+    assert len(stage.stack.pi_starts()) == 1, "the playpen holds the process open"
 
     door = stage.tui_client(TERMINAL_A)
 

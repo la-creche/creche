@@ -129,7 +129,7 @@ def test_a_failed_sandbox_is_not_startable(tmp_path: Path) -> None:
 
 def test_the_env_file_path_is_read_per_sandbox(tmp_path: Path) -> None:
     """Contract 05 §4.1: `sessiond` hands this path to
-    `sbx exec --env-file`, which is the only way the supervisor learns
+    `sbx exec --env-file`, which is the only way the playpen learns
     where its mounts are (contract 03 §7.1)."""
     rows = [{"id": "chat-s5", "state": "ready", "supervisor_env": "/srv/a/supervisor.env"}]
     status = _publish(tmp_path, sandboxes=rows).read(_FAMILY)
@@ -137,7 +137,7 @@ def test_the_env_file_path_is_read_per_sandbox(tmp_path: Path) -> None:
     assert status is not None
     box = status.sandbox_by_id("chat-s5")
     assert box is not None
-    assert box.supervisor_env == "/srv/a/supervisor.env"
+    assert box.playpen_env == "/srv/a/supervisor.env"
 
 
 def test_a_sandbox_row_with_no_env_file_reads_empty(tmp_path: Path) -> None:
@@ -149,7 +149,7 @@ def test_a_sandbox_row_with_no_env_file_reads_empty(tmp_path: Path) -> None:
     assert status is not None
     box = status.sandbox_by_id("chat-s5")
     assert box is not None
-    assert box.supervisor_env == ""
+    assert box.playpen_env == ""
 
 
 def test_an_unknown_sandbox_id_is_none(tmp_path: Path) -> None:

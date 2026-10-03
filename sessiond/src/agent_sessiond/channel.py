@@ -23,9 +23,9 @@ class SandboxDial:
     """What it takes to open one channel (contract 03 §7.1).
 
     Two values, never one. `sbx exec` forwards no host environment, so the
-    supervisor learns where its mounts are only from the env file `managerd`
+    playpen learns where its mounts are only from the env file `managerd`
     wrote; the status document publishes that path per sandbox (contract 05
-    §4.1). A dial without it starts a supervisor that answers `fatal`.
+    §4.1). A dial without it starts a playpen that answers `fatal`.
     """
 
     sandbox: str
@@ -63,7 +63,7 @@ class Channel(Protocol):
 class FakeChannel:
     """A channel whose far side is a test, not a sandbox.
 
-    Both directions are queues. A test writes what the supervisor would say
+    Both directions are queues. A test writes what the playpen would say
     and reads what the host sent, so contract 03 can be exercised whole
     without a process anywhere.
     """

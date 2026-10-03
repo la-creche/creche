@@ -8,14 +8,14 @@ PEP checks the grant file, mints a delegation id and calls the REAL
 `sessiond` over its Unix socket. `sessiond` runs one job session in the thin
 family's own sandbox and deletes it afterwards.
 
-    bridge (chat's model) ──► PEP ──► sessiond ──► job-<ulid> ──► supervisor
+    bridge (chat's model) ──► PEP ──► sessiond ──► job-<ulid> ──► playpen
                                │                                     │
                         grants/chat.json                        fake-pi.mjs
                                │
                         audit/<day>.jsonl
 
 Three fakes, none under test: `FakeDriver` (a Mac has no `sbx`),
-`FakeLiteLLMKeys` (no test mints a key) and `fake-pi.mjs` (the supervisor
+`FakeLiteLLMKeys` (no test mints a key) and `fake-pi.mjs` (the playpen
 package's own double). Everything from the family file to the wrapped
 answer is real code.
 """
@@ -77,7 +77,7 @@ _GROUP_WRITABLE = 0o660
 
 pytestmark = pytest.mark.skipif(
     bridge_bundle_missing(),
-    reason="supervisor/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
+    reason="playpen/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
 )
 
 
@@ -137,7 +137,7 @@ async def run_and_read_turn_file(stage: Stage3, session: str) -> dict[str, objec
     """One delegate call, and the turn file the job ran under.
 
     That file is the only place the minted id is written down outside the
-    PEP's memory, and the supervisor removes it with the job session, so the
+    PEP's memory, and the playpen removes it with the job session, so the
     job turn is slowed down enough to read the file while it still exists.
     """
     stage.stack.set_pi_env(events=SLOW_TURN_EVENTS, delay_ms=SLOW_TURN_GAP_MS)
@@ -223,7 +223,7 @@ async def test_the_minted_delegation_reaches_the_job(delegating: Stage3) -> None
     """Contract 04 §7.4 and contract 03 §7.4 rule 4 item 5.
 
     The PEP mints the id, `sessiond` puts it on `start_turn`, and the
-    supervisor writes it into the job's turn file, where that sandbox's
+    playpen writes it into the job's turn file, where that sandbox's
     bridge reads it. Packet FX fixed the case this covers: a delegation used
     to be dropped whole when the PEP sent no caller session, which lost the
     id as well.
@@ -305,7 +305,7 @@ async def test_the_directory_survives_both_jobs(delegating: Stage3) -> None:
 
 
 async def test_the_job_works_through_the_link_the_operator_named(delegating: Stage3) -> None:
-    """The path of `docs/rework/spec.md` §7.2. The supervisor derives the
+    """The path of `docs/rework/spec.md` §7.2. The playpen derives the
     target from its own mount, so the host never sends one and a forged
     message cannot aim it."""
     session = session_of(chat_id())

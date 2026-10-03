@@ -1,7 +1,7 @@
 """Autonomous semantics: the trigger, the turn limit and the queue.
 
 An autonomous family is the only kind with any of the three (contract 02
-§13). Everything here runs against a fake supervisor, so no test needs
+§13). Everything here runs against a fake playpen, so no test needs
 the host, `sbx` or a live `sessiond`.
 """
 
@@ -68,7 +68,7 @@ class AutoHarness:
             RunTurnRequest(prompt=PROMPT, trigger=trigger),
             DOOR,
         )
-        await self.fleet.supervisor(_sandbox_of(family)).next_start()
+        await self.fleet.playpen(_sandbox_of(family)).next_start()
         return live
 
     async def queue(self, session: str = SECOND_SESSION) -> LiveTurn:
@@ -91,8 +91,8 @@ class AutoHarness:
         return [line.kind for line in self.lines(session)]
 
     async def settle(self, live: LiveTurn) -> None:
-        supervisor = self.fleet.supervisor(_sandbox_of(live.record.family))
-        await supervisor.settle(live.record.session, live.record.turn)
+        playpen = self.fleet.playpen(_sandbox_of(live.record.family))
+        await playpen.settle(live.record.session, live.record.turn)
         await settle_now(live.done)
 
     async def outcome(self, family: str = AUTO_FAMILY) -> dict[str, Any]:
@@ -365,7 +365,7 @@ async def test_a_queued_turn_starts_when_a_slot_frees(tmp_path: Path) -> None:
     queued = await harness.queue(SECOND_SESSION)
 
     await harness.settle(first)
-    await harness.fleet.supervisor(AUTO_SANDBOX).next_start()
+    await harness.fleet.playpen(AUTO_SANDBOX).next_start()
 
     assert queued.record.state is TurnState.RUNNING
     assert queued.record.sandbox == AUTO_SANDBOX
@@ -479,7 +479,7 @@ async def test_a_queued_turn_with_no_env_file_ends_the_job(tmp_path: Path) -> No
         kind="autonomous",
         sandboxes=((AUTO_SANDBOX, "ready"),),
         max_running_turns=1,
-        supervisor_env="",
+        playpen_env="",
     )
 
     await harness.settle(first)
@@ -559,7 +559,7 @@ async def test_the_record_names_a_failure(tmp_path: Path) -> None:
     harness.create()
     live = await harness.run(None)
 
-    await harness.fleet.supervisor(AUTO_SANDBOX).fail(
+    await harness.fleet.playpen(AUTO_SANDBOX).fail(
         AUTO_SESSION, live.record.turn, "model_error", "the model refused"
     )
     await settle_now(live.done)
@@ -710,7 +710,7 @@ async def test_a_firing_during_the_outage_dials_nothing(tmp_path: Path) -> None:
     # Contract 02 §14. The word names the fact: nobody removed a
     # permission, the PEP stopped answering.
     assert live.record.reason is TurnReason.PEP_UNREACHABLE
-    assert harness.fleet.supervisors == {}
+    assert harness.fleet.playpens == {}
     await harness.stop()
 
 

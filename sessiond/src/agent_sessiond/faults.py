@@ -33,7 +33,7 @@ class FaultCode(StrEnum):
     PROTOCOL_MISMATCH = "protocol_mismatch"
     PROTOCOL_VIOLATION = "protocol_violation"
     ORPHAN_PROCESSES = "orphan_processes"
-    # Contract 05 §3.3.1: raised when the supervisor answers contract 03
+    # Contract 05 §3.3.1: raised when the playpen answers contract 03
     # §5.7's `fatal` instead of `ready`. Contract 05 §4.2 defines `ready` as
     # "the channel handshake passed", which only this service runs.
     SANDBOX_START_FAILED = "sandbox_start_failed"

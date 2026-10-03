@@ -25,7 +25,7 @@ verbs:
       - sessiond
       - managerd
       - ui
-      - sandbox-image
+      - playpen
       - mcp-servers
       - infra
       - releasectl

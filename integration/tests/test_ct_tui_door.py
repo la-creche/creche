@@ -5,9 +5,9 @@ WebUI half. This proves the other half meets it on the SAME session:
 
     agent-tui chat --session owui-<chat id>
 
-The door, `sessiond`, the supervisor and the status document are all real.
+The door, `sessiond`, the playpen and the status document are all real.
 Two stand-ins, both the gate's own: `fake_sbx.py` for `sbx exec`, and
-`fake-pi.mjs` behind the supervisor. Nothing dials a live service.
+`fake-pi.mjs` behind the playpen. Nothing dials a live service.
 
 The TUI door runs synchronously — it makes a call, then blocks on a terminal
 — so each scenario drives it in a worker thread and keeps the stack's event
@@ -157,7 +157,7 @@ async def test_ct_tui_attaches_to_an_owui_session(stack: Stack, tmp_path: Path) 
     assert argv[:3] == ["exec", "-it", "--env-file"]
     # Contract 05 §4.1.1 rule 3: the path comes from the status document, and
     # `sessiond` puts the same one on its own channel command.
-    assert argv[3] == str(stack.supervisor_env)
+    assert argv[3] == str(stack.playpen_env)
     assert argv[4] == SANDBOX
     assert argv[argv.index("--session") + 1] == session
     # The session already ran a turn, so it is not this terminal's first writer.
@@ -168,7 +168,7 @@ async def test_ct_a_second_terminal_is_refused(stack: Stack, tmp_path: Path) -> 
     """Contract 02 §7.2. Contention refuses: it never queues and never steals.
 
     Two terminals is the case `sessiond`'s lease is the ONLY fence for.
-    Contract 03 §7.5's process record names the supervisor's process, so it
+    Contract 03 §7.5's process record names the playpen's process, so it
     stops neither a second `agent-pi-launch` nor a `start_turn` racing one
     (§7.6, "What this does NOT fence").
     """

@@ -69,7 +69,7 @@ EnvironmentFile=/etc/agent-control/site.env
 # (its LAN listener is off), and `serve`'s default is a LAN URL. Without this
 # line every `ready` handshake is refused with ConnectError, and every sandbox
 # stays `creating` for ever: families `in_sync`, no fault, none `ready`.
-# `--image-python`: contract 01 §3.9's second flavor. `supervisor/Dockerfile`
+# `--image-python`: contract 01 §3.9's second flavor. `playpen/Dockerfile`
 # builds both targets and `bin/rework-cutover.sh` writes both values into
 # managerd.env. An empty value is allowed and means this host has no python
 # image: a family with `sandbox.image: python` then raises

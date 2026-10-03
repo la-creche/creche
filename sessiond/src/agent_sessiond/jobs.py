@@ -55,7 +55,7 @@ class Delegation:
     def to_channel(self) -> dict[str, Any]:
         """What rides on `start_turn` (contract 03 §7.4 rule 4 item 5).
 
-        Two fields, and no third: the supervisor's reader keeps `id` and
+        Two fields, and no third: the playpen's reader keeps `id` and
         `caller_session`, and no header carries a family. Always both keys,
         `caller_session` possibly null: contract 04 §7.3 makes
         `claimed_session_id` advisory, so the PEP may send none, and that is

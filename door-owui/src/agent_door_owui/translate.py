@@ -129,7 +129,7 @@ class TurnTranslator:
             return []
 
         # A pi rpc command response should never reach the journal: contract
-        # 03 §5.1 forwards events, and the supervisor answers a refused
+        # 03 §5.1 forwards events, and the playpen answers a refused
         # command with `turn_failed`. Handled anyway, because a stalled chat
         # is a worse outcome than a visible error.
         if event_type == _RPC_RESPONSE and event.get("success") is False:

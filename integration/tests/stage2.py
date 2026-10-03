@@ -1,11 +1,11 @@
 """A real `managerd` beside the running stack (packet I2, stage 2).
 
-Stage 1's harness holds the door, `sessiond` and the supervisor. Stage 2
+Stage 1's harness holds the door, `sessiond` and the playpen. Stage 2
 adds the reconciler, so that a change to a family FILE is what drives the
 scenario, exactly as it does on the host.
 
     family.yaml ──► reconcile_family() ──► grants/<family>.json  (the PEP reads it)
-                            │          ──► config/                (the supervisor reads it)
+                            │          ──► config/                (the playpen reads it)
                             │          ──► status.json            (`sessiond` reads it)
                             │
                             └──HttpSwitchClient──uds──► sessiond /internal/switch-sandbox
@@ -167,7 +167,7 @@ class BreakTheIncomingEnv:
 
     This is how a scenario reaches "the new sandbox never completes its
     handshake" with the real bundle. `sbx exec --env-file` carries the
-    three mount paths, and a supervisor that finds one unset answers
+    three mount paths, and a playpen that finds one unset answers
     `fatal` with `mount_dir_unset` rather than `ready` (contract 03 §5.7).
 
     The moment matters: `managerd` writes the file during the create, and
@@ -194,7 +194,7 @@ class BreakTheIncomingEnv:
     def switch(self, request: SwitchRequest) -> SwitchResult:
         if not self._spent and request.outgoing is not None:
             self._spent = True
-            self._stack.supervisor_env_of(request.to).write_text(
+            self._stack.playpen_env_of(request.to).write_text(
                 "AGENT_SANDBOX=" + request.to + "\n", encoding="utf-8"
             )
 

@@ -76,7 +76,7 @@ TWO_GATE_GAP_MS = 40
 
 pytestmark = pytest.mark.skipif(
     bridge_bundle_missing(),
-    reason="supervisor/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
+    reason="playpen/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
 )
 
 
@@ -116,7 +116,7 @@ async def two_gate_job(stage: Stage5) -> tuple[str, str]:
     """A fired job whose turn is long enough to meet two gates.
 
     `test_i5_stage5.held_job` runs a ten-second turn, which is one gate's
-    worth. The turn id comes from the REAL supervisor's turn file, because
+    worth. The turn id comes from the REAL playpen's turn file, because
     a gated call must name the turn the host actually started.
     """
     stage.stack.set_pi_env(events=TWO_GATE_EVENTS, delay_ms=TWO_GATE_GAP_MS)
@@ -124,11 +124,11 @@ async def two_gate_job(stage: Stage5) -> tuple[str, str]:
 
     await until(
         lambda: stage.live_turn(HA_REVIEW, fired.session) is not None,
-        f"the supervisor's turn file for {fired.session}",
+        f"the playpen's turn file for {fired.session}",
         timeout=SETTLE_TIMEOUT_S,
     )
     turn = stage.live_turn(HA_REVIEW, fired.session)
-    assert turn == fired.turn, "the supervisor is running a turn sessiond did not start"
+    assert turn == fired.turn, "the playpen is running a turn sessiond did not start"
 
     return fired.session, turn
 

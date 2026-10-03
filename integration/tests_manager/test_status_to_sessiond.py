@@ -6,7 +6,7 @@ hand-written that file. These tests hand it the real one.
 
     apply_once ──► families/chat/status.json ──► StatusReader ──► run_turn
                                                                      │
-                                       FakeSupervisor ◄── channel ◄──┘
+                                       FakePlaypen ◄── channel ◄──┘
 
 The second half of this file is the harder half. `apply_once` reports
 `creating`, never `ready`, and `ready` means "the channel handshake passed"
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 from agent_managerd import paths as managerd_paths
-from agent_managerd.supervisor_env import read_supervisor_env
+from agent_managerd.playpen_env import read_playpen_env
 from agent_sessiond.auth import Principal
 from agent_sessiond.channel import SandboxDial
 from agent_sessiond.config import Config
@@ -31,7 +31,7 @@ from agent_sessiond.family_status import FamilyState, SandboxState, StatusReader
 from agent_sessiond.requests import CreateRequest, RunTurnRequest
 from agent_sessiond.service import SessionService
 from agent_sessiond.states import SessionKind, TurnState
-from sessiond_harness import FakeFleet, SupervisorPlan, make_config
+from sessiond_harness import FakeFleet, PlaypenPlan, make_config
 
 from .conftest import FAMILY, Applied
 
@@ -71,7 +71,7 @@ def test_the_reader_finds_the_sandbox_id(reader: StatusReader) -> None:
 
 def test_the_reader_takes_the_credential_epoch(reader: StatusReader) -> None:
     """Contract 03 §12.5: the epoch rides on the channel, so a wrong one
-    would make the supervisor refuse every turn."""
+    would make the playpen refuse every turn."""
     status = reader.read(FAMILY)
     assert status is not None
     assert status.epoch == 1
@@ -122,17 +122,17 @@ def test_the_reader_finds_the_env_file_managerd_wrote(
     assert status is not None
     box = status.sandbox_by_id(SANDBOX)
     assert box is not None
-    env_path = managerd_paths.supervisor_env_path(applied.state_root, FAMILY, SANDBOX)
-    assert box.supervisor_env == str(env_path)
-    assert Path(box.supervisor_env).is_file()
+    env_path = managerd_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
+    assert box.playpen_env == str(env_path)
+    assert Path(box.playpen_env).is_file()
 
 
 def test_the_env_file_names_the_directories_apply_mounted(applied: Applied) -> None:
     """The same three host paths `_sandbox_spec` handed `sbx create`. A
     mount's in-VM path IS its host path, so there is nothing to translate
     between the two sides (contract 03 §7.1)."""
-    env_path = managerd_paths.supervisor_env_path(applied.state_root, FAMILY, SANDBOX)
-    values = read_supervisor_env(env_path)
+    env_path = managerd_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
+    values = read_playpen_env(env_path)
     spec = applied.driver.calls[0].args[0]
     mounted = [mount.path for mount in getattr(spec, "mounts", ())]
 
@@ -149,7 +149,7 @@ def test_the_default_command_carries_that_file_and_the_id(
     from `managerd`'s own document with no value typed by hand.
 
     `sbx exec` forwards no host environment, so a command without
-    `--env-file` starts a supervisor that finds none of its three mounts;
+    `--env-file` starts a playpen that finds none of its three mounts;
     one without `--sandbox` makes it exit 2 before opening anything.
     """
     status = reader.read(FAMILY)
@@ -157,8 +157,8 @@ def test_the_default_command_carries_that_file_and_the_id(
     box = status.sandbox_by_id(SANDBOX)
     assert box is not None
 
-    argv = build_argv(DEFAULT_COMMAND, SandboxDial(SANDBOX, box.supervisor_env))
-    env_path = managerd_paths.supervisor_env_path(applied.state_root, FAMILY, SANDBOX)
+    argv = build_argv(DEFAULT_COMMAND, SandboxDial(SANDBOX, box.playpen_env))
+    env_path = managerd_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
 
     assert argv[:2] == ["sbx", "exec"]
     assert argv[argv.index("--env-file") + 1] == str(env_path)
@@ -197,14 +197,14 @@ async def test_a_turn_reaches_the_sandbox_managerd_created(
     try:
         service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
         live = await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
-        started = await fleet.supervisor(SANDBOX).next_start()
+        started = await fleet.playpen(SANDBOX).next_start()
 
         assert live.record.sandbox == SANDBOX
         assert started["session"] == SESSION
         assert fleet.dials == [SANDBOX]
         # Contract 03 §7.1: the dial carries the file, not only the id.
         assert fleet.env_files == [
-            str(managerd_paths.supervisor_env_path(applied.state_root, FAMILY, SANDBOX))
+            str(managerd_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX))
         ]
     finally:
         await service.close()
@@ -219,8 +219,8 @@ async def test_the_channel_carries_the_epoch_and_config_rev(
     try:
         service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
         await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
-        started = await fleet.supervisor(SANDBOX).next_start()
-        hello = fleet.supervisor(SANDBOX).hello
+        started = await fleet.playpen(SANDBOX).next_start()
+        hello = fleet.playpen(SANDBOX).hello
 
         assert started["env_epoch"] == 1
         assert started["config_rev"] == applied.result.status.config_rev
@@ -236,7 +236,7 @@ async def test_a_failed_handshake_still_fails_the_turn(applied: Applied, tmp_pat
     sandbox is not the same as it serving, and nothing here weakens that."""
     service, fleet = build_service(applied, tmp_path)
     # Contract 03 §3: a `ready` naming another sandbox fails the handshake.
-    fleet.plan(SANDBOX, SupervisorPlan(sandbox="chat-s99"))
+    fleet.plan(SANDBOX, PlaypenPlan(sandbox="chat-s99"))
     try:
         service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
         live = await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
@@ -295,7 +295,7 @@ async def test_a_ready_sandbox_still_wins_over_a_newer_creating_one(
     try:
         service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
         live = await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
-        await fleet.supervisor(SANDBOX).next_start()
+        await fleet.playpen(SANDBOX).next_start()
 
         assert live.record.sandbox == SANDBOX
     finally:

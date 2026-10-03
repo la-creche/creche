@@ -279,7 +279,7 @@ def test_spend_share_needs_both_numbers(tmp_path: Path) -> None:
     assert row.spend.known
 
 
-def test_a_sandbox_without_supervisor_env_is_visible(tmp_path: Path) -> None:
+def test_a_sandbox_without_playpen_env_is_visible(tmp_path: Path) -> None:
     """Contract 05 §4.1.1 rule 4 makes it a fault; the page must show it."""
     root = tmp_path / "state"
     write_json(
@@ -289,7 +289,7 @@ def test_a_sandbox_without_supervisor_env_is_visible(tmp_path: Path) -> None:
 
     row = read_family(root / "families", "chat", NOW)
 
-    assert not row.sandboxes[0].has_supervisor_env
+    assert not row.sandboxes[0].has_playpen_env
 
 
 def test_a_count_field_that_is_not_a_number_reads_zero(tmp_path: Path) -> None:

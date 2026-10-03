@@ -45,7 +45,7 @@ class LiteLLMError(RuntimeError):
 class Spend:
     """What LiteLLM says this family has spent (contract 05 §7).
 
-    LiteLLM is the authority. The `usage` numbers a supervisor reports are
+    LiteLLM is the authority. The `usage` numbers a playpen reports are
     advisory, because the sandbox is untrusted (contract 03 §13 rule 7)."""
 
     spend_usd: float

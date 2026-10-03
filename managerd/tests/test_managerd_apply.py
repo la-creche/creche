@@ -16,8 +16,8 @@ from agent_managerd.apply import ApplyResult, FamilyNotFoundError, apply_once
 from agent_managerd.credentials import read_creds
 from agent_managerd.driver import DriverError, FakeDriver, SandboxSpec
 from agent_managerd.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
+from agent_managerd.playpen_env import read_playpen_env
 from agent_managerd.status import now_rfc3339
-from agent_managerd.supervisor_env import read_supervisor_env
 from agent_managerd.switch import FakeSwitchClient, SwitchClient
 from managerd_helpers import write_registry
 
@@ -182,11 +182,11 @@ def test_every_mount_is_named_by_its_host_path(registry_root: Path, state_root: 
 # --- supervisor.env (contract 03 §7.1) ---------------------------------------
 
 
-def test_creating_the_sandbox_writes_supervisor_env(registry_root: Path, state_root: Path) -> None:
+def test_creating_the_sandbox_writes_playpen_env(registry_root: Path, state_root: Path) -> None:
     """`sbx exec` forwards no host environment, so this file is the only
-    way the supervisor learns where its three mounts are."""
+    way the playpen learns where its three mounts are."""
     apply_chat(registry_root, state_root)
-    values = read_supervisor_env(paths.supervisor_env_path(state_root, "chat", "chat-s1"))
+    values = read_playpen_env(paths.playpen_env_path(state_root, "chat", "chat-s1"))
     assert values["AGENT_CRED_DIR"] == str(paths.creds_dir(state_root, "chat"))
     assert values["AGENT_FAMILY_CONFIG_DIR"] == str(paths.config_dir(state_root, "chat"))
     assert values["AGENT_CONTROL_DIR"] == str(paths.control_dir(state_root, "chat", "chat-s1"))
@@ -200,8 +200,8 @@ def test_the_status_document_publishes_the_env_file_path(
     to `sbx exec --env-file`. A document without it is a fault, not a
     guess, so the document must carry it."""
     result = apply_chat(registry_root, state_root)
-    published = result.status.sandboxes[0].supervisor_env
-    assert published == str(paths.supervisor_env_path(state_root, "chat", "chat-s1"))
+    published = result.status.sandboxes[0].playpen_env
+    assert published == str(paths.playpen_env_path(state_root, "chat", "chat-s1"))
     assert Path(published).is_file()
 
 
@@ -212,7 +212,7 @@ def test_the_env_file_survives_the_control_directory_being_emptied(
     every create. The env file sits beside it, so the emptying cannot take
     it."""
     apply_chat(registry_root, state_root)
-    env_path = paths.supervisor_env_path(state_root, "chat", "chat-s1")
+    env_path = paths.playpen_env_path(state_root, "chat", "chat-s1")
     assert env_path.is_file()
     assert not env_path.is_relative_to(paths.control_root(state_root, "chat"))
 
@@ -221,7 +221,7 @@ def test_a_failed_create_writes_no_env_file(registry_root: Path, state_root: Pat
     """A file naming a sandbox that does not exist would send `sessiond`
     at a VM nobody made."""
     apply_chat(registry_root, state_root, driver=FailingDriver())
-    assert not paths.supervisor_env_path(state_root, "chat", "chat-s1").exists()
+    assert not paths.playpen_env_path(state_root, "chat", "chat-s1").exists()
 
 
 def test_a_second_apply_keeps_the_env_file_current(registry_root: Path, state_root: Path) -> None:
@@ -230,13 +230,13 @@ def test_a_second_apply_keeps_the_env_file_current(registry_root: Path, state_ro
     driver = FakeDriver()
     litellm = FakeLiteLLMKeys()
     apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
-    paths.supervisor_env_path(state_root, "chat", "chat-s1").unlink()
+    paths.playpen_env_path(state_root, "chat", "chat-s1").unlink()
 
     result = apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
 
-    assert paths.supervisor_env_path(state_root, "chat", "chat-s1").is_file()
-    assert result.status.sandboxes[0].supervisor_env == str(
-        paths.supervisor_env_path(state_root, "chat", "chat-s1")
+    assert paths.playpen_env_path(state_root, "chat", "chat-s1").is_file()
+    assert result.status.sandboxes[0].playpen_env == str(
+        paths.playpen_env_path(state_root, "chat", "chat-s1")
     )
 
 

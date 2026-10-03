@@ -3,7 +3,7 @@
     fake_sbx.py exec --env-file <file> <sandbox id> -- <command> [args...]
 
 The harness runs on a Mac, so there is no microVM and no `sbx`. What it
-still has to reproduce is the ONE mechanism the supervisor depends on
+still has to reproduce is the ONE mechanism the playpen depends on
 (contract 03 §7.1):
 
 1. `sbx exec` forwards no host environment. The child starts from the
@@ -13,14 +13,14 @@ still has to reproduce is the ONE mechanism the supervisor depends on
 
 So a `sessiond` that built its command without `--env-file` would start a
 child with no `AGENT_CRED_DIR`, no `AGENT_FAMILY_CONFIG_DIR` and no
-`AGENT_CONTROL_DIR`, exactly as on the host — and the supervisor would
+`AGENT_CONTROL_DIR`, exactly as on the host — and the playpen would
 answer `fatal` instead of serving.
 
 `FAKE_SBX_IMAGE_ENV` names the variables that stand in for what the
 sandbox image provides (`AGENT_PI_BIN`, `AGENT_LOCK_BEAT_MS`). It is read
 here, in the stand-in for `sbx` itself, never inside the child.
 
-This file `exec`s, so the supervisor stays ONE process: stdin, stdout,
+This file `exec`s, so the playpen stays ONE process: stdin, stdout,
 stderr and every signal reach it unchanged, the way they do through a
 real `sbx exec`.
 """
@@ -100,7 +100,7 @@ def main(argv: list[str]) -> int:
         return fail("no command to run")
 
     # execvpe, not a child: one process means stdin, stdout, stderr and every
-    # signal reach the supervisor exactly as they would through `sbx exec`.
+    # signal reach the playpen exactly as they would through `sbx exec`.
     # The program is looked up on the PATH of the environment being built,
     # which is the image's PATH.
     env = image_env() | read_env_file(env_file)

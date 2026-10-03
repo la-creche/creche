@@ -1,7 +1,7 @@
 """Closing an idle channel, and the turn that dials it again (contract 03 §10).
 
 A thin or autonomous family's VM must stop between jobs, and it stops only
-once its one `sbx exec` is gone. Every test runs against a fake supervisor,
+once its one `sbx exec` is gone. Every test runs against a fake playpen,
 with the 120-second window shrunk to a fraction of a second.
 """
 
@@ -12,17 +12,17 @@ from pathlib import Path
 
 from agent_sessiond.auth import Principal
 from agent_sessiond.config import Config
+from agent_sessiond.playpen_link import PlaypenLink
 from agent_sessiond.requests import CreateRequest, RunTurnRequest, Wait
 from agent_sessiond.service import SessionService
 from agent_sessiond.states import TurnState
-from agent_sessiond.supervisor_link import SupervisorLink
 from agent_sessiond.turns import LiveTurn
 from sessiond_harness import (
     CHAT_SESSION,
     FAMILY,
     SANDBOX,
     FakeFleet,
-    SupervisorPlan,
+    PlaypenPlan,
     make_config,
     settle_now,
     wait_until,
@@ -69,12 +69,12 @@ class IdleHarness:
 
     async def full_turn(self, family: str = AUTO_FAMILY, session: str = AUTO_SESSION) -> None:
         live = await self.run(family, session)
-        supervisor = self.fleet.supervisor(_sandbox_of(family))
-        await supervisor.next_start()
-        await supervisor.settle(session, live.record.turn)
+        playpen = self.fleet.playpen(_sandbox_of(family))
+        await playpen.next_start()
+        await playpen.settle(session, live.record.turn)
         await settle_now(live.done)
 
-    def link(self, family: str = AUTO_FAMILY) -> SupervisorLink:
+    def link(self, family: str = AUTO_FAMILY) -> PlaypenLink:
         found = self.service.link(_sandbox_of(family))
         assert found is not None
         return found
@@ -122,7 +122,7 @@ async def test_an_autonomous_channel_closes_after_its_job(tmp_path: Path) -> Non
     await harness.full_turn()
     await harness.closed()
 
-    assert harness.fleet.supervisor(AUTO_SANDBOX).shutdowns == 1
+    assert harness.fleet.playpen(AUTO_SANDBOX).shutdowns == 1
     await harness.stop()
 
 
@@ -149,7 +149,7 @@ async def test_an_attended_channel_stays_open(tmp_path: Path) -> None:
     await asyncio.sleep(IDLE_WATCH_S)
 
     assert harness.link(FAMILY).is_open is True
-    assert harness.fleet.supervisor(SANDBOX).shutdowns == 0
+    assert harness.fleet.playpen(SANDBOX).shutdowns == 0
     await harness.stop()
 
 
@@ -159,7 +159,7 @@ async def test_an_accepted_turn_answers_before_its_dial(tmp_path: Path) -> None:
     and the trigger door stops reading after 15."""
     harness = await build(tmp_path)
     gate = asyncio.Event()
-    harness.fleet.plan(AUTO_SANDBOX, SupervisorPlan(ready_gate=gate))
+    harness.fleet.plan(AUTO_SANDBOX, PlaypenPlan(ready_gate=gate))
     harness.create()
 
     live = await asyncio.wait_for(harness.run(wait=Wait.ACCEPTED), AT_ONCE_S)
@@ -167,8 +167,8 @@ async def test_an_accepted_turn_answers_before_its_dial(tmp_path: Path) -> None:
     assert live.record.state is TurnState.RUNNING
 
     gate.set()
-    await wait_until(lambda: AUTO_SANDBOX in harness.fleet.supervisors)
-    started = await harness.fleet.supervisor(AUTO_SANDBOX).next_start()
+    await wait_until(lambda: AUTO_SANDBOX in harness.fleet.playpens)
+    started = await harness.fleet.playpen(AUTO_SANDBOX).next_start()
 
     assert started["turn"] == live.record.turn
     await harness.stop()
@@ -179,7 +179,7 @@ async def test_a_turn_stopped_during_its_dial_is_never_sent(tmp_path: Path) -> N
     anyway would run a stopped job and hold the channel open for ever."""
     harness = await build(tmp_path)
     gate = asyncio.Event()
-    harness.fleet.plan(AUTO_SANDBOX, SupervisorPlan(ready_gate=gate))
+    harness.fleet.plan(AUTO_SANDBOX, PlaypenPlan(ready_gate=gate))
     harness.create()
     live = await harness.run(wait=Wait.ACCEPTED)
     await harness.service.stop_turn(
@@ -187,9 +187,9 @@ async def test_a_turn_stopped_during_its_dial_is_never_sent(tmp_path: Path) -> N
     )
 
     gate.set()
-    await wait_until(lambda: AUTO_SANDBOX in harness.fleet.supervisors)
+    await wait_until(lambda: AUTO_SANDBOX in harness.fleet.playpens)
     await harness.closed()
 
     assert live.record.state is TurnState.ABORTED
-    assert harness.fleet.supervisor(AUTO_SANDBOX).started == []
+    assert harness.fleet.playpen(AUTO_SANDBOX).started == []
     await harness.stop()

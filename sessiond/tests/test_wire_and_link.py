@@ -19,15 +19,15 @@ from agent_sessiond.clock import now, rfc3339_ms
 from agent_sessiond.errors import TurnReason
 from agent_sessiond.exec_channel import DEFAULT_COMMAND, ExecChannel, build_argv
 from agent_sessiond.faults import FaultCode, FaultReporter
-from agent_sessiond.paths import supervisor_lock_file
-from agent_sessiond.states import SessionKind
-from agent_sessiond.supervisor_link import (
+from agent_sessiond.paths import playpen_lock_file
+from agent_sessiond.playpen_link import (
     HandshakeError,
-    OrphanSupervisor,
-    SupervisorFatal,
-    SupervisorLink,
+    OrphanPlaypen,
+    PlaypenFatal,
+    PlaypenLink,
     Violation,
 )
+from agent_sessiond.states import SessionKind
 from agent_sessiond.wire import (
     CHANNEL_IDLE_TTL_OTHER_S,
     MAX_EVENT_BYTES,
@@ -38,11 +38,11 @@ from agent_sessiond.wire import (
     LineSplitter,
     LogLine,
     OpenedLine,
+    PlaypenReason,
     PongLine,
     Ready,
     Refusal,
     SettledLine,
-    SupervisorReason,
     cap_event,
     encode,
     host_reason,
@@ -51,15 +51,15 @@ from agent_sessiond.wire import (
 )
 from sessiond_harness import (
     FAMILY,
+    PLAYPEN_ENV,
     SANDBOX,
-    SUPERVISOR_ENV,
-    FakeSupervisor,
-    SupervisorPlan,
+    FakePlaypen,
+    PlaypenPlan,
 )
 
 SESSION = "owui-3f2a9c41"
 TURN = "01JBQ7WZ0X4T9V6K2H8M3N5PQR"
-ENV_FILE = SUPERVISOR_ENV
+ENV_FILE = PLAYPEN_ENV
 
 # Contract 03 §10 rule 3's 120 seconds, shrunk so a test watches it pass.
 IDLE_TTL_S = 0.05
@@ -144,7 +144,7 @@ def test_parse_refuses_what_contract_13_rule_1_names() -> None:
     assert parse('{"type":"event","session":"s","turn":"t","turn_seq":0}') is Refusal.MALFORMED
 
 
-def test_parse_reads_each_supervisor_line() -> None:
+def test_parse_reads_each_playpen_line() -> None:
     ready = parse(json.dumps({"type": "ready", "protocol": "1.0", "sandbox": SANDBOX}))
     pong = parse('{"type":"pong","nonce":"9f13"}')
     event = parse(
@@ -189,7 +189,7 @@ def test_parse_reads_each_supervisor_line() -> None:
     assert isinstance(settled, SettledLine)
     assert settled.leaf_id == "e5f6"
     assert isinstance(failed, FailedLine)
-    assert failed.reason is SupervisorReason.PROCESS_DIED
+    assert failed.reason is PlaypenReason.PROCESS_DIED
 
 
 def test_an_unknown_failure_reason_reads_as_internal() -> None:
@@ -207,7 +207,7 @@ def test_an_unknown_failure_reason_reads_as_internal() -> None:
     )
 
     assert isinstance(failed, FailedLine)
-    assert failed.reason is SupervisorReason.INTERNAL
+    assert failed.reason is PlaypenReason.INTERNAL
 
 
 def test_an_oversized_event_keeps_only_its_type() -> None:
@@ -220,7 +220,7 @@ def test_an_oversized_event_keeps_only_its_type() -> None:
     assert "blob" not in big
 
 
-def test_usage_from_the_supervisor_is_read_defensively() -> None:
+def test_usage_from_the_playpen_is_read_defensively() -> None:
     """Contract 03 §13 rule 7: LiteLLM is the authority, this is advisory."""
     usage = read_usage({"input": 10, "output": -1, "cost_usd": "free", "cache_read": True})
 
@@ -230,20 +230,20 @@ def test_usage_from_the_supervisor_is_read_defensively() -> None:
     assert usage.cache_read == 0
 
 
-def test_every_supervisor_reason_maps_to_a_turn_reason() -> None:
+def test_every_playpen_reason_maps_to_a_turn_reason() -> None:
     """Contract 03 §5.3. The host never forwards a reason verbatim."""
-    mapped = {reason: host_reason(reason) for reason in SupervisorReason}
+    mapped = {reason: host_reason(reason) for reason in PlaypenReason}
 
-    assert mapped[SupervisorReason.NO_RESIDENT_PROCESS] is None
-    assert mapped[SupervisorReason.FORK_REFUSED] is None
-    assert mapped[SupervisorReason.PROCESS_DIED] is TurnReason.SANDBOX_LOST
-    assert mapped[SupervisorReason.DEADLINE_EXCEEDED] is TurnReason.TURN_TIMEOUT
-    assert mapped[SupervisorReason.LINE_TOO_LARGE] is TurnReason.PROTOCOL_VIOLATION
+    assert mapped[PlaypenReason.NO_RESIDENT_PROCESS] is None
+    assert mapped[PlaypenReason.FORK_REFUSED] is None
+    assert mapped[PlaypenReason.PROCESS_DIED] is TurnReason.SANDBOX_LOST
+    assert mapped[PlaypenReason.DEADLINE_EXCEEDED] is TurnReason.TURN_TIMEOUT
+    assert mapped[PlaypenReason.LINE_TOO_LARGE] is TurnReason.PROTOCOL_VIOLATION
 
 
 def test_the_default_command_carries_the_env_file_and_the_sandbox() -> None:
     """Contract 03 §7.1. `sbx exec` forwards no host environment, so a
-    command without `--env-file` starts a supervisor that finds none of its
+    command without `--env-file` starts a playpen that finds none of its
     mounts; one without `--sandbox` makes it exit 2 before it opens
     anything (its own Dockerfile asserts that exit)."""
     argv = build_argv(DEFAULT_COMMAND, dial(SANDBOX))
@@ -312,7 +312,7 @@ class Recorder:
 def make_link(
     tmp_path: Path,
     events: Recorder,
-    plan: SupervisorPlan | None = None,
+    plan: PlaypenPlan | None = None,
     ping_interval_s: float = 30.0,
     host_deadline_s: float = 90.0,
     lock_stale_s: float = 20.0,
@@ -321,17 +321,17 @@ def make_link(
     idle_ttl_s: float = CHANNEL_IDLE_TTL_OTHER_S,
     exit_wait_s: float = 2.0,
     queued: Callable[[], int] = lambda: 0,
-) -> tuple[SupervisorLink, dict[str, FakeSupervisor]]:
-    supervisors: dict[str, FakeSupervisor] = {}
+) -> tuple[PlaypenLink, dict[str, FakePlaypen]]:
+    playpens: dict[str, FakePlaypen] = {}
 
     def factory(target: SandboxDial) -> FakeChannel:
         channel = FakeChannel(target.sandbox)
-        supervisor = FakeSupervisor(channel, plan if plan is not None else SupervisorPlan())
-        supervisors[target.sandbox] = supervisor
-        supervisor.serve()
+        playpen = FakePlaypen(channel, plan if plan is not None else PlaypenPlan())
+        playpens[target.sandbox] = playpen
+        playpen.serve()
         return channel
 
-    link = SupervisorLink(
+    link = PlaypenLink(
         family=FAMILY,
         kind=kind,
         events=events,
@@ -346,16 +346,16 @@ def make_link(
         exit_wait_s=exit_wait_s,
         queued=queued,
     )
-    return link, supervisors
+    return link, playpens
 
 
 def idle_link(
     tmp_path: Path,
     events: Recorder,
-    plan: SupervisorPlan | None = None,
+    plan: PlaypenPlan | None = None,
     kind: SessionKind = SessionKind.AUTONOMOUS,
     queued: Callable[[], int] = lambda: 0,
-) -> tuple[SupervisorLink, dict[str, FakeSupervisor]]:
+) -> tuple[PlaypenLink, dict[str, FakePlaypen]]:
     """A link whose idle window passes in a fraction of a second."""
     return make_link(
         tmp_path,
@@ -371,7 +371,7 @@ def idle_link(
 async def test_the_handshake_refuses_a_wrong_sandbox_id(tmp_path: Path) -> None:
     """A stale exec left over from a switch names another sandbox (§3 rule 3)."""
     events = Recorder()
-    link, _ = make_link(tmp_path, events, SupervisorPlan(sandbox="chat-s9"))
+    link, _ = make_link(tmp_path, events, PlaypenPlan(sandbox="chat-s9"))
 
     with pytest.raises(HandshakeError):
         await link.ensure_open(dial(), 7)
@@ -381,9 +381,9 @@ async def test_the_handshake_refuses_a_wrong_sandbox_id(tmp_path: Path) -> None:
 
 async def test_a_lost_channel_reports_once(tmp_path: Path) -> None:
     events = Recorder()
-    link, supervisors = make_link(tmp_path, events)
+    link, playpens = make_link(tmp_path, events)
     await link.ensure_open(dial(), 7)
-    await supervisors[SANDBOX].drop()
+    await playpens[SANDBOX].drop()
     await asyncio.wait_for(_until(lambda: bool(events.lost)), 2.0)
 
     assert events.lost == [SANDBOX]
@@ -394,7 +394,7 @@ async def test_a_lost_channel_reports_once(tmp_path: Path) -> None:
 async def test_two_missed_pongs_drop_the_channel(tmp_path: Path) -> None:
     """Contract 03 §10 rule 4."""
     events = Recorder()
-    link, _ = make_link(tmp_path, events, SupervisorPlan(answer_ping=False), ping_interval_s=0.02)
+    link, _ = make_link(tmp_path, events, PlaypenPlan(answer_ping=False), ping_interval_s=0.02)
     await link.ensure_open(dial(), 7)
     await asyncio.wait_for(_until(lambda: bool(events.lost)), 2.0)
 
@@ -404,9 +404,9 @@ async def test_two_missed_pongs_drop_the_channel(tmp_path: Path) -> None:
 
 async def test_a_pong_keeps_the_channel_open(tmp_path: Path) -> None:
     events = Recorder()
-    link, supervisors = make_link(tmp_path, events, ping_interval_s=0.02)
+    link, playpens = make_link(tmp_path, events, ping_interval_s=0.02)
     await link.ensure_open(dial(), 7)
-    await asyncio.wait_for(_until(lambda: supervisors[SANDBOX].pings >= 3), 2.0)
+    await asyncio.wait_for(_until(lambda: playpens[SANDBOX].pings >= 3), 2.0)
 
     assert events.lost == []
     assert link.is_open is True
@@ -414,7 +414,7 @@ async def test_a_pong_keeps_the_channel_open(tmp_path: Path) -> None:
 
 
 async def test_an_absent_lock_file_dials_at_once(tmp_path: Path) -> None:
-    """§11.4 rule 4, step 1: the last supervisor removed it as it exited."""
+    """§11.4 rule 4, step 1: the last playpen removed it as it exited."""
     events = Recorder()
     link, _ = make_link(tmp_path, events, lock_stale_s=10.0)
 
@@ -429,9 +429,9 @@ async def test_an_absent_lock_file_dials_at_once(tmp_path: Path) -> None:
 async def test_another_sandboxs_live_lock_never_delays(tmp_path: Path) -> None:
     """Contract 03 §7.1: the control directory is per sandbox.
 
-    A drain keeps the outgoing supervisor alive and beating ITS lock while
+    A drain keeps the outgoing playpen alive and beating ITS lock while
     the switch asks for the incoming sandbox's handshake. A family-wide
-    lock made that handshake wait the outgoing supervisor out, so a drain
+    lock made that handshake wait the outgoing playpen out, so a drain
     switch could never complete.
     """
     events = Recorder()
@@ -452,7 +452,7 @@ async def test_another_sandboxs_live_lock_never_delays(tmp_path: Path) -> None:
 async def test_a_lock_whose_beat_stopped_is_removed(tmp_path: Path) -> None:
     """§11.4 rule 4, step 2: a counter that stopped means nobody is writing."""
     events = Recorder()
-    path = supervisor_lock_file(tmp_path, FAMILY, SANDBOX)
+    path = playpen_lock_file(tmp_path, FAMILY, SANDBOX)
     _write_lock(tmp_path, beat=41)
     link, _ = make_link(tmp_path, events, lock_stale_s=0.2, lock_poll_s=0.02)
 
@@ -467,7 +467,7 @@ async def test_a_lock_whose_beat_stopped_is_removed(tmp_path: Path) -> None:
 
 
 async def test_a_beating_lock_keeps_the_host_waiting(tmp_path: Path) -> None:
-    """§11.4 rule 4, step 4: a counter that moves is a live supervisor."""
+    """§11.4 rule 4, step 4: a counter that moves is a live playpen."""
     events = Recorder()
     link, _ = make_link(tmp_path, events, host_deadline_s=0.3, lock_stale_s=0.2, lock_poll_s=0.01)
 
@@ -477,7 +477,7 @@ async def test_a_beating_lock_keeps_the_host_waiting(tmp_path: Path) -> None:
     beating = asyncio.create_task(_beat_lock(tmp_path, every_s=0.02, first=2))
 
     try:
-        with pytest.raises(OrphanSupervisor):
+        with pytest.raises(OrphanPlaypen):
             await link.ensure_open(dial(), 7)
     finally:
         beating.cancel()
@@ -490,7 +490,7 @@ async def test_a_beating_lock_keeps_the_host_waiting(tmp_path: Path) -> None:
 async def test_one_unreadable_read_never_unlocks_the_family(tmp_path: Path) -> None:
     """§11.4 rule 4, step 3: a half-written file decides nothing on its own."""
     events = Recorder()
-    path = supervisor_lock_file(tmp_path, FAMILY, SANDBOX)
+    path = playpen_lock_file(tmp_path, FAMILY, SANDBOX)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{half writ", encoding="utf-8")
     link, _ = make_link(tmp_path, events, lock_stale_s=0.2, lock_poll_s=0.02)
@@ -500,7 +500,7 @@ async def test_one_unreadable_read_never_unlocks_the_family(tmp_path: Path) -> N
     waited = asyncio.get_running_loop().time() - started
 
     # A file that never reads cleanly for a whole window is not one a live
-    # supervisor is writing, so the wait is `lock_stale_s` and not 90 seconds.
+    # playpen is writing, so the wait is `lock_stale_s` and not 90 seconds.
     assert waited >= 0.2
     assert link.is_open is True
     await link.close()
@@ -509,9 +509,9 @@ async def test_one_unreadable_read_never_unlocks_the_family(tmp_path: Path) -> N
 async def test_a_fatal_in_place_of_ready_raises_a_fault(tmp_path: Path) -> None:
     """Contract 03 §5.7 rule 3: the mount is read before the first line."""
     events = Recorder()
-    link, _ = make_link(tmp_path, events, plan=SupervisorPlan(fatal="control_mount_unwritable"))
+    link, _ = make_link(tmp_path, events, plan=PlaypenPlan(fatal="control_mount_unwritable"))
 
-    with pytest.raises(SupervisorFatal):
+    with pytest.raises(PlaypenFatal):
         await link.ensure_open(dial(), 7)
 
     faults = json.loads((tmp_path / "faults" / "sessiond" / f"{FAMILY}.json").read_text())
@@ -525,9 +525,9 @@ async def test_a_fatal_in_place_of_ready_raises_a_fault(tmp_path: Path) -> None:
 async def test_a_fatal_on_a_live_channel_drops_it(tmp_path: Path) -> None:
     """§5.7 rule 2: a last line, never a state."""
     events = Recorder()
-    link, supervisors = make_link(tmp_path, events)
+    link, playpens = make_link(tmp_path, events)
     await link.ensure_open(dial(), 7)
-    await supervisors[SANDBOX].send_fatal("control_mount_unwritable")
+    await playpens[SANDBOX].send_fatal("control_mount_unwritable")
     await asyncio.wait_for(_until(lambda: bool(events.lost)), 2.0)
 
     assert link.is_open is False
@@ -539,11 +539,11 @@ async def test_a_fatal_on_a_live_channel_drops_it(tmp_path: Path) -> None:
 async def test_session_opened_never_spends_the_refusal_budget(tmp_path: Path) -> None:
     """Contract 03 §5.6. Ten pre-starts must not close a family's channel."""
     events = Recorder()
-    link, supervisors = make_link(tmp_path, events)
+    link, playpens = make_link(tmp_path, events)
     await link.ensure_open(dial(), 7)
 
     for index in range(REFUSAL_BUDGET + 2):
-        await supervisors[SANDBOX].open_session(f"{SESSION}-{index}")
+        await playpens[SANDBOX].open_session(f"{SESSION}-{index}")
 
     await asyncio.wait_for(_until(lambda: len(events.opened) == REFUSAL_BUDGET + 2), 2.0)
 
@@ -556,9 +556,9 @@ async def test_session_opened_never_spends_the_refusal_budget(tmp_path: Path) ->
 async def test_a_line_for_an_unknown_turn_is_dropped(tmp_path: Path) -> None:
     """Contract 03 §13 rule 3: addressing must name a turn in flight."""
     events = Recorder()
-    link, supervisors = make_link(tmp_path, events)
+    link, playpens = make_link(tmp_path, events)
     await link.ensure_open(dial(), 7)
-    await supervisors[SANDBOX].emit_text(SESSION, TURN, "nobody asked")
+    await playpens[SANDBOX].emit_text(SESSION, TURN, "nobody asked")
     await asyncio.sleep(0.05)
 
     assert events.events == []
@@ -567,10 +567,10 @@ async def test_a_line_for_an_unknown_turn_is_dropped(tmp_path: Path) -> None:
 
 async def test_a_registered_turn_receives_its_events(tmp_path: Path) -> None:
     events = Recorder()
-    link, supervisors = make_link(tmp_path, events)
+    link, playpens = make_link(tmp_path, events)
     await link.ensure_open(dial(), 7)
     link.register(SESSION, TURN)
-    await supervisors[SANDBOX].emit_text(SESSION, TURN, "Sensor ")
+    await playpens[SANDBOX].emit_text(SESSION, TURN, "Sensor ")
     await asyncio.wait_for(_until(lambda: bool(events.events)), 2.0)
 
     assert events.events[0][0] == SESSION
@@ -581,13 +581,13 @@ async def test_a_registered_turn_receives_its_events(tmp_path: Path) -> None:
 async def test_an_idle_channel_closes(tmp_path: Path, kind: SessionKind) -> None:
     """Contract 03 §10 rule 3. The VM stops once nothing holds it up."""
     events = Recorder()
-    link, supervisors = idle_link(tmp_path, events, kind=kind)
+    link, playpens = idle_link(tmp_path, events, kind=kind)
     await link.ensure_open(dial(), 7)
     await asyncio.wait_for(_until(lambda: not link.is_open), 2.0)
 
-    # `shutdown` first: a killed exec does not reach the in-VM supervisor,
+    # `shutdown` first: a killed exec does not reach the in-VM playpen,
     # which would keep beating its lock and hold the VM up (probe 0a, A5).
-    assert supervisors[SANDBOX].shutdowns == 1
+    assert playpens[SANDBOX].shutdowns == 1
     # Closing for idleness is not a loss. No turn was there to fail.
     assert events.lost == []
     await link.close()
@@ -596,12 +596,12 @@ async def test_an_idle_channel_closes(tmp_path: Path, kind: SessionKind) -> None
 async def test_an_attended_channel_never_closes_for_idleness(tmp_path: Path) -> None:
     """Contract 03 §10 rule 2. `channel_idle_ttl_s` 0 means never close."""
     events = Recorder()
-    link, supervisors = idle_link(tmp_path, events, kind=SessionKind.ATTENDED)
+    link, playpens = idle_link(tmp_path, events, kind=SessionKind.ATTENDED)
     await link.ensure_open(dial(), 7)
     await asyncio.sleep(IDLE_WATCH_S)
 
     assert link.is_open is True
-    assert supervisors[SANDBOX].shutdowns == 0
+    assert playpens[SANDBOX].shutdowns == 0
     await link.close()
 
 
@@ -637,16 +637,16 @@ async def test_a_queued_turn_holds_the_channel(tmp_path: Path) -> None:
 async def test_a_resident_process_holds_the_channel(tmp_path: Path) -> None:
     """Contract 03 §10 rule 3: no resident process, and §5.4 ends one."""
     events = Recorder()
-    link, supervisors = idle_link(tmp_path, events)
+    link, playpens = idle_link(tmp_path, events)
     await link.ensure_open(dial(), 7)
     link.note_opened(SESSION)
-    await supervisors[SANDBOX].open_session(SESSION)
+    await playpens[SANDBOX].open_session(SESSION)
     await asyncio.wait_for(_until(lambda: bool(events.opened)), 2.0)
     await asyncio.sleep(IDLE_WATCH_S)
 
     assert link.is_open is True
 
-    await supervisors[SANDBOX].reap(SESSION)
+    await playpens[SANDBOX].reap(SESSION)
     await asyncio.wait_for(_until(lambda: not link.is_open), 2.0)
     await link.close()
 
@@ -654,12 +654,12 @@ async def test_a_resident_process_holds_the_channel(tmp_path: Path) -> None:
 async def test_a_settled_turn_that_holds_nothing_frees_the_channel(tmp_path: Path) -> None:
     """§5.2's `resident` false: `pi_idle_ttl_s` 0 keeps no process (§6 rule 4)."""
     events = Recorder()
-    link, supervisors = idle_link(tmp_path, events)
+    link, playpens = idle_link(tmp_path, events)
     await link.ensure_open(dial(), 7)
     link.note_opened(SESSION)
-    await supervisors[SANDBOX].open_session(SESSION)
+    await playpens[SANDBOX].open_session(SESSION)
     link.register(SESSION, TURN)
-    await supervisors[SANDBOX].settle(SESSION, TURN)
+    await playpens[SANDBOX].settle(SESSION, TURN)
     await asyncio.wait_for(_until(lambda: bool(events.settled)), 2.0)
     link.unregister(SESSION, TURN)
 
@@ -669,38 +669,38 @@ async def test_a_settled_turn_that_holds_nothing_frees_the_channel(tmp_path: Pat
 
 
 async def test_a_residency_claim_for_an_unopened_session_holds_nothing(tmp_path: Path) -> None:
-    """Every byte from the supervisor is a claim (§13). Naming sessions this
+    """Every byte from the playpen is a claim (§13). Naming sessions this
     host never opened must not keep the VM up."""
     events = Recorder()
-    link, supervisors = idle_link(tmp_path, events)
+    link, playpens = idle_link(tmp_path, events)
     await link.ensure_open(dial(), 7)
-    await supervisors[SANDBOX].open_session(SESSION)
+    await playpens[SANDBOX].open_session(SESSION)
     await asyncio.wait_for(_until(lambda: not link.is_open), 2.0)
     await link.close()
 
 
-async def test_a_supervisor_that_never_exits_is_closed_anyway(tmp_path: Path) -> None:
+async def test_a_playpen_that_never_exits_is_closed_anyway(tmp_path: Path) -> None:
     """The wait for the exit is bounded, so the next dial is not held."""
     events = Recorder()
-    link, supervisors = idle_link(tmp_path, events, SupervisorPlan(exits_on_shutdown=False))
+    link, playpens = idle_link(tmp_path, events, PlaypenPlan(exits_on_shutdown=False))
     await link.ensure_open(dial(), 7)
     await asyncio.wait_for(_until(lambda: not link.is_open), 2.0)
 
-    assert supervisors[SANDBOX].shutdowns == 1
+    assert playpens[SANDBOX].shutdowns == 1
     await link.close()
 
 
 async def test_the_next_dial_after_an_idle_close_opens_a_new_channel(tmp_path: Path) -> None:
     """Contract 03 §10 rule 5. The next turn pays the cold start."""
     events = Recorder()
-    link, supervisors = idle_link(tmp_path, events)
+    link, playpens = idle_link(tmp_path, events)
     await link.ensure_open(dial(), 7)
-    first = supervisors[SANDBOX]
+    first = playpens[SANDBOX]
     await asyncio.wait_for(_until(lambda: not link.is_open), 2.0)
     await link.ensure_open(dial(), 7)
 
     assert link.is_open is True
-    assert supervisors[SANDBOX] is not first
+    assert playpens[SANDBOX] is not first
     await link.close()
 
 
@@ -720,7 +720,7 @@ async def test_the_exec_channel_round_trips_through_a_real_process() -> None:
     await channel.close()
 
 
-#: A child that says its pid and then waits on stdin, as the supervisor does.
+#: A child that says its pid and then waits on stdin, as the playpen does.
 PID_THEN_WAIT = "sh -c 'echo $$; exec cat'"
 
 
@@ -777,13 +777,13 @@ def test_a_closed_exec_channel_leaves_no_child_and_no_transport(
 
 
 def _write_lock(state_root: Path, beat: int, host_deadline_s: float = 90.0) -> None:
-    """The lock file as the supervisor writes it (contract 03 §11.1 rule 3).
+    """The lock file as the playpen writes it (contract 03 §11.1 rule 3).
 
     `started_at` is here because the file carries it. Nothing on this side
     reads it: the two clocks are not the same clock (§11.4 rule 4).
     """
     write_json(
-        supervisor_lock_file(state_root, FAMILY, SANDBOX),
+        playpen_lock_file(state_root, FAMILY, SANDBOX),
         {
             "pid": 412,
             "sandbox": SANDBOX,
@@ -796,7 +796,7 @@ def _write_lock(state_root: Path, beat: int, host_deadline_s: float = 90.0) -> N
 
 
 async def _beat_lock(state_root: Path, every_s: float, first: int = 1) -> None:
-    """A live supervisor, rewriting its lock with a counter one higher."""
+    """A live playpen, rewriting its lock with a counter one higher."""
     beat = first
 
     while True:

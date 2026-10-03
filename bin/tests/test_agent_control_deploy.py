@@ -178,13 +178,13 @@ def test_an_exclude_pattern_would_not_have_kept_the_venv(deployed: Path) -> None
 def test_the_keep_is_anchored_to_the_top_of_the_tree(deployed: Path) -> None:
     """A component build leaves its own venv deeper in the tree. Only the one
     the units run from is kept, which is what the leading `/` buys."""
-    nested = deployed / "workbench" / VENV / "bin"
+    nested = deployed / "toybox" / VENV / "bin"
     nested.mkdir(parents=True)
     (nested / "python").write_text("#!/bin/sh\n", encoding="utf-8")
 
     assert _git(deployed, *_clean_argv()[1:]).returncode == 0
 
-    assert not (deployed / "workbench").exists()
+    assert not (deployed / "toybox").exists()
     assert (deployed / VENV / "bin" / "agent-pep").is_file()
 
 

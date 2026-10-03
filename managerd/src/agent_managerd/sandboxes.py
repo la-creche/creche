@@ -18,7 +18,7 @@ a hole in deny-by-default. An id costs nothing. A hole
 costs everything.
 
 It sits beside `apply.py` rather than under it: it calls four siblings
-(`driver`, `egress`, `supervisor_env`, `status`), which a leaf may not do
+(`driver`, `egress`, `playpen_env`, `status`), which a leaf may not do
 (`AGENTS.md`, layers)."""
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ from .driver import DriverError, Mount, SandboxDriver, SandboxSpec
 from .egress import EgressConfig
 from .faults import FaultEntry
 from .images import IMAGE_FLAVOR_UNCONFIGURED, SandboxImages
+from .playpen_env import write_playpen_env
 from .status import ChannelState, SandboxLifecycle, SandboxPower, SandboxStatus
-from .supervisor_env import write_supervisor_env
 from .switch import SwitchClient, SwitchError, SwitchRequest
 
 #: The ledger names sandboxes, never a secret (contract 05 §2 rule 3).
@@ -82,7 +82,7 @@ class SandboxRecord:
     created_at: str
     ready_at: str | None
     allow: tuple[str, ...]
-    supervisor_env: str
+    playpen_env: str
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -95,7 +95,7 @@ class SandboxRecord:
             "created_at": self.created_at,
             "ready_at": self.ready_at,
             "allow": list(self.allow),
-            "supervisor_env": self.supervisor_env,
+            "supervisor_env": self.playpen_env,
         }
 
     def with_state(self, state: SandboxLifecycle) -> SandboxRecord:
@@ -170,7 +170,7 @@ def create_sandbox(
         created_at=now_rfc3339(),
         ready_at=None,
         allow=allowed,
-        supervisor_env=str(paths.supervisor_env_path(state_root, family.name, name)),
+        playpen_env=str(paths.playpen_env_path(state_root, family.name, name)),
     )
     # Recorded before the VM exists, never after: a crash between the two
     # would otherwise leave a VM nothing knows the name of.
@@ -186,8 +186,8 @@ def create_sandbox(
 
     # After the proof, never before: a file naming a sandbox whose egress
     # was not proved would point `sessiond` at a hole (invariant 11).
-    write_supervisor_env(
-        paths.supervisor_env_path(state_root, family.name, name),
+    write_playpen_env(
+        paths.playpen_env_path(state_root, family.name, name),
         state_root=state_root,
         family=family.name,
         sandbox=name,
@@ -353,12 +353,12 @@ def set_allow(state_root: Path, family_name: str, allow: tuple[str, ...]) -> Non
 
 def empty_control_dir(state_root: Path, family_name: str, sandbox: str) -> None:
     """Contract 05 §4.3 rule 5: a `supervisor.lock` left by a DEAD
-    supervisor would make `sessiond` wait for nothing (contract 03 §11.4
+    playpen would make `sessiond` wait for nothing (contract 03 §11.4
     rule 4).
 
     The directory is this sandbox's own, so emptying it is safe even while
     another sandbox of the family is serving turns: an id is never reused,
-    so nothing here was written by a supervisor that is still alive."""
+    so nothing here was written by a playpen that is still alive."""
     control = paths.control_dir(state_root, family_name, sandbox)
     if control.exists():
         shutil.rmtree(control)
@@ -372,7 +372,7 @@ def _forget_control(state_root: Path, family_name: str, sandbox: str) -> None:
     already removed the VM must not fail over a leftover directory."""
     with contextlib.suppress(OSError):
         shutil.rmtree(paths.control_dir(state_root, family_name, sandbox), ignore_errors=True)
-        paths.supervisor_env_path(state_root, family_name, sandbox).unlink(missing_ok=True)
+        paths.playpen_env_path(state_root, family_name, sandbox).unlink(missing_ok=True)
 
 
 def live_record(state_root: Path, family_name: str) -> SandboxRecord | None:
@@ -412,7 +412,7 @@ def status_of(record: SandboxRecord) -> SandboxStatus:
         created_at=record.created_at,
         ready_at=record.ready_at,
         channel=ChannelState.OPEN if running else ChannelState.CLOSED,
-        supervisor_env=record.supervisor_env,
+        playpen_env=record.playpen_env,
     )
 
 
@@ -515,7 +515,7 @@ def _one_record(raw: Any) -> SandboxRecord | None:
             created_at=str(row["created_at"]),
             ready_at=_optional_text(row.get("ready_at")),
             allow=tuple(str(one) for one in cast("list[Any]", row.get("allow", []))),
-            supervisor_env=str(row.get("supervisor_env", "")),
+            playpen_env=str(row.get("supervisor_env", "")),
         )
     except (KeyError, TypeError, ValueError):
         return None

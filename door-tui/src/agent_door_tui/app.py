@@ -228,7 +228,7 @@ class TuiDoor:
         """Step 7. From here the terminal belongs to pi."""
         argv = launch_argv(
             sbx=self._sbx,
-            supervisor_env=serving.supervisor_env,
+            playpen_env=serving.playpen_env,
             sandbox=serving.sandbox,
             session=chosen.session,
             launcher=self._launcher,
@@ -264,7 +264,7 @@ class TuiDoor:
         """Turn the launcher's exit code into a sentence with a next step."""
         if code == EXIT_SESSION_HELD:
             self._terminal.show(
-                f"The supervisor still holds a pi process for {session}. "
+                f"The playpen still holds a pi process for {session}. "
                 "It is freed when the family's idle timeout passes "
                 "(pi_idle_ttl_s, 900s for an attended family) or when the next "
                 "turn reaps it. Contract 03 §7.5."

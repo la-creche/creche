@@ -1,6 +1,6 @@
 """A tool the operator grants reaches a pi process that is already running (GRF).
 
-No unit test can reach this one. `supervisor/test/grant-refresh.test.ts`
+No unit test can reach this one. `playpen/test/grant-refresh.test.ts`
 drives the real bridge against `fake-pep.ts`, which has no grant file;
 `pep/tests/test_pep_grf_manifest_revalidate.py` drives the real PEP with a
 `TestClient`, which is not the bridge. The claim the packet makes is about
@@ -40,7 +40,7 @@ from pep_harness import build_pep, free_port, serving
 #: The bridge bundle, and the driver that plays pi around it for as long as a
 #: grant file takes to move.
 DRIVER = repo_root() / "integration" / "tests_manager" / "node" / "grant_refresh_driver.mjs"
-BUNDLE = repo_root() / "supervisor" / "dist" / "pep-bridge.js"
+BUNDLE = repo_root() / "playpen" / "dist" / "pep-bridge.js"
 
 FAMILY = "chat"
 SESSION = "owui-grf1c2e3"
@@ -146,7 +146,7 @@ def pep_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
         yield url, rework
 
 
-@pytest.mark.skipif(not BUNDLE.is_file(), reason="run `pnpm build` in supervisor/ first")
+@pytest.mark.skipif(not BUNDLE.is_file(), reason="run `pnpm build` in playpen/ first")
 async def test_a_granted_verb_reaches_a_running_bridge(pep_url: Any, tmp_path: Path) -> None:
     """The whole of packet GRF, through the real PEP and the real bridge."""
     url, rework = pep_url

@@ -4,7 +4,7 @@ Contract 04 §8.6 says the session shows `waiting-approval` while a gated
 call waits for a phone tap, and contract 02 §8.1 already has the two journal
 lines for it. Nothing in either contract sends `sessiond` a message when a
 gate opens: the bridge's HTTP call simply blocks inside the sandbox, the
-supervisor sees an agent that is still working, and the PEP holds the gate
+playpen sees an agent that is still working, and the PEP holds the gate
 in its own memory.
 
 One artefact of an open gate does exist outside the PEP. §6.4 makes a gated

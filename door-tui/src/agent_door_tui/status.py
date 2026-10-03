@@ -55,7 +55,7 @@ class Serving:
     """The sandbox a terminal will exec into, and anything odd about it."""
 
     sandbox: str
-    supervisor_env: str
+    playpen_env: str
     #: One line for the operator when the family is not fully healthy. Empty
     #: when nothing is wrong. It never stops the terminal.
     warning: str = ""

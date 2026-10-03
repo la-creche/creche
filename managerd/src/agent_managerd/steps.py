@@ -26,8 +26,8 @@ from .egress import EgressConfig
 from .faults import FaultEntry, drop_superseded, read_fault_file, rescope_by_fleet
 from .grants import build_grant_file, grant_file_matches, write_grant_file
 from .litellm_keys import LiteLLMError, LiteLLMKeys
+from .playpen_env import write_playpen_env
 from .status import CredentialsBlock, LimitsBlock, RotationState, now_rfc3339
-from .supervisor_env import write_supervisor_env
 
 #: Contract 01 §3.12, §3.14: what a thin/autonomous family gets when it
 #: leaves the field unset. Not imported from `agent_family`: `grammar.py`'s
@@ -194,17 +194,17 @@ def write_config(
     return True
 
 
-def publish_supervisor_env(state_root: Path, family_name: str, sandbox: str) -> None:
+def publish_playpen_env(state_root: Path, family_name: str, sandbox: str) -> None:
     """Rewrite one sandbox's `supervisor.env` (contract 03 §7.1).
 
     A create writes it once. This puts it back for a sandbox an earlier
     pass created and then left: a sandbox whose file is missing publishes
     no path, and `sessiond` refuses every turn on it with
-    `sandbox_unavailable` rather than dialling a supervisor that would
+    `sandbox_unavailable` rather than dialling a playpen that would
     answer `fatal` (contract 05 §4.1.1 rule 4). Nothing else can repair it,
     because `managerd` is the file's only writer."""
-    write_supervisor_env(
-        paths.supervisor_env_path(state_root, family_name, sandbox),
+    write_playpen_env(
+        paths.playpen_env_path(state_root, family_name, sandbox),
         state_root=state_root,
         family=family_name,
         sandbox=sandbox,

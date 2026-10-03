@@ -11,7 +11,7 @@ model: { router: agent-router, budget_usd_per_day: 5 }
 files:
   # The work root, not one chat's directory: mounts are fixed when the sandbox
   # is created, so the per-chat directory is made inside it and linked by the
-  # supervisor at job start (docs/rework/spec.md §7.2).
+  # playpen at job start (docs/rework/spec.md §7.2).
   - { path: /srv/agents/work/code-sandbox, mode: rw }
 
 tools: {}

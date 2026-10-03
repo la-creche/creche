@@ -18,7 +18,7 @@ OUTBOX_DIR = "outbox"
 SCRATCH_DIR = "scratch"
 
 STATUS_FILE = "status.json"
-SUPERVISOR_LOCK = "supervisor.lock"
+PLAYPEN_LOCK = "supervisor.lock"
 
 _FAMILIES = "families"
 _CONTROL = "control"
@@ -37,7 +37,7 @@ _CODE_SANDBOX = "code-sandbox"
 # SAME path inside the VM (contract 03 §7.1), so a path sent on the channel is
 # the host path. There is no second name for it and nothing rewrites one.
 #
-# The integration harness runs the supervisor as a plain child process on a
+# The integration harness runs the playpen as a plain child process on a
 # Mac, under a temp directory no sbx mount put there, so it overrides the root
 # below. Nothing else sets this, on the host or anywhere.
 SANDBOX_MOUNT_ENV = "SESSIOND_SANDBOX_SESSIONS_MOUNT"
@@ -98,20 +98,20 @@ def status_file(state_root: Path, family: str) -> Path:
 
 
 def control_dir(state_root: Path, family: str, sandbox: str) -> Path:
-    """The supervisor's control mount (contract 03 §7.1). PER SANDBOX:
+    """The playpen's control mount (contract 03 §7.1). PER SANDBOX:
     contract 05 §5 keeps two sandboxes of one family live at once, in two
-    microVMs, and each supervisor beats its own lock in its own
+    microVMs, and each playpen beats its own lock in its own
     directory."""
     return family_state_dir(state_root, family) / _CONTROL / sandbox
 
 
-def supervisor_lock_file(state_root: Path, family: str, sandbox: str) -> Path:
-    """Proof that an old supervisor may still live (contract 03 §11.4).
+def playpen_lock_file(state_root: Path, family: str, sandbox: str) -> Path:
+    """Proof that an old playpen may still live (contract 03 §11.4).
 
     One lock per sandbox. A family-wide lock made the incoming sandbox
-    watch the OUTGOING supervisor's beat, so the handshake a switch asks
+    watch the OUTGOING playpen's beat, so the handshake a switch asks
     for could never pass while the family was still being served."""
-    return control_dir(state_root, family, sandbox) / SUPERVISOR_LOCK
+    return control_dir(state_root, family, sandbox) / PLAYPEN_LOCK
 
 
 def creds_dir(state_root: Path, family: str) -> Path:

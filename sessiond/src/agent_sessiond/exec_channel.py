@@ -18,7 +18,7 @@ Four facts shape this module.
 3. `sbx exec` forwards NO host environment. `--env-file` is the only way a
    value reaches the VM, and `managerd` writes the file it names
    (contract 03 §7.1).
-4. The supervisor exits 2 without a sandbox id, so `--sandbox` is part of the
+4. The playpen exits 2 without a sandbox id, so `--sandbox` is part of the
    command and not an optional extra.
 """
 
@@ -159,9 +159,9 @@ class ExecChannel:
             stderr_task.cancel()
             self._stderr_task = None
 
-        # Closing stdin is what a healthy supervisor sees as its exit signal.
+        # Closing stdin is what a healthy playpen sees as its exit signal.
         # A client-side kill does not reach the in-VM process (probe 0a, A5),
-        # so the supervisor's own ping deadline is the real safety net.
+        # so the playpen's own ping deadline is the real safety net.
         if process.stdin is not None:
             with contextlib.suppress(BrokenPipeError, RuntimeError):
                 process.stdin.close()

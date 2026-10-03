@@ -423,7 +423,7 @@ def _artifact_digest(component: str) -> str | None:
     """Contract 06 §9's `artifact_digest`.
 
     `null` for every kind but `oci-image`, and `null` for that one too
-    today: nothing in this repository pushes `sandbox-image` to an OCI
+    today: nothing in this repository pushes `playpen` to an OCI
     registry, so there is no registry digest to record. Saying so here,
     once, is better than nine `None`s a reader has to infer a reason for.
     Contract 06 §9 carries the same sentence.

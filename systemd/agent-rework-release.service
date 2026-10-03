@@ -52,7 +52,7 @@ ProtectHostname=yes
 RestrictSUIDSGID=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 # Deliberately NOT set, each with its reason:
-#   RestrictNamespaces   — the `infra` and `sandbox-image` components run
+#   RestrictNamespaces   — the `infra` and `playpen` components run
 #                          compose and an image build, and both make
 #                          namespaces.
 #   NoNewPrivileges      — runuser and sops. Untested against either.

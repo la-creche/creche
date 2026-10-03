@@ -47,7 +47,7 @@ log = logging.getLogger("agent_managerd.pep_watch")
 
 #: Contract 05 §3.3's code. It is the same word the sandbox bridge already
 #: puts in a tool error when a call cannot leave the VM
-#: (`supervisor/bridge/pep.ts`, `CallFailure.Unreachable`), so an operator
+#: (`playpen/bridge/pep.ts`, `CallFailure.Unreachable`), so an operator
 #: reading the view and an operator reading a turn see one name.
 PEP_UNREACHABLE: Final = "pep_unreachable"
 

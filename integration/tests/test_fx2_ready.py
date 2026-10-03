@@ -7,10 +7,10 @@ field, so the view was lying about a live family.
 
 This is the cross-package half of the fix, which no unit test can reach:
 `managerd`'s §5 call has to run the REAL handshake against the REAL
-supervisor bundle inside `sessiond`, and the answer to that call is the only
+playpen bundle inside `sessiond`, and the answer to that call is the only
 evidence `managerd` is allowed to have (contract 05 §1, §4.2, §4.3 step 7).
 
-    reconcile_family ──§5──► sessiond ──channel──► supervisor
+    reconcile_family ──§5──► sessiond ──channel──► playpen
             │                                          │
             └────────── ready ◄──── "switched: true" ◄──┘
 

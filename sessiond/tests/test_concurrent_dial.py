@@ -1,8 +1,8 @@
 """Concurrent turns of one family share one channel (contract 03 §1 rule 1).
 
 Contract 03 opens ONE long-lived channel per family. Five chats at once all
-reach `SupervisorLink.ensure_open` in the same moment. A second dial is not
-just a wasted `sbx exec`: the new supervisor finds
+reach `PlaypenLink.ensure_open` in the same moment. A second dial is not
+just a wasted `sbx exec`: the new playpen finds
 the first one's lock and exits (§11.4 rule 4), and the turns written to the
 losing channel never hear an answer.
 
@@ -21,7 +21,7 @@ from agent_sessiond.channel import Channel, FakeChannel, SandboxDial
 from agent_sessiond.requests import CreateRequest, RunTurnRequest
 from agent_sessiond.service import SessionService
 from agent_sessiond.turns import LiveTurn
-from sessiond_harness import FAMILY, FakeSupervisor, SupervisorPlan, make_config, write_status
+from sessiond_harness import FAMILY, FakePlaypen, PlaypenPlan, make_config, write_status
 
 OWUI = Principal.DOOR_OWUI
 DOOR = "owui-1"
@@ -41,20 +41,20 @@ class _SpawningFleet:
 
     def __init__(self) -> None:
         self.dials: list[str] = []
-        self.supervisors: list[FakeSupervisor] = []
+        self.playpens: list[FakePlaypen] = []
 
     def factory(self, dial: SandboxDial) -> Channel:
         self.dials.append(dial.sandbox)
         channel = _SpawningChannel(dial.sandbox)
-        supervisor = FakeSupervisor(channel, SupervisorPlan())
-        self.supervisors.append(supervisor)
-        supervisor.serve()
+        playpen = FakePlaypen(channel, PlaypenPlan())
+        self.playpens.append(playpen)
+        playpen.serve()
 
         return channel
 
     async def stop(self) -> None:
-        for supervisor in self.supervisors:
-            await supervisor.stop()
+        for playpen in self.playpens:
+            await playpen.stop()
 
 
 async def test_concurrent_turns_dial_once(tmp_path: Path) -> None:
@@ -73,7 +73,7 @@ async def test_concurrent_turns_dial_once(tmp_path: Path) -> None:
     assert fleet.dials == fleet.dials[:1], fleet.dials
     assert len({turn.record.turn for turn in live}) == HOW_MANY
 
-    started = fleet.supervisors[0].started
+    started = fleet.playpens[0].started
     assert {message["session"] for message in started} == set(sessions)
 
     await service.close()

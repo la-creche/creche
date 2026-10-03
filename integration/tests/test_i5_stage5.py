@@ -11,7 +11,7 @@ approvals that block in place (packet CP). `stage5.py` holds the wiring.
 
     agent-trigger fire  /  POST /triggers/<family>/<name>
       ▼
-    sessiond ──► auto-<ulid> ──► one turn ──► the real supervisor
+    sessiond ──► auto-<ulid> ──► one turn ──► the real playpen
       ▼                                          │
     the job's model calls a GATED tool           ▼
       ▼                                     fake-pi.mjs
@@ -94,7 +94,7 @@ MAX_GATE_LAG_S = 4.0
 
 pytestmark = pytest.mark.skipif(
     bridge_bundle_missing(),
-    reason="supervisor/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
+    reason="playpen/dist/pep-bridge.js is missing: run `pnpm install && pnpm build`",
 )
 
 
@@ -158,7 +158,7 @@ async def settled_job(stage: Stage5, session: str) -> dict[str, object]:
 async def held_job(stage: Stage5) -> tuple[str, str]:
     """Fire a timer trigger and wait until its turn is running in a sandbox.
 
-    The turn id comes from the REAL supervisor's own turn file (contract 03
+    The turn id comes from the REAL playpen's own turn file (contract 03
     §7.4), not from anything this harness invented: a gated call must carry
     the turn the host actually started, or `sessiond` drops the PEP's audit
     record as a claim about a turn it does not own.
@@ -168,11 +168,11 @@ async def held_job(stage: Stage5) -> tuple[str, str]:
 
     await until(
         lambda: stage.live_turn(HA_REVIEW, fired.session) is not None,
-        f"the supervisor's turn file for {fired.session}",
+        f"the playpen's turn file for {fired.session}",
         timeout=SETTLE_TIMEOUT_S,
     )
     turn = stage.live_turn(HA_REVIEW, fired.session)
-    assert turn == fired.turn, "the supervisor is running a turn sessiond did not start"
+    assert turn == fired.turn, "the playpen is running a turn sessiond did not start"
 
     return fired.session, turn
 
@@ -716,7 +716,7 @@ async def test_a_restart_sweeps_the_job_it_interrupted(stage: Stage5) -> None:
 
     await until(
         lambda: stage.live_turn(HA_REVIEW, fired.session) is not None,
-        f"the supervisor's turn file for {fired.session}",
+        f"the playpen's turn file for {fired.session}",
         timeout=SETTLE_TIMEOUT_S,
     )
 

@@ -644,7 +644,7 @@ def test_adopting_a_replacement_rewrites_its_env_file(fleet: Fleet) -> None:
     fleet.write(sandbox={"cpus": 4})
     fleet.run()
 
-    env_path = paths.supervisor_env_path(fleet.state_root, FAMILY, "chat-s2")
+    env_path = paths.playpen_env_path(fleet.state_root, FAMILY, "chat-s2")
     env_path.unlink()
     fleet.switch = FakeSwitchClient()
     fleet.run()

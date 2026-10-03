@@ -38,7 +38,7 @@ SHA_OF = {
     "sessiond": "8c41d027fe5b3a9016d4e7c2b508af3196720de5",
     "managerd": "4a7c2e19bd3f508c6e21af4b90d7c3516882ee40",
     "ui": "1e9a640fb27c853d0a416ff2cb3d7905e8a12b64",
-    "sandbox-image": "5f0b73d1ca4e26987b3d0af5c81926e4ad70b3c1",
+    "playpen": "5f0b73d1ca4e26987b3d0af5c81926e4ad70b3c1",
     "mcp-servers": "c0de4471b9a2f38e5d7016cc82ab4f90d3e61a58",
     "infra": "9d1f0c7a5b2e4438a6c0d19f37be5a2c48e1067b",
     "releasectl": "b6e2a90d47c1f3825ae0db6194c73f08251ad6e7",

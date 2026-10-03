@@ -66,7 +66,7 @@ def remove_owner_dir(work_root: Path, owner_session: str) -> bool:
 def workspace_of(family: str, owner_session: str | None) -> dict[str, Any] | None:
     """`start_turn.workspace` for a job, or None (contract 03 §7.2).
 
-    It carries no host path. The supervisor derives the target from its own
+    It carries no host path. The playpen derives the target from its own
     mount, so a compromised host message cannot aim the link elsewhere.
     """
     if family != CODE_SANDBOX_FAMILY or owner_session is None:

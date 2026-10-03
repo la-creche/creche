@@ -20,7 +20,7 @@ from sessiond_harness import (
     FAMILY,
     SANDBOX,
     FakeFleet,
-    FakeSupervisor,
+    FakePlaypen,
     make_config,
     write_status,
     write_tokens,
@@ -181,10 +181,10 @@ async def test_wait_settled_answers_with_the_text(rig: Rig) -> None:
             headers=rig.head(Principal.DOOR_OWUI),
         )
     )
-    supervisor = await _await_supervisor(rig)
-    sent = await supervisor.next_start()
-    await supervisor.play_turn(CHAT_SESSION, sent["turn"], ANSWER)
-    await supervisor.settle(CHAT_SESSION, sent["turn"])
+    playpen = await _await_playpen(rig)
+    sent = await playpen.next_start()
+    await playpen.play_turn(CHAT_SESSION, sent["turn"], ANSWER)
+    await playpen.settle(CHAT_SESSION, sent["turn"])
     answer = await asyncio.wait_for(calling, 3.0)
     body = answer.json()
 
@@ -213,10 +213,10 @@ async def test_wait_stream_yields_ndjson_to_the_terminal_line(rig: Rig) -> None:
                     lines.append(json.loads(raw))
 
     reading = asyncio.create_task(read())
-    supervisor = await _await_supervisor(rig)
-    sent = await supervisor.next_start()
-    await supervisor.play_turn(CHAT_SESSION, sent["turn"], ANSWER)
-    await supervisor.settle(CHAT_SESSION, sent["turn"])
+    playpen = await _await_playpen(rig)
+    sent = await playpen.next_start()
+    await playpen.play_turn(CHAT_SESSION, sent["turn"], ANSWER)
+    await playpen.settle(CHAT_SESSION, sent["turn"])
     await asyncio.wait_for(reading, 3.0)
 
     seqs = [line["journal_seq"] for line in lines]
@@ -401,11 +401,11 @@ async def test_switch_sandbox_takes_only_the_managerd_token(rig: Rig) -> None:
     assert reached.json()["error"]["code"] == "bad_request"
 
 
-async def _await_supervisor(rig: Rig) -> FakeSupervisor:
+async def _await_playpen(rig: Rig) -> FakePlaypen:
     """The channel is dialled inside the request, so wait for the dial."""
     for _ in range(400):
-        if SANDBOX in rig.fleet.supervisors:
-            return rig.fleet.supervisor()
+        if SANDBOX in rig.fleet.playpens:
+            return rig.fleet.playpen()
 
         await asyncio.sleep(0.005)
 

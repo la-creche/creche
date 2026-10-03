@@ -13,7 +13,7 @@ The exchange they had in the terminal was in no Open WebUI transcript, the
 phone's next message named a parent `sessiond` could not map, and
 `turns_total` said 2 where they had three exchanges.
 
-    the phone  ─http─► door-owui ─uds─► sessiond ─► supervisor ─► fake pi
+    the phone  ─http─► door-owui ─uds─► sessiond ─► playpen ─► fake pi
     the terminal ────► door-tui  ─uds─►    │  ▲        get_entries   │
                                            │  └───────────────────── ┘
                                            └─http─► FakeOwui

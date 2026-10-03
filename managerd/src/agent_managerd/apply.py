@@ -24,6 +24,7 @@ from .egress import EgressConfig
 from .faults import FaultEntry
 from .images import SandboxImages
 from .litellm_keys import LiteLLMKeys
+from .playpen_env import write_playpen_env
 from .sandboxes import SandboxRecord
 from .status import (
     CredentialsBlock,
@@ -36,7 +37,6 @@ from .status import (
     write_status,
     write_validation_report,
 )
-from .supervisor_env import write_supervisor_env
 from .switch import SwitchClient
 from .webhook_tokens import ensure_webhooks
 
@@ -302,7 +302,7 @@ def _ensure_sandbox(
         # Republished, not only written at create: a family whose
         # `supervisor.env` went missing would fail every turn, and an apply
         # is the one thing that can put it back.
-        _write_supervisor_env(state_root, family.name, live.id)
+        _write_playpen_env(state_root, family.name, live.id)
         return live, ()
 
     # Contract 01 §3.9: a flavor this host has no image for creates
@@ -325,13 +325,13 @@ def _ensure_sandbox(
     return outcome.record, ()
 
 
-def _write_supervisor_env(state_root: Path, family_name: str, sandbox: str) -> None:
+def _write_playpen_env(state_root: Path, family_name: str, sandbox: str) -> None:
     """Contract 03 section 7.1: `sbx exec` forwards no host environment, so
     `--env-file` is the only way the three mount paths reach the
-    supervisor. sbx mounts each directory at its own HOST path, so the file
+    playpen. sbx mounts each directory at its own HOST path, so the file
     names those paths and rewrites nothing."""
-    write_supervisor_env(
-        paths.supervisor_env_path(state_root, family_name, sandbox),
+    write_playpen_env(
+        paths.playpen_env_path(state_root, family_name, sandbox),
         state_root=state_root,
         family=family_name,
         sandbox=sandbox,

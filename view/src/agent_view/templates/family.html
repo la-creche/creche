@@ -39,8 +39,8 @@
   <td>{{ box.power }}</td>
   <td><code>{{ box.image }}</code></td>
   <td>{{ box.cpus }} cpu, {{ box.memory }}</td>
-  <td>{{ box.channel }}{% if not box.has_supervisor_env %}
-      <span class="flag">no supervisor env</span>{% endif %}</td>
+  <td>{{ box.channel }}{% if not box.has_playpen_env %}
+      <span class="flag">no playpen env</span>{% endif %}</td>
   <td>{{ when(box.ready_at) }}</td>
 </tr>
 {% else %}
