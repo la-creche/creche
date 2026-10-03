@@ -17,7 +17,7 @@ from agent_family.model import FamilyFile
 from agent_family.parse import parse_family
 from agent_family.registry import load_registry
 from agent_family.report import Issues, Report
-from agent_family.validate import RETIRING_NAMES, Index, check_family
+from agent_family.validate import Index, check_family
 from family_helpers import (
     FIXTURES,
     FakeHost,
@@ -219,15 +219,13 @@ def test_release_is_allowed_for_the_platform_family() -> None:
     assert not errors(report)
 
 
-@pytest.mark.parametrize("old_name", sorted(RETIRING_NAMES))
-def test_a_retiring_name_still_passes_the_fence(old_name: str) -> None:
-    """The registry's family file lists the old name until its own change
-    lands, so the fence takes it for one cycle and still refuses a stranger."""
+@pytest.mark.parametrize("old_name", ["pep", "sessiond", "releasectl"])
+def test_an_old_component_name_is_refused(old_name: str) -> None:
+    """The names the packages had before the renames. The fence took them
+    for one cycle while the registry's family file still said them, and
+    refuses them now like any stranger."""
     old = check("agent-control", verbs={"release": {"components": [old_name]}})
-    assert not errors(old)
-
-    unknown = check("agent-control", verbs={"release": {"components": ["not-a-component"]}})
-    assert "not a releasable component" in messages(unknown)
+    assert "not a releasable component" in messages(old)
 
 
 def test_the_platform_family_mounts_nothing_else() -> None:

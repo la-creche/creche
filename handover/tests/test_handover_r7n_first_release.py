@@ -134,14 +134,12 @@ UNVERIFIED = [
     _not_verified("noticeboard", "pep-grant", "chaperone"),
 ]
 
-#: The two rows the operator reads on the phone, exactly. Three contracts
+#: The two rows the operator reads on the phone, exactly. Four contracts
 #: have a provider root can see: `family-file` and `manager-status` from
-#: `caregiver`, `session-api` from `attendance`. `component-manifest` is
-#: provided by no manifest until `releasectl` retires
-#: (`handover/component.yaml`, `UNPROVIDED_FOR_NOW` in
-#: `test_handover_repo_manifests.py`).
+#: `caregiver`, `session-api` from `attendance`, `component-manifest` from
+#: `handover`.
 REVIEW_ROW = "suspect: 3 manifest(s) not verified (attendance, caregiver, handover)"
-CONTRACTS_ROW = "3 satisfied, 5 not verified"
+CONTRACTS_ROW = "4 satisfied, 5 not verified"
 
 #: The second request the real spool held: `caregiver` asked for
 #: `mcp-servers=latest` while agent-mcp carried no `mcp-servers-v*` tag,
