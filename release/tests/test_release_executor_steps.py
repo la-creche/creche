@@ -203,7 +203,7 @@ def test_the_ledger_carries_the_whole_resolved_manifest(bench: Bench) -> None:
 
     assert isinstance(manifest, dict)
     assert str(manifest["manifest_sha256"]).startswith("sha256:")  # pyright: ignore[reportUnknownArgumentType]
-    assert len(manifest["components"]) == 9  # pyright: ignore[reportUnknownArgumentType]
+    assert len(manifest["components"]) == 10  # pyright: ignore[reportUnknownArgumentType]
 
 
 def test_the_request_file_always_leaves_requests(bench: Bench) -> None:

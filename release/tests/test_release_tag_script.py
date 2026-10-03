@@ -19,15 +19,17 @@ import sys
 from pathlib import Path
 
 import pytest
-from agent_release.catalog import CATALOG, RETIRING, Repo
+from agent_release.catalog import ARRIVING, CATALOG, RETIRING, Repo
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "release" / "bin" / "allocate-tags.sh"
 
 #: Contract 06 §1's agent-control rows, in catalog order, minus a retiring
-#: one: the planner never tags it.
+#: or an arriving one: the planner never tags either.
 COMPONENTS = tuple(
-    row.name for row in CATALOG if row.repo is Repo.AGENT_CONTROL and row.name not in RETIRING
+    row.name
+    for row in CATALOG
+    if row.repo is Repo.AGENT_CONTROL and row.name not in RETIRING | ARRIVING
 )
 
 #: Every one of them at its first version, sorted as `_tags` returns them.

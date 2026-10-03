@@ -42,6 +42,7 @@ SHA_OF = {
     "mcp-servers": "c0de4471b9a2f38e5d7016cc82ab4f90d3e61a58",
     "infra": "9d1f0c7a5b2e4438a6c0d19f37be5a2c48e1067b",
     "releasectl": "b6e2a90d47c1f3825ae0db6194c73f08251ad6e7",
+    "handover": "e3c58a01f9d24b76c0a1e8f35b92d7406c1fa8b3",
     "registry-data": "77aa10c4e2b8936df05174c3ab29e6108dd4f3b2",
 }
 

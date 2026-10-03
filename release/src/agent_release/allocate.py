@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .catalog import CATALOG, RETIRING, CatalogRow, Kind, Repo
+from .catalog import ARRIVING, CATALOG, RETIRING, CatalogRow, Kind, Repo
 from .errors import Refusal, RefusalCode, safe_token
 
 #: Contract 06 §2: one expression reads every component tag, in every repo.
@@ -290,9 +290,11 @@ def _allocated(
 
     A retiring component (`catalog.RETIRING`) is in none of them. A tag is a
     version somebody can release, and the commit that deletes its directory
-    changes every one of its paths.
+    changes every one of its paths. An arriving one (`catalog.ARRIVING`) is
+    in none of them either: it has no directory to release yet.
     """
-    rows = [row for row in CATALOG if row.repo is repo and row.name not in RETIRING]
+    skipped = RETIRING | ARRIVING
+    rows = [row for row in CATALOG if row.repo is repo and row.name not in skipped]
     hit = set(touched(paths, repo)) | set(untagged(tags, repo)) | set(tagged_here(at_sha, repo))
 
     return tuple(row.name for row in rows if row.name in hit)
