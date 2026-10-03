@@ -156,7 +156,7 @@ class SwitchNote:
     #: verify — it never guesses a command.
     verify: VerifyHook | None = None
     #: Where this switch kept the unit file it replaces (`install.py` rule
-    #: 6), e.g. `/etc/systemd/system/agent-pep.service.prev`. None when it
+    #: 6), e.g. `/etc/systemd/system/creche-chaperone.service.prev`. None when it
     #: replaces none: the manifest names no unit, none is installed, or the
     #: release carries the file already there. The repair puts back exactly
     #: this, and no unit at all when it is None.
@@ -301,7 +301,7 @@ def read_capped(dir_fd: int, name: str, cap: int, owner_uids: frozenset[int] | N
     root forever, and `fstat` refuses everything that is not a plain file.
 
     `owner_uids` is a SET, not one uid: §3.1 names three requesters, and one
-    of them is the PEP's `release` verb, which runs as `pep`. Root still
+    of them is the PEP's `release` verb, which runs as `chaperone`. Root still
     decides nothing on what the file SAYS — the set is root's own
     configuration, and it is what keeps a fourth account from filing.
     """
@@ -395,7 +395,7 @@ class Spool:
         self, root: str, owner_uid: int, *, also_owned_by: frozenset[int] = frozenset()
     ) -> None:
         #: §3.1's requesters that have a host account: the operator, who types
-        #: `agent-releasectl request`, and `pep`, whose `release` verb files
+        #: `agent-releasectl request`, and `chaperone`, whose `release` verb files
         #: the same bytes. CI files through neither — it has no account here.
         #: Everything else is quarantined unread.
         self.owner_uids = frozenset({owner_uid}) | also_owned_by

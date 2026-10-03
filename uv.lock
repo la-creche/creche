@@ -13,10 +13,10 @@ members = [
     "agent-door-trigger",
     "agent-door-tui",
     "agent-family",
-    "agent-pep",
     "agent-release",
     "attendance",
     "caregiver",
+    "chaperone",
     "library",
     "noticeboard",
 ]
@@ -30,10 +30,10 @@ dependencies = [
     { name = "agent-door-trigger" },
     { name = "agent-door-tui" },
     { name = "agent-family" },
-    { name = "agent-pep" },
     { name = "agent-release" },
     { name = "attendance" },
     { name = "caregiver" },
+    { name = "chaperone" },
     { name = "library" },
     { name = "noticeboard" },
 ]
@@ -55,10 +55,10 @@ requires-dist = [
     { name = "agent-door-trigger", editable = "door-trigger" },
     { name = "agent-door-tui", editable = "door-tui" },
     { name = "agent-family", editable = "family" },
-    { name = "agent-pep", editable = "pep" },
     { name = "agent-release", editable = "release" },
     { name = "attendance", editable = "attendance" },
     { name = "caregiver", editable = "caregiver" },
+    { name = "chaperone", editable = "chaperone" },
     { name = "library", editable = "library" },
     { name = "noticeboard", editable = "noticeboard" },
 ]
@@ -134,29 +134,6 @@ dependencies = [
 requires-dist = [
     { name = "pydantic", specifier = ">=2.8" },
     { name = "pyyaml", specifier = ">=6" },
-]
-
-[[package]]
-name = "agent-pep"
-version = "0.1.0"
-source = { editable = "pep" }
-dependencies = [
-    { name = "agent-release" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "mcp" },
-    { name = "pyyaml" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-release", editable = "release" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "mcp", specifier = ">=1.2" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [[package]]
@@ -336,6 +313,29 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6d/cd/a361394c94b2129d604bb846f624a8e88255a3ee33129c434a00d715e64f/cffi-2.1.1-cp315-cp315t-win32.whl", hash = "sha256:06c72bb76605a4b0cd0aad6930b69d4baf7dd5d806cfc409b824191099700e66", size = 182707, upload-time = "2026-08-03T21:21:11.226Z" },
     { url = "https://files.pythonhosted.org/packages/9b/b5/ba2b299993c26577d529b6ae29841f9e15b9fcf004d65f423f4fcf94ade9/cffi-2.1.1-cp315-cp315t-win_amd64.whl", hash = "sha256:d9c275eaacd24aa73f94ffd6de08fc3f932424d8b6c376f4bed7cde376fe7bc3", size = 193772, upload-time = "2026-08-03T21:21:12.39Z" },
     { url = "https://files.pythonhosted.org/packages/aa/29/35e016098c814cd93de9cd320c66b5bfba14dc6ecedd3cb518fa7c408c69/cffi-2.1.1-cp315-cp315t-win_arm64.whl", hash = "sha256:d18e5ac0f2f03f4f518d3e23db0f0cad7faa1da8620e9c09461d443bbf6e6692", size = 186360, upload-time = "2026-08-03T21:21:13.636Z" },
+]
+
+[[package]]
+name = "chaperone"
+version = "0.1.0"
+source = { editable = "chaperone" }
+dependencies = [
+    { name = "agent-release" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "pyyaml" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-release", editable = "release" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "mcp", specifier = ">=1.2" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [[package]]

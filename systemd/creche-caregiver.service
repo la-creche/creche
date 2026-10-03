@@ -16,7 +16,7 @@ After=network-online.target
 Wants=network-online.target
 # THE REWORK RESTART POLICY. Decided once, argued here, and named by the
 # other five always-on rework units (`creche-attendance`, `creche-door-owui`,
-# `creche-noticeboard`, `creche-trigger-webhooks`, `agent-pep`). Change it here and
+# `creche-noticeboard`, `creche-trigger-webhooks`, `creche-chaperone`). Change it here and
 # in all six, or `bin/tests/test_rework_unit_restart.py` fails.
 #
 # WHY NO START LIMIT. With StartLimitIntervalSec=120 and StartLimitBurst=5,
@@ -124,7 +124,7 @@ NoNewPrivileges=yes
 SystemCallArchitectures=native
 RestrictRealtime=yes
 LockPersonality=yes
-# 0027, not 0077: the PEP (user `pep`, group `agents`) reads the grant files
+# 0027, not 0077: the PEP (user `chaperone`, group `agents`) reads the grant files
 # this daemon writes. Every file it publishes is chmod'd explicitly anyway;
 # this only covers directories made with a bare mkdir.
 UMask=0027

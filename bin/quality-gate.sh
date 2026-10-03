@@ -30,7 +30,7 @@ ALWAYS="bin/tests/test_unique_test_basenames.py"
 DOCS_MARKER="docs"
 
 # The suites the full run collects, one per line: pyproject.toml's
-# testpaths, e.g. "pep/tests". A suite missing from disk is left out.
+# testpaths, e.g. "chaperone/tests". A suite missing from disk is left out.
 list_suites() {
   local suite
 
@@ -43,7 +43,7 @@ list_suites() {
 }
 
 # in_package PATH SUITES: whether PATH sits in the package of one of SUITES.
-# A package is the directory above its suite: pep/ for pep/tests.
+# A package is the directory above its suite: chaperone/ for chaperone/tests.
 in_package() {
   local suite
 

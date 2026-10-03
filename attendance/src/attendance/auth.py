@@ -29,7 +29,7 @@ MIN_TOKEN_BYTES = 32
 # Contract 02 §3 rule 5's exception: the two tokens the PEP reads, the
 # delegate door's and the dispatch door's (§13.4), may carry the group-read
 # bit, because the PEP runs as a different user
-# (`pep`). Nothing wider: no world bit, and no group write or execute. Every
+# (`chaperone`). Nothing wider: no world bit, and no group write or execute. Every
 # other token stays 0600.
 _PEP_ALLOWED_GROUP_OTHER_BITS = stat.S_IRGRP
 
@@ -51,7 +51,7 @@ class Principal(StrEnum):
     CAREGIVER = "managerd"
 
 
-#: The two token files the PEP reads as user `pep`, and the only ones rule 5's
+#: The two token files the PEP reads as user `chaperone`, and the only ones rule 5's
 #: mode exception covers (contract 02 §3 rule 5).
 PEP_READ_TOKENS: frozenset[Principal] = frozenset(
     {Principal.DOOR_DELEGATE, Principal.DOOR_DISPATCH}

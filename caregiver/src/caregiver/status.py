@@ -25,9 +25,9 @@ from typing import Any, Final, cast
 from agent_family import FamilyFile, FamilyState, Report
 
 from .atomic import atomic_write
+from .chaperone_watch import PepReport, unwatched
 from .clock import now_rfc3339 as now_rfc3339
 from .faults import FaultEntry
-from .pep_watch import PepReport, unwatched
 from .webhook_tokens import WebhookToken
 
 STATUS_FILE_MODE: Final = 0o644
@@ -227,7 +227,7 @@ class StatusDocument:
     #: and has no interval to probe over: `apply-once`, `reconcile-once`
     #: and the two refusals. A watch that is silently off lets a PEP outage
     #: go unnoticed, so there is no value here that means "nobody said".
-    pep: PepReport = field(default_factory=unwatched)
+    chaperone: PepReport = field(default_factory=unwatched)
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -246,7 +246,7 @@ class StatusDocument:
             "spend": self.spend,
             "limits": self.limits.as_json(),
             "triggers": self.triggers.as_json(),
-            "pep": self.pep.as_json(),
+            "pep": self.chaperone.as_json(),
         }
 
 

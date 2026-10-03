@@ -120,7 +120,7 @@ deploy_site "$PRODUCT" "$SITE" \
 # code". release/component.yaml says the same, and bin/rework-release-visit.sh,
 # run by hand, is the step that installs it.
 
-# --compile-bytecode: this checkout is root-owned, so the operator's account and `pep` cannot
+# --compile-bytecode: this checkout is root-owned, so the operator's account and `chaperone` cannot
 # write a single __pycache__ entry and every process start recompiles from
 # source — ~740 modules, measured at 1.8s per `agentctl` on the host against
 # 0.55s with the cache warm, and the same tax on each unit restart below.
@@ -130,12 +130,12 @@ deploy_site "$PRODUCT" "$SITE" \
 # they are installed editable, so their sources live in this checkout rather
 # than site-packages. Best effort — a failure here costs the cache, not the
 # deploy, and a stale .pyc cannot be served (Python checks mtime and size).
-WORKSPACE_SRC=(/opt/agent-control/{pep,library}/src)
+WORKSPACE_SRC=(/opt/agent-control/{chaperone,library}/src)
 /opt/agent-control/.venv/bin/python -m compileall -q "${WORKSPACE_SRC[@]}" \
   || echo "WARNING: bytecode pre-compile failed; imports fall back to source" >&2
-# venv must be world-executable so user `pep` (and the operator) can run from it;
+# venv must be world-executable so user `chaperone` (and the operator) can run from it;
 # the __pycache__ dirs just written need the same, and hold only code. This
-# tree is root-owned end to end (/opt/agent-control), never pep-writable, so
+# tree is root-owned end to end (/opt/agent-control), never chaperone-writable, so
 # a recursive chmod here carries no TOCTOU risk.
 chmod -R a+rX /opt/agent-control/.venv "${WORKSPACE_SRC[@]}"
 
@@ -174,9 +174,9 @@ check_unit() {
   return 1
 }
 
-if systemctl is-enabled agent-pep >/dev/null 2>&1; then
-  systemctl restart agent-pep
-  check_unit agent-pep || FAILED_UNITS+=(agent-pep)
+if systemctl is-enabled creche-chaperone >/dev/null 2>&1; then
+  systemctl restart creche-chaperone
+  check_unit creche-chaperone || FAILED_UNITS+=(creche-chaperone)
 fi
 
 # The rework's user units run from their own component trees, never from

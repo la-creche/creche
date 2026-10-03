@@ -9,7 +9,7 @@ This is the ONE test that keeps a manifest's `--env-file` and its unit's
 own `EnvironmentFile=` from drifting apart. The rule cuts both ways: a
 component whose unit declares `EnvironmentFile=` must pass that same path
 with `--env-file`, and one whose unit declares none must not claim one
-either. `pep` reads the site file, `/etc/agent-control/site.env`.
+either. `chaperone` reads the site file, `/etc/agent-control/site.env`.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ UNIT_OF = {
     "noticeboard": "creche-noticeboard.service",
     "attendance": "creche-attendance.service",
     "caregiver": "creche-caregiver.service",
-    "pep": "agent-pep.service",
+    "chaperone": "creche-chaperone.service",
 }
 
 
@@ -75,11 +75,11 @@ def test_noticeboard_attendance_and_caregiver_each_name_a_real_env_file() -> Non
         assert _unit_env_file(UNIT_OF[component]) == path, component
 
 
-def test_pep_names_the_site_file_on_both_sides() -> None:
-    """`agent-pep.service` reads its LAN address, its Home Assistant and its
-    sops path from the site file, and `pep-verify` reads the same file."""
-    manifest = read_one(REPO_ROOT, "pep").manifest
+def test_chaperone_names_the_site_file_on_both_sides() -> None:
+    """`creche-chaperone.service` reads its LAN address, its Home Assistant and its
+    sops path from the site file, and `chaperone-verify` reads the same file."""
+    manifest = read_one(REPO_ROOT, "chaperone").manifest
     path = "/etc/agent-control/site.env"
 
-    assert _unit_env_file(UNIT_OF["pep"]) == path
+    assert _unit_env_file(UNIT_OF["chaperone"]) == path
     assert _verify_env_file(manifest.verify.command) == path

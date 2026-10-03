@@ -36,7 +36,7 @@ def _signals_kept() -> Iterator[None]:
     """Fail a test that leaves a signal disposition changed, and put it back.
 
     A leaked disposition does its damage later, in a test that did nothing
-    wrong. pep's launcher test left SIGPIPE at SIG_DFL, so the worker's next
+    wrong. chaperone's launcher test left SIGPIPE at SIG_DFL, so the worker's next
     write to a closed socket killed the whole worker. xdist then blamed
     whichever release test it was running: "worker 'gw6' crashed while
     running ...".
@@ -151,7 +151,7 @@ def in_shard(nodeid: str, shard: int, total: int) -> bool:
     """Whether shard `shard` of `total` runs the test `nodeid`.
 
     The test's own id decides, through a hash that is the same on every
-    machine: crc32("pep/tests/test_x.py::test_y") % 4 == 1 puts that test in
+    machine: crc32("chaperone/tests/test_x.py::test_y") % 4 == 1 puts that test in
     shard 2/4 and in no other. A rule that counted positions instead would
     drop or repeat a test wherever two machines collect in different orders.
     Hashing per test and not per file also spreads one slow file over every

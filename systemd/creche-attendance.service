@@ -67,7 +67,7 @@ NoNewPrivileges=yes
 SystemCallArchitectures=native
 RestrictRealtime=yes
 LockPersonality=yes
-# 0027, not 0077: the PEP (user `pep`, group `agents`) connects to the socket
+# 0027, not 0077: the PEP (user `chaperone`, group `agents`) connects to the socket
 # this service binds under `sock/`, and reads the audit and outcome trees
 # beside it. The socket itself is chmod'd 0660 by the service after bind
 # (contract 02 §3 rule 1); this only covers directories made with a bare

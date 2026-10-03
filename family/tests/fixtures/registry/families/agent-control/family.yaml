@@ -21,7 +21,7 @@ verbs:
   # absent because it never takes a release (contract 06 §6).
   release:
     components:
-      - pep
+      - chaperone
       - attendance
       - caregiver
       - noticeboard

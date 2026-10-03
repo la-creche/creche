@@ -52,7 +52,7 @@ def _raw(body: dict[str, object]) -> bytes:
 def test_a_request_with_an_unknown_key_is_refused() -> None:
     """Rule 2: the key set is CLOSED. An unknown key is a refusal, not a
     field root ignores — an ignored field is a field somebody adds later."""
-    body = request_body({"pep": "2.1.0"}) | {"install_to": "/etc"}
+    body = request_body({"chaperone": "2.1.0"}) | {"install_to": "/etc"}
     with pytest.raises(Refusal) as raised:
         parse_request(_raw(body), REQUEST_ID)
 
@@ -62,7 +62,7 @@ def test_a_request_with_an_unknown_key_is_refused() -> None:
 def test_a_request_cannot_name_a_path_a_command_or_a_hash() -> None:
     """Rule 7: no such field exists, so each of these is the same refusal."""
     for smuggled in ("build", "sha", "manifest_sha256", "verify", "url"):
-        body = request_body({"pep": "2.1.0"}) | {smuggled: "/bin/sh"}
+        body = request_body({"chaperone": "2.1.0"}) | {smuggled: "/bin/sh"}
         with pytest.raises(Refusal):
             parse_request(_raw(body), REQUEST_ID)
 
@@ -70,7 +70,7 @@ def test_a_request_cannot_name_a_path_a_command_or_a_hash() -> None:
 def test_a_request_body_naming_another_id_is_refused() -> None:
     """The file name is what the id must equal: root acts on one id, and a
     body that names a second one is a request it would ledger elsewhere."""
-    body = request_body({"pep": "2.1.0"}, request_id="01K5J8M2Q7V3X9R4T6N0B8C2DF")
+    body = request_body({"chaperone": "2.1.0"}, request_id="01K5J8M2Q7V3X9R4T6N0B8C2DF")
     with pytest.raises(Refusal):
         parse_request(_raw(body), REQUEST_ID)
 
@@ -79,12 +79,12 @@ def test_a_version_with_a_trailing_newline_is_refused() -> None:
     """Rule 3: every pattern ends in `\\Z`. A `$` also matches before a
     trailing newline, and these values become git tags and argv words."""
     with pytest.raises(Refusal):
-        parse_request(_raw(request_body({"pep": "2.1.0\n"})), REQUEST_ID)
+        parse_request(_raw(request_body({"chaperone": "2.1.0\n"})), REQUEST_ID)
 
 
 def test_a_component_name_with_a_traversal_is_refused() -> None:
     with pytest.raises(Refusal):
-        parse_request(_raw(request_body({"../../etc/pep": "2.1.0"})), REQUEST_ID)
+        parse_request(_raw(request_body({"../../etc/chaperone": "2.1.0"})), REQUEST_ID)
 
 
 def test_a_request_naming_more_than_eight_components_is_refused() -> None:
@@ -117,13 +117,13 @@ def test_a_name_that_is_not_json_is_not_a_request() -> None:
 
 
 def test_a_rollback_without_a_target_is_refused() -> None:
-    body = request_body({"pep": "2.1.0"}, kind="rollback")
+    body = request_body({"chaperone": "2.1.0"}, kind="rollback")
     with pytest.raises(Refusal):
         parse_request(_raw(body), REQUEST_ID)
 
 
 def test_a_release_carrying_a_rollback_target_is_refused() -> None:
-    body = request_body({"pep": "2.1.0"}) | {"rollback_of": REQUEST_ID}
+    body = request_body({"chaperone": "2.1.0"}) | {"rollback_of": REQUEST_ID}
     with pytest.raises(Refusal):
         parse_request(_raw(body), REQUEST_ID)
 
@@ -136,7 +136,7 @@ def test_a_symlink_in_requests_is_never_followed(tmp_path: Path) -> None:
     which is how a request could otherwise name `/etc/shadow`."""
     root = make_spool_dirs(tmp_path)
     secret = tmp_path / "secret.json"
-    secret.write_text(json.dumps(request_body({"pep": "2.1.0"})), encoding="utf-8")
+    secret.write_text(json.dumps(request_body({"chaperone": "2.1.0"})), encoding="utf-8")
     link = root / REQUESTS_DIR / f"{REQUEST_ID}.json"
     link.symlink_to(secret)
 
@@ -177,7 +177,7 @@ def test_a_file_owned_by_another_uid_is_refused(tmp_path: Path) -> None:
     """Rule 2: owned by the operator. A test cannot chown, so it asks for an owner
     the file cannot have — the check is the same one either way."""
     root = make_spool_dirs(tmp_path)
-    write_request(root, REQUEST_ID, request_body({"pep": "2.1.0"}))
+    write_request(root, REQUEST_ID, request_body({"chaperone": "2.1.0"}))
 
     spool = Spool(str(root), this_uid() + 1)
     try:
@@ -221,7 +221,7 @@ def test_running_is_reserialized_from_the_validated_fields(tmp_path: Path) -> No
     """Rule 4. The file root writes is built from the dataclass, so a value
     that passed no pattern cannot reach `running/` or the ledger."""
     root = make_spool_dirs(tmp_path)
-    write_request(root, REQUEST_ID, request_body({"pep": "2.1.0"}))
+    write_request(root, REQUEST_ID, request_body({"chaperone": "2.1.0"}))
 
     spool = Spool(str(root), this_uid())
     try:
@@ -240,7 +240,7 @@ def test_running_is_reserialized_from_the_validated_fields(tmp_path: Path) -> No
         "requester_session",
         "ts",
     }
-    assert written["components"] == {"pep": "2.1.0"}
+    assert written["components"] == {"chaperone": "2.1.0"}
     assert not (root / REQUESTS_DIR / f"{REQUEST_ID}.json").exists()
 
 
@@ -267,21 +267,21 @@ def test_a_quarantined_name_keeps_nothing_hostile(tmp_path: Path) -> None:
 def test_a_planted_live_state_file_is_never_read(tmp_path: Path) -> None:
     """The planted document, from the other end.
 
-    An operator-side writer plants a document saying `pep` is at 9.9.9 and
+    An operator-side writer plants a document saying `chaperone` is at 9.9.9 and
     that `latest` means 9.9.9. Root builds its own from the
     install trees and never opens the file, so nothing it says reaches the
     resolution.
     """
     roots = (tmp_path / "components",)
-    stamp_tree(roots[0], "pep", "2.0.3")
+    stamp_tree(roots[0], "chaperone", "2.0.3")
     planted = tmp_path / "releases"
     planted.mkdir()
-    write_live_state(planted, live_state_body({"pep": "9.9.9"}, {"pep": "9.9.9"}))
+    write_live_state(planted, live_state_body({"chaperone": "9.9.9"}, {"chaperone": "9.9.9"}))
 
-    built = build_state(roots, {"pep": "latest"}, fake_readers(latest={"pep": "2.1.0"}))
+    built = build_state(roots, {"chaperone": "latest"}, fake_readers(latest={"chaperone": "2.1.0"}))
 
-    assert built.state.live["pep"] == "2.0.3"
-    assert built.state.latest == {"pep": "2.1.0"}
+    assert built.state.live["chaperone"] == "2.0.3"
+    assert built.state.latest == {"chaperone": "2.1.0"}
 
 
 def test_the_install_stamp_is_the_only_source_of_live(tmp_path: Path) -> None:
@@ -289,11 +289,11 @@ def test_the_install_stamp_is_the_only_source_of_live(tmp_path: Path) -> None:
     ONLY thing `live` is built from. The monotonic rule of §2.4 step 3
     therefore rests on what is installed and on nothing a writer claims."""
     roots = (tmp_path / "components",)
-    stamp_tree(roots[0], "pep", "2.0.3")
+    stamp_tree(roots[0], "chaperone", "2.0.3")
 
-    built = build_state(roots, {"pep": "2.1.0"}, fake_readers())
+    built = build_state(roots, {"chaperone": "2.1.0"}, fake_readers())
 
-    assert built.state.live["pep"] == "2.0.3"
+    assert built.state.live["chaperone"] == "2.0.3"
     assert built.state.live["attendance"] is None
 
 
@@ -303,11 +303,11 @@ def test_a_reader_that_answers_nothing_builds_an_empty_world(tmp_path: Path) -> 
     A builder nobody wired resolves `latest` to nothing and carries no
     facts, so `resolve` refuses the request instead of inventing a version.
     """
-    built = build_state((tmp_path / "components",), {"pep": "latest"}, Readers())
+    built = build_state((tmp_path / "components",), {"chaperone": "latest"}, Readers())
 
     assert built.state.latest == {}
     assert built.state.facts == {}
-    assert built.notes == ("no released tag for pep: 'latest' names nothing",)
+    assert built.notes == ("no released tag for chaperone: 'latest' names nothing",)
 
 
 def test_a_state_fixture_naming_an_unknown_component_is_refused() -> None:
@@ -315,7 +315,7 @@ def test_a_state_fixture_naming_an_unknown_component_is_refused() -> None:
     through: `--state <file>`. The component list is fixed by the
     contract, so a name it does not list is refused with the code
     `state`."""
-    body = live_state_body({"pep": "2.0.3"}, {"pep": "2.1.0"})
+    body = live_state_body({"chaperone": "2.0.3"}, {"chaperone": "2.1.0"})
     body["latest"] = {"not-a-component": "1.0.0"}
 
     with pytest.raises(Refusal) as raised:

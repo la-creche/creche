@@ -97,11 +97,11 @@ def test_a_symlink_inside_the_tree_is_never_followed(tmp_path: Path) -> None:
     outside.write_text("#!/bin/sh\n", encoding="utf-8")
     outside.chmod(0o700)
 
-    tree = tmp_path / "pep.new" / "bin"
+    tree = tmp_path / "chaperone.new" / "bin"
     tree.mkdir(parents=True)
     (tree / "python3").symlink_to(outside)
 
-    _installer().normalize_modes(tmp_path / "pep.new")
+    _installer().normalize_modes(tmp_path / "chaperone.new")
 
     assert _mode(outside) == 0o700
 

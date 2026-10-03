@@ -20,14 +20,14 @@ from release_fixtures import manifest_text, provides_entry, requires_entry
 RELEASE_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
 RESOLVED_AT = 1758153600.0
 
-#: `pep` provides pep-grant 2.1. `attendance` and `noticeboard` call it at 2.0, and
-#: `attendance` deploys after `pep`.
+#: `chaperone` provides pep-grant 2.1. `attendance` and `noticeboard` call it at 2.0, and
+#: `attendance` deploys after `chaperone`.
 EDGES: dict[str, tuple[str, str, str]] = {
-    "pep": (provides_entry("pep-grant", 2, 1), "", ""),
+    "chaperone": (provides_entry("pep-grant", 2, 1), "", ""),
     "attendance": (
         provides_entry("session-api", 1, 4),
         requires_entry("pep-grant", 2, 0),
-        "pep",
+        "chaperone",
     ),
     "noticeboard": ("", requires_entry("pep-grant", 2, 0), "attendance"),
     "caregiver": ("", "", ""),
@@ -39,7 +39,7 @@ EDGES: dict[str, tuple[str, str, str]] = {
 }
 
 LIVE = {
-    "pep": "2.0.3",
+    "chaperone": "2.0.3",
     "attendance": "1.4.7",
     "noticeboard": "0.7.0",
     "caregiver": "1.2.0",
@@ -72,7 +72,7 @@ def _state(**changes: object) -> ReleaseState:
     state = ReleaseState(
         live=dict(LIVE),
         provided={ContractId.PEP_GRANT: (2, 0), ContractId.SESSION_API: (1, 4)},
-        latest={"pep": "2.1.0"},
+        latest={"chaperone": "2.1.0"},
         facts=facts,
     )
     for name, value in changes.items():
@@ -89,15 +89,15 @@ def _refusal(request: dict[str, str], state: ReleaseState | None = None) -> Refu
 
 
 def test_parse_request_reads_name_and_version() -> None:
-    assert parse_request(["pep=2.1.0", "attendance=latest"]) == {
-        "pep": "2.1.0",
+    assert parse_request(["chaperone=2.1.0", "attendance=latest"]) == {
+        "chaperone": "2.1.0",
         "attendance": "latest",
     }
 
 
 def test_parse_request_refuses_a_bare_name() -> None:
     with pytest.raises(Refusal) as caught:
-        parse_request(["pep"])
+        parse_request(["chaperone"])
 
     assert caught.value.code is RefusalCode.REQUEST
     assert "expected <component>=<version>" in caught.value.detail
@@ -105,14 +105,14 @@ def test_parse_request_refuses_a_bare_name() -> None:
 
 def test_parse_request_refuses_a_repeat() -> None:
     with pytest.raises(Refusal) as caught:
-        parse_request(["pep=2.1.0", "pep=2.2.0"])
+        parse_request(["chaperone=2.1.0", "chaperone=2.2.0"])
 
-    assert "names pep twice" in caught.value.detail
+    assert "names chaperone twice" in caught.value.detail
 
 
 def test_parse_request_refuses_a_two_number_version() -> None:
     with pytest.raises(Refusal) as caught:
-        parse_request(["pep=2.1"])
+        parse_request(["chaperone=2.1"])
 
     assert "MAJOR.MINOR.PATCH" in caught.value.detail
 
@@ -137,10 +137,10 @@ def test_the_data_component_can_never_be_released() -> None:
 
 def test_a_component_with_no_manifest_is_refused() -> None:
     manifests = _nine()
-    del manifests["pep"]
+    del manifests["chaperone"]
 
     with pytest.raises(Refusal) as caught:
-        resolve(manifests, _state(), {"pep": "2.1.0"})
+        resolve(manifests, _state(), {"chaperone": "2.1.0"})
 
     assert "has no component.yaml" in caught.value.detail
 
@@ -150,24 +150,24 @@ def test_latest_needs_a_live_state_entry() -> None:
 
 
 def test_latest_resolves_to_the_newest_version() -> None:
-    resolution = resolve(_nine(), _state(), {"pep": "latest"})
-    pep = next(item for item in resolution.components if item.name == "pep")
+    resolution = resolve(_nine(), _state(), {"chaperone": "latest"})
+    chaperone = next(item for item in resolution.components if item.name == "chaperone")
 
-    assert pep.action is Action.DEPLOY
-    assert pep.to_version == "2.1.0"
-    assert pep.tag() == "pep-v2.1.0"
+    assert chaperone.action is Action.DEPLOY
+    assert chaperone.to_version == "2.1.0"
+    assert chaperone.tag() == "chaperone-v2.1.0"
 
 
 def test_requesting_the_live_version_changes_nothing() -> None:
-    resolution = resolve(_nine(), _state(), {"pep": "2.0.3"})
-    pep = next(item for item in resolution.components if item.name == "pep")
+    resolution = resolve(_nine(), _state(), {"chaperone": "2.0.3"})
+    chaperone = next(item for item in resolution.components if item.name == "chaperone")
 
-    assert pep.action is Action.UNCHANGED
+    assert chaperone.action is Action.UNCHANGED
     assert resolution.order == ()
 
 
 def test_every_component_appears_in_name_order() -> None:
-    resolution = resolve(_nine(), _state(), {"pep": "2.1.0"})
+    resolution = resolve(_nine(), _state(), {"chaperone": "2.1.0"})
     names = [item.name for item in resolution.components]
 
     assert names == sorted(names)
@@ -175,7 +175,7 @@ def test_every_component_appears_in_name_order() -> None:
 
 
 def test_the_data_component_carries_no_version_or_tag() -> None:
-    resolution = resolve(_nine(), _state(), {"pep": "2.1.0"})
+    resolution = resolve(_nine(), _state(), {"chaperone": "2.1.0"})
     data = next(item for item in resolution.components if item.name == "registry-data")
 
     assert data.action is Action.UNCHANGED
@@ -185,17 +185,17 @@ def test_the_data_component_carries_no_version_or_tag() -> None:
 
 
 def test_a_set_deploys_dependencies_first() -> None:
-    resolution = resolve(_nine(), _state(), {"pep": "2.1.0", "attendance": "1.5.0"})
+    resolution = resolve(_nine(), _state(), {"chaperone": "2.1.0", "attendance": "1.5.0"})
 
-    assert resolution.order == ("pep", "attendance")
-    assert resolution.deploying == frozenset({"pep", "attendance"})
+    assert resolution.order == ("chaperone", "attendance")
+    assert resolution.deploying == frozenset({"chaperone", "attendance"})
 
 
 def test_the_contract_table_names_every_consumer() -> None:
-    resolution = resolve(_nine(), _state(), {"pep": "2.1.0"})
+    resolution = resolve(_nine(), _state(), {"chaperone": "2.1.0"})
     grant = next(row for row in resolution.contracts if row.contract is ContractId.PEP_GRANT)
 
-    assert grant.provider == "pep"
+    assert grant.provider == "chaperone"
     assert [item.name for item in grant.consumers] == ["attendance", "noticeboard"]
 
 
@@ -206,7 +206,7 @@ def _document(request: dict[str, str]) -> dict[str, object]:
 
 
 def test_the_document_has_contract_06_paragraph_9_fields() -> None:
-    document = _document({"pep": "2.1.0"})
+    document = _document({"chaperone": "2.1.0"})
 
     assert set(document) == {
         "manifest_version",
@@ -222,21 +222,21 @@ def test_the_document_has_contract_06_paragraph_9_fields() -> None:
 
 
 def test_the_same_set_hashes_the_same_whatever_the_argument_order() -> None:
-    forwards = _document(parse_request(["pep=2.1.0", "attendance=1.5.0"]))
-    backwards = _document(parse_request(["attendance=1.5.0", "pep=2.1.0"]))
+    forwards = _document(parse_request(["chaperone=2.1.0", "attendance=1.5.0"]))
+    backwards = _document(parse_request(["attendance=1.5.0", "chaperone=2.1.0"]))
 
     assert forwards["manifest_sha256"] == backwards["manifest_sha256"]
 
 
 def test_a_different_version_hashes_differently() -> None:
-    one = _document({"pep": "2.1.0"})
-    two = _document({"pep": "2.1.1"})
+    one = _document({"chaperone": "2.1.0"})
+    two = _document({"chaperone": "2.1.1"})
 
     assert one["manifest_sha256"] != two["manifest_sha256"]
 
 
 def test_the_hash_covers_every_other_field() -> None:
-    document = _document({"pep": "2.1.0"})
+    document = _document({"chaperone": "2.1.0"})
     body = dict(document)
     del body["manifest_sha256"]
     text = canonical_json(body)
@@ -261,7 +261,7 @@ def test_a_component_with_no_facts_reads_null_and_not_a_refusal() -> None:
     state = _state(facts={})
 
     document = build_document(
-        resolve(_nine(), state, {"pep": "2.1.0"}), state, RELEASE_ID, "human", RESOLVED_AT
+        resolve(_nine(), state, {"chaperone": "2.1.0"}), state, RELEASE_ID, "human", RESOLVED_AT
     )
 
     rows = document["components"]

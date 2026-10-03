@@ -31,7 +31,7 @@ from release_fixtures import manifest_text
 PYTHON_DIR = "python3.12"
 
 
-def _tree(root: Path, name: str = "pep.new") -> Path:
+def _tree(root: Path, name: str = "chaperone.new") -> Path:
     """A staged venv tree: a site-packages, a bin and a verify hook."""
     tree = root / name
     site = tree / "lib" / PYTHON_DIR / "site-packages"
@@ -64,8 +64,8 @@ def _dist_info(tree: Path, name: str, body: object) -> Path:
 
 def test_a_tree_that_holds_its_own_code_passes(tmp_path: Path) -> None:
     tree = _tree(tmp_path)
-    (_site(tree) / "agent_pep").mkdir()
-    _dist_info(tree, "agent_pep", {"url": "file:///src/pep", "dir_info": {}})
+    (_site(tree) / "chaperone").mkdir()
+    _dist_info(tree, "chaperone", {"url": "file:///src/chaperone", "dir_info": {}})
 
     assert escapes(tree) == ()
 
@@ -162,13 +162,13 @@ def test_check_tree_raises_its_own_refusal_code(tmp_path: Path) -> None:
     """The ledger's `refused_check` tells the operator which fault this was, so it
     is neither `manifest` nor a bare step failure."""
     tree = _tree(tmp_path)
-    (_site(tree) / "_editable_impl_agent_pep.pth").write_text("/opt/x/src\n", encoding="utf-8")
+    (_site(tree) / "_editable_impl_chaperone.pth").write_text("/opt/x/src\n", encoding="utf-8")
 
     with pytest.raises(Refusal) as raised:
-        check_tree("pep", tree)
+        check_tree("chaperone", tree)
 
     assert raised.value.code is RefusalCode.EDITABLE
-    assert raised.value.subject == "pep"
+    assert raised.value.subject == "chaperone"
 
 
 # ---- the executor -----------------------------------------------------------
@@ -178,10 +178,10 @@ def test_check_tree_raises_its_own_refusal_code(tmp_path: Path) -> None:
 #: fake `uv` writes the staged tree from a hook on this argv.
 BUILD_FIELD = """runs_as: operator
 build:
-  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable", "--package", "agent-pep"]"""
+  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable", "--package", "chaperone"]"""
 
 
-def _manifest(tmp_path: Path, name: str = "pep", **edits: str) -> ComponentManifest:
+def _manifest(tmp_path: Path, name: str = "chaperone", **edits: str) -> ComponentManifest:
     text = manifest_text(name).replace("runs_as: operator", BUILD_FIELD)
     root = tmp_path / "components"
     text = text.replace(f"/opt/components/{name}", str(root / name))
@@ -199,10 +199,10 @@ def _build(tmp_path: Path, write: str) -> tuple[FakeRun, ComponentManifest, Path
     def make(_: object) -> None:
         tree = _tree(paths.new.parent, paths.new.name)
         if write:
-            (_site(tree) / "_editable_impl_agent_pep.pth").write_text(write, encoding="utf-8")
+            (_site(tree) / "_editable_impl_chaperone.pth").write_text(write, encoding="utf-8")
 
     run = FakeRun(answers=git_host_answers(), hooks={"sync": make})
-    source = tmp_path / "work" / "pep"
+    source = tmp_path / "work" / "chaperone"
     source.mkdir(parents=True)
     Installer(fake_host(tmp_path, run)).build(manifest, source, paths)
 
@@ -211,7 +211,7 @@ def _build(tmp_path: Path, write: str) -> tuple[FakeRun, ComponentManifest, Path
 
 def test_a_staged_tree_that_escapes_refuses_the_release(tmp_path: Path) -> None:
     with pytest.raises(Refusal) as raised:
-        _build(tmp_path, "/opt/agent-control/pep/src\n")
+        _build(tmp_path, "/opt/agent-control/chaperone/src\n")
 
     assert raised.value.code is RefusalCode.EDITABLE
 
@@ -219,12 +219,12 @@ def test_a_staged_tree_that_escapes_refuses_the_release(tmp_path: Path) -> None:
 def test_a_refused_build_swaps_nothing(tmp_path: Path) -> None:
     """The check runs at step 8, so the live tree is untouched: `install.to`
     still holds whatever was there and no rename has happened."""
-    live = tmp_path / "components" / "pep"
+    live = tmp_path / "components" / "chaperone"
     (live / "bin").mkdir(parents=True)
     (live / "bin" / "marker").write_text("live\n", encoding="utf-8")
 
     with pytest.raises(Refusal):
-        _build(tmp_path, "/opt/agent-control/pep/src\n")
+        _build(tmp_path, "/opt/agent-control/chaperone/src\n")
 
     assert (live / "bin" / "marker").is_file()
 

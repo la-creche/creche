@@ -45,6 +45,7 @@ from agent_family import (
 
 from . import paths, sandboxes, steps
 from .applied import AppliedState, read_applied, write_applied
+from .chaperone_watch import PepReport, unwatched
 from .clock import now_rfc3339, seconds_from_now
 from .credentials import Credentials
 from .driver import SandboxDriver
@@ -53,7 +54,6 @@ from .faults import FaultEntry
 from .images import SandboxImages
 from .litellm_keys import SPEND_WINDOW, LiteLLMError, LiteLLMKeys, Spend
 from .mcp_wire import McpReport
-from .pep_watch import PepReport, unwatched
 from .sandboxes import SandboxRecord
 from .status import (
     CredentialsBlock,
@@ -197,7 +197,7 @@ def reconcile_family(
     actors: Actors,
     spend: SpendRead = SpendRead.SKIP,
     stop: StopCheck = _never,
-    pep: PepReport | None = None,
+    chaperone: PepReport | None = None,
     mcp: McpReport | None = None,
 ) -> ReconcileResult:
     """Validate, diff, act, publish. Never raises on content.
@@ -210,7 +210,7 @@ def reconcile_family(
     `stop` is the watch loop's SIGTERM, consulted between two steps of the
     sandbox axis and never inside one.
 
-    `pep` is the fleet's one PEP reading, taken by the loop's watch and
+    `chaperone` is the fleet's one PEP reading, taken by the loop's watch and
     handed to every family's pass (contract 05 §3.3 `pep_unreachable`). A
     caller that passes none publishes `pep.watch: off`, because it has no
     interval to probe over and may not claim the PEP answered.
@@ -224,7 +224,7 @@ def reconcile_family(
     if report is None:
         raise FamilyNotFoundError(family_name)
 
-    watch = pep if pep is not None else unwatched()
+    watch = chaperone if chaperone is not None else unwatched()
     write_validation_report(paths.validation_path(state_root, family_name), report)
     live = _live_records(state_root, family_name)
     folded = (
@@ -260,7 +260,7 @@ def reconcile_family(
         folded=folded,
         spend=spend,
         stop=stop,
-        pep=watch,
+        chaperone=watch,
         mcp=mcp,
     )
 
@@ -281,7 +281,7 @@ def _converge(
     folded: tuple[FaultEntry, ...],
     spend: SpendRead,
     stop: StopCheck,
-    pep: PepReport,
+    chaperone: PepReport,
     mcp: McpReport | None,
 ) -> ReconcileResult:
     ran: list[str] = []
@@ -306,7 +306,7 @@ def _converge(
             ran=(),
             note="key_mint_failed",
             spend_block=None,
-            pep=pep,
+            chaperone=chaperone,
         )
 
     if refresh is KeyRefresh.UPDATE and applied is not None:
@@ -359,7 +359,7 @@ def _converge(
             spend_block=None,
             webhooks=webhooks,
             in_flight=True,
-            pep=pep,
+            chaperone=chaperone,
         )
 
     halted = False
@@ -398,7 +398,7 @@ def _converge(
     records = _live_records(state_root, family.name)
     faults = [
         *steps.read_faults(state_root, family.name, tuple(one.id for one in records)),
-        *_pep_faults(pep),
+        *_pep_faults(chaperone),
         *_mcp_faults(mcp),
         *key_faults,
         *timer_faults,
@@ -439,7 +439,7 @@ def _converge(
         settled=settled,
         applied_now=done,
         webhooks=webhooks,
-        pep=pep,
+        chaperone=chaperone,
     )
 
 
@@ -678,7 +678,7 @@ def _keep_last_good(
     revision: str,
     folded: tuple[FaultEntry, ...],
     applied: AppliedState | None,
-    pep: PepReport,
+    chaperone: PepReport,
 ) -> ReconcileResult:
     """Invariant 19: a bad definition yields a report. The last good
     definition keeps serving and nothing is touched (contract 05 §3.1)."""
@@ -708,7 +708,7 @@ def _keep_last_good(
         # would silently move `max_running_turns` on a family that never
         # changed (contract 05 §3.1).
         limits=steps.limits_for(applied.family) if applied is not None else LimitsBlock(),
-        pep=pep,
+        chaperone=chaperone,
     )
     write_status(paths.status_path(state_root, family_name), doc)
     return ReconcileResult(family_name, doc, (), "invalid")
@@ -721,7 +721,7 @@ def _refuse_immutable(
     folded: tuple[FaultEntry, ...],
     applied: AppliedState,
     diff: Diff,
-    pep: PepReport,
+    chaperone: PepReport,
 ) -> ReconcileResult:
     """`name` and `kind` cannot move (contract 01 §3.1). Only the OLD
     revision proves it, so no single-file validation can catch this and
@@ -753,7 +753,7 @@ def _refuse_immutable(
         sandboxes=tuple(sandboxes.status_of(one) for one in _live_records(state_root, family.name)),
         faults=folded,
         limits=steps.limits_for(applied.family),
-        pep=pep,
+        chaperone=chaperone,
     )
     write_status(paths.status_path(state_root, family.name), doc)
     return ReconcileResult(family.name, doc, (), "refused: immutable field moved")
@@ -779,7 +779,7 @@ def _publish(
     applied_now: bool = False,
     webhooks: tuple[WebhookToken, ...] = (),
     in_flight: bool = False,
-    pep: PepReport,
+    chaperone: PepReport,
 ) -> ReconcileResult:
     """Contract 05 §2: one document, rewritten atomically on every state
     change."""
@@ -811,7 +811,7 @@ def _publish(
         faults=faults,
         reconcile=_reconcile_block(state, applied_rev, revision, ran),
         spend=spend_block,
-        pep=pep,
+        chaperone=chaperone,
     )
     write_status(paths.status_path(state_root, family.name), doc)
     return ReconcileResult(family.name, doc, ran, note)
@@ -905,7 +905,7 @@ def _spend_block(
 # --- small answers ---------------------------------------------------------------
 
 
-def _pep_faults(pep: PepReport) -> tuple[FaultEntry, ...]:
+def _pep_faults(chaperone: PepReport) -> tuple[FaultEntry, ...]:
     """Contract 05 §3.3's `pep_unreachable`, raised on EVERY family.
 
     One PEP serves the whole fleet, so one outage is every family's
@@ -921,7 +921,7 @@ def _pep_faults(pep: PepReport) -> tuple[FaultEntry, ...]:
     real and belongs in the row, not in a comment: an autonomous family
     that fires during an outage runs a turn that burns model spend with
     no tools."""
-    fault = pep.fault()
+    fault = chaperone.fault()
 
     return (fault,) if fault is not None else ()
 

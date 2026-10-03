@@ -480,7 +480,7 @@ def test_the_pep_reads_back_what_the_intake_sealed(
 
     So this runs the real seal and the PEP's own loader over it.
     """
-    from agent_pep.secrets import load_secret_dir
+    from chaperone.secrets import load_secret_dir
 
     store, key_file = _sealed_store(tmp_path)
     monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(key_file))
@@ -510,6 +510,6 @@ def test_a_planted_sops_config_cannot_wedge_the_read(
     monkeypatch.chdir(work)
     monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(key_file))
 
-    from agent_pep.secrets import load_secret_dir
+    from chaperone.secrets import load_secret_dir
 
     assert load_secret_dir(store) == {SECRET_NAME: PASTED}

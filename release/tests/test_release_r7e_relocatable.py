@@ -211,7 +211,7 @@ def _manifest(tmp_path: Path, name: str, kind: Kind) -> object:
 def test_the_executor_creates_the_environment_before_the_build(tmp_path: Path) -> None:
     """The fix, where it actually has to happen. Faked children, because
     what is proved here is the ORDER of the argv the executor runs."""
-    manifest = _manifest(tmp_path, "pep", Kind.VENV)
+    manifest = _manifest(tmp_path, "chaperone", Kind.VENV)
     run = FakeRun(answers=git_host_answers())
     source = tmp_path / "src"
     source.mkdir()

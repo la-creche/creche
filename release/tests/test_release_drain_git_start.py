@@ -35,7 +35,7 @@ def test_a_git_child_that_cannot_start_fails_the_step(tmp_path: Path) -> None:
     readers = root_readers(fake_host(tmp_path, run), api=None)
 
     with pytest.raises(StepFailed) as raised:
-        readers.input_digest("pep", SOME_SHA)
+        readers.input_digest("chaperone", SOME_SHA)
 
     assert "FileNotFoundError" in raised.value.detail
 
@@ -46,4 +46,4 @@ def test_a_git_child_that_exits_nonzero_is_no_digest(tmp_path: Path) -> None:
     run = FakeRun(fails={"cat-file": 1})
     readers = root_readers(fake_host(tmp_path, run), api=None)
 
-    assert readers.input_digest("pep", SOME_SHA) is None
+    assert readers.input_digest("chaperone", SOME_SHA) is None

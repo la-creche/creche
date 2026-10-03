@@ -57,7 +57,7 @@ class _Host:
 
     options: list[str]
     spool: Path
-    #: The agent-control clone, where `noticeboard` and `pep` are tagged.
+    #: The agent-control clone, where `noticeboard` and `chaperone` are tagged.
     control: Path
 
 
@@ -278,17 +278,17 @@ def test_every_named_component_must_move_not_only_one(
 ) -> None:
     """Without `--wait` a set that moves `noticeboard` alone files. With it, the set
     the operator named waits whole, and the deadline names what did not move."""
-    host = _host(tmp_path, {COMPONENT: LIVE, "pep": LIVE})
+    host = _host(tmp_path, {COMPONENT: LIVE, "chaperone": LIVE})
     _github(monkeypatch, host, {2: NEXT_TAG})
 
-    code = cli.main(["request", COMPONENT, "pep", *host.options, "--wait", "20"])
+    code = cli.main(["request", COMPONENT, "chaperone", *host.options, "--wait", "20"])
 
     err = capsys.readouterr().err
     assert code == cli.EXIT_REFUSED
     assert _filed(host) == []
-    assert "waiting for a tag that moves noticeboard, pep (0s of 20s)" in err
-    assert "waiting for a tag that moves pep (10s of 20s)" in err
-    assert "refused [request] request: no tag moves pep after waiting 20s" in err
+    assert "waiting for a tag that moves chaperone, noticeboard (0s of 20s)" in err
+    assert "waiting for a tag that moves chaperone (10s of 20s)" in err
+    assert "refused [request] request: no tag moves chaperone after waiting 20s" in err
     assert clock.slept == [cli.POLL_S] * 2
 
 

@@ -13,9 +13,9 @@ from release_fixtures import manifest_text, provides_entry, requires_entry, writ
 
 RELEASE_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
 
-#: `pep` provides pep-grant 2.1 and `attendance` calls it at 2.0.
+#: `chaperone` provides pep-grant 2.1 and `attendance` calls it at 2.0.
 EDGES: dict[str, tuple[str, str]] = {
-    "pep": (provides_entry("pep-grant", 2, 1), ""),
+    "chaperone": (provides_entry("pep-grant", 2, 1), ""),
     "attendance": ("", requires_entry("pep-grant", 2, 0)),
 }
 
@@ -55,9 +55,9 @@ def _state_file(tmp_path: Path) -> str:
         for index, row in enumerate(CATALOG)
     }
     body = {
-        "live": {"pep": "2.0.3", "attendance": "1.4.7"},
+        "live": {"chaperone": "2.0.3", "attendance": "1.4.7"},
         "provided": {"pep-grant": "2.0"},
-        "latest": {"pep": "2.1.0"},
+        "latest": {"chaperone": "2.1.0"},
         "facts": facts,
     }
     path = tmp_path / "live-state.json"
@@ -129,7 +129,7 @@ def test_check_with_site_refuses_a_site_that_lacks_a_value(
 def test_check_refuses_an_incomplete_set(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    write_manifest(tmp_path, "pep", manifest_text("pep"))
+    write_manifest(tmp_path, "chaperone", manifest_text("chaperone"))
 
     code = main(["check", "--root", str(tmp_path)])
 
@@ -138,7 +138,7 @@ def test_check_refuses_an_incomplete_set(
 
 
 def test_partial_accepts_one_repo(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    write_manifest(tmp_path, "pep", manifest_text("pep"))
+    write_manifest(tmp_path, "chaperone", manifest_text("chaperone"))
 
     code = main(["check", "--root", str(tmp_path), "--partial"])
 
@@ -159,14 +159,14 @@ def test_check_json_reports_every_component(
 
 
 def test_resolve_prints_the_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    argv = ["resolve", "pep=2.1.0", *_roots_argv(tmp_path), "--state", _state_file(tmp_path)]
+    argv = ["resolve", "chaperone=2.1.0", *_roots_argv(tmp_path), "--state", _state_file(tmp_path)]
 
     code = main(argv)
     out = capsys.readouterr().out
 
     assert code == EXIT_OK
-    assert "pep             deploy     2.0.3     2.1.0     pep-v2.1.0" in out
-    assert "order: pep" in out
+    assert "chaperone       deploy     2.0.3     2.1.0     chaperone-v2.1.0" in out
+    assert "order: chaperone" in out
     assert "manifest_sha256" not in out
 
 
@@ -175,7 +175,7 @@ def test_resolve_prints_the_hash_with_an_id(
 ) -> None:
     argv = [
         "resolve",
-        "pep=latest",
+        "chaperone=latest",
         *_roots_argv(tmp_path),
         "--state",
         _state_file(tmp_path),
@@ -195,7 +195,7 @@ def test_resolve_json_carries_the_document(
 ) -> None:
     argv = [
         "resolve",
-        "pep=2.1.0",
+        "chaperone=2.1.0",
         *_roots_argv(tmp_path),
         "--state",
         _state_file(tmp_path),
@@ -212,13 +212,13 @@ def test_resolve_json_carries_the_document(
     assert code == EXIT_OK
     assert report["manifest"]["id"] == RELEASE_ID
     assert report["manifest"]["requested_by"] == "agent-control"
-    assert report["manifest"]["order"] == ["pep"]
+    assert report["manifest"]["order"] == ["chaperone"]
 
 
 def test_a_broken_floor_names_both_versions(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`stage7-releases.md` §7.1's acceptance run: a fixture with a floor pep cannot meet."""
+    """`stage7-releases.md` §7.1's acceptance run: a fixture with a floor chaperone cannot meet."""
     argv = ["resolve", "attendance=1.5.0", *_roots_argv(tmp_path, floor=4)]
 
     code = main(argv)
@@ -227,7 +227,7 @@ def test_a_broken_floor_names_both_versions(
     assert code == EXIT_REFUSED
     assert "refused [C1] pep-grant" in error
     assert "attendance requires pep-grant 2.4" in error
-    assert "pep provides 2.1" in error
+    assert "chaperone provides 2.1" in error
 
 
 def test_a_refusal_in_json_is_a_report(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

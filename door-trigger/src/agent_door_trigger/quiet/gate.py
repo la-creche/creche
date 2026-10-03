@@ -15,8 +15,8 @@ from zoneinfo import ZoneInfo
 
 from agent_family import FamilyFile, QuietBlock, Verb, load_registry
 
+from .chaperone import FamilyReads
 from .decide import Daily, Reason, Rule, Snapshot, Watch, reasons, wake_of
-from .pep import FamilyReads
 from .records import Called, Ending, Records
 from .state import GateState, StateStore
 

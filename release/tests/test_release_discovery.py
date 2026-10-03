@@ -16,7 +16,15 @@ from agent_release.errors import Refusal, RefusalCode
 from agent_release.manifest import MAX_MANIFEST_BYTES
 from release_fixtures import manifest_text, write_manifest
 
-CONTROL_NAMES = ("pep", "attendance", "caregiver", "noticeboard", "playpen", "infra", "releasectl")
+CONTROL_NAMES = (
+    "chaperone",
+    "attendance",
+    "caregiver",
+    "noticeboard",
+    "playpen",
+    "infra",
+    "releasectl",
+)
 
 
 def _control_repo(root: Path) -> Path:
@@ -38,7 +46,7 @@ def test_discover_finds_every_manifest(tmp_path: Path) -> None:
     found = discover([_control_repo(tmp_path)])
 
     assert set(found.manifests()) == set(CONTROL_NAMES)
-    assert found.found["pep"].subject == "pep/component.yaml"
+    assert found.found["chaperone"].subject == "chaperone/component.yaml"
 
 
 def test_missing_names_what_no_root_held(tmp_path: Path) -> None:
@@ -96,11 +104,11 @@ def test_a_retiring_component_still_reads_when_it_is_present(tmp_path: Path) -> 
 
 
 def test_only_a_retiring_component_may_be_absent(tmp_path: Path) -> None:
-    kept = tuple(name for name in CONTROL_NAMES if name != "pep")
+    kept = tuple(name for name in CONTROL_NAMES if name != "chaperone")
 
     found = discover(_all_three(tmp_path, kept))
 
-    assert found.missing == ("pep",)
+    assert found.missing == ("chaperone",)
 
 
 def test_a_complete_pair_of_roots_is_complete(tmp_path: Path) -> None:
@@ -114,8 +122,8 @@ def test_a_complete_pair_of_roots_is_complete(tmp_path: Path) -> None:
 
 
 def test_a_name_outside_the_catalog_is_refused(tmp_path: Path) -> None:
-    text = manifest_text("pep").replace("name: pep", "name: smuggled")
-    write_manifest(tmp_path, "pep", text)
+    text = manifest_text("chaperone").replace("name: chaperone", "name: smuggled")
+    write_manifest(tmp_path, "chaperone", text)
 
     refusal = _refusal([tmp_path])
 
@@ -124,17 +132,17 @@ def test_a_name_outside_the_catalog_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_declared_path_must_match_the_directory(tmp_path: Path) -> None:
-    write_manifest(tmp_path, "pep", manifest_text("pep", path="attendance"))
+    write_manifest(tmp_path, "chaperone", manifest_text("chaperone", path="attendance"))
 
     refusal = _refusal([tmp_path])
 
     assert refusal.code is RefusalCode.CATALOG
-    assert "but sits in pep" in refusal.detail
+    assert "but sits in chaperone" in refusal.detail
 
 
 def test_a_declared_repo_must_match_the_catalog(tmp_path: Path) -> None:
-    text = manifest_text("pep").replace("repo: agent-control", "repo: agent-mcp")
-    write_manifest(tmp_path, "pep", text)
+    text = manifest_text("chaperone").replace("repo: agent-control", "repo: agent-mcp")
+    write_manifest(tmp_path, "chaperone", text)
 
     refusal = _refusal([tmp_path])
 
@@ -154,8 +162,8 @@ def test_a_data_component_cannot_declare_itself_releasable(tmp_path: Path) -> No
 def test_two_roots_cannot_declare_one_component_twice(tmp_path: Path) -> None:
     first = tmp_path / "one"
     second = tmp_path / "two"
-    write_manifest(first, "pep", manifest_text("pep"))
-    write_manifest(second, "pep", manifest_text("pep"))
+    write_manifest(first, "chaperone", manifest_text("chaperone"))
+    write_manifest(second, "chaperone", manifest_text("chaperone"))
 
     refusal = _refusal([first, second])
 
@@ -165,9 +173,9 @@ def test_two_roots_cannot_declare_one_component_twice(tmp_path: Path) -> None:
 
 def test_a_symlinked_manifest_is_refused(tmp_path: Path) -> None:
     real = tmp_path / "elsewhere.yaml"
-    real.write_text(manifest_text("pep"), encoding="utf-8")
-    (tmp_path / "pep").mkdir()
-    (tmp_path / "pep" / "component.yaml").symlink_to(real)
+    real.write_text(manifest_text("chaperone"), encoding="utf-8")
+    (tmp_path / "chaperone").mkdir()
+    (tmp_path / "chaperone" / "component.yaml").symlink_to(real)
 
     refusal = _refusal([tmp_path])
 
@@ -177,7 +185,7 @@ def test_a_symlinked_manifest_is_refused(tmp_path: Path) -> None:
 
 def test_an_oversized_manifest_is_refused_before_it_parses(tmp_path: Path) -> None:
     padding = "# " + ("x" * MAX_MANIFEST_BYTES) + "\n"
-    write_manifest(tmp_path, "pep", padding + manifest_text("pep"))
+    write_manifest(tmp_path, "chaperone", padding + manifest_text("chaperone"))
 
     refusal = _refusal([tmp_path])
 
@@ -186,16 +194,16 @@ def test_an_oversized_manifest_is_refused_before_it_parses(tmp_path: Path) -> No
 
 
 def test_a_skipped_directory_holds_no_declaration(tmp_path: Path) -> None:
-    hidden = tmp_path / ".venv" / "pep"
+    hidden = tmp_path / ".venv" / "chaperone"
     hidden.mkdir(parents=True)
-    (hidden / "component.yaml").write_text(manifest_text("pep"), encoding="utf-8")
+    (hidden / "component.yaml").write_text(manifest_text("chaperone"), encoding="utf-8")
 
     assert discover([tmp_path]).found == {}
 
 
 def test_a_symlinked_directory_is_not_walked(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
-    write_manifest(outside, "pep", manifest_text("pep"))
+    write_manifest(outside, "chaperone", manifest_text("chaperone"))
     root = tmp_path / "root"
     root.mkdir()
     (root / "linked").symlink_to(outside)
@@ -207,7 +215,7 @@ def test_too_many_manifest_files_is_refused(tmp_path: Path) -> None:
     for index in range(MAX_MANIFEST_FILES + 2):
         directory = tmp_path / f"c{index:03d}"
         directory.mkdir()
-        (directory / "component.yaml").write_text("name: pep\n", encoding="utf-8")
+        (directory / "component.yaml").write_text("name: chaperone\n", encoding="utf-8")
 
     refusal = _refusal([tmp_path])
 
@@ -217,6 +225,6 @@ def test_too_many_manifest_files_is_refused(tmp_path: Path) -> None:
 
 def test_releasable_drops_the_data_component(tmp_path: Path) -> None:
     write_manifest(tmp_path, "registry-data", manifest_text("registry-data"))
-    write_manifest(tmp_path, "pep", manifest_text("pep"))
+    write_manifest(tmp_path, "chaperone", manifest_text("chaperone"))
 
-    assert set(releasable(discover([tmp_path]))) == {"pep"}
+    assert set(releasable(discover([tmp_path]))) == {"chaperone"}

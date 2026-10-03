@@ -72,7 +72,7 @@ def test_force_is_a_fire_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]
         code = main(["fire", FAMILY, "--force", "--check"])
 
     assert code == ExitCode.ACCEPTED
-    assert f"pep=http://{os.environ[ENV_LAN_ADDRESS]}:{PEP_PORT}" in capsys.readouterr().out
+    assert f"chaperone=http://{os.environ[ENV_LAN_ADDRESS]}:{PEP_PORT}" in capsys.readouterr().out
 
 
 # --- HttpAttendance.any_live: contract 02 §5.2, as the gate asks it ---

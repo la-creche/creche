@@ -93,11 +93,11 @@ class CatalogRow:
 #: `noticeboard` at `noticeboard/` and `playpen` at `playpen/`.
 #:
 #: `bundles` follows each build through `uv.lock`: `attendance` installs the
-#: doors, and `agent-door-trigger` brings `agent-family`; `agent-pep`
-#: imports the requester, so `agent-release` ships in `pep`'s tree.
+#: doors, and `agent-door-trigger` brings `agent-family`; `chaperone`
+#: imports the requester, so `agent-release` ships in `chaperone`'s tree.
 #: `test_each_component_bundles_what_its_build_installs` holds it equal.
 CATALOG: tuple[CatalogRow, ...] = (
-    CatalogRow("pep", Repo.AGENT_CONTROL, "pep", Kind.VENV, Releases.YES, ("release",)),
+    CatalogRow("chaperone", Repo.AGENT_CONTROL, "chaperone", Kind.VENV, Releases.YES, ("release",)),
     CatalogRow(
         "attendance",
         Repo.AGENT_CONTROL,
@@ -131,7 +131,7 @@ CONTRACT_OWNER: dict[ContractId, str] = {
     ContractId.FAMILY_FILE: "caregiver",
     ContractId.SESSION_API: "attendance",
     ContractId.CHANNEL: "playpen",
-    ContractId.PEP_GRANT: "pep",
+    ContractId.PEP_GRANT: "chaperone",
     ContractId.MANAGER_STATUS: "caregiver",
     ContractId.COMPONENT_MANIFEST: "releasectl",
 }

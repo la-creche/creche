@@ -58,7 +58,7 @@ class FoundManifest:
     manifest: ComponentManifest
     #: Repo-relative directory that held the file, `.` at a repository root.
     directory: str
-    #: The label a refusal names, such as `pep/component.yaml`.
+    #: The label a refusal names, such as `chaperone/component.yaml`.
     subject: str
     #: The file's own bytes, as read. The switch stamps them into the
     #: artifact so the NEXT release reads this component's interface out

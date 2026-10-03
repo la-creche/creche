@@ -59,10 +59,10 @@ from agent_family import HostFacts, Index, Registry, load_registry, revision_of
 
 from . import paths
 from .applied import read_applied
+from .chaperone_watch import PepReport, PepWatch, unwatched
 from .delete import delete_family
 from .mcp_release import McpPaths
 from .mcp_wire import McpReport, mcp_pass
-from .pep_watch import PepReport, PepWatch, unwatched
 from .reconcile import Actors, SpendRead, reconcile_family
 from .rotate import settle
 from .status import restamp_status
@@ -335,7 +335,7 @@ class LoopConfig:
     #: this manager was given no PEP address, the watch is OFF, and every
     #: document SAYS `pep.watch: off` — never nothing, because a watch that
     #: is silently off lets a PEP outage go unnoticed.
-    pep: PepWatch | None = None
+    chaperone: PepWatch | None = None
 
 
 @dataclass(frozen=True)
@@ -482,7 +482,7 @@ def serve(config: LoopConfig, actors: Actors, control: Control) -> LoopState:
     stopping = threading.Event()
     log.info(
         "caregiver: watching %s, state %s, images base=%s python=%s, up to %d passes at once, "
-        "pep watch %s",
+        "chaperone watch %s",
         config.registry_root,
         config.state_root,
         config.image,
@@ -629,19 +629,19 @@ def _watch_pep(config: LoopConfig) -> bool:
     (`Passes`), so the most it can cost is one probe timeout of dispatch
     latency once per interval — and only while the PEP is not answering,
     which is when a fault matters more than a second of latency."""
-    if config.pep is None:
+    if config.chaperone is None:
         return False
 
-    return config.pep.poll()
+    return config.chaperone.poll()
 
 
 def _pep_report(config: LoopConfig) -> PepReport:
     """What every pass of this look publishes. `off` when this manager
     was given no address: the document says so rather than nothing."""
-    if config.pep is None:
+    if config.chaperone is None:
         return unwatched()
 
-    return config.pep.report()
+    return config.chaperone.report()
 
 
 def _sweep(
@@ -868,7 +868,7 @@ def _pass(
                 actors=actors,
                 spend=spend,
                 stop=stop,
-                pep=_pep_report(config),
+                chaperone=_pep_report(config),
                 mcp=state.mcp,
             )
         except Exception as exc:

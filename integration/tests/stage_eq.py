@@ -74,7 +74,7 @@ EQ_REGISTRY_ROOT: Final = repo_root() / "integration" / "fixtures" / "eq-registr
 ENQUEUE: Final = "enqueue"
 JOB_STATUS: Final = "job_status"
 
-#: Contract 02 §3 rule 5: the PEP reads this one as user `pep`, so it carries
+#: Contract 02 §3 rule 5: the PEP reads this one as user `chaperone`, so it carries
 #: the group-read bit on the host. Same mode as the delegate door's.
 DISPATCH_TOKEN_MODE: Final = DELEGATE_TOKEN_MODE
 
@@ -165,7 +165,7 @@ def serving_eq(
     core keeps both verbs as seams and the manifest never offers them, which
     is the fail-closed answer and not what this packet is testing.
     """
-    from pep_harness import build_pep, free_port, serving
+    from chaperone_harness import build_pep, free_port, serving
 
     socket = stage.stack.attendance_socket
 

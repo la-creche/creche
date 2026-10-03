@@ -27,7 +27,7 @@ provides:
   - { contract: session-api, major: 1, minor: 4 }
 requires:
   - { contract: channel, major: 1, min_minor: 3 }
-depends_on: [pep]
+depends_on: [chaperone]
 verify:
   command: ["/home/operator/.local/components/attendance/bin/attendance-verify", "--json"]
   user: operator
@@ -59,7 +59,7 @@ def test_good_manifest_round_trips() -> None:
     assert parsed.build == (("/usr/bin/uv", "sync", "--frozen", "--package", "attendance"),)
     assert parsed.provides[0].contract is ContractId.SESSION_API
     assert parsed.requires[0].min_minor == 3
-    assert parsed.depends_on == ("pep",)
+    assert parsed.depends_on == ("chaperone",)
     assert parsed.verify.user is VerifyUser.OPERATOR
     assert parsed.restore.mode is RestoreMode.AUTOMATIC
 
@@ -236,7 +236,12 @@ def test_manifest_version_from_a_future_contract_is_refused() -> None:
 
 
 def test_depends_on_refuses_a_repeat() -> None:
-    assert "repeats" in _refusal(GOOD.replace("depends_on: [pep]", "depends_on: [pep, pep]")).detail
+    assert (
+        "repeats"
+        in _refusal(
+            GOOD.replace("depends_on: [chaperone]", "depends_on: [chaperone, chaperone]")
+        ).detail
+    )
 
 
 @pytest.mark.parametrize(
@@ -283,7 +288,7 @@ def test_a_non_string_key_is_refused() -> None:
 
 
 def test_safe_token_hides_anything_but_a_plain_word() -> None:
-    assert safe_token("pep-v2.1.0") == "pep-v2.1.0"
+    assert safe_token("chaperone-v2.1.0") == "chaperone-v2.1.0"
     assert safe_token("rm -rf /") == UNPRINTABLE
-    assert safe_token("x\nname: pep") == UNPRINTABLE
+    assert safe_token("x\nname: chaperone") == UNPRINTABLE
     assert safe_token(17) == UNPRINTABLE

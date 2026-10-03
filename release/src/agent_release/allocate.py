@@ -201,7 +201,7 @@ def touched(paths: tuple[str, ...], repo: Repo) -> tuple[str, ...]:
     A line is either a bare path from the head commit's own diff, or
     `<component><TAB><path>` from that one component's range (see
     `RANGE_SEPARATOR`). A range line counts for its own component and for no
-    other: `attendance<TAB>pep` is a change to `pep` that happened inside
+    other: `attendance<TAB>chaperone` is a change to `chaperone` that happened inside
     `attendance`'s window, and it tags neither.
 
     A path under no component reaches nothing, which is contract 06 §2.1's
@@ -230,10 +230,10 @@ def levels_of(levels: tuple[str, ...], repo: Repo) -> dict[str, tuple[str, ...]]
     range, a merged pull request carrying that label changed that path. The
     label counts only when the path is one of the component's own. A merge
     queue lands several pull requests in one push, and a `bump:minor` meant
-    for `attendance` must not raise `pep` because both merged together.
+    for `attendance` must not raise `chaperone` because both merged together.
 
         attendance<TAB>bump:minor<TAB>attendance   counts: attendance's own path
-        pep<TAB>bump:minor<TAB>attendance        does not: pep's range, not its path
+        chaperone<TAB>bump:minor<TAB>attendance        does not: chaperone's range, not its path
 
     A line for a component this repo does not own is not this run's to read,
     and refuses: the script writes every line itself.

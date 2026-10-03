@@ -2,7 +2,7 @@
 
 No unit test can reach this one. `playpen/test/grant-refresh.test.ts`
 drives the real bridge against `fake-pep.ts`, which has no grant file;
-`pep/tests/test_pep_grf_manifest_revalidate.py` drives the real PEP with a
+`chaperone/tests/test_chaperone_grf_manifest_revalidate.py` drives the real PEP with a
 `TestClient`, which is not the bridge. The claim the packet makes is about
 both at once, plus the file between them:
 
@@ -35,7 +35,7 @@ from stack import repo_root
 
 sys.path.insert(0, str(repo_root() / "integration" / "tests_manager"))
 
-from pep_harness import build_pep, free_port, serving
+from chaperone_harness import build_pep, free_port, serving
 
 #: The bridge bundle, and the driver that plays pi around it for as long as a
 #: grant file takes to move.

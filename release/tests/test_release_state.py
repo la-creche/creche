@@ -14,10 +14,10 @@ SHA = "2b59c3bd81f4a6079ce5d2a3418b6f0cc7d9e215"
 DIGEST = "sha256:" + ("5e41" * 16)
 
 FULL: dict[str, Any] = {
-    "live": {"pep": "2.0.3", "attendance": None},
+    "live": {"chaperone": "2.0.3", "attendance": None},
     "provided": {"pep-grant": "2.0"},
-    "latest": {"pep": "2.1.0"},
-    "facts": {"pep": {"sha": SHA, "input_digest": DIGEST, "artifact_digest": None}},
+    "latest": {"chaperone": "2.1.0"},
+    "facts": {"chaperone": {"sha": SHA, "input_digest": DIGEST, "artifact_digest": None}},
 }
 
 
@@ -37,11 +37,11 @@ def _refusal(body: Any) -> Refusal:
 def test_a_full_document_round_trips() -> None:
     state = _parse(FULL)
 
-    assert state.live == {"pep": "2.0.3", "attendance": None}
+    assert state.live == {"chaperone": "2.0.3", "attendance": None}
     assert state.provided == {ContractId.PEP_GRANT: (2, 0)}
-    assert state.latest == {"pep": "2.1.0"}
-    assert state.facts["pep"].sha == SHA
-    assert state.facts["pep"].artifact_digest is None
+    assert state.latest == {"chaperone": "2.1.0"}
+    assert state.facts["chaperone"].sha == SHA
+    assert state.facts["chaperone"].artifact_digest is None
 
 
 def test_every_key_is_optional() -> None:
@@ -70,7 +70,7 @@ def test_unparseable_json_is_refused() -> None:
 
 def test_an_oversized_document_is_refused() -> None:
     padded = dict(FULL)
-    padded["latest"] = {"pep": "1.0.0"}
+    padded["latest"] = {"chaperone": "1.0.0"}
     text = json.dumps(padded) + (" " * MAX_STATE_BYTES)
 
     with pytest.raises(Refusal) as caught:
@@ -84,11 +84,11 @@ def test_live_refuses_a_name_outside_the_catalog() -> None:
 
 
 def test_live_refuses_a_version_that_is_not_three_numbers() -> None:
-    assert "MAJOR.MINOR.PATCH" in _refusal({"live": {"pep": "2.1"}}).detail
+    assert "MAJOR.MINOR.PATCH" in _refusal({"live": {"chaperone": "2.1"}}).detail
 
 
 def test_latest_refuses_a_null() -> None:
-    assert "MAJOR.MINOR.PATCH" in _refusal({"latest": {"pep": None}}).detail
+    assert "MAJOR.MINOR.PATCH" in _refusal({"latest": {"chaperone": None}}).detail
 
 
 def test_provided_refuses_an_unknown_contract_id() -> None:
@@ -100,32 +100,32 @@ def test_provided_refuses_a_three_number_version() -> None:
 
 
 def test_facts_refuse_a_short_sha() -> None:
-    body = {"facts": {"pep": {"sha": "abc", "input_digest": DIGEST, "artifact_digest": None}}}
+    body = {"facts": {"chaperone": {"sha": "abc", "input_digest": DIGEST, "artifact_digest": None}}}
 
     assert "40 lower-case hex" in _refusal(body).detail
 
 
 def test_facts_refuse_an_unprefixed_digest() -> None:
-    body = {"facts": {"pep": {"sha": SHA, "input_digest": "5e41", "artifact_digest": None}}}
+    body = {"facts": {"chaperone": {"sha": SHA, "input_digest": "5e41", "artifact_digest": None}}}
 
     assert "sha256:<64 hex>" in _refusal(body).detail
 
 
 def test_facts_accept_an_artifact_digest() -> None:
-    body = {"facts": {"pep": {"sha": SHA, "input_digest": DIGEST, "artifact_digest": DIGEST}}}
+    body = {"facts": {"chaperone": {"sha": SHA, "input_digest": DIGEST, "artifact_digest": DIGEST}}}
 
-    assert _parse(body).facts["pep"].artifact_digest == DIGEST
+    assert _parse(body).facts["chaperone"].artifact_digest == DIGEST
 
 
 def test_facts_refuse_an_unknown_field() -> None:
-    body = {"facts": {"pep": {"sha": SHA, "input_digest": DIGEST, "command": "/bin/sh"}}}
+    body = {"facts": {"chaperone": {"sha": SHA, "input_digest": DIGEST, "command": "/bin/sh"}}}
 
     assert "unknown field: command" in _refusal(body).detail
 
 
 def test_a_map_field_refuses_a_list() -> None:
-    assert "'live' must be an object" in _refusal({"live": ["pep"]}).detail
+    assert "'live' must be an object" in _refusal({"live": ["chaperone"]}).detail
 
 
 def test_facts_refuse_a_scalar_entry() -> None:
-    assert "'facts.pep' must be an object" in _refusal({"facts": {"pep": SHA}}).detail
+    assert "'facts.chaperone' must be an object" in _refusal({"facts": {"chaperone": SHA}}).detail

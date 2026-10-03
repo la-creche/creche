@@ -128,9 +128,9 @@ def test_ha_call_keeps_a_null_entity_id() -> None:
 
 
 def test_release_dumps_its_components() -> None:
-    f = family(name="agent-control", verbs={"release": {"components": ["pep"]}})
+    f = family(name="agent-control", verbs={"release": {"components": ["chaperone"]}})
     grant = build_grant_file(f, index(), rev="r", token_sha256=())
-    assert grant.verbs["release"] == {"components": ["pep"]}
+    assert grant.verbs["release"] == {"components": ["chaperone"]}
 
 
 # --- delegates and approval --------------------------------------------------

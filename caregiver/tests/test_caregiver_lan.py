@@ -49,9 +49,9 @@ def test_the_planes_are_on_the_lan_address() -> None:
 def test_explicit_endpoints_need_no_address(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(LAN_ADDRESS_ENV)
 
-    config = EgressConfig(litellm="litellm.test:4000", pep="pep.test:8300", canaries=())
+    config = EgressConfig(litellm="litellm.test:4000", chaperone="chaperone.test:8300", canaries=())
 
-    assert config.allowed(()) == ("litellm.test:4000", "pep.test:8300")
+    assert config.allowed(()) == ("litellm.test:4000", "chaperone.test:8300")
 
 
 def test_serve_watches_the_pep_on_the_lan_address(
@@ -60,7 +60,7 @@ def test_serve_watches_the_pep_on_the_lan_address(
     assert _serve_plan(tmp_path) == EXIT_OK
 
     printed = capsys.readouterr().out
-    assert f"pep watch: {url(Port.PEP)}," in printed
+    assert f"chaperone watch: {url(Port.PEP)}," in printed
     assert f"attendance: {url(Port.ATTENDANCE)}," in printed
 
 
@@ -70,10 +70,12 @@ def test_an_explicit_pep_url_still_wins(
     monkeypatch.delenv(LAN_ADDRESS_ENV)
     socket = str(tmp_path / "sessiond.sock")
 
-    code = _serve_plan(tmp_path, "--pep-url", "http://pep.test:1", "--sessiond-socket", socket)
+    code = _serve_plan(
+        tmp_path, "--pep-url", "http://chaperone.test:1", "--sessiond-socket", socket
+    )
 
     assert code == EXIT_OK
-    assert "pep watch: http://pep.test:1," in capsys.readouterr().out
+    assert "chaperone watch: http://chaperone.test:1," in capsys.readouterr().out
 
 
 def test_serve_with_no_address_names_the_variable(

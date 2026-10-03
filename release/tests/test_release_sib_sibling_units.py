@@ -56,7 +56,7 @@ NEW_VERSION = "0.1.4"
 #: without one.
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
-PEP_UNIT = "agent-pep.service"
+CHAPERONE_UNIT = "creche-chaperone.service"
 NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: Sibling names, shaped like `attendance`'s three doors.
@@ -244,8 +244,8 @@ def _make_bench(tmp_path: Path, component: str, unit: str, units: str) -> Bench:
 
 @pytest.fixture
 def system(tmp_path: Path) -> Bench:
-    """`pep`, with its unit under `/etc/systemd/system`."""
-    return _make_bench(tmp_path, "pep", PEP_UNIT, SYSTEM_UNITS)
+    """`chaperone`, with its unit under `/etc/systemd/system`."""
+    return _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT, SYSTEM_UNITS)
 
 
 @pytest.fixture
@@ -347,7 +347,7 @@ def _restarts(bench: Bench, name: str) -> list[int]:
 @pytest.mark.parametrize(
     ("component", "unit", "units", "who"),
     [
-        ("pep", PEP_UNIT, SYSTEM_UNITS, As.ROOT),
+        ("chaperone", CHAPERONE_UNIT, SYSTEM_UNITS, As.ROOT),
         ("noticeboard", NOTICEBOARD_UNIT, USER_UNITS, As.OPERATOR),
     ],
     ids=["system unit, as root", "user unit, as the operator"],

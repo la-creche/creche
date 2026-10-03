@@ -10,7 +10,7 @@ upstream and answers with the pasted value — is
 1. `executor/roster.py`: what root writes, and that it writes it safely.
 2. `RosterSource`: that the PEP reads both files and that a generated row
    supersedes a base one of the same name
-   (`pep/tests/test_pep_mcf_roster_wins.py` holds the reason).
+   (`chaperone/tests/test_chaperone_mcf_roster_wins.py` holds the reason).
 
 The rule every case comes back to is WHO writes it. `caregiver` runs as
 the operator, and the roster names commands the PEP executes, so a roster the operator
@@ -25,14 +25,14 @@ from typing import Final, cast
 
 import pytest
 import yaml
-from agent_pep.mcp_client import UpstreamError
-from agent_pep.reload_wiring import RosterSource
 from agent_release.errors import Refusal
 from agent_release.executor.ledger import Entry
 from agent_release.executor.mcpbuild import McpBuilder, ServerBuild, ServerPaths
 from agent_release.executor.roster import Restored, restore, rows, write
 from agent_release.executor.steps import MCP_COMPONENT, Release, Wiring
 from agent_release.mcpserver import ServerFence, ServerFile, ServerPin, Source, parse_server
+from chaperone.mcp_client import UpstreamError
+from chaperone.reload_wiring import RosterSource
 
 MCP_ROOT: Final = Path("/opt/mcp")
 SERVER: Final = "weather"
@@ -368,7 +368,7 @@ class _NoBuilder:
     def swap_back(self, build: object) -> None:
         self.swapped_back.append(str(getattr(build, "name", "?")))
 
-    def reload_pep(self) -> _Result:
+    def reload_chaperone(self) -> _Result:
         self.signalled += 1
 
         return _Result()

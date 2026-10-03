@@ -325,7 +325,9 @@ def test_a_request_left_in_the_old_spool_stops_the_move(old_host: Path) -> None:
 
 
 def test_a_switch_note_left_in_the_old_spool_stops_the_move(old_host: Path) -> None:
-    (_under(old_host, f"{OLD_SPOOL_ROOT}/running") / f"{LEDGER_ID}-pep.switch").write_text("{}")
+    (_under(old_host, f"{OLD_SPOOL_ROOT}/running") / f"{LEDGER_ID}-chaperone.switch").write_text(
+        "{}"
+    )
 
     with pytest.raises(RelocateError, match="unfinished switch"):
         move_old(old_host, os.getuid())

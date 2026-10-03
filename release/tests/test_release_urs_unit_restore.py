@@ -2,7 +2,7 @@
 
 Step 9 swaps the tree in, then `refresh_unit` copies the unit file the
 release carries over the installed one. A step 10 that put back the tree
-alone would restart it under the unit then in force: the NEW one. `pep`
+alone would restart it under the unit then in force: the NEW one. `chaperone`
 0.1.4's unit grants `CAP_SETUID` and `CAP_SETGID`, bounding and ambient,
 for the launcher its tree carries. If its verify failed, 0.1.3 — which
 spawns every MCP server itself — would restart under that unit, and every
@@ -66,7 +66,7 @@ NEW_VERSION = "0.1.4"
 #: without one.
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
-PEP_UNIT = "agent-pep.service"
+CHAPERONE_UNIT = "creche-chaperone.service"
 NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: `fake_host`'s two unit directories: `/etc/systemd/system`, and
@@ -74,7 +74,7 @@ NOTICEBOARD_UNIT = "creche-noticeboard.service"
 SYSTEM_UNITS = "system-units"
 USER_UNITS = "user-units"
 
-#: What `pep` 0.1.4's unit adds for its launcher, and what 0.1.3 must never
+#: What `chaperone` 0.1.4's unit adds for its launcher, and what 0.1.3 must never
 #: run under.
 CAPABILITIES = (
     "CapabilityBoundingSet=CAP_SETUID CAP_SETGID",
@@ -321,7 +321,7 @@ def test_the_switch_note_names_the_kept_unit_before_it_moves(tmp_path: Path) -> 
     """A crash repair reads the note, so the note says where the old unit
     went BEFORE the refresh overwrites it — and the copy is already there,
     byte for byte."""
-    bench = _make_bench(tmp_path, "pep", PEP_UNIT)
+    bench = _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT)
     old = bench.installed().read_bytes()
     seen: list[tuple[dict[str, object], bytes | None]] = []
 
@@ -347,7 +347,7 @@ def test_a_unit_that_cannot_be_kept_moves_nothing(tmp_path: Path) -> None:
     """The keep runs before the note and before the swap, so a keep that
     fails is a switch that moved nothing: the old tree and the old unit
     stay in service, and there is nothing for step 10 to put back."""
-    bench = _make_bench(tmp_path, "pep", PEP_UNIT)
+    bench = _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT)
     old = bench.installed().read_bytes()
     keep = (INSTALL, "-m", "0644", str(bench.installed()), str(bench.kept()))
 
@@ -363,7 +363,7 @@ def test_a_unit_that_cannot_be_kept_moves_nothing(tmp_path: Path) -> None:
 
     entry = bench.ledger()
     assert entry["status"] == "failed"
-    assert str(entry["reason"]).startswith(f"switch: cannot keep {PEP_UNIT}")
+    assert str(entry["reason"]).startswith(f"switch: cannot keep {CHAPERONE_UNIT}")
     assert installed_version(bench.tree()) == LIVE_VERSION
     assert bench.installed().read_bytes() == old
     assert not bench.run.ran("daemon-reload")
@@ -373,9 +373,9 @@ def test_a_unit_that_cannot_be_kept_moves_nothing(tmp_path: Path) -> None:
 
 
 def test_a_failed_verify_puts_the_previous_unit_back_byte_for_byte(tmp_path: Path) -> None:
-    """The `pep` case: 0.1.4's unit grants two capabilities, its verify
+    """The `chaperone` case: 0.1.4's unit grants two capabilities, its verify
     fails, and 0.1.3 comes back under 0.1.3's own unit file."""
-    bench = _make_bench(tmp_path, "pep", PEP_UNIT)
+    bench = _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT)
     old = bench.installed().read_bytes()
     _serve(bench, _unit_text(bench, *CAPABILITIES))
     _fail_verify_once(bench)
@@ -387,13 +387,13 @@ def test_a_failed_verify_puts_the_previous_unit_back_byte_for_byte(tmp_path: Pat
     assert installed_version(bench.tree()) == LIVE_VERSION
     assert bench.installed().read_bytes() == old
     log = cast("list[object]", entry["log_tail"])
-    assert f"unit back: {PEP_UNIT} from {bench.kept()}" in log
+    assert f"unit back: {CHAPERONE_UNIT} from {bench.kept()}" in log
 
 
 def test_the_unit_goes_back_and_reloads_before_the_restart(tmp_path: Path) -> None:
     """The kept copy goes back, then `daemon-reload`, then the restart:
     the previous tree never starts under this release's unit."""
-    bench = _make_bench(tmp_path, "pep", PEP_UNIT)
+    bench = _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT)
     _serve(bench, _unit_text(bench, *CAPABILITIES))
     _fail_verify_once(bench)
 
@@ -402,24 +402,26 @@ def test_the_unit_goes_back_and_reloads_before_the_restart(tmp_path: Path) -> No
     put_back = bench.put_back_at()
     assert len(put_back) == 1, "the kept unit never went back"
     reload = min(index for index in bench.at("daemon-reload") if index > put_back[0])
-    restart = min(index for index in bench.at("restart", PEP_UNIT) if index > put_back[0])
+    restart = min(index for index in bench.at("restart", CHAPERONE_UNIT) if index > put_back[0])
     assert reload < restart
     # The failing verify came first: this is the restore, not the switch.
-    verified = [index for index, one in enumerate(bench.run.seen) if "pep-verify" in one.argv[0]]
+    verified = [
+        index for index, one in enumerate(bench.run.seen) if "chaperone-verify" in one.argv[0]
+    ]
     assert verified[0] < put_back[0]
 
 
 # -- 3. nothing replaced, nothing put back ------------------------------------
 
 
-@pytest.mark.parametrize("unit", [PEP_UNIT, None], ids=["identical", "none named"])
+@pytest.mark.parametrize("unit", [CHAPERONE_UNIT, None], ids=["identical", "none named"])
 def test_a_release_that_replaced_no_unit_puts_none_back(tmp_path: Path, unit: str | None) -> None:
     """The manifest names no unit, or the release carries the file already
     installed. Either way the switch replaces nothing, its note says so,
     and the restore touches no unit file. A `<unit>.prev` an EARLIER
     release left is not this one's: nothing reads a copy the note does not
     name."""
-    bench = _make_bench(tmp_path, "pep", unit)
+    bench = _make_bench(tmp_path, "chaperone", unit)
     if unit is not None:
         bench.kept().write_bytes(b"[Unit]\nDescription=an earlier release's copy\n")
 
@@ -444,7 +446,7 @@ def test_the_crash_repair_puts_the_kept_unit_back(tmp_path: Path) -> None:
     """A run that dies after the refresh leaves this release's unit over a
     tree nobody recorded. The next run puts back the tree, then the unit,
     then reloads and restarts."""
-    bench = _make_bench(tmp_path, "pep", PEP_UNIT)
+    bench = _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT)
     old = bench.installed().read_bytes()
     _serve(bench, _unit_text(bench, *CAPABILITIES))
     _crash_at_the_restart(bench)
@@ -459,7 +461,7 @@ def test_the_crash_repair_puts_the_kept_unit_back(tmp_path: Path) -> None:
     put_back = [index for index in bench.put_back_at() if index >= crashed]
     assert len(put_back) == 1, "the repair never put the kept unit back"
     reload = min(index for index in bench.at("daemon-reload") if index > put_back[0])
-    restart = min(index for index in bench.at("restart", PEP_UNIT) if index > put_back[0])
+    restart = min(index for index in bench.at("restart", CHAPERONE_UNIT) if index > put_back[0])
     assert reload < restart
 
 
@@ -471,7 +473,7 @@ def test_a_copy_that_cannot_go_back_is_a_manual_line(tmp_path: Path) -> None:
     three commands a person types, and the restore stops BEFORE the
     restart, so the previous tree does not come up under this release's
     unit."""
-    bench = _make_bench(tmp_path, "pep", PEP_UNIT)
+    bench = _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT)
     new = _unit_text(bench, *CAPABILITIES)
     _serve(bench, new)
     _fail_verify_once(bench, then=lambda: bench.kept().unlink(missing_ok=True))
@@ -485,13 +487,13 @@ def test_a_copy_that_cannot_go_back_is_a_manual_line(tmp_path: Path) -> None:
     assert bench.installed().read_text(encoding="utf-8") == new
     attempt = bench.put_back_at()
     assert len(attempt) == 1
-    assert not [index for index in bench.at("restart", PEP_UNIT) if index > attempt[0]]
+    assert not [index for index in bench.at("restart", CHAPERONE_UNIT) if index > attempt[0]]
 
 
 def test_a_repair_whose_copy_is_gone_says_so_under_manual(tmp_path: Path) -> None:
     """The same end, reached by the crash repair: the entry says the unit
     did not go back, names the commands, and restarts nothing."""
-    bench = _make_bench(tmp_path, "pep", PEP_UNIT)
+    bench = _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT)
     new = _unit_text(bench, *CAPABILITIES)
     _serve(bench, new)
     _crash_at_the_restart(bench)
@@ -506,7 +508,7 @@ def test_a_repair_whose_copy_is_gone_says_so_under_manual(tmp_path: Path) -> Non
     assert entry["reason"] == UNIT_NOT_BACK
     assert _by_hand(bench.kept(), "root", "systemctl") in bench.manual(note_name)
     assert bench.installed().read_text(encoding="utf-8") == new
-    assert not [index for index in bench.at("restart", PEP_UNIT) if index >= crashed]
+    assert not [index for index in bench.at("restart", CHAPERONE_UNIT) if index >= crashed]
 
 
 # -- a unit of the operator's -------------------------------------------------

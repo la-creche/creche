@@ -129,7 +129,7 @@ def test_a_readable_token_file_stops_the_service(tmp_path: Path) -> None:
 
 def test_the_delegate_token_may_be_group_readable(tmp_path: Path) -> None:
     """Contract 02 §3 rule 5's exception: the PEP reads `door-delegate.token`
-    as user `pep`, so this file may carry the group-read bit."""
+    as user `chaperone`, so this file may carry the group-read bit."""
     write_tokens(tmp_path)
     path = token_file(tmp_path, Principal.DOOR_DELEGATE.value)
     os.chmod(path, 0o640)

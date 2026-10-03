@@ -159,7 +159,7 @@ own module.
 
     **The root is never a release's.** The PEP's children inherit its
     mount namespace, `ProtectSystem=strict` makes every path read-only
-    there, and `agent-pep.service`'s `ReadWritePaths` entry for the root
+    there, and `creche-chaperone.service`'s `ReadWritePaths` entry for the root
     binds it writable only if it exists as the PEP starts. So
     `bin/rework-release-visit.sh` makes it before its own PEP restart,
     and a release that finds no root refuses before any child runs. A
@@ -294,12 +294,12 @@ HASH_MARKER: Final = "--hash=sha256:"
 
 #: The unit that holds every MCP child. Step 9's last action for an
 #: `mcp-servers` release is one signal to it (`stage7-releases.md` §4.4).
-PEP_UNIT: Final = "agent-pep.service"
+CHAPERONE_UNIT: Final = "creche-chaperone.service"
 
 #: `reload_pool.TRIGGER`, as an argv list. `systemctl kill` and not a PID
 #: root looked up: the unit name is the only thing root has to be right
 #: about, and systemd resolves it to the running process.
-HUP_ARGV: Final = (SYSTEMCTL, "kill", "-s", "HUP", PEP_UNIT)
+HUP_ARGV: Final = (SYSTEMCTL, "kill", "-s", "HUP", CHAPERONE_UNIT)
 
 
 @dataclass(frozen=True)
@@ -657,7 +657,7 @@ class McpBuilder:
 
     def _require_state_root(self, name: str) -> None:
         """Assumption 12: the root is the visit's, and a release never makes
-        it. `agent-pep.service` binds it writable only if it exists as the
+        it. `creche-chaperone.service` binds it writable only if it exists as the
         PEP starts, so a root made here would be read-only to every server
         until the next restart, behind a ledger saying `succeeded`."""
         if self.state_root.is_symlink() or not self.state_root.is_dir():
@@ -769,7 +769,7 @@ class McpBuilder:
         if build.paths.prev.is_dir():
             os.rename(build.paths.prev, build.paths.to)
 
-    def reload_pep(self) -> Result:
+    def reload_chaperone(self) -> Result:
         """§4.4 step 1, and step 9's last action for an `mcp-servers`
         release. One signal, by unit name, as an argv list."""
         return self.host.run(Command(argv=HUP_ARGV, identity=As.ROOT, timeout_s=SHORT_TIMEOUT_S))

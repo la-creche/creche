@@ -38,7 +38,7 @@ Five rules follow from it, and each is a test.
 4. **This roster is the ONLY source for a declared server.** The PEP also
    reads the base roster the deployed checkout carries
    (`reload_wiring.RosterSource`), and that file holds no row
-   (`pep/upstreams.yaml`). A name in both would take the generated row,
+   (`chaperone/upstreams.yaml`). A name in both would take the generated row,
    because this file is root's, written at step 9 of a release the operator
    approved, from the tree root just installed. So a PEP that starts with
    no readable generated roster serves no MCP server, and a reload onto an
@@ -53,15 +53,15 @@ Five rules follow from it, and each is a test.
 ## What is NOT here
 
 `arg_allows`. Contract 01b §7 declares both fences and `UpstreamSpec`
-carries only `arg_denies` (`pep/src/agent_pep/fences.py` says why: no
+carries only `arg_denies` (`chaperone/src/chaperone/fences.py` says why: no
 family holds an allow rule yet). Writing one into the roster would make
 the file unparseable, so `steps._say_unapplied_allows` puts one `manual`
 line in the ledger naming every server whose allows are not applied.
 
 **Where the file lives** is `host.ROSTER_FILE`, beside the other paths
 root writes: `/var/lib/agent-release/upstreams.yaml`, under root's own root
-(`layout.py`). NOT `/opt/agent-control/pep/upstreams.yaml`, which is inside
-the `pep` component's artifact — a `pep` release swaps that whole tree, so every
+(`layout.py`). NOT `/opt/agent-control/chaperone/upstreams.yaml`, which is inside
+the `chaperone` component's artifact — a `chaperone` release swaps that whole tree, so every
 generated row would vanish on the PEP's next release with nothing
 anywhere to say why.
 """

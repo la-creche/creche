@@ -57,15 +57,15 @@ FIXTURE = {
     "ui/node_modules/react/index.js": "js",
     "shim/src/agent_shim.egg-info/PKG-INFO": "egg",
     # Live: tracked source beside leftovers of its own.
-    "pep/src/agent_pep/host.py": "py",
-    "pep/src/agent_pep/__pycache__/host.pyc": "pyc",
+    "chaperone/src/chaperone/host.py": "py",
+    "chaperone/src/chaperone/__pycache__/host.pyc": "pyc",
     # The venv the units run from.
-    f"{VENV}/bin/agent-pep": "#!/bin/sh\n",
-    f"{VENV}/lib/python3.12/site-packages/agent_pep/__init__.py": "",
+    f"{VENV}/bin/chaperone": "#!/bin/sh\n",
+    f"{VENV}/lib/python3.12/site-packages/chaperone/__init__.py": "",
     # Untracked and NOT ignored: `-X` must leave it, `-x` would not.
     "left-by-hand.txt": "a decrypted secret, or a copy of a unit",
 }
-TRACKED = (".gitignore", "pyproject.toml", "pep/src/agent_pep/host.py")
+TRACKED = (".gitignore", "pyproject.toml", "chaperone/src/chaperone/host.py")
 
 #: What the leftovers' own directories are called, once the files under them
 #: are gone: `git clean -d` removes the directory too.
@@ -135,13 +135,13 @@ def test_the_clean_removes_a_deleted_directorys_leftovers(deployed: Path) -> Non
 
 
 def test_the_clean_keeps_the_venv_every_unit_runs_from(deployed: Path) -> None:
-    """`/opt/agent-control/.venv` is what `agent-pep.service` execs from and
+    """`/opt/agent-control/.venv` is what `creche-chaperone.service` execs from and
     what `uv sync` fills two steps later in the same script."""
     done = _git(deployed, *_clean_argv()[1:])
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert (deployed / VENV / "bin" / "agent-pep").is_file()
-    assert (deployed / VENV / "lib/python3.12/site-packages/agent_pep/__init__.py").is_file()
+    assert (deployed / VENV / "bin" / "chaperone").is_file()
+    assert (deployed / VENV / "lib/python3.12/site-packages/chaperone/__init__.py").is_file()
 
 
 def test_the_clean_keeps_what_git_does_not_ignore(deployed: Path) -> None:
@@ -154,12 +154,12 @@ def test_the_clean_keeps_what_git_does_not_ignore(deployed: Path) -> None:
 
 
 def test_a_live_directory_keeps_its_tracked_files(deployed: Path) -> None:
-    """`pep/` is not deleted: it loses its `__pycache__` and keeps its
+    """`chaperone/` is not deleted: it loses its `__pycache__` and keeps its
     source. The next two steps of the deploy write that cache again."""
     assert _git(deployed, *_clean_argv()[1:]).returncode == 0
 
-    assert (deployed / "pep/src/agent_pep/host.py").is_file()
-    assert not (deployed / "pep/src/agent_pep/__pycache__").exists()
+    assert (deployed / "chaperone/src/chaperone/host.py").is_file()
+    assert not (deployed / "chaperone/src/chaperone/__pycache__").exists()
 
 
 def test_an_exclude_pattern_would_not_have_kept_the_venv(deployed: Path) -> None:
@@ -185,7 +185,7 @@ def test_the_keep_is_anchored_to_the_top_of_the_tree(deployed: Path) -> None:
     assert _git(deployed, *_clean_argv()[1:]).returncode == 0
 
     assert not (deployed / "toybox").exists()
-    assert (deployed / VENV / "bin" / "agent-pep").is_file()
+    assert (deployed / VENV / "bin" / "chaperone").is_file()
 
 
 def test_the_deploy_never_cleans_everything_untracked() -> None:
@@ -244,10 +244,10 @@ OLD_INSTALL_WORDS = (
 
 #: The files that existed only to feed that install.
 OLD_INSTALL_INPUTS = (
-    "pep/mcp-pins.env",
-    "pep/kagimcp.lock",
-    "pep/kagimcp-requirements.in",
-    "pep/ha-mcp.lock",
+    "chaperone/mcp-pins.env",
+    "chaperone/kagimcp.lock",
+    "chaperone/kagimcp-requirements.in",
+    "chaperone/ha-mcp.lock",
 )
 
 

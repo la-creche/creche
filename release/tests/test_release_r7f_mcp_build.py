@@ -689,7 +689,7 @@ def test_the_last_action_is_one_signal_to_the_pep_unit(tmp_path: Path) -> None:
     fake = McpFake()
     builder, _, _ = _builder(tmp_path, fake)
 
-    builder.reload_pep()
+    builder.reload_chaperone()
 
     assert fake.seen[-1].argv == HUP_ARGV
     assert fake.seen[-1].identity is As.ROOT
