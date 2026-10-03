@@ -1,0 +1,22 @@
+{# The noticeboard's shell. No script tag anywhere: every page works with
+   scripts off, because the page a reader reaches when something is
+   broken must not itself need something to work. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}noticeboard{% endblock %}</title>
+<link rel="stylesheet" href="/static/noticeboard.css?v=1">
+</head>
+<body>
+<nav>
+  <a href="/">families</a>
+  <a href="/audit">audit</a>
+  <span class="where">{{ bind }}</span>
+</nav>
+<main>
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>

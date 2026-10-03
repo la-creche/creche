@@ -24,7 +24,7 @@ verbs:
       - pep
       - sessiond
       - managerd
-      - ui
+      - noticeboard
       - playpen
       - mcp-servers
       - infra

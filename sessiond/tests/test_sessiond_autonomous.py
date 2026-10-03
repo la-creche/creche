@@ -715,7 +715,7 @@ async def test_a_firing_during_the_outage_dials_nothing(tmp_path: Path) -> None:
 
 
 async def test_the_refused_firing_leaves_a_reason(tmp_path: Path) -> None:
-    """Contract 02 §13.1. The one view shows a record, never a silence."""
+    """Contract 02 §13.1. The noticeboard shows a record, never a silence."""
     harness = await build(tmp_path)
     _set_faults(harness, (_pep_unreachable(),))
     harness.create()

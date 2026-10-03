@@ -19,11 +19,11 @@ def _manifest(name: str, *, provides: str = "", requires: str = "") -> Component
 
 
 def _green_set() -> dict[str, ComponentManifest]:
-    """`pep` provides pep-grant 2.1. `sessiond` and `ui` call it at 2.0."""
+    """`pep` provides pep-grant 2.1. `sessiond` and `noticeboard` call it at 2.0."""
     return {
         "pep": _manifest("pep", provides=provides_entry("pep-grant", 2, 1)),
         "sessiond": _manifest("sessiond", requires=requires_entry("pep-grant", 2, 0)),
-        "ui": _manifest("ui", requires=requires_entry("pep-grant", 2, 0)),
+        "noticeboard": _manifest("noticeboard", requires=requires_entry("pep-grant", 2, 0)),
         "infra": _manifest("infra"),
     }
 
@@ -46,7 +46,7 @@ def test_a_green_set_returns_one_row_per_contract() -> None:
     assert rows[0].contract is ContractId.PEP_GRANT
     assert rows[0].provider == "pep"
     assert rows[0].version() == "2.1"
-    assert [item.name for item in rows[0].consumers] == ["sessiond", "ui"]
+    assert [item.name for item in rows[0].consumers] == ["noticeboard", "sessiond"]
 
 
 def test_a_component_with_neither_list_is_in_no_row() -> None:
@@ -101,14 +101,16 @@ def test_c1_reports_a_contract_nobody_provides_and_does_not_refuse() -> None:
     reason the release neither causes nor can fix. So it is reported.
     """
     manifests = _green_set()
-    manifests["ui"] = _manifest("ui", requires=requires_entry("manager-status", 1, 1))
+    manifests["noticeboard"] = _manifest(
+        "noticeboard", requires=requires_entry("manager-status", 1, 1)
+    )
 
-    table = build_table(manifests, frozenset({"ui"}), PEP_GRANT_LIVE)
+    table = build_table(manifests, frozenset({"noticeboard"}), PEP_GRANT_LIVE)
 
-    assert [one.consumer for one in table.unprovided] == ["ui"]
+    assert [one.consumer for one in table.unprovided] == ["noticeboard"]
     assert table.unprovided[0].contract is ContractId.MANAGER_STATUS
     assert table.unprovided[0].line() == (
-        "not verified: ui requires manager-status 1.1, "
+        "not verified: noticeboard requires manager-status 1.1, "
         "and managerd is not a tree under an install root"
     )
 
@@ -138,12 +140,14 @@ def test_c2_refuses_two_providers() -> None:
 
 
 def test_c3_refuses_a_provider_that_owns_nothing() -> None:
-    manifests = {"ui": _manifest("ui", provides=provides_entry("pep-grant", 2, 1))}
+    manifests = {
+        "noticeboard": _manifest("noticeboard", provides=provides_entry("pep-grant", 2, 1))
+    }
 
-    refusal = _refusal(manifests, frozenset({"ui"}), PEP_GRANT_LIVE)
+    refusal = _refusal(manifests, frozenset({"noticeboard"}), PEP_GRANT_LIVE)
 
     assert refusal.code is RefusalCode.C3
-    assert "wrong provider for pep-grant: ui provides it, pep owns it" in refusal.detail
+    assert "wrong provider for pep-grant: noticeboard provides it, pep owns it" in refusal.detail
 
 
 def test_c4_refuses_a_major_bump_that_leaves_a_consumer_behind() -> None:
@@ -156,16 +160,18 @@ def test_c4_refuses_a_major_bump_that_leaves_a_consumer_behind() -> None:
     assert refusal.code is RefusalCode.C4
     assert "breaking change needs a set" in refusal.detail
     assert "2.0 -> 3.0" in refusal.detail
-    assert "missing consumers: ui" in refusal.detail
+    assert "missing consumers: noticeboard" in refusal.detail
 
 
 def test_c4_accepts_the_bump_when_every_consumer_ships() -> None:
     manifests = _green_set()
     manifests["pep"] = _manifest("pep", provides=provides_entry("pep-grant", 3, 0))
     manifests["sessiond"] = _manifest("sessiond", requires=requires_entry("pep-grant", 3, 0))
-    manifests["ui"] = _manifest("ui", requires=requires_entry("pep-grant", 3, 0))
+    manifests["noticeboard"] = _manifest("noticeboard", requires=requires_entry("pep-grant", 3, 0))
 
-    rows = build_table(manifests, frozenset({"pep", "sessiond", "ui"}), PEP_GRANT_LIVE).rows
+    rows = build_table(
+        manifests, frozenset({"pep", "sessiond", "noticeboard"}), PEP_GRANT_LIVE
+    ).rows
 
     assert rows[0].version() == "3.0"
 
@@ -174,7 +180,7 @@ def test_c4_does_not_apply_to_a_first_install() -> None:
     manifests = _green_set()
     manifests["pep"] = _manifest("pep", provides=provides_entry("pep-grant", 2, 1))
     manifests["sessiond"] = _manifest("sessiond", requires=requires_entry("pep-grant", 2, 0))
-    manifests["ui"] = _manifest("ui", requires=requires_entry("pep-grant", 2, 0))
+    manifests["noticeboard"] = _manifest("noticeboard", requires=requires_entry("pep-grant", 2, 0))
 
     assert build_table(manifests, frozenset({"pep"}), {}).rows
 
@@ -184,7 +190,7 @@ def test_c4_ignores_a_provider_this_release_leaves_alone() -> None:
     manifests = _green_set()
     manifests["pep"] = _manifest("pep", provides=provides_entry("pep-grant", 3, 0))
     manifests["sessiond"] = _manifest("sessiond", requires=requires_entry("pep-grant", 3, 0))
-    manifests["ui"] = _manifest("ui", requires=requires_entry("pep-grant", 3, 0))
+    manifests["noticeboard"] = _manifest("noticeboard", requires=requires_entry("pep-grant", 3, 0))
 
     table = build_table(manifests, frozenset({"infra"}), PEP_GRANT_LIVE)
     rows: tuple[ContractRow, ...] = table.rows

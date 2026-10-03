@@ -71,9 +71,9 @@ def test_a_failing_hook_reports_the_exit_code_and_the_stderr_tail(tmp_path: Path
 
 
 def test_a_failing_hook_still_carries_its_stdout_report(tmp_path: Path) -> None:
-    """`view-verify --json` writes its whole report to stdout and nothing
+    """`noticeboard-verify --json` writes its whole report to stdout and nothing
     to stderr, even on exit 1. A `run_hook` that kept stdout only on
-    success would leave the ledger's failure line at `verify ui: exit 1:`
+    success would leave the ledger's failure line at `verify noticeboard: exit 1:`
     — the exit code alone, with the one line that explains the fault (a
     missing access key, say) nowhere in `done/<id>.json`."""
     manifest = _manifest(tmp_path)
@@ -87,7 +87,7 @@ def test_a_failing_hook_still_carries_its_stdout_report(tmp_path: Path) -> None:
 
 def test_a_restart_failure_carries_systemctls_stderr(tmp_path: Path) -> None:
     """Every `_must` failure carries its stderr, not the verify hook alone:
-    `cannot restart agent-view.service (exit 1)` is followed by what
+    `cannot restart creche-noticeboard.service (exit 1)` is followed by what
     `systemctl` says, `Failed to restart … see status`."""
     manifest = _manifest(tmp_path, "pep", **{"unit: null": "unit: agent-pep.service"})
     (tmp_path / "system-units").mkdir(exist_ok=True)
@@ -205,7 +205,7 @@ def test_a_restore_with_no_previous_artifact_stops(tmp_path: Path) -> None:
 
 
 def test_an_uninstalled_unit_is_listed_as_manual_and_never_installed(tmp_path: Path) -> None:
-    """Contract 06 §1 rule 7 and §2.4's note on step 9. `ui`'s unit is not
+    """Contract 06 §1 rule 7 and §2.4's note on step 9. `noticeboard`'s unit is not
     installed anywhere yet, and installing one stays the installer's job."""
     manifest = _manifest(tmp_path, "pep", **{"unit: null": "unit: agent-pep.service"})
     run = FakeRun()

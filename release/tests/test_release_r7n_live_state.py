@@ -44,11 +44,11 @@ from agent_release.executor.source import (
 from release_executor_fixtures import FakeApi, FakeRun, fake_host, fake_readers, stamp_tree
 from release_fixtures import manifest_text, provides_entry
 
-#: The component this module reads a digest for. `view/` is its subtree and
+#: The component this module reads a digest for. `noticeboard/` is its subtree and
 #: `uv.lock` is the lock file that decides what its build installs, so its
 #: digest has two inputs and proves the ordering as well as the hash.
-COMPONENT = "ui"
-SUBTREE = "view"
+COMPONENT = "noticeboard"
+SUBTREE = "noticeboard"
 
 OTHER_SHA = "0" * 40
 
@@ -91,12 +91,12 @@ def _run_git(argv: list[str], cwd: Path) -> str | None:
 
 
 def _make_clone(tmp_path: Path, *, lock: str = "one\n") -> Path:
-    """A repository shaped like agent-control: a `view/` subtree, a
+    """A repository shaped like agent-control: a `noticeboard/` subtree, a
     `uv.lock` beside it, and a file under neither."""
     repo = tmp_path / "agent-control"
     (repo / SUBTREE).mkdir(parents=True)
     repo.chmod(0o755)
-    (repo / SUBTREE / "component.yaml").write_text("name: ui\n", encoding="utf-8")
+    (repo / SUBTREE / "component.yaml").write_text("name: noticeboard\n", encoding="utf-8")
     (repo / "uv.lock").write_text(lock, encoding="utf-8")
     (repo / "README.md").write_text("outside both\n", encoding="utf-8")
     _git(repo, "init", "-q", "-b", "main")
@@ -123,13 +123,13 @@ def test_the_digest_is_the_git_object_ids_of_the_declared_paths(tmp_path: Path) 
     repo = _make_clone(tmp_path)
     sha = _head(repo)
     rows = [
-        (path, _git(repo, "rev-parse", f"{sha}:{path}").strip()) for path in ("uv.lock", SUBTREE)
+        (path, _git(repo, "rev-parse", f"{sha}:{path}").strip()) for path in (SUBTREE, "uv.lock")
     ]
     text = "".join(f"{path} {found}\n" for path, found in rows)
     expected = "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     assert input_digest(_run_git, repo, COMPONENT, sha) == expected
-    assert digest_paths(COMPONENT) == ("uv.lock", SUBTREE)
+    assert digest_paths(COMPONENT) == (SUBTREE, "uv.lock")
 
 
 @pytest.mark.slow
@@ -139,7 +139,9 @@ def test_a_change_under_the_component_changes_its_digest(tmp_path: Path) -> None
     other's without cloning either."""
     repo = _make_clone(tmp_path)
     before = input_digest(_run_git, repo, COMPONENT, _head(repo))
-    (repo / SUBTREE / "component.yaml").write_text("name: ui\nkind: venv\n", encoding="utf-8")
+    (repo / SUBTREE / "component.yaml").write_text(
+        "name: noticeboard\nkind: venv\n", encoding="utf-8"
+    )
     _git(repo, "commit", "-qam", "second")
 
     assert input_digest(_run_git, repo, COMPONENT, _head(repo)) != before
@@ -188,7 +190,13 @@ def test_a_path_that_is_absent_at_that_commit_is_written_down(tmp_path: Path) ->
 @pytest.mark.slow
 def test_the_clones_own_tags_answer_the_newest_version(tmp_path: Path) -> None:
     repo = _make_clone(tmp_path)
-    for tag in ("ui-v0.1.0", "ui-v0.2.0", "ui-v0.10.0", "pep-v9.9.9", "v0.13.5"):
+    for tag in (
+        "noticeboard-v0.1.0",
+        "noticeboard-v0.2.0",
+        "noticeboard-v0.10.0",
+        "pep-v9.9.9",
+        "v0.13.5",
+    ):
         _git(repo, "tag", tag)
 
     found = tag_names(_run_git, repo, COMPONENT)
@@ -200,7 +208,7 @@ def test_the_clones_own_tags_answer_the_newest_version(tmp_path: Path) -> None:
 @pytest.mark.slow
 def test_a_planted_tag_in_the_clone_stops_at_the_predicate(tmp_path: Path) -> None:
     """The corpus is the operator's and anything running as the operator can write a tag
-    into it. So: plant `ui-v9.9.9` and read the whole path it travels.
+    into it. So: plant `noticeboard-v9.9.9` and read the whole path it travels.
 
     The requester believes it, because the requester is advisory and says
     so. ROOT does not read the clone's tags at all — `latest` and the
@@ -210,7 +218,7 @@ def test_a_planted_tag_in_the_clone_stops_at_the_predicate(tmp_path: Path) -> No
     is fetched, nothing is built and nothing is swapped.
     """
     repo = _make_clone(tmp_path)
-    _git(repo, "tag", "ui-v9.9.9")
+    _git(repo, "tag", "noticeboard-v9.9.9")
 
     planted = newest_tagged_version(tag_names(_run_git, repo, COMPONENT), COMPONENT)
     assert planted == "9.9.9"
@@ -231,7 +239,7 @@ def test_a_planted_tag_in_the_clone_stops_at_the_predicate(tmp_path: Path) -> No
 
 
 def _refs(*names: str) -> FakeApi:
-    base = "/repos/example-owner/agent-control/git/matching-refs/tags/ui-v"
+    base = "/repos/example-owner/agent-control/git/matching-refs/tags/noticeboard-v"
 
     return FakeApi({base: [{"ref": f"refs/tags/{one}"} for one in names]})
 
@@ -239,29 +247,35 @@ def _refs(*names: str) -> FakeApi:
 def test_root_reads_the_newest_matching_ref(tmp_path: Path) -> None:
     del tmp_path
 
-    assert newest_version(_refs("ui-v0.1.0", "ui-v0.10.0", "ui-v0.9.0"), "ui", "agent-control")
+    assert newest_version(
+        _refs("noticeboard-v0.1.0", "noticeboard-v0.10.0", "noticeboard-v0.9.0"),
+        "noticeboard",
+        "agent-control",
+    )
 
 
 def test_a_component_with_no_tag_answers_nothing() -> None:
     """A component with no tag at all is not a failure: `latest` names
     nothing and `resolve` refuses the request with its own reason."""
-    assert newest_version(_refs(), "ui", "agent-control") is None
+    assert newest_version(_refs(), "noticeboard", "agent-control") is None
 
 
 def test_a_ref_that_is_not_this_components_tag_is_ignored() -> None:
     """The repository's own history holds `v*` and `schema-v*`, which
     contract 06 §2 does not reuse."""
-    assert newest_version(_refs("v0.13.5", "schema-v0.11.3"), "ui", "agent-control") is None
+    assert (
+        newest_version(_refs("v0.13.5", "schema-v0.11.3"), "noticeboard", "agent-control") is None
+    )
 
 
 def test_a_full_page_of_refs_is_refused_rather_than_guessed() -> None:
     """GitHub sorts refs alphabetically, so a full page means the newest
     may be on a page root did not read. It says so instead of naming the
     highest of a prefix it cannot bound."""
-    many = _refs(*[f"ui-v0.0.{index}" for index in range(REFS_MAX)])
+    many = _refs(*[f"noticeboard-v0.0.{index}" for index in range(REFS_MAX)])
 
     with pytest.raises(Refusal) as raised:
-        newest_version(many, "ui", "agent-control")
+        newest_version(many, "noticeboard", "agent-control")
 
     assert raised.value.code is RefusalCode.STATE
     assert "one page" in raised.value.detail
@@ -276,7 +290,7 @@ def test_an_unreachable_api_is_a_refusal_and_never_an_empty_answer() -> None:
         raise OSError("no route to host")
 
     with pytest.raises(Refusal) as raised:
-        newest_version(unreachable, "ui", "agent-control")
+        newest_version(unreachable, "noticeboard", "agent-control")
 
     assert raised.value.code is RefusalCode.STATE
 
@@ -308,9 +322,10 @@ def test_a_stamped_manifest_claiming_another_components_contract_is_dropped(
     """Rule C3 applied to what is live: only the component contract 06 §3
     names as a contract's owner is read for it."""
     roots = (tmp_path / "components",)
-    stamp_tree(roots[0], "ui", "0.1.0")
+    stamp_tree(roots[0], "noticeboard", "0.1.0")
     write_manifest_stamp(
-        roots[0] / "ui", manifest_text("ui", provides=provides_entry("session-api", 9, 9))
+        roots[0] / "noticeboard",
+        manifest_text("noticeboard", provides=provides_entry("session-api", 9, 9)),
     )
 
     assert build_state(roots, {}, Readers()).state.provided == {}
@@ -347,24 +362,24 @@ def test_facts_are_built_only_for_what_the_release_acts_on(tmp_path: Path) -> No
         tag_sha=fake_readers().tag_sha,
         input_digest=fake_readers().input_digest,
     )
-    built = build_state(roots, {"ui": "latest"}, readers)
+    built = build_state(roots, {"noticeboard": "latest"}, readers)
 
-    assert asked == ["ui"]
-    assert set(built.state.facts) == {"ui"}
-    assert built.state.facts["ui"].sha is not None
+    assert asked == ["noticeboard"]
+    assert set(built.state.facts) == {"noticeboard"}
+    assert built.state.facts["noticeboard"].sha is not None
 
 
 def test_a_version_that_resolves_to_no_commit_is_a_note_and_no_facts(tmp_path: Path) -> None:
     """The requester's end: it says what it could not check rather than
     refusing, because root re-derives all of it at step 2."""
     roots = (tmp_path / "components",)
-    stamp_tree(roots[0], "ui", "0.1.0")
-    write_stamp(roots[0] / "ui", "0.1.0")
+    stamp_tree(roots[0], "noticeboard", "0.1.0")
+    write_stamp(roots[0] / "noticeboard", "0.1.0")
 
-    built = build_state(roots, {"ui": "0.2.0"}, Readers(newest_version=lambda _: "0.2.0"))
+    built = build_state(roots, {"noticeboard": "0.2.0"}, Readers(newest_version=lambda _: "0.2.0"))
 
     assert built.state.facts == {}
-    assert built.notes == ("no commit for ui-v0.2.0: its source facts are unknown here",)
+    assert built.notes == ("no commit for noticeboard-v0.2.0: its source facts are unknown here",)
 
 
 def test_the_catalog_decides_which_paths_a_digest_covers() -> None:

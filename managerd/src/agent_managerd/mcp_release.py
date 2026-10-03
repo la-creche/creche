@@ -158,8 +158,8 @@ ANSWER_FLOOR_S: Final = 86_400.0
 #: again here because the two modules share nothing.
 MAX_ENTRY_BYTES: Final = 1 << 20
 
-#: How much of root's reason a report line, a status document and the one
-#: view carry. Root wrote it, so it is trustworthy about the release. It is
+#: How much of root's reason a report line, a status document and the
+#: noticeboard carry. Root wrote it, so it is trustworthy about the release. It is
 #: still DATA: it is bounded and made printable, never interpreted.
 MAX_REASON_CHARS: Final = 200
 
@@ -795,7 +795,7 @@ def _server_list(value: object) -> tuple[str, ...]:
 def _word(value: object, cap: int) -> str:
     """A root-written string, made printable and bounded.
 
-    It reaches a log line, a status document and the one view. A newline
+    It reaches a log line, a status document and the noticeboard. A newline
     in it is a second line a reader may believe, and a megabyte of it is
     a megabyte in every document this manager publishes.
     """

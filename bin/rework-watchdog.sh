@@ -140,7 +140,7 @@ HTTP_UNAUTHORIZED=401
 # check 5 below reads by its RESULT rather than by `is-failed` — a oneshot
 # that is meant to exit says more about itself that way.
 UNITS="agent-sessiond.service agent-managerd.service agent-door-owui.service \
-agent-trigger-webhooks.service agent-view.service"
+agent-trigger-webhooks.service creche-noticeboard.service"
 
 # Contract 05 §2 rule 5's 90 s, doubled. A document this old means nobody
 # who is running has looked.

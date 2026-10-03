@@ -2,7 +2,7 @@
 
 A staged COMPONENT tree meets the release unit's `UMask=0027` and a build
 that runs as root: `root:root 0750` at the end of it, and
-`agent-view.service` (run as the operator) unable to exec its program out of what
+`creche-noticeboard.service` (run as the operator) unable to exec its program out of what
 was just installed. `install.normalize_modes` answers that for components.
 
 It is in `mcpbuild.py` too, and in three places rather than one, because an

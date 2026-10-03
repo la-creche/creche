@@ -163,7 +163,7 @@ UNIT_FILE_MODE: Final = "0644"
 UNIT_KEPT_SUFFIX: Final = ".prev"
 
 #: The release unit's own `UMask=`, 0027, leaves every OTHER bit at zero on
-#: whatever a build writes into `<install.to>.new` — `agent-view.service`
+#: whatever a build writes into `<install.to>.new` — `creche-noticeboard.service`
 #: runs as the operator and cannot list such a tree after the swap.
 #: `normalize_modes` runs once, after the build and
 #: the two stamps, and sets every mode explicitly so a staged tree is
@@ -180,7 +180,7 @@ FILE_OTHER_R: Final = 0o004
 OWNER_EXECUTE_BIT: Final = 0o100
 
 #: The setting that says what a unit starts, and the one prefix of it that
-#: does not. `ExecStartPre` is a check that runs and exits; `agent-view.
+#: does not. `ExecStartPre` is a check that runs and exits; `creche-noticeboard.
 #: service` carries both, pointing at the same tree.
 EXEC_START_KEY: Final = "ExecStart="
 
@@ -247,7 +247,7 @@ VERIFY_STDOUT_MAX_BYTES: Final = 8 * 1024
 
 #: Bounds a failing child's stderr, both in a verify hook's own `detail`
 #: (contract 06 §4 rule 4) and in every other `_must` failure — a restart,
-#: a unit refresh, a fetch. Without it `cannot restart agent-view.service
+#: a unit refresh, a fetch. Without it `cannot restart creche-noticeboard.service
 #: (exit 1)` drops the one line `systemctl` printed to explain itself.
 STDERR_TAIL_LINES: Final = 40
 
@@ -907,7 +907,7 @@ class Installer:
         hook the switch note recorded.
 
         stdout is captured pass OR fail, because a hook's report is what a
-        reader needs to learn WHY, and `view-verify --json` writes its whole
+        reader needs to learn WHY, and `noticeboard-verify --json` writes its whole
         report to stdout and nothing to stderr (contract 06 §4 rule 4).
         """
         identity = As.ROOT if hook.user == str(VerifyUser.ROOT) else As.OPERATOR

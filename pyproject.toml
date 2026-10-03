@@ -14,7 +14,7 @@ dependencies = [
     "agent-door-owui",
     "agent-door-tui",
     "agent-door-trigger",
-    "agent-view",
+    "noticeboard",
     "agent-release",
 ]
 
@@ -22,7 +22,7 @@ dependencies = [
 package = false
 
 [tool.uv.workspace]
-members = ["pep", "library", "family", "managerd", "sessiond", "door-owui", "door-tui", "door-trigger", "view", "release"]
+members = ["pep", "library", "family", "managerd", "sessiond", "door-owui", "door-tui", "door-trigger", "noticeboard", "release"]
 
 [tool.uv.sources]
 agent-pep = { workspace = true }
@@ -33,7 +33,7 @@ agent-sessiond = { workspace = true }
 agent-door-owui = { workspace = true }
 agent-door-tui = { workspace = true }
 agent-door-trigger = { workspace = true }
-agent-view = { workspace = true }
+noticeboard = { workspace = true }
 agent-release = { workspace = true }
 
 [dependency-groups]
@@ -61,7 +61,7 @@ testpaths = [
     "door-owui/tests",
     "door-tui/tests",
     "door-trigger/tests",
-    "view/tests",
+    "noticeboard/tests",
     "release/tests",
 ]
 addopts = "-q"
@@ -103,6 +103,6 @@ source = [
     "agent_door_owui",
     "agent_door_tui",
     "agent_door_trigger",
-    "agent_view",
+    "noticeboard",
     "agent_release",
 ]

@@ -84,7 +84,7 @@ class HostRecords:
         return Ending.PENDING
 
     def called(self, family: str, call: str, since: datetime, until: datetime) -> Called:
-        # CONTRACT-QUESTION: contract 04 §6 names the one view as the audit's
+        # CONTRACT-QUESTION: contract 04 §6 names the noticeboard as the audit's
         # only reader. This is a second one, under the same user, reading
         # records by tool name and never an argument.
         for day in _utc_days(since, until):

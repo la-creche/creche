@@ -130,8 +130,8 @@ def test_a_real_cost_wins_over_an_unreported_turn() -> None:
 
 
 def test_the_record_still_serializes_a_null_spend() -> None:
-    """`to_file()` is what lands on disk, and the one view already reads a
-    `None` here (`view/src/agent_view/statusdocs.py`'s `OutcomeRow`, and
+    """`to_file()` is what lands on disk, and the noticeboard already reads a
+    `None` here (`noticeboard/src/noticeboard/statusdocs.py`'s `OutcomeRow`, and
     `family.html`'s template already renders it as "—")."""
     body = build(_session(), [_turn(Usage(input=10, cost_usd=0.0))]).to_file()
 

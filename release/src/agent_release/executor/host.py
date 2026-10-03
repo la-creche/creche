@@ -77,7 +77,7 @@ SOURCE_ROOT: Final = CORPUS_ROOT
 #: it, which is what `provenance.check_monotonic` compares against. An empty
 #: tuple turns both off silently. Leaving the operator's root out was that fix
 #: applied to half the catalog: `paths_of` refused `sessiond`, `managerd`
-#: and `ui` at step 8, and a downgrade of `sessiond` read as a first
+#: and `noticeboard` at step 8, and a downgrade of `sessiond` read as a first
 #: install.
 #: Where every MCP server installs, one tree per server (contract 06 §1 row
 #: 6). It is NOT an `install_roots` entry: no `component.yaml` may name a

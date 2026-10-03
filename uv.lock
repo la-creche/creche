@@ -17,8 +17,8 @@ members = [
     "agent-pep",
     "agent-release",
     "agent-sessiond",
-    "agent-view",
     "library",
+    "noticeboard",
 ]
 
 [[package]]
@@ -34,8 +34,8 @@ dependencies = [
     { name = "agent-pep" },
     { name = "agent-release" },
     { name = "agent-sessiond" },
-    { name = "agent-view" },
     { name = "library" },
+    { name = "noticeboard" },
 ]
 
 [package.dev-dependencies]
@@ -59,8 +59,8 @@ requires-dist = [
     { name = "agent-pep", editable = "pep" },
     { name = "agent-release", editable = "release" },
     { name = "agent-sessiond", editable = "sessiond" },
-    { name = "agent-view", editable = "view" },
     { name = "library", editable = "library" },
+    { name = "noticeboard", editable = "noticeboard" },
 ]
 
 [package.metadata.requires-dev]
@@ -201,29 +201,6 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "uvicorn", specifier = ">=0.30" },
-]
-
-[[package]]
-name = "agent-view"
-version = "0.1.0"
-source = { editable = "view" }
-dependencies = [
-    { name = "agent-family" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "jinja2" },
-    { name = "ruamel-yaml" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-family", editable = "family" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "jinja2", specifier = ">=3.1" },
-    { name = "ruamel-yaml", specifier = ">=0.18" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
@@ -814,6 +791,29 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/24/bf/d1bda4f6168e0b2e9e5958945e01910052158313224ada5ce1fb2e1113b8/nodeenv-1.10.0.tar.gz", hash = "sha256:996c191ad80897d076bdfba80a41994c2b47c68e224c542b48feba42ba00f8bb", size = 55611, upload-time = "2025-12-20T14:08:54.006Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/b2/d0896bdcdc8d28a7fc5717c305f1a861c26e18c05047949fb371034d98bd/nodeenv-1.10.0-py2.py3-none-any.whl", hash = "sha256:5bb13e3eed2923615535339b3c620e76779af4cb4c6a90deccc9e36b274d3827", size = 23438, upload-time = "2025-12-20T14:08:52.782Z" },
+]
+
+[[package]]
+name = "noticeboard"
+version = "0.1.0"
+source = { editable = "noticeboard" }
+dependencies = [
+    { name = "agent-family" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "jinja2" },
+    { name = "ruamel-yaml" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-family", editable = "family" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "ruamel-yaml", specifier = ">=0.18" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [[package]]

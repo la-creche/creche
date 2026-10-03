@@ -133,7 +133,7 @@ _WARN_LEVELS = frozenset({"warn", "error"})
 _RESTART_ERROR = "sessiond restarted before this job ended"
 
 # Contract 02 §13.1's `error`, for a firing this service stopped before it
-# cost anything. It is what the one view shows in place of a silence, so it
+# cost anything. It is what the noticeboard shows in place of a silence, so it
 # says the effect, the cause and what happens next, in a person's words.
 _PEP_AWAY_MESSAGE = (
     "This job did not run: the policy service was not answering, "
@@ -293,7 +293,7 @@ class SessionService:
         """Contract 04 §8.6. Show a turn that waits for a phone tap.
 
         The upkeep loop calls this. It is public so a test can drive it
-        without a clock, and so an operator's one view sees the state within
+        without a clock, and so an operator's noticeboard sees the state within
         `FLUSH_INTERVAL_S` of the PEP writing its `pending` record.
         """
         for gate in self._gates.poll():
@@ -1292,7 +1292,7 @@ class SessionService:
         """End the firing at once, with a record that says why.
 
         The turn is minted and failed rather than refused with an error,
-        because a refusal before the mint leaves the one view a silence:
+        because a refusal before the mint leaves the noticeboard a silence:
         contract 02 §13.1's outcome record is built from a session's turns,
         and a session with no turn produces none.
 

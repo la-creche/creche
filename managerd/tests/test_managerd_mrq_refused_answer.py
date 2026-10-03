@@ -393,7 +393,7 @@ def test_a_future_stamp_with_no_entry_left_expires_at_the_unanswered_bound(
 
 def test_a_long_reason_is_cut_to_the_cap(paths: McpPaths) -> None:
     """Root's reason is root-written and is still DATA. It reaches a log
-    line, a status document and the one view."""
+    line, a status document and the noticeboard."""
     request_servers(paths, (SERVER,), NOW, REVISION)
     _answer(paths, _filed(paths)[0], reason="x" * 4000)
 

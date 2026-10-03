@@ -10,8 +10,8 @@ Six behaviours, each with its own reason to exist.
 1. **A fast-forward moves `HEAD` and says so once.** One journal line per
    move, none when nothing moved: a line a minute for ever is how a real
    refusal gets missed.
-2. **A DIVERGED checkout is reported and left alone.** The view commits
-   into this checkout and never pushes (`view/src/agent_view/
+2. **A DIVERGED checkout is reported and left alone.** The noticeboard commits
+   into this checkout and never pushes (`noticeboard/src/noticeboard/
    registrywrite.py`), so a local commit is a normal Tuesday, not
    corruption. The old sync rebased and pushed. This one never does: a
    rebase of the operator's own commit under them is unrecoverable from a timer.
@@ -263,11 +263,11 @@ def test_the_working_tree_carries_the_new_bytes(rig: Rig) -> None:
 
 
 def test_a_local_commit_is_reported_and_never_rebased(rig: Rig) -> None:
-    """The view commits into this checkout and never pushes, so a local
+    """The noticeboard commits into this checkout and never pushes, so a local
     commit is normal. The old sync rebased it and pushed. Rebasing the operator's
     own commit under them, from a timer, is not recoverable."""
-    rig.write_family("chat", "an edit through the view", where=rig.registry)
-    _git(rig.registry, "commit", "-qam", "a view edit")
+    rig.write_family("chat", "an edit through the noticeboard", where=rig.registry)
+    _git(rig.registry, "commit", "-qam", "a noticeboard edit")
     mine = rig.head()
     rig.merge_upstream()
 
@@ -324,8 +324,8 @@ def test_a_refusal_leaves_the_stamp_where_it_was(rig: Rig) -> None:
     check must go stale on it."""
     rig.run()
     first = rig.stamp.read_text(encoding="utf-8")
-    rig.write_family("chat", "an edit through the view", where=rig.registry)
-    _git(rig.registry, "commit", "-qam", "a view edit")
+    rig.write_family("chat", "an edit through the noticeboard", where=rig.registry)
+    _git(rig.registry, "commit", "-qam", "a noticeboard edit")
     rig.merge_upstream()
 
     rig.run()

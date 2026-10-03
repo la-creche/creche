@@ -86,7 +86,7 @@ class Quiesce:
 
 
 def starting(sessions_root: Path, now: float) -> tuple[str, ...]:
-    """One pass with no memory. A caller that asks once — the one view, a
+    """One pass with no memory. A caller that asks once — the noticeboard, a
     doctor check — needs no watcher, and a lie costs it one answer."""
     return Quiesce().starting(sessions_root, now)
 

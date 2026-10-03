@@ -177,7 +177,7 @@ class Gatekeeper:
         return sum(1 for gate in self._gates.values() if gate.family == family)
 
     def open_gates(self) -> frozenset[str]:
-        """Which gate ids are open. For the one view and for tests."""
+        """Which gate ids are open. For the noticeboard and for tests."""
         self._sweep()
         return frozenset(self._gates)
 

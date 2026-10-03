@@ -399,7 +399,7 @@ def status_of(record: SandboxRecord) -> SandboxStatus:
     `sandbox` names the sandbox that served the LAST turn, not the one a
     turn runs on now. A field it cannot fill would be a number that lies
     quietly. `sessiond` is the one authority for
-    a live count, and contract 05 §8 already sends the view there."""
+    a live count, and contract 05 §8 already sends the noticeboard there."""
     running = record.state in (SandboxLifecycle.READY, SandboxLifecycle.DRAINING)
     return SandboxStatus(
         id=record.id,

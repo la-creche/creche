@@ -26,7 +26,7 @@ from agent_release.executor.live_state import write_stamp
 from agent_release.executor.request import parse_request
 from release_fixtures import manifest_text, write_manifest
 
-COMPONENT = "ui"
+COMPONENT = "noticeboard"
 LIVE = "0.1.0"
 NEXT = "0.1.1"
 NEXT_TAG = f"{COMPONENT}-v{NEXT}"
@@ -57,7 +57,7 @@ class _Host:
 
     options: list[str]
     spool: Path
-    #: The agent-control clone, where `ui` and `pep` are tagged.
+    #: The agent-control clone, where `noticeboard` and `pep` are tagged.
     control: Path
 
 
@@ -166,7 +166,7 @@ def test_a_tag_that_lands_on_the_second_poll_files_the_request(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The dispatch case. The first poll finds `ui` at its live version,
+    """The dispatch case. The first poll finds `noticeboard` at its live version,
     which is where a request without `--wait` refuses. `--wait` sleeps once
     and files."""
     host = _host(tmp_path, {COMPONENT: LIVE})
@@ -179,7 +179,7 @@ def test_a_tag_that_lands_on_the_second_poll_files_the_request(
     assert _filed(host) == [{COMPONENT: "latest"}]
     assert github.polls == 2
     assert clock.slept == [cli.POLL_S]
-    assert err.count("waiting for a tag that moves ui (0s of 600s)") == 1
+    assert err.count("waiting for a tag that moves noticeboard (0s of 600s)") == 1
 
 
 def test_the_deadline_refuses_with_todays_words_and_the_wait(
@@ -206,7 +206,7 @@ def test_the_deadline_refuses_with_todays_words_and_the_wait(
     assert clock.slept == [cli.POLL_S] * 3
     # One line per waiting poll: the fetch note is said once, not per poll.
     assert err.count(FETCH_NOTE.format(root=host.control.parent)) == 1
-    assert err.count("waiting for a tag that moves ui") == 3
+    assert err.count("waiting for a tag that moves noticeboard") == 3
 
 
 def test_a_dry_run_that_waits_files_nothing(
@@ -257,8 +257,8 @@ def test_no_flag_means_one_fetch_one_resolve_and_no_sleep(
 def test_a_named_version_waits_for_exactly_that_tag(
     tmp_path: Path, clock: _Clock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`ui@0.1.2` would deploy from the first poll, but its tag is not there
-    yet. `ui-v0.1.1` landing does not move it. `ui-v0.1.2` does."""
+    """`noticeboard@0.1.2` would deploy from the first poll, but its tag is not there
+    yet. `noticeboard-v0.1.1` landing does not move it. `noticeboard-v0.1.2` does."""
     host = _host(tmp_path, {COMPONENT: LIVE})
     github = _github(monkeypatch, host, {2: NEXT_TAG, 3: f"{COMPONENT}-v0.1.2"})
 
@@ -276,7 +276,7 @@ def test_every_named_component_must_move_not_only_one(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Without `--wait` a set that moves `ui` alone files. With it, the set
+    """Without `--wait` a set that moves `noticeboard` alone files. With it, the set
     the operator named waits whole, and the deadline names what did not move."""
     host = _host(tmp_path, {COMPONENT: LIVE, "pep": LIVE})
     _github(monkeypatch, host, {2: NEXT_TAG})
@@ -286,7 +286,7 @@ def test_every_named_component_must_move_not_only_one(
     err = capsys.readouterr().err
     assert code == cli.EXIT_REFUSED
     assert _filed(host) == []
-    assert "waiting for a tag that moves pep, ui (0s of 20s)" in err
+    assert "waiting for a tag that moves noticeboard, pep (0s of 20s)" in err
     assert "waiting for a tag that moves pep (10s of 20s)" in err
     assert "refused [request] request: no tag moves pep after waiting 20s" in err
     assert clock.slept == [cli.POLL_S] * 2
@@ -308,14 +308,14 @@ def test_a_fetch_that_fails_is_said_on_the_poll_it_fails(
     err = capsys.readouterr().err
     assert code == cli.EXIT_REFUSED
     note = err.index(f"note: {ROOT_REFUSAL}")
-    assert note < err.index("waiting for a tag that moves ui (0s of 10s)")
+    assert note < err.index("waiting for a tag that moves noticeboard (0s of 10s)")
     assert clock.slept == [cli.POLL_S]
 
 
 def test_a_malformed_version_is_refused_before_any_fetch_or_wait(
     tmp_path: Path, clock: _Clock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No tag can ever be named `ui-v0.1`. The executor's own parser says so
+    """No tag can ever be named `noticeboard-v0.1`. The executor's own parser says so
     before the first poll, not after the whole deadline."""
     host = _host(tmp_path, {COMPONENT: LIVE})
     github = _github(monkeypatch, host, {})

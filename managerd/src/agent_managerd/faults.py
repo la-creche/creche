@@ -154,7 +154,7 @@ def rescope_by_fleet(
 
     So: the fault stops turns only while it names the family's ONLY live
     sandbox. Nothing is hidden either way -- the entry, its message and its
-    sandbox reach the status document unchanged, and the view still shows it.
+    sandbox reach the status document unchanged, and the noticeboard still shows it.
 
     Every other code keeps the value section 3.3's table fixes.
     """

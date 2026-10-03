@@ -57,9 +57,9 @@
 #
 # A TAG COVERS EVERY CHANGE SINCE THE COMPONENT'S OWN LAST TAG.
 # A run can be missed: a red `main` tags nothing, and a pending run gives
-# way to a newer one. Merge A changes `view/` and its run is missed, merge B
+# way to a newer one. Merge A changes `noticeboard/` and its run is missed, merge B
 # changes only `docs/` and its run passes. Reading one commit's paths would
-# tag nothing for `ui`, and A's change would never be tagged at all. So each
+# tag nothing for `noticeboard`, and A's change would never be tagged at all. So each
 # component gets its own `git diff <its newest tag> <SHA>`, and each line
 # handed to the planner says which component's range it came from.
 #

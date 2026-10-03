@@ -75,7 +75,7 @@ TMP_SUFFIX: Final = ".tmp"
 #: A ledger entry carries the whole resolved manifest and a 200 line tail.
 MAX_RECORD_BYTES: Final = 1 << 20
 
-#: `done/` is readable by the group so the one view can read an outcome
+#: `done/` is readable by the group so the noticeboard can read an outcome
 #: (§2.6). It informs and never decides.
 LEDGER_FILE_MODE: Final = 0o640
 

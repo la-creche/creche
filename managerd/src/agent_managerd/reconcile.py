@@ -79,7 +79,7 @@ log = logging.getLogger("agent_managerd.reconcile")
 #: across four workers on this host.
 MODEL_CACHE_S: Final = 10
 
-#: Contract 05 §3.2: `first_error` is a convenience for the view.
+#: Contract 05 §3.2: `first_error` is a convenience for the noticeboard.
 FIRST_ERROR_CHARS: Final = 200
 
 #: Contract 05 §3.4's two step names that `Step` does not carry. They are

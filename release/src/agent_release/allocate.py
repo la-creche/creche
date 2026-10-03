@@ -70,9 +70,9 @@ REPO_ROOT_PATH = "."
 #: `<component><RANGE_SEPARATOR><path>`.
 #:
 #: WHY A RANGE AT ALL. A run can be missed: a red `main` tags nothing, and
-#: a pending run gives way to a newer one. Merge A changes `view/` and its
+#: a pending run gives way to a newer one. Merge A changes `noticeboard/` and its
 #: run is missed. Merge B changes only `docs/`, its run passes, and the head
-#: commit's own diff names no component. `ui` is never tagged and nothing
+#: commit's own diff names no component. `noticeboard` is never tagged and nothing
 #: says so. A component is
 #: therefore tagged when its paths changed since ITS OWN newest tag, and each
 #: component has its own range, so one flat list of paths cannot say

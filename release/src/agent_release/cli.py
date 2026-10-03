@@ -517,7 +517,7 @@ def _poll(args: argparse.Namespace, wanted: dict[str, str]) -> _Resolved:
     """
     started = monotonic()
     # The fetch comes FIRST. The corpus is refreshed hourly and this side
-    # reads its tags, so a preview built before the fetch would say `ui`
+    # reads its tags, so a preview built before the fetch would say `noticeboard`
     # has no tag minutes after CI made one, and a ROOT read before the
     # fetch can miss a component.yaml that merged minutes ago the same way.
     # `wanted` needs no root, so it comes first and costs nothing.
@@ -634,7 +634,7 @@ def _refresh_corpus(args: argparse.Namespace, wanted: dict[str, str]) -> CorpusR
     that can fix that, because it is the one that runs as the operator.
 
     It runs BEFORE the preview: this side reads the corpus' own tags, so a
-    preview built first would say `ui` has no tag minutes after CI made
+    preview built first would say `noticeboard` has no tag minutes after CI made
     one.
     """
     # stderr, so `--json` still prints one parseable object. It goes out

@@ -47,7 +47,7 @@ UNITS: Final = (
     "agent-managerd.service",
     "agent-door-owui.service",
     "agent-trigger-webhooks.service",
-    "agent-view.service",
+    "creche-noticeboard.service",
 )
 
 #: The registry's door (check 5). The sync is what pulls
@@ -443,12 +443,12 @@ def test_a_socket_that_answers_nothing_is_found(rig: Rig) -> None:
 
 
 def test_a_failed_unit_is_found_and_named(rig: Rig) -> None:
-    rig.run(WD_FAILED_UNITS="agent-view.service")
-    done = rig.run(WD_FAILED_UNITS="agent-view.service")
+    rig.run(WD_FAILED_UNITS="creche-noticeboard.service")
+    done = rig.run(WD_FAILED_UNITS="creche-noticeboard.service")
 
     assert done.returncode == 1
     assert rig.stored() == "units"
-    assert "agent-view.service" in rig.posts()[0]
+    assert "creche-noticeboard.service" in rig.posts()[0]
 
 
 # --- check 5: the registry still reaches this host ---------------------------

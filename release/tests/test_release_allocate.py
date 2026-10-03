@@ -52,7 +52,9 @@ def test_a_changed_file_names_its_component() -> None:
 
 
 def test_the_view_directory_is_the_ui_component() -> None:
-    assert touched(("view/src/agent_view/__init__.py",), Repo.AGENT_CONTROL) == ("ui",)
+    assert touched(("noticeboard/src/noticeboard/__init__.py",), Repo.AGENT_CONTROL) == (
+        "noticeboard",
+    )
 
 
 def test_a_docs_only_change_touches_nothing() -> None:
@@ -277,7 +279,7 @@ def test_another_repositorys_components_are_never_bootstrapped() -> None:
 
 
 def test_the_first_run_tags_every_component_the_commit_did_not_touch() -> None:
-    """Item 1: `main` carries no component tag, so the operator has no `ui-v…` to
+    """Item 1: `main` carries no component tag, so the operator has no `noticeboard-v…` to
     name. One dispatch gives every component its first version."""
     plans = _plan(("infra/secrets.enc.env", "pyproject.toml"), tags=OLD_TAGS)
 
@@ -343,11 +345,11 @@ def test_a_component_added_later_gets_its_first_tag_unasked() -> None:
     """The reason this is not a `--bootstrap` flag. A catalog row added in a
     year is untagged, and the next run tags it with no flag to remember."""
     every = tuple(row.name for row in CATALOG if row.repo is Repo.AGENT_CONTROL)
-    already = tuple(f"{name}-v1.0.0" for name in every if name != "ui")
+    already = tuple(f"{name}-v1.0.0" for name in every if name != "noticeboard")
 
     plans = _plan(("docs/rework/design.md",), tags=already)
 
-    assert [item.tag for item in plans] == ["ui-v0.1.0"]
+    assert [item.tag for item in plans] == ["noticeboard-v0.1.0"]
 
 
 def test_read_lines_drops_blank_lines() -> None:
@@ -384,9 +386,9 @@ def test_a_range_line_whose_path_is_another_components_counts_nothing() -> None:
 
 
 def test_two_ranges_in_one_file_each_tag_their_own_component() -> None:
-    lines = ("pep\tpep", "pep\tdocs", "ui\tview", "ui\tdocs")
+    lines = ("pep\tpep", "pep\tdocs", "noticeboard\tnoticeboard", "noticeboard\tdocs")
 
-    assert touched(lines, Repo.AGENT_CONTROL) == ("pep", "ui")
+    assert touched(lines, Repo.AGENT_CONTROL) == ("pep", "noticeboard")
 
 
 def test_a_range_lines_path_is_checked_like_any_other() -> None:
@@ -405,23 +407,25 @@ def test_a_prefix_this_repo_does_not_own_is_read_as_a_path() -> None:
 
 def test_the_gap_a_missed_dispatch_leaves() -> None:
     """The gap a missed run leaves. A red `main` tags nothing, so a missed
-    run is a normal case. Merge A changes `view/` and its run is missed.
+    run is a normal case. Merge A changes `noticeboard/` and its run is missed.
     Merge B changes only `docs/`. The head commit's own diff names no
-    component, so a planner reading it alone would never tag `ui`, and
+    component, so a planner reading it alone would never tag `noticeboard`, and
     nothing would say so.
     """
     head_commit_only = _plan(("docs/rework/design.md",), tags=ALL_TAGGED)
     assert head_commit_only == ()
 
-    since_each_tag = _plan(("ui\tview", "ui\tdocs", "pep\tdocs"), tags=ALL_TAGGED)
+    since_each_tag = _plan(
+        ("noticeboard\tnoticeboard", "noticeboard\tdocs", "pep\tdocs"), tags=ALL_TAGGED
+    )
 
-    assert [item.tag for item in since_each_tag] == ["ui-v0.1.1"]
+    assert [item.tag for item in since_each_tag] == ["noticeboard-v0.1.1"]
 
 
 def test_a_component_whose_range_holds_nothing_is_not_tagged() -> None:
     """The rule is still per component. A range that changed none of the
     component's own paths allocates nothing for it."""
-    assert _plan(("pep\tdocs", "ui\tdocs"), tags=ALL_TAGGED) == ()
+    assert _plan(("pep\tdocs", "noticeboard\tdocs"), tags=ALL_TAGGED) == ()
 
 
 # ---- the packages a component's build installs -----------------------------
@@ -435,10 +439,10 @@ def test_a_door_change_tags_sessiond() -> None:
 
 
 def test_a_family_change_tags_every_component_that_installs_it() -> None:
-    """`agent-family` is in `sessiond`'s, `managerd`'s and `ui`'s trees."""
+    """`agent-family` is in `sessiond`'s, `managerd`'s and `noticeboard`'s trees."""
     changed = ("family/src/agent_family/model.py",)
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("sessiond", "managerd", "ui")
+    assert touched(changed, Repo.AGENT_CONTROL) == ("sessiond", "managerd", "noticeboard")
 
 
 def test_a_release_package_change_tags_pep_too() -> None:
@@ -450,13 +454,22 @@ def test_a_release_package_change_tags_pep_too() -> None:
 
 def test_a_range_that_changed_only_installed_packages_still_tags() -> None:
     """The gap rule 9 closes. A merge changed `door-trigger/` and `family/`
-    only. Measured against their own directories, `sessiond` and `ui` found
+    only. Measured against their own directories, `sessiond` and `noticeboard` found
     nothing and kept tags older than the code their trees would install."""
-    lines = ("sessiond\tdoor-trigger", "sessiond\tfamily", "managerd\tfamily", "ui\tfamily")
+    lines = (
+        "sessiond\tdoor-trigger",
+        "sessiond\tfamily",
+        "managerd\tfamily",
+        "noticeboard\tfamily",
+    )
 
     plans = _plan(lines, tags=ALL_TAGGED)
 
-    assert [item.tag for item in plans] == ["sessiond-v0.1.1", "managerd-v0.1.1", "ui-v0.1.1"]
+    assert [item.tag for item in plans] == [
+        "sessiond-v0.1.1",
+        "managerd-v0.1.1",
+        "noticeboard-v0.1.1",
+    ]
 
 
 # ---- a component already tagged on this commit -----------------------------

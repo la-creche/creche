@@ -196,7 +196,7 @@ def status_of(last: Turn) -> Outcome:
 
 
 def write(state_root: Path, outcome: OutcomeRecord) -> Path:
-    """Temp file and rename, world-readable for the one view (§13.1)."""
+    """Temp file and rename, world-readable for the noticeboard (§13.1)."""
     path = outcome_file(state_root, outcome.family, outcome.id)
     write_json(path, outcome.to_file(), MODE_PUBLIC_READ)
     return path

@@ -213,7 +213,7 @@ def test_each_component_bundles_what_its_build_installs(found: ManifestSet) -> N
     changes the artifact, so it must move the tag, and `CatalogRow.bundles`
     is that list written down. A package added to a build and not there
     ships with no new tag: a merge that changed only `door-trigger/` and
-    `family/` once left `sessiond` and `ui` on tags older than their code."""
+    `family/` once left `sessiond` and `noticeboard` on tags older than their code."""
     packages = _workspace()
     for name, item in found.found.items():
         row = CATALOG_BY_NAME[name]

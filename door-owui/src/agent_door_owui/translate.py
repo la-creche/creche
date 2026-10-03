@@ -29,7 +29,7 @@ _UNKNOWN_REASON = "interrupted"
 _NO_TERMINAL_REASON = "stream_ended_before_the_turn_settled"
 
 # pi event types this door renders. Anything else is recorded by `sessiond`
-# and shown by the one view; the chat surface has no place for it.
+# and shown by the noticeboard; the chat surface has no place for it.
 _MESSAGE_UPDATE = "message_update"
 _MESSAGE_END = "message_end"
 _TOOL_START = "tool_execution_start"

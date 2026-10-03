@@ -86,7 +86,7 @@ def test_the_default_install_roots_hold_both_trees() -> None:
     assert Path(operator_install_root()) in roots
 
 
-@pytest.mark.parametrize("name", ["sessiond", "managerd", "ui"])
+@pytest.mark.parametrize("name", ["sessiond", "managerd", "noticeboard"])
 def test_a_user_venv_component_is_not_refused_by_containment(name: str) -> None:
     """`paths_of` must not refuse a component whose `install.to` sits
     under `~operator`, or `sessiond` could not be released at all."""
@@ -287,7 +287,7 @@ def test_a_repair_with_no_recorded_hook_says_so_under_manual(
 def test_a_repair_with_no_previous_tree_restarts_nothing(repair_bench: RepairBench) -> None:
     """The FIRST install of a component: there is no `.prev`, so there is
     nothing to put back and the unit keeps running what the crashed switch
-    left live. That is `ui` on the host, and it is deliberate — a restart
+    left live. That is `noticeboard` on the host, and it is deliberate — a restart
     would take the component down to reach the same tree.
 
     What it must not be is silent. The note is cleared, one `manual` line

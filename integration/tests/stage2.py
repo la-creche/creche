@@ -114,7 +114,7 @@ class Manager:
         )
 
     def status(self) -> dict[str, Any]:
-        """The status document as `sessiond` and the view read it."""
+        """The status document as `sessiond` and the noticeboard read it."""
         path = managerd_paths.status_path(self.state_root, FAMILY)
         body: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         return body
