@@ -126,12 +126,7 @@ CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
 #: commits, this entry first and the directory's deletion second, so the
 #: requester a host already runs keeps planning across the second one. The
 #: row goes once no installed requester expects the file.
-#:
-#: `releasectl` is `handover`'s old name. Its row and its directory left in
-#: one commit, because the executor that reads this catalog is the thing
-#: renamed. The name stays here while its tree is still installed on a host
-#: (`/opt/components/releasectl`), and leaves once that tree is retired.
-RETIRING: frozenset[str] = frozenset({"infra", "releasectl"})
+RETIRING: frozenset[str] = frozenset({"infra"})
 
 #: Components on their way INTO the catalog, the opposite of `RETIRING`. The
 #: row lands before the directory, so a checkout carries the manifest or not,

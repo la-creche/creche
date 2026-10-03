@@ -98,11 +98,6 @@ GIT_READ_TIMEOUT_S: Final = 30.0
 #: believes nothing the file says.
 CHAPERONE_USER: Final = "chaperone"
 
-#: The PEP's account before the rename. A host runs the old unit until its
-#: cutover, and this executor ships first, so it accepts both owners until a
-#: cleanup removes this one.
-RETIRING_PEP_USER: Final = "pep"
-
 
 def _ledger_only(request_id: str, kind: str, requested_by: str, reason: str) -> Entry:
     """A request that never reached step 1 still gets §2.6's entry: one
@@ -489,14 +484,10 @@ def _chaperone_uids() -> frozenset[int]:
     file nothing. An absent account is not an error: a host with no PEP
     simply has one requester.
     """
-    uids: set[int] = set()
-    for user in (CHAPERONE_USER, RETIRING_PEP_USER):
-        try:
-            uids.add(pwd.getpwnam(user).pw_uid)
-        except KeyError:
-            continue
-
-    return frozenset(uids)
+    try:
+        return frozenset({pwd.getpwnam(CHAPERONE_USER).pw_uid})
+    except KeyError:
+        return frozenset()
 
 
 def run_pass(spool: Spool, wiring: Wiring) -> int:

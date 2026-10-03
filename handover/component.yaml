@@ -33,17 +33,9 @@ build:
 install:
   to: /opt/components/handover
   prev: /opt/components/handover.prev
-# Contract 06 makes this component the provider of `component-manifest`
-# (`catalog.CONTRACT_OWNER`), and yet it provides nothing, for now. The
-# first `handover` release is installed by the old `releasectl` executor.
-# Its contract table would hold two providers of `component-manifest`: the
-# live `releasectl` tree's stamp and the deploying `handover`. It refuses
-# that with C2, and its requester refuses it with C3. A follow-up restores
-# `{ contract: component-manifest, major: 0, minor: 17 }` once `handover` is
-# live and `releasectl` is retired. Nothing requires the contract, so the
-# gap breaks no consumer
-# (`test_handover_provides_nothing_until_releasectl_retires`).
-provides: []
+provides:
+  # Contract 06: the manifest shape, the resolver and the allocator.
+  - { contract: component-manifest, major: 0, minor: 17 }
 requires: []
 depends_on: []
 verify:

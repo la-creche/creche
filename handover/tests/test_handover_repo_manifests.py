@@ -67,27 +67,18 @@ def test_a_manifest_sits_where_the_catalog_says(found: ManifestSet) -> None:
         assert item.directory == CATALOG_BY_NAME[name].path
 
 
-#: Contracts no manifest provides today. `component-manifest` is the
-#: temporary exception: the first `handover` release is installed by the old
-#: `releasectl` executor, whose contract table would hold two providers of it
-#: (the live `releasectl` stamp and the deploying `handover`) and refuse with
-#: C2 or C3. A follow-up restores `provides` once `handover` is live and
-#: `releasectl` is retired, and empties this set.
-UNPROVIDED_FOR_NOW: frozenset[ContractId] = frozenset({ContractId.COMPONENT_MANIFEST})
-
-
 def test_the_repo_set_resolves_with_a_green_table(found: ManifestSet) -> None:
     resolution = resolve(found.manifests(), ReleaseState(), {})
 
     assert resolution.order == ()
-    assert len(resolution.contracts) == len(ContractId) - len(UNPROVIDED_FOR_NOW)
+    assert len(resolution.contracts) == len(ContractId)
 
 
-def test_handover_provides_nothing_until_releasectl_retires(found: ManifestSet) -> None:
-    """Pinned, so the follow-up that restores `component-manifest` is a
-    deliberate change (`UNPROVIDED_FOR_NOW`, `handover/component.yaml`).
-    The owner stays `handover`: only the claim waits."""
-    assert found.manifests()["handover"].provides == ()
+def test_handover_provides_the_manifest_contract(found: ManifestSet) -> None:
+    """Contract 06's own shape is `handover`'s to provide, and the catalog
+    names it as the owner."""
+    provided = found.manifests()["handover"].provides
+    assert [one.contract for one in provided] == [ContractId.COMPONENT_MANIFEST]
     assert CONTRACT_OWNER[ContractId.COMPONENT_MANIFEST] == "handover"
 
 

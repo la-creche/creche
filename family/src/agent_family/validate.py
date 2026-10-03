@@ -85,17 +85,6 @@ RELEASABLE: Final = frozenset(
     }
 )
 
-#: Old names a family file may still list. `sandbox-image` became `playpen`,
-#: `ui` became `noticeboard`, `sessiond` became `attendance`, `managerd`
-#: became `caregiver`, `pep` became `chaperone` and `releasectl` became
-#: `handover`. The registry's family file says the old names until its own
-#: change lands after these deploy. Each rename adds its old name. The set
-#: shrinks in one cleanup after the registry's family file names the new
-#: components.
-RETIRING_NAMES: Final = frozenset(
-    {"sandbox-image", "ui", "sessiond", "managerd", "pep", "releasectl"}
-)
-
 #: Probe 0a measured 155 to 170 MB per idle held-open pi process and 62 MB for
 #: the playpen (contract 01 §3.9). The warning uses the LOW end, so it fires
 #: only when the budget cannot carry the count even optimistically. Used only
@@ -501,7 +490,7 @@ def _check_release(family: FamilyFile, issues: Issues) -> None:
         return
 
     for position, component in enumerate(fence.components):
-        if component not in RELEASABLE | RETIRING_NAMES:
+        if component not in RELEASABLE:
             issues.error(
                 f"verbs.release.components[{position}]",
                 f"'{component}' is not a releasable component; contract 06 §1 names "
