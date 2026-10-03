@@ -138,6 +138,40 @@ def test_an_install_path_is_accepted_under_a_configured_root(tmp_path: Path) -> 
     assert paths.new.name == "pep.new"
 
 
+def test_the_install_root_itself_is_refused(tmp_path: Path) -> None:
+    """`swap_in` renames `to` away. A `to` that IS the root would rename
+    every installed tree to `<root>.prev` and put one component in its
+    place."""
+    root = tmp_path / "components"
+    manifest = _manifest(tmp_path, "pep", **{str(root / "pep"): str(root)})
+    with pytest.raises(Refusal) as raised:
+        paths_of(manifest, (root,))
+
+    assert raised.value.code is RefusalCode.MANIFEST
+
+
+def test_a_nested_install_path_is_refused(tmp_path: Path) -> None:
+    """Direct children only: `<root>/<other>/pep` would live inside another
+    component's tree."""
+    root = tmp_path / "components"
+    manifest = _manifest(tmp_path, "pep", **{str(root / "pep"): str(root / "x" / "pep")})
+    with pytest.raises(Refusal) as raised:
+        paths_of(manifest, (root,))
+
+    assert raised.value.code is RefusalCode.MANIFEST
+
+
+def test_a_prev_that_names_another_tree_is_refused(tmp_path: Path) -> None:
+    """`swap_in` removes `prev` first. A free `prev` under the root removes
+    whichever tree it names, so it may only be `<to>.prev`."""
+    root = tmp_path / "components"
+    manifest = _manifest(tmp_path, "pep", **{str(root / "pep.prev"): str(root / "releasectl")})
+    with pytest.raises(Refusal) as raised:
+        paths_of(manifest, (root,))
+
+    assert raised.value.code is RefusalCode.MANIFEST
+
+
 def test_a_swap_puts_the_old_tree_at_prev_and_back_again(tmp_path: Path) -> None:
     """Step 9's two renames, then step 10's. The tree that failed goes to
     `.new`, and the run that staged it removes it before it ends
