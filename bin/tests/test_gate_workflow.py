@@ -121,7 +121,7 @@ PINNED = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
 TAG_COMMENT = re.compile(r"^\s*# v\d+\.\d+\.\d+$")
 
 #: A small suite, to split for real in a subprocess.
-SMALL_SUITE = "indexer/tests"
+SMALL_SUITE = "library/tests"
 
 
 def _root_conftest() -> Any:

@@ -59,7 +59,7 @@ REFERENCE = re.compile(
 )
 
 #: One shell brace list, `{a,b}`, in a referenced path. The deploy names
-#: `/opt/agent-control/{pep,indexer}/src` this way. A list that still names
+#: `/opt/agent-control/{pep,library}/src` this way. A list that still names
 #: a deleted directory stops the deploy on the host at `chmod`, and a scan
 #: that does not expand the list cannot see it.
 BRACES = re.compile(r"\{([A-Za-z0-9._,+-]+)\}")

@@ -7,7 +7,7 @@ version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
     "agent-pep",
-    "agent-indexer",
+    "library",
     "agent-family",
     "agent-managerd",
     "agent-sessiond",
@@ -22,11 +22,11 @@ dependencies = [
 package = false
 
 [tool.uv.workspace]
-members = ["pep", "indexer", "family", "managerd", "sessiond", "door-owui", "door-tui", "door-trigger", "view", "release"]
+members = ["pep", "library", "family", "managerd", "sessiond", "door-owui", "door-tui", "door-trigger", "view", "release"]
 
 [tool.uv.sources]
 agent-pep = { workspace = true }
-agent-indexer = { workspace = true }
+library = { workspace = true }
 agent-family = { workspace = true }
 agent-managerd = { workspace = true }
 agent-sessiond = { workspace = true }
@@ -54,7 +54,7 @@ dev = [
 testpaths = [
     "bin/tests",
     "pep/tests",
-    "indexer/tests",
+    "library/tests",
     "family/tests",
     "managerd/tests",
     "sessiond/tests",
@@ -96,7 +96,7 @@ known-third-party = ["conftest"]
 branch = true
 source = [
     "agent_pep",
-    "agent_indexer",
+    "library",
     "agent_family",
     "agent_managerd",
     "agent_sessiond",

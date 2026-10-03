@@ -1,6 +1,6 @@
-"""`bin/provision-indexer.sh` takes the LAN address from the site file.
+"""`bin/provision-library.sh` takes the LAN address from the site file.
 
-The indexer's sandbox may reach TEI on the host's LAN address and nothing
+The library's sandbox may reach TEI on the host's LAN address and nothing
 else, and the image it runs fixes that address at build time. The address
 is the site's (`/etc/agent-control/site.env`). `LAN_ADDRESS` still wins.
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Final
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
-SCRIPT: Final = REPO_ROOT / "bin" / "provision-indexer.sh"
+SCRIPT: Final = REPO_ROOT / "bin" / "provision-library.sh"
 
 #: A corpus no machine has, so the script stops before it builds anything.
 ABSENT_CORPUS: Final = "lan-test-absent-corpus"
@@ -76,7 +76,7 @@ def test_an_explicit_address_still_wins(tmp_path: Path) -> None:
 
 def test_the_image_is_built_with_the_address() -> None:
     """A sandbox has no site file: the image carries the address
-    (`indexer/Dockerfile`), and its build fails without it."""
+    (`library/Dockerfile`), and its build fails without it."""
     text = SCRIPT.read_text(encoding="utf-8")
 
     assert '--build-arg "AGENT_LAN_ADDRESS=$LAN_ADDRESS"' in text

@@ -1,5 +1,5 @@
 # Vault index build for scope %i. USER unit; %i = scope name
-# under /srv/agents/vault. The sandbox index-%i must exist (provision-indexer.sh).
+# under /srv/agents/vault. The sandbox index-%i must exist (provision-library.sh).
 [Unit]
 Description=Vault index build for scope %i
 

@@ -14,13 +14,13 @@ from pathlib import Path
 
 import httpx
 
-from .indexer import DIMS, EMBED_MAX_BATCH, PROFILES, Corpus, index_scope
+from .library import DIMS, EMBED_MAX_BATCH, PROFILES, Corpus, index_scope
 
 #: An explicit TEI base URL. It wins over the address below.
 TEI_URL_ENV = "TEI_URL"
 
 #: The site's LAN address, baked into the image at build time
-#: (`Dockerfile`, `bin/provision-indexer.sh`): a sandbox has no site file.
+#: (`Dockerfile`, `bin/provision-library.sh`): a sandbox has no site file.
 LAN_ADDRESS_ENV = "AGENT_LAN_ADDRESS"
 
 #: TEI's port on that address (`infra/compose.yaml`).

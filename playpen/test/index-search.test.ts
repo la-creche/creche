@@ -5,8 +5,8 @@
 //   query ──► embed (PEP, when granted) ──► chunks_emb, nearest by L2 ─┐
 //         └─────────────────────────────► chunks_fts, bm25 ───────────┴─► RRF
 //
-// The stores here are built with `node:sqlite` in the layout the indexer
-// writes (`indexer/README.md`, "Store schema"), minus `chunks_vec`, which the
+// The stores here are built with `node:sqlite` in the layout the library
+// writes (`library/README.md`, "Store schema"), minus `chunks_vec`, which the
 // bridge never reads. The PEP is `test/fake-pep.ts` on 127.0.0.1.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -133,7 +133,7 @@ afterEach(async () => {
   saved.clear();
 });
 
-/** float32, little-endian: the indexer's `chunks_emb` blob. */
+/** float32, little-endian: the library's `chunks_emb` blob. */
 function blob(vector: readonly number[]): Uint8Array {
   const view = new DataView(new ArrayBuffer(vector.length * 4));
   vector.forEach((value, index) => view.setFloat32(index * 4, value, true));
@@ -141,7 +141,7 @@ function blob(vector: readonly number[]): Uint8Array {
   return new Uint8Array(view.buffer);
 }
 
-/** One index directory, `<index root>/<name>/store.db`, as the indexer lays it out. */
+/** One index directory, `<index root>/<name>/store.db`, as the library lays it out. */
 function buildStore(name: string, fixture: FixtureStore): string {
   const dir = join(indexRoot, name);
   mkdirSync(dir, { recursive: true });

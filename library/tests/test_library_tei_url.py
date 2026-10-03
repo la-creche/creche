@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 import pytest
-from agent_indexer.__main__ import (
+from library.__main__ import (
     LAN_ADDRESS_ENV,
     TEI_PORT,
     TEI_URL_ENV,

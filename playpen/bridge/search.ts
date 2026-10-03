@@ -9,7 +9,7 @@
 // index keeps its own ranking. Every vector lives in one model space, so the
 // distances do compare, and the nearest chunks of all indexes form ONE list.
 //
-// The fail-closed rule is the indexer's (`indexer/AGENTS.md`): an index whose
+// The fail-closed rule is the library's (`library/AGENTS.md`): an index whose
 // recorded `embed_model` is not the model `embed` answered with refuses its
 // vector half, because vectors from two model spaces do not compare. An index
 // that recorded no model, holds no `chunks_emb` or disagrees on dims refuses

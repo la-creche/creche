@@ -30,7 +30,7 @@ from typing import Protocol
 
 import sqlite_vec
 
-log = logging.getLogger("agent_indexer")
+log = logging.getLogger("library")
 
 
 class Corpus(StrEnum):
