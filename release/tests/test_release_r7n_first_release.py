@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from agent_release.catalog import CATALOG, CATALOG_BY_NAME, RETIRING, Repo
+from agent_release.catalog import ARRIVING, CATALOG, CATALOG_BY_NAME, RETIRING, Repo
 from agent_release.executor.approval import Decision, Summary
 from agent_release.executor.drain import Counter, drain, handle
 from agent_release.executor.live_state import (
@@ -199,8 +199,9 @@ def _repo_manifest(components: Path, name: str) -> str | None:
         return None
 
     where = REPO_ROOT if row.path == "." else REPO_ROOT / row.path
-    # A retiring component's directory has left this tree (`catalog.RETIRING`).
-    if name in RETIRING and not (where / "component.yaml").is_file():
+    # A retiring component's directory has left this tree (`catalog.RETIRING`),
+    # and an arriving one's has not reached it yet (`catalog.ARRIVING`).
+    if name in RETIRING | ARRIVING and not (where / "component.yaml").is_file():
         return None
 
     text = (where / "component.yaml").read_text(encoding="utf-8")

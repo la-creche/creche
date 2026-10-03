@@ -71,7 +71,8 @@ from .report import Issues
 from .server import McpServerFile
 
 #: Contract 06 §1's releasable names. `registry-data` is absent: it never
-#: takes a release (contract 06 §6).
+#: takes a release (contract 06 §6). `handover` is `releasectl`'s next name,
+#: which the registry's family file may list once the rename lands.
 RELEASABLE: Final = frozenset(
     {
         "chaperone",
@@ -82,6 +83,7 @@ RELEASABLE: Final = frozenset(
         "mcp-servers",
         "infra",
         "releasectl",
+        "handover",
     }
 )
 

@@ -34,6 +34,7 @@ EDGES: dict[str, tuple[str, str, str]] = {
     "playpen": ("", "", ""),
     "infra": ("", "", ""),
     "releasectl": ("", "", ""),
+    "handover": ("", "", ""),
     "mcp-servers": ("", "", ""),
     "registry-data": ("", "", ""),
 }

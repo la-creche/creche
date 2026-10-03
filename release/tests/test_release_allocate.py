@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from agent_release.allocate import (
     MAX_INPUT_LINES,
@@ -17,8 +19,10 @@ from agent_release.allocate import (
     touched,
     untagged,
 )
-from agent_release.catalog import CATALOG, CATALOG_BY_NAME, RETIRING, Kind, Repo
+from agent_release.catalog import ARRIVING, CATALOG, CATALOG_BY_NAME, RETIRING, Kind, Repo
+from agent_release.discovery import discover
 from agent_release.errors import Refusal, RefusalCode
+from release_fixtures import manifest_text, write_manifest
 
 #: The tags the repository already carries under the OLD schemes. Contract 06
 #: §2 keeps them as history and reuses neither prefix.
@@ -27,9 +31,11 @@ OLD_TAGS = ("v0.12.43", "v0.12.42", "schema-v0.11.3")
 #: Every agent-control component at its first version. A repository in this
 #: state has nothing left to bootstrap, so the path rule alone decides.
 #: The components a run in agent-control may tag: its rows, minus a retiring
-#: one, which is never tagged.
+#: or an arriving one, which is never tagged.
 TAGGED = tuple(
-    row.name for row in CATALOG if row.repo is Repo.AGENT_CONTROL and row.name not in RETIRING
+    row.name
+    for row in CATALOG
+    if row.repo is Repo.AGENT_CONTROL and row.name not in RETIRING | ARRIVING
 )
 ALL_TAGGED = tuple(f"{name}-v0.1.0" for name in TAGGED)
 
@@ -250,7 +256,7 @@ def test_the_lock_file_moves_every_venv_component_and_no_other() -> None:
     tag, and shipped only when something else changed the component."""
     plans = _plan(("uv.lock",), tags=ALL_TAGGED)
 
-    ours = [row for row in CATALOG if row.repo is Repo.AGENT_CONTROL]
+    ours = [row for row in CATALOG if row.repo is Repo.AGENT_CONTROL and row.name not in ARRIVING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV}
 
     assert {plan.component for plan in plans} == venvs
@@ -314,6 +320,31 @@ def test_a_retiring_component_is_never_tagged() -> None:
 
     assert retiring not in {item.component for item in first}
     assert retiring not in {item.component for item in bumped}
+
+
+def test_an_arriving_component_reads_absent_and_is_never_tagged(tmp_path: Path) -> None:
+    """`handover` is `releasectl`'s next name. Its row lands one release
+    before its directory, because an installed executor learns a name only
+    from a `releasectl` release. A tree with no `handover/` reads complete,
+    and no run tags it: not a first tag, and not a bump."""
+    (arriving,) = ARRIVING
+    assert arriving == "handover"
+    assert arriving in CATALOG_BY_NAME
+    row = CATALOG_BY_NAME[arriving]
+    present = tuple(
+        one.name for one in CATALOG if one.repo is Repo.AGENT_CONTROL and one.name != arriving
+    )
+    for name in present:
+        write_manifest(tmp_path, name, manifest_text(name))
+
+    found = discover([tmp_path])
+    first = _plan(("pyproject.toml",), tags=OLD_TAGS)
+    bumped = _plan((f"{row.path}/component.yaml", "uv.lock"), tags=ALL_TAGGED)
+
+    assert not (tmp_path / row.path).exists()
+    assert arriving not in found.missing
+    assert arriving not in {item.component for item in first}
+    assert arriving not in {item.component for item in bumped}
 
 
 def test_a_docs_only_merge_still_gives_an_untagged_component_its_first() -> None:

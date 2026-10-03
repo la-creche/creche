@@ -77,6 +77,7 @@ SPEC: dict[str, tuple[str, str, str]] = {
     "infra": ("compose", "ai-stack.service", ""),
     "playpen": ("oci-image", "null", ""),
     "releasectl": ("venv", "agent-release.service", ""),
+    "handover": ("venv", "null", ""),
     "mcp-servers": ("venv", "null", ""),
     "registry-data": ("data", "null", ""),
 }

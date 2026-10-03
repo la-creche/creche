@@ -12,7 +12,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from agent_release.catalog import CATALOG_BY_NAME, RETIRING, ContractId, Kind, Repo
+from agent_release.catalog import ARRIVING, CATALOG_BY_NAME, RETIRING, ContractId, Kind, Repo
 from agent_release.cli import EXIT_OK
 from agent_release.cli import main as cli_main
 from agent_release.discovery import ManifestSet, discover
@@ -43,10 +43,11 @@ def _provided(found: ManifestSet) -> dict[ContractId, tuple[int, int]]:
 
 def test_every_agent_control_component_declares_itself(found: ManifestSet) -> None:
     """All but a retiring one, whose directory has left this tree
-    (`catalog.RETIRING`)."""
+    (`catalog.RETIRING`), and an arriving one, whose directory has not
+    reached it yet (`catalog.ARRIVING`)."""
     here = {row.name for row in CATALOG_BY_NAME.values() if row.repo is Repo.AGENT_CONTROL}
 
-    assert set(found.manifests()) == here - RETIRING
+    assert set(found.manifests()) == here - RETIRING - ARRIVING
 
 
 def test_only_the_other_repos_components_are_missing(found: ManifestSet) -> None:

@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .catalog import CATALOG, CATALOG_BY_NAME, RETIRING, Releases
+from .catalog import ARRIVING, CATALOG, CATALOG_BY_NAME, RETIRING, Releases
 from .errors import Refusal, RefusalCode, safe_token
 from .manifest import (
     MANIFEST_FILENAME,
@@ -211,7 +211,7 @@ def discover(roots: list[Path]) -> ManifestSet:
             found[manifest.name] = entry
 
     absent = (row.name for row in CATALOG if row.name not in found)
-    missing = tuple(name for name in absent if name not in RETIRING)
+    missing = tuple(name for name in absent if name not in RETIRING | ARRIVING)
 
     return ManifestSet(found=found, missing=missing)
 

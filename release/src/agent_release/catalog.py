@@ -114,6 +114,10 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("mcp-servers", Repo.AGENT_MCP, ".", Kind.VENV, Releases.YES),
     CatalogRow("infra", Repo.AGENT_CONTROL, "infra", Kind.COMPOSE, Releases.YES),
     CatalogRow("releasectl", Repo.AGENT_CONTROL, "release", Kind.VENV, Releases.YES),
+    # The name `releasectl` takes next. The row lands one release before its
+    # directory: an installed executor learns a name only from a `releasectl`
+    # release, and the rename removes `releasectl` (`ARRIVING`).
+    CatalogRow("handover", Repo.AGENT_CONTROL, "handover", Kind.VENV, Releases.YES),
     CatalogRow("registry-data", Repo.AGENT_REGISTRY, ".", Kind.DATA, Releases.NO),
 )
 
@@ -125,6 +129,14 @@ CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
 #: requester a host already runs keeps planning across the second one. The
 #: row goes once no installed requester expects the file.
 RETIRING: frozenset[str] = frozenset({"infra"})
+
+#: Components on their way INTO the catalog, the opposite of `RETIRING`. The
+#: row lands before the directory, so a checkout carries the manifest or not,
+#: and both read. Discovery tolerates the absent file and the allocator tags
+#: none of them: a tag is a version somebody can release, and there is no
+#: tree to release yet. A name leaves this set in the commit that adds its
+#: directory.
+ARRIVING: frozenset[str] = frozenset({"handover"})
 
 #: Contract 06 §3's provider column. Rule C3 refuses any other claimant.
 CONTRACT_OWNER: dict[ContractId, str] = {
@@ -147,7 +159,9 @@ MANIFEST_CONTRACT_MINOR = 6
 LAST_IN_ORDER = "releasectl"
 
 #: stage7-releases.md §2.3: at most eight entries, the catalog minus
-#: `registry-data`, which never releases.
+#: `registry-data`, which never releases. `handover` (`ARRIVING`) does not
+#: raise the count: it is `releasectl`'s next name, and no request names
+#: both with a tree behind each.
 MAX_REQUEST_COMPONENTS = 8
 
 
