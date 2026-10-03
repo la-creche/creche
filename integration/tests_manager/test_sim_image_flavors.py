@@ -12,7 +12,7 @@ way to install anything — answered "plot my spending by month" with
     sbx create plots-s1 -t <the python image>
     sbx create chat-s1  -t <the base image>
               |
-              v  the document sessiond's OWN reader says it may serve
+              v  the document attendance's OWN reader says it may serve
     plots.sandboxes[0].image == the python image
 
 Three things in one case, because they are one behaviour: the flavor
@@ -39,7 +39,7 @@ from agent_managerd.loop import LoopConfig, LoopState, Passes, look
 from agent_managerd.reconcile import Actors
 from agent_managerd.switch import FakeSwitchClient
 from agent_managerd.timers import FakeUnits
-from agent_sessiond.family_status import FamilyState, StatusReader, check_may_serve
+from attendance.family_status import FamilyState, StatusReader, check_may_serve
 
 from .conftest import CHAT_FAMILY, FAMILY, IMAGE, write_family
 
@@ -83,7 +83,7 @@ def _images_of(driver: FakeDriver) -> dict[str, str]:
 def _published_images(state_root: Path, family: str) -> list[str]:
     """Each sandbox's `image`, out of the document itself.
 
-    `sessiond`'s reader drops the field — which image a sandbox came from
+    `attendance`'s reader drops the field — which image a sandbox came from
     is not its business — so this is the one reader that can see it, and
     contract 05 §4.1 says the document must carry it."""
     body = json.loads(paths.status_path(state_root, family).read_text(encoding="utf-8"))
@@ -115,7 +115,7 @@ def test_the_flavor_picks_the_image_and_a_change_of_it_replaces_the_sandbox(
     # 1 and 2: the flavor picks the image, the absent field picks `base`.
     assert _images_of(driver) == {f"{PLOTS}-s1": PYTHON_IMAGE, f"{FAMILY}-s1": IMAGE}
 
-    # `sessiond`'s own reader, not an assertion about JSON: what it serves
+    # `attendance`'s own reader, not an assertion about JSON: what it serves
     # is a family whose sandbox says which image it came from.
     served = reader.require(PLOTS)
     check_may_serve(served)

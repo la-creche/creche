@@ -76,7 +76,7 @@ def _fake_ssh(directory: Path) -> Path:
 
 
 def test_the_named_components_map_to_their_repositories() -> None:
-    assert repos_of(["pep", "sessiond"]) == ("agent-control",)
+    assert repos_of(["pep", "attendance"]) == ("agent-control",)
     assert repos_of(["mcp-servers"]) == ("agent-mcp",)
     assert repos_of(["pep", "mcp-servers"]) == ("agent-control", "agent-mcp")
 

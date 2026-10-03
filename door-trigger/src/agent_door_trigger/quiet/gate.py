@@ -35,7 +35,7 @@ class Busy(StrEnum):
 
 
 class LiveSessions(Protocol):
-    """What the gate asks `sessiond`."""
+    """What the gate asks `attendance`."""
 
     def any_live(self, family: str) -> bool | None:
         """Whether any session of the family is live. None: unknown."""
@@ -94,7 +94,7 @@ class QuietGate:
     def check(self) -> Check:
         now = self._clock()
 
-        # Live first, then the record: `sessiond` writes the record BEFORE
+        # Live first, then the record: `attendance` writes the record BEFORE
         # it deletes the session, so this order sees one or the other.
         busy = _busy_of(self._sessions.any_live(self._name))
         state = self._settle(self._store.read(self._name), busy)

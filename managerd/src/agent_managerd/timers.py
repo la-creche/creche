@@ -4,7 +4,7 @@
     triggers: [{cron: "0 9 * * 1-5"}]
       -> ~/.config/systemd/user/agent-trigger-<family>-t1.timer
          OnCalendar=Mon..Fri *-*-* 09:00:00
-         Unit=agent-trigger@<family>.service
+         Unit=creche-trigger@<family>.service
 
 One stored template unit runs the command; this module writes only the
 timers. A changed schedule rewrites its unit. A removed trigger removes
@@ -32,7 +32,7 @@ log = logging.getLogger("agent_managerd.timers")
 
 #: One template service per fleet, instanced per family. Stored in
 #: `systemd/`, installed by a bootstrap script, never generated here.
-TRIGGER_SERVICE: Final = "agent-trigger@{family}.service"
+TRIGGER_SERVICE: Final = "creche-trigger@{family}.service"
 
 #: `agent-trigger-<family>-t<N>.timer`, N counting the CRON triggers in
 #: file order from 1. Position, not content: a changed schedule REWRITES

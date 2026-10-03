@@ -2,7 +2,7 @@
 #
 # One page shows every family, sandbox and session, and it is where the operator
 # edits a family. It reads managerd's status documents, the PEP's audit
-# files and sessiond as the principal `view-ro`, and it writes exactly one
+# files and attendance as the principal `view-ro`, and it writes exactly one
 # thing: a validated git commit in the registry. It never applies anything.
 # managerd watches the registry and converges (contract 05 §5).
 #

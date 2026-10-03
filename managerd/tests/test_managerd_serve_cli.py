@@ -2,7 +2,7 @@
 
 Every one of them mutates, so every one keeps the `--write` gate. These
 tests hold that gate and the wiring behind it: a plan run must reach no
-client at all, not even to read the `sessiond` token file."""
+client at all, not even to read the `attendance` token file."""
 
 from __future__ import annotations
 
@@ -80,9 +80,9 @@ def test_a_plan_run_makes_no_change(bench: Bench, capsys: pytest.CaptureFixture[
     assert not paths.creds_path(bench.state_root, "chat").exists()
 
 
-def test_a_plan_run_never_reads_the_sessiond_token(bench: Bench) -> None:
+def test_a_plan_run_never_reads_the_attendance_token(bench: Bench) -> None:
     """`HttpSwitchClient` reads the token file in its constructor. A plan
-    run on a host where `sessiond` has not started yet must still print."""
+    run on a host where `attendance` has not started yet must still print."""
     assert bench.reconcile() == EXIT_OK
 
 

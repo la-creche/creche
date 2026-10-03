@@ -4,7 +4,7 @@ The release unit's `UMask=0027` makes root's per-request clone
 `root:root 0750`, and a user unit is installed as the operator. A step 9 that
 installed the unit file straight out of that clone, from
 `<work root>/<request id>/<name>/systemd/<unit>`, would fail every `noticeboard`,
-`sessiond` or `managerd` release whose unit file changed, at the refresh,
+`attendance` or `managerd` release whose unit file changed, at the refresh,
 with `Permission denied`. Root installing it instead would make root
 the operator's deputy (`release/AGENTS.md` rule 5a). So step 8 copies the unit
 file into the staged tree before `normalize_modes`, and step 9 installs it

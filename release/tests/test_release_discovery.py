@@ -16,7 +16,7 @@ from agent_release.errors import Refusal, RefusalCode
 from agent_release.manifest import MAX_MANIFEST_BYTES
 from release_fixtures import manifest_text, write_manifest
 
-CONTROL_NAMES = ("pep", "sessiond", "managerd", "noticeboard", "playpen", "infra", "releasectl")
+CONTROL_NAMES = ("pep", "attendance", "managerd", "noticeboard", "playpen", "infra", "releasectl")
 
 
 def _control_repo(root: Path) -> Path:
@@ -124,7 +124,7 @@ def test_a_name_outside_the_catalog_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_declared_path_must_match_the_directory(tmp_path: Path) -> None:
-    write_manifest(tmp_path, "pep", manifest_text("pep", path="sessiond"))
+    write_manifest(tmp_path, "pep", manifest_text("pep", path="attendance"))
 
     refusal = _refusal([tmp_path])
 

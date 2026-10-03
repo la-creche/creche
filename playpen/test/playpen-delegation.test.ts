@@ -3,7 +3,7 @@
 // So the id the PEP minted has to reach the PEP again on every call the job
 // makes:
 //
-//   sessiond ──start_turn{delegation}──► playpen ──► turn.json
+//   attendance ──start_turn{delegation}──► playpen ──► turn.json
 //                                                          │
 //                              pep-bridge reads it per call ▼
 //                                          PEP ◄── X-Delegation-Id

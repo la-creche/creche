@@ -1,7 +1,7 @@
 """`enqueue` and `job_status` on the family path (contract 04 §4.1).
 
 The decision core stays pure and the executor drives a fake door, so nothing
-here needs `sessiond`, a socket or the host.
+here needs `attendance`, a socket or the host.
 """
 
 from __future__ import annotations

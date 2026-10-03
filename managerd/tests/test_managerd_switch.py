@@ -1,4 +1,4 @@
-"""The one call `managerd` makes to `sessiond` (contract 05 §5).
+"""The one call `managerd` makes to `attendance` (contract 05 §5).
 
 Everything else the two services share travels through the status
 document, so this is the whole client surface."""
@@ -120,7 +120,7 @@ def test_a_missing_count_reads_zero() -> None:
 
 
 def test_a_not_implemented_answer_raises() -> None:
-    """A `sessiond` without the handler answers 501 here. `managerd` must see a
+    """An `attendance` without the handler answers 501 here. `managerd` must see a
     refusal, not a silent success that would destroy a live sandbox."""
     body = {"error": "not_implemented"}
     client = client_answering(lambda _: httpx.Response(501, json=body))
@@ -136,7 +136,7 @@ def test_a_bad_request_answer_raises() -> None:
 
 def test_a_transport_failure_raises_switch_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("no route to sessiond")
+        raise httpx.ConnectError("no route to attendance")
 
     with pytest.raises(SwitchError):
         client_answering(handler).switch(a_request())

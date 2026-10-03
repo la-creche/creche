@@ -6,11 +6,11 @@ that resolved to no family; NOT contract 04 §6's audit). Optional:
 PEP_UPSTREAMS (upstreams.yaml path), PEP_SECRETS (sops-encrypted yaml),
 PEP_BIND (host:port, default the site's LAN address on 8300), HA_URL (Home
 Assistant base for the `ha_call` verb, default the site's),
-PEP_SESSIOND_SOCKET + PEP_DELEGATE_TOKEN_FILE (contract 04 §7: sessiond's
+PEP_SESSIOND_SOCKET + PEP_DELEGATE_TOKEN_FILE (contract 04 §7: attendance's
 delegate door; without both, invoke_agent stays a seam. The token file is
-read on each delegate call, not here, because sessiond writes it at ITS
+read on each delegate call, not here, because attendance writes it at ITS
 start and this process can start first), PEP_DISPATCH_TOKEN_FILE
-(contract 02 §13.4: sessiond's dispatch door, on the same socket with its own
+(contract 02 §13.4: attendance's dispatch door, on the same socket with its own
 bearer; without it enqueue and job_status stay seams),
 PEP_RELEASE_REQUESTS_DIR (`stage7-releases.md` §2.3: root's release spool;
 without it the `release` verb stays a seam), PEP_APPROVAL_URL (contract 04
@@ -149,7 +149,7 @@ def main() -> int:
             return _unparsable(exc)
 
     host, _, port = bind.rpartition(":")
-    sessiond_socket = os.environ.get("PEP_SESSIOND_SOCKET")
+    attendance_socket = os.environ.get("PEP_SESSIOND_SOCKET")
     # `stage7-releases.md` §2.3. Unset leaves `release` a named seam.
     release_requests_dir = os.environ.get("PEP_RELEASE_REQUESTS_DIR")
     delegate_token_file = _delegate_token_file()
@@ -163,7 +163,7 @@ def main() -> int:
             ha_url=site.ha_url(os.environ),
             fault_sweep_interval_s=_sweep_interval(),
             roster=roster,
-            sessiond_socket=Path(sessiond_socket) if sessiond_socket else None,
+            attendance_socket=Path(attendance_socket) if attendance_socket else None,
             delegate_token_file=delegate_token_file,
             dispatch_token_file=dispatch_token_file,
             release_requests_dir=Path(release_requests_dir) if release_requests_dir else None,
@@ -208,7 +208,7 @@ def _delegate_token_file() -> Path | None:
 def _door_token_file(variable: str, verbs: str) -> Path | None:
     """The PATH of one door bearer, from its environment variable.
 
-    The file is NOT read here. `sessiond` writes it when it starts and this
+    The file is NOT read here. `attendance` writes it when it starts and this
     process can start first, so a value read at boot would be empty for the
     life of the process and every rotation would need a restart. The door
     reads it on each call and fails that call closed when it cannot.

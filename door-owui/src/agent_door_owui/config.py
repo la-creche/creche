@@ -21,7 +21,7 @@ MIN_KEY_BYTES = 32
 # Contract 02 §3 rule 9 gives this door 8340. config overrides this default;
 # from_env refuses 0.0.0.0 regardless.
 DEFAULT_BIND = "127.0.0.1:8340"
-DEFAULT_SESSIOND_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
+DEFAULT_ATTENDANCE_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
 DEFAULT_TOKEN_FILE = "/srv/agents/state/rework/tokens/door-owui.token"
 DEFAULT_FAMILIES_DIR = "/srv/agents/state/rework/families"
 
@@ -50,16 +50,16 @@ class DoorConfig:
     bind_host: str
     bind_port: int
     door_key: str
-    sessiond_token: str
-    sessiond_url: str
-    sessiond_socket: Path | None
+    attendance_token: str
+    attendance_url: str
+    attendance_socket: Path | None
     families_dir: Path
 
     def describe(self) -> str:
         """A one-line summary for `--check`. Carries no secret."""
-        target = self.sessiond_socket or self.sessiond_url
+        target = self.attendance_socket or self.attendance_url
         return (
-            f"bind={self.bind_host}:{self.bind_port} sessiond={target} "
+            f"bind={self.bind_host}:{self.bind_port} attendance={target} "
             f"families={self.families_dir} key_bytes={len(self.door_key)}"
         )
 
@@ -69,15 +69,15 @@ def from_env(environ: dict[str, str] | None = None) -> DoorConfig:
     env = environ if environ is not None else dict(os.environ)
 
     host, port = _bind(env.get(ENV_BIND, DEFAULT_BIND))
-    url, socket = _sessiond_target(env)
+    url, socket = _attendance_target(env)
 
     return DoorConfig(
         bind_host=host,
         bind_port=port,
         door_key=_read_key(env, ENV_KEY_FILE, required=True),
-        sessiond_token=_read_key(env, ENV_TOKEN_FILE, required=True),
-        sessiond_url=url,
-        sessiond_socket=socket,
+        attendance_token=_read_key(env, ENV_TOKEN_FILE, required=True),
+        attendance_url=url,
+        attendance_socket=socket,
         families_dir=Path(env.get(ENV_FAMILIES_DIR, DEFAULT_FAMILIES_DIR)),
     )
 
@@ -100,8 +100,8 @@ def _bind(value: str) -> tuple[str, int]:
     return host.strip("[]"), number
 
 
-def _sessiond_target(env: dict[str, str]) -> tuple[str, Path | None]:
-    """A Unix socket by default. A URL only when `sessiond` binds the LAN."""
+def _attendance_target(env: dict[str, str]) -> tuple[str, Path | None]:
+    """A Unix socket by default. A URL only when `attendance` binds the LAN."""
     url = env.get(ENV_URL, "").strip()
     socket = env.get(ENV_SOCKET, "").strip()
     if url and socket:
@@ -111,7 +111,7 @@ def _sessiond_target(env: dict[str, str]) -> tuple[str, Path | None]:
             raise ConfigError(f"{ENV_URL} must start with http:// or https://.")
         return url.rstrip("/"), None
 
-    return UDS_BASE_URL, Path(socket or DEFAULT_SESSIOND_SOCKET)
+    return UDS_BASE_URL, Path(socket or DEFAULT_ATTENDANCE_SOCKET)
 
 
 def _read_key(env: dict[str, str], name: str, *, required: bool) -> str:

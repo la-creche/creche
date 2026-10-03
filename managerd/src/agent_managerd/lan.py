@@ -26,8 +26,8 @@ class Port(IntEnum):
     #: Contract 01 §3.7 rule 4.
     LITELLM = 4000
     PEP = 8300
-    #: Contract 02 §3 rule 9: `sessiond`'s optional LAN port.
-    SESSIOND = 8350
+    #: Contract 02 §3 rule 9: `attendance`'s optional LAN port.
+    ATTENDANCE = 8350
     #: Open WebUI: a LAN neighbour no sandbox has business reaching.
     OPEN_WEBUI = 8181
 

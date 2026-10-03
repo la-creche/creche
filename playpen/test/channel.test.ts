@@ -282,7 +282,7 @@ describe("turns", () => {
   });
 
   it("reports the entry ids the host needs to map a message", async () => {
-    // §5.2. sessiond maps an Open WebUI message to a pi entry with these two.
+    // §5.2. attendance maps an Open WebUI message to a pi entry with these two.
     const harness = open();
     harness.start();
     harness.hello();
@@ -322,7 +322,7 @@ describe("turns", () => {
   });
 
   it("refuses a second turn on a session already running one", async () => {
-    // §6 rule 2. sessiond's writer lease should prevent it; we still check.
+    // §6 rule 2. attendance's writer lease should prevent it; we still check.
     const harness = open({ piEnv: { "owui-busy": { FAKE_PI_DELAY_MS: "80" } } });
     harness.start();
     harness.hello();

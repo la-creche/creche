@@ -13,7 +13,7 @@ has proved it works.
 
 **Quiet means: the session service has reported no turn in flight for five
 consecutive minutes.** Every model call an agent makes belongs to a turn,
-and `sessiond` knows every turn. `bin/rework-cutover.sh up` asks exactly
+and `attendance` knows every turn. `bin/rework-cutover.sh up` asks exactly
 this before it restarts anything, over the same socket, with the same
 `view-ro` bearer.
 
@@ -50,7 +50,7 @@ shell line is §3.2 rule 6. No installed program reads the token and speaks
 HTTP in one process, so dropping privilege for the whole query would need a
 new one.
 
-**What a lying `sessiond` can achieve.** `sessiond` is the operator's, so it can
+**What a lying `attendance` can achieve.** `attendance` is the operator's, so it can
 say "quiet" while turns run. The cost is dropped model calls and never a
 privilege. That is acceptable where an operator-written live-state document was
 not: the document decided WHAT root installs, and a lie there changes the
@@ -59,7 +59,7 @@ approved, and the worst outcome is the very thing the window is a courtesy
 against — which the operator can cause at any moment anyway, by killing the pi
 processes the turns run in.
 
-**`BusySeenFn` is a seam**, and `sessiond_signal` is what production wires
+**`BusySeenFn` is a seam**, and `attendance_signal` is what production wires
 into it. Every failure answers None, and None is never quiet.
 """
 
@@ -105,7 +105,7 @@ BUSY_STATES: Final = ("running", "queued", "waiting-approval")
 #: One page of one row. Root needs "is there one", never the list.
 LIST_LIMIT: Final = 1
 
-#: One question to `sessiond`. Three of them run per poll, so a wedged
+#: One question to `attendance`. Three of them run per poll, so a wedged
 #: socket costs at most 15 s of a 30 s poll and the hour cap still holds.
 ASK_TIMEOUT_S: Final = 5.0
 
@@ -118,17 +118,17 @@ MIN_TOKEN_BYTES: Final = 32
 #: A file root reads whole is a file a writer can grow.
 MAX_TOKEN_BYTES: Final = 4096
 
-#: What the `Host:` header carries. `sessiond` serves one name over a Unix
+#: What the `Host:` header carries. `attendance` serves one name over a Unix
 #: socket and no DNS is involved, so this is a constant and not a hostname.
 SOCKET_HOST: Final = "sessiond"
 
 
 class Busy(StrEnum):
-    """What one question to `sessiond` answered."""
+    """What one question to `attendance` answered."""
 
     #: At least one session is in a `BUSY_STATES` state.
     YES = "yes"
-    #: `sessiond` answered, and no session is in flight.
+    #: `attendance` answered, and no session is in flight.
     NO = "no"
     #: Root could not ask, or could not believe the answer. Never quiet.
     UNKNOWN = "unknown"
@@ -234,7 +234,7 @@ def _read_all(handle: int) -> bytes:
     """Up to the cap, in as many reads as it takes.
 
     One `os.read` may answer short. A truncated bearer is refused by
-    `sessiond` and costs the release its whole hour, which is a fail-closed
+    `attendance` and costs the release its whole hour, which is a fail-closed
     end nobody could diagnose, so the loop is worth its four lines.
     """
     chunks: list[bytes] = []
@@ -291,7 +291,7 @@ class _Connection(http.client.HTTPConnection):
 
 
 def _any_session(socket_path: Path, token: bytes, state: str, timeout_s: float) -> bool | None:
-    """Whether `sessiond` names one session in `state`, or None.
+    """Whether `attendance` names one session in `state`, or None.
 
     The bearer rides a header and never the path (invariant 13): a token in
     a URL lands in every access log and every error message there is.
@@ -341,7 +341,7 @@ def _has_rows(raw: bytes) -> bool | None:
     return len(cast("list[object]", rows)) > 0
 
 
-def ask_sessiond(
+def ask_attendance(
     socket_path: Path,
     token_path: Path,
     owner_uid: int,
@@ -391,7 +391,7 @@ class _Window:
         self._busy_at = clock()
 
     def busy_seen(self) -> float | None:
-        answer = ask_sessiond(self._socket, self._token, self._owner_uid)
+        answer = ask_attendance(self._socket, self._token, self._owner_uid)
         if answer is not Busy.NO:
             # Busy, or root could not ask. Both restart the window: root may
             # only count minutes it actually watched. Without this, four
@@ -405,7 +405,7 @@ class _Window:
         return self._busy_at
 
 
-def sessiond_signal(
+def attendance_signal(
     socket_path: Path,
     token_path: Path,
     owner_uid: int,

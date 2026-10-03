@@ -1,6 +1,6 @@
 """The webhook listener end to end: one HTTP request in, the right
-`sessiond` call and the right response out. `FakeSessiond` plays
-sessiond's part; `FakeRouteTable` is a settable double so a test can move
+`attendance` call and the right response out. `FakeAttendance` plays
+attendance's part; `FakeRouteTable` is a settable double so a test can move
 a route from present to absent without touching a real registry
 (`test_trigger_routes.py` covers `RouteTable` itself against a real one).
 """
@@ -9,17 +9,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_door_trigger.config import ServeConfig, SessiondTarget
-from agent_door_trigger.errors import SessiondError
+from agent_door_trigger.attendance import AcceptedTurn
+from agent_door_trigger.config import AttendanceTarget, ServeConfig
+from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.routes import Route
-from agent_door_trigger.sessiond import AcceptedTurn
 from agent_door_trigger.tokens import MIN_WEBHOOK_TOKEN_BYTES, tokens_match
 from agent_door_trigger.webhooks import (  # pyright: ignore[reportPrivateUsage]
     _authorized,
     create_app,
 )
 from starlette.testclient import TestClient
-from trigger_fake_sessiond import FakeSessiond
+from trigger_fake_attendance import FakeAttendance
 
 TOKEN = "w" * MIN_WEBHOOK_TOKEN_BYTES
 ROUTE = Route(family="scrum-lead", name="deploy-notify", token=TOKEN)
@@ -45,7 +45,7 @@ class FakeRouteTable:
 
 def _config(tmp_path: Path) -> ServeConfig:
     return ServeConfig(
-        sessiond=SessiondTarget(url="http://sessiond", socket=None, token="t" * 32),
+        attendance=AttendanceTarget(url="http://sessiond", socket=None, token="t" * 32),
         bind_host="192.0.2.10",
         bind_port=8360,
         families_dir=tmp_path / "families",
@@ -55,7 +55,7 @@ def _config(tmp_path: Path) -> ServeConfig:
     )
 
 
-def _client(tmp_path: Path, fake: FakeSessiond, routes: FakeRouteTable) -> TestClient:
+def _client(tmp_path: Path, fake: FakeAttendance, routes: FakeRouteTable) -> TestClient:
     app = create_app(_config(tmp_path), fake, routes)
     return TestClient(app)
 
@@ -68,7 +68,7 @@ def _auth(token: str) -> dict[str, str]:
 
 
 def test_an_unknown_family_answers_404(tmp_path: Path) -> None:
-    with _client(tmp_path, FakeSessiond(), FakeRouteTable()) as client:
+    with _client(tmp_path, FakeAttendance(), FakeRouteTable()) as client:
         response = client.post("/triggers/no-such-family/deploy-notify", headers=_auth(TOKEN))
 
     assert response.status_code == 404
@@ -76,7 +76,7 @@ def test_an_unknown_family_answers_404(tmp_path: Path) -> None:
 
 def test_an_unknown_name_answers_404(tmp_path: Path) -> None:
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
-    with _client(tmp_path, FakeSessiond(), routes) as client:
+    with _client(tmp_path, FakeAttendance(), routes) as client:
         response = client.post("/triggers/scrum-lead/no-such-name", headers=_auth(TOKEN))
 
     assert response.status_code == 404
@@ -84,7 +84,7 @@ def test_an_unknown_name_answers_404(tmp_path: Path) -> None:
 
 def test_a_wrong_token_answers_404(tmp_path: Path) -> None:
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
-    with _client(tmp_path, FakeSessiond(), routes) as client:
+    with _client(tmp_path, FakeAttendance(), routes) as client:
         response = client.post(
             "/triggers/scrum-lead/deploy-notify", headers=_auth("w" * MIN_WEBHOOK_TOKEN_BYTES + "x")
         )
@@ -94,7 +94,7 @@ def test_a_wrong_token_answers_404(tmp_path: Path) -> None:
 
 def test_the_three_404s_carry_the_same_body(tmp_path: Path) -> None:
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
-    with _client(tmp_path, FakeSessiond(), routes) as client:
+    with _client(tmp_path, FakeAttendance(), routes) as client:
         unknown_family = client.post("/triggers/ghost/deploy-notify", headers=_auth(TOKEN))
         unknown_name = client.post("/triggers/scrum-lead/ghost", headers=_auth(TOKEN))
         wrong_token = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth("bad" * 20))
@@ -111,7 +111,7 @@ def test_a_route_that_stopped_being_servable_answers_404(tmp_path: Path) -> None
     # family once its definition stops validating), and this door must
     # answer exactly as it would for a route that never existed.
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
-    with _client(tmp_path, FakeSessiond(), routes) as client:
+    with _client(tmp_path, FakeAttendance(), routes) as client:
         first = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
         assert first.status_code == 202
 
@@ -125,7 +125,7 @@ def test_a_route_that_stopped_being_servable_answers_404(tmp_path: Path) -> None
 
 
 def test_a_good_call_fires_and_returns_202(tmp_path: Path) -> None:
-    fake = FakeSessiond(accepted=AcceptedTurn(turn="01T", state="queued", journal_seq=1))
+    fake = FakeAttendance(accepted=AcceptedTurn(turn="01T", state="queued", journal_seq=1))
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
     with _client(tmp_path, fake, routes) as client:
         response = client.post(
@@ -148,7 +148,7 @@ def test_a_good_call_fires_and_returns_202(tmp_path: Path) -> None:
 
 
 def test_a_call_with_no_body_still_fires(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
     with _client(tmp_path, fake, routes) as client:
         response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
@@ -162,7 +162,7 @@ def test_a_call_with_no_body_still_fires(tmp_path: Path) -> None:
 
 def test_invalid_json_body_is_400(tmp_path: Path) -> None:
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
-    with _client(tmp_path, FakeSessiond(), routes) as client:
+    with _client(tmp_path, FakeAttendance(), routes) as client:
         response = client.post(
             "/triggers/scrum-lead/deploy-notify",
             headers={**_auth(TOKEN), "content-type": "application/octet-stream"},
@@ -174,7 +174,7 @@ def test_invalid_json_body_is_400(tmp_path: Path) -> None:
 
 def test_an_oversized_body_is_413(tmp_path: Path) -> None:
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
-    with _client(tmp_path, FakeSessiond(), routes) as client:
+    with _client(tmp_path, FakeAttendance(), routes) as client:
         response = client.post(
             "/triggers/scrum-lead/deploy-notify",
             headers=_auth(TOKEN),
@@ -184,11 +184,11 @@ def test_an_oversized_body_is_413(tmp_path: Path) -> None:
     assert response.status_code == 413
 
 
-# --- sessiond refusals reach the external caller as a real status ---
+# --- attendance refusals reach the external caller as a real status ---
 
 
 def test_a_full_queue_answers_429(tmp_path: Path) -> None:
-    fake = FakeSessiond(turn_error=SessiondError("queue_full", "queue is full", 429))
+    fake = FakeAttendance(turn_error=AttendanceError("queue_full", "queue is full", 429))
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
     with _client(tmp_path, fake, routes) as client:
         response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
@@ -198,7 +198,7 @@ def test_a_full_queue_answers_429(tmp_path: Path) -> None:
 
 
 def test_a_non_autonomous_family_answers_403(tmp_path: Path) -> None:
-    fake = FakeSessiond(ensure_error=SessiondError("forbidden", "not autonomous", 403))
+    fake = FakeAttendance(ensure_error=AttendanceError("forbidden", "not autonomous", 403))
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
     with _client(tmp_path, fake, routes) as client:
         response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))

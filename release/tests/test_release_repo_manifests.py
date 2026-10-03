@@ -213,7 +213,7 @@ def test_each_component_bundles_what_its_build_installs(found: ManifestSet) -> N
     changes the artifact, so it must move the tag, and `CatalogRow.bundles`
     is that list written down. A package added to a build and not there
     ships with no new tag: a merge that changed only `door-trigger/` and
-    `family/` once left `sessiond` and `noticeboard` on tags older than their code."""
+    `family/` once left `attendance` and `noticeboard` on tags older than their code."""
     packages = _workspace()
     for name, item in found.found.items():
         row = CATALOG_BY_NAME[name]
@@ -262,7 +262,7 @@ def _timeout_s(text: str, key: str) -> int:
 def test_a_restart_outlasts_every_units_own_stop_and_start(found: ManifestSet) -> None:
     """Step 9's `systemctl restart` answers only once its unit has stopped
     and started again, and systemd bounds both. A shorter wait fails a
-    healthy release: sessiond's 60 s stop met a 30 s wait on 2026-10-01
+    healthy release: attendance's 60 s stop met a 30 s wait on 2026-10-01
     and the release restored. A unit `PartOf=` this one stops before it, so
     its stop counts too."""
     units = _unit_texts()

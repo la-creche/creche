@@ -1,4 +1,4 @@
-"""One line of `sessiond`'s event stream, validated before use.
+"""One line of `attendance`'s event stream, validated before use.
 
 Contract 02 §8 fixes the shape. The stream crosses a process boundary, so
 every line is untrusted input: shape and size are checked before anything

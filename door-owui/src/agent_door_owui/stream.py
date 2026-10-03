@@ -7,7 +7,7 @@ work. A comment frame every few seconds is the cheapest cure.
 
 The frames are pumped through a bounded queue by one task, so the timer can
 fire while the source waits. The bound is what puts backpressure on the read
-from `sessiond` when the browser is slower than the turn: the door stops
+from `attendance` when the browser is slower than the turn: the door stops
 reading rather than growing a buffer (contract 03 §9 rule 2 has the same
 shape on the channel).
 """
@@ -24,7 +24,7 @@ from .sse import KEEPALIVE_FRAME
 # under the time one tool call can take.
 KEEPALIVE_S = 15.0
 
-# One thousand frames, the same bound a `sessiond` reader gets.
+# One thousand frames, the same bound an `attendance` reader gets.
 QUEUE_LIMIT = 1000
 
 _END = object()
@@ -68,7 +68,7 @@ async def with_keepalive(
             raise failures[0]
     finally:
         # The consumer stopped, or the source ended. Cancelling the pump
-        # closes the stream to `sessiond` and stops nothing on the host: the
+        # closes the stream to `attendance` and stops nothing on the host: the
         # turn keeps running and its events are already journalled
         # (invariant 4, contract 02 §5.4).
         task.cancel()

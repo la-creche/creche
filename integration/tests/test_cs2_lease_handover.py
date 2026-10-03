@@ -9,7 +9,7 @@ that terminal for the 60 seconds after every chat turn, because the idle
 Draft 6 §7.3 rule 5 hands an idle lease to another door, §5.10 lets a door
 give one back the moment it is done, and §5.11 closes the session's pi
 process instead of waiting out `pi_idle_ttl_s`. This scenario proves all
-three against a real `sessiond` and the real TUI door client, off the host.
+three against a real `attendance` and the real TUI door client, off the host.
 
 ```
   Open WebUI door --turn------------------> lease: owui, idle
@@ -20,7 +20,7 @@ three against a real `sessiond` and the real TUI door client, off the host.
 ```
 
 The TUI door's client is synchronous, so every call runs in a worker thread
-and the stack's own event loop stays free for `sessiond`.
+and the stack's own event loop stays free for `attendance`.
 """
 
 from __future__ import annotations
@@ -29,15 +29,15 @@ import asyncio
 from collections.abc import Callable
 
 import pytest
-from agent_door_tui.config import TuiConfig
-from agent_door_tui.sessiond import (
+from agent_door_tui.attendance import (
     CODE_LEASE_TAKEN_OVER,
-    HttpSessiond,
+    AttendanceError,
+    HttpAttendance,
     Intent,
-    SessiondError,
     SessionRow,
     Takeover,
 )
+from agent_door_tui.config import TuiConfig
 from conftest import chat_body, chat_id, message_id, owui_headers, session_of
 from stack import FAMILY, Stack
 
@@ -48,17 +48,17 @@ SECOND_TERMINAL = "tui.5002"
 CODE_SESSION_BUSY = "session_busy"
 
 
-def tui_client(stack: Stack) -> HttpSessiond:
-    """The TUI door's own client, pointed at the stack's `sessiond`."""
-    socket = stack.sessiond_socket
+def tui_client(stack: Stack) -> HttpAttendance:
+    """The TUI door's own client, pointed at the stack's `attendance`."""
+    socket = stack.attendance_socket
     assert socket is not None, "the stack fixture always serves before it yields"
     token = (stack.state_root / "tokens" / "door-tui.token").read_text(encoding="utf-8")
 
-    return HttpSessiond(
+    return HttpAttendance(
         TuiConfig(
-            sessiond_token=token.strip(),
-            sessiond_url="http://sessiond",
-            sessiond_socket=socket,
+            attendance_token=token.strip(),
+            attendance_url="http://sessiond",
+            attendance_socket=socket,
             families_dir=stack.families_dir,
             sbx="/nonexistent/sbx",
             pi_launch="/nonexistent/agent-pi-launch.js",
@@ -99,7 +99,7 @@ async def test_cs2_a_terminal_takes_an_idle_chat_lease(stack: Stack) -> None:
         await call(lambda: door.take_writer(FAMILY, session, FIRST_TERMINAL))
 
         # A second terminal still meets the refusal §7 exists for (rule 6).
-        with pytest.raises(SessiondError) as busy:
+        with pytest.raises(AttendanceError) as busy:
             await call(lambda: door.take_writer(FAMILY, session, SECOND_TERMINAL))
 
         assert busy.value.code == CODE_SESSION_BUSY
@@ -111,7 +111,7 @@ async def test_cs2_a_terminal_takes_an_idle_chat_lease(stack: Stack) -> None:
 
         # §7.4: the first terminal's renewal timer learns it lost the
         # session, and may never take it back.
-        with pytest.raises(SessiondError) as renewed:
+        with pytest.raises(AttendanceError) as renewed:
             await call(
                 lambda: door.take_writer(
                     FAMILY, session, FIRST_TERMINAL, Takeover.POLITE, Intent.RENEW

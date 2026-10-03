@@ -16,7 +16,7 @@ whole path:
 
 Stage 3's harness is reused unchanged: `stage3.Stage3` publishes all three
 families with the real manager, `serving_pep` puts the real PEP in front of
-the real `sessiond`, and `call_tool` drives the real bridge. Nothing here is a
+the real `attendance`, and `call_tool` drives the real bridge. Nothing here is a
 second copy of that plumbing.
 """
 
@@ -39,7 +39,7 @@ CHAT_PATH = "/v1/chat/completions"
 HTTP_OK = 200
 
 #: Contract 04 §6.3's journal line for a finished turn. The door's stream ends
-#: at pi's `agent_settled` and `sessiond` writes this after, so a reader polls
+#: at pi's `agent_settled` and `attendance` writes this after, so a reader polls
 #: for it rather than reading the journal the instant a stream ends.
 TURN_SETTLED = "turn_settled"
 
@@ -179,7 +179,7 @@ async def test_a_cap_of_three_runs_three_delegate_calls_at_once(
 
 async def test_the_default_cap_still_refuses_the_third(delegating: Stage3) -> None:
     """No field, so the default of 2 applies and the third is refused
-    `rate_limited` at the PEP, before `sessiond` sees it (contract 04 §5
+    `rate_limited` at the PEP, before `attendance` sees it (contract 04 §5
     row 7).
     """
     assert granted_cap(delegating) == DEFAULT_CAP
@@ -214,7 +214,7 @@ async def test_raising_the_cap_live_keeps_the_sandbox_and_the_session(
     refused = [one for one in await call_at_once(delegating, session, RAISED_CAP) if not one.ok]
     assert len(refused) == 1
 
-    # The raise, with the PEP serving and `sessiond` holding the session.
+    # The raise, with the PEP serving and `attendance` holding the session.
     cap_raised_to(delegating, tmp_path / "raised-live", RAISED_CAP)
     assert granted_cap(delegating) == RAISED_CAP
 

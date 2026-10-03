@@ -21,7 +21,7 @@
 //  2. **It refuses while a live rpc process holds the session** (§7.5). Two
 //     concurrent writers on one session file cross-contaminate context, orphan
 //     a branch, and both report success with no error anywhere.
-//     `sessiond`'s writer lease (contract 02 §7) is the first fence and this is
+//     `attendance`'s writer lease (contract 02 §7) is the first fence and this is
 //     the second, inside the VM, where the lease cannot reach.
 
 import { existsSync, mkdirSync } from "node:fs";
@@ -55,8 +55,8 @@ const MAX_PATH_LENGTH = 4096;
  * Whether the session store is expected to exist already.
  *
  * CONTRACT-QUESTION: contract 03 §7.6 lets `--new` make the pi store, and
- * contract 02 §9 makes the session directory `sessiond`'s. `New` makes the
- * pi store and no session record, so `sessiond` still has no row for it.
+ * contract 02 §9 makes the session directory `attendance`'s. `New` makes the
+ * pi store and no session record, so `attendance` still has no row for it.
  */
 export enum LaunchSession {
   /** Attach to a session a door already created. */
@@ -202,7 +202,7 @@ function readArgs(argv: readonly string[]): LaunchArgs | null {
  *
  * A mount's path inside the VM IS its host path (§7.1), so the default needs
  * no rewrite. `SESSIOND_SANDBOX_SESSIONS_MOUNT` is §7.1 rule 6's one seam, and
- * it names this same directory for `sessiond` too, which is what lets a
+ * it names this same directory for `attendance` too, which is what lets a
  * harness run this bundle off the host.
  */
 function sessionsMount(env: NodeJS.ProcessEnv, family: string): string {

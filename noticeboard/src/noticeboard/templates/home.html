@@ -29,9 +29,9 @@
     {% if row.serving %}{{ row.serving.id }} ({{ row.serving.state }}){% else %}none{% endif %}
   </td>
   {# No running count here: `managerd` cannot count a running turn. The
-     only true one is `sessiond`'s, and this
+     only true one is `attendance`'s, and this
      page reads files and never dials a service, so it still renders
-     when `sessiond` is down. The per-session count is on the family
+     when `attendance` is down. The per-session count is on the family
      page. The queue cap stays: it is true, and this is its one place. #}
   <td>
     {{ row.limits.max_queued_turns or "—" }}

@@ -1,6 +1,6 @@
 """Contract 02 §14's error model, as this door's two callers need it.
 
-`sessiond` answers every refusal with `{"error": {"code", "message", ...}}`
+`attendance` answers every refusal with `{"error": {"code", "message", ...}}`
 (contract 02 §14). This module carries that shape into the process and maps
 each code onto what this door's two callers need: the CLI wants an exit code
 and one clear stderr line (systemd's journal is where the operator reads it),
@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from enum import IntEnum
 
-#: The status this module falls back to for a sessiond code the table below
+#: The status this module falls back to for an attendance code the table below
 #: does not name. Contract 02 §14's code set is closed, so an unmapped code
-#: means sessiond shipped one this door has not caught up to yet — worth
+#: means attendance shipped one this door has not caught up to yet — worth
 #: surfacing as a server error, never guessed at as a 4xx.
 _FALLBACK_STATUS = 502
 
@@ -28,8 +28,8 @@ class ExitCode(IntEnum):
     USAGE = 2
 
 
-class SessiondError(Exception):
-    """One refusal from `sessiond`, in the shape of contract 02 §14."""
+class AttendanceError(Exception):
+    """One refusal from `attendance`, in the shape of contract 02 §14."""
 
     def __init__(self, code: str, message: str, status: int) -> None:
         super().__init__(f"{code}: {message}")
@@ -39,9 +39,9 @@ class SessiondError(Exception):
 
 
 #: Contract 02 §14's request-level codes, mapped to the status this door's
-#: webhook listener answers an EXTERNAL caller with. This is NOT sessiond's
-#: own status: sessiond's 400/403/409/etc. describe the call between
-#: sessiond and this door, and a caller outside the platform gets this
+#: webhook listener answers an EXTERNAL caller with. This is NOT attendance's
+#: own status: attendance's 400/403/409/etc. describe the call between
+#: attendance and this door, and a caller outside the platform gets this
 #: door's own reading of what each one means for it.
 WEBHOOK_STATUS: dict[str, int] = {
     "bad_request": 400,

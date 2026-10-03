@@ -80,7 +80,7 @@ def test_the_timer_points_at_the_one_template_service() -> None:
     units = FakeUnits()
     apply_timers(autonomous(), units)  # type: ignore[arg-type]
     text = units.files["agent-trigger-chat-t1.timer"]
-    assert "Unit=agent-trigger@chat.service" in text
+    assert "Unit=creche-trigger@chat.service" in text
     assert "OnCalendar=*-*-* *:00:00" in text
 
 

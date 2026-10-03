@@ -1,6 +1,6 @@
 """Narrowing helpers for JSON that crossed a process boundary.
 
-Every byte from `sessiond`, from a status document and from an HTTP client
+Every byte from `attendance`, from a status document and from an HTTP client
 is untrusted input: its shape is checked before a field is read (invariants
 12 and 14). `isinstance(value, dict)` alone narrows to `dict[Unknown,
 Unknown]` under a strict type checker, which hides exactly the mistake these

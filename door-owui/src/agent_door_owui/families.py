@@ -26,7 +26,7 @@ _LOG = logging.getLogger(__name__)
 
 # The Open WebUI door writes `owui-*` sessions into attended families and
 # nothing else (contract 02 §3.1). A thin or autonomous family in the picker
-# would be a request `sessiond` refuses.
+# would be a request `attendance` refuses.
 ATTENDED = "attended"
 
 _STATUS_FILE = "status.json"

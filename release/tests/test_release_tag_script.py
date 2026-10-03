@@ -374,16 +374,16 @@ def test_a_label_raises_only_the_component_its_merge_changed(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     """A merge queue lands two pull requests in one push, so one run reads
-    both. The labelled one changed `sessiond/`, the other `pep/`: the label
-    is `sessiond`'s alone, though both ranges hold that merge."""
+    both. The labelled one changed `attendance/`, the other `pep/`: the label
+    is `attendance`'s alone, though both ranges hold that merge."""
     _seed_first_tags(repo)
-    labelled = _commit(repo, "sessiond/src/one.py")
+    labelled = _commit(repo, "attendance/src/one.py")
     _commit(repo, "pep/src/one.py")
 
     done = _run(repo, shims, tmp_path, bumps={labelled: "bump:minor"}, pr="yes")
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "sessiond-v0.2.0"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "attendance-v0.2.0"])
 
 
 @pytest.mark.slow
@@ -418,12 +418,12 @@ def test_a_set_of_components_each_get_their_own_tag(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     _seed_first_tags(repo)
-    _commit(repo, "pep/src/one.py", "sessiond/src/two.py")
+    _commit(repo, "pep/src/one.py", "attendance/src/two.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "sessiond-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "attendance-v0.1.1"])
 
 
 @pytest.mark.slow

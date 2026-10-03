@@ -108,7 +108,7 @@ def test_every_webhook_status_is_a_real_http_status() -> None:
         assert 400 <= status <= 599, f"{code} maps to {status}, not a client/server error status"
 
 
-def test_an_unmapped_sessiond_code_falls_back_to_502() -> None:
+def test_an_unmapped_attendance_code_falls_back_to_502() -> None:
     assert webhook_status("some_future_code_this_table_does_not_know") == 502
 
 

@@ -112,7 +112,7 @@ def test_an_apply_with_no_switch_client_leaves_the_sandbox_creating(
     registry_root: Path, state_root: Path
 ) -> None:
     """No handshake can run without one, and contract 05 §4.2 rule 4 forbids
-    writing `ready` after `sbx create` alone. `sessiond` still dials a
+    writing `ready` after `sbx create` alone. `attendance` still dials a
     `creating` sandbox, so the family serves either way."""
     result = apply_chat(registry_root, state_root)
     assert len(result.status.sandboxes) == 1
@@ -132,7 +132,7 @@ def test_an_apply_with_a_switch_client_reaches_ready(registry_root: Path, state_
 
 
 def test_a_refused_handshake_keeps_the_apply_ok(registry_root: Path, state_root: Path) -> None:
-    """`up` runs `apply-once` before `sessiond` is listening, so a refusal
+    """`up` runs `apply-once` before `attendance` is listening, so a refusal
     here is the normal first pass and must not fail the verb."""
     switch = FakeSwitchClient(refuse="connection refused")
 
@@ -196,7 +196,7 @@ def test_creating_the_sandbox_writes_playpen_env(registry_root: Path, state_root
 def test_the_status_document_publishes_the_env_file_path(
     registry_root: Path, state_root: Path
 ) -> None:
-    """Contract 05 §4.1. `sessiond` reads the path from here and hands it
+    """Contract 05 §4.1. `attendance` reads the path from here and hands it
     to `sbx exec --env-file`. A document without it is a fault, not a
     guess, so the document must carry it."""
     result = apply_chat(registry_root, state_root)
@@ -218,7 +218,7 @@ def test_the_env_file_survives_the_control_directory_being_emptied(
 
 
 def test_a_failed_create_writes_no_env_file(registry_root: Path, state_root: Path) -> None:
-    """A file naming a sandbox that does not exist would send `sessiond`
+    """A file naming a sandbox that does not exist would send `attendance`
     at a VM nobody made."""
     apply_chat(registry_root, state_root, driver=FailingDriver())
     assert not paths.playpen_env_path(state_root, "chat", "chat-s1").exists()

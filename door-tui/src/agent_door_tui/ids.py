@@ -1,11 +1,11 @@
 """Identifier forms and the one ULID this door mints (contract 02 §2).
 
-The door names the session it creates. `sessiond` names turns. A session id
+The door names the session it creates. `attendance` names turns. A session id
 becomes a directory name on the host and inside the sandbox, so its form is
 checked here before anything builds a path or a command from it (invariants
 12 and 14).
 
-These rules are copied from the contract, not imported from `sessiond`. The
+These rules are copied from the contract, not imported from `attendance`. The
 two programs are separate processes and the wire is the only thing between
 them: copy a proven fact, not a module.
 """

@@ -1,6 +1,6 @@
-"""Three families, one real PEP, one real `sessiond` (packet I3, stage 3).
+"""Three families, one real PEP, one real `attendance` (packet I3, stage 3).
 
-Stage 1's harness holds the door, `sessiond` and the playpen. Stage 2 put
+Stage 1's harness holds the door, `attendance` and the playpen. Stage 2 put
 the reconciler beside them. Stage 3 adds the PEP, and with it the first call
 that leaves one family's sandbox and lands in another's:
 
@@ -8,9 +8,9 @@ that leaves one family's sandbox and lands in another's:
       │ POST /call {tool: invoke_agent}          contract 04 §7.1
       ▼
     the REAL PEP family app  ──grant file──► allow, mint a delegation id
-      │ POST /delegate over sessiond's Unix socket, Bearer door-delegate
+      │ POST /delegate over attendance's Unix socket, Bearer door-delegate
       ▼
-    the REAL sessiond ──► job-<ulid> in the THIN family ──► one turn
+    the REAL attendance ──► job-<ulid> in the THIN family ──► one turn
       │ fake_sbx.py exec --env-file ──► node dist/playpen.js
       ▼                                             │
     {status, session_id, content}                   ▼
@@ -52,8 +52,8 @@ from agent_managerd import paths as managerd_paths
 from agent_managerd.apply import ApplyResult, apply_once
 from agent_managerd.driver import FakeDriver
 from agent_managerd.litellm_keys import FakeLiteLLMKeys
-from agent_sessiond.auth import Principal
-from agent_sessiond.ids import SessionPrefix, new_ulid
+from attendance.auth import Principal
+from attendance.ids import SessionPrefix, new_ulid
 from fastapi import FastAPI
 from stack import FAMILY, LOCK_BEAT_MS, Stack, fake_pi_script, repo_root
 
@@ -104,7 +104,7 @@ _IMAGE_SEAMS: Final = ("AGENT_PI_BIN", "AGENT_LOCK_BEAT_MS", "AGENT_CODE_SANDBOX
 
 #: `tests_manager/pep_harness.py` builds the real PEP through its real entry
 #: point. Importing it by path beats a second copy of `main()`'s plumbing
-#: here. `tests_manager/conftest.py` reaches `sessiond/tests` the same way.
+#: here. `tests_manager/conftest.py` reaches `attendance/tests` the same way.
 sys.path.insert(0, str(repo_root() / "integration" / "tests_manager"))
 
 
@@ -403,7 +403,7 @@ class Stage3:
             "AGENT_PI_BIN": str(self.write_pi_shim()),
             "AGENT_LOCK_BEAT_MS": str(LOCK_BEAT_MS),
             # Contract 03 §7.1 rule 6's seam for the work root. It must name
-            # the directory `sessiond` creates under its own `work_root`, or
+            # the directory `attendance` creates under its own `work_root`, or
             # the chat and the job would work in two different places.
             "AGENT_CODE_SANDBOX_ROOT": str(self.work_root / CODE_SANDBOX),
             "FAKE_SBX_IMAGE_ENV": ",".join(_IMAGE_SEAMS),
@@ -413,7 +413,7 @@ class Stage3:
         """Put `door-delegate.token` at the mode the host deploys it with.
 
         Contract 02 §3 rule 5's exception: the PEP runs as user `pep` and
-        `sessiond` owns the file, so group read is what makes the door
+        `attendance` owns the file, so group read is what makes the door
         reachable at all. 0600 would be readable here — one user owns
         everything in a test — which is why the scenario for it asserts on
         the two readers' code rather than on a failed open.
@@ -449,12 +449,12 @@ def serving_pep(stage: Stage3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
 
     Loopback, never the LAN address: a test binds nothing another host can
     reach. The PEP serves in its own thread with its
-    own event loop, so `sessiond` keeps serving on this test's loop while a
+    own event loop, so `attendance` keeps serving on this test's loop while a
     delegate call is in flight on the PEP's.
     """
     from pep_harness import free_port, serving
 
-    socket_path = stage.stack.sessiond_socket
+    socket_path = stage.stack.attendance_socket
     if socket_path is None:
         raise AssertionError("the stack is not serving yet")
 

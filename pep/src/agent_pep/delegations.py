@@ -7,7 +7,7 @@ mints one. That is what makes `chain` in §6.3 evidence while the
 ```
   chat --invoke_agent--> PEP mints D, records D -> ("chat", "vault-oracle")
                           |
-                          `--> sessiond /delegate --> vault-oracle's sandbox
+                          `--> attendance /delegate --> vault-oracle's sandbox
                                                         |
    vault-oracle's own PEP calls carry X-Delegation-Id: D  |
                           .-----------------------------'

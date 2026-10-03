@@ -69,7 +69,7 @@ MAX_MANIFEST_BYTES: Final = 64 * 1024
 MAX_STAMP_BYTES: Final = 64
 
 #: Where components install (contract 06 §1). Root-owned components go under
-#: the first, and `sessiond`, `managerd` and `noticeboard` under the second, because
+#: the first, and `attendance`, `managerd` and `noticeboard` under the second, because
 #: their units are the operator's user units and a user unit reads a tree the operator
 #: owns. They are spelled HERE and not in `host.py`, which imports them,
 #: because they are where `live` is read from and the requester — which may

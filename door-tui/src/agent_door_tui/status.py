@@ -10,7 +10,7 @@ path of that sandbox's `supervisor.env`. It refuses when a sandbox switch
 is in progress, or when no sandbox serves.
 
 `ready` is the only state that serves a terminal. Contract 05 §4.2 lets
-`sessiond` dial a `creating` sandbox because running the handshake is what
+`attendance` dial a `creating` sandbox because running the handshake is what
 promotes it. A terminal runs no handshake: it is `sbx exec -it` into a VM
 that may not have booted, so a half-built sandbox is refused instead.
 
@@ -230,7 +230,7 @@ def _sandboxes(document: dict[str, object]) -> list[dict[str, object]]:
 def _warning(document: dict[str, object]) -> str:
     """What is odd about this family, said in one line. Never a refusal.
 
-    A fault that blocks TURNS does not block a terminal. `sessiond` refuses a
+    A fault that blocks TURNS does not block a terminal. `attendance` refuses a
     turn with `family_degraded`, and a human at a keyboard is exactly who
     wants a terminal then. So the door says what is wrong and opens it.
     """

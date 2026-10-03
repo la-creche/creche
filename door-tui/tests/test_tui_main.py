@@ -1,6 +1,6 @@
 """The command line: `agent-tui <family>` and `--check`.
 
-`--check` is the one path that calls neither `sessiond` nor `sbx`, so a bad
+`--check` is the one path that calls neither `attendance` nor `sbx`, so a bad
 token file is caught before the operator is in front of a terminal that will not
 open.
 """
@@ -12,9 +12,9 @@ from pathlib import Path
 import pytest
 from agent_door_tui.__main__ import main, parse_args, request_of
 from agent_door_tui.app import Want
+from agent_door_tui.attendance import Takeover
 from agent_door_tui.config import ENV_FAMILIES_DIR, ENV_TOKEN_FILE
 from agent_door_tui.errors import Exit
-from agent_door_tui.sessiond import Takeover
 
 TOKEN = "door-tui-token-" + "t" * 32
 

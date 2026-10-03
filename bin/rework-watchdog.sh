@@ -26,7 +26,7 @@
 #                document at least every 30 s, and §2 rule 5 makes a reader
 #                call one older than 90 s `unknown`, so 180 s is two of
 #                those and cannot fire on a manager that is running.  5 s
-#   3. sessiond  the Unix socket must exist AND answer. An unauthenticated
+#   3. attendance  the Unix socket must exist AND answer. An unauthenticated
 #                GET returns 401, which proves a listener and needs no
 #                token (invariant 13).  5 s
 #   4. units     `systemctl --user is-failed` must be false for each of the
@@ -139,8 +139,8 @@ HTTP_UNAUTHORIZED=401
 # also installs are not: this alarm's own, and `registry-sync.service`, which
 # check 5 below reads by its RESULT rather than by `is-failed` — a oneshot
 # that is meant to exit says more about itself that way.
-UNITS="agent-sessiond.service agent-managerd.service agent-door-owui.service \
-agent-trigger-webhooks.service creche-noticeboard.service"
+UNITS="creche-attendance.service agent-managerd.service creche-door-owui.service \
+creche-trigger-webhooks.service creche-noticeboard.service"
 
 # Contract 05 §2 rule 5's 90 s, doubled. A document this old means nobody
 # who is running has looked.
@@ -339,12 +339,12 @@ check_managerd() {
   note_down managerd "no status document written for ${age}s (newest $newest, limit ${STALE_AFTER_S}s)"
 }
 
-# --- 3. sessiond ---------------------------------------------------------------
+# --- 3. attendance ---------------------------------------------------------------
 
-check_sessiond() {
+check_attendance() {
   local code
   if [[ ! -S "$SOCKET" ]]; then
-    note_down sessiond "no socket at $SOCKET"
+    note_down attendance "no socket at $SOCKET"
     return 0
   fi
 
@@ -354,11 +354,11 @@ check_sessiond() {
     --unix-socket "$SOCKET" http://sessiond/v1/sessions 2>/dev/null)"
 
   if [[ "$code" == "$HTTP_UNAUTHORIZED" || "$code" == "$HTTP_OK" ]]; then
-    say "ok: sessiond answers on its socket"
+    say "ok: attendance answers on its socket"
     return 0
   fi
 
-  note_down sessiond "the socket at $SOCKET answered ${code:-nothing}, not $HTTP_UNAUTHORIZED"
+  note_down attendance "the socket at $SOCKET answered ${code:-nothing}, not $HTTP_UNAUTHORIZED"
 }
 
 # --- 4. no rework unit is failed ------------------------------------------------
@@ -439,7 +439,7 @@ check_registry_sync() {
 
 check_pep
 check_managerd
-check_sessiond
+check_attendance
 check_units
 check_registry_sync
 

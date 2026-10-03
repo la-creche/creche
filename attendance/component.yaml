@@ -1,0 +1,54 @@
+# The session service, and the four front doors that ship with it.
+# Contract 06 §1 row 2, and §1 rule 1: a door cannot be at a different
+# version from the session API it serves, so it is not its own component.
+manifest_version: "0.4"
+name: attendance
+repo: agent-control
+path: attendance
+kind: venv
+# `creche-attendance.service`, like every other user unit on the rework plane.
+# Step 9 restarts the unit this NAMES; a name no installed unit answers to
+# is listed under `manual` and silently never restarted (§1 rule 7).
+unit: creche-attendance.service
+runs_as: operator
+# All four packages, because `attendance` depends on none of the doors
+# and three units run from this one tree. `--package` repeats: measured
+# against uv 0.12.17 on 2026-09-20, one sync fills one environment with all
+# four. `agent-door-tui` is here too — `agent-tui` is a command the operator runs,
+# from the same tree, at the same version as the API it speaks to.
+# `--no-editable`: contract 06 §8.2. Three units run from this one tree, so
+# without it a deploy changes what all three load at their next restart.
+build:
+  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable",
+     "--package", "attendance",
+     "--package", "agent-door-owui",
+     "--package", "agent-door-tui",
+     "--package", "agent-door-trigger"]
+install:
+  to: ~/.local/components/attendance
+  prev: ~/.local/components/attendance.prev
+provides:
+  # Contract 02: create, list, run turn, attach, stop, the journal, events.
+  - { contract: session-api, major: 0, minor: 12 }
+requires:
+  # Contract 03's host side: one channel per sandbox, over sbx exec stdio.
+  - { contract: channel, major: 0, min_minor: 12 }
+  # Contract 04 §7.3: it serves the PEP's one session path.
+  - { contract: pep-grant, major: 0, min_minor: 11 }
+  # Contract 05: it reads managerd's status document and writes a fault file.
+  - { contract: manager-status, major: 0, min_minor: 16 }
+depends_on: [pep, playpen]
+verify:
+  # --env-file: the same file
+  # systemd/creche-attendance.service's own EnvironmentFile= names, read by
+  # the hook itself as the operator. Pinned equal by
+  # release/tests/test_release_r7r_verify_env.py.
+  command: ["~/.local/components/attendance/bin/attendance-verify", "--json",
+            "--env-file", "/srv/agents/state/rework/sessiond.env"]
+  user: operator
+  timeout_s: 60
+restore:
+  mode: automatic
+  keep: 3
+secrets: []
+release: yes

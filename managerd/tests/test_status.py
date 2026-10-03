@@ -94,7 +94,7 @@ def test_credentials_block_as_json() -> None:
 
 
 def test_limits_block_defaults_max_queued_turns_to_100() -> None:
-    """Contract 05 §2.1: sessiond's own constant (contract 02 §13 rule 4),
+    """Contract 05 §2.1: attendance's own constant (contract 02 §13 rule 4),
     not read from family.yaml, so it is the one field not null by default."""
     assert LimitsBlock().as_json() == {
         "max_running_turns": None,

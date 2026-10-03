@@ -1,6 +1,6 @@
 """The verify hook's environment.
 
-`noticeboard-verify`, `sessiond-verify` and `managerd-verify` take `--env-file
+`noticeboard-verify`, `attendance-verify` and `managerd-verify` take `--env-file
 <path>` so root's executor never has to open a file the operator controls itself
 (`release/AGENTS.md` "Trust rules"): the hook reads it as its own user,
 the same user the unit's `EnvironmentFile=` already trusts.
@@ -27,7 +27,7 @@ ENV_FILE_RE = re.compile(r"^EnvironmentFile=(\S+)$", re.MULTILINE)
 #: Component name -> the unit its verify hook's own user actually reads.
 UNIT_OF = {
     "noticeboard": "creche-noticeboard.service",
-    "sessiond": "agent-sessiond.service",
+    "attendance": "creche-attendance.service",
     "managerd": "agent-managerd.service",
     "pep": "agent-pep.service",
 }
@@ -60,12 +60,12 @@ def test_every_verify_hooks_env_file_matches_its_units_environment_file() -> Non
         assert _verify_env_file(manifest.verify.command) == _unit_env_file(unit), component
 
 
-def test_noticeboard_sessiond_and_managerd_each_name_a_real_env_file() -> None:
+def test_noticeboard_attendance_and_managerd_each_name_a_real_env_file() -> None:
     """The literal paths, so a bug in the drift-proof test above (both
     sides silently None) cannot pass unnoticed."""
     expected = {
         "noticeboard": "/srv/agents/state/rework/view.env",
-        "sessiond": "/srv/agents/state/rework/sessiond.env",
+        "attendance": "/srv/agents/state/rework/sessiond.env",
         "managerd": "/srv/agents/state/rework/managerd.env",
     }
     for component, path in expected.items():

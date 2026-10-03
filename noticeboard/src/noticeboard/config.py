@@ -31,7 +31,7 @@ DEFAULT_REGISTRY_DIR: Final = "/srv/agents/registry"
 
 #: Contract 02 §3 rule 1: the socket lives on the production state root,
 #: because a hardened unit cannot reach `/run/user/<uid>`.
-DEFAULT_SESSIOND_SOCKET: Final = "/srv/agents/state/rework/sock/sessiond.sock"
+DEFAULT_ATTENDANCE_SOCKET: Final = "/srv/agents/state/rework/sock/sessiond.sock"
 
 #: A Unix-socket client still needs a base URL for the path and the Host
 #: header. The name is never resolved.
@@ -70,8 +70,8 @@ class Config:
     port: int
     state_root: Path
     registry_dir: Path
-    sessiond_socket: Path | None
-    sessiond_url: str
+    attendance_socket: Path | None
+    attendance_url: str
     page_size: int
     #: `Secure` on the CSRF cookie. The proxy terminates TLS, so a browser
     #: only ever sees https. Set `VIEW_COOKIE_SECURE=0` for a plain-HTTP
@@ -104,7 +104,7 @@ class Config:
 
     @property
     def view_token_file(self) -> Path:
-        """Contract 02 §3 rule 5: the `view-ro` bearer. `sessiond` mints it;
+        """Contract 02 §3 rule 5: the `view-ro` bearer. `attendance` mints it;
         this service only reads it."""
         return self.state_root / "tokens" / "view-ro.token"
 
@@ -118,7 +118,7 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
     _refuse_wildcard(bind)
     _refuse_open_on_lan(bind, key)
 
-    socket_path = _text(source, "SESSIOND_SOCKET", DEFAULT_SESSIOND_SOCKET)
+    socket_path = _text(source, "SESSIOND_SOCKET", DEFAULT_ATTENDANCE_SOCKET)
     url = _text(source, "SESSIOND_URL", "")
 
     return Config(
@@ -127,9 +127,9 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
         state_root=_path(source, "STATE_ROOT", DEFAULT_STATE_ROOT),
         registry_dir=_path(source, "REGISTRY_DIR", DEFAULT_REGISTRY_DIR),
         # A URL wins: it is how an operator points the noticeboard at a TCP
-        # `sessiond` (contract 02 §3 rule 2) instead of the socket.
-        sessiond_socket=None if url else Path(socket_path),
-        sessiond_url=url or SOCKET_BASE_URL,
+        # `attendance` (contract 02 §3 rule 2) instead of the socket.
+        attendance_socket=None if url else Path(socket_path),
+        attendance_url=url or SOCKET_BASE_URL,
         page_size=_page_size(source),
         cookie_secure=_flag(source, "COOKIE_SECURE"),
         access_key=key,

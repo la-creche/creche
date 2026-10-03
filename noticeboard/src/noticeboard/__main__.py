@@ -19,8 +19,8 @@ from pathlib import Path
 import uvicorn
 
 from .app import build_app
+from .attendancehttp import HttpTransport, build_client
 from .config import Config, ConfigError, from_env
-from .sessiondhttp import HttpTransport, build_client
 from .sessions import SessionReader
 
 EXIT_OK = 0
@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _serve(config: Config) -> None:
     reader = SessionReader(
-        transport=HttpTransport(build_client(config.sessiond_socket, config.sessiond_url)),
+        transport=HttpTransport(build_client(config.attendance_socket, config.attendance_url)),
         token_file=config.view_token_file,
     )
     _LOG.info("noticeboard on %s:%s", config.bind, config.port)
@@ -73,7 +73,7 @@ def _report(config: Config) -> None:
     print(f"outcomes      {_where(config.outcomes_dir)}")
     print(f"registry      {_where(config.registry_dir)}")
     print(f"view-ro token {_where(config.view_token_file)}")
-    print(f"sessiond      {_sessiond(config)}")
+    print(f"attendance      {_attendance(config)}")
 
 
 def _key_state(config: Config) -> str:
@@ -87,11 +87,11 @@ def _where(path: Path) -> str:
     return f"{path} ({'present' if path.exists() else 'MISSING'})"
 
 
-def _sessiond(config: Config) -> str:
-    if config.sessiond_socket is None:
-        return config.sessiond_url
+def _attendance(config: Config) -> str:
+    if config.attendance_socket is None:
+        return config.attendance_url
 
-    return _where(config.sessiond_socket)
+    return _where(config.attendance_socket)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

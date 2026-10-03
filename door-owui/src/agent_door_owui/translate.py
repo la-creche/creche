@@ -1,4 +1,4 @@
-"""`sessiond` event lines to OpenAI SSE frames.
+"""`attendance` event lines to OpenAI SSE frames.
 
 The input is contract 02 §8 journal lines. `tests/test_translate.py`'s
 golden vectors fix the output.
@@ -28,7 +28,7 @@ _STATUS_FAILED = "failed"
 _UNKNOWN_REASON = "interrupted"
 _NO_TERMINAL_REASON = "stream_ended_before_the_turn_settled"
 
-# pi event types this door renders. Anything else is recorded by `sessiond`
+# pi event types this door renders. Anything else is recorded by `attendance`
 # and shown by the noticeboard; the chat surface has no place for it.
 _MESSAGE_UPDATE = "message_update"
 _MESSAGE_END = "message_end"
@@ -70,7 +70,7 @@ class TurnTranslator:
             return []
 
         # Latch this turn's id from the first line that carries one, then
-        # ignore any line addressed to a different turn. `sessiond` streams
+        # ignore any line addressed to a different turn. `attendance` streams
         # one turn here, and a line from another one is a bug, not content.
         if line.turn is not None and self._turn is None:
             self._turn = line.turn

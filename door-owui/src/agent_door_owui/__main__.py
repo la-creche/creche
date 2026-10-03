@@ -2,7 +2,7 @@
 
 Config comes from the environment (`config.py` lists every `DOOR_OWUI_*`
 variable). `--check` validates it and exits without binding a port or
-touching `sessiond`, so a bad key file or a `0.0.0.0` bind is caught before
+touching `attendance`, so a bad key file or a `0.0.0.0` bind is caught before
 the unit is enabled, not after (config.py §"fail closed").
 """
 
@@ -15,15 +15,15 @@ import sys
 import uvicorn
 
 from .app import create_app
+from .attendance import HttpAttendance
 from .config import ConfigError, DoorConfig, from_env
 from .families import StatusFiles
-from .sessiond import HttpSessiond
 
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     # httpx logs every request URL at INFO, and a header carrying the
-    # sessiond token rides on every one of these calls (invariant 13).
+    # attendance token rides on every one of these calls (invariant 13).
     for noisy in ("httpx", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
@@ -48,14 +48,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="validate config and exit, without binding a port or calling sessiond",
+        help="validate config and exit, without binding a port or calling attendance",
     )
     return parser.parse_args(argv)
 
 
 def _serve(config: DoorConfig) -> None:
     families = StatusFiles(config.families_dir)
-    app = create_app(config, HttpSessiond(config), families)
+    app = create_app(config, HttpAttendance(config), families)
     # config.from_env() already refuses a 0.0.0.0 bind, so nothing here can
     # widen it back out.
     uvicorn.run(app, host=config.bind_host, port=config.bind_port)

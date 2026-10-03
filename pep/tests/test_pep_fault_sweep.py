@@ -1,6 +1,6 @@
 """The sweep that clears a fault without traffic (contract 04 §1.6 rule 7).
 
-`grants_stale` blocks turns (contract 05 §3.3), and `sessiond` refuses every
+`grants_stale` blocks turns (contract 05 §3.3), and `attendance` refuses every
 turn of a family that carries a turn-blocking fault. If only a call re-read
 the grant file, a family whose grant file was missing for one second would
 stay down: no call, no re-read, no clear. The sweep is the traffic-free half

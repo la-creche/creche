@@ -1,7 +1,7 @@
 """ULID minting: 26 characters, upper-case Crockford base32 (contract 02 §2).
 
 Every ULID in the seven rework contracts is this exact alphabet and this
-exact length, "a session id's `<ulid>` suffix" named among them. `sessiond`
+exact length, "a session id's `<ulid>` suffix" named among them. `attendance`
 mints turn ids this same way; this door mints the `auto-<ulid>` session id
 for each firing and the turn's own `idempotency_key`, so the shape must
 already match before the two processes ever talk (contract 02 §2, §6).

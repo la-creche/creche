@@ -61,7 +61,7 @@ def test_serve_watches_the_pep_on_the_lan_address(
 
     printed = capsys.readouterr().out
     assert f"pep watch: {url(Port.PEP)}," in printed
-    assert f"sessiond: {url(Port.SESSIOND)}," in printed
+    assert f"attendance: {url(Port.ATTENDANCE)}," in printed
 
 
 def test_an_explicit_pep_url_still_wins(

@@ -8,21 +8,21 @@ refuses: it never queues and never steals.
 from __future__ import annotations
 
 import pytest
+from agent_door_tui.attendance import AttendanceError, Takeover
 from agent_door_tui.errors import DoorError, Exit
 from agent_door_tui.lease import LEASE_TTL_S, RENEW_INTERVAL_S, WriterLease
-from agent_door_tui.sessiond import SessiondError, Takeover
-from fake_tui_sessiond import FAMILY, FakeSessiond
+from fake_tui_attendance import FAMILY, FakeAttendance
 
 SESSION = "tui-01JBQ7WZ0X4T9V6K2H8M3N5PQR"
 INSTANCE = "tui.4242"
 
 
-def lease_of(door: FakeSessiond) -> WriterLease:
+def lease_of(door: FakeAttendance) -> WriterLease:
     return WriterLease(door, FAMILY, SESSION, INSTANCE)
 
 
 def test_taking_the_lease_calls_the_writer_operation() -> None:
-    door = FakeSessiond()
+    door = FakeAttendance()
 
     lease_of(door).take()
 
@@ -32,7 +32,7 @@ def test_taking_the_lease_calls_the_writer_operation() -> None:
 
 def test_a_held_lease_refuses_and_never_steals() -> None:
     """Contract 02 §7.2, §7.3 rule 6. Another terminal is the refusal."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     door.hold(FAMILY, SESSION, "tui")
 
     with pytest.raises(DoorError) as caught:
@@ -51,7 +51,7 @@ def test_another_doors_idle_lease_passes(door_instance: str = INSTANCE) -> None:
     A chat that settled seconds ago is the normal case when a chat moves to
     the terminal, not a collision.
     """
-    door = FakeSessiond()
+    door = FakeAttendance()
     door.hold(FAMILY, SESSION, "owui")
 
     lease_of(door).take()
@@ -62,7 +62,7 @@ def test_another_doors_idle_lease_passes(door_instance: str = INSTANCE) -> None:
 
 def test_an_idle_holder_is_named_with_the_way_out() -> None:
     """An idle lease is not contention. The message says what would take it."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     door.hold(FAMILY, SESSION, "tui")
 
     with pytest.raises(DoorError) as caught:
@@ -73,7 +73,7 @@ def test_an_idle_holder_is_named_with_the_way_out() -> None:
 
 def test_a_running_turn_is_never_offered_force() -> None:
     """Contract 02 §7.3: `force` never interrupts a running turn."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     door.hold(FAMILY, SESSION, "owui", turn="01JBTURN")
 
     with pytest.raises(DoorError) as caught:
@@ -85,7 +85,7 @@ def test_a_running_turn_is_never_offered_force() -> None:
 
 def test_force_takes_another_terminals_idle_lease() -> None:
     """Contract 02 §7.3 rule 6. A deliberate act, never the default."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     door.hold(FAMILY, SESSION, "tui")
 
     lease_of(door).take(Takeover.FORCE)
@@ -95,8 +95,8 @@ def test_force_takes_another_terminals_idle_lease() -> None:
 
 
 def test_force_is_still_refused_while_a_turn_runs() -> None:
-    """`sessiond` decides. The door cannot talk it into interrupting a turn."""
-    door = FakeSessiond()
+    """`attendance` decides. The door cannot talk it into interrupting a turn."""
+    door = FakeAttendance()
     door.hold(FAMILY, SESSION, "owui", turn="01JBTURN")
 
     with pytest.raises(DoorError) as caught:
@@ -107,7 +107,7 @@ def test_force_is_still_refused_while_a_turn_runs() -> None:
 
 def test_a_renewal_never_forces() -> None:
     """A renewal that forced would steal a lease this door had already lost."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     lease = lease_of(door)
     lease.take(Takeover.FORCE)
     door.forced.clear()
@@ -118,7 +118,7 @@ def test_a_renewal_never_forces() -> None:
 
 
 def test_renewal_repeats_the_writer_call_under_the_ttl() -> None:
-    door = FakeSessiond()
+    door = FakeAttendance()
     lease = lease_of(door)
     lease.take()
 
@@ -134,7 +134,7 @@ def test_the_renewal_interval_leaves_room_for_two_misses() -> None:
 
 
 def test_the_renewal_thread_stops_when_the_lease_is_released() -> None:
-    door = FakeSessiond()
+    door = FakeAttendance()
     lease = lease_of(door)
     lease.take()
     lease.start_renewal()
@@ -149,7 +149,7 @@ def test_the_renewal_thread_stops_when_the_lease_is_released() -> None:
 
 def test_release_hands_the_lease_back_at_once() -> None:
     """Contract 02 §5.10. No 60-second wait."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     lease = lease_of(door)
     lease.take()
 
@@ -161,7 +161,7 @@ def test_release_hands_the_lease_back_at_once() -> None:
 
 
 def test_release_is_safe_to_call_twice() -> None:
-    door = FakeSessiond()
+    door = FakeAttendance()
     lease = lease_of(door)
     lease.take()
 
@@ -174,10 +174,10 @@ def test_release_is_safe_to_call_twice() -> None:
 
 def test_a_failed_release_never_raises() -> None:
     """It runs on the way out, often from a signal handler."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     lease = lease_of(door)
     lease.take()
-    door.fail_with = SessiondError("unreachable", "sessiond did not answer", 0)
+    door.fail_with = AttendanceError("unreachable", "attendance did not answer", 0)
 
     lease.release()
 
@@ -186,7 +186,7 @@ def test_a_failed_release_never_raises() -> None:
 
 def test_a_renew_that_lost_the_lease_stops_renewing() -> None:
     """Contract 02 §7.4. Asking again every 20 seconds would fight a human."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     lease = lease_of(door)
     lease.take()
     door.hold(FAMILY, SESSION, "owui")
@@ -201,7 +201,7 @@ def test_a_renew_that_lost_the_lease_stops_renewing() -> None:
 
 
 def test_releasing_a_lease_never_taken_does_nothing() -> None:
-    door = FakeSessiond()
+    door = FakeAttendance()
 
     lease_of(door).release()
 
@@ -210,10 +210,10 @@ def test_releasing_a_lease_never_taken_does_nothing() -> None:
 
 def test_a_renewal_that_fails_does_not_end_the_terminal() -> None:
     """A human is typing. A lost renewal is a warning, never a kill."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     lease = lease_of(door)
     lease.take()
-    door.fail_with = SessiondError("unreachable", "sessiond did not answer", 0)
+    door.fail_with = AttendanceError("unreachable", "attendance did not answer", 0)
 
     lease.renew_once()
 
@@ -221,21 +221,21 @@ def test_a_renewal_that_fails_does_not_end_the_terminal() -> None:
 
 
 def test_a_failed_take_leaves_nothing_to_release() -> None:
-    door = FakeSessiond()
-    door.fail_with = SessiondError("unreachable", "sessiond did not answer", 0)
+    door = FakeAttendance()
+    door.fail_with = AttendanceError("unreachable", "attendance did not answer", 0)
     lease = lease_of(door)
 
     with pytest.raises(DoorError) as caught:
         lease.take()
 
-    assert caught.value.code is Exit.SESSIOND
+    assert caught.value.code is Exit.ATTENDANCE
     lease.release()
     assert not lease.renewing
 
 
 def test_the_renewal_thread_runs_and_joins() -> None:
     """The thread outlives nothing: `release` joins it before the door exits."""
-    door = FakeSessiond()
+    door = FakeAttendance()
     lease = lease_of(door)
     lease.take()
     lease.start_renewal()

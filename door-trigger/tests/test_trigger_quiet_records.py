@@ -1,4 +1,4 @@
-"""`quiet/records.py` against real files under `tmp_path`: `sessiond`'s
+"""`quiet/records.py` against real files under `tmp_path`: `attendance`'s
 outcome records and the PEP's audit, in their contract shapes."""
 
 from __future__ import annotations

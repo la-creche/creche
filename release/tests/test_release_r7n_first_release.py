@@ -86,10 +86,10 @@ UNIT = "creche-noticeboard.service"
 #: is a compose project, `mcp-servers` is `/opt/mcp/<name>` and
 #: `registry-data` is a checkout. Root learns a component's manifest from
 #: a tree under an install root, so it can see none of them.
-INSTALLED_TREES = ("managerd", "releasectl", "sessiond", "noticeboard")
+INSTALLED_TREES = ("managerd", "releasectl", "attendance", "noticeboard")
 
 #: What `pep` provides, and nobody in the resolved set does. `managerd`,
-#: `sessiond` and `noticeboard` all require it, so it is the requirement root cannot
+#: `attendance` and `noticeboard` all require it, so it is the requirement root cannot
 #: check on this host.
 UNPROVIDED = "pep-grant"
 
@@ -98,14 +98,14 @@ UNPROVIDED = "pep-grant"
 #: order the manifest declares them. `pep` provides `pep-grant` and
 #: `playpen` provides `channel`, and neither is a tree under an
 #: install root. `releasectl` requires nothing, and `noticeboard` gets `session-api`
-#: from `sessiond` and `manager-status` from `managerd`, which ARE trees.
+#: from `attendance` and `manager-status` from `managerd`, which ARE trees.
 #:
 #: The FLOORS are read from the manifests and never written here. A contract
 #: draft moves a `min_minor` in some other pull request, and a number typed
 #: into this list then fails a test that has nothing to do with that change
 #: (it did, the day this was written: `pep-grant` went 0.10 to 0.11 and
 #: `channel` 0.11 to 0.12 while this file was on its branch).
-_MANIFEST_DIR = {"managerd": "managerd", "sessiond": "sessiond", "noticeboard": "noticeboard"}
+_MANIFEST_DIR = {"managerd": "managerd", "attendance": "attendance", "noticeboard": "noticeboard"}
 
 
 def _floor(component: str, contract: str) -> str:
@@ -127,18 +127,18 @@ def _not_verified(component: str, contract: str, owner: str) -> str:
 
 
 UNVERIFIED = [
+    _not_verified("attendance", "channel", "playpen"),
+    _not_verified("attendance", "pep-grant", "pep"),
     _not_verified("managerd", "pep-grant", "pep"),
     _not_verified("managerd", "channel", "playpen"),
     _not_verified("noticeboard", "pep-grant", "pep"),
-    _not_verified("sessiond", "channel", "playpen"),
-    _not_verified("sessiond", "pep-grant", "pep"),
 ]
 
 #: The two rows the operator reads on the phone, exactly. Four contracts have a
 #: provider root can see:
 #: `family-file` and `manager-status` from `managerd`, `session-api` from
-#: `sessiond`, `component-manifest` from `releasectl`.
-REVIEW_ROW = "suspect: 3 manifest(s) not verified (managerd, releasectl, sessiond)"
+#: `attendance`, `component-manifest` from `releasectl`.
+REVIEW_ROW = "suspect: 3 manifest(s) not verified (attendance, managerd, releasectl)"
 CONTRACTS_ROW = "4 satisfied, 5 not verified"
 
 #: The second request the real spool held: `managerd` asked for
@@ -458,7 +458,7 @@ def test_the_unprovided_requirement_is_reported_and_never_refused(first: First) 
 
     `pep` was live out of `/opt/agent-control/.venv`, which is no tree
     under an install root, so root saw no provider for `pep-grant` —
-    which `managerd`, `sessiond` and `noticeboard` all
+    which `managerd`, `attendance` and `noticeboard` all
     require. Root cannot tell that from "nothing provides it", and
     refusing there refuses every release on this host for ever.
     """
@@ -474,8 +474,8 @@ def test_the_unprovided_requirement_is_reported_and_never_refused(first: First) 
 
 def test_a_provider_root_can_see_is_still_checked(first: First) -> None:
     """The teeth stay where root can bite. `noticeboard` requires `session-api`
-    from `sessiond`, which IS a tree under an install root, so a floor the
-    live `sessiond` does not meet refuses exactly as before."""
+    from `attendance`, which IS a tree under an install root, so a floor the
+    live `attendance` does not meet refuses exactly as before."""
     _raise_the_floor(first, "noticeboard", "session-api", "9.9")
 
     result = _release(first, {COMPONENT: FIRST_VERSION})

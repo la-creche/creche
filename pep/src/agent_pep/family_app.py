@@ -21,7 +21,7 @@ This layer executes the granted MCP tools, `embed`, `ha_call`, `invoke_agent`
 the same path with one wait in the middle: the decision is made, the gate
 opens, the HTTP call is held here, and only a tap runs it.
 
-It also executes `enqueue` and `job_status` through `sessiond`'s dispatch
+It also executes `enqueue` and `job_status` through `attendance`'s dispatch
 door (contract 02 §13.4).
 
 `release` and a server this PEP has not loaded are named seams: the decision

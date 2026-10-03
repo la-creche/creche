@@ -147,7 +147,7 @@ export const CODE_SANDBOX_LINK_PREFIX = "/tmp/code-sandbox-";
  * contract path is not there and `mkdir` under it fails. The same argument
  * made `SESSIOND_SANDBOX_SESSIONS_MOUNT`, and the same bound applies: an
  * environment variable attaches no mount, so it widens no reach (invariant
- * 12). `sessiond` names the matching directory through its own `WORK_ROOT`.
+ * 12). `attendance` names the matching directory through its own `WORK_ROOT`.
  */
 export const CODE_SANDBOX_ROOT_ENV = "AGENT_CODE_SANDBOX_ROOT";
 

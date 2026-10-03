@@ -43,10 +43,10 @@ SCRIPT: Final = REPO_ROOT / "bin" / "rework-watchdog.sh"
 
 #: The five units the script asks `systemctl --user is-failed` about.
 UNITS: Final = (
-    "agent-sessiond.service",
+    "creche-attendance.service",
     "agent-managerd.service",
-    "agent-door-owui.service",
-    "agent-trigger-webhooks.service",
+    "creche-door-owui.service",
+    "creche-trigger-webhooks.service",
     "creche-noticeboard.service",
 )
 
@@ -428,7 +428,7 @@ def test_a_missing_socket_is_found(rig: Rig) -> None:
     done = rig.run()
 
     assert done.returncode == 1
-    assert rig.stored() == "sessiond"
+    assert rig.stored() == "attendance"
     assert "no socket" in rig.posts()[0]
 
 
@@ -439,7 +439,7 @@ def test_a_socket_that_answers_nothing_is_found(rig: Rig) -> None:
     done = rig.run(WD_SOCK_CODE="000")
 
     assert done.returncode == 1
-    assert rig.stored() == "sessiond"
+    assert rig.stored() == "attendance"
 
 
 def test_a_failed_unit_is_found_and_named(rig: Rig) -> None:
@@ -619,7 +619,7 @@ def test_a_verdict_that_grows_pushes_again(rig: Rig) -> None:
     done = rig.run(WD_PEP_CODE="000", WD_SOCK_CODE="000")
 
     assert done.returncode == 1
-    assert rig.stored() == "pep sessiond"
+    assert rig.stored() == "pep attendance"
     assert len(rig.posts()) == 2
 
 

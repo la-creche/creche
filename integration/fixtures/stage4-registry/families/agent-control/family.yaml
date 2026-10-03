@@ -26,7 +26,7 @@ verbs:
   release:
     components:
       - pep
-      - sessiond
+      - attendance
       - managerd
       - noticeboard
       - playpen

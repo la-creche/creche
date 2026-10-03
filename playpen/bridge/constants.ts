@@ -117,7 +117,7 @@ export const MANIFEST_BACKGROUND_MS = 15000;
  * `pi_idle_ttl_s` = 900 s away.
  *
  * Why 60 s and not 15 s: a family's `pep_rpm` is 60 by default and a sandbox
- * holds up to 12 pi processes (`sessiond/wire.py`), so the poll's worst case
+ * holds up to 12 pi processes (`attendance/wire.py`), so the poll's worst case
  * is 12 requests a minute out of 60. At the toolless cadence that worst case
  * would be 48 of 60 and the poll could starve a real tool call. A toolless
  * process makes no other call, which is why it may ask faster.

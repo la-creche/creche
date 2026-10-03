@@ -52,9 +52,9 @@ EXIT_USAGE: Final = 2
 #
 # LiteLLM:  `--litellm-base-url`, else `url(Port.LITELLM)`.
 #
-# sessiond: contract 02 §3 rules 1 and 2. It binds a Unix socket and, when
+# attendance: contract 02 §3 rules 1 and 2. It binds a Unix socket and, when
 #           configured, the LAN address at 8350. `--sessiond-url`, else
-#           `url(Port.SESSIOND)`.
+#           `url(Port.ATTENDANCE)`.
 #
 # PEP:      where it answers `/healthz` (contract 05 §3.3). The production
 #           address is the DEFAULT, not an empty string: the PEP binds the
@@ -83,7 +83,7 @@ def _parser() -> argparse.ArgumentParser:
     _python_image_arg(apply_cmd)
     apply_cmd.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     apply_cmd.add_argument("--litellm-base-url", default=None)
-    _sessiond_args(apply_cmd)
+    _attendance_args(apply_cmd)
     apply_cmd.add_argument(
         "--write", action="store_true", help="act. Without it, print the plan only"
     )
@@ -165,7 +165,7 @@ def _watch_args(parser: argparse.ArgumentParser) -> None:
     _python_image_arg(parser)
     parser.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     parser.add_argument("--litellm-base-url", default=None)
-    _sessiond_args(parser)
+    _attendance_args(parser)
     parser.add_argument("--write", action="store_true", help="act. Without it, print the plan only")
 
 
@@ -229,16 +229,19 @@ def _pep_watch(args: argparse.Namespace) -> PepWatch | None:
     )
 
 
-def _sessiond_args(parser: argparse.ArgumentParser) -> None:
-    """Where `sessiond` answers. Every verb that can build a switch client
-    declares BOTH, in one place: `apply-once` once read `args.sessiond_url`
+def _attendance_args(parser: argparse.ArgumentParser) -> None:
+    """Where `attendance` answers. Every verb that can build a switch client
+    declares BOTH, in one place: `apply-once` once read `args.attendance_url`
     without declaring it, and died on the first host that had a token file."""
-    parser.add_argument("--sessiond-url", default=None)
+    # The flags keep the old name: the installed managerd unit passes
+    # `--sessiond-socket`, and that unit changes only by a host step.
+    parser.add_argument("--sessiond-url", dest="attendance_url", default=None)
     parser.add_argument(
         "--sessiond-socket",
+        dest="attendance_socket",
         type=Path,
         default=None,
-        help="sessiond's Unix socket. When given, it wins over --sessiond-url",
+        help="attendance's Unix socket. When given, it wins over --sessiond-url",
     )
 
 
@@ -246,8 +249,8 @@ def _litellm_url(args: argparse.Namespace) -> str:
     return args.litellm_base_url or url(Port.LITELLM)
 
 
-def _sessiond_url(args: argparse.Namespace) -> str:
-    return args.sessiond_url or url(Port.SESSIOND)
+def _attendance_url(args: argparse.Namespace) -> str:
+    return args.attendance_url or url(Port.ATTENDANCE)
 
 
 def _master_key() -> str:
@@ -320,7 +323,7 @@ def _apply_once_command(
 def _optional_switch(args: argparse.Namespace) -> SwitchClient | None:
     """The client `apply_once` asks for the handshake with, or `None`.
 
-    `up` runs this verb BEFORE `sessiond` is listening, and on a fresh host
+    `up` runs this verb BEFORE `attendance` is listening, and on a fresh host
     before its token file exists. Neither is an error: with no client the
     sandbox stays `creating` (contract 05 §4.2 rule 4), and the apply that
     runs once the service is up promotes it. A missing token must not fail
@@ -356,10 +359,10 @@ def _actors(
 
 def _switch_client(args: argparse.Namespace) -> SwitchClient:
     token = read_token(paths.managerd_token_path(args.state_root))
-    if args.sessiond_socket is not None:
-        return HttpSwitchClient.over_socket(args.sessiond_socket, token)
+    if args.attendance_socket is not None:
+        return HttpSwitchClient.over_socket(args.attendance_socket, token)
 
-    return HttpSwitchClient(_sessiond_url(args), token)
+    return HttpSwitchClient(_attendance_url(args), token)
 
 
 def _watch_plan(args: argparse.Namespace, families: Sequence[str]) -> list[str]:
@@ -369,18 +372,19 @@ def _watch_plan(args: argparse.Namespace, families: Sequence[str]) -> list[str]:
         f"image: {args.image}",
         f"image (python): {args.image_python or '(none configured)'}",
         f"families: {', '.join(families) if families else '(none)'}",
-        f"sessiond: {_sessiond_address(args)}, token {paths.managerd_token_path(args.state_root)}",
+        f"attendance: {_attendance_address(args)}, "
+        f"token {paths.managerd_token_path(args.state_root)}",
     ]
 
 
-def _sessiond_address(args: argparse.Namespace) -> str:
+def _attendance_address(args: argparse.Namespace) -> str:
     """What `_switch_client` dials, for the banner. It once printed the LAN
     URL while the socket was in use, and sent a reader looking for a listener
     that production does not have."""
-    if args.sessiond_socket is not None:
-        return f"socket {args.sessiond_socket}"
+    if args.attendance_socket is not None:
+        return f"socket {args.attendance_socket}"
 
-    return _sessiond_url(args)
+    return _attendance_url(args)
 
 
 def _serve_command(

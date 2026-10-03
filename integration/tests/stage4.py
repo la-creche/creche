@@ -1,15 +1,15 @@
 """One session in two UIs, and the platform fence (packet I4, stage 4).
 
-Stage 1's harness holds the Open WebUI door, `sessiond` and the playpen.
+Stage 1's harness holds the Open WebUI door, `attendance` and the playpen.
 Stage 4 puts the REAL TUI door beside them on the same session, and a fake
-Open WebUI chat API behind `sessiond`, so the operator's stage 4 test runs off the
+Open WebUI chat API behind `attendance`, so the operator's stage 4 test runs off the
 host:
 
 ```
   httpx (the phone)          agent-tui (the terminal)
-    │ /v1/chat/completions      │ TuiDoor -> HttpSessiond
+    │ /v1/chat/completions      │ TuiDoor -> HttpAttendance
     ▼                           ▼
-  door-owui  ───uds──►  sessiond  ──uds──►  (its own writer lease)
+  door-owui  ───uds──►  attendance  ──uds──►  (its own writer lease)
                            │  │ stdio, contract 03
                            │  ▼
                            │  fake_sbx.py ─► playpen.js ─► fake-pi.mjs
@@ -21,7 +21,7 @@ host:
 ```
 
 Nothing under test is faked. The TUI door is `agent_door_tui`'s own code,
-built the way `__main__` builds it. `sessiond` reaches the fake Open WebUI
+built the way `__main__` builds it. `attendance` reaches the fake Open WebUI
 through its own `HttpChatApi`, over real HTTP, because that class holds both
 the response reader and the 10-second timeout stage 4 has questions about.
 
@@ -34,12 +34,12 @@ Two notes a reader needs.
 1. **A terminal's own turns never reach this journal.** On the host the TUI
    hands its tty to pi inside the sandbox (contract 03 §7.6), which writes
    the pi store directly and journals nothing. So a scenario that needs a
-   turn UNDER the TUI's lease runs it through `sessiond` as `door-tui`. That
+   turn UNDER the TUI's lease runs it through `attendance` as `door-tui`. That
    is the only TUI-door turn a journal can hold, and it is what proves the
-   lease and the ordering. `Stack.sessiond_as` is the same argument packet
+   lease and the ordering. `Stack.attendance_as` is the same argument packet
    CS makes for `managerd`: no door sits in front of the call.
 2. **The fake Open WebUI serves on its own thread.** `HttpChatApi` is
-   synchronous, and `sessiond` runs it on a worker thread (contract 02 §10.4
+   synchronous, and `attendance` runs it on a worker thread (contract 02 §10.4
    rule 5). A fake on this test's event loop could not answer while such a
    call was in flight, so the scenario that holds a write open to measure
    the loop would deadlock instead of measuring it. That scenario is what
@@ -67,18 +67,18 @@ import pytest
 import yaml
 from agent_door_owui.headers import PARENT_ID_HEADER, USER_MESSAGE_ID_HEADER
 from agent_door_tui.app import TuiDoor
+from agent_door_tui.attendance import HttpAttendance as TuiAttendance
 from agent_door_tui.config import TuiConfig
 from agent_door_tui.launch import TerminalRunner
 from agent_door_tui.picker import ScriptedTerminal
-from agent_door_tui.sessiond import HttpSessiond as TuiSessiond
 from agent_door_tui.status import StatusFiles
 from agent_managerd import paths as managerd_paths
 from agent_managerd.apply import ApplyResult, apply_once
 from agent_managerd.driver import FakeDriver
 from agent_managerd.litellm_keys import FakeLiteLLMKeys
-from agent_sessiond.api import DOOR_INSTANCE_HEADER
-from agent_sessiond.auth import Principal
-from agent_sessiond.config import Config
+from attendance.api import DOOR_INSTANCE_HEADER
+from attendance.auth import Principal
+from attendance.config import Config
 from conftest import chat_body, owui_headers
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -109,11 +109,11 @@ PLATFORM_ROOT: Final = "/srv/agents/work/platform"
 
 #: An obvious fixture, never a credential (invariant 13). It is long enough
 #: to look like a key and it is written into a 0600 file, because that is how
-#: `sessiond` reads one (contract 02 §10.4).
+#: `attendance` reads one (contract 02 §10.4).
 FIXTURE_OWUI_KEY: Final = "fixture-owui-api-key-" + "o" * 32
 
 #: Contract 02 §10.4 step 2's folder. Any id: Open WebUI owns the value and
-#: `sessiond` only forwards it.
+#: `attendance` only forwards it.
 FIXTURE_FOLDER_ID: Final = "fixture-folder-0001"
 
 #: Probe 0c's three paths, measured on the host against Open WebUI v0.11.3.
@@ -176,7 +176,7 @@ class FakeOwui:
     The chat id sits at the TOP level of the answer and the chat body under
     `.chat`. That is what the probe read back (`probes/0c-owui-writes/run.sh`
     steps 2 and 3), and it is the whole reason this is an HTTP server rather
-    than a stub behind `ChatApi`: the shape is what `sessiond` parses.
+    than a stub behind `ChatApi`: the shape is what `attendance` parses.
 
     `mood` is a scenario's one knob. `DAWDLE` holds each write for
     `dawdle_s`, which is how the turn-settle path's cost is measured from the
@@ -309,7 +309,7 @@ class Stage4:
 
     def tui_config(self, instance: str, sbx: Path | str = "/nonexistent/sbx") -> TuiConfig:
         """The config `agent_door_tui.__main__` builds, on this stack."""
-        socket = self.stack.sessiond_socket
+        socket = self.stack.attendance_socket
 
         if socket is None:
             raise AssertionError("the stack is not serving yet")
@@ -319,18 +319,18 @@ class Stage4:
         )
 
         return TuiConfig(
-            sessiond_token=token.strip(),
-            sessiond_url="http://sessiond",
-            sessiond_socket=socket,
+            attendance_token=token.strip(),
+            attendance_url="http://sessiond",
+            attendance_socket=socket,
             families_dir=self.stack.families_dir,
             sbx=str(sbx),
             pi_launch=LAUNCHER,
             door_instance=instance,
         )
 
-    def tui_client(self, instance: str) -> TuiSessiond:
+    def tui_client(self, instance: str) -> TuiAttendance:
         """The TUI door's own client, for a scenario that drives one call."""
-        return TuiSessiond(self.tui_config(instance))
+        return TuiAttendance(self.tui_config(instance))
 
     def tui_door(
         self,
@@ -338,10 +338,10 @@ class Stage4:
         sbx: Path,
         runner: TerminalRunner | None = None,
         answers: list[str] | None = None,
-    ) -> tuple[TuiDoor, TuiSessiond, ScriptedTerminal]:
+    ) -> tuple[TuiDoor, TuiAttendance, ScriptedTerminal]:
         """One whole `agent-tui` run, assembled as `__main__` assembles it."""
         config = self.tui_config(instance, sbx)
-        client = TuiSessiond(config)
+        client = TuiAttendance(config)
         screen = ScriptedTerminal(answers if answers is not None else [])
         door = TuiDoor(
             client,
@@ -403,7 +403,7 @@ class Stage4:
         journal, so the only TUI-door turn a scenario can observe is this
         one, run as `door-tui` with the header that names the terminal.
         """
-        client = self.stack.sessiond_as(Principal.DOOR_TUI)
+        client = self.stack.attendance_as(Principal.DOOR_TUI)
 
         try:
             answer = await client.post(
@@ -573,7 +573,7 @@ class Stage4:
     def open_delegate_door(self) -> Path:
         """Contract 02 §3 rule 5's one exception, at the host's own mode.
 
-        The PEP runs as user `pep` and `sessiond` owns the file, so group
+        The PEP runs as user `pep` and `attendance` owns the file, so group
         read is what makes the delegate door reachable at all. Stage 3
         proves that rule; stage 4 only needs the PEP to start.
         """
@@ -663,7 +663,7 @@ def serving_pep(stage: Stage4, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     """
     from pep_harness import build_pep, free_port, serving
 
-    socket_path = stage.stack.sessiond_socket
+    socket_path = stage.stack.attendance_socket
 
     if socket_path is None:
         raise AssertionError("the stack is not serving yet")
@@ -681,7 +681,7 @@ def serving_owui(owui: FakeOwui) -> Iterator[str]:
     """Put the fake Open WebUI on a loopback port, on its own thread.
 
     Loopback, never the LAN address: a test binds nothing another host can
-    reach. Its own thread, because `sessiond` calls
+    reach. Its own thread, because `attendance` calls
     it synchronously from the turn-settle path — a server on this test's loop
     could not answer while that call was in flight.
     """
@@ -713,7 +713,7 @@ async def settle(check: Callable[[], bool], what: str, timeout: float = 10.0) ->
     """Spin until a condition holds, or say what never happened.
 
     Contract 02 §8.2: the door's stream ends at pi's `agent_settled` and
-    `sessiond` writes `turn_settled` after that. A reader that looks the
+    `attendance` writes `turn_settled` after that. A reader that looks the
     instant a stream ends sees the turn still in flight, so every read of the
     journal's tail goes through here.
     """

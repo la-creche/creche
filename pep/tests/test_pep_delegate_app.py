@@ -1,7 +1,7 @@
 """`invoke_agent` end to end through the family path (contract 04 §7).
 
 The delegate door is a fake behind `DelegateDoor`, so nothing here needs
-`sessiond`, a sandbox or the host. Every row of the decision and every audit
+`attendance`, a sandbox or the host. Every row of the decision and every audit
 consequence is asserted against the real app.
 """
 
@@ -44,7 +44,7 @@ DELEGATE_CALL: dict[str, object] = {
 
 @dataclass
 class FakeDoor:
-    """One `sessiond` delegate door, recorded rather than reached."""
+    """One `attendance` delegate door, recorded rather than reached."""
 
     reply: DelegateReply = field(
         default_factory=lambda: DelegateReply(DelegateStatus.OK, content=ANSWER)
@@ -364,24 +364,24 @@ def test_half_a_configuration_builds_no_door(tmp_path: Path) -> None:
     base = PepConfig(audit_dir=tmp_path / "a", rework_dir=tmp_path / "r")
     assert build_delegate_door(base) is None
     assert build_delegate_door(_with(base, delegate_token="t" * 32)) is None
-    assert build_delegate_door(_with(base, sessiond_socket=tmp_path / "s.sock")) is None
+    assert build_delegate_door(_with(base, attendance_socket=tmp_path / "s.sock")) is None
 
 
 def test_a_token_and_a_socket_build_a_door(tmp_path: Path) -> None:
     base = PepConfig(audit_dir=tmp_path / "a", rework_dir=tmp_path / "r")
-    built = _with(base, delegate_token="t" * 32, sessiond_socket=tmp_path / "s.sock")
+    built = _with(base, delegate_token="t" * 32, attendance_socket=tmp_path / "s.sock")
     assert build_delegate_door(built) is not None
 
 
 def test_a_token_and_a_url_build_a_door(tmp_path: Path) -> None:
     base = PepConfig(audit_dir=tmp_path / "a", rework_dir=tmp_path / "r")
-    built = _with(base, delegate_token="t" * 32, sessiond_url="http://192.0.2.10:8350")
+    built = _with(base, delegate_token="t" * 32, attendance_url="http://192.0.2.10:8350")
     assert build_delegate_door(built) is not None
     # The default URL names no host that could answer, so it is not a
     # configuration on its own.
-    assert build_delegate_door(_with(base, delegate_token="t" * 32, sessiond_url=UDS_BASE_URL)) is (
-        None
-    )
+    assert build_delegate_door(
+        _with(base, delegate_token="t" * 32, attendance_url=UDS_BASE_URL)
+    ) is (None)
 
 
 def _with(cfg: PepConfig, **over: object) -> PepConfig:

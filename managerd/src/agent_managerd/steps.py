@@ -199,7 +199,7 @@ def publish_playpen_env(state_root: Path, family_name: str, sandbox: str) -> Non
 
     A create writes it once. This puts it back for a sandbox an earlier
     pass created and then left: a sandbox whose file is missing publishes
-    no path, and `sessiond` refuses every turn on it with
+    no path, and `attendance` refuses every turn on it with
     `sandbox_unavailable` rather than dialling a playpen that would
     answer `fatal` (contract 05 §4.1.1 rule 4). Nothing else can repair it,
     because `managerd` is the file's only writer."""
@@ -259,7 +259,7 @@ def apply_egress(
 
 def limits_for(family: FamilyFile) -> LimitsBlock:
     """Contract 05 §2.1: two come from `family.yaml`; `max_queued_turns`
-    is `sessiond`'s own constant, which `LimitsBlock`'s default mirrors."""
+    is `attendance`'s own constant, which `LimitsBlock`'s default mirrors."""
     if family.kind == Kind.AUTONOMOUS:
         turns = (
             family.max_running_turns

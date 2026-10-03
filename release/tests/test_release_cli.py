@@ -13,10 +13,10 @@ from release_fixtures import manifest_text, provides_entry, requires_entry, writ
 
 RELEASE_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
 
-#: `pep` provides pep-grant 2.1 and `sessiond` calls it at 2.0.
+#: `pep` provides pep-grant 2.1 and `attendance` calls it at 2.0.
 EDGES: dict[str, tuple[str, str]] = {
     "pep": (provides_entry("pep-grant", 2, 1), ""),
-    "sessiond": ("", requires_entry("pep-grant", 2, 0)),
+    "attendance": ("", requires_entry("pep-grant", 2, 0)),
 }
 
 
@@ -25,7 +25,7 @@ def _repo_roots(tmp_path: Path, *, floor: int = 0) -> list[str]:
     roots = {repo: tmp_path / str(repo) for repo in Repo}
     for row in CATALOG:
         provides, requires = EDGES.get(row.name, ("", ""))
-        if row.name == "sessiond" and floor:
+        if row.name == "attendance" and floor:
             requires = requires_entry("pep-grant", 2, floor)
 
         write_manifest(
@@ -55,7 +55,7 @@ def _state_file(tmp_path: Path) -> str:
         for index, row in enumerate(CATALOG)
     }
     body = {
-        "live": {"pep": "2.0.3", "sessiond": "1.4.7"},
+        "live": {"pep": "2.0.3", "attendance": "1.4.7"},
         "provided": {"pep-grant": "2.0"},
         "latest": {"pep": "2.1.0"},
         "facts": facts,
@@ -143,7 +143,7 @@ def test_partial_accepts_one_repo(tmp_path: Path, capsys: pytest.CaptureFixture[
     code = main(["check", "--root", str(tmp_path), "--partial"])
 
     assert code == EXIT_OK
-    assert "missing: sessiond" in capsys.readouterr().out
+    assert "missing: attendance" in capsys.readouterr().out
 
 
 def test_check_json_reports_every_component(
@@ -219,19 +219,19 @@ def test_a_broken_floor_names_both_versions(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`stage7-releases.md` §7.1's acceptance run: a fixture with a floor pep cannot meet."""
-    argv = ["resolve", "sessiond=1.5.0", *_roots_argv(tmp_path, floor=4)]
+    argv = ["resolve", "attendance=1.5.0", *_roots_argv(tmp_path, floor=4)]
 
     code = main(argv)
     error = capsys.readouterr().err
 
     assert code == EXIT_REFUSED
     assert "refused [C1] pep-grant" in error
-    assert "sessiond requires pep-grant 2.4" in error
+    assert "attendance requires pep-grant 2.4" in error
     assert "pep provides 2.1" in error
 
 
 def test_a_refusal_in_json_is_a_report(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    argv = ["resolve", "sessiond=1.5.0", *_roots_argv(tmp_path, floor=4), "--json"]
+    argv = ["resolve", "attendance=1.5.0", *_roots_argv(tmp_path, floor=4), "--json"]
 
     code = main(argv)
     report = json.loads(capsys.readouterr().out)

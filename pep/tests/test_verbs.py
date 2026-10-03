@@ -110,7 +110,7 @@ def test_release_schema_and_fence() -> None:
     assert check_schema("release", args) is None
     assert check_fence("release", args, fence) is None
 
-    outside: dict[str, object] = {"components": {"sessiond": "latest"}}
+    outside: dict[str, object] = {"components": {"attendance": "latest"}}
     denial = check_fence("release", outside, fence)
     assert denial is not None
     assert denial.reason == "arg_validation"

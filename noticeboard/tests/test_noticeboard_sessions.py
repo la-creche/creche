@@ -1,4 +1,4 @@
-"""`sessiond` read as `view-ro` (contract 02)."""
+"""`attendance` read as `view-ro` (contract 02)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from noticeboard.sessions import (
     SessionReader,
 )
 from noticeboard_helpers import (
-    FakeSessiond,
+    FakeAttendance,
     journal_line,
     ndjson,
     session_doc,
@@ -28,12 +28,12 @@ EVENTS_PATH = f"{DETAIL_PATH}/events"
 LINE_SEP = chr(0x2028)
 
 
-def reader(tmp_path: Path, fake: FakeSessiond) -> SessionReader:
+def reader(tmp_path: Path, fake: FakeAttendance) -> SessionReader:
     return SessionReader(transport=fake, token_file=write_token(tmp_path))
 
 
 def test_the_session_list_is_read(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(LIST_PATH, {"sessions": [session_doc()], "next_cursor": None})
 
     answer = reader(tmp_path, fake).sessions(family=CHAT)
@@ -45,7 +45,7 @@ def test_the_session_list_is_read(tmp_path: Path) -> None:
 
 def test_the_token_never_reaches_the_query(tmp_path: Path) -> None:
     """Invariant 13. The bearer is its own argument, so no query can hold it."""
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(LIST_PATH, {"sessions": []})
 
     reader(tmp_path, fake).sessions(family=CHAT)
@@ -56,7 +56,7 @@ def test_the_token_never_reaches_the_query(tmp_path: Path) -> None:
 
 
 def test_a_missing_token_file_reports_and_makes_no_call(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     answer = SessionReader(transport=fake, token_file=tmp_path / "gone.token").sessions()
 
     assert "cannot read the noticeboard-ro token" in answer.problem
@@ -64,7 +64,7 @@ def test_a_missing_token_file_reports_and_makes_no_call(tmp_path: Path) -> None:
 
 
 def test_an_empty_token_file_is_refused(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     answer = SessionReader(transport=fake, token_file=write_token(tmp_path, "")).sessions()
 
     assert "empty" in answer.problem
@@ -72,7 +72,7 @@ def test_an_empty_token_file_is_refused(tmp_path: Path) -> None:
 
 
 def test_the_door_comes_from_the_session_id_prefix(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(
         LIST_PATH,
         {
@@ -98,7 +98,7 @@ def test_an_unknown_prefix_falls_back_to_the_lease_holder(tmp_path: Path) -> Non
         "expires_at": "2026-09-19T12:00:00Z",
         "turn": None,
     }
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(LIST_PATH, {"sessions": [session_doc(session="legacy-1", writer=lease)]})
 
     answer = reader(tmp_path, fake).sessions()
@@ -107,7 +107,7 @@ def test_an_unknown_prefix_falls_back_to_the_lease_holder(tmp_path: Path) -> Non
 
 
 def test_a_refusal_becomes_a_sentence_not_an_exception(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(
         LIST_PATH,
         {"error": {"code": "forbidden", "message": "this token may not read chat"}},
@@ -121,18 +121,18 @@ def test_a_refusal_becomes_a_sentence_not_an_exception(tmp_path: Path) -> None:
     assert "403" in answer.problem
 
 
-def test_a_dead_sessiond_becomes_a_report(tmp_path: Path) -> None:
-    fake = FakeSessiond()
-    fake.fault = "cannot reach sessiond: ConnectError: no socket"
+def test_a_dead_attendance_becomes_a_report(tmp_path: Path) -> None:
+    fake = FakeAttendance()
+    fake.fault = "cannot reach attendance: ConnectError: no socket"
 
     answer = reader(tmp_path, fake).sessions()
 
     assert answer.rows == ()
-    assert "cannot reach sessiond" in answer.problem
+    assert "cannot reach attendance" in answer.problem
 
 
 def test_a_malformed_body_becomes_a_report(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(LIST_PATH, b"{ not json")
 
     answer = reader(tmp_path, fake).sessions()
@@ -142,7 +142,7 @@ def test_a_malformed_body_becomes_a_report(tmp_path: Path) -> None:
 
 
 def test_the_turns_carry_their_state_and_usage(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     body = session_doc()
     body["turns"] = [turn_doc(), turn_doc(turn="01K5J9QWB2M4N6Q8S0V2W4Y6A8", state="running")]
     fake.answer(DETAIL_PATH, body)
@@ -157,7 +157,7 @@ def test_the_turns_carry_their_state_and_usage(tmp_path: Path) -> None:
 
 
 def test_a_turn_without_usage_reads_zero_not_a_crash(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     body = session_doc()
     body["turns"] = [turn_doc(usage=None)]
     fake.answer(DETAIL_PATH, body)
@@ -170,7 +170,7 @@ def test_a_turn_without_usage_reads_zero_not_a_crash(tmp_path: Path) -> None:
 
 def test_the_event_stream_is_split_on_line_feed_alone(tmp_path: Path) -> None:
     """Contract 02 §8: U+2028 is legal inside a JSON string."""
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(
         EVENTS_PATH,
         json.dumps(
@@ -186,7 +186,7 @@ def test_the_event_stream_is_split_on_line_feed_alone(tmp_path: Path) -> None:
 
 
 def test_the_stream_asks_for_a_replay_and_never_follows(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(EVENTS_PATH, ndjson([journal_line(7, "note", {})]))
 
     reader(tmp_path, fake).events(CHAT, OWUI, from_seq=6)
@@ -196,7 +196,7 @@ def test_the_stream_asks_for_a_replay_and_never_follows(tmp_path: Path) -> None:
 
 
 def test_a_broken_journal_line_never_hides_the_rest(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {})]) + b"{ broken\n")
 
     stream = reader(tmp_path, fake).events(CHAT, OWUI)
@@ -206,7 +206,7 @@ def test_a_broken_journal_line_never_hides_the_rest(tmp_path: Path) -> None:
 
 
 def test_an_enormous_stream_is_capped_and_says_so(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     rows = [journal_line(one, "note", {}) for one in range(MAX_STREAM_LINES + 5)]
     fake.answer(EVENTS_PATH, ndjson(rows))
 
@@ -218,7 +218,7 @@ def test_an_enormous_stream_is_capped_and_says_so(tmp_path: Path) -> None:
 
 
 def test_the_list_limit_is_held_to_the_contract_cap(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(LIST_PATH, {"sessions": []})
 
     reader(tmp_path, fake).sessions(limit=9999)
@@ -230,7 +230,7 @@ def test_the_list_limit_is_held_to_the_contract_cap(tmp_path: Path) -> None:
 def test_free_labels_are_bounded(tmp_path: Path) -> None:
     """§4.2 calls labels free strings, so a family writes them."""
     labels = {f"k{index}": "x" * 900 for index in range(60)}
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer(LIST_PATH, {"sessions": [session_doc(labels=labels)]})
 
     answer = reader(tmp_path, fake).sessions()

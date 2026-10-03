@@ -18,7 +18,7 @@ Four rules shape every branch below.
    atomic file.
 3. **An invalid file changes nothing** (invariant 19). The last good
    definition keeps serving and the report says why.
-4. **A refused switch keeps both sandboxes.** `sessiond` owns the sessions.
+4. **A refused switch keeps both sandboxes.** `attendance` owns the sessions.
    Destroying the outgoing sandbox on a refusal would end every one of
    them."""
 
@@ -83,7 +83,7 @@ MODEL_CACHE_S: Final = 10
 FIRST_ERROR_CHARS: Final = 200
 
 #: Contract 05 §3.4's two step names that `Step` does not carry. They are
-#: `managerd`'s own actions on `sessiond` and on sbx, not the landing of
+#: `managerd`'s own actions on `attendance` and on sbx, not the landing of
 #: any one family-file field, so `agent_family` has no member for them.
 #: `SWITCH_STEP` is re-exported from `sandboxes`, which makes the call.
 SWITCH_STEP: Final = sandboxes.SWITCH_STEP
@@ -101,7 +101,7 @@ TIMER_ENABLE_FAILED: Final = "timer_enable_failed"
 #: Contract 05 §4.3 step 5b. `_replace` calls this with the steps it has
 #: run so far, to publish the status document BEFORE the §5 call. The
 #: document is the only thing that crosses between the two services (§1),
-#: so a `to` it does not name is a `to` `sessiond` refuses.
+#: so a `to` it does not name is a `to` `attendance` refuses.
 PublishNow = Callable[[tuple[str, ...]], None]
 
 #: Answers True once the service has been told to stop. A pass consults it
@@ -392,7 +392,7 @@ def _converge(
 
     # Both fault files are read AGAIN, now the pass has acted. A §5 call
     # completes a channel handshake, and contract 05 §3.3.1 rule 8 makes that
-    # clear every fault `sessiond` raised for the family. Publishing the
+    # clear every fault `attendance` raised for the family. Publishing the
     # entries read at the top of the pass would report a fault this pass
     # itself just cleared, and leave the family `degraded` until the next one.
     records = _live_records(state_root, family.name)
@@ -576,7 +576,7 @@ def _promote(
     `sandboxes.promote_sandbox` carries the reasoning and makes the call.
     What belongs here is the moment before it: §4.3 step 5b, for the same
     reason a replacement publishes first. A sandbox the status document does
-    not name is one `sessiond` will not dial, and §5.3 rule 8 refuses it."""
+    not name is one `attendance` will not dial, and §5.3 rule 8 refuses it."""
     if serving.state is SandboxLifecycle.READY:
         return serving, (), tuple(ran)
 
@@ -640,7 +640,7 @@ def _replace(
         mode=mode,
         reason=diff.reason() if diff is not None else f"image moved to {image}",
     )
-    # Contract 05 §4.3 step 5b. `sessiond` knows this family only through
+    # Contract 05 §4.3 step 5b. `attendance` knows this family only through
     # the status document (§1), so a sandbox the document does not name is
     # one it will not dial, and §5.3 rule 8 refuses the call.
     _halt_if(stop, ran)
@@ -649,7 +649,7 @@ def _replace(
     try:
         actors.switch.switch(request)
     except SwitchError as exc:
-        # Both sandboxes stay. `sessiond` still sends every turn to the
+        # Both sandboxes stay. `attendance` still sends every turn to the
         # outgoing one, and destroying it would end every session (§5.3
         # rule 1). The next pass retries the same call, which §5.3 rule 7
         # makes idempotent.
@@ -704,7 +704,7 @@ def _keep_last_good(
         sandboxes=tuple(sandboxes.status_of(one) for one in _live_records(state_root, family_name)),
         faults=folded,
         # The last good definition is what serves, so its limits are what
-        # `sessiond` must still enforce. Publishing the defaults instead
+        # `attendance` must still enforce. Publishing the defaults instead
         # would silently move `max_running_turns` on a family that never
         # changed (contract 05 §3.1).
         limits=steps.limits_for(applied.family) if applied is not None else LimitsBlock(),

@@ -1,6 +1,6 @@
-"""One running stack: the real door, the real `sessiond`, the real playpen.
+"""One running stack: the real door, the real `attendance`, the real playpen.
 
-    httpx  ──http/uds──►  door-owui  ──http/uds──►  sessiond
+    httpx  ──http/uds──►  door-owui  ──http/uds──►  attendance
                                                        │ stdio (contract 03)
                                                        ▼
                                         fake_sbx.py exec --env-file ...
@@ -12,7 +12,7 @@
                                            playpen/test/fake-pi.mjs
 
 Nothing here is a mock of a thing under test. Both Python services run under
-their own uvicorn listener on a Unix socket, so the door speaks to `sessiond`
+their own uvicorn listener on a Unix socket, so the door speaks to `attendance`
 over the transport it uses on the host. Two stand-ins: `fake-pi.mjs`, the
 playpen package's own double for `pi --mode rpc`, reached through the
 `AGENT_PI_BIN` seam `playpen/src/launcher.ts` already provides, and
@@ -44,15 +44,15 @@ from typing import Any, cast
 import httpx
 import uvicorn
 from agent_door_owui.app import create_app
+from agent_door_owui.attendance import HttpAttendance
 from agent_door_owui.config import DoorConfig
 from agent_door_owui.families import StatusFiles
-from agent_door_owui.sessiond import HttpSessiond
 from agent_managerd import paths as managerd_paths
 from agent_managerd.playpen_env import write_playpen_env
-from agent_sessiond.api import build_app
-from agent_sessiond.auth import Principal, TokenBook
-from agent_sessiond.config import Bind, Config
-from agent_sessiond.service import SessionService
+from attendance.api import build_app
+from attendance.auth import Principal, TokenBook
+from attendance.config import Bind, Config
+from attendance.service import SessionService
 
 FAMILY = "chat"
 SANDBOX = "chat-s1"
@@ -132,11 +132,11 @@ class Stack:
         self.log_dir = root / "log"
         self.pi_spawn_log = root / "pi-spawns.log"
         self.client: httpx.AsyncClient | None = None
-        self.door_to_sessiond: httpx.AsyncClient | None = None
-        #: Where `sessiond` listens, for a scenario that dials it with a
+        self.door_to_attendance: httpx.AsyncClient | None = None
+        #: Where `attendance` listens, for a scenario that dials it with a
         #: client of its own — `managerd`'s switch client, for one.
-        self.sessiond_socket: Path | None = None
-        self._door_to_sessiond: HttpSessiond | None = None
+        self.attendance_socket: Path | None = None
+        self._door_to_attendance: HttpAttendance | None = None
         self._service: SessionService | None = None
         self._servers: list[_Listener] = []
         self._clients: list[httpx.AsyncClient] = []
@@ -367,7 +367,7 @@ class Stack:
         """This process's own environment, holding no mount path.
 
         The three mount paths are NOT here. They travel in `supervisor.env`,
-        through `--env-file`, exactly as on the host: a `sessiond` that built
+        through `--env-file`, exactly as on the host: an `attendance` that built
         its command without that flag would start a playpen with none of
         them, and every turn would fail (contract 03 §7.1).
 
@@ -393,50 +393,50 @@ class Stack:
 
     async def serve(self) -> httpx.AsyncClient:
         """Start both services and return a client that plays Open WebUI."""
-        sessiond_socket = self._socket_path("s.sock")
+        attendance_socket = self._socket_path("s.sock")
         door_socket = self._socket_path("d.sock")
-        self.sessiond_socket = sessiond_socket
+        self.attendance_socket = attendance_socket
 
-        self._service = SessionService(self._sessiond_config(sessiond_socket))
+        self._service = SessionService(self._attendance_config(attendance_socket))
         self._service.start()
         self._service.start_upkeep()
 
         tokens = TokenBook(self.state_root)
         tokens.load()
-        await self._listen(build_app(self._service, tokens), sessiond_socket)
+        await self._listen(build_app(self._service, tokens), attendance_socket)
 
-        door_config = self._door_config(sessiond_socket)
-        # Kept, because the door's own client to `sessiond` holds a keep-alive
+        door_config = self._door_config(attendance_socket)
+        # Kept, because the door's own client to `attendance` holds a keep-alive
         # connection for the life of the app. An unclosed one keeps the
-        # `sessiond` listener's `wait_closed()` waiting for ever at teardown.
-        self._door_to_sessiond = HttpSessiond(door_config)
+        # `attendance` listener's `wait_closed()` waiting for ever at teardown.
+        self._door_to_attendance = HttpAttendance(door_config)
         door = create_app(
-            door_config, self._door_to_sessiond, StatusFiles(door_config.families_dir)
+            door_config, self._door_to_attendance, StatusFiles(door_config.families_dir)
         )
         await self._listen(door, door_socket)
 
         self.client = self._client(door_socket)
-        self.door_to_sessiond = self._sessiond_client(sessiond_socket)
+        self.door_to_attendance = self._attendance_client(attendance_socket)
 
         return self.client
 
-    def sessiond_as(self, principal: Principal) -> httpx.AsyncClient:
-        """A client to `sessiond` holding one principal's token.
+    def attendance_as(self, principal: Principal) -> httpx.AsyncClient:
+        """A client to `attendance` holding one principal's token.
 
         `managerd`'s one call has no door in front of it (contract 05 §5),
-        so a scenario that switches a sandbox speaks to `sessiond` directly.
+        so a scenario that switches a sandbox speaks to `attendance` directly.
         """
-        path = self.sessiond_socket
+        path = self.attendance_socket
 
         if path is None:
             raise AssertionError("the stack is not serving yet")
 
-        return self._sessiond_client(path, principal)
+        return self._attendance_client(path, principal)
 
-    def _sessiond_client(
+    def _attendance_client(
         self, path: Path, principal: Principal = Principal.DOOR_OWUI
     ) -> httpx.AsyncClient:
-        """A door's own client to `sessiond`, for the calls the door makes first.
+        """A door's own client to `attendance`, for the calls the door makes first.
 
         Contract 02 §5.1's create-or-find is its own HTTP call. The Open WebUI
         door makes it and then runs a turn in one request, so this is the only
@@ -467,7 +467,7 @@ class Stack:
 
         return client
 
-    def _sessiond_config(self, socket_path: Path) -> Config:
+    def _attendance_config(self, socket_path: Path) -> Config:
         # The SHAPE of the command on the host, with `sbx` replaced and
         # nothing else: the two template fields, their order and the
         # `--sandbox` flag are the ones `exec_channel.DEFAULT_COMMAND` uses.
@@ -491,16 +491,16 @@ class Stack:
             lock_poll_s=LOCK_POLL_S,
         )
 
-    def _door_config(self, sessiond_socket: Path) -> DoorConfig:
+    def _door_config(self, attendance_socket: Path) -> DoorConfig:
         token = (self.state_root / "tokens" / "door-owui.token").read_text(encoding="utf-8")
 
         return DoorConfig(
             bind_host="127.0.0.1",
             bind_port=8320,
             door_key=DOOR_KEY,
-            sessiond_token=token.strip(),
-            sessiond_url="http://sessiond",
-            sessiond_socket=sessiond_socket,
+            attendance_token=token.strip(),
+            attendance_url="http://sessiond",
+            attendance_socket=attendance_socket,
             families_dir=self.families_dir,
         )
 
@@ -532,9 +532,9 @@ class Stack:
         for client in self._clients:
             await client.aclose()
 
-        if self._door_to_sessiond is not None:
-            await self._door_to_sessiond.aclose()
-            self._door_to_sessiond = None
+        if self._door_to_attendance is not None:
+            await self._door_to_attendance.aclose()
+            self._door_to_attendance = None
 
         if self._service is not None:
             await self._service.close()
@@ -545,11 +545,11 @@ class Stack:
             await listener.stop()
 
     def channel_pids(self) -> list[int]:
-        """The playpen processes `sessiond` is holding open, for a kill test."""
+        """The playpen processes `attendance` is holding open, for a kill test."""
         return [process.pid for process in self._channel_processes()]
 
     def channel_argv(self) -> list[list[str]]:
-        """The argv of every channel `sessiond` opened, in dial order.
+        """The argv of every channel `attendance` opened, in dial order.
 
         No contract puts this on a wire, so reading it back is a test
         reaching into one process it hosts. It is what proves the two flags

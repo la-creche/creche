@@ -6,7 +6,7 @@
         |-- grants/<family>.json + creds.json ----> the PEP family path
         |-- config/ (runtime.json, instructions.md, skills/) -> the playpen
         |-- creds/ + control/ (mounts) -----------> the playpen
-        `-- families/<family>/status.json --------> sessiond
+        `-- families/<family>/status.json --------> attendance
 
 Every test here runs the REAL writer and the REAL reader. Only the two
 things that would touch a host are faked: the sandbox driver (`FakeDriver`)
@@ -53,12 +53,12 @@ IMAGE: Final = "sha256:000000000000000000000000000000000000000000000000000000000
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 PLAYPEN_DIR: Final = REPO_ROOT / "playpen"
 
-# `sessiond/tests/sessiond_harness.py` holds the far side of the channel: a
+# `attendance/tests/attendance_harness.py` holds the far side of the channel: a
 # playpen that speaks contract 03. Seam 4 reuses it rather than writing a
 # second one that could disagree with it. pytest puts a test directory on
 # `sys.path` only when it collects from that directory, and a run of
 # `integration/tests_manager` alone collects nothing there.
-sys.path.insert(0, str(REPO_ROOT / "sessiond" / "tests"))
+sys.path.insert(0, str(REPO_ROOT / "attendance" / "tests"))
 
 #: The locked fleet's attended chat family, trimmed to what stage 1 runs.
 #: `egress: []` is deliberate: contract 01 §3.7 rule 5 makes it the normal

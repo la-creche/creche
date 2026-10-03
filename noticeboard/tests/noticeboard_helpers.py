@@ -1,7 +1,7 @@
 """Fixture state for the noticeboard's tests.
 
 Everything the noticeboard reads is a file another service wrote, plus one HTTP
-call to `sessiond`. So a test needs a state root on disk and a fake session
+call to `attendance`. So a test needs a state root on disk and a fake session
 service, and nothing else: no host, no `managerd`, no sandbox.
 """
 
@@ -258,7 +258,7 @@ def ndjson(rows: list[dict[str, Any]]) -> bytes:
     return b"".join(json.dumps(row).encode("utf-8") + b"\n" for row in rows)
 
 
-class FakeSessiond:
+class FakeAttendance:
     """A `sessions.Transport` that answers from a table, and records the
     bearer it was given so a test can prove the token never reached a URL."""
 

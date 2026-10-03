@@ -27,8 +27,8 @@ class Exit(IntEnum):
     SESSION_BUSY = 65
     #: A switch is in progress, or no sandbox serves (contract 05 §4.2).
     NO_SANDBOX = 66
-    #: `sessiond` refused the call, or could not be reached.
-    SESSIOND = 67
+    #: `attendance` refused the call, or could not be reached.
+    ATTENDANCE = 67
     #: The picker chose nothing.
     NO_CHOICE = 68
 

@@ -1,4 +1,4 @@
-"""The PEP's client for `sessiond`'s delegate door (contract 04 §7).
+"""The PEP's client for `attendance`'s delegate door (contract 04 §7).
 
 ```
   sandbox --POST /call {tool: invoke_agent} --> PEP --> POST /delegate
@@ -14,7 +14,7 @@ Four rules this module keeps, each with its reason:
 1. **The door's token is read from a file, never from argv or a URL**
    (invariant 13), and it is read at CALL time, not at start
    (`CachedTokenFile`). `read_door_token` refuses a file shorter than 32
-   bytes, the same floor `sessiond` itself applies (contract 02 §3 rule 7).
+   bytes, the same floor `attendance` itself applies (contract 02 §3 rule 7).
 2. **The whole call is bounded at 120 seconds** (§7.5). `httpx`'s own
    `timeout=` is per phase, so a door trickling bytes could stay under it
    forever; `asyncio.wait_for` caps the wall clock. Cancelling the request
@@ -43,7 +43,7 @@ import httpx
 
 log = logging.getLogger("agent_pep.delegate")
 
-#: Contract 04 §7.3: `sessiond` serves this one path for the PEP.
+#: Contract 04 §7.3: `attendance` serves this one path for the PEP.
 DELEGATE_PATH: Final = "/delegate"
 
 #: A Unix socket carries no host, so httpx needs a base URL to build a
@@ -161,7 +161,7 @@ def read_door_token(path: Path) -> str:
 class CachedTokenFile:
     """`read_door_token` moved off the start path and onto the call path.
 
-    WHY. `sessiond` writes `tokens/door-delegate.token` when IT starts. The
+    WHY. `attendance` writes `tokens/door-delegate.token` when IT starts. The
     PEP is a system unit and can start first, so a value read once at boot is
     empty for the life of the process, and every rotation needs
     `sudo systemctl restart agent-pep`. Reading at call time removes that
@@ -275,7 +275,7 @@ class HttpDelegateDoor:
             return await asyncio.wait_for(self._post(request), timeout=self._config.timeout_s)
         except TimeoutError:
             # Cancelling closes the connection, and that is what tells
-            # `sessiond` to stop the turn: §7.3 gives the PEP this one path.
+            # `attendance` to stop the turn: §7.3 gives the PEP this one path.
             log.warning(
                 "delegate to %s passed %.0fs; the request was cancelled",
                 request.target_family,
@@ -314,7 +314,7 @@ class HttpDelegateDoor:
 
     async def _post(self, request: DelegateRequest) -> DelegateReply:
         # Before the connection, not after: a PEP that cannot prove its
-        # identity must not open a socket to sessiond at all.
+        # identity must not open a socket to attendance at all.
         try:
             bearer = self._bearer()
         except DoorTokenError as exc:

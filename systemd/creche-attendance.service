@@ -1,0 +1,78 @@
+# The session service (rework contract 02). USER unit, as the operator.
+#
+# It owns every session, every turn and every journal on this host, and it
+# holds the four front doors' server side. Four processes dial it — the Open
+# WebUI door, the TUI, the trigger door and the noticeboard — and the PEP dials it
+# too, over the Unix socket named below. So it starts FIRST and stops LAST.
+#
+# Installed and enabled by `bin/rework-cutover.sh up`. Never by a release:
+# `stage7-releases.md` §2.4 step 9 refreshes an ALREADY installed unit in
+# place and never runs an installer (contract 06 §5.1's reason).
+#
+# ExecStart points into the component tree contract 06 §1 row 2 fixes, not
+# into /opt/agent-control/.venv. That is where the release executor swaps an
+# `attendance` release, and a unit that ran from anywhere else would relaunch
+# the old code after a release the ledger called a success.
+#
+# The three doors that ship inside this same component (contract 06 §1 rule
+# 1) run from the same tree: `creche-door-owui.service` and
+# `creche-trigger-webhooks.service` name this venv's own bin.
+[Unit]
+Description=attendance, the rework session service
+After=network-online.target
+Wants=network-online.target
+# THE REWORK RESTART POLICY, argued in full in
+# `systemd/agent-managerd.service`: no start limit, so a transient fault
+# cannot end this service for good, and a back-off so restarting for ever
+# stays cheap. `bin/rework-watchdog.sh` is what says the service is not well;
+# `systemctl --user status` still shows NRestarts.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-control
+# sbx panics without both: its state is per-user and a user manager sets
+# neither (systemd/AGENTS.md). attendance runs one `sbx exec` per family for
+# the channel, so it inherits the requirement.
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# No secret in this unit. Every credential this service reads is a file
+# under the state root's `tokens/` directory, at mode 0600, and the env file
+# names paths only. It is written 0600 by `bin/rework-cutover.sh up`.
+EnvironmentFile=/srv/agents/state/rework/sessiond.env
+# The site's AGENT_LAN_ADDRESS: the address a LAN bind uses.
+EnvironmentFile=/etc/agent-control/site.env
+ExecStart=%h/.local/components/attendance/bin/python -m attendance
+# `--check` validates the environment and all seven token files, prints what
+# the service would bind, and exits. It opens no socket and touches no
+# sandbox, so a deploy may run it before it swaps this unit.
+ExecStartPre=%h/.local/components/attendance/bin/python -m attendance --check
+# The rework restart policy (`systemd/agent-managerd.service`). `always`,
+# because systemd calls SIGHUP, SIGINT, SIGTERM and SIGPIPE clean exits and
+# this service has no clean exit that must stay down.
+Restart=always
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=120s
+# SIGTERM ends the accept loop and lets an in-flight turn settle, so no turn
+# is cut between `agent_settled` and the journal's `turn_settled` line
+# (contract 02 §8.2).
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# A user unit on this host cannot use mount-namespace options
+# (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
+# options need no namespace and apply fine (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+# 0027, not 0077: the PEP (user `pep`, group `agents`) connects to the socket
+# this service binds under `sock/`, and reads the audit and outcome trees
+# beside it. The socket itself is chmod'd 0660 by the service after bind
+# (contract 02 §3 rule 1); this only covers directories made with a bare
+# mkdir.
+UMask=0027
+
+[Install]
+WantedBy=default.target

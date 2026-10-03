@@ -10,11 +10,11 @@ Each step below exists because of the one before it.
 1. Read the family's status document. A family that is not attended, or that
    is mid-switch, is refused before the operator is asked to choose anything.
 2. Pick the session: `--session`, `--new`, or the numbered list.
-3. A NEW session is created through `sessiond` FIRST, so the session exists
+3. A NEW session is created through `attendance` FIRST, so the session exists
    in the one place that owns sessions before pi writes a byte.
 4. Take the writer lease as `door-tui`. A lease another door holds refuses:
    contention never queues and never steals.
-5. Ask `sessiond` to release the session's held-open pi process (§5.11), so
+5. Ask `attendance` to release the session's held-open pi process (§5.11), so
    the terminal never waits out `pi_idle_ttl_s` behind pi's own fence. A
    turn still in flight is stopped first: §5.11 refuses while one runs.
 6. Re-read the status document, because the sandbox may have changed while
@@ -28,12 +28,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from .attendance import AttendanceClient, AttendanceError, SessionRow, Takeover, raise_refusal
 from .errors import DoorError, Exit
 from .ids import TITLE_MAX, is_session, new_session_id
 from .launch import EXIT_SBX_FAILED, Store, TerminalRunner, launch_argv
 from .lease import WriterLease
 from .picker import NEW_SESSION, Terminal, pick_session
-from .sessiond import SessiondClient, SessiondError, SessionRow, Takeover, raise_refusal
 from .signals import Interrupted, SignalGuard
 from .status import FamilyDirectory, Serving
 
@@ -76,7 +76,7 @@ class TuiDoor:
 
     def __init__(
         self,
-        door: SessiondClient,
+        door: AttendanceClient,
         families: FamilyDirectory,
         terminal: Terminal,
         runner: TerminalRunner,
@@ -155,13 +155,13 @@ class TuiDoor:
         return Chosen(choice.session, _store_of(found))
 
     def _create(self, request: Request) -> Chosen:
-        """Step 3. `sessiond` owns sessions, so it makes one before pi does."""
+        """Step 3. `attendance` owns sessions, so it makes one before pi does."""
         session = new_session_id()
         title = request.title[:TITLE_MAX]
 
         try:
             self._door.create_session(request.family, session, title)
-        except SessiondError as error:
+        except AttendanceError as error:
             raise raise_refusal(error) from error
 
         self._terminal.show(f"New session {session} in family {request.family}.")
@@ -191,10 +191,10 @@ class TuiDoor:
         return code
 
     def _release_process(self, family: str, session: str) -> None:
-        """Ask `sessiond` to let go of the session's pi process (§5.11).
+        """Ask `attendance` to let go of the session's pi process (§5.11).
 
         The operation maps to contract 03 §4.5's `stop_process`, which only
-        `sessiond` may send. A turn still in flight is stopped first, because
+        `attendance` may send. A turn still in flight is stopped first, because
         §5.11 rule 2 refuses while one is. Without this the terminal meets
         contract 03 §7.6's fence, exit 8, for `pi_idle_ttl_s`.
         """
@@ -202,7 +202,7 @@ class TuiDoor:
 
         try:
             self._door.release_process(family, session, self._instance)
-        except SessiondError as error:
+        except AttendanceError as error:
             raise raise_refusal(error) from error
 
     def _stop_unfinished(self, family: str, session: str) -> None:
@@ -221,7 +221,7 @@ class TuiDoor:
 
         try:
             self._door.stop_turn(family, session, turn)
-        except SessiondError as error:
+        except AttendanceError as error:
             raise raise_refusal(error) from error
 
     def _hand_over(self, serving: Serving, chosen: Chosen) -> int:
@@ -285,19 +285,19 @@ class TuiDoor:
         if serving.warning:
             self._terminal.show(f"Note: {serving.warning}.")
 
-    # -------------------------------------------------------- sessiond, safely
+    # -------------------------------------------------------- attendance, safely
 
     def _list(self, family: str) -> list[SessionRow]:
         try:
             return self._door.sessions(family)
-        except SessiondError as error:
+        except AttendanceError as error:
             raise raise_refusal(error) from error
 
     def _read(self, family: str, session: str) -> SessionRow | None:
-        """One session, or None when `sessiond` does not know it yet."""
+        """One session, or None when `attendance` does not know it yet."""
         try:
             return self._door.get_session(family, session)
-        except SessiondError as error:
+        except AttendanceError as error:
             if error.status == _NOT_FOUND:
                 return None
 

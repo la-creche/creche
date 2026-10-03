@@ -1,6 +1,6 @@
 """Configuration for both of this door's processes.
 
-`fire` makes two calls to `sessiond` and exits; `serve` also watches the
+`fire` makes two calls to `attendance` and exits; `serve` also watches the
 registry and the webhook token directory. Fail closed, the same floor
 contract 02 §3 rule 7 sets for every door's own credential: a missing,
 empty or short token file refuses to start rather than serving with no
@@ -15,17 +15,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 #: Contract 02 §3 rule 7's floor, applied here to this door's own
-#: `sessiond` token the same way every other door applies it.
+#: `attendance` token the same way every other door applies it.
 MIN_TOKEN_BYTES = 32
 
-#: Contract 02 §3 rule 1. `sessiond` is a systemd USER unit, so its own
+#: Contract 02 §3 rule 1. `attendance` is a systemd USER unit, so its own
 #: runtime directory sits under `/run/user/<uid>`, which the hardened PEP
 #: unit cannot reach — the socket lives on the state root instead, as in
-#: `sessiond/src/agent_sessiond/config.py` and door-owui's and door-tui's
-#: own `DEFAULT_SESSIOND_SOCKET`.
-DEFAULT_SESSIOND_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
+#: `attendance/src/attendance/config.py` and door-owui's and door-tui's
+#: own `DEFAULT_ATTENDANCE_SOCKET`.
+DEFAULT_ATTENDANCE_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
 #: gate-1a.md's token layout.
-DEFAULT_SESSIOND_TOKEN_FILE = "/srv/agents/state/rework/tokens/door-trigger.token"
+DEFAULT_ATTENDANCE_TOKEN_FILE = "/srv/agents/state/rework/tokens/door-trigger.token"
 
 #: Contract 05 §2's status document directory.
 DEFAULT_FAMILIES_DIR = "/srv/agents/state/rework/families"
@@ -40,7 +40,7 @@ DEFAULT_REGISTRY_ROOT = "/srv/agents/registry"
 #: under the shared rework state root.
 DEFAULT_WEBHOOKS_DIR = "/srv/agents/state/rework/triggers/webhooks"
 
-#: The shared rework state root: `sessiond`'s outcome records, the PEP's
+#: The shared rework state root: `attendance`'s outcome records, the PEP's
 #: audit and the quiet check's own records all sit under it.
 DEFAULT_STATE_ROOT = "/srv/agents/state/rework"
 
@@ -68,9 +68,9 @@ DEFAULT_REFRESH_S = 30.0
 #: request line against. Nothing resolves this name.
 UDS_BASE_URL = "http://sessiond"
 
-ENV_SESSIOND_SOCKET = "DOOR_TRIGGER_SESSIOND_SOCKET"
-ENV_SESSIOND_URL = "DOOR_TRIGGER_SESSIOND_URL"
-ENV_SESSIOND_TOKEN_FILE = "DOOR_TRIGGER_SESSIOND_TOKEN_FILE"
+ENV_ATTENDANCE_SOCKET = "DOOR_TRIGGER_SESSIOND_SOCKET"
+ENV_ATTENDANCE_URL = "DOOR_TRIGGER_SESSIOND_URL"
+ENV_ATTENDANCE_TOKEN_FILE = "DOOR_TRIGGER_SESSIOND_TOKEN_FILE"
 ENV_BIND = "DOOR_TRIGGER_BIND"
 ENV_FAMILIES_DIR = "DOOR_TRIGGER_FAMILIES_DIR"
 ENV_REGISTRY_ROOT = "DOOR_TRIGGER_REGISTRY_ROOT"
@@ -87,8 +87,8 @@ class ConfigError(Exception):
 
 
 @dataclass(frozen=True)
-class SessiondTarget:
-    """Where `sessiond` is, and the bearer token this door presents to it."""
+class AttendanceTarget:
+    """Where `attendance` is, and the bearer token this door presents to it."""
 
     url: str
     socket: Path | None
@@ -97,10 +97,10 @@ class SessiondTarget:
 
 @dataclass(frozen=True)
 class FireConfig:
-    """Everything `agent-trigger fire` needs. All but `sessiond` serve the
+    """Everything `agent-trigger fire` needs. All but `attendance` serve the
     quiet check (contract 01 §3.15)."""
 
-    sessiond: SessiondTarget
+    attendance: AttendanceTarget
     pep_url: str
     registry_root: Path
     families_dir: Path
@@ -108,9 +108,9 @@ class FireConfig:
 
     def describe(self) -> str:
         """A one-line summary for `--check`. Carries no secret."""
-        target = self.sessiond.socket or self.sessiond.url
+        target = self.attendance.socket or self.attendance.url
         return (
-            f"sessiond={target} pep={self.pep_url} registry={self.registry_root} "
+            f"attendance={target} pep={self.pep_url} registry={self.registry_root} "
             f"families={self.families_dir} state={self.state_root}"
         )
 
@@ -121,7 +121,7 @@ class ServeConfig:
     own settings: the webhook listener also fires jobs once a call
     authenticates."""
 
-    sessiond: SessiondTarget
+    attendance: AttendanceTarget
     bind_host: str
     bind_port: int
     families_dir: Path
@@ -130,9 +130,9 @@ class ServeConfig:
     refresh_s: float
 
     def describe(self) -> str:
-        target = self.sessiond.socket or self.sessiond.url
+        target = self.attendance.socket or self.attendance.url
         return (
-            f"bind={self.bind_host}:{self.bind_port} sessiond={target} "
+            f"bind={self.bind_host}:{self.bind_port} attendance={target} "
             f"families={self.families_dir} registry={self.registry_root} "
             f"webhooks={self.webhooks_dir} refresh={self.refresh_s}s"
         )
@@ -142,7 +142,7 @@ def fire_config_from_env(environ: dict[str, str] | None = None) -> FireConfig:
     """Build `fire`'s config, or raise `ConfigError` naming what to fix."""
     env = environ if environ is not None else dict(os.environ)
     return FireConfig(
-        sessiond=_sessiond_target(env),
+        attendance=_attendance_target(env),
         pep_url=_pep_url(env),
         registry_root=Path(env.get(ENV_REGISTRY_ROOT, DEFAULT_REGISTRY_ROOT)),
         families_dir=Path(env.get(ENV_FAMILIES_DIR, DEFAULT_FAMILIES_DIR)),
@@ -161,7 +161,7 @@ def serve_config_from_env(environ: dict[str, str] | None = None) -> ServeConfig:
     host, port = _bind(bind)
 
     return ServeConfig(
-        sessiond=_sessiond_target(env),
+        attendance=_attendance_target(env),
         bind_host=host,
         bind_port=port,
         families_dir=Path(env.get(ENV_FAMILIES_DIR, DEFAULT_FAMILIES_DIR)),
@@ -171,23 +171,23 @@ def serve_config_from_env(environ: dict[str, str] | None = None) -> ServeConfig:
     )
 
 
-def _sessiond_target(env: dict[str, str]) -> SessiondTarget:
-    url, socket = _sessiond_endpoint(env)
-    return SessiondTarget(url=url, socket=socket, token=_read_token(env))
+def _attendance_target(env: dict[str, str]) -> AttendanceTarget:
+    url, socket = _attendance_endpoint(env)
+    return AttendanceTarget(url=url, socket=socket, token=_read_token(env))
 
 
-def _sessiond_endpoint(env: dict[str, str]) -> tuple[str, Path | None]:
-    """A Unix socket by default. A URL only when `sessiond` binds the LAN."""
-    url = env.get(ENV_SESSIOND_URL, "").strip()
-    socket = env.get(ENV_SESSIOND_SOCKET, "").strip()
+def _attendance_endpoint(env: dict[str, str]) -> tuple[str, Path | None]:
+    """A Unix socket by default. A URL only when `attendance` binds the LAN."""
+    url = env.get(ENV_ATTENDANCE_URL, "").strip()
+    socket = env.get(ENV_ATTENDANCE_SOCKET, "").strip()
     if url and socket:
-        raise ConfigError(f"set {ENV_SESSIOND_URL} or {ENV_SESSIOND_SOCKET}, not both.")
+        raise ConfigError(f"set {ENV_ATTENDANCE_URL} or {ENV_ATTENDANCE_SOCKET}, not both.")
     if url:
         if not url.startswith(("http://", "https://")):
-            raise ConfigError(f"{ENV_SESSIOND_URL} must start with http:// or https://.")
+            raise ConfigError(f"{ENV_ATTENDANCE_URL} must start with http:// or https://.")
         return url.rstrip("/"), None
 
-    return UDS_BASE_URL, Path(socket or DEFAULT_SESSIOND_SOCKET)
+    return UDS_BASE_URL, Path(socket or DEFAULT_ATTENDANCE_SOCKET)
 
 
 def _lan_address(env: dict[str, str]) -> str:
@@ -208,18 +208,18 @@ def _pep_url(env: dict[str, str]) -> str:
 
 
 def _read_token(env: dict[str, str]) -> str:
-    path = env.get(ENV_SESSIOND_TOKEN_FILE, "").strip() or DEFAULT_SESSIOND_TOKEN_FILE
+    path = env.get(ENV_ATTENDANCE_TOKEN_FILE, "").strip() or DEFAULT_ATTENDANCE_TOKEN_FILE
 
     try:
         value = Path(path).read_text(encoding="utf-8").strip()
     except OSError as exc:
         raise ConfigError(
-            f"{ENV_SESSIOND_TOKEN_FILE}: cannot read {path} ({exc.strerror})."
+            f"{ENV_ATTENDANCE_TOKEN_FILE}: cannot read {path} ({exc.strerror})."
         ) from exc
 
     if len(value.encode("utf-8")) < MIN_TOKEN_BYTES:
         raise ConfigError(
-            f"{ENV_SESSIOND_TOKEN_FILE}: the token in {path} is shorter than "
+            f"{ENV_ATTENDANCE_TOKEN_FILE}: the token in {path} is shorter than "
             f"{MIN_TOKEN_BYTES} bytes. An empty or short token is how an admin "
             "surface becomes an open one."
         )

@@ -177,28 +177,28 @@ def test_two_merges_in_a_row_never_collide() -> None:
 
 
 def test_two_merges_of_different_components_are_independent() -> None:
-    tags = ("pep-v0.5.0", "sessiond-v1.2.3")
+    tags = ("pep-v0.5.0", "attendance-v1.2.3")
 
-    levels = ("pep\tbump:minor\tpep", "sessiond\tbump:minor\tsessiond")
+    levels = ("pep\tbump:minor\tpep", "attendance\tbump:minor\tattendance")
 
-    plans = _plan(("pep/src/x.py", "sessiond/src/y.py"), tags=tags, levels=levels)
+    plans = _plan(("pep/src/x.py", "attendance/src/y.py"), tags=tags, levels=levels)
 
     assert _one(plans, "pep").tag == "pep-v0.6.0"
-    assert _one(plans, "sessiond").tag == "sessiond-v1.3.0"
+    assert _one(plans, "attendance").tag == "attendance-v1.3.0"
 
 
 def test_a_label_raises_only_the_component_its_pull_request_changed() -> None:
     """A merge queue lands two pull requests in one push. One carries
-    `bump:minor` and changed `sessiond/`, the other changed `pep/`. The
+    `bump:minor` and changed `attendance/`, the other changed `pep/`. The
     script writes the label into both ranges, because both hold that merge,
-    and only `sessiond` may take it."""
-    tags = ("pep-v0.5.0", "sessiond-v1.2.3")
-    levels = ("pep\tbump:minor\tsessiond", "sessiond\tbump:minor\tsessiond")
+    and only `attendance` may take it."""
+    tags = ("pep-v0.5.0", "attendance-v1.2.3")
+    levels = ("pep\tbump:minor\tattendance", "attendance\tbump:minor\tattendance")
 
-    plans = _plan(("pep/src/x.py", "sessiond/src/y.py"), tags=tags, levels=levels)
+    plans = _plan(("pep/src/x.py", "attendance/src/y.py"), tags=tags, levels=levels)
 
     assert _one(plans, "pep").tag == "pep-v0.5.1"
-    assert _one(plans, "sessiond").tag == "sessiond-v1.3.0"
+    assert _one(plans, "attendance").tag == "attendance-v1.3.0"
 
 
 def test_the_highest_level_in_a_range_wins() -> None:
@@ -380,9 +380,9 @@ def test_a_line_that_names_a_component_counts_for_that_one_only() -> None:
 
 
 def test_a_range_line_whose_path_is_another_components_counts_nothing() -> None:
-    """`sessiond`'s range holds a change under `pep/`. That is a change to
-    `pep` that happened inside `sessiond`'s window, and it tags neither."""
-    assert touched(("sessiond\tpep",), Repo.AGENT_CONTROL) == ()
+    """`attendance`'s range holds a change under `pep/`. That is a change to
+    `pep` that happened inside `attendance`'s window, and it tags neither."""
+    assert touched(("attendance\tpep",), Repo.AGENT_CONTROL) == ()
 
 
 def test_two_ranges_in_one_file_each_tag_their_own_component() -> None:
@@ -431,18 +431,18 @@ def test_a_component_whose_range_holds_nothing_is_not_tagged() -> None:
 # ---- the packages a component's build installs -----------------------------
 
 
-def test_a_door_change_tags_sessiond() -> None:
-    """Contract 06 §1 rule 1: the doors ship inside `sessiond`'s tree."""
+def test_a_door_change_tags_attendance() -> None:
+    """Contract 06 §1 rule 1: the doors ship inside `attendance`'s tree."""
     changed = ("door-trigger/src/agent_door_trigger/cli.py",)
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("sessiond",)
+    assert touched(changed, Repo.AGENT_CONTROL) == ("attendance",)
 
 
 def test_a_family_change_tags_every_component_that_installs_it() -> None:
-    """`agent-family` is in `sessiond`'s, `managerd`'s and `noticeboard`'s trees."""
+    """`agent-family` is in `attendance`'s, `managerd`'s and `noticeboard`'s trees."""
     changed = ("family/src/agent_family/model.py",)
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("sessiond", "managerd", "noticeboard")
+    assert touched(changed, Repo.AGENT_CONTROL) == ("attendance", "managerd", "noticeboard")
 
 
 def test_a_release_package_change_tags_pep_too() -> None:
@@ -454,11 +454,11 @@ def test_a_release_package_change_tags_pep_too() -> None:
 
 def test_a_range_that_changed_only_installed_packages_still_tags() -> None:
     """The gap rule 9 closes. A merge changed `door-trigger/` and `family/`
-    only. Measured against their own directories, `sessiond` and `noticeboard` found
+    only. Measured against their own directories, `attendance` and `noticeboard` found
     nothing and kept tags older than the code their trees would install."""
     lines = (
-        "sessiond\tdoor-trigger",
-        "sessiond\tfamily",
+        "attendance\tdoor-trigger",
+        "attendance\tfamily",
         "managerd\tfamily",
         "noticeboard\tfamily",
     )
@@ -466,7 +466,7 @@ def test_a_range_that_changed_only_installed_packages_still_tags() -> None:
     plans = _plan(lines, tags=ALL_TAGGED)
 
     assert [item.tag for item in plans] == [
-        "sessiond-v0.1.1",
+        "attendance-v0.1.1",
         "managerd-v0.1.1",
         "noticeboard-v0.1.1",
     ]

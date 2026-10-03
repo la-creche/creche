@@ -3,7 +3,7 @@
 Stage 5 retires the job spool, and nothing could replace it while `enqueue`
 and `job_status` were seams in the PEP. This
 suite runs the replacement end to end: the real PEP, the real dispatch door,
-the real `sessiond`, the real playpen and the real bridge.
+the real `attendance`, the real playpen and the real bridge.
 
     chat's turn ──enqueue──► PEP ──► /dispatch ──► auto-<ulid> in scrum-lead
                      │                                    │
@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 from agent_managerd import paths as managerd_paths
-from agent_sessiond.ids import SessionPrefix
+from attendance.ids import SessionPrefix
 from stack import Stack, until
 from stage5 import ToolCall, bridge_bundle_missing
 from stage_eq import (
@@ -45,7 +45,7 @@ from stage_eq import (
 #: processes on a loaded Mac. Stage 5 uses the same number for the same work.
 SETTLE_TIMEOUT_S = 120.0
 
-#: A turn long enough to make a gated call INSIDE it. `sessiond` reads the
+#: A turn long enough to make a gated call INSIDE it. `attendance` reads the
 #: PEP's audit on a one-second loop, so the turn outlives two of those polls
 #: plus the push and the tap. Stage 5's own numbers.
 HELD_TURN_EVENTS = 250
@@ -119,7 +119,7 @@ async def chat_turn(stage: StageEq) -> tuple[str, str]:
     """One live attended turn, and the turn id the playpen is running.
 
     A tool call has to carry the turn the host started, or the PEP's audit
-    record names a turn `sessiond` does not own (contract 04 §8.6).
+    record names a turn `attendance` does not own (contract 04 §8.6).
     """
     stage.stack.set_pi_env(events=HELD_TURN_EVENTS, delay_ms=HELD_TURN_GAP_MS)
     session = CALLER_SESSION
@@ -147,7 +147,7 @@ async def lead_job(stage: StageEq) -> tuple[str, str]:
         timeout=SETTLE_TIMEOUT_S,
     )
     turn = stage.live_turn(LEAD, fired.session)
-    assert turn == fired.turn, "the playpen is running a turn sessiond did not start"
+    assert turn == fired.turn, "the playpen is running a turn attendance did not start"
 
     return fired.session, turn
 

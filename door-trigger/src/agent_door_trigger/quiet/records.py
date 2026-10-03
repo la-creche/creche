@@ -1,6 +1,6 @@
 """The two host records the gate reads beside the PEP.
 
-1. `sessiond`'s outcome record (contract 02 §13.1): how the wake the gate
+1. `attendance`'s outcome record (contract 02 §13.1): how the wake the gate
    let through ended. Written by temp file and rename before the session is
    deleted, so a session gone with no record is a job that vanished.
 2. The PEP's audit (contract 04 §6): whether the family made its daily call.

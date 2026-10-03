@@ -37,10 +37,10 @@ VALIDATION_FILE_MODE: Final = 0o644
 #: `unknown` rather than trusting a stale document as current.
 STALE_AFTER_S: Final = 90
 
-#: Contract 02 section 13 rule 4: `sessiond`'s own constant, not a
+#: Contract 02 section 13 rule 4: `attendance`'s own constant, not a
 #: per-family setting read from `family.yaml`. `managerd` only mirrors it
 #: into the status view (contract 05 section 2.1).
-SESSIOND_MAX_QUEUED_TURNS: Final = 100
+ATTENDANCE_MAX_QUEUED_TURNS: Final = 100
 
 
 class SandboxLifecycle(StrEnum):
@@ -114,7 +114,7 @@ class SandboxStatus:
     ready_at: str | None
     channel: ChannelState
     #: Contract 05 section 4.1: the host path of this sandbox's
-    #: `supervisor.env`. `sessiond` hands it to `sbx exec --env-file`, which
+    #: `supervisor.env`. `attendance` hands it to `sbx exec --env-file`, which
     #: is the only way the playpen learns where its mounts are
     #: (contract 03 section 7.1).
     playpen_env: str = ""
@@ -165,7 +165,7 @@ class TriggersBlock:
     Assistant."""
 
     webhooks: tuple[WebhookToken, ...] = ()
-    #: Contract 01 §3.13's dispatch form. `sessiond` never reads a family
+    #: Contract 01 §3.13's dispatch form. `attendance` never reads a family
     #: file, so this is how it learns that another family's `enqueue` verb
     #: may start a job here (contract 02 §13.4.1 rule 3). Written either way:
     #: `false` says no, and a missing key says this `managerd` is too old.
@@ -186,11 +186,11 @@ def accepts_dispatch(family: FamilyFile) -> bool:
 @dataclass(frozen=True)
 class LimitsBlock:
     """Contract 05 section 2.1. `max_running_turns` and `job_timeout_s`
-    come from `family.yaml`; `max_queued_turns` mirrors `sessiond`'s own
-    constant instead (`SESSIOND_MAX_QUEUED_TURNS`)."""
+    come from `family.yaml`; `max_queued_turns` mirrors `attendance`'s own
+    constant instead (`ATTENDANCE_MAX_QUEUED_TURNS`)."""
 
     max_running_turns: int | None = None
-    max_queued_turns: int | None = SESSIOND_MAX_QUEUED_TURNS
+    max_queued_turns: int | None = ATTENDANCE_MAX_QUEUED_TURNS
     job_timeout_s: int | None = None
 
     def as_json(self) -> dict[str, Any]:

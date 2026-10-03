@@ -15,9 +15,9 @@ REPO_GRAPH: Graph = {
     "pep": (),
     "infra": (),
     "playpen": (),
-    "sessiond": ("pep", "playpen"),
+    "attendance": ("pep", "playpen"),
     "managerd": ("pep", "infra"),
-    "noticeboard": ("sessiond", "managerd"),
+    "noticeboard": ("attendance", "managerd"),
     "releasectl": (),
 }
 
@@ -34,7 +34,7 @@ def _graph(edges: dict[str, str]) -> Graph:
 
 def test_a_dependency_outside_the_catalog_is_refused() -> None:
     with pytest.raises(Refusal) as caught:
-        _graph({"pep": "sessiond, infra", "noticeboard": "not-a-component"})
+        _graph({"pep": "attendance, infra", "noticeboard": "not-a-component"})
 
     assert caught.value.code is RefusalCode.CATALOG
     assert "contract 06 §1 omits" in caught.value.detail
@@ -49,7 +49,7 @@ def test_a_self_edge_is_a_cycle() -> None:
 
 
 def test_a_cycle_is_printed() -> None:
-    graph = _graph({"pep": "noticeboard", "noticeboard": "sessiond", "sessiond": "pep"})
+    graph = _graph({"pep": "noticeboard", "noticeboard": "attendance", "attendance": "pep"})
 
     with pytest.raises(Refusal) as caught:
         check_acyclic(graph)
@@ -67,11 +67,11 @@ def test_an_acyclic_graph_passes() -> None:
 
 
 def test_dependencies_deploy_first() -> None:
-    order = deploy_order(REPO_GRAPH, frozenset({"noticeboard", "sessiond", "pep", "playpen"}))
+    order = deploy_order(REPO_GRAPH, frozenset({"noticeboard", "attendance", "pep", "playpen"}))
 
-    assert order.index("pep") < order.index("sessiond")
-    assert order.index("playpen") < order.index("sessiond")
-    assert order.index("sessiond") < order.index("noticeboard")
+    assert order.index("pep") < order.index("attendance")
+    assert order.index("playpen") < order.index("attendance")
+    assert order.index("attendance") < order.index("noticeboard")
 
 
 def test_a_dependency_outside_the_release_takes_no_place() -> None:
@@ -81,7 +81,7 @@ def test_a_dependency_outside_the_release_takes_no_place() -> None:
 
 
 def test_releasectl_is_always_last() -> None:
-    order = deploy_order(REPO_GRAPH, frozenset({"releasectl", "pep", "noticeboard", "sessiond"}))
+    order = deploy_order(REPO_GRAPH, frozenset({"releasectl", "pep", "noticeboard", "attendance"}))
 
     assert order[-1] == LAST_IN_ORDER
 

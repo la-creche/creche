@@ -35,7 +35,7 @@ from agent_release.executor.spool import DONE_DIR, REJECTED_DIR, REQUESTS_DIR, R
 #: Every fixture SHA is 40 lowercase hex, because the manifest's pattern is.
 SHA_OF = {
     "pep": "2b59c3bd81f4a6079ce5d2a3418b6f0cc7d9e215",
-    "sessiond": "8c41d027fe5b3a9016d4e7c2b508af3196720de5",
+    "attendance": "8c41d027fe5b3a9016d4e7c2b508af3196720de5",
     "managerd": "4a7c2e19bd3f508c6e21af4b90d7c3516882ee40",
     "noticeboard": "1e9a640fb27c853d0a416ff2cb3d7905e8a12b64",
     "playpen": "5f0b73d1ca4e26987b3d0af5c81926e4ad70b3c1",

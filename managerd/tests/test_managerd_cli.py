@@ -100,7 +100,7 @@ def test_apply_once_with_write_actually_applies(registry_root: Path, state_root:
 
 
 def _write_managerd_token(state_root: Path) -> None:
-    """What `sessiond` mints on a host that has run `up` before."""
+    """What `attendance` mints on a host that has run `up` before."""
     token = paths.managerd_token_path(state_root)
     token.parent.mkdir(parents=True, exist_ok=True)
     token.write_text("fixture-managerd-token-" + "m" * 32, encoding="utf-8")
@@ -110,7 +110,7 @@ def _write_managerd_token(state_root: Path) -> None:
 def test_apply_once_runs_when_the_managerd_token_exists(
     registry_root: Path, state_root: Path
 ) -> None:
-    """With a token file present the CLI goes on to read `args.sessiond_url`,
+    """With a token file present the CLI goes on to read `args.attendance_url`,
     which `apply-once` must declare, or it dies of an AttributeError before
     it builds the family. Every other test here has no token file, so
     `read_token` refuses first and would hide it.
@@ -137,10 +137,10 @@ def test_apply_once_runs_when_the_managerd_token_exists(
     assert read_creds(paths.creds_path(state_root, "chat")) is not None
 
 
-def test_apply_once_takes_sessiond_by_its_unix_socket(
+def test_apply_once_takes_attendance_by_its_unix_socket(
     registry_root: Path, state_root: Path, tmp_path: Path
 ) -> None:
-    """A gate runs `sessiond` on a Unix socket and nothing else, so a URL
+    """A gate runs `attendance` on a Unix socket and nothing else, so a URL
     alone can never reach it and the sandbox would stay `creating`."""
     _write_managerd_token(state_root)
     code = main(

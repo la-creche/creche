@@ -15,8 +15,8 @@ Description=agent-managerd, the rework family manager
 After=network-online.target
 Wants=network-online.target
 # THE REWORK RESTART POLICY. Decided once, argued here, and named by the
-# other five always-on rework units (`agent-sessiond`, `agent-door-owui`,
-# `creche-noticeboard`, `agent-trigger-webhooks`, `agent-pep`). Change it here and
+# other five always-on rework units (`creche-attendance`, `creche-door-owui`,
+# `creche-noticeboard`, `creche-trigger-webhooks`, `agent-pep`). Change it here and
 # in all six, or `bin/tests/test_rework_unit_restart.py` fails.
 #
 # WHY NO START LIMIT. With StartLimitIntervalSec=120 and StartLimitBurst=5,
@@ -59,13 +59,13 @@ Environment=XDG_CONFIG_HOME=%h/.config
 # invariant 13: the LiteLLM master key never rides on argv, in a URL or in a
 # log line. This file is root-owned and mode 0600; the unit only names it.
 EnvironmentFile=/srv/agents/state/rework/managerd.env
-# The site's AGENT_LAN_ADDRESS: where LiteLLM, sessiond and the PEP answer.
+# The site's AGENT_LAN_ADDRESS: where LiteLLM, attendance and the PEP answer.
 EnvironmentFile=/etc/agent-control/site.env
 # The component tree contract 06 §1 row 3 fixes, not /opt/agent-control's
 # shared workspace venv. The release executor swaps `<install.to>` and
 # restarts this unit, so a unit that ran from anywhere else would relaunch
 # the old code after a release the ledger called a success.
-# `--sessiond-socket`: `sessiond` answers on its Unix socket and nowhere else
+# `--sessiond-socket`: `attendance` answers on its Unix socket and nowhere else
 # (its LAN listener is off), and `serve`'s default is a LAN URL. Without this
 # line every `ready` handshake is refused with ConnectError, and every sandbox
 # stays `creating` for ever: families `in_sync`, no fault, none `ready`.

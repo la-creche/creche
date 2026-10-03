@@ -145,7 +145,7 @@ def test_a_request_becomes_a_prompt_and_a_persona() -> None:
 
 
 def test_history_is_not_replayed() -> None:
-    # `sessiond` owns the transcript (invariant 5). Only the new prompt goes.
+    # `attendance` owns the transcript (invariant 5). Only the new prompt goes.
     request = parse_chat_request(
         _body(messages=[{"role": "user", "content": "one"}, {"role": "user", "content": "two"}])
     )

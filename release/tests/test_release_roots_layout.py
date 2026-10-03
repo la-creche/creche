@@ -73,7 +73,7 @@ OPERATOR_BY_DESIGN: Final = {
     # A signal: planted records can only make root WAIT (`quiesce.py`).
     "sessions_root": "a quiet-window signal that can only delay",
     # §2.8's signal, read O_NOFOLLOW off the open descriptor (`quiet.py`).
-    "sessiond_socket": "a quiet-window signal that can only delay",
+    "attendance_socket": "a quiet-window signal that can only delay",
     "view_token_file": "a quiet-window signal that can only delay",
 }
 

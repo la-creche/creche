@@ -325,7 +325,7 @@ def test_a_bind_override_is_honoured(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_an_env_file_supplies_the_bind(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """`--env-file` works the same way here as it does for `noticeboard-verify`,
-    `sessiond-verify` and `managerd-verify`: one mechanism for all four."""
+    `attendance-verify` and `managerd-verify`: one mechanism for all four."""
     monkeypatch.delenv("PEP_BIND", raising=False)
     monkeypatch.setattr("agent_pep.verify.httpx.get", fake_get(answer(200, HEALTHY)))
     env_file = tmp_path / "pep.env"

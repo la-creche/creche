@@ -11,7 +11,7 @@ still has to reproduce is the ONE mechanism the playpen depends on
 2. `--env-file` is the only thing that carries a value in. Each
    `NAME=value` line of that file becomes one variable.
 
-So a `sessiond` that built its command without `--env-file` would start a
+So an `attendance` that built its command without `--env-file` would start a
 child with no `AGENT_CRED_DIR`, no `AGENT_FAMILY_CONFIG_DIR` and no
 `AGENT_CONTROL_DIR`, exactly as on the host — and the playpen would
 answer `fatal` instead of serving.
