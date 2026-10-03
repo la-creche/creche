@@ -94,23 +94,29 @@ for script in "$SCRIPT" "$HERE/../agent-rework-intake"; do
   grep -q 'require_root_chain "$SITE_SECRETS"' "$script" \
     && pass "$(basename "$script") guards the directories above the link" \
     || fail "$(basename "$script") never guards the directories above the link"
-
-  grep -q 'require_root_chain "$SECRETS"' "$script" \
-    && pass "$(basename "$script") guards the directories above \$SECRETS" \
-    || fail "$(basename "$script") never guards the directories above \$SECRETS"
 done
 
-# Every path root uses must reach the guard, not only the first one.
+# Every path root executes or decrypts must reach BOTH guards, not only
+# the first one: the file's own owner and mode, and every directory above
+# it. The release wrapper names each path; the intake loops over `$path`.
 for name in SOPS SECRETS EXECUTOR; do
   grep -q "require_root_owned \"\$$name\"" "$SCRIPT" \
-    && pass "the wrapper guards \$$name" \
-    || fail "the wrapper never guards \$$name"
+    && pass "the release wrapper guards \$$name" \
+    || fail "the release wrapper never guards \$$name"
+  grep -q "require_root_chain \"\$$name\"" "$SCRIPT" \
+    && pass "the release wrapper guards the directories above \$$name" \
+    || fail "the release wrapper never guards the directories above \$$name"
 done
+
+INTAKE_SCRIPT="$HERE/../agent-rework-intake"
+grep -q '^for path in "$INTAKE" "$SOPS" "$SECRETS"; do$' "$INTAKE_SCRIPT" \
+  && grep -q 'require_root_owned "$path" || ! require_root_chain "$path"' "$INTAKE_SCRIPT" \
+  && pass "the intake wrapper guards every path and the directories above it" \
+  || fail "the intake wrapper leaves a path or a directory chain unguarded"
 
 # The sops file is the site's, at one path no checkout holds. Root judges
 # the file a link there names: the guard must get the resolved path, and
 # neither wrapper may read a file of the deployed tree.
-INTAKE_SCRIPT="$HERE/../agent-rework-intake"
 for script in "$SCRIPT" "$INTAKE_SCRIPT"; do
   name="$(basename "$script")"
   grep -q '^SITE_SECRETS=/etc/agent-control/secrets.enc.env$' "$script" \

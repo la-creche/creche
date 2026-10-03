@@ -14,9 +14,12 @@ Seven rules this module exists to keep.
 1. **Nothing is swapped until everything is built.** A failed `stage`
    removes the `.new` tree and nothing on the host has changed (§2.4 row 8).
 2. **A path is checked for containment before it is touched.** `install.to`
-   and `install.prev` are validated absolute paths, and here they must also
-   sit under a root the executor was configured with. A manifest that a
-   merged pull request could widen must not be able to name `/etc`.
+   and `install.prev` are validated absolute paths, and here `install.to`
+   must also be a DIRECT child of a root the executor was configured with,
+   and `install.prev` must be `<install.to>.prev`. A manifest that a
+   merged pull request could widen must not be able to name `/etc`, the
+   root itself (a swap would rename every installed tree away), or another
+   component's tree (a swap removes `prev` first).
 3. **No symlink is followed out of the staged tree.** The verify hook's own
    `argv[0]` is resolved inside `<install.to>.new` before the switch, so a
    staged tree cannot point the hook at a binary somewhere else.
@@ -96,6 +99,10 @@ from .source import GIT, REFRESH_COMMAND, git_env, git_ground, require_trusted
 from .spool import VerifyHook
 
 NEW_SUFFIX: Final = ".new"
+
+#: Rule 2: the only `install.prev` a manifest may name. `swap_in` removes
+#: `prev` before the rename, so a free choice could remove any tree.
+PREV_SUFFIX: Final = ".prev"
 
 #: Where a component's unit file lives inside its repository, and where
 #: every unit in this repository sits.
@@ -291,20 +298,24 @@ def paths_of(manifest: ComponentManifest, roots: tuple[Path, ...]) -> Paths:
     """Contract 06 §8's `install`, with rule 2's containment check applied."""
     to = Path(manifest.install.to)
     prev = Path(manifest.install.prev)
-    for path in (to, prev):
-        _require_contained(manifest.name, path, roots)
+    _require_contained(manifest.name, to, roots)
+    if prev != Path(f"{to}{PREV_SUFFIX}"):
+        detail = f"install.prev is not install.to{PREV_SUFFIX}: {prev.name}"
+        raise Refusal(RefusalCode.MANIFEST, manifest.name, detail)
 
     return Paths(to=to, prev=prev, new=Path(f"{to}{NEW_SUFFIX}"))
 
 
 def _require_contained(component: str, path: Path, roots: tuple[Path, ...]) -> None:
+    """A direct child of a root. The root itself is refused: `swap_in`
+    renames `to` away, and under a root that is every installed tree."""
     if not roots:
         return
 
-    if any(path == root or root in path.parents for root in roots):
+    if path.parent in roots:
         return
 
-    detail = f"install path is outside every configured install root: {path.name}"
+    detail = f"install path is not directly under a configured install root: {path.name}"
     raise Refusal(RefusalCode.MANIFEST, component, detail)
 
 

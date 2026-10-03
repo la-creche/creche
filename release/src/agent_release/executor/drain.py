@@ -44,6 +44,7 @@ from ..resolve import TAG_FORMAT
 from ..site import operator_account
 from .approval import deny_all
 from .host import As, Command, Host, make_runner
+from .install import StepFailed
 from .ledger import Entry, Outcome, Step, StepName, StepStatus
 from .live_state import InputDigestFn, Readers
 from .notice import notice_of, say_nothing
@@ -412,15 +413,21 @@ def _digest_reader(host: Host) -> InputDigestFn:
     """`source.input_digest`, run through root's one child starter."""
 
     def run_git(argv: Sequence[str], cwd: Path) -> str | None:
-        result = host.run(
-            Command(
-                argv=tuple(argv),
-                identity=As.ROOT,
-                timeout_s=GIT_READ_TIMEOUT_S,
-                cwd=cwd,
-                env=tuple(git_env().items()),
-            )
+        command = Command(
+            argv=tuple(argv),
+            identity=As.ROOT,
+            timeout_s=GIT_READ_TIMEOUT_S,
+            cwd=cwd,
+            env=tuple(git_env().items()),
         )
+        # A child that cannot start (a clone re-made under root's feet, no
+        # file descriptor left) fails THIS step, as `Installer._run` does.
+        # Left to propagate it would end the whole drain pass.
+        try:
+            result = host.run(command)
+        except OSError as exc:
+            raise StepFailed(f"{argv[0]}: {type(exc).__name__}") from None
+
         if result.code != 0:
             return None
 

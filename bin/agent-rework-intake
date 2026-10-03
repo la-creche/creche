@@ -61,21 +61,21 @@ require_root_chain() {
   done
 }
 
-for path in "$INTAKE" "$SOPS" "$SECRETS"; do
-  if ! require_root_owned "$path"; then
-    echo "agent-rework-intake: $path is not root:root and unwritable by others; refusing to run" >&2
-    exit 1
-  fi
-done
-
 # Its contents become root's whole environment, and `sops exec-env` runs its
 # command under `sh -c`. A writer of this file picks names such as LD_PRELOAD,
 # so ownership is the control here, not the encryption: the recipient is
 # readable out of the file's own header.
-# The link's own directories as well: whoever can write one of them decides
-# what the path resolves to.
-if ! require_root_chain "$SECRETS" || ! require_root_chain "$SITE_SECRETS"; then
-  echo "agent-rework-intake: a directory above $SECRETS is not root:root and unwritable by others; refusing to run" >&2
+# Each path's directories as well: whoever can write one of them decides
+# what the path names after the guard looked.
+for path in "$INTAKE" "$SOPS" "$SECRETS"; do
+  if ! require_root_owned "$path" || ! require_root_chain "$path"; then
+    echo "agent-rework-intake: $path or a directory above it is not root:root and unwritable by others; refusing to run" >&2
+    exit 1
+  fi
+done
+
+if ! require_root_chain "$SITE_SECRETS"; then
+  echo "agent-rework-intake: a directory above $SITE_SECRETS is not root:root and unwritable by others; refusing to run" >&2
   exit 1
 fi
 

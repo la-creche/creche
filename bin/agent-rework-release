@@ -68,13 +68,15 @@ require_root_chain() {
 # Root runs this one. There is no safe fallback: a wrapper that drains the
 # spool by executing a binary it does not own has already lost. Exiting
 # non-zero is loud, and leaves requests/ for the next verified run.
-if ! require_root_owned "$EXECUTOR"; then
-  echo "agent-rework-release: $EXECUTOR is not root:root and unwritable by others; refusing to run it as root" >&2
+# Its directories as well: a directory somebody else can write holds a
+# name they can swap after the guard looked at the file.
+if ! require_root_owned "$EXECUTOR" || ! require_root_chain "$EXECUTOR"; then
+  echo "agent-rework-release: $EXECUTOR or a directory above it is not root:root and unwritable by others; refusing to run it as root" >&2
   exit 1
 fi
 
-if ! require_root_owned "$SOPS"; then
-  echo "agent-rework-release: $SOPS is not root:root and unwritable by others; not executing it as root. Requests will be refused." >&2
+if ! require_root_owned "$SOPS" || ! require_root_chain "$SOPS"; then
+  echo "agent-rework-release: $SOPS or a directory above it is not root:root and unwritable by others; not executing it as root. Requests will be refused." >&2
   exec "$EXECUTOR"
 fi
 
