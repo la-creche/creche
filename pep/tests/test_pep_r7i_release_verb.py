@@ -30,7 +30,7 @@ from fastapi.testclient import TestClient
 from pep_family_helpers import FAMILY_TOKEN, make_grants, write_grants
 
 #: Contract 01 §3.5's `release` fence: the platform allowlist, nothing else.
-FENCE: dict[str, object] = {"release": {"components": ["pep", "sessiond"]}}
+FENCE: dict[str, object] = {"release": {"components": ["pep", "attendance"]}}
 
 CALL: dict[str, object] = {"tool": "release", "args": {"components": {"pep": "2.1.0"}}}
 

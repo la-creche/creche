@@ -11,7 +11,7 @@ contract 02 draft 6), the Open WebUI write-back and the edit-or-regenerate
 branch (the same packet), and the platform fence in `managerd` and the PEP
 (contract 01 §5.5). This file is the first time they run together.
 
-    the phone  ─http─► door-owui ─uds─► sessiond ─► playpen ─► fake pi
+    the phone  ─http─► door-owui ─uds─► attendance ─► playpen ─► fake pi
     the terminal ────► door-tui  ─uds─►    │
                                            └─http─► FakeOwui (the write-back)
 
@@ -29,14 +29,14 @@ from typing import Any
 
 import httpx
 import pytest
-from agent_door_tui.ids import new_session_id
-from agent_door_tui.sessiond import (
+from agent_door_tui.attendance import (
     CODE_LEASE_TAKEN_OVER,
     CODE_SESSION_BUSY,
+    AttendanceError,
     Intent,
-    SessiondError,
     Takeover,
 )
+from agent_door_tui.ids import new_session_id
 from conftest import chat_id, message_id, session_of
 from stack import FAMILY, Stack
 from stage4 import (
@@ -110,10 +110,10 @@ async def call_pep(client: httpx.AsyncClient, token: str, tool: str) -> dict[str
 
 @pytest.fixture
 async def stage(roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Stage4]:
-    """The stage 1 stack, with a fake Open WebUI behind `sessiond`.
+    """The stage 1 stack, with a fake Open WebUI behind `attendance`.
 
     The fake is serving and its three settings are in the `Config` BEFORE
-    `serve()`: `sessiond` reads them once, when the service is built.
+    `serve()`: `attendance` reads them once, when the service is built.
     """
     tree, socket_dir = roots
     built = Stack(tree, socket_dir)
@@ -171,7 +171,7 @@ def prompts(stage: Stage4, session: str) -> list[str]:
 async def tui_session(stage: Stage4, title: str = "a terminal session") -> str:
     """One session born in the terminal, made the way the door makes one.
 
-    Step 3 of the door's order: `sessiond` owns sessions, so it creates one
+    Step 3 of the door's order: `attendance` owns sessions, so it creates one
     before pi writes a byte. The id carries contract 02 §2's `tui-` prefix,
     which is what tells the write-back this session has no chat yet.
     """
@@ -289,7 +289,7 @@ async def test_i4_phone_to_terminal_and_back(stage: Stage4) -> None:
         # §7.4: the terminal's renewal timer learns it lost the session. A
         # renew never takes anything back, or the two doors would trade the
         # lease every twenty seconds with nobody asking.
-        with pytest.raises(SessiondError) as renewed:
+        with pytest.raises(AttendanceError) as renewed:
             await in_thread(
                 lambda: door.take_writer(FAMILY, session, TERMINAL_A, Takeover.POLITE, Intent.RENEW)
             )
@@ -331,7 +331,7 @@ async def test_i4_a_running_turn_refuses_every_takeover(stage: Stage4) -> None:
 
         # Every door and every flag, against a turn that is still streaming.
         for takeover in (Takeover.POLITE, Takeover.FORCE):
-            with pytest.raises(SessiondError) as refused:
+            with pytest.raises(AttendanceError) as refused:
                 await in_thread(
                     lambda flag=takeover: door.take_writer(FAMILY, session, TERMINAL_A, flag)
                 )
@@ -478,7 +478,7 @@ async def test_i4_release_process_waits_for_a_running_turn(stage: Stage4) -> Non
             "the phone's turn to start",
         )
 
-        with pytest.raises(SessiondError) as refused:
+        with pytest.raises(AttendanceError) as refused:
             await in_thread(lambda: door.release_process(FAMILY, session, TERMINAL_A))
     finally:
         answer = await running
@@ -507,7 +507,7 @@ async def test_i4_a_second_terminal_needs_force(stage: Stage4) -> None:
 
         # Idle, and still refused: another TERMINAL's lease is the one case
         # rule 5 does not hand over.
-        with pytest.raises(SessiondError) as polite:
+        with pytest.raises(AttendanceError) as polite:
             await in_thread(lambda: second.take_writer(FAMILY, session, TERMINAL_B))
 
         assert polite.value.code == CODE_SESSION_BUSY
@@ -525,7 +525,7 @@ async def test_i4_a_second_terminal_needs_force(stage: Stage4) -> None:
             "the second terminal's turn to start",
         )
 
-        with pytest.raises(SessiondError) as forced:
+        with pytest.raises(AttendanceError) as forced:
             await in_thread(lambda: first.take_writer(FAMILY, session, TERMINAL_A, Takeover.FORCE))
     finally:
         await turning
@@ -711,7 +711,7 @@ async def test_i4_the_pep_fences_the_platform_credential(
 async def test_i4_a_hung_open_webui_stalls_nothing(stage: Stage4) -> None:
     """Contract 02 §10.4 rule 5: the copy's cost sits OFF the turn's path.
 
-    One `sessiond` process serves every session of every family on one
+    One `attendance` process serves every session of every family on one
     event loop. A synchronous write from the turn-settle path puts an Open
     WebUI outage on that loop, and its own client waits 10 seconds, so one
     terminal session settling would freeze every chat on the host for as

@@ -10,10 +10,10 @@ everything, so invariant 3 held. Their journal showed the cost:
     branch_fallback wanted_entry=null reason=unmapped_parent
 
 The exchange they had in the terminal was in no Open WebUI transcript, the
-phone's next message named a parent `sessiond` could not map, and
+phone's next message named a parent `attendance` could not map, and
 `turns_total` said 2 where they had three exchanges.
 
-    the phone  ─http─► door-owui ─uds─► sessiond ─► playpen ─► fake pi
+    the phone  ─http─► door-owui ─uds─► attendance ─► playpen ─► fake pi
     the terminal ────► door-tui  ─uds─►    │  ▲        get_entries   │
                                            │  └───────────────────── ┘
                                            └─http─► FakeOwui
@@ -28,7 +28,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from agent_sessiond.auth import Principal
+from attendance.auth import Principal
 from conftest import chat_id, message_id, session_of
 from stack import FAMILY, Stack
 from stage4 import FakeOwui, OwuiMood, Stage4, owui_config, serving_owui, settle
@@ -138,7 +138,7 @@ async def test_the_journal_counts_a_terminal_exchange(stage: Stage4) -> None:
         lambda: len(stage.lines_of(session, "terminal_exchange")) == 1,
         "the terminal exchange to be journalled",
     )
-    client = stage.stack.sessiond_as(Principal.DOOR_TUI)
+    client = stage.stack.attendance_as(Principal.DOOR_TUI)
 
     try:
         answer = await client.get(f"/v1/sessions/{FAMILY}/{session}")

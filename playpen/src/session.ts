@@ -493,7 +493,7 @@ export class SandboxSession {
   }
 
   /**
-   * Contract 03 §5.2. `sessiond` needs the user entry id and the leaf id to
+   * Contract 03 §5.2. `attendance` needs the user entry id and the leaf id to
    * map an Open WebUI message to a pi entry. An entry id is a durable cursor,
    * so `since` asks only for what this turn added. A `since` that matches no
    * entry answers `success: false`; then the whole list comes back and the

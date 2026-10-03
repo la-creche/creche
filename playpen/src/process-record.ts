@@ -9,7 +9,7 @@
 // the same VM through `sbx exec -it`. §6 rule 1 allows one pi process per
 // session and never two — two concurrent writers on one session file
 // cross-contaminate context, orphan a branch, and both report success with no
-// error anywhere. `sessiond`'s writer lease (contract 02 §7) is
+// error anywhere. `attendance`'s writer lease (contract 02 §7) is
 // the first fence. This file is the second, inside the VM, where the lease
 // cannot reach.
 //

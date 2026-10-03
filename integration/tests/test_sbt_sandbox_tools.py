@@ -5,7 +5,7 @@ of them was sent. `--exclude-tools` removes; nothing enabled anything; and pi
 activates four of its seven built-ins at startup, so every family granted
 `grep`, `find` or `ls` went without them.
 
-    door-owui ─► sessiond ─► fake_sbx exec --env-file ─► playpen.js
+    door-owui ─► attendance ─► fake_sbx exec --env-file ─► playpen.js
                                                              │
                               <sessions>/<session>/pi/settings.json ◄┘
                               <sessions>/<session>/pi/models.json
@@ -13,7 +13,7 @@ activates four of its seven built-ins at startup, so every family granted
 `playpen/test/sandbox-tools.test.ts` asserts this against the SOURCE and
 `playpen/test/real-pi.test.ts` asserts that pi honours it. What only this
 suite can add is the bundle: `settings.json` is written by the same
-`esbuild` output the image carries, into the session store `sessiond` named,
+`esbuild` output the image carries, into the session store `attendance` named,
 inside a process that got its mounts from `--env-file` and from nothing else.
 
 The pi shim cannot show which tools a model ended up with — it has no model

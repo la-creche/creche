@@ -8,7 +8,7 @@ grant file (contract 04 §1.6 rule 3). Those two rules closed a loop:
 
     grant file gone for a moment
       -> the PEP raises grants_stale        (contract 04 §1.6 rule 1)
-      -> sessiond answers family_degraded   (contract 05 §3.3)
+      -> attendance answers family_degraded   (contract 05 §3.3)
       -> no call reaches the PEP
       -> nothing re-reads the grant file
       -> the fault never clears
@@ -17,7 +17,7 @@ The orchestrator broke it by hand with one authenticated `GET /manifest`.
 
 Two scenarios, one for each half of the fix. Both run the REAL PEP, built
 through its own entry point, and the REAL `managerd`. Neither needs
-`sessiond`: the deadlock is between these two.
+`attendance`: the deadlock is between these two.
 """
 
 from __future__ import annotations

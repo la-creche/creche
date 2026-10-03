@@ -46,7 +46,7 @@ class Store(Enum):
     """Whether this session already has a pi store inside the sandbox.
 
     Contract 03 §7.6: without `--new` the launcher exits 9 when the store is
-    missing. A session the door just created through `sessiond` has none, so
+    missing. A session the door just created through `attendance` has none, so
     this terminal is its first writer.
     """
 

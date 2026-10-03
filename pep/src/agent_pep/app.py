@@ -106,23 +106,23 @@ class PepConfig:
     # pool, and a new server needs a restart, which drops every approval
     # blocked in place.
     roster: RosterSource | None = None
-    # Contract 04 §7: sessiond's delegate door. `delegate_token_file` is what
+    # Contract 04 §7: attendance's delegate door. `delegate_token_file` is what
     # the unit sets and what the live PEP uses: the file is read on each call
-    # (CachedTokenFile), because sessiond writes it at ITS start and this
+    # (CachedTokenFile), because attendance writes it at ITS start and this
     # process can start first. `delegate_token` is the fixed-value form a test
     # builds a door with. Neither is ever an env value or an argv value
     # (invariant 13). Without one of the two AND a socket (or a URL),
     # invoke_agent stays a seam and the manifest does not offer it.
     delegate_token: str = ""
     delegate_token_file: Path | None = None
-    # Contract 02 §13.4: sessiond's dispatch door, which serves `enqueue` and
+    # Contract 02 §13.4: attendance's dispatch door, which serves `enqueue` and
     # `job_status`. Its own bearer, not the delegate door's, so one stolen
     # token reaches one family kind. Read on each call for the same reason.
     # Without one of the two AND a socket, both verbs stay seams.
     dispatch_token: str = ""
     dispatch_token_file: Path | None = None
-    sessiond_socket: Path | None = None
-    sessiond_url: str = UDS_BASE_URL
+    attendance_socket: Path | None = None
+    attendance_url: str = UDS_BASE_URL
     # Contract 04 §8.4: the protected Node-RED hook a gate is pushed to, the
     # bearer the PEP presents to it, and the bearer Node-RED presents back on
     # POST /approval/<gate>. All three are VALUES here, read from the sops
@@ -351,27 +351,27 @@ def _deny_response(reason: FamilyReason, detail: str | None = None) -> JSONRespo
 def build_delegate_door(cfg: PepConfig) -> DelegateDoor | None:
     """Contract 04 §7's client, or `None` when this PEP has no door.
 
-    Both halves are required: a credential proves identity to `sessiond` and a
+    Both halves are required: a credential proves identity to `attendance` and a
     socket (or a URL) says where it listens. Half a configuration leaves
     `invoke_agent` a seam, which is the fail-closed answer — the decision core
     then denies it with `not_implemented` and the manifest never offers it.
 
     A token FILE counts as configured even when it is not readable yet. That
-    is the point: the PEP can start before `sessiond` writes it, and the door
+    is the point: the PEP can start before `attendance` writes it, and the door
     reads it on the call instead. An empty file at call time fails that one
     call and nothing else.
     """
     source = CachedTokenFile(cfg.delegate_token_file) if cfg.delegate_token_file else None
     if source is None and not cfg.delegate_token:
         return None
-    if cfg.sessiond_socket is None and cfg.sessiond_url == UDS_BASE_URL:
+    if cfg.attendance_socket is None and cfg.attendance_url == UDS_BASE_URL:
         return None
 
     return HttpDelegateDoor(
         DoorConfig(
             token=cfg.delegate_token,
-            socket_path=cfg.sessiond_socket,
-            base_url=cfg.sessiond_url,
+            socket_path=cfg.attendance_socket,
+            base_url=cfg.attendance_url,
             token_source=source,
         )
     )
@@ -381,21 +381,21 @@ def build_dispatch_door(cfg: PepConfig) -> DispatchDoor | None:
     """Contract 02 §13.4's client, or `None` when this PEP has no door.
 
     Both halves are required, exactly as for the delegate door: a credential
-    proves identity to `sessiond` and a socket (or a URL) says where it
+    proves identity to `attendance` and a socket (or a URL) says where it
     listens. Half a configuration leaves `enqueue` and `job_status` seams,
     which is the fail-closed answer.
     """
     source = CachedTokenFile(cfg.dispatch_token_file) if cfg.dispatch_token_file else None
     if source is None and not cfg.dispatch_token:
         return None
-    if cfg.sessiond_socket is None and cfg.sessiond_url == UDS_BASE_URL:
+    if cfg.attendance_socket is None and cfg.attendance_url == UDS_BASE_URL:
         return None
 
     return HttpDispatchDoor(
         DispatchConfig(
             token=cfg.dispatch_token,
-            socket_path=cfg.sessiond_socket,
-            base_url=cfg.sessiond_url,
+            socket_path=cfg.attendance_socket,
+            base_url=cfg.attendance_url,
             token_source=source,
         )
     )

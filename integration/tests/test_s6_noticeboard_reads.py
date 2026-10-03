@@ -1,4 +1,4 @@
-"""Packet S6: the noticeboard reads a REAL `sessiond`, as the principal `view-ro`.
+"""Packet S6: the noticeboard reads a REAL `attendance`, as the principal `view-ro`.
 
 `noticeboard/tests` proves the reader against a fake transport. This proves it
 against the running service: the socket, the `Authorization` header, the
@@ -13,10 +13,10 @@ One scenario:
    transcript holding the prompt that was sent and the answer that came
    back.
 4. The same token is refused on a write. `view-ro` has no code path to
-   one in `noticeboard`, and `sessiond` refuses it as well.
+   one in `noticeboard`, and `attendance` refuses it as well.
 
 The noticeboard's reader is synchronous, so every call runs in a thread. A sync
-client awaited on the loop that also serves `sessiond` would deadlock.
+client awaited on the loop that also serves `attendance` would deadlock.
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ import asyncio
 import contextlib
 from collections.abc import Iterator
 
-from agent_sessiond.auth import Principal
+from attendance.auth import Principal
 from conftest import chat_body, chat_id, message_id, owui_headers, session_of
-from noticeboard.sessiondhttp import HttpTransport, build_client
+from noticeboard.attendancehttp import HttpTransport, build_client
 from noticeboard.sessions import SessionReader
 from noticeboard.transcript import Voice, fold
 from stack import FAMILY, Stack, until
@@ -77,7 +77,7 @@ async def test_the_noticeboard_reads_a_real_session_as_view_ro(stack: Stack) -> 
 async def test_the_view_token_cannot_write(stack: Stack) -> None:
     """Contract 02 §3.1: `view-ro` writes nothing. Two fences, not one.
 
-    `noticeboard` has no code that can post a turn, and `sessiond` refuses
+    `noticeboard` has no code that can post a turn, and `attendance` refuses
     the token anyway. This asserts the second one, because the first is
     proved by the absence of code and nothing else.
     """
@@ -86,7 +86,7 @@ async def test_the_view_token_cannot_write(stack: Stack) -> None:
     await _answer(stack, chat, PROMPT)
     await _settled(stack, session)
 
-    client = stack.sessiond_as(Principal.VIEW_RO)
+    client = stack.attendance_as(Principal.VIEW_RO)
     response = await client.post(
         f"/v1/sessions/{FAMILY}/{session}/turns",
         json={"prompt": "write something"},
@@ -97,14 +97,14 @@ async def test_the_view_token_cannot_write(stack: Stack) -> None:
 
 @contextlib.contextmanager
 def _reader(stack: Stack) -> Iterator[SessionReader]:
-    """The noticeboard's reader, over the socket `sessiond` is actually serving.
+    """The noticeboard's reader, over the socket `attendance` is actually serving.
 
     The client is closed here. The service holds one for its whole life,
     but a test that leaked one would leak a socket per test.
     """
-    assert stack.sessiond_socket is not None
+    assert stack.attendance_socket is not None
 
-    client = build_client(stack.sessiond_socket, SOCKET_BASE_URL)
+    client = build_client(stack.attendance_socket, SOCKET_BASE_URL)
 
     try:
         yield SessionReader(

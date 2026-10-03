@@ -14,7 +14,7 @@ SHA = "2b59c3bd81f4a6079ce5d2a3418b6f0cc7d9e215"
 DIGEST = "sha256:" + ("5e41" * 16)
 
 FULL: dict[str, Any] = {
-    "live": {"pep": "2.0.3", "sessiond": None},
+    "live": {"pep": "2.0.3", "attendance": None},
     "provided": {"pep-grant": "2.0"},
     "latest": {"pep": "2.1.0"},
     "facts": {"pep": {"sha": SHA, "input_digest": DIGEST, "artifact_digest": None}},
@@ -37,7 +37,7 @@ def _refusal(body: Any) -> Refusal:
 def test_a_full_document_round_trips() -> None:
     state = _parse(FULL)
 
-    assert state.live == {"pep": "2.0.3", "sessiond": None}
+    assert state.live == {"pep": "2.0.3", "attendance": None}
     assert state.provided == {ContractId.PEP_GRANT: (2, 0)}
     assert state.latest == {"pep": "2.1.0"}
     assert state.facts["pep"].sha == SHA

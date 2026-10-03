@@ -1,21 +1,21 @@
 """A real `managerd` beside the running stack (packet I2, stage 2).
 
-Stage 1's harness holds the door, `sessiond` and the playpen. Stage 2
+Stage 1's harness holds the door, `attendance` and the playpen. Stage 2
 adds the reconciler, so that a change to a family FILE is what drives the
 scenario, exactly as it does on the host.
 
     family.yaml ──► reconcile_family() ──► grants/<family>.json  (the PEP reads it)
                             │          ──► config/                (the playpen reads it)
-                            │          ──► status.json            (`sessiond` reads it)
+                            │          ──► status.json            (`attendance` reads it)
                             │
-                            └──HttpSwitchClient──uds──► sessiond /internal/switch-sandbox
+                            └──HttpSwitchClient──uds──► attendance /internal/switch-sandbox
 
 Two things are fakes, and neither is under test: `FakeDriver`, because a
 Mac has no `sbx`, and `FakeLiteLLMKeys`, because no test may mint a key.
 Everything between the file and the answer is the real code.
 
 `reconcile_family` is synchronous and `HttpSwitchClient` blocks on the
-socket `sessiond` serves, so a pass runs in a worker thread. Calling it
+socket `attendance` serves, so a pass runs in a worker thread. Calling it
 inline would deadlock the listener it is calling.
 """
 
@@ -74,10 +74,10 @@ def write_registry(root: Path, *, instructions: str = "Be helpful.\n", **overrid
 
 
 class Manager:
-    """One `managerd` wired to the running `sessiond`.
+    """One `managerd` wired to the running `attendance`.
 
     The switch client is the real one, over the same Unix socket the door
-    uses, carrying the real token file `sessiond` minted.
+    uses, carrying the real token file `attendance` minted.
     """
 
     def __init__(self, stack: Stack, registry_root: Path, switch: SwitchClient | None = None):
@@ -93,7 +93,7 @@ class Manager:
         )
 
     async def pass_once(self) -> ReconcileResult:
-        """One reconcile pass, off the event loop `sessiond` serves on."""
+        """One reconcile pass, off the event loop `attendance` serves on."""
         return await asyncio.to_thread(self._pass_once)
 
     def _pass_once(self) -> ReconcileResult:
@@ -114,7 +114,7 @@ class Manager:
         )
 
     def status(self) -> dict[str, Any]:
-        """The status document as `sessiond` and the noticeboard read it."""
+        """The status document as `attendance` and the noticeboard read it."""
         path = managerd_paths.status_path(self.state_root, FAMILY)
         body: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         return body
@@ -143,8 +143,8 @@ class Manager:
 
 
 def http_switch_client(stack: Stack) -> SwitchClient:
-    """The real client, with the real token file `sessiond` reads back."""
-    socket = stack.sessiond_socket
+    """The real client, with the real token file `attendance` reads back."""
+    socket = stack.attendance_socket
 
     if socket is None:
         raise AssertionError("the stack is not serving yet")

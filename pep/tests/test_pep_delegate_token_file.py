@@ -1,6 +1,6 @@
 """The delegate door reads its bearer at CALL time (contract 04 §7.3).
 
-Why this file exists: `sessiond` writes `door-delegate.token` when IT starts.
+Why this file exists: `attendance` writes `door-delegate.token` when IT starts.
 The PEP is a system unit and can start first, so a token read once at boot is
 empty forever and every rotation needs `sudo systemctl restart agent-pep`.
 The operator makes one root visit, not one per rotation.
@@ -38,7 +38,7 @@ seen: list[str] = []
 
 
 def write_token(path: Path, value: str) -> None:
-    """A token file the way `sessiond` writes it: 0640, group readable."""
+    """A token file the way `attendance` writes it: 0640, group readable."""
     path.write_text(value + "\n", encoding="utf-8")
     os.chmod(path, 0o640)
 
@@ -76,7 +76,7 @@ def clear_seen() -> None:
 
 
 def test_a_file_written_after_start_is_read(tmp_path: Path) -> None:
-    """The exact live failure: the PEP starts, `sessiond` writes the file
+    """The exact live failure: the PEP starts, `attendance` writes the file
     afterwards, and the next call must find it."""
     path = tmp_path / TOKEN_NAME
     source = CachedTokenFile(path)
@@ -209,7 +209,7 @@ def _config(tmp_path: Path, **fields: object) -> PepConfig:
     base = {
         "audit_dir": tmp_path / "audit",
         "rework_dir": tmp_path / "rework",
-        "sessiond_socket": tmp_path / "sessiond.sock",
+        "attendance_socket": tmp_path / "sessiond.sock",
     }
     return PepConfig(**{**base, **fields})  # pyright: ignore[reportArgumentType]
 

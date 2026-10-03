@@ -5,9 +5,9 @@ Contract 05 §6.4 names this file and gives it a writer: `managerd` mints
 one per declared webhook and removes it when the declaration goes. This
 module only READS it, and the directory layout below is the one place this
 door's half of that agreement lives. The 0600 requirement IS enforced here,
-the same way `sessiond`'s own token loader enforces it for a door's token
-(`agent_sessiond.atomic.is_group_or_world_readable`, re-derived rather than
-imported: this package imports nothing from `sessiond`).
+the same way `attendance`'s own token loader enforces it for a door's token
+(`attendance.atomic.is_group_or_world_readable`, re-derived rather than
+imported: this package imports nothing from `attendance`).
 """
 
 from __future__ import annotations

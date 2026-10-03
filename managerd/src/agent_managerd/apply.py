@@ -70,7 +70,7 @@ def apply_once(
     host: HostFacts | None = None,
     egress: EgressConfig | None = None,
     # Contract 05 §4.3 steps 6 and 7. Optional, because `up` runs this verb
-    # before `sessiond` is listening: with no client the sandbox stays
+    # before `attendance` is listening: with no client the sandbox stays
     # `creating`, which is what §4.2 rule 4 requires when no handshake ran.
     switch: SwitchClient | None = None,
 ) -> ApplyResult:
@@ -269,7 +269,7 @@ def _apply_valid(
         return publish(record)
 
     # Contract 05 §4.3 step 5b then steps 6 and 7. The document is published
-    # FIRST because it is the only thing that crosses to `sessiond` (§1), so
+    # FIRST because it is the only thing that crosses to `attendance` (§1), so
     # a sandbox it does not name is one §5.3 rule 8 refuses.
     publish(record)
     promoted, _step = sandboxes.promote_sandbox(state_root, family.name, record, switch)

@@ -56,7 +56,7 @@ SPEC_HASH_CHARS: Final = 8
 SWITCH_STEP: Final = "switch_sandbox"
 
 #: The states in which a sandbox is the family's live one. `planned` and
-#: `creating` are here because §4.2 has `sessiond` dial a `creating` sandbox:
+#: `creating` are here because §4.2 has `attendance` dial a `creating` sandbox:
 #: running the handshake is what promotes it.
 LIVE_STATES: Final = (
     SandboxLifecycle.PLANNED,
@@ -156,7 +156,7 @@ def create_sandbox(
     egress: EgressConfig,
 ) -> CreateOutcome:
     """Contract 05 §4.3, steps 1 to 5a. Step 6 (the channel handshake) is
-    `sessiond`'s: it holds the only channel, and running the handshake is
+    `attendance`'s: it holds the only channel, and running the handshake is
     what promotes the sandbox to `ready` (§4.2)."""
     name = _take_next_id(state_root, family.name)
     allowed = egress.allowed(family.egress)
@@ -185,7 +185,7 @@ def create_sandbox(
         return _failed(state_root, family.name, record, driver, exc)
 
     # After the proof, never before: a file naming a sandbox whose egress
-    # was not proved would point `sessiond` at a hole (invariant 11).
+    # was not proved would point `attendance` at a hole (invariant 11).
     write_playpen_env(
         paths.playpen_env_path(state_root, family.name, name),
         state_root=state_root,
@@ -233,7 +233,7 @@ def fail_planned(state_root: Path, family_name: str, driver: SandboxDriver) -> t
     was never proved.
 
     §4.2 puts `planned` in `LIVE_STATES` because §4.2 rule 2 has
-    `sessiond` wait for one. That also made the reconciler ADOPT one as
+    `attendance` wait for one. That also made the reconciler ADOPT one as
     the family's serving sandbox and ask for its handshake, which would
     hand turns to a VM that never passed step 2's canary probe -- a hole
     in deny-by-default (invariant 11). Retiring the row closes it: the id
@@ -269,13 +269,13 @@ def promote_sandbox(
 
     §5.1's `from` is "null on a first create" and §5.3 rule 8 says a first
     switch always names a `creating` sandbox, "because the switch is what
-    asks for the handshake". `sessiond` holds the only channel (§4.2) and
+    asks for the handshake". `attendance` holds the only channel (§4.2) and
     never writes this service's document (§1), so that answer is the only
     evidence `managerd` can have that a sandbox is `ready`.
 
     A refusal changes nothing and raises no fault. §3.3's
     `sandbox_start_failed` is "no sandbox reached `ready` AFTER THE RETRY
-    BUDGET", not after one refused call, and `sessiond` still dials a
+    BUDGET", not after one refused call, and `attendance` still dials a
     `creating` sandbox (§4.2 rule 1), so the family keeps serving and the
     next apply asks again.
 
@@ -305,8 +305,8 @@ def mark_ready(state_root: Path, family_name: str, sandbox_id: str) -> SandboxRe
     """Contract 05 §4.3 step 7: "on a passing handshake, set `ready_at` and
     `state: ready`".
 
-    The evidence is `sessiond`'s answer to §5 and nothing else. §4.2 rule 4
-    forbids writing `ready` after `sbx create` alone, `sessiond` holds the
+    The evidence is `attendance`'s answer to §5 and nothing else. §4.2 rule 4
+    forbids writing `ready` after `sbx create` alone, `attendance` holds the
     only channel, and §1 leaves that one answer as the only thing that
     crosses back. `ready_at` keeps its first value: a handshake that passed
     is an event, not a level."""
@@ -353,7 +353,7 @@ def set_allow(state_root: Path, family_name: str, allow: tuple[str, ...]) -> Non
 
 def empty_control_dir(state_root: Path, family_name: str, sandbox: str) -> None:
     """Contract 05 §4.3 rule 5: a `supervisor.lock` left by a DEAD
-    playpen would make `sessiond` wait for nothing (contract 03 §11.4
+    playpen would make `attendance` wait for nothing (contract 03 §11.4
     rule 4).
 
     The directory is this sandbox's own, so emptying it is safe even while
@@ -391,14 +391,14 @@ def status_of(record: SandboxRecord) -> SandboxStatus:
 
     `power` and `channel` are what `managerd` can attest to on its own:
     `sbx create` does not boot a VM, the first exec does (README §6), and
-    the channel belongs to `sessiond`.
+    the channel belongs to `attendance`.
 
     There is no `turns_running`: `managerd` cannot count a family's running
     turns. The `managerd` principal holds `Access.INTERNAL`, which reaches
     `/internal/*` and nothing else (contract 02 §3.1), and a session row's
     `sandbox` names the sandbox that served the LAST turn, not the one a
     turn runs on now. A field it cannot fill would be a number that lies
-    quietly. `sessiond` is the one authority for
+    quietly. `attendance` is the one authority for
     a live count, and contract 05 §8 already sends the noticeboard there."""
     running = record.state in (SandboxLifecycle.READY, SandboxLifecycle.DRAINING)
     return SandboxStatus(

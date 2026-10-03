@@ -50,10 +50,10 @@
 # and a merge queue lands several in one push. A component's level is the
 # highest label among the pull requests in ITS range that changed ITS paths:
 #
-#   main  ──A──────B──────C     A: bump:minor, changed sessiond/
-#                               B: no label,   changed pep/
-#   sessiond-v0.1.7 → 0.2.0     C: no label,   changed sessiond/
-#   pep-v0.1.12     → 0.1.13    A's label is not pep's: A changed no pep path
+#   main  ──A──────B──────C       A: bump:minor, changed attendance/
+#                                 B: no label,   changed pep/
+#   attendance-v0.1.7 → 0.2.0     C: no label,   changed attendance/
+#   pep-v0.1.12       → 0.1.13    A's label is not pep's: A changed no pep path
 #
 # A TAG COVERS EVERY CHANGE SINCE THE COMPONENT'S OWN LAST TAG.
 # A run can be missed: a red `main` tags nothing, and a pending run gives

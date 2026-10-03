@@ -1,6 +1,6 @@
 """Config, ids and exit codes: everything `--check` exercises.
 
-The TUI door holds one secret, its `sessiond` token, and it reads it from a
+The TUI door holds one secret, its `attendance` token, and it reads it from a
 file into memory (invariant 13). Nothing here may put a token on argv, in a
 URL or in a message.
 """
@@ -50,8 +50,8 @@ def base_env(tmp_path: Path) -> dict[str, str]:
 def test_config_reads_the_token_file(tmp_path: Path) -> None:
     config = from_env(base_env(tmp_path))
 
-    assert config.sessiond_token == TOKEN
-    assert config.sessiond_socket is not None
+    assert config.attendance_token == TOKEN
+    assert config.attendance_socket is not None
     assert config.families_dir.name == "families"
 
 
@@ -91,8 +91,8 @@ def test_config_takes_the_lan_url_when_it_is_given(tmp_path: Path) -> None:
 
     config = from_env(env)
 
-    assert config.sessiond_url == "http://192.0.2.10:8350"
-    assert config.sessiond_socket is None
+    assert config.attendance_url == "http://192.0.2.10:8350"
+    assert config.attendance_socket is None
 
 
 def test_config_overrides_sbx_and_the_launcher(tmp_path: Path) -> None:

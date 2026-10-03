@@ -1,11 +1,11 @@
 """`POST /internal/switch-sandbox` — the one call `managerd` makes to
-`sessiond` (contract 05 §1, §5).
+`attendance` (contract 05 §1, §5).
 
 Everything else the two services share travels through the status
 document, so this whole module is that one call: its request, its answer,
 and the bearer token that authorises it.
 
-`sessiond` holds every session and every channel. Only it can move new
+`attendance` holds every session and every channel. Only it can move new
 turns from one sandbox to another, and only it knows how many turns are
 still running on the outgoing one. `managerd` asks and waits.
 
@@ -25,7 +25,7 @@ from agent_family import SwitchMode
 
 SWITCH_PATH: Final = "/internal/switch-sandbox"
 
-#: Contract 05 §5.1: how long `sessiond` may take before it answers.
+#: Contract 05 §5.1: how long `attendance` may take before it answers.
 DEFAULT_DEADLINE_S: Final = 300
 
 REQUEST_TIMEOUT_MARGIN_S: Final = 30
@@ -34,7 +34,7 @@ HTTP_OK: Final = 200
 
 
 class SwitchError(RuntimeError):
-    """`sessiond` did not move the family onto the new sandbox."""
+    """`attendance` did not move the family onto the new sandbox."""
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ class SwitchRequest:
 @dataclass(frozen=True)
 class SwitchResult:
     """Contract 05 §5.2. The counts describe the OUTGOING sandbox only:
-    `switched` is already true the moment `sessiond` accepts the call."""
+    `switched` is already true the moment `attendance` accepts the call."""
 
     switched: bool
     outcome: str
@@ -78,7 +78,7 @@ class SwitchClient(Protocol):
 
 
 def read_token(path: Path) -> str:
-    """The `managerd` token `sessiond` expects (contract 02 §3 rule 5).
+    """The `managerd` token `attendance` expects (contract 02 §3 rule 5).
 
     A missing or empty file refuses before anything is sent. An empty key
     once turned a LAN admin surface into an open one; a client that would
@@ -99,7 +99,7 @@ SOCKET_BASE_URL = "http://sessiond"
 
 
 class HttpSwitchClient:
-    """Speaks to `sessiond` over its Unix socket or its LAN address.
+    """Speaks to `attendance` over its Unix socket or its LAN address.
 
     The token rides in a bearer header. It never appears in the URL, on
     argv or in a log line (invariant 13), and no method here puts a
@@ -115,7 +115,7 @@ class HttpSwitchClient:
 
     @classmethod
     def over_socket(cls, socket: Path, token: str) -> HttpSwitchClient:
-        """`sessiond` on its Unix socket. A gate runs it there and nowhere
+        """`attendance` on its Unix socket. A gate runs it there and nowhere
         else, so a URL alone can never reach it. The host part of the base
         URL names nothing: the transport dials the socket."""
         client = httpx.Client(
@@ -146,7 +146,7 @@ def _result_of(response: httpx.Response, request: SwitchRequest) -> SwitchResult
         # Contract 05 §5.3 rule 1: `switched` is what says new turns now go
         # to `to`. Without it the outgoing sandbox is still the family's,
         # and destroying it would end every session.
-        raise SwitchError(f"switch to {request.to}: sessiond did not switch")
+        raise SwitchError(f"switch to {request.to}: attendance did not switch")
 
     return SwitchResult(
         switched=True,
@@ -162,10 +162,10 @@ def _object(response: httpx.Response) -> dict[str, Any]:
     try:
         body = response.json()
     except ValueError as exc:
-        raise SwitchError("sessiond answered a body that is not JSON") from exc
+        raise SwitchError("attendance answered a body that is not JSON") from exc
 
     if not isinstance(body, dict):
-        raise SwitchError("sessiond answered a body that is not an object")
+        raise SwitchError("attendance answered a body that is not an object")
 
     return cast("dict[str, Any]", body)
 
@@ -178,7 +178,7 @@ def _count(value: Any) -> int:
 
 class FakeSwitchClient:
     """Records every request. `refuse` makes each call raise, which is how
-    a test drives a `sessiond` whose handler answers 501.
+    a test drives an `attendance` whose handler answers 501.
 
     Locked, because families converge side by side and two
     of them may ask for a switch at the same time. `HttpSwitchClient`

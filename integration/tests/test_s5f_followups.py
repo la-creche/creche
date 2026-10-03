@@ -68,7 +68,7 @@ class Decision(StrEnum):
     DENY = "deny"
 
 
-#: TWO gates inside one turn, and `sessiond` reads the PEP's audit once a
+#: TWO gates inside one turn, and `attendance` reads the PEP's audit once a
 #: second, so this turn has to outlive four of those polls plus two pushes
 #: and two taps. 600 deltas 40 ms apart is about 24 seconds.
 TWO_GATE_EVENTS = 600
@@ -128,7 +128,7 @@ async def two_gate_job(stage: Stage5) -> tuple[str, str]:
         timeout=SETTLE_TIMEOUT_S,
     )
     turn = stage.live_turn(HA_REVIEW, fired.session)
-    assert turn == fired.turn, "the playpen is running a turn sessiond did not start"
+    assert turn == fired.turn, "the playpen is running a turn attendance did not start"
 
     return fired.session, turn
 

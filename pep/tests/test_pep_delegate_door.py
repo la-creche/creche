@@ -1,4 +1,4 @@
-"""The PEP as a client of `sessiond`'s delegate door (contract 04 §7).
+"""The PEP as a client of `attendance`'s delegate door (contract 04 §7).
 
 No live service: every case drives `HttpDelegateDoor` through an httpx mock
 transport, which is the same door an `sbx` sandbox would reach over the Unix
@@ -148,7 +148,7 @@ async def test_a_refusal_from_the_door_is_a_failure() -> None:
     assert "403" in (reply.error or "")
 
 
-async def test_sessiond_being_down_is_a_failure() -> None:
+async def test_attendance_being_down_is_a_failure() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no such socket")
 
@@ -195,7 +195,7 @@ async def test_one_client_serves_every_call_and_closes_once() -> None:
 
 
 async def test_a_socket_path_builds_a_unix_transport(tmp_path: Path) -> None:
-    """`sessiond` listens on a Unix socket, so the door speaks HTTP over one
+    """`attendance` listens on a Unix socket, so the door speaks HTTP over one
     and never over a port. Nothing is connected here: building the client
     opens no socket."""
     built = HttpDelegateDoor(DoorConfig(token=TOKEN, socket_path=tmp_path / "sessiond.sock"))

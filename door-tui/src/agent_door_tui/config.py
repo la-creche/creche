@@ -1,6 +1,6 @@
 """The door's configuration, read from the environment, checked at start.
 
-Fail closed. The door refuses to start when its `sessiond` token file is
+Fail closed. The door refuses to start when its `attendance` token file is
 missing, empty or under 32 bytes (contract 02 §3 rule 7). An empty key would
 turn a LAN admin surface into an open one, and this rule exists so that
 cannot happen.
@@ -21,7 +21,7 @@ from pathlib import Path
 # Contract 02 §3 rule 7's floor.
 MIN_TOKEN_BYTES = 32
 
-DEFAULT_SESSIOND_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
+DEFAULT_ATTENDANCE_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
 DEFAULT_TOKEN_FILE = "/srv/agents/state/rework/tokens/door-tui.token"
 DEFAULT_FAMILIES_DIR = "/srv/agents/state/rework/families"
 
@@ -49,9 +49,9 @@ class ConfigError(Exception):
 class TuiConfig:
     """Everything the door needs. One field is a secret and is never printed."""
 
-    sessiond_token: str
-    sessiond_url: str
-    sessiond_socket: Path | None
+    attendance_token: str
+    attendance_url: str
+    attendance_socket: Path | None
     families_dir: Path
     sbx: str
     pi_launch: str
@@ -59,24 +59,24 @@ class TuiConfig:
 
     def describe(self) -> str:
         """A one-line summary for `--check`. Carries no secret."""
-        target = self.sessiond_socket or self.sessiond_url
+        target = self.attendance_socket or self.attendance_url
 
         return (
-            f"sessiond={target} families={self.families_dir} sbx={self.sbx} "
+            f"attendance={target} families={self.families_dir} sbx={self.sbx} "
             f"launcher={self.pi_launch} instance={self.door_instance} "
-            f"token_bytes={len(self.sessiond_token)}"
+            f"token_bytes={len(self.attendance_token)}"
         )
 
 
 def from_env(environ: dict[str, str] | None = None) -> TuiConfig:
     """Build the config, or raise `ConfigError` naming what to fix."""
     env = environ if environ is not None else dict(os.environ)
-    url, socket = _sessiond_target(env)
+    url, socket = _attendance_target(env)
 
     return TuiConfig(
-        sessiond_token=_read_token(env),
-        sessiond_url=url,
-        sessiond_socket=socket,
+        attendance_token=_read_token(env),
+        attendance_url=url,
+        attendance_socket=socket,
         families_dir=Path(env.get(ENV_FAMILIES_DIR, DEFAULT_FAMILIES_DIR)),
         sbx=env.get(ENV_SBX, DEFAULT_SBX).strip() or DEFAULT_SBX,
         pi_launch=env.get(ENV_PI_LAUNCH, DEFAULT_PI_LAUNCH).strip() or DEFAULT_PI_LAUNCH,
@@ -99,8 +99,8 @@ def door_instance() -> str:
     return f"tui.{os.getpid()}"
 
 
-def _sessiond_target(env: dict[str, str]) -> tuple[str, Path | None]:
-    """A Unix socket by default. A URL only when `sessiond` binds the LAN."""
+def _attendance_target(env: dict[str, str]) -> tuple[str, Path | None]:
+    """A Unix socket by default. A URL only when `attendance` binds the LAN."""
     url = env.get(ENV_URL, "").strip()
     socket = env.get(ENV_SOCKET, "").strip()
 
@@ -113,7 +113,7 @@ def _sessiond_target(env: dict[str, str]) -> tuple[str, Path | None]:
 
         return url.rstrip("/"), None
 
-    return UDS_BASE_URL, Path(socket or DEFAULT_SESSIOND_SOCKET)
+    return UDS_BASE_URL, Path(socket or DEFAULT_ATTENDANCE_SOCKET)
 
 
 def _read_token(env: dict[str, str]) -> str:

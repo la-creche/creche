@@ -1,4 +1,4 @@
-"""The PEP as a client of `sessiond`'s dispatch door (contract 02 §13.4).
+"""The PEP as a client of `attendance`'s dispatch door (contract 02 §13.4).
 
 No live service: every case drives `HttpDispatchDoor` through an httpx mock
 transport, the same door a sandbox's `enqueue` would reach over the socket.
@@ -289,7 +289,7 @@ async def test_a_jobs_list_is_bounded() -> None:
 
 class _NoToken:
     """A token source whose file is missing, the way a PEP that started
-    before `sessiond` sees it."""
+    before `attendance` sees it."""
 
     def value(self) -> str:
         from agent_pep.delegate import DoorTokenError

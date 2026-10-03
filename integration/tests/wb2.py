@@ -3,13 +3,13 @@
 `stage4.py` says it plainly (note 1): a terminal's own turns never reach the
 journal, because the TUI door hands its tty to pi INSIDE the sandbox
 (contract 03 §7.6) and pi writes the session store directly. Stage 4's
-scenarios therefore run a TUI-door turn through `sessiond`, which is the one
+scenarios therefore run a TUI-door turn through `attendance`, which is the one
 TUI turn a journal can hold.
 
 Packet WB2 needs the other one. So this module writes the entries a
 terminal's pi process would have written, into the store `fake-pi.mjs` keeps
 under `PI_CODING_AGENT_DIR`, and then ends the lease. Everything after that
-is the real path: `sessiond` sends contract 03 §4.8's `get_entries`, the real
+is the real path: `attendance` sends contract 03 §4.8's `get_entries`, the real
 playpen starts a real fake-pi process on that store, and the entries come
 back over the channel.
 
@@ -17,7 +17,7 @@ back over the channel.
   this module        the real path under test
   -----------        ------------------------
   write e3,e4  --->  release the tui lease
-                     sessiond --get_entries--> playpen --> fake pi
+                     attendance --get_entries--> playpen --> fake pi
                      terminal_exchange line, owui_map rows, one append
 ```
 
@@ -92,7 +92,7 @@ async def terminal_visit(
        module's stand-in, and it is the only one.
     4. Give the lease back (§5.10), which is where §10.5 reads.
 
-    The door's client is synchronous and `sessiond` runs on this test's own
+    The door's client is synchronous and `attendance` runs on this test's own
     loop, so every call goes to a worker thread. A direct call would block
     the service it is calling (`stage4.in_thread`).
     """

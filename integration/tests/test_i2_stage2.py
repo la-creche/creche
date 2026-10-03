@@ -1,4 +1,4 @@
-"""Packet I2: stage 2, with the reconciler, `sessiond` and the playpen
+"""Packet I2: stage 2, with the reconciler, `attendance` and the playpen
 running together for the first time.
 
 This is the operator's stage 2 test, invariant 9 made runnable: "A permission
@@ -8,7 +8,7 @@ file. Nothing else is touched, and every assertion reads something that
 crossed a process boundary.
 
     family.yaml ──► managerd ──► grants, config mount, status.json
-                          └────► POST /internal/switch-sandbox ──► sessiond
+                          └────► POST /internal/switch-sandbox ──► attendance
                                                                       │
     Open WebUI ──► door-owui ──────────────────────────────────────►──┘
                                                                       │
@@ -34,7 +34,7 @@ from agent_family import FamilyState
 from agent_pep.family_decisions import decide_family, manifest_actions
 from agent_pep.family_grants import FamilyStore
 from agent_pep.faults import FaultWriter
-from agent_sessiond.auth import Principal
+from attendance.auth import Principal
 from conftest import chat_body, chat_id, message_id, owui_headers, session_of
 from stack import FAMILY, FIXTURE_PEP_TOKEN, SANDBOX, Stack, until
 from stage2 import BreakTheIncomingEnv, Manager, http_switch_client, write_registry
@@ -248,7 +248,7 @@ async def test_a_switch_that_cannot_complete_keeps_serving(stack: Stack, tmp_pat
     already serving on, both sandboxes are accounted for, and the document
     says which sandbox could not start.
 
-    Until packet FX2, `managerd` dropped `sessiond`'s `sandbox_start_failed`,
+    Until packet FX2, `managerd` dropped `attendance`'s `sandbox_start_failed`,
     so this scenario could only assert the `reconcile` block: "an operator
     sees that a switch is outstanding, but not why". The fault now says why,
     and the family is `degraded` rather than `reconciling` because §3's
@@ -313,7 +313,7 @@ async def test_a_later_pass_completes_the_refused_switch(stack: Stack, tmp_path:
 async def test_the_managerd_token_clears_the_internal_check(stack: Stack, tmp_path: Path) -> None:
     """Kept from packet CM's own test. A refusal for any reason raises the
     same `SwitchError`, so the scenarios above would pass even with a token
-    `sessiond` rejects. This asks `sessiond` directly."""
+    `attendance` rejects. This asks `attendance` directly."""
     registry = write_registry(tmp_path / "registry")
     manager = Manager(stack, registry)
     await manager.pass_once()
@@ -481,7 +481,7 @@ async def _await_every_turn_ended(stack: Stack, session: str) -> None:
     """Wait for the host journal, which lands AFTER the client's `[DONE]`.
 
     The door ends its stream at pi's own `agent_settled` event (contract 02
-    §8.2). `sessiond` writes the terminal line when the playpen's message
+    §8.2). `attendance` writes the terminal line when the playpen's message
     arrives, which is later: 5 ms in the run that caught this, under load. A
     test that counts `turn_settled` the instant a stream ends reads too early.
     """
@@ -499,7 +499,7 @@ def _open_turns(stack: Stack, session: str) -> int:
 
 
 async def _switch_as_managerd(stack: Stack, *, to: str) -> httpx.Response:
-    client = stack.sessiond_as(Principal.MANAGERD)
+    client = stack.attendance_as(Principal.MANAGERD)
 
     return await client.post(
         SWITCH_PATH,

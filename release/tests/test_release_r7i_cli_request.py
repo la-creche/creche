@@ -37,9 +37,9 @@ def _tree(tmp_path: Path) -> list[str]:
 
 def _state_file(tmp_path: Path) -> str:
     body = {
-        "live": {"pep": "2.0.3", "sessiond": "1.4.7"},
+        "live": {"pep": "2.0.3", "attendance": "1.4.7"},
         "provided": {},
-        "latest": {"pep": "2.1.0", "sessiond": "1.5.0"},
+        "latest": {"pep": "2.1.0", "attendance": "1.5.0"},
         "facts": {},
     }
     path = tmp_path / "live-state.json"
@@ -194,6 +194,6 @@ def test_two_requests_land_as_two_files(tmp_path: Path) -> None:
     roots = _tree(tmp_path)
 
     main(["request", "pep", *roots, "--spool", str(spool)])
-    main(["request", "sessiond", *roots, "--spool", str(spool)])
+    main(["request", "attendance", *roots, "--spool", str(spool)])
 
     assert len(_filed(spool)) == 2

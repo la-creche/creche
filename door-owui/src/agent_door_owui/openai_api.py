@@ -1,6 +1,6 @@
 """The OpenAI wire shapes this door reads and writes.
 
-One request becomes one turn. The door keeps no conversation: `sessiond`
+One request becomes one turn. The door keeps no conversation: `attendance`
 owns the transcript (invariant 5), so the history Open WebUI replays is
 read for the prompt and the persona, and for nothing else.
 """
@@ -16,7 +16,7 @@ from .untrusted import field_text, is_list, is_object
 MODEL_PREFIX = "agent:"
 MODEL_OWNER = "agent-control"
 
-# Contract 02 §5.4's cap on `prompt`. Refused here rather than at `sessiond`,
+# Contract 02 §5.4's cap on `prompt`. Refused here rather than at `attendance`,
 # so the reader learns which message was too big.
 MAX_PROMPT_BYTES = 256 * 1024
 
@@ -140,7 +140,7 @@ def _count(usage: dict[str, object], field: str) -> int:
 
 
 def _last_user_text(messages: list[object]) -> str:
-    """The prompt is the last user message. History is `sessiond`'s job."""
+    """The prompt is the last user message. History is `attendance`'s job."""
     for message in reversed(messages):
         if not is_object(message):
             continue
@@ -161,7 +161,7 @@ def _last_user_text(messages: list[object]) -> str:
 def _persona(messages: list[object]) -> str | None:
     """Every system message, in order: the folder prompt (contract 02 §11).
 
-    It is persona text and carries no authority. `sessiond` puts it in a
+    It is persona text and carries no authority. `attendance` puts it in a
     delimited block that says so, and no code path leads from it to a grant.
     """
     parts = [

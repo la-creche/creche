@@ -166,12 +166,12 @@ def test_the_planned_request_is_under_the_executor_s_byte_cap() -> None:
 
 def test_the_file_is_named_after_the_id_and_parses_back(tmp_path: Path) -> None:
     directory = _requests(tmp_path)
-    planned = plan_request({"sessiond": "latest"}, requested_by="human", now=NOW)
+    planned = plan_request({"attendance": "latest"}, requested_by="human", now=NOW)
     path = file_request(planned, str(directory))
 
     assert Path(path).name == f"{planned.id}.json"
     raw = Path(path).read_bytes()
-    assert parse_request(raw, planned.id).wanted() == {"sessiond": "latest"}
+    assert parse_request(raw, planned.id).wanted() == {"attendance": "latest"}
 
 
 def test_no_temporary_name_is_left_behind(tmp_path: Path) -> None:

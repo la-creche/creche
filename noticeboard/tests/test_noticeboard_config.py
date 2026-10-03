@@ -94,12 +94,12 @@ def test_state_paths_come_off_one_root(tmp_path: Path) -> None:
     assert config.view_token_file == tmp_path / "tokens" / "view-ro.token"
 
 
-def test_a_sessiond_url_replaces_the_socket() -> None:
+def test_a_attendance_url_replaces_the_socket() -> None:
     url = f"http://{LAN_BIND}:8350"
     config = from_env({"VIEW_BIND": "127.0.0.1", "VIEW_SESSIOND_URL": url})
 
-    assert config.sessiond_socket is None
-    assert config.sessiond_url == url
+    assert config.attendance_socket is None
+    assert config.attendance_url == url
 
 
 def test_key_check_refuses_a_missing_and_a_wrong_key() -> None:

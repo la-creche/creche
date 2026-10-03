@@ -16,7 +16,7 @@ Two kinds of test here, because one of them cannot run everywhere.
 
 1. Mode-driven: a real 0000 directory, which is the fault as the host had
    it. Root reads a 0000 directory anyway, so these skip for root, the
-   same way `sessiond/tests/test_sessiond_approvals.py` already does.
+   same way `attendance/tests/test_attendance_approvals.py` already does.
 2. Injected: a raising stand-in for the call, which proves the same guard
    under any account. Every claim this file makes is covered by at least
    one test of kind 2, so a run as root still proves the guard.

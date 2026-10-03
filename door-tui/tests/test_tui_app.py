@@ -1,7 +1,7 @@
 """One run of `agent-tui`, end to end against fakes.
 
-Every external thing is behind a small protocol: `sessiond` is
-`FakeSessiond`, the status document is a fake family directory, the terminal
+Every external thing is behind a small protocol: `attendance` is
+`FakeAttendance`, the status document is a fake family directory, the terminal
 is scripted, and `sbx` is a runner that records its argv. Nothing here
 touches a live service and nothing needs the host.
 """
@@ -13,13 +13,13 @@ import signal
 
 import pytest
 from agent_door_tui.app import EXIT_NO_STORE, EXIT_SESSION_HELD, Request, TuiDoor, Want
+from agent_door_tui.attendance import AttendanceError, SessionState, Takeover, TurnState
 from agent_door_tui.errors import DoorError, Exit
 from agent_door_tui.launch import LAUNCHER_ARG_NEW
 from agent_door_tui.lease import WriterLease
 from agent_door_tui.picker import ScriptedTerminal
-from agent_door_tui.sessiond import SessiondError, SessionState, Takeover, TurnState
 from agent_door_tui.status import Serving
-from fake_tui_sessiond import FAMILY, FakeSessiond, row
+from fake_tui_attendance import FAMILY, FakeAttendance, row
 
 SANDBOX = "chat-s1"
 ENV_FILE = "/srv/agents/state/rework/families/chat/supervisor.env"
@@ -70,7 +70,7 @@ class Fixture:
     """One door, with every collaborator a test can reach."""
 
     def __init__(self, answers: list[str] | None = None, code: int = 0) -> None:
-        self.door = FakeSessiond()
+        self.door = FakeAttendance()
         self.families = FakeFamilies()
         self.terminal = ScriptedTerminal(answers if answers is not None else [])
         self.runner = FakeRunner(code)
@@ -163,7 +163,7 @@ def test_the_picker_choosing_nothing_never_takes_a_lease() -> None:
 
 
 def test_new_creates_the_session_before_anything_else() -> None:
-    """A new session exists in `sessiond` before pi writes a byte."""
+    """A new session exists in `attendance` before pi writes a byte."""
     fixture = Fixture()
 
     fixture.run(new("Debug the boiler"))
@@ -218,7 +218,7 @@ def test_a_session_id_that_is_not_one_is_refused() -> None:
     assert caught.value.code is Exit.BAD_USAGE
 
 
-def test_a_session_sessiond_does_not_know_is_a_first_writer() -> None:
+def test_a_session_attendance_does_not_know_is_a_first_writer() -> None:
     fixture = Fixture()
 
     fixture.run(named("tui-01JBQ7WZ0X4T9V6K2H8M3N5PQR"))
@@ -522,14 +522,14 @@ def test_a_missing_store_is_explained_in_plain_words() -> None:
     assert "--new" in fixture.shown
 
 
-def test_a_sessiond_that_does_not_answer_refuses() -> None:
+def test_a_attendance_that_does_not_answer_refuses() -> None:
     fixture = Fixture()
-    fixture.door.fail_with = SessiondError("unreachable", "sessiond did not answer", 0)
+    fixture.door.fail_with = AttendanceError("unreachable", "attendance did not answer", 0)
 
     with pytest.raises(DoorError) as caught:
         fixture.run(new())
 
-    assert caught.value.code is Exit.SESSIOND
+    assert caught.value.code is Exit.ATTENDANCE
     assert fixture.runner.argv == []
 
 

@@ -1,6 +1,6 @@
 """One firing: the shared core of `agent-trigger fire` and the webhook
 listener, so a CLI firing and a webhook firing can never drift apart in
-how they talk to `sessiond`.
+how they talk to `attendance`.
 
 A firing creates a fresh `auto-<ulid>` session (contract 02 §13 rule 1)
 and runs one turn with `wait: "accepted"`, the one response shape
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from .sessiond import AcceptedTurn, SessiondClient, TurnRequest
+from .attendance import AcceptedTurn, AttendanceClient, TurnRequest
 from .ulid import new_ulid
 
 SESSION_PREFIX = "auto-"
@@ -51,19 +51,19 @@ class Firing:
 
 @dataclass(frozen=True)
 class FireOutcome:
-    """What `sessiond` answered for one firing. Reaching this point at all
+    """What `attendance` answered for one firing. Reaching this point at all
     means the job was accepted or queued: any refusal raises
-    `SessiondError` instead (contract 02 §14)."""
+    `AttendanceError` instead (contract 02 §14)."""
 
     session: str
     turn: str
     state: str
 
 
-def fire_trigger(sessiond: SessiondClient, firing: Firing) -> FireOutcome:
-    """Create the session, run the turn, return what `sessiond` answered.
+def fire_trigger(attendance: AttendanceClient, firing: Firing) -> FireOutcome:
+    """Create the session, run the turn, return what `attendance` answered.
 
-    Raises `SessiondError` (`errors.py`) for every refusal contract 02
+    Raises `AttendanceError` (`errors.py`) for every refusal contract 02
     §14 defines. The caller (`cli.py`, `webhooks.py`) decides what that
     becomes: an exit code and a journal line, or an HTTP status for an
     external caller.
@@ -71,7 +71,7 @@ def fire_trigger(sessiond: SessiondClient, firing: Firing) -> FireOutcome:
     fired_at = datetime.now(UTC)
     session = f"{SESSION_PREFIX}{new_ulid()}"
 
-    sessiond.ensure_session(firing.family, session)
+    attendance.ensure_session(firing.family, session)
 
     request = TurnRequest(
         family=firing.family,
@@ -80,7 +80,7 @@ def fire_trigger(sessiond: SessiondClient, firing: Firing) -> FireOutcome:
         idempotency_key=new_ulid(),
         labels=_labels(firing, fired_at),
     )
-    accepted = sessiond.accepted_turn(request)
+    accepted = attendance.accepted_turn(request)
 
     return _outcome(session, accepted)
 

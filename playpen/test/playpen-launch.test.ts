@@ -160,7 +160,7 @@ describe("the launcher's command line", () => {
 
 describe("the launcher's fences", () => {
   it("refuses while a live rpc process holds the session", async () => {
-    // §7.5. `sessiond`'s writer lease is the first fence; this is the second,
+    // §7.5. `attendance`'s writer lease is the first fence; this is the second,
     // inside the VM, where the lease cannot reach.
     const harness = open({ piEnv: { [SESSION]: { FAKE_PI_DELAY_MS: "150" } } });
     harness.start();

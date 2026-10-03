@@ -1,6 +1,6 @@
 // Contract 03 §1 and §9. The one stdio channel: stdin carries host commands,
 // stdout carries the protocol and nothing else, stderr carries free text that
-// `sessiond` writes to a log file and never parses.
+// `attendance` writes to a log file and never parses.
 //
 // §9's problem is that one pipe is shared by every session of a family, so a
 // stall anywhere stalls the whole family. This file owns the outbound half of

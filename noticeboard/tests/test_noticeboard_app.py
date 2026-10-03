@@ -1,7 +1,7 @@
 """Every page, the perimeter and one save.
 
 Every source is a fixture: a state root on disk, a git registry in a tmp
-dir, and a fake `sessiond`. No host, no socket, no live service.
+dir, and a fake `attendance`. No host, no socket, no live service.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from noticeboard_helpers import (
     CHAT_COMMENT,
     CHAT_FAMILY_YAML,
     NOW,
-    FakeSessiond,
+    FakeAttendance,
     commit_count,
     journal_line,
     make_registry,
@@ -41,7 +41,7 @@ HOST = "noticeboard.example.test"
 
 
 class Harness:
-    def __init__(self, client: TestClient, config: Config, fake: FakeSessiond) -> None:
+    def __init__(self, client: TestClient, config: Config, fake: FakeAttendance) -> None:
         self.client = client
         self.config = config
         self.fake = fake
@@ -73,13 +73,13 @@ def board(tmp_path: Path) -> Iterator[Harness]:
         port=8370,
         state_root=state,
         registry_dir=registry,
-        sessiond_socket=None,
-        sessiond_url="http://sessiond",
+        attendance_socket=None,
+        attendance_url="http://sessiond",
         page_size=DEFAULT_PAGE_SIZE,
         cookie_secure=False,
         access_key=KEY,
     )
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.answer("/v1/sessions", {"sessions": [session_doc()], "next_cursor": None})
     detail = session_doc()
     detail["turns"] = [turn_doc()]
@@ -211,13 +211,13 @@ def test_the_session_page_shows_the_transcript_and_the_turns(board: Harness) -> 
     assert "settled" in answer.text
 
 
-def test_a_dead_sessiond_still_renders_the_session_page(board: Harness) -> None:
-    board.fake.fault = "cannot reach sessiond: ConnectError"
+def test_a_dead_attendance_still_renders_the_session_page(board: Harness) -> None:
+    board.fake.fault = "cannot reach attendance: ConnectError"
 
     answer = board.get(f"/sessions/{CHAT}/{OWUI}")
 
     assert answer.status_code == 200
-    assert "cannot reach sessiond" in answer.text
+    assert "cannot reach attendance" in answer.text
 
 
 def test_the_audit_page_says_it_shows_full_arguments(board: Harness) -> None:

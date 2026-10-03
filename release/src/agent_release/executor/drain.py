@@ -51,7 +51,7 @@ from .notice import notice_of, say_nothing
 from .phone import TOKEN_ENV as APPROVAL_TOKEN_ENV
 from .phone import URL_ENV, build_phone
 from .provenance import ApiGetFn, github_api, newest_version, tag_commit
-from .quiet import sessiond_signal
+from .quiet import attendance_signal
 from .request import Request, request_id_of
 from .self_switch import settle, switch_in
 from .source import git_env, input_digest, require_trusted
@@ -347,7 +347,7 @@ def build_wiring(operator_uid: int, secrets: Secrets, operator_gid: int = 0) -> 
     That is the other fail-closed end: an unconfigured approval path must
     refuse every release rather than wave one through (invariant 10).
 
-    §2.8's signal is `sessiond`: no turn in flight for five consecutive
+    §2.8's signal is `attendance`: no turn in flight for five consecutive
     minutes. A host whose session service root cannot reach reads nothing,
     and nothing is never quiet, so `infra` waits out its hour and fails the
     switch instead of recreating `ai-litellm` under live calls. `operator_uid`
@@ -371,8 +371,8 @@ def build_wiring(operator_uid: int, secrets: Secrets, operator_gid: int = 0) -> 
         readers=root_readers(host, api),
         api=api,
         notify=notify or say_nothing,
-        last_busy_seen=sessiond_signal(
-            host.sessiond_socket, host.view_token_file, operator_uid, host.clock
+        last_busy_seen=attendance_signal(
+            host.attendance_socket, host.view_token_file, operator_uid, host.clock
         ),
     )
 

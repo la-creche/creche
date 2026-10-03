@@ -166,7 +166,7 @@ def _matches(path: str, row: CatalogRow) -> bool:
         return True
 
     # A directory the build installs counts as the component's own (contract
-    # 06 §1 rule 9): `door-trigger/x.py` reaches `sessiond`.
+    # 06 §1 rule 9): `door-trigger/x.py` reaches `attendance`.
     tops = (row.path, *row.bundles)
 
     return any(path == top or path.startswith(f"{top}/") for top in tops)
@@ -201,8 +201,8 @@ def touched(paths: tuple[str, ...], repo: Repo) -> tuple[str, ...]:
     A line is either a bare path from the head commit's own diff, or
     `<component><TAB><path>` from that one component's range (see
     `RANGE_SEPARATOR`). A range line counts for its own component and for no
-    other: `sessiond<TAB>pep` is a change to `pep` that happened inside
-    `sessiond`'s window, and it tags neither.
+    other: `attendance<TAB>pep` is a change to `pep` that happened inside
+    `attendance`'s window, and it tags neither.
 
     A path under no component reaches nothing, which is contract 06 §2.1's
     fourth case: a docs-only merge produces no tag.
@@ -230,10 +230,10 @@ def levels_of(levels: tuple[str, ...], repo: Repo) -> dict[str, tuple[str, ...]]
     range, a merged pull request carrying that label changed that path. The
     label counts only when the path is one of the component's own. A merge
     queue lands several pull requests in one push, and a `bump:minor` meant
-    for `sessiond` must not raise `pep` because both merged together.
+    for `attendance` must not raise `pep` because both merged together.
 
-        sessiond<TAB>bump:minor<TAB>sessiond   counts: sessiond's own path
-        pep<TAB>bump:minor<TAB>sessiond        does not: pep's range, not its path
+        attendance<TAB>bump:minor<TAB>attendance   counts: attendance's own path
+        pep<TAB>bump:minor<TAB>attendance        does not: pep's range, not its path
 
     A line for a component this repo does not own is not this run's to read,
     and refuses: the script writes every line itself.

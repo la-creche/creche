@@ -24,7 +24,7 @@ provides:
   # Contract 04, the per-family grant file, the family token and audit v2.
   - { contract: pep-grant, major: 0, minor: 11 }
 requires:
-  # `delegate.py` calls sessiond to start a thin job's turn (contract 02 §3).
+  # `delegate.py` calls attendance to start a thin job's turn (contract 02 §3).
   - { contract: session-api, major: 0, min_minor: 12 }
 depends_on: []
 verify:

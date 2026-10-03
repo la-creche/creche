@@ -294,7 +294,7 @@ def test_the_install_stamp_is_the_only_source_of_live(tmp_path: Path) -> None:
     built = build_state(roots, {"pep": "2.1.0"}, fake_readers())
 
     assert built.state.live["pep"] == "2.0.3"
-    assert built.state.live["sessiond"] is None
+    assert built.state.live["attendance"] is None
 
 
 def test_a_reader_that_answers_nothing_builds_an_empty_world(tmp_path: Path) -> None:

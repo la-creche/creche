@@ -196,7 +196,7 @@ VERB_CATALOG: Final[dict[str, VerbSpec]] = {
 #: a granted tool that does not exist yet.
 IMPLEMENTED_VERBS: Final = frozenset({EMBED, HA_CALL})
 
-#: The two verbs `sessiond`'s dispatch door serves (contract 02 §13.4). Like
+#: The two verbs `attendance`'s dispatch door serves (contract 02 §13.4). Like
 #: `invoke_agent`, their availability is a configuration question:
 #: `family_decisions` answers `not_implemented` when this PEP holds
 #: no dispatch door, and allows the call when it does.

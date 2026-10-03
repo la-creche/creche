@@ -1,12 +1,12 @@
 """The PEP clears its own faults without traffic (contract 04 §1.6 rule 7).
 
-`grants_stale` has `blocks_turns: true` (contract 05 §3.3), and `sessiond`
+`grants_stale` has `blocks_turns: true` (contract 05 §3.3), and `attendance`
 answers `family_degraded` to every turn of a family that carries one. If only
 a CALL re-read a good grant file, those two rules would close a loop:
 
     grant file missing for one second
       -> the PEP raises grants_stale
-      -> sessiond refuses every turn of that family
+      -> attendance refuses every turn of that family
       -> no call reaches the PEP
       -> nothing re-reads the grant file
       -> the fault never clears

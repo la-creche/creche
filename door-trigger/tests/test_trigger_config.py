@@ -9,15 +9,15 @@ import pytest
 from agent_door_trigger.config import (
     DEFAULT_REGISTRY_ROOT,
     DEFAULT_WEBHOOK_PORT,
+    ENV_ATTENDANCE_SOCKET,
+    ENV_ATTENDANCE_TOKEN_FILE,
+    ENV_ATTENDANCE_URL,
     ENV_BIND,
     ENV_FAMILIES_DIR,
     ENV_LAN_ADDRESS,
     ENV_PEP_URL,
     ENV_REFRESH_S,
     ENV_REGISTRY_ROOT,
-    ENV_SESSIOND_SOCKET,
-    ENV_SESSIOND_TOKEN_FILE,
-    ENV_SESSIOND_URL,
     ENV_WEBHOOKS_DIR,
     MIN_TOKEN_BYTES,
     PEP_PORT,
@@ -37,7 +37,7 @@ def _lan() -> str:
 def _env(tmp_path: Path, **overrides: str) -> dict[str, str]:
     token_file = tmp_path / "door-trigger.token"
     token_file.write_text(GOOD_TOKEN, encoding="utf-8")
-    env = {ENV_SESSIOND_TOKEN_FILE: str(token_file), ENV_LAN_ADDRESS: _lan()}
+    env = {ENV_ATTENDANCE_TOKEN_FILE: str(token_file), ENV_LAN_ADDRESS: _lan()}
     env.update(overrides)
     return env
 
@@ -49,28 +49,28 @@ def _without_site(tmp_path: Path, **overrides: str) -> dict[str, str]:
     return env
 
 
-# --- shared: the sessiond target both configs carry ---
+# --- shared: the attendance target both configs carry ---
 
 
-def test_a_unix_socket_is_the_default_sessiond_target(tmp_path: Path) -> None:
+def test_a_unix_socket_is_the_default_attendance_target(tmp_path: Path) -> None:
     config = fire_config_from_env(_env(tmp_path))
 
-    assert config.sessiond.socket == Path("/srv/agents/state/rework/sock/sessiond.sock")
-    assert config.sessiond.token == GOOD_TOKEN
+    assert config.attendance.socket == Path("/srv/agents/state/rework/sock/sessiond.sock")
+    assert config.attendance.token == GOOD_TOKEN
 
 
 def test_a_lan_url_replaces_the_socket(tmp_path: Path) -> None:
     url = f"http://{_lan()}:8350"
-    config = fire_config_from_env(_env(tmp_path, **{ENV_SESSIOND_URL: f"{url}/"}))
+    config = fire_config_from_env(_env(tmp_path, **{ENV_ATTENDANCE_URL: f"{url}/"}))
 
-    assert config.sessiond.socket is None
-    assert config.sessiond.url == url
+    assert config.attendance.socket is None
+    assert config.attendance.url == url
 
 
-def test_two_sessiond_targets_are_refused(tmp_path: Path) -> None:
+def test_two_attendance_targets_are_refused(tmp_path: Path) -> None:
     env = _env(
         tmp_path,
-        **{ENV_SESSIOND_URL: f"http://{_lan()}:8350", ENV_SESSIOND_SOCKET: "/run/s.sock"},
+        **{ENV_ATTENDANCE_URL: f"http://{_lan()}:8350", ENV_ATTENDANCE_SOCKET: "/run/s.sock"},
     )
 
     with pytest.raises(ConfigError):
@@ -82,7 +82,7 @@ def test_a_short_token_refuses_to_start(tmp_path: Path) -> None:
     short.write_text("abc", encoding="utf-8")
 
     with pytest.raises(ConfigError) as caught:
-        fire_config_from_env(_env(tmp_path, **{ENV_SESSIOND_TOKEN_FILE: str(short)}))
+        fire_config_from_env(_env(tmp_path, **{ENV_ATTENDANCE_TOKEN_FILE: str(short)}))
 
     assert str(MIN_TOKEN_BYTES) in str(caught.value)
 
@@ -92,12 +92,12 @@ def test_an_empty_token_refuses_to_start(tmp_path: Path) -> None:
     empty.write_text("", encoding="utf-8")
 
     with pytest.raises(ConfigError):
-        fire_config_from_env(_env(tmp_path, **{ENV_SESSIOND_TOKEN_FILE: str(empty)}))
+        fire_config_from_env(_env(tmp_path, **{ENV_ATTENDANCE_TOKEN_FILE: str(empty)}))
 
 
 def test_a_missing_token_file_refuses_to_start(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as caught:
-        fire_config_from_env(_env(tmp_path, **{ENV_SESSIOND_TOKEN_FILE: str(tmp_path / "gone")}))
+        fire_config_from_env(_env(tmp_path, **{ENV_ATTENDANCE_TOKEN_FILE: str(tmp_path / "gone")}))
 
     assert "cannot read" in str(caught.value)
 
@@ -114,12 +114,12 @@ def test_the_fire_summary_carries_no_secret(tmp_path: Path) -> None:
 def test_fire_needs_only_a_token_file_by_default(tmp_path: Path) -> None:
     # No DOOR_TRIGGER_* var but the token file: matches the systemd unit,
     # which sets no environment beyond HOME and XDG_CONFIG_HOME
-    # (systemd/agent-trigger@.service). The default token path is absolute
+    # (systemd/creche-trigger@.service). The default token path is absolute
     # and cannot be pointed at tmp_path, so this only proves the socket and
     # families/registry settings need no override to construct.
     config = fire_config_from_env(_env(tmp_path))
 
-    assert config.sessiond.url == "http://sessiond"
+    assert config.attendance.url == "http://sessiond"
 
 
 # --- fire: the PEP the quiet check calls ---

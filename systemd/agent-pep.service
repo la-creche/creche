@@ -134,9 +134,9 @@ Environment=PEP_REWORK_DIR=/srv/agents/state/rework
 # from the code, not from hope. `bin/tests/test_rework_root_visit.py` holds
 # this unit to every claim in this block.
 #
-# THE DELEGATE DOOR (contract 04 §7.3). The socket is sessiond's,
-# and the token file is sessiond's too. Both may be absent when this process
-# starts, and that is the normal case: sessiond is a USER unit and starts
+# THE DELEGATE DOOR (contract 04 §7.3). The socket is attendance's,
+# and the token file is attendance's too. Both may be absent when this process
+# starts, and that is the normal case: attendance is a USER unit and starts
 # later.
 #   - socket absent: HttpDelegateDoor builds its transport lazily and
 #     connects at call time, so an absent socket is an httpx.ConnectError on
@@ -232,7 +232,7 @@ UMask=0027
 InaccessiblePaths=-/srv/agents/vault -/srv/agents/registry -/srv/agents/work -/srv/agents/state/materializer/state.db
 # Three rework entries are the family path's, and they are the only three:
 # the audit record v2 (contract 04 §6), the grants_stale fault file managerd
-# reads (§1.6), and sessiond's socket directory (contract 02 §3 rule 1),
+# reads (§1.6), and attendance's socket directory (contract 02 §3 rule 1),
 # because connect(2) on a Unix socket asks for write. The fourth,
 # releases/requests, is the `release` verb's spool (see its Environment=
 # line above).

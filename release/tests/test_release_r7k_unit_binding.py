@@ -249,7 +249,7 @@ def test_the_tree_itself_counts_as_inside_itself(bench: Bench) -> None:
 
 
 def test_an_operator_user_unit_is_read_from_its_own_directory(tmp_path: Path) -> None:
-    """`sessiond`, `managerd` and the noticeboard are USER units, installed under
+    """`attendance`, `managerd` and the noticeboard are USER units, installed under
     `~operator/.config/systemd/user` by `bin/rework-cutover.sh`. Root reads the
     FILE: `systemctl --user show` needs the operator's own bus."""
     bench = _make_bench(tmp_path, "noticeboard", NOTICEBOARD_UNIT)
@@ -494,10 +494,10 @@ def test_the_real_pep_unit_and_the_real_manifest_pass_rule_eight(tmp_path: Path)
     installer.check_unit_binds(manifest, REPO_ROOT)
 
 
-#: `sessiond`'s three door units, which run out of its tree
+#: `attendance`'s three door units, which run out of its tree
 #: (`install.py` rule 8).
-SESSIOND_DOORS = frozenset(
-    {"agent-door-owui.service", "agent-trigger-webhooks.service", "agent-trigger@.service"}
+ATTENDANCE_DOORS = frozenset(
+    {"creche-door-owui.service", "creche-trigger-webhooks.service", "creche-trigger@.service"}
 )
 
 
@@ -513,8 +513,8 @@ def test_every_unit_that_starts_a_tree_travels_with_its_component(tmp_path: Path
     """Rule 8, proven from the repository through the executor's own
     `stage_unit`. Every shipped unit is installed on a fake host, and a
     stage out of this repository must carry exactly the units that start
-    the component's tree: its `unit:` and its siblings. So `sessiond`'s
-    three doors are siblings of `sessiond`."""
+    the component's tree: its `unit:` and its siblings. So `attendance`'s
+    three doors are siblings of `attendance`."""
     shipped = sorted((REPO_ROOT / "systemd").glob("*.service"))
     staged_for: dict[str, set[str]] = {}
     for path in sorted(REPO_ROOT.glob("*/component.yaml")):
@@ -545,4 +545,4 @@ def test_every_unit_that_starts_a_tree_travels_with_its_component(tmp_path: Path
         assert staged == starting, manifest.name
         staged_for[manifest.name] = staged
 
-    assert staged_for["sessiond"] == {"agent-sessiond.service", *SESSIOND_DOORS}
+    assert staged_for["attendance"] == {"creche-attendance.service", *ATTENDANCE_DOORS}

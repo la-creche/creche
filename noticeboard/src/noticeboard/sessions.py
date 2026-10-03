@@ -1,4 +1,4 @@
-"""`sessiond` as the noticeboard reads it: principal `view-ro` (contract 02).
+"""`attendance` as the noticeboard reads it: principal `view-ro` (contract 02).
 
 The noticeboard holds the weakest token in the system. Contract 02 §3.1 gives
 `view-ro` every family, no session id of its own, and no write at all, so
@@ -8,7 +8,7 @@ can create, steer, stop or delete, because there is no code for it.
 
 Two shapes this module defends against.
 
-1. **A `sessiond` that does not answer.** A page must still render. Every
+1. **An `attendance` that does not answer.** A page must still render. Every
    call returns its rows plus a `problem` string, never an exception, and
    the page shows the problem as a report (invariant 19).
 2. **An answer that is not what the contract says.** The body crosses a
@@ -72,7 +72,7 @@ class Reply:
     status: int = 0
     body: bytes = b""
     #: A transport failure: no socket, refused connection, timeout. Empty
-    #: when the call reached `sessiond`, whatever it then answered.
+    #: when the call reached `attendance`, whatever it then answered.
     problem: str = ""
 
 
@@ -80,7 +80,7 @@ class Transport(Protocol):
     """The one thing this module cannot fake for itself.
 
     A test supplies a transport that answers from fixtures. Nothing else
-    in the noticeboard knows whether `sessiond` is on a socket or on TCP.
+    in the noticeboard knows whether `attendance` is on a socket or on TCP.
 
     `bearer` is its own parameter, never a member of `params`. A token in
     a bag of query parameters is one edit away from a URL (invariant 13).
@@ -206,7 +206,7 @@ class SessionReader:
     _token: str = field(default="", init=False, repr=False)
 
     def sessions(self, family: str = "", limit: int = 50, cursor: str = "") -> SessionList:
-        """Contract 02 §5.2. Newest activity first, as `sessiond` orders it."""
+        """Contract 02 §5.2. Newest activity first, as `attendance` orders it."""
         params: dict[str, str] = {"limit": str(min(limit, MAX_SESSION_LIMIT))}
 
         if family:
@@ -270,9 +270,9 @@ class SessionReader:
             return None, _refusal(reply)
 
         if len(reply.body) > limit:
-            return None, f"sessiond answered over {limit} bytes; refusing to parse it"
+            return None, f"attendance answered over {limit} bytes; refusing to parse it"
 
-        body, problem = jsonfiles.parse_object(reply.body, "sessiond's answer")
+        body, problem = jsonfiles.parse_object(reply.body, "attendance's answer")
 
         return body, problem or ""
 
@@ -294,7 +294,7 @@ class SessionReader:
         try:
             found = self.token_file.read_text(encoding="utf-8").strip()
         except OSError as error:
-            # The file is mode 0600 and owned by sessiond's user, so "not
+            # The file is mode 0600 and owned by attendance's user, so "not
             # readable" is the ordinary first-run failure here.
             return "", f"cannot read the noticeboard-ro token: {error.strerror or error}"
 
@@ -308,15 +308,15 @@ class SessionReader:
 
 def _refusal(reply: Reply) -> str:
     """Contract 02 §14's error body, read as a sentence for a page."""
-    body, _ = jsonfiles.parse_object(reply.body, "sessiond's refusal")
+    body, _ = jsonfiles.parse_object(reply.body, "attendance's refusal")
     error = jsonfiles.child(body or {}, "error")
     code = jsonfiles.whole(error, "code")
     message = jsonfiles.text(error, "message")
 
     if not code:
-        return f"sessiond answered {reply.status} with no error code"
+        return f"attendance answered {reply.status} with no error code"
 
-    return f"sessiond refused: {code} ({reply.status}) {message}".rstrip()
+    return f"attendance refused: {code} ({reply.status}) {message}".rstrip()
 
 
 def _stream(raw: bytes) -> Stream:

@@ -1,6 +1,6 @@
 """A session's journal, folded into something a person reads (contract 02 §8).
 
-The session page shows a transcript, and `sessiond` has no transcript to
+The session page shows a transcript, and `attendance` has no transcript to
 give: `view-ro` may replay the event stream and nothing more. So this
 module turns journal lines into entries. It is pure, so a test hands it
 lines and reads entries.

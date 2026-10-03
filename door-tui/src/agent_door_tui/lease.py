@@ -1,6 +1,6 @@
 """The writer lease this terminal holds while pi runs (contract 02 §7).
 
-A session has at most one writer and any number of readers. `sessiond`
+A session has at most one writer and any number of readers. `attendance`
 enforces that, because pi enforces nothing: two concurrent pi writers on one
 session store cross-contaminate context, orphan a branch and both report
 success with no error anywhere (contract 02 §7, measured).
@@ -25,11 +25,11 @@ from __future__ import annotations
 import logging
 import threading
 
-from .sessiond import (
+from .attendance import (
     CODE_LEASE_TAKEN_OVER,
+    AttendanceClient,
+    AttendanceError,
     Intent,
-    SessiondClient,
-    SessiondError,
     Takeover,
     raise_refusal,
 )
@@ -51,7 +51,7 @@ class WriterLease:
 
     def __init__(
         self,
-        door: SessiondClient,
+        door: AttendanceClient,
         family: str,
         session: str,
         door_instance: str,
@@ -67,7 +67,7 @@ class WriterLease:
 
     @property
     def held(self) -> bool:
-        """True once `sessiond` granted the lease and before it was released."""
+        """True once `attendance` granted the lease and before it was released."""
         return self._held
 
     @property
@@ -81,12 +81,12 @@ class WriterLease:
         """Take the lease, or refuse with the holder named (contract 02 §7.2).
 
         `POLITE` is the default and the only value the door picks on its own.
-        `FORCE` comes from the operator's own `--force`, and `sessiond` still refuses
+        `FORCE` comes from the operator's own `--force`, and `attendance` still refuses
         it while a turn is in flight (contract 02 §7.3 rule 4).
         """
         try:
             self._door.take_writer(self._family, self._session, self._instance, takeover)
-        except SessiondError as error:
+        except AttendanceError as error:
             raise raise_refusal(error) from error
 
         self._held = True
@@ -107,7 +107,7 @@ class WriterLease:
     def renew_once(self) -> None:
         """One renewal. A failure is counted and logged, never raised.
 
-        A human is typing into pi. Ending the terminal because `sessiond`
+        A human is typing into pi. Ending the terminal because `attendance`
         missed one call would lose that work for nothing: the lease has 60
         seconds of TTL and the next renewal may well succeed.
 
@@ -123,7 +123,7 @@ class WriterLease:
             self._door.take_writer(
                 self._family, self._session, self._instance, Takeover.POLITE, Intent.RENEW
             )
-        except SessiondError as error:
+        except AttendanceError as error:
             self._after_failed_renewal(error)
 
     def release(self) -> None:
@@ -131,7 +131,7 @@ class WriterLease:
 
         Idempotent, and a refusal here is logged rather than raised: this
         runs on the way out, often from a signal handler, and the TTL still
-        ends a lease `sessiond` would not take back.
+        ends a lease `attendance` would not take back.
         """
         self._stop.set()
         thread = self._thread
@@ -155,10 +155,10 @@ class WriterLease:
     def _give_back(self) -> None:
         try:
             self._door.release_writer(self._family, self._session, self._instance)
-        except SessiondError as error:
+        except AttendanceError as error:
             _LOG.warning("the writer lease was not released: %s", error.code)
 
-    def _after_failed_renewal(self, error: SessiondError) -> None:
+    def _after_failed_renewal(self, error: AttendanceError) -> None:
         self.renewal_failures += 1
 
         if error.code == CODE_LEASE_TAKEN_OVER:

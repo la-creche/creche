@@ -1,6 +1,6 @@
 // Contract 03 §4 and §5: the wire vocabulary of the one channel, as types.
 // Field names here ARE the wire, so nothing in this file may be renamed for
-// taste. The host is `sessiond`; the playpen is this process.
+// taste. The host is `attendance`; the playpen is this process.
 
 /** Contract 03 §4. Every message the host may send. */
 export type HostMessageType =

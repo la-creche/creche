@@ -23,7 +23,7 @@ GOOD_KEY = "k" * MIN_KEY_BYTES
 def _env(tmp_path: Path, **overrides: str) -> dict[str, str]:
     key_file = tmp_path / "door.key"
     key_file.write_text(GOOD_KEY, encoding="utf-8")
-    token_file = tmp_path / "sessiond.token"
+    token_file = tmp_path / "attendance.token"
     token_file.write_text("t" * MIN_KEY_BYTES, encoding="utf-8")
     env = {
         ENV_KEY_FILE: str(key_file),
@@ -37,7 +37,7 @@ def _env(tmp_path: Path, **overrides: str) -> dict[str, str]:
 def test_a_unix_socket_is_the_default_target(tmp_path: Path) -> None:
     config = from_env(_env(tmp_path))
 
-    assert config.sessiond_socket == Path("/srv/agents/state/rework/sock/sessiond.sock")
+    assert config.attendance_socket == Path("/srv/agents/state/rework/sock/sessiond.sock")
     assert config.bind_host == "127.0.0.1"
     assert config.bind_port == 8340
     assert config.door_key == GOOD_KEY
@@ -46,8 +46,8 @@ def test_a_unix_socket_is_the_default_target(tmp_path: Path) -> None:
 def test_a_lan_url_replaces_the_socket(tmp_path: Path) -> None:
     config = from_env(_env(tmp_path, **{ENV_URL: "http://192.0.2.10:8310/"}))
 
-    assert config.sessiond_socket is None
-    assert config.sessiond_url == "http://192.0.2.10:8310"
+    assert config.attendance_socket is None
+    assert config.attendance_url == "http://192.0.2.10:8310"
 
 
 def test_two_targets_are_refused(tmp_path: Path) -> None:

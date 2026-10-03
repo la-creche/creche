@@ -116,7 +116,7 @@ def test_a_live_wake_past_the_floor_fires_anyway() -> None:
 
 
 def test_a_wake_that_vanished_is_dropped() -> None:
-    """No record and no live session: `sessiond` writes the record before
+    """No record and no live session: `attendance` writes the record before
     it deletes the session, so this job ended without one."""
     rig = Rig()
     _good(rig)
@@ -131,7 +131,7 @@ def test_a_wake_that_vanished_is_dropped() -> None:
     assert rig.state.good.session == "auto-FIRST"
 
 
-def test_an_unknown_sessiond_keeps_the_last_firing() -> None:
+def test_an_unknown_attendance_keeps_the_last_firing() -> None:
     rig = Rig()
     _woken(rig)
     rig.sessions.live = None

@@ -1,5 +1,5 @@
-"""The door end to end: one HTTP request in, the right sessiond call and
-the right OpenAI-shaped answer out. `FakeSessiond` plays sessiond's part;
+"""The door end to end: one HTTP request in, the right attendance call and
+the right OpenAI-shaped answer out. `FakeAttendance` plays attendance's part;
 `StatusFiles` is the real picker, pointed at a `tmp_path`."""
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_door_owui.app import create_app
+from agent_door_owui.attendance import AttendanceError, SettledTurn, StreamBroken
 from agent_door_owui.config import DoorConfig
 from agent_door_owui.families import StatusFiles
 from agent_door_owui.headers import (
@@ -20,8 +21,7 @@ from agent_door_owui.headers import (
     USER_MESSAGE_ID_HEADER,
 )
 from agent_door_owui.journal import JournalLine
-from agent_door_owui.sessiond import SessiondError, SettledTurn, StreamBroken
-from fake_sessiond import FakeSessiond
+from fake_attendance import FakeAttendance
 from starlette.testclient import TestClient
 
 DOOR_KEY = "d" * 32
@@ -34,9 +34,9 @@ def _config(tmp_path: Path) -> DoorConfig:
         bind_host="127.0.0.1",
         bind_port=8340,
         door_key=DOOR_KEY,
-        sessiond_token="t" * 32,
-        sessiond_url="http://sessiond",
-        sessiond_socket=None,
+        attendance_token="t" * 32,
+        attendance_url="http://sessiond",
+        attendance_socket=None,
         families_dir=tmp_path / "families",
     )
 
@@ -54,7 +54,7 @@ def _write_status(tmp_path: Path, family: str, **fields: Any) -> None:
     (directory / "status.json").write_text(json.dumps(document), encoding="utf-8")
 
 
-def _client(tmp_path: Path, fake: FakeSessiond) -> TestClient:
+def _client(tmp_path: Path, fake: FakeAttendance) -> TestClient:
     config = _config(tmp_path)
     app = create_app(config, fake, StatusFiles(config.families_dir))
     return TestClient(app)
@@ -109,7 +109,7 @@ def _success_lines() -> list[JournalLine]:
 def test_the_picker_lists_attended_families(tmp_path: Path) -> None:
     _write_status(tmp_path, "chat")
     _write_status(tmp_path, "vault-oracle", kind="thin")
-    client = _client(tmp_path, FakeSessiond())
+    client = _client(tmp_path, FakeAttendance())
 
     response = client.get("/v1/models", headers={"Authorization": f"Bearer {DOOR_KEY}"})
 
@@ -119,7 +119,7 @@ def test_the_picker_lists_attended_families(tmp_path: Path) -> None:
 
 def test_models_needs_the_doors_own_key(tmp_path: Path) -> None:
     _write_status(tmp_path, "chat")
-    client = _client(tmp_path, FakeSessiond())
+    client = _client(tmp_path, FakeAttendance())
 
     response = client.get("/v1/models")
 
@@ -127,7 +127,7 @@ def test_models_needs_the_doors_own_key(tmp_path: Path) -> None:
 
 
 def test_a_non_streamed_turn_answers_with_the_text(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.settled = SettledTurn(
         turn="01T",
         state="settled",
@@ -148,7 +148,7 @@ def test_a_non_streamed_turn_answers_with_the_text(tmp_path: Path) -> None:
 
 
 def test_a_streamed_turn_carries_the_answer_as_sse(tmp_path: Path) -> None:
-    fake = FakeSessiond(lines=_success_lines())
+    fake = FakeAttendance(lines=_success_lines())
     client = _client(tmp_path, fake)
 
     with client.stream(
@@ -165,7 +165,7 @@ def test_a_streamed_turn_carries_the_answer_as_sse(tmp_path: Path) -> None:
 
 
 def test_an_empty_chat_id_is_a_hard_refusal(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     client = _client(tmp_path, fake)
 
     response = client.post(
@@ -178,7 +178,7 @@ def test_an_empty_chat_id_is_a_hard_refusal(tmp_path: Path) -> None:
 
 
 def test_a_crafted_chat_id_is_refused(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     client = _client(tmp_path, fake)
 
     response = client.post(
@@ -196,8 +196,8 @@ def test_a_repeat_message_id_returns_the_existing_turn(tmp_path: Path) -> None:
     # Contract 02 §6: a second `run turn` with the same key on the same
     # session returns the existing turn rather than running it again. The
     # door itself does not special-case this — the point of the test is
-    # that it does not get in the way of sessiond's own idempotency.
-    fake = FakeSessiond()
+    # that it does not get in the way of attendance's own idempotency.
+    fake = FakeAttendance()
     client = _client(tmp_path, fake)
 
     first = client.post("/v1/chat/completions", headers=_headers(), json=_body())
@@ -206,11 +206,13 @@ def test_a_repeat_message_id_returns_the_existing_turn(tmp_path: Path) -> None:
     assert first.status_code == second.status_code == 200
     assert first.json()["choices"] == second.json()["choices"]
     assert len(fake.requests) == 2  # the door called through both times...
-    assert fake.requests[0].idempotency_key == fake.requests[1].idempotency_key  # ...sessiond's job
+    assert (
+        fake.requests[0].idempotency_key == fake.requests[1].idempotency_key
+    )  # ...attendance's job
 
 
 def test_a_repeat_with_a_different_prompt_is_refused(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     client = _client(tmp_path, fake)
 
     client.post("/v1/chat/completions", headers=_headers(), json=_body(text="first question"))
@@ -223,8 +225,8 @@ def test_a_repeat_with_a_different_prompt_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_second_writer_gets_409(tmp_path: Path) -> None:
-    fake = FakeSessiond()
-    fake.turn_error = SessiondError("session_busy", "another door holds the writer lease", 409)
+    fake = FakeAttendance()
+    fake.turn_error = AttendanceError("session_busy", "another door holds the writer lease", 409)
     client = _client(tmp_path, fake)
 
     response = client.post("/v1/chat/completions", headers=_headers(), json=_body())
@@ -237,8 +239,8 @@ def test_a_second_writer_gets_409_even_when_streaming(tmp_path: Path) -> None:
     # This is the case that motivates priming the relay before returning a
     # StreamingResponse: Starlette locks in the status code the instant
     # the response object is constructed.
-    fake = FakeSessiond()
-    fake.turn_error = SessiondError("session_busy", "another door holds the writer lease", 409)
+    fake = FakeAttendance()
+    fake.turn_error = AttendanceError("session_busy", "another door holds the writer lease", 409)
     client = _client(tmp_path, fake)
 
     response = client.post("/v1/chat/completions", headers=_headers(), json=_body(stream=True))
@@ -248,7 +250,7 @@ def test_a_second_writer_gets_409_even_when_streaming(tmp_path: Path) -> None:
 
 
 def test_a_failed_non_streamed_turn_is_a_visible_error(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     fake.settled = SettledTurn(turn="01T", state="failed", text="", usage={}, reason="model_error")
     client = _client(tmp_path, fake)
 
@@ -259,7 +261,7 @@ def test_a_failed_non_streamed_turn_is_a_visible_error(tmp_path: Path) -> None:
 
 
 def test_a_failed_streamed_turn_is_a_visible_error(tmp_path: Path) -> None:
-    fake = FakeSessiond(lines=[_turn_failed("budget_exceeded")])
+    fake = FakeAttendance(lines=[_turn_failed("budget_exceeded")])
     client = _client(tmp_path, fake)
 
     with client.stream(
@@ -273,11 +275,11 @@ def test_a_failed_streamed_turn_is_a_visible_error(tmp_path: Path) -> None:
 
 
 def test_a_connection_dropped_mid_stream_is_a_visible_error(tmp_path: Path) -> None:
-    # Not a turn failure sessiond reported — the door's OWN read of the
-    # stream broke (sessiond.py turns a dropped httpx connection into
+    # Not a turn failure attendance reported — the door's OWN read of the
+    # stream broke (attendance.py turns a dropped httpx connection into
     # StreamBroken). A failure is never silent, whoever's it is: the reader
     # must still see a visible error, never a stream that quietly cuts off.
-    fake = FakeSessiond(
+    fake = FakeAttendance(
         lines=[_pi_text("partial answer")],
         stream_error=StreamBroken("connection reset"),
     )
@@ -296,11 +298,11 @@ def test_a_connection_dropped_mid_stream_is_a_visible_error(tmp_path: Path) -> N
 
 def test_client_disconnect_leaves_the_turn_running(tmp_path: Path) -> None:
     # A turn that never settles on its own: the only way this stream ends
-    # is the reader going away. SessiondClient has no "stop" or "abort"
+    # is the reader going away. AttendanceClient has no "stop" or "abort"
     # method at all, so nothing the door does here could end the turn even
     # if it wanted to — the only observable effect is the fake's own
     # stream context manager closing.
-    fake = FakeSessiond(lines=[_pi_text("partial answer, then nothing else ever arrives")])
+    fake = FakeAttendance(lines=[_pi_text("partial answer, then nothing else ever arrives")])
     client = _client(tmp_path, fake)
 
     with client.stream(
@@ -320,7 +322,7 @@ def test_client_disconnect_leaves_the_turn_running(tmp_path: Path) -> None:
 
 
 def test_a_background_task_request_never_starts_a_turn(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     client = _client(tmp_path, fake)
 
     response = client.post(
@@ -336,7 +338,7 @@ def test_a_background_task_request_never_starts_a_turn(tmp_path: Path) -> None:
 
 
 def test_chat_completions_needs_the_doors_own_key(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     client = _client(tmp_path, fake)
     headers = _headers()
     del headers["Authorization"]
@@ -348,7 +350,7 @@ def test_chat_completions_needs_the_doors_own_key(tmp_path: Path) -> None:
 
 
 def test_a_wrong_key_is_refused(tmp_path: Path) -> None:
-    fake = FakeSessiond()
+    fake = FakeAttendance()
     client = _client(tmp_path, fake)
 
     response = client.post(
@@ -359,11 +361,11 @@ def test_a_wrong_key_is_refused(tmp_path: Path) -> None:
 
 
 def test_the_branch_fallback_retries_without_the_parent(tmp_path: Path) -> None:
-    # Contract 02 §10.2: sessiond answering
+    # Contract 02 §10.2: attendance answering
     # not_implemented for a request that carried parent_id falls back to a
     # plain turn, once, rather than failing the chat.
-    fake = FakeSessiond()
-    fake.turn_error = SessiondError("not_implemented", "branching is not built yet", 501)
+    fake = FakeAttendance()
+    fake.turn_error = AttendanceError("not_implemented", "branching is not built yet", 501)
     client = _client(tmp_path, fake)
 
     response = client.post(

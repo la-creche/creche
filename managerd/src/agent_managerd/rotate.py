@@ -96,7 +96,7 @@ class RotateRequest:
 
 @dataclass(frozen=True)
 class RotateOutcome:
-    """What one rotation did. `epoch` is the new one, which `sessiond`
+    """What one rotation did. `epoch` is the new one, which `attendance`
     picks up from the status document on its next read (§6.3 step 3)."""
 
     epoch: int

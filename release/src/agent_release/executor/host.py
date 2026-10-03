@@ -76,8 +76,8 @@ SOURCE_ROOT: Final = CORPUS_ROOT
 #: a path outside it, and step 2 learns the live version from the tree under
 #: it, which is what `provenance.check_monotonic` compares against. An empty
 #: tuple turns both off silently. Leaving the operator's root out was that fix
-#: applied to half the catalog: `paths_of` refused `sessiond`, `managerd`
-#: and `noticeboard` at step 8, and a downgrade of `sessiond` read as a first
+#: applied to half the catalog: `paths_of` refused `attendance`, `managerd`
+#: and `noticeboard` at step 8, and a downgrade of `attendance` read as a first
 #: install.
 #: Where every MCP server installs, one tree per server (contract 06 §1 row
 #: 6). It is NOT an `install_roots` entry: no `component.yaml` may name a
@@ -102,7 +102,7 @@ MCP_STATE_ROOT: Final = "/var/lib/agent-mcp"
 #: the operator's, and `bin/rework-cutover.sh up` makes both: the socket 0660 in a
 #: 2750 directory, the token 0600. `executor/quiet.py` carries why root may
 #: open an operator-owned token at all and how it avoids being the operator's deputy.
-SESSIOND_SOCKET: Final = "/srv/agents/state/rework/sock/sessiond.sock"
+ATTENDANCE_SOCKET: Final = "/srv/agents/state/rework/sock/sessiond.sock"
 VIEW_TOKEN_FILE: Final = "/srv/agents/state/rework/tokens/view-ro.token"
 
 
@@ -303,7 +303,7 @@ class Host:
     mcp_state_root: Path = Path(MCP_STATE_ROOT)
     #: §2.8's signal. Fields rather than constants at the call site, so a
     #: test points the quiet window at a socket of its own.
-    sessiond_socket: Path = Path(SESSIOND_SOCKET)
+    attendance_socket: Path = Path(ATTENDANCE_SOCKET)
     view_token_file: Path = Path(VIEW_TOKEN_FILE)
 
 

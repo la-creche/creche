@@ -78,7 +78,7 @@ def _default_roots() -> tuple[Path, ...]:
 
 
 def test_the_default_install_roots_hold_both_trees() -> None:
-    """Contract 06 §1: `pep` installs under `/opt/components`, `sessiond`
+    """Contract 06 §1: `pep` installs under `/opt/components`, `attendance`
     under the operator's home. One root covers half the catalog."""
     roots = _default_roots()
 
@@ -86,10 +86,10 @@ def test_the_default_install_roots_hold_both_trees() -> None:
     assert Path(operator_install_root()) in roots
 
 
-@pytest.mark.parametrize("name", ["sessiond", "managerd", "noticeboard"])
+@pytest.mark.parametrize("name", ["attendance", "managerd", "noticeboard"])
 def test_a_user_venv_component_is_not_refused_by_containment(name: str) -> None:
     """`paths_of` must not refuse a component whose `install.to` sits
-    under `~operator`, or `sessiond` could not be released at all."""
+    under `~operator`, or `attendance` could not be released at all."""
     manifest = _repo_manifest(name)
 
     paths = paths_of(manifest, _default_roots())
@@ -469,12 +469,12 @@ def test_a_component_with_no_install_tree_declares_nothing() -> None:
     """Contract 06 §10.2's third row. Nothing is installed, so nothing is
     running, so no interface it might declare can be broken by this
     release."""
-    found = silent_manifest("sessiond")
+    found = silent_manifest("attendance")
 
     assert found.provides == ()
     assert found.requires == ()
     assert found.depends_on == ()
-    assert found.name == "sessiond"
+    assert found.name == "attendance"
 
 
 def test_a_silent_manifest_passes_the_real_parser() -> None:

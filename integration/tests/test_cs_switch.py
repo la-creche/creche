@@ -1,6 +1,6 @@
 """Packet CS: a sandbox switch, with the real playpen on both sides.
 
-The unit tests of `sessiond/` prove the switch against a fake playpen.
+The unit tests of `attendance/` prove the switch against a fake playpen.
 This proves it against the built bundle: `stop_process` and `shutdown` are
 messages the real playpen parses, and it exits on the second one. A switch
 that only a fake accepted would pass there and hang here.
@@ -20,7 +20,7 @@ import os
 from typing import Any
 
 import httpx
-from agent_sessiond.auth import Principal
+from attendance.auth import Principal
 from conftest import chat_body, chat_id, message_id, owui_headers, session_of
 from stack import FAMILY, SANDBOX, Stack, until
 
@@ -73,7 +73,7 @@ async def test_a_drain_moves_a_live_chat_to_a_new_sandbox(stack: Stack) -> None:
 
 async def _switch(stack: Stack) -> dict[str, Any]:
     """`managerd`'s one call, with the one token that reaches `/internal/*`."""
-    client = stack.sessiond_as(Principal.MANAGERD)
+    client = stack.attendance_as(Principal.MANAGERD)
     response = await client.post(
         SWITCH_PATH,
         json={

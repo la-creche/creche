@@ -1,7 +1,7 @@
 """The stage 1 gate, rehearsed on a Mac.
 
 Thirteen scenarios, one per behaviour the operator will check on the host. Each drives
-the real door, the real `sessiond` and the real playpen in one process.
+the real door, the real `attendance` and the real playpen in one process.
 Read `integration/README.md` for what each one proves and how to read a
 failure.
 """
@@ -205,7 +205,7 @@ async def test_a_killed_playpen_is_visible(stack: Stack) -> None:
     assert (stack.session_dir(session) / "session.json").exists()
 
     # The killed playpen could not remove its own lock, and nothing here
-    # removes it by hand. `sessiond` proves the writer is gone by watching the
+    # removes it by hand. `attendance` proves the writer is gone by watching the
     # beat counter stand still for `lock_stale_s` (M4, contract 03 §11.4).
     assert stack.playpen_lock().exists(), "a killed playpen leaves its lock"
     stack.set_pi_env(events=3, delay_ms=1)
@@ -227,7 +227,7 @@ async def test_a_new_session_warms_its_pi_process(stack: Stack) -> None:
     # Contract 02 §5.1's create-or-find, which every door calls first. The
     # door makes this call and runs a turn in the same request, so this is the
     # only place the two can be told apart.
-    created = await _sessiond(stack).post(
+    created = await _attendance(stack).post(
         SESSIONS_PATH, json={"family": FAMILY, "session": session}
     )
     assert created.status_code == HTTP_CREATED
@@ -316,9 +316,9 @@ def _client(stack: Stack) -> httpx.AsyncClient:
     return client
 
 
-def _sessiond(stack: Stack) -> httpx.AsyncClient:
-    """A door's own client to `sessiond`, for the call the door makes first."""
-    client = stack.door_to_sessiond
+def _attendance(stack: Stack) -> httpx.AsyncClient:
+    """A door's own client to `attendance`, for the call the door makes first."""
+    client = stack.door_to_attendance
     assert client is not None, "the stack fixture always serves before it yields"
 
     return client
@@ -378,7 +378,7 @@ async def _await_settled(stack: Stack, session: str) -> None:
     """Wait for the host journal, which lands AFTER the client's `[DONE]`.
 
     The door closes its stream on pi's own `agent_settled` event.
-    `sessiond` writes the `turn_settled` LINE when the playpen's
+    `attendance` writes the `turn_settled` LINE when the playpen's
     `turn_settled` message arrives, which is later. A test that reads the
     journal the instant a stream ends is reading too early, and so is any
     other reader.

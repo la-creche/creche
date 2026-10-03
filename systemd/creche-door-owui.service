@@ -1,0 +1,78 @@
+# The Open WebUI front door (rework contract 02 §5). USER unit, as the operator.
+#
+# It serves an OpenAI-compatible surface on the host's LAN address, port 8340, and turns each
+# chat into one session on `attendance`. The operator's Open WebUI connection points
+# here, and `agent:<family>` is the model id it offers.
+#
+# It ships INSIDE the `attendance` component (contract 06 §1 rule 1: a door
+# cannot be at a different version from the session API it serves), so its
+# ExecStart names that component's own venv and an `attendance` release moves
+# both at once.
+#
+# `PartOf=` is what makes that true at run time. A component's `unit:` is
+# ONE name (contract 06 §8), so `stage7-releases.md` §2.4 step 9 restarts
+# `creche-attendance.service` and nothing else — and this process would hold
+# the previous tree open through the rename and go on serving the old code.
+# `PartOf` restarts this door with that unit, so all four processes leave
+# the old tree together.
+#
+# Installed and enabled by `bin/rework-cutover.sh up`. Never by a release.
+[Unit]
+Description=agent-door-owui, the Open WebUI front door
+# The door dials attendance's Unix socket on every request. `Requires=` would
+# take the door down with an attendance restart; `After=` alone keeps the boot
+# order and lets `Restart=on-failure` bring the door back on its own.
+After=network-online.target creche-attendance.service
+Wants=network-online.target
+# An `attendance` release restarts `creche-attendance.service` alone. This line
+# carries the door with it, so no process keeps serving the renamed tree.
+PartOf=creche-attendance.service
+# THE REWORK RESTART POLICY, argued in full in
+# `systemd/agent-managerd.service`: no start limit, so a transient fault
+# cannot end this service for good, and a back-off so restarting for ever
+# stays cheap. `bin/rework-watchdog.sh` is what says the service is not well;
+# `systemctl --user status` still shows NRestarts.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-control
+# sbx panics without both, and every user unit in this repo carries them
+# regardless (systemd/AGENTS.md).
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# invariant 13: the door key never rides on argv, in a URL or in a log line.
+# DOOR_OWUI_KEY_FILE names a mode-0600 file, so the value stays out of
+# `systemctl show` as well. Written 0600 by `bin/rework-cutover.sh up`.
+EnvironmentFile=/srv/agents/state/rework/door-owui.env
+ExecStart=%h/.local/components/attendance/bin/python -m agent_door_owui
+# `--check` reads the config and both credential files and exits without
+# binding. A cutover or a deploy runs it before it swaps this unit.
+ExecStartPre=%h/.local/components/attendance/bin/python -m agent_door_owui --check
+# The rework restart policy (`systemd/agent-managerd.service`). `always`,
+# because systemd calls SIGHUP, SIGINT, SIGTERM and SIGPIPE clean exits and
+# this service has no clean exit that must stay down.
+Restart=always
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=120s
+KillSignal=SIGTERM
+# A client stream ends at pi's `agent_settled` event; the door holds the
+# connection until then. 30 s is long enough to end one cleanly and short
+# enough that a stop is not a wait.
+TimeoutStopSec=30
+
+# A user unit on this host cannot use mount-namespace options
+# (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
+# options need no namespace and apply fine (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+# 0077, not 0027: this door writes no file of its own, so there is no
+# group-read requirement to preserve (contrast creche-attendance.service,
+# which binds a socket the PEP's group must reach).
+UMask=0077
+
+[Install]
+WantedBy=default.target

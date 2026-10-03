@@ -7,7 +7,7 @@
     agent-tui --check                    validate the config and exit
 
 Config comes from the environment (`config.py` lists every `DOOR_TUI_*`
-variable). `--check` touches neither `sessiond` nor `sbx`, so a bad token
+variable). `--check` touches neither `attendance` nor `sbx`, so a bad token
 file is caught before the operator is in front of a terminal that will not open.
 """
 
@@ -18,11 +18,11 @@ import logging
 import sys
 
 from .app import Request, TuiDoor, Want
+from .attendance import HttpAttendance, Takeover
 from .config import ConfigError, TuiConfig, from_env
 from .errors import DoorError, Exit
 from .launch import Terminal as SbxTerminal
 from .picker import RealTerminal
-from .sessiond import HttpSessiond, Takeover
 from .status import StatusFiles
 
 PROGRAM = "agent-tui"
@@ -30,7 +30,7 @@ PROGRAM = "agent-tui"
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    # httpx logs every request URL at INFO, and the sessiond token rides on
+    # httpx logs every request URL at INFO, and the attendance token rides on
     # every one of these calls (invariant 13).
     for noisy in ("httpx", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(config: TuiConfig, request: Request) -> int:
-    door = HttpSessiond(config)
+    door = HttpAttendance(config)
     tui = TuiDoor(
         door,
         StatusFiles(config.families_dir),
@@ -108,7 +108,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="validate the config and exit, without calling sessiond or sbx",
+        help="validate the config and exit, without calling attendance or sbx",
     )
     args = parser.parse_args(argv)
 

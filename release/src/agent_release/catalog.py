@@ -92,16 +92,16 @@ class CatalogRow:
 #: Contract 06 §1, in its own order. `managerd` sits at `managerd/`, `noticeboard` at
 #: `noticeboard/` and `playpen` at `playpen/`.
 #:
-#: `bundles` follows each build through `uv.lock`: `sessiond` installs the
+#: `bundles` follows each build through `uv.lock`: `attendance` installs the
 #: doors, and `agent-door-trigger` brings `agent-family`; `agent-pep`
 #: imports the requester, so `agent-release` ships in `pep`'s tree.
 #: `test_each_component_bundles_what_its_build_installs` holds it equal.
 CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("pep", Repo.AGENT_CONTROL, "pep", Kind.VENV, Releases.YES, ("release",)),
     CatalogRow(
-        "sessiond",
+        "attendance",
         Repo.AGENT_CONTROL,
-        "sessiond",
+        "attendance",
         Kind.VENV,
         Releases.YES,
         ("door-owui", "door-tui", "door-trigger", "family"),
@@ -129,7 +129,7 @@ RETIRING: frozenset[str] = frozenset({"infra"})
 #: Contract 06 §3's provider column. Rule C3 refuses any other claimant.
 CONTRACT_OWNER: dict[ContractId, str] = {
     ContractId.FAMILY_FILE: "managerd",
-    ContractId.SESSION_API: "sessiond",
+    ContractId.SESSION_API: "attendance",
     ContractId.CHANNEL: "playpen",
     ContractId.PEP_GRANT: "pep",
     ContractId.MANAGER_STATUS: "managerd",

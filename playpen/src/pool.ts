@@ -405,7 +405,7 @@ export class SessionPool {
     this.log("warn", held.id, "the outbound queue drained, reading this pi process again");
   }
 
-  /** §6 rule 2. `sessiond`'s writer lease should prevent it. We still check. */
+  /** §6 rule 2. `attendance`'s writer lease should prevent it. We still check. */
   private busyWith(message: TurnRequest): boolean {
     const session = this.sessions.get(message.session);
     if (session?.busy !== true) {
@@ -504,7 +504,7 @@ export class SessionPool {
   /**
    * Waits out a start already running for one session.
    *
-   * `open_session` is fire and forget on the host: `sessiond` sends it at
+   * `open_session` is fire and forget on the host: `attendance` sends it at
    * create-or-find and never waits for `session_opened` (§4.7 rules 8 to 11),
    * so the first `start_turn` of a chat can arrive while that pre-start is
    * still spawning. That process is the one the turn wants, so the turn waits
@@ -681,7 +681,7 @@ export class SessionPool {
    * mid-turn from the bridge's poll.
    *
    * `log` at `warn` is the channel message contract 03 §5.5 already gives
-   * free text, and `sessiond` turns a `warn` with a session into a journal
+   * free text, and `attendance` turns a `warn` with a session into a journal
    * `note`. No new event type is invented for either line. A state the bridge
    * never wrote reads null, and null says nothing: see `tool-state.ts`.
    */

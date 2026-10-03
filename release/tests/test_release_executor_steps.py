@@ -603,15 +603,15 @@ def test_a_set_of_two_components_is_no_longer_refused(bench: Bench) -> None:
     the resolved set, still needs the contract check and still needs one
     approval. `test_release_r7d_sets.py` proves the set END TO END; this
     one pins that no "set of more than one" refusal stands in its way."""
-    stamp_tree(bench.components, "sessiond", "1.4.6")
+    stamp_tree(bench.components, "attendance", "1.4.6")
     write_live_state(
         bench.tmp_path,
         live_state_body(
-            {"pep": LIVE_VERSION, "sessiond": "1.4.6"},
-            {"pep": NEW_VERSION, "sessiond": "1.4.7"},
+            {"pep": LIVE_VERSION, "attendance": "1.4.6"},
+            {"pep": NEW_VERSION, "attendance": "1.4.7"},
         ),
     )
-    body = request_body({"pep": NEW_VERSION, "sessiond": "1.4.7"})
+    body = request_body({"pep": NEW_VERSION, "attendance": "1.4.7"})
     _run_one(bench, body)
 
     assert "set of more than one" not in str(bench.ledger()["reason"])

@@ -296,7 +296,7 @@ def check_absolute_path(value: str, subject: str, field: str) -> str:
 
 
 #: A path that starts here is under the operator's home (`site.py`), e.g.
-#: `~/.local/components/sessiond`. A manifest names no host's account, so it
+#: `~/.local/components/attendance`. A manifest names no host's account, so it
 #: cannot spell that home out. `~name/` is not this and stays refused.
 OPERATOR_HOME_PREFIX = "~/"
 

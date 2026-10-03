@@ -1,6 +1,6 @@
 """A release refreshes every unit its component ships (`install.py` rule 8).
 
-`sessiond` ships four unit files: the manifest's `unit:` and three door
+`attendance` ships four unit files: the manifest's `unit:` and three door
 units that run out of the same tree. A release that refreshed only the
 first left the doors on their old files. One door restarted with the new
 tree under its old unit, which lacked a new `EnvironmentFile=` line, and
@@ -59,10 +59,10 @@ BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editab
 PEP_UNIT = "agent-pep.service"
 NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
-#: Sibling names, shaped like `sessiond`'s three doors.
+#: Sibling names, shaped like `attendance`'s three doors.
 DOOR = "agent-door-a.service"
 TRIGGER = "agent-trigger-b.service"
-TEMPLATE = "agent-trigger@.service"
+TEMPLATE = "creche-trigger@.service"
 IDLE = "agent-door-idle.service"
 OTHER = "agent-other.service"
 

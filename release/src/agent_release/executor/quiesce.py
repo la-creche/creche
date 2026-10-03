@@ -5,7 +5,7 @@ for it would make the window unreachable. A turn that STARTED in the last
 `LAUNCH_GRACE_S` does, because that is the window in which a sandbox is
 still coming up and a restart of the host side would strand it.
 
-The evidence is the turn record `sessiond` writes at
+The evidence is the turn record `attendance` writes at
 `/srv/agents/sessions/<family>/<session>/turns/<turn>.json` (contract 02
 §9), which carries `state` and `started_at`. Root reads it the way it reads
 every operator-owned file: capped, and a record it cannot parse informs nothing

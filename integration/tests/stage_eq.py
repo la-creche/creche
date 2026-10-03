@@ -5,7 +5,7 @@ tool call open. This module adds the one path neither of those covered: a
 granted family calling `enqueue`, and reading back what became of the job
 with `job_status` (contract 04 §4.1, contract 02 §13.4).
 
-    chat's turn ──enqueue──► the REAL PEP ──► POST /dispatch ──► sessiond
+    chat's turn ──enqueue──► the REAL PEP ──► POST /dispatch ──► attendance
       │                          │                                 │
       │                          `── audit/<day>.jsonl             ▼
       │                              chain ["chat","scrum-lead"]  auto-<ulid>
@@ -29,7 +29,7 @@ transport and the bridge driver; `StageEq` changes two things and adds one.
    makes `enqueue` and `job_status` more than seams. There is no webhook
    listener here: nothing in this packet is fired by one.
 
-NO STAND-IN. Contract 02 §13.4.1 rule 3 makes `sessiond` refuse every dispatch
+NO STAND-IN. Contract 02 §13.4.1 rule 3 makes `attendance` refuse every dispatch
 to a family whose status document lacks `triggers.enqueue: true` (contract 05
 §2.1). The real `managerd` publishes that key from the family file, and
 `published_dispatch_flags` only reads it back.
@@ -46,7 +46,7 @@ from typing import Any, Final
 import pytest
 from agent_managerd import paths as managerd_paths
 from agent_managerd.apply import ApplyResult, apply_once
-from agent_sessiond.auth import Principal
+from attendance.auth import Principal
 from stack import repo_root
 from stage5 import (
     APPROVAL_LIMIT_S,
@@ -166,7 +166,7 @@ def serving_eq(
     """
     from pep_harness import build_pep, free_port, serving
 
-    socket = stage.stack.sessiond_socket
+    socket = stage.stack.attendance_socket
 
     if socket is None:
         raise AssertionError("the stack is not serving yet")

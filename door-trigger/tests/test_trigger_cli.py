@@ -1,22 +1,22 @@
 """The CLI: argument parsing, `--check`, exit codes and the one output
 line `fire` prints — everything `main()` itself is responsible for.
-`execute_fire`'s own sessiond call is exercised directly against
-`FakeSessiond`; the real wire shape is `test_trigger_fire.py`'s job."""
+`execute_fire`'s own attendance call is exercised directly against
+`FakeAttendance`; the real wire shape is `test_trigger_fire.py`'s job."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+from agent_door_trigger.attendance import AcceptedTurn
 from agent_door_trigger.cli import execute_fire, main
 from agent_door_trigger.config import (
+    ENV_ATTENDANCE_TOKEN_FILE,
     ENV_REGISTRY_ROOT,
-    ENV_SESSIOND_TOKEN_FILE,
     MIN_TOKEN_BYTES,
 )
-from agent_door_trigger.errors import ExitCode, SessiondError
-from agent_door_trigger.sessiond import AcceptedTurn
-from trigger_fake_sessiond import FakeSessiond
+from agent_door_trigger.errors import AttendanceError, ExitCode
+from trigger_fake_attendance import FakeAttendance
 
 GOOD_TOKEN = "t" * MIN_TOKEN_BYTES
 
@@ -24,18 +24,18 @@ GOOD_TOKEN = "t" * MIN_TOKEN_BYTES
 def _env(tmp_path: Path, **overrides: str) -> dict[str, str]:
     token_file = tmp_path / "door-trigger.token"
     token_file.write_text(GOOD_TOKEN, encoding="utf-8")
-    env = {ENV_SESSIOND_TOKEN_FILE: str(token_file)}
+    env = {ENV_ATTENDANCE_TOKEN_FILE: str(token_file)}
     env.update(overrides)
     return env
 
 
-# --- execute_fire: the core, against FakeSessiond ---
+# --- execute_fire: the core, against FakeAttendance ---
 
 
 def test_a_cron_firing_prints_session_and_state(capsys: pytest.CaptureFixture[str]) -> None:
-    sessiond = FakeSessiond(accepted=AcceptedTurn(turn="01T", state="queued", journal_seq=1))
+    attendance = FakeAttendance(accepted=AcceptedTurn(turn="01T", state="queued", journal_seq=1))
 
-    code = execute_fire(sessiond, "scrum-lead", None, None)
+    code = execute_fire(attendance, "scrum-lead", None, None)
 
     assert code == ExitCode.ACCEPTED
     out = capsys.readouterr().out
@@ -44,26 +44,26 @@ def test_a_cron_firing_prints_session_and_state(capsys: pytest.CaptureFixture[st
 
 
 def test_a_running_turn_is_also_accepted(capsys: pytest.CaptureFixture[str]) -> None:
-    sessiond = FakeSessiond(accepted=AcceptedTurn(turn="01T", state="running", journal_seq=1))
+    attendance = FakeAttendance(accepted=AcceptedTurn(turn="01T", state="running", journal_seq=1))
 
-    code = execute_fire(sessiond, "scrum-lead", None, None)
+    code = execute_fire(attendance, "scrum-lead", None, None)
 
     assert code == ExitCode.ACCEPTED
     assert "running" in capsys.readouterr().out
 
 
 def test_a_webhook_style_fire_passes_the_trigger_name() -> None:
-    sessiond = FakeSessiond()
+    attendance = FakeAttendance()
 
-    execute_fire(sessiond, "ha-review", "deploy-notify", None)
+    execute_fire(attendance, "ha-review", "deploy-notify", None)
 
-    assert sessiond.requests[0].labels["trigger_name"] == "deploy-notify"
+    assert attendance.requests[0].labels["trigger_name"] == "deploy-notify"
 
 
 def test_a_refusal_prints_to_stderr_and_exits_refused(capsys: pytest.CaptureFixture[str]) -> None:
-    sessiond = FakeSessiond(turn_error=SessiondError("queue_full", "queue is full", 429))
+    attendance = FakeAttendance(turn_error=AttendanceError("queue_full", "queue is full", 429))
 
-    code = execute_fire(sessiond, "scrum-lead", None, None)
+    code = execute_fire(attendance, "scrum-lead", None, None)
 
     assert code == ExitCode.REFUSED
     captured = capsys.readouterr()
@@ -73,9 +73,9 @@ def test_a_refusal_prints_to_stderr_and_exits_refused(capsys: pytest.CaptureFixt
 
 
 def test_forbidden_is_also_a_refusal_not_a_crash(capsys: pytest.CaptureFixture[str]) -> None:
-    sessiond = FakeSessiond(ensure_error=SessiondError("forbidden", "not autonomous", 403))
+    attendance = FakeAttendance(ensure_error=AttendanceError("forbidden", "not autonomous", 403))
 
-    code = execute_fire(sessiond, "chat", None, None)
+    code = execute_fire(attendance, "chat", None, None)
 
     assert code == ExitCode.REFUSED
     assert "forbidden" in capsys.readouterr().err
@@ -84,7 +84,7 @@ def test_forbidden_is_also_a_refusal_not_a_crash(capsys: pytest.CaptureFixture[s
 # --- main(): argument parsing, --check, and the exit code it returns ---
 
 
-def test_fire_check_validates_config_and_never_calls_sessiond(
+def test_fire_check_validates_config_and_never_calls_attendance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     for key, value in _env(tmp_path).items():
@@ -138,18 +138,18 @@ def test_fire_with_an_oversized_payload_file_is_a_usage_error(
     assert "over the" in captured.err
 
 
-def test_fire_cannot_reach_sessiond_is_a_usage_error(
+def test_fire_cannot_reach_attendance_is_a_usage_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     for key, value in _env(tmp_path).items():
         monkeypatch.setenv(key, value)
-    # No sessiond is listening on the default socket inside a test sandbox.
+    # No attendance is listening on the default socket inside a test sandbox.
     monkeypatch.setenv("DOOR_TRIGGER_SESSIOND_SOCKET", str(tmp_path / "no-such.sock"))
 
     code = main(["fire", "chat"])
 
     assert code == ExitCode.USAGE
-    assert "cannot reach sessiond" in capsys.readouterr().err
+    assert "cannot reach attendance" in capsys.readouterr().err
 
 
 def test_serve_check_validates_config_and_never_binds(

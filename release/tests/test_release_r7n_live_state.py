@@ -304,16 +304,16 @@ def test_provided_comes_from_the_stamped_manifests(tmp_path: Path) -> None:
     stamped into the tree, which is a file root wrote into a tree it owns.
     """
     roots = (tmp_path / "components",)
-    stamp_tree(roots[0], "sessiond", "1.4.7")
+    stamp_tree(roots[0], "attendance", "1.4.7")
     write_manifest_stamp(
-        roots[0] / "sessiond",
-        manifest_text("sessiond", provides=provides_entry("session-api", 1, 4)),
+        roots[0] / "attendance",
+        manifest_text("attendance", provides=provides_entry("session-api", 1, 4)),
     )
 
     built = build_state(roots, {}, Readers())
 
     assert built.state.provided == {"session-api": (1, 4)}
-    assert built.trees["sessiond"].present is True
+    assert built.trees["attendance"].present is True
 
 
 def test_a_stamped_manifest_claiming_another_components_contract_is_dropped(
@@ -337,9 +337,9 @@ def test_an_unstamped_tree_is_present_and_has_no_version(tmp_path: Path) -> None
     reading as "this component is not installed", which made the first
     release refuse at step 4 with C1."""
     roots = (tmp_path / "components",)
-    (roots[0] / "sessiond").mkdir(parents=True)
+    (roots[0] / "attendance").mkdir(parents=True)
 
-    tree = build_state(roots, {}, Readers()).trees["sessiond"]
+    tree = build_state(roots, {}, Readers()).trees["attendance"]
 
     assert tree.present is True
     assert tree.version is None

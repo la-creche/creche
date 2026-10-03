@@ -1,5 +1,5 @@
 """Fault files another service writes (contract 05 section 3.3, section
-3.3.1). `sessiond` and the PEP see faults `managerd` cannot see for itself
+3.3.1). `attendance` and the PEP see faults `managerd` cannot see for itself
 and report them in a file, never a call.
 
 `read_fault_file` is the reader. Every reconcile pass reads the files
@@ -28,7 +28,7 @@ FAULT_CODES_BY_SOURCE: Final[dict[str, frozenset[str]]] = {
             "orphan_processes",
             "audit_unreadable",
             # The fourth code section 3.3.1 names for this writer, and the one
-            # code two services may report. `sessiond` raises it for a sandbox
+            # code two services may report. `attendance` raises it for a sandbox
             # whose playpen answered `fatal` (contract 03 section 5.7), so
             # the handshake it runs can never pass.
             "sandbox_start_failed",
@@ -38,7 +38,7 @@ FAULT_CODES_BY_SOURCE: Final[dict[str, frozenset[str]]] = {
 }
 
 #: Section 3.3 defines this one code FLEET-wide -- "no sandbox reached
-#: `ready` after the retry budget" -- while `sessiond` can only ever see one
+#: `ready` after the retry budget" -- while `attendance` can only ever see one
 #: sandbox at a time. `rescope_by_fleet` closes that gap.
 FLEET_WIDE_CODE: Final = "sandbox_start_failed"
 
@@ -147,7 +147,7 @@ def rescope_by_fleet(
     """Decide `blocks_turns` for the one code section 3.3 defines fleet-wide.
 
     `sandbox_start_failed` reads "no sandbox reached `ready` after the retry
-    budget", but `sessiond` raises it per SANDBOX. During a make-before-break
+    budget", but `attendance` raises it per SANDBOX. During a make-before-break
     replacement (section 5) the entry names the INCOMING sandbox while the
     outgoing one serves every turn, and section 5.3 promises the family keeps
     serving. Taking `blocks_turns` from the code alone would stop it.

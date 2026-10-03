@@ -20,16 +20,16 @@ from release_fixtures import manifest_text, provides_entry, requires_entry
 RELEASE_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
 RESOLVED_AT = 1758153600.0
 
-#: `pep` provides pep-grant 2.1. `sessiond` and `noticeboard` call it at 2.0, and
-#: `sessiond` deploys after `pep`.
+#: `pep` provides pep-grant 2.1. `attendance` and `noticeboard` call it at 2.0, and
+#: `attendance` deploys after `pep`.
 EDGES: dict[str, tuple[str, str, str]] = {
     "pep": (provides_entry("pep-grant", 2, 1), "", ""),
-    "sessiond": (
+    "attendance": (
         provides_entry("session-api", 1, 4),
         requires_entry("pep-grant", 2, 0),
         "pep",
     ),
-    "noticeboard": ("", requires_entry("pep-grant", 2, 0), "sessiond"),
+    "noticeboard": ("", requires_entry("pep-grant", 2, 0), "attendance"),
     "managerd": ("", "", ""),
     "playpen": ("", "", ""),
     "infra": ("", "", ""),
@@ -40,7 +40,7 @@ EDGES: dict[str, tuple[str, str, str]] = {
 
 LIVE = {
     "pep": "2.0.3",
-    "sessiond": "1.4.7",
+    "attendance": "1.4.7",
     "noticeboard": "0.7.0",
     "managerd": "1.2.0",
     "playpen": "3.1.2",
@@ -89,9 +89,9 @@ def _refusal(request: dict[str, str], state: ReleaseState | None = None) -> Refu
 
 
 def test_parse_request_reads_name_and_version() -> None:
-    assert parse_request(["pep=2.1.0", "sessiond=latest"]) == {
+    assert parse_request(["pep=2.1.0", "attendance=latest"]) == {
         "pep": "2.1.0",
-        "sessiond": "latest",
+        "attendance": "latest",
     }
 
 
@@ -146,7 +146,7 @@ def test_a_component_with_no_manifest_is_refused() -> None:
 
 
 def test_latest_needs_a_live_state_entry() -> None:
-    assert "names no released tag" in _refusal({"sessiond": "latest"}).detail
+    assert "names no released tag" in _refusal({"attendance": "latest"}).detail
 
 
 def test_latest_resolves_to_the_newest_version() -> None:
@@ -185,10 +185,10 @@ def test_the_data_component_carries_no_version_or_tag() -> None:
 
 
 def test_a_set_deploys_dependencies_first() -> None:
-    resolution = resolve(_nine(), _state(), {"pep": "2.1.0", "sessiond": "1.5.0"})
+    resolution = resolve(_nine(), _state(), {"pep": "2.1.0", "attendance": "1.5.0"})
 
-    assert resolution.order == ("pep", "sessiond")
-    assert resolution.deploying == frozenset({"pep", "sessiond"})
+    assert resolution.order == ("pep", "attendance")
+    assert resolution.deploying == frozenset({"pep", "attendance"})
 
 
 def test_the_contract_table_names_every_consumer() -> None:
@@ -196,7 +196,7 @@ def test_the_contract_table_names_every_consumer() -> None:
     grant = next(row for row in resolution.contracts if row.contract is ContractId.PEP_GRANT)
 
     assert grant.provider == "pep"
-    assert [item.name for item in grant.consumers] == ["noticeboard", "sessiond"]
+    assert [item.name for item in grant.consumers] == ["attendance", "noticeboard"]
 
 
 def _document(request: dict[str, str]) -> dict[str, object]:
@@ -222,8 +222,8 @@ def test_the_document_has_contract_06_paragraph_9_fields() -> None:
 
 
 def test_the_same_set_hashes_the_same_whatever_the_argument_order() -> None:
-    forwards = _document(parse_request(["pep=2.1.0", "sessiond=1.5.0"]))
-    backwards = _document(parse_request(["sessiond=1.5.0", "pep=2.1.0"]))
+    forwards = _document(parse_request(["pep=2.1.0", "attendance=1.5.0"]))
+    backwards = _document(parse_request(["attendance=1.5.0", "pep=2.1.0"]))
 
     assert forwards["manifest_sha256"] == backwards["manifest_sha256"]
 

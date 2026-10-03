@@ -222,11 +222,11 @@ def test_a_passing_handshake_makes_the_sandbox_ready(fleet: Fleet) -> None:
 
 
 def test_a_refused_handshake_leaves_the_sandbox_creating(fleet: Fleet) -> None:
-    """A refusal changes nothing. `sessiond` still dials a `creating`
+    """A refusal changes nothing. `attendance` still dials a `creating`
     sandbox (§4.2 rule 1), so the family keeps serving, and §3.3's
     `sandbox_start_failed` means "after the retry budget" — not after one
     refusal — so no fault is raised."""
-    fleet.switch = FakeSwitchClient(refuse="sessiond is not listening")
+    fleet.switch = FakeSwitchClient(refuse="attendance is not listening")
 
     result = fleet.run()
 
@@ -237,7 +237,7 @@ def test_a_refused_handshake_leaves_the_sandbox_creating(fleet: Fleet) -> None:
 
 def test_a_pass_after_a_refused_handshake_asks_again(fleet: Fleet) -> None:
     """Every step is idempotent, so an interrupted pass simply repeats."""
-    fleet.switch = FakeSwitchClient(refuse="sessiond is not listening")
+    fleet.switch = FakeSwitchClient(refuse="attendance is not listening")
     fleet.run()
     fleet.switch = FakeSwitchClient()
 
@@ -558,7 +558,7 @@ def test_fewer_cpus_interrupts_instead_of_draining(fleet: Fleet) -> None:
 
 
 def test_the_replacement_is_built_before_the_switch_is_asked_for(fleet: Fleet) -> None:
-    """Make before break. `sessiond` may only be told to move onto a
+    """Make before break. `attendance` may only be told to move onto a
     sandbox whose egress is already proved (§4.3 step 2)."""
     fleet.run()
     fleet.forget_calls()
@@ -578,7 +578,7 @@ def test_the_replacement_is_built_before_the_switch_is_asked_for(fleet: Fleet) -
 def test_the_document_names_the_replacement_before_the_call(fleet: Fleet) -> None:
     """Contract 05 §4.3 step 5b. The status document is the only thing that
     crosses between the two services (§1), so a `to` it does not name is a
-    `to` `sessiond` will not dial, and §5.3 rule 8 refuses the switch."""
+    `to` `attendance` will not dial, and §5.3 rule 8 refuses the switch."""
     fleet.run()
     published: list[list[str]] = []
 
@@ -623,10 +623,10 @@ def test_the_replacement_carries_the_same_reach_as_the_outgoing_one(fleet: Fleet
 
 
 def test_a_refused_switch_keeps_the_outgoing_sandbox(fleet: Fleet) -> None:
-    """`sessiond` owns the sessions. Destroying the sandbox it still sends
+    """`attendance` owns the sessions. Destroying the sandbox it still sends
     every turn to would end every one of them (§5.3 rule 1)."""
     fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="sessiond answered 503")
+    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
     fleet.write(sandbox={"cpus": 4})
     result = fleet.run()
     assert set(fleet.live_ids()) == {"chat-s1", "chat-s2"}
@@ -636,11 +636,11 @@ def test_a_refused_switch_keeps_the_outgoing_sandbox(fleet: Fleet) -> None:
 
 def test_adopting_a_replacement_rewrites_its_env_file(fleet: Fleet) -> None:
     """Contract 05 §4.1.1 rule 4: a sandbox without the file publishes no
-    path, and `sessiond` refuses every turn on it. A create writes it once,
+    path, and `attendance` refuses every turn on it. A create writes it once,
     and `managerd` is its only writer, so the pass that adopts a sandbox an
     earlier pass left behind has to put it back."""
     fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="sessiond answered 503")
+    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
     fleet.write(sandbox={"cpus": 4})
     fleet.run()
 
@@ -657,7 +657,7 @@ def test_a_restart_after_a_refused_switch_converges(fleet: Fleet) -> None:
     diff, finds the replacement it already built, and retries the one call
     §5.3 rule 7 makes idempotent."""
     fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="sessiond answered 503")
+    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
     fleet.write(sandbox={"cpus": 4})
     fleet.run()
     fleet.switch = FakeSwitchClient()
@@ -716,7 +716,7 @@ def test_the_replacement_of_a_narrowed_family_never_carries_the_old_reach(
 
 def test_a_reconciling_family_publishes_the_reconcile_block(fleet: Fleet) -> None:
     fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="sessiond answered 503")
+    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
     fleet.write(sandbox={"cpus": 4})
     result = fleet.run()
     assert result.status.reconcile is not None
@@ -729,7 +729,7 @@ def test_the_published_step_is_one_of_the_contracts_names(fleet: Fleet) -> None:
     reason after a colon for the log line, and that detail may not reach
     the document."""
     fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="sessiond answered 503")
+    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
     fleet.write(sandbox={"cpus": 4})
     result = fleet.run()
     assert result.status.reconcile is not None
@@ -757,7 +757,7 @@ def test_an_invalid_file_keeps_the_last_good_revision_serving(fleet: Fleet) -> N
 
 
 def test_an_invalid_file_keeps_publishing_the_last_good_limits(fleet: Fleet) -> None:
-    """`sessiond` reads limits from this document. Dropping them would move
+    """`attendance` reads limits from this document. Dropping them would move
     a running family's ceiling for a change that was refused."""
     fleet.write(kind="autonomous", max_running_turns=3, triggers=[{"cron": HOURLY}])
     fleet.run()
@@ -849,7 +849,7 @@ def test_a_failed_replacement_keeps_the_outgoing_sandbox(fleet: Fleet) -> None:
 # --- faults another service wrote -------------------------------------------------
 
 
-def test_a_sessiond_fault_folds_into_the_document(fleet: Fleet) -> None:
+def test_a_attendance_fault_folds_into_the_document(fleet: Fleet) -> None:
     write_fault_file(fleet.state_root, "sessiond", "protocol_mismatch")
     result = fleet.run()
     assert [one.code for one in result.status.faults] == ["protocol_mismatch"]

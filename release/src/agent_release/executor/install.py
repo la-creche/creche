@@ -51,7 +51,7 @@ Seven rules this module exists to keep.
        <clone>/systemd/<unit>  --stage, root-->  <install.to>.new/systemd/<unit>
        <install.to>/systemd/<unit>  --refresh, owner-->  <unit>
 8. **A component's sibling units travel with its own unit.** A sibling is a
-   unit file that runs out of the same tree: `sessiond`'s three door units.
+   unit file that runs out of the same tree: `attendance`'s three door units.
    A file is one when ALL of these hold.
 
    1. The component is `kind: venv`, names a unit, and that unit is
@@ -198,7 +198,7 @@ EXEC_PREFIXES: Final = "@-:+!"
 #: root reads this one off disk as a file some other installer wrote.
 MAX_UNIT_BYTES: Final = 64 * 1024
 
-#: Rule 8: the most siblings one component may have. `sessiond` has three.
+#: Rule 8: the most siblings one component may have. `attendance` has three.
 #: More is a stage that fails, not a loop root runs over a directory the
 #: operator can fill.
 MAX_SIBLINGS: Final = 16
@@ -206,7 +206,7 @@ MAX_SIBLINGS: Final = 16
 #: Rule 8's test 2: the only unit type a sibling can be.
 SERVICE_SUFFIX: Final = ".service"
 
-#: A template unit (`agent-trigger@.service`) has no instance of its own, so
+#: A template unit (`creche-trigger@.service`) has no instance of its own, so
 #: it is refreshed and never restarted.
 TEMPLATE_MARK: Final = "@."
 
@@ -225,7 +225,7 @@ SHORT_TIMEOUT_S: Final = 30.0
 #: and started again, and systemd bounds both (`TimeoutStopSec`, then
 #: SIGKILL; `TimeoutStartSec`). So this only has to sit above the largest
 #: sum a component unit allows: managerd's 360 s drain plus a 90 s start.
-#: `SHORT_TIMEOUT_S` cut sessiond's 60 s stop on 2026-10-01 and restored a
+#: `SHORT_TIMEOUT_S` cut attendance's 60 s stop on 2026-10-01 and restored a
 #: healthy release. `test_a_restart_outlasts_every_units_own_stop_and_start`
 #: holds every unit under it.
 RESTART_TIMEOUT_S: Final = 600.0

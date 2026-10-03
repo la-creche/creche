@@ -24,12 +24,12 @@ from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
+from .attendance import AttendanceClient
 from .config import ServeConfig
-from .errors import SessiondError, webhook_status
+from .errors import AttendanceError, webhook_status
 from .fire import Firing, TriggerKind, fire_trigger
 from .payload import MAX_PAYLOAD_BYTES, PayloadInvalid, PayloadTooLarge, read_payload
 from .routes import Route, RouteLookup
-from .sessiond import SessiondClient
 from .tokens import tokens_match
 
 _LOG = logging.getLogger(__name__)
@@ -46,12 +46,12 @@ _DUMMY_TOKEN = "0" * 64
 def _error(code: str, message: str) -> dict[str, dict[str, str]]:
     """This listener's one error shape, toward whatever external system
     posted the trigger. Not contract 02 §14's own body: that shape is
-    between sessiond and this door, and a code that started there
+    between attendance and this door, and a code that started there
     (`webhook_status`'s input) is carried through, never restated."""
     return {"error": {"code": code, "message": message}}
 
 
-def create_app(config: ServeConfig, sessiond: SessiondClient, routes: RouteLookup) -> FastAPI:
+def create_app(config: ServeConfig, attendance: AttendanceClient, routes: RouteLookup) -> FastAPI:
     """Build the webhook listener's ASGI app. `routes` is refreshed once at
     startup, then on `config.refresh_s` and on SIGHUP, for the app's whole
     lifetime.
@@ -89,12 +89,14 @@ def create_app(config: ServeConfig, sessiond: SessiondClient, routes: RouteLooku
             )
 
         body = await request.body()
-        return await run_in_threadpool(_fire_webhook, sessiond, family, name, body)
+        return await run_in_threadpool(_fire_webhook, attendance, family, name, body)
 
     return app
 
 
-def _fire_webhook(sessiond: SessiondClient, family: str, name: str, body: bytes) -> JSONResponse:
+def _fire_webhook(
+    attendance: AttendanceClient, family: str, name: str, body: bytes
+) -> JSONResponse:
     try:
         payload = read_payload(body) if body else None
     except PayloadTooLarge as exc:
@@ -105,9 +107,11 @@ def _fire_webhook(sessiond: SessiondClient, family: str, name: str, body: bytes)
     firing = Firing(family=family, kind=TriggerKind.WEBHOOK, name=name, payload=payload)
 
     try:
-        outcome = fire_trigger(sessiond, firing)
-    except SessiondError as exc:
-        _LOG.warning("trigger %s/%s: sessiond refused: %s: %s", family, name, exc.code, exc.message)
+        outcome = fire_trigger(attendance, firing)
+    except AttendanceError as exc:
+        _LOG.warning(
+            "trigger %s/%s: attendance refused: %s: %s", family, name, exc.code, exc.message
+        )
         return JSONResponse(
             status_code=webhook_status(exc.code), content=_error(exc.code, exc.message)
         )

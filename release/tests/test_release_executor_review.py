@@ -123,7 +123,7 @@ def test_read_one_takes_the_component_out_of_a_whole_repository(tmp_path: Path) 
     _repo_tree(clone, "pep", tmp_path / "components")
 
     assert read_one(clone, "pep").manifest.name == "pep"
-    assert read_one(clone, "sessiond").manifest.name == "sessiond"
+    assert read_one(clone, "attendance").manifest.name == "attendance"
 
 
 def test_a_release_lands_when_every_clone_is_a_whole_repository(tmp_path: Path) -> None:

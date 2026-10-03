@@ -75,7 +75,7 @@ def test_it_holds_no_secret(tmp_path: Path) -> None:
 
 
 def test_it_is_group_readable_and_no_wider(tmp_path: Path) -> None:
-    """0640. `sessiond` never reads it — it hands the path to `sbx` — but
+    """0640. `attendance` never reads it — it hands the path to `sbx` — but
     the file is a host artefact and the world has no business in it."""
     mode = stat.S_IMODE(write(tmp_path).stat().st_mode)
 

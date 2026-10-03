@@ -1,7 +1,7 @@
 """`managerd` publishes whether a family may be dispatched to.
 
 Contract 02 §13.4.1 rule 3 refuses a dispatch to a family that declares no
-`enqueue: true` trigger (contract 01 §3.13). `sessiond` never reads a family
+`enqueue: true` trigger (contract 01 §3.13). `attendance` never reads a family
 file, so the fact reaches it through the status document's `triggers.enqueue`
 (contract 05 §2.1). The reader defaults it to `False`: without the key,
 every `enqueue` call is refused `dispatch_not_declared`.

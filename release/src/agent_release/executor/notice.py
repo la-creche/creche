@@ -11,7 +11,7 @@ This module is the second one. It carries what was asked, what happened,
 and where the ledger entry is.
 
 **The wake-up is deliberately NOT here**: root holds no session credential
-and `sessiond` runs as the operator, so root cannot start a turn without a new
+and `attendance` runs as the operator, so root cannot start a turn without a new
 root-to-operator channel.
 `done/` is group readable by design (§2.6), so the woken-from-the-ledger
 half belongs to an operator-side reader. Root's job is the record and the push.

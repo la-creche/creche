@@ -76,7 +76,7 @@ function saveEntries() {
   }
 
   try {
-    // No mkdir. `sessiond` makes the session directory and DELETES it when a
+    // No mkdir. `attendance` makes the session directory and DELETES it when a
     // thin job ends (contract 02 §12 rules 5 and 6), while this process is
     // still being killed. A mkdir here recreated that directory after the
     // delete, about one run in five, and the job looked like it never went.

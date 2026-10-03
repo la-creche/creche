@@ -1,4 +1,4 @@
-"""The PEP's client for `sessiond`'s dispatch door (contract 02 §13.4).
+"""The PEP's client for `attendance`'s dispatch door (contract 02 §13.4).
 
 ```
   sandbox --POST /call {tool: enqueue} --> PEP --> POST /dispatch
@@ -14,9 +14,9 @@ Four rules, each with its reason:
 1. **This door's bearer is its own**, not `door-delegate`'s. Contract 02 §3.1
    keeps one prefix and one family kind per principal, so a stolen bearer
    reaches one kind. The file is read at CALL time for the same reason the
-   delegate token is: `sessiond` writes it when IT starts, and the PEP is a
+   delegate token is: `attendance` writes it when IT starts, and the PEP is a
    system unit that can start first.
-2. **A refusal keeps its meaning.** `sessiond` answers with contract 02 §14's
+2. **A refusal keeps its meaning.** `attendance` answers with contract 02 §14's
    codes, and this module maps each one to a contract 04 §5 reason. A target
    that declares no `enqueue` trigger is `tool_not_granted` and not
    `upstream_failed`, because nothing ran and the answer will not change on a
@@ -49,7 +49,7 @@ DISPATCH_PATH: Final = "/dispatch"
 JOBS_PATH: Final = "/dispatch/jobs"
 
 #: Neither call waits for a job, so this bounds a socket and nothing else.
-#: `sessiond` creates a session and starts one turn inside it.
+#: `attendance` creates a session and starts one turn inside it.
 DISPATCH_TIMEOUT_S: Final = 30.0
 
 #: Contract 02 §13.4.2's own `limit` ceiling, applied again on the way back:
@@ -72,7 +72,7 @@ _BY_ERROR_CODE: Final[dict[str, FamilyReason]] = {
     "queue_full": "rate_limited",
 }
 
-#: What a caller is told when `sessiond` refuses without a code this table
+#: What a caller is told when `attendance` refuses without a code this table
 #: knows. The detail never names a path: the caller is a sandbox.
 UNREACHABLE_DETAIL: Final = "the dispatch door did not answer"
 
@@ -264,7 +264,7 @@ class HttpDispatchDoor:
 
     async def _post(self, path: str, body: dict[str, object]) -> dict[str, object]:
         # Before the connection, not after: a PEP that cannot prove its
-        # identity must not open a socket to `sessiond` at all.
+        # identity must not open a socket to `attendance` at all.
         try:
             bearer = self._bearer()
         except DoorTokenError as exc:

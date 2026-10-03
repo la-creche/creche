@@ -1,8 +1,8 @@
-"""OpenAI-shaped refusals, and the map from `sessiond`'s error model.
+"""OpenAI-shaped refusals, and the map from `attendance`'s error model.
 
 Open WebUI shows `error.message` from an OpenAI-shaped body and shows
 nothing else, so every refusal here names the thing to change.
-Contract 02 §14 fixes `sessiond`'s codes. This module turns each one into
+Contract 02 §14 fixes `attendance`'s codes. This module turns each one into
 a status, a type and a sentence a reader can act on.
 """
 
@@ -67,7 +67,7 @@ def error_body(
 # `unauthorized` and `forbidden` are deliberately not passed through: they
 # mean the DOOR's own token was refused, and answering 401 would tell the
 # user to fix a connection key that is not the broken one.
-_SESSIOND_CODES: dict[str, tuple[int, ErrorType]] = {
+_ATTENDANCE_CODES: dict[str, tuple[int, ErrorType]] = {
     "bad_request": (HTTP_BAD_REQUEST, ErrorType.INVALID_REQUEST),
     "idempotency_mismatch": (HTTP_BAD_REQUEST, ErrorType.INVALID_REQUEST),
     "unauthorized": (HTTP_BAD_GATEWAY, ErrorType.SERVER),
@@ -85,24 +85,24 @@ _SESSIOND_CODES: dict[str, tuple[int, ErrorType]] = {
 }
 
 # Sentences that beat the raw code in a chat window. A code with no entry
-# keeps `sessiond`'s own message.
-_SESSIOND_TEXT: dict[str, str] = {
+# keeps `attendance`'s own message.
+_ATTENDANCE_TEXT: dict[str, str] = {
     "session_busy": (
         "this session is open in another door and only one may write at a time. "
         "Close it there, or stop the running turn, then send again."
     ),
-    "unauthorized": "the door's own sessiond token was refused. Check the token file.",
-    "forbidden": "the door's own sessiond token may not reach this family.",
+    "unauthorized": "the door's own attendance token was refused. Check the token file.",
+    "forbidden": "the door's own attendance token may not reach this family.",
     "family_invalid": "this family has never had a valid definition, so nothing can serve it.",
     "family_degraded": "this family is degraded and a fault is blocking turns.",
     "sandbox_unavailable": "this family has no sandbox to run the turn on. Try again shortly.",
 }
 
 
-def from_sessiond(code: str, message: str) -> DoorError:
+def from_attendance(code: str, message: str) -> DoorError:
     """Turn one contract 02 §14 error into the refusal Open WebUI shows."""
-    status, error_type = _SESSIOND_CODES.get(code, (HTTP_BAD_GATEWAY, ErrorType.SERVER))
-    text = _SESSIOND_TEXT.get(code, message or code)
+    status, error_type = _ATTENDANCE_CODES.get(code, (HTTP_BAD_GATEWAY, ErrorType.SERVER))
+    text = _ATTENDANCE_TEXT.get(code, message or code)
 
     return DoorError(status, text, code=code, error_type=error_type)
 
@@ -111,7 +111,7 @@ def turn_failure(reason: str) -> DoorError:
     """The visible error for a turn that ended any way other than settled.
 
     A turn's `reason` (contract 02 §14's second table) is a different
-    namespace from the request-level codes `from_sessiond` maps, so it is
+    namespace from the request-level codes `from_attendance` maps, so it is
     never passed through that function. Both the streaming translator and
     the non-streaming path show this same sentence, so a reader sees the
     same words regardless of which `wait` mode answered.

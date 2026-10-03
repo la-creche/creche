@@ -165,8 +165,8 @@ def grant_path(root: Path, family: str) -> Path:
 
 
 def managerd_token_path(root: Path) -> Path:
-    """The bearer `sessiond` expects on `/internal/switch-sandbox`
-    (contract 02 §3 rule 5: one token file per caller). `sessiond` owns
+    """The bearer `attendance` expects on `/internal/switch-sandbox`
+    (contract 02 §3 rule 5: one token file per caller). `attendance` owns
     this directory and mints the file; `managerd` only reads it."""
     return root / TOKENS_DIR / f"{MANAGERD_PRINCIPAL}.token"
 
@@ -187,6 +187,6 @@ def webhook_token_path(root: Path, family: str, name: str) -> Path:
 
 def fault_path(root: Path, source: str, family: str) -> Path:
     """Contract 05 §3.3.1, contract 04 §1.6: one file per writer per family.
-    `source` is `sessiond` or `pep` — never `managerd`, which reads these,
+    `source` is `attendance` or `pep` — never `managerd`, which reads these,
     never writes them."""
     return root / FAULTS_DIR / source / f"{family}.json"

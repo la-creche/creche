@@ -1,6 +1,6 @@
 """One autonomous family, run by a trigger and gated by a phone (packet I5).
 
-Stage 1 put the door, `sessiond` and the playpen in one process. Stage 2
+Stage 1 put the door, `attendance` and the playpen in one process. Stage 2
 added the reconciler and stage 3 the PEP. Stage 5 adds the two things nothing
 has ever run together: the trigger door that starts an autonomous job, and the
 PEP approval that holds a tool call open until a phone answers.
@@ -8,7 +8,7 @@ PEP approval that holds a tool call open until a phone answers.
     agent-trigger fire / POST /triggers/<family>/<name>   the REAL door
       │ contract 02 §5.1 then §5.4, wait=accepted
       ▼
-    the REAL sessiond ──► auto-<ulid> ──► one turn, queued past the limit
+    the REAL attendance ──► auto-<ulid> ──► one turn, queued past the limit
       │ fake_sbx.py exec --env-file ──► node dist/playpen.js
       ▼                                            │
     the job's model calls a GATED tool             ▼
@@ -18,7 +18,7 @@ PEP approval that holds a tool call open until a phone answers.
       │      │                                            │
       │      `── audit/<day>.jsonl (decision: pending) ──┐ │ tap
       │                                                  │ ▼
-      │   sessiond's AuditTail ──► waiting-approval  ◄────┘ POST /approval/<gate>
+      │   attendance's AuditTail ──► waiting-approval  ◄────┘ POST /approval/<gate>
       ▼
     execute, or deny ──► the turn settles ──► outcomes/<family>/<ulid>.json
 
@@ -64,23 +64,23 @@ from typing import Any, Final
 import httpx
 import pytest
 import yaml
+from agent_door_trigger.attendance import HttpAttendance
 from agent_door_trigger.cli import execute_fire
-from agent_door_trigger.config import ServeConfig, SessiondTarget
+from agent_door_trigger.config import AttendanceTarget, ServeConfig
 from agent_door_trigger.errors import ExitCode
 from agent_door_trigger.families import StatusFiles
 from agent_door_trigger.fire import FireOutcome, Firing, TriggerKind, fire_trigger
 from agent_door_trigger.routes import RouteTable
-from agent_door_trigger.sessiond import HttpSessiond
 from agent_door_trigger.webhooks import create_app as create_webhook_app
 from agent_managerd import paths as managerd_paths
 from agent_managerd.apply import ApplyResult, apply_once
 from agent_managerd.driver import FakeDriver
 from agent_managerd.litellm_keys import FakeLiteLLMKeys
 from agent_pep.gatekeeper import Gatekeeper, HttpApprovalNotifier
-from agent_sessiond.auth import Principal
-from agent_sessiond.config import Bind, Config
-from agent_sessiond.ids import new_ulid
-from agent_sessiond.service import SessionService
+from attendance.auth import Principal
+from attendance.config import Bind, Config
+from attendance.ids import new_ulid
+from attendance.service import SessionService
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from stack import FAMILY, LOCK_POLL_S, LOCK_STALE_S, Stack, repo_root
@@ -146,7 +146,7 @@ WEBHOOK_TOKEN_MODE: Final = 0o600
 #: else about the gate changes: the same object, the same notifier, the same
 #: deadline arithmetic.
 #:
-#: The default has to outlast `sessiond`'s own one-second gate poll twice
+#: The default has to outlast `attendance`'s own one-second gate poll twice
 #: over, because the scenario that MEASURES that lag must not race the
 #: deadline it is measuring under. `IMPATIENT_LIMIT_S` is the short one, for
 #: the scenario that watches the gate run out.
@@ -190,8 +190,8 @@ class GateNotice:
     """One push, as the fake transport received it (contract 04 §8.4 rule 1).
 
     `at` is when this process saw it, on the monotonic clock. Scenario 4
-    measures from here to the moment `sessiond` shows `waiting-approval`,
-    which is the lag a PEP-to-`sessiond` message would close.
+    measures from here to the moment `attendance` shows `waiting-approval`,
+    which is the lag a PEP-to-`attendance` message would close.
     """
 
     family: str
@@ -449,8 +449,8 @@ class Stage5:
         Contract 03 §7.4: the playpen rewrites this at every `start_turn`,
         so it names the current turn of a held-open process. A tool call from
         inside the job has to carry that id, or the PEP's audit record names
-        a turn the host never started and `sessiond` drops it (contract 04
-        §8.6, `sessiond/approvals.py` rule 1).
+        a turn the host never started and `attendance` drops it (contract 04
+        §8.6, `attendance/approvals.py` rule 1).
         """
         path = (
             managerd_paths.control_dir(self.stack.state_root, family, f"{family}-s1")
@@ -471,7 +471,7 @@ class Stage5:
         `view-ro` is the principal the noticeboard uses, and it is the reader
         that contract 04 §8.6 is written for.
         """
-        client = self.stack.sessiond_as(Principal.VIEW_RO)
+        client = self.stack.attendance_as(Principal.VIEW_RO)
         reply = await client.get(f"/v1/sessions/{family}/{session}")
 
         if reply.status_code != HTTP_OK:
@@ -482,7 +482,7 @@ class Stage5:
         return str(body.get("state", ""))
 
     async def session_exists(self, family: str, session: str) -> bool:
-        client = self.stack.sessiond_as(Principal.VIEW_RO)
+        client = self.stack.attendance_as(Principal.VIEW_RO)
         reply = await client.get(f"/v1/sessions/{family}/{session}")
 
         return reply.status_code == HTTP_OK
@@ -539,12 +539,12 @@ class Stage5:
     async def accepted_turn(self, family: str, session: str) -> dict[str, Any]:
         """Contract 02 §5.1 then §5.4, as a door makes them.
 
-        `Stack.door_to_sessiond` is the second client at the second boundary
+        `Stack.door_to_attendance` is the second client at the second boundary
         (`AGENTS.md` 8): the Open WebUI door does create-or-find and runs a
         turn inside one request, so nothing else can read back the `state`
         an `accepted` turn was admitted with.
         """
-        client = self.stack.door_to_sessiond
+        client = self.stack.door_to_attendance
         if client is None:
             raise AssertionError("the stack is not serving yet")
 
@@ -569,14 +569,14 @@ class Stage5:
 
     # -------------------------------------------------------------- the trigger
 
-    def trigger_client(self) -> HttpSessiond:
-        """The door's own `sessiond` client, built from its own config type.
+    def trigger_client(self) -> HttpAttendance:
+        """The door's own `attendance` client, built from its own config type.
 
-        Synchronous on purpose (`door-trigger/sessiond.py`), so every call
-        through it runs on a worker thread: `sessiond` serves on this test's
+        Synchronous on purpose (`door-trigger/attendance.py`), so every call
+        through it runs on a worker thread: `attendance` serves on this test's
         event loop and a blocking call on that loop would deadlock it.
         """
-        socket = self.stack.sessiond_socket
+        socket = self.stack.attendance_socket
         if socket is None:
             raise AssertionError("the stack is not serving yet")
 
@@ -586,7 +586,7 @@ class Stage5:
             .strip()
         )
 
-        return HttpSessiond(SessiondTarget(url="http://sessiond", socket=socket, token=token))
+        return HttpAttendance(AttendanceTarget(url="http://sessiond", socket=socket, token=token))
 
     async def fire(
         self,
@@ -651,7 +651,7 @@ class Stage5:
         because a test binds nothing another host can reach. Everything else
         is what the unit file sets on the host.
         """
-        socket = self.stack.sessiond_socket
+        socket = self.stack.attendance_socket
         if socket is None:
             raise AssertionError("the stack is not serving yet")
 
@@ -662,7 +662,7 @@ class Stage5:
         )
 
         return ServeConfig(
-            sessiond=SessiondTarget(url="http://sessiond", socket=socket, token=token),
+            attendance=AttendanceTarget(url="http://sessiond", socket=socket, token=token),
             bind_host="127.0.0.1",
             bind_port=0,
             families_dir=self.stack.families_dir,
@@ -716,14 +716,14 @@ class Stage5:
         return path
 
     def restart_service(self) -> SessionService:
-        """A second `sessiond` over the same state, as a restart leaves it.
+        """A second `attendance` over the same state, as a restart leaves it.
 
         Contract 02 §13.3: the queue lives in memory, so a fresh process ends
         every `queued` turn it finds and starts with an empty one. The caller
         closes the first service before this one starts, because two services
         on one state root is not a restart.
         """
-        socket = self.stack.sessiond_socket
+        socket = self.stack.attendance_socket
         if socket is None:
             raise AssertionError("the stack never served")
 
@@ -776,12 +776,12 @@ def serving_stage5(
 
     `limit_s` is contract 04 §8.5's 15 minutes, shortened. A scenario that
     watches the gate EXPIRE passes a small number. Every other scenario
-    wants one it cannot lose a race against, because `sessiond` reads the
+    wants one it cannot lose a race against, because `attendance` reads the
     gate off the audit file on a one-second loop.
     """
     from pep_harness import build_pep, free_port, serving
 
-    socket = stage.stack.sessiond_socket
+    socket = stage.stack.attendance_socket
     if socket is None:
         raise AssertionError("the stack is not serving yet")
 

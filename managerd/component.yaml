@@ -27,7 +27,7 @@ requires:
   - { contract: pep-grant, major: 0, min_minor: 11 }
   # Contract 03: supervisor.env carries the mount paths the channel fixes.
   - { contract: channel, major: 0, min_minor: 12 }
-  # Contract 02: it asks sessiond to drain a session before a replacement.
+  # Contract 02: it asks attendance to drain a session before a replacement.
   - { contract: session-api, major: 0, min_minor: 12 }
 depends_on: [pep, infra]
 verify:

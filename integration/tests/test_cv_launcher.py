@@ -7,7 +7,7 @@ serving.
     fake_sbx.py exec --env-file <supervisor.env> chat-s1 -- \\
       node playpen/dist/agent-pi-launch.js --sandbox chat-s1 --session ...
 
-Nothing here is faked that is not faked in the gate. The door, `sessiond`, the
+Nothing here is faked that is not faked in the gate. The door, `attendance`, the
 playpen bundle and the launcher bundle are all real, both bundles read the
 same `supervisor.env` through the same stand-in for `sbx exec`, and the pi
 shim is the gate's own.
@@ -15,7 +15,7 @@ shim is the gate's own.
 Two scenarios, one per promise §7.6 makes:
 
 1. **It refuses while a live rpc process holds the session** (§7.5). Exit 8,
-   with the session named. The gate's `sessiond` lease cannot see inside a
+   with the session named. The gate's `attendance` lease cannot see inside a
    sandbox, so this record is what stops two writers on one pi session store.
 2. **The terminal's pi command is the playpen's, minus `--mode rpc`.** The
    playpen's own harness asserts that against its pool. This asserts it

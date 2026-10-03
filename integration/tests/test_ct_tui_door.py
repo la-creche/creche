@@ -1,17 +1,17 @@
-"""Packet CT: the TUI door against the real `sessiond`, off the host.
+"""Packet CT: the TUI door against the real `attendance`, off the host.
 
 Invariant 3 says "one session, every UI". The stage 1 gate proves the Open
 WebUI half. This proves the other half meets it on the SAME session:
 
     agent-tui chat --session owui-<chat id>
 
-The door, `sessiond`, the playpen and the status document are all real.
+The door, `attendance`, the playpen and the status document are all real.
 Two stand-ins, both the gate's own: `fake_sbx.py` for `sbx exec`, and
 `fake-pi.mjs` behind the playpen. Nothing dials a live service.
 
 The TUI door runs synchronously — it makes a call, then blocks on a terminal
 — so each scenario drives it in a worker thread and keeps the stack's event
-loop free for `sessiond`.
+loop free for `attendance`.
 
 Three scenarios, one per promise packet CT makes.
 
@@ -26,7 +26,7 @@ Three scenarios, one per promise packet CT makes.
    holds the writer lease. Contract 02 §7.2: contention refuses, it never
    queues and never steals. Two pi writers on one session store
    cross-contaminate context and both report success.
-3. **A new session is created through `sessiond` first**, so the session
+3. **A new session is created through `attendance` first**, so the session
    exists where sessions are owned before pi writes a byte, and the
    launcher is told this terminal is its first writer.
 """
@@ -40,11 +40,11 @@ from pathlib import Path
 
 import pytest
 from agent_door_tui.app import Request, TuiDoor, Want
+from agent_door_tui.attendance import HttpAttendance
 from agent_door_tui.config import TuiConfig
 from agent_door_tui.errors import DoorError, Exit
 from agent_door_tui.launch import LAUNCHER_ARG_NEW, Terminal
 from agent_door_tui.picker import ScriptedTerminal
-from agent_door_tui.sessiond import HttpSessiond
 from agent_door_tui.status import StatusFiles
 from conftest import chat_body, chat_id, message_id, owui_headers, session_of
 from stack import FAMILY, SANDBOX, Stack
@@ -80,15 +80,15 @@ def recorded(log: Path) -> list[str]:
 
 
 def tui_config(stack: Stack, sbx: Path, instance: str) -> TuiConfig:
-    """The door's config, pointed at the stack's own `sessiond` and status."""
-    socket = stack.sessiond_socket
+    """The door's config, pointed at the stack's own `attendance` and status."""
+    socket = stack.attendance_socket
     assert socket is not None, "the stack fixture always serves before it yields"
     token = (stack.state_root / "tokens" / "door-tui.token").read_text(encoding="utf-8")
 
     return TuiConfig(
-        sessiond_token=token.strip(),
-        sessiond_url="http://sessiond",
-        sessiond_socket=socket,
+        attendance_token=token.strip(),
+        attendance_url="http://sessiond",
+        attendance_socket=socket,
         families_dir=stack.families_dir,
         sbx=str(sbx),
         pi_launch=LAUNCHER,
@@ -98,9 +98,9 @@ def tui_config(stack: Stack, sbx: Path, instance: str) -> TuiConfig:
 
 def build_door(
     stack: Stack, sbx: Path, instance: str, answers: list[str] | None = None
-) -> tuple[TuiDoor, HttpSessiond, ScriptedTerminal]:
+) -> tuple[TuiDoor, HttpAttendance, ScriptedTerminal]:
     config = tui_config(stack, sbx, instance)
-    client = HttpSessiond(config)
+    client = HttpAttendance(config)
     screen = ScriptedTerminal(answers if answers is not None else [])
     door = TuiDoor(
         client,
@@ -156,7 +156,7 @@ async def test_ct_tui_attaches_to_an_owui_session(stack: Stack, tmp_path: Path) 
     argv = recorded(log)
     assert argv[:3] == ["exec", "-it", "--env-file"]
     # Contract 05 §4.1.1 rule 3: the path comes from the status document, and
-    # `sessiond` puts the same one on its own channel command.
+    # `attendance` puts the same one on its own channel command.
     assert argv[3] == str(stack.playpen_env)
     assert argv[4] == SANDBOX
     assert argv[argv.index("--session") + 1] == session
@@ -167,7 +167,7 @@ async def test_ct_tui_attaches_to_an_owui_session(stack: Stack, tmp_path: Path) 
 async def test_ct_a_second_terminal_is_refused(stack: Stack, tmp_path: Path) -> None:
     """Contract 02 §7.2. Contention refuses: it never queues and never steals.
 
-    Two terminals is the case `sessiond`'s lease is the ONLY fence for.
+    Two terminals is the case `attendance`'s lease is the ONLY fence for.
     Contract 03 §7.5's process record names the playpen's process, so it
     stops neither a second `agent-pi-launch` nor a `start_turn` racing one
     (§7.6, "What this does NOT fence").
@@ -217,7 +217,7 @@ async def test_ct_a_second_terminal_is_refused(stack: Stack, tmp_path: Path) -> 
 
 
 async def test_ct_a_new_session_exists_before_pi_runs(stack: Stack, tmp_path: Path) -> None:
-    """Packet CT step 2. `sessiond` creates the session before the exec, and
+    """Packet CT step 2. `attendance` creates the session before the exec, and
     the launcher is told `--new`."""
     sbx, log = fake_sbx(tmp_path)
     door, client, screen = build_door(stack, sbx, INSTANCE)
@@ -231,7 +231,7 @@ async def test_ct_a_new_session_exists_before_pi_runs(stack: Stack, tmp_path: Pa
     argv = recorded(log)
     session = argv[argv.index("--session") + 1]
     assert session.startswith("tui-")
-    # `sessiond` owns sessions, so the directory is on disk before the exec.
+    # `attendance` owns sessions, so the directory is on disk before the exec.
     assert stack.session_dir(session).exists()
     assert LAUNCHER_ARG_NEW in argv
     assert any(session in line for line in screen.shown)

@@ -25,8 +25,8 @@ treats a granted tool that does not exist yet. The policy above each seam is
 real and tested: only the execution is missing.
 
 Four flags say what this process can execute, and all default to off:
-`delegate_ready` for `sessiond`'s delegate door (§7), `approvals_ready` for
-the approval transport (§8), `dispatch_ready` for `sessiond`'s dispatch door
+`delegate_ready` for `attendance`'s delegate door (§7), `approvals_ready` for
+the approval transport (§8), `dispatch_ready` for `attendance`'s dispatch door
 (contract 02 §13.4, which serves `enqueue` and `job_status`) and
 `release_ready` for root's release spool (`stage7-releases.md` §2.3, which
 serves `release`). A PEP without one keeps the seam rather than allowing a

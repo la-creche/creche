@@ -5,10 +5,10 @@ This is the operator's stage 3 test made runnable. Three families are published 
 the real `managerd` from checked-in registry files. A scripted model in the
 `chat` sandbox calls `invoke_agent` through the REAL PEP bridge. The REAL
 PEP checks the grant file, mints a delegation id and calls the REAL
-`sessiond` over its Unix socket. `sessiond` runs one job session in the thin
+`attendance` over its Unix socket. `attendance` runs one job session in the thin
 family's own sandbox and deletes it afterwards.
 
-    bridge (chat's model) ──► PEP ──► sessiond ──► job-<ulid> ──► playpen
+    bridge (chat's model) ──► PEP ──► attendance ──► job-<ulid> ──► playpen
                                │                                     │
                         grants/chat.json                        fake-pi.mjs
                                │
@@ -32,7 +32,7 @@ import pytest
 from agent_managerd import paths as managerd_paths
 from agent_pep.delegate import DoorTokenError, read_door_token
 from agent_pep.family_ids import ULID_RE
-from agent_sessiond.auth import Principal, TokenBook, TokenError
+from attendance.auth import Principal, TokenBook, TokenError
 from conftest import chat_id, session_of
 from stack import Stack, until
 from stage3 import (
@@ -222,7 +222,7 @@ async def test_the_audit_holds_the_call_and_its_chain(delegating: Stage3) -> Non
 async def test_the_minted_delegation_reaches_the_job(delegating: Stage3) -> None:
     """Contract 04 §7.4 and contract 03 §7.4 rule 4 item 5.
 
-    The PEP mints the id, `sessiond` puts it on `start_turn`, and the
+    The PEP mints the id, `attendance` puts it on `start_turn`, and the
     playpen writes it into the job's turn file, where that sandbox's
     bridge reads it. Packet FX fixed the case this covers: a delegation used
     to be dropped whole when the PEP sent no caller session, which lost the
@@ -340,7 +340,7 @@ async def test_two_chats_get_two_directories(delegating: Stage3) -> None:
 async def test_a_claimed_owner_outside_the_grammar_gets_none(delegating: Stage3) -> None:
     """Contract 02 §12.1 and contract 04 §3.1. The owner id arrives in a
     header, so it is checked twice before it becomes a path: the PEP drops a
-    value outside the session grammar, and `sessiond` refuses one that
+    value outside the session grammar, and `attendance` refuses one that
     reached it anyway. Neither step builds a path from `..`.
     """
     escape = "../../etc"
@@ -363,7 +363,7 @@ async def test_deleting_the_chat_deletes_its_directory(delegating: Stage3) -> No
     keyed by the session that OWNS it, so the chat's delete takes it and a
     job's delete never did."""
     session = session_of(chat_id())
-    owui = delegating.stack.sessiond_as(Principal.DOOR_OWUI)
+    owui = delegating.stack.attendance_as(Principal.DOOR_OWUI)
     created = await owui.post("/v1/sessions", json={"family": CHAT, "session": session})
     assert created.status_code == HTTP_CREATED, created.text
 
@@ -385,7 +385,7 @@ async def test_an_empty_delegates_list_hides_the_tool(
     """Contract 04 §4 rule 1. `invoke_agent` is synthesized from `delegates`,
     so a family with none never sees the tool at all.
 
-    Nothing may reach `sessiond`: no job session, no pi process.
+    Nothing may reach `attendance`: no job session, no pi process.
     """
     rewritten = stage.rewrite_family(CHAT, tmp_path / "narrowed", delegates=[])
     stage.apply_from(rewritten, CHAT)
@@ -406,7 +406,7 @@ async def test_a_target_outside_delegates_is_refused(
     """Contract 04 §7.2 row 4. The tool is granted, the target is not.
 
     The grant file is the whole of the reach and the PEP re-reads it per
-    call, so this edit lands with no restart and nothing reaches `sessiond`.
+    call, so this edit lands with no restart and nothing reaches `attendance`.
     """
     rewritten = stage.rewrite_family(CHAT, tmp_path / "one-delegate", delegates=[CODE_SANDBOX])
     stage.apply_from(rewritten, CHAT)
@@ -486,7 +486,7 @@ async def test_a_third_call_at_once_is_rate_limited(delegating: Stage3) -> None:
     `max_inflight_delegations`, and this fixture family leaves it at the
     default of 2.
 
-    The third is refused by the PEP before `sessiond` sees it. A family that
+    The third is refused by the PEP before `attendance` sees it. A family that
     sets contract 01 §3.6.1's field higher runs three at once: see
     `test_md_inflight.py`.
     """
@@ -537,14 +537,14 @@ async def test_three_calls_finish_when_they_are_paced(delegating: Stage3) -> Non
 
 def test_the_delegate_token_is_deployed_group_readable(stage: Stage3) -> None:
     """Contract 02 §3 rule 5's one exception. The PEP runs as user `pep` and
-    `sessiond` owns the file, so group read is what opens the door at all."""
+    `attendance` owns the file, so group read is what opens the door at all."""
     path = stage.open_delegate_door()
 
     assert stat.S_IMODE(path.stat().st_mode) == DELEGATE_TOKEN_MODE
     assert read_door_token(path)
 
 
-def test_sessiond_accepts_only_the_delegate_at_0640(stage: Stage3) -> None:
+def test_attendance_accepts_only_the_delegate_at_0640(stage: Stage3) -> None:
     """The exception is one file wide. Every other principal stays 0600.
 
     The harness cannot change users, so this asserts on the code path that

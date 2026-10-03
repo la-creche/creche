@@ -11,7 +11,7 @@ approvals that block in place (packet CP). `stage5.py` holds the wiring.
 
     agent-trigger fire  /  POST /triggers/<family>/<name>
       ▼
-    sessiond ──► auto-<ulid> ──► one turn ──► the real playpen
+    attendance ──► auto-<ulid> ──► one turn ──► the real playpen
       ▼                                          │
     the job's model calls a GATED tool           ▼
       ▼                                     fake-pi.mjs
@@ -29,11 +29,11 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
-from agent_door_trigger.errors import SessiondError
+from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.payload import MAX_PAYLOAD_BYTES
 from agent_managerd import paths as managerd_paths
-from agent_sessiond.ids import SessionPrefix, new_ulid
-from agent_sessiond.queueing import MAX_QUEUED_TURNS
+from attendance.ids import SessionPrefix, new_ulid
+from attendance.queueing import MAX_QUEUED_TURNS
 from stack import Stack, until
 from stage5 import (
     ACTION_APPROVE,
@@ -65,7 +65,7 @@ DELEGATE_QUESTION = "boiler-11c"
 #: processes on a loaded Mac. Stage 3 uses the same number for the same work.
 SETTLE_TIMEOUT_S = 120.0
 
-#: A job turn long enough to make a gated call INSIDE. `sessiond` reads the
+#: A job turn long enough to make a gated call INSIDE. `attendance` reads the
 #: PEP's audit on a one-second loop, so the turn has to outlive two of those
 #: polls plus the push and the tap. 250 deltas 40 ms apart is about 10 s.
 HELD_TURN_EVENTS = 250
@@ -86,7 +86,7 @@ STATE_POLL_S = 0.02
 #: the comparison and not the length check.
 WRONG_BEARER = "not-the-minted-bearer-" + "z" * 32
 
-#: `sessiond` reads the PEP's audit file on its upkeep loop, once a second
+#: `attendance` reads the PEP's audit file on its upkeep loop, once a second
 #: (`service.FLUSH_INTERVAL_S`). One whole poll plus slack for a loaded Mac
 #: is the bound scenario 4 asserts, and the printed number is the sample.
 MAX_GATE_LAG_S = 4.0
@@ -160,7 +160,7 @@ async def held_job(stage: Stage5) -> tuple[str, str]:
 
     The turn id comes from the REAL playpen's own turn file (contract 03
     §7.4), not from anything this harness invented: a gated call must carry
-    the turn the host actually started, or `sessiond` drops the PEP's audit
+    the turn the host actually started, or `attendance` drops the PEP's audit
     record as a claim about a turn it does not own.
     """
     stage.stack.set_pi_env(events=HELD_TURN_EVENTS, delay_ms=HELD_TURN_GAP_MS)
@@ -172,7 +172,7 @@ async def held_job(stage: Stage5) -> tuple[str, str]:
         timeout=SETTLE_TIMEOUT_S,
     )
     turn = stage.live_turn(HA_REVIEW, fired.session)
-    assert turn == fired.turn, "the playpen is running a turn sessiond did not start"
+    assert turn == fired.turn, "the playpen is running a turn attendance did not start"
 
     return fired.session, turn
 
@@ -181,8 +181,8 @@ async def waited_for_state(stage: Stage5, session: str, wanted: str, since: floa
     """Wait for one session state and answer how long it took, in seconds.
 
     Scenario 4's measurement, when `since` is the push's own arrival time.
-    `waiting-approval` reaches `sessiond` only through the PEP's audit file,
-    read on a one-second loop, so the number is the lag a PEP-to-`sessiond`
+    `waiting-approval` reaches `attendance` only through the PEP's audit file,
+    read on a one-second loop, so the number is the lag a PEP-to-`attendance`
     message would close.
 
     `stack.until` takes a synchronous check and reading a session state is
@@ -270,7 +270,7 @@ async def test_a_trigger_for_a_thin_family_is_refused(stage: Stage5) -> None:
 async def test_a_webhook_payload_reaches_the_job_byte_for_byte(gated: Stage5) -> None:
     """The packet's own words: the payload is DATA for the job, untouched.
 
-    The prompt `sessiond` journals is what `door-trigger` built, and the
+    The prompt `attendance` journals is what `door-trigger` built, and the
     payload sits inside it exactly as it arrived — no re-serialized JSON,
     no reordered keys, no changed spacing.
     """
@@ -312,7 +312,7 @@ async def test_an_unknown_hook_reads_like_a_wrong_token(gated: Stage5) -> None:
 
 
 async def test_an_oversized_body_is_refused_at_the_door(gated: Stage5) -> None:
-    """`payload.py`'s cap. Nothing this big ever reaches `sessiond`."""
+    """`payload.py`'s cap. Nothing this big ever reaches `attendance`."""
     body = b'{"pad":"' + b"p" * (MAX_PAYLOAD_BYTES + 1) + b'"}'
     before = set(gated.sessions_of(HA_REVIEW))
     reply = await gated.post_webhook(HA_REVIEW, WEBHOOK_NAME, body)
@@ -331,7 +331,7 @@ async def test_a_body_that_is_not_json_is_refused_at_the_door(gated: Stage5) -> 
 
 
 def _turn_prompt(stage: Stage5, session: str) -> str | None:
-    """The prompt `sessiond` journalled for one session's first turn."""
+    """The prompt `attendance` journalled for one session's first turn."""
     for line in stage.journal_lines(HA_REVIEW, session):
         if line["kind"] == "turn_started":
             return str(line["body"].get("prompt", ""))
@@ -432,8 +432,8 @@ async def test_a_gated_call_waits_for_the_phone_and_then_runs(gated: Stage5) -> 
     assert "mobile_app_example_phone" in notice.summary
 
     lag_s = await waited_for_state(gated, session, "waiting-approval", since=notice.at)
-    print(f"\nI5 measurement: waiting-approval reached sessiond {lag_s:.2f}s after the push")
-    # The bound, not the sample: `sessiond` reads the PEP's audit on its
+    print(f"\nI5 measurement: waiting-approval reached attendance {lag_s:.2f}s after the push")
+    # The bound, not the sample: `attendance` reads the PEP's audit on its
     # one-second upkeep loop, so one poll plus slack is the whole of it.
     assert lag_s < MAX_GATE_LAG_S
 
@@ -664,7 +664,7 @@ async def test_an_approval_after_the_timeout_is_refused(impatient: Stage5) -> No
 
 
 async def test_the_hundred_and_first_queued_turn_is_refused(stage: Stage5) -> None:
-    """Contract 02 §13 rule 4. `max_queued_turns` is `sessiond`'s own 100.
+    """Contract 02 §13 rule 4. `max_queued_turns` is `attendance`'s own 100.
 
     The real constant, not a shrunken one: a queued turn costs two host
     calls and no sandbox, so filling the queue for real is cheaper than
@@ -674,7 +674,7 @@ async def test_the_hundred_and_first_queued_turn_is_refused(stage: Stage5) -> No
     for _ in range(MAX_QUEUED_TURNS + 1):
         await stage.fire(HA_REVIEW)
 
-    with pytest.raises(SessiondError) as refused:
+    with pytest.raises(AttendanceError) as refused:
         await stage.fire(HA_REVIEW)
 
     assert refused.value.code == "queue_full"
@@ -689,7 +689,7 @@ async def test_a_restart_ends_every_queued_turn(stage: Stage5) -> None:
 
     Every queued turn leaves an outcome record saying `queue_lost`, which
     names the event, where `internal` would have claimed a bug in
-    `sessiond` that a plain restart is not (contract 02 §4.3).
+    `attendance` that a plain restart is not (contract 02 §4.3).
     """
     stage.stack.set_pi_env(events=HELD_TURN_EVENTS, delay_ms=HELD_TURN_GAP_MS)
     fired = [await stage.fire(HA_REVIEW) for _ in range(FIRES_AT_ONCE)]

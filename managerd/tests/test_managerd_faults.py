@@ -74,9 +74,9 @@ def test_a_valid_pep_fault_parses_with_its_detail(tmp_path: Path) -> None:
     assert fault.detail == {"message": "grants/chat.json: unknown version 3", "rev": "reg-8c01aa"}
 
 
-def test_sessiond_may_report_an_unreadable_audit(tmp_path: Path) -> None:
+def test_attendance_may_report_an_unreadable_audit(tmp_path: Path) -> None:
     """Contract 05 section 3.3's `audit_unreadable`.
-    It does not stop turns: the PEP's audit is how sessiond LABELS a turn
+    It does not stop turns: the PEP's audit is how attendance LABELS a turn
     that waits for a phone tap, never how it decides to run one."""
     path = tmp_path / "chat.json"
     write(
@@ -138,8 +138,8 @@ def test_an_unknown_code_is_dropped(tmp_path: Path) -> None:
 
 
 def test_a_code_belonging_to_a_different_source_is_dropped(tmp_path: Path) -> None:
-    """`grants_stale` is the PEP's code. A sessiond-written file claiming
-    it is either a bug in sessiond or a forged file, and either way it is
+    """`grants_stale` is the PEP's code. An attendance-written file claiming
+    it is either a bug in attendance or a forged file, and either way it is
     dropped, not trusted (rule 6)."""
     path = tmp_path / "chat.json"
     write(
@@ -222,7 +222,7 @@ def test_an_unparseable_written_at_counts_as_stale(tmp_path: Path) -> None:
 # --- `sandbox_start_failed`, the code two services report (section 3.3.1) -----
 
 
-def sessiond_file(path: Path, sandbox: str) -> None:
+def attendance_file(path: Path, sandbox: str) -> None:
     write(
         path,
         {
@@ -243,12 +243,12 @@ def sessiond_file(path: Path, sandbox: str) -> None:
     )
 
 
-def test_sessiond_may_raise_sandbox_start_failed(tmp_path: Path) -> None:
+def test_attendance_may_raise_sandbox_start_failed(tmp_path: Path) -> None:
     """Contract 05 section 3.3.1 names FOUR codes for this writer. The reader
     allowed three, so a playpen that answered `fatal` reached the status
     document through nothing at all."""
     path = tmp_path / "chat.json"
-    sessiond_file(path, "chat-s1")
+    attendance_file(path, "chat-s1")
 
     result = read_fault_file(path, "sessiond", now=NOW)
 
@@ -261,7 +261,7 @@ def test_the_lone_sandbox_failing_blocks_turns(tmp_path: Path) -> None:
     """Section 3.3's own wording: "no sandbox reached `ready`". One live
     sandbox, and that one fatal, means the family cannot serve."""
     path = tmp_path / "chat.json"
-    sessiond_file(path, "chat-s1")
+    attendance_file(path, "chat-s1")
     read = read_fault_file(path, "sessiond", now=NOW)
     assert read is not None
 
@@ -276,7 +276,7 @@ def test_a_replacement_failing_keeps_the_family_up(tmp_path: Path) -> None:
     the outgoing one serves every turn, and section 5.3 promises the family
     keeps serving. So `blocks_turns` comes from the fleet, not the code."""
     path = tmp_path / "chat.json"
-    sessiond_file(path, "chat-s2")
+    attendance_file(path, "chat-s2")
     read = read_fault_file(path, "sessiond", now=NOW)
     assert read is not None
 

@@ -100,15 +100,15 @@ def test_a_restart_failure_carries_systemctls_stderr(tmp_path: Path) -> None:
     assert "restart failed" in raised.value.detail
 
 
-#: What `agent-sessiond.service` lets an in-flight turn take to settle
+#: What `creche-attendance.service` lets an in-flight turn take to settle
 #: (`TimeoutStopSec=60`), and systemd's default `TimeoutStartSec`.
-SESSIOND_STOP_S = 60
+ATTENDANCE_STOP_S = 60
 DEFAULT_START_S = 90
 
 
 def test_a_restart_waits_out_the_units_own_stop(tmp_path: Path) -> None:
     """`systemctl restart` answers only once the unit has stopped and
-    started again. A wait of 30 s cut sessiond's 60 s stop on 2026-10-01,
+    started again. A wait of 30 s cut attendance's 60 s stop on 2026-10-01,
     and the release restored while the unit was still restarting."""
     manifest = _manifest(tmp_path, "pep", **{"unit: null": "unit: agent-pep.service"})
     (tmp_path / "system-units").mkdir(exist_ok=True)
@@ -118,7 +118,7 @@ def test_a_restart_waits_out_the_units_own_stop(tmp_path: Path) -> None:
     Installer(fake_host(tmp_path, run)).restart(manifest)
 
     restart = next(one for one in run.seen if "restart" in one.argv)
-    assert restart.timeout_s > SESSIOND_STOP_S + DEFAULT_START_S
+    assert restart.timeout_s > ATTENDANCE_STOP_S + DEFAULT_START_S
 
 
 def test_an_install_path_outside_every_root_is_refused(tmp_path: Path) -> None:

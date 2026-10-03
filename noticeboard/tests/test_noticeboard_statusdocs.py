@@ -200,7 +200,7 @@ def test_no_sandbox_row_carries_a_running_turn_count(tmp_path: Path) -> None:
     `managerd` may not call `GET /v1/sessions` (contract 02 §3.1), so it
     cannot count a running turn, and a summed default of 0 would put
     "0 running" on the one screen invariant 20 calls the truth. The live
-    count has one authority, `sessiond`, and the family page's session
+    count has one authority, `attendance`, and the family page's session
     table is where it shows."""
     root = tmp_path / "state"
     write_json(

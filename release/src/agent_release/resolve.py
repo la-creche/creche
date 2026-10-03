@@ -87,7 +87,7 @@ class Resolution:
 
 
 def parse_request(items: list[str]) -> dict[str, str]:
-    """`['pep=2.1.0', 'sessiond=latest']` to a map, refusing anything else."""
+    """`['pep=2.1.0', 'attendance=latest']` to a map, refusing anything else."""
     if len(items) > MAX_REQUEST_COMPONENTS:
         detail = f"names more than {MAX_REQUEST_COMPONENTS} components"
         raise Refusal(RefusalCode.REQUEST, "request", detail)

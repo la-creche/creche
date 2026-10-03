@@ -570,7 +570,7 @@ def test_a_stop_gives_up_on_a_step_that_outruns_the_grace(bench: Bench) -> None:
 def test_a_stop_runs_no_slow_step_after_the_one_in_flight(bench: Bench) -> None:
     """Contract 05 §4.3: a replacement is create, then switch, then destroy.
     A stop that arrived during the create must not go on to call
-    `sessiond`."""
+    `attendance`."""
     bench.look()
     write_registry(bench.registry_root, sandbox={"cpus": 4})
     bench.switch = FakeSwitchClient()
@@ -618,7 +618,7 @@ def test_what_a_stop_left_behind_converges_on_the_next_start(bench: Bench) -> No
 def test_a_planned_sandbox_left_by_a_kill_is_never_adopted(bench: Bench) -> None:
     """A kill between the ledger's `planned` row and the end of §4.3 leaves
     a row for a sandbox whose egress was never proved. Adopting it would
-    hand `sessiond` a hole in deny-by-default (invariant 11)."""
+    hand `attendance` a hole in deny-by-default (invariant 11)."""
     bench.look()
     serving = sandboxes.read_ledger(bench.state_root, "chat")[0]
     leftover = replace(serving, id="chat-s2", state=SandboxLifecycle.PLANNED, ready_at=None)

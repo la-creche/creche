@@ -5,7 +5,7 @@ wakes the family, before any session exists.
                |
                |  quiet: in the family file?  no --------------------> fire
                v
-             gate.py    sessiond: a wake still live? ---- yes -------> quiet
+             gate.py    attendance: a wake still live? ---- yes -------> quiet
                |        records.py: last firing ended ok? --> last good wake
                |        pep.py, AS the family: survey_board, job_status
                |        records.py: the daily call made today?

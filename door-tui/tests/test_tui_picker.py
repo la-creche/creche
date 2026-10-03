@@ -7,10 +7,10 @@ activity, its state and which door made it, newest first.
 from __future__ import annotations
 
 import pytest
+from agent_door_tui.attendance import SessionState
 from agent_door_tui.errors import DoorError, Exit
 from agent_door_tui.picker import NEW_SESSION, Choice, ScriptedTerminal, pick_session
-from agent_door_tui.sessiond import SessionState
-from fake_tui_sessiond import row
+from fake_tui_attendance import row
 
 ROWS = [
     row("tui-01JBQ7WZ0X4T9V6K2H8M3N5PQR", title="Boiler", updated_at="2026-09-19T10:04:11Z"),

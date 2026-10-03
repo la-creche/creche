@@ -219,7 +219,7 @@ class FamilyRow:
     # There is no `turns_running` here: `managerd` may not call
     # `GET /v1/sessions` (contract 02 §3.1), so it cannot count a running
     # turn, and a number it cannot count does not belong on the noticeboard
-    # invariant 20 calls the truth. The live count belongs to `sessiond`,
+    # invariant 20 calls the truth. The live count belongs to `attendance`,
     # and `sessions.py` reads it per session there.
 
     @property
@@ -470,7 +470,7 @@ def _sandboxes(body: Json) -> tuple[SandboxRow, ...]:
             ready_at=jsonfiles.whole(one, "ready_at"),
             channel=jsonfiles.whole(one, "channel"),
             # Contract 05 §4.1.1 rule 4: a sandbox row without this path is
-            # a fault, because `sessiond` cannot build a channel command.
+            # a fault, because `attendance` cannot build a channel command.
             has_playpen_env=bool(jsonfiles.whole(one, "supervisor_env")),
         )
         for one in jsonfiles.children(body, "sandboxes", MAX_SANDBOXES)

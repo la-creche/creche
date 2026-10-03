@@ -16,9 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from .attendance import SessionRow
 from .errors import DoorError, Exit
 from .ids import door_of
-from .sessiond import SessionRow
 
 #: How much of a title a row shows before it is cut.
 TITLE_WIDTH = 48
