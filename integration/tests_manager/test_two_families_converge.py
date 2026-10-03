@@ -1,6 +1,6 @@
 """Seam 5: two families converging at once, read by the real `attendance`.
 
-Packet MCF. Until it, `managerd` walked the families in sorted order and
+Packet MCF. Until it, `caregiver` walked the families in sorted order and
 ran one pass at a time. A sandbox replacement costs 1 to 3.5 minutes, so
 the new image of 2026-09-21 took twenty minutes across eleven families,
 and for all of it `attendance` read documents older than the 90 seconds
@@ -15,7 +15,7 @@ is that the second family is servable while the first is stuck, and that
 the first one's document says what it is doing rather than going stale.
 
 `loop.look` with a `Passes` of its own is exactly what `serve` runs each
-tick; `serve` adds the tick and the stop, which `managerd/tests` covers
+tick; `serve` adds the tick and the stop, which `caregiver/tests` covers
 without a second service in the room."""
 
 from __future__ import annotations
@@ -25,14 +25,14 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from agent_managerd.driver import FakeDriver, SandboxSpec
-from agent_managerd.egress import EgressConfig
-from agent_managerd.litellm_keys import FakeLiteLLMKeys
-from agent_managerd.loop import LoopConfig, LoopState, Passes, look
-from agent_managerd.reconcile import Actors
-from agent_managerd.switch import FakeSwitchClient
-from agent_managerd.timers import FakeUnits
 from attendance.family_status import FamilyState, StatusReader, check_may_serve
+from caregiver.driver import FakeDriver, SandboxSpec
+from caregiver.egress import EgressConfig
+from caregiver.litellm_keys import FakeLiteLLMKeys
+from caregiver.loop import LoopConfig, LoopState, Passes, look
+from caregiver.reconcile import Actors
+from caregiver.switch import FakeSwitchClient
+from caregiver.timers import FakeUnits
 
 from .conftest import CHAT_FAMILY, FAMILY, IMAGE, write_family
 

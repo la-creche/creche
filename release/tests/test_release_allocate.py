@@ -211,14 +211,14 @@ def test_the_highest_level_in_a_range_wins() -> None:
 
 
 def test_a_label_counts_through_a_bundled_package() -> None:
-    """`family/` is `managerd`'s own path (contract 06 §1 rule 9), so a
+    """`family/` is `caregiver`'s own path (contract 06 §1 rule 9), so a
     labelled pull request that changed only `family/` raises it."""
-    tags = ("managerd-v0.1.9",)
-    levels = ("managerd\tbump:minor\tfamily",)
+    tags = ("caregiver-v0.1.9",)
+    levels = ("caregiver\tbump:minor\tfamily",)
 
-    plans = _plan(("managerd\tfamily",), tags=(*ALL_TAGGED, *tags), levels=levels)
+    plans = _plan(("caregiver\tfamily",), tags=(*ALL_TAGGED, *tags), levels=levels)
 
-    assert _one(plans, "managerd").tag == "managerd-v0.2.0"
+    assert _one(plans, "caregiver").tag == "caregiver-v0.2.0"
 
 
 @pytest.mark.parametrize(
@@ -439,10 +439,10 @@ def test_a_door_change_tags_attendance() -> None:
 
 
 def test_a_family_change_tags_every_component_that_installs_it() -> None:
-    """`agent-family` is in `attendance`'s, `managerd`'s and `noticeboard`'s trees."""
+    """`agent-family` is in `attendance`'s, `caregiver`'s and `noticeboard`'s trees."""
     changed = ("family/src/agent_family/model.py",)
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("attendance", "managerd", "noticeboard")
+    assert touched(changed, Repo.AGENT_CONTROL) == ("attendance", "caregiver", "noticeboard")
 
 
 def test_a_release_package_change_tags_pep_too() -> None:
@@ -459,7 +459,7 @@ def test_a_range_that_changed_only_installed_packages_still_tags() -> None:
     lines = (
         "attendance\tdoor-trigger",
         "attendance\tfamily",
-        "managerd\tfamily",
+        "caregiver\tfamily",
         "noticeboard\tfamily",
     )
 
@@ -467,7 +467,7 @@ def test_a_range_that_changed_only_installed_packages_still_tags() -> None:
 
     assert [item.tag for item in plans] == [
         "attendance-v0.1.1",
-        "managerd-v0.1.1",
+        "caregiver-v0.1.1",
         "noticeboard-v0.1.1",
     ]
 

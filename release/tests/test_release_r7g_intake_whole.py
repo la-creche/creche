@@ -31,13 +31,13 @@ from typing import Final
 from urllib.parse import urlencode, urlsplit
 
 import pytest
-from agent_managerd.mcp_release import McpPaths, open_gaps, request_servers
 from agent_release.intake.gaps import GapDirectory
 from agent_release.intake.notify import make_push
 from agent_release.intake.run import Listener, Watch, Wiring, one_pass
 from agent_release.intake.service import CONTENT_SECURITY_POLICY, Intake
 from agent_release.intake.store import SecretStore
 from agent_release.intake.token import Tokens
+from caregiver.mcp_release import McpPaths, open_gaps, request_servers
 
 pytestmark = pytest.mark.slow
 
@@ -159,7 +159,7 @@ def test_one_file_one_secret_and_one_tap(tmp_path: Path) -> None:
         marker=tmp_path / "mcp-request.json",
     )
 
-    # 1. managerd sees a declared server with a secret that has no value.
+    # 1. caregiver sees a declared server with a secret that has no value.
     assert open_gaps(paths, {SERVER: (NAME,)}, 1.0) == (NAME,)
     assert (gaps_dir / f"{NAME}.json").exists()
 
@@ -229,7 +229,7 @@ def test_one_file_one_secret_and_one_tap(tmp_path: Path) -> None:
     finally:
         listener.close()
 
-    # 8. managerd opens no gap for a name that has a value, and files the
+    # 8. caregiver opens no gap for a name that has a value, and files the
     #    one `mcp-servers` request that installs the server.
     assert open_gaps(paths, {SERVER: (NAME,)}, 2.0) == ()
     assert request_servers(paths, (SERVER,), 3.0).servers == (SERVER,)

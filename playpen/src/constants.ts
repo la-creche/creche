@@ -103,7 +103,7 @@ export const INDEX_ROOT = "/srv/agents/state/index";
  * Contract 03 §7.1. The files inside the mounts this process reads. The
  * DIRECTORIES are not here: sbx mounts a host directory at its own host path,
  * so there is no fixed path to name. `mounts.ts` reads them from the
- * environment `managerd`'s `supervisor.env` carries.
+ * environment `caregiver`'s `supervisor.env` carries.
  */
 export const CRED_FILE = "creds.json";
 export const LOCK_FILE = "supervisor.lock";

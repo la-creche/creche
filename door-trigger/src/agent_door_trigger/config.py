@@ -30,8 +30,8 @@ DEFAULT_ATTENDANCE_TOKEN_FILE = "/srv/agents/state/rework/tokens/door-trigger.to
 #: Contract 05 §2's status document directory.
 DEFAULT_FAMILIES_DIR = "/srv/agents/state/rework/families"
 
-#: The registry root `agent-managerd.service` itself is started with
-#: (`systemd/agent-managerd.service`). Not a contract value: this door
+#: The registry root `creche-caregiver.service` itself is started with
+#: (`systemd/creche-caregiver.service`). Not a contract value: this door
 #: reads the registry only for declared webhook names (`README.md`'s
 #: Known gaps).
 DEFAULT_REGISTRY_ROOT = "/srv/agents/registry"
@@ -58,7 +58,7 @@ ENV_LAN_ADDRESS = "AGENT_LAN_ADDRESS"
 #: the host already uses, and 8360 is not one of them.
 DEFAULT_WEBHOOK_PORT = 8360
 
-#: Contract 05 §2 rule 4: `managerd` rewrites its status document "at
+#: Contract 05 §2 rule 4: `caregiver` rewrites its status document "at
 #: least every 30 seconds". Refreshing this door's route table on the
 #: same cadence means a family's status is never staler here than it
 #: already is at the source.

@@ -7,7 +7,7 @@
 //   host  /srv/agents/state/rework/families/chat/control/
 //   VM    /srv/agents/state/rework/families/chat/control/   (the same path)
 //
-// `managerd` writes the three paths into `supervisor.env` and
+// `caregiver` writes the three paths into `supervisor.env` and
 // `sbx exec --env-file` delivers them, so the environment is the only source.
 // A missing one is `fatal` (§5.7) and never a fallback: `/run/control` cannot
 // exist under sbx, so a fallback would fail every turn as `channel_lost` with

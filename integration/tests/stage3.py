@@ -48,14 +48,15 @@ from typing import Any, Final
 
 import pytest
 import yaml
-from agent_managerd import paths as managerd_paths
-from agent_managerd.apply import ApplyResult, apply_once
-from agent_managerd.driver import FakeDriver
-from agent_managerd.litellm_keys import FakeLiteLLMKeys
 from attendance.auth import Principal
 from attendance.ids import SessionPrefix, new_ulid
+from caregiver.apply import ApplyResult, apply_once
+from caregiver.driver import FakeDriver
+from caregiver.litellm_keys import FakeLiteLLMKeys
 from fastapi import FastAPI
 from stack import FAMILY, LOCK_BEAT_MS, Stack, fake_pi_script, repo_root
+
+from caregiver import paths as caregiver_paths
 
 #: The caller and the two delegates of `docs/rework/spec.md` §4.4, as the
 #: fixture registry holds them. `chat` is `stack.FAMILY`, named again here so
@@ -130,7 +131,7 @@ class ToolCall:
 class Stage3:
     """The stage 1 stack, with two thin families and the PEP beside it.
 
-    `managerd` publishes all three families from the fixture registry, so
+    `caregiver` publishes all three families from the fixture registry, so
     every status document, grant file and `supervisor.env` on the path is
     the one the real reconciler writes (`AGENTS.md` 12).
     """
@@ -204,9 +205,9 @@ class Stage3:
     # ------------------------------------------------------- what to assert on
 
     def pep_token(self, family: str) -> str:
-        """The family token `managerd` minted, as the sandbox holds it."""
+        """The family token `caregiver` minted, as the sandbox holds it."""
         body = json.loads(
-            (managerd_paths.creds_path(self.stack.state_root, family)).read_text(encoding="utf-8")
+            (caregiver_paths.creds_path(self.stack.state_root, family)).read_text(encoding="utf-8")
         )
         return str(body["pep_token"])
 
@@ -277,7 +278,7 @@ class Stage3:
         session (contract 03 §7.4), so a reader sees one only while a job
         still holds its pi process.
         """
-        sessions = managerd_paths.control_dir(self.stack.state_root, family, f"{family}-s1")
+        sessions = caregiver_paths.control_dir(self.stack.state_root, family, f"{family}-s1")
 
         return sorted(sessions.glob(f"sessions/{SessionPrefix.JOB.value}*/turn.json"))
 
@@ -337,7 +338,7 @@ class Stage3:
         stands in for the playpen as well as for pi."""
         sandbox = f"{family}-s1"
         directory = (
-            managerd_paths.control_dir(self.stack.state_root, family, sandbox)
+            caregiver_paths.control_dir(self.stack.state_root, family, sandbox)
             / "sessions"
             / session
         )

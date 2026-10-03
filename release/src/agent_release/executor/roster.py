@@ -13,7 +13,7 @@ the operator cannot write. Root, at step 9 of a verified `mcp-servers` release,
 from the `server.yaml` files of exactly the tree it just installed, is the
 only candidate that is both.
 
-`managerd` runs as the operator. If `managerd` wrote this file, an operator-side
+`caregiver` runs as the operator. If `caregiver` wrote this file, an operator-side
 process could make the PEP run any command on the host — which is
 `stage7-releases.md` §6 row 9 with the fence removed, and worse than row 9
 because it needs no package and no release at all. The threat table's

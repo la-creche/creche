@@ -1,5 +1,5 @@
 {
-    "include": ["pep/src", "library/src", "family/src", "managerd/src", "attendance/src", "door-owui/src", "door-tui/src", "door-trigger/src", "noticeboard/src", "release/src"],
+    "include": ["pep/src", "library/src", "family/src", "caregiver/src", "attendance/src", "door-owui/src", "door-tui/src", "door-trigger/src", "noticeboard/src", "release/src"],
     "typeCheckingMode": "strict",
     "pythonVersion": "3.12",
     "venvPath": ".",

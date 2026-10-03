@@ -44,7 +44,7 @@ unit's own `EnvironmentFile=`, and the hook reads `PEP_BIND`, else
 the way `__main__` does. With neither, the hook reports one failed check
 that names the variable. It never falls back to a default address. The
 flag has the same shape as in `noticeboard-verify`, `attendance-verify` and
-`managerd-verify`.
+`caregiver-verify`.
 """
 
 from __future__ import annotations

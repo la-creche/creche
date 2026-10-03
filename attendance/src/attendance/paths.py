@@ -93,7 +93,7 @@ def family_state_dir(state_root: Path, family: str) -> Path:
 
 
 def status_file(state_root: Path, family: str) -> Path:
-    """The document `managerd` publishes (contract 05 §2)."""
+    """The document `caregiver` publishes (contract 05 §2)."""
     return family_state_dir(state_root, family) / STATUS_FILE
 
 
@@ -115,7 +115,7 @@ def playpen_lock_file(state_root: Path, family: str, sandbox: str) -> Path:
 
 
 def creds_dir(state_root: Path, family: str) -> Path:
-    """Written by `managerd`, mounted read-only (contract 03 §12)."""
+    """Written by `caregiver`, mounted read-only (contract 03 §12)."""
     return family_state_dir(state_root, family) / _CREDS
 
 

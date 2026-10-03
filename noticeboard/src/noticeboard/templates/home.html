@@ -28,7 +28,7 @@
   <td>
     {% if row.serving %}{{ row.serving.id }} ({{ row.serving.state }}){% else %}none{% endif %}
   </td>
-  {# No running count here: `managerd` cannot count a running turn. The
+  {# No running count here: `caregiver` cannot count a running turn. The
      only true one is `attendance`'s, and this
      page reads files and never dials a service, so it still renders
      when `attendance` is down. The per-session count is on the family

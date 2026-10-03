@@ -369,7 +369,7 @@ async def test_a_removed_grant_cancels_a_held_gate(tmp_path: Path) -> None:
         call = asyncio.create_task(client.post("/call", json=EMBED_CALL, headers=family_auth()))
         await started(rail)
 
-        # managerd rewrites the grant file without `embed`.
+        # caregiver rewrites the grant file without `embed`.
         write_grants(grants_dir(tmp_path), gated(verbs={"ha_call": HA_FENCE}))
         reply = await call
 

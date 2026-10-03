@@ -10,7 +10,7 @@ IS the client. From the moment this runs, the tty belongs to pi.
 Three facts shape the command.
 
 1. `sbx exec` forwards NO host environment. `--env-file` is the only thing
-   that carries the three mount paths in, and `managerd` publishes that
+   that carries the three mount paths in, and `caregiver` publishes that
    file's path per sandbox (contract 05 §4.1.1).
 2. `-it` is what gives pi a terminal. Without it pi reads EOF and exits.
 3. Nothing on this argv is a secret (invariant 13). Every word is a path or

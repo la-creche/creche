@@ -6,7 +6,7 @@ Two rules this file pins down.
    'none'` and an injected `<script>` stops at the policy rather than at the
    escaping. The form posts by itself, in the encoding a form sends.
 2. **A stored value closes its gap** (§4.3 step 6). The gap file lives in
-   an operator-written directory and `managerd` re-opens a gap whose name has
+   an operator-written directory and `caregiver` re-opens a gap whose name has
    no value, so the close has to come after the value lands.
 
 Nothing here runs as root: `owner_uid` is this test's own uid.

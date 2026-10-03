@@ -6,7 +6,7 @@ while it is there, because a field this module ignores is still a field a
 later reader will trust.
 
 **Why root parses this file again.** `agent_family.server` already models it
-for `managerd`, which runs as the operator. Root installs FROM it: it builds a venv,
+for `caregiver`, which runs as the operator. Root installs FROM it: it builds a venv,
 downloads an artifact and puts a tree at `/opt/mcp/<name>`. A validation
 performed by another package, in another process, at another time, is not a
 fact root may rely on for that (`stage7-releases.md` §3, "root trusts no byte
@@ -159,7 +159,7 @@ SECRET_WORDS: Final = ("TOKEN", "KEY", "PASSWORD", "SECRET")
 SECRET_PREFIX: Final = "secret:"
 
 #: Contract 01b §4.1's `secret:<key>`, the same pattern the intake's store
-#: and `managerd`'s gap writer apply. The name becomes a file name under
+#: and `caregiver`'s gap writer apply. The name becomes a file name under
 #: root's secrets directory, so a name root could not read is a name root
 #: does not carry forward.
 SECRET_NAME_RE: Final = re.compile(r"[a-z][a-z0-9_]{1,62}")
@@ -385,7 +385,7 @@ def _secrets(name: str, value: Any) -> tuple[str, ...]:
 
     A name that fails `SECRET_NAME_RE` is refused rather than dropped.
     Root would never be able to store it — the intake's store and
-    `managerd`'s gap writer both check the same pattern — so the server
+    `caregiver`'s gap writer both check the same pattern — so the server
     would install and then start with an unresolved reference.
     """
     found: set[str] = set()
@@ -822,7 +822,7 @@ def _one_upstream_per_secret(servers: tuple[ServerFile, ...]) -> None:
     about the registry as a whole, and this is the one place every
     declaration is in hand at once. Per file it is invisible.
 
-    The gap layout cannot catch it: `managerd._write_gap` writes
+    The gap layout cannot catch it: `caregiver._write_gap` writes
     `secret-gaps/<secret name>.json`, so a second server declaring one
     name would overwrite the first server's gap and the operator would be pushed
     one link naming one of the two.

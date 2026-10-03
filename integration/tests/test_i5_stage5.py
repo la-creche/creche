@@ -31,7 +31,6 @@ from pathlib import Path
 import pytest
 from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.payload import MAX_PAYLOAD_BYTES
-from agent_managerd import paths as managerd_paths
 from attendance.ids import SessionPrefix, new_ulid
 from attendance.queueing import MAX_QUEUED_TURNS
 from stack import Stack, until
@@ -49,6 +48,8 @@ from stage5 import (
     bridge_bundle_missing,
     serving_stage5,
 )
+
+from caregiver import paths as caregiver_paths
 
 HTTP_OK = 200
 HTTP_ACCEPTED = 202
@@ -110,7 +111,7 @@ async def stage(roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> As
     # that finds one REFRESHES its LiteLLM key rather than minting, and this
     # fake never minted that one, so the family would come up degraded and
     # with no grant file (`AGENTS.md` 18).
-    managerd_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
+    caregiver_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
     for result in ready.apply_all():
         assert result.ok, result.status.faults
 
@@ -740,7 +741,7 @@ async def test_a_removed_verb_is_denied_between_two_calls(gated: Stage5, tmp_pat
     """Invariant 9, inside a live job. The second call is refused at once.
 
     The family FILE drives it (`AGENTS.md` 21): the verb is removed from a
-    copy of the fixture registry and the real `managerd` applies it. Nothing
+    copy of the fixture registry and the real `caregiver` applies it. Nothing
     restarts, and invariant 8 holds — the session goes on and the job still
     finishes with a record.
     """

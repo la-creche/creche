@@ -1,4 +1,4 @@
-"""Reading `managerd`'s status documents (contract 05 §2, §3, §4, §7, §8)."""
+"""Reading `caregiver`'s status documents (contract 05 §2, §3, §4, §7, §8)."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def test_every_family_is_found_by_listing_the_directory(tmp_path: Path) -> None:
 
 
 def test_a_stale_document_reads_unknown_not_its_own_state(tmp_path: Path) -> None:
-    """Contract 05 §2 rule 5: past 90 s, `managerd` is not running."""
+    """Contract 05 §2 rule 5: past 90 s, `caregiver` is not running."""
     root = tmp_path / "state"
     write_json(root / "families" / "chat" / "status.json", status_doc(age_s=200))
 
@@ -51,7 +51,7 @@ def test_a_stale_document_reads_unknown_not_its_own_state(tmp_path: Path) -> Non
 
     assert row.health is Health.UNKNOWN
     assert row.stale
-    assert "managerd last wrote 200s ago" in row.reason
+    assert "caregiver last wrote 200s ago" in row.reason
 
 
 def test_a_document_with_no_written_at_reads_unknown(tmp_path: Path) -> None:
@@ -197,7 +197,7 @@ def test_no_sandbox_row_carries_a_running_turn_count(tmp_path: Path) -> None:
     """The status document carries no `turns_running`, and this page must
     not put it back by defaulting it.
 
-    `managerd` may not call `GET /v1/sessions` (contract 02 §3.1), so it
+    `caregiver` may not call `GET /v1/sessions` (contract 02 §3.1), so it
     cannot count a running turn, and a summed default of 0 would put
     "0 running" on the one screen invariant 20 calls the truth. The live
     count has one authority, `attendance`, and the family page's session

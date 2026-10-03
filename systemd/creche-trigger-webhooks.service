@@ -4,7 +4,7 @@
 # `agent-trigger serve` binds the LAN address, never loopback, so Node-RED
 # and Home Assistant automations elsewhere on the LAN can reach
 # POST /triggers/<family>/<name>. A route exists only when both hold:
-# managerd's published status says the family is autonomous and has
+# caregiver's published status says the family is autonomous and has
 # validated at least once, and the registry's own family file still
 # declares that webhook name right now. Every other request — unknown
 # family, unknown name, wrong token — answers the identical 404.
@@ -28,7 +28,7 @@ Wants=network-online.target
 # serving the old code. `PartOf` carries this unit with that restart.
 PartOf=creche-attendance.service
 # THE REWORK RESTART POLICY, argued in full in
-# `systemd/agent-managerd.service`: no start limit, so a transient fault
+# `systemd/creche-caregiver.service`: no start limit, so a transient fault
 # cannot end this service for good, and a back-off so restarting for ever
 # stays cheap. `bin/rework-watchdog.sh` is what says the service is not well;
 # `systemctl --user status` still shows NRestarts.
@@ -50,7 +50,7 @@ EnvironmentFile=/etc/agent-control/site.env
 # /opt/agent-control's shared workspace venv, which no release swaps.
 ExecStart=%h/.local/components/attendance/bin/agent-trigger serve
 ExecReload=/bin/kill -HUP $MAINPID
-# The rework restart policy (`systemd/agent-managerd.service`). `always`,
+# The rework restart policy (`systemd/creche-caregiver.service`). `always`,
 # because systemd calls SIGHUP, SIGINT, SIGTERM and SIGPIPE clean exits and
 # this service has no clean exit that must stay down.
 Restart=always
@@ -68,7 +68,7 @@ SystemCallArchitectures=native
 RestrictRealtime=yes
 LockPersonality=yes
 # 0077, not 0027: this process writes no file of its own, so there is no
-# group-read requirement to preserve (contrast agent-managerd.service,
+# group-read requirement to preserve (contrast creche-caregiver.service,
 # which writes files the PEP must read).
 UMask=0077
 

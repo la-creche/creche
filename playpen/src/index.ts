@@ -5,7 +5,7 @@
 //     node /opt/agent-supervisor/agent-supervisor.js --sandbox <family>-s<N>
 //
 // `sbx exec` forwards no host environment, so `--env-file` is the only way the
-// three mount paths of §7.1 arrive. `managerd` writes that file.
+// three mount paths of §7.1 arrive. `caregiver` writes that file.
 //
 // This file is the composition root and nothing else. It reads the one
 // argument and the environment, builds the real mounts and the real launcher,

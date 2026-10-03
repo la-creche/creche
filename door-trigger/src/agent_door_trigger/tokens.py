@@ -1,7 +1,7 @@
 """Per-webhook bearer tokens: one file per declared webhook trigger, mode
 0600.
 
-Contract 05 §6.4 names this file and gives it a writer: `managerd` mints
+Contract 05 §6.4 names this file and gives it a writer: `caregiver` mints
 one per declared webhook and removes it when the declaration goes. This
 module only READS it, and the directory layout below is the one place this
 door's half of that agreement lives. The 0600 requirement IS enforced here,

@@ -45,7 +45,7 @@ Description=Agent control plane PEP (per-call authorization proxy)
 After=network-online.target
 Wants=network-online.target
 # THE REWORK RESTART POLICY, argued in full in
-# `systemd/agent-managerd.service`. No start limit is the half that matters
+# `systemd/creche-caregiver.service`. No start limit is the half that matters
 # here: with `StartLimitIntervalSec=300` and `StartLimitBurst=5`, five
 # deaths in five minutes would mean `failed`, for ever, over the ONE
 # enforcement point. A PEP that
@@ -231,7 +231,7 @@ UMask=0027
 # file's 0600 mode does not fence it: this entry does.
 InaccessiblePaths=-/srv/agents/vault -/srv/agents/registry -/srv/agents/work -/srv/agents/state/materializer/state.db
 # Three rework entries are the family path's, and they are the only three:
-# the audit record v2 (contract 04 §6), the grants_stale fault file managerd
+# the audit record v2 (contract 04 §6), the grants_stale fault file caregiver
 # reads (§1.6), and attendance's socket directory (contract 02 §3 rule 1),
 # because connect(2) on a Unix socket asks for write. The fourth,
 # releases/requests, is the `release` verb's spool (see its Environment=

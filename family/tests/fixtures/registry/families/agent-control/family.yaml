@@ -23,7 +23,7 @@ verbs:
     components:
       - pep
       - attendance
-      - managerd
+      - caregiver
       - noticeboard
       - playpen
       - mcp-servers

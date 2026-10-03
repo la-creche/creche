@@ -216,7 +216,7 @@ def _check_floors(
     **A contract with no provider in the set is reported, not refused.**
     Root learns a component's interface from a tree under an install root,
     and a provider can be live without one: `playpen` is an image
-    and never a tree. Refusing would answer `managerd requires channel
+    and never a tree. Refusing would answer `caregiver requires channel
     0.11, the set provides it nowhere` for a set the host already runs.
 
     Root cannot tell "nothing provides it" from "its provider is not a tree

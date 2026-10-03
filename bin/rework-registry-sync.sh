@@ -4,7 +4,7 @@
 #   /opt/agent-control/bin/rework-registry-sync.sh
 #   /opt/agent-control/bin/rework-registry-sync.sh --last   # HEAD and its age
 #
-# WHY IT EXISTS. `managerd` reads the registry out of the checkout at
+# WHY IT EXISTS. `caregiver` reads the registry out of the checkout at
 # /srv/agents/registry and applies a change within one pass, and it never
 # pulls. This script is the one door that does. When nothing pulls, the
 # checkout freezes, nothing on the host knows, and every family and
@@ -17,8 +17,8 @@
 # not corruption. Rebasing it under the operator from a timer is not recoverable, so a
 # checkout that has diverged is REPORTED and left exactly as it is.
 #
-# WHAT `managerd` SEES DURING A FAST-FORWARD. It polls every 2 seconds
-# (`managerd/src/agent_managerd/loop.py`, POLL_INTERVAL_S) and its revision is
+# WHAT `caregiver` SEES DURING A FAST-FORWARD. It polls every 2 seconds
+# (`caregiver/src/caregiver/loop.py`, POLL_INTERVAL_S) and its revision is
 # a CONTENT hash over every file under `families/`, `mcp/` and `skills/`
 # (`family/src/agent_family/registry.py`, `revision_of`), never the git sha.
 # Git moves `HEAD` in one atomic ref update, and then writes the working tree
@@ -37,7 +37,7 @@
 #      next pass corrects — a sandbox replaced twice, a LiteLLM key written
 #      twice. Both are idempotent by design (contract 05 §5).
 # A lock between two processes that do not share it is not a lock, so this
-# script does not pretend to hold `managerd` off. Its lock is for its own
+# script does not pretend to hold `caregiver` off. Its lock is for its own
 # runs (below).
 #
 # THE LOCK. `flock -n` on a dedicated descriptor, taken BEFORE the fetch. The
@@ -89,7 +89,7 @@ set -uo pipefail
 # including on the host.
 TEST_PREFIX="${REGISTRY_SYNC_TEST_PREFIX:-}"
 
-# The REAL registry checkout. `managerd` watches it, the trigger door reads
+# The REAL registry checkout. `caregiver` watches it, the trigger door reads
 # it, and the noticeboard commits into it.
 REGISTRY="$TEST_PREFIX/srv/agents/registry"
 STATE_ROOT="$TEST_PREFIX/srv/agents/state/rework"
@@ -111,8 +111,8 @@ REMOTE=origin
 BRANCH=main
 UPSTREAM="$REMOTE/$BRANCH"
 
-# The one file `managerd` would write INTO this checkout, through
-# `live_manifest.publish` (`managerd/src/agent_managerd/live_manifest.py`),
+# The one file `caregiver` would write INTO this checkout, through
+# `live_manifest.publish` (`caregiver/src/caregiver/live_manifest.py`),
 # which nothing calls today (contract 06 §3.4). It is derived from root's
 # ledger, so this script may discard its copy, and it must: a derived file
 # may never hold a family change up. See `clear_derived`.

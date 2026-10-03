@@ -142,7 +142,7 @@ class Reply:
 #: for it (§4.3 step 6, and §4.1 step 3 in reverse). It takes the secret's
 #: NAME, which has passed `SECRET_NAME_RE`, and never a value. True means
 #: a gap file went away, and no caller here acts on the answer: a gap root
-#: could not close is one `managerd` re-opens, which costs one push.
+#: could not close is one `caregiver` re-opens, which costs one push.
 CloseFn = Callable[[str], bool]
 
 
@@ -161,7 +161,7 @@ class Intake:
     tokens: Tokens
     store: SecretStore
     #: §4.3 step 6's other half. The gap file lives in an operator-written
-    #: directory and `managerd` re-opens a gap whose name still has no
+    #: directory and `caregiver` re-opens a gap whose name still has no
     #: value, so the close has to happen AFTER the value lands or the
     #: reconciler simply writes it again.
     close_gap: CloseFn = _close_nothing
@@ -234,7 +234,7 @@ class Intake:
         return Reply(HTTP_OK, STORED.encode("utf-8"))
 
     def _close_quietly(self, name: str) -> None:
-        """A gap root cannot close is a gap `managerd` re-opens, which
+        """A gap root cannot close is a gap `caregiver` re-opens, which
         costs one more push. It is never a reason to un-store a value."""
         try:
             self.close_gap(name)

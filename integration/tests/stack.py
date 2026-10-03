@@ -21,7 +21,7 @@ environment and nothing else.
 
 Temp directories stand in for the sandbox mounts, the sessions root and the
 state root, because a Mac has no /srv. The playpen learns where they are
-the same way it does on the host: from the `supervisor.env` `managerd` writes,
+the same way it does on the host: from the `supervisor.env` `caregiver` writes,
 handed to the channel command as `--env-file`.
 `SESSIOND_SANDBOX_SESSIONS_MOUNT` is the one remaining host-side seam.
 """
@@ -47,12 +47,13 @@ from agent_door_owui.app import create_app
 from agent_door_owui.attendance import HttpAttendance
 from agent_door_owui.config import DoorConfig
 from agent_door_owui.families import StatusFiles
-from agent_managerd import paths as managerd_paths
-from agent_managerd.playpen_env import write_playpen_env
 from attendance.api import build_app
 from attendance.auth import Principal, TokenBook
 from attendance.config import Bind, Config
 from attendance.service import SessionService
+from caregiver.playpen_env import write_playpen_env
+
+from caregiver import paths as caregiver_paths
 
 FAMILY = "chat"
 SANDBOX = "chat-s1"
@@ -134,7 +135,7 @@ class Stack:
         self.client: httpx.AsyncClient | None = None
         self.door_to_attendance: httpx.AsyncClient | None = None
         #: Where `attendance` listens, for a scenario that dials it with a
-        #: client of its own — `managerd`'s switch client, for one.
+        #: client of its own — `caregiver`'s switch client, for one.
         self.attendance_socket: Path | None = None
         self._door_to_attendance: HttpAttendance | None = None
         self._service: SessionService | None = None
@@ -148,16 +149,16 @@ class Stack:
         return self.state_root / "families"
 
     def mounts_of(self, sandbox: str) -> Mounts:
-        """The four host directories `managerd` would mount for one sandbox.
+        """The four host directories `caregiver` would mount for one sandbox.
 
-        Each is built with `managerd`'s own path functions, so the fixture
+        Each is built with `caregiver`'s own path functions, so the fixture
         and the file `write_playpen_env` writes cannot disagree.
         """
         return Mounts(
             sessions=self.sessions_root / FAMILY,
-            creds=managerd_paths.creds_dir(self.state_root, FAMILY),
-            config=managerd_paths.config_dir(self.state_root, FAMILY),
-            control=managerd_paths.control_dir(self.state_root, FAMILY, sandbox),
+            creds=caregiver_paths.creds_dir(self.state_root, FAMILY),
+            config=caregiver_paths.config_dir(self.state_root, FAMILY),
+            control=caregiver_paths.control_dir(self.state_root, FAMILY, sandbox),
         )
 
     @property
@@ -172,7 +173,7 @@ class Stack:
         control directory, so the two live sandboxes of a switch cannot
         share it.
         """
-        return managerd_paths.playpen_env_path(self.state_root, FAMILY, sandbox)
+        return caregiver_paths.playpen_env_path(self.state_root, FAMILY, sandbox)
 
     @property
     def playpen_env(self) -> Path:
@@ -201,7 +202,7 @@ class Stack:
     # ------------------------------------------------------------------ setup
 
     def build_fixture(self) -> None:
-        """Write everything `managerd` would publish for the `chat` family.
+        """Write everything `caregiver` would publish for the `chat` family.
 
         Packet B1 is not merged, so the status document (contract 05 §2) and
         the three control-mount files are written by hand from the contracts.
@@ -231,7 +232,7 @@ class Stack:
         """One status document, exactly as contract 05 §2 shapes it.
 
         `sandboxes` carries the whole list, which a switch needs: contract
-        05 §5 has `managerd` publish the replacement before it calls.
+        05 §5 has `caregiver` publish the replacement before it calls.
         `sandbox_state` sets the state of the one default row.
         """
         rows = sandboxes if sandboxes != ((SANDBOX, "ready"),) else ((SANDBOX, sandbox_state),)
@@ -262,10 +263,10 @@ class Stack:
         path.write_text(json.dumps(document), encoding="utf-8")
 
     def add_sandbox(self, sandbox: str) -> None:
-        """Everything `managerd`'s own create leaves behind for one sandbox:
+        """Everything `caregiver`'s own create leaves behind for one sandbox:
         an empty control directory and that sandbox's `supervisor.env`.
 
-        The env file comes from `managerd`'s own writer, not a hand-made
+        The env file comes from `caregiver`'s own writer, not a hand-made
         copy of its format. A second implementation here could drift from
         the one that runs on the host, and the drift would look like a
         passing test.
@@ -423,7 +424,7 @@ class Stack:
     def attendance_as(self, principal: Principal) -> httpx.AsyncClient:
         """A client to `attendance` holding one principal's token.
 
-        `managerd`'s one call has no door in front of it (contract 05 §5),
+        `caregiver`'s one call has no door in front of it (contract 05 §5),
         so a scenario that switches a sandbox speaks to `attendance` directly.
         """
         path = self.attendance_socket

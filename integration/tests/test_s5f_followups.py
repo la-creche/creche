@@ -1,7 +1,7 @@
 """Packet S5F: what the stage 5 follow-ups make possible, end to end.
 
 Two scenarios that could not be written before, each on the real PEP, the
-real `managerd` and the real `door-trigger` of `stage5.py`.
+real `caregiver` and the real `door-trigger` of `stage5.py`.
 
 1. **Item A's ruling.** A refused gate returns its turn to `running`
    (contract 02 draft 8 §4.3), so ONE job can meet an approved gate and a
@@ -14,7 +14,7 @@ real `managerd` and the real `door-trigger` of `stage5.py`.
 
     family.yaml declares webhook: boiler-alert
       ▼
-    managerd mints <state>/triggers/webhooks/ha-review/boiler-alert.token
+    caregiver mints <state>/triggers/webhooks/ha-review/boiler-alert.token
       ▼                                       │
     status.json names its PATH                ▼
                                     door-trigger serves POST /triggers/...
@@ -32,7 +32,6 @@ from typing import Any
 
 import pytest
 from agent_door_trigger.tokens import MIN_WEBHOOK_TOKEN_BYTES
-from agent_managerd import paths as managerd_paths
 from stack import Stack, until
 from stage5 import (
     CHAT,
@@ -51,6 +50,8 @@ from test_i5_stage5 import (
     settled_job,
     waited_for_state,
 )
+
+from caregiver import paths as caregiver_paths
 
 #: The same tool with other arguments hashes to another gate (contract 04
 #: §8.2), which is what lets one turn meet two of them.
@@ -90,7 +91,7 @@ async def stage(roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> As
 
     # The stack writes `chat` a hand-made `creds.json` for stage 1, and an
     # apply that finds one refreshes a LiteLLM key this fake never minted.
-    managerd_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
+    caregiver_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
     for result in ready.apply_all():
         assert result.ok, result.status.faults
 
@@ -200,9 +201,9 @@ async def test_one_job_records_an_approved_gate_and_a_denied_one(gated: Stage5) 
 # ------------------------------------------------------------------- item C
 
 
-def test_managerd_mints_the_declared_webhooks_bearer(stage: Stage5) -> None:
+def test_caregiver_mints_the_declared_webhooks_bearer(stage: Stage5) -> None:
     """Contract 05 §6.4. Nothing in this harness writes this file."""
-    path = managerd_paths.webhook_token_path(stage.stack.state_root, HA_REVIEW, WEBHOOK_NAME)
+    path = caregiver_paths.webhook_token_path(stage.stack.state_root, HA_REVIEW, WEBHOOK_NAME)
 
     assert path.is_file()
     assert stat.S_IMODE(path.stat().st_mode) == WEBHOOK_TOKEN_MODE
@@ -211,7 +212,7 @@ def test_managerd_mints_the_declared_webhooks_bearer(stage: Stage5) -> None:
 
 def test_the_status_document_names_the_path_and_not_the_value(stage: Stage5) -> None:
     """Contract 05 §6.4 rule 5. The document is 0644."""
-    path = managerd_paths.status_path(stage.stack.state_root, HA_REVIEW)
+    path = caregiver_paths.status_path(stage.stack.state_root, HA_REVIEW)
     body: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     rows = body["triggers"]["webhooks"]
     minted = stage.webhook_token(HA_REVIEW, WEBHOOK_NAME)
@@ -220,7 +221,7 @@ def test_the_status_document_names_the_path_and_not_the_value(stage: Stage5) -> 
         {
             "name": WEBHOOK_NAME,
             "token_path": str(
-                managerd_paths.webhook_token_path(stage.stack.state_root, HA_REVIEW, WEBHOOK_NAME)
+                caregiver_paths.webhook_token_path(stage.stack.state_root, HA_REVIEW, WEBHOOK_NAME)
             ),
         }
     ]

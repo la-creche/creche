@@ -1,9 +1,9 @@
 """Which families the webhook listener may ever open a route for.
 
-Contract 05 §2: `managerd` writes
+Contract 05 §2: `caregiver` writes
 `/srv/agents/state/rework/families/<family>/status.json` and is its only
 writer. This module reads that document to answer one question per family:
-has `managerd` ever applied a valid definition for it, and is it
+has `caregiver` ever applied a valid definition for it, and is it
 `autonomous`? Both must hold before this door will even look at what the
 registry says that family's webhook triggers are named (`routes.py`).
 
@@ -46,7 +46,7 @@ class AutonomousFamilies(Protocol):
 
 
 class StatusFiles:
-    """Reads the status documents `managerd` publishes (contract 05 §2)."""
+    """Reads the status documents `caregiver` publishes (contract 05 §2)."""
 
     def __init__(self, root: Path) -> None:
         self._root = root
@@ -77,7 +77,7 @@ class StatusFiles:
             raw = path.read_text(encoding="utf-8")
         except OSError:
             # A family directory with no readable status document is one
-            # `managerd` has not published yet.
+            # `caregiver` has not published yet.
             return None
 
         try:

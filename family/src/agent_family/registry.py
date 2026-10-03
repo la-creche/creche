@@ -145,7 +145,7 @@ def _read_families(root: Path) -> tuple[dict[str, FamilyFile], dict[str, tuple[I
         name = directory.name
         path = directory / FAMILY_FILE
         if not path.is_file():
-            # §5.6 rule 3: a warning, and `managerd` ignores the directory.
+            # §5.6 rule 3: a warning, and `caregiver` ignores the directory.
             issues = Issues()
             issues.warn("<document>", f"no {FAMILY_FILE}; this directory is ignored")
             issues_by_name[name] = issues.frozen()

@@ -25,7 +25,7 @@ requires:
   - { contract: manager-status, major: 0, min_minor: 16 }
   # Contract 04: it reads the audit record and the grant a family holds.
   - { contract: pep-grant, major: 0, min_minor: 11 }
-depends_on: [attendance, managerd]
+depends_on: [attendance, caregiver]
 verify:
   # --env-file: the same file
   # systemd/creche-noticeboard.service's own EnvironmentFile= names, read by the

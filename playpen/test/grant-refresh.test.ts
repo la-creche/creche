@@ -127,7 +127,7 @@ describe("a granted tool reaches a running pi process", () => {
     await bridge(pi, TEST_PACE);
     expect(pi.getActiveTools()).toEqual([SEARCH]);
 
-    // The operator edits the family file. `managerd` rewrites the grant file with a
+    // The operator edits the family file. `caregiver` rewrites the grant file with a
     // fresh revision, and the PEP serves it on the next ask.
     serve("rev-b", [entry(SEARCH), entry(HA_CALL, "Call Home Assistant.")]);
     await until(() => pi.named(HA_CALL) !== undefined, "the watch loop to register ha_call");
@@ -181,9 +181,9 @@ describe("a granted tool reaches a running pi process", () => {
   }, 20000);
 
   it("registers nothing again when only the revision moved", async () => {
-    // `managerd` mints a fresh `rev` on every grant write, and a token
+    // `caregiver` mints a fresh `rev` on every grant write, and a token
     // rotation writes the file without touching the tool list
-    // (`managerd/src/agent_managerd/steps.py`, `grant_revision`). A reader
+    // (`caregiver/src/caregiver/steps.py`, `grant_revision`). A reader
     // must not be told the tool list changed when it did not.
     serve("rev-a", [entry(SEARCH)]);
     await bridge(pi, TEST_PACE);

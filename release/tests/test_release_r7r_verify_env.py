@@ -1,6 +1,6 @@
 """The verify hook's environment.
 
-`noticeboard-verify`, `attendance-verify` and `managerd-verify` take `--env-file
+`noticeboard-verify`, `attendance-verify` and `caregiver-verify` take `--env-file
 <path>` so root's executor never has to open a file the operator controls itself
 (`release/AGENTS.md` "Trust rules"): the hook reads it as its own user,
 the same user the unit's `EnvironmentFile=` already trusts.
@@ -28,7 +28,7 @@ ENV_FILE_RE = re.compile(r"^EnvironmentFile=(\S+)$", re.MULTILINE)
 UNIT_OF = {
     "noticeboard": "creche-noticeboard.service",
     "attendance": "creche-attendance.service",
-    "managerd": "agent-managerd.service",
+    "caregiver": "creche-caregiver.service",
     "pep": "agent-pep.service",
 }
 
@@ -60,13 +60,13 @@ def test_every_verify_hooks_env_file_matches_its_units_environment_file() -> Non
         assert _verify_env_file(manifest.verify.command) == _unit_env_file(unit), component
 
 
-def test_noticeboard_attendance_and_managerd_each_name_a_real_env_file() -> None:
+def test_noticeboard_attendance_and_caregiver_each_name_a_real_env_file() -> None:
     """The literal paths, so a bug in the drift-proof test above (both
     sides silently None) cannot pass unnoticed."""
     expected = {
         "noticeboard": "/srv/agents/state/rework/view.env",
         "attendance": "/srv/agents/state/rework/sessiond.env",
-        "managerd": "/srv/agents/state/rework/managerd.env",
+        "caregiver": "/srv/agents/state/rework/managerd.env",
     }
     for component, path in expected.items():
         manifest = read_one(REPO_ROOT, component).manifest

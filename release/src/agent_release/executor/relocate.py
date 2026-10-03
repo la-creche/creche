@@ -10,7 +10,7 @@ new directories and before it installs the units that point at them:
 What it carries, and why each one:
 
 - **The ledger.** The executor refuses a request id `done/` already holds,
-  and `managerd` reads its answers there. A fresh ledger would forget both.
+  and `caregiver` reads its answers there. A fresh ledger would forget both.
 - **The sealed secrets.** The operator pasted each one on the phone. Dropping them
   would re-open a gap per server and one phone push each.
 - **The roster.** The PEP reads it at its next start. Without it every
@@ -21,13 +21,13 @@ visit says how), `rejected/` is quarantine, and the old work root holds
 per-request trees nobody reads again. `docs/rework/retire-old.md` removes
 the old tree once nothing reads it.
 
-Two more things, both for the minutes between this visit and `managerd`'s
+Two more things, both for the minutes between this visit and `caregiver`'s
 own release, which is the one writer still running the old constants:
 
 - **It holds the OLD spool lock** while it looks and copies, so an old
   executor already past its tap finishes first.
 - **It renames the old spool root to `releases.retired`.** An old
-  `managerd` finds no `requests/` there and takes the quiet branch it
+  `caregiver` finds no `requests/` there and takes the quiet branch it
   takes on a host with no release spool (`mcp_wire.mcp_pass`), instead of filing
   requests into a spool nothing drains any more.
 
@@ -222,7 +222,7 @@ def _hold_old_lock(prefix: Path) -> int | None:
 
 def _retire_old_spool(prefix: Path) -> str:
     """One `rename(2)`, inside the old state root. A failure is reported
-    and does not undo the move: an old `managerd` then files into a spool
+    and does not undo the move: an old `caregiver` then files into a spool
     nothing drains, which it reports itself after an hour."""
     old = _under(prefix, OLD_SPOOL_ROOT)
     retired = f"{OLD_SPOOL_ROOT}{RETIRED_SUFFIX}"

@@ -28,7 +28,7 @@ class InstallBlock(Strict):
     #: table and in `stage7-releases.md` §4.2 and in `agent_release`'s own
     #: reader, and NOT here, so this validator refused every real `pypi`
     #: declaration with "unknown field 'lock'" — in CI at §4.1 step 2, and
-    #: again in `managerd`'s registry read, which is where invariant 18's
+    #: again in `caregiver`'s registry read, which is where invariant 18's
     #: near end looks for a declared server.
     lock: str | None = None
     python: str = "3.12"
@@ -50,7 +50,7 @@ class SharedSecretEntry(Strict):
     """Contract 01b §4.3: this file's `run.env` names `secret`, and the
     server named here names it too, on purpose.
 
-    Without this field the schema refuses the whole file, and `managerd`
+    Without this field the schema refuses the whole file, and `caregiver`
     then drops a server the registry really declares.
     """
 

@@ -1,6 +1,6 @@
-"""Which sandbox serves a terminal, read from `managerd`'s status document.
+"""Which sandbox serves a terminal, read from `caregiver`'s status document.
 
-Contract 05 §2: `managerd` writes
+Contract 05 §2: `caregiver` writes
 `/srv/agents/state/rework/families/<family>/status.json` and is its only
 writer. A reader lists that directory to find every family, so no index
 exists and no index can go stale.
@@ -43,7 +43,7 @@ STATE_DRAINING = "draining"
 #: Contract 05 §3.4's steps that create, swap or destroy a sandbox.
 _SWITCH_STEPS = frozenset({"create_sandbox", "switch_sandbox", "destroy_sandbox"})
 
-#: Contract 05 §2 rule 5. Older than this, `managerd` is not running.
+#: Contract 05 §2 rule 5. Older than this, `caregiver` is not running.
 STALE_AFTER_S = 90
 
 # A status document is small. A larger file is a fault, not a document.
@@ -74,7 +74,7 @@ class FamilyDirectory(Protocol):
 
 
 class StatusFiles:
-    """Reads the status documents `managerd` publishes."""
+    """Reads the status documents `caregiver` publishes."""
 
     def __init__(self, root: Path) -> None:
         self._root = root
@@ -118,7 +118,7 @@ class StatusFiles:
             raise DoorError(
                 Exit.NO_SANDBOX,
                 f"no readable status document for family {family} under {self._root}. "
-                "managerd publishes it; check that managerd runs and the family exists.",
+                "caregiver publishes it; check that caregiver runs and the family exists.",
             )
 
         return document
@@ -170,7 +170,7 @@ def _check_never_valid(family: str, document: dict[str, object]) -> None:
 def _check_switch(family: str, document: dict[str, object]) -> None:
     """Refuse while a sandbox is being replaced.
 
-    A terminal that started here would attach to a sandbox `managerd` is
+    A terminal that started here would attach to a sandbox `caregiver` is
     about to tear down, and pi would die mid-sentence with nothing on either
     side able to say why.
     """

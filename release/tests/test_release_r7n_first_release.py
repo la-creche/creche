@@ -86,9 +86,9 @@ UNIT = "creche-noticeboard.service"
 #: is a compose project, `mcp-servers` is `/opt/mcp/<name>` and
 #: `registry-data` is a checkout. Root learns a component's manifest from
 #: a tree under an install root, so it can see none of them.
-INSTALLED_TREES = ("managerd", "releasectl", "attendance", "noticeboard")
+INSTALLED_TREES = ("caregiver", "releasectl", "attendance", "noticeboard")
 
-#: What `pep` provides, and nobody in the resolved set does. `managerd`,
+#: What `pep` provides, and nobody in the resolved set does. `caregiver`,
 #: `attendance` and `noticeboard` all require it, so it is the requirement root cannot
 #: check on this host.
 UNPROVIDED = "pep-grant"
@@ -98,14 +98,14 @@ UNPROVIDED = "pep-grant"
 #: order the manifest declares them. `pep` provides `pep-grant` and
 #: `playpen` provides `channel`, and neither is a tree under an
 #: install root. `releasectl` requires nothing, and `noticeboard` gets `session-api`
-#: from `attendance` and `manager-status` from `managerd`, which ARE trees.
+#: from `attendance` and `manager-status` from `caregiver`, which ARE trees.
 #:
 #: The FLOORS are read from the manifests and never written here. A contract
 #: draft moves a `min_minor` in some other pull request, and a number typed
 #: into this list then fails a test that has nothing to do with that change
 #: (it did, the day this was written: `pep-grant` went 0.10 to 0.11 and
 #: `channel` 0.11 to 0.12 while this file was on its branch).
-_MANIFEST_DIR = {"managerd": "managerd", "attendance": "attendance", "noticeboard": "noticeboard"}
+_MANIFEST_DIR = {"caregiver": "caregiver", "attendance": "attendance", "noticeboard": "noticeboard"}
 
 
 def _floor(component: str, contract: str) -> str:
@@ -129,23 +129,23 @@ def _not_verified(component: str, contract: str, owner: str) -> str:
 UNVERIFIED = [
     _not_verified("attendance", "channel", "playpen"),
     _not_verified("attendance", "pep-grant", "pep"),
-    _not_verified("managerd", "pep-grant", "pep"),
-    _not_verified("managerd", "channel", "playpen"),
+    _not_verified("caregiver", "pep-grant", "pep"),
+    _not_verified("caregiver", "channel", "playpen"),
     _not_verified("noticeboard", "pep-grant", "pep"),
 ]
 
 #: The two rows the operator reads on the phone, exactly. Four contracts have a
 #: provider root can see:
-#: `family-file` and `manager-status` from `managerd`, `session-api` from
+#: `family-file` and `manager-status` from `caregiver`, `session-api` from
 #: `attendance`, `component-manifest` from `releasectl`.
-REVIEW_ROW = "suspect: 3 manifest(s) not verified (attendance, managerd, releasectl)"
+REVIEW_ROW = "suspect: 3 manifest(s) not verified (attendance, caregiver, releasectl)"
 CONTRACTS_ROW = "4 satisfied, 5 not verified"
 
-#: The second request the real spool held: `managerd` asked for
+#: The second request the real spool held: `caregiver` asked for
 #: `mcp-servers=latest` while agent-mcp carried no `mcp-servers-v*` tag,
 #: so root refuses it. A later ULID than the operator's, so the drain reaches it
 #: second.
-MANAGERD_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DM"
+CAREGIVER_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DM"
 
 #: What the noticeboard's unit really execs on the host — `bin/rework-cutover.sh`
 #: installed it under `~operator/.config/systemd/user` pointing at the tree
@@ -388,7 +388,7 @@ def test_the_first_ui_release_reaches_done_with_no_version_at_all(first: First) 
     """`agent-releasectl request noticeboard`, which means `latest`.
 
     Root reads the newest tag itself, so `latest` needs no document
-    `managerd` would have to publish.
+    `caregiver` would have to publish.
     """
     result = _release(first, {COMPONENT: "latest"})
 
@@ -458,7 +458,7 @@ def test_the_unprovided_requirement_is_reported_and_never_refused(first: First) 
 
     `pep` was live out of `/opt/agent-control/.venv`, which is no tree
     under an install root, so root saw no provider for `pep-grant` —
-    which `managerd`, `attendance` and `noticeboard` all
+    which `caregiver`, `attendance` and `noticeboard` all
     require. Root cannot tell that from "nothing provides it", and
     refusing there refuses every release on this host for ever.
     """
@@ -553,7 +553,7 @@ def test_the_preview_and_root_give_one_answer(first: First) -> None:
 
 
 def test_two_requests_in_one_pass_each_get_their_own_entry(first: First) -> None:
-    """The real spool held two: the operator's `noticeboard`, and `managerd`'s
+    """The real spool held two: the operator's `noticeboard`, and `caregiver`'s
     `mcp-servers=latest`, which root correctly refuses because agent-mcp
     carries no `mcp-servers-v*` tag.
 
@@ -571,8 +571,8 @@ def test_two_requests_in_one_pass_each_get_their_own_entry(first: First) -> None
     )
     write_request(
         first.spool_root,
-        MANAGERD_ID,
-        request_body({"mcp-servers": "latest"}, request_id=MANAGERD_ID, requested_by="managerd"),
+        CAREGIVER_ID,
+        request_body({"mcp-servers": "latest"}, request_id=CAREGIVER_ID, requested_by="managerd"),
     )
     write_request(
         first.spool_root,
@@ -588,7 +588,7 @@ def test_two_requests_in_one_pass_each_get_their_own_entry(first: First) -> None
 
     assert handled == 2
     assert first.ledger()["status"] == "succeeded"
-    other = first.ledger(MANAGERD_ID)
+    other = first.ledger(CAREGIVER_ID)
     assert other["status"] == "refused"
     assert "names no released tag" in str(other["reason"])
     assert len(pushed) == 2

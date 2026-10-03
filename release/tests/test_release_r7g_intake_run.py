@@ -143,7 +143,7 @@ def test_one_gap_mints_one_token_and_one_push(roots: tuple[Path, Path]) -> None:
 
 
 def test_a_second_pass_does_not_push_again(roots: tuple[Path, Path]) -> None:
-    """`managerd` re-opens the gap file every reconcile pass, so the file
+    """`caregiver` re-opens the gap file every reconcile pass, so the file
     cannot be what paces the phone. Root's own cooldown is."""
     gaps, _ = roots
     _gap_file(gaps, SERVER, NAME)

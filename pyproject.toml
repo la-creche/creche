@@ -9,7 +9,7 @@ dependencies = [
     "agent-pep",
     "library",
     "agent-family",
-    "agent-managerd",
+    "caregiver",
     "attendance",
     "agent-door-owui",
     "agent-door-tui",
@@ -22,13 +22,13 @@ dependencies = [
 package = false
 
 [tool.uv.workspace]
-members = ["pep", "library", "family", "managerd", "attendance", "door-owui", "door-tui", "door-trigger", "noticeboard", "release"]
+members = ["pep", "library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "noticeboard", "release"]
 
 [tool.uv.sources]
 agent-pep = { workspace = true }
 library = { workspace = true }
 agent-family = { workspace = true }
-agent-managerd = { workspace = true }
+caregiver = { workspace = true }
 attendance = { workspace = true }
 agent-door-owui = { workspace = true }
 agent-door-tui = { workspace = true }
@@ -56,7 +56,7 @@ testpaths = [
     "pep/tests",
     "library/tests",
     "family/tests",
-    "managerd/tests",
+    "caregiver/tests",
     "attendance/tests",
     "door-owui/tests",
     "door-tui/tests",
@@ -98,7 +98,7 @@ source = [
     "agent_pep",
     "library",
     "agent_family",
-    "agent_managerd",
+    "caregiver",
     "attendance",
     "agent_door_owui",
     "agent_door_tui",

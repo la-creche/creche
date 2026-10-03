@@ -28,7 +28,7 @@ Wants=network-online.target
 # carries the door with it, so no process keeps serving the renamed tree.
 PartOf=creche-attendance.service
 # THE REWORK RESTART POLICY, argued in full in
-# `systemd/agent-managerd.service`: no start limit, so a transient fault
+# `systemd/creche-caregiver.service`: no start limit, so a transient fault
 # cannot end this service for good, and a back-off so restarting for ever
 # stays cheap. `bin/rework-watchdog.sh` is what says the service is not well;
 # `systemctl --user status` still shows NRestarts.
@@ -49,7 +49,7 @@ ExecStart=%h/.local/components/attendance/bin/python -m agent_door_owui
 # `--check` reads the config and both credential files and exits without
 # binding. A cutover or a deploy runs it before it swaps this unit.
 ExecStartPre=%h/.local/components/attendance/bin/python -m agent_door_owui --check
-# The rework restart policy (`systemd/agent-managerd.service`). `always`,
+# The rework restart policy (`systemd/creche-caregiver.service`). `always`,
 # because systemd calls SIGHUP, SIGINT, SIGTERM and SIGPIPE clean exits and
 # this service has no clean exit that must stay down.
 Restart=always

@@ -476,7 +476,7 @@ class Release:
             # is already `safe_token`ed where the refusal is raised, so
             # this adds no untrusted text to the ledger, and it goes in
             # the LOG rather than in `reason`: `reason` is what
-            # `managerd` folds into its marker and what the phone push
+            # `caregiver` folds into its marker and what the phone push
             # carries, and both are bounded on purpose.
             self.entry.say(refusal.as_line())
         except StepFailed as failure:

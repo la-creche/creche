@@ -1,6 +1,6 @@
 """The gap drain, read as an attacker.
 
-`managerd` writes `/srv/agents/state/rework/secret-gaps/<name>.json` as
+`caregiver` writes `/srv/agents/state/rework/secret-gaps/<name>.json` as
 the operator, and root reads it. The directory is operator-writable, so every byte
 of it is hostile: §3.2's rules are the same ones `spool.py` applies to
 `requests/`.

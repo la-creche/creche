@@ -6,7 +6,7 @@
 // tiny pi that collects `registerTool`, call the default export, then execute
 // one registered tool. The only difference is the far side. There it is
 // `test/fake-pep.ts`, which has no grant file, no token check and no audit.
-// Here it is the PEP itself, reading the grant file `managerd` wrote.
+// Here it is the PEP itself, reading the grant file `caregiver` wrote.
 //
 // The environment carries what the playpen would set (contract 03 §7):
 // PEP_URL, PEP_TOKEN, AGENT_SESSION, AGENT_TURN and AGENT_TURN_FILE.

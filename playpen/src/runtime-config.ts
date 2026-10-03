@@ -1,5 +1,5 @@
 // Contract 01 §6.1 and contract 03 §7.1. The family config mount is one
-// read-only directory `managerd` writes and one revision counter versions.
+// read-only directory `caregiver` writes and one revision counter versions.
 // The playpen reads it when it STARTS a pi process, never per turn, so a
 // change reaches a session when its held-open process is next recycled.
 //
@@ -84,7 +84,7 @@ function toolList(raw: unknown): readonly string[] {
 }
 
 /**
- * `replace` only when the file says so. `managerd` writes no key for the
+ * `replace` only when the file says so. `caregiver` writes no key for the
  * default, and appending keeps pi's own prompt, the reading that loses least
  * when a value is one this playpen does not know.
  */

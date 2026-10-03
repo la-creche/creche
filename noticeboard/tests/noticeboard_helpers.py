@@ -2,7 +2,7 @@
 
 Everything the noticeboard reads is a file another service wrote, plus one HTTP
 call to `attendance`. So a test needs a state root on disk and a fake session
-service, and nothing else: no host, no `managerd`, no sandbox.
+service, and nothing else: no host, no `caregiver`, no sandbox.
 """
 
 from __future__ import annotations
@@ -349,7 +349,7 @@ def write_audit_day(audit_dir: Path, day: str, rows: list[dict[str, Any]]) -> Pa
 
 
 def make_registry(base: Path) -> Path:
-    """A git registry with two families, as `managerd` reads it."""
+    """A git registry with two families, as `caregiver` reads it."""
     root = base / "registry"
     (root / "families" / "chat").mkdir(parents=True)
     (root / "families" / "chat" / "family.yaml").write_text(CHAT_FAMILY_YAML, encoding="utf-8")

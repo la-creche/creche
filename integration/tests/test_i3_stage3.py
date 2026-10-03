@@ -2,7 +2,7 @@
 another, with every process on the path the real one.
 
 This is the operator's stage 3 test made runnable. Three families are published by
-the real `managerd` from checked-in registry files. A scripted model in the
+the real `caregiver` from checked-in registry files. A scripted model in the
 `chat` sandbox calls `invoke_agent` through the REAL PEP bridge. The REAL
 PEP checks the grant file, mints a delegation id and calls the REAL
 `attendance` over its Unix socket. `attendance` runs one job session in the thin
@@ -29,7 +29,6 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
-from agent_managerd import paths as managerd_paths
 from agent_pep.delegate import DoorTokenError, read_door_token
 from agent_pep.family_ids import ULID_RE
 from attendance.auth import Principal, TokenBook, TokenError
@@ -45,6 +44,8 @@ from stage3 import (
     bridge_bundle_missing,
     serving_pep,
 )
+
+from caregiver import paths as caregiver_paths
 
 INVOKE_AGENT = "invoke_agent"
 HTTP_OK = 200
@@ -93,7 +94,7 @@ async def stage(roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> As
     # that finds one REFRESHES its LiteLLM key rather than minting, and this
     # fake never minted that one, so the family would come up degraded with
     # no grant file. Removing it puts all three families on one path.
-    managerd_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
+    caregiver_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
     for result in ready.apply_all():
         assert result.ok, result.status.faults
 

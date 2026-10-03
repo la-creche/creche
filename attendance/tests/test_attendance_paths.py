@@ -43,7 +43,7 @@ def test_it_never_names_the_old_work_mount(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_each_family_gets_its_own_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`managerd` mounts `/srv/agents/sessions/<family>/`, one per family."""
+    """`caregiver` mounts `/srv/agents/sessions/<family>/`, one per family."""
     monkeypatch.delenv(SANDBOX_MOUNT_ENV, raising=False)
 
     assert sandbox_cwd(SESSIONS_ROOT, "code-sandbox", SESSION).startswith(

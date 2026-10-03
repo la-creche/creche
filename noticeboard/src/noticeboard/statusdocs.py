@@ -1,11 +1,11 @@
-"""`managerd`'s status documents, as the noticeboard reads them (contract 05 §8).
+"""`caregiver`'s status documents, as the noticeboard reads them (contract 05 §8).
 
 Invariant 20: one view shows every family, sandbox and session, and that
 view is the truth. Truth here means two things this module enforces.
 
 1. **A stale document is never shown as current** (contract 05 §2 rule 5).
    Past 90 seconds the family reads `unknown` and the row says why, because
-   a `written_at` that old means `managerd` is not running, not that the
+   a `written_at` that old means `caregiver` is not running, not that the
    state below it still holds.
 2. **Spend is one number per family.** The budget belongs
    to the family key, never to a sandbox (contract 05 §7 rule 1), so no
@@ -49,7 +49,7 @@ class Health(StrEnum):
 
     `unknown` is the contract's own word for a stale document (§2 rule 5).
     `unreadable` is this noticeboard's word for a file it could not parse at all,
-    which the contract does not name because `managerd` never writes one.
+    which the contract does not name because `caregiver` never writes one.
     """
 
     IN_SYNC = "in_sync"
@@ -216,7 +216,7 @@ class FamilyRow:
 
         return creating[-1] if creating else None
 
-    # There is no `turns_running` here: `managerd` may not call
+    # There is no `turns_running` here: `caregiver` may not call
     # `GET /v1/sessions` (contract 02 §3.1), so it cannot count a running
     # turn, and a number it cannot count does not belong on the noticeboard
     # invariant 20 calls the truth. The live count belongs to `attendance`,
@@ -413,7 +413,7 @@ def _row(name: str, body: Json, now: datetime) -> FamilyRow:
 def _health(body: Json, age: float | None) -> Health:
     """A stale document answers `unknown` whatever its `state` says.
 
-    Contract 05 §2 rule 5 is explicit: past 90 seconds `managerd` is not
+    Contract 05 §2 rule 5 is explicit: past 90 seconds `caregiver` is not
     running, and the reader must not show the stale state as current.
     """
     if age is None or age > STALE_AFTER_S:
@@ -439,9 +439,9 @@ def _reason(
     """One line that says why the row is not `in sync`."""
     if health is Health.UNKNOWN:
         if age is None:
-            return "no written_at in the status document; managerd may not be running"
+            return "no written_at in the status document; caregiver may not be running"
 
-        return f"managerd last wrote {int(age)}s ago, past the {STALE_AFTER_S}s limit"
+        return f"caregiver last wrote {int(age)}s ago, past the {STALE_AFTER_S}s limit"
 
     if health is Health.INVALID and validation is not None:
         never = "no revision of this family ever validated; " if validation.never_valid else ""

@@ -1,8 +1,8 @@
 """Packet C2's shared fixtures: one applied `chat` family, real on both sides.
 
-`managerd` writes four things that three other programs read:
+`caregiver` writes four things that three other programs read:
 
-    managerd.apply_once
+    caregiver.apply_once
         |-- grants/<family>.json + creds.json ----> the PEP family path
         |-- config/ (runtime.json, instructions.md, skills/) -> the playpen
         |-- creds/ + control/ (mounts) -----------> the playpen
@@ -32,11 +32,12 @@ from typing import Any, Final
 
 import pytest
 import yaml
-from agent_managerd import paths
-from agent_managerd.apply import ApplyResult, apply_once
-from agent_managerd.credentials import read_creds
-from agent_managerd.driver import FakeDriver
-from agent_managerd.litellm_keys import FakeLiteLLMKeys
+from caregiver.apply import ApplyResult, apply_once
+from caregiver.credentials import read_creds
+from caregiver.driver import FakeDriver
+from caregiver.litellm_keys import FakeLiteLLMKeys
+
+from caregiver import paths
 
 FAMILY: Final = "chat"
 SKILL: Final = "kitchen"
@@ -116,7 +117,7 @@ class Applied:
 
     @property
     def token(self) -> str:
-        """The PEP token `managerd` minted. A fixture value in a temp
+        """The PEP token `caregiver` minted. A fixture value in a temp
         directory: it authorizes nothing outside this test process."""
         creds = read_creds(paths.creds_path(self.state_root, FAMILY))
         assert creds is not None, "apply_once wrote no creds.json"

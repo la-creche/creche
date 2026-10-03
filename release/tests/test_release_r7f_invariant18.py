@@ -7,7 +7,7 @@ where the design puts a human or root:
 |---|---|
 | 1 the operator writes `mcp/<name>/server.yaml` | the test writes the file |
 | 2 CI validates it | `mcpserver`, which root re-runs anyway |
-| 3 the reconciler files a request | `agent_managerd.mcp_release`, real |
+| 3 the reconciler files a request | `caregiver.mcp_release`, real |
 | 4 the operator pastes the secret | one `<name>.enc` in the per-secret store |
 | 5 the operator taps the release | a fake phone that grants |
 | 6 the PEP reloads | a real `ReloadablePool` over the stub server |
@@ -33,7 +33,6 @@ from typing import Final, cast
 
 import pytest
 import yaml
-from agent_managerd.mcp_release import REQUEST_COMPONENT, McpPaths, request_servers
 from agent_pep.family_decisions import decide_family
 from agent_pep.family_grants import FamilyGrants, token_digest
 from agent_pep.mcp_client import Launcher, StdioUpstreamPool, UpstreamSpec
@@ -47,6 +46,7 @@ from agent_release.executor.host import Result as RunResult
 from agent_release.executor.mcpbuild import HUP_ARGV
 from agent_release.executor.spool import DONE_DIR, Spool
 from agent_release.executor.steps import Wiring
+from caregiver.mcp_release import REQUEST_COMPONENT, McpPaths, request_servers
 from release_executor_fixtures import (
     SHA_OF,
     FakeRun,
@@ -198,7 +198,7 @@ FAMILY_TOKEN: Final = "test-family-token-chat"
 
 
 def _grants(tools: dict[str, list[str]]) -> FamilyGrants:
-    """One family file, as `managerd` writes it (contract 04 §2)."""
+    """One family file, as `caregiver` writes it (contract 04 §2)."""
     return FamilyGrants.model_validate(
         {
             "version": 2,

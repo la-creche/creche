@@ -5,13 +5,13 @@
 # by its `rollback`, and `bin/rework-cutover.sh status` prints the checkout's
 # HEAD and its age.
 #
-# WHY IT EXISTS. `managerd` reads the registry out of /srv/agents/registry
+# WHY IT EXISTS. `caregiver` reads the registry out of /srv/agents/registry
 # and applies a change within one pass, and nothing else on the host pulls
 # that checkout. Without this unit the checkout freezes while
 # agent-registry's `main` moves, and nothing on the host knows.
 #
 # NO Restart= AND NO START LIMIT, on purpose. THE REWORK RESTART POLICY in
-# `systemd/agent-managerd.service` is for always-on services. This one is
+# `systemd/creche-caregiver.service` is for always-on services. This one is
 # MEANT to exit, and it exits non-zero on a refusal so that
 # `systemctl --user status registry-sync` shows it. The timer is its retry:
 # restarting a refused run would repeat the same refusal a second sooner and

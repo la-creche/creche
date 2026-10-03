@@ -257,7 +257,7 @@ def test_parse_rejects_shapes_that_are_not_objects() -> None:
 
 def test_a_grant_file_without_limits_caps_delegations_at_two(tmp_path: Path) -> None:
     """Contract 04 §1.2: the cap now comes from the caller family's file, and
-    `managerd` writes it into every grant file. A file written before that
+    `caregiver` writes it into every grant file. A file written before that
     field existed carries no `limits` block, and this PEP must read it as 2
     rather than as no cap at all (contract 01 §3.6.1)."""
     store, grants_dir, _ = _store(tmp_path)

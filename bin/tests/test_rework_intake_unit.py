@@ -169,7 +169,7 @@ def test_the_unit_restarts_and_cannot_burn_its_start_limit() -> None:
     A `StartLimitIntervalSec` in `[Service]` is ignored by this systemd
     version with a logged warning, so a crash loop hits systemd's DEFAULT
     start limit and the unit stays down. The rule is the shared rework policy
-    (`agent-managerd.service`'s `[Unit]` comment): no start limit at all,
+    (`creche-caregiver.service`'s `[Unit]` comment): no start limit at all,
     `StartLimitIntervalSec=0` in `[Unit]`, so `StartLimitBurst` is gone —
     a burst value means nothing beside an interval of zero."""
     unit = _unit()

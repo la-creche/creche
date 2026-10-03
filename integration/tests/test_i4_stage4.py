@@ -8,7 +8,7 @@ WebUI chat and the TUI session within one family ARE the same session.
 The pieces were built by agents who never saw each other's code: the TUI
 door (packet CT), the lease rulings and `release-process` (packet CS2,
 contract 02 draft 6), the Open WebUI write-back and the edit-or-regenerate
-branch (the same packet), and the platform fence in `managerd` and the PEP
+branch (the same packet), and the platform fence in `caregiver` and the PEP
 (contract 01 §5.5). This file is the first time they run together.
 
     the phone  ─http─► door-owui ─uds─► attendance ─► playpen ─► fake pi
@@ -617,7 +617,7 @@ def fleet(stage: Stage4) -> Stage4:
 def test_i4_only_agent_control_mounts_the_platform(fleet: Stage4) -> None:
     """Scenario 7, the file half of invariant 10 (`docs/rework/spec.md` §4.4).
 
-    This is the sandbox spec `managerd` hands the driver, which is as close
+    This is the sandbox spec `caregiver` hands the driver, which is as close
     to `sbx create` as a Mac reaches. What only the host can prove is that
     the VM then holds exactly these mounts and nothing else.
     """

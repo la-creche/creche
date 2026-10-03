@@ -44,14 +44,14 @@ def test_a_returned_grant_file_clears_the_fault(tmp_path: Path) -> None:
     store.scan()
     assert _faults_of(tmp_path, "chat") != []
 
-    # `managerd` writes the real grant file. Nothing calls the PEP.
+    # `caregiver` writes the real grant file. Nothing calls the PEP.
     write_grants(grants_dir, make_grants())
     assert store.sweep_faults() == frozenset({"chat"})
     assert _faults_of(tmp_path, "chat") == []
 
 
 def test_an_absent_file_keeps_its_fault(tmp_path: Path) -> None:
-    """Absence may be an accident. `managerd` decides what it means, so the
+    """Absence may be an accident. `caregiver` decides what it means, so the
     sweep renews the fault instead of clearing it."""
     store, grants_dir = _store(tmp_path)
     write_grants(grants_dir, make_grants())

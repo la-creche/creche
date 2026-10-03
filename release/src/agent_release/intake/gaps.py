@@ -4,7 +4,7 @@
 /srv/agents/state/rework/secret-gaps/<name>.json   written by the operator  <- HOSTILE
 ```
 
-`managerd` opens a gap for every declared secret that has no value
+`caregiver` opens a gap for every declared secret that has no value
 (`mcp_release.py`), and this module reads them: without it §4.1's five
 automatic steps end at step 3.
 
@@ -53,12 +53,12 @@ from typing import Any, Final, cast
 
 from .token import SECRET_NAME_RE, SERVER_NAME_RE
 
-#: `managerd`'s `GAPS_DIR`, a SIBLING of the secrets directory.
+#: `caregiver`'s `GAPS_DIR`, a SIBLING of the secrets directory.
 DEFAULT_GAPS_DIR: Final = "/srv/agents/state/rework/secret-gaps"
 
 GAP_SUFFIX: Final = ".json"
 
-#: A gap is three short fields. `managerd`'s own writer produces well under
+#: A gap is three short fields. `caregiver`'s own writer produces well under
 #: 200 bytes, and 4 KiB is `spool.py`'s cap for a whole release request.
 MAX_GAP_BYTES: Final = 4096
 
@@ -106,7 +106,7 @@ class GapDirectory:
     Every method opens the directory afresh. Holding a descriptor open
     across a whole run would be faster and would also keep a deleted
     directory alive for as long as the intake runs, which reads as "the
-    gap is still open" long after `managerd` removed it.
+    gap is still open" long after `caregiver` removed it.
     """
 
     def __init__(self, directory: Path, writer_uid: int) -> None:
@@ -133,7 +133,7 @@ class GapDirectory:
     def close(self, gap: OpenGap) -> bool:
         """The gap is filled. Remove the file so nobody re-opens it.
 
-        True when a file went away. `managerd` will not write it again,
+        True when a file went away. `caregiver` will not write it again,
         because `_gaps_for` skips a name whose `<name>.enc` exists — and
         that is checked in the right order, because root closes the gap
         only after the value has landed.

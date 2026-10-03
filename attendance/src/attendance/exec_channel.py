@@ -16,7 +16,7 @@ Four facts shape this module.
 2. stdout carries the protocol and nothing else. stderr is free text and is
    written to a log file, never parsed as protocol (contract 03 §1 rule 4).
 3. `sbx exec` forwards NO host environment. `--env-file` is the only way a
-   value reaches the VM, and `managerd` writes the file it names
+   value reaches the VM, and `caregiver` writes the file it names
    (contract 03 §7.1).
 4. The playpen exits 2 without a sandbox id, so `--sandbox` is part of the
    command and not an optional extra.

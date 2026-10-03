@@ -6,9 +6,9 @@ because nothing in the system ever wrote `ready`. The noticeboard shows that
 field, so the noticeboard was lying about a live family.
 
 This is the cross-package half of the fix, which no unit test can reach:
-`managerd`'s §5 call has to run the REAL handshake against the REAL
+`caregiver`'s §5 call has to run the REAL handshake against the REAL
 playpen bundle inside `attendance`, and the answer to that call is the only
-evidence `managerd` is allowed to have (contract 05 §1, §4.2, §4.3 step 7).
+evidence `caregiver` is allowed to have (contract 05 §1, §4.2, §4.3 step 7).
 
     reconcile_family ──§5──► attendance ──channel──► playpen
             │                                          │
@@ -37,7 +37,7 @@ async def test_the_sandbox_that_serves_is_published_ready(stack: Stack, tmp_path
 
     `ready` means "the channel handshake passed" (§4.1), and `attendance` holds
     the only channel (§4.2). So this passes only if a real handshake ran and
-    `managerd` wrote down what it was told.
+    `caregiver` wrote down what it was told.
     """
     manager = Manager(stack, write_registry(tmp_path / "registry"))
 

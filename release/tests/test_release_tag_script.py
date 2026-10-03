@@ -545,9 +545,9 @@ def test_the_dry_run_prints_the_range_per_component(
     # `pep` has no `pep/` here, but its build installs `release/`, which the
     # fixture holds (contract 06 §1 rule 9), so its range is read.
     assert "pep: 2 commit(s) since pep-v0.1.0" in done.stdout
-    # Neither `managerd/` nor `family/` exists, so no range can be read for
-    # `managerd`. A skipped component is said out loud, never left out.
-    assert "managerd: no path in this tree" in done.stdout
+    # Neither `caregiver/` nor `family/` exists, so no range can be read for
+    # `caregiver`. A skipped component is said out loud, never left out.
+    assert "caregiver: no path in this tree" in done.stdout
     assert _tags(repo) == FIRST_TAGS
     assert not (tmp_path / "gh.log").exists()
 

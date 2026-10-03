@@ -215,7 +215,7 @@ def test_release_fences_on_chat(verbs: dict[str, object], expect: str) -> None:
 
 
 def test_release_is_allowed_for_the_platform_family() -> None:
-    report = check("agent-control", verbs={"release": {"components": ["pep", "managerd"]}})
+    report = check("agent-control", verbs={"release": {"components": ["pep", "caregiver"]}})
     assert not errors(report)
 
 
@@ -339,7 +339,7 @@ def _check_against(index: Index, fixture: str, **changes: Any) -> Report:
 
 def test_the_platform_merge_is_never_granted_by_name() -> None:
     """`main` may carry no branch protection, so a family that could merge on
-    agent-registry would land its own grants, and `managerd` would apply them
+    agent-registry would land its own grants, and `caregiver` would apply them
     with nobody looking."""
     report = _check_against(_merge_declared(), "agent-control", tools={PLATFORM_SERVER: [MERGE]})
     assert "never granted" in messages(report)

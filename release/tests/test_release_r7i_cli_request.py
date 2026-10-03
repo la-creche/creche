@@ -24,7 +24,7 @@ SPOOL = "spool"
 def _tree(tmp_path: Path) -> list[str]:
     """One root with every component, and the live state `latest` needs.
 
-    `managerd` publishes that document on the host and the executor reads the
+    `caregiver` publishes that document on the host and the executor reads the
     same path at step 2 (contract 06 §11), so a request naming `latest` needs
     one on this side too or it cannot say what `latest` is.
     """

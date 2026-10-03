@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from agent_managerd import paths as managerd_paths
 from attendance.ids import SessionPrefix
 from stack import Stack, until
 from stage5 import ToolCall, bridge_bundle_missing
@@ -40,6 +39,8 @@ from stage_eq import (
     StageEq,
     serving_eq,
 )
+
+from caregiver import paths as caregiver_paths
 
 #: A job of a fixture family is one short fake turn, but it crosses five
 #: processes on a loaded Mac. Stage 5 uses the same number for the same work.
@@ -87,7 +88,7 @@ async def stage(
     # The stack writes `chat` a hand-made `creds.json` for stage 1. An apply
     # that finds one REFRESHES its LiteLLM key rather than minting, and this
     # fake never minted that one (`AGENTS.md` 18).
-    managerd_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
+    caregiver_paths.creds_path(built.state_root, CHAT).unlink(missing_ok=True)
     for result in ready.apply_all():
         assert result.ok, result.status.faults
 

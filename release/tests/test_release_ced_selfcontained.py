@@ -1,9 +1,9 @@
 """An installed tree holds its own code (contract 06 §8.2).
 
 `uv sync` installs a workspace member EDITABLE. A tree built with
-`uv sync --frozen --package agent-managerd` holds the third-party packages,
-and `lib/python3.12/site-packages/_editable_impl_agent_managerd.pth` names
-`/opt/agent-control/managerd/src`, so the running reconciler reads its code
+`uv sync --frozen --package caregiver` holds the third-party packages,
+and `lib/python3.12/site-packages/_editable_impl_caregiver.pth` names
+`/opt/agent-control/caregiver/src`, so the running reconciler reads its code
 from `/opt/agent-control`.
 
 `--no-editable` fixes the build. This module proves the FENCE: the executor
@@ -73,13 +73,13 @@ def test_a_tree_that_holds_its_own_code_passes(tmp_path: Path) -> None:
 def test_an_editable_pth_naming_the_repository_is_found(tmp_path: Path) -> None:
     """The exact file the host carried."""
     tree = _tree(tmp_path)
-    pth = _site(tree) / "_editable_impl_agent_managerd.pth"
-    pth.write_text("/opt/agent-control/managerd/src\n", encoding="utf-8")
+    pth = _site(tree) / "_editable_impl_caregiver.pth"
+    pth.write_text("/opt/agent-control/caregiver/src\n", encoding="utf-8")
 
     found = escapes(tree)
 
     assert len(found) == 1
-    assert "_editable_impl_agent_managerd.pth" in found[0]
+    assert "_editable_impl_caregiver.pth" in found[0]
 
 
 def test_a_relative_pth_line_that_climbs_out_is_found(tmp_path: Path) -> None:

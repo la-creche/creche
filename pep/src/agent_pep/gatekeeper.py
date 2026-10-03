@@ -31,7 +31,7 @@ Five rules, each with its reason:
    nobody waits stores no decision: it closes the gate and authorizes
    nothing.
 5. **A removed grant cancels the gate** (§1.5.3). The reach check runs on a
-   poll while the gate is held, so revocation lands without `managerd`
+   poll while the gate is held, so revocation lands without `caregiver`
    reaching into this process.
 
 No policy here, and no clock of this module's own: the deadline is the event

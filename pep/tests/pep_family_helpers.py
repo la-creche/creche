@@ -39,7 +39,7 @@ def make_grants(**over: object) -> FamilyGrants:
 
 
 def write_grants(directory: Path, grants: FamilyGrants) -> Path:
-    """The atomic write contract 04 §1.3 describes, as `managerd` does it."""
+    """The atomic write contract 04 §1.3 describes, as `caregiver` does it."""
     return write_grants_raw(directory, grants.family, json.dumps(grants.model_dump()))
 
 

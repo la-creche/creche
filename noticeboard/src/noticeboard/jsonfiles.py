@@ -23,7 +23,7 @@ from typing import Final, cast
 type Json = dict[str, object]
 
 #: A status document or a validation report is a few kilobytes. A megabyte
-#: is far past anything `managerd` writes and still small enough to read in
+#: is far past anything `caregiver` writes and still small enough to read in
 #: one go on a page request.
 MAX_DOC_BYTES: Final = 1 << 20
 

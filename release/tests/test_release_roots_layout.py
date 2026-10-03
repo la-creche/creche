@@ -133,7 +133,7 @@ def test_every_host_path_field_is_classified() -> None:
 
 def test_the_four_paths_that_moved_are_layouts() -> None:
     """One spelling each. The spool, the intake's store and the roster are
-    what the PEP and `managerd` are pointed at, so a second copy that drifted
+    what the PEP and `caregiver` are pointed at, so a second copy that drifted
     would be a writer and a reader on two different paths."""
     fields = _path_fields()
 
@@ -342,7 +342,7 @@ def test_a_release_holding_the_old_lock_stops_the_move(old_host: Path) -> None:
 
 
 def test_the_old_spool_is_renamed_aside(old_host: Path) -> None:
-    """An old `managerd` then finds no `requests/` and stays quiet, instead
+    """An old `caregiver` then finds no `requests/` and stays quiet, instead
     of filing into a spool nothing drains any more."""
     moved = move_old(old_host, os.getuid())
 
@@ -353,7 +353,7 @@ def test_the_old_spool_is_renamed_aside(old_host: Path) -> None:
 
 def test_the_old_secrets_and_roster_stay_where_they_were(old_host: Path) -> None:
     """Copied, never moved: `retire-old.md` removes them once the one
-    process that still reads them, an old `managerd`, is released."""
+    process that still reads them, an old `caregiver`, is released."""
     move_old(old_host, os.getuid())
 
     assert (_under(old_host, OLD_SECRETS_DIR) / f"{SECRET}.enc").is_file()

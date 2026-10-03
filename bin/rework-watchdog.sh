@@ -12,15 +12,15 @@
 # So this watchdog SHARES NO FATE with what it watches. It is a oneshot
 # under the user manager, it holds no rework code, it dials no rework
 # service for permission, and it works when all five units are dead.
-# `managerd`'s own `pep_unreachable` fault (contract 05 §3.3) covers the
-# PEP from INSIDE `managerd`, which is no help when `managerd` is the dead
+# `caregiver`'s own `pep_unreachable` fault (contract 05 §3.3) covers the
+# PEP from INSIDE `caregiver`, which is no help when `caregiver` is the dead
 # one. This is the outside half.
 #
 # FIVE CHECKS, each with its own timeout, none needing a credential:
 #   1. pep       GET :8300/healthz on the host's LAN address must answer 200.  5 s
 #                Loopback answers nothing on that host: every service
 #                binds the LAN address (README).
-#   2. managerd  the newest `written_at` under
+#   2. caregiver the newest `written_at` under
 #                /srv/agents/state/rework/families/*/status.json must be
 #                younger than 180 s. Contract 05 §2 rule 4 rewrites each
 #                document at least every 30 s, and §2 rule 5 makes a reader
@@ -46,11 +46,11 @@
 # probes a minute apart, so this removes the false alarm without hiding a real
 # one.
 #
-# This applies to all five checks alike, including managerd's, which already
+# This applies to all five checks alike, including caregiver's, which already
 # waits for 180 s of staleness before its first failed reading. Requiring a
 # second consecutive stale reading adds up to one more minute on top (180 to
 # 240 s worst case) before a push. That is still far short of an outage of
-# hours, which is what this script exists to catch, and a normal managerd
+# hours, which is what this script exists to catch, and a normal caregiver
 # restart is fast enough that it never makes the status document 180 s
 # stale even once, so the extra minute costs nothing a real outage would
 # notice.
@@ -139,7 +139,7 @@ HTTP_UNAUTHORIZED=401
 # also installs are not: this alarm's own, and `registry-sync.service`, which
 # check 5 below reads by its RESULT rather than by `is-failed` — a oneshot
 # that is meant to exit says more about itself that way.
-UNITS="creche-attendance.service agent-managerd.service creche-door-owui.service \
+UNITS="creche-attendance.service creche-caregiver.service creche-door-owui.service \
 creche-trigger-webhooks.service creche-noticeboard.service"
 
 # Contract 05 §2 rule 5's 90 s, doubled. A document this old means nobody
@@ -275,9 +275,9 @@ check_pep() {
   note_down pep "the PEP did not answer $HTTP_OK at $PEP_URL$HEALTH_PATH (got ${code:-nothing})"
 }
 
-# --- 2. managerd is publishing ------------------------------------------------
+# --- 2. caregiver is publishing -----------------------------------------------
 
-# RFC 3339 (`2026-09-21T14:19:02Z`, managerd/src/agent_managerd/clock.py) to
+# RFC 3339 (`2026-09-21T14:19:02Z`, caregiver/src/caregiver/clock.py) to
 # seconds since the epoch. GNU `date -d` first, BSD `date -j -f` second: the
 # script runs on the host, which is GNU, and its test runs on a Mac, which
 # is not. The GNU form fails with "illegal option -- d" on BSD and prints
@@ -296,7 +296,7 @@ stamp_of() {  # stamp_of <status.json>
     | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
 }
 
-check_managerd() {
+check_caregiver() {
   local documents newest now stamp seconds age
   # `find` under `timeout`, because a state root on a hung mount would
   # otherwise hold this run until the next firing.
@@ -304,7 +304,7 @@ check_managerd() {
     find "$FAMILIES_DIR" -maxdepth 2 -name status.json 2>/dev/null)"
 
   if [[ -z "$documents" ]]; then
-    note_down managerd "no status document under $FAMILIES_DIR: managerd has published nothing"
+    note_down caregiver "no status document under $FAMILIES_DIR: caregiver has published nothing"
     return 0
   fi
 
@@ -319,24 +319,24 @@ check_managerd() {
   done <<< "$documents"
 
   if [[ -z "$newest" ]]; then
-    note_down managerd "no readable written_at under $FAMILIES_DIR"
+    note_down caregiver "no readable written_at under $FAMILIES_DIR"
     return 0
   fi
 
   seconds="$(epoch_of "$newest")"
   if [[ -z "$seconds" ]]; then
-    note_down managerd "could not read the time $newest out of a status document"
+    note_down caregiver "could not read the time $newest out of a status document"
     return 0
   fi
 
   now="$(date -u +%s)"
   age=$(( now - seconds ))
   if [[ "$age" -lt "$STALE_AFTER_S" ]]; then
-    say "ok: managerd published ${age}s ago ($newest)"
+    say "ok: caregiver published ${age}s ago ($newest)"
     return 0
   fi
 
-  note_down managerd "no status document written for ${age}s (newest $newest, limit ${STALE_AFTER_S}s)"
+  note_down caregiver "no status document written for ${age}s (newest $newest, limit ${STALE_AFTER_S}s)"
 }
 
 # --- 3. attendance ---------------------------------------------------------------
@@ -438,7 +438,7 @@ check_registry_sync() {
 # --- the verdict, and the one push ------------------------------------------
 
 check_pep
-check_managerd
+check_caregiver
 check_attendance
 check_units
 check_registry_sync

@@ -177,7 +177,7 @@ class QuietGate:
 def gated_family(registry_root: Path, name: str) -> tuple[FamilyFile, QuietBlock] | None:
     """The family and its `quiet:` block, when the registry's file for it is
     valid and carries one. Anything else fires as before: a check read from
-    a file `managerd` would refuse is not one to trust."""
+    a file `caregiver` would refuse is not one to trust."""
     try:
         registry = load_registry(registry_root)
     except OSError as exc:

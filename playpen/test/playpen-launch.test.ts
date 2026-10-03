@@ -46,7 +46,7 @@ afterEach(async () => {
   }
 });
 
-/** The environment `managerd`'s `supervisor.env` carries, for one harness. */
+/** The environment `caregiver`'s `supervisor.env` carries, for one harness. */
 function mountEnv(harness: Harness): NodeJS.ProcessEnv {
   return {
     [CRED_DIR_ENV]: join(harness.root, "creds"),

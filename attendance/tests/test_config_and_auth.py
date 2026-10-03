@@ -120,7 +120,7 @@ def test_a_short_token_file_stops_the_service(tmp_path: Path) -> None:
 
 def test_a_readable_token_file_stops_the_service(tmp_path: Path) -> None:
     write_tokens(tmp_path)
-    path = token_file(tmp_path, Principal.MANAGERD.value)
+    path = token_file(tmp_path, Principal.CAREGIVER.value)
     os.chmod(path, 0o644)
 
     with pytest.raises(TokenError):
@@ -217,12 +217,12 @@ def test_a_door_token_never_reaches_internal() -> None:
     with pytest.raises(ApiError):
         check_access(Principal.DOOR_OWUI, Access.INTERNAL)
 
-    check_access(Principal.MANAGERD, Access.INTERNAL)
+    check_access(Principal.CAREGIVER, Access.INTERNAL)
 
 
-def test_the_managerd_token_never_reads_sessions() -> None:
+def test_the_caregiver_token_never_reads_sessions() -> None:
     with pytest.raises(ApiError):
-        check_access(Principal.MANAGERD, Access.READ)
+        check_access(Principal.CAREGIVER, Access.READ)
 
 
 def test_a_writer_may_also_read() -> None:

@@ -16,8 +16,8 @@ REPO_GRAPH: Graph = {
     "infra": (),
     "playpen": (),
     "attendance": ("pep", "playpen"),
-    "managerd": ("pep", "infra"),
-    "noticeboard": ("attendance", "managerd"),
+    "caregiver": ("pep", "infra"),
+    "noticeboard": ("attendance", "caregiver"),
     "releasectl": (),
 }
 
