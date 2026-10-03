@@ -7,7 +7,7 @@ wakes the family, before any session exists.
                v
              gate.py    attendance: a wake still live? ---- yes -------> quiet
                |        records.py: last firing ended ok? --> last good wake
-               |        pep.py, AS the family: survey_board, job_status
+               |        chaperone.py, AS the family: survey_board, job_status
                |        records.py: the daily call made today?
                v
              decide.py  every reason to wake, against the last good wake

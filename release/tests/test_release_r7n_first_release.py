@@ -81,21 +81,21 @@ UNIT = "creche-noticeboard.service"
 #: `bin/rework-cutover.sh` made the three operator-owned ones and
 #: `bin/rework-release-visit.sh` made `releasectl`. None is stamped.
 #:
-#: The other five are live or absent and are NOT trees: `pep` runs out
+#: The other five are live or absent and are NOT trees: `chaperone` runs out
 #: of the deployed checkout's venv, `playpen` is an image, `infra`
 #: is a compose project, `mcp-servers` is `/opt/mcp/<name>` and
 #: `registry-data` is a checkout. Root learns a component's manifest from
 #: a tree under an install root, so it can see none of them.
 INSTALLED_TREES = ("caregiver", "releasectl", "attendance", "noticeboard")
 
-#: What `pep` provides, and nobody in the resolved set does. `caregiver`,
+#: What `chaperone` provides, and nobody in the resolved set does. `caregiver`,
 #: `attendance` and `noticeboard` all require it, so it is the requirement root cannot
 #: check on this host.
 UNPROVIDED = "pep-grant"
 
 #: Every requirement root cannot check on the host, in the order
 #: `contracts._check_floors` walks the set: by component name, then in the
-#: order the manifest declares them. `pep` provides `pep-grant` and
+#: order the manifest declares them. `chaperone` provides `pep-grant` and
 #: `playpen` provides `channel`, and neither is a tree under an
 #: install root. `releasectl` requires nothing, and `noticeboard` gets `session-api`
 #: from `attendance` and `manager-status` from `caregiver`, which ARE trees.
@@ -128,10 +128,10 @@ def _not_verified(component: str, contract: str, owner: str) -> str:
 
 UNVERIFIED = [
     _not_verified("attendance", "channel", "playpen"),
-    _not_verified("attendance", "pep-grant", "pep"),
-    _not_verified("caregiver", "pep-grant", "pep"),
+    _not_verified("attendance", "pep-grant", "chaperone"),
+    _not_verified("caregiver", "pep-grant", "chaperone"),
     _not_verified("caregiver", "channel", "playpen"),
-    _not_verified("noticeboard", "pep-grant", "pep"),
+    _not_verified("noticeboard", "pep-grant", "chaperone"),
 ]
 
 #: The two rows the operator reads on the phone, exactly. Four contracts have a
@@ -456,7 +456,7 @@ def test_the_first_release_resolves_against_an_empty_provided(first: First) -> N
 def test_the_unprovided_requirement_is_reported_and_never_refused(first: First) -> None:
     """The refusal the operator's real first release got, and why it is gone.
 
-    `pep` was live out of `/opt/agent-control/.venv`, which is no tree
+    `chaperone` was live out of `/opt/agent-control/.venv`, which is no tree
     under an install root, so root saw no provider for `pep-grant` —
     which `caregiver`, `attendance` and `noticeboard` all
     require. Root cannot tell that from "nothing provides it", and

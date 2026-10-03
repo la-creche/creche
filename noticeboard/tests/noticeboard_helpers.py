@@ -83,7 +83,7 @@ def status_doc(
         "credentials": {
             "epoch": 7,
             "key_id": f"sk-live-{family}-7",
-            "token_id": f"pep-{family}-7",
+            "token_id": f"chaperone-{family}-7",
             "rotated_at": stamp(3600),
             "next_rotation_at": None,
             "rotation_state": "settled",

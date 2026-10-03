@@ -314,10 +314,12 @@ def test_the_pep_is_dialled_on_the_sites_address(rig: Rig) -> None:
 
 
 def test_an_explicit_pep_url_still_wins(rig: Rig, tmp_path: Path) -> None:
-    done = rig.run(WATCHDOG_PEP_URL="http://pep.test:1", AGENT_SITE_FILE=str(tmp_path / "none"))
+    done = rig.run(
+        WATCHDOG_PEP_URL="http://chaperone.test:1", AGENT_SITE_FILE=str(tmp_path / "none")
+    )
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert "http://pep.test:1/healthz" in rig.stub_log.read_text(encoding="utf-8")
+    assert "http://chaperone.test:1/healthz" in rig.stub_log.read_text(encoding="utf-8")
 
 
 def test_no_site_file_stops_with_one_line_naming_it(rig: Rig, tmp_path: Path) -> None:
@@ -344,7 +346,7 @@ def test_a_single_failure_is_recorded_but_not_pushed(rig: Rig) -> None:
     assert done.returncode == 1, "a failed check still turns the unit red at once"
     assert rig.posts() == []
     assert rig.stored() == "up", "not yet confirmed, so the verdict has not moved"
-    assert "pep: " in done.stdout
+    assert "chaperone: " in done.stdout
     assert ", 1 of 2" in done.stdout
     assert "DOWN: " not in done.stdout
 
@@ -367,7 +369,7 @@ def test_two_consecutive_failures_confirm_and_push(rig: Rig) -> None:
     done = rig.run(WD_PEP_CODE="000")
 
     assert done.returncode == 1
-    assert rig.stored() == "pep"
+    assert rig.stored() == "chaperone"
     assert len(rig.posts()) == 1
     assert "DOWN: " in done.stdout
 
@@ -382,7 +384,7 @@ def test_a_dead_pep_is_found_and_pushed_once(rig: Rig) -> None:
     first = rig.run(WD_PEP_CODE="000")
 
     assert first.returncode == 1
-    assert rig.stored() == "pep"
+    assert rig.stored() == "chaperone"
     assert len(rig.posts()) == 1
     assert "rework DOWN" in rig.posts()[0]
     assert "healthz" in rig.posts()[0]
@@ -555,7 +557,7 @@ def test_two_things_down_are_one_push_that_names_both(rig: Rig) -> None:
     rig.run(WD_PEP_CODE="000", WD_FAILED_UNITS="creche-caregiver.service")
     rig.run(WD_PEP_CODE="000", WD_FAILED_UNITS="creche-caregiver.service")
 
-    assert rig.stored() == "pep units"
+    assert rig.stored() == "chaperone units"
     assert len(rig.posts()) == 1
     assert "healthz" in rig.posts()[0]
     assert "creche-caregiver.service" in rig.posts()[0]
@@ -596,7 +598,7 @@ def test_recovery_pushes_once_and_says_what_came_back(rig: Rig) -> None:
     assert rig.stored() == "up"
     assert len(rig.posts()) == 2
     assert "rework recovered" in rig.posts()[1]
-    assert "pep" in rig.posts()[1]
+    assert "chaperone" in rig.posts()[1]
 
 
 def test_recovery_needs_no_second_clean_run(rig: Rig) -> None:
@@ -619,7 +621,7 @@ def test_a_verdict_that_grows_pushes_again(rig: Rig) -> None:
     done = rig.run(WD_PEP_CODE="000", WD_SOCK_CODE="000")
 
     assert done.returncode == 1
-    assert rig.stored() == "pep attendance"
+    assert rig.stored() == "chaperone attendance"
     assert len(rig.posts()) == 2
 
 
@@ -635,7 +637,7 @@ def test_a_notice_that_cannot_be_sent_is_retried(rig: Rig) -> None:
 
     second = rig.run(WD_PEP_CODE="000")
 
-    assert rig.stored() == "pep"
+    assert rig.stored() == "chaperone"
     assert second.returncode == 1
 
 
@@ -718,7 +720,7 @@ def test_last_prints_the_stored_verdict_and_nothing_else(rig: Rig) -> None:
     done = rig.run("--last")
 
     assert done.returncode == 0
-    assert done.stdout.strip() == "pep"
+    assert done.stdout.strip() == "chaperone"
     assert len(rig.posts()) == before, "--last must check nothing and push nothing"
     assert "is-failed" not in rig.stub_log.read_text(encoding="utf-8").rsplit("\n", 2)[-1]
 

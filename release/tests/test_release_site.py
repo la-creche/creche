@@ -116,9 +116,9 @@ def test_provenance_asks_github_about_the_sites_owner(site_file: Path) -> None:
         return provenance.ApiReply(status=404, body=None)
 
     with pytest.raises(Refusal):
-        provenance.check_release(api, "pep", "agent-control", "pep-v0.1.0")
+        provenance.check_release(api, "chaperone", "agent-control", "chaperone-v0.1.0")
 
-    assert asked == ["/repos/some-org/agent-control/releases/tags/pep-v0.1.0"]
+    assert asked == ["/repos/some-org/agent-control/releases/tags/chaperone-v0.1.0"]
 
 
 def test_the_operator_is_read_from_the_site_file(site_file: Path) -> None:
@@ -236,9 +236,9 @@ def test_provenance_asks_github_about_the_sites_name_for_a_repository(site_file:
         return provenance.ApiReply(status=404, body=None)
 
     with pytest.raises(Refusal):
-        provenance.check_release(api, "pep", "agent-control", "pep-v0.1.0")
+        provenance.check_release(api, "chaperone", "agent-control", "chaperone-v0.1.0")
 
-    assert asked == ["/repos/some-org/some-product/releases/tags/pep-v0.1.0"]
+    assert asked == ["/repos/some-org/some-product/releases/tags/chaperone-v0.1.0"]
 
 
 @pytest.mark.parametrize("quoted", ['"some-org"', "'some-org'"])

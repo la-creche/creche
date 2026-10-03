@@ -3,7 +3,7 @@
 pytest imports test modules by basename in this repo's import mode, so two
 packages that both hold `tests/test_faults.py`, or both hold a helper named
 `family_helpers.py`, break collection for the WHOLE repo. A scoped run such as
-`uv run pytest pep/tests` never shows it. Only the full run does, and CI is
+`uv run pytest chaperone/tests` never shows it. Only the full run does, and CI is
 the full run, so every scoped pre-push run carries this file as well
 (`bin/quality-gate.sh --tests-for`). The rule gets a check instead of a
 memory.

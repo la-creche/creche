@@ -94,9 +94,14 @@ LOG_PREFIX: Final = "agent-release"
 GIT_READ_TIMEOUT_S: Final = 30.0
 
 #: §3.1's second requester writes through the PEP, which runs as this user
-#: (`systemd/agent-pep.service`). Root accepts a file it owns and still
+#: (`systemd/creche-chaperone.service`). Root accepts a file it owns and still
 #: believes nothing the file says.
-PEP_USER: Final = "pep"
+CHAPERONE_USER: Final = "chaperone"
+
+#: The PEP's account before the rename. A host runs the old unit until its
+#: cutover, and this executor ships first, so it accepts both owners until a
+#: cleanup removes this one.
+RETIRING_PEP_USER: Final = "pep"
 
 
 def _ledger_only(request_id: str, kind: str, requested_by: str, reason: str) -> Entry:
@@ -475,19 +480,23 @@ def keep_only_the_secrets(environ: MutableMapping[str, str]) -> Secrets:
     return found
 
 
-def _pep_uid() -> frozenset[int]:
-    """The PEP's account, when this host has one.
+def _chaperone_uids() -> frozenset[int]:
+    """The PEP's accounts that this host has.
 
     §3.1's second requester is the `agent-control` family, and its path is
-    the PEP's `release` verb. The PEP runs as `pep`, so the file it writes
-    is pep-owned and root must accept that owner or the verb can file
-    nothing. An absent account is not an error: a host with no PEP simply
-    has one requester.
+    the PEP's `release` verb. The PEP runs as `chaperone`, so the file it
+    writes is chaperone-owned and root must accept that owner or the verb can
+    file nothing. An absent account is not an error: a host with no PEP
+    simply has one requester.
     """
-    try:
-        return frozenset({pwd.getpwnam(PEP_USER).pw_uid})
-    except KeyError:
-        return frozenset()
+    uids: set[int] = set()
+    for user in (CHAPERONE_USER, RETIRING_PEP_USER):
+        try:
+            uids.add(pwd.getpwnam(user).pw_uid)
+        except KeyError:
+            continue
+
+    return frozenset(uids)
 
 
 def run_pass(spool: Spool, wiring: Wiring) -> int:
@@ -525,7 +534,7 @@ def main() -> int:
         return 1
 
     try:
-        spool = Spool(SPOOL_ROOT, operator_uid, also_owned_by=_pep_uid())
+        spool = Spool(SPOOL_ROOT, operator_uid, also_owned_by=_chaperone_uids())
     except SpoolError as exc:
         print(f"{LOG_PREFIX}: {exc}", file=sys.stderr)
 

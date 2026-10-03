@@ -49,9 +49,9 @@ GATE: Final = "4f2a8c31b09d6e57"
 def _summary() -> Summary:
     return Summary(
         review="safe: 1 component(s), service",
-        components="pep 2.0.3 -> 2.1.0",
+        components="chaperone 2.0.3 -> 2.1.0",
         contracts="6 contracts satisfied",
-        restarts="agent-pep.service",
+        restarts="creche-chaperone.service",
         restore="automatic",
         requested_by="agent-control",
         manifest="6b84c0e5aa10",

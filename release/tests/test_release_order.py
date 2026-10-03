@@ -12,11 +12,11 @@ from release_fixtures import manifest_text
 #: The edges the repo's own manifests declare, written out so an order test
 #: reads without a fixture tree.
 REPO_GRAPH: Graph = {
-    "pep": (),
+    "chaperone": (),
     "infra": (),
     "playpen": (),
-    "attendance": ("pep", "playpen"),
-    "caregiver": ("pep", "infra"),
+    "attendance": ("chaperone", "playpen"),
+    "caregiver": ("chaperone", "infra"),
     "noticeboard": ("attendance", "caregiver"),
     "releasectl": (),
 }
@@ -34,7 +34,7 @@ def _graph(edges: dict[str, str]) -> Graph:
 
 def test_a_dependency_outside_the_catalog_is_refused() -> None:
     with pytest.raises(Refusal) as caught:
-        _graph({"pep": "attendance, infra", "noticeboard": "not-a-component"})
+        _graph({"chaperone": "attendance, infra", "noticeboard": "not-a-component"})
 
     assert caught.value.code is RefusalCode.CATALOG
     assert "contract 06 §1 omits" in caught.value.detail
@@ -42,14 +42,16 @@ def test_a_dependency_outside_the_catalog_is_refused() -> None:
 
 def test_a_self_edge_is_a_cycle() -> None:
     with pytest.raises(Refusal) as caught:
-        _graph({"pep": "pep"})
+        _graph({"chaperone": "chaperone"})
 
     assert caught.value.code is RefusalCode.CYCLE
-    assert caught.value.detail == "pep -> pep"
+    assert caught.value.detail == "chaperone -> chaperone"
 
 
 def test_a_cycle_is_printed() -> None:
-    graph = _graph({"pep": "noticeboard", "noticeboard": "attendance", "attendance": "pep"})
+    graph = _graph(
+        {"chaperone": "noticeboard", "noticeboard": "attendance", "attendance": "chaperone"}
+    )
 
     with pytest.raises(Refusal) as caught:
         check_acyclic(graph)
@@ -67,9 +69,11 @@ def test_an_acyclic_graph_passes() -> None:
 
 
 def test_dependencies_deploy_first() -> None:
-    order = deploy_order(REPO_GRAPH, frozenset({"noticeboard", "attendance", "pep", "playpen"}))
+    order = deploy_order(
+        REPO_GRAPH, frozenset({"noticeboard", "attendance", "chaperone", "playpen"})
+    )
 
-    assert order.index("pep") < order.index("attendance")
+    assert order.index("chaperone") < order.index("attendance")
     assert order.index("playpen") < order.index("attendance")
     assert order.index("attendance") < order.index("noticeboard")
 
@@ -81,7 +85,9 @@ def test_a_dependency_outside_the_release_takes_no_place() -> None:
 
 
 def test_releasectl_is_always_last() -> None:
-    order = deploy_order(REPO_GRAPH, frozenset({"releasectl", "pep", "noticeboard", "attendance"}))
+    order = deploy_order(
+        REPO_GRAPH, frozenset({"releasectl", "chaperone", "noticeboard", "attendance"})
+    )
 
     assert order[-1] == LAST_IN_ORDER
 

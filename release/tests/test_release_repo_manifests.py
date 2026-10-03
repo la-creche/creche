@@ -93,7 +93,7 @@ def test_the_releasectl_hook_passes_from_the_executors_directory(
     for `tmp_path`, an empty tree like the one it names."""
     manifest = found.manifests()["releasectl"]
     args = [str(tmp_path) if one == manifest.install.to else one for one in manifest.verify.command]
-    monkeypatch.chdir(REPO_ROOT / "pep")
+    monkeypatch.chdir(REPO_ROOT / "chaperone")
 
     assert cli_main(args[1:]) == EXIT_OK
 

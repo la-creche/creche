@@ -94,7 +94,7 @@ ROSTER_FILE: Final = layout.ROSTER_FILE
 #: server whose file declares `run.state_dir`. Under `/var/lib`
 #: and not `/opt/mcp`, because state outlives every tree a release swaps.
 #: The root itself is NOT a release's: `bin/rework-release-visit.sh` makes it
-#: `root:root 0755` and `agent-pep.service` names it in `ReadWritePaths`,
+#: `root:root 0755` and `creche-chaperone.service` names it in `ReadWritePaths`,
 #: which binds it writable only if it exists when the PEP starts.
 MCP_STATE_ROOT: Final = "/var/lib/agent-mcp"
 
@@ -191,7 +191,7 @@ def seal_argv(recipients: tuple[str, ...]) -> tuple[str, ...]:
     """`sops`, encrypt only, to a public recipient set.
 
     `sops` and not `age`, because the PEP decrypts these files with
-    `sops -d` already (`pep/src/agent_pep/secrets.py`). One format and one
+    `sops -d` already (`chaperone/src/chaperone/secrets.py`). One format and one
     tool on both ends beats a second one that root alone understands.
 
     `--config /dev/null` is a control rather than tidiness
@@ -296,7 +296,7 @@ class Host:
     mcp_root: Path = Path(MCP_ROOT)
     #: `stage7-releases.md` §4.4 step 1's file: the upstream roster root
     #: writes from the servers it just installed. Root's own state, not an
-    #: install root — a `pep` release swaps the whole `pep` tree, so a
+    #: install root — a `chaperone` release swaps the whole `chaperone` tree, so a
     #: roster inside it would vanish on the PEP's next release.
     roster_file: Path = Path(ROSTER_FILE)
     #: `MCP_STATE_ROOT`, a field so a test points it inside `tmp_path`.

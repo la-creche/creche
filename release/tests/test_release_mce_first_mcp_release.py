@@ -12,7 +12,7 @@ from.
 | eleven `mcp/<name>/server.yaml` | **the eleven declarations, comments removed** |
 | `mcp-servers-v0.1.0` on agent-mcp `a1b2c3d` | one tag, one SHA, that tag |
 | `caregiver`'s `mcp-servers=latest` request | the same body, alone in the spool |
-| no `/opt/components/mcp-servers` | `releasectl` and `pep` only |
+| no `/opt/components/mcp-servers` | `releasectl` and `chaperone` only |
 
 The declarations in `release_mce_registry/` have the fields of a registry
 that was in use, with its comments removed and its site's values replaced.
@@ -57,7 +57,7 @@ the real code.
 4. A real phone, a real Node-RED flow and a real tap.
 5. The modes a real `UMask=0027` root unit leaves. One test sets the
    umask itself and asserts the directories that decide it.
-6. The PEP's mount namespace. That `agent-pep.service`'s `ReadWritePaths`
+6. The PEP's mount namespace. That `creche-chaperone.service`'s `ReadWritePaths`
    binds `/var/lib/agent-mcp` writable for a server is systemd's to prove
    on the host, and a real `install -d` giving the directory
    to `mcp-<name>` is too: `McpFake` makes it and owns it as the test user.
@@ -80,10 +80,6 @@ from urllib.parse import urlencode, urlsplit
 
 import pytest
 import yaml
-from agent_pep.family_ids import MCP_TOOL_SEPARATOR
-from agent_pep.mcp_client import Launcher, UpstreamError, load_upstreams, resolve_env
-from agent_pep.reload_wiring import RosterSource
-from agent_pep.run_as import child_env as server_env
 from agent_release.catalog import CATALOG_BY_NAME
 from agent_release.errors import Refusal
 from agent_release.executor.approval import Decision, Summary
@@ -103,6 +99,10 @@ from agent_release.intake.service import Intake
 from agent_release.intake.store import SecretStore
 from agent_release.intake.token import Tokens
 from agent_release.mcpserver import ServerFile, Source, read_registry
+from chaperone.family_ids import MCP_TOOL_SEPARATOR
+from chaperone.mcp_client import Launcher, UpstreamError, load_upstreams, resolve_env
+from chaperone.reload_wiring import RosterSource
+from chaperone.run_as import child_env as server_env
 from release_executor_fixtures import (
     FakeRun,
     GitFake,
@@ -264,11 +264,11 @@ ENTRYPOINTS: Final = {
     "vikunja-networking": "vikunja-mcp",
 }
 
-#: The base roster, the file `agent-pep.service` names as
+#: The base roster, the file `creche-chaperone.service` names as
 #: `PEP_UPSTREAMS`. Read from this repository rather than typed, because
 #: its overlap with the registry's eleven is what rule 4 checks and a
 #: typed list would answer it with whatever the typist remembered.
-BASE_ROSTER: Final = Path(__file__).resolve().parents[2] / "pep" / "upstreams.yaml"
+BASE_ROSTER: Final = Path(__file__).resolve().parents[2] / "chaperone" / "upstreams.yaml"
 
 #: `component.yaml`'s own build line, as agent-mcp merged it at `a1b2c3d`:
 #: one `uv sync --frozen` at the repository root.
@@ -534,7 +534,7 @@ def bench(tmp_path: Path) -> Bench:
     # The two trees the operator's morning visit leaves. `mcp-servers` is NOT
     # one: `/opt/components/mcp-servers` does not exist before this
     # release, which is why `previous` reads None.
-    for name in ("releasectl", "pep"):
+    for name in ("releasectl", "chaperone"):
         (components / name).mkdir(parents=True, exist_ok=True)
 
     registry = _registry_tree(tmp_path / "corpus")
@@ -640,7 +640,7 @@ def test_rule_1_the_composite_fence_contract_01b_defines_parses(
     arguments joined by
     `/` as one string, because matching `repo` alone lets
     `someone-else/agent-control` pass a fence meant for
-    `<owner>/agent-control`. `pep/src/agent_pep/fences.py` implements it
+    `<owner>/agent-control`. `chaperone/src/chaperone/fences.py` implements it
     (`COMPOSITE_SEPARATOR`) and contract 01b §8.2's own example uses it.
 
     Both files that carry `docs/rework/spec.md` §4.4's github split declare
@@ -836,7 +836,7 @@ def test_the_seven_rows_the_operator_reads_before_the_tap(bench: Bench) -> None:
     assert shown[0].restore == "automatic"
     assert shown[0].requested_by == "managerd"
     assert [one for one in bench.manual() if one.startswith("installed and unstamped")] == [
-        "installed and unstamped, nothing root can read: pep",
+        "installed and unstamped, nothing root can read: chaperone",
         "installed and unstamped, nothing root can read: releasectl",
     ]
 
@@ -1144,7 +1144,7 @@ def test_one_secret_pasted_through_the_intake_then_the_release(
 
 def test_the_roster_root_writes_is_what_the_peps_parser_reads(bench: Bench) -> None:
     """The two shapes, against each other. `load_upstreams` is the PEP's
-    own reader, imported here because reading `pep/` is allowed and
+    own reader, imported here because reading `chaperone/` is allowed and
     changing it is not this package's.
 
     A roster the PEP refuses does not install nothing — it leaves the OLD
@@ -1239,7 +1239,7 @@ def test_a_generated_name_the_base_does_not_hold_is_the_one_that_serves(
     """The other side of rule 4: a name the base roster does NOT hold
     comes through, with root's own command.
 
-    `weather` is not in `pep/upstreams.yaml`, so a twelfth declaration
+    `weather` is not in `chaperone/upstreams.yaml`, so a twelfth declaration
     serves on its first release.
     """
     _release(bench)
@@ -1348,7 +1348,7 @@ def test_the_pep_hands_the_path_to_the_server_as_it_is(bench: Bench) -> None:
     _release(bench)
     spec = load_upstreams(bench.roster)["ha-read"]
 
-    params = Launcher(("agent-pep-as",)).params(spec, resolve_env(spec, {SHARED_SECRET: "x"}))
+    params = Launcher(("chaperone-as",)).params(spec, resolve_env(spec, {SHARED_SECRET: "x"}))
     execs_with = server_env(cast("dict[str, str]", params.env))
 
     assert execs_with[HA_STATE_ENV] == str(bench.state_root / "ha-read")

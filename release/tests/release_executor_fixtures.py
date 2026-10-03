@@ -34,7 +34,7 @@ from agent_release.executor.spool import DONE_DIR, REJECTED_DIR, REQUESTS_DIR, R
 
 #: Every fixture SHA is 40 lowercase hex, because the manifest's pattern is.
 SHA_OF = {
-    "pep": "2b59c3bd81f4a6079ce5d2a3418b6f0cc7d9e215",
+    "chaperone": "2b59c3bd81f4a6079ce5d2a3418b6f0cc7d9e215",
     "attendance": "8c41d027fe5b3a9016d4e7c2b508af3196720de5",
     "caregiver": "4a7c2e19bd3f508c6e21af4b90d7c3516882ee40",
     "noticeboard": "1e9a640fb27c853d0a416ff2cb3d7905e8a12b64",
@@ -344,8 +344,8 @@ def stamp_tree(root: Path, name: str, version: str) -> Path:
     """An install tree as the switch leaves it: a bin directory, a hook, a
     site-packages and the version stamp `live_state` reads back.
 
-    The hook is named for the COMPONENT, so `pep.new` and `pep.prev` both
-    carry `pep-verify` — which is what the manifest names and what the
+    The hook is named for the COMPONENT, so `chaperone.new` and `chaperone.prev` both
+    carry `chaperone-verify` — which is what the manifest names and what the
     executor relocates into the staged tree.
 
     The site-packages is EMPTY, which is what self-contained looks like: no

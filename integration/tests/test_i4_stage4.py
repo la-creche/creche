@@ -73,7 +73,7 @@ PLATFORM_TOOL = "github-platform__create_pull_request"
 CODE_TOOL = "github-code__create_pull_request"
 
 #: Contract 04 §5's two refusals that mean "policy said no", from
-#: `agent_pep.family_decisions.FamilyReason`. Every other reason is a call
+#: `chaperone.family_decisions.FamilyReason`. Every other reason is a call
 #: that got PAST the decision and then failed to run, which is what a
 #: harness with no `github-mcp-server` behind it expects.
 POLICY_DENIALS = frozenset({"tool_not_granted", "unknown_token"})

@@ -130,7 +130,7 @@ _TOKEN_MODE: Final = 0o600
 _HTTP_OK: Final = 200
 _HTTP_SERVER_ERROR: Final = 500
 
-#: `tests_manager/pep_harness.py` builds the real PEP through its real entry
+#: `tests_manager/chaperone_harness.py` builds the real PEP through its real entry
 #: point, and holds the two helpers that put a FastAPI app on a loopback
 #: port. `stage3.py` reaches it the same way.
 sys.path.insert(0, str(repo_root() / "integration" / "tests_manager"))
@@ -574,7 +574,7 @@ class Stage4:
     def open_delegate_door(self) -> Path:
         """Contract 02 §3 rule 5's one exception, at the host's own mode.
 
-        The PEP runs as user `pep` and `attendance` owns the file, so group
+        The PEP runs as user `chaperone` and `attendance` owns the file, so group
         read is what makes the delegate door reachable at all. Stage 3
         proves that rule; stage 4 only needs the PEP to start.
         """
@@ -657,12 +657,12 @@ def recording_sbx(root: Path, name: str = "s4-sbx") -> tuple[Path, Path]:
 def serving_pep(stage: Stage4, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[str]:
     """The REAL PEP on a loopback port, reading this stage's grant files.
 
-    `pep_harness.build_pep` runs `agent_pep.__main__.main()` and stops it
+    `chaperone_harness.build_pep` runs `chaperone.__main__.main()` and stops it
     one statement before it serves, so the config comes from the
     environment exactly as the unit file supplies it. The fence question
     scenario 7 asks is a decision, and this is where the decision is made.
     """
-    from pep_harness import build_pep, free_port, serving
+    from chaperone_harness import build_pep, free_port, serving
 
     socket_path = stage.stack.attendance_socket
 
@@ -686,7 +686,7 @@ def serving_owui(owui: FakeOwui) -> Iterator[str]:
     it synchronously from the turn-settle path — a server on this test's loop
     could not answer while that call was in flight.
     """
-    from pep_harness import free_port, serving
+    from chaperone_harness import free_port, serving
 
     with serving(owui.app(), free_port()) as url:
         yield url

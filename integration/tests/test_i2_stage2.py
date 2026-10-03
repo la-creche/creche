@@ -31,10 +31,10 @@ from typing import Any, cast
 import httpx
 import sse_read
 from agent_family import FamilyState
-from agent_pep.family_decisions import decide_family, manifest_actions
-from agent_pep.family_grants import FamilyStore
-from agent_pep.faults import FaultWriter
 from attendance.auth import Principal
+from chaperone.family_decisions import decide_family, manifest_actions
+from chaperone.family_grants import FamilyStore
+from chaperone.faults import FaultWriter
 from conftest import chat_body, chat_id, message_id, owui_headers, session_of
 from stack import FAMILY, FIXTURE_PEP_TOKEN, SANDBOX, Stack, until
 from stage2 import BreakTheIncomingEnv, Manager, http_switch_client, write_registry
@@ -433,9 +433,11 @@ def _grants(manager: Manager) -> Any:
 
     Every lookup re-scans, which is what makes a tool change land per call
     (contract 04 §1.4). The HTTP path around it is proved in
-    `integration/tests_manager/test_grants_to_pep.py`.
+    `integration/tests_manager/test_grants_to_chaperone.py`.
     """
-    store = FamilyStore(manager.state_root / "grants", FaultWriter(manager.state_root / "pep-out"))
+    store = FamilyStore(
+        manager.state_root / "grants", FaultWriter(manager.state_root / "chaperone-out")
+    )
     found = store.lookup(FIXTURE_PEP_TOKEN)
 
     assert found is not None, "the PEP does not recognise the token caregiver published"

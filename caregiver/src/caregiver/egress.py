@@ -8,7 +8,7 @@ of it, once, in one place a host can override.
 
     family.yaml egress: []          the normal attended case
               +
-    EgressConfig.litellm/.pep       always allowed, never listed
+    EgressConfig.litellm/.chaperone always allowed, never listed
               =
     sbx policy allow network        what the sandbox may reach
 
@@ -51,13 +51,13 @@ class EgressConfig:
     family file ever can."""
 
     litellm: str = field(default_factory=litellm_endpoint)
-    pep: str = field(default_factory=pep_endpoint)
+    chaperone: str = field(default_factory=pep_endpoint)
     canaries: tuple[str, ...] = field(default_factory=default_canaries)
 
     def allowed(self, family_egress: Sequence[str]) -> tuple[str, ...]:
         """The two planes first, then the family's own list in file order.
         Planes first so a truncated log still shows them."""
-        planes = (self.litellm, self.pep)
+        planes = (self.litellm, self.chaperone)
         extra = tuple(one for one in family_egress if one not in planes)
         return (*planes, *extra)
 
@@ -69,5 +69,5 @@ class EgressConfig:
         apply of such a family. Dropping it narrows the probe, never the
         policy -- the allow list is unchanged, and every remaining canary
         is still proved denied."""
-        granted = {*family_egress, self.litellm, self.pep}
+        granted = {*family_egress, self.litellm, self.chaperone}
         return tuple(one for one in self.canaries if one not in granted)

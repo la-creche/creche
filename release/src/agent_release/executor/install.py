@@ -405,10 +405,10 @@ class Installer:
     def check_unit_binds(self, manifest: ComponentManifest, source: Path) -> None:
         """Contract 06 §1 rule 8: a release must be able to change what runs.
 
-        When a unit execs `/opt/agent-control/.venv/bin/agent-pep` while
-        `pep/component.yaml` installs `/opt/components/pep`, nothing in
+        When a unit execs `/opt/agent-control/.venv/bin/chaperone` while
+        `chaperone/component.yaml` installs `/opt/components/chaperone`, nothing in
         steps 8 to 10 notices: the tree builds, the swap lands,
-        the unit restarts, `pep-verify` passes out of the NEW tree, and the
+        the unit restarts, `chaperone-verify` passes out of the NEW tree, and the
         running PEP is the old code of `/opt`. The ledger says `succeeded`
         and §2.5's tap bound to a commit that never went into service.
 
@@ -1262,7 +1262,7 @@ def _read_unit(path: Path) -> bytes | None:
 
 
 def _unit_of(kept: Path) -> Path:
-    """`/etc/systemd/system/agent-pep.service` for its kept copy. A name
+    """`/etc/systemd/system/creche-chaperone.service` for its kept copy. A name
     with nothing before the suffix answers itself, so the `install` fails
     and says so rather than this raising inside a repair."""
     name = kept.name.removesuffix(UNIT_KEPT_SUFFIX)
@@ -1271,7 +1271,7 @@ def _unit_of(kept: Path) -> Path:
 
 
 def _relocate(command: str, old_root: Path, new_root: Path) -> Path | None:
-    """`/opt/components/pep/bin/pep-verify` under `<to>.new` instead."""
+    """`/opt/components/chaperone/bin/chaperone-verify` under `<to>.new` instead."""
     candidate = Path(command)
     if candidate != old_root and old_root not in candidate.parents:
         return None

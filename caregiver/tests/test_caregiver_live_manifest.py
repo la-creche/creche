@@ -42,11 +42,11 @@ def _entry(
             "resolved_at": resolved_at,
             "components": [
                 {"name": row, "action": "deploy", "to_version": caregiver},
-                {"name": "pep", "action": "unchanged", "to_version": "2.0.3"},
+                {"name": "chaperone", "action": "unchanged", "to_version": "2.0.3"},
             ],
             "contracts": [
                 {"contract": "family-file", "provider": "caregiver", "version": contract},
-                {"contract": "pep-grant", "provider": "pep", "version": "2.0"},
+                {"contract": "pep-grant", "provider": "chaperone", "version": "2.0"},
             ],
         },
     }

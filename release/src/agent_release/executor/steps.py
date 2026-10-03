@@ -271,7 +271,7 @@ class Plan:
         return str(entry.get("sha"))
 
     def moves(self) -> list[str]:
-        """`pep 2.0.3 → 2.1.0`, one per deploying component, in order."""
+        """`chaperone 2.0.3 → 2.1.0`, one per deploying component, in order."""
         return [
             f"{name} {self.from_version(name) or 'absent'} → {self.to_version(name)}"
             for name in self.order
@@ -1127,7 +1127,7 @@ class Release:
         if name != MCP_COMPONENT or not self.roster_written:
             return
 
-        result = self.mcp.reload_pep()
+        result = self.mcp.reload_chaperone()
         if result.code != 0:
             self.entry.manual.append("the PEP did not take the reload signal")
 
@@ -1172,7 +1172,7 @@ class Release:
 
         put_back.extend(self._restore_orphaned_servers())
         # `reason` is NOT overwritten here. `_step` already recorded why the
-        # switch failed, and that is the fact a reader needs: `switch: pep
+        # switch failed, and that is the fact a reader needs: `switch: chaperone
         # verify failed` and `switch: no quiet window in 3600s` are two very
         # different releases, and "verify failed" said the same for both.
 
@@ -1232,7 +1232,7 @@ class Release:
     def _restore_units(self, name: str) -> tuple[Path, ...]:
         """The unit and the siblings this release replaced, back BEFORE
         the restart. The previous tree must not restart under the unit this
-        release installed: `pep` 0.1.4's unit grants two capabilities for a
+        release installed: the PEP's 0.1.4 unit grants two capabilities for a
         launcher 0.1.3 does not carry. Answers the siblings put back."""
         unit = self.units.get(name)
         siblings = self.siblings.get(name, ())

@@ -74,7 +74,7 @@ from .server import McpServerFile
 #: takes a release (contract 06 §6).
 RELEASABLE: Final = frozenset(
     {
-        "pep",
+        "chaperone",
         "attendance",
         "caregiver",
         "noticeboard",
@@ -86,12 +86,12 @@ RELEASABLE: Final = frozenset(
 )
 
 #: Old names a family file may still list. `sandbox-image` became `playpen`,
-#: `ui` became `noticeboard`, `sessiond` became `attendance` and `managerd`
-#: became `caregiver`. The registry's family file says the old names until
-#: its own change lands after these deploy. Each rename adds its old name.
-#: The set shrinks in one cleanup after the registry's family file names
-#: the new components.
-RETIRING_NAMES: Final = frozenset({"sandbox-image", "ui", "sessiond", "managerd"})
+#: `ui` became `noticeboard`, `sessiond` became `attendance`, `managerd`
+#: became `caregiver` and `pep` became `chaperone`. The registry's family
+#: file says the old names until its own change lands after these deploy.
+#: Each rename adds its old name. The set shrinks in one cleanup after the
+#: registry's family file names the new components.
+RETIRING_NAMES: Final = frozenset({"sandbox-image", "ui", "sessiond", "managerd", "pep"})
 
 #: Probe 0a measured 155 to 170 MB per idle held-open pi process and 62 MB for
 #: the playpen (contract 01 §3.9). The warning uses the LOW end, so it fires

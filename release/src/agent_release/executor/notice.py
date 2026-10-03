@@ -4,8 +4,8 @@
 appears, and nothing else.
 
 1. The requester is woken with the entry.
-2. The phone gets one push, **not actionable**: `pep 2.1.0 restored: verify
-   failed` or `pep 2.1.0 succeeded (9 verify hooks ok)`.
+2. The phone gets one push, **not actionable**: `chaperone 2.1.0 restored: verify
+   failed` or `chaperone 2.1.0 succeeded (9 verify hooks ok)`.
 
 This module is the second one. It carries what was asked, what happened,
 and where the ledger entry is.
@@ -47,7 +47,7 @@ class Notice:
 
     #: The request id, which is also the ledger entry's file name.
     id: str
-    #: What was asked: `pep 2.0.3 → 2.1.0`, or the component alone when the
+    #: What was asked: `chaperone 2.0.3 → 2.1.0`, or the component alone when the
     #: run never got far enough to resolve a version.
     asked: str
     #: §2.6's `status`: succeeded, restored, failed or refused.
@@ -114,7 +114,7 @@ def notice_of(entry: Entry, component: str | None = None) -> Notice:
 
 
 def _asked(entry: Entry, component: str | None) -> str:
-    """`pep 2.0.3 → 2.1.0`, from the ledger's own `previous` map and the
+    """`chaperone 2.0.3 → 2.1.0`, from the ledger's own `previous` map and the
     resolved manifest. A run that refused before step 2 has neither, so it
     falls back to the component the caller named, then to the id."""
     moves = _moves(entry)

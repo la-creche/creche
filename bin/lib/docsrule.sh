@@ -19,7 +19,7 @@
 # Bash 3.2-clean: macOS runs the hook too.
 
 # docs_path PATH: whether PATH is prose, e.g. docs/rework/spec.md or
-# pep/AGENTS.md, and not a fixture's instructions.md.
+# chaperone/AGENTS.md, and not a fixture's instructions.md.
 docs_path() {
   case "/$1" in
     */tests/* | */fixtures/*)

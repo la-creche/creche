@@ -29,8 +29,8 @@ from .errors import AttendanceError, ExitCode
 from .families import StatusFiles
 from .fire import Firing, TriggerKind, fire_trigger
 from .payload import PayloadError, read_payload
+from .quiet.chaperone import HttpFamilyReads, family_token
 from .quiet.gate import QuietGate, gated_family
-from .quiet.pep import HttpFamilyReads, family_token
 from .quiet.records import HostRecords
 from .quiet.state import StateFiles
 from .routes import RouteTable
@@ -107,12 +107,12 @@ def _run_fire(args: argparse.Namespace) -> ExitCode:
         return ExitCode.USAGE
 
     attendance = HttpAttendance(config.attendance)
-    pep = httpx.Client(base_url=config.pep_url)
+    chaperone = httpx.Client(base_url=config.pep_url)
     try:
         # Only the cron's own firing is checked: a named trigger or a
         # payload is work, and `--force` is a person meaning it.
         checked = not (args.force or args.trigger or payload)
-        gate = _gate(config, args.family, attendance, pep) if checked else None
+        gate = _gate(config, args.family, attendance, chaperone) if checked else None
         return execute_fire(attendance, args.family, args.trigger, payload, gate)
     except (OSError, httpx.HTTPError) as exc:
         # A dead socket, a refused connection, a timeout: none of these
@@ -122,11 +122,11 @@ def _run_fire(args: argparse.Namespace) -> ExitCode:
         return ExitCode.USAGE
     finally:
         attendance.close()
-        pep.close()
+        chaperone.close()
 
 
 def _gate(
-    config: FireConfig, family: str, attendance: HttpAttendance, pep: httpx.Client
+    config: FireConfig, family: str, attendance: HttpAttendance, chaperone: httpx.Client
 ) -> QuietGate | None:
     """The family's quiet check, or None when its file asks for none."""
     gated = gated_family(config.registry_root, family)
@@ -137,7 +137,7 @@ def _gate(
     return QuietGate(
         found,
         quiet,
-        reads=HttpFamilyReads(pep, family_token(config.families_dir, family)),
+        reads=HttpFamilyReads(chaperone, family_token(config.families_dir, family)),
         records=HostRecords(config.state_root / OUTCOMES_DIR, config.state_root / AUDIT_DIR),
         store=StateFiles(config.state_root / QUIET_DIR),
         sessions=attendance,

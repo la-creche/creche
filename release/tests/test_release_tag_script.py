@@ -247,12 +247,12 @@ def test_a_first_run_tags_every_component_that_has_none(
 ) -> None:
     """Item 1: a repository with no component tag gets them all at once, so
     the operator has a `noticeboard-v…` to name without waiting for a merge under `noticeboard/`."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode == 0, done.stderr
-    assert "released pep-v0.1.0" in done.stdout
+    assert "released chaperone-v0.1.0" in done.stdout
     assert "released noticeboard-v0.1.0" in done.stdout
     assert _tags(repo) == FIRST_TAGS
 
@@ -260,7 +260,7 @@ def test_a_first_run_tags_every_component_that_has_none(
 @pytest.mark.slow
 def test_the_first_run_is_idempotent(repo: Path, shims: Path, tmp_path: Path) -> None:
     """A second dispatch on the same commit is the safe thing to do."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
     done = _run(repo, shims, tmp_path)
@@ -275,13 +275,13 @@ def test_after_the_bootstrap_only_the_changed_component_moves(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     """The rule extinguishes itself: one tag per component, once."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    _commit(repo, "pep/src/two.py")
+    _commit(repo, "chaperone/src/two.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
 
 
 @pytest.mark.slow
@@ -305,7 +305,7 @@ def test_an_unknown_argument_stops_the_run(repo: Path, shims: Path, tmp_path: Pa
     """A typo for `--dry-run` must not be a real run. The script creates
     tags and Releases, and a silently ignored argument is how a reader who
     meant to look ends up having allocated."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, "--dryrun")
 
@@ -321,21 +321,21 @@ def test_an_unknown_argument_stops_the_run(repo: Path, shims: Path, tmp_path: Pa
 def test_two_merges_in_a_row_both_get_a_tag(repo: Path, shims: Path, tmp_path: Path) -> None:
     """Pain 1, end to end: neither merge leaves the branch tip untagged."""
     _seed_first_tags(repo)
-    first = _commit(repo, "pep/src/one.py")
+    first = _commit(repo, "chaperone/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    second = _commit(repo, "pep/src/two.py")
+    second = _commit(repo, "chaperone/src/two.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "pep-v0.1.2"])
-    assert _git(repo, "rev-list", "-n1", "pep-v0.1.1") == first
-    assert _git(repo, "rev-list", "-n1", "pep-v0.1.2") == second
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "chaperone-v0.1.2"])
+    assert _git(repo, "rev-list", "-n1", "chaperone-v0.1.1") == first
+    assert _git(repo, "rev-list", "-n1", "chaperone-v0.1.2") == second
 
 
 @pytest.mark.slow
 def test_a_rerun_on_one_commit_creates_nothing(repo: Path, shims: Path, tmp_path: Path) -> None:
     _seed_first_tags(repo)
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
     done = _run(repo, shims, tmp_path)
@@ -343,7 +343,7 @@ def test_a_rerun_on_one_commit_creates_nothing(repo: Path, shims: Path, tmp_path
     assert done.returncode == 0
     assert "already on this commit" in done.stdout
     assert "allocate-tags: 0 created" in done.stdout
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
 
 
 @pytest.mark.slow
@@ -361,12 +361,12 @@ def test_a_docs_only_merge_produces_no_tag(repo: Path, shims: Path, tmp_path: Pa
 @pytest.mark.slow
 def test_a_bump_label_raises_the_level(repo: Path, shims: Path, tmp_path: Path) -> None:
     _seed_first_tags(repo)
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, labels="bump:minor", pr="yes")
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.2.0"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.2.0"])
 
 
 @pytest.mark.slow
@@ -374,16 +374,16 @@ def test_a_label_raises_only_the_component_its_merge_changed(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     """A merge queue lands two pull requests in one push, so one run reads
-    both. The labelled one changed `attendance/`, the other `pep/`: the label
+    both. The labelled one changed `attendance/`, the other `chaperone/`: the label
     is `attendance`'s alone, though both ranges hold that merge."""
     _seed_first_tags(repo)
     labelled = _commit(repo, "attendance/src/one.py")
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, bumps={labelled: "bump:minor"}, pr="yes")
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "attendance-v0.2.0"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "attendance-v0.2.0"])
 
 
 @pytest.mark.slow
@@ -392,20 +392,20 @@ def test_a_label_from_before_the_range_raises_nothing(
 ) -> None:
     """A labelled merge the component's newest tag already covers asked for
     that tag's level, not for the next one's."""
-    covered = _commit(repo, "pep/src/one.py")
+    covered = _commit(repo, "chaperone/src/one.py")
     _seed_first_tags(repo)
-    _commit(repo, "pep/src/two.py")
+    _commit(repo, "chaperone/src/two.py")
 
     done = _run(repo, shims, tmp_path, bumps={covered: "bump:major"}, pr="yes")
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
 
 
 @pytest.mark.slow
 def test_a_bump_label_never_raises_a_first_tag(repo: Path, shims: Path, tmp_path: Path) -> None:
     """A component that has never released has no number to bump."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, labels="bump:major", pr="yes")
 
@@ -418,12 +418,12 @@ def test_a_set_of_components_each_get_their_own_tag(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     _seed_first_tags(repo)
-    _commit(repo, "pep/src/one.py", "attendance/src/two.py")
+    _commit(repo, "chaperone/src/one.py", "attendance/src/two.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "attendance-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "attendance-v0.1.1"])
 
 
 @pytest.mark.slow
@@ -434,27 +434,27 @@ def test_a_tag_the_remote_already_holds_stops_the_run(
 
     The planner's target is always above every tag it was shown, so only a
     tag this checkout has not fetched can collide. Here the remote carries
-    `pep-v0.1.0` on another commit and this checkout does not.
+    `chaperone-v0.1.0` on another commit and this checkout does not.
     """
     origin = tmp_path / "origin.git"
     base = _git(repo, "rev-parse", "HEAD")
-    _git(origin, "tag", "pep-v0.1.0", base)
-    _commit(repo, "pep/src/one.py")
+    _git(origin, "tag", "chaperone-v0.1.0", base)
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode != 0
-    assert "conflict: pep-v0.1.0 exists on the remote" in done.stderr
+    assert "conflict: chaperone-v0.1.0 exists on the remote" in done.stderr
 
 
 @pytest.mark.slow
 def test_dry_run_writes_no_tag(repo: Path, shims: Path, tmp_path: Path) -> None:
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, "--dry-run")
 
     assert done.returncode == 0
-    assert "would create pep-v0.1.0" in done.stdout
+    assert "would create chaperone-v0.1.0" in done.stdout
     assert _tags(repo) == []
 
 
@@ -488,17 +488,17 @@ def test_each_component_reads_its_own_window(repo: Path, shims: Path, tmp_path: 
     """Two components, two different newest tags, two different ranges."""
     _seed_first_tags(repo)
     _commit(repo, "noticeboard/src/one.py")
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
-    assert _tags(repo) == sorted([*FIRST_TAGS, "pep-v0.1.1", "noticeboard-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "noticeboard-v0.1.1"])
 
     # `noticeboard`'s window now starts at noticeboard-v0.1.1, so the earlier noticeboard/ change is
-    # behind it and only the new one counts. `pep` saw nothing at all.
+    # behind it and only the new one counts. `chaperone` saw nothing at all.
     _commit(repo, "noticeboard/src/two.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
     assert _tags(repo) == sorted(
-        [*FIRST_TAGS, "pep-v0.1.1", "noticeboard-v0.1.1", "noticeboard-v0.1.2"]
+        [*FIRST_TAGS, "chaperone-v0.1.1", "noticeboard-v0.1.1", "noticeboard-v0.1.2"]
     )
 
 
@@ -512,17 +512,17 @@ def test_a_tag_that_is_not_an_ancestor_refuses_that_component(
     the others are tagged."""
     _seed_first_tags(repo)
     _git(repo, "checkout", "-q", "-b", "side")
-    side = _commit(repo, "pep/src/side.py")
-    _git(repo, "tag", "pep-v0.2.0", side)
+    side = _commit(repo, "chaperone/src/side.py")
+    _git(repo, "tag", "chaperone-v0.2.0", side)
     _git(repo, "checkout", "-q", "main")
-    _commit(repo, "pep/src/one.py", "noticeboard/src/one.py")
+    _commit(repo, "chaperone/src/one.py", "noticeboard/src/one.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode != 0
-    assert "pep-v0.2.0 is not an ancestor" in done.stderr
+    assert "chaperone-v0.2.0 is not an ancestor" in done.stderr
     assert "noticeboard-v0.1.1" in _tags(repo)
-    assert "pep-v0.2.1" not in _tags(repo)
+    assert "chaperone-v0.2.1" not in _tags(repo)
 
 
 @pytest.mark.slow
@@ -542,9 +542,9 @@ def test_the_dry_run_prints_the_range_per_component(
     assert "releasectl: 2 commit(s) since releasectl-v0.1.0" in done.stdout
     assert "would create noticeboard-v0.1.1" in done.stdout
     assert "would create releasectl" not in done.stdout
-    # `pep` has no `pep/` here, but its build installs `release/`, which the
+    # `chaperone` has no `chaperone/` here, but its build installs `release/`, which the
     # fixture holds (contract 06 §1 rule 9), so its range is read.
-    assert "pep: 2 commit(s) since pep-v0.1.0" in done.stdout
+    assert "chaperone: 2 commit(s) since chaperone-v0.1.0" in done.stdout
     # Neither `caregiver/` nor `family/` exists, so no range can be read for
     # `caregiver`. A skipped component is said out loud, never left out.
     assert "caregiver: no path in this tree" in done.stdout
@@ -592,7 +592,7 @@ def test_the_body_names_the_pull_requests_in_the_range(
 def test_a_first_tags_body_says_it_has_no_range(repo: Path, shims: Path, tmp_path: Path) -> None:
     """A component with no tag has no window to measure, and the body must
     not imply one."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, pr="yes")
 
@@ -668,7 +668,7 @@ def test_a_repository_the_catalog_does_not_know_stops_the_run(
 ) -> None:
     """Falling back to agent-control's components in somebody else's
     checkout is how a tag lands in the wrong repository. Refuse instead."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, repository="example-owner/some-other-repo")
 
@@ -684,7 +684,7 @@ def test_tag_repo_names_the_catalogs_repository_when_its_host_does_not(
     """A repository may be hosted under a name the catalog does not hold.
     Its workflow then says which catalog repository it is, and GitHub is
     still asked by the hosted name."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(
         repo,
@@ -697,7 +697,7 @@ def test_tag_repo_names_the_catalogs_repository_when_its_host_does_not(
 
     assert done.returncode == 0, done.stderr
     assert "repo:    agent-control" in done.stdout
-    assert "pep-v0.1.0" in _tags(repo)
+    assert "chaperone-v0.1.0" in _tags(repo)
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
     assert "--repo example-owner/some-product" in log
     assert "example-owner/agent-control" not in log
@@ -707,7 +707,7 @@ def test_tag_repo_names_the_catalogs_repository_when_its_host_does_not(
 def test_a_tag_repo_the_catalog_does_not_know_stops_the_run(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, tag_repo="some-other-repo")
 
@@ -730,7 +730,7 @@ def test_the_origin_remote_names_the_repository_when_ci_does_not(
     assert done.returncode == 0, done.stderr
     assert "repo:    agent-mcp" in done.stdout
     assert "would create mcp-servers-v0.1.0" in done.stdout
-    assert "pep" not in done.stdout
+    assert "chaperone" not in done.stdout
 
 
 # ---- the tree the run tags -------------------------------------------------
@@ -744,7 +744,7 @@ def test_the_script_tags_the_tree_it_is_pointed_at(
     branch: the script reads and tags the borrowing checkout, and leaves its
     own alone."""
     _commit(other_repo, "src/agent_mcp/one.py")
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(
         repo, shims, tmp_path, repository="example-owner/agent-mcp", tree=other_repo, pr="yes"
@@ -791,7 +791,7 @@ def test_a_tag_repo_root_that_is_not_a_directory_stops_the_run(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     """A mistyped path must not quietly tag the script's own checkout."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, tree=tmp_path / "nowhere")
 
@@ -812,7 +812,7 @@ def test_a_failed_pull_request_read_is_no_pull_request(
     requests therefore turned a 401 body into the labels and into the
     Release notes. Two tokens are now in play (agent-mcp's workflow adds a
     PAT), so a read that failed must read as no pull request at all."""
-    _commit(repo, "pep/src/one.py")
+    _commit(repo, "chaperone/src/one.py")
 
     done = _run(repo, shims, tmp_path, labels="bump:minor", pr="yes", gh_reads=False)
 
@@ -821,4 +821,4 @@ def test_a_failed_pull_request_read_is_no_pull_request(
     assert "Bad credentials" not in done.stdout
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
     assert "Bad credentials" not in log
-    assert "touch pep/src/one.py" in log
+    assert "touch chaperone/src/one.py" in log

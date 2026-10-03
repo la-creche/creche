@@ -48,11 +48,6 @@ from urllib.parse import urlencode, urlsplit
 
 import pytest
 import yaml
-from agent_pep.family_decisions import decide_family
-from agent_pep.family_grants import FamilyGrants, token_digest
-from agent_pep.mcp_client import Launcher, StdioUpstreamPool
-from agent_pep.reload_pool import ReloadablePool
-from agent_pep.reload_wiring import ReloadTrigger, RosterSource
 from agent_release.catalog import CATALOG_BY_NAME
 from agent_release.executor.approval import Decision, Summary, Verdict
 from agent_release.executor.drain import Counter, handle
@@ -76,6 +71,11 @@ from caregiver.mcp_release import MARKER_NAME, McpPaths
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
+from chaperone.family_decisions import decide_family
+from chaperone.family_grants import FamilyGrants, token_digest
+from chaperone.mcp_client import Launcher, StdioUpstreamPool
+from chaperone.reload_pool import ReloadablePool
+from chaperone.reload_wiring import ReloadTrigger, RosterSource
 from release_executor_fixtures import (
     SHA_OF,
     FakeRun,
@@ -108,9 +108,9 @@ CLIENT_TIMEOUT_S: Final = 10.0
 PASTED: Final = "pasted-by-the-operator-at-step-4"
 NOW: Final = 1_758_153_600.0
 
-STUB: Final = Path(__file__).resolve().parent.parent.parent / "pep/tests/stub_mcp_server.py"
+STUB: Final = Path(__file__).resolve().parent.parent.parent / "chaperone/tests/stub_mcp_server.py"
 
-#: The PEP starts every upstream through `agent-pep-as`, as its own
+#: The PEP starts every upstream through `chaperone-as`, as its own
 #: `mcp-<name>` user, which a test cannot become. This is that launcher
 #: with the switch faked, for every generation the pool builds.
 AS_TEST_USER: Final = partial(

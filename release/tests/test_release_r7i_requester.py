@@ -38,7 +38,7 @@ from release_executor_fixtures import make_spool_dirs
 NOW = 1758153590.0
 
 #: A uid this process is not. `Spool`'s first argument is the operator's, and these
-#: tests run as neither the operator nor pep.
+#: tests run as neither the operator nor chaperone.
 _ANOTHER_UID = os.getuid() + 1
 
 
@@ -78,7 +78,7 @@ def test_the_minted_id_is_one_the_executor_accepts() -> None:
         body = {
             "id": minted,
             "kind": "release",
-            "components": {"pep": "2.1.0"},
+            "components": {"chaperone": "2.1.0"},
             "rollback_of": None,
             "requested_by": "human",
             "requester_session": None,
@@ -104,7 +104,7 @@ def test_the_id_sorts_by_time() -> None:
 def test_a_component_name_the_executor_refuses_is_refused_here() -> None:
     """§3.2 rule 2's pattern, reached through the executor's own parser."""
     with pytest.raises(Refusal) as raised:
-        _plan({"pep; rm -rf /": "2.1.0"})
+        _plan({"chaperone; rm -rf /": "2.1.0"})
 
     assert raised.value.code is RefusalCode.REQUEST
     assert "components" in raised.value.detail
@@ -112,7 +112,7 @@ def test_a_component_name_the_executor_refuses_is_refused_here() -> None:
 
 def test_a_version_that_is_not_a_version_is_refused() -> None:
     with pytest.raises(Refusal) as raised:
-        _plan({"pep": "2.1"})
+        _plan({"chaperone": "2.1"})
 
     assert raised.value.code is RefusalCode.REQUEST
 
@@ -125,25 +125,25 @@ def test_more_components_than_the_cap_are_refused() -> None:
 
 def test_a_rollback_with_no_target_is_refused() -> None:
     with pytest.raises(Refusal) as raised:
-        _plan({"pep": "2.1.0"}, kind="rollback")
+        _plan({"chaperone": "2.1.0"}, kind="rollback")
 
     assert "rollback_of" in raised.value.detail
 
 
 def test_a_release_carrying_a_rollback_target_is_refused() -> None:
     with pytest.raises(Refusal):
-        _plan({"pep": "2.1.0"}, rollback_of="01K5J8M2Q7V3X9R4T6N0B8C2DE")
+        _plan({"chaperone": "2.1.0"}, rollback_of="01K5J8M2Q7V3X9R4T6N0B8C2DE")
 
 
 def test_a_requested_by_that_is_not_a_name_is_refused() -> None:
     with pytest.raises(Refusal):
-        _plan({"pep": "2.1.0"}, requested_by="Agent Control")
+        _plan({"chaperone": "2.1.0"}, requested_by="Agent Control")
 
 
 def test_a_session_id_with_a_newline_is_refused() -> None:
     """§3.2 rule 3: `fullmatch`, so a trailing newline is not a session id."""
     with pytest.raises(Refusal):
-        _plan({"pep": "2.1.0"}, requester_session="tui-01K5J7Z9R0P2M4C6H8K1N3V5W7\n")
+        _plan({"chaperone": "2.1.0"}, requester_session="tui-01K5J7Z9R0P2M4C6H8K1N3V5W7\n")
 
 
 def test_the_planned_request_is_under_the_executor_s_byte_cap() -> None:
@@ -179,7 +179,9 @@ def test_no_temporary_name_is_left_behind(tmp_path: Path) -> None:
     in `.json` re-fires the unit; a leftover dot-name is litter root never
     drains, because it does not match the glob."""
     directory = _requests(tmp_path)
-    file_request(plan_request({"pep": "2.1.0"}, requested_by="human", now=NOW), str(directory))
+    file_request(
+        plan_request({"chaperone": "2.1.0"}, requested_by="human", now=NOW), str(directory)
+    )
 
     assert [one.name for one in directory.iterdir() if one.name.startswith(".")] == []
 
@@ -188,7 +190,7 @@ def test_the_file_is_closed_to_group_and_other(tmp_path: Path) -> None:
     """Nothing but the writer and root reads a request."""
     directory = _requests(tmp_path)
     path = file_request(
-        plan_request({"pep": "2.1.0"}, requested_by="human", now=NOW), str(directory)
+        plan_request({"chaperone": "2.1.0"}, requested_by="human", now=NOW), str(directory)
     )
     mode = stat.S_IMODE(os.stat(path).st_mode)
 
@@ -205,7 +207,9 @@ def test_a_full_directory_is_refused_with_the_executor_s_rate_code(tmp_path: Pat
         (directory / f"{new_ulid(NOW + index)}.json").write_text("{}", encoding="utf-8")
 
     with pytest.raises(Refusal) as raised:
-        file_request(plan_request({"pep": "2.1.0"}, requested_by="human", now=NOW), str(directory))
+        file_request(
+            plan_request({"chaperone": "2.1.0"}, requested_by="human", now=NOW), str(directory)
+        )
 
     assert raised.value.code is RefusalCode.RATE
 
@@ -218,7 +222,7 @@ def test_a_requests_directory_that_is_a_symlink_is_refused(tmp_path: Path) -> No
     link.symlink_to(directory)
 
     with pytest.raises(RequesterError):
-        file_request(plan_request({"pep": "2.1.0"}, requested_by="human", now=NOW), str(link))
+        file_request(plan_request({"chaperone": "2.1.0"}, requested_by="human", now=NOW), str(link))
 
 
 def test_a_missing_spool_is_an_error_and_not_a_refusal(tmp_path: Path) -> None:
@@ -226,7 +230,7 @@ def test_a_missing_spool_is_an_error_and_not_a_refusal(tmp_path: Path) -> None:
     this host's fault, and a caller must be able to tell them apart."""
     with pytest.raises(RequesterError):
         file_request(
-            plan_request({"pep": "2.1.0"}, requested_by="human", now=NOW),
+            plan_request({"chaperone": "2.1.0"}, requested_by="human", now=NOW),
             str(tmp_path / "absent"),
         )
 
@@ -235,7 +239,7 @@ def test_a_planted_file_with_the_same_name_is_never_replaced(tmp_path: Path) -> 
     """`link`, not `rename`: replacing a name that already exists would let a
     second writer's request vanish with nothing to say so."""
     directory = _requests(tmp_path)
-    planned = plan_request({"pep": "2.1.0"}, requested_by="human", now=NOW)
+    planned = plan_request({"chaperone": "2.1.0"}, requested_by="human", now=NOW)
     (directory / f"{planned.id}.json").write_text("planted", encoding="utf-8")
 
     with pytest.raises(RequesterError):
@@ -250,13 +254,13 @@ def test_a_planted_file_with_the_same_name_is_never_replaced(tmp_path: Path) -> 
 def test_root_reads_a_file_from_either_requester(tmp_path: Path) -> None:
     """§3.1 names the operator and the `agent-control` family. The operator types
     `agent-releasectl request`; the family's path is the PEP's `release`
-    verb, and the PEP runs as `pep`, so the file it writes is pep-owned.
+    verb, and the PEP runs as `chaperone`, so the file it writes is chaperone-owned.
 
     A check of one uid would leave the verb's file unread and the second
     requester a path that cannot work.
     """
     root = make_spool_dirs(tmp_path)
-    planned = plan_request({"pep": "2.1.0"}, requested_by="agent-control", now=NOW)
+    planned = plan_request({"chaperone": "2.1.0"}, requested_by="agent-control", now=NOW)
     file_request(planned, str(root / REQUESTS_DIR))
 
     spool = Spool(str(root), _ANOTHER_UID, also_owned_by=frozenset({os.getuid()}))
@@ -270,7 +274,7 @@ def test_root_refuses_a_file_from_a_third_account(tmp_path: Path) -> None:
     """The set is root's own configuration, so a fourth account that can
     write into `requests/` still files nothing."""
     root = make_spool_dirs(tmp_path)
-    planned = plan_request({"pep": "2.1.0"}, requested_by="agent-control", now=NOW)
+    planned = plan_request({"chaperone": "2.1.0"}, requested_by="agent-control", now=NOW)
     file_request(planned, str(root / REQUESTS_DIR))
 
     spool = Spool(str(root), _ANOTHER_UID, also_owned_by=frozenset({_ANOTHER_UID + 1}))
@@ -285,7 +289,7 @@ def test_the_kind_survives_the_round_trip(tmp_path: Path) -> None:
     directory = _requests(tmp_path)
     target = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
     planned = plan_request(
-        {"pep": "2.1.0"}, requested_by="human", now=NOW, kind="rollback", rollback_of=target
+        {"chaperone": "2.1.0"}, requested_by="human", now=NOW, kind="rollback", rollback_of=target
     )
     path = file_request(planned, str(directory))
     back = parse_request(Path(path).read_bytes(), planned.id)

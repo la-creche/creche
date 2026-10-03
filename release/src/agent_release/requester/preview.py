@@ -123,7 +123,7 @@ def _review(
 
 
 def _moves(resolution: Resolution) -> list[str]:
-    """`pep 2.0.3 → 2.1.0`, one per deploying component, in deploy order."""
+    """`chaperone 2.0.3 → 2.1.0`, one per deploying component, in deploy order."""
     rows = {item.name: item for item in resolution.components}
 
     return [

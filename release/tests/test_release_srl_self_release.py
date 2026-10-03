@@ -170,7 +170,7 @@ def bench(tmp_path: Path) -> Bench:
 
 @pytest.fixture
 def pair(tmp_path: Path) -> Bench:
-    return _make_bench(tmp_path, {"pep": (PEP_LIVE, PEP_NEW), SELF: (LIVE, NEW)})
+    return _make_bench(tmp_path, {"chaperone": (PEP_LIVE, PEP_NEW), SELF: (LIVE, NEW)})
 
 
 def _run(bench: Bench, components: dict[str, str], counter: Counter | None = None) -> str:
@@ -324,24 +324,24 @@ def test_the_intake_restart_is_named_under_manual(bench: Bench) -> None:
 
 
 def test_a_set_switches_releasectl_after_everything_else(pair: Bench) -> None:
-    """Rule 1 and rule 2 together: `pep` swaps and verifies inside the
+    """Rule 1 and rule 2 together: `chaperone` swaps and verifies inside the
     release, `releasectl` after its entry."""
-    _run(pair, {"pep": PEP_NEW, SELF: NEW})
+    _run(pair, {"chaperone": PEP_NEW, SELF: NEW})
 
     release = pair.ledger()
-    assert cast("dict[str, object]", release["manifest"])["order"] == ["pep", SELF]
-    assert _verified(release) == ["pep"]
+    assert cast("dict[str, object]", release["manifest"])["order"] == ["chaperone", SELF]
+    assert _verified(release) == ["chaperone"]
     assert _verified(pair.self_entry()) == [SELF]
-    assert pair.live("pep") == PEP_NEW
+    assert pair.live("chaperone") == PEP_NEW
     assert pair.live() == NEW
 
 
 def test_a_failed_set_never_switches_releasectl(pair: Bench) -> None:
-    """`pep` fails its hook, the set restores, and `releasectl` never
+    """`chaperone` fails its hook, the set restores, and `releasectl` never
     moves: no note, no second entry, no staged tree left behind."""
-    pair.run.fails["pep-verify"] = 1
+    pair.run.fails["chaperone-verify"] = 1
 
-    _run(pair, {"pep": PEP_NEW, SELF: NEW})
+    _run(pair, {"chaperone": PEP_NEW, SELF: NEW})
 
     assert pair.ledger()["status"] != "succeeded"
     assert not pair.has_entry(SELF_ENTRY)

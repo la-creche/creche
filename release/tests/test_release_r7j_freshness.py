@@ -8,7 +8,7 @@ and each answers it in the way its own account can:
 | Who | Runs as | What it does |
 |---|---|---|
 | `agent-releasectl request` | the operator | fetches the component's repo, then files |
-| the PEP's `release` verb | `pep` | runs NO git, and says so in its answer |
+| the PEP's `release` verb | `chaperone` | runs NO git, and says so in its answer |
 | the executor | root | refuses, naming the one command that fixes it |
 
 The executor's half is in `test_release_r7j_source_trust.py`. This file is
@@ -76,15 +76,15 @@ def _fake_ssh(directory: Path) -> Path:
 
 
 def test_the_named_components_map_to_their_repositories() -> None:
-    assert repos_of(["pep", "attendance"]) == ("agent-control",)
+    assert repos_of(["chaperone", "attendance"]) == ("agent-control",)
     assert repos_of(["mcp-servers"]) == ("agent-mcp",)
-    assert repos_of(["pep", "mcp-servers"]) == ("agent-control", "agent-mcp")
+    assert repos_of(["chaperone", "mcp-servers"]) == ("agent-control", "agent-mcp")
 
 
 def test_a_name_the_catalog_does_not_hold_is_skipped_rather_than_guessed() -> None:
     """The request parser refuses it a moment later with root's own reason.
     Fetching for it would be this side inventing a repository name."""
-    assert repos_of(["../../etc", "pep"]) == ("agent-control",)
+    assert repos_of(["../../etc", "chaperone"]) == ("agent-control",)
 
 
 # ---- the fetch itself ------------------------------------------------------
@@ -123,7 +123,7 @@ def test_a_fetch_over_ssh_brings_a_new_tag(tmp_path: Path, monkeypatch: pytest.M
     """The corpus clones fetch from `git@github.com:…`, so this fetch IS an
     ssh transport. Under the executor's `core.sshCommand=false` git would
     run `false` as its ssh, every fetch would exit 128, and
-    `request pep --wait` would poll a corpus that never moves while the
+    `request chaperone --wait` would poll a corpus that never moves while the
     tag sits on GitHub.
 
     The `ssh` here runs the remote's `git-upload-pack` locally, so this is
@@ -139,7 +139,7 @@ def test_a_fetch_over_ssh_brings_a_new_tag(tmp_path: Path, monkeypatch: pytest.M
         capture_output=True,
         check=True,
     )
-    subprocess.run([GIT, "tag", "pep-v0.1.6"], cwd=upstream, capture_output=True, check=True)
+    subprocess.run([GIT, "tag", "chaperone-v0.1.6"], cwd=upstream, capture_output=True, check=True)
     monkeypatch.setattr(corpus_module, "SSH", str(_fake_ssh(tmp_path / "bin")), raising=False)
 
     report = refresh(("agent-control",), corpus)
@@ -148,7 +148,7 @@ def test_a_fetch_over_ssh_brings_a_new_tag(tmp_path: Path, monkeypatch: pytest.M
     tags = subprocess.run(
         [GIT, "tag", "--list"], cwd=clone, capture_output=True, text=True, check=True
     ).stdout.split()
-    assert "pep-v0.1.6" in tags
+    assert "chaperone-v0.1.6" in tags
 
 
 def test_a_repository_the_corpus_does_not_hold_is_reported_not_raised(tmp_path: Path) -> None:
@@ -228,7 +228,15 @@ def test_request_fetches_before_it_files_and_says_so(
     spool.mkdir()
 
     code = cli.main(
-        ["request", "pep@0.2.0", "--root", str(_REPO_ROOT), "--partial", "--spool", str(spool)]
+        [
+            "request",
+            "chaperone@0.2.0",
+            "--root",
+            str(_REPO_ROOT),
+            "--partial",
+            "--spool",
+            str(spool),
+        ]
     )
 
     assert code == 0
@@ -250,7 +258,7 @@ def test_the_json_answer_is_one_object_with_the_corpus_lines_in_it(
     code = cli.main(
         [
             "request",
-            "pep@0.2.0",
+            "chaperone@0.2.0",
             "--root",
             str(_REPO_ROOT),
             "--partial",
@@ -272,7 +280,9 @@ def test_a_dry_run_fetches_nothing(
     calls: list[object] = []
     monkeypatch.setattr(cli, "refresh", lambda *a, **k: calls.append(a) or CorpusReport(True, []))
 
-    code = cli.main(["request", "pep@0.2.0", "--root", str(_REPO_ROOT), "--partial", "--dry-run"])
+    code = cli.main(
+        ["request", "chaperone@0.2.0", "--root", str(_REPO_ROOT), "--partial", "--dry-run"]
+    )
 
     assert code == 0
     assert calls == []
@@ -289,7 +299,15 @@ def test_a_corpus_that_would_not_fetch_still_files_and_warns(
     spool.mkdir()
 
     code = cli.main(
-        ["request", "pep@0.2.0", "--root", str(_REPO_ROOT), "--partial", "--spool", str(spool)]
+        [
+            "request",
+            "chaperone@0.2.0",
+            "--root",
+            str(_REPO_ROOT),
+            "--partial",
+            "--spool",
+            str(spool),
+        ]
     )
 
     assert code == 0
@@ -301,9 +319,9 @@ def test_a_corpus_that_would_not_fetch_still_files_and_warns(
 
 
 def _state_file(tmp_path: Path) -> str:
-    """`pep` resolves at `latest` with no real corpus: this is a read-order
+    """`chaperone` resolves at `latest` with no real corpus: this is a read-order
     test, not a tag-resolution one."""
-    body = {"live": {}, "provided": {}, "latest": {"pep": "0.2.0"}, "facts": {}}
+    body = {"live": {}, "provided": {}, "latest": {"chaperone": "0.2.0"}, "facts": {}}
     path = tmp_path / "live-state.json"
     path.write_text(json.dumps(body), encoding="utf-8")
 
@@ -355,7 +373,7 @@ def test_the_roots_are_read_after_the_fetch_not_before(
     code = cli.main(
         [
             "request",
-            "pep",
+            "chaperone",
             "--root",
             str(control),
             "--root",
@@ -390,7 +408,7 @@ def test_a_root_still_missing_after_the_fetch_names_the_sync_command(
     code = cli.main(
         [
             "request",
-            "pep",
+            "chaperone",
             "--root",
             str(control),
             "--root",
@@ -421,7 +439,7 @@ def test_dry_run_never_gets_the_sync_hint(
     code = cli.main(
         [
             "request",
-            "pep",
+            "chaperone",
             "--root",
             str(control),
             "--root",
@@ -444,10 +462,10 @@ def test_dry_run_never_gets_the_sync_hint(
 
 
 def test_the_release_verbs_answer_says_the_corpus_is_not_its_to_refresh() -> None:
-    """The verb runs as `pep`, which holds no git credential and owns no
+    """The verb runs as `chaperone`, which holds no git credential and owns no
     corpus. It files, and the answer names what the operator runs if the executor
     then refuses."""
-    from agent_pep.release_door import CORPUS_NOTE
+    from chaperone.release_door import CORPUS_NOTE
 
     assert CORPUS_NOTE
     assert "sync-code-corpus" in CORPUS_NOTE
@@ -456,9 +474,9 @@ def test_the_release_verbs_answer_says_the_corpus_is_not_its_to_refresh() -> Non
 def test_the_pep_never_imports_the_corpus_refresher() -> None:
     """`agent_release.corpus` starts children. The PEP's process is where
     `release/AGENTS.md` keeps them out of, and `requester/` is the whole of
-    what `pep/` may reach in this package."""
-    pep = Path(__file__).resolve().parents[2] / "pep" / "src" / "agent_pep"
-    for module in pep.rglob("*.py"):
+    what `chaperone/` may reach in this package."""
+    chaperone = Path(__file__).resolve().parents[2] / "chaperone" / "src" / "chaperone"
+    for module in chaperone.rglob("*.py"):
         text = module.read_text(encoding="utf-8")
         assert "agent_release.corpus" not in text, module.name
 

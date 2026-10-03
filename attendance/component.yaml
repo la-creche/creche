@@ -37,7 +37,7 @@ requires:
   - { contract: pep-grant, major: 0, min_minor: 11 }
   # Contract 05: it reads caregiver's status document and writes a fault file.
   - { contract: manager-status, major: 0, min_minor: 16 }
-depends_on: [pep, playpen]
+depends_on: [chaperone, playpen]
 verify:
   # --env-file: the same file
   # systemd/creche-attendance.service's own EnvironmentFile= names, read by

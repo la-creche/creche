@@ -40,7 +40,7 @@ from stage2 import IMAGE, write_registry
 
 from caregiver import paths as caregiver_paths
 
-#: `tests_manager/pep_harness.py` builds the real PEP through its real entry
+#: `tests_manager/chaperone_harness.py` builds the real PEP through its real entry
 #: point, as `stage3.py` does. One copy of `main()`'s plumbing, not two.
 sys.path.insert(0, str(repo_root() / "integration" / "tests_manager"))
 
@@ -86,10 +86,10 @@ class Host:
         )
 
     def build_pep(self) -> Any:
-        from pep_harness import build_pep
+        from chaperone_harness import build_pep
 
         self._monkeypatch.setenv("PEP_FAULT_SWEEP_INTERVAL_S", SWEEP_INTERVAL_S)
-        return build_pep(self._monkeypatch, self._tree / "pep", self.state_root)
+        return build_pep(self._monkeypatch, self._tree / "chaperone", self.state_root)
 
     @property
     def token(self) -> str:
@@ -122,17 +122,17 @@ def host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Host:
     return built
 
 
-def manifest(pep: TestClient, token: str) -> int:
-    return pep.get("/manifest", headers={"Authorization": f"Bearer {token}"}).status_code
+def manifest(chaperone: TestClient, token: str) -> int:
+    return chaperone.get("/manifest", headers={"Authorization": f"Bearer {token}"}).status_code
 
 
-def raise_the_fault(host: Host, pep: TestClient) -> None:
+def raise_the_fault(host: Host, chaperone: TestClient) -> None:
     """The gate's own sequence: serve the family, take its grant file away,
     then call again. The second call is what raises `grants_stale`, because
     `FamilyStore` keeps an entry for a family it has served before."""
-    assert manifest(pep, host.token) == HTTP_OK
+    assert manifest(chaperone, host.token) == HTTP_OK
     host.grant_path.unlink()
-    assert manifest(pep, host.token) == HTTP_FORBIDDEN
+    assert manifest(chaperone, host.token) == HTTP_FORBIDDEN
 
     codes = [one["code"] for one in host.pep_faults()]
     assert codes == ["grants_stale"], f"the PEP raised {codes}"
@@ -143,8 +143,8 @@ def raise_the_fault(host: Host, pep: TestClient) -> None:
 def test_an_apply_after_the_probe_publishes_in_sync(host: Host) -> None:
     """Gate 1b, end to end. `caregiver` writes the grant file the fault is no
     longer about, so the document says `in_sync` and no turn is refused."""
-    with TestClient(host.build_pep()) as pep:
-        raise_the_fault(host, pep)
+    with TestClient(host.build_pep()) as chaperone:
+        raise_the_fault(host, chaperone)
 
     result = host.apply()
 
@@ -156,8 +156,8 @@ def test_an_apply_after_the_probe_publishes_in_sync(host: Host) -> None:
 def test_an_idle_familys_fault_clears_with_no_call(host: Host) -> None:
     """The other half. Nothing calls the PEP after the grant file returns, so
     only the sweep of contract 04 §1.6 rule 7 can clear this."""
-    with TestClient(host.build_pep()) as pep:
-        raise_the_fault(host, pep)
+    with TestClient(host.build_pep()) as chaperone:
+        raise_the_fault(host, chaperone)
 
         # `caregiver` puts the grant file back. From here nothing touches the
         # client: a call would clear the fault the old way and prove nothing.

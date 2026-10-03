@@ -178,8 +178,8 @@ def test_a_reachable_canary_destroys_the_sandbox(tmp_path: Path) -> None:
 
 def test_the_endpoints_are_configurable(tmp_path: Path) -> None:
     """Defaults as the contract names them, overridable for a test host."""
-    config = EgressConfig(litellm="litellm.test:4000", pep="pep.test:8300")
-    assert config.allowed(()) == ("litellm.test:4000", "pep.test:8300")
+    config = EgressConfig(litellm="litellm.test:4000", chaperone="chaperone.test:8300")
+    assert config.allowed(()) == ("litellm.test:4000", "chaperone.test:8300")
 
 
 def test_the_default_endpoints_match_the_contract() -> None:

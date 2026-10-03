@@ -1,8 +1,8 @@
 """A release that cannot change what runs is refused.
 
-A unit that execs `/opt/agent-control/.venv/bin/agent-pep` while
-`pep/component.yaml` installs to `/opt/components/pep` and names that unit
-lets a `pep` release build a tree, swap it, restart the unit, pass its
+A unit that execs `/opt/agent-control/.venv/bin/chaperone` while
+`chaperone/component.yaml` installs to `/opt/components/chaperone` and names that unit
+lets a `chaperone` release build a tree, swap it, restart the unit, pass its
 verify and write `done` — while the PEP still runs the code of `/opt`. What
 the tap binds to must be what runs (invariant 17, `stage7-releases.md`
 §2.5). The repository's own files are proved at the end of this module, and
@@ -67,7 +67,7 @@ NEW_VERSION = "2.1.0"
 #: without one.
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
-PEP_UNIT = "agent-pep.service"
+CHAPERONE_UNIT = "creche-chaperone.service"
 NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: The refusal code, as the ledger records it.
@@ -180,8 +180,8 @@ def _make_bench(tmp_path: Path, component: str, unit: str | None) -> Bench:
 
 @pytest.fixture
 def bench(tmp_path: Path) -> Bench:
-    """`pep` live at 2.0.3, 2.1.0 the latest tag, one system unit."""
-    return _make_bench(tmp_path, "pep", PEP_UNIT)
+    """`chaperone` live at 2.0.3, 2.1.0 the latest tag, one system unit."""
+    return _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT)
 
 
 def _release(bench: Bench) -> str:
@@ -198,8 +198,8 @@ def _release(bench: Bench) -> str:
 
 def test_a_unit_that_starts_a_program_outside_the_tree_is_refused(bench: Bench) -> None:
     """The unit execs `/opt/agent-control/.venv`, and the release installs
-    `/opt/components/pep`."""
-    _install_unit(bench, _unit_text("/opt/agent-control/.venv/bin/agent-pep"))
+    `/opt/components/chaperone`."""
+    _install_unit(bench, _unit_text("/opt/agent-control/.venv/bin/chaperone"))
     _serve(bench)
 
     result = _release(bench)
@@ -207,27 +207,27 @@ def test_a_unit_that_starts_a_program_outside_the_tree_is_refused(bench: Bench) 
     assert "refused" in result
     entry = bench.ledger()
     assert entry["refused_check"] == UNIT_CODE
-    assert PEP_UNIT in bench.reason()
-    assert "/opt/agent-control/.venv/bin/agent-pep" in bench.reason()
+    assert CHAPERONE_UNIT in bench.reason()
+    assert "/opt/agent-control/.venv/bin/chaperone" in bench.reason()
 
 
 def test_the_refusal_swaps_nothing_and_restarts_nothing(bench: Bench) -> None:
     """Step 8 refuses, so the old tree is still in service and the unit was
     never touched."""
-    _install_unit(bench, _unit_text("/opt/agent-control/.venv/bin/agent-pep"))
+    _install_unit(bench, _unit_text("/opt/agent-control/.venv/bin/chaperone"))
     _serve(bench)
 
     _release(bench)
 
     assert installed_version(bench.tree()) == LIVE_VERSION
-    assert not (bench.components / "pep.new").exists()
-    assert not (bench.components / "pep.prev").exists()
+    assert not (bench.components / "chaperone.new").exists()
+    assert not (bench.components / "chaperone.prev").exists()
     assert not bench.run.ran("restart")
 
 
 def test_a_unit_that_starts_the_tree_releases(bench: Bench) -> None:
     """The other direction, and the one that must not become collateral."""
-    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/agent-pep"))
+    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/chaperone"))
     _serve(bench)
 
     result = _release(bench)
@@ -298,7 +298,7 @@ def test_a_user_unit_reaches_its_tree_through_the_home_specifier(tmp_path: Path)
 def test_the_home_specifier_in_a_system_unit_is_not_the_operators_home(bench: Bench) -> None:
     """In a system unit `%h` is root's home. It is left as written, which
     is a path outside every tree, so the unit is refused."""
-    _install_unit(bench, _unit_text("%h/components/pep/bin/agent-pep"))
+    _install_unit(bench, _unit_text("%h/components/chaperone/bin/chaperone"))
     _serve(bench)
 
     assert "refused" in _release(bench)
@@ -308,7 +308,7 @@ def test_the_home_specifier_in_a_system_unit_is_not_the_operators_home(bench: Be
 def test_a_component_with_no_unit_is_not_checked(tmp_path: Path) -> None:
     """`releasectl` and `playpen` carry `unit: null`. Nothing is
     restarted, so there is no unit to disagree with the tree."""
-    bench = _make_bench(tmp_path, "pep", None)
+    bench = _make_bench(tmp_path, "chaperone", None)
     _serve(bench)
 
     assert "succeeded" in _release(bench), bench.reason()
@@ -325,14 +325,14 @@ def test_a_unit_nothing_installed_is_left_to_the_manual_list(bench: Bench) -> No
     assert "succeeded" in result, bench.reason()
     manual = bench.ledger()["manual"]
     assert isinstance(manual, list)
-    assert any(PEP_UNIT in str(one) for one in manual), manual  # pyright: ignore[reportUnknownVariableType]
+    assert any(CHAPERONE_UNIT in str(one) for one in manual), manual  # pyright: ignore[reportUnknownVariableType]
 
 
 def test_the_unit_the_release_installs_is_the_one_that_is_read(bench: Bench) -> None:
     """Step 9 refreshes the unit file in place from the fetched tree, so the
     release that CORRECTS the unit is exactly the release that must pass."""
-    _install_unit(bench, _unit_text("/opt/agent-control/.venv/bin/agent-pep"))
-    _serve(bench, staged_unit=_unit_text(f"{bench.tree()}/bin/agent-pep"))
+    _install_unit(bench, _unit_text("/opt/agent-control/.venv/bin/chaperone"))
+    _serve(bench, staged_unit=_unit_text(f"{bench.tree()}/bin/chaperone"))
 
     assert "succeeded" in _release(bench), bench.reason()
 
@@ -340,8 +340,8 @@ def test_the_unit_the_release_installs_is_the_one_that_is_read(bench: Bench) -> 
 def test_a_staged_unit_that_still_points_away_is_refused(bench: Bench) -> None:
     """The same door, shut. A tree that carries a unit file is not thereby
     trusted: the file is read and held to the same rule."""
-    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/agent-pep"))
-    _serve(bench, staged_unit=_unit_text("/opt/agent-control/.venv/bin/agent-pep"))
+    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/chaperone"))
+    _serve(bench, staged_unit=_unit_text("/opt/agent-control/.venv/bin/chaperone"))
 
     result = _release(bench)
 
@@ -354,10 +354,10 @@ def test_a_symlinked_installed_unit_keeps_its_own_text(bench: Bench) -> None:
     replace a linked unit and the linked file is what stays in force."""
     installed = _install_unit(bench, "")
     installed.unlink()
-    real = bench.tmp_path / "linked-agent-pep.service"
-    real.write_text(_unit_text("/opt/agent-control/.venv/bin/agent-pep"), encoding="utf-8")
+    real = bench.tmp_path / "linked-creche-chaperone.service"
+    real.write_text(_unit_text("/opt/agent-control/.venv/bin/chaperone"), encoding="utf-8")
     installed.symlink_to(real)
-    _serve(bench, staged_unit=_unit_text(f"{bench.tree()}/bin/agent-pep"))
+    _serve(bench, staged_unit=_unit_text(f"{bench.tree()}/bin/chaperone"))
 
     result = _release(bench)
 
@@ -427,8 +427,8 @@ def test_exec_start_pre_is_not_exec_start() -> None:
 # -- this repository's own units ----------------------------------------------
 
 #: Every component whose SHIPPED unit does not start a program inside its
-#: own `install.to`: none, since `agent-pep.service` execs
-#: `/opt/components/pep/bin/agent-pep` and `bin/rework-release-visit.sh`
+#: own `install.to`: none, since `creche-chaperone.service` execs
+#: `/opt/components/chaperone/bin/chaperone` and `bin/rework-release-visit.sh`
 #: bootstraps that first tree the way it bootstraps `releasectl`'s.
 #:
 #: Keep it EMPTY. A new row here is a component whose release would write
@@ -470,23 +470,24 @@ def test_the_repositorys_own_units_start_the_trees_their_manifests_install() -> 
 
 
 def test_the_real_pep_unit_and_the_real_manifest_pass_rule_eight(tmp_path: Path) -> None:
-    """`pep`, through the executor's OWN check rather than a re-reading.
+    """`chaperone`, through the executor's OWN check rather than a re-reading.
 
     The test above compares two strings. This one runs `check_unit_binds`
-    with this repository's `systemd/agent-pep.service` and
-    `pep/component.yaml` exactly as they ship, in both readings step 9 can
+    with this repository's `systemd/creche-chaperone.service` and
+    `chaperone/component.yaml` exactly as they ship, in both readings step 9 can
     take: the file already installed under `/etc/systemd/system`, and the
-    file the release would refresh in its place. `pep` is the component
+    file the release would refresh in its place. `chaperone` is the component
     this rule is written for, and the one worth driving end to end.
     """
     manifest = parse_manifest(
-        (REPO_ROOT / "pep" / "component.yaml").read_text(encoding="utf-8"), "pep/component.yaml"
+        (REPO_ROOT / "chaperone" / "component.yaml").read_text(encoding="utf-8"),
+        "chaperone/component.yaml",
     )
-    assert manifest.install.to == "/opt/components/pep"
+    assert manifest.install.to == "/opt/components/chaperone"
 
     installer = Installer(fake_host(tmp_path, FakeRun(answers=git_host_answers())))
-    shipped = (REPO_ROOT / "systemd" / PEP_UNIT).read_text(encoding="utf-8")
-    (tmp_path / "system-units" / PEP_UNIT).write_text(shipped, encoding="utf-8")
+    shipped = (REPO_ROOT / "systemd" / CHAPERONE_UNIT).read_text(encoding="utf-8")
+    (tmp_path / "system-units" / CHAPERONE_UNIT).write_text(shipped, encoding="utf-8")
 
     # No `systemd/` under the source, so the INSTALLED file is what is read.
     installer.check_unit_binds(manifest, tmp_path / "no-systemd-directory")

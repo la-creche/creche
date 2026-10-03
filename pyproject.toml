@@ -6,7 +6,7 @@ name = "agent-control-workspace"
 version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-pep",
+    "chaperone",
     "library",
     "agent-family",
     "caregiver",
@@ -22,10 +22,10 @@ dependencies = [
 package = false
 
 [tool.uv.workspace]
-members = ["pep", "library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "noticeboard", "release"]
+members = ["chaperone", "library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "noticeboard", "release"]
 
 [tool.uv.sources]
-agent-pep = { workspace = true }
+chaperone = { workspace = true }
 library = { workspace = true }
 agent-family = { workspace = true }
 caregiver = { workspace = true }
@@ -53,7 +53,7 @@ dev = [
 # pytest collects only test_*.py there and ignores the .sh siblings.
 testpaths = [
     "bin/tests",
-    "pep/tests",
+    "chaperone/tests",
     "library/tests",
     "family/tests",
     "caregiver/tests",
@@ -95,7 +95,7 @@ known-third-party = ["conftest"]
 [tool.coverage.run]
 branch = true
 source = [
-    "agent_pep",
+    "chaperone",
     "library",
     "agent_family",
     "caregiver",

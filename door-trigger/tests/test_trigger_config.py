@@ -132,9 +132,11 @@ def test_fire_builds_the_pep_url_from_the_lan_address(tmp_path: Path) -> None:
 
 
 def test_an_explicit_pep_url_still_wins(tmp_path: Path) -> None:
-    config = fire_config_from_env(_without_site(tmp_path, **{ENV_PEP_URL: "http://pep.test:1/"}))
+    config = fire_config_from_env(
+        _without_site(tmp_path, **{ENV_PEP_URL: "http://chaperone.test:1/"})
+    )
 
-    assert config.pep_url == "http://pep.test:1"
+    assert config.pep_url == "http://chaperone.test:1"
 
 
 def test_fire_with_no_lan_address_names_the_variable(tmp_path: Path) -> None:

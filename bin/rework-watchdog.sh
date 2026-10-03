@@ -17,7 +17,7 @@
 # one. This is the outside half.
 #
 # FIVE CHECKS, each with its own timeout, none needing a credential:
-#   1. pep       GET :8300/healthz on the host's LAN address must answer 200.  5 s
+#   1. chaperone GET :8300/healthz on the host's LAN address must answer 200.  5 s
 #                Loopback answers nothing on that host: every service
 #                binds the LAN address (README).
 #   2. caregiver the newest `written_at` under
@@ -262,7 +262,7 @@ note_down() {  # note_down <key> <line>
 
 # --- 1. the PEP ---------------------------------------------------------------
 
-check_pep() {
+check_chaperone() {
   local code
   code="$(curl -s -o /dev/null -w '%{http_code}' -m "$CHECK_TIMEOUT_S" \
     "$PEP_URL$HEALTH_PATH" 2>/dev/null)"
@@ -272,7 +272,7 @@ check_pep() {
     return 0
   fi
 
-  note_down pep "the PEP did not answer $HTTP_OK at $PEP_URL$HEALTH_PATH (got ${code:-nothing})"
+  note_down chaperone "the PEP did not answer $HTTP_OK at $PEP_URL$HEALTH_PATH (got ${code:-nothing})"
 }
 
 # --- 2. caregiver is publishing -----------------------------------------------
@@ -437,7 +437,7 @@ check_registry_sync() {
 
 # --- the verdict, and the one push ------------------------------------------
 
-check_pep
+check_chaperone
 check_caregiver
 check_attendance
 check_units

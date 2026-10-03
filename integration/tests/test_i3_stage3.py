@@ -29,9 +29,9 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
-from agent_pep.delegate import DoorTokenError, read_door_token
-from agent_pep.family_ids import ULID_RE
 from attendance.auth import Principal, TokenBook, TokenError
+from chaperone.delegate import DoorTokenError, read_door_token
+from chaperone.family_ids import ULID_RE
 from conftest import chat_id, session_of
 from stack import Stack, until
 from stage3 import (
@@ -537,7 +537,7 @@ async def test_three_calls_finish_when_they_are_paced(delegating: Stage3) -> Non
 
 
 def test_the_delegate_token_is_deployed_group_readable(stage: Stage3) -> None:
-    """Contract 02 §3 rule 5's one exception. The PEP runs as user `pep` and
+    """Contract 02 §3 rule 5's one exception. The PEP runs as user `chaperone` and
     `attendance` owns the file, so group read is what opens the door at all."""
     path = stage.open_delegate_door()
 

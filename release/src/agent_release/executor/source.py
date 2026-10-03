@@ -171,7 +171,7 @@ def require_trusted(component: str, repo: Path, owner_uid: int, owner_gid: int) 
 
     The rule, decided from what the host really has. `/srv/agents/code/<repo>`
     is the operator's, group and owner, mode 0775 today, and no account but the
-    operator's is in that group — the fleet's sandbox users are `pep`, `mcp-<name>` and the
+    operator's is in that group — the fleet's sandbox users are `chaperone`, `mcp-<name>` and the
     per-family sandbox uids, none of which the registry or `bootstrap-root.sh`
     puts in it. So:
 

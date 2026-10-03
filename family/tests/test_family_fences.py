@@ -200,7 +200,7 @@ def test_verb_fences(verbs: dict[str, object], expect: str) -> None:
 
 
 RELEASE_CASES: tuple[tuple[dict[str, Any], str], ...] = (
-    ({"release": {"components": ["pep"]}}, "outside the platform fence"),
+    ({"release": {"components": ["chaperone"]}}, "outside the platform fence"),
     ({"release": {"components": []}}, "needs at least one component name"),
     ({"release": {"components": ["not-a-component"]}}, "not a releasable component"),
 )
@@ -215,7 +215,7 @@ def test_release_fences_on_chat(verbs: dict[str, object], expect: str) -> None:
 
 
 def test_release_is_allowed_for_the_platform_family() -> None:
-    report = check("agent-control", verbs={"release": {"components": ["pep", "caregiver"]}})
+    report = check("agent-control", verbs={"release": {"components": ["chaperone", "caregiver"]}})
     assert not errors(report)
 
 

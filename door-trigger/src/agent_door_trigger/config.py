@@ -110,7 +110,7 @@ class FireConfig:
         """A one-line summary for `--check`. Carries no secret."""
         target = self.attendance.socket or self.attendance.url
         return (
-            f"attendance={target} pep={self.pep_url} registry={self.registry_root} "
+            f"attendance={target} chaperone={self.pep_url} registry={self.registry_root} "
             f"families={self.families_dir} state={self.state_root}"
         )
 

@@ -72,7 +72,6 @@ from agent_door_trigger.families import StatusFiles
 from agent_door_trigger.fire import FireOutcome, Firing, TriggerKind, fire_trigger
 from agent_door_trigger.routes import RouteTable
 from agent_door_trigger.webhooks import create_app as create_webhook_app
-from agent_pep.gatekeeper import Gatekeeper, HttpApprovalNotifier
 from attendance.auth import Principal
 from attendance.config import Bind, Config
 from attendance.ids import new_ulid
@@ -80,6 +79,7 @@ from attendance.service import SessionService
 from caregiver.apply import ApplyResult, apply_once
 from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
+from chaperone.gatekeeper import Gatekeeper, HttpApprovalNotifier
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from stack import FAMILY, LOCK_POLL_S, LOCK_STALE_S, Stack, repo_root
@@ -93,7 +93,7 @@ from stage3 import (
 
 from caregiver import paths as caregiver_paths
 
-#: `tests_manager/pep_harness.py` builds the real PEP through its real entry
+#: `tests_manager/chaperone_harness.py` builds the real PEP through its real entry
 #: point. `stage3` puts that directory on the path when it is imported; this
 #: repeats it so a reader of this module sees where `build_pep` comes from,
 #: and so an import order change cannot quietly break it.
@@ -780,7 +780,7 @@ def serving_stage5(
     wants one it cannot lose a race against, because `attendance` reads the
     gate off the audit file on a one-second loop.
     """
-    from pep_harness import build_pep, free_port, serving
+    from chaperone_harness import build_pep, free_port, serving
 
     socket = stage.stack.attendance_socket
     if socket is None:

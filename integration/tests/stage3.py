@@ -103,7 +103,7 @@ _PI_LOG_FIELDS: Final = 3
 #: `supervisor.env` through `--env-file`, as on the host (`AGENTS.md` 15).
 _IMAGE_SEAMS: Final = ("AGENT_PI_BIN", "AGENT_LOCK_BEAT_MS", "AGENT_CODE_SANDBOX_ROOT")
 
-#: `tests_manager/pep_harness.py` builds the real PEP through its real entry
+#: `tests_manager/chaperone_harness.py` builds the real PEP through its real entry
 #: point. Importing it by path beats a second copy of `main()`'s plumbing
 #: here. `tests_manager/conftest.py` reaches `attendance/tests` the same way.
 sys.path.insert(0, str(repo_root() / "integration" / "tests_manager"))
@@ -413,7 +413,7 @@ class Stage3:
     def open_delegate_door(self) -> Path:
         """Put `door-delegate.token` at the mode the host deploys it with.
 
-        Contract 02 §3 rule 5's exception: the PEP runs as user `pep` and
+        Contract 02 §3 rule 5's exception: the PEP runs as user `chaperone` and
         `attendance` owns the file, so group read is what makes the door
         reachable at all. 0600 would be readable here — one user owns
         everything in a test — which is why the scenario for it asserts on
@@ -430,13 +430,13 @@ def build_pep_app(
 ) -> FastAPI:
     """The real PEP, with contract 04 §7's two settings filled in.
 
-    `pep_harness.build_pep` runs `agent_pep.__main__.main()` and stops it one
+    `chaperone_harness.build_pep` runs `chaperone.__main__.main()` and stops it one
     statement before it serves, so the config comes from the environment
     exactly as it does in the unit file.
     """
     # Imported here, not at the top: the name resolves only after the
     # `sys.path.insert` above, and an import block runs before any statement.
-    from pep_harness import build_pep
+    from chaperone_harness import build_pep
 
     monkeypatch.setenv("PEP_SESSIOND_SOCKET", str(socket_path))
     monkeypatch.setenv("PEP_DELEGATE_TOKEN_FILE", str(stage.open_delegate_door()))
@@ -453,7 +453,7 @@ def serving_pep(stage: Stage3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     own event loop, so `attendance` keeps serving on this test's loop while a
     delegate call is in flight on the PEP's.
     """
-    from pep_harness import free_port, serving
+    from chaperone_harness import free_port, serving
 
     socket_path = stage.stack.attendance_socket
     if socket_path is None:

@@ -88,8 +88,8 @@ def test_the_production_wiring_carries_an_install_root() -> None:
 def test_a_host_built_with_no_roots_still_contains_install_paths() -> None:
     """A `Host` built the way `build_wiring` builds it refuses `/etc`. The
     default is the containment check, not an empty tuple that turns it off."""
-    text = manifest_text("pep").replace("/opt/components/pep", "/etc/pep")
-    manifest = parse_manifest(text, "pep/component.yaml")
+    text = manifest_text("chaperone").replace("/opt/components/chaperone", "/etc/chaperone")
+    manifest = parse_manifest(text, "chaperone/component.yaml")
 
     with pytest.raises(Refusal) as raised:
         paths_of(manifest, Host(run=_no_child).install_roots)
@@ -119,10 +119,10 @@ def _repo_tree(root: Path, component: str, components: Path) -> None:
 def test_read_one_takes_the_component_out_of_a_whole_repository(tmp_path: Path) -> None:
     """§2.4 row 2 reads ONE `component.yaml` per component, at the path the
     catalog fixes. A walk of the whole tree finds seven."""
-    clone = tmp_path / "pep-clone"
-    _repo_tree(clone, "pep", tmp_path / "components")
+    clone = tmp_path / "chaperone-clone"
+    _repo_tree(clone, "chaperone", tmp_path / "components")
 
-    assert read_one(clone, "pep").manifest.name == "pep"
+    assert read_one(clone, "chaperone").manifest.name == "chaperone"
     assert read_one(clone, "attendance").manifest.name == "attendance"
 
 
@@ -137,13 +137,13 @@ def test_a_release_lands_when_every_clone_is_a_whole_repository(tmp_path: Path) 
     wiring = Wiring(
         host=fake_host(tmp_path, run),
         transport=grant_transport(),
-        readers=fake_readers(latest={"pep": NEW_VERSION}),
-        api=green_api("agent-control", f"pep-v{NEW_VERSION}", SHA_OF["pep"]),
+        readers=fake_readers(latest={"chaperone": NEW_VERSION}),
+        api=green_api("agent-control", f"chaperone-v{NEW_VERSION}", SHA_OF["chaperone"]),
     )
-    stamp_tree(components, "pep", LIVE_VERSION)
+    stamp_tree(components, "chaperone", LIVE_VERSION)
     run.dynamic = GitFake(lambda into, name: _repo_tree(into, name, components))
-    run.hooks["sync"] = lambda _: stamp_tree(components, "pep.new", NEW_VERSION)
-    write_request(spool_root, REQUEST_ID, request_body({"pep": NEW_VERSION}))
+    run.hooks["sync"] = lambda _: stamp_tree(components, "chaperone.new", NEW_VERSION)
+    write_request(spool_root, REQUEST_ID, request_body({"chaperone": NEW_VERSION}))
 
     spool = Spool(str(spool_root), this_uid())
     try:
@@ -176,7 +176,7 @@ def _flood_requests(spool_root: Path) -> None:
             spool_root,
             request_id,
             request_body(
-                {"pep": NEW_VERSION},
+                {"chaperone": NEW_VERSION},
                 request_id=request_id,
                 requested_by=f"flood-{index:02d}",
             ),

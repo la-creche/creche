@@ -194,7 +194,7 @@ def test_the_clones_own_tags_answer_the_newest_version(tmp_path: Path) -> None:
         "noticeboard-v0.1.0",
         "noticeboard-v0.2.0",
         "noticeboard-v0.10.0",
-        "pep-v9.9.9",
+        "chaperone-v9.9.9",
         "v0.13.5",
     ):
         _git(repo, "tag", tag)

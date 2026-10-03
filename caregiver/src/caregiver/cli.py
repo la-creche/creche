@@ -24,6 +24,12 @@ from agent_family import Index, Registry, Report, load_registry
 
 from . import paths
 from .apply import apply_once
+from .chaperone_watch import (
+    PEP_PROBE_INTERVAL_S,
+    PEP_UNREACHABLE_AFTER_S,
+    HttpPepProbe,
+    PepWatch,
+)
 from .delete import delete_family
 from .driver import SandboxDriver, SbxDriver
 from .egress import EgressConfig
@@ -31,12 +37,6 @@ from .lan import ConfigError, Port, url
 from .litellm_keys import HttpLiteLLMKeys, LiteLLMKeys
 from .loop import LoopConfig, SignalControl, serve
 from .mcp_release import paths_under
-from .pep_watch import (
-    PEP_PROBE_INTERVAL_S,
-    PEP_UNREACHABLE_AFTER_S,
-    HttpPepProbe,
-    PepWatch,
-)
 from .reconcile import Actors, SpendRead, reconcile_family
 from .rotate import Mode, Reason, RotateError, RotateRequest, Scope, rotate
 from .switch import HttpSwitchClient, SwitchClient, SwitchError, read_token
@@ -401,7 +401,7 @@ def _serve_command(
     # Not in `_watch_plan`: only `serve` holds an interval to probe over,
     # so only `serve` declares these three.
     print(
-        f"pep watch: {_pep_url(args) or 'OFF (nothing watches the PEP)'}, "
+        f"chaperone watch: {_pep_url(args) or 'OFF (nothing watches the PEP)'}, "
         f"every {args.pep_probe_interval_s:.0f}s, "
         f"fault after {args.pep_unreachable_after_s:.0f}s of silence"
     )
@@ -435,7 +435,7 @@ def _serve_command(
         # a host where root has not made the spool yet gets a quiet pass
         # rather than an error every two seconds.
         mcp=paths_under(Path(args.state_root), Path(args.release_root)),
-        pep=_pep_watch(args),
+        chaperone=_pep_watch(args),
     )
     try:
         serve(config, _actors(args, driver, litellm, switch, units), control)
@@ -587,8 +587,8 @@ def _print_pep_line(doc: dict[str, Any]) -> None:
         print("  pep: no watch block (written by an older caregiver)")
         return
 
-    pep = cast("dict[str, Any]", block)
-    print(f"  pep: {pep.get('watch')} {pep.get('url') or '(no address configured)'}")
+    chaperone = cast("dict[str, Any]", block)
+    print(f"  pep: {chaperone.get('watch')} {chaperone.get('url') or '(no address configured)'}")
 
 
 def _status_command(args: argparse.Namespace) -> int:

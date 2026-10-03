@@ -309,7 +309,7 @@ def test_no_file_carries_a_version_to_bump() -> None:
 @pytest.mark.parametrize("total", [1, 2, 6, 13])
 def test_every_test_is_in_exactly_one_shard(total: int) -> None:
     in_shard = _root_conftest().in_shard
-    ids = [f"pep/tests/test_{number}.py::test_it[{number}]" for number in range(500)]
+    ids = [f"chaperone/tests/test_{number}.py::test_it[{number}]" for number in range(500)]
 
     for one in ids:
         holders = [shard for shard in range(1, total + 1) if in_shard(one, shard, total)]

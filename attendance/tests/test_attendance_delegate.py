@@ -29,7 +29,7 @@ from attendance.service import SessionService  # isort: skip
 
 DELEGATE = Principal.DOOR_DELEGATE
 OWUI = Principal.DOOR_OWUI
-DOOR = "pep-1"
+DOOR = "chaperone-1"
 
 ORACLE = "vault-oracle"
 ORACLE_SANDBOX = "vault-oracle-s1"

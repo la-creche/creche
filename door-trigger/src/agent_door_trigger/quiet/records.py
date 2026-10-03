@@ -4,7 +4,7 @@
    let through ended. Written by temp file and rename before the session is
    deleted, so a session gone with no record is a job that vanished.
 2. The PEP's audit (contract 04 §6): whether the family made its daily call.
-   One UTC day per file, `pep:agents` 0640, so this door reads it through
+   One UTC day per file, `chaperone:agents` 0640, so this door reads it through
    the operator's `agents` group.
 
 Neither read raises. What cannot be read answers the value the gate wakes on.
