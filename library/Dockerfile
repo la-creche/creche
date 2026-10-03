@@ -1,4 +1,4 @@
-# Indexer sandbox image: python + the agent-indexer package.
+# Library sandbox image: python + the library package.
 # Pushed to the loopback registry; per-scope sandboxes run `index-scope`.
 FROM python:3.12-slim
 # The site's LAN address, where TEI answers. A sandbox has no site file, so

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Provision the indexer for one corpus (OPERATOR, no sudo): image, sandbox with
+# Provision the library for one corpus (OPERATOR, no sudo): image, sandbox with
 # the corpus as its only workspace, TEI-only egress, timer unit.
-#   ./bin/provision-indexer.sh notes           # vault scope (default)
-#   ./bin/provision-indexer.sh agent-control code
-#   ./bin/provision-indexer.sh alpha test      # gate fixture, no timer
+#   ./bin/provision-library.sh notes           # vault scope (default)
+#   ./bin/provision-library.sh agent-control code
+#   ./bin/provision-library.sh alpha test      # gate fixture, no timer
 # Prerequisite: AGENT_LAN_ADDRESS in /etc/agent-control/site.env, or
 # LAN_ADDRESS in the environment.
 set -euo pipefail
@@ -29,7 +29,7 @@ REPO="$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO/bin/lib/envfile.sh"
 
 # The host's LAN address, where TEI answers: the sandbox's one egress hole,
-# and fixed into the image at build time (indexer/Dockerfile). `LAN_ADDRESS`
+# and fixed into the image at build time (library/Dockerfile). `LAN_ADDRESS`
 # wins, then the site file.
 # `AGENT_SITE_FILE` names another site file, which is how a test points at a
 # fixture. No default: a default would be somebody's host.
@@ -40,16 +40,19 @@ LAN_ADDRESS="${LAN_ADDRESS:-$(envfile_value "$SITE_FILE" AGENT_LAN_ADDRESS || tr
 [[ -d "$SCOPE_DIR" ]] || { echo "no corpus dir $SCOPE_DIR" >&2; exit 2; }
 mkdir -p "$IDX_DIR"
 REGISTRY="127.0.0.1:5000"
-VER="$(python3 -c "import tomllib;print(tomllib.load(open('$REPO/indexer/pyproject.toml','rb'))['project']['version'])")"
-IMG="$REGISTRY/agent-indexer:$VER"
+VER="$(python3 -c "import tomllib;print(tomllib.load(open('$REPO/library/pyproject.toml','rb'))['project']['version'])")"
+# The image keeps its old name: every index-* sandbox on a host was
+# created from it, and a new name would orphan them.
+IMAGE_NAME="agent-indexer"
+IMG="$REGISTRY/$IMAGE_NAME:$VER"
 SBX="index-$IDX_NAME"
 
 echo "[1] image $IMG"
-docker build -q --build-arg "AGENT_LAN_ADDRESS=$LAN_ADDRESS" -t "$IMG" "$REPO/indexer/" >/dev/null
+docker build -q --build-arg "AGENT_LAN_ADDRESS=$LAN_ADDRESS" -t "$IMG" "$REPO/library/" >/dev/null
 docker push -q "$IMG" >/dev/null
 echo "[2] sandbox $SBX (scope ro + index rw, egress: TEI only)"
 if ! sbx ls 2>/dev/null | grep -q "^$SBX "; then
-  # scope is READ-ONLY to the indexer; only the external index dir is rw.
+  # scope is READ-ONLY to the library; only the external index dir is rw.
   # sbx requires the PRIMARY (first) workspace to be read/write, so the
   # index dir leads and the scope rides second with :ro.
   sbx create shell "$IDX_DIR" "$SCOPE_DIR:ro" -t "$IMG" --name "$SBX" -m 1g --cpus 2 -q

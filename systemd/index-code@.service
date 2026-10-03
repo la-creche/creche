@@ -1,6 +1,6 @@
 # Code-corpus index build for repo %i. USER unit; %i = a
 # directory under /srv/agents/code. The sandbox index-code-%i must exist
-# (provision-indexer.sh <repo> code).
+# (provision-library.sh <repo> code).
 [Unit]
 Description=Code index build for repo %i
 

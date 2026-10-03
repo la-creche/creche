@@ -67,5 +67,5 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   fi
 done < "$REPO_LIST"
 
-echo "corpus at $CORPUS_ROOT; provision new repos with:  ./bin/provision-indexer.sh <name> code"
+echo "corpus at $CORPUS_ROOT; provision new repos with:  ./bin/provision-library.sh <name> code"
 exit "$fails"

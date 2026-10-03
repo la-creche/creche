@@ -130,7 +130,7 @@ deploy_site "$PRODUCT" "$SITE" \
 # they are installed editable, so their sources live in this checkout rather
 # than site-packages. Best effort — a failure here costs the cache, not the
 # deploy, and a stale .pyc cannot be served (Python checks mtime and size).
-WORKSPACE_SRC=(/opt/agent-control/{pep,indexer}/src)
+WORKSPACE_SRC=(/opt/agent-control/{pep,library}/src)
 /opt/agent-control/.venv/bin/python -m compileall -q "${WORKSPACE_SRC[@]}" \
   || echo "WARNING: bytecode pre-compile failed; imports fall back to source" >&2
 # venv must be world-executable so user `pep` (and the operator) can run from it;

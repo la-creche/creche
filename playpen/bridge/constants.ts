@@ -37,7 +37,7 @@ export const SEARCH_TOOL = "index_search";
 /** Contract 04 §4.1. The verb that gives `index_search` its semantic half. */
 export const EMBED_VERB = "embed";
 
-/** `indexer/README.md`: one store per index directory. */
+/** `library/README.md`: one store per index directory. */
 export const STORE_FILE = "store.db";
 
 /** Contract 04 §3. Advisory: the PEP audits them and decides nothing on them. */

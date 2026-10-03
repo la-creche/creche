@@ -1,6 +1,6 @@
 // One corpus index, read over the family's read-only mount (contract 03 §7.3
-// rule 6). The indexer writes the store and this file reads it, so the schema
-// is a cross-language contract (`indexer/README.md`, "Store schema"):
+// rule 6). The library writes the store and this file reads it, so the schema
+// is a cross-language contract (`library/README.md`, "Store schema"):
 //
 //   <index root>/<name>/store.db
 //     meta(key, value)            embed_model, dims
@@ -27,7 +27,7 @@ import { STORE_FILE } from "./constants.js";
 /** An index directory's name: a vault scope, `code-<repo>`, `house__ha`. */
 export const INDEX_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
-/** `meta.dims`, as the indexer writes it: a positive decimal integer. */
+/** `meta.dims`, as the library writes it: a positive decimal integer. */
 const DIMS_RE = /^[1-9][0-9]{0,4}$/;
 
 /** Every component of a stored vector is one float32. */
@@ -103,9 +103,9 @@ export function isIndexRoot(root: string): boolean {
 /**
  * Every index under the root that holds a store, sorted by name.
  *
- * A directory with no `store.db` is skipped: the indexer leaves some behind
+ * A directory with no `store.db` is skipped: the library leaves some behind
  * when a scope is renamed, and they hold nothing to search. So is a name the
- * indexer never writes, because it becomes a label the model reads.
+ * library never writes, because it becomes a label the model reads.
  */
 export function listIndexes(root: string): IndexRef[] {
   let names: string[];
@@ -244,7 +244,7 @@ export class IndexStore {
   /**
    * The `limit` chunks whose vectors lie nearest the query, by L2.
    *
-   * The indexer stores the vectors TEI returns, and TEI normalizes them, so
+   * The library stores the vectors TEI returns, and TEI normalizes them, so
    * this is also the cosine ranking. One pass, one row at a time: the scan
    * holds `limit` candidates, never the whole table.
    */
