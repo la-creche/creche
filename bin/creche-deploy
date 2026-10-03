@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# ROOT deploy for /opt/creche. The ONLY sudoers entry.
+# Origin is the operator's local checkout — root never needs GitHub credentials;
+# the operator reviews and pulls in that tree, then this promotes it.
+#
+# Usage: sudo creche-deploy [ref]     (default: main from the operator's tree)
+set -euo pipefail
+
+# The product's root-owned checkout, and the site's beside it. The site's
+# configuration stays in /etc/agent-control: that path is wire every unit
+# and wrapper reads, and it moves in a later change of its own.
+PRODUCT=/opt/creche
+SITE=/opt/private-docs
+
+#: The one branch the site deploys. It has no release branches and no tags.
+SITE_REF=main
+
+# deploy_site PRODUCT SITE: bring SITE to its origin's SITE_REF.
+#
+# The site is this deployment's own repository: the docs, the secret
+# ciphertext, the compose stack, the personal scripts and units. It follows
+# the product's rule, so root needs no GitHub credential for it either: its
+# origin is the checkout BESIDE the product's origin.
+#
+#   <code>/creche        ──fetch──▶ /opt/creche         the product
+#   <code>/private-docs  ──fetch──▶ /opt/private-docs   the site
+#
+# A first run clones it. A host with no site checkout beside the product's
+# says so and deploys the product alone.
+#
+# Returns non-zero when the site could not be brought up to date. The caller
+# decides what that costs.
+deploy_site() {
+  local product="$1" site="$2" origin
+
+  # The site's origin is named after the product's: the same parent
+  # directory, e.g. <code>/creche -> <code>/private-docs.
+  origin="$(dirname "$(git -C "$product" remote get-url origin)")/$(basename "$site")"
+
+  if [[ ! -d "$site/.git" ]]; then
+    if [[ ! -d "$origin/.git" ]]; then
+      echo "no site checkout at $origin: the product deploys alone"
+      return 0
+    fi
+
+    git clone --quiet "$origin" "$site" || return 1
+  fi
+
+  git -C "$site" remote set-url origin "$origin" || return 1
+  git -C "$site" fetch --quiet origin || return 1
+  git -C "$site" checkout --quiet -f "origin/$SITE_REF" || return 1
+  echo "site     $(git -C "$site" rev-parse --short HEAD): $(git -C "$site" log -1 --format=%s)"
+}
+
+[[ "$(id -u)" == "0" ]] || { echo "run via sudo" >&2; exit 1; }
+
+REF="${1:-main}"
+cd "$PRODUCT"
+git fetch origin
+
+# Verify the ref resolves BEFORE `checkout -f` touches anything, so a
+# typo'd or unpushed ref fails as "no such ref" and not as some other
+# checkout failure.
+RESOLVED_REF="origin/$REF"
+if ! git rev-parse --verify --quiet "${RESOLVED_REF}^{commit}" >/dev/null; then
+  RESOLVED_REF="$REF"
+fi
+if ! git rev-parse --verify --quiet "${RESOLVED_REF}^{commit}" >/dev/null; then
+  echo "ref '$REF' does not resolve to a commit in $(pwd) (checked origin/$REF and $REF)" >&2
+  exit 1
+fi
+git checkout -f "$RESOLVED_REF"
+echo "deployed $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
+
+# The leftovers of directories this repository no longer has. `git checkout
+# -f` removes TRACKED files and leaves IGNORED ones exactly where they are,
+# so a deleted directory survives on the host holding nothing but
+# __pycache__/, node_modules/ and *.egg-info/. Nothing reads it, and
+# `ls /opt/creche` tells a reader this host runs a system it does not.
+#
+# -X, and NEVER -x. `-X` removes only what .gitignore already covers. `-x`
+# would take every untracked file with it, which here means whatever root or
+# the operator left in this tree by hand — a decrypted secret, a copy of a unit, a
+# scratch file — and root cannot tell one of those from a stale cache.
+#
+# `-e '!/.venv/'` is a NEGATION, not an exclusion, and the difference is the
+# whole hazard: `-e .venv` ADDS a pattern to the ignore rules, so under -X it
+# marks the venv for REMOVAL instead of sparing it (git 2.54, measured in
+# bin/tests/test_creche_deploy.py). A leading `!` un-ignores, and the
+# leading `/` anchors it to the top of the tree, so a venv deeper in is still
+# cleaned. This one venv is what every unit runs from and what `uv sync`
+# fills below.
+#
+# HERE, and never after the two steps below: `uv sync --compile-bytecode` and
+# `compileall` write the __pycache__ trees this would otherwise delete in the
+# same run.
+#
+# Not fatal: a deploy that stops on housekeeping is worse than an untidy tree.
+git clean -fdX -e '!/.venv/' \
+  || echo "WARNING: ignored leftovers could not be removed; the tree is deployed either way" >&2
+
+# Self-update: the sudoers-whitelisted copy at /usr/local/sbin otherwise
+# fossilizes the moment this file changes. Root already executes the operator's
+# tree (that IS the deploy), so installing the fresh copy and re-running
+# widens nothing. The env guard stops a re-exec loop.
+SELF=/usr/local/sbin/creche-deploy
+NEW=/opt/creche/bin/creche-deploy
+if [[ -z "${CRECHE_DEPLOY_REEXEC:-}" ]] && ! cmp -s "$NEW" "$SELF"; then
+  echo "deploy script changed; self-updating and re-running"
+  install -m 0755 "$NEW" "$SELF"
+  CRECHE_DEPLOY_REEXEC=1 exec "$SELF" "$REF"
+fi
+
+# After the self-update, so the copy that knows the site is the one that
+# deploys it. Not fatal YET: nothing on the host reads the site until the
+# files it holds leave this tree, and that change makes this line fatal.
+deploy_site "$PRODUCT" "$SITE" \
+  || echo "WARNING: the site at $SITE could not be brought up to date; the product is deployed either way" >&2
+
+# /usr/local/sbin/creche-handover is deliberately NOT refreshed by a
+# deploy: contract 06 §1.1, "the thing that deploys code is not deployed by
+# code". handover/component.yaml says the same, and bin/rework-release-visit.sh,
+# run by hand, is the step that installs it.
+
+# --compile-bytecode: this checkout is root-owned, so the operator's account and `chaperone` cannot
+# write a single __pycache__ entry and every process start recompiles from
+# source — ~740 modules, measured at 1.8s per `agentctl` on the host against
+# 0.55s with the cache warm, and the same tax on each unit restart below.
+# Writing the .pyc here, as root, is the only place it can happen.
+/usr/local/bin/uv sync --frozen --no-dev --compile-bytecode
+# uv compiles what it installs, which leaves out the workspace's own packages:
+# they are installed editable, so their sources live in this checkout rather
+# than site-packages. Best effort — a failure here costs the cache, not the
+# deploy, and a stale .pyc cannot be served (Python checks mtime and size).
+WORKSPACE_SRC=(/opt/creche/{chaperone,library}/src)
+/opt/creche/.venv/bin/python -m compileall -q "${WORKSPACE_SRC[@]}" \
+  || echo "WARNING: bytecode pre-compile failed; imports fall back to source" >&2
+# venv must be world-executable so user `chaperone` (and the operator) can run from it;
+# the __pycache__ dirs just written need the same, and hold only code. This
+# tree is root-owned end to end (/opt/creche), never chaperone-writable, so
+# a recursive chmod here carries no TOCTOU risk.
+chmod -R a+rX /opt/creche/.venv "${WORKSPACE_SRC[@]}"
+
+# No MCP server is installed here. Every server the PEP runs is
+# `mcp/<name>/server.yaml` in agent-registry, built into /opt/mcp/<name> by
+# an `mcp-servers` release (docs/rework/stage7-releases.md §4.2), and the
+# roster root writes is the only list of them. Old trees under
+# /opt/agent-pep-mcp stay where they are: a deploy is not the verb that
+# removes something, and `bin/rework-retire-old.sh remove-old-trees` is.
+
+systemctl daemon-reload
+
+# Crash-loop detection: `systemctl restart` returns 0 as soon as the
+# unit forks, and a unit that crashes 1s later under Restart=on-failure
+# looks identical to a healthy one to a plain `sleep 2; status || true`.
+# Poll is-active AND the restart counter for a while: "active" alone is
+# not enough evidence when the unit could be actively flapping between
+# our poll ticks.
+POLL_S=20
+FAILED_UNITS=()
+# The one unit this script restarts: the PEP, a system unit.
+check_unit() {
+  local unit="$1" waited=0 active="" restarts_before restarts_now
+  restarts_before="$(systemctl show -p NRestarts --value "$unit" 2>/dev/null || echo 0)"
+  while (( waited < POLL_S )); do
+    sleep 2
+    waited=$((waited + 2))
+    active="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    restarts_now="$(systemctl show -p NRestarts --value "$unit" 2>/dev/null || echo 0)"
+    if [[ "$active" == "active" && "$restarts_now" -le "$restarts_before" ]]; then
+      echo "  $unit: active (NRestarts=$restarts_now)"
+      return 0
+    fi
+  done
+  echo "CRASH-LOOP: $unit is '$active' after ${POLL_S}s (NRestarts $restarts_before -> $restarts_now)" >&2
+  return 1
+}
+
+if systemctl is-enabled creche-chaperone >/dev/null 2>&1; then
+  systemctl restart creche-chaperone
+  check_unit creche-chaperone || FAILED_UNITS+=(creche-chaperone)
+fi
+
+# The rework's user units run from their own component trees, never from
+# this checkout's venv (systemd/AGENTS.md), so this deploy restarts no user
+# unit. `handover` owns them: it swaps <install.to> and
+# restarts the unit, then runs that component's verify hook.
+
+if ((${#FAILED_UNITS[@]} > 0)); then
+  echo "DEPLOY FAILED: crash-looping unit(s): ${FAILED_UNITS[*]}" >&2
+  exit 1
+fi

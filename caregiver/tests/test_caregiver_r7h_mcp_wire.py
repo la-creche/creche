@@ -290,7 +290,7 @@ def test_the_real_ha_pair_opens_one_gap(bench: Bench) -> None:
 
     The gap's shape is §4.3 rule 5's: ONE file, keyed on the secret, whose
     `server` is the pair's first name in sorted order. Nothing is added
-    for the second name. `agent_release.intake.gaps.GAP_KEYS` is a closed
+    for the second name. `handover.intake.gaps.GAP_KEYS` is a closed
     set of `server`, `secret` and `at`, and `_parse_gap` refuses a body
     holding any other key and a `server` that is not one name — so an
     extended shape would not reach the operator at all.

@@ -36,7 +36,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/agent-control
+WorkingDirectory=/opt/creche
 # sbx panics without both, and this door's own dependency tree shells out
 # to it nowhere directly — every user unit in this repo carries them
 # regardless (systemd/AGENTS.md).
@@ -47,7 +47,7 @@ EnvironmentFile=/etc/agent-control/site.env
 # The trigger door ships INSIDE the `attendance` component (contract 06 §1
 # rule 1: a door cannot be at a different version from the session API it
 # serves), so it runs from that component's venv and moves with it. Not
-# /opt/agent-control's shared workspace venv, which no release swaps.
+# /opt/creche's shared workspace venv, which no release swaps.
 ExecStart=%h/.local/components/attendance/bin/agent-trigger serve
 ExecReload=/bin/kill -HUP $MAINPID
 # The rework restart policy (`systemd/creche-caregiver.service`). `always`,

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # OPERATOR — pull the registry checkout onto agent-registry's `main`. Runs every
 # minute from `registry-sync.timer` on the host, as the operator:
-#   /opt/agent-control/bin/rework-registry-sync.sh
-#   /opt/agent-control/bin/rework-registry-sync.sh --last   # HEAD and its age
+#   /opt/creche/bin/rework-registry-sync.sh
+#   /opt/creche/bin/rework-registry-sync.sh --last   # HEAD and its age
 #
 # WHY IT EXISTS. `caregiver` reads the registry out of the checkout at
 # /srv/agents/registry and applies a change within one pass, and it never
@@ -149,7 +149,7 @@ export GIT_TERMINAL_PROMPT=0
 # checkout is untrusted input. Anything that can write a family file into it
 # can write `.git/config` and `.git/hooks/post-merge`, and a fast-forward
 # runs hooks. Each word closes one command-shaped setting
-# (`release/src/agent_release/executor/source.py` argues the full list):
+# (`handover/src/handover/executor/source.py` argues the full list):
 #   safe.directory   one exact path, so a checkout that a root visit left
 #                    root-owned is a refusal about git's answer rather than
 #                    about "dubious ownership"

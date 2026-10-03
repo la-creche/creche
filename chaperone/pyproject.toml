@@ -11,11 +11,11 @@ dependencies = [
     "pyyaml>=6.0",
     "mcp>=1.2",
     # The `release` verb files the same request bytes the operator's own command
-    # files, through `agent_release.requester` (stage7-releases.md §2.3). One
+    # files, through `handover.requester` (stage7-releases.md §2.3). One
     # writer, so a refusal reads the same on both sides. `release_door.py`
     # imports that subpackage and nothing else from this dependency; a test
     # in `chaperone/tests/test_chaperone_r7i_release_verb.py` holds it to that.
-    "agent-release",
+    "handover",
 ]
 
 [project.scripts]
@@ -36,12 +36,12 @@ build-backend = "hatchling.build"
 packages = ["src/chaperone"]
 
 [tool.uv.sources]
-agent-release = { workspace = true }
+handover = { workspace = true }
 
 [tool.uv]
 # uv rebuilds a local package only when pyproject.toml, setup.py or setup.cfg
 # changes, and every first-party package stays at one version. Without the
 # source in the key, a non-editable build installs the FIRST wheel uv ever
 # cached for this directory, for ever, so a new commit's tree runs old code
-# (release/tests/test_release_ced_uv_guard.py).
+# (handover/tests/test_handover_ced_uv_guard.py).
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]

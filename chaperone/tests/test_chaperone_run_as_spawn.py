@@ -26,8 +26,6 @@ from typing import Final
 
 import pytest
 import yaml
-from agent_release.executor.roster import rows
-from agent_release.mcpserver import parse_server
 from chaperone.mcp_client import (
     LAUNCHER_SCRIPT,
     Launcher,
@@ -41,6 +39,8 @@ from chaperone.mcp_client import (
 from chaperone.reload_pool import ReloadablePool
 from chaperone.reload_wiring import RosterSource
 from chaperone.run_as import CHILD_ENV_VAR
+from handover.executor.roster import rows
+from handover.mcpserver import parse_server
 
 HERE: Final = Path(__file__).resolve().parent
 STUB: Final = HERE / "stub_mcp_server.py"

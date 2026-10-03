@@ -24,7 +24,7 @@ correctly refuses to serve an unkeyed admin surface on the LAN — the
 right answer to the wrong question, on every release. `--env-file <path>`
 names the SAME file the unit's own
 `EnvironmentFile=` does (`noticeboard/component.yaml`'s `verify.command`, pinned
-to the unit by `release/tests/test_release_r7r_verify_env.py`), and this
+to the unit by `handover/tests/test_handover_r7r_verify_env.py`), and this
 hook reads it itself, as its own user — never root, which is what keeps a
 root process from ever opening a file only the operator's account controls.
 """

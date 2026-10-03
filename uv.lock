@@ -13,10 +13,10 @@ members = [
     "agent-door-trigger",
     "agent-door-tui",
     "agent-family",
-    "agent-release",
     "attendance",
     "caregiver",
     "chaperone",
+    "handover",
     "library",
     "noticeboard",
 ]
@@ -30,10 +30,10 @@ dependencies = [
     { name = "agent-door-trigger" },
     { name = "agent-door-tui" },
     { name = "agent-family" },
-    { name = "agent-release" },
     { name = "attendance" },
     { name = "caregiver" },
     { name = "chaperone" },
+    { name = "handover" },
     { name = "library" },
     { name = "noticeboard" },
 ]
@@ -55,10 +55,10 @@ requires-dist = [
     { name = "agent-door-trigger", editable = "door-trigger" },
     { name = "agent-door-tui", editable = "door-tui" },
     { name = "agent-family", editable = "family" },
-    { name = "agent-release", editable = "release" },
     { name = "attendance", editable = "attendance" },
     { name = "caregiver", editable = "caregiver" },
     { name = "chaperone", editable = "chaperone" },
+    { name = "handover", editable = "handover" },
     { name = "library", editable = "library" },
     { name = "noticeboard", editable = "noticeboard" },
 ]
@@ -135,17 +135,6 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.8" },
     { name = "pyyaml", specifier = ">=6" },
 ]
-
-[[package]]
-name = "agent-release"
-version = "0.1.0"
-source = { editable = "release" }
-dependencies = [
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pyyaml", specifier = ">=6" }]
 
 [[package]]
 name = "annotated-doc"
@@ -320,8 +309,8 @@ name = "chaperone"
 version = "0.1.0"
 source = { editable = "chaperone" }
 dependencies = [
-    { name = "agent-release" },
     { name = "fastapi" },
+    { name = "handover" },
     { name = "httpx" },
     { name = "mcp" },
     { name = "pyyaml" },
@@ -330,8 +319,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-release", editable = "release" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "handover", editable = "handover" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mcp", specifier = ">=1.2" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -541,6 +530,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
 ]
+
+[[package]]
+name = "handover"
+version = "0.1.0"
+source = { editable = "handover" }
+dependencies = [
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pyyaml", specifier = ">=6" }]
 
 [[package]]
 name = "httpcore"

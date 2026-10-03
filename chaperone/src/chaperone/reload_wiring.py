@@ -27,7 +27,7 @@ uid can. No port, no bearer, no listener, and nothing a sandbox can reach.
    treats a parse failure as "no upstreams". There are two of them: the
    base roster the unit names as `PEP_UPSTREAMS`, which a deploy moves and
    which holds no row, and the one root generates from the servers an
-   `mcp-servers` release installed (`agent_release.executor.roster`).
+   `mcp-servers` release installed (`handover.executor.roster`).
    `upstreams` says why two and why the GENERATED one wins a name.
 2. **A reload that fails leaves the old pool serving, and says so.** Every
    path out of `reload_once` is caught and logged. A raise inside a signal
@@ -164,7 +164,7 @@ class RosterSource:
     #: the value lands in a file the PEP never opens.
     secrets_dir: Path | None = None
     #: §4.4's second roster: what root wrote at the end of the last
-    #: verified `mcp-servers` release (`agent_release.executor.roster`).
+    #: verified `mcp-servers` release (`handover.executor.roster`).
     #: Absent means no such release has run, which is not an error.
     generated_file: Path | None = None
 
@@ -194,7 +194,7 @@ class RosterSource:
         file. Root does, at step 9 of a release the operator approved on
         their phone, from the `server.yaml` files of exactly the tree it just
         installed, with every `command` built by root from a validated
-        name (`agent_release.executor.roster`, rule 1). A base row that
+        name (`handover.executor.roster`, rule 1). A base row that
         won would keep serving a tree no release installed, with a
         success in the ledger.
 

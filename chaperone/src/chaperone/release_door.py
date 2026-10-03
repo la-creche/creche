@@ -16,8 +16,8 @@ Four rules, each with its reason.
    would ask the operator for two taps, one to let the request exist and one to
    approve the release. The tap that matters is the executor's at step 5,
    because it binds to what will actually happen (§2.5).
-2. **The bytes are `agent_release.requester`'s, not a second copy.** The
-   `agent-releasectl` command the operator types and this verb file the same shape
+2. **The bytes are `handover.requester`'s, not a second copy.** The
+   `handover` command the operator types and this verb file the same shape
    through the same function, so a refusal reads the same on both sides and
    a rule added to `executor/request.py` reaches both.
 3. **`requested_by` is a CLAIM.** This module writes the family the bearer
@@ -38,8 +38,8 @@ import time
 from dataclasses import dataclass
 from typing import Final, Protocol
 
-from agent_release.errors import Refusal, RefusalCode
-from agent_release.requester import REQUESTS_PATH, RequesterError, file_request, plan_request
+from handover.errors import Refusal, RefusalCode
+from handover.requester import REQUESTS_PATH, RequesterError, file_request, plan_request
 
 from .family_decisions import FamilyReason
 
@@ -56,9 +56,9 @@ RATE_LIMITED: Final[FamilyReason] = "rate_limited"
 #: Root reads the release source out of
 #: `/srv/agents/code/<repo>`, which `code-corpus-sync.timer` refreshes
 #: hourly, so a release filed minutes after a merge names a SHA the corpus
-#: may not hold. `agent-releasectl request` fetches first, because it runs as
+#: may not hold. `handover request` fetches first, because it runs as
 #: the operator. **This verb runs as `chaperone`**, which owns no corpus, holds no git
-#: credential and must start no child (`release/AGENTS.md`), so it cannot.
+#: credential and must start no child (`handover/AGENTS.md`), so it cannot.
 #:
 #: It also cannot KNOW whether the corpus is behind without running git. So
 #: the note is unconditional: the caller is told what the executor will
@@ -67,7 +67,7 @@ RATE_LIMITED: Final[FamilyReason] = "rate_limited"
 #: `done/<ULID>.json` an hour later and has to work it out.
 CORPUS_NOTE: Final = (
     "root reads the source from /srv/agents/code, refreshed hourly. If the release refuses "
-    "for a SHA the corpus has not got, run /opt/agent-control/bin/sync-code-corpus.sh as "
+    "for a SHA the corpus has not got, run /opt/creche/bin/sync-code-corpus.sh as "
     "the operator and ask again."
 )
 

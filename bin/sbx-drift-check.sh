@@ -33,7 +33,7 @@
 # (`bin/lib/envfile.sh`, `bin/rework-watchdog.sh`).
 #
 # The host's LAN address is AGENT_LAN_ADDRESS in /etc/agent-control/site.env
-# (release/src/agent_release/site.py). Without it the script stops before it
+# (handover/src/handover/site.py). Without it the script stops before it
 # asks sbx anything: no default, because a default would be somebody's host.
 set -uo pipefail
 # sbx phones home on every invocation and that, not the work asked of it, is

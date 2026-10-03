@@ -30,7 +30,7 @@ verify:
   # --env-file: the same file
   # systemd/creche-noticeboard.service's own EnvironmentFile= names, read by the
   # hook itself as the operator. Pinned equal by
-  # release/tests/test_release_r7r_verify_env.py.
+  # handover/tests/test_handover_r7r_verify_env.py.
   command: ["~/.local/components/noticeboard/bin/noticeboard-verify", "--json",
             "--env-file", "/srv/agents/state/rework/view.env"]
   user: operator

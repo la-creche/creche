@@ -36,7 +36,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/agent-control
+WorkingDirectory=/opt/creche
 # sbx panics without both, and every user unit in this repo carries them
 # regardless (systemd/AGENTS.md).
 Environment=HOME=%h

@@ -25,7 +25,7 @@ class InstallBlock(Strict):
     version: str | None = None
     #: Contract 01b §3.4: the committed closure root installs FROM, and a
     #: required field for `source: pypi`. It was in the contract's field
-    #: table and in `stage7-releases.md` §4.2 and in `agent_release`'s own
+    #: table and in `stage7-releases.md` §4.2 and in `handover`'s own
     #: reader, and NOT here, so this validator refused every real `pypi`
     #: declaration with "unknown field 'lock'" — in CI at §4.1 step 2, and
     #: again in `caregiver`'s registry read, which is where invariant 18's

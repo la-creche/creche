@@ -63,7 +63,7 @@ def _signals_kept() -> Iterator[None]:
     pytest.fail(f"the test left {names} changed. Restore every signal handler a test sets.")
 
 
-#: Names the site file every test reads (release/src/agent_release/site.py).
+#: Names the site file every test reads (handover/src/handover/site.py).
 SITE_FILE_ENV = "AGENT_SITE_FILE"
 
 #: A site that is nobody's: the values a test may rely on. The addresses
@@ -108,7 +108,7 @@ def operator_is_an_account(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make the site's operator an account of this machine, with the home
     the site names. `site.operator_account` asks the password database, and
     no test machine has the account a site file names."""
-    from agent_release import site
+    from handover import site
 
     def lookup(name: str) -> pwd.struct_passwd:
         if name != site.operator_user():

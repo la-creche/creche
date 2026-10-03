@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # OPERATOR rework outage alarm. Runs every minute from
-# `agent-rework-watchdog.timer` on the host, as the operator:
-#   /opt/agent-control/bin/rework-watchdog.sh
-#   /opt/agent-control/bin/rework-watchdog.sh --last   # print the verdict
+# `creche-watchdog.timer` on the host, as the operator:
+#   /opt/creche/bin/rework-watchdog.sh
+#   /opt/creche/bin/rework-watchdog.sh --last   # print the verdict
 #
 # WHY IT EXISTS. A rework service can die in silence: a SIGHUP that arrives
 # before the PEP's handler is installed is a clean exit to systemd, and a
@@ -36,7 +36,7 @@
 #                and a fleet that ignores every merge looks exactly like a
 #                quiet morning from in here.  5 s
 #
-# A CHECK MUST FAIL TWICE IN A ROW BEFORE IT CAN PUSH. `agent-control-deploy`
+# A CHECK MUST FAIL TWICE IN A ROW BEFORE IT CAN PUSH. `creche-deploy`
 # and the release visit restart the PEP on purpose, and its `/healthz` is
 # away for 10 to 15 s each time. A one-minute probe lands in that gap about
 # one time in four, and the operator would get "rework DOWN" for a restart
@@ -64,7 +64,7 @@
 # next run tries the push again.
 #
 # It exits non-zero while ANY check has failed this run, confirmed or not,
-# so `systemctl --user status agent-rework-watchdog` shows trouble at once —
+# so `systemctl --user status creche-watchdog` shows trouble at once —
 # a lone unconfirmed failure still turns the unit red, it just does not
 # reach the operator's phone until it repeats.
 #
@@ -122,7 +122,7 @@ HOOKS_ENV="$STATE_ROOT/hooks.env"
 DEPRECATED_ENV="$TEST_PREFIX/srv/agents/state/materializer/env"
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib/envfile.sh"
 
-# The deployment's site file (release/src/agent_release/site.py).
+# The deployment's site file (handover/src/handover/site.py).
 # `AGENT_SITE_FILE` names another one, which is how a test points at a fixture.
 SITE_FILE="${AGENT_SITE_FILE:-/etc/agent-control/site.env}"
 
@@ -214,7 +214,7 @@ fi
 # Bounded, never `source`d: this file is this script's own past output, not
 # a stranger's, but a byte cap before the parse is the habit every other
 # reader of untrusted-shaped input in this repo keeps (bin/AGENTS.md,
-# release/AGENTS.md's trust rules). Two `head -c` reads of a two-line file
+# handover/AGENTS.md's trust rules). Two `head -c` reads of a two-line file
 # cost nothing measurable.
 STATE_BLOB=""
 [[ -r "$VERDICT_FILE" ]] && STATE_BLOB="$(head -c "$STATE_READ_CAP" "$VERDICT_FILE" 2>/dev/null)"
@@ -519,7 +519,7 @@ fi
 if [[ "$VERDICT" == "$ALL_WELL" ]]; then
   SUMMARY="rework recovered: $WAS answers again, all five checks pass"
 else
-  SUMMARY="rework DOWN: $(printf '%s' "$CONFIRMED_LINES") see journalctl --user -u agent-rework-watchdog"
+  SUMMARY="rework DOWN: $(printf '%s' "$CONFIRMED_LINES") see journalctl --user -u creche-watchdog"
 fi
 
 say "verdict moved: $WAS -> $VERDICT"

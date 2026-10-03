@@ -40,7 +40,7 @@ _REQUIRED: Final[dict[InstallSource, tuple[str, ...]]] = {
 _PINNING_FIELDS: Final = ("package", "version", "lock", "repo", "asset", "sha256", "ref")
 
 #: Contract 01b §3.4 rule 3: `install.lock` is a plain repository path, and
-#: `agent_release.mcpserver` refuses the same four shapes before it reads
+#: `handover.mcpserver` refuses the same four shapes before it reads
 #: the file. Saying it HERE is what makes §4.1 step 2 true — CI refuses a
 #: traversing lock path before the byte reaches the host.
 _LOCK_PATH: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
@@ -183,7 +183,7 @@ def _check_shared(server: McpServerFile, issues: Issues) -> None:
     """Contract 01b §4.3, as far as ONE file can be read.
 
     The agreement itself is registry-wide and root checks it
-    (`agent_release.mcpserver._one_upstream_per_secret`). What is visible
+    (`handover.mcpserver._one_upstream_per_secret`). What is visible
     here is a declaration that could not be acted on whatever the other
     file says.
     """

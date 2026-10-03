@@ -26,9 +26,9 @@ from pathlib import Path
 from typing import Final, NoReturn
 
 import pytest
-from agent_release.executor.host import MCP_USER_RE
-from agent_release.mcpserver import SERVER_NAME_RE
 from chaperone.run_as import CHILD_ENV_VAR, REFUSED_EXIT, Refused, Target
+from handover.executor.host import MCP_USER_RE
+from handover.mcpserver import SERVER_NAME_RE
 
 from chaperone import run_as
 

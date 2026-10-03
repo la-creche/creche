@@ -5,7 +5,7 @@ This script tells the operator's phone inside five minutes, so the cases that ma
 most are the ones about SAYING it, and saying it once.
 
 **A check must fail on two CONSECUTIVE runs before it pushes.**
-`agent-control-deploy` and the release visit restart the PEP on
+`creche-deploy` and the release visit restart the PEP on
 purpose, and a lone probe landing inside the 10-15 s restart window must
 not page the operator for an outage they ordered. A single failure still turns the
 exit code non-zero and still names itself in the journal — it just does
@@ -338,7 +338,7 @@ def test_no_site_file_stops_with_one_line_naming_it(rig: Rig, tmp_path: Path) ->
 
 
 def test_a_single_failure_is_recorded_but_not_pushed(rig: Rig) -> None:
-    """THE FALSE ALARM THIS FIX REMOVES. `agent-control-deploy` restarts
+    """THE FALSE ALARM THIS FIX REMOVES. `creche-deploy` restarts
     the PEP on purpose and `/healthz` is away for 10-15 s; a lone probe
     landing in that window must not page the operator for a restart they ordered."""
     done = rig.run(WD_PEP_CODE="000")

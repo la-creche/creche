@@ -15,7 +15,7 @@ Four rules shape this file.
 1. **One probe per interval for the WHOLE fleet**, never one per family.
    Eleven families asking the same question eleven times answers it no
    better.
-2. **One flap is not an outage.** `agent-control-deploy` restarts the PEP
+2. **One flap is not an outage.** `creche-deploy` restarts the PEP
    on every deploy and `/healthz` answers again in about 10 to 15 s. The
    fault waits out `PEP_UNREACHABLE_AFTER_S` of unbroken silence.
 3. **Nothing escapes.** A probe that raises, hangs or answers rubbish is a

@@ -1,0 +1,27 @@
+# Fires creche-watchdog.service every minute. USER timer, as the operator.
+#
+# Installed and enabled by `bin/rework-cutover.sh up`, removed by its
+# `rollback`.
+#
+# WHY A MINUTE. The brief is "tell the operator's phone within five minutes". The
+# slowest check is `caregiver`'s freshness, which needs a document 180 s old
+# before it says anything, so a minute puts the first push at about three
+# minutes and the second sighting a minute after that. Ten seconds would buy
+# nothing: the thresholds, not the cadence, set how fast an outage is seen.
+# The alarm pushes on a CHANGE of verdict only, so a five-hour outage is one
+# push and one "recovered" push, not three hundred.
+[Unit]
+Description=Check every minute that the rework services are alive
+
+[Timer]
+# Two minutes after boot, so the five units have had their own start.
+OnBootSec=2min
+OnUnitActiveSec=1min
+# The default would spread these over a minute, which is the whole interval.
+AccuracySec=10s
+# NO Persistent=true. A missed run is a minute of not looking; catching up
+# after a reboot would push a verdict about a host that no longer exists.
+Unit=creche-watchdog.service
+
+[Install]
+WantedBy=timers.target

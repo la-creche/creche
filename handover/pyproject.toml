@@ -1,0 +1,36 @@
+[project]
+name = "handover"
+version = "0.1.0"
+description = "handover: component manifests, the resolver, and tags allocated at merge (contract 06)."
+requires-python = ">=3.12"
+dependencies = ["pyyaml>=6"]
+
+[project.scripts]
+# `handover` is this component's own name (contract 06 §1 row 8).
+handover = "handover.cli:main"
+# The ROOT executor (stage7-releases.md §2.4). A separate name from the
+# requester CLI above, because the two have different identities and
+# different reach: `handover` reads files a caller names and writes
+# one request, `handover-exec` swaps trees and restarts units.
+# `bin/creche-handover` execs this one.
+handover-exec = "handover.executor.drain:main"
+# The ROOT secret intake (stage7-releases.md §4.3). A third name, because it
+# is a third identity and a third reach: this one binds a TLS listener on the
+# LAN address and is handed plaintext secrets, and it deploys nothing.
+# `bin/creche-handover-intake` execs it, and it runs until systemd stops it.
+handover-intake = "handover.intake.run:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/handover"]
+
+[tool.uv]
+# uv rebuilds a local package only when pyproject.toml, setup.py or setup.cfg
+# changes, and every first-party package stays at one version. Without the
+# source in the key, a non-editable build installs the FIRST wheel uv ever
+# cached for this directory, for ever, and a new commit's tree holds the old
+# code (handover/tests/test_handover_ced_uv_guard.py).
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]

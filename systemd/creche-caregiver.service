@@ -51,7 +51,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/agent-control
+WorkingDirectory=/opt/creche
 # sbx panics without both: its state is per-user and a user manager sets
 # neither (systemd/AGENTS.md). caregiver shells out to sbx for every sandbox.
 Environment=HOME=%h
@@ -61,7 +61,7 @@ Environment=XDG_CONFIG_HOME=%h/.config
 EnvironmentFile=/srv/agents/state/rework/managerd.env
 # The site's AGENT_LAN_ADDRESS: where LiteLLM, attendance and the PEP answer.
 EnvironmentFile=/etc/agent-control/site.env
-# The component tree contract 06 §1 row 3 fixes, not /opt/agent-control's
+# The component tree contract 06 §1 row 3 fixes, not /opt/creche's
 # shared workspace venv. The release executor swaps `<install.to>` and
 # restarts this unit, so a unit that ran from anywhere else would relaunch
 # the old code after a release the ledger called a success.
