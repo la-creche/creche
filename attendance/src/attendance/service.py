@@ -142,6 +142,11 @@ _PEP_AWAY_MESSAGE = (
     "so no tool call would have worked. The next firing runs as usual."
 )
 
+# Contract 02 §14's `message` for a turn that this service did not start
+# because of an error that it did not expect. It holds no text of that
+# error. The log holds the error.
+_START_ERROR = "attendance could not start this turn"
+
 # Contract 02 §10.2 rules 1 and 2: run the prompt, branch nothing. Every
 # caller that has no Open WebUI parent id wants exactly this.
 PLAIN_PROMPT = Decision(Branch.PROMPT)
@@ -1222,8 +1227,31 @@ class SessionService:
     ) -> LiveTurn:
         """Mint the turn and journal it BEFORE the channel hears about it."""
         live = self._mint_turn(record, request, persona, TurnState.RUNNING)
-        self._begin_turn(live, record, request, persona, status, sandbox)
+
+        try:
+            self._begin_turn(live, record, request, persona, status, sandbox)
+        except Exception:
+            self._fail_start(live)
+            raise
+
         return live
+
+    def _fail_start(self, live: LiveTurn) -> None:
+        """End a turn whose start raised, so that it does not stay in flight.
+
+        The turn is in the book before its first write. Left `running` with
+        no deadline watcher, or `queued` out of the FIFO, it holds its
+        session and a slot of its family until the process restarts.
+        Contract 02 §4.3 has no `queued -> failed`, so a queued turn ends
+        `aborted`.
+        """
+        state = live.record.state
+
+        if is_terminal(state):
+            return
+
+        ending = TurnState.ABORTED if state is TurnState.QUEUED else TurnState.FAILED
+        self._settle(live, ending, TurnReason.INTERNAL, _START_ERROR)
 
     def _mint_turn(
         self,
@@ -1398,20 +1426,26 @@ class SessionService:
         self._queue.check_room(family)
 
         live = self._mint_turn(record, request, persona, TurnState.QUEUED)
-        line = self._append(
-            family,
-            record.session,
-            LineKind.TURN_QUEUED,
-            live.record.turn,
-            {
-                "prompt": request.prompt,
-                "idempotency_key": request.idempotency_key,
-                "queue_depth": self._queue.depth(family) + 1,
-            },
-        )
-        live.first_seq = line.journal_seq if line.journal_seq is not None else 0
-        self._store.save_turn(live.record)
-        self._store.save(record)
+
+        try:
+            line = self._append(
+                family,
+                record.session,
+                LineKind.TURN_QUEUED,
+                live.record.turn,
+                {
+                    "prompt": request.prompt,
+                    "idempotency_key": request.idempotency_key,
+                    "queue_depth": self._queue.depth(family) + 1,
+                },
+            )
+            live.first_seq = line.journal_seq if line.journal_seq is not None else 0
+            self._store.save_turn(live.record)
+            self._store.save(record)
+        except Exception:
+            self._fail_start(live)
+            raise
+
         self._queue.add(family, Waiting(live=live, request=request, persona=persona, branch=branch))
         return live
 
@@ -1468,6 +1502,21 @@ class SessionService:
 
         if record is None:
             return
+
+        try:
+            await self._start_queued(waiting, status, record)
+        except Exception:
+            # Nothing awaits this task. Without this handler the turn stays
+            # `queued` out of the FIFO, or `running` with no deadline watcher.
+            _LOG.exception(
+                "queued turn %s of %s/%s did not start", live.record.turn, family, session
+            )
+            self._fail_start(live)
+
+    async def _start_queued(self, waiting: Waiting, status: FamilyStatus, record: Session) -> None:
+        """The start itself. `_start_waiting` ends the turn when this raises."""
+        live = waiting.live
+        family = live.record.family
 
         # A family with nothing to dial, or a sandbox with no env file
         # (contract 05 §4.1). Contract 02 §4.3 has no `queued -> failed`, so
@@ -1554,23 +1603,23 @@ class SessionService:
         family = live.record.family
         session = live.record.session
 
-        if branch.branch is Branch.FALLBACK:
-            # Contract 02 §10.2 rule 4. The turn runs; the divergence is
-            # visible rather than silent.
-            self._append(
-                family,
-                session,
-                LineKind.BRANCH_FALLBACK,
-                live.record.turn,
-                {"wanted_entry": None, "reason": branch.reason},
-            )
-
-        if branch.branch is Branch.FORK:
-            # Contract 03 §4.1: pi may refuse a target that is not on the
-            # active branch, and the host owns the fallback.
-            self._forks[live.key] = Fork(request, persona, status, sandbox)
-
         try:
+            if branch.branch is Branch.FALLBACK:
+                # Contract 02 §10.2 rule 4. The turn runs; the divergence is
+                # visible rather than silent.
+                self._append(
+                    family,
+                    session,
+                    LineKind.BRANCH_FALLBACK,
+                    live.record.turn,
+                    {"wanted_entry": None, "reason": branch.reason},
+                )
+
+            if branch.branch is Branch.FORK:
+                # Contract 03 §4.1: pi may refuse a target that is not on the
+                # active branch, and the host owns the fallback.
+                self._forks[live.key] = Fork(request, persona, status, sandbox)
+
             link = await self._link_for(family, status, sandbox)
 
             # The dial may outlast the turn: an `accepted` one can be stopped,
@@ -1607,6 +1656,13 @@ class SessionService:
             return
         except (ChannelClosed, HandshakeError, ValueError) as error:
             self._settle(live, TurnState.FAILED, TurnReason.CHANNEL_LOST, str(error))
+            return
+        except Exception:
+            # An error of any other type. The deadline watcher starts after
+            # this block, so without this handler the turn stays `running`
+            # with nothing to end it.
+            _LOG.exception("turn %s of %s/%s did not start", live.record.turn, family, session)
+            self._fail_start(live)
             return
 
         live.deadline_task = asyncio.create_task(

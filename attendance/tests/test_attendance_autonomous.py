@@ -529,6 +529,74 @@ async def test_a_queued_turn_with_no_sandbox_ends_the_job(tmp_path: Path) -> Non
     await harness.stop()
 
 
+async def test_a_queued_turn_whose_start_raises_ends_the_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Contract 02 §4.3. The error is of a type that the start does not name.
+
+    Nothing awaits the start of a queued turn. A turn left `queued` out of
+    the FIFO never ends, and its job leaves no outcome record. The contract
+    has no `queued -> failed`, so the turn ends `aborted`.
+    """
+    harness = await build(tmp_path, max_running_turns=1)
+    harness.create()
+    harness.create(session=SECOND_SESSION)
+    first = await harness.run(None)
+    queued = await harness.queue(SECOND_SESSION)
+    write_status(
+        harness.config.state_root,
+        family=AUTO_FAMILY,
+        kind="autonomous",
+        sandboxes=((AUTO_SANDBOX, "ready"),),
+        max_running_turns=1,
+        playpen_env="",
+    )
+
+    def failing(*_: object) -> None:
+        raise OSError(errno.ENOSPC, "no space left")
+
+    monkeypatch.setattr(harness.service.faults, "raise_fault", failing)
+
+    await harness.settle(first)
+    await settle_now(queued.done)
+
+    assert queued.record.state is TurnState.ABORTED
+    assert queued.record.reason is TurnReason.INTERNAL
+    await harness.stop()
+
+
+async def test_a_turn_that_cannot_be_queued_is_not_left_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The caller gets the error. The turn must not hold the session."""
+    harness = await build(tmp_path, max_running_turns=1)
+    harness.create()
+    harness.create(session=SECOND_SESSION)
+    await harness.run(None)
+    failed: list[str] = []
+    save_turn = harness.service.store.save_turn
+
+    def failing_once(record: Turn) -> None:
+        if not failed:
+            failed.append(record.turn)
+            raise OSError(errno.ENOSPC, "no space left")
+
+        save_turn(record)
+
+    monkeypatch.setattr(harness.service.store, "save_turn", failing_once)
+
+    with pytest.raises(OSError, match="no space left"):
+        await harness.queue(SECOND_SESSION)
+
+    live = harness.service.live_turn(AUTO_FAMILY, SECOND_SESSION, failed[0])
+
+    assert live is not None
+    assert live.record.state is TurnState.ABORTED
+    assert live.record.reason is TurnReason.INTERNAL
+    assert harness.service.queue_depth(AUTO_FAMILY) == 0
+    await harness.stop()
+
+
 # --------------------------------------------------------- the outcome record
 
 
