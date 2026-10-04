@@ -133,23 +133,32 @@ DENY_ENV = {
     "DENY_SHA256": "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f",
 }
 
-#: Where the archive comes from: a release of the cargo-deny repository.
-DENY_URL = (
-    '"https://github.com/EmbarkStudios/cargo-deny/releases/download/$DENY_VERSION/$name.tar.gz"'
-)
+#: The whole text of the step. The archive comes from a release of the
+#: cargo-deny repository. `set -euo pipefail` stops the step at the first
+#: command that fails. The compare is before the unpack, and the unpack is
+#: before the line that puts the program on PATH. A pin of some lines only
+#: lets a second unpack or a second value of `found` in between them.
+DENY_RUN = """\
+set -euo pipefail
+name="cargo-deny-$DENY_VERSION-x86_64-unknown-linux-musl"
+archive="$RUNNER_TEMP/$name.tar.gz"
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \\
+  --output "$archive" \\
+  "https://github.com/EmbarkStudios/cargo-deny/releases/download/$DENY_VERSION/$name.tar.gz"
+found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+if [[ "$found" != "$DENY_SHA256" ]]; then
+  echo "cargo-deny: the archive has the SHA-256 $found, not $DENY_SHA256" >&2
+  exit 1
+fi
+mkdir -p "$RUNNER_TEMP/cargo-deny"
+tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-deny" --strip-components 1 "$name/cargo-deny"
+echo "$RUNNER_TEMP/cargo-deny" >> "$GITHUB_PATH"
+PATH="$RUNNER_TEMP/cargo-deny:$PATH" cargo deny --version
+"""
 
-#: The lines of the step that decide, each by its start, in the order that
-#: they must have. `set -euo pipefail` stops the step at the first command
-#: that fails.
-DENY_STOPS_ON_A_FAILURE = "set -euo pipefail"
-DENY_ORDER = (
-    'found="$(sha256sum "$archive"',
-    'if [[ "$found" != "$DENY_SHA256" ]]; then',
-    "exit 1",
-    "fi",
-    "tar -xzf ",
-    'echo "$RUNNER_TEMP/cargo-deny" >> "$GITHUB_PATH"',
-)
+#: Each key of the step. One more key can change what a failure of the step
+#: does, for example `continue-on-error` or `shell`.
+DENY_KEYS = {"name", "if", "working-directory", "env", "run"}
 
 #: The two files the cargo cache is good for.
 CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
@@ -419,30 +428,21 @@ def test_the_rust_job_runs_the_gate_the_hooks_run(
         assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
 
 
-def _line_of(lines: list[str], start: str) -> int:
-    """The index of the one line that starts with `start`."""
-    (found,) = [index for index, line in enumerate(lines) if line.startswith(start)]
-
-    return found
-
-
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
 def test_the_rust_job_takes_cargo_deny_from_an_archive_that_it_checked(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
     """No action installs `cargo-deny`, so no commit pin holds the program.
     The SHA-256 of the archive is the pin. The step must compare it before
-    the unpack, and it must put nothing on PATH after a sum that differs."""
+    the unpack, and it must put nothing on PATH after a sum that differs.
+    The test holds the whole text of the step and each key of the step."""
     (deny,) = [step for step in jobs["rust"]["steps"] if step.get("name") == DENY_STEP]
-    lines = [line.strip() for line in deny["run"].splitlines()]
-    order = [_line_of(lines, start) for start in DENY_ORDER]
     names = [step.get("name") or step.get("run") for step in jobs["rust"]["steps"]]
 
+    assert set(deny) == DENY_KEYS
     assert deny["env"] == DENY_ENV
     assert deny["working-directory"] == RUST_DIR
-    assert lines[0] == DENY_STOPS_ON_A_FAILURE
-    assert DENY_URL in lines
-    assert order == sorted(order)
+    assert deny["run"] == DENY_RUN
     assert names.index(DENY_STEP) < names.index(RUST_RUN)
 
 
