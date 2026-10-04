@@ -1,7 +1,13 @@
 """Read the door's SSE body back, the way Open WebUI reads it.
 
-One `data:` line per frame, and `[DONE]` last. The door's own writer is under
-test, so nothing here uses it: this module parses the bytes.
+One event per frame, a blank line after each event, and `[DONE]` last. The
+door's own writer is under test, so nothing here uses it: this module parses
+the bytes, by the rules that an SSE client follows:
+
+1. A blank line ends an event. What follows the last blank line is an event
+   that no client gets.
+2. The `data` lines of one event are one value, joined by newlines.
+3. A line that starts with a colon is a comment.
 """
 
 from __future__ import annotations
@@ -10,8 +16,10 @@ import json
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
-_DATA_PREFIX: Final = "data: "
+_DATA_FIELD: Final = "data:"
 _DONE: Final = "[DONE]"
+_LINE_END: Final = "\n"
+_EVENT_END: Final = "\n\n"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,25 +66,34 @@ class Frames:
 
 
 def parse(raw: str) -> Frames:
-    """Split an SSE body into its JSON chunks. A comment line is dropped."""
-    chunks: list[dict[str, Any]] = []
-    done = False
+    """Split an SSE body into its JSON chunks. A comment line is dropped.
 
-    for line in raw.split("\n"):
-        stripped = line.strip()
+    `ends_with_done` is true only when `[DONE]` is the last event. An event
+    that is not JSON raises, as it stops a client.
+    """
+    values = _data_values(raw)
+    chunks = tuple(_object(json.loads(value)) for value in values if value != _DONE)
 
-        if not stripped.startswith(_DATA_PREFIX):
-            continue
+    return Frames(raw=raw, chunks=chunks, ends_with_done=values[-1:] == [_DONE])
 
-        payload = stripped[len(_DATA_PREFIX) :]
 
-        if payload == _DONE:
-            done = True
-            continue
+def _data_values(raw: str) -> list[str]:
+    """The data of each event that a blank line ended, in arrival order."""
+    text = raw.replace("\r\n", _LINE_END).replace("\r", _LINE_END)
+    values: list[str] = []
 
-        chunks.append(_object(json.loads(payload)))
+    for event in text.split(_EVENT_END)[:-1]:
+        lines = [line for line in event.split(_LINE_END) if line.startswith(_DATA_FIELD)]
 
-    return Frames(raw=raw, chunks=tuple(chunks), ends_with_done=done)
+        if lines:
+            values.append(_LINE_END.join(_field_value(line) for line in lines))
+
+    return values
+
+
+def _field_value(line: str) -> str:
+    """What follows `data:`, without the one space a writer may put there."""
+    return line[len(_DATA_FIELD) :].removeprefix(" ")
 
 
 def _delta_text(choice: dict[str, Any]) -> str:
