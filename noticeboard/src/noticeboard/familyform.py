@@ -126,10 +126,8 @@ def with_posted(form: Form, posted: Mapping[str, str]) -> Form:
 def _typed(own: Field, posted: Mapping[str, str]) -> Field:
     """One control as the post left it.
 
-    A browser names each free text control in a post. For a post that does
-    not name a block, the document takes the block of the registry, and the
-    control shows it. Each other control that the post does not name is
-    empty.
+    A browser names each free text control in a post. A control that the
+    post does not name shows what the document takes.
     """
     if own.locked:
         return own
@@ -137,9 +135,27 @@ def _typed(own: Field, posted: Mapping[str, str]) -> Field:
     if own.control is Control.CHECKBOX:
         return replace(own, checked=own.name in posted)
 
-    unnamed = own.value if own.control is Control.BLOCK else ""
+    return replace(own, value=posted.get(own.name, _unnamed(own))[:MAX_FIELD_CHARS])
 
-    return replace(own, value=posted.get(own.name, unnamed)[:MAX_FIELD_CHARS])
+
+def _unnamed(own: Field) -> str:
+    """What a free text control shows when the post does not name it.
+
+    The document takes the block of the registry for a block, and the
+    control shows it. The document drops each other key, so the family takes
+    the default of the schema. A list shows that default, because an empty
+    list control posts an empty list. Each other control is empty, and an
+    empty control drops the key again.
+    """
+    if own.control is Control.BLOCK:
+        return own.value
+
+    info = FamilyFile.model_fields.get(own.name)
+
+    if own.control is not Control.LINES or info is None:
+        return ""
+
+    return _rendered(own.name, own.control, info.get_default(call_default_factory=True))
 
 
 def document_of(form: Form, posted: Mapping[str, str]) -> tuple[str, str]:

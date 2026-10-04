@@ -252,15 +252,37 @@ def test_the_form_of_an_answer_keeps_a_locked_control() -> None:
 
 def test_a_control_that_the_post_does_not_name_shows_no_text_of_the_reader() -> None:
     """A browser names each free text control. For a post that names none,
-    a block shows the block of the registry, as the document takes it. Each
-    other control is empty."""
-    form = form_of(family(), CHAT_INDEX)
+    a block shows the block of the registry, as the document takes it. A
+    list shows the default of the schema. Each other control is empty."""
+    form = form_of(family(CHAT_FAMILY_YAML + "sandbox_tools: [read]\n"), CHAT_INDEX)
+    no_list = posted_from(form)
+    del no_list["sandbox_tools"]
+    taken, _ = parse_posted(form, no_list)
+    assert taken is not None
 
     shown = with_posted(form, {})
 
     assert value_of(shown, "description") == ""
     assert value_of(shown, "egress") == ""
     assert value_of(shown, "files") == value_of(form, "files")
+    assert taken.sandbox_tools != ["read"]
+    assert value_of(shown, "sandbox_tools") == "".join(f"{one}\n" for one in taken.sandbox_tools)
+
+
+def test_a_post_that_leaves_a_control_out_gives_one_family() -> None:
+    """A post that a browser did not make can leave a control out. The page
+    that answers it shows what the document took, so the post of that page
+    gives the same family."""
+    form = form_of(family(), CHAT_INDEX)
+
+    for own in form.fields:
+        posted = posted_from(form)
+        posted.pop(own.name, None)
+
+        first, _ = parse_posted(form, posted)
+        again, _ = parse_posted(form, posted_from(with_posted(form, posted)))
+
+        assert again == first, own.name
 
 
 def test_the_form_of_an_answer_cuts_a_value_at_the_cap_of_a_control() -> None:
