@@ -70,6 +70,26 @@ def test_config_refuses_a_missing_token_file(tmp_path: Path) -> None:
         from_env({ENV_TOKEN_FILE: str(tmp_path / "nothing.token")})
 
 
+def test_config_refuses_a_token_file_that_is_not_utf8(tmp_path: Path) -> None:
+    path = tmp_path / "binary.token"
+    path.write_bytes(b"\xff\xfe" * MIN_TOKEN_BYTES)
+
+    with pytest.raises(ConfigError, match="not UTF-8") as caught:
+        from_env({ENV_TOKEN_FILE: str(path)})
+
+    assert ENV_TOKEN_FILE in str(caught.value)
+    # The decode error holds bytes of the token. The refusal does not carry it.
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_config_refuses_a_token_path_that_the_system_refuses(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="cannot read") as caught:
+        from_env({ENV_TOKEN_FILE: str(tmp_path / "a\x00b")})
+
+    assert "\x00" not in str(caught.value)
+
+
 def test_config_refuses_a_url_and_a_socket_together(tmp_path: Path) -> None:
     env = base_env(tmp_path)
     env[ENV_URL] = "http://192.0.2.10:8350"
