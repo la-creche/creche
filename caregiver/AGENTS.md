@@ -149,7 +149,9 @@ host where something has gone wrong.
 | spend | 60 s | spend moves with turns, not ticks |
 | create backoff | 5 s, doubling to 300 s | a failed create burns an id |
 
-`SIGHUP` means "look now". `SIGTERM` stops the loop after the look in flight.
+`SIGHUP` means "look now". The wait ends, and each family takes a pass at
+the next look. A family in a create backoff keeps its wait. `SIGTERM` stops
+the loop after the look in flight.
 
 Each step of a look ends in a handler of the loop: a dispatch, a pass, a
 delete, the MCP pass. The handler writes the first error with its

@@ -144,10 +144,12 @@ STOP_GRACE_S: Final = 330.0
 
 class Control(Protocol):
     """What ends a wait, and what ends the loop. `SignalControl` is the
-    real one. A test uses `FixedControl` and never sleeps."""
+    real one. A test uses `FixedControl` and never sleeps.
+
+    `wait` answers whether a signal asked for a look now."""
 
     def stopped(self) -> bool: ...
-    def wait(self, seconds: float) -> None: ...
+    def wait(self, seconds: float) -> bool: ...
 
 
 @dataclass
@@ -453,7 +455,10 @@ class LoopState:
         time (contract 05 §2 rule 8). Without this a raised fault and a
         cleared one would each sit unsaid for up to one heartbeat, and a
         fault that is computed and never published is a fault nobody
-        sees."""
+        sees.
+
+        A `SIGHUP` asks for the same: `serve` calls this when a signal
+        ended its wait."""
         with self._mutex:
             self._families = {
                 name: replace(one, revision=FORCE_PASS) for name, one in self._families.items()
@@ -536,7 +541,12 @@ def serve(config: LoopConfig, actors: Actors, control: Control) -> LoopState:
     with Passes(config.max_concurrent_passes, grace_s=config.stop_grace_s) as passes:
         while not control.stopped():
             _one_look(config, actors, state, passes, stopping.is_set)
-            control.wait(config.poll_interval_s)
+            if control.wait(config.poll_interval_s):
+                # "Look now" is a look at each family. Without this, a
+                # look with no edit reads one content hash and stops, and
+                # a pass that must try a step again waits for the
+                # heartbeat. A create backoff stays as it is.
+                state.force_pass()
 
         stopping.set()
 
@@ -1191,11 +1201,13 @@ class SignalControl:
     def stopped(self) -> bool:
         return self._stop.is_set()
 
-    def wait(self, seconds: float) -> None:
-        """Ends early on a look-now or a stop. `Event.set` wakes the waiter,
-        so a SIGHUP costs one tick of latency at most, not a full poll."""
-        self._look.wait(seconds)
+    def wait(self, seconds: float) -> bool:
+        """Ends early on a look-now or a stop, and answers whether it did.
+        `Event.set` wakes the waiter, so a SIGHUP costs one tick of latency
+        at most, not a full poll."""
+        asked = self._look.wait(seconds)
         self._look.clear()
+        return asked
 
     def _on_look(self, signum: int, frame: FrameType | None) -> None:
         del signum, frame
@@ -1222,5 +1234,6 @@ class FixedControl:
         self.left -= 1
         return False
 
-    def wait(self, seconds: float) -> None:
+    def wait(self, seconds: float) -> bool:
         self.waits.append(seconds)
+        return False

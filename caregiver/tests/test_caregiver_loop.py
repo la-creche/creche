@@ -11,6 +11,7 @@ import json
 import logging
 import shutil
 import signal
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -44,6 +45,7 @@ from caregiver_helpers import (
     write_registry,
 )
 
+from caregiver import loop as loop_module
 from caregiver import paths, sandboxes
 
 IMAGE: str = "sha256:deadbeef"
@@ -451,6 +453,79 @@ def test_a_second_wait_after_a_hangup_still_sleeps(restored_handlers: object) ->
     started = time.monotonic()
     control.wait(0.05)
     assert time.monotonic() - started >= 0.05
+
+
+def test_a_wait_says_when_a_hangup_ended_it(restored_handlers: object) -> None:
+    """The loop asks the wait whether a signal asked for a look now."""
+    del restored_handlers
+    control = SignalControl()
+    control.install()
+    signal.raise_signal(signal.SIGHUP)
+
+    assert control.wait(LONG_WAIT_S) is True
+    assert control.wait(0.01) is False
+
+
+class Asked(FixedControl):
+    """A control whose first wait ends as a `SIGHUP` ends it, or as the
+    poll interval ends it. The wait returns when the first pass of the
+    family ended and its thread is gone, so the second look does not find
+    that pass in flight."""
+
+    def __init__(self, states: list[LoopState], *, hangup: bool) -> None:
+        super().__init__(looks=2)
+        self._states = states
+        self._hangup = hangup
+
+    def wait(self, seconds: float) -> bool:
+        super().wait(seconds)
+        deadline = time.monotonic() + LONG_WAIT_S
+        while self._states[0].of("chat").revision == "" or self._in_flight():
+            assert time.monotonic() < deadline, "the first pass did not end"
+            time.sleep(0.01)
+
+        return self._hangup and len(self.waits) == 1
+
+    @staticmethod
+    def _in_flight() -> bool:
+        """`Passes` names the thread of a pass after its family."""
+        return any(one.name == "pass-chat" for one in threading.enumerate())
+
+
+@pytest.fixture
+def loop_states(monkeypatch: pytest.MonkeyPatch) -> list[LoopState]:
+    """Each `LoopState` that `serve` makes, for a control that reads one."""
+    made: list[LoopState] = []
+
+    class Recorded(LoopState):
+        def __init__(self) -> None:
+            super().__init__()
+            made.append(self)
+
+    monkeypatch.setattr(loop_module, "LoopState", Recorded)
+    return made
+
+
+def test_a_hangup_brings_the_next_pass_forward(bench: Bench, loop_states: list[LoopState]) -> None:
+    """`SIGHUP` says "look now". A pass that must try a step again, such as
+    a switch call that `attendance` refused, then runs at the next look. It
+    does not wait for the heartbeat."""
+    bench.switch = FakeSwitchClient(refuse="attendance answered 503")
+
+    serve(bench.config(), bench.actors(), Asked(loop_states, hangup=True))
+
+    assert len(bench.switch.requests) == 2
+
+
+def test_a_wait_that_runs_out_brings_no_pass_forward(
+    bench: Bench, loop_states: list[LoopState]
+) -> None:
+    """Without the signal, the family waits for its heartbeat."""
+    bench.switch = FakeSwitchClient(refuse="attendance answered 503")
+
+    serve(bench.config(), bench.actors(), Asked(loop_states, hangup=False))
+
+    assert len(bench.switch.requests) == 1
 
 
 def test_a_termination_signal_stops_the_loop(restored_handlers: object) -> None:
