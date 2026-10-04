@@ -668,6 +668,33 @@ async def test_the_record_names_a_failure(tmp_path: Path) -> None:
     await harness.stop()
 
 
+async def test_a_failure_text_with_no_utf8_form_still_ends_the_job(tmp_path: Path) -> None:
+    """The message of a failed turn comes from the sandbox. A message with
+    one half of a surrogate pair has no UTF-8 form. The job still leaves its
+    record, and the channel stays open."""
+    harness = await build(tmp_path)
+    harness.create()
+    live = await harness.run(None)
+
+    await harness.fleet.playpen(AUTO_SANDBOX).fail(
+        AUTO_SESSION, live.record.turn, "model_error", "cut \ud83d"
+    )
+    await settle_now(live.done)
+    record = await harness.outcome()
+
+    assert record["status"] == "failed"
+    assert record["error"] == "cut \ufffd"
+    assert harness.fleet.channels[AUTO_SANDBOX].alive is True
+    await harness.stop()
+
+
+def test_a_cut_error_has_a_utf8_form() -> None:
+    assert cut_error("a\ud800b") == "a\ufffdb"
+    assert cut_error("\ud800" * ERROR_MAX_BYTES) == "\ufffd" * (ERROR_MAX_BYTES // 3)
+    assert cut_error("caf\u00e9 \U0001f600") == "caf\u00e9 \U0001f600"
+    assert cut_error(None) is None
+
+
 async def test_a_follow_up_that_raises_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

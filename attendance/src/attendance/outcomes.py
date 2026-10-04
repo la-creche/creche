@@ -222,9 +222,13 @@ def cut_error(error: str | None) -> str | None:
     if error is None:
         return None
 
-    encoded = error.encode("utf-8")
+    # A message from a sandbox can hold one half of a surrogate pair. Such a
+    # text has no UTF-8 form, so the cap in bytes cannot count it. The record
+    # holds U+FFFD in the place of each half.
+    whole = error.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+    encoded = whole.encode("utf-8")
 
     if len(encoded) <= ERROR_MAX_BYTES:
-        return error
+        return whole
 
     return encoded[:ERROR_MAX_BYTES].decode("utf-8", "ignore")
