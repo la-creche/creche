@@ -599,17 +599,22 @@ class SessionService:
         # later, it would leave the turn running with nothing to run it.
         self._dial_for(family, status, sandbox)
         live = self._open_turn(record, request, sandbox, persona, status)
-        start = self._send_start(live, request, persona, status, sandbox, branch)
+        # The start is work of the service, not of the request. The server
+        # can cancel a request during the dial. The turn is in the book by
+        # then, so its start must still end: with a `start_turn` and a
+        # deadline watcher, or with a turn that failed.
+        started = self._start_apart(
+            self._send_start(live, request, persona, status, sandbox, branch)
+        )
 
         # Contract 02 §5.4: `accepted` answers at once. The dial can be a cold
         # start of 10 to 15 seconds (contract 03 §10 rule 5), and after an
         # idle close (rule 3) it usually is. `_send_start` settles the turn
         # itself on every failure, so nothing is lost by not waiting.
         if request.wait is Wait.ACCEPTED:
-            self._run_later(start)
             return live
 
-        await start
+        await asyncio.shield(started)
         return live
 
     async def steer(
@@ -1515,6 +1520,18 @@ class SessionService:
         task.add_done_callback(self._followups.discard)
         task.add_done_callback(report_failure)
         return True
+
+    def _start_apart(self, work: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        """Run the start of a turn as a task that no request owns.
+
+        The caller is a request, so an event loop runs. `close()` ends the
+        task with each other follow-up.
+        """
+        task = asyncio.create_task(work, name="turn start")
+        self._followups.add(task)
+        task.add_done_callback(self._followups.discard)
+        task.add_done_callback(report_failure)
+        return task
 
     async def _start_waiting(self, waiting: Waiting, status: FamilyStatus) -> None:
         """Move one queued turn to `running` (contract 02 §4.3)."""

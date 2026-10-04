@@ -220,8 +220,6 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - `_pump_queue` runs only when a turn ends. A queued turn does not start
   while the status document is unreadable or states no kind. Nothing tries
   again until another turn of the family ends (`service.py`).
-- When the server cancels a start during the dial, the turn stays `running`
-  with no deadline watcher (`service.py`).
 - `_settle` does not raise `IllegalTransition`. For a move that contract 02
   §4.3 does not allow, it writes one log line and one `note` line. The turn
   does not move. A `turn_settled` for a turn in `waiting-approval` is such a
