@@ -18,20 +18,16 @@ from __future__ import annotations
 
 import re
 import signal
-from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 from proc_chat import SESSIONS_PATH, TURN_STARTED, until
-from proc_ids import AUTO_PREFIX
+from proc_ids import AUTO_PREFIX, ULID
 from proc_services import Service
 from proc_standins import set_pi_env
-from proc_tree import SECRET_MODE, Tree, first_sandbox, token_of
-from proc_trigger import CHAT, FIRE, ORACLE, REVIEW, TriggerStack, fire_env
-
-#: Contract 02 §2: a ULID in upper-case Crockford base32.
-ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
+from proc_tree import Tree, first_sandbox, replace_secret, token_of
+from proc_trigger import CHAT, FIRE, HELD_TURN, ORACLE, REVIEW, TriggerStack, fire_env
 
 #: Contract 02 §13.1: the times of an outcome record are RFC 3339 in UTC.
 RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z")
@@ -39,10 +35,6 @@ RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z")
 #: A job of the fixture family is one short turn of the pi stand-in, and it
 #: crosses four processes on a loaded machine.
 JOB_DEADLINE_S = 60.0
-
-#: A turn long enough that a second firing finds it running: 250 deltas,
-#: 40 ms apart.
-HELD_TURN = {"events": 250, "delay_ms": 40}
 
 #: `ha-review` runs one turn at a time (contract 01 §3.14), so three firings
 #: are one running turn and two that wait (contract 02 §13 rules 2 and 3).
@@ -241,7 +233,7 @@ def test_the_fire_check_validates_and_calls_nothing(trigger_prepared: TriggerSta
 async def test_a_fire_refuses_a_bad_token_file(timer: TriggerStack, content: str | None) -> None:
     """Contract 02 §3 rule 7, as the door applies it to its own token. Fail closed."""
     tree = timer.tree
-    _replace(tree.token_file("door-trigger"), content)
+    replace_secret(tree.token_file("door-trigger"), content)
 
     fired = timer.fire(REVIEW)
 
@@ -272,15 +264,3 @@ def _kinds_of_the_one_session(tree: Tree) -> list[str]:
     sessions = tree.sessions_of(REVIEW)
 
     return tree.journal_kinds(sessions[0], REVIEW) if sessions else []
-
-
-def _replace(path: Path, content: str | None) -> None:
-    """Remove a secret file, or put another in its place by rename."""
-    if content is None:
-        path.unlink()
-        return
-
-    temp = path.with_name(f".{path.name}.tmp")
-    temp.write_text(content, encoding="utf-8")
-    temp.chmod(SECRET_MODE)
-    temp.replace(path)

@@ -16,7 +16,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from proc_tree import FAMILY, SANDBOX, SECRET_MODE, THIN, add_family, token_of, write_status
+from proc_tree import (
+    FAMILY,
+    SANDBOX,
+    THIN,
+    add_family,
+    replace_secret,
+    token_of,
+    write_status,
+)
 from proc_tui import ARG_NEW, ARG_SESSION, TuiStack
 
 CHECK_FLAG = "--check"
@@ -44,7 +52,7 @@ def test_the_check_validates_and_touches_nothing(tui_prepared: TuiStack) -> None
 @pytest.mark.parametrize("content", [None, "", SHORT_SECRET], ids=["missing", "empty", "short"])
 def test_a_bad_token_file_refuses_to_start(tui_prepared: TuiStack, content: str | None) -> None:
     """Contract 02 §3 rule 7, as the door applies it to its own token. Fail closed."""
-    _replace(tui_prepared.tree.token_file("door-tui"), content)
+    replace_secret(tui_prepared.tree.token_file("door-tui"), content)
 
     child, terminal = tui_prepared.open_terminal(FAMILY, ARG_NEW)
 
@@ -103,15 +111,3 @@ async def test_a_session_id_that_is_no_id_is_refused(tui: TuiStack) -> None:
 
     assert child.wait(EXIT_DEADLINE_S) != 0
     assert tui.terminal_calls() == []
-
-
-def _replace(path: Path, content: str | None) -> None:
-    """Remove a secret file, or put another in its place by rename."""
-    if content is None:
-        path.unlink()
-        return
-
-    temp = path.with_name(f".{path.name}.tmp")
-    temp.write_text(content, encoding="utf-8")
-    temp.chmod(SECRET_MODE)
-    temp.replace(path)

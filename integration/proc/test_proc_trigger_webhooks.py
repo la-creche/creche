@@ -37,19 +37,16 @@ from proc_tree import (
     SECRET_MODE,
     Tree,
     Validity,
+    replace_secret,
     token_of,
     webhook_token_of,
     write_status,
     write_webhook_token,
 )
-from proc_trigger import REVIEW, SERVE, WEBHOOK, TriggerStack, hook_path, serve_env
+from proc_trigger import HELD_TURN, REVIEW, SERVE, WEBHOOK, TriggerStack, hook_path, serve_env
 
 #: A job of the fixture family crosses four processes on a loaded machine.
 JOB_DEADLINE_S = 60.0
-
-#: A turn long enough to read its journal before the job ends, and to fill
-#: the queue behind it: 250 deltas, 40 ms apart.
-HELD_TURN = {"events": 250, "delay_ms": 40}
 
 #: Long enough to pass the 32-byte floor, so a refusal proves the comparison
 #: and not the length check.
@@ -307,7 +304,7 @@ def test_the_listener_refuses_a_bad_token_file(
     """Contract 02 §3 rule 7, as the door applies it to its own token. Fail closed."""
     tree = trigger_prepared.tree
     port = trigger_prepared.supervisor.free_port()
-    _replace(tree.token_file("door-trigger"), content)
+    replace_secret(tree.token_file("door-trigger"), content)
 
     child = trigger_prepared.spawn(
         Service.DOOR_TRIGGER, serve_env(tree, f"{LOOPBACK}:{port}"), SERVE
@@ -355,15 +352,3 @@ def _turn_prompt(tree: Tree, session: str) -> str | None:
             return str(line["body"].get("prompt", ""))
 
     return None
-
-
-def _replace(path: Path, content: str | None) -> None:
-    """Remove a secret file, or put another in its place by rename."""
-    if content is None:
-        path.unlink()
-        return
-
-    temp = path.with_name(f".{path.name}.tmp")
-    temp.write_text(content, encoding="utf-8")
-    temp.chmod(SECRET_MODE)
-    temp.replace(path)

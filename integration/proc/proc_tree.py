@@ -784,6 +784,15 @@ def write_door_key(tree: Tree) -> None:
     _atomic_write(tree.door_key_file, DOOR_KEY + "\n", SECRET_MODE)
 
 
+def replace_secret(path: Path, content: str | None) -> None:
+    """Remove a secret file, or put another in its place by rename."""
+    if content is None:
+        path.unlink()
+        return
+
+    _atomic_write(path, content, SECRET_MODE)
+
+
 def _sandbox_row(tree: Tree, family: str, sandbox: str, state: str, now: str) -> dict[str, Any]:
     return {
         "id": sandbox,

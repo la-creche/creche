@@ -18,7 +18,6 @@ import json
 import os
 import signal
 import time
-from pathlib import Path
 
 import pytest
 from proc_caregiver import (
@@ -52,7 +51,7 @@ from proc_standins import (
     tune,
     untune,
 )
-from proc_tree import FAMILY, SANDBOX, SECRET_MODE, write_family_prose
+from proc_tree import FAMILY, SANDBOX, replace_secret, write_family_prose
 
 NEXT_SANDBOX = "chat-s2"
 NEW_INSTRUCTIONS = "Answer only in metric units.\n"
@@ -131,7 +130,7 @@ def test_serve_refuses_a_bad_token_file(
     A `caregiver` that sent an empty bearer would ask `attendance` to accept
     one.
     """
-    _replace(caregiver_prepared.tree.token_file("managerd"), content)
+    replace_secret(caregiver_prepared.tree.token_file("managerd"), content)
 
     done = caregiver_prepared.run_caregiver(*_serve(caregiver_prepared))
 
@@ -422,15 +421,3 @@ def _left_the_table(pid: int) -> bool:
         return False
 
     return False
-
-
-def _replace(path: Path, content: str | None) -> None:
-    """Remove a secret file, or put another in its place by rename."""
-    if content is None:
-        path.unlink()
-        return
-
-    temp = path.with_name(f".{path.name}.tmp")
-    temp.write_text(content, encoding="utf-8")
-    temp.chmod(SECRET_MODE)
-    temp.replace(path)

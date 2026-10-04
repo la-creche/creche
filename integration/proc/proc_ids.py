@@ -7,6 +7,7 @@ service gives them: a test imports none.
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Final
 
@@ -16,6 +17,10 @@ _ULID_CHARS: Final = 26
 _TIME_BITS: Final = 48
 _RANDOM_BYTES: Final = 10
 _BITS_PER_CHAR: Final = 5
+
+#: Contract 02 §2: the form of a ULID, 26 characters of upper-case Crockford
+#: base32.
+ULID: Final = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 
 #: The prefix of a session that the trigger door makes (contract 02 §2).
 AUTO_PREFIX: Final = "auto-"

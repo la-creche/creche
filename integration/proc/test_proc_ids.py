@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import re
-
-from proc_ids import AUTO_PREFIX, auto_session, new_ulid
-
-#: Contract 02 §2: 26 characters of upper-case Crockford base32.
-ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
+from proc_ids import AUTO_PREFIX, ULID, auto_session, new_ulid
 
 #: A ULID holds 48 bits of time in its first 10 characters, so the first
 #: character is 0 to 7.

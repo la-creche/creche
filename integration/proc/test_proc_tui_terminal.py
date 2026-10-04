@@ -30,13 +30,13 @@ from run to run. The scenario of a new session and the scenario of
 from __future__ import annotations
 
 import json
-import re
 import signal
 import time
 
 import pytest
 from proc_chat import until
 from proc_harness import Child, pid_is_alive, pids_gone_by
+from proc_ids import ULID
 from proc_standins import PI, calls_of
 from proc_terminal import ENTER, EOF, INTERRUPT, Terminal
 from proc_tree import FAMILY, SANDBOX
@@ -53,9 +53,6 @@ from proc_tui import (
     instance_of,
     launch_bundle,
 )
-
-#: Contract 02 §2: a ULID in upper-case Crockford base32.
-ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 
 #: Contract 03 §7.6: the launcher could read no credential file.
 EXIT_NO_CREDENTIALS = 10

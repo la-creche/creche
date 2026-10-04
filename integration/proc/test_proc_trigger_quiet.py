@@ -26,7 +26,7 @@ from proc_chat import until
 from proc_harness import Finished, Supervisor
 from proc_standins import set_pi_env
 from proc_tree import Tree, append_audit, audit_record
-from proc_trigger import REVIEW, TriggerStack, hook_path
+from proc_trigger import HELD_TURN, REVIEW, TriggerStack, hook_path
 
 #: Contract 01 §3.15: the default floor. No scenario here runs that long, so
 #: the floor never is the reason for a wake.
@@ -41,9 +41,6 @@ QUIET_WITH_DAILY = f"{{ daily: {{ call: {DAILY_CALL}, hour: 0, zone: UTC }} }}"
 QUIET_ANSWER = f"quiet: {REVIEW}: nothing changed since"
 
 JOB_DEADLINE_S = 60.0
-
-#: A turn long enough that the next firing finds the wake live.
-HELD_TURN = {"events": 250, "delay_ms": 40}
 
 #: The pi stand-in ends in its first delta, so the turn fails.
 FAILED_TURN = {"die_at": 1}
