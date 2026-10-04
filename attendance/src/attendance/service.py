@@ -346,7 +346,12 @@ class SessionService:
         test can drive it without a clock.
         """
         for family in self._queue.families():
-            self._pump_queue(family)
+            try:
+                self._pump_queue(family)
+            except Exception:
+                # Each tick tries the families in the same order. Without
+                # this guard one family that fails hides each family after it.
+                _LOG.exception("queue of family %s was not tried", family)
 
     def _report_audit(self, message: str | None) -> None:
         """Contract 05 §3.3's `audit_unreadable`.

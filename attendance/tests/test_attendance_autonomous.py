@@ -20,6 +20,7 @@ from attendance.auth import Principal
 from attendance.branching import Branch, Decision
 from attendance.config import Config
 from attendance.errors import ApiError, ErrorCode, TurnReason
+from attendance.family_status import FamilyStatus, StatusReader
 from attendance.models import JournalLine, LineKind, Trigger, TriggerKind, Turn
 from attendance.outcomes import ERROR_MAX_BYTES, cut_error
 from attendance.paths import outcome_file
@@ -38,6 +39,9 @@ AUTO_SANDBOX = "scrum-lead-s1"
 AUTO_SESSION = "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
 SECOND_SESSION = "auto-01JBQ80M4F7S2YQ1VZK6W3TDEN"
 THIRD_SESSION = "auto-01JBQ81P8G9T3ZR2WAM7X4VEFP"
+FOURTH_SESSION = "auto-01JBQ82R3H1V4AS3XBN8Y5WFGQ"
+OTHER_FAMILY = "issue-worker"
+OTHER_SANDBOX = "issue-worker-s1"
 CHAT_FAMILY = "chat"
 CHAT_SESSION = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 DOOR = "trigger-1"
@@ -638,6 +642,65 @@ async def test_a_turn_that_starts_holds_its_slot(tmp_path: Path) -> None:
     assert second.record.state is TurnState.RUNNING
     assert third.record.state is TurnState.QUEUED
     assert harness.service.queue_depth(AUTO_FAMILY) == 1
+    await harness.stop()
+
+
+async def test_a_failed_try_of_one_queue_does_not_stop_the_next(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Contract 02 §13 rule 3. Each tick tries the queues in the same order.
+    A try that raises for one family must not hide each family after it."""
+    harness = await build(tmp_path, max_running_turns=1)
+    service = harness.service
+    harness.create()
+    harness.create(session=SECOND_SESSION)
+    await harness.run(None)
+    await harness.queue(SECOND_SESSION)
+
+    def publish(kind: str) -> None:
+        write_status(
+            harness.config.state_root,
+            family=OTHER_FAMILY,
+            kind=kind,
+            sandboxes=((OTHER_SANDBOX, "ready"),),
+            max_running_turns=1,
+        )
+
+    publish("autonomous")
+    request = RunTurnRequest(prompt=PROMPT)
+
+    for session in (THIRD_SESSION, FOURTH_SESSION):
+        service.create_or_find(TRIGGER_DOOR, CreateRequest(family=OTHER_FAMILY, session=session))
+
+    running = await service.run_turn(TRIGGER_DOOR, OTHER_FAMILY, THIRD_SESSION, request, DOOR)
+    playpen = harness.fleet.playpen(OTHER_SANDBOX)
+    await playpen.next_start()
+    queued = await service.run_turn(TRIGGER_DOOR, OTHER_FAMILY, FOURTH_SESSION, request, DOOR)
+    # The slot frees while the document states no kind, so the head waits
+    # for the upkeep.
+    publish("")
+    await playpen.settle(THIRD_SESSION, running.record.turn)
+    await settle_now(running.done)
+    publish("autonomous")
+    read = StatusReader.read
+
+    def failing(reader: StatusReader, family: str) -> FamilyStatus | None:
+        if family == AUTO_FAMILY:
+            raise OSError(errno.EIO, "the read failed")
+
+        return read(reader, family)
+
+    monkeypatch.setattr(StatusReader, "read", failing)
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        service.pump_queues()
+
+    started = await playpen.next_start()
+
+    assert started["turn"] == queued.record.turn
+    assert service.queue_depth(AUTO_FAMILY) == 1
+    assert f"queue of family {AUTO_FAMILY} was not tried" in caplog.text
+    monkeypatch.undo()
     await harness.stop()
 
 
