@@ -1,6 +1,6 @@
 {
   "name": "playpen",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "type": "module",
   "description": "playpen: the process inside a family sandbox that speaks contract 03 over one sbx exec and multiplexes one pi rpc process per session.",
