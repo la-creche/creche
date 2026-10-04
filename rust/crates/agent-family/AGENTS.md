@@ -143,7 +143,10 @@ error. The program does not stop on such a file.
   Python also reads the body, and refuses a file with a wrong body.
 - `registry::load_registry` reads a file name that is not UTF-8 with a
   replacement character. A directory with such a name gets a report under
-  that changed name.
+  that changed name. `registry::revision_of` reads the name in the same
+  way. The Python function uses the bytes of the name, so the two
+  revisions differ for a registry with such a name. No vector holds such a
+  name.
 - The program writes the usage text and the help text of Python 3.13. The
   text of another Python version can differ. No vector holds that text.
 - The program reads a command line as `argparse` of Python 3.13 reads it.
