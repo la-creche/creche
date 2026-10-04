@@ -101,6 +101,11 @@ component's own newest tag.
 - A change under `rust/` moves no component today, because no component is a
   binary component. A change to `rust/Cargo.lock`, `rust/Cargo.toml` or
   `rust/rust-toolchain.toml` moves every binary component and no other kind.
+- Prose moves no tag. A `.md` file outside `tests/` and `fixtures/` is
+  prose. A merge that changes only `playpen/AGENTS.md` makes no tag. The next
+  code change to `playpen/` makes one tag, and that tag covers both merges.
+- A new tag asks the operator for a release. `creche-follow.timer` on the
+  host files the request for each component that has had a release.
 - Only CI mints a Release. The release executor refuses a Release that
   `github-actions[bot]` did not author. Do not push a tag by hand.
 - A re-run on the same commit is a no-op. A tag is never moved or deleted.
