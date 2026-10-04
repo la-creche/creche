@@ -32,7 +32,7 @@ from caregiver.loop import (
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import REFUSED_TOOLS, expire_overlap, write_registry
 
 from caregiver import paths, sandboxes
 
@@ -320,6 +320,23 @@ def test_an_invalid_family_file_is_never_treated_as_deleted(bench: Bench) -> Non
     bench.look()
     assert paths.family_dir(bench.state_root, "ops").exists()
     assert bench.litellm.deleted == []
+
+
+def test_an_invalid_family_file_never_settles_a_rotation(bench: Bench) -> None:
+    """The settle runs before the pass, and it writes the grant file from
+    the family it is handed. A file the validator refused still parses, so
+    it would land in the one file the chaperone enforces."""
+    bench.look()
+    expire_overlap(bench.state_root)
+    creds = paths.creds_path(bench.state_root, "chat").read_bytes()
+    grant = paths.grant_path(bench.state_root, "chat").read_bytes()
+
+    write_registry(bench.registry_root, tools=REFUSED_TOOLS)
+    bench.look()
+
+    assert bench.status_of("chat")["state"] == FamilyState.INVALID
+    assert paths.creds_path(bench.state_root, "chat").read_bytes() == creds
+    assert paths.grant_path(bench.state_root, "chat").read_bytes() == grant
 
 
 # --- the signals a unit sends ------------------------------------------------------
