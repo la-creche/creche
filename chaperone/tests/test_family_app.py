@@ -72,16 +72,20 @@ def build(
     ha_url: str = HA_URL,
     embed_body: bytes | None = None,
     info_body: bytes | None = None,
+    paths: list[str] | None = None,
 ) -> TestClient:
     """The app with the family path configured and no live service.
 
     `embed_body` and `info_body` are the bytes of a reply of the embedding
     service, for a test of a reply that is not the shape the service gives.
+    `paths` gets the path of each request that a service receives.
     """
     pool = pool or FakePool()
 
     def handle(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
+        if paths is not None:
+            paths.append(request.url.path)
         if url.endswith("/embed"):
             if embed_body is not None:
                 return httpx.Response(tei_status, content=embed_body, headers=JSON_BODY)
@@ -629,7 +633,6 @@ def test_an_unreadable_model_id_does_not_block_the_call(tmp_path: Path) -> None:
         pytest.param(b"[]", id="no-vector"),
         pytest.param(b"[5]", id="a-vector-that-is-a-number"),
         pytest.param(b'[["a"]]', id="a-text-in-the-vector"),
-        pytest.param(b"[[true]]", id="a-boolean-in-the-vector"),
         pytest.param(b"[[null]]", id="a-null-in-the-vector"),
         pytest.param(b"[[0.1, NaN]]", id="not-a-number-in-the-vector"),
         pytest.param(b"[[0.1, Infinity]]", id="an-infinity-in-the-vector"),
@@ -662,28 +665,74 @@ def test_an_embed_reply_of_whole_numbers_is_a_vector(tmp_path: Path) -> None:
     assert reply.json()["result"]["dims"] == 4
 
 
+def test_a_boolean_in_an_embed_reply_stays_in_the_vector(tmp_path: Path) -> None:
+    """The reply carried `true` to the caller before the check of the
+    vector. That reading stays, as a contract question."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path, embed_body=b"[[true, 0.5, false]]")
+    reply = client.post("/call", json=EMBED_CALL, headers=family_auth())
+
+    assert reply.status_code == 200
+    assert reply.json()["result"]["embedding"] == [True, 0.5, False]
+    assert reply.json()["result"]["dims"] == 3
+
+
 @pytest.mark.parametrize(
     "info_body",
     [
         pytest.param(TOO_DEEP_JSON, id="nested-too-deep"),
         pytest.param(b'["BAAI/bge-base-en-v1.5"]', id="a-list"),
         pytest.param(b"null", id="a-null"),
-        pytest.param(b"{}", id="no-model-id"),
-        pytest.param(b'{"model_id": 5}', id="a-number-for-the-id"),
-        pytest.param(b'{"model_id": null}', id="a-null-for-the-id"),
-        pytest.param(b'{"model_id": {"name": "x"}}', id="an-object-for-the-id"),
+        pytest.param(b'"BAAI/bge-base-en-v1.5"', id="a-text"),
     ],
 )
-def test_a_model_id_of_another_shape_reads_as_unknown(tmp_path: Path, info_body: bytes) -> None:
-    """The id is a string (§4.1). A reply of `/info` that holds no string id
-    reads as a reply that cannot be read: the call goes on, and the reply
-    says `unknown`."""
+def test_an_info_reply_that_is_no_object_is_an_upstream_failure(
+    tmp_path: Path, info_body: bytes
+) -> None:
+    """A reply of `/info` that is JSON and no object is §5 row 11, with its
+    own audit line. No text goes to `/embed`. The reply is not kept, so the
+    next call reads `/info` again."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    paths: list[str] = []
+    client = build(tmp_path, info_body=info_body, paths=paths)
+    replies = [client.post("/call", json=EMBED_CALL, headers=family_auth()) for _ in range(2)]
+
+    assert [reply.status_code for reply in replies] == [502, 502]
+    assert replies[0].json()["reason"] == "upstream_failed"
+    assert paths == ["/info", "/info"]
+    assert [(r["decision"], r["reason"]) for r in v2_lines(tmp_path)] == [
+        ("allow", "upstream_failed"),
+        ("allow", "upstream_failed"),
+    ]
+
+
+def test_an_info_reply_with_no_model_id_reads_as_unknown(tmp_path: Path) -> None:
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path, info_body=b"{}")
+    reply = client.post("/call", json=EMBED_CALL, headers=family_auth())
+
+    assert reply.status_code == 200
+    assert reply.json()["result"]["model"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("info_body", "model"),
+    [
+        pytest.param(b'{"model_id": 5}', "5", id="a-number"),
+        pytest.param(b'{"model_id": null}', "None", id="a-null"),
+    ],
+)
+def test_a_model_id_that_is_no_string_reads_as_its_text(
+    tmp_path: Path, info_body: bytes, model: str
+) -> None:
+    """The reply held the `str()` of such an id before the check of the
+    `/info` reply. That reading stays, as a contract question."""
     write_grants(grants_dir(tmp_path), make_grants())
     client = build(tmp_path, info_body=info_body)
     reply = client.post("/call", json=EMBED_CALL, headers=family_auth())
 
     assert reply.status_code == 200
-    assert reply.json()["result"]["model"] == "unknown"
+    assert reply.json()["result"]["model"] == model
 
 
 def test_ha_call_without_a_token_fails_closed(tmp_path: Path) -> None:

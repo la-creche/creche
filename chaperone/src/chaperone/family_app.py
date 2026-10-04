@@ -712,8 +712,11 @@ class FamilyGate:
         try:
             info = await client.get(f"{self._deps.tei_url}/info", timeout=TEI_INFO_TIMEOUT_S)
             self._tei_model = _model_id(info.json())
-        except (httpx.HTTPError, ValueError, RecursionError):
+        except (httpx.HTTPError, ValueError):
             self._tei_model = UNKNOWN_MODEL
+        except RecursionError:
+            # Not kept, as before this handler: the next call reads again.
+            raise ExecutionFailed("embed failed: the /info reply nests too deep") from None
         return self._tei_model
 
     async def _ha_call(self, args: dict[str, object]) -> dict[str, object]:
@@ -940,9 +943,9 @@ def _first_vector(reply: object) -> list[object]:
     numbers. A value that is not a finite JSON number is refused: the reply
     of this PEP is strict JSON, which has no word for one.
 
-    CONTRACT-QUESTION: §4.1 says "list of numbers" and gives no minimum
-    length. A vector of no number is taken, as it was before this check. A
-    change costs each caller that reads `dims`.
+    CONTRACT-QUESTION: §4.1 gives the vector as a list whose items are
+    numbers, with no minimum length. An empty vector is taken, as it was
+    before this check. A change costs each caller that reads `dims`.
     """
     if not isinstance(reply, list) or not reply:
         raise ExecutionFailed("embed failed: the reply holds no vector")
@@ -959,11 +962,15 @@ def _first_vector(reply: object) -> list[object]:
 
 
 def _is_finite_number(value: object) -> bool:
-    """A JSON number that strict JSON can write. `True` is an `int` in
-    Python and is no number in JSON. An integer is finite at any length."""
-    if isinstance(value, bool):
-        return False
+    """A number that strict JSON can write. An integer is finite at any
+    length.
 
+    CONTRACT-QUESTION: §4.1 gives the items of the vector as numbers and is
+    silent on `true` and `false`. Python reads each one as an integer, and
+    the reply carried it to the caller before this check. That reading
+    stays. A change to a refusal costs a caller of a service that sends
+    one.
+    """
     if isinstance(value, int):
         return True
 
@@ -971,19 +978,18 @@ def _is_finite_number(value: object) -> bool:
 
 
 def _model_id(info: object) -> str:
-    """The `model_id` of an `/info` reply, or `UNKNOWN_MODEL`.
+    """The `model_id` of an `/info` reply, or `ExecutionFailed` for a reply
+    that is no object. A reply with no id reads as `UNKNOWN_MODEL`.
 
-    CONTRACT-QUESTION: §4.1 says that the reply reports the id "as the
-    service reports it" and is silent on a service that reports no string.
-    Such a reply reads as a reply that cannot be read: `unknown`, and the
-    call goes on. A change to an upstream failure costs every `embed` call
-    while `/info` is down.
+    CONTRACT-QUESTION: §4.1 gives the model id as a string and is silent on
+    a service that reports an id of another type. Such an id reads as its
+    `str()`, as it did before this check. A change costs a caller that
+    compares the id with the id of its index.
     """
     if not isinstance(info, dict):
-        return UNKNOWN_MODEL
+        raise ExecutionFailed("embed failed: the /info reply is not an object")
 
-    served = cast("dict[str, object]", info).get("model_id")
-    return served if isinstance(served, str) else UNKNOWN_MODEL
+    return str(cast("dict[str, object]", info).get("model_id", UNKNOWN_MODEL))
 
 
 def _text_or_none(value: object) -> str | None:

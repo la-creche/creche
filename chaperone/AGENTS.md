@@ -217,10 +217,14 @@ Each line is an open contract question and the module it lives in.
   read (`family_app.py`).
 - An `embed` reply takes a vector of no number. Contract 04 §4.1 gives no
   minimum length (`family_app.py`).
-- An `/info` reply that holds no string id reads as `unknown`, and the
-  `embed` call continues (`family_app.py`).
+- An `embed` reply can hold `true` or `false` in the vector. Contract 04
+  §4.1 does not say if a boolean is a number (`family_app.py`).
+- A `model_id` of `/info` that is not a string reads as its `str()`.
+  Contract 04 §4.1 gives the id as a string (`family_app.py`).
 - No audit line holds a string that is not Unicode text, or arguments that
   nest deeper than the interpreter recurses. The record holds a marker in
   their place (`family_audit.py`, `family_app.py`).
 - A refused body whose echo is not JSON text answers 422 with the type and
   the message of each error only (`app.py`).
+- The log of a request of no family counts a string that is not Unicode
+  text as its `surrogatepass` bytes (`app.py`).

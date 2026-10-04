@@ -246,7 +246,12 @@ def _args_digest(args: dict[str, object]) -> tuple[int, str]:
 
     `surrogatepass`: the body reader takes a string that is not Unicode
     text, and such a string has no strict UTF-8 form. It counts as the
-    bytes it has "as it is", so the request still gets its line."""
+    bytes it has "as it is", so the request still gets its line.
+
+    CONTRACT-QUESTION: contract 04 §6 describes the log of a family only,
+    so it has no rule for the bytes of such a string in this log. The
+    reading here: the `surrogatepass` bytes. A change costs a reader that
+    compares the digests of two requests."""
     raw = json.dumps(args, ensure_ascii=False, sort_keys=True).encode("utf-8", "surrogatepass")
     return len(raw), hashlib.sha256(raw).hexdigest()
 
