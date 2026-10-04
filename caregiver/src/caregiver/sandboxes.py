@@ -460,23 +460,18 @@ def _write_rows(
     state_root: Path, family_name: str, rows: tuple[SandboxRecord | _Unread, ...]
 ) -> None:
     """The one writer of the ledger file."""
-    unread = sum(1 for one in rows if isinstance(one, _Unread))
-    try:
-        text = _ledger_text(family_name, rows)
-    except (ValueError, RecursionError):
-        # `json.loads` reads a deeper value than `json.dumps` writes with
-        # an indent under Python 3.12. Such a row cannot go back, and it
-        # must not make every later rewrite raise.
-        log.error("%s: the ledger drops %d row(s) that it cannot write again", family_name, unread)
-        records = tuple(one for one in rows if isinstance(one, SandboxRecord))
-        text = _ledger_text(family_name, records)
-    else:
-        if unread:
-            log.warning("%s: the ledger keeps %d row(s) that do not read", family_name, unread)
+    kept = tuple(one for one in rows if _can_write(one))
+    dropped = len(rows) - len(kept)
+    if dropped:
+        log.error("%s: the ledger drops %d row(s) that it cannot write again", family_name, dropped)
+
+    unread = sum(1 for one in kept if isinstance(one, _Unread))
+    if unread:
+        log.warning("%s: the ledger keeps %d row(s) that do not read", family_name, unread)
 
     atomic_write(
         paths.sandboxes_path(state_root, family_name),
-        text.encode("utf-8") + b"\n",
+        _ledger_text(family_name, kept).encode("utf-8") + b"\n",
         mode=LEDGER_FILE_MODE,
     )
 
@@ -488,6 +483,23 @@ def _ledger_text(family_name: str, rows: tuple[SandboxRecord | _Unread, ...]) ->
         "sandboxes": [one.raw if isinstance(one, _Unread) else one.as_json() for one in rows],
     }
     return json.dumps(body, indent=2)
+
+
+def _can_write(row: SandboxRecord | _Unread) -> bool:
+    """Whether the ledger text can hold this row.
+
+    `json.loads` reads a deeper value than `json.dumps` writes with an
+    indent under Python 3.12. A row of that kind cannot go back into the
+    file, and it must not make every later rewrite raise."""
+    if isinstance(row, SandboxRecord):
+        return True
+
+    try:
+        _ledger_text("", (row,))
+    except (ValueError, RecursionError):
+        return False
+
+    return True
 
 
 def _is_live(row: SandboxRecord | _Unread) -> TypeGuard[SandboxRecord]:

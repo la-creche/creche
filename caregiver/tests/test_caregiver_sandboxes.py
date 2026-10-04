@@ -431,10 +431,12 @@ def test_a_row_that_cannot_be_written_again_does_not_stop_a_rewrite(
     must not make every later rewrite raise. The rows that read stay, and
     the log says what the rewrite did with the row."""
     create(state_root, family, FakeDriver())
+    create(state_root, family, FakeDriver())
     path = paths.sandboxes_path(state_root, "chat")
     text = path.read_text(encoding="utf-8")
     deep = "[" * DEEPER_THAN_AN_ENCODER + "]" * DEEPER_THAN_AN_ENCODER
     path.write_text(text.replace('"cpus": 2', f'"cpus": {deep}', 1), encoding="utf-8")
+    spoiled = spoil(state_root, "chat-s2", allow="docs.python.org:443")
     assert read_ledger(state_root, "chat") == ()
 
     with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
@@ -442,6 +444,8 @@ def test_a_row_that_cannot_be_written_again_does_not_stop_a_rewrite(
 
     assert outcome.record is not None
     assert read_ledger(state_root, "chat") == (outcome.record,)
+    # The row that the encoder can write stays, whatever the other one did.
+    assert spoiled in ledger_rows(state_root)
     assert caplog.records
 
 
