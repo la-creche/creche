@@ -491,6 +491,13 @@ MERGED_KEYS: Final = 256
 #: The text of the roster is smaller than 1 KiB.
 CHAIN_LEVELS: Final = 26
 
+#: The two limits of the roster reader as numbers, not as the names of
+#: `mcp_release`. They are the numbers of the Rust reader of a component
+#: manifest. A number that changes in `mcp_release` fails a test that uses
+#: these.
+CHAIN_AT_THE_LIMIT: Final = 128
+PAIRS_AT_THE_LIMIT: Final = 65_536
+
 
 def _merged(times: int) -> str:
     """A roster with one row whose merge key copies `MERGED_KEYS` pairs
@@ -525,6 +532,26 @@ def _chain(levels: int) -> str:
     )
 
     return "\n".join(rows) + "\n"
+
+
+def _linked(links: int) -> str:
+    """A roster with `links` merge keys, where each row merges the row
+    before it one time. The reader makes each row before the row that
+    merges it, so it follows one merge key at a time."""
+    lines = ["row0: &row0 {command: x}"]
+    lines.extend(f"row{row}: &row{row} {{<<: *row{row - 1}}}" for row in range(1, links))
+    lines.append(f"weather: {{<<: *row{links - 1}}}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _copied(pairs: int) -> str:
+    """A roster with one row whose merge key copies `pairs` pairs."""
+    times, rest = divmod(pairs, MERGED_KEYS)
+    keys = ", ".join(f"k{number}: 0" for number in range(MERGED_KEYS))
+    aliases = ", ".join(["*base"] * times + ["*one"] * rest)
+
+    return f"base: &base {{{keys}}}\none: &one {{k0: 0}}\nweather: {{<<: [{aliases}]}}\n"
 
 
 def test_a_roster_with_a_merge_key_names_what_is_served(bench: Bench) -> None:
@@ -573,6 +600,37 @@ def test_a_merge_of_an_empty_value_counts_against_the_bound(bench: Bench) -> Non
     side = 300
     assert side * side > MERGE_PAIRS_MAX
     bench.mcp.roster.write_text(_empty_values(side, side), encoding="utf-8")
+
+    assert served_servers(bench.mcp) == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [_nested(CHAIN_AT_THE_LIMIT), _linked(CHAIN_AT_THE_LIMIT + 1), _copied(PAIRS_AT_THE_LIMIT)],
+    ids=["chain", "rows", "pairs"],
+)
+def test_the_last_roster_inside_a_limit_names_what_is_served(bench: Bench, text: str) -> None:
+    """The reader takes a chain of 128 merge keys and 65,536 copied pairs.
+    A chain is a merge key that holds a merge key. Rows that each merge
+    the row before it make no chain, so 129 such merge keys read."""
+    from caregiver.mcp_release import served_servers
+
+    bench.mcp.roster.write_text(text, encoding="utf-8")
+
+    assert SERVER in served_servers(bench.mcp)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [_nested(CHAIN_AT_THE_LIMIT + 1), _copied(PAIRS_AT_THE_LIMIT + 1)],
+    ids=["chain", "pairs"],
+)
+def test_the_first_roster_past_a_limit_is_nothing_served(bench: Bench, text: str) -> None:
+    """One more merge key in the chain, or one more copied pair, and the
+    roster does not read."""
+    from caregiver.mcp_release import served_servers
+
+    bench.mcp.roster.write_text(text, encoding="utf-8")
 
     assert served_servers(bench.mcp) == ()
 
