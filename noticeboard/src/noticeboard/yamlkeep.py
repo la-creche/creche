@@ -241,7 +241,8 @@ def _set(node: MutableMapping[str, Any], key: str, was: object, wanted: object) 
         return
 
     if was_block:
-        # The edit removed every key of the block, so the block goes whole.
+        # The block goes whole: the edit removed each key of it, or put a
+        # value of another kind in its place.
         _drop_block_comment(node, key)
 
     # A list is replaced whole. Matching an edited item to the item it came
