@@ -10,6 +10,7 @@ import shlex
 from pathlib import Path
 
 import pytest
+from proc_caregiver import serve_words
 from proc_services import (
     DEFAULT_ONLY_ENV,
     SERVICES,
@@ -22,12 +23,17 @@ from proc_services import (
     unknown_variables,
     venv_bin,
 )
+from proc_tree import Tree
 
 #: `integration/proc/test_proc_table.py` is 3 deep in the checkout.
 UNIT_DIR = Path(__file__).resolve().parents[2] / "systemd"
 EXEC_START = "ExecStart="
 CONTINUES = "\\"
 OVERRIDE_PREFIX = "CRECHE_PROC_"
+FLAG = "--"
+
+#: The three flags of `caregiver serve` that the suite adds to those of the unit.
+NOT_IN_THE_UNIT = {"--litellm-base-url", "--release-root", "--poll-interval-s"}
 
 
 def test_each_default_is_what_its_unit_runs() -> None:
@@ -39,6 +45,23 @@ def test_each_default_is_what_its_unit_runs() -> None:
 
             assert Path(words[0]).name == entry.program, f"{service.value}: {unit}"
             assert selector == entry.selector, f"{service.value}: {unit}"
+
+
+def test_the_arguments_of_caregiver_are_those_of_its_unit() -> None:
+    """The suite starts `caregiver` with each flag of the unit, in the order of the unit.
+
+    The row of `caregiver` has no selector, because a scenario also runs
+    its other verbs. So the verb and the flags of the unit are held here.
+    `proc_caregiver.py` gives the reason for each flag that the unit has not.
+    """
+    unit = shlex.split(_exec_start("creche-caregiver.service"))[1:]
+    suite = serve_words(Tree(Path("/the-root-of-a-test")), 1, "http://chaperone.invalid")
+    unit_flags = [word for word in unit if word.startswith(FLAG)]
+    suite_flags = [word for word in suite if word.startswith(FLAG)]
+
+    assert suite[0] == unit[0] == "serve"
+    assert [flag for flag in suite_flags if flag in unit_flags] == unit_flags
+    assert set(suite_flags) - set(unit_flags) == NOT_IN_THE_UNIT
 
 
 def test_every_service_has_a_row_and_its_own_variable() -> None:

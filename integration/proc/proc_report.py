@@ -1,4 +1,4 @@
-"""What a failed test carries: the root, and what each process wrote.
+"""What a failed test carries: the root, what each process wrote, and each status document.
 
 `conftest.py` uses this module in two places:
 
@@ -21,7 +21,11 @@ TEARDOWN_FAILED = "the teardown had to end a process:"
 
 
 def describe(tree: Tree, supervisor: Supervisor) -> str:
-    """The root, what each process wrote, and what each playpen wrote."""
+    """The root, what each process wrote, what each playpen wrote, and each status document.
+
+    A status document holds no secret (contract 05 §2 rule 3). It says which
+    fault a family has, and no output of a process says that.
+    """
     parts = [f"root: {tree.root} (set {KEEP_ROOTS_ENV}=1 to keep it)", supervisor.output()]
 
     if tree.log_dir.is_dir():
@@ -29,7 +33,29 @@ def describe(tree: Tree, supervisor: Supervisor) -> str:
             text = log.read_text(encoding="utf-8", errors="replace")
             parts.append(f"--- {log.name} ---\n{text}")
 
-    return "\n".join(parts)
+    return "\n".join([*parts, *_status_documents(tree)])
+
+
+def _status_documents(tree: Tree) -> list[str]:
+    """Each status document of the root, under the name of its family.
+
+    A service can remove a family while this function reads. A document that
+    is gone is left out.
+    """
+    if not tree.families_dir.is_dir():
+        return []
+
+    documents: list[str] = []
+
+    for family in sorted(path.name for path in tree.families_dir.iterdir()):
+        try:
+            text = tree.status_file(family).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        documents.append(f"--- the status document of {family} ---\n{text}")
+
+    return documents
 
 
 def end_processes(tree: Tree, supervisor: Supervisor, grace_s: float = STOP_GRACE_S) -> str | None:
