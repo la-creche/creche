@@ -100,30 +100,26 @@ error. The program does not stop on such a file.
      Python validator accepts the file. A Rust `String` cannot hold that
      value. This crate refuses the file. The vector is
      `yaml-escape-surrogate`.
-  2. `creche-contracts/src/family.rs`, `is_port`, contract 01 §3.7. The
-     Python validator reads a decimal digit that is not ASCII in a port.
-     This crate refuses such a digit, as rule 9 of `rust/AGENTS.md` says.
-     The vector is `rule-egress-edges`.
-  3. `yaml/construct.rs`, `py_int` and `py_float`. With an integer tag or
+  2. `yaml/construct.rs`, `py_int` and `py_float`. With an integer tag or
      a float tag on a quoted text, Python reads a decimal digit that is not
      ASCII. This crate refuses it. No vector holds such a text.
-  4. `yaml/construct.rs`, `decode_base64`. Python 3.12 stops a `!!binary`
+  3. `yaml/construct.rs`, `decode_base64`. Python 3.12 stops a `!!binary`
      value at its first complete padding. Python 3.13 and 3.14 read on.
      This crate reads as Python 3.13 reads. No vector holds such a value.
-  5. `yaml/construct.rs`, `MERGE_DEPTH_MAX` and `MERGED_ENTRIES_MAX`.
+  4. `yaml/construct.rs`, `MERGE_DEPTH_MAX` and `MERGED_ENTRIES_MAX`.
      Contract 01 gives no limit for merge keys. This crate follows a chain
      of 400 merge keys and makes 100,000 entries from merge keys. It
      refuses a text past a limit. No test holds a text at a limit.
-  6. `yaml/text.rs`, `NOT_PRINTED`. No contract gives the text of a YAML
+  5. `yaml/text.rs`, `NOT_PRINTED`. No contract gives the text of a YAML
      error. Python escapes a code point that its Unicode version does not
      assign. This crate does not, so a message that quotes such a code
      point differs.
-  7. `yaml/compose.rs`, `NESTING_MAX`. Contract 01 gives no limit for the
+  6. `yaml/compose.rs`, `NESTING_MAX`. Contract 01 gives no limit for the
      nesting of a file. This crate reads 128 levels and refuses a text with
      more. The Python validator reads more levels. A debug build reads a
      text of 128 levels on a stack of 1 MiB. The vectors are
      `nest-128-levels` and `nest-129-levels`.
-  8. `creche-contracts/src/ids.rs`, `ToolName`, `EnvName` and
+  7. `creche-contracts/src/ids.rs`, `ToolName`, `EnvName` and
      `PackageVersion`, contract 01 §3.4 and contract 01b §3.1, §4.1 and §5.
      `rust/AGENTS.md` lists the three questions. The Python validator
      accepts a tool name and a variable name of more than 64 bytes. It also

@@ -438,6 +438,14 @@ EGRESS_CASES = (
     (["*.github.com"], "holds a wildcard, which is ungrantable"),
     (["github.com:99999"], "has a port outside 1 to 65535"),
     (["_bad_host_"], "is not a hostname or hostname:port"),
+    # §3.7 rule 3: a port is ASCII digits. U+00B2 and U+0661 are digits to
+    # `str.isdigit`, and `int` reads only the second one.
+    (["github.com:\u00b2"], "has a port outside 1 to 65535"),
+    (["github.com:\u0661"], "has a port outside 1 to 65535"),
+    # `hostname:port` with no port is neither of the two forms.
+    (["github.com:"], "has a port outside 1 to 65535"),
+    # More digits than the interpreter converts.
+    (["github.com:" + "9" * 5000], "has a port outside 1 to 65535"),
 )
 
 
@@ -449,6 +457,11 @@ def test_egress_fences(egress: list[str], expect: str) -> None:
 
 def test_empty_egress_is_the_normal_case() -> None:
     assert not errors(check("chat"))
+
+
+@pytest.mark.parametrize("entry", ["github.com", "github.com:1", "github.com:65535", "a.b:00443"])
+def test_a_hostname_with_a_port_in_range_is_allowed(entry: str) -> None:
+    assert not errors(check("code", egress=[entry]))
 
 
 # --- 3.8 shell and sandbox_tools ---------------------------------------------

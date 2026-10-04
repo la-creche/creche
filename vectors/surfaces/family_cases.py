@@ -610,6 +610,16 @@ verbs:
         + "'example.com.', 'EXAMPLE.com', 'a_b.example', '192.0.2.10:443', '999.999.999.999', "
         + "'1.2.3', 'localhost', 'example.com:\u0661', 'example.com:+1', 'https://example.com']\n",
     ),
+    # U+00B2 is a digit to `str.isdigit` and no number to `int`.
+    _case("rule-egress-superscript", HEAD + "egress: ['example.com:\u00b2']\n"),
+    _case(
+        "rule-egress-port-digits",
+        HEAD
+        + "egress: ['example.com:00443', 'example.com:0000000000', 'example.com:065536', "
+        + "'example.com:100000', 'example.com:"
+        + "9" * _HUGE_DIGITS
+        + "']\n",
+    ),
     # --- the runtime fields (contract 01 §3.8) ---
     _case(
         "rule-runtime",

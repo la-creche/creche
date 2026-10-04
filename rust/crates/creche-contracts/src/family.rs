@@ -1588,11 +1588,6 @@ fn is_host_label(label: &str) -> bool {
 }
 
 fn is_port(port: &str) -> bool {
-    // CONTRACT-QUESTION: contract 01 §3.7 says "port 1 to 65535". The Python
-    // validator also reads a decimal digit that is not ASCII. This check
-    // refuses such a digit, as rule 9 of `rust/AGENTS.md` says. To read such
-    // a digit costs a table of the decimal digits of Unicode here, and the
-    // row `rule-egress-edges` of `DEVIATIONS` goes away.
     let digits = port.trim_start_matches('0');
 
     port.bytes().all(|byte| byte.is_ascii_digit())
@@ -1606,7 +1601,8 @@ impl FromStr for EgressHost {
     type Err = EgressHostError;
 
     fn from_str(text: &str) -> Result<Self, EgressHostError> {
-        let (host, port) = text.split_once(':').unwrap_or((text, ""));
+        let parts = text.split_once(':');
+        let (host, port) = parts.unwrap_or((text, ""));
         if text.contains('*') {
             return Err(EgressHostError::Wildcard);
         }
@@ -1615,7 +1611,8 @@ impl FromStr for EgressHost {
             return Err(EgressHostError::IpLiteral);
         }
 
-        if !port.is_empty() && !is_port(port) {
+        // A colon with no port after it is neither of the two forms.
+        if parts.is_some() && !is_port(port) {
             return Err(EgressHostError::BadPort);
         }
 
@@ -4025,7 +4022,6 @@ mod tests {
                 "example.com",
                 "example.com:443",
                 "example.com:65535",
-                "example.com:",
                 "EXAMPLE.com",
                 "localhost",
                 "1.2.3",
@@ -4040,6 +4036,7 @@ mod tests {
             ("192.0.2.10:443", EgressHostError::IpLiteral),
             ("999.999.999.999", EgressHostError::IpLiteral),
             ("::1", EgressHostError::IpLiteral),
+            ("example.com:", EgressHostError::BadPort),
             ("example.com:0", EgressHostError::BadPort),
             ("example.com:65536", EgressHostError::BadPort),
             ("example.com:+1", EgressHostError::BadPort),

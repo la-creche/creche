@@ -256,6 +256,10 @@ def duration_s(value: str) -> int | None:
 
 _IPV4: Final = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
 _HOSTNAME: Final = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$")
+#: ASCII digits, and five at most after the zeros at the start. `str.isdigit`
+#: also takes a digit that is not ASCII, and `int` raises on some of those
+#: and on a run past the digit limit of the interpreter.
+_PORT: Final = re.compile(r"0*([0-9]{1,5})")
 
 
 class EgressProblem(StrEnum):
@@ -267,9 +271,18 @@ class EgressProblem(StrEnum):
     BAD_HOSTNAME = "bad_hostname"
 
 
+def _is_port(port: str) -> bool:
+    """Contract 01 §3.7 rule 3: a number from 1 to 65535."""
+    match = _PORT.fullmatch(port)
+    if match is None:
+        return False
+
+    return PORT_MIN <= int(match.group(1)) <= PORT_MAX
+
+
 def egress_problem(entry: str) -> EgressProblem | None:
     """`hostname` or `hostname:port`. None when the entry is allowed."""
-    host, _, port = entry.partition(":")
+    host, colon, port = entry.partition(":")
     if "*" in entry:
         return EgressProblem.WILDCARD
 
@@ -277,7 +290,7 @@ def egress_problem(entry: str) -> EgressProblem | None:
         # A bare IPv4, or an IPv6 literal, whose extra colons land in `port`.
         return EgressProblem.IP_LITERAL
 
-    if port and (not port.isdigit() or not PORT_MIN <= int(port) <= PORT_MAX):
+    if colon and not _is_port(port):
         return EgressProblem.BAD_PORT
 
     labels = host.split(".")

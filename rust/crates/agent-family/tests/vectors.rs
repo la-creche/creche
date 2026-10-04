@@ -49,9 +49,6 @@ mod walk {
         /// The Python code accepts the file. The Rust report holds one error
         /// for the whole file, with this message.
         Refused(&'static str),
-        /// The Python code refuses the file. The Rust report holds one issue
-        /// more: this location and this message.
-        OneMoreError(&'static str, &'static str),
         /// The stance `stricter` of `rust/AGENTS.md`. The Python code accepts
         /// the file. An id type of `creche_contracts::ids` refuses one text
         /// of the file, so the Rust report holds one error more: this
@@ -90,7 +87,7 @@ mod walk {
 
     /// Each vector on which the Rust code differs from the Python code on
     /// purpose.
-    const DEVIATIONS: [Deviation; 17] = [
+    const DEVIATIONS: [Deviation; 16] = [
         no_value(
             "yaml-huge-int",
             "YAML will not parse: an integer has more than 4300 digits",
@@ -138,17 +135,6 @@ mod walk {
             // cannot hold that value, so the Rust reader refuses the file.
             difference: Difference::Refused(
                 "YAML will not parse: the escape for the surrogate U+D800 gives no character",
-            ),
-        },
-        Deviation {
-            surface: "family_file",
-            vector: "rule-egress-edges",
-            contract: "contract 01 §3.7: a port is 1 to 65535",
-            // The Python code reads the Arabic-Indic digit one as the port 1.
-            // `rust/AGENTS.md` refuses a digit that is not ASCII.
-            difference: Difference::OneMoreError(
-                "egress[11]",
-                "'example.com:\u{661}' has a port outside 1 to 65535",
             ),
         },
         Deviation {
@@ -456,10 +442,6 @@ mod walk {
                 assert!(!report.ok(), "{id}: {contract}");
 
                 return;
-            }
-            Some((Difference::OneMoreError(loc, msg), contract)) => {
-                assert_eq!(vector["result"], "refused", "{id}: {contract}");
-                without(&mut issues, &error_json(loc, msg), id, contract);
             }
             None => {}
         }
