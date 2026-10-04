@@ -50,6 +50,8 @@ playpen runs inside the sandbox image, which carries Node.
 4. A fault clears only on evidence: a completed handshake or a service start.
 5. Persona text carries no authority.
 6. A door's request body is untrusted input. `requests.py` parses it.
+7. The status document is a claim. A document with no known `kind` opens no
+   door and starts no queued turn. Read the kind with `served_kind`.
 
 ## Security rules
 
@@ -70,6 +72,14 @@ playpen runs inside the sandbox image, which carries Node.
    `channel` and `wire` to primitives. A route never touches the journal.
 5. Nothing here needs Node.
 6. Build paths with `paths.py`.
+7. Give each task a name and the done-callback `tasks.report_failure`. A
+   task that ends with an error must reach the log.
+8. Give the body of a loop that lives as long as the service one handler.
+   The handler logs the failure, and the loop goes on. `_flush_loop` and the
+   writer loop of `owui_copy.py` are the pattern. A channel loop is the
+   exception: a dead reader ends in a lost channel (contract 03 §10 rule 4).
+9. End a turn whose start raises with `_fail_start`. A turn must not stay
+   in flight with no deadline watcher.
 
 ## Switch rules
 
@@ -147,6 +157,7 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `playpen_link.py`, `switching.py`, `channel.py`, `exec_channel.py`, `wire.py` | one sandbox's channel, a switch, the protocol |
 | `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch ledger, the per-chat work directory |
 | `family_status.py`, `faults.py` | the status document, the fault file |
+| `tasks.py` | what a task says when it ends with an error |
 | `verify.py` | `attendance-verify` |
 
 ## Tests
