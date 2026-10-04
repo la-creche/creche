@@ -470,8 +470,8 @@ class Release:
         the switch of `handover` reads the staged tree. A directory that
         stayed grew the disk with each release.
 
-        A run that ends as a crash does (`_swap`, `_move_back`) does not
-        come here. Its directory stays, as its note does.
+        A run that ends in the way of a crash (`_swap`, `_move_back`) does
+        not come here. Its directory stays, as its note does.
         """
         remove_staged(self.wiring.host.work_root / self.request.id, FETCHED_TREES, self.entry)
 

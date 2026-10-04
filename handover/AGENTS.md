@@ -113,8 +113,9 @@ The console script is `handover`. The verify hook and the operator's
    that deploys code is not deployed by code.
 9. A step that raises an error it does not name is a failed step. The
    ledger gets the type of the error, and never its text.
-10. A unit file longer than 64 KiB stops the stage, for each kind. A line
-    after the cap can start a program that no reader saw.
+10. A unit file longer than 64 KiB stops the stage, for a `venv` component
+    and for a `binary` component. A line after the cap can start a program
+    that no reader saw.
 11. A staged venv tree is a directory, as a staged binary tree is. A link in
     its place is a fault: step 9 renames the link, and not the directory.
 
@@ -320,6 +321,12 @@ that wants a refusal changes one field.
   file takes a chain of 400 and 100,000 copied pairs. Each pair of limits is
   that of the Rust reader of the same file, so the two readers refuse the
   same text (`manifest.py`, `mcpserver.py`).
+- No contract names the sops file. Its reader takes the two merge limits of
+  a manifest (`intake/store.py`).
+- A manifest whose chain of merge keys passes the limit gets the refusal
+  text `nests deeper than 128 levels`. The Rust reader gives such a chain
+  that text. The Python reader still reads plain nesting deeper than 128
+  levels (`manifest.py`).
 - The intake reads `Content-Length` with `int`. That reader takes a sign,
   an underscore and a digit that is not ASCII (`intake/service.py`).
 - The secret-name pattern is copied into five modules, and the copies agree
@@ -364,14 +371,15 @@ that wants a refusal changes one field.
   does not read `rust/rust-toolchain.toml`. It also downloads a toolchain
   that the host does not have. The operator decides how the host gets its
   toolchain (`executor/install.py`).
-- A run that ends as a crash does keeps `work/<id>`, and no later run
+- A run that ends in the way of a crash keeps `work/<id>`. No later run
   removes it. A binary build leaves its `target` directory there
   (`executor/steps.py`).
 - `stage7-releases.md` §2.4 row 8 names no rule for the set-user-ID bit, the
   set-group-ID bit and the sticky bit of a staged file. The mode pass drops
   the three bits (`executor/install.py`).
 - Contract 06 §1 rule 8 names no size for a unit file. A unit file longer
-  than 64 KiB stops the stage, for each kind (`executor/install.py`).
+  than 64 KiB stops the stage, for a `venv` component and for a `binary`
+  component (`executor/install.py`).
 - Contract 06 §8.2 names no rule for a staged venv tree that is a link. The
   walk reports the link as a fault with the code `editable`
   (`executor/selfcontained.py`).

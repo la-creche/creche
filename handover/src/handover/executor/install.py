@@ -238,9 +238,9 @@ EXEC_PREFIXES: Final = "@-:+!"
 #: root reads this one off disk as a file some other installer wrote.
 #:
 #: CONTRACT-QUESTION: contract 06 §1 rule 8 names no size for a unit file.
-#: The reading taken stops the stage for a longer file, for each kind: a
-#: reader that judges a part of a file passes each line after that part. A
-#: larger cap costs this constant.
+#: The reading taken stops the stage for a longer file, for a `venv`
+#: component and for a `binary` component: a reader that judges a part of a
+#: file passes each line after that part. A larger cap costs this constant.
 MAX_UNIT_BYTES: Final = 64 * 1024
 
 #: Rule 8: the most siblings one component may have. `attendance` has three.
