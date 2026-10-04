@@ -277,7 +277,9 @@ impl FaultCode {
 words! {
     /// The step of a reconcile pass that is in flight (contract 05 §3.4).
     ///
-    /// A reader that gets another word refuses the document.
+    /// The set holds the eight words of §3.4 and one word that only
+    /// `caregiver` has: `write_timers`. A reader that gets another word
+    /// refuses the document.
     ReconcileStep, ReconcileStepError, "a reconcile step" {
         /// The validator checks the family file.
         Validate => "validate",
@@ -295,6 +297,14 @@ words! {
         SwitchSandbox => "switch_sandbox",
         /// `caregiver` destroys the old sandbox.
         DestroySandbox => "destroy_sandbox",
+        // CONTRACT-QUESTION: contract 05 §3.4 names the eight steps above.
+        // `caregiver.reconcile` also publishes `write_timers` as the step of
+        // a pass that changed the timer set last. The type takes that word,
+        // so a writer with this type can publish each document that
+        // `caregiver` writes today. To refuse it, `caregiver` must publish
+        // another step for such a pass.
+        /// `caregiver` writes the timer set of the triggers.
+        WriteTimers => "write_timers",
     }
 }
 
@@ -420,7 +430,8 @@ mod tests {
         assert_eq!(SandboxLifecycle::ALL.len(), 7);
         assert_eq!(FaultCode::ALL.len(), 15);
         assert_eq!(FaultSource::ALL.len(), 3);
-        assert_eq!(ReconcileStep::ALL.len(), 8);
+        // The eight steps of §3.4, and `write_timers` of `caregiver`.
+        assert_eq!(ReconcileStep::ALL.len(), 9);
         assert_eq!(Health::ALL.len(), 6);
     }
 

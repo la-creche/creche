@@ -36,6 +36,7 @@ from attendance.paths import fault_file, outcome_file
 from caregiver.chaperone_watch import PepReach, PepReport
 from caregiver.faults import FaultEntry, read_fault_file
 from caregiver.litellm_keys import SPEND_WINDOW
+from caregiver.reconcile import TIMERS_STEP
 from caregiver.status import (
     ChannelState,
     CredentialsBlock,
@@ -288,6 +289,17 @@ WRITTEN: Final[tuple[Written, ...]] = (
             state=FamilyState.RECONCILING,
             reconcile=_reconcile("create_sandbox", from_rev=_REV, attempts=2),
             sandboxes=(_sandbox(1), _sandbox(2, SandboxLifecycle.PLANNED, playpen_env="")),
+        ),
+    ),
+    # `caregiver.reconcile` publishes the last step of a pass, and
+    # `TIMERS_STEP` is one of them. Contract 05 §3.4 does not name it.
+    Written(
+        "reconciling-timers",
+        _document(
+            state=FamilyState.RECONCILING,
+            applied_rev=_OLD_REV,
+            config_rev=_OLD_REV,
+            reconcile=_reconcile(TIMERS_STEP),
         ),
     ),
     Written(

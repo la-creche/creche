@@ -416,6 +416,9 @@ Rules for the test:
       `null` for a family with no credentials. The type takes it.
   12. `fault_file::FAULT_FILE_CAP_BYTES`, contract 05 §3.3.1. The contract
       gives no size cap. The reader has a cap of 1 MiB.
+  13. `ReconcileStep::WriteTimers`, contract 05 §3.4. The contract names
+      eight steps. `caregiver` also writes the step `write_timers`. The type
+      takes it.
 - Contract 05 gives no grammar for these texts of the status document. Each
   one is a `String`: `registry_rev`, `applied_rev`, `config_rev`,
   `validation.rev`, `key_id`, `token_id`, `image`, `spec_hash`, `memory` and
