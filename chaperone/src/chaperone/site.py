@@ -58,6 +58,29 @@ _ZERO: Final = r"(?:0[xX]0*|0+)"
 #: and each one is zero. `0` and `0x0.0` are such texts.
 _IPV4_EACH_INTERFACE: Final = re.compile(rf"{_ZERO}(?:\.{_ZERO}){{0,3}}")
 
+#: One number as the C resolver reads it: hexadecimal after `0x`, octal
+#: after `0`, decimal in each other case.
+_C_NUMBER: Final = re.compile(r"0[xX][0-9a-fA-F]*|0[0-7]*|[1-9][0-9]*")
+_HEX_PREFIXES: Final = ("0x", "0X")
+_OCTAL_PREFIX: Final = "0"
+
+#: An IPv4 address is 32 bits. Some resolvers keep only those bits of one
+#: number that is larger.
+_IPV4_VALUES: Final = 2**32
+
+#: What starts the zone of an address. Some resolvers read an address with
+#: an empty zone as the address.
+_ZONE_SEPARATOR: Final = "%"
+
+#: What separates the groups of an IPv6 address, and the numbers of an IPv4
+#: address.
+_IPV6_SEPARATOR: Final = ":"
+_IPV4_SEPARATOR: Final = "."
+
+#: What ends a text for the C resolver. It reads no character after the
+#: first one.
+_C_TEXT_END: Final = "\x00"
+
 #: The word for each interface in the config of some services. No resolver
 #: reads it, so a bind on it is a start that fails.
 _EACH_INTERFACE_WORD: Final = "*"
@@ -169,22 +192,70 @@ def _is_each_interface(text: str) -> bool:
     or that IPv4 address as an IPv6 address, in each spelling. `text` is
     the host as the resolver gets it.
 
+    The C resolver reads the text to its first null character. A listener
+    on a host of no text answers on each interface with some resolvers.
+
     Some resolvers stop at white space, so only the text before the first
-    white space counts. Brackets around the text do not count.
+    white space counts. Brackets around the text do not count, and a zone
+    does not count.
     """
-    bare = text[1:-1] if text.startswith("[") and text.endswith("]") else text
-    address_text = bare.split(maxsplit=1)[0] if bare.strip() else bare
+    c_text = text.partition(_C_TEXT_END)[0]
+    if not c_text:
+        return True
+
+    bare = c_text[1:-1] if c_text.startswith("[") and c_text.endswith("]") else c_text
+    spaced = bare.split(maxsplit=1)[0] if bare.strip() else bare
+    address_text = spaced.partition(_ZONE_SEPARATOR)[0]
     if address_text == _EACH_INTERFACE_WORD or _IPV4_EACH_INTERFACE.fullmatch(address_text):
         return True
 
+    if _is_zero_in_32_bits(address_text):
+        return True
+
     try:
-        address = ipaddress.IPv6Address(address_text)
+        address = ipaddress.IPv6Address(_no_zero_in_front(address_text))
     except ValueError:
         return False
 
     mapped = address.ipv4_mapped
 
     return int(address) == 0 or (mapped is not None and int(mapped) == 0)
+
+
+def _no_zero_in_front(text: str) -> str:
+    """An IPv6 text with no zero in front of a number: not in a group, and
+    not in a number of an IPv4 end. Some resolvers read `00000::` as `::`
+    and `::ffff:00.0.0.0` as `::ffff:0.0.0.0`. `ipaddress` refuses a group
+    of more than four digits, and a number with a zero in front."""
+    groups = [
+        _IPV4_SEPARATOR.join(
+            number.lstrip("0") or number[:1] for number in group.split(_IPV4_SEPARATOR)
+        )
+        for group in text.split(_IPV6_SEPARATOR)
+    ]
+
+    return _IPV6_SEPARATOR.join(groups)
+
+
+def _is_zero_in_32_bits(text: str) -> bool:
+    """Whether `text` is one number of the C resolver whose low 32 bits are
+    all zero. `4294967296` is such a number. The count keeps only those
+    bits, so a number of each length has an answer."""
+    if not _C_NUMBER.fullmatch(text):
+        return False
+
+    if text.startswith(_HEX_PREFIXES):
+        base, digits = 16, text[2:]
+    elif text.startswith(_OCTAL_PREFIX):
+        base, digits = 8, text[1:]
+    else:
+        base, digits = 10, text
+
+    value = 0
+    for digit in digits:
+        value = (value * base + int(digit, base)) % _IPV4_VALUES
+
+    return value == 0
 
 
 def tei_url(env: Mapping[str, str]) -> str:
