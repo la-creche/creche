@@ -32,9 +32,8 @@ from . import auditfiles, statusdocs, transcript
 from .auditfiles import AuditFilter, AuditPage
 from .config import Config
 from .familyform import Form, form_of
-from .jsonfiles import Json
 from .sessions import SessionList, SessionReader, SessionRow, TurnRow
-from .statusdocs import FamilyRow, OutcomeRow
+from .statusdocs import FamilyRow, IssueRow, OutcomeRow
 
 #: How many audit lines a family page shows before pointing at /audit.
 FAMILY_AUDIT_LINES: Final = 10
@@ -64,7 +63,7 @@ class Home:
 class FamilyPage:
     row: FamilyRow
     sessions: SessionList
-    issues: tuple[Json, ...] = ()
+    issues: tuple[IssueRow, ...] = ()
     issues_problem: str = ""
     outcomes: tuple[OutcomeRow, ...] = ()
     audit: AuditPage | None = None
@@ -133,7 +132,7 @@ def family_page(config: Config, reader: SessionReader, name: str, now: datetime)
     )
 
 
-def _report(config: Config, row: FamilyRow) -> tuple[tuple[Json, ...], str]:
+def _report(config: Config, row: FamilyRow) -> tuple[tuple[IssueRow, ...], str]:
     """Contract 05 §3.2 points at a file. It is read only when named."""
     if row.validation is None or row.validation.ok:
         return (), ""

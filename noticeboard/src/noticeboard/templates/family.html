@@ -19,7 +19,7 @@
 {{ problem(page.issues_problem) }}
 <ul class="issues">
 {% for issue in page.issues %}
-  <li><code>{{ issue.get("loc", "") }}</code> {{ issue.get("msg", "") }}</li>
+  <li><code>{{ issue.loc }}</code> {{ issue.msg }}</li>
 {% endfor %}
 </ul>
 {% endif %}

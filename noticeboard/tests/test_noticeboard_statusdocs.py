@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from noticeboard.jsonfiles import MAX_TEXT_CHARS
 from noticeboard.statusdocs import (
+    NOT_TEXT,
     Health,
+    IssueRow,
     read_families,
     read_family,
     read_outcomes,
@@ -356,6 +359,31 @@ def test_the_validation_report_is_read_from_its_own_file(tmp_path: Path) -> None
 
     assert problem == ""
     assert len(issues) == 2
+
+
+def test_an_issue_reads_as_two_texts_with_a_bound(tmp_path: Path) -> None:
+    """Contract 01 §7: `loc` and `msg` are text. A page gets each one through
+    the display cap, and a marker for a value that is no text."""
+    path = tmp_path / "validation.json"
+    write_json(
+        path,
+        {
+            "issues": [
+                {"severity": "error", "loc": "tools.kagi", "msg": "m" * (MAX_TEXT_CHARS + 1)},
+                {"severity": "error", "loc": ["tools", ["kagi"]], "msg": None},
+                {"severity": "error"},
+            ],
+        },
+    )
+
+    issues, problem = read_report(path)
+
+    assert problem == ""
+    assert issues == (
+        IssueRow(loc="tools.kagi", msg="m" * MAX_TEXT_CHARS),
+        IssueRow(loc=NOT_TEXT, msg=NOT_TEXT),
+        IssueRow(loc="", msg=""),
+    )
 
 
 def test_a_missing_report_is_reported(tmp_path: Path) -> None:

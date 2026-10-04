@@ -43,6 +43,10 @@ HOST = "noticeboard.example.test"
 #: A text that holds one half of a surrogate pair. JSON writes it as an escape.
 HALF_PAIR = "a\ud800b"
 
+#: How deep the `loc` of one issue nests in a test. One supported Python reads
+#: this depth, and the others refuse it.
+ISSUE_NESTING = 100_000
+
 #: The largest count that the interpreter writes as text, and so the largest
 #: that the JSON reader keeps.
 LONGEST_COUNT = int("9" * 4300)
@@ -251,6 +255,26 @@ def test_a_missing_state_file_renders_a_report(board: Harness) -> None:
 
     assert answer.status_code == 200
     assert "missing" in answer.text
+
+
+def test_an_issue_field_that_is_no_text_still_renders(board: Harness, tmp_path: Path) -> None:
+    """An issue field is text in contract 01 §7. The page shows a marker for
+    another value and never the form of that value."""
+    from noticeboard_helpers import status_doc, write_json
+
+    report = tmp_path / "validation.json"
+    nested = "[" * ISSUE_NESTING + "]" * ISSUE_NESTING
+    report.write_text(f'{{"issues": [{{"loc": {nested}, "msg": "unknown"}}]}}', encoding="utf-8")
+    validation = {"ok": False, "error_count": 1, "report_path": str(report)}
+    write_json(
+        board.config.families_dir / "chat" / "status.json",
+        status_doc(state="invalid", validation=validation),
+    )
+
+    answer = board.get("/families/chat")
+
+    assert answer.status_code == 200
+    assert "[[" not in answer.text
 
 
 def test_the_family_page_lists_sandboxes_and_sessions(board: Harness) -> None:

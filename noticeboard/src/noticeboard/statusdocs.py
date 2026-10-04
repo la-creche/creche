@@ -43,6 +43,9 @@ MAX_ISSUES: Final = 200
 #: releases apart, short enough to sit in a table cell.
 DIGEST_CHARS: Final = 19
 
+#: What a page shows for a field of an issue that holds no text.
+NOT_TEXT: Final = "(not text)"
+
 
 class Health(StrEnum):
     """Contract 05 §3's four states, plus the two a READER can be in.
@@ -150,6 +153,14 @@ class ValidationRow:
     warning_count: int
     report_path: str
     first_error: str
+
+
+@dataclass(frozen=True)
+class IssueRow:
+    """One issue of contract 01 §7, as a page shows it."""
+
+    loc: str
+    msg: str
 
 
 @dataclass(frozen=True)
@@ -293,7 +304,7 @@ def read_families(families_dir: Path, now: datetime) -> tuple[FamilyRow, ...]:
     return tuple(read_family(families_dir, name, now) for name in family_names(families_dir))
 
 
-def read_report(path: Path) -> tuple[tuple[Json, ...], str]:
+def read_report(path: Path) -> tuple[tuple[IssueRow, ...], str]:
     """Contract 01 §7's issue list from the file §3.2 points at.
 
     Answers the issues and a problem string. A report is only read when the
@@ -304,7 +315,22 @@ def read_report(path: Path) -> tuple[tuple[Json, ...], str]:
     if body is None:
         return (), problem or jsonfiles.missing(path.name)
 
-    return jsonfiles.children(body, "issues", MAX_ISSUES), ""
+    issues = jsonfiles.children(body, "issues", MAX_ISSUES)
+
+    return tuple(IssueRow(_issue_text(one, "loc"), _issue_text(one, "msg")) for one in issues), ""
+
+
+def _issue_text(issue: Json, key: str) -> str:
+    """One field of an issue, for a page. A field that is not there reads
+    empty. A value that is no text reads as a marker: its own form has no
+    bound, and a page shows only what a helper of `jsonfiles` bounds."""
+    if key not in issue:
+        return ""
+
+    if not isinstance(issue[key], str):
+        return NOT_TEXT
+
+    return jsonfiles.text(issue, key)
 
 
 def read_outcomes(outcomes_dir: Path, family: str, limit: int) -> tuple[OutcomeRow, ...]:
