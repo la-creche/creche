@@ -22,6 +22,12 @@ export const MAX_EVENT_BYTES = 262144;
  */
 export const MAX_PI_NESTING = 256;
 
+/**
+ * Contract 03 §5.1. `turn_seq` counts from 1 in each turn. A turn that sent
+ * no line fails with this number.
+ */
+export const FIRST_TURN_SEQ = 1;
+
 /** Contract 03 §8. One `log` message, and one forwarded pi stderr line. */
 export const MAX_LOG_BYTES = 4096;
 

@@ -554,5 +554,121 @@ describe("untrusted input", () => {
     expect(failed?.session).toBe("owui-bad-deadline");
     expect(failed?.turn).toBe(turnId(1));
     expect(failed?.message).toContain("deadline_s");
+    // §5.3 gives the reason. §5.1 numbers a line of a turn from 1, and keeps
+    // 0 for a line with no session and no turn.
+    expect(failed?.reason).toBe("internal");
+    expect(failed?.turn_seq).toBe(1);
+  });
+
+  it("numbers a refused line that names a turn from 1 before hello too", async () => {
+    const harness = open();
+    harness.start();
+    harness.send({ type: "steer", session: "owui-early-steer", turn: turnId(1), message: 7 });
+
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    const failed = harness.of("turn_failed")[0];
+
+    expect(failed?.turn).toBe(turnId(1));
+    expect(failed?.reason).toBe("internal");
+    expect(failed?.turn_seq).toBe(1);
+  });
+
+  it("fails the running turn that a refused line names", async () => {
+    // §5.3: the line names a session and a turn, so that turn fails. The turn
+    // runs, so the failure takes its next number and pi gets an abort.
+    const harness = open({ piEnv: { "owui-bad-steer": { FAKE_PI_DELAY_MS: "40" } } });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-bad-steer", turnId(1));
+
+    await until(() => eventsOf(harness, turnId(1)).length > 0, "the turn to start");
+    harness.send({ type: "steer", session: "owui-bad-steer", turn: turnId(1), message: 7 });
+
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    const failed = harness.of("turn_failed")[0];
+    const before = eventsOf(harness, turnId(1)).length;
+
+    expect(failed?.turn).toBe(turnId(1));
+    expect(failed?.reason).toBe("internal");
+    expect(failed?.message).toContain("steer.message");
+    expect(failed?.turn_seq).toBe(before + 1);
+
+    // pi ends the run after the abort. No line of that turn follows the
+    // failure, and the process stays for the next turn.
+    await until(
+      () => harness.of("log").some((line) => line.message.includes("agent_settled")),
+      "pi to end the run",
+    );
+    expect(eventsOf(harness, turnId(1))).toHaveLength(before);
+    expect(harness.of("turn_settled")).toHaveLength(0);
+    expect(harness.of("process_exit")).toHaveLength(0);
+
+    harness.startTurn("owui-bad-steer", turnId(2));
+    await until(() => harness.of("turn_settled").length === 1, "the next turn");
+    expect(harness.of("turn_settled")[0]?.turn).toBe(turnId(2));
+  });
+
+  it("does not run a turn that a refused line failed while it waited", async () => {
+    // Both lines arrive in one chunk, so the refusal is read while the turn
+    // still waits for its pi process.
+    const harness = open();
+    harness.start();
+    harness.hello();
+
+    const start = {
+      type: "start_turn",
+      turn: turnId(1),
+      session: "owui-waiting",
+      cwd: harness.cwd("owui-waiting"),
+      session_dir: harness.sessionDir("owui-waiting"),
+      prompt: "hello",
+      deadline_s: 30,
+      env_epoch: 1,
+      config_rev: "reg-test",
+    };
+    const steer = { type: "steer", session: "owui-waiting", turn: turnId(1), message: 7 };
+    harness.sendRaw(`${JSON.stringify(start)}\n${JSON.stringify(steer)}`);
+
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    expect(harness.of("turn_failed")[0]?.turn_seq).toBe(1);
+
+    // The fake pi answers a prompt in well under this time.
+    await until(() => harness.spawns.length === 1, "the pi process");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(eventsOf(harness, turnId(1))).toHaveLength(0);
+    expect(harness.of("turn_settled")).toHaveLength(0);
+    expect(harness.of("turn_failed")).toHaveLength(1);
+
+    harness.startTurn("owui-waiting", turnId(2));
+    await until(() => harness.of("turn_settled").length === 1, "the next turn");
+    expect(harness.spawns).toHaveLength(1);
+  });
+
+  it("keeps no process for a refused turn when the family holds none", async () => {
+    // §6 rule 4. With `pi_idle_ttl_s` 0 a process stays only for its turn.
+    const harness = open();
+    harness.start();
+    harness.hello({ pi_idle_ttl_s: 0 });
+
+    const start = {
+      type: "start_turn",
+      turn: turnId(1),
+      session: "owui-thin",
+      cwd: harness.cwd("owui-thin"),
+      session_dir: harness.sessionDir("owui-thin"),
+      prompt: "hello",
+      deadline_s: 30,
+      env_epoch: 1,
+      config_rev: "reg-test",
+    };
+    const steer = { type: "steer", session: "owui-thin", turn: turnId(1), message: 7 };
+    harness.sendRaw(`${JSON.stringify(start)}\n${JSON.stringify(steer)}`);
+
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    await until(() => harness.of("process_exit").length === 1, "the process to go");
+
+    expect(eventsOf(harness, turnId(1))).toHaveLength(0);
+    expect(harness.of("process_exit")[0]?.turn).toBeNull();
   });
 });

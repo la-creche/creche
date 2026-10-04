@@ -26,6 +26,7 @@ import {
   DEFAULT_MAX_RESIDENT,
   DEFAULT_PI_IDLE_TTL_S,
   DEFAULT_STOP_GRACE_MS,
+  FIRST_TURN_SEQ,
   MAX_LOG_BYTES,
   PEP_BRIDGE_PATH,
   PROTOCOL_VERSION,
@@ -246,22 +247,32 @@ export class Playpen {
    *
    * Contract 03 §5.3 fixes the reason: `internal`, the conservative outcome,
    * because the reason table has nothing narrower.
+   *
+   * The failure names a turn, so §5.1 numbers it from 1. The pool knows the
+   * number, because it knows whether that turn runs.
    */
   private refuse(refusal: Refusal): void {
     const session = refusal.session;
     const turn = refusal.turn;
+    const detail = `refused a host message: ${refusal.detail}`;
     if (session === undefined || turn === undefined) {
-      this.log("error", null, `refused a host message: ${refusal.detail}`);
+      this.log("error", null, detail);
       return;
     }
 
+    if (this.pool !== null) {
+      this.pool.refuseTurn({ session, turn }, detail);
+      return;
+    }
+
+    // No pool exists before `hello`, so no turn runs and none sent a line.
     this.options.channel.send({
       type: "turn_failed",
       session,
       turn,
-      turn_seq: NO_TURN_SEQ,
+      turn_seq: FIRST_TURN_SEQ,
       reason: "internal",
-      message: `refused a host message: ${refusal.detail}`,
+      message: detail,
     });
   }
 

@@ -315,6 +315,23 @@ export class SandboxSession {
     this.pi.closeStdin();
   }
 
+  /**
+   * Contract 03 §5.3. Fails the running turn when its id is `turn`, and
+   * sends pi's `abort`, as a turn past its deadline ends. False when this
+   * session runs another turn or none.
+   */
+  public failRunning(turn: string, reason: TurnFailReason, message: string): boolean {
+    const state = this.turn;
+    if (state === null || state.id !== turn) {
+      return false;
+    }
+
+    this.fail(state, reason, message);
+    void this.abort();
+
+    return true;
+  }
+
   /** §11.1 rule 2. The heartbeat deadline does not wait for a settle. */
   public kill(): void {
     this.stopping = "shutdown";

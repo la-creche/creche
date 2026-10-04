@@ -13,7 +13,7 @@
 // so a spare could never be handed on.
 
 import { CredReader } from "./creds.js";
-import { MAX_LOG_BYTES } from "./constants.js";
+import { FIRST_TURN_SEQ, MAX_LOG_BYTES } from "./constants.js";
 import { piModelId, writeModelsJson } from "./models-json.js";
 import { bridgeAt, buildPiStart, PiMode } from "./pi-args.js";
 import type { PiArgsSpec, PiStart } from "./pi-args.js";
@@ -81,6 +81,17 @@ type SpawnOutcome =
   | { readonly ok: true; readonly session: SandboxSession }
   | { readonly ok: false; readonly reason: TurnFailReason; readonly detail: string };
 
+/** The two ids that address one turn on the channel (contract 03 §5.1). */
+interface TurnAddress {
+  readonly session: string;
+  readonly turn: string;
+}
+
+/** One key for one turn. A session id holds no `/` (contract 02 §2). */
+function turnKey(at: TurnAddress): string {
+  return `${at.session}/${at.turn}`;
+}
+
 /**
  * Why a held-open process cannot serve the next turn (§6 rule 5).
  *
@@ -140,6 +151,12 @@ export class SessionPool {
    */
   private readonly toolRevs = new Map<string, string>();
 
+  /**
+   * The turns that `startTurn` took and that wait for their pi process.
+   * `refuseTurn` removes one, and that turn then never runs.
+   */
+  private readonly waitingTurns = new Set<string>();
+
   private readonly links: CodeSandboxLinks;
   private sweep: NodeJS.Timeout | null = null;
   private throttled: SandboxSession | null = null;
@@ -190,26 +207,70 @@ export class SessionPool {
       return;
     }
 
-    await this.settleStart(message.session);
+    const key = turnKey(message);
+    this.waitingTurns.add(key);
 
-    const existing = this.sessions.get(message.session);
-    const stale = existing === undefined ? Staleness.Binding : this.staleness(existing, message);
-    if (existing !== undefined && stale === Staleness.None) {
-      await this.runTurn(existing, message);
+    let opened: SpawnOutcome;
+    let wanted: boolean;
+    try {
+      opened = await this.sessionFor(message);
+    } finally {
+      wanted = this.waitingTurns.delete(key);
+    }
+
+    if (!wanted) {
+      // `refuseTurn` failed this turn while it waited, so nothing runs.
+      if (opened.ok) {
+        this.reapUnheld(opened.session);
+      }
+
       return;
     }
 
-    if (existing !== undefined) {
-      await this.recycle(existing, stale);
-    }
-
-    const opened = await this.open(message);
     if (!opened.ok) {
       this.failTurn(message, opened.reason, opened.detail);
       return;
     }
 
     await this.runTurn(opened.session, message);
+  }
+
+  /**
+   * The process a `start_turn` runs on. A held process serves the turn when
+   * nothing moved under it (§6 rule 5). Each other one is recycled, and a new
+   * process starts.
+   */
+  private async sessionFor(message: StartTurnMessage): Promise<SpawnOutcome> {
+    await this.settleStart(message.session);
+
+    const existing = this.sessions.get(message.session);
+    const stale = existing === undefined ? Staleness.Binding : this.staleness(existing, message);
+    if (existing !== undefined && stale === Staleness.None) {
+      return { ok: true, session: existing };
+    }
+
+    if (existing !== undefined) {
+      await this.recycle(existing, stale);
+    }
+
+    return this.open(message);
+  }
+
+  /**
+   * Contract 03 §5.3. A host line that the playpen refused named this turn,
+   * so the turn fails with `internal`.
+   *
+   * A turn that runs fails with its next `turn_seq`, and pi gets an abort. A
+   * turn that waits for its pi process never starts. A turn that this pool
+   * does not hold sent no line, so the failure is its first line (§5.1).
+   */
+  public refuseTurn(at: TurnAddress, detail: string): void {
+    if (this.sessions.get(at.session)?.failRunning(at.turn, "internal", detail) === true) {
+      return;
+    }
+
+    this.waitingTurns.delete(turnKey(at));
+    this.failTurn(at, "internal", detail);
   }
 
   /**
@@ -666,8 +727,16 @@ export class SessionPool {
   private afterTurn(session: SandboxSession): void {
     this.sayWhatTheToolsDid(session);
 
-    // `pi_idle_ttl_s` 0 is the thin and autonomous default: nothing is held.
-    if (this.settings.idleTtlS <= 0 && this.sessions.get(session.id) === session) {
+    this.reapUnheld(session);
+  }
+
+  /** `pi_idle_ttl_s` 0 is the thin and autonomous default: nothing is held. */
+  private reapUnheld(session: SandboxSession): void {
+    if (this.settings.idleTtlS > 0 || session.busy) {
+      return;
+    }
+
+    if (this.sessions.get(session.id) === session) {
       void this.reap(session, "reaped");
     }
   }
@@ -828,12 +897,12 @@ export class SessionPool {
     });
   }
 
-  private failTurn(message: TurnRequest, reason: TurnFailReason, detail: string): void {
+  private failTurn(at: TurnAddress, reason: TurnFailReason, detail: string): void {
     this.deps.emit({
       type: "turn_failed",
-      session: message.session,
-      turn: message.turn,
-      turn_seq: 1,
+      session: at.session,
+      turn: at.turn,
+      turn_seq: FIRST_TURN_SEQ,
       reason,
       message: detail.slice(0, MAX_LOG_BYTES),
     });
