@@ -12,6 +12,10 @@ workflow: branches, hooks, CI, tags and releases.
   `GIT_COMMON_DIR` and `GIT_OBJECT_DIRECTORY` before they run. A hook that
   runs from a linked worktree then does not leak those into the test suite's
   own `git` subprocesses.
+- The root `conftest.py` removes the same five variables before pytest
+  imports a test. git also sets them for `git rebase --exec` and for
+  `git bisect run`. A test run from there then cannot write into the
+  repository of the caller.
 
 ## Hooks
 
@@ -23,20 +27,25 @@ under `rust/`, it also runs `cargo fmt` and `cargo clippy`.
 
 | The push changes | The hook runs |
 |---|---|
-| a path under a package, for example `chaperone/app.py` | that package's suite, `--tests-for` |
-| a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite, `--tests` |
+| a path under a package, for example `chaperone/app.py` | that package's suite, `--tests-for`. For a product package, also `vectors/tests` |
+| a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite. The hook passes `--tests-for`, and the gate runs every suite |
+| a path under `vectors/`, for example `vectors/data/index.json` | `vectors/tests`, and the cargo steps when `cargo` is on `PATH` |
 | a path under `rust/`, for example `rust/Cargo.lock` | `cargo fmt`, `cargo clippy` and `cargo test`, and no pytest suite for that path |
 | Markdown only, outside `tests/` and `fixtures/` | the tests marked `docs`, `--docs` |
 | nothing, or a deleted branch | no test |
 
 A package is the directory above a `testpaths` entry in the root
-`pyproject.toml`. A new suite needs no change to the hook.
+`pyproject.toml`. A new suite needs no change to the hook. A product package
+is each package but `bin/` and `vectors/`.
 
 The cargo steps are `bin/rust-gate.sh`. The rule that starts them is
 `bin/lib/rustrule.sh`.
 
-- A commit or a push with no path under `rust/` starts no cargo step. It
-  needs no `cargo` on `PATH`.
+- A commit or a push with no path under `rust/` needs no `cargo` on `PATH`.
+  It starts no cargo step, with one exception.
+- The exception is a push with a path under `vectors/`. The Rust tests read
+  `vectors/data`, so that push starts the cargo steps when `cargo` is on
+  `PATH`. Without `cargo`, the gate prints one line and passes.
 - A commit or a push with a path under `rust/` needs `cargo`. Without it the
   gate fails before the first check.
 - The commit that concludes a merge needs no `cargo` when only the other
@@ -53,19 +62,21 @@ in `AGENTS.md` yourself.
 ## CI
 
 `.github/workflows/gate.yml` runs on every pull request and on every merge
-group. It has five kinds of job:
+group. It has six kinds of job:
 
 1. `lint`: ruff, ruff format, pyright. On a docs-only pull request it also
    runs the tests marked `docs`.
 2. `tests`: the full Python suite, as four shards. A test's own id puts it in
    exactly one shard.
 3. `playpen`: `pnpm test`, `pnpm run typecheck` and `pnpm run build`.
-4. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
+4. `proc`: the process-level suite, `uv run pytest integration/proc -m slow`.
+   The job builds the playpen first. A test that skips is a failure there.
+5. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
    `rust/rust-toolchain.toml` names. When the pull request changes no path
-   under `rust/`, the job skips those steps and passes. A change to the Rust
-   checks themselves also runs the steps. `rust_gate_path` in
-   `bin/lib/rustrule.sh` lists those files.
-5. `gate`: red unless every other job passed. This is the one check the
+   under `rust/` and no path under `vectors/`, the job skips those steps and
+   passes. A change to the Rust checks themselves also runs the steps.
+   `rust_gate_path` in `bin/lib/rustrule.sh` lists those files.
+6. `gate`: red unless every other job passed. This is the one check the
    merge queue and the release executor read.
 
 Comment `!retest` on a pull request to restart its CI on the same commit.

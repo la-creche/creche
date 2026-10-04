@@ -5,8 +5,10 @@
 #           │                         docs push the tests marked `docs`
 #           ├── tests (1..N)   code   the full suite, one shard per job
 #           ├── playpen     code   the TypeScript suite and its build
+#           ├── proc        code   the process-level suite, each service
+#           │                      as a process, on the built playpen
 #           └── rust        code   cargo fmt, clippy and test, for a push
-#                                  that touches rust/
+#                                  that touches rust/ or vectors/
 #                                 └── release   tags + Releases, only when
 #                                               every job passed
 #
@@ -38,14 +40,15 @@
 # A docs-only push onto a commit whose own run passed runs only the tests
 # marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
 # runs.
-# The `tests`, `playpen` and `rust` jobs are gate.yml's, and
+# The `tests`, `playpen`, `proc` and `rust` jobs are gate.yml's, and
 # bin/tests/test_gate_workflow.py holds the two files to the same shard
 # command — diff the two when changing either.
 #
-# A push that touches nothing under rust/, onto a commit whose own run
-# passed, skips the steps of the `rust` job (bin/lib/rustrule.sh). The job is
-# still a success. A change under rust/ reaches no component, so it mints no
-# tag (handover/src/handover/allocate.py).
+# A push that touches nothing under rust/ and nothing under vectors/, onto a
+# commit whose own run passed, skips the steps of the `rust` job
+# (bin/lib/rustrule.sh). The job is still a success. A change under rust/
+# reaches no component, so it mints no tag
+# (handover/src/handover/allocate.py).
 #
 # agent-mcp has a SIBLING of the `release` job, in its own
 # rework-component-tags.yml. `mcp-servers` is its component, not
@@ -91,8 +94,9 @@ jobs:
       # does not list, and a dispatch, which has no `before` at all.
       #
       # `rust` is `false` only by the same two facts: that run passed, and
-      # this push touches nothing under rust/. So a push never skips the
-      # Rust checks over a tree whose Rust failed, or is still in, its run.
+      # this push touches nothing under rust/ and nothing under vectors/. So
+      # a push never skips the Rust checks over a tree whose Rust failed, or
+      # is still in, its run.
       - name: scope
         id: scope
         shell: bash
@@ -199,12 +203,57 @@ jobs:
       - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck && pnpm run build
         working-directory: playpen
 
+  # The process-level suite (integration/proc/AGENTS.md). It starts each
+  # service as a process, from the command its unit runs, so it can judge a
+  # service in any language. It is not in `testpaths`: no shard runs it.
+  # It needs the built playpen, so it has node and pnpm as the playpen job
+  # has them, and the build takes the same TEST-NET-1 address.
+  #
+  # CRECHE_PROC_NO_SKIP: a test that needs the bundle skips itself when the
+  # bundle is missing. A run in which every test skips is green and judged
+  # nothing, so here a skip is a failure.
+  #
+  # The time limit: a teardown waits 20 s for each process group. A fault
+  # in the harness can cost every test that wait, and a job has 6 hours by
+  # default. On a laptop the suite runs in about 1 minute.
+  proc:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: playpen/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: playpen/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile && pnpm run build
+        working-directory: playpen
+        env:
+          AGENT_LAN_ADDRESS: 192.0.2.10
+
+      - uses: ./.github/actions/uv-sync
+
+      - run: uv run pytest integration/proc -m slow
+        env:
+          CRECHE_PROC_NO_SKIP: "1"
+
   # The Cargo workspace under rust/: bin/rust-gate.sh, the checks the hooks
   # run. The job runs on every code change, and on a change that touches
   # nothing under rust/ every step but the checkout is skipped
   # (bin/lib/rustrule.sh). The job is then a success: a job skipped as a
   # whole on a code change reads as red in the verdict. A change to the Rust
   # checks themselves, this file included, counts as a change under rust/.
+  # So does a change under vectors/: the Rust tests read vectors/data.
   #
   # The runner has rustup, so no action installs the toolchain.
   # `rustup toolchain install` with no name installs what
@@ -252,11 +301,11 @@ jobs:
       - run: bin/rust-gate.sh --tests
         if: needs.scope.outputs.rust != 'false'
 
-  # `always()`: on a docs push `tests`, `playpen` and `rust` are skipped, and
-  # a job that needs a skipped job is skipped by default. The verdict step is
-  # what holds the tags back when a job failed.
+  # `always()`: on a docs push `tests`, `playpen`, `proc` and `rust` are
+  # skipped, and a job that needs a skipped job is skipped by default. The
+  # verdict step is what holds the tags back when a job failed.
   release:
-    needs: [scope, lint, tests, playpen, rust]
+    needs: [scope, lint, tests, playpen, proc, rust]
     if: always()
     runs-on: ubuntu-latest
     permissions:

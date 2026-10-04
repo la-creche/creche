@@ -9,18 +9,21 @@
 #                          with no flag here for its lint job: gate.yml,
 #                          release.yml)
 #                          --tests-for PATH...: only the suites of the
-#                          packages PATH... touch (pre-push)
+#                          packages PATH... touch (pre-push), and
+#                          vectors/tests for a product package
 #                          --docs: only the tests marked `docs`, for a
 #                          change bin/lib/docsrule.sh calls docs only
 #   bin/rust-gate.sh       only for a change under rust/ (bin/lib/rustrule.sh):
 #                          cargo fmt and cargo clippy, and cargo test where
-#                          pytest runs. Any other change runs no cargo step
-#                          and needs no cargo on PATH
+#                          pytest runs. A push that changes vectors/ runs it
+#                          too, but only where cargo is on PATH. Any other
+#                          change runs no cargo step and needs no cargo on PATH
 # Enforced by githooks/ (`git config core.hooksPath githooks`).
 set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
 # rust_path, rust_dirty and RUST_DIR: what counts as a Rust change.
+# vectors_path: what the Rust tests read outside rust/.
 . bin/lib/rustrule.sh
 
 #: One pytest command for the full run, a scoped one and the docs one, so
@@ -39,6 +42,17 @@ DOCS_MARKER="docs"
 #: The Rust half of the gate, and the flag that adds cargo test to it.
 RUST_GATE="bin/rust-gate.sh"
 RUST_TESTS="--tests"
+
+#: The suite that holds vectors/data equal to what the Python code does
+#: (vectors/README.md). A change in a product package can move a vector, so a
+#: scoped run for such a package carries this suite too. CI would find the
+#: moved vector, but only after the push.
+VECTORS_SUITE="vectors/tests"
+
+#: The suites of the packages that hold no product code: a change there moves
+#: no vector. Every other suite is the suite of a product package, so a new
+#: suite in testpaths counts as one until this list names it.
+NO_PRODUCT=("bin/tests" "$VECTORS_SUITE")
 
 # The suites the full run collects, one per line: pyproject.toml's
 # testpaths, e.g. "chaperone/tests". A suite missing from disk is left out.
@@ -67,6 +81,24 @@ in_package() {
   return 1
 }
 
+# product_suite SUITE: whether SUITE is the suite of a product package.
+product_suite() {
+  local other
+
+  for other in "${NO_PRODUCT[@]}"; do
+    if [[ "$1" == "$other" ]]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# has_suite SUITE SUITES: whether SUITES, one per line, holds SUITE.
+has_suite() {
+  [[ $'\n'"$2"$'\n' == *$'\n'"$1"$'\n'* ]]
+}
+
 # tally FIRST COUNT: "FIRST", or "FIRST and N more".
 tally() {
   if [[ "$2" -le 1 ]]; then
@@ -82,8 +114,9 @@ tally() {
 # (uv.lock, pyproject.toml, docs/, .github/, githooks/) can change what any
 # suite sees, so it runs the full suite instead. A path under rust/ is cargo's
 # to test, not pytest's: it picks no suite and is not a path in no package.
+# A path in a product package also picks vectors/tests.
 tests_for() {
-  local suites suite path first count stray="" strays=0 others=0
+  local suites suite path first count stray="" strays=0 others=0 product=0
   local -a picked=()
 
   if [[ $# -eq 0 ]]; then
@@ -142,7 +175,17 @@ tests_for() {
 
     picked+=("$suite")
     echo "quality-gate: $suite, for $(tally "$first" "$count")"
+
+    if product_suite "$suite"; then
+      product=1
+    fi
   done <<< "$suites"
+
+  if [[ "$product" -eq 1 && " ${picked[*]} " != *" $VECTORS_SUITE "* ]] &&
+    has_suite "$VECTORS_SUITE" "$suites"; then
+    picked+=("$VECTORS_SUITE")
+    echo "quality-gate: $VECTORS_SUITE, for a change in a product package"
+  fi
 
   if [[ -f "$ALWAYS" && " ${picked[*]} " != *" ${ALWAYS%/*} "* ]]; then
     picked+=("$ALWAYS")
@@ -194,6 +237,39 @@ rust_for() {
   esac
 }
 
+# vectors_for MODE PATH...: which paths of a scoped run are under vectors/,
+# e.g. "vectors/data/index.json and 2 more". Prints nothing in another mode:
+# a commit runs no test, the full run runs the Rust checks for everything,
+# and a docs run starts no cargo step.
+#
+# The Rust tests read vectors/data, so these paths run the Rust checks too,
+# but only where cargo is on PATH. A Python session with no Rust toolchain
+# regenerates the vectors and must still push. CI runs the Rust checks for
+# the same change (rust_touched in bin/lib/rustrule.sh).
+vectors_for() {
+  local mode="$1" path first="" count=0
+  shift
+
+  if [[ "$mode" != --tests-for ]]; then
+    return 0
+  fi
+
+  for path in "$@"; do
+    if ! vectors_path "$path"; then
+      continue
+    fi
+
+    if [[ -z "$first" ]]; then
+      first="$path"
+    fi
+    count=$((count + 1))
+  done
+
+  if [[ "$count" -gt 0 ]]; then
+    tally "$first" "$count"
+  fi
+}
+
 MODE="${1:-}"
 case "$MODE" in
   "" | --tests | --docs) ;;
@@ -214,6 +290,18 @@ if [[ -n "$RUST_FOR" ]] && ! command -v cargo >/dev/null; then
   exit 1
 fi
 
+# A vector that moves runs the Rust checks where cargo is, and passes with one
+# line where it is not. A path under rust/ in the same run already decided.
+NO_RUST_FOR=""
+if [[ -z "$RUST_FOR" ]]; then
+  VECTORS_FOR="$(vectors_for "$MODE" "$@")"
+  if command -v cargo >/dev/null; then
+    RUST_FOR="$VECTORS_FOR"
+  else
+    NO_RUST_FOR="$VECTORS_FOR"
+  fi
+fi
+
 uv run ruff check .
 uv run ruff format --check .
 uv run pyright
@@ -224,6 +312,10 @@ if [[ -n "$RUST_FOR" ]]; then
     "") "$RUST_GATE" ;;
     *) "$RUST_GATE" "$RUST_TESTS" ;;
   esac
+fi
+
+if [[ -n "$NO_RUST_FOR" ]]; then
+  echo "quality-gate: cargo not on PATH: no Rust test for $NO_RUST_FOR. CI runs the Rust tests"
 fi
 
 case "$MODE" in

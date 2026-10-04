@@ -13,6 +13,9 @@ command and an environment, and gives back a `Child`:
    of this suite on one machine never take the same port.
 5. `stop_all` ends every group and says which one it had to kill. It waits
    for every process of a group, not only for the leader.
+6. A process that ended is no process of a group, and its pid is not alive.
+   The system keeps such a process until its parent reaps it, and a signal
+   still finds it. `/proc` on Linux and `ps` on macOS give its state.
 
 The registry at the bottom is the suite's check at session end: a group that
 no teardown confirmed gone is a leak.
@@ -26,6 +29,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
@@ -69,6 +73,27 @@ LOOPBACK: Final = "127.0.0.1"
 #: directory is the one thing a test touches outside its root.
 _PORT_LOCK_DIR: Final = Path(tempfile.gettempdir()) / f"creche-proc-ports-{os.getuid()}"
 _LOCK_FILE_MODE: Final = 0o600
+
+#: Where Linux lists each process, one directory per pid. macOS has none.
+_PROC_DIR: Final = Path("/proc")
+
+#: The fields of `/proc/<pid>/stat` that follow the name of the program, by
+#: position (proc(5)): the state is field 3 of the line, the process group is
+#: field 5, and the thread count is field 20.
+_STAT_STATE: Final = 0
+_STAT_PGRP: Final = 2
+_STAT_THREADS: Final = 17
+
+#: The state of a process that ended and that no parent reaped yet. `/proc`
+#: names a zombie `Z` and a dead task `X`. `ps` on macOS starts the state of
+#: a zombie with `Z`.
+_PROC_ENDED: Final = frozenset({"Z", "X"})
+_PS_ENDED: Final = "Z"
+
+#: The program that lists the processes of a group where no `/proc` exists.
+_PS: Final = "/bin/ps"
+_PS_TIMEOUT_S: Final = 5.0
+_IS_MACOS: Final = sys.platform == "darwin"
 
 
 class ProcError(Exception):
@@ -368,7 +393,11 @@ def port_is_free(port: int) -> bool:
 
 
 def pid_is_alive(pid: int) -> bool:
-    """True while the process table holds `pid`."""
+    """True while `pid` names a process that runs.
+
+    A process that ended keeps its pid until its parent reaps it, and a
+    signal still finds the pid. Such a process runs nothing.
+    """
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -376,7 +405,7 @@ def pid_is_alive(pid: int) -> bool:
     except PermissionError:
         return True
 
-    return True
+    return not _pid_ended(pid)
 
 
 def session_id_of(pid: int) -> int | None:
@@ -482,14 +511,177 @@ def _signal_group(pgid: int, signum: signal.Signals) -> None:
 
 
 def _group_is_alive(pgid: int) -> bool:
+    """Whether a process of the group still runs.
+
+    A process that ended stays in its group until its parent reaps it. It
+    runs nothing, so it does not count. The signal alone cannot tell:
+
+    - Linux answers the signal for a group of such processes. `/proc` holds
+      the state of each one.
+    - macOS answers EPERM for such a group, and for a group of another user.
+      `ps` lists the state of each process.
+
+    When the list is empty or cannot be read, the signal is the answer. On
+    Linux it is also the answer when one state cannot be read, and when a
+    second list holds a new process of the group. A group that can run is
+    never called empty.
+    """
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        ended = _ended_by_ps(pgid) if _IS_MACOS else []
+    else:
+        ended = _ended_by_proc(pgid)
 
-    return True
+    return not ended or not all(ended)
+
+
+@dataclass(frozen=True, slots=True)
+class _Stat:
+    """What `/proc/<pid>/stat` says of one process."""
+
+    pgid: int
+    ended: bool
+
+
+class _StatUnread(Exception):
+    """`/proc` holds the `stat` file of a process and the file gives no state."""
+
+
+def _read_stat(pid: int | str) -> _Stat | None:
+    """One process as Linux describes it, or None where no such file exists.
+
+    proc(5): `pid (name) state ppid pgrp ...`. The name can hold a space and
+    a bracket, so the fields count from the last `)`.
+
+    A process whose first thread ended while another thread runs has the
+    state `Z` and more than one thread. That process runs.
+
+    Raises `_StatUnread` for a file that is there and that gives no state.
+    The group of that process is not known then, and the process can run.
+    """
+    try:
+        text = (_PROC_DIR / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
+    except (FileNotFoundError, NotADirectoryError, ProcessLookupError):
+        return None
+    except OSError as error:
+        raise _StatUnread(f"cannot read the state of {pid}: {error.strerror}") from error
+
+    fields = text.rpartition(")")[2].split()
+
+    try:
+        state = fields[_STAT_STATE]
+        pgid = int(fields[_STAT_PGRP])
+        threads = int(fields[_STAT_THREADS])
+    except (IndexError, ValueError) as error:
+        raise _StatUnread(f"cannot parse the state of {pid}") from error
+
+    return _Stat(pgid=pgid, ended=state in _PROC_ENDED and threads <= 1)
+
+
+def _ended_by_proc(pgid: int) -> list[bool]:
+    """For each process of the group that `/proc` lists: whether it ended.
+
+    Empty when `/proc` cannot say it for certain. The signal is the answer
+    then.
+
+    A process can start another one and end between the list and the read of
+    its state. The list then holds only the ended one, and the new one runs.
+    So an answer that each process ended needs a second list that holds no
+    new process of the group. A process that ended starts nothing. A process
+    that runs at the second list is in that list, and it is new there or the
+    first read found that it runs.
+    """
+    first = _group_in_proc(pgid)
+
+    if not first:
+        return []
+
+    if not all(first.values()):
+        return list(first.values())
+
+    second = _group_in_proc(pgid)
+
+    if second is None or not second.keys() <= first.keys():
+        return []
+
+    return list(first.values())
+
+
+def _group_in_proc(pgid: int) -> dict[str, bool] | None:
+    """Each process of the group that `/proc` lists now: whether it ended.
+
+    None when the list cannot be read, or the state of one process. That
+    process can be a process of the group.
+    """
+    try:
+        names = os.listdir(_PROC_DIR)
+    except OSError:
+        return None
+
+    ended: dict[str, bool] = {}
+
+    for name in names:
+        if not name.isdecimal():
+            continue
+
+        try:
+            stat = _read_stat(name)
+        except _StatUnread:
+            return None
+
+        if stat is not None and stat.pgid == pgid:
+            ended[name] = stat.ended
+
+    return ended
+
+
+def _ended_by_ps(pgid: int) -> list[bool]:
+    """For each process of the group that `ps` lists: whether it ended."""
+    try:
+        done = subprocess.run(
+            [_PS, "-o", "stat=", "-g", str(pgid)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=_PS_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    if done.returncode != 0:
+        return []
+
+    states = [line.strip() for line in done.stdout.splitlines()]
+
+    return [state.startswith(_PS_ENDED) for state in states if state]
+
+
+def _pid_ended(pid: int) -> bool:
+    """Whether `pid` names a process that ended and that no parent reaped.
+
+    Linux says so in `/proc`. macOS has no `/proc`, and it knows no process
+    group for such a pid.
+    """
+    try:
+        stat = _read_stat(pid)
+    except _StatUnread:
+        return False
+
+    if stat is not None:
+        return stat.ended
+
+    try:
+        os.getpgid(pid)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+
+    return False
 
 
 def _group_gone_by(pgid: int, deadline: float) -> bool:

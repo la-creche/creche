@@ -7,6 +7,9 @@ worker runs next.
 
 It also holds `--shard K/N`, which CI's gate uses to run the one suite on N
 machines at once (.github/workflows/gate.yml).
+
+It also drops the variables that point a `git` child at the repository of
+the caller, when pytest imports this file.
 """
 
 from __future__ import annotations
@@ -20,6 +23,36 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+#: What git exports to a command it starts: a hook, an alias, `git rebase
+#: --exec`, `git bisect run`. Each one points a `git` child at the repository
+#: of the caller. The two hooks unset the same five (githooks/pre-commit).
+GIT_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+)
+
+
+def _drop_git_env() -> None:
+    """Remove git's own variables from this process, so no child gets one.
+
+    Some fixtures run `git init` and `git config` in a throwaway repository
+    with the environment they inherit. With `GIT_DIR` set, those commands
+    write into the repository of the caller instead. A test run from a linked
+    worktree left `core.bare` and a `[user]` section in the shared config
+    that way. bin/tests/test_git_env_dropped.py holds the proof.
+    """
+    for name in GIT_ENV:
+        os.environ.pop(name, None)
+
+
+# At import and not in a hook. pytest imports this file before it imports a
+# test module or a conftest.py below it, and before xdist starts a worker.
+# So no module, no fixture and no test ever sees one of the variables.
+_drop_git_env()
 
 #: Every signal this platform names. Linux's unnamed real-time signals are
 #: left out: no test here touches them.

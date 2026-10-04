@@ -81,6 +81,10 @@ touches `rust/`. `bin/AGENTS.md` has the table. Every path under `rust/`
 counts, a Markdown file too. The exception is a push of Markdown files only.
 That push runs the tests marked `docs` and no cargo step.
 
+A push that changes a path under `vectors/` is the one other case. It starts
+`bin/rust-gate.sh` when `cargo` is on `PATH`. In CI, a code change under
+`vectors/` runs the `rust` job.
+
 ## The rules
 
 Each rule has its reason. Do not break a rule without a change to this file.
@@ -243,10 +247,10 @@ the reason in the commit message.
 - An error code on a `compile_fail` test, for example `E0423`, is a note for
   the reader. The toolchain of this workspace does not check the code. The
   test passes on each compile error.
-- A Rust test reads no file outside `rust/`. The gate runs cargo only for a
-  change under `rust/`, so a change to a file elsewhere does not run the
-  test. If a later change needs such a file, add its directory to
-  `bin/lib/rustrule.sh` first.
+- A Rust test reads no file outside `rust/` and `vectors/data`. The gate
+  runs cargo only for a change under `rust/` or `vectors/`, so a change to a
+  file elsewhere does not run the test. If a later change needs such a file,
+  add its directory to `bin/lib/rustrule.sh` first.
 - A Rust source file includes no Markdown file. A push of Markdown files
   only runs no cargo step. `bin/rust-gate.sh` refuses a line that holds
   `include_str!`, `include_bytes!` or `include!` and a name that ends in
