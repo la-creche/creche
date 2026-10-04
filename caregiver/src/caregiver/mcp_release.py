@@ -396,8 +396,12 @@ def served_servers(paths: McpPaths) -> tuple[str, ...]:
         return ()
 
     names = cast("dict[object, object]", loaded)
-
-    return tuple(sorted(str(name) for name in names))
+    try:
+        return tuple(sorted(str(name) for name in names))
+    except ValueError:
+        # A name is an integer past the digit limit of the interpreter.
+        # The reader makes such an integer from a scalar in base 16.
+        return ()
 
 
 class _RosterLoader(yaml.SafeLoader):

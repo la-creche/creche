@@ -429,6 +429,18 @@ def test_a_roster_names_what_is_served(bench: Bench) -> None:
     assert served_servers(bench.mcp) == (SERVER,)
 
 
+def test_a_roster_name_with_no_text_is_nothing_served(bench: Bench) -> None:
+    """The name of a row can be an integer that the interpreter does not
+    convert to text. The reader refuses that roster, as each roster that
+    does not read."""
+    from caregiver.mcp_release import served_servers
+
+    number = "0x" + "f" * MORE_DIGITS_THAN_AN_INTEGER
+    bench.mcp.roster.write_text(f"weather: &name {number}\n*name : {{}}\n", encoding="utf-8")
+
+    assert served_servers(bench.mcp) == ()
+
+
 #: The limits of the child process that reads one roster. A reader that
 #: refuses the file ends in milliseconds and uses little memory.
 CHILD_SECONDS: Final = 30.0
