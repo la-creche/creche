@@ -11,7 +11,7 @@ writer here.
       state/families/<family>/status.json          contract 05 §2
       state/families/<family>/supervisor-<id>.env  contract 03 §7.1
       state/families/<family>/creds/creds.json     contract 03 §12
-      state/families/<family>/config/runtime.json  contract 01 §6.1
+      state/families/<family>/config/              contract 01 §6.1
       state/families/<family>/control/<id>/        contract 03 §7.1
       state/tokens/<principal>.token     contract 02 §3 rule 5
       state/door-owui.key                contract 02 §3 rule 7
@@ -30,6 +30,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 
@@ -37,9 +38,25 @@ FAMILY: Final = "chat"
 SANDBOX: Final = "chat-s1"
 MODEL: Final = f"agent:{FAMILY}"
 
-#: The three family kinds of contract 02 §2 that a fixture can publish.
+#: The two family kinds of contract 02 §2 that a fixture publishes.
 ATTENDED: Final = "attended"
 THIN: Final = "thin"
+
+#: What `caregiver` puts in `instructions.md` of a fixture family.
+INSTRUCTIONS: Final = "Be helpful.\n"
+
+
+class Validity(StrEnum):
+    """What the newest family file was, for the status document (contract 05 §3)."""
+
+    #: The newest file validated. The family is `in_sync`.
+    VALID = "valid"
+    #: The newest file failed, and the last good definition serves (§3.1).
+    INVALID = "invalid"
+    #: No revision ever validated, so nothing serves (§3.1).
+    NEVER_VALID = "never_valid"
+
+
 MODEL_ALIAS: Final = "agent-router"
 CONFIG_REV: Final = "reg-c1-proc"
 CRED_EPOCH: Final = 7
@@ -291,6 +308,7 @@ def add_family(tree: Tree, family: str, kind: str) -> None:
     write_playpen_env(tree, family)
     write_creds(tree, family)
     write_runtime(tree, family)
+    write_instructions(tree, family)
     write_status(tree, family, kind, job_timeout_s=JOB_TIMEOUT_S if kind == THIN else None)
 
 
@@ -301,6 +319,8 @@ def write_status(
     *,
     job_timeout_s: int | None = None,
     sandboxes: tuple[tuple[str, str], ...] | None = None,
+    config_rev: str = CONFIG_REV,
+    validity: Validity = Validity.VALID,
 ) -> None:
     """One whole status document (contract 05 §2.1, §4.1, §9).
 
@@ -312,27 +332,30 @@ def write_status(
     `job_timeout_s` is the one limit a scenario moves. Only a thin family
     has one (§9). `sandboxes` is every row as an id and a state of §4.2, for
     a scenario that plays `caregiver` during a replacement. The default is
-    the one ready sandbox of the family.
+    the one ready sandbox of the family. `config_rev` moves when the config
+    mount changes (contract 01 §6.1). `validity` sets `state` and the
+    validation block together (§3.1, §3.2).
     """
     now = _rfc3339()
     rows = sandboxes if sandboxes is not None else ((first_sandbox(family), "ready"),)
+    valid = validity is Validity.VALID
     document: dict[str, Any] = {
         "family": family,
         "kind": kind,
-        "state": "in_sync",
+        "state": "in_sync" if valid else "invalid",
         "written_at": now,
         "registry_rev": CONFIG_REV,
         "applied_rev": CONFIG_REV,
-        "config_rev": CONFIG_REV,
+        "config_rev": config_rev,
         "validation": {
             "rev": CONFIG_REV,
             "checked_at": now,
-            "ok": True,
-            "never_valid": False,
-            "error_count": 0,
+            "ok": valid,
+            "never_valid": validity is Validity.NEVER_VALID,
+            "error_count": 0 if valid else 1,
             "warning_count": 0,
             "report_path": str(tree.family_dir(family) / "validation.json"),
-            "first_error": None,
+            "first_error": None if valid else "kind: not a family kind",
         },
         "faults": [],
         "reconcile": None,
@@ -404,6 +427,15 @@ def write_runtime(tree: Tree, family: str = FAMILY) -> None:
     _atomic_write(
         tree.mounts(family).config / "runtime.json", json.dumps(document) + "\n", STATUS_MODE
     )
+
+
+def write_instructions(tree: Tree, family: str = FAMILY, text: str = INSTRUCTIONS) -> None:
+    """`instructions.md` of the family config mount (contract 01 §6.1).
+
+    It reaches pi as a path on the command line, never as text
+    (contract 03 §7.1).
+    """
+    _atomic_write(tree.mounts(family).config / "instructions.md", text, STATUS_MODE)
 
 
 def write_grants(tree: Tree, family: str, *, rev: str, delegates: tuple[str, ...]) -> None:

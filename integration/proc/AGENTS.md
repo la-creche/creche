@@ -108,6 +108,7 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_owui_turns.py` | door and `attendance` | the thirteen stage 1 scenarios, with the numbers of the old suite |
 | `test_proc_owui_start.py` | door and `attendance` | a start, a refused start, the socket mode, a token reload |
 | `test_proc_switch.py` | door and `attendance` | the switch call of contract 05 §5, with a test in the place of `caregiver` |
+| `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
 | `test_proc_delegate.py` | chaperone and `attendance` | the delegate path of contract 04 §7, the manifest and the audit |
 | `test_proc_override.py` | door and `attendance` | each service starts through its variable |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, held to their own rules |
