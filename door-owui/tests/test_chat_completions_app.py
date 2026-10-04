@@ -427,3 +427,20 @@ def test_no_answer_from_attendance_is_a_502_in_the_error_shape(
     assert error["code"] == "attendance_unreachable"
     assert error["type"] == "server_error"
     assert "cannot reach attendance" in error["message"]
+
+
+# --- a request body that nests too deep ---
+
+
+def test_a_body_that_nests_too_deep_is_a_400_in_the_error_shape(tmp_path: Path) -> None:
+    # More levels than the JSON parser of each supported Python reads.
+    levels = 400_000
+    client = _client(tmp_path, FakeAttendance())
+    headers = {**_headers(), "content-type": "application/json"}
+
+    response = client.post(
+        "/v1/chat/completions", headers=headers, content="[" * levels + "]" * levels
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "bad_body"

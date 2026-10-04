@@ -171,7 +171,8 @@ def _background_task_refusal() -> DoorError:
 async def _json_body(request: Request) -> object:
     try:
         return await request.json()
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
+        # RecursionError: a body that nests too deep is not a ValueError.
         raise DoorError(
             HTTP_BAD_REQUEST, "the request body is not valid JSON.", code="bad_body"
         ) from exc
