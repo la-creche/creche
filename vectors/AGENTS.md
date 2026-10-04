@@ -134,6 +134,9 @@ directory is not a workspace package, so a change here does not change
   Python version: 9,997 levels on 3.12 and 9,998 on 3.13. Python refuses that
   input when the caller is about 900 C calls deep. Python 3.14 refuses it on
   a small stack.
+- The vector `yaml-deep-flow` of `family_file` has a 10,000-deep nesting. It
+  assumes the default recursion limit of Python. With a larger limit, the
+  YAML reader can read that input.
 - The session surfaces go through the routes of `attendance.api`. The
   service behind the routes is a stand-in. No vector covers a refusal that
   the real service makes after the parse: a token, a family kind, a lease.

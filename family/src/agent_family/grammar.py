@@ -14,7 +14,7 @@ from typing import Final
 #: `[a-z][a-z0-9-]{1,30}`: 2 to 31 characters, hyphens, never an underscore.
 #: The PEP's call name is `<server>__<tool>` and it splits on the double
 #: underscore (contract 01 §3.4 rule 6), so neither half may carry one.
-FAMILY_NAME: Final = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+FAMILY_NAME: Final = re.compile(r"^[a-z][a-z0-9-]{1,30}\Z")
 SERVER_NAME: Final = FAMILY_NAME
 WEBHOOK_NAME: Final = FAMILY_NAME
 
@@ -25,18 +25,18 @@ WEBHOOK_NAME: Final = FAMILY_NAME
 #: then revokes them, and the PEP raises a turn-blocking `grants_stale` on it.
 #: The grammar accepts it, so only a refusal here keeps the name free.
 PROBE_FAMILY: Final = "gate-probe"
-TOOL_NAME: Final = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+TOOL_NAME: Final = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*\Z")
 SKILL_NAME: Final = FAMILY_NAME
-MODEL_ALIAS: Final = re.compile(r"^[a-z0-9][a-z0-9._/-]*$")
-MOUNT_PATH: Final = re.compile(r"^[A-Za-z0-9._/-]+$")
-ENV_VAR_NAME: Final = re.compile(r"^[A-Z][A-Z0-9_]*$")
-HA_IDENTIFIER: Final = re.compile(r"^[a-z][a-z0-9_]*$")
-HA_ENTITY_ID: Final = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+$")
-SHA256_HEX: Final = re.compile(r"^[0-9a-f]{64}$")
-GITHUB_REPO: Final = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+MODEL_ALIAS: Final = re.compile(r"^[a-z0-9][a-z0-9._/-]*\Z")
+MOUNT_PATH: Final = re.compile(r"^[A-Za-z0-9._/-]+\Z")
+ENV_VAR_NAME: Final = re.compile(r"^[A-Z][A-Z0-9_]*\Z")
+HA_IDENTIFIER: Final = re.compile(r"^[a-z][a-z0-9_]*\Z")
+HA_ENTITY_ID: Final = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+\Z")
+SHA256_HEX: Final = re.compile(r"^[0-9a-f]{64}\Z")
+GITHUB_REPO: Final = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\Z")
 #: An exact version, never a range: a range makes a hash meaningless
 #: (contract 01b §3.1).
-EXACT_VERSION: Final = re.compile(r"^[0-9][0-9A-Za-z.+-]*$")
+EXACT_VERSION: Final = re.compile(r"^[0-9][0-9A-Za-z.+-]*\Z")
 VERSION_RANGE_CHARS: Final = ("*", "^", "~", ">", "<", "=", ",", " ")
 
 # --- ranges (contract 01 §3) ---
@@ -166,6 +166,10 @@ SECRET_PREFIX: Final = "secret:"
 #: Contract 01 §3.13: the three shorthands a cron trigger may use.
 CRON_SHORTHANDS: Final = ("@hourly", "@daily", "@weekly")
 
+#: One field of a five-field cron expression: ASCII digits and the signs of
+#: a list, a range and a step. `caregiver.timers` converts no other character.
+CRON_FIELD: Final = re.compile(r"^[0-9*,/-]+\Z")
+
 #: Contract 01 §3.15: the tool `quiet.board` fingerprints, on the server it
 #: names.
 SURVEY_TOOL: Final = "survey_board"
@@ -232,13 +236,29 @@ def is_under(path: str, root: str) -> bool:
     return path.startswith(root + "/")
 
 
+#: The most digits of a count that `int` reads here. Each range of a count
+#: in this file ends below six digits. `int` raises on a run of digits past
+#: the digit limit of the interpreter, so a longer run reads as
+#: `_COUNT_PAST_RANGE`, and the range check of the caller refuses it.
+_COUNT_DIGITS_MAX: Final = 18
+_COUNT_PAST_RANGE: Final = 10**_COUNT_DIGITS_MAX
+
+
+def _count(digits: str) -> int:
+    """A run of ASCII digits as a number, or a number past each range."""
+    if len(digits) > _COUNT_DIGITS_MAX:
+        return _COUNT_PAST_RANGE
+
+    return int(digits)
+
+
 def memory_mb(value: str) -> int | None:
     """`[1-9][0-9]*[mg]` to megabytes. None when the spelling is wrong."""
     match = re.fullmatch(r"([1-9][0-9]*)([mg])", value)
     if match is None:
         return None
 
-    size = int(match.group(1))
+    size = _count(match.group(1))
     return size * 1024 if match.group(2) == "g" else size
 
 
@@ -251,11 +271,15 @@ def duration_s(value: str) -> int | None:
     if match is None:
         return None
 
-    return int(match.group(1)) * _DURATION_SECONDS[match.group(2)]
+    return _count(match.group(1)) * _DURATION_SECONDS[match.group(2)]
 
 
-_IPV4: Final = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
-_HOSTNAME: Final = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$")
+_IPV4: Final = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}\Z")
+_HOSTNAME: Final = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\Z")
+#: ASCII digits, and five at most after the zeros at the start. `str.isdigit`
+#: also takes a digit that is not ASCII, and `int` raises on some of those
+#: and on a run past the digit limit of the interpreter.
+_PORT: Final = re.compile(r"^0*([0-9]{1,5})\Z")
 
 
 class EgressProblem(StrEnum):
@@ -267,9 +291,18 @@ class EgressProblem(StrEnum):
     BAD_HOSTNAME = "bad_hostname"
 
 
+def _is_port(port: str) -> bool:
+    """Contract 01 §3.7 rule 3: a number from 1 to 65535."""
+    match = _PORT.fullmatch(port)
+    if match is None:
+        return False
+
+    return PORT_MIN <= int(match.group(1)) <= PORT_MAX
+
+
 def egress_problem(entry: str) -> EgressProblem | None:
     """`hostname` or `hostname:port`. None when the entry is allowed."""
-    host, _, port = entry.partition(":")
+    host, colon, port = entry.partition(":")
     if "*" in entry:
         return EgressProblem.WILDCARD
 
@@ -277,7 +310,7 @@ def egress_problem(entry: str) -> EgressProblem | None:
         # A bare IPv4, or an IPv6 literal, whose extra colons land in `port`.
         return EgressProblem.IP_LITERAL
 
-    if port and (not port.isdigit() or not PORT_MIN <= int(port) <= PORT_MAX):
+    if colon and not _is_port(port):
         return EgressProblem.BAD_PORT
 
     labels = host.split(".")

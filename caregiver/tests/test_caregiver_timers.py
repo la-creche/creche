@@ -52,6 +52,7 @@ def autonomous(**overrides: object) -> object:
         ("30 4 1 * *", "*-*-01 04:30:00"),
         ("0 3 1 6 *", "*-06-01 03:00:00"),
         ("15 2 * * 0", "Sun *-*-* 02:15:00"),
+        ("05 009 * * *", "*-*-* 09:05:00"),
     ],
 )
 def test_it_spells_a_cron_line_as_a_calendar_line(expression: str, calendar: str) -> None:
@@ -71,6 +72,29 @@ def test_it_spells_a_cron_line_as_a_calendar_line(expression: str, calendar: str
 def test_a_shape_systemd_cannot_mean_is_refused(expression: str) -> None:
     with pytest.raises(CronShapeError):
         cron_to_oncalendar(expression)
+
+
+#: U+0669, U+0665 and U+0661 are decimal digits that are not ASCII. U+00B2 is
+#: a digit to `str.isdigit` and no number to `int`.
+NOT_ASCII_NUMBERS = {
+    "minute": "\u0669 * * * *",
+    "hour": "0 \u0669 * * *",
+    "hour-superscript": "0 \u00b2 * * *",
+    "step": "*/\u0665 * * * *",
+    "step-superscript": "*/\u00b2 * * * *",
+    "range-step": "1-5/\u0665 * * * *",
+    "day-of-month": "0 9 \u0661 * *",
+    "month": "0 9 1 \u0661 *",
+    "day-of-week": "0 9 * * \u0661",
+    # More digits than the interpreter converts.
+    "long-number": "0 " + "9" * 5000 + " * * *",
+}
+
+
+@pytest.mark.parametrize("case", NOT_ASCII_NUMBERS)
+def test_a_text_that_is_no_ascii_number_is_refused(case: str) -> None:
+    with pytest.raises(CronShapeError):
+        cron_to_oncalendar(NOT_ASCII_NUMBERS[case])
 
 
 # --- the unit text ------------------------------------------------------------------
@@ -189,6 +213,17 @@ def test_an_unspellable_trigger_is_reported_and_written_nowhere() -> None:
     outcome = apply_timers(autonomous(triggers=[{"cron": "0 9 1 * 1"}]), units)  # type: ignore[arg-type]
     assert outcome.refused == ("0 9 1 * 1",)
     assert units.names() == ()
+
+
+@pytest.mark.parametrize("case", NOT_ASCII_NUMBERS)
+def test_a_trigger_with_no_ascii_number_gets_no_unit(case: str) -> None:
+    """The pass reports the line, writes no unit for it and keeps the rest."""
+    units = FakeUnits()
+    triggers = [{"cron": NOT_ASCII_NUMBERS[case]}, {"cron": HOURLY}]
+    outcome = apply_timers(autonomous(triggers=triggers), units)  # type: ignore[arg-type]
+    assert outcome.refused == (NOT_ASCII_NUMBERS[case],)
+    assert units.names() == ("creche-trigger-chat-t2.timer",)
+    assert all(text.isascii() for text in units.files.values())
 
 
 def test_one_unspellable_trigger_does_not_lose_the_others() -> None:

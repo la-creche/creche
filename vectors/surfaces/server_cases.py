@@ -243,6 +243,35 @@ run:
         + "  - { tools: [write_one], arg: _a/b_1, values: [a, a] }\n",
     ),
     _case("rule-fence-no-tools", HEAD + "arg_allows:\n  - { tools: [x], arg: a, values: [b] }\n"),
+    # An argument name has 64 characters at most (contract 01b §7.2).
+    _case(
+        "rule-fence-arg-length",
+        HEAD
+        + TOOLS
+        + "arg_denies:\n"
+        + "  - { tools: all, arg: "
+        + "a" * 64
+        + "/"
+        + "b" * 64
+        + ", values: [a] }\n"
+        + "  - { tools: all, arg: "
+        + "a" * 65
+        + ", values: [a] }\n"
+        + "  - { tools: all, arg: owner/"
+        + "b" * 65
+        + ", values: [a] }\n",
+    ),
+    # `all` covers the tools that the file declares (contract 01b §7.1).
+    _case(
+        "rule-fence-all-no-tool",
+        HEAD
+        + "arg_allows:\n  - { tools: all, arg: a, values: [b] }\n"
+        + "arg_denies:\n  - { tools: all, arg: a, values: [b] }\n",
+    ),
+    _case(
+        "rule-fence-all-empty-tools",
+        HEAD + "tools: []\narg_denies:\n  - { tools: all, arg: a, values: [b] }\n",
+    ),
     # --- shared secrets (contract 01b §4.3) ---
     _case(
         "rule-shared",
