@@ -77,6 +77,8 @@ host where something has gone wrong.
 - A stop is checked between steps, never inside one.
 - A `planned` sandbox row is a create a kill cut short. `fail_planned`
   retires it at the top of every pass.
+- A sandbox row that does not read stays in the ledger file. No rewrite
+  removes it.
 - An empty registry deletes no family.
 - `rotate` deletes the old key before it mints the new one. The token
   overlaps. The key does not.
@@ -167,3 +169,8 @@ Nothing here touches a real sandbox or LiteLLM.
 - `read_creds` converts a field with `int` and `str`. It reads `true` as
   epoch 1. Contract 03 §12 gives no rule for a field of another type
   (`credentials.py`).
+- The ledger reader converts a field with `int` and `str`. No contract
+  defines the ledger file (`sandboxes.py`).
+- No pass manages a sandbox whose ledger row does not read. The row stays
+  in the file, and the log names the family at each rewrite
+  (`sandboxes.py`).

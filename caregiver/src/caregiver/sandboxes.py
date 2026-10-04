@@ -26,10 +26,11 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, TypeGuard, cast
 
 from agent_family import FamilyFile, SwitchMode
 
@@ -43,6 +44,8 @@ from .images import IMAGE_FLAVOR_UNCONFIGURED, SandboxImages
 from .playpen_env import write_playpen_env
 from .status import ChannelState, SandboxLifecycle, SandboxPower, SandboxStatus
 from .switch import SwitchClient, SwitchError, SwitchRequest
+
+log = logging.getLogger("caregiver.sandboxes")
 
 #: The ledger names sandboxes, never a secret (contract 05 §2 rule 3).
 LEDGER_FILE_MODE: Final = 0o644
@@ -100,6 +103,16 @@ class SandboxRecord:
 
     def with_state(self, state: SandboxLifecycle) -> SandboxRecord:
         return replace(self, state=state)
+
+
+@dataclass(frozen=True)
+class _Unread:
+    """A ledger row that the reader refused, as the file holds it.
+
+    The row still names a sandbox. A rewrite puts it back in its place, so
+    the ledger does not forget that sandbox."""
+
+    raw: Any
 
 
 @dataclass(frozen=True)
@@ -344,11 +357,9 @@ def set_allow(state_root: Path, family_name: str, allow: tuple[str, ...]) -> Non
     (§3.5). A record left unwritten would therefore leak every row the edit
     added. A `failed`, `stopping` or `gone` sandbox keeps its own list: its
     rows are the ones its own create granted, and nothing edited those."""
-    records = read_ledger(state_root, family_name)
-    updated = tuple(
-        replace(one, allow=allow) if one.state in LIVE_STATES else one for one in records
-    )
-    write_ledger(state_root, family_name, updated)
+    rows = _read_rows(state_root, family_name)
+    updated = tuple(replace(one, allow=allow) if _is_live(one) else one for one in rows)
+    _write_rows(state_root, family_name, updated)
 
 
 def empty_control_dir(state_root: Path, family_name: str, sandbox: str) -> None:
@@ -418,7 +429,22 @@ def status_of(record: SandboxRecord) -> SandboxStatus:
 
 def read_ledger(state_root: Path, family_name: str) -> tuple[SandboxRecord, ...]:
     """Oldest first. An unreadable ledger answers empty, the same way a
-    missing one does: `caregiver`'s own state is not a reason to crash."""
+    missing one does: `caregiver`'s own state is not a reason to crash.
+
+    A row that does not read is left out here. It stays in the file."""
+    rows = _read_rows(state_root, family_name)
+    return tuple(one for one in rows if isinstance(one, SandboxRecord))
+
+
+def write_ledger(state_root: Path, family_name: str, records: tuple[SandboxRecord, ...]) -> None:
+    """Write `records` as the rows that read. Each row of the present file
+    that does not read stays, before them."""
+    unread = tuple(one for one in _read_rows(state_root, family_name) if isinstance(one, _Unread))
+    _write_rows(state_root, family_name, (*unread, *records))
+
+
+def _read_rows(state_root: Path, family_name: str) -> tuple[SandboxRecord | _Unread, ...]:
+    """Every row of the ledger file, in file order."""
     body = read_json(paths.sandboxes_path(state_root, family_name))
     if body is None:
         return ()
@@ -427,21 +453,49 @@ def read_ledger(state_root: Path, family_name: str) -> tuple[SandboxRecord, ...]
     if not isinstance(rows, list):
         return ()
 
-    parsed = (_one_record(raw) for raw in cast("list[Any]", rows))
-    return tuple(one for one in parsed if one is not None)
+    return tuple(_one_record(raw) or _Unread(raw) for raw in cast("list[Any]", rows))
 
 
-def write_ledger(state_root: Path, family_name: str, records: tuple[SandboxRecord, ...]) -> None:
+def _write_rows(
+    state_root: Path, family_name: str, rows: tuple[SandboxRecord | _Unread, ...]
+) -> None:
+    """The one writer of the ledger file."""
+    unread = sum(1 for one in rows if isinstance(one, _Unread))
+    try:
+        text = _ledger_text(family_name, rows)
+    except (ValueError, RecursionError):
+        # `json.loads` reads a deeper value than `json.dumps` writes with
+        # an indent under Python 3.12. Such a row cannot go back, and it
+        # must not make every later rewrite raise.
+        log.error("%s: the ledger drops %d row(s) that it cannot write again", family_name, unread)
+        records = tuple(one for one in rows if isinstance(one, SandboxRecord))
+        text = _ledger_text(family_name, records)
+    else:
+        if unread:
+            log.warning("%s: the ledger keeps %d row(s) that do not read", family_name, unread)
+
+    atomic_write(
+        paths.sandboxes_path(state_root, family_name),
+        text.encode("utf-8") + b"\n",
+        mode=LEDGER_FILE_MODE,
+    )
+
+
+def _ledger_text(family_name: str, rows: tuple[SandboxRecord | _Unread, ...]) -> str:
     body = {
         "family": family_name,
         "written_at": now_rfc3339(),
-        "sandboxes": [one.as_json() for one in records],
+        "sandboxes": [one.raw if isinstance(one, _Unread) else one.as_json() for one in rows],
     }
-    atomic_write(
-        paths.sandboxes_path(state_root, family_name),
-        json.dumps(body, indent=2).encode("utf-8") + b"\n",
-        mode=LEDGER_FILE_MODE,
-    )
+    return json.dumps(body, indent=2)
+
+
+def _is_live(row: SandboxRecord | _Unread) -> TypeGuard[SandboxRecord]:
+    return isinstance(row, SandboxRecord) and row.state in LIVE_STATES
+
+
+def _has_id(row: SandboxRecord | _Unread, sandbox_id: str) -> bool:
+    return isinstance(row, SandboxRecord) and row.id == sandbox_id
 
 
 def _take_next_id(state_root: Path, family_name: str) -> str:
@@ -482,17 +536,18 @@ def _failed(
 
 def _put(state_root: Path, family_name: str, record: SandboxRecord) -> None:
     """Add or replace one row, keeping creation order."""
-    existing = read_ledger(state_root, family_name)
-    replaced = tuple(record if one.id == record.id else one for one in existing)
-    if all(one.id != record.id for one in existing):
+    existing = _read_rows(state_root, family_name)
+    replaced = tuple(record if _has_id(one, record.id) else one for one in existing)
+    if not any(_has_id(one, record.id) for one in existing):
         replaced = (*existing, record)
 
-    write_ledger(state_root, family_name, replaced)
+    _write_rows(state_root, family_name, replaced)
 
 
 def _drop(state_root: Path, family_name: str, sandbox_id: str) -> None:
-    existing = read_ledger(state_root, family_name)
-    write_ledger(state_root, family_name, tuple(one for one in existing if one.id != sandbox_id))
+    existing = _read_rows(state_root, family_name)
+    kept = tuple(one for one in existing if not _has_id(one, sandbox_id))
+    _write_rows(state_root, family_name, kept)
 
 
 def _one_record(raw: Any) -> SandboxRecord | None:
@@ -500,6 +555,17 @@ def _one_record(raw: Any) -> SandboxRecord | None:
         return None
 
     row = cast("dict[str, Any]", raw)
+    allow = row.get("allow", [])
+    if not isinstance(allow, list):
+        # A text here would read as one row for each character.
+        return None
+
+    # CONTRACT-QUESTION: no contract defines this file. Contract 05 §4.1
+    # gives the type of each field of a sandbox entry, and the reader of
+    # this ledger keeps the lax reading it had: `int` and `str` convert a
+    # value of another type. A strict reader refuses rows that this one
+    # takes today, and a row that does not read is a sandbox that no pass
+    # manages.
     try:
         return SandboxRecord(
             id=str(row["id"]),
@@ -510,10 +576,12 @@ def _one_record(raw: Any) -> SandboxRecord | None:
             memory=str(row["memory"]),
             created_at=str(row["created_at"]),
             ready_at=_optional_text(row.get("ready_at")),
-            allow=tuple(str(one) for one in cast("list[Any]", row.get("allow", []))),
+            allow=tuple(str(one) for one in cast("list[Any]", allow)),
             playpen_env=str(row.get("supervisor_env", "")),
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
+        # OverflowError is `int` of a float that is not finite.
+        # RecursionError is `str` of a value that nests too deep.
         return None
 
 
