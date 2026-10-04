@@ -68,6 +68,19 @@ def _o(body_id: str, fields: dict[str, object]) -> Body:
     return Body(body_id, _json(fields))
 
 
+#: Stands in a written field for one half of a surrogate pair. `_half_pair`
+#: puts the JSON escape of that half in its place.
+_HALF: Final = "\ue000"
+
+
+def _half_pair(body: Body) -> Body:
+    """The body with the escape of one half of a surrogate pair at each `_HALF`.
+
+    The reader makes a text from that escape, and the text has no UTF-8 form.
+    """
+    return Body(body.id, body.raw.replace(_HALF.encode(), b"\\ud800"))
+
+
 def _long(body_id: str, head: str, fill: str, count: int, tail: str) -> Body:
     """A body with one long run of `fill` between `head` and `tail`."""
     return Body(body_id, parts=((head, 1), (fill, count), (tail, 1)))
@@ -226,6 +239,13 @@ CREATE_BODIES: Final[tuple[Body, ...]] = (
     _create("labels-key-300-chars", labels={"k" * 300: "v"}),
     _create("labels-key-any-text", labels={"Not A Key\n\u00e9": "v"}),
     _create("title-long-and-labels-bad", title="t" * 201, labels={"door": 5}),
+    # --- a text with one half of a surrogate pair ---
+    _half_pair(_create("half-pair-in-title", title=f"Kitchen{_HALF}")),
+    _half_pair(_create("half-pair-in-label-value", labels={"room": _HALF})),
+    _half_pair(_create("half-pair-in-label-key", labels={_HALF: "kitchen"})),
+    _half_pair(_create("half-pair-in-family", family=f"chat{_HALF}")),
+    _half_pair(_create("half-pair-in-session", session=f"owui-{_HALF}")),
+    _half_pair(_create("half-pair-in-owner-session", owner_session=f"owui-{_HALF}")),
 )
 
 # --- run a turn (§5.4) -------------------------------------------------------------
@@ -342,6 +362,9 @@ TIMES: Final[tuple[tuple[str, str], ...]] = (
     ("week-53-of-a-short-year", "2025-W53-1"),
     ("week-date-day-8", "2026-W38-8"),
     ("week-date-past-year-9999", "9999-W52-6"),
+    ("offset-moves-before-year-one", "0001-01-01T00:00:00+00:01"),
+    ("offset-moves-past-year-9999", "9999-12-31T23:59:59-00:01"),
+    ("offset-moves-to-year-one", "0001-01-01T00:01:00+00:01"),
 )
 
 RUN_TURN_BODIES: Final[tuple[Body, ...]] = (
@@ -550,6 +573,21 @@ RUN_TURN_BODIES: Final[tuple[Body, ...]] = (
     _turn("order-attachments-and-owui", attachments=[".."], owui={}),
     _turn("order-owui-and-trigger", owui={}, trigger={}),
     _turn("order-trigger-and-deadline", trigger={}, deadline_s=0),
+    # --- a text with one half of a surrogate pair ---
+    _half_pair(_o("half-pair-in-prompt", {"prompt": f"Which sensor{_HALF}"})),
+    _half_pair(_turn("half-pair-in-key", idempotency_key=f"key-{_HALF}")),
+    _half_pair(_turn("half-pair-in-wait", wait=f"settled{_HALF}")),
+    _half_pair(_turn("half-pair-in-persona", persona_text=f"You answer{_HALF}")),
+    _half_pair(_turn("half-pair-in-label-value", labels={"room": _HALF})),
+    _half_pair(_turn("half-pair-in-label-key", labels={_HALF: "kitchen"})),
+    _half_pair(_turn("half-pair-in-owui-chat-id", owui={**_OWUI, "chat_id": _HALF})),
+    _half_pair(_turn("half-pair-in-owui-message-id", owui={**_OWUI, "message_id": _HALF})),
+    _half_pair(_turn("half-pair-in-owui-parent-id", owui={**_OWUI, "parent_id": _HALF})),
+    _half_pair(_turn("half-pair-in-trigger-name", trigger={"kind": "timer", "name": _HALF})),
+    _half_pair(_turn("half-pair-in-trigger-kind", trigger={"kind": f"timer{_HALF}"})),
+    _half_pair(
+        _turn("half-pair-in-trigger-fired-at", trigger={"kind": "timer", "fired_at": _HALF})
+    ),
 )
 
 # --- the writer lease, steer and stop (§5.6, §5.7, §5.9) ---------------------------
@@ -583,6 +621,8 @@ WRITER_BODIES: Final[tuple[Body, ...]] = (
     _o("intent-empty", {"intent": ""}),
     _o("intent-number", {"intent": 5}),
     _o("holder-and-intent-unknown", {"holder": "view", "intent": "release"}),
+    _half_pair(_o("half-pair-in-holder", {"holder": f"tui{_HALF}"})),
+    _half_pair(_o("half-pair-in-intent", {"intent": f"renew{_HALF}"})),
 )
 
 STEER_BODIES: Final[tuple[Body, ...]] = (
@@ -600,6 +640,7 @@ STEER_BODIES: Final[tuple[Body, ...]] = (
     _o("message-two-byte-chars-over-the-cap", {"message": "\u00e9" * (STEER_BYTES // 2) + "a"}),
     Body("no-body", b""),
     Body("top-array", b'["Stop."]'),
+    _half_pair(_o("half-pair-in-message", {"message": f"Check the garage{_HALF}"})),
 )
 
 STOP_BODIES: Final[tuple[Body, ...]] = (
@@ -616,6 +657,7 @@ STOP_BODIES: Final[tuple[Body, ...]] = (
     _o("reason-200-two-byte-chars", {"reason": "\u00e9" * 200}),
     Body("no-body", b""),
     Body("top-text", b'"user_stopped"'),
+    _half_pair(_o("half-pair-in-reason", {"reason": f"tui_takeover{_HALF}"})),
 )
 
 # --- the dispatch door (§13.4) and the delegate door (contract 04 §7.3) -------------
@@ -696,6 +738,11 @@ def _door_bodies(base: dict[str, object]) -> tuple[Body, ...]:
         ),
         Body("no-body", b""),
         Body("top-array", b"[]"),
+        _half_pair(_o("half-pair-in-caller", {**base, "caller_family": f"chat{_HALF}"})),
+        _half_pair(_o("half-pair-in-target", {**base, "target_family": f"chat{_HALF}"})),
+        _half_pair(_o("half-pair-in-delegation", {**base, "delegation_id": _HALF})),
+        _half_pair(_o("half-pair-in-message", {**base, "message": f"Triage{_HALF}"})),
+        _half_pair(_o("half-pair-in-claimed", {**base, "claimed_session_id": f"owui-{_HALF}"})),
     )
 
 
@@ -728,6 +775,7 @@ DISPATCH_BODIES: Final[tuple[Body, ...]] = (
     _dispatch("key-128-two-byte-chars", idempotency_key="\u00e9" * 128),
     _dispatch("claimed-bad-and-chain-bad", claimed_session_id="..", chain=["Scrum"]),
     _dispatch("chain-bad-and-key-long", chain=["Scrum"], idempotency_key="k" * 129),
+    _half_pair(_dispatch("half-pair-in-key", idempotency_key=f"morning-{_HALF}")),
 )
 
 _DELEGATE: Final[dict[str, object]] = {
@@ -784,6 +832,9 @@ JOBS_BODIES: Final[tuple[Body, ...]] = (
     _jobs("since-bad-and-limit-bad", since="never", limit=0),
     Body("no-body", b""),
     Body("top-array", b"[]"),
+    _half_pair(_jobs("half-pair-in-caller", caller_family=f"chat{_HALF}")),
+    _half_pair(_jobs("half-pair-in-session", session=f"auto-{_HALF}")),
+    _half_pair(_jobs("half-pair-in-since", since=f"2026-10-07T05:00:00Z{_HALF}")),
 )
 
 # --- the sandbox switch (contract 05 §5.1) -----------------------------------------
@@ -835,6 +886,11 @@ SWITCH_BODIES: Final[tuple[Body, ...]] = (
     _switch("mode-unknown-and-deadline-bad", mode="replace", deadline_s=0),
     Body("no-body", b""),
     Body("top-array", b"[]"),
+    _half_pair(_switch("half-pair-in-family", family=f"chat{_HALF}")),
+    _half_pair(_switch("half-pair-in-to", to=f"chat-s{_HALF}")),
+    _half_pair(_switch("half-pair-in-mode", mode=f"drain{_HALF}")),
+    _half_pair(_switch("half-pair-in-reason", reason=f"definition_changed{_HALF}")),
+    _half_pair(_switch("half-pair-in-from", **{"from": f"chat-s{_HALF}"})),
 )
 
 # --- the three queries (§5.2, §5.3, §5.5) ------------------------------------------
@@ -1278,6 +1334,7 @@ JOURNAL_LINES: Final[tuple[Body, ...]] = (
     _l("ts-space-before-offset", ts="2026-10-05 21:22:05 +0200"),
     _l("ts-week-date", ts="2026-W41-1T19:22:05Z"),
     _l("ts-words", ts="just now"),
+    _l("ts-offset-moves-before-year-one", ts="0001-01-01T00:00:00+00:01"),
     _l("ts-empty", ts=""),
     _l("ts-null", ts=None),
     _l("ts-number", ts=1789759325),

@@ -161,13 +161,12 @@ impl TurnAddress {
 /// A reader accepts an unknown value as [`FatalClaim::Unknown`]. §3 version
 /// rule 2 forbids a fatal unknown field, so a reason that a newer image sends
 /// is still a fault that the operator sees.
-///
-/// The Python host knows one reason. It reads `mount_dir_unset` of §5.7 as
-/// unknown, and this reader does the same.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FatalClaim {
     /// The control mount is not writable.
     ControlMountUnwritable,
+    /// The environment does not name one of the three directories.
+    MountDirUnset,
     /// Each other value, and no value.
     Unknown,
 }
@@ -178,7 +177,17 @@ impl FatalClaim {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ControlMountUnwritable => "control_mount_unwritable",
+            Self::MountDirUnset => "mount_dir_unset",
             Self::Unknown => "unknown",
+        }
+    }
+
+    /// The reason that a name of the playpen stands for.
+    fn of(name: &str) -> Self {
+        match name {
+            "control_mount_unwritable" => Self::ControlMountUnwritable,
+            "mount_dir_unset" => Self::MountDirUnset,
+            _ => Self::Unknown,
         }
     }
 }
@@ -252,8 +261,9 @@ impl Usage {
 /// records it and does not act on it (§13 rule 5).
 ///
 /// An event is an object of at most [`MAX_EVENT_BYTES`] bytes that nests at
-/// most [`MAX_EVENT_DEPTH`] levels. For a larger event the host keeps three
-/// fields: `type`, `truncated` and `original_bytes` (§13 rule 6).
+/// most [`MAX_EVENT_DEPTH`] levels and holds no lone surrogate. For each
+/// other event the host keeps three fields: `type`, `truncated` and
+/// `original_bytes` (§13 rule 6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event(JsonObject);
 
@@ -342,21 +352,31 @@ impl Event {
     }
 
     /// Applies rule 6 of §13 to the `event` of a line.
+    // CONTRACT-QUESTION: contract 03 §13 rule 5 says that the host records an
+    // event, and no rule names an event that the host cannot record. A text
+    // of pi can end in a lone surrogate, and such an event has no UTF-8 form.
+    // The Python host reads it as oversized and keeps its type only, and
+    // `original_bytes` counts a lone surrogate as three bytes. This reader
+    // does the same. To refuse the line costs the turn: a refused line leaves
+    // a gap in `turn_seq`.
     fn capped(fields: JsonObject) -> Result<Self, Refusal> {
         let whole = Json::Object(fields);
-
-        // Python raises `UnicodeEncodeError` on a lone surrogate here.
-        let size = json::compact_size(&whole).map_err(|_| Refusal::Malformed)?;
-        let small = size <= MAX_EVENT_BYTES && !json::nests_past(&whole, MAX_EVENT_DEPTH);
+        let (size, has_utf8_form) = match json::compact_size(&whole) {
+            Ok(size) => (size, true),
+            Err(json::LoneSurrogate) => (json::lossy_size(&whole), false),
+        };
+        let small =
+            has_utf8_form && size <= MAX_EVENT_BYTES && !json::nests_past(&whole, MAX_EVENT_DEPTH);
         let fields = whole.into_object().unwrap_or_default();
         if small {
             return Ok(Self(fields));
         }
 
+        // A type with a lone surrogate is no type that the host can keep.
         let kind = fields
             .get("type")
             .and_then(Json::as_text)
-            .filter(|kind| !kind.is_empty())
+            .filter(|kind| kind.as_str().is_some_and(|text| !text.is_empty()))
             .cloned()
             .unwrap_or_else(|| Text::from(UNKNOWN_EVENT_TYPE));
         let size = u64::try_from(size).map_err(|_| Refusal::Malformed)?;
@@ -1217,25 +1237,25 @@ fn event(record: &mut JsonObject) -> Result<EventLine, Refusal> {
     })
 }
 
-fn usage(value: Option<&Json>) -> Result<Usage, Refusal> {
+fn usage(value: Option<&Json>) -> Usage {
     let empty = JsonObject::default();
     let record = value.and_then(Json::as_object).unwrap_or(&empty);
     let cost = match record.get("cost_usd") {
         Some(Json::Float(float)) => Cost::of(*float),
         Some(Json::Int(integer)) if integer.is_negative() => Cost::ZERO,
-        // Python raises `OverflowError` for an integer past the range of a
-        // float.
-        Some(Json::Int(integer)) => Cost::of(integer.to_f64().ok_or(Refusal::Malformed)?),
+        // An integer past the range of a float is no cost, as in the Python
+        // host.
+        Some(Json::Int(integer)) => integer.to_f64().map_or(Cost::ZERO, Cost::of),
         _ => Cost::ZERO,
     };
 
-    Ok(Usage {
+    Usage {
         input: count_or(record, "input", 0),
         output: count_or(record, "output", 0),
         cache_read: count_or(record, "cache_read", 0),
         cache_write: count_or(record, "cache_write", 0),
         cost_usd: cost,
-    })
+    }
 }
 
 fn settled(record: &JsonObject) -> Result<SettledLine, Refusal> {
@@ -1246,7 +1266,7 @@ fn settled(record: &JsonObject) -> Result<SettledLine, Refusal> {
         turn,
         turn_seq,
         resident: flag(record, "resident"),
-        usage: usage(record.get("usage"))?,
+        usage: usage(record.get("usage")),
         user_entry_id: text_of(record, "user_entry_id"),
         leaf_id: text_of(record, "leaf_id"),
         entry_count: count_of(record, "entry_count"),
@@ -1335,11 +1355,13 @@ fn entries(record: &JsonObject) -> Result<EntriesLine, Refusal> {
 }
 
 fn fatal(record: &JsonObject) -> FatalLine {
-    let known = FatalClaim::ControlMountUnwritable;
-    let reason = text_of(record, "reason").filter(|reason| reason == known.as_str());
+    let reason = record
+        .get("reason")
+        .and_then(Json::as_text)
+        .and_then(Text::as_str);
 
     FatalLine {
-        reason: reason.map_or(FatalClaim::Unknown, |_| known),
+        reason: reason.map_or(FatalClaim::Unknown, FatalClaim::of),
         message: message_of(record),
     }
 }
@@ -1743,22 +1765,25 @@ pub(super) mod tests {
         assert!(parse(&pong(&format!("{digits}.5"))).is_ok());
         assert!(parse(&pong("1e99999")).is_ok());
 
-        // An integer past the range of a float is `OverflowError` in Python.
+        // An integer past the range of a float is no cost.
         assert_eq!(cost(&format!("1{}", "0".repeat(308))), Ok(1e308));
-        assert_eq!(
-            cost(&format!("1{}", "0".repeat(309))),
-            Err(Refusal::Malformed)
-        );
+        assert_eq!(cost(&format!("1{}", "0".repeat(309))), Ok(0.0));
         assert_eq!(cost(&format!("-1{}", "0".repeat(309))), Ok(0.0));
         assert_eq!(cost("9007199254740993"), Ok(9_007_199_254_740_992.0));
-        assert_eq!(cost("1e999"), Ok(f64::INFINITY));
-        assert_eq!(cost("-1e999"), Ok(0.0));
         assert_eq!(cost("-0.0").map(f64::to_bits), Ok((-0.0_f64).to_bits()));
-        assert!(cost("NaN").unwrap().is_nan());
+
+        // A cost that is not finite is no cost.
+        for not_finite in ["1e999", "-1e999", "NaN", "Infinity", "-Infinity"] {
+            assert_eq!(
+                cost(not_finite).map(f64::to_bits),
+                Ok(0.0_f64.to_bits()),
+                "{not_finite}"
+            );
+        }
     }
 
     #[test]
-    fn a_lone_surrogate_stays_in_a_text_and_refuses_an_event() {
+    fn a_lone_surrogate_stays_in_a_text_and_caps_an_event() {
         let PlaypenLine::Log(log) = line(r#"{"type":"log","message":"a\ud800b"}"#) else {
             panic!("no log line");
         };
@@ -1767,10 +1792,19 @@ pub(super) mod tests {
         assert_eq!(log.message().to_utf16(), vec![0x61, 0xd800, 0x62]);
         assert_eq!(log.message().to_string_lossy(), "a\u{fffd}b");
         assert_eq!(
-            event_refusal(r#"{"type":"x","text":"\ud800"}"#),
-            Some(Refusal::Malformed)
+            event_line(r#"{"type":"x","text":"\ud800"}"#)
+                .event()
+                .to_json(),
+            r#"{"type":"x","truncated":true,"original_bytes":25}"#
         );
-        assert_eq!(event_refusal(r#"{"\udc00":1}"#), Some(Refusal::Malformed));
+        assert_eq!(
+            event_line(r#"{"\udc00":1}"#).event().to_json(),
+            r#"{"type":"unknown","truncated":true,"original_bytes":9}"#
+        );
+        assert_eq!(
+            event_line(r#"{"type":"x\ud800"}"#).event().to_json(),
+            r#"{"type":"unknown","truncated":true,"original_bytes":15}"#
+        );
         assert_eq!(
             parse(r#"{"type":"pon\ud800g","nonce":"x"}"#),
             Err(Refusal::UnknownType)
@@ -1871,11 +1905,15 @@ pub(super) mod tests {
         else {
             panic!("no fatal line");
         };
+        let PlaypenLine::Fatal(other) = line(r#"{"type":"fatal","reason":"out_of_cheese"}"#) else {
+            panic!("no fatal line");
+        };
 
         assert_eq!(log.level().known(), None);
         assert_eq!(log.level().to_text(), "LOUD");
         assert_eq!(exit.reason().known(), Some(ExitReason::Crashed));
         assert_eq!(exit.reason().to_text(), "crashed");
-        assert_eq!(fatal.reason(), FatalClaim::Unknown);
+        assert_eq!(fatal.reason(), FatalClaim::MountDirUnset);
+        assert_eq!(other.reason(), FatalClaim::Unknown);
     }
 }

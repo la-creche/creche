@@ -7,6 +7,7 @@ its session until the process restarts.
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import logging
 from pathlib import Path
@@ -22,9 +23,12 @@ from attendance.states import TurnState
 from attendance_harness import (
     CHAT_SESSION,
     FAMILY,
+    SANDBOX,
     FakeFleet,
+    PlaypenPlan,
     make_config,
     settle_now,
+    wait_until,
     write_status,
 )
 
@@ -108,6 +112,35 @@ async def test_the_session_takes_a_turn_after_a_start_that_raised(tmp_path: Path
 
     assert live.record.state is TurnState.RUNNING
     assert live.deadline_task is not None
+    await service.close()
+    await flaky.fleet.stop()
+
+
+async def test_a_request_that_ends_in_the_dial_does_not_end_the_start(tmp_path: Path) -> None:
+    """A client that disconnects changes nothing. The server cancels the
+    request while the service dials. The start is work of the service, so
+    the turn still gets its `start_turn` and its deadline watcher."""
+    flaky = Flaky()
+    flaky.broken = False
+    service = build(tmp_path, flaky)
+    cold = asyncio.Event()
+    flaky.fleet.plan(SANDBOX, PlaypenPlan(ready_gate=cold))
+    request = asyncio.create_task(
+        service.run_turn(OWUI, FAMILY, CHAT_SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
+    )
+    await wait_until(lambda: SANDBOX in flaky.fleet.playpens)
+    request.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await request
+
+    cold.set()
+    sent = await flaky.fleet.playpen().next_start()
+    live = service.live_turn(FAMILY, CHAT_SESSION, sent["turn"])
+
+    assert live is not None
+    await wait_until(lambda: live.deadline_task is not None)
+    assert live.record.state is TurnState.RUNNING
     await service.close()
     await flaky.fleet.stop()
 
