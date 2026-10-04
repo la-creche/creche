@@ -146,6 +146,8 @@ prefixed `test_noticeboard_`.
 - A save still rewrites two shapes that it did not edit (`yamlkeep.py`). The
   first is a flow mapping inside a flow mapping. The second is a flow mapping
   on a line past column 100.
+- A save that removes the last key of a block also removes the comment lines
+  and the blank lines after that key (`yamlkeep.py`).
 - A user unit started before its user joined the `agents` group cannot read
   the chaperone's 0640 audit files until the host reboots. The audit page
   shows a banner and renders the rest.

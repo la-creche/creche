@@ -230,8 +230,9 @@ def _set(node: MutableMapping[str, Any], key: str, was: object, wanted: object) 
     """One key. A nested mapping recurses, so a one-field edit inside a
     block leaves that block's other keys and their comments alone."""
     inner: object = node.get(key)
+    was_block = isinstance(inner, MutableMapping)
 
-    if isinstance(inner, MutableMapping) and isinstance(wanted, Mapping):
+    if was_block and isinstance(wanted, Mapping) and wanted:
         _merge(
             cast("MutableMapping[str, Any]", inner),
             cast("Mapping[str, Any]", was) if isinstance(was, Mapping) else {},
@@ -239,7 +240,45 @@ def _set(node: MutableMapping[str, Any], key: str, was: object, wanted: object) 
         )
         return
 
+    if was_block:
+        # The edit removed every key of the block, so the block goes whole.
+        _drop_block_comment(node, key)
+
     # A list is replaced whole. Matching an edited item to the item it came
     # from is guesswork, and a wrong guess moves a comment onto the wrong
     # grant -- which is worse than losing it.
     node[key] = wanted
+
+
+class _Comments(Protocol):
+    """What ruamel keeps beside a mapping: for each key, a list of four
+    comment slots. ruamel ships no type information, so the one member this
+    module reads is named here."""
+
+    items: dict[str, list[object]]
+
+
+class _Commented(Protocol):
+    ca: _Comments
+
+
+#: The slot of a comment that stands between a key and its value: a comment
+#: above the first key of a block.
+_BEFORE_VALUE: Final = 3
+
+
+def _drop_block_comment(node: MutableMapping[str, Any], key: str) -> None:
+    """Forget the comment above the first key of a block that goes.
+
+    ruamel keeps that comment on the parent. Left there, it comes out
+    between the key and its new value, and the emitter then writes an empty
+    mapping at column 0, which no reader parses. The comment explained a key
+    that the edit removed.
+    """
+    if not isinstance(node, CommentedMap):
+        return
+
+    slots = cast("_Commented", node).ca.items.get(key)
+
+    if slots is not None and len(slots) > _BEFORE_VALUE:
+        slots[_BEFORE_VALUE] = None

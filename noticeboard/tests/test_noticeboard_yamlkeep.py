@@ -201,6 +201,17 @@ def test_an_edit_inside_a_flow_mapping_keeps_its_comment_at_its_column() -> None
     ]
 
 
+def test_removing_the_only_tool_leaves_a_file_that_parses() -> None:
+    """The comment above the tool goes with the tool. The block that stays
+    is one the reader takes."""
+    text = styled(tools={})
+
+    assert model_of(text)["tools"] == {}
+    assert "kagi" not in text
+    assert "tools: {}" in text.splitlines()
+    assert "egress: []" in text.splitlines()
+
+
 #: A small family file for the shapes below. Each test adds its own lines.
 SMALL = """\
 name: chat
@@ -235,3 +246,10 @@ def test_a_flow_mapping_past_the_width_comes_back_on_one_line() -> None:
     assert len(line) > YAML_WIDTH
 
     assert line in small_saved(f"files:\n{line}\nshell: false\n", shell=True)
+
+
+@pytest.mark.xfail(strict=True, reason=KNOWN_GAP)
+def test_a_comment_after_a_removed_last_key_is_kept() -> None:
+    lines = "tools:\n  kagi: all\n  ha: all\n# No reach but the chaperone.\negress: []\n"
+
+    assert "# No reach but the chaperone." in small_saved(lines, tools={"kagi": "all"})
