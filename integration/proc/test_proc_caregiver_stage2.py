@@ -13,6 +13,7 @@ or an HTTP answer.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 from typing import Any
@@ -38,6 +39,7 @@ from proc_chat import (
 from proc_standins import ALLOW, SBX, sbx_rows, sbx_sandboxes, set_pi_env, tune, untune
 from proc_tree import (
     FAMILY,
+    FAULTS_OF_ATTENDANCE,
     SANDBOX,
     Tree,
     family_body,
@@ -322,7 +324,12 @@ async def test_a_switch_that_cannot_complete_keeps_serving(
     assert list(sbx_sandboxes(house.tree)) == [SANDBOX, NEXT_SANDBOX]
     assert not [command for command in house.sbx_commands() if command[0] == "rm"]
 
-    # The fault is of the incoming sandbox, and the outgoing one answers each turn.
+    # `attendance` reports the sandbox in its fault file (contract 05 §3.3.1 rule 1).
+    assert [(fault["code"], fault["sandbox"]) for fault in _attendance_faults(house.tree)] == [
+        ("sandbox_start_failed", NEXT_SANDBOX)
+    ]
+    # `caregiver` folds the report into the document (rule 4). The fault is of
+    # the incoming sandbox, and the outgoing one answers each turn.
     fault = _one_fault(_status(house), "sandbox_start_failed")
     assert fault["sandbox"] == NEXT_SANDBOX
     assert fault["blocks_turns"] is False
@@ -354,6 +361,8 @@ async def test_a_later_pass_completes_the_refused_switch(
         lambda: house.serves(sandbox=NEXT_SANDBOX), f"{NEXT_SANDBOX} to serve", RETRY_DEADLINE_S
     )
 
+    # Contract 05 §3.3.1 rule 8: the handshake that passed is what clears the fault.
+    assert _attendance_faults(house.tree) == []
     assert _status(house)["faults"] == []
     assert list(sbx_sandboxes(house.tree)) == [NEXT_SANDBOX]
     assert len(_creates(house)) == 2, "a later pass made a third sandbox"
@@ -499,6 +508,14 @@ def _allowed_ever(house: CaregiverStack, sandbox: str) -> list[str]:
     head = ("policy", "allow", "network", "--sandbox", sandbox)
 
     return [command[-1] for command in house.sbx_commands() if command[: len(head)] == head]
+
+
+def _attendance_faults(tree: Tree) -> list[dict[str, Any]]:
+    """Each open fault that `attendance` reports for the family (contract 05 §3.3.1)."""
+    document = json.loads(tree.fault_file(FAULTS_OF_ATTENDANCE).read_text(encoding="utf-8"))
+    faults: list[dict[str, Any]] = document["faults"]
+
+    return faults
 
 
 def _one_fault(status: dict[str, Any], code: str) -> dict[str, Any]:

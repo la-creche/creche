@@ -58,10 +58,9 @@ INSTRUCTIONS: Final = "Be helpful.\n"
 #: Contract 01 §3.2: the budget of a fixture family, in dollars each day.
 BUDGET_USD: Final = 15
 
-#: Contract 05 §3.3.1: the two services that write a fault file, by the name
-#: of the directory of each.
+#: Contract 05 §3.3.1: the directory of the fault files that `attendance`
+#: writes.
 FAULTS_OF_ATTENDANCE: Final = "sessiond"
-FAULTS_OF_CHAPERONE: Final = "pep"
 
 
 class Validity(StrEnum):
