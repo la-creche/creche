@@ -641,6 +641,11 @@ Rules for the test:
   `crates/creche-runtime/src/log.rs`: no contract gives the form of a log
   line. The Python services write five forms. Three stamp the local time,
   and two have no time. The runtime writes one form, with the time in UTC.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/token.rs`: two rules of a token file check no
+  mode, `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`. Contract 02 §3 rule 5
+  gives each token file a mode. The Python readers behind the two rules
+  check none, and the rules do the same.
 - No check holds the rules of "The rules for a service", except a part of
   rule 13. A service crate that breaks a rule builds and passes the lint
   gate.

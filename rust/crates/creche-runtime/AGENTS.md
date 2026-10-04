@@ -146,6 +146,12 @@ One more attribute waits for a body. The field `start` of
   write five forms. Three stamp the local time, and two have no time. This
   crate writes one form with the time in UTC. A change of the form costs one
   function, `format_line`.
+- This `CONTRACT-QUESTION` comment is open in `src/token.rs`:
+  `TokenRule::DOOR` and `TokenRule::NOT_EMPTY` check no mode. Contract 02 §3
+  rule 5 gives each token file a mode, and `attendance` checks it. The Python
+  readers of a door, of the chaperone and of `caregiver` check none. The two
+  rules keep the reading of those readers. The owner decides if a rule gets
+  a mode check.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same

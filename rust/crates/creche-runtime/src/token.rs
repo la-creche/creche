@@ -130,6 +130,16 @@ impl TokenRule {
         encoding: Encoding::AnyBytes,
     };
 
+    // CONTRACT-QUESTION: contract 02 §3 rule 5 gives each token file a mode,
+    // and `attendance` checks that mode when it reads the file. The Python
+    // readers on the other side check no mode: a door for its key file and
+    // for its token file, the chaperone for the token file of the delegate
+    // door, and `caregiver` for its token file. Contract 04 §7.3 names no
+    // mode check for the delegate door. The reading here is the reading of
+    // those readers: `DOOR` and `NOT_EMPTY` have `ModeRule::AnyMode`. A mode
+    // check costs one word in a constant. The reader then refuses a file
+    // that the Python reader accepts.
+
     /// The key or the token of a door
     /// (`door-owui/src/agent_door_owui/config.py:117-146`,
     /// `chaperone/src/chaperone/delegate.py:141-158`): 32 bytes or more, no
