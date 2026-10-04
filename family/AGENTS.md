@@ -115,5 +115,5 @@ uv run pytest family/tests
      §1 and contract 01b §1. The contracts give no limit for merge keys. The
      reader follows a chain of 400 merge keys at most. It makes 100,000
      entries from merge keys at most. A merged value with no entry counts
-     as one entry. It refuses a text past a limit. The Rust reader of the
-     two files has the same two limits.
+     as one entry. The reader refuses a text past a limit. The Rust reader
+     of a family file and of a server file has the same two limits.

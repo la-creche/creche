@@ -145,10 +145,11 @@ directory is not a workspace package, so a change here does not change
 - The vector `yaml-deep-flow` of `family_file` has a 10,000-deep nesting. It
   assumes the default recursion limit of Python. With a larger limit, the
   YAML reader can read that input.
-- The vector `yaml-merge-chain-at-limit` has a chain of 400 merge keys. The
-  Python reader uses two calls for each merge key of a chain. The vector
-  assumes the default recursion limit of Python and a caller that is less
-  than 180 calls deep. With a deeper caller, the reader refuses that input.
+- The vector `yaml-merge-chain-at-limit` of `family_file` and of
+  `server_file` has a chain of 400 merge keys. The Python reader uses two
+  calls for each merge key of a chain. The vector assumes the default
+  recursion limit of Python and a caller that is less than 180 calls deep.
+  With a deeper caller, the reader refuses that input.
 - The session surfaces go through the routes of `attendance.api`. The
   service behind the routes is a stand-in. No vector covers a refusal that
   the real service makes after the parse: a token, a family kind, a lease.
