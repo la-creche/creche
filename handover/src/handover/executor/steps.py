@@ -1252,11 +1252,22 @@ class Release:
         """
         plan = self._require_plan()
         put_back: list[str] = []
+        unverified: list[str] = []
         for name in reversed(self.deployed):
-            self._restore_one(plan, name)
-            put_back.append(name)
+            # CONTRACT-QUESTION: contract 06 §5.2 says that the executor
+            # stops when the hook of a restored component fails. §5.1 says
+            # that a release goes back whole. The reading taken: the
+            # restore puts each other component back first, and the step
+            # then fails. A stop at the first such hook leaves a part of
+            # the set on the new version, which is a set that no resolution
+            # made. The other reading costs this list and its check.
+            verified = self._restore_one(plan, name)
+            (put_back if verified else unverified).append(name)
 
         put_back.extend(self._restore_orphaned_servers())
+        if unverified:
+            raise StepFailed(f"{', '.join(unverified)} did not verify after the restore")
+
         # `reason` is NOT overwritten here. `_step` already recorded why the
         # switch failed, and that is the fact a reader needs: `switch: chaperone
         # verify failed` and `switch: no quiet window in 3600s` are two very
@@ -1285,7 +1296,10 @@ class Release:
 
         return [f"{MCP_COMPONENT} servers"]
 
-    def _restore_one(self, plan: Plan, name: str) -> None:
+    def _restore_one(self, plan: Plan, name: str) -> bool:
+        """One component back, and its hook. Answers whether the hook
+        passed: the caller puts each other component back before it says
+        so."""
         manifest = plan.manifest(name)
         paths = self._require_paths(name)
         # BEFORE the component's own tree, and not after it. `swap_back`
@@ -1311,8 +1325,8 @@ class Release:
         self.installer.revive(tuple(one for one in back if one not in running))
         outcome = self.installer.verify(manifest)
         self._record_verify(outcome)
-        if not outcome.ok:
-            raise StepFailed(f"{name} did not verify after the restore")
+
+        return outcome.ok
 
     def _move_back(self, name: str, paths: Paths) -> None:
         """The moves of the restore, with the rule of `_swap`.

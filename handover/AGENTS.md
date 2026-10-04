@@ -302,6 +302,11 @@ that wants a refusal changes one field.
   list. For an error that no step names, the reason also holds the type of
   the error and the symbol of its number. Both come from code
   (`executor/steps.py`).
+- Contract 06 §5.2 says that the executor stops when the hook of a restored
+  component fails. §5.1 says that a release goes back whole. The restore
+  puts each other component back first, and the step then fails. A fault
+  that is no failed hook still stops the restore at its component
+  (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`executor/roster.py`).
 - PyYAML reads a digit that is not ASCII in a number with the tag `!!int`.
   A whole number of a manifest can thus hold one. Contract 06 §8 names no
