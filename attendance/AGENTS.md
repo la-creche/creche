@@ -223,12 +223,19 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   trigger and the key of a dispatch. A parser takes the escape in each of
   the four. A member that no parser reads can hold the escape too
   (`requests.py`).
+- Contract 02 §11 rule 6 truncates a persona text and does not refuse it. A
+  persona text with one half of a surrogate pair has no UTF-8 form.
+  `_persona` refuses the body with `bad_request` (`requests.py`).
 - Contract 02 §3 rule 2 says never `0.0.0.0` and gives the LAN address no
   grammar. `from_env` refuses each spelling of the address of each interface.
   It takes each other text as the address (`config.py`).
 - `_settle` does not raise `IllegalTransition`. For a move that contract 02
   §4.3 does not allow, it writes one log line and one `note` line. The turn
   does not move. No known path makes such a move (`service.py`, `states.py`).
+- Contract 03 §13 rule 8 accepts `turn_settled` for a turn in
+  `waiting-approval`. Contract 02 §4.3 has no move from `waiting-approval`
+  to `settled`. `_leave_approval` moves that turn through `running`
+  (`service.py`).
 - A turn can settle while the decision of its gate is not in the audit file
   yet. That turn gets no `approval_resolved` line, and its tally does not
   count the gate (`service.py`).

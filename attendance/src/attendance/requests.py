@@ -586,6 +586,11 @@ def _persona(raw: dict[str, Any], family: str, session: str) -> str:
 
     A refusal here would make a folder prompt able to break a chat, and a
     folder may only shape behaviour (invariant 7).
+
+    CONTRACT-QUESTION: §11 rule 6 truncates a persona and does not refuse
+    it. A persona text with one half of a surrogate pair has no UTF-8 form,
+    and `_utf8_text` refuses the body. The other reading puts U+FFFD in the
+    place of the half. It needs the same change in the Rust type.
     """
     text = raw.get("persona_text")
 

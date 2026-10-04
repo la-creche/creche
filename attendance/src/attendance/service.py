@@ -2043,9 +2043,11 @@ class SessionService:
         poll runs once in `FLUSH_INTERVAL_S`. The poll runs here first, so
         the decision reaches the journal and the tally before the settle.
 
-        Contract 02 §4.3 has no move from `waiting-approval` to `settled`. A
+        CONTRACT-QUESTION: contract 03 §13 rule 8 accepts the settle, and
+        contract 02 §4.3 has no move from `waiting-approval` to `settled`. A
         turn that still waits after the poll goes through `running`. Left as
-        it is, the turn stays in flight until its deadline.
+        it is, the turn stays in flight until its deadline. A direct move in
+        §4.3 removes the pass through `running`.
         """
         if live.record.state is not TurnState.WAITING_APPROVAL:
             return
