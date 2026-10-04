@@ -84,7 +84,7 @@ from .requests import (
     Wait,
     WriterRequest,
 )
-from .states import SessionKind, TurnState, can_move, is_terminal
+from .states import IllegalTransition, SessionKind, TurnState, can_move, is_terminal
 from .store import SessionStore
 from .streams import Follow, StreamEnd, StreamHub
 from .switching import SwitchBook, SwitchKey, SwitchOutcome, SwitchRun, SwitchTally, switch_key
@@ -116,6 +116,9 @@ FLUSH_INTERVAL_S = 1.0
 
 # Contract 05 §5.3 rule 6's line, named once so a reader can switch on it.
 SWITCH_NOTE = "sandbox_switched"
+
+# The `note` line for a turn move that contract 02 §4.3 does not allow.
+ILLEGAL_MOVE_NOTE = "illegal_transition"
 
 # Contract 02 §10.5. Entry reads waiting for an answer, across every family.
 # One read per lease release, and a dropped channel never answers, so the
@@ -1245,12 +1248,8 @@ class SessionService:
         Contract 02 §4.3 has no `queued -> failed`, so a queued turn ends
         `aborted`.
         """
-        state = live.record.state
-
-        if is_terminal(state):
-            return
-
-        ending = TurnState.ABORTED if state is TurnState.QUEUED else TurnState.FAILED
+        queued = live.record.state is TurnState.QUEUED
+        ending = TurnState.ABORTED if queued else TurnState.FAILED
         self._settle(live, ending, TurnReason.INTERNAL, _START_ERROR)
 
     def _mint_turn(
@@ -2198,8 +2197,17 @@ class SessionService:
         message: str,
         body: dict[str, Any] | None = None,
     ) -> None:
-        """Move a turn to a terminal state, journal it, and wake its waiters."""
+        """Move a turn to a terminal state, journal it, and wake its waiters.
+
+        Two enders can race: a stop, a deadline or a lost channel, and the
+        settle that arrived first. The second ender of a turn that already
+        ended changes nothing and is no defect, so it returns here.
+        """
+        if is_terminal(live.record.state):
+            return
+
         if not can_move(live.record.state, state):
+            self._note_illegal_move(live, state)
             return
 
         live.record.state = state
@@ -2221,6 +2229,25 @@ class SessionService:
         self._save_session(family, session)
         self._release(live)
         self._end_job(live, message)
+
+    def _note_illegal_move(self, live: LiveTurn, wanted: TurnState) -> None:
+        """Make a move that contract 02 §4.3 does not allow visible.
+
+        The turn does not move: `states.py` refuses an illegal move and does
+        not correct it. The refusal is not raised, because `_settle` runs in
+        the channel reader and in a request, and the defect is somewhere
+        else. A refusal in silence would hide that defect, so the log and the
+        journal each get one line.
+        """
+        refused = IllegalTransition(live.record.turn, live.record.state, wanted)
+        _LOG.error("%s/%s %s", live.record.family, live.record.session, refused)
+        self._append(
+            live.record.family,
+            live.record.session,
+            LineKind.NOTE,
+            live.record.turn,
+            {"note": ILLEGAL_MOVE_NOTE, "from": refused.current.value, "to": wanted.value},
+        )
 
     def _apply_gate(self, gate: Gate) -> None:
         """One audit record, applied to the turn it names (contract 04 §8.6).

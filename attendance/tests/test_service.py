@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from attendance.auth import Principal
 from attendance.config import Config
 from attendance.errors import ApiError, ErrorCode, TurnReason
 from attendance.faults import FaultCode
-from attendance.models import Holder, JournalLine, LineKind, OwuiRefs
+from attendance.models import Holder, JournalLine, LineKind, OwuiRefs, Usage
 from attendance.paths import fault_file, journal_file
 from attendance.persona import BODY_BUDGET_BYTES
 from attendance.requests import (
@@ -25,7 +27,7 @@ from attendance.service import SessionService
 from attendance.states import SessionState, TurnState
 from attendance.streams import Follow, StreamEnd
 from attendance.turns import LiveTurn
-from attendance.wire import MAX_EVENT_DEPTH, MAX_LINE_BYTES, MAX_PERSONA_BYTES
+from attendance.wire import MAX_EVENT_DEPTH, MAX_LINE_BYTES, MAX_PERSONA_BYTES, SettledLine
 from attendance_harness import (
     CHAT_SESSION,
     CONFIG_REV,
@@ -739,6 +741,47 @@ async def test_only_the_lease_holder_steers(tmp_path: Path) -> None:
         await harness.service.steer(TUI, FAMILY, CHAT_SESSION, live.record.turn, "mine", "tui-1")
 
     assert caught.value.code is ErrorCode.SESSION_BUSY
+    await harness.stop()
+
+
+async def test_a_late_ender_of_a_settled_turn_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two enders can race. The turn settles while a stop waits for the channel.
+
+    The second ender changes nothing and is no defect, so it writes no line
+    and no log line.
+    """
+    harness = await build(tmp_path)
+    harness.create()
+    live = await harness.start_turn()
+    link = harness.service.link(SANDBOX)
+    assert link is not None
+    send = link.send
+    settled = SettledLine(
+        session=CHAT_SESSION, turn=live.record.turn, turn_seq=1, resident=True, usage=Usage()
+    )
+
+    async def settle_first(message: dict[str, Any]) -> None:
+        if message["type"] == "abort":
+            await harness.service.handle_settled(FAMILY, settled)
+
+        await send(message)
+
+    monkeypatch.setattr(link, "send", settle_first)
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        body = await harness.service.stop_turn(
+            OWUI, FAMILY, CHAT_SESSION, live.record.turn, "stop", DOOR
+        )
+
+    kinds = harness.kinds()
+
+    assert body["state"] == TurnState.SETTLED.value
+    assert kinds.count(LineKind.TURN_SETTLED) == 1
+    assert LineKind.TURN_ABORTED not in kinds
+    assert LineKind.NOTE not in kinds
+    assert caplog.text == ""
     await harness.stop()
 
 

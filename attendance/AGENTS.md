@@ -175,3 +175,11 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   from the work root (`service.py`).
 - Contract 03 §13 rule 6 names no nesting limit for an event. `cap_event`
   reads an event of more than 64 levels as oversized (`wire.py`).
+- Contract 02 §4.3 has no move from `queued` to `failed`, and no failure for
+  a turn that did not start. Two functions start a turn only to fail it:
+  `_refuse_toolless_job` and `_start_queued` (`service.py`).
+- `_settle` does not raise `IllegalTransition`. For a move that contract 02
+  §4.3 does not allow, it writes one log line and one `note` line. The turn
+  does not move. A `turn_settled` for a turn in `waiting-approval` is such a
+  move. That turn then stays in flight until its deadline (`service.py`,
+  `states.py`).
