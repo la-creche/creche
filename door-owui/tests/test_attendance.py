@@ -22,8 +22,13 @@ from agent_door_owui.attendance import (
     _iter_lines,  # pyright: ignore[reportPrivateUsage]
     _settled_of,  # pyright: ignore[reportPrivateUsage]
 )
-from agent_door_owui.journal import MAX_LINE_BYTES, JournalLine
+from agent_door_owui.journal import MAX_LINE_BYTES, BadLine, JournalLine, parse_line
 from agent_door_owui.untrusted import as_object
+
+#: More levels than the JSON parser of each supported Python reads. The text
+#: is under the cap of a line, so it reaches the parser.
+TOO_DEEP = 400_000
+DEEP_JSON = "[" * TOO_DEEP + "]" * TOO_DEEP
 
 TURN = TurnRequest(
     family="chat",
@@ -115,6 +120,19 @@ def test_a_junk_settled_body_does_not_raise() -> None:
     assert not result.is_settled
 
 
+def test_an_answer_that_nests_too_deep_does_not_raise() -> None:
+    assert not _settled_of(DEEP_JSON).is_settled
+    assert _error_of(500, DEEP_JSON).code == "internal"
+
+
+def test_a_line_that_nests_too_deep_is_a_bad_line() -> None:
+    line = '{"journal_seq":1,"kind":"note","turn":null,"body":' + DEEP_JSON + "}"
+    assert len(line) < MAX_LINE_BYTES
+
+    with pytest.raises(BadLine):
+        parse_line(line.encode("utf-8"))
+
+
 def test_an_error_body_becomes_a_attendance_error() -> None:
     raw = '{"error":{"code":"session_busy","message":"another door holds the writer lease"}}'
 
@@ -186,6 +204,15 @@ async def test_a_bad_line_is_dropped_and_the_good_ones_survive() -> None:
     raw = b'not json\n{"journal_seq":1,"kind":"note","turn":null,"body":{}}\n'
 
     lines = await _collect(_FakeResponse(raw))
+
+    assert [line.kind for line in lines] == ["note"]
+
+
+async def test_a_line_that_nests_too_deep_is_dropped_and_the_good_ones_survive() -> None:
+    deep = '{"journal_seq":1,"kind":"note","turn":null,"body":' + DEEP_JSON + "}\n"
+    good = '{"journal_seq":2,"kind":"note","turn":null,"body":{}}\n'
+
+    lines = await _collect(_FakeResponse(deep.encode("utf-8"), good.encode("utf-8")))
 
     assert [line.kind for line in lines] == ["note"]
 

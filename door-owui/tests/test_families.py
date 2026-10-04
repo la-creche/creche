@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+from agent_door_owui import families
 from agent_door_owui.families import StatusFiles
+from owui_json_limit import ParserAtItsLimit
 
 
 def _write_status(root: Path, family: str, **fields: Any) -> None:
@@ -84,3 +87,21 @@ def test_an_oversized_status_document_is_ignored(tmp_path: Path) -> None:
     _write_status(tmp_path, "huge", labels={"pad": "x" * 300_000})
 
     assert StatusFiles(tmp_path).serving() == ["chat"]
+
+
+def test_a_document_that_is_not_utf8_is_ignored(tmp_path: Path) -> None:
+    _write_status(tmp_path, "chat")
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "status.json").write_bytes(b'{"kind":"attended\xff"}')
+
+    assert StatusFiles(tmp_path).serving() == ["chat"]
+
+
+def test_a_document_that_nests_too_deep_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_status(tmp_path, "chat")
+    monkeypatch.setattr(families, "json", ParserAtItsLimit)
+
+    assert StatusFiles(tmp_path).serving() == []

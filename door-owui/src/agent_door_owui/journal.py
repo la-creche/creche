@@ -61,7 +61,8 @@ def parse_line(raw: bytes) -> JournalLine:
 
     try:
         parsed: object = json.loads(decoded)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
+        # RecursionError: a line that nests too deep is not a ValueError.
         raise BadLine("line is not valid JSON") from exc
 
     if not is_object(parsed):

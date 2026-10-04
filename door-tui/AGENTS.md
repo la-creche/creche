@@ -101,3 +101,10 @@ uv run pytest integration/tests/test_ct_tui_door.py -m slow
 
 Test file basenames are prefixed `test_tui_`. `bin/quality-gate.sh` runs
 pyright over `door-tui/src` only. Keep the tests typed anyway.
+
+## Known gaps
+
+- Contract 05 §2.1 does not say what a reader does with a `written_at` that
+  has no UTC offset. This door reads it as no time. The status document is
+  then stale, and the door warns. `attendance` and the noticeboard read such
+  a time as UTC (`status.py`).

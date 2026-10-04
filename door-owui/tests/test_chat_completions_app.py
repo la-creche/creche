@@ -9,8 +9,15 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
+import pytest
 from agent_door_owui.app import create_app
-from agent_door_owui.attendance import AttendanceError, SettledTurn, StreamBroken
+from agent_door_owui.attendance import (
+    AttendanceError,
+    HttpAttendance,
+    SettledTurn,
+    StreamBroken,
+)
 from agent_door_owui.config import DoorConfig
 from agent_door_owui.families import StatusFiles
 from agent_door_owui.headers import (
@@ -380,3 +387,104 @@ def test_the_branch_fallback_retries_without_the_parent(tmp_path: Path) -> None:
     assert len(fake.requests) == 2
     assert fake.with_parent_flags == [True, False]
     assert fake.requests[0].parent_id == "9f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f"
+
+
+# --- attendance does not answer ---
+
+
+def _door_over(tmp_path: Path, handler: Any) -> TestClient:
+    """The door with the real attendance client over a transport a test writes."""
+    config = _config(tmp_path)
+    transport = httpx.MockTransport(handler)
+    upstream = httpx.AsyncClient(base_url=config.attendance_url, transport=transport)
+    app = create_app(config, HttpAttendance(config, upstream), StatusFiles(config.families_dir))
+
+    return TestClient(app)
+
+
+def _no_answer(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("no answer", request=request)
+
+
+def _no_answer_to_a_turn(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/v1/sessions":
+        return httpx.Response(201, json={})
+
+    raise httpx.ConnectError("no answer", request=request)
+
+
+@pytest.mark.parametrize("handler", [_no_answer, _no_answer_to_a_turn])
+@pytest.mark.parametrize("stream", [False, True])
+def test_no_answer_from_attendance_is_a_502_in_the_error_shape(
+    tmp_path: Path, handler: Any, stream: bool
+) -> None:
+    client = _door_over(tmp_path, handler)
+
+    response = client.post("/v1/chat/completions", headers=_headers(), json=_body(stream=stream))
+
+    assert response.status_code == 502
+    error = response.json()["error"]
+    assert error["code"] == "attendance_unreachable"
+    assert error["type"] == "server_error"
+    assert "cannot reach attendance" in error["message"]
+
+
+# --- a request body that nests too deep ---
+
+
+def test_a_body_that_nests_too_deep_is_a_400_in_the_error_shape(tmp_path: Path) -> None:
+    # More levels than the JSON parser of each supported Python reads.
+    levels = 400_000
+    client = _client(tmp_path, FakeAttendance())
+    headers = {**_headers(), "content-type": "application/json"}
+
+    response = client.post(
+        "/v1/chat/completions", headers=headers, content="[" * levels + "]" * levels
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "bad_body"
+
+
+# --- a model with no UTF-8 form ---
+
+
+def test_a_model_with_no_utf8_form_is_a_400_in_the_error_shape(tmp_path: Path) -> None:
+    # A JSON escape names one half of a surrogate pair.
+    body = '{"model": "agent:\\ud800", "messages": [{"role": "user", "content": "go"}]}'
+    client = _client(tmp_path, FakeAttendance())
+    headers = {**_headers(), "content-type": "application/json"}
+
+    response = client.post("/v1/chat/completions", headers=headers, content=body)
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "bad_model"
+    assert error["type"] == "invalid_request_error"
+
+
+# --- a failure that no handler names ---
+
+
+class _BrokenAttendance(FakeAttendance):
+    """Raises an error that the door has no handler for."""
+
+    async def ensure_session(self, family: str, session: str) -> None:
+        raise RuntimeError("a defect of the door")
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_an_unexpected_failure_is_a_500_in_the_error_shape(tmp_path: Path, stream: bool) -> None:
+    config = _config(tmp_path)
+    app = create_app(config, _BrokenAttendance(), StatusFiles(config.families_dir))
+    # The server raises the error again after the answer, so that its log
+    # holds the traceback. The test reads the answer.
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post("/v1/chat/completions", headers=_headers(), json=_body(stream=stream))
+
+    assert response.status_code == 500
+    error = response.json()["error"]
+    assert error["code"] == "internal"
+    assert error["type"] == "server_error"
+    assert "a defect of the door" not in error["message"]

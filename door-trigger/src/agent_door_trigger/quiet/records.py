@@ -119,7 +119,7 @@ class HostRecords:
                     continue
 
                 body: object = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            except (OSError, ValueError, RecursionError):
                 continue
 
             yield as_object(body)
@@ -143,7 +143,8 @@ def _ran(line: str, family: str, call: str, since: datetime) -> bool:
     try:
         record = as_object(json.loads(line))
         at = datetime.fromisoformat(field_text(record, "ts"))
-    except ValueError:
+    except (ValueError, RecursionError):
+        # RecursionError: a line that nests too deep is not a ValueError.
         return False
 
     # The PEP writes UTC with a `Z`. A time with no zone cannot be placed.

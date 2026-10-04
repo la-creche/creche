@@ -9,7 +9,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+from agent_door_trigger.quiet import records
 from agent_door_trigger.quiet.records import Called, Ending, HostRecords
+from trigger_json_limit import ParserAtItsLimit
 
 FAMILY = "scrum-lead"
 CALL = "mail__send_standup_email"
@@ -17,6 +20,10 @@ FIRED = datetime(2026, 9, 25, 10, 0, tzinfo=UTC)
 #: 16:00 in Phoenix, as UTC: the audit's file name is the UTC day.
 AFTERNOON = datetime(2026, 9, 25, 23, 0, tzinfo=UTC)
 MIDNIGHT = datetime(2026, 9, 25, 7, 0, tzinfo=UTC)
+
+#: More levels than the JSON parser of each supported Python reads. The audit
+#: reader has no size cap, so the line reaches the parser.
+TOO_DEEP = 400_000
 
 
 def _records(tmp_path: Path) -> HostRecords:
@@ -85,6 +92,15 @@ def test_a_broken_record_is_skipped(tmp_path: Path) -> None:
     assert _records(tmp_path).ending(FAMILY, "auto-A", FIRED) is Ending.OK
 
 
+def test_a_record_that_nests_too_deep_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _outcome(tmp_path, "01OUT", "auto-A", "ok", FIRED + timedelta(minutes=5))
+    monkeypatch.setattr(records, "json", ParserAtItsLimit)
+
+    assert _records(tmp_path).ending(FAMILY, "auto-A", FIRED) is Ending.PENDING
+
+
 # --- called: the daily call, from the audit ---
 
 
@@ -149,5 +165,15 @@ def test_a_broken_line_is_skipped(tmp_path: Path) -> None:
     directory.mkdir()
     good = json.dumps(_call("2026-09-25T23:01:02.345Z"))
     (directory / "2026-09-25.jsonl").write_text(f"{{{CALL}\n{good}\n", encoding="utf-8")
+
+    assert _records(tmp_path).called(FAMILY, CALL, MIDNIGHT, AFTERNOON) is Called.YES
+
+
+def test_a_line_that_nests_too_deep_is_skipped(tmp_path: Path) -> None:
+    directory = tmp_path / "audit"
+    directory.mkdir()
+    deep = '{"tool":"' + CALL + '","args":' + "[" * TOO_DEEP + "]" * TOO_DEEP + "}"
+    good = json.dumps(_call("2026-09-25T23:01:02.345Z"))
+    (directory / "2026-09-25.jsonl").write_text(f"{deep}\n{good}\n", encoding="utf-8")
 
     assert _records(tmp_path).called(FAMILY, CALL, MIDNIGHT, AFTERNOON) is Called.YES
