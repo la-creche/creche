@@ -408,12 +408,16 @@ def test_an_oversized_roster_is_read_as_nothing_served(bench: Bench) -> None:
         "weather: " + "[" * DEEPER_THAN_THE_YAML_READER + "]" * DEEPER_THAN_THE_YAML_READER + "\n",
         "weather: {port: " + "9" * MORE_DIGITS_THAN_AN_INTEGER + "}\n",
         "weather: {command: \xff}\n",
+        "weather: {command: x}\n---\nother: {command: x}\n",
     ],
-    ids=["very-deep", "huge-integer", "not-utf8"],
+    ids=["very-deep", "huge-integer", "not-utf8", "two-documents"],
 )
 def test_a_roster_that_does_not_read_is_nothing_served(bench: Bench, text: str) -> None:
     """A roster that this process cannot read asks for a release, and the
-    release writes the roster again. A raise here would stop that repair."""
+    release writes the roster again. A raise here would stop that repair.
+
+    A roster is one document. The reader does not take the first document
+    of a file that holds two."""
     from caregiver.mcp_release import served_servers
 
     bench.mcp.roster.write_bytes(text.encode("latin-1"))
