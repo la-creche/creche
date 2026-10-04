@@ -160,6 +160,11 @@ One more attribute waits for a body. The field `start` of
   readers of a door, of the chaperone and of `caregiver` check none. The two
   rules keep the reading of those readers. The owner decides if a rule gets
   a mode check.
+- This `CONTRACT-QUESTION` comment is open in `src/atomic.rs`: contract 04
+  §1.3 step 2 names the temporary file of a grant file `<family>.json.tmp`.
+  The Python writer of the grant file uses another name. This crate names
+  each temporary file `.<name>.<pid>.<count>.tmp`, as the Python `attendance`
+  does. A change of the name costs one function, `temp_name`.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same
