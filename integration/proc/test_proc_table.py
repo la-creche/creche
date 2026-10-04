@@ -18,6 +18,7 @@ from proc_services import (
     Service,
     command_of,
     env_of,
+    unknown_variables,
     venv_bin,
 )
 
@@ -85,6 +86,25 @@ def test_an_override_that_names_no_program_is_an_error(tmp_path: Path) -> None:
 
     with pytest.raises(CommandError, match="CRECHE_PROC_NOTICEBOARD names"):
         command_of(Service.NOTICEBOARD, {"CRECHE_PROC_NOTICEBOARD": str(missing)})
+
+
+def test_a_misspelled_variable_is_found() -> None:
+    """Fail closed. A name that no row has would leave the default in place."""
+    environ = {
+        "CRECHE_PROC_ATTENDENCE": "/path/to/the/binary",
+        "CRECHE_PROC_DOOR_OWUI_": "/path/to/the/binary",
+        "CRECHE_PROC_CHAPERONE": "/path/to/the/binary",
+        "CRECHE_PROC_KEEP": "1",
+        "PATH": "/usr/bin",
+    }
+
+    assert unknown_variables(environ) == ["CRECHE_PROC_ATTENDENCE", "CRECHE_PROC_DOOR_OWUI_"]
+
+
+def test_every_variable_of_the_table_is_known() -> None:
+    environ = dict.fromkeys((entry.override for entry in SERVICES.values()), "/bin/sh")
+
+    assert unknown_variables(environ) == []
 
 
 def _exec_start(unit: str) -> str:

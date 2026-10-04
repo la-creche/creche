@@ -10,6 +10,11 @@ A test names a `Service`. It never names a program, a module or a language.
 
 `test_proc_table.py` holds each default against the unit file, so the table
 cannot drift from what the host starts.
+
+Every variable of this suite starts with `CRECHE_PROC_`. `unknown_variables`
+finds a name with that start that the suite does not read. A misspelled
+override would leave the default in place, and the run would look like a
+run that judged the other binary.
 """
 
 from __future__ import annotations
@@ -112,6 +117,15 @@ SERVICES: Final[dict[Service, StartEntry]] = {
     ),
 }
 
+#: The start of every variable that this suite reads.
+VARIABLE_PREFIX: Final = "CRECHE_PROC_"
+
+#: Set it to keep the root of every test on disk, to read after a run.
+KEEP_ROOTS_ENV: Final = "CRECHE_PROC_KEEP"
+
+#: The variables of the suite that replace no command.
+SWITCHES: Final = frozenset({KEEP_ROOTS_ENV})
+
 #: What only the default command needs. Python holds a child's stdout in a
 #: buffer when it is a file, and the failure report reads that file while the
 #: process runs. An override gets none of these: nothing in a test may depend
@@ -167,8 +181,16 @@ def env_of(command: StartCommand) -> dict[str, str]:
     return dict(DEFAULT_ONLY_ENV)
 
 
+def unknown_variables(environ: Mapping[str, str] | None = None) -> list[str]:
+    """Each name with the suite's prefix that the suite does not read, sorted."""
+    source = os.environ if environ is None else environ
+    known = SWITCHES | {entry.override for entry in SERVICES.values()}
+
+    return sorted(name for name in source if name.startswith(VARIABLE_PREFIX) and name not in known)
+
+
 def describe_table(environ: Mapping[str, str] | None = None) -> list[str]:
-    """One line per service, for the header of a test run."""
+    """One line per service, for the header and the summary of a test run."""
     lines: list[str] = []
 
     for service in Service:

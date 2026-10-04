@@ -3,13 +3,16 @@
 Every test here starts real processes and is marked `slow` for that reason.
 The mark is applied once, here, so no scenario can forget it.
 
-Three rules are enforced here and not left to a test:
+Four rules are enforced here and not left to a test:
 
 1. Every process of a test ends with the test. A teardown that had to kill
    one fails the test.
 2. A failed test carries the stdout and the stderr of every process it
    started, and every playpen log.
 3. The session ends with no process left. `no_process_left` is that check.
+4. A run says which command it judged. A variable with the suite's prefix
+   that the suite does not read stops the run, and each run prints the
+   command of each service before its result line.
 """
 
 from __future__ import annotations
@@ -24,23 +27,41 @@ import pytest
 from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
 from proc_owui import OwuiStack
-from proc_services import describe_table
+from proc_services import KEEP_ROOTS_ENV, describe_table, unknown_variables
 from proc_standins import end_standins
 from proc_tree import Tree, make_root, playpen_bundle, remove_root, socket_path_fits
 
 _HERE = Path(__file__).resolve().parent
 _BUILD_HINT = "run `pnpm install && pnpm run build` in playpen/ first"
 
-#: Set it to keep the root of every test on disk, to read after a run.
-KEEP_ROOTS_ENV = "CRECHE_PROC_KEEP"
-
 #: What a failed test adds to its report. One callable per test.
 _REPORT = pytest.StashKey[Callable[[], str]]()
+
+
+def pytest_configure() -> None:
+    """Fail closed on a variable that the suite does not read.
+
+    A misspelled override starts the default command. Every test would then
+    pass, and the run would judge the wrong program.
+    """
+    unknown = unknown_variables()
+
+    if unknown:
+        raise pytest.UsageError(
+            f"the process suite reads no variable named {', '.join(unknown)}. "
+            "Correct the name or unset it. `integration/proc/AGENTS.md` lists every variable."
+        )
 
 
 def pytest_report_header() -> list[str]:
     """Say which command each service runs, so a reader knows what was judged."""
     return describe_table()
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Say it again before the result line. `-q` hides the header of a run."""
+    for line in describe_table():
+        terminalreporter.write_line(line)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

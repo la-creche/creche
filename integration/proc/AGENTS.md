@@ -20,8 +20,9 @@ cd playpen && pnpm install && AGENT_LAN_ADDRESS=192.0.2.10 pnpm run build && cd 
 uv run pytest integration/proc -m slow
 ```
 
-Add `-n 4` to run the tests on four workers. Add `-v` to see the command of
-each service in the header of the run.
+Add `-n 4` to run the tests on four workers. Each run prints the command of
+each service before its result line. Each line ends with the origin of the
+command: `default` or `override`.
 
 A test that needs `playpen/dist/playpen.js` skips itself when the file is
 missing. A silent pass would be worse than a skip. The suite needs `node` on
@@ -79,6 +80,10 @@ else.
 A variable that is set and empty is an error. A variable that names no
 program is an error. The suite never returns to the default command. A run
 that judged the default would look like a run that judged the binary.
+
+Every variable of the suite starts with `CRECHE_PROC_`. A variable with that
+start that the suite does not read stops the run before the first test. A
+misspelled name would start the default command.
 
 ## What runs
 
