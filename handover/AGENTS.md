@@ -113,6 +113,8 @@ The console script is `handover`. The verify hook and the operator's
    that deploys code is not deployed by code.
 9. A step that raises an error it does not name is a failed step. The
    ledger gets the type of the error, and never its text.
+10. A unit file longer than 64 KiB stops the stage, for each kind. A line
+    after the cap can start a program that no reader saw.
 
 ## Rules `follow/` adds
 
@@ -363,6 +365,3 @@ that wants a refusal changes one field.
 - A run that ends as a crash does keeps `work/<id>`, and no later run
   removes it. A binary build leaves its `target` directory there
   (`executor/steps.py`).
-- The unit rule reads the first 64 KiB of a unit file. A line after that
-  can start a program outside the tree. The binary walk refuses a longer
-  file, and the unit rule does not (`executor/install.py`).

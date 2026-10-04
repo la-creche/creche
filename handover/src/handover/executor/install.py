@@ -514,12 +514,8 @@ class Installer:
 
         carried = _carried_unit(manifest, source)
         chosen = carried if carried is not None and not installed.is_symlink() else installed
-        try:
-            data = chosen.read_bytes()[:MAX_UNIT_BYTES]
-        except OSError:
-            raise StepFailed(f"{manifest.name}: cannot read {manifest.unit}") from None
 
-        return chosen, data.decode("utf-8", errors="replace")
+        return chosen, _unit_text(manifest, chosen)
 
     def build(self, manifest: ComponentManifest, source: Path, paths: Paths) -> None:
         """Run `build` into `<install.to>.new`, then prove the hook is there."""
@@ -617,9 +613,7 @@ class Installer:
         it, or None when no host and no fetched tree holds the file."""
         found = self._effective_unit(manifest, source)
         if found is not None:
-            # Read again, and whole: `_effective_unit` cuts its text at the
-            # cap, and `_unit_text` refuses a file that is longer.
-            return _unit_text(manifest, found[0])
+            return found[1]
 
         carried = _carried_unit(manifest, source)
         if carried is None:
@@ -1328,8 +1322,11 @@ def _unit_text(manifest: ComponentManifest, path: Path) -> str:
     nothing can say the staged tree holds them. A file longer than
     `MAX_UNIT_BYTES` stops it too, as `_read_unit` refuses one: a line
     after the cap can start a program that this reader never saw."""
+    # One byte past the cap says that the file is longer. The rest of a
+    # long file is never read.
     try:
-        data = path.read_bytes()
+        with path.open("rb") as file:
+            data = file.read(MAX_UNIT_BYTES + 1)
     except OSError:
         raise StepFailed(f"{manifest.name}: cannot read {path.name}") from None
 
