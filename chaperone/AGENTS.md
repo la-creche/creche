@@ -98,6 +98,8 @@ A shared module may not grow a branch that only one caller reaches.
   intent.
 - A call has no effect when no audit line can hold its arguments in full.
   An allow becomes `internal_error`. A denial keeps its reason.
+- A result that is not strict JSON in UTF-8 is an upstream failure. The
+  audit line says so before the answer goes out.
 
 ## Identity and revocation
 

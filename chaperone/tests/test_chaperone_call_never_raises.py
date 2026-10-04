@@ -239,3 +239,25 @@ def test_a_request_of_no_family_gets_its_line_for_any_arguments(tmp_path: Path) 
     assert record["reason"] == "unknown_token"
     assert record["args_bytes"] == len(raw)
     assert record["args_sha256"] == hashlib.sha256(raw).hexdigest()
+
+
+# ---- the result of an upstream -----------------------------------------------
+
+
+def test_a_result_that_no_reply_can_carry_is_an_upstream_failure(tmp_path: Path) -> None:
+    """A result is bytes of another process. One that is not JSON text is §5
+    row 11, and the line says so before the answer goes out."""
+
+    class Answers(FakePool):
+        async def call(self, server: str, tool: str, args: dict[str, object]) -> str:
+            return "\ud800"
+
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path, pool=Answers())
+
+    reply = call(client, body_of(SEARCH, '{"query":"x"}'))
+
+    assert reply.status_code == 502
+    assert reply.json()["reason"] == "upstream_failed"
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("allow", "upstream_failed")

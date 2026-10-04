@@ -35,6 +35,7 @@ allowing a call it would fail to run.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import time
@@ -117,6 +118,9 @@ ARGS_NOT_HELD: Final = (
     "the audit cannot hold these arguments: they nest too deep, "
     "or they hold a string that is not Unicode text"
 )
+
+#: The detail of a result that no reply can carry. It does not quote it.
+RESULT_NOT_JSON: Final = "the result is not JSON text that a reply can carry"
 
 #: The PEP's own audit names for the two endpoints that are not tool calls.
 #: A `$` cannot start a tool name, so neither can collide with one.
@@ -317,6 +321,8 @@ class FamilyGate:
         started = time.monotonic()
         try:
             payload = await self._execute(grants, decision, claimed)
+            if not _carries(payload):
+                raise ExecutionFailed(RESULT_NOT_JSON)
         except DispatchRefused as exc:
             # Contract 02 §13.4.1 rule 5: a refused dispatch created nothing.
             # So this is a policy denial and not §5 row 11's allowed call that
@@ -881,6 +887,18 @@ def _holds_current_rev(headers: Mapping[str, str], rev: str) -> bool:
         tag = tag[1:-1]
 
     return tag == rev
+
+
+def _carries(payload: dict[str, object]) -> bool:
+    """Whether a JSON reply can carry this result: strict JSON, as text in
+    UTF-8. A result is bytes of another process (invariant 12), and `app.py`
+    writes the reply after the audit line says how the call ended."""
+    try:
+        json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (ValueError, RecursionError):
+        return False
+
+    return True
 
 
 def _plain(detail: str | None) -> str | None:
