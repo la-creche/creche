@@ -36,90 +36,150 @@
 //! reader reads has a view in the module of its contract (`rust/AGENTS.md`,
 //! "A reader that accepts more than the contract").
 //!
-//! Each body here is a stub. `rust/crates/creche-runtime/AGENTS.md` lists the
-//! stubs and the packet that writes them.
+//! # How a function reads a value
+//!
+//! Each function reads the whole value first, into a private tree of the JSON
+//! kinds. Then it takes the content when the kind is right. The steps are in
+//! that order for two reasons:
+//!
+//! 1. A value of a wrong kind has no error. The only error of a function is
+//!    the error of the deserializer, for a text that is not JSON.
+//! 2. [`object`], [`block`], [`list`] and [`list_first`] give the tree to the
+//!    raw type `T`. An object or a member that `T` refuses is then empty or
+//!    dropped, and the answer stays.
+//!
+//! Three rules of the tree hold for each raw type `T` below a function of
+//! this module:
+//!
+//! - A key that an object holds two times has the value of its last
+//!   occurrence, as a Python `dict` has. A derived `serde` type alone refuses
+//!   such an object.
+//! - A struct with named fields reads from an object only. A derived `serde`
+//!   type alone also takes a list and fills its fields by position. No Python
+//!   reader does that.
+//! - A value nests 128 levels of lists and objects at most.
+//!
+//! The body of [`parse_object`] is a stub. `rust/crates/creche-runtime/AGENTS.md`
+//! lists the stubs and the packet that writes them.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer};
+use serde::de::value::{MapAccessDeserializer, MapDeserializer, SeqDeserializer};
+use serde::de::{
+    self, DeserializeOwned, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor,
+};
+use serde::{Deserialize, Deserializer, forward_to_deserialize_any};
 
 /// A text. A value that is not a JSON string reads as the empty text.
 ///
 /// Use it with `#[serde(default, deserialize_with = "untrusted::text")]`. The
 /// `default` gives the empty text for a field that is absent.
 ///
+/// The function keeps each character of the text. Give the result to [`cut`]
+/// where the Python reader has a cap.
+///
+/// The Python origin is `as_text` and `field_text` of each door, for example
+/// `door-owui/src/agent_door_owui/untrusted.py:30-37`, and `text` and `whole`
+/// of `noticeboard/src/noticeboard/jsonfiles.py:93-108`.
+///
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
 pub fn text<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
-    todo!()
+    let Json::Text(text) = read(deserializer)? else {
+        return Ok(String::new());
+    };
+
+    Ok(text)
 }
 
 /// A whole number. A value that is not a JSON integer reads as 0.
 ///
 /// `true` and `false` are not integers here, and each one reads as 0. In
-/// Python a `bool` is an `int`, so each Python copy excludes it by name.
+/// Python a `bool` is an `int`, so each Python copy excludes it by name. A
+/// number with a fraction or an exponent is not an integer, so `2.0` reads
+/// as 0.
+///
+/// An integer that does not fit an `i64` reads as 0 too.
+///
+/// The Python origin is `field_int` of
+/// `door-tui/src/agent_door_tui/untrusted.py:45-52` and `integer` of
+/// `noticeboard/src/noticeboard/jsonfiles.py:111-123`.
 ///
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
+//
+// CONTRACT-QUESTION: contracts 02, 04 and 05 give a count no range. The
+// Python readers keep an integer of each size. This reader holds 64 bits with
+// a sign, and it reads a larger integer as 0, the value of a field of a wrong
+// type. No service of this platform writes such a count. A reader that keeps
+// each size costs a type for a large integer in each raw type.
 pub fn int<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    todo!()
+    let Json::Int(whole) = read(deserializer)? else {
+        return Ok(0);
+    };
+
+    Ok(whole)
 }
 
 /// A number: an integer or a float. A value of another type, `true` and
 /// `false` read as `None`.
 ///
+/// An integer reads as the nearest float, as `float` of Python gives it. The
+/// result is always finite: the JSON reader refuses a text with a number
+/// outside the range of a float.
+///
+/// The Python origin is `number` of
+/// `noticeboard/src/noticeboard/jsonfiles.py:126-137`.
+///
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
 pub fn number<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    todo!()
+    Ok(match read(deserializer)? {
+        Json::Int(whole) => nearest_float(whole),
+        Json::Large(whole) => nearest_float(whole),
+        Json::Float(float) => Some(float),
+        Json::Null | Json::Bool(_) | Json::Text(_) | Json::List(_) | Json::Object(_) => None,
+    })
+}
+
+/// The float that is nearest to an integer, with a tie to the even float.
+///
+/// The decimal text of the integer goes through the float parser of the
+/// standard library, which rounds in that way. `float` of Python rounds an
+/// `int` in the same way. The lint gate refuses the `as` conversion.
+fn nearest_float(whole: impl fmt::Display) -> Option<f64> {
+    whole.to_string().parse().ok()
 }
 
 /// A switch. It is on only for the JSON value `true`.
 ///
 /// The number 1 and the text `"true"` read as off.
 ///
+/// The Python origin is `flag` of
+/// `noticeboard/src/noticeboard/jsonfiles.py:140-141`.
+///
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
 pub fn flag<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
 {
-    todo!()
+    Ok(matches!(read(deserializer)?, Json::Bool(true)))
 }
 
 /// An object of the raw type `T`. A value that is absent, `null` or not an
@@ -128,20 +188,28 @@ where
 /// Use [`block`] when the reader must tell an absent object from an empty
 /// one.
 ///
+/// An object that `T` refuses reads as the default of `T` too. A raw type
+/// refuses no object when each of its fields names a function of this module
+/// and has `default`.
+///
+/// The Python origin is `as_object` of each door, for example
+/// `door-owui/src/agent_door_owui/untrusted.py:25-27`, and `child` of
+/// `noticeboard/src/noticeboard/jsonfiles.py:153-156`.
+///
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
 pub fn object<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de> + Default,
 {
-    todo!()
+    let value = read(deserializer)?;
+    if !matches!(value, Json::Object(_)) {
+        return Ok(T::default());
+    }
+
+    Ok(T::deserialize(value).unwrap_or_default())
 }
 
 /// An object of the raw type `T`, or `None`. A value that is absent, `null`
@@ -151,40 +219,48 @@ where
 /// fields means that the writer published an empty block. [`object`] reads
 /// the two cases as one.
 ///
+/// An object that `T` refuses reads as `None` too.
+///
+/// The Python origin is `block` of
+/// `noticeboard/src/noticeboard/jsonfiles.py:144-150` and `as_object` of
+/// `attendance/src/attendance/atomic.py:94-103`.
+///
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
 pub fn block<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
 {
-    todo!()
+    let value = read(deserializer)?;
+    if !matches!(value, Json::Object(_)) {
+        return Ok(None);
+    }
+
+    Ok(T::deserialize(value).ok())
 }
 
 /// A list. A value that is not a JSON array reads as the empty list. The
 /// function drops each member that is not a `T` and keeps the others in
 /// order.
 ///
+/// The result does not tell a value that is no list from an empty list.
+///
+/// The Python origin is `as_list` of
+/// `door-tui/src/agent_door_tui/untrusted.py:30-32` and `as_array` of
+/// `attendance/src/attendance/atomic.py:106-111`. The drop of a member is the
+/// `isinstance` check that each caller of the two makes on a member.
+///
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
 pub fn list<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
 {
-    todo!()
+    Ok(members_of(read(deserializer)?, usize::MAX))
 }
 
 /// A list of the first `N` members. The function takes the first `N` members
@@ -195,20 +271,33 @@ where
 ///
 /// Write the count in the path: `untrusted::list_first::<8, _, _>`.
 ///
+/// The Python origin is `children` and `strings` of
+/// `noticeboard/src/noticeboard/jsonfiles.py:159-181`. The slice
+/// `entries[:limit]` comes before the `isinstance` check there.
+///
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
 pub fn list_first<'de, const N: usize, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
 {
-    todo!()
+    Ok(members_of(read(deserializer)?, N))
+}
+
+/// The first `first` members of a list, without each of them that is not a
+/// `T`. A value that is not a list has no member.
+fn members_of<'de, T: Deserialize<'de>>(value: Json, first: usize) -> Vec<T> {
+    let Json::List(members) = value else {
+        return Vec::new();
+    };
+
+    members
+        .into_iter()
+        .take(first)
+        .filter_map(|member| T::deserialize(member).ok())
+        .collect()
 }
 
 /// Why bytes are not the JSON object of an answer.
@@ -280,8 +369,299 @@ pub fn cut(text: &str, max_chars: usize) -> &str {
     text.get(..end).unwrap_or_default()
 }
 
+// --- one JSON value ---
+
+/// The count of levels of lists and objects that one value can have.
+///
+/// A list inside a list has two levels. The tree of a value that nests deeper
+/// is an error of the deserializer.
+///
+/// `serde_json` stops a text before this count, so the limit of `serde_json`
+/// is the limit of [`parse_object`]. This limit is for a deserializer that
+/// has none. The drop of a tree and the read of a raw type from a tree use
+/// the stack for each level, so the count of levels needs a bound here.
+///
+// CONTRACT-QUESTION: contract 02 §3 rule 3 says that a body is JSON and gives
+// no nesting limit. Python reads a text until its own recursion limit, which
+// differs between two versions of the interpreter. This reader takes the
+// limit above. No answer of a service nests deeper than a pi event, and the
+// host caps a pi event at 64 levels. A higher limit costs one number here and
+// a reader with no limit in place of `serde_json`.
+const DEPTH_MAX: usize = 128;
+
+/// What the deserializer error says for a value past [`DEPTH_MAX`].
+const TOO_DEEP: &str = "the value nests deeper than 128 levels";
+
+/// One JSON value, by its kind.
+///
+/// Each function of this module reads a value into this type first. A kind
+/// that the function does not take then has no error: the function gives its
+/// empty value.
+///
+/// The type is also a deserializer. [`object`], [`block`], [`list`] and
+/// [`list_first`] give a value to the raw type of the caller. A value that
+/// the raw type refuses is a [`Mismatch`], which the function drops.
+#[derive(Debug, Clone, PartialEq)]
+enum Json {
+    Null,
+    Bool(bool),
+    /// An integer that fits 64 bits with a sign.
+    Int(i64),
+    /// An integer above the largest `i64` that fits 64 bits with no sign.
+    Large(u64),
+    /// A number with a fraction or an exponent, and an integer of more than
+    /// 64 bits. `serde_json` gives such an integer as the nearest float.
+    Float(f64),
+    Text(String),
+    List(Vec<Self>),
+    /// Each member, in the order of the text. No key occurs two times.
+    Object(Vec<(String, Self)>),
+}
+
+/// The tree of the value that a deserializer holds.
+fn read<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Json, D::Error> {
+    Reader {
+        levels_left: DEPTH_MAX,
+    }
+    .deserialize(deserializer)
+}
+
+/// Reads one value into a [`Json`].
+#[derive(Clone, Copy)]
+struct Reader {
+    /// The count of levels of lists and objects that the value can have.
+    levels_left: usize,
+}
+
+impl Reader {
+    /// The reader of a member of a list or of an object.
+    fn inside<E: de::Error>(self) -> Result<Self, E> {
+        match self.levels_left.checked_sub(1) {
+            Some(levels_left) => Ok(Self { levels_left }),
+            None => Err(E::custom(TOO_DEEP)),
+        }
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for Reader {
+    type Value = Json;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Json, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Reader {
+    type Value = Json;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Json, E> {
+        Ok(Json::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Json, E> {
+        Ok(Json::Int(value))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Json, E> {
+        Ok(i64::try_from(value).map_or(Json::Large(value), Json::Int))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Json, E> {
+        Ok(Json::Float(value))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Json, E> {
+        Ok(Json::Text(value.to_owned()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Json, E> {
+        Ok(Json::Text(value))
+    }
+
+    fn visit_unit<E>(self) -> Result<Json, E> {
+        Ok(Json::Null)
+    }
+
+    fn visit_none<E>(self) -> Result<Json, E> {
+        Ok(Json::Null)
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Json, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Json, A::Error> {
+        let inside = self.inside()?;
+        let mut members = Vec::new();
+        while let Some(member) = seq.next_element_seed(inside)? {
+            members.push(member);
+        }
+
+        Ok(Json::List(members))
+    }
+
+    /// A key that occurs two times has the value of its last occurrence, at
+    /// the place of its first. A `dict` of Python does the same.
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Json, A::Error> {
+        let inside = self.inside()?;
+        let mut members: Vec<(String, Json)> = Vec::new();
+        let mut places: HashMap<String, usize> = HashMap::new();
+        while let Some(key) = map.next_key::<String>()? {
+            let value = map.next_value_seed(inside)?;
+            let first = places.get(&key).and_then(|place| members.get_mut(*place));
+            if let Some(member) = first {
+                member.1 = value;
+                continue;
+            }
+
+            places.insert(key.clone(), members.len());
+            members.push((key, value));
+        }
+
+        Ok(Json::Object(members))
+    }
+}
+
+/// A value is not what the raw type of a caller takes.
+///
+/// The type holds no text. A function of this module drops it and gives its
+/// empty value, so no part of an answer goes into an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Mismatch;
+
+impl fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the value is not what the raw type takes")
+    }
+}
+
+impl Error for Mismatch {}
+
+impl de::Error for Mismatch {
+    fn custom<T: fmt::Display>(_: T) -> Self {
+        Self
+    }
+}
+
+impl IntoDeserializer<'_, Mismatch> for Json {
+    type Deserializer = Self;
+
+    fn into_deserializer(self) -> Self {
+        self
+    }
+}
+
+impl<'de> Deserializer<'de> for Json {
+    type Error = Mismatch;
+
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Mismatch> {
+        match self {
+            Self::Null => visitor.visit_unit(),
+            Self::Bool(value) => visitor.visit_bool(value),
+            Self::Int(value) => visitor.visit_i64(value),
+            Self::Large(value) => visitor.visit_u64(value),
+            Self::Float(value) => visitor.visit_f64(value),
+            Self::Text(value) => visitor.visit_string(value),
+            Self::List(members) => {
+                let mut seq = SeqDeserializer::new(members.into_iter());
+                let value = visitor.visit_seq(&mut seq)?;
+                seq.end()?;
+
+                Ok(value)
+            }
+            Self::Object(members) => {
+                let mut map = MapDeserializer::new(members.into_iter());
+                let value = visitor.visit_map(&mut map)?;
+                map.end()?;
+
+                Ok(value)
+            }
+        }
+    }
+
+    fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Mismatch> {
+        match self {
+            Self::Null => visitor.visit_none(),
+            value => visitor.visit_some(value),
+        }
+    }
+
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        _: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Mismatch> {
+        visitor.visit_newtype_struct(self)
+    }
+
+    /// A struct with named fields reads from an object only.
+    ///
+    /// A derived visitor also takes a list and fills the fields by position.
+    /// No Python reader does that: each one takes a member only when it is a
+    /// `dict`.
+    fn deserialize_struct<V: Visitor<'de>>(
+        self,
+        _: &'static str,
+        _: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Mismatch> {
+        match self {
+            Self::Object(_) => self.deserialize_any(visitor),
+            Self::Null
+            | Self::Bool(_)
+            | Self::Int(_)
+            | Self::Large(_)
+            | Self::Float(_)
+            | Self::Text(_)
+            | Self::List(_) => Err(Mismatch),
+        }
+    }
+
+    /// An enum reads as `serde_json` reads it: a text is a variant with no
+    /// content, and an object with one member is a variant and its content.
+    fn deserialize_enum<V: Visitor<'de>>(
+        self,
+        _: &'static str,
+        _: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Mismatch> {
+        match self {
+            Self::Text(variant) => visitor.visit_enum(variant.into_deserializer()),
+            Self::Object(members) if members.len() == 1 => {
+                let map = MapDeserializer::new(members.into_iter());
+
+                visitor.visit_enum(MapAccessDeserializer::new(map))
+            }
+            Self::Null
+            | Self::Bool(_)
+            | Self::Int(_)
+            | Self::Large(_)
+            | Self::Float(_)
+            | Self::List(_)
+            | Self::Object(_) => Err(Mismatch),
+        }
+    }
+
+    fn deserialize_ignored_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Mismatch> {
+        visitor.visit_unit()
+    }
+
+    forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf unit unit_struct seq tuple tuple_struct map identifier
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::de::StrRead;
+
     use super::*;
 
     #[test]
@@ -291,6 +671,698 @@ mod tests {
             NotAnObject::NotObject.to_string(),
             "the answer is not a JSON object"
         );
+    }
+
+    // --- how the tests call a function ---
+
+    /// The reader of `serde_json` over one JSON text.
+    type TextReader<'a> = serde_json::Deserializer<StrRead<'a>>;
+
+    /// What a function of this module gives for one JSON text. The function
+    /// gets the reader of `serde_json` itself, with no raw type around the
+    /// value.
+    fn direct<'a, T>(
+        input: &'a str,
+        function: impl FnOnce(&mut TextReader<'a>) -> Result<T, serde_json::Error>,
+    ) -> Result<T, serde_json::Error> {
+        let mut reader = serde_json::Deserializer::from_str(input);
+        let value = function(&mut reader)?;
+        reader.end()?;
+
+        Ok(value)
+    }
+
+    /// The raw type of a small object. Each field names a function of this
+    /// module and has `default`, so the type refuses no object.
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    struct Part {
+        #[serde(default, deserialize_with = "text")]
+        name: String,
+        #[serde(default, deserialize_with = "int")]
+        count: i64,
+    }
+
+    fn part(name: &str, count: i64) -> Part {
+        Part {
+            name: name.to_owned(),
+            count,
+        }
+    }
+
+    /// A raw type with a field that names no function. It refuses an object
+    /// whose `id` is absent or is no number.
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    struct Strict {
+        id: u64,
+    }
+
+    // --- text ---
+
+    #[test]
+    fn a_text_reads_as_its_characters() {
+        let texts = [
+            (r#""family""#, "family"),
+            (r#""""#, ""),
+            (r#""  a  ""#, "  a  "),
+            (r#""7""#, "7"),
+            (r#""a\"b\\c\ndé""#, "a\"b\\c\nd\u{e9}"),
+            (r#""😀""#, "\u{1f600}"),
+        ];
+
+        for (input, wanted) in texts {
+            assert_eq!(
+                direct(input, |reader| text(reader)).unwrap(),
+                wanted,
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_that_is_no_text_reads_as_the_empty_text() {
+        let others = [
+            "null",
+            "true",
+            "false",
+            "7",
+            "-3",
+            "1.5",
+            "[]",
+            r#"["a"]"#,
+            "{}",
+            r#"{"a":"b"}"#,
+        ];
+
+        for input in others {
+            assert_eq!(direct(input, |reader| text(reader)).unwrap(), "", "{input}");
+        }
+    }
+
+    #[test]
+    fn a_text_keeps_each_character_and_the_caller_cuts_it() {
+        let input = format!("\"{}\"", "a".repeat(600));
+        let read = direct(&input, |reader| text(reader)).unwrap();
+
+        assert_eq!(read.len(), 600);
+        assert_eq!(cut(&read, 500).len(), 500);
+    }
+
+    // --- int ---
+
+    #[test]
+    fn an_integer_reads_as_its_value() {
+        let integers = [
+            ("7", 7),
+            ("0", 0),
+            ("-3", -3),
+            ("9223372036854775807", i64::MAX),
+            ("-9223372036854775808", i64::MIN),
+        ];
+
+        for (input, wanted) in integers {
+            assert_eq!(
+                direct(input, |reader| int(reader)).unwrap(),
+                wanted,
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_that_is_no_integer_reads_as_zero() {
+        let others = [
+            "true",
+            "false",
+            "2.0",
+            "1.5",
+            "1e3",
+            "-0.0",
+            r#""7""#,
+            "null",
+            "[7]",
+            r#"{"a":7}"#,
+        ];
+
+        for input in others {
+            assert_eq!(direct(input, |reader| int(reader)).unwrap(), 0, "{input}");
+        }
+    }
+
+    #[test]
+    fn an_integer_that_no_i64_holds_reads_as_zero() {
+        let large = [
+            "9223372036854775808",
+            "18446744073709551615",
+            "18446744073709551616",
+            "-9223372036854775809",
+            "123456789012345678901234567890",
+        ];
+
+        for input in large {
+            assert_eq!(direct(input, |reader| int(reader)).unwrap(), 0, "{input}");
+        }
+    }
+
+    // --- number ---
+
+    /// `test_a_number_reads_as_a_float` of
+    /// `noticeboard/tests/test_noticeboard_jsonfiles.py`.
+    #[test]
+    fn a_number_reads_as_a_float() {
+        assert_eq!(direct("3", |reader| number(reader)).unwrap(), Some(3.0));
+        assert_eq!(direct("3.42", |reader| number(reader)).unwrap(), Some(3.42));
+    }
+
+    /// `test_a_field_that_is_not_a_number_reads_none` of the same file. The
+    /// test of a raw type below covers the absent field.
+    #[test]
+    fn a_value_that_is_no_number_reads_as_none() {
+        let others = [r#""3.42""#, "true", "false", "null", "[3]", r#"{"a":3}"#];
+
+        for input in others {
+            assert_eq!(
+                direct(input, |reader| number(reader)).unwrap(),
+                None,
+                "{input}"
+            );
+        }
+    }
+
+    /// `test_an_integer_past_every_float_reads_none` of the same file. The
+    /// Python reader gives `None` for the field. `serde_json` refuses the
+    /// text, so the function gives the error of the deserializer.
+    #[test]
+    fn an_integer_past_every_float_is_no_json_text_here() {
+        let past_every_float = format!("1{}", "0".repeat(400));
+        let below_every_float = format!("-{past_every_float}");
+
+        assert!(direct(&past_every_float, |reader| number(reader)).is_err());
+        assert!(direct(&below_every_float, |reader| number(reader)).is_err());
+        assert!(direct("1e400", |reader| number(reader)).is_err());
+    }
+
+    #[test]
+    fn an_integer_reads_as_the_nearest_float_with_a_tie_to_even() {
+        let two_to_63 = 9_223_372_036_854_775_808.0_f64;
+        let two_to_64 = 18_446_744_073_709_551_616.0_f64;
+        let integers = [
+            // 2^53 + 1 and 2^53 + 3 are each in the middle of two floats.
+            ("9007199254740993", 9_007_199_254_740_992.0),
+            ("9007199254740995", 9_007_199_254_740_996.0),
+            ("9223372036854775807", two_to_63),
+            ("-9223372036854775808", -two_to_63),
+            ("9223372036854775808", two_to_63),
+            ("18446744073709551615", two_to_64),
+            ("18446744073709551616", two_to_64),
+            ("123456789012345678901234567890", 1.234_567_890_123_456_8e29),
+        ];
+
+        for (input, wanted) in integers {
+            let read = direct(input, |reader| number(reader)).unwrap().unwrap();
+
+            assert_eq!(read.to_bits(), wanted.to_bits(), "{input}");
+        }
+    }
+
+    #[test]
+    fn a_float_keeps_the_sign_of_its_zero() {
+        let zeros = [("0.0", 0.0_f64), ("-0.0", -0.0_f64), ("0", 0.0_f64)];
+
+        for (input, wanted) in zeros {
+            let read = direct(input, |reader| number(reader)).unwrap().unwrap();
+
+            assert_eq!(read.to_bits(), wanted.to_bits(), "{input}");
+        }
+    }
+
+    // --- flag ---
+
+    #[test]
+    fn a_switch_is_on_for_true_and_for_no_other_value() {
+        let others = [
+            "false",
+            "1",
+            "1.0",
+            r#""true""#,
+            "null",
+            "[true]",
+            r#"{"a":true}"#,
+        ];
+
+        assert!(direct("true", |reader| flag(reader)).unwrap());
+        for input in others {
+            assert!(!direct(input, |reader| flag(reader)).unwrap(), "{input}");
+        }
+    }
+
+    // --- object and block ---
+
+    /// Each JSON text that is no object. The last one is a list with the
+    /// values of the two fields of `Part`, in the order of the fields.
+    const NO_OBJECT: [&str; 8] = [
+        "null",
+        "true",
+        "7",
+        "1.5",
+        r#""a""#,
+        "[]",
+        r#"[{"name":"a"}]"#,
+        r#"["a",2]"#,
+    ];
+
+    #[test]
+    fn an_object_reads_through_its_raw_type() {
+        let objects = [
+            (r#"{"name":"a","count":2}"#, part("a", 2)),
+            (r#"{"count":2,"name":"a"}"#, part("a", 2)),
+            ("{}", part("", 0)),
+            (r#"{"name":7,"count":"2"}"#, part("", 0)),
+            (r#"{"name":"a","other":[1,{"b":null}]}"#, part("a", 0)),
+        ];
+
+        for (input, wanted) in objects {
+            let read: Part = direct(input, |reader| object(reader)).unwrap();
+            let held: Option<Part> = direct(input, |reader| block(reader)).unwrap();
+
+            assert_eq!(read, wanted, "{input}");
+            assert_eq!(held, Some(wanted), "{input}");
+        }
+    }
+
+    #[test]
+    fn a_value_that_is_no_object_reads_as_the_default_and_as_no_block() {
+        for input in NO_OBJECT {
+            let read: Part = direct(input, |reader| object(reader)).unwrap();
+            let held: Option<Part> = direct(input, |reader| block(reader)).unwrap();
+
+            assert_eq!(read, Part::default(), "{input}");
+            assert_eq!(held, None, "{input}");
+        }
+    }
+
+    #[test]
+    fn an_empty_block_differs_from_no_block() {
+        let empty: Option<Part> = direct("{}", |reader| block(reader)).unwrap();
+        let absent: Option<Part> = direct("null", |reader| block(reader)).unwrap();
+
+        assert_eq!(empty, Some(Part::default()));
+        assert_eq!(absent, None);
+    }
+
+    #[test]
+    fn an_object_that_its_raw_type_refuses_reads_as_empty() {
+        let taken = r#"{"id":7}"#;
+        let refused = [r#"{"id":"7"}"#, r#"{"id":-1}"#, "{}"];
+
+        let read: Strict = direct(taken, |reader| object(reader)).unwrap();
+        let held: Option<Strict> = direct(taken, |reader| block(reader)).unwrap();
+
+        assert_eq!(read, Strict { id: 7 });
+        assert_eq!(held, Some(Strict { id: 7 }));
+        for input in refused {
+            let read: Strict = direct(input, |reader| object(reader)).unwrap();
+            let held: Option<Strict> = direct(input, |reader| block(reader)).unwrap();
+
+            assert_eq!(read, Strict::default(), "{input}");
+            assert_eq!(held, None, "{input}");
+        }
+    }
+
+    #[test]
+    fn a_key_that_an_object_holds_two_times_has_its_last_value() {
+        let input = r#"{"name":"first","count":1,"name":"last"}"#;
+        let read: Part = direct(input, |reader| object(reader)).unwrap();
+        let held: Option<Part> = direct(input, |reader| block(reader)).unwrap();
+        let members: Vec<Part> = direct(&format!("[{input}]"), |reader| list(reader)).unwrap();
+
+        assert_eq!(read, part("last", 1));
+        assert_eq!(held, Some(part("last", 1)));
+        assert_eq!(members, [part("last", 1)]);
+        // The derived type alone refuses the object.
+        assert!(serde_json::from_str::<Part>(input).is_err());
+    }
+
+    // --- list and list_first ---
+
+    /// A list with one member of each kind.
+    const MIXED: &str = r#"["a",1,true,null,{"name":"n"},["x"],2.5,"b"]"#;
+
+    #[test]
+    fn a_list_drops_each_member_of_a_wrong_type_and_keeps_the_order() {
+        let texts: Vec<String> = direct(MIXED, |reader| list(reader)).unwrap();
+        let integers: Vec<i64> = direct(MIXED, |reader| list(reader)).unwrap();
+        let numbers: Vec<f64> = direct(MIXED, |reader| list(reader)).unwrap();
+        let switches: Vec<bool> = direct(MIXED, |reader| list(reader)).unwrap();
+        let parts: Vec<Part> = direct(MIXED, |reader| list(reader)).unwrap();
+        let lists: Vec<Vec<String>> = direct(MIXED, |reader| list(reader)).unwrap();
+
+        assert_eq!(texts, ["a", "b"]);
+        assert_eq!(integers, [1]);
+        assert_eq!(numbers, [1.0, 2.5]);
+        assert_eq!(switches, [true]);
+        assert_eq!(parts, [part("n", 0)]);
+        assert_eq!(lists, [["x"]]);
+    }
+
+    #[test]
+    fn a_value_that_is_no_list_reads_as_the_empty_list() {
+        let others = ["null", "true", "7", "1.5", r#""a""#, "{}", r#"{"0":"a"}"#];
+
+        for input in others {
+            let read: Vec<String> = direct(input, |reader| list(reader)).unwrap();
+            let first: Vec<String> = direct(input, |reader| list_first::<2, _, _>(reader)).unwrap();
+
+            assert!(read.is_empty(), "{input}");
+            assert!(first.is_empty(), "{input}");
+        }
+    }
+
+    #[test]
+    fn the_cap_of_a_list_counts_each_member_that_the_list_drops() {
+        let input = r#"["a",1,"b","c"]"#;
+        let none: Vec<String> = direct(input, |reader| list_first::<0, _, _>(reader)).unwrap();
+        let one: Vec<String> = direct(input, |reader| list_first::<1, _, _>(reader)).unwrap();
+        let two: Vec<String> = direct(input, |reader| list_first::<2, _, _>(reader)).unwrap();
+        let three: Vec<String> = direct(input, |reader| list_first::<3, _, _>(reader)).unwrap();
+        let each: Vec<String> = direct(input, |reader| list_first::<50, _, _>(reader)).unwrap();
+        let whole: Vec<String> = direct(input, |reader| list(reader)).unwrap();
+
+        assert!(none.is_empty());
+        assert_eq!(one, ["a"]);
+        // The second member is no text. The cap of 2 counts it.
+        assert_eq!(two, ["a"]);
+        assert_eq!(three, ["a", "b"]);
+        assert_eq!(each, ["a", "b", "c"]);
+        assert_eq!(whole, each);
+    }
+
+    #[test]
+    fn a_member_that_is_a_list_is_no_struct() {
+        let input = r#"[{"name":"a","count":1},["b",2],{"name":"c"}]"#;
+        let read: Vec<Part> = direct(input, |reader| list(reader)).unwrap();
+
+        assert_eq!(read, [part("a", 1), part("c", 0)]);
+        // The derived type alone takes the list and fills each field by its
+        // place.
+        assert!(serde_json::from_str::<Strict>("[7]").is_ok());
+    }
+
+    // --- a raw type below a function ---
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Shape {
+        Plain,
+        Named(String),
+        Sized { count: u8 },
+    }
+
+    #[test]
+    fn an_enum_reads_as_serde_json_reads_it() {
+        let taken = r#"["plain",{"named":"a"},{"sized":{"count":2}}]"#;
+        let mixed = r#"["plain","other",7,null,{"named":7},{"named":"a","sized":{"count":2}},{},{"named":"b"}]"#;
+        let wanted = [
+            Shape::Plain,
+            Shape::Named("a".to_owned()),
+            Shape::Sized { count: 2 },
+        ];
+
+        let read: Vec<Shape> = direct(taken, |reader| list(reader)).unwrap();
+        let kept: Vec<Shape> = direct(mixed, |reader| list(reader)).unwrap();
+
+        assert_eq!(read, wanted);
+        assert_eq!(serde_json::from_str::<Vec<Shape>>(taken).unwrap(), wanted);
+        assert_eq!(kept, [Shape::Plain, Shape::Named("b".to_owned())]);
+    }
+
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    struct Plain {
+        label: Option<String>,
+        pair: (String, i64),
+        sizes: BTreeMap<String, u8>,
+        wrapped: Wrapped,
+    }
+
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    struct Wrapped(String);
+
+    #[test]
+    fn a_raw_type_with_plain_fields_reads_as_serde_json_reads_it() {
+        let taken = [
+            r#"{"label":"l","pair":["a",1],"sizes":{"x":1,"y":255},"wrapped":"w","more":[{}]}"#,
+            r#"{"label":null,"pair":["a",1],"sizes":{},"wrapped":""}"#,
+            r#"{"pair":["a",1],"sizes":{},"wrapped":""}"#,
+        ];
+        let refused = [
+            // A pair of one member and a pair of three members.
+            r#"{"pair":["a"],"sizes":{},"wrapped":""}"#,
+            r#"{"pair":["a",1,2],"sizes":{},"wrapped":""}"#,
+            // A size that no `u8` holds.
+            r#"{"pair":["a",1],"sizes":{"x":256},"wrapped":""}"#,
+            // A map that is a list, and a text that is a number.
+            r#"{"pair":["a",1],"sizes":[],"wrapped":""}"#,
+            r#"{"pair":["a",1],"sizes":{},"wrapped":7}"#,
+            // A field that is absent.
+            r#"{"pair":["a",1],"sizes":{}}"#,
+        ];
+
+        for input in taken {
+            let read: Option<Plain> = direct(input, |reader| block(reader)).unwrap();
+
+            assert_eq!(read, serde_json::from_str(input).ok(), "{input}");
+            assert!(read.is_some(), "{input}");
+        }
+        for input in refused {
+            let read: Option<Plain> = direct(input, |reader| block(reader)).unwrap();
+
+            assert_eq!(read, None, "{input}");
+            assert!(serde_json::from_str::<Plain>(input).is_err(), "{input}");
+        }
+    }
+
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Closed {
+        #[serde(default, deserialize_with = "text")]
+        name: String,
+    }
+
+    #[test]
+    fn a_raw_type_that_denies_an_unknown_field_refuses_the_object() {
+        let known: Option<Closed> = direct(r#"{"name":"a"}"#, |reader| block(reader)).unwrap();
+        let unknown: Option<Closed> =
+            direct(r#"{"name":"a","other":1}"#, |reader| block(reader)).unwrap();
+
+        assert_eq!(
+            known,
+            Some(Closed {
+                name: "a".to_owned()
+            })
+        );
+        assert_eq!(unknown, None);
+    }
+
+    /// A raw type with each function of this module, and the functions
+    /// inside each other.
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    struct Outer {
+        #[serde(default, deserialize_with = "object")]
+        head: Part,
+        #[serde(default, deserialize_with = "block")]
+        tail: Option<Part>,
+        #[serde(default, deserialize_with = "list")]
+        parts: Vec<Part>,
+        #[serde(default, deserialize_with = "list_first::<2, _, _>")]
+        first: Vec<Outer>,
+    }
+
+    #[test]
+    fn the_functions_read_inside_each_other() {
+        let input = r#"{
+            "head": {"name": "h", "count": 1},
+            "tail": {"name": "t"},
+            "parts": [{"name": "p"}, 7, {"count": 2}],
+            "first": [
+                {"head": {"name": "inner"}, "first": [{"parts": [{}]}]},
+                "dropped",
+                {"head": {"name": "past the cap"}}
+            ]
+        }"#;
+        let innermost = Outer {
+            parts: vec![part("", 0)],
+            ..Outer::default()
+        };
+        let inner = Outer {
+            head: part("inner", 0),
+            first: vec![innermost],
+            ..Outer::default()
+        };
+        let wanted = Outer {
+            head: part("h", 1),
+            tail: Some(part("t", 0)),
+            parts: vec![part("p", 0), part("", 2)],
+            first: vec![inner],
+        };
+
+        let read: Outer = direct(input, |reader| object(reader)).unwrap();
+
+        assert_eq!(read, wanted);
+    }
+
+    // --- the tree of one value ---
+
+    fn tree(input: &str) -> Json {
+        direct(input, |reader| read(reader)).unwrap()
+    }
+
+    #[test]
+    fn the_tree_holds_each_kind_of_value() {
+        let input =
+            r#"[null,true,false,7,-3,9223372036854775807,9223372036854775808,1.5,"a",[],{}]"#;
+        let wanted = Json::List(vec![
+            Json::Null,
+            Json::Bool(true),
+            Json::Bool(false),
+            Json::Int(7),
+            Json::Int(-3),
+            Json::Int(i64::MAX),
+            Json::Large(9_223_372_036_854_775_808),
+            Json::Float(1.5),
+            Json::Text("a".to_owned()),
+            Json::List(Vec::new()),
+            Json::Object(Vec::new()),
+        ]);
+
+        assert_eq!(tree(input), wanted);
+    }
+
+    #[test]
+    fn the_tree_keeps_the_last_value_of_a_key_at_its_first_place() {
+        let wanted = Json::Object(vec![
+            ("a".to_owned(), Json::Int(3)),
+            ("b".to_owned(), Json::Int(2)),
+            (String::new(), Json::Null),
+        ]);
+
+        assert_eq!(tree(r#"{"a":1,"b":2,"a":3,"":null}"#), wanted);
+    }
+
+    #[test]
+    fn a_tree_reads_again_as_the_same_tree() {
+        let input = r#"{"a":[1,{"b":[null,true,1.5,"c",18446744073709551615]}],"d":{}}"#;
+        let first = tree(input);
+        let again = read(first.clone()).unwrap();
+
+        assert_eq!(again, first);
+    }
+
+    #[test]
+    fn a_mismatch_holds_no_text_of_the_value() {
+        let error = <Mismatch as de::Error>::custom("the content of an answer");
+
+        assert_eq!(error, Mismatch);
+        assert_eq!(
+            error.to_string(),
+            "the value is not what the raw type takes"
+        );
+    }
+
+    // --- the nesting limit ---
+
+    /// `levels` lists, each one inside the one before, around `null`.
+    ///
+    /// `serde_json` reads no text that nests as deep as the limit of this
+    /// module. The test of the limit thus needs a deserializer with no limit
+    /// of its own.
+    struct Nest(usize);
+
+    impl<'de> Deserializer<'de> for Nest {
+        type Error = de::value::Error;
+
+        fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+            match self.0.checked_sub(1) {
+                Some(inside) => visitor.visit_seq(Inside(Some(inside))),
+                None => visitor.visit_unit(),
+            }
+        }
+
+        forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map struct enum identifier ignored_any
+        }
+    }
+
+    /// The one member of a list of `Nest`.
+    struct Inside(Option<usize>);
+
+    impl<'de> SeqAccess<'de> for Inside {
+        type Error = de::value::Error;
+
+        fn next_element_seed<S: DeserializeSeed<'de>>(
+            &mut self,
+            seed: S,
+        ) -> Result<Option<S::Value>, Self::Error> {
+            self.0
+                .take()
+                .map(|levels| seed.deserialize(Nest(levels)))
+                .transpose()
+        }
+    }
+
+    #[test]
+    fn a_value_at_the_nesting_limit_reads() {
+        let mut deepest = &read(Nest(DEPTH_MAX)).unwrap();
+        let mut levels = 0;
+        while let Json::List(members) = deepest {
+            deepest = &members[0];
+            levels += 1;
+        }
+
+        assert_eq!(levels, DEPTH_MAX);
+        assert_eq!(deepest, &Json::Null);
+        assert_eq!(text(Nest(DEPTH_MAX)).unwrap(), "");
+        assert_eq!(list::<_, String>(Nest(DEPTH_MAX)).unwrap(), [""; 0]);
+    }
+
+    #[test]
+    fn a_value_past_the_nesting_limit_is_an_error_of_the_deserializer() {
+        for levels in [DEPTH_MAX + 1, DEPTH_MAX + 2, 1_000_000, usize::MAX] {
+            let failed = [
+                text(Nest(levels)).unwrap_err(),
+                int(Nest(levels)).unwrap_err(),
+                number(Nest(levels)).unwrap_err(),
+                flag(Nest(levels)).unwrap_err(),
+                object::<_, Part>(Nest(levels)).unwrap_err(),
+                block::<_, Part>(Nest(levels)).unwrap_err(),
+                list::<_, String>(Nest(levels)).unwrap_err(),
+                list_first::<2, _, String>(Nest(levels)).unwrap_err(),
+            ];
+
+            for error in failed {
+                assert_eq!(error.to_string(), TOO_DEEP, "{levels}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_message_of_the_nesting_limit_names_the_limit() {
+        assert!(TOO_DEEP.contains(&DEPTH_MAX.to_string()));
+    }
+
+    /// The limit of `serde_json` is under the limit of this module, so a
+    /// JSON text meets the limit of `serde_json` first.
+    #[test]
+    fn serde_json_stops_a_text_before_the_nesting_limit() {
+        let lists = |levels: usize| format!("{}{}", "[".repeat(levels), "]".repeat(levels));
+        let objects =
+            |levels: usize| format!("{}1{}", r#"{"a":"#.repeat(levels), "}".repeat(levels));
+        let read_last = DEPTH_MAX - 1;
+
+        assert!(direct(&lists(read_last), |reader| read(reader)).is_ok());
+        assert!(direct(&objects(read_last), |reader| read(reader)).is_ok());
+        assert!(direct(&lists(DEPTH_MAX), |reader| read(reader)).is_err());
+        assert!(direct(&objects(DEPTH_MAX), |reader| read(reader)).is_err());
     }
 
     // --- cut ---
