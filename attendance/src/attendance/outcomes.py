@@ -17,6 +17,7 @@ visible and harmless. The other order loses the job entirely.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -49,6 +50,17 @@ ERROR_MAX_BYTES = 4_096
 SPEND_UNKNOWN_REASON: Final = (
     "tokens were used but no cost was reported; the advisory number is unreliable "
     "and this layer does not read LiteLLM, spend's one authority (contract 05 §7)"
+)
+
+
+# CONTRACT-QUESTION: contract 02 §13.1 gives `spend_usd` as a number or
+# null, and names one case for null. It does not name a sum that is not
+# finite. Each cost of a turn is finite, and the sum of two of them can be
+# infinity. No JSON number is infinity, so the record holds null with this
+# reason. The other reading writes the largest float, which states a spend
+# that no turn reported.
+SPEND_NOT_FINITE_REASON: Final = (
+    "the sum of the reported costs is not a finite number; the advisory number is unreliable"
 )
 
 
@@ -174,6 +186,9 @@ def _spend_of(turns: list[Turn]) -> tuple[float | None, str | None]:
         turn.usage.input + turn.usage.output + turn.usage.cache_read + turn.usage.cache_write
         for turn in turns
     )
+
+    if not math.isfinite(cost):
+        return None, SPEND_NOT_FINITE_REASON
 
     if cost == 0.0 and tokens > 0:
         return None, SPEND_UNKNOWN_REASON

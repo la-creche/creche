@@ -175,6 +175,8 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   second (`approvals.py`, `service.py`).
 - An outcome record's `spend_usd` sums advisory costs. A sum of zero with
   tokens records `null` with `spend_reason` (`outcomes.py`).
+- Contract 02 §13.1 names no sum of costs that is not finite. Such a sum
+  records `null` with `spend_reason` (`outcomes.py`).
 - A `tui-` session with a null `leaf_id` can reach its chat twice
   (`service.py`, `terminal.py`).
 - After an idle close, the status document still says `channel: open`
