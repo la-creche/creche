@@ -170,8 +170,12 @@ When each Python copy accepts an input, the Rust type accepts it too. This
 rule also applies when a stricter reading of the contract is possible. Name
 such a case in the pull request. The owner decides it.
 
-The exception is a digit that is not ASCII. Rule 9 refuses it. Each such
-difference is a row of the `DEVIATIONS` table in the test.
+The rule has two exceptions:
+
+- A digit that is not ASCII. Rule 9 refuses it. Each such difference is a
+  row of the `DEVIATIONS` table in the test.
+- A number of more than 4300 digits in a version. Python reads no longer
+  text as an integer, so the types refuse it. No vector holds such a number.
 
 ## Code style
 
@@ -309,16 +313,20 @@ Rules for the test:
      copy: no `+`, no `-` and a cap of 64.
   5. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. Each
      Python copy accepts a decimal digit that is not ASCII. The types refuse
-     it. This is the one place where a type refuses what each Python copy
-     accepts.
+     it.
   6. `OwuiChatId::session_id`, contract 02 §2. The Python door makes a
      session id of 133 bytes from a chat id of 128 bytes. The function
      refuses to make that session id.
+  7. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. The
+     contract gives no cap on the digits of a number. Python reads a text of
+     4300 digits at most as an integer. The types have that cap.
 - `Secret` does not erase its bytes when the value drops. A sure erase needs
   `unsafe` code, and the lint gate forbids `unsafe` code.
 - `Secret::matches` has no branch on a byte of the secret. The compiler gives
   no proof that its time is constant.
 - The id types accept what each Python copy accepts, also where a stricter
-  reading of a contract is possible. Three examples: a version number of any
-  length, a version number with a zero at its start, and a sandbox number
-  with a zero at its start. The owner decides each case.
+  reading of a contract is possible. The owner decides each case. Three
+  examples:
+  1. A version number of 4300 digits. The number does not fit `u64`.
+  2. A version number with a zero at its start.
+  3. A sandbox number with a zero at its start.

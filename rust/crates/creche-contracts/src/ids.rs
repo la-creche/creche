@@ -1299,8 +1299,17 @@ run_id! {
 /// What stands between two numbers of a version.
 const VERSION_SEPARATOR: char = '.';
 
+// CONTRACT-QUESTION: contract 06 §2 and §3 give no cap on the count of digits
+// of a number. The Python implementation reads each number as an integer, and
+// Python reads a text of 4300 digits at most as an integer. This cap is that
+// count, so `Version`, `ContractVersion` and `Tag` accept no number that the
+// Python implementation cannot read. A smaller cap, for example one that fits
+// `u64`, refuses a version that each Python copy accepts today.
+/// The largest count of digits of one number of a version.
+const NUMBER_DIGITS_MAX: usize = 4300;
+
 /// The grammar of a version: a fixed count of numbers with `.` between them.
-/// A number is one ASCII digit or more.
+/// A number is one ASCII digit or more, and [`NUMBER_DIGITS_MAX`] at most.
 struct Dotted {
     /// What an error text calls a value, with its article: `a version`.
     noun: &'static str,
@@ -1314,6 +1323,7 @@ enum DottedFault {
     BadByte { at: usize },
     WrongCount,
     EmptyNumber,
+    LongNumber,
 }
 
 /// Checks `text` against `dotted`, the bytes first.
@@ -1332,6 +1342,13 @@ fn check_dotted(text: &str, dotted: &Dotted) -> Result<(), DottedFault> {
 
     if text.split(VERSION_SEPARATOR).any(str::is_empty) {
         return Err(DottedFault::EmptyNumber);
+    }
+
+    // Each byte is a digit or the separator, so the count of bytes of a number
+    // is its count of digits.
+    let longest = text.split(VERSION_SEPARATOR).map(str::len).max();
+    if longest.is_some_and(|digits| digits > NUMBER_DIGITS_MAX) {
+        return Err(DottedFault::LongNumber);
     }
 
     Ok(())
@@ -1375,6 +1392,8 @@ macro_rules! dotted_id {
             WrongCount,
             /// A number of the text has no digit.
             EmptyNumber,
+            /// A number of the text has more digits than the grammar permits.
+            LongNumber,
         }
 
         impl From<DottedFault> for $error {
@@ -1383,6 +1402,7 @@ macro_rules! dotted_id {
                     DottedFault::BadByte { at } => Self::BadByte { at },
                     DottedFault::WrongCount => Self::WrongCount,
                     DottedFault::EmptyNumber => Self::EmptyNumber,
+                    DottedFault::LongNumber => Self::LongNumber,
                 }
             }
         }
@@ -1394,6 +1414,10 @@ macro_rules! dotted_id {
                     Self::BadByte { at } => write!(f, "byte {at} of {noun} is not 0 to 9 or ."),
                     Self::WrongCount => write!(f, "{noun} has {numbers} numbers"),
                     Self::EmptyNumber => write!(f, "each number of {noun} has 1 digit or more"),
+                    Self::LongNumber => write!(
+                        f,
+                        "each number of {noun} has {NUMBER_DIGITS_MAX} digits or less"
+                    ),
                 }
             }
         }
@@ -1424,9 +1448,9 @@ dotted_id! {
     /// The version of one component: `MAJOR.MINOR.PATCH`, three numbers of
     /// ASCII digits (contract 06 §2).
     ///
-    /// The grammar has no cap on a number and permits a zero at the start of a
-    /// number, as the Python implementation does. The type has no order. The
-    /// order of the text is not the order of the versions.
+    /// A number has 4300 digits or less. The grammar permits a zero at the
+    /// start of a number, as the Python implementation does. The type has no
+    /// order. The order of the text is not the order of the versions.
     ///
     /// ```
     /// use creche_contracts::ids::Version;
@@ -1481,8 +1505,9 @@ dotted_id! {
     /// The version of one contract: `MAJOR.MINOR`, two numbers of ASCII digits
     /// (contract 06 §3, §8).
     ///
-    /// The grammar has no cap on a number and permits a zero at the start of a
-    /// number, as the Python implementation does. The type has no order.
+    /// A number has 4300 digits or less. The grammar permits a zero at the
+    /// start of a number, as the Python implementation does. The type has no
+    /// order.
     ///
     /// ```
     /// use creche_contracts::ids::ContractVersion;
@@ -2349,6 +2374,53 @@ mod tests {
         }
 
         #[test]
+        fn a_number_of_a_version_has_4300_digits_or_less() {
+            let longest = "9".repeat(NUMBER_DIGITS_MAX);
+            let too_long = format!("{longest}9");
+            // A zero at the start of a number counts as a digit.
+            let zeros = "0".repeat(NUMBER_DIGITS_MAX + 1);
+
+            assert_eq!(NUMBER_DIGITS_MAX, 4300);
+            tables_hold::<Version>(
+                &[
+                    &format!("{longest}.0.0"),
+                    &format!("0.{longest}.0"),
+                    &format!("0.0.{longest}"),
+                    &format!("{longest}.{longest}.{longest}"),
+                ],
+                &[
+                    (&format!("{too_long}.0.0"), VersionError::LongNumber),
+                    (&format!("0.{too_long}.0"), VersionError::LongNumber),
+                    (&format!("0.0.{too_long}"), VersionError::LongNumber),
+                    (&format!("0.0.{zeros}"), VersionError::LongNumber),
+                    (&format!("{too_long}.0"), VersionError::WrongCount),
+                    (&format!("{too_long}..0"), VersionError::EmptyNumber),
+                ],
+            );
+            tables_hold::<ContractVersion>(
+                &[&format!("{longest}.0"), &format!("0.{longest}")],
+                &[
+                    (&format!("{too_long}.0"), ContractVersionError::LongNumber),
+                    (&format!("0.{too_long}"), ContractVersionError::LongNumber),
+                    (&format!("0.{zeros}"), ContractVersionError::LongNumber),
+                ],
+            );
+            tables_hold::<Tag>(
+                &[&format!("ab-v{longest}.0.0"), &format!("ab-v0.0.{longest}")],
+                &[
+                    (
+                        &format!("ab-v{too_long}.0.0"),
+                        TagError::Version(VersionError::LongNumber),
+                    ),
+                    (
+                        &format!("ab-v0.0.{too_long}"),
+                        TagError::Version(VersionError::LongNumber),
+                    ),
+                ],
+            );
+        }
+
+        #[test]
         fn a_normalized_version_has_no_zero_at_the_start_of_a_number() {
             for (text, normalized) in [
                 ("1.2.3", "1.2.3"),
@@ -2450,6 +2522,7 @@ mod tests {
                 AttachmentNameError::TooLong.to_string(),
                 VersionError::WrongCount.to_string(),
                 VersionError::EmptyNumber.to_string(),
+                VersionError::LongNumber.to_string(),
                 ContractVersionError::BadByte { at: 1 }.to_string(),
                 OwuiModelError::NoPrefix.to_string(),
                 OwuiModelError::Family(FamilyNameError::TooShort).to_string(),
@@ -2477,6 +2550,7 @@ mod tests {
                     "an attachment name has 120 bytes or less",
                     "a version has 3 numbers",
                     "each number of a version has 1 digit or more",
+                    "each number of a version has 4300 digits or less",
                     "byte 1 of a contract version is not 0 to 9 or .",
                     "a model name starts with agent:",
                     "after agent:, a family name has 2 bytes or more",
