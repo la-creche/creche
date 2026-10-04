@@ -21,8 +21,8 @@ WORKSPACE_MANIFEST="./Cargo.toml"
 inherits_lints() {
   awk '
     { sub(/^[ \t]+/, "") }
-    /^\[/ { table = $0; sub(/[ \t]*(#.*)?$/, "", table); next }
-    table == "[lints]" && /^workspace[ \t]*=[ \t]*true[ \t]*(#.*)?$/ { found = 1 }
+    /^\[/ { in_lints = ($0 ~ /^\[lints\][ \t]*(#.*)?$/); next }
+    in_lints && /^workspace[ \t]*=[ \t]*true[ \t]*(#.*)?$/ { found = 1 }
     END { exit found ? 0 : 1 }
   ' "$1"
 }
