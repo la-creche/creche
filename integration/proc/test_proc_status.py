@@ -2,12 +2,13 @@
 
 `integration/tests/test_i2_stage2.py` edits a family file and lets
 `caregiver`'s own code publish the result, inside the test process. No
-`caregiver` process runs in this suite yet, so a test plays `caregiver`: it
+`caregiver` process runs in this topology, so a test plays `caregiver`: it
 writes the status document and the config mount as contracts 01 and 05 give
 them.
 
 So these scenarios judge the readers. They do not prove that `caregiver`
-writes these files.
+writes these files. `test_proc_caregiver_stage2.py` does, with a `caregiver`
+process.
 """
 
 from __future__ import annotations

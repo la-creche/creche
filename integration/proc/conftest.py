@@ -25,6 +25,7 @@ from typing import NoReturn, cast
 
 import httpx
 import pytest
+from proc_caregiver import CaregiverStack
 from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
 from proc_owui import OwuiStack
@@ -194,6 +195,50 @@ def delegate(tree: Tree, supervisor: Supervisor, bundle: Path) -> DelegateStack:
 async def sandbox(delegate: DelegateStack) -> AsyncIterator[httpx.AsyncClient]:
     """A client that plays the sandbox of the caller family at the chaperone."""
     async with delegate.sandbox_client() as client:
+        yield client
+
+
+@pytest.fixture
+def caregiver_prepared(tree: Tree, supervisor: Supervisor) -> CaregiverStack:
+    """The third topology on disk, with the LiteLLM stand-in and no service."""
+    stack = CaregiverStack(tree, supervisor)
+    stack.prepare()
+    stack.start_litellm()
+
+    return stack
+
+
+@pytest.fixture
+def caregiver_alone(caregiver_prepared: CaregiverStack) -> CaregiverStack:
+    """`caregiver` alone, after its first pass. The `supervisor` fixture ends it."""
+    caregiver_prepared.spawn_caregiver()
+    caregiver_prepared.await_published()
+
+    return caregiver_prepared
+
+
+@pytest.fixture
+def house_prepared(tree: Tree, supervisor: Supervisor, bundle: Path) -> CaregiverStack:
+    """The house on disk, with no service started. A test changes the registry first."""
+    stack = CaregiverStack(tree, supervisor)
+    stack.prepare()
+
+    return stack
+
+
+@pytest.fixture
+def house(house_prepared: CaregiverStack) -> CaregiverStack:
+    """The house, serving one attended family. The `supervisor` fixture ends it."""
+    house_prepared.start_house()
+    house_prepared.await_serving()
+
+    return house_prepared
+
+
+@pytest.fixture
+async def house_door(house: CaregiverStack) -> AsyncIterator[httpx.AsyncClient]:
+    """A client that plays Open WebUI against the door of the house."""
+    async with house.door_client() as client:
         yield client
 
 

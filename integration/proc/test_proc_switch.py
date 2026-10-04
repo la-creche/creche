@@ -2,7 +2,7 @@
 
 `integration/tests/test_i2_stage2.py` drives a replacement through
 `caregiver`'s own code, inside the test process. No `caregiver` process runs
-in this suite yet, so a test plays `caregiver` here and does what contract
+in this topology, so a test plays `caregiver` here and does what contract
 05 §4.3 and §5 give it to do:
 
 1. Write the env file of the incoming sandbox.
@@ -11,7 +11,8 @@ in this suite yet, so a test plays `caregiver` here and does what contract
 4. Publish the status document with the outgoing sandbox gone.
 
 So these scenarios judge the `attendance` side of a replacement. They do not
-prove that `caregiver` makes the call.
+prove that `caregiver` makes the call. `test_proc_caregiver_stage2.py` does,
+with a `caregiver` process.
 """
 
 from __future__ import annotations
