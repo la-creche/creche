@@ -43,6 +43,12 @@
   {"id":"over-129-chars","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"refusal":{"code":"bad_id"},"result":"refused"},
   {"id":"owui-prefix-133-chars","input":{"text":"owui-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"refusal":{"code":"bad_id"},"result":"refused"},
   {"id":"leading-newline","input":{"text":"\na"},"result":"accepted","value":{"chat_id":"a","session":"owui-a"}},
-  {"id":"crlf","input":{"text":"a\r\n"},"result":"accepted","value":{"chat_id":"a","session":"owui-a"}}
+  {"id":"crlf","input":{"text":"a\r\n"},"result":"accepted","value":{"chat_id":"a","session":"owui-a"}},
+  {"id":"every-stripped-character","input":{"text":"\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000a\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"},"result":"accepted","value":{"chat_id":"a","session":"owui-a"}},
+  {"id":"leading-unit-separator","input":{"text":"\u001fa"},"result":"accepted","value":{"chat_id":"a","session":"owui-a"}},
+  {"id":"trailing-no-break-space","input":{"text":"a\u00a0"},"result":"accepted","value":{"chat_id":"a","session":"owui-a"}},
+  {"id":"zero-width-space","input":{"text":"a\u200b"},"refusal":{"code":"bad_id"},"result":"refused"},
+  {"id":"mongolian-vowel-separator","input":{"text":"a\u180e"},"refusal":{"code":"bad_id"},"result":"refused"},
+  {"id":"byte-order-mark","input":{"text":"\ufeffa"},"refusal":{"code":"bad_id"},"result":"refused"}
  ]
 }
