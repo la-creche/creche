@@ -25,6 +25,7 @@ from typing import NoReturn, cast
 
 import httpx
 import pytest
+from proc_board import BoardStack
 from proc_caregiver import CaregiverStack
 from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
@@ -32,6 +33,8 @@ from proc_owui import OwuiStack
 from proc_report import describe, end_processes
 from proc_services import KEEP_ROOTS_ENV, NO_SKIP_ENV, describe_table, unknown_variables
 from proc_tree import Tree, make_root, playpen_bundle, remove_root, socket_path_fits
+from proc_trigger import TriggerStack
+from proc_tui import TuiStack, launch_bundle
 
 _HERE = Path(__file__).resolve().parent
 _BUILD_HINT = "run `pnpm install && pnpm run build` in playpen/ first"
@@ -101,6 +104,17 @@ def bundle() -> Path:
     Skip rather than fail. A silent pass would be worse than either.
     """
     path = playpen_bundle()
+
+    if not path.exists():
+        _skip(f"{path} is missing: {_BUILD_HINT}")
+
+    return path
+
+
+@pytest.fixture(scope="session")
+def launcher(bundle: Path) -> Path:
+    """The built launcher of the terminal door. The same build writes both bundles."""
+    path = launch_bundle()
 
     if not path.exists():
         _skip(f"{path} is missing: {_BUILD_HINT}")
@@ -240,6 +254,74 @@ async def house_door(house: CaregiverStack) -> AsyncIterator[httpx.AsyncClient]:
     """A client that plays Open WebUI against the door of the house."""
     async with house.door_client() as client:
         yield client
+
+
+@pytest.fixture
+def board_prepared(tree: Tree, supervisor: Supervisor) -> BoardStack:
+    """The fifth topology on disk, with no service started."""
+    stack = BoardStack(tree, supervisor)
+    stack.prepare()
+
+    return stack
+
+
+@pytest.fixture
+def board(board_prepared: BoardStack, bundle: Path) -> BoardStack:
+    """The fifth topology, serving. The `supervisor` fixture ends it."""
+    board_prepared.start()
+
+    return board_prepared
+
+
+@pytest.fixture
+def board_alone(board_prepared: BoardStack) -> BoardStack:
+    """The noticeboard with no `attendance` beside it. It needs no bundle."""
+    board_prepared.start_board()
+
+    return board_prepared
+
+
+@pytest.fixture
+def trigger_prepared(tree: Tree, supervisor: Supervisor) -> TriggerStack:
+    """The fourth topology on disk, with no service started."""
+    stack = TriggerStack(tree, supervisor)
+    stack.prepare()
+
+    return stack
+
+
+@pytest.fixture
+def timer(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
+    """`attendance` alone. A test runs the timer command of the trigger door."""
+    trigger_prepared.spawn_attendance()
+    trigger_prepared.await_attendance()
+
+    return trigger_prepared
+
+
+@pytest.fixture
+def trigger(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
+    """The fourth topology, serving: `attendance` and the webhook listener."""
+    trigger_prepared.start()
+
+    return trigger_prepared
+
+
+@pytest.fixture
+def tui_prepared(tree: Tree, supervisor: Supervisor) -> TuiStack:
+    """The sixth topology on disk, with no service started."""
+    stack = TuiStack(tree, supervisor)
+    stack.prepare()
+
+    return stack
+
+
+@pytest.fixture
+def tui(tui_prepared: TuiStack, launcher: Path) -> TuiStack:
+    """The sixth topology, serving. A test opens each terminal itself."""
+    tui_prepared.start()
+
+    return tui_prepared
 
 
 def _skip(reason: str) -> NoReturn:
