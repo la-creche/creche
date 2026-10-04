@@ -82,9 +82,9 @@ any use. A value that fails answers 404.
     file in its own directory. Rename it into place.
 24. The noticeboard never parses YAML itself. `agent_family` owns the reader.
     `yamlkeep.py` is the one module that touches a YAML library, and it reads
-    no meaning. `app.py` gives the patched text back to `agent_family`. A text
-    that does not read as the model of the form gives way to the document of
-    `yamlout.py`.
+    no meaning. `app.py` gives the patched text back to `agent_family`. When
+    the text does not read as the model of the form, the save writes the
+    document of `yamlout.py`.
 
 ## Run it
 
