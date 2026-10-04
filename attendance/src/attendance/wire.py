@@ -13,6 +13,7 @@ also splits on U+2028 and U+2029, which are legal inside a JSON string
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -70,7 +71,15 @@ REFUSAL_BUDGET = 10
 REFUSAL_WINDOW_S = 60.0
 
 _LF = "\n"
+_LF_BYTE = b"\n"
 _CR = "\r"
+
+# The type of a capped event whose own type is absent or cannot be kept.
+_UNKNOWN_EVENT_TYPE = "unknown"
+
+# The error handler that encodes one half of a surrogate pair as its three
+# bytes. A count of bytes then has a value for each text.
+_KEEP_HALF_PAIRS = "surrogatepass"
 
 
 class HostType(StrEnum):
@@ -107,6 +116,7 @@ class FatalReason(StrEnum):
     """Why the playpen cannot serve at all (contract 03 §5.7)."""
 
     CONTROL_MOUNT_UNWRITABLE = "control_mount_unwritable"
+    MOUNT_DIR_UNSET = "mount_dir_unset"
     # §3 version rule 2: neither side may make an unknown field fatal, so a
     # reason a newer image invents still lands as a fault the operator sees.
     UNKNOWN = "unknown"
@@ -330,6 +340,9 @@ class LineSplitter:
     A record over `MAX_LINE_BYTES` is refused, and the bytes up to the next LF
     are discarded so the channel stays usable. Probe 0a measured that exact
     behaviour: one byte over was refused and the channel kept working (§14, A8).
+
+    The buffer holds the start of one record and never more than the cap.
+    No byte of a chunk enters it before the size check, in each state.
     """
 
     def __init__(self, max_line_bytes: int = MAX_LINE_BYTES) -> None:
@@ -338,42 +351,60 @@ class LineSplitter:
         self._dropping = False
 
     def feed(self, chunk: bytes) -> list[RawLine]:
-        self._buffer.extend(chunk)
         lines: list[RawLine] = []
+        view = memoryview(chunk)
+        start = 0
 
         while True:
-            index = self._buffer.find(b"\n")
+            index = chunk.find(_LF_BYTE, start)
 
             if index < 0:
                 break
 
-            record = bytes(self._buffer[:index])
-            del self._buffer[: index + 1]
+            tail = view[start:index]
+            start = index + 1
 
             if self._dropping:
                 self._dropping = False
                 continue
 
-            lines.append(_decode_record(record, self._max))
+            lines.append(self._record(tail))
+            self._buffer.clear()
+
+        # The record that is being dropped has no LF yet. Its bytes go.
+        if self._dropping:
+            return lines
+
+        rest = view[start:]
+        size = len(self._buffer) + len(rest)
 
         # A partial record already over the cap can be refused now. Holding it
         # would let one bad sender grow this buffer without bound.
-        if not self._dropping and len(self._buffer) > self._max:
-            lines.append(RawLine(text=None, size=len(self._buffer), refusal=Refusal.TOO_LARGE))
+        if size > self._max:
+            lines.append(RawLine(text=None, size=size, refusal=Refusal.TOO_LARGE))
             self._buffer.clear()
             self._dropping = True
+            return lines
+
+        self._buffer.extend(rest)
 
         return lines
 
     def pending_bytes(self) -> int:
         return len(self._buffer)
 
+    def _record(self, tail: memoryview) -> RawLine:
+        """The record that `tail` completes. The size check comes first."""
+        size = len(self._buffer) + len(tail)
 
-def _decode_record(record: bytes, max_bytes: int) -> RawLine:
+        if size > self._max:
+            return RawLine(text=None, size=size, refusal=Refusal.TOO_LARGE)
+
+        return _decode_record(bytes(self._buffer) + bytes(tail))
+
+
+def _decode_record(record: bytes) -> RawLine:
     size = len(record)
-
-    if size > max_bytes:
-        return RawLine(text=None, size=size, refusal=Refusal.TOO_LARGE)
 
     try:
         text = record.decode("utf-8")
@@ -420,10 +451,9 @@ def parse(text: str) -> PlaypenMessage | Refusal:
     except json.JSONDecodeError:
         return Refusal.NOT_JSON
     except Exception:
-        # Every exception, not a list of types. Three lines under the size cap
-        # raised three types in three places: RecursionError on deep nesting,
-        # a plain ValueError on an integer past the interpreter's digit limit,
-        # and UnicodeEncodeError in `cap_event` on a lone surrogate.
+        # Every exception, not a list of types. Two lines under the size cap
+        # raised two types in two places: RecursionError on deep nesting, and
+        # a plain ValueError on an integer past the interpreter's digit limit.
         return Refusal.MALFORMED
 
 
@@ -452,6 +482,11 @@ def _parse_typed(kind: PlaypenType, record: dict[str, Any]) -> PlaypenMessage | 
         return _parse_ready(record)
 
     if kind is PlaypenType.PONG:
+        # CONTRACT-QUESTION: contract 03 §4.6 and §5.5 show a `nonce` that
+        # is a text and do not say that a `ping` can have none. The playpen
+        # answers a `ping` with no nonce with `nonce: null`. This host sends
+        # a nonce in each `ping`, so it refuses a `pong` with no text there:
+        # the stricter reading. A host that sends no nonce must read null.
         nonce = _text(record.get("nonce"))
         return PongLine(nonce=nonce) if nonce is not None else Refusal.MALFORMED
 
@@ -652,17 +687,40 @@ def cap_event(event: dict[str, Any]) -> dict[str, Any]:
     oversized here and keeps its type only: the stricter reading. To refuse
     the line would cost the turn, because a refused line leaves a gap in
     `turn_seq` and rule 4 fails a turn on a gap.
-    """
-    size = len(json.dumps(event, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
-    if size <= MAX_EVENT_BYTES and not _nests_past(event, MAX_EVENT_DEPTH):
+    CONTRACT-QUESTION: §13 rule 5 says that the host records an event, and
+    no rule names an event that the host cannot record. A text of pi can end
+    in one half of a surrogate pair, and such an event has no UTF-8 form. It
+    is read as oversized here and keeps its type only, for the reason above.
+    `original_bytes` counts one half as three bytes. The other reading puts
+    U+FFFD in the place of the half, which changes an event that rule 5
+    keeps unchanged.
+    """
+    text = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
+    size, whole = _utf8_size(text)
+
+    if whole and size <= MAX_EVENT_BYTES and not _nests_past(event, MAX_EVENT_DEPTH):
         return event
 
+    kind = _text(event.get("type"))
+
     return {
-        "type": _text(event.get("type")) or "unknown",
+        "type": kind if kind and _utf8_size(kind)[1] else _UNKNOWN_EVENT_TYPE,
         "truncated": True,
         "original_bytes": size,
     }
+
+
+def _utf8_size(text: str) -> tuple[int, bool]:
+    """The count of UTF-8 bytes of a text, and whether it has a UTF-8 form.
+
+    A text with one half of a surrogate pair has none. Its count takes each
+    half as three bytes.
+    """
+    try:
+        return len(text.encode("utf-8")), True
+    except UnicodeEncodeError:
+        return len(text.encode("utf-8", _KEEP_HALF_PAIRS)), False
 
 
 def _nests_past(event: dict[str, Any], limit: int) -> bool:
@@ -904,10 +962,21 @@ def _optional_count(value: object) -> int | None:
 
 
 def _money(value: object) -> float:
+    """A cost from the sandbox, or 0.0 for a value that is no cost.
+
+    NaN is not below zero, so the range check alone lets it pass. A cost
+    that is not finite has no JSON text, and an answer cannot hold it. An
+    integer past the range of a float has no float, and it is no cost too.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return 0.0
 
-    return float(value)
+    try:
+        cost = float(value)
+    except OverflowError:
+        return 0.0
+
+    return cost if math.isfinite(cost) else 0.0
 
 
 def _str_list(value: object) -> list[str]:

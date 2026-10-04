@@ -116,6 +116,29 @@ def test_turn_round_trip_keeps_the_prompt_digest(tmp_path: Path) -> None:
     assert "prompt_sha256" not in turn.to_api()
 
 
+@pytest.mark.parametrize("cost", [float("nan"), float("inf"), 10**400])
+def test_a_stored_cost_that_is_not_finite_reads_as_no_cost(tmp_path: Path, cost: float) -> None:
+    """A turn record from an older service can hold such a cost."""
+    store = _store(tmp_path)
+    store.create(_session())
+    turn = Turn(
+        turn="01JBQ7WZ0X4T9V6K2H8M3N5PQR",
+        session=_SESSION,
+        family=_FAMILY,
+        state=TurnState.SETTLED,
+        started_at=_MOMENT,
+        sandbox="chat-s3",
+        usage=Usage(input=4120, cost_usd=cost),
+    )
+    store.save_turn(turn)
+
+    loaded = store.load_turns(_FAMILY, _SESSION)
+
+    assert loaded[0].usage.input == 4120
+    assert loaded[0].usage.cost_usd == 0.0
+    assert json.dumps(loaded[0].to_api(), allow_nan=False)
+
+
 def test_journal_is_gapless_and_replays(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.create(_session())
