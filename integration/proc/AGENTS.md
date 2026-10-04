@@ -586,7 +586,7 @@ the text of the failure. Work down this list.
   `write_grants` and `write_status` of `proc_tree.py` write neither.
 - **No scenario for a copy into Open WebUI.** Contract 02 §10.4 writes a
   session that a terminal made into Open WebUI. The old stage 4 suite holds
-  those scenarios with an object in the test process in the place of Open
+  those scenarios. An object in its test process takes the place of Open
   WebUI. Here they need a stand-in program for Open WebUI, and none exists.
 - **The floor of the quiet check has no scenario.** `floor_hours` is 1 hour
   at least, and the door has no variable for its clock. A scenario would
@@ -612,8 +612,9 @@ the text of the failure. Work down this list.
   is. That answer is a 303 to the page of the family, with the start of the
   commit id in `saved`. A change costs three assertions in
   `test_proc_board_edit.py`.
-- **A save of the noticeboard ends at the commit.** No `caregiver` runs, so
-  no scenario proves that a saved family file converges.
+- **A save of the noticeboard ends at the commit.** No `caregiver` runs
+  beside the noticeboard, so no scenario proves that a saved family file
+  converges.
 - **The state of an ended process.** The harness reads it from `/proc` on
   Linux and from `ps` on macOS. On another system, a process that ended
   counts as a process that runs until its parent reaps it. On Linux, the
