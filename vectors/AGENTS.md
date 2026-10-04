@@ -26,7 +26,9 @@ directory is not a workspace package, so a change here does not change
 7. The output is the same on every machine and under each supported Python
    version. `--check` under each version is the proof.
 8. One test builds the vectors. The other tests read the committed files.
-   A second build doubles the cost of the suite.
+   A second build doubles the cost of the suite. The one exception is
+   `tests/test_vectors_runtime.py`. It builds the group `runtime` alone, in
+   about one second.
 9. `pyright` checks this directory in strict mode.
 
 ## Module map

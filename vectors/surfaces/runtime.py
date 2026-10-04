@@ -830,9 +830,13 @@ TOKEN_READERS: Final[tuple[TokenReader, ...]] = (
 )
 
 
-def _kind(reader: TokenReader, error: Exception) -> str:
-    """The kind of one refusal text. No vector holds the text: it names a path."""
-    text = str(error)
+def _kind(reader: TokenReader, error: Exception, home: Path) -> str:
+    """The kind of one refusal text. No vector holds the text: it names a path.
+
+    The path is under `home`, a temporary directory. The search reads the
+    text without that directory, so its name cannot hold a mark.
+    """
+    text = str(error).replace(str(home), "")
     if reader.about not in text:
         raise ValueError(f"{reader.name}: a refusal that does not name the input")
 
@@ -846,13 +850,14 @@ def _kind(reader: TokenReader, error: Exception) -> str:
 def _token_vector(reader: TokenReader, file: TokenFile, scratch: Path) -> Vector:
     given = bytes_input(file.raw)
     params = {"mode": f"{file.mode:04o}"}
-    call = reader.prepare(scratch / reader.name / file.id, file)
+    home = scratch / reader.name / file.id
+    call = reader.prepare(home, file)
     with quiet_logs():
         outcome = attempt(call)
 
     if isinstance(outcome, Raised):
         if reader.refusal is not None and isinstance(outcome.exc, reader.refusal):
-            return refused(file.id, given, _kind(reader, outcome.exc), params=params)
+            return refused(file.id, given, _kind(reader, outcome.exc, home), params=params)
 
         return raised(file.id, given, outcome.exc, params=params)
 
