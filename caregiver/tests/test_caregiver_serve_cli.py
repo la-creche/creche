@@ -9,14 +9,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from agent_family import FamilyState
+from agent_family import FamilyState, load_registry
 from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE, main
 from caregiver.credentials import read_creds
 from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import REFUSED_TOOLS, expire_overlap, write_registry
+from caregiver_helpers import KIND_MOVED, REFUSED_TOOLS, expire_overlap, write_registry
 
 from caregiver import paths
 
@@ -227,6 +227,24 @@ def test_rotating_an_invalid_family_writes_nothing(bench: Bench) -> None:
 
     write_registry(bench.registry_root, tools=REFUSED_TOOLS)
 
+    assert bench.rotate("--write") == EXIT_USAGE
+    assert paths.creds_path(bench.state_root, "chat").read_bytes() == creds
+    assert paths.grant_path(bench.state_root, "chat").read_bytes() == grant
+    assert bench.litellm.deleted == []
+
+
+def test_rotating_a_refused_kind_move_writes_nothing(bench: Bench) -> None:
+    """A file whose `kind` moved has an ok report, and the reconciler
+    refuses it against the applied snapshot. Its grants must never reach
+    the grant file, and its budget must never reach a new key."""
+    bench.reconcile("--write")
+    expire_overlap(bench.state_root)
+    creds = paths.creds_path(bench.state_root, "chat").read_bytes()
+    grant = paths.grant_path(bench.state_root, "chat").read_bytes()
+
+    write_registry(bench.registry_root, **KIND_MOVED)
+
+    assert load_registry(bench.registry_root).reports["chat"].ok
     assert bench.rotate("--write") == EXIT_USAGE
     assert paths.creds_path(bench.state_root, "chat").read_bytes() == creds
     assert paths.grant_path(bench.state_root, "chat").read_bytes() == grant

@@ -487,7 +487,7 @@ def _reconcile_once_command(
 
 def _rotate_command(args: argparse.Namespace, litellm: LiteLLMKeys | None) -> int:
     registry = load_registry(args.registry)
-    family = valid_family(registry, args.family)
+    family = valid_family(registry, args.family, state_root=args.state_root)
     if family is None:
         print(f"caregiver: no valid family '{args.family}'", file=sys.stderr)
         return EXIT_USAGE

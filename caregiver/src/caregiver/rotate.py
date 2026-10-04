@@ -41,9 +41,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, NewType
 
-from agent_family import FamilyFile, Index, Registry
+from agent_family import FamilyFile, Index, Registry, classify
 
 from . import paths, steps
+from .applied import read_applied
 from .clock import now_rfc3339, seconds_from_now
 from .credentials import Credentials, mint_token, read_creds, write_creds
 from .litellm_keys import LiteLLMError, LiteLLMKeys
@@ -56,9 +57,10 @@ log = logging.getLogger("caregiver.rotate")
 #: so a job started under the old epoch finishes under it.
 ROTATION_GRACE_S: Final = 300
 
-#: A family file whose validation report is ok. `valid_family` is the only
-#: maker. `rotate` and `settle` write the grant file the chaperone enforces,
-#: so they take this type and never a file that only parsed.
+#: A family file the reconciler would apply: its validation report is ok,
+#: and the applied snapshot does not refuse the edit. `valid_family` is the
+#: only maker. `rotate` and `settle` write the grant file the chaperone
+#: enforces, so they take this type and never a file that only parsed.
 ValidFamily = NewType("ValidFamily", FamilyFile)
 
 
@@ -115,14 +117,25 @@ class RotateOutcome:
     webhooks: tuple[WebhookToken, ...] = ()
 
 
-def valid_family(registry: Registry, name: str) -> ValidFamily | None:
-    """The family `name`, when its report has no error. `registry.families`
-    holds every file that PARSED, and one the validator refused is among
-    them. An ok report also proves `name` is the directory's own name, so
-    it is safe as a path component."""
+def valid_family(registry: Registry, name: str, *, state_root: Path) -> ValidFamily | None:
+    """The family `name`, when the reconciler would apply its file.
+
+    `registry.families` holds every file that PARSED, and one the validator
+    refused is among them. An ok report also proves `name` is the
+    directory's own name, so it is safe as a path component.
+
+    An ok report is not enough. A moved `kind` passes single-file
+    validation, and only the applied snapshot proves the move (contract 01
+    §3.1). The reconciler refuses that file and keeps the last good
+    definition serving, so this refuses it too. No snapshot means no diff,
+    which is the reconciler's own reading."""
     family = registry.families.get(name)
     report = registry.reports.get(name)
     if family is None or report is None or not report.ok:
+        return None
+
+    applied = read_applied(state_root, name)
+    if applied is not None and classify(applied.family, family).refused:
         return None
 
     return ValidFamily(family)

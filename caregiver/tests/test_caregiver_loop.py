@@ -32,7 +32,7 @@ from caregiver.loop import (
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import REFUSED_TOOLS, expire_overlap, write_registry
+from caregiver_helpers import KIND_MOVED, REFUSED_TOOLS, expire_overlap, write_registry
 
 from caregiver import paths, sandboxes
 
@@ -335,6 +335,25 @@ def test_an_invalid_family_file_never_settles_a_rotation(bench: Bench) -> None:
     bench.look()
 
     assert bench.status_of("chat")["state"] == FamilyState.INVALID
+    assert paths.creds_path(bench.state_root, "chat").read_bytes() == creds
+    assert paths.grant_path(bench.state_root, "chat").read_bytes() == grant
+
+
+def test_a_refused_kind_move_never_settles_a_rotation(bench: Bench) -> None:
+    """A file whose `kind` moved has an ok report: only the applied
+    snapshot proves the move. The pass refuses the file, so the settle
+    before it must refuse the file too."""
+    bench.look()
+    expire_overlap(bench.state_root)
+    creds = paths.creds_path(bench.state_root, "chat").read_bytes()
+    grant = paths.grant_path(bench.state_root, "chat").read_bytes()
+
+    write_registry(bench.registry_root, **KIND_MOVED)
+    bench.look()
+
+    status = bench.status_of("chat")
+    assert status["state"] == FamilyState.INVALID
+    assert "kind changed" in str(status["validation"])
     assert paths.creds_path(bench.state_root, "chat").read_bytes() == creds
     assert paths.grant_path(bench.state_root, "chat").read_bytes() == grant
 

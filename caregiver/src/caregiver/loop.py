@@ -910,10 +910,11 @@ def _settle_rotation(config: LoopConfig, registry: Registry, name: str) -> None:
 
     CONTRACT-QUESTION: contract 05 §6.3 step 5 ends the overlap when its
     grace runs out, and §3.1 touches nothing while a file is invalid. This
-    takes §3.1: no settle for a family whose report has an error, so the
-    previous token stays accepted until the file is valid again. Ending
-    the overlap on time needs a write that changes the digests alone."""
-    family = valid_family(registry, name)
+    takes §3.1: no settle for a family whose report has an error or whose
+    edit the applied snapshot refuses, so the previous token stays accepted
+    until the file is valid again. Ending the overlap on time needs a write
+    that changes the digests alone."""
+    family = valid_family(registry, name, state_root=config.state_root)
     if family is None:
         return
 

@@ -29,6 +29,11 @@ FAMILY_YAML: dict[str, Any] = {
 #: the file all the same, beside a report that is not ok.
 REFUSED_TOOLS: dict[str, list[str]] = {"ghost": ["merge_pull_request"]}
 
+#: An edit the validator passes and the reconciler refuses: `kind` cannot
+#: move (contract 01 §3.1), and only the applied snapshot proves it did.
+#: The limit moves with it, so the edit shows in the grant file.
+KIND_MOVED: dict[str, object] = {"kind": "thin", "max_inflight_delegations": 7}
+
 #: Before any clock this suite runs under.
 LONG_AGO: str = "2020-01-01T00:00:00Z"
 

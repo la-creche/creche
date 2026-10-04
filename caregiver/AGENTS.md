@@ -79,7 +79,8 @@ host where something has gone wrong.
 - `rotate` deletes the old key before it mints the new one. The token
   overlaps. The key does not.
 - `rotate` and `settle` take a `ValidFamily`. Only `rotate.valid_family`
-  makes one, and only from a family whose report has no error.
+  makes one. The report must have no error, and the applied snapshot must
+  not refuse the edit.
 - A cron line with no `OnCalendar` spelling gets no unit.
 - A fault's `blocks_turns` comes from `faults.BLOCKS_TURNS_BY_CODE`, never
   from the file.
