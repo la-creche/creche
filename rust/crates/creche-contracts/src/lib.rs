@@ -5,6 +5,7 @@
 //! again. `rust/AGENTS.md` holds the rules for a new type.
 
 pub mod ids;
+pub mod secret;
 
 #[cfg(test)]
 mod vectors;

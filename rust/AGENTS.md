@@ -78,9 +78,12 @@ Each rule has its reason. Do not break a rule without a change to this file.
    expect. `#[expect]` fails the build when the exception is not necessary,
    and `#[allow]` stays.
 6. **Give a secret its own type.** The type has a `Debug` that prints no
-   secret. It has no `Display` and no `Serialize`.
+   secret. It has no `Display` and no `Serialize`. `secret::Secret` is that
+   type. Compare a secret only with `Secret::matches`. Read its bytes only
+   with `Secret::expose_secret`.
    Reason: the secret then cannot go to a log line, to a page or to a wire by
-   accident.
+   accident. A search for `expose_secret` finds each place where a secret
+   leaves the type.
 7. **Do not put `serde_json::Value` in a contract type.** The exception is a
    field that the contract calls opaque.
    Reason: a `Value` holds any shape, so the type checks nothing.
@@ -274,6 +277,10 @@ Rules for the test:
   6. `OwuiChatId::session_id`, contract 02 §2. The Python door makes a
      session id of 133 bytes from a chat id of 128 bytes. The function
      refuses to make that session id.
+- `Secret` does not erase its bytes when the value drops. A sure erase needs
+  `unsafe` code, and the lint gate forbids `unsafe` code.
+- `Secret::matches` has no branch on a byte of the secret. The compiler gives
+  no proof that its time is constant.
 - The id types accept what each Python copy accepts, also where a stricter
   reading of a contract is possible. Three examples: a version number of any
   length, a version number with a zero at its start, and a sandbox number
