@@ -24,12 +24,20 @@ from caregiver_helpers import (
     grants_alone,
     published,
     published_epoch,
+    write_no_file_dir,
     write_registry,
 )
 
-from caregiver import paths
+from caregiver import cli, paths
 
 IMAGE: str = "sha256:deadbeef"
+
+#: The variable that holds the master key of LiteLLM.
+KEY_VARIABLE: str = "LITELLM_MASTER_KEY"
+
+#: Two addresses of TEST-NET-1. No test dials them.
+LITELLM_URL: str = "http://192.0.2.10:4000"
+ATTENDANCE_URL: str = "http://192.0.2.10:8350"
 
 #: What the default `chat` family asks LiteLLM for. An invalid or refused
 #: file in these tests asks for `OTHER_MODEL`, which must reach no key.
@@ -132,6 +140,16 @@ def test_an_unknown_family_is_a_usage_mistake(bench: Bench) -> None:
     )
 
 
+def test_a_directory_with_no_family_file_is_a_usage_mistake(bench: Bench) -> None:
+    """Contract 01 §5.6 rule 3: `caregiver` ignores the directory, so the
+    verb has no family of that name."""
+    write_no_file_dir(bench.registry_root)
+    words = ["reconcile-once", str(bench.registry_root), "stray", "--image", IMAGE]
+
+    assert bench.run(*words, "--state-root", str(bench.state_root), "--write") == EXIT_USAGE
+    assert not paths.family_dir(bench.state_root, "stray").exists()
+
+
 def test_a_degraded_family_exits_non_zero(bench: Bench) -> None:
     write_registry(bench.registry_root, kind="nonsense")
     assert bench.reconcile("--write") == EXIT_PROBLEM
@@ -156,6 +174,20 @@ def test_serve_without_write_only_prints_the_plan(
     assert "Pass --write to start" in out
     assert "families: chat" in out
     assert bench.driver.calls == []
+
+
+def test_the_plan_of_serve_names_no_directory_with_no_family_file(
+    bench: Bench, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Contract 01 §5.6 rule 3: `serve` ignores the directory, so the plan
+    does not name it as a family."""
+    write_no_file_dir(bench.registry_root)
+
+    bench.run(
+        "serve", str(bench.registry_root), "--image", IMAGE, "--state-root", str(bench.state_root)
+    )
+
+    assert "families: chat\n" in capsys.readouterr().out
 
 
 def test_serve_names_the_release_root_it_would_use(
@@ -190,6 +222,64 @@ def test_serve_refuses_a_scratch_state_root_beside_roots_real_spool(bench: Bench
     assert bench.driver.calls == []
 
 
+# --- a verb with no master key ------------------------------------------------------
+
+
+class NoSignals:
+    """In place of `SignalControl`. The test process keeps its own signal
+    handlers, and a loop that starts stops at once."""
+
+    def install(self) -> None:
+        return
+
+    def stopped(self) -> bool:
+        return True
+
+    def wait(self, seconds: float) -> None:
+        del seconds
+
+
+def _words_with_no_key(bench: Bench, tmp_path: Path, verb: str) -> list[str]:
+    """The words of one verb that acts, with each address given."""
+    state = ["--state-root", str(bench.state_root), "--litellm-base-url", LITELLM_URL, "--write"]
+    watch = [str(bench.registry_root), "--image", IMAGE, "--sessiond-url", ATTENDANCE_URL]
+    words = {
+        "serve": ["serve", *watch, "--release-root", str(tmp_path / "release"), "--pep-url", ""],
+        "reconcile-once": ["reconcile-once", *watch, "chat"],
+        "apply-once": ["apply-once", *watch, "chat"],
+        "rotate": ["rotate", str(bench.registry_root), "chat"],
+        "delete": ["delete", "chat"],
+    }
+
+    return [*words[verb], *state]
+
+
+@pytest.mark.parametrize("verb", ["serve", "reconcile-once", "apply-once", "rotate", "delete"])
+def test_a_verb_that_acts_refuses_to_start_with_no_master_key(
+    bench: Bench,
+    tmp_path: Path,
+    verb: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Fail closed. The refusal is one line that names the variable. It is
+    not an error that leaves `main`: the unit starts `serve` again after
+    each exit."""
+    monkeypatch.delenv(KEY_VARIABLE, raising=False)
+    monkeypatch.setattr(cli, "SignalControl", NoSignals)
+
+    code = main(
+        _words_with_no_key(bench, tmp_path, verb),
+        driver=bench.driver,
+        switch=bench.switch,
+        units=bench.units,
+    )
+
+    assert code == EXIT_PROBLEM
+    assert capsys.readouterr().err.strip().splitlines() == [f"caregiver: {KEY_VARIABLE} is not set"]
+    assert bench.driver.calls == []
+
+
 # --- rotate -----------------------------------------------------------------------
 
 
@@ -209,6 +299,41 @@ def test_rotate_with_write_raises_the_epoch(bench: Bench) -> None:
     after = read_creds(paths.creds_path(bench.state_root, "chat"))
     assert after is not None
     assert after.epoch == 2
+
+
+def test_rotate_publishes_the_new_epoch(bench: Bench) -> None:
+    """Contract 05 §6.3 step 3. `attendance` reads the epoch from the status
+    document alone, so the verb puts it there. It changes no other field:
+    the verb did not look at the family, so `written_at` stays."""
+    bench.reconcile("--write")
+    before = published(bench.state_root)
+
+    assert bench.rotate("--write") == EXIT_OK
+
+    after = published(bench.state_root)
+    assert after["credentials"]["epoch"] == 2
+    assert after["credentials"]["rotated_at"] >= before["credentials"]["rotated_at"]
+    assert {**after, "credentials": None} == {**before, "credentials": None}
+
+
+def test_rotate_of_an_invalid_family_publishes_the_new_epoch(bench: Bench) -> None:
+    """The rotation that keeps the grants as applied publishes too."""
+    bench.reconcile("--write")
+    write_registry(bench.registry_root, tools=REFUSED_TOOLS)
+
+    assert bench.rotate("--write") == EXIT_OK
+
+    assert published_epoch(bench.state_root) == 2
+
+
+def test_rotate_writes_no_document_where_none_is(bench: Bench) -> None:
+    """A family with no status document gets its first one from a pass."""
+    bench.reconcile("--write")
+    paths.status_path(bench.state_root, "chat").unlink()
+
+    assert bench.rotate("--write") == EXIT_OK
+
+    assert not paths.status_path(bench.state_root, "chat").exists()
 
 
 def test_rotate_says_the_key_half_is_not_graceful(

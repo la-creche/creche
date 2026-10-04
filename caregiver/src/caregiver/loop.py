@@ -67,7 +67,7 @@ from .delete import delete_family
 from .images import SandboxImages
 from .mcp_release import McpPaths
 from .mcp_wire import McpReport, mcp_pass
-from .reconcile import Actors, SpendRead, reconcile_family
+from .reconcile import Actors, SpendRead, has_family_file, reconcile_family
 from .released import ReleasedImages
 from .rotate import settle
 from .status import published_here, restamp_status
@@ -144,10 +144,12 @@ STOP_GRACE_S: Final = 330.0
 
 class Control(Protocol):
     """What ends a wait, and what ends the loop. `SignalControl` is the
-    real one. A test uses `FixedControl` and never sleeps."""
+    real one. A test uses `FixedControl` and never sleeps.
+
+    `wait` answers whether a signal asked for a look now."""
 
     def stopped(self) -> bool: ...
-    def wait(self, seconds: float) -> None: ...
+    def wait(self, seconds: float) -> bool: ...
 
 
 @dataclass
@@ -196,6 +198,19 @@ class Said:
             return
 
         log.error("%s; %d times now, the loop goes on", key, count)
+
+    def warn(self, line: str) -> None:
+        """Write this warning out, or count it and stay quiet. For a state
+        of the host that lasts and that is no error of the loop."""
+        count = self._note(line)
+        if count == 0:
+            return
+
+        if count == 1:
+            log.warning("%s", line)
+            return
+
+        log.warning("%s; %d times now", line, count)
 
     def _note(self, key: str) -> int:
         """Count this sighting. Answers the count to write out, or 0 to
@@ -453,7 +468,10 @@ class LoopState:
         time (contract 05 §2 rule 8). Without this a raised fault and a
         cleared one would each sit unsaid for up to one heartbeat, and a
         fault that is computed and never published is a fault nobody
-        sees."""
+        sees.
+
+        A `SIGHUP` asks for the same: `serve` calls this when a signal
+        ended its wait."""
         with self._mutex:
             self._families = {
                 name: replace(one, revision=FORCE_PASS) for name, one in self._families.items()
@@ -536,7 +554,12 @@ def serve(config: LoopConfig, actors: Actors, control: Control) -> LoopState:
     with Passes(config.max_concurrent_passes, grace_s=config.stop_grace_s) as passes:
         while not control.stopped():
             _one_look(config, actors, state, passes, stopping.is_set)
-            control.wait(config.poll_interval_s)
+            if control.wait(config.poll_interval_s):
+                # "Look now" is a look at each family. Without this, a
+                # look with no edit reads one content hash and stops, and
+                # a pass that must try a step again waits for the
+                # heartbeat. A create backoff stays as it is.
+                state.force_pass()
 
         stopping.set()
 
@@ -764,6 +787,13 @@ def _dispatch(
     class from one family's document or thread would end the sweep in the
     same way.
     """
+    if not has_family_file(registry, name):
+        # Contract 01 §5.6 rule 3: a directory with no `family.yaml` is
+        # ignored. No pass, no document and no record of the loop, so the
+        # name is behind no revision.
+        state.forget(name)
+        return False
+
     try:
         return _dispatch_one(config, actors, registry, name, state, passes, stop)
     except Exception as exc:
@@ -1077,7 +1107,22 @@ def _forget_deleted(
 
     gone: list[str] = []
     for name in _families_with_state(config.state_root, state.said):
+        # CONTRACT-QUESTION: contract 01 §5.6 rule 3 says that `caregiver`
+        # ignores a family directory with no `family.yaml`. It does not say
+        # what a family with state is when its directory loses the file.
+        # Such a name has a report, so the reading here keeps the state: no
+        # pass and no delete, and the status document goes stale. A stale
+        # document fails the `heartbeat` check of `caregiver-verify`, so a
+        # release of `caregiver` fails while the directory stays as it is.
+        # To read the directory as absent, this line must ask for the file,
+        # and the loop then deletes the key and each sandbox of that family.
         if name in registry.reports:
+            if not has_family_file(registry, name):
+                state.said.warn(
+                    f"{name}: its registry directory holds no family.yaml, so no pass "
+                    "runs and its status document goes stale"
+                )
+
             continue
 
         if not _may_run(state.of(name)):
@@ -1177,11 +1222,13 @@ class SignalControl:
     def stopped(self) -> bool:
         return self._stop.is_set()
 
-    def wait(self, seconds: float) -> None:
-        """Ends early on a look-now or a stop. `Event.set` wakes the waiter,
-        so a SIGHUP costs one tick of latency at most, not a full poll."""
-        self._look.wait(seconds)
+    def wait(self, seconds: float) -> bool:
+        """Ends early on a look-now or a stop, and answers whether it did.
+        `Event.set` wakes the waiter, so a SIGHUP costs one tick of latency
+        at most, not a full poll."""
+        asked = self._look.wait(seconds)
         self._look.clear()
+        return asked
 
     def _on_look(self, signum: int, frame: FrameType | None) -> None:
         del signum, frame
@@ -1208,5 +1255,6 @@ class FixedControl:
         self.left -= 1
         return False
 
-    def wait(self, seconds: float) -> None:
+    def wait(self, seconds: float) -> bool:
         self.waits.append(seconds)
+        return False

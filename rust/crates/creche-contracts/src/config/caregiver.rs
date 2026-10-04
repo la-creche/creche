@@ -257,20 +257,21 @@ impl Images {
 /// The type is stricter than the Python reader in these places:
 ///
 /// 1. An image is a reference with a digest. `argparse` takes each text.
-/// 2. `LITELLM_MASTER_KEY` is necessary for `--write`. The Python service
-///    starts without it, and each call to LiteLLM then fails.
-/// 3. Each path is absolute. `argparse` takes each text as a path, and reads
+/// 2. Each path is absolute. `argparse` takes each text as a path, and reads
 ///    the empty text as the directory `.`.
-/// 4. Each URL is an [`HttpUrl`]. The Python service takes each text.
-/// 5. Each count of seconds is finite and more than zero. `argparse` takes
+/// 3. Each URL is an [`HttpUrl`]. The Python service takes each text.
+/// 4. Each count of seconds is finite and more than zero. `argparse` takes
 ///    each number that `float` reads: zero, a negative number, `nan` and
 ///    `inf` too.
-/// 6. `--max-concurrent-passes` is 1 to 65535. `argparse` takes each
+/// 5. `--max-concurrent-passes` is 1 to 65535. `argparse` takes each
 ///    integer.
-/// 7. A state root of its own needs a release root of its own in the two
+/// 6. A state root of its own needs a release root of its own in the two
 ///    modes. The Python service makes that check only with `--write`.
-/// 8. A LAN address that is set must be a [`LanAddress`], also when each
+/// 7. A LAN address that is set must be a [`LanAddress`], also when each
 ///    plane has a flag. The Python service then does not read the variable.
+///
+/// `LITELLM_MASTER_KEY` is necessary for `--write`. The Python service
+/// refuses a start without it too.
 ///
 /// ```
 /// use creche_contracts::config::caregiver::{CaregiverConfig, PepWatch, RawServe};
@@ -502,10 +503,10 @@ fn max_passes(raw: &RawServe) -> Parsed<u16> {
 
 // CONTRACT-QUESTION: `spec.md` §5.4 says where the master key of LiteLLM
 // lives, and not what the caregiver does without it. The Python service
-// starts with no key, and each call to LiteLLM then fails. The type refuses
-// `--write` with no key: the service cannot mint a family key without it.
-// The laxer reading gives a daemon that runs and converges no family. To
-// take it, let `Mode::Write` hold no key.
+// refuses `--write` with no key, and the type does the same: the service
+// cannot mint a family key without it. The laxer reading gives a daemon
+// that runs and converges no family. To take it, let `Mode::Write` hold no
+// key.
 /// The master key as its variable holds it. The Python service reads the
 /// variable with no strip. `None` for a variable that is not set or empty.
 fn master_key(env: &Env) -> Parsed<Option<Secret>> {
