@@ -457,8 +457,9 @@ def test_a_route_that_raises_answers_the_body_of_the_contract(
     monkeypatch: pytest.MonkeyPatch,
     send: Callable[[TestClient], httpx.Response],
 ) -> None:
-    """§5.1: an answer that is not 200 holds `reason`. A failure that no
-    layer handled is row 12, and never an answer with no reason."""
+    """Row 12 of §5 gives `internal_error` for a failure that no layer
+    handled. The answer holds that reason, and is never a 500 with no
+    reason."""
     write_grants(grants_dir(tmp_path), make_grants())
     client = build(tmp_path)
 

@@ -752,9 +752,9 @@ def create_app(
         echo: the caller's key is in `loc` and its value in `input`.
 
         CONTRACT-QUESTION: contract 04 §5 has no row for a body that the
-        reader refuses, and §5.1 gives its answer no body. The reading
-        here: the status that each other refused body gets, and no text of
-        the caller. A change costs a caller that reads `loc`."""
+        reader refuses. The reading here: the status that each other
+        refused body gets, and no text of the caller. A change costs a
+        caller that reads `loc`."""
         try:
             return await request_validation_exception_handler(request, exc)
         except (ValueError, RecursionError):
@@ -766,11 +766,12 @@ def create_app(
 
     @app.exception_handler(Exception)
     async def unexpected(_request: Request, exc: Exception) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
-        """Contract 04 §5 row 12, for a failure that no layer below handled.
-        §5.1: an answer that is not 200 holds `reason`, so a route never
-        answers with a bare 500. The type and not the text: the text can
-        quote the request. Starlette raises the failure again after this
-        answer, so the server logs its traceback."""
+        """Contract 04 §5 row 12 gives `internal_error` for a failure that
+        no layer below handled. Without this handler, such a failure
+        answers 500 with no `reason`. The log line holds the type and not
+        the text: the text can quote the request. Starlette raises the
+        failure again after this answer, so the server logs its
+        traceback."""
         log.error("a route raised %s; answering internal_error", type(exc).__name__)
         return _deny_response("internal_error")
 

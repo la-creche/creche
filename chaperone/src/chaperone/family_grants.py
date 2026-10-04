@@ -249,8 +249,8 @@ class FamilyStore:
                 grants, raw_ok = None, f"grants/{family}.json: unreadable ({exc})"
             except Exception as exc:
                 # `lookup` reads every file on every call, so a failure
-                # nobody named must stay with this family. The type and not
-                # the text: the text can quote the file.
+                # nobody named must stay with this family. The fault holds
+                # the type and not the text: the text can quote the file.
                 log.exception("grants/%s.json could not be read; that family fails closed", family)
                 grants, raw_ok = None, f"grants/{family}.json: unreadable ({type(exc).__name__})"
 

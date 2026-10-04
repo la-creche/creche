@@ -102,9 +102,9 @@ A shared module may not grow a branch that only one caller reaches.
   each other decision, the writer writes the line and raises `AuditError`.
 - A result that is not strict JSON in UTF-8 is an upstream failure. The
   audit line says so before the answer goes out.
-- A route never answers a bare 500. A failure that no layer handles
-  answers `internal_error` in the body of contract 04 §5.1. A call of a
-  family still gets its audit line.
+- A route never answers 500 with no `reason`. For a failure that no layer
+  handles, the route answers `internal_error`, row 12 of contract 04 §5.
+  A call of a family still gets its audit line.
 
 ## Identity and revocation
 
@@ -163,8 +163,9 @@ authenticated path into the process that holds every credential.
    `SIGHUP` reads again. Never read the roster in `__main__`.
 8. A `sops` failure keeps the credentials already in memory.
 9. One reload task at a time, with a repeat flag.
-10. The read of the roster and of the credentials runs off the event loop
-    thread. `sops -d` can take seconds, and the loop holds every call.
+10. The read of the roster and of the credentials runs on a worker thread,
+    not on the thread of the event loop. `sops -d` can take seconds, and
+    the loop holds every call.
 
 Both secret layouts are read, and that is permanent. The monolith holds every
 credential that predates the intake. The per-secret store is the only layout
@@ -215,7 +216,7 @@ Each line is an open contract question and the module it lives in.
   outlives its retirement until the unit stops (`mcp_client.py`, `run_as.py`).
 - A call held at a gate across a reload runs under the fences its decision
   read (`family_app.py`).
-- An `embed` reply takes a vector of no number. Contract 04 §4.1 gives no
+- An `embed` reply can hold an empty vector. Contract 04 §4.1 gives no
   minimum length (`family_app.py`).
 - An `embed` reply can hold `true` or `false` in the vector. Contract 04
   §4.1 does not say if a boolean is a number (`family_app.py`).
