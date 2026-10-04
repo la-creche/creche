@@ -12,6 +12,7 @@ httpx mock transport that reports back which bearer it saw.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 
@@ -28,9 +29,17 @@ from chaperone.delegate import (
     HttpDelegateDoor,
 )
 
+from chaperone import __main__ as entry
+
 FIRST = "a" * MIN_DOOR_TOKEN_BYTES
 SECOND = "b" * MIN_DOOR_TOKEN_BYTES
 TOKEN_NAME = "door-delegate.token"
+
+#: The content of a token file that is not text: no byte of it is UTF-8.
+NOT_TEXT = b"\xff" * MIN_DOOR_TOKEN_BYTES
+
+#: How the error of the decoder writes that byte. No message can hold it.
+NOT_TEXT_BYTE = "0xff"
 
 #: What the mock transport records, so a case can assert on the bearer the
 #: door actually presented rather than on the door's internal state.
@@ -162,6 +171,38 @@ def test_the_error_never_carries_the_value(tmp_path: Path) -> None:
     assert "tiny" not in str(caught.value)
 
 
+def test_a_file_that_is_not_text_refuses(tmp_path: Path) -> None:
+    """The refusal of each other file that the door cannot use, and not the
+    error of the decoder: that error holds a byte of the file."""
+    path = tmp_path / TOKEN_NAME
+    path.write_bytes(NOT_TEXT)
+
+    with pytest.raises(DoorTokenError) as caught:
+        CachedTokenFile(path).value()
+
+    assert NOT_TEXT_BYTE not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__
+
+
+def test_the_probe_at_start_takes_a_file_that_is_not_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The probe changes nothing: it writes one line, and the PEP starts."""
+    path = tmp_path / TOKEN_NAME
+    path.write_bytes(NOT_TEXT)
+    monkeypatch.setenv("PEP_DELEGATE_TOKEN_FILE", str(path))
+
+    with caplog.at_level(logging.WARNING, logger="chaperone"):
+        found = entry._delegate_token_file()  # pyright: ignore[reportPrivateUsage]
+
+    assert found == path
+    lines = [one.getMessage() for one in caplog.records]
+    assert len(lines) == 1, lines
+    assert "fails closed" in lines[0]
+    assert NOT_TEXT_BYTE not in lines[0]
+
+
 # ---- the door presents what the file holds now -----------------------------
 
 
@@ -181,6 +222,15 @@ def test_an_unreadable_file_fails_the_call_closed(tmp_path: Path) -> None:
     """Fail closed (chaperone/AGENTS.md rule 1): no request leaves the PEP, and the
     caller is told the call failed."""
     built = door(DoorConfig(token="", token_source=CachedTokenFile(tmp_path / TOKEN_NAME)))
+
+    assert call(built) is DelegateStatus.FAILED
+    assert seen == []
+
+
+def test_a_file_that_is_not_text_fails_the_call_closed(tmp_path: Path) -> None:
+    path = tmp_path / TOKEN_NAME
+    path.write_bytes(NOT_TEXT)
+    built = door(DoorConfig(token="", token_source=CachedTokenFile(path)))
 
     assert call(built) is DelegateStatus.FAILED
     assert seen == []
