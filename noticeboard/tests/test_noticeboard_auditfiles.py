@@ -49,6 +49,14 @@ def test_a_file_that_is_not_a_day_is_ignored(tmp_path: Path) -> None:
     assert known_days(tmp_path) == ("2026-09-19",)
 
 
+def test_a_day_name_with_a_trailing_newline_is_ignored(tmp_path: Path) -> None:
+    # A `$` also matches before a final newline. `\Z` does not.
+    write_audit_day(tmp_path, "2026-09-19", [audit_line()])
+    (tmp_path / "2026-09-20.jsonl\n").write_text("{}\n", encoding="utf-8")
+
+    assert known_days(tmp_path) == ("2026-09-19",)
+
+
 def test_the_family_filter_is_exact(tmp_path: Path) -> None:
     write_audit_day(
         tmp_path,

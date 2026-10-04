@@ -39,7 +39,7 @@ ARGS_NOTICE: Final = (
 
 #: Contract 04 §6: one file per UTC day. Anything else in the directory is
 #: not an audit file and is not read.
-DAY_NAME: Final = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
+DAY_NAME: Final = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl\Z")
 
 #: A record can hold a 256 KiB request's arguments, with one string value
 #: capped at 8 KiB (§6.1). Half a megabyte is past any real line.
