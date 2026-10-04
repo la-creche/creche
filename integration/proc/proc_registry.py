@@ -11,7 +11,9 @@ webhook names and `quiet`), the noticeboard (the edit form) and `caregiver`.
 
 `git` runs with an environment that this module builds whole. No variable of
 the shell that runs the suite reaches it, and no config file of a person:
-`HOME` is the home of the root, and the global file is `/dev/null`.
+`HOME` is the home of the root, and the global file is `/dev/null`. `git`
+looks for a repository in the root and never above it, so a root inside
+another checkout cannot send a command to that checkout.
 """
 
 from __future__ import annotations
@@ -214,6 +216,7 @@ def _git(tree: Tree, *args: str) -> str:
         "HOME": str(tree.home),
         "GIT_CONFIG_GLOBAL": _NO_FILE,
         "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CEILING_DIRECTORIES": str(tree.root),
         "GIT_TERMINAL_PROMPT": "0",
     }
 
