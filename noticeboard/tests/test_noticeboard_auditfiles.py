@@ -18,6 +18,11 @@ from noticeboard_helpers import audit_line, deep_object, peak_memory_of, write_a
 #: A record under `MAX_LINE_BYTES` that nests past the limit of the JSON reader.
 DEEP_RECORD_LEVELS = 250_000
 
+#: Decimal digits of Unicode that are not ASCII. Written as escapes so the
+#: source file holds no character that looks like another.
+FULLWIDTH_2026 = "\uff12\uff10\uff12\uff16"
+ARABIC_INDIC_ONE = "\u0661"
+
 #: Arguments that the JSON reader takes, and the most memory their page may take.
 DEEP_ARGS_LEVELS = 3_000
 PAGE_MEMORY_MAX = 4 * 1024 * 1024
@@ -61,6 +66,15 @@ def test_a_day_name_with_a_trailing_newline_is_ignored(tmp_path: Path) -> None:
     # A `$` also matches before a final newline. `\Z` does not.
     write_audit_day(tmp_path, "2026-09-19", [audit_line()])
     (tmp_path / "2026-09-20.jsonl\n").write_text("{}\n", encoding="utf-8")
+
+    assert known_days(tmp_path) == ("2026-09-19",)
+
+
+def test_a_day_name_with_digits_outside_ascii_is_ignored(tmp_path: Path) -> None:
+    # `\d` takes every decimal digit of Unicode unless the pattern says ASCII.
+    write_audit_day(tmp_path, "2026-09-19", [audit_line()])
+    (tmp_path / f"{FULLWIDTH_2026}-09-20.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / f"2026-09-2{ARABIC_INDIC_ONE}.jsonl").write_text("{}\n", encoding="utf-8")
 
     assert known_days(tmp_path) == ("2026-09-19",)
 
