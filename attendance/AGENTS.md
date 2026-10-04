@@ -222,6 +222,7 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   again until another turn of the family ends (`service.py`).
 - `_settle` does not raise `IllegalTransition`. For a move that contract 02
   §4.3 does not allow, it writes one log line and one `note` line. The turn
-  does not move. A `turn_settled` for a turn in `waiting-approval` is such a
-  move. That turn then stays in flight until its deadline (`service.py`,
-  `states.py`).
+  does not move. No known path makes such a move (`service.py`, `states.py`).
+- A turn can settle while the decision of its gate is not in the audit file
+  yet. That turn gets no `approval_resolved` line, and its tally does not
+  count the gate (`service.py`).

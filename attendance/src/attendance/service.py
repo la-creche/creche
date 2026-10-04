@@ -1970,6 +1970,12 @@ class SessionService:
         if live is None or not live.is_active:
             return
 
+        self._leave_approval(live)
+
+        # The decision of the gate can end the turn.
+        if not live.is_active:
+            return
+
         live.record.usage.add(message.usage)
         self._map_owui(family, live, message)
         self._settle(
@@ -1983,6 +1989,26 @@ class SessionService:
                 "user_entry_id": message.user_entry_id,
             },
         )
+
+    def _leave_approval(self, live: LiveTurn) -> None:
+        """Let a turn that waits for approval settle (contract 03 §13 rule 8).
+
+        pi settles after the gated call returned, so the PEP decided the
+        gate. Its record can be in the audit file and not read yet: the gate
+        poll runs once in `FLUSH_INTERVAL_S`. The poll runs here first, so
+        the decision reaches the journal and the tally before the settle.
+
+        Contract 02 §4.3 has no move from `waiting-approval` to `settled`. A
+        turn that still waits after the poll goes through `running`. Left as
+        it is, the turn stays in flight until its deadline.
+        """
+        if live.record.state is not TurnState.WAITING_APPROVAL:
+            return
+
+        self._upkeep_step("the gate poll", self.read_gates)
+
+        if live.record.state is TurnState.WAITING_APPROVAL:
+            live.record.state = TurnState.RUNNING
 
     async def handle_failed(self, family: str, message: FailedLine) -> None:
         live = self._turns.get(family, message.session, message.turn)
