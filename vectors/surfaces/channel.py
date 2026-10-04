@@ -283,6 +283,14 @@ LINES: Final[tuple[Line, ...]] = (
         _EVENT_HEAD.replace('"turn_seq":1', '"turn_seq":' + "9" * 4300) + "{}}",
     ),
     _l("event-key-lone-surrogate", _EVENT_HEAD + '{"type":"x","\\udc00":1}}'),
+    _l("event-type-lone-surrogate", _EVENT_HEAD + '{"type":"x\\ud800","text":"a"}}'),
+    _l("event-lone-surrogate-nested", _EVENT_HEAD + '{"type":"x","a":[{"b":["\\udc00"]}]}}'),
+    _l("event-lone-surrogates-reversed", _EVENT_HEAD + '{"type":"x","text":"\\ude00\\ud83d"}}'),
+    _l(
+        "event-lone-surrogate-and-text-forms",
+        _EVENT_HEAD + '{"type":"x","text":"caf\u00e9 \\n \\u0001 \U0001f600 \\ud83d"}}',
+    ),
+    _l("event-lone-surrogate-no-type", _EVENT_HEAD + '{"text":"\\ud800"}}'),
     _l("event-type-empty-depth-65", _EVENT_HEAD + '{"type":"","a":' + _nested(64) + "}}"),
     _l(
         "event-duplicate-key-last-shallow",

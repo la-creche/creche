@@ -74,6 +74,13 @@ _LF = "\n"
 _LF_BYTE = b"\n"
 _CR = "\r"
 
+# The type of a capped event whose own type is absent or cannot be kept.
+_UNKNOWN_EVENT_TYPE = "unknown"
+
+# The error handler that encodes one half of a surrogate pair as its three
+# bytes. A count of bytes then has a value for each text.
+_KEEP_HALF_PAIRS = "surrogatepass"
+
 
 class HostType(StrEnum):
     """Host to playpen (contract 03 §4)."""
@@ -676,17 +683,39 @@ def cap_event(event: dict[str, Any]) -> dict[str, Any]:
     oversized here and keeps its type only: the stricter reading. To refuse
     the line would cost the turn, because a refused line leaves a gap in
     `turn_seq` and rule 4 fails a turn on a gap.
-    """
-    size = len(json.dumps(event, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
-    if size <= MAX_EVENT_BYTES and not _nests_past(event, MAX_EVENT_DEPTH):
+    CONTRACT-QUESTION: §13 rule 5 says that the host records an event, and
+    no rule names an event that the host cannot record. A text of pi can end
+    in one half of a surrogate pair, and such an event has no UTF-8 form. It
+    is read as oversized here and keeps its type only, for the reason above.
+    `original_bytes` counts one half as three bytes. The other reading puts
+    U+FFFD in the place of the half, which changes an event that rule 5
+    keeps unchanged.
+    """
+    text = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
+    encoded = text.encode("utf-8", _KEEP_HALF_PAIRS)
+    whole = _has_utf8_form(text)
+
+    if whole and len(encoded) <= MAX_EVENT_BYTES and not _nests_past(event, MAX_EVENT_DEPTH):
         return event
 
+    kind = _text(event.get("type"))
+
     return {
-        "type": _text(event.get("type")) or "unknown",
+        "type": kind if kind and _has_utf8_form(kind) else _UNKNOWN_EVENT_TYPE,
         "truncated": True,
-        "original_bytes": size,
+        "original_bytes": len(encoded),
     }
+
+
+def _has_utf8_form(text: str) -> bool:
+    """False for a text that holds one half of a surrogate pair."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+
+    return True
 
 
 def _nests_past(event: dict[str, Any], limit: int) -> bool:

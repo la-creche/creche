@@ -820,6 +820,9 @@ Rules for the test:
      takes 1 to 200 bytes.
   7. `host::ProtocolVersion`, contract 03 §3. The contract gives no grammar
      for a number. The type takes two numbers of 1 to 9 ASCII digits.
+  8. `claim::Event`, contract 03 §13 rule 5. The contract names no event that
+     the host cannot record. The Python host keeps only the type of an event
+     with a lone surrogate. The reader does the same.
 - The host side of `channel` accepts what the Python host accepts, also
   where a stricter reading of contract 03 is possible. The owner decides each
   case. Four examples:

@@ -85,16 +85,21 @@ LONE_SURROGATE = "a\ud800b"
 # splits on them, which would tear one record into two (contract 03 §2 rule 4).
 UNICODE_SEPARATORS = f"line{chr(0x2028)}sep{chr(0x2029)}arator"
 
-# Three lines under the line cap that are not a `JSONDecodeError`. Each one
+# Two lines under the line cap that are not a `JSONDecodeError`. Each one
 # raised a different exception type at a different place in `parse`: the JSON
-# reader's recursion limit, the interpreter's integer digit limit, and the
-# UTF-8 encode of a lone surrogate in `cap_event`.
+# reader's recursion limit and the interpreter's integer digit limit.
 RAISING_LINES = {
     "deep_nesting": "[" * 200_000,
     "long_integer": "1" * 5_000,
-    "lone_surrogate": (
-        '{"type":"event","session":"s","turn":"t","turn_seq":1,"event":{"text":"\\ud800"}}'
-    ),
+}
+
+# Events with one half of a surrogate pair: in a text, in a key and inside
+# an array. Each one has no UTF-8 form. The value is the count of its bytes
+# when one half counts as three bytes.
+EVENTS_WITH_A_HALF_PAIR = {
+    '{"type":"message_update","text":"cut \\ud83d"}': 42,
+    '{"type":"x","\\udc00":1}': 20,
+    '{"type":"x","a":[{"b":"\\ud800"}]}': 30,
 }
 
 LOG_LINE = '{"type":"log","message":"pi started"}'
@@ -307,6 +312,33 @@ def test_an_oversized_event_keeps_only_its_type() -> None:
     assert big["truncated"] is True
     assert big["original_bytes"] > MAX_EVENT_BYTES
     assert "blob" not in big
+
+
+@pytest.mark.parametrize("event", list(EVENTS_WITH_A_HALF_PAIR))
+def test_an_event_with_no_utf8_form_keeps_only_its_type(event: str) -> None:
+    """The host cannot store the event whole. A refusal of the line leaves a
+    gap in `turn_seq`, and a gap fails the turn."""
+    line = parse(f'{{"type":"event","session":"s","turn":"t","turn_seq":1,"event":{event}}}')
+
+    assert isinstance(line, EventLine)
+    assert line.event == {
+        "type": json.loads(event)["type"],
+        "truncated": True,
+        "original_bytes": EVENTS_WITH_A_HALF_PAIR[event],
+    }
+
+
+def test_an_event_type_with_no_utf8_form_reads_as_unknown() -> None:
+    capped = cap_event({"type": "message\ud800", "text": "x"})
+
+    assert capped == {"type": "unknown", "truncated": True, "original_bytes": 32}
+    assert json.dumps(capped, ensure_ascii=False).encode("utf-8")
+
+
+def test_an_event_with_a_whole_surrogate_pair_is_kept_whole() -> None:
+    event = {"type": "message_update", "text": "\U0001f600"}
+
+    assert cap_event(event) is event
 
 
 def test_an_event_nested_past_the_cap_keeps_only_its_type() -> None:

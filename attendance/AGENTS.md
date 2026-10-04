@@ -186,6 +186,9 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   from the work root (`service.py`).
 - Contract 03 §13 rule 6 names no nesting limit for an event. `cap_event`
   reads an event of more than 64 levels as oversized (`wire.py`).
+- Contract 03 §13 rule 5 names no event that the host cannot record. An
+  event with one half of a surrogate pair has no UTF-8 form. `cap_event`
+  reads it as oversized (`wire.py`).
 - Contract 05 §2.1 does not say what a reader does with a `kind` that is
   not one of its three words. `served_kind` refuses each door with
   `forbidden`. A family that never validated has an empty `kind` and gets

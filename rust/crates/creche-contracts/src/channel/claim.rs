@@ -261,8 +261,9 @@ impl Usage {
 /// records it and does not act on it (§13 rule 5).
 ///
 /// An event is an object of at most [`MAX_EVENT_BYTES`] bytes that nests at
-/// most [`MAX_EVENT_DEPTH`] levels. For a larger event the host keeps three
-/// fields: `type`, `truncated` and `original_bytes` (§13 rule 6).
+/// most [`MAX_EVENT_DEPTH`] levels and holds no lone surrogate. For each
+/// other event the host keeps three fields: `type`, `truncated` and
+/// `original_bytes` (§13 rule 6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event(JsonObject);
 
@@ -351,21 +352,31 @@ impl Event {
     }
 
     /// Applies rule 6 of §13 to the `event` of a line.
+    // CONTRACT-QUESTION: contract 03 §13 rule 5 says that the host records an
+    // event, and no rule names an event that the host cannot record. A text
+    // of pi can end in a lone surrogate, and such an event has no UTF-8 form.
+    // The Python host reads it as oversized and keeps its type only, and
+    // `original_bytes` counts a lone surrogate as three bytes. This reader
+    // does the same. To refuse the line costs the turn: a refused line leaves
+    // a gap in `turn_seq`.
     fn capped(fields: JsonObject) -> Result<Self, Refusal> {
         let whole = Json::Object(fields);
-
-        // Python raises `UnicodeEncodeError` on a lone surrogate here.
-        let size = json::compact_size(&whole).map_err(|_| Refusal::Malformed)?;
-        let small = size <= MAX_EVENT_BYTES && !json::nests_past(&whole, MAX_EVENT_DEPTH);
+        let (size, has_utf8_form) = match json::compact_size(&whole) {
+            Ok(size) => (size, true),
+            Err(json::LoneSurrogate) => (json::lossy_size(&whole), false),
+        };
+        let small =
+            has_utf8_form && size <= MAX_EVENT_BYTES && !json::nests_past(&whole, MAX_EVENT_DEPTH);
         let fields = whole.into_object().unwrap_or_default();
         if small {
             return Ok(Self(fields));
         }
 
+        // A type with a lone surrogate is no type that the host can keep.
         let kind = fields
             .get("type")
             .and_then(Json::as_text)
-            .filter(|kind| !kind.is_empty())
+            .filter(|kind| kind.as_str().is_some_and(|text| !text.is_empty()))
             .cloned()
             .unwrap_or_else(|| Text::from(UNKNOWN_EVENT_TYPE));
         let size = u64::try_from(size).map_err(|_| Refusal::Malformed)?;
@@ -1775,7 +1786,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_lone_surrogate_stays_in_a_text_and_refuses_an_event() {
+    fn a_lone_surrogate_stays_in_a_text_and_caps_an_event() {
         let PlaypenLine::Log(log) = line(r#"{"type":"log","message":"a\ud800b"}"#) else {
             panic!("no log line");
         };
@@ -1784,10 +1795,19 @@ pub(super) mod tests {
         assert_eq!(log.message().to_utf16(), vec![0x61, 0xd800, 0x62]);
         assert_eq!(log.message().to_string_lossy(), "a\u{fffd}b");
         assert_eq!(
-            event_refusal(r#"{"type":"x","text":"\ud800"}"#),
-            Some(Refusal::Malformed)
+            event_line(r#"{"type":"x","text":"\ud800"}"#)
+                .event()
+                .to_json(),
+            r#"{"type":"x","truncated":true,"original_bytes":25}"#
         );
-        assert_eq!(event_refusal(r#"{"\udc00":1}"#), Some(Refusal::Malformed));
+        assert_eq!(
+            event_line(r#"{"\udc00":1}"#).event().to_json(),
+            r#"{"type":"unknown","truncated":true,"original_bytes":9}"#
+        );
+        assert_eq!(
+            event_line(r#"{"type":"x\ud800"}"#).event().to_json(),
+            r#"{"type":"unknown","truncated":true,"original_bytes":15}"#
+        );
         assert_eq!(
             parse(r#"{"type":"pon\ud800g","nonce":"x"}"#),
             Err(Refusal::UnknownType)
