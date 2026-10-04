@@ -52,8 +52,8 @@ No release holds this crate. Add it to a crate only under
     (`rust/AGENTS.md`, "Tests"). The packet that writes the body of the type
     writes that test.
 13. Write each difference from a Python test helper as a row of a
-    `DEVIATIONS` table in the test of the module. The row names the Python
-    file and the line.
+    `DEVIATIONS` table. Put the table in the test of the module. The row
+    names the Python file and the line.
 14. Name the Python origin of a helper in its doc comment, with the file and
     the line. Some helpers have no Python origin. Say so there.
 15. Write no `println!` and no `eprintln!` in code that is not a test.
