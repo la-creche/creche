@@ -143,6 +143,9 @@ delete, the MCP pass. The handler writes the first error with its
 traceback. It counts each repeat. The loop continues, and the other
 families pass.
 
+A delete that fails gets the backoff of a failed create. The loop starts
+the delete again when the backoff ends or the registry changes.
+
 ## `mcp_release.py`
 
 1. It installs nothing and reads no secret value.

@@ -39,7 +39,7 @@ from agent_family import FamilyState, revision_of
 from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
-from caregiver.loop import Backoff, LoopConfig, LoopState, look
+from caregiver.loop import BACKOFF_FIRST_S, Backoff, LoopConfig, LoopState, look
 from caregiver.mcp_release import MARKER_NAME, McpPaths
 from caregiver.mcp_wire import mcp_pass
 from caregiver.reconcile import Actors
@@ -539,3 +539,115 @@ def test_a_delete_that_raises_ends_in_the_handler_of_the_loop(
     ]
     assert paths.family_dir(bench.state_root, gone).is_dir()
     assert published(bench.state_root, kept)["state"] == FamilyState.IN_SYNC
+
+
+class FailingDelete:
+    """A stand-in for the delete of one family. It records each try."""
+
+    def __init__(self) -> None:
+        self.tries: list[str] = []
+
+    def __call__(self, config: LoopConfig, actors: Actors, name: str) -> None:
+        del config, actors
+        self.tries.append(name)
+        raise UNNAMED
+
+
+def test_a_delete_that_raises_waits_before_the_next_try(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delete that fails gets the wait of a pass that raised. A delete at
+    each look calls each client every two seconds, and an error text that
+    moves at each try fills the complaint ledger."""
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    delete = FailingDelete()
+    monkeypatch.setattr(loop_module, "_delete_one", delete)
+
+    for _ in range(3):
+        bench.look(heartbeat_s=0.0)
+
+    assert delete.tries == [gone]
+    backoff = bench.state.of(gone).backoff
+    assert backoff is not None
+    assert backoff.delay_s == BACKOFF_FIRST_S
+
+
+def test_a_delete_starts_again_when_its_wait_ends(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second failure doubles the wait, as a second failed create does."""
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    delete = FailingDelete()
+    monkeypatch.setattr(loop_module, "_delete_one", delete)
+    bench.look(heartbeat_s=0.0)
+
+    bench.state.note(gone, backoff=Backoff(next_at=time.monotonic(), delay_s=BACKOFF_FIRST_S))
+    bench.look(heartbeat_s=0.0)
+
+    assert delete.tries == [gone, gone]
+    backoff = bench.state.of(gone).backoff
+    assert backoff is not None
+    assert backoff.delay_s == BACKOFF_FIRST_S * 2
+
+
+def test_a_registry_edit_starts_a_waiting_delete_again(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An edit clears each backoff, because the edit can be the repair."""
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    delete = FailingDelete()
+    monkeypatch.setattr(loop_module, "_delete_one", delete)
+    bench.look(heartbeat_s=0.0)
+
+    write_registry(bench.registry_root, name="notes")
+    bench.look(heartbeat_s=0.0)
+
+    assert delete.tries == [gone, gone]
+
+
+def test_a_waiting_delete_does_not_open_the_gate_of_the_loop(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A family with no file has no document to keep fresh. While its
+    delete waits, a look within one heartbeat reads no registry."""
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    monkeypatch.setattr(loop_module, "_delete_one", FailingDelete())
+    bench.look()
+    loads: list[Path] = []
+    real_load = loop_module.load_registry
+
+    def counted(root: Path, host: object) -> object:
+        loads.append(root)
+        return real_load(root, host)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(loop_module, "load_registry", counted)
+
+    for _ in range(3):
+        bench.look()
+
+    assert loads == []
+
+
+def test_a_delete_that_works_after_a_wait_forgets_the_family(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    with monkeypatch.context() as patched:
+        patched.setattr(loop_module, "_delete_one", FailingDelete())
+        bench.look(heartbeat_s=0.0)
+
+    bench.state.note(gone, backoff=Backoff(next_at=time.monotonic(), delay_s=BACKOFF_FIRST_S))
+    bench.look(heartbeat_s=0.0)
+
+    assert not paths.family_dir(bench.state_root, gone).exists()
+    assert bench.state.of(gone).backoff is None

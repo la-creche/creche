@@ -1044,9 +1044,15 @@ def _backoff(slot: FamilyLoop, name: str) -> Backoff:
     family whose image does not exist from spending the whole id space
     before anybody reads the fault. A pass that raised gets the same wait
     for the same reason: two seconds is too soon to try again."""
+    wait = _longer_wait(slot)
+    log.warning("%s: pass did not converge, next attempt in %.0fs", name, wait.delay_s)
+    return wait
+
+
+def _longer_wait(slot: FamilyLoop) -> Backoff:
+    """The first wait, or two times the last one, up to the ceiling."""
     previous = slot.backoff
     delay = BACKOFF_FIRST_S if previous is None else min(previous.delay_s * 2, BACKOFF_MAX_S)
-    log.warning("%s: pass did not converge, next attempt in %.0fs", name, delay)
     return Backoff(next_at=time.monotonic() + delay, delay_s=delay)
 
 
@@ -1074,6 +1080,13 @@ def _forget_deleted(
         if name in registry.reports:
             continue
 
+        if not _may_run(state.of(name)):
+            # A delete of this family failed, and its wait is not over. A
+            # family with no file has no document to keep fresh, so it
+            # must not open the heartbeat half of `LoopState.due`.
+            state.note(name, published_at=time.monotonic())
+            continue
+
         if passes.start(name, _delete_work(config, actors, name, state)):
             gone.append(name)
 
@@ -1088,10 +1101,16 @@ def _delete_work(
             _delete_one(config, actors, name)
         except Exception as exc:
             # `Exception`, not `(OSError, RuntimeError)`, and every step of
-            # the delete is inside it. The state of the family stays, so
-            # the next look starts the delete again. Through the ledger,
-            # because that look comes two seconds later.
+            # the delete is inside it. The state of the family stays, so a
+            # later look starts the delete again. Through the ledger,
+            # because the delete can fail many times.
             state.said.say(f"{name}: delete", exc)
+            # A wait, as for a pass that raised. A delete at each look
+            # calls each client every two seconds, and an error text that
+            # moves at each try fills the ledger.
+            wait = _longer_wait(state.of(name))
+            log.warning("%s: delete did not end, next attempt in %.0fs", name, wait.delay_s)
+            state.note(name, published_at=time.monotonic(), backoff=wait)
             return
 
         state.forget(name)
