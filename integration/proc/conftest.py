@@ -120,13 +120,20 @@ def supervisor(tree: Tree, request: pytest.FixtureRequest) -> Iterator[Superviso
 
 
 @pytest.fixture
-def owui(tree: Tree, supervisor: Supervisor, bundle: Path) -> OwuiStack:
-    """The first topology, serving. The `supervisor` fixture ends it."""
+def owui_prepared(tree: Tree, supervisor: Supervisor) -> OwuiStack:
+    """The first topology on disk, with no service started."""
     stack = OwuiStack(tree, supervisor)
     stack.prepare()
-    stack.start()
 
     return stack
+
+
+@pytest.fixture
+def owui(owui_prepared: OwuiStack, bundle: Path) -> OwuiStack:
+    """The first topology, serving. The `supervisor` fixture ends it."""
+    owui_prepared.start()
+
+    return owui_prepared
 
 
 @pytest.fixture
