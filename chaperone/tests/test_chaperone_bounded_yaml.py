@@ -10,6 +10,7 @@ keys, and 65,536 copied pairs in one document.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Final
 
 import pytest
@@ -67,18 +68,18 @@ UNDER_THE_LIMITS: Final = (
 )
 
 
-def _outcome(text: str, *, bounded: bool) -> tuple[str, object]:
+def _outcome(load: Callable[[str], object], text: str) -> tuple[str, object]:
     """What one reader does with `text`: its value, or the type and the
     text of its error."""
     try:
-        return "value", bounded_yaml.load(text) if bounded else yaml.safe_load(text)
+        return "value", load(text)
     except yaml.YAMLError as error:
         return type(error).__name__, str(error)
 
 
 @pytest.mark.parametrize("text", UNDER_THE_LIMITS)
 def test_under_the_limits_the_reader_does_what_pyyaml_does(text: str) -> None:
-    assert _outcome(text, bounded=True) == _outcome(text, bounded=False)
+    assert _outcome(bounded_yaml.load, text) == _outcome(yaml.safe_load, text)
 
 
 def test_a_chain_of_merge_keys_at_the_limit_reads() -> None:

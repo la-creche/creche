@@ -61,31 +61,36 @@ PAIRS = 256
 MERGES_AT_THE_LIMIT = 256
 
 
-def _merged(merges: int, *, at_root: bool) -> str:
-    """A monolith that merges one mapping of `PAIRS` names `merges` times:
-    into the file itself, or into the value of one name."""
+#: Where `_merged` puts its merge key: in the file itself, or in the value
+#: of one name. `{merge}` stands for the merge key and its value.
+IN_THE_FILE = "{merge}\n"
+IN_A_VALUE = "other: {{{merge}}}\n"
+
+
+def _merged(merges: int, place: str) -> str:
+    """A monolith that merges one mapping of `PAIRS` names `merges` times,
+    at `place`."""
     names = ", ".join(f"k{n}: {LEAK}" for n in range(PAIRS))
     aliases = ", ".join(["*a"] * merges)
-    merge = f"<<: [{aliases}]"
 
-    return f"base: &a {{{names}}}\n" + (f"{merge}\n" if at_root else f"other: {{{merge}}}\n")
+    return f"base: &a {{{names}}}\n" + place.format(merge=f"<<: [{aliases}]")
 
 
 def test_merge_keys_at_the_limit_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(subprocess, "run", _fake_sops(_merged(MERGES_AT_THE_LIMIT, at_root=True)))
+    monkeypatch.setattr(subprocess, "run", _fake_sops(_merged(MERGES_AT_THE_LIMIT, IN_THE_FILE)))
 
     found = load_sops_secrets(tmp_path / "s.enc.yaml")
 
     assert found == {f"k{n}": LEAK for n in range(PAIRS)}
 
 
-@pytest.mark.parametrize("at_root", [True, False], ids=["in-the-file", "in-a-value"])
+@pytest.mark.parametrize("place", [IN_THE_FILE, IN_A_VALUE], ids=["in-the-file", "in-a-value"])
 def test_merge_keys_past_the_limit_are_a_file_that_will_not_parse(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, at_root: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, place: str
 ) -> None:
     """The error names a line and nothing of the content, as each other
     error of this reader does."""
-    text = _merged(MERGES_AT_THE_LIMIT + 1, at_root=at_root)
+    text = _merged(MERGES_AT_THE_LIMIT + 1, place)
     monkeypatch.setattr(subprocess, "run", _fake_sops(text))
 
     with pytest.raises(SecretsFormatError) as caught:

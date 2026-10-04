@@ -75,19 +75,18 @@ def _row(name: str, env: str) -> str:
     return f"{name}:\n  command: {COMMAND}\n  env: {env}\n"
 
 
-def _copies(merges: int, *, one_more: bool = False) -> str:
-    """A roster whose row `b` merges the variables of row `a` `merges` times.
+#: The alias of the row `one` of `_copies`, which has one variable.
+ONE_MORE_PAIR: Final = "*one"
 
-    `one_more` adds the one variable of a third row to the merge.
-    """
+
+def _copies(merges: int, *more: str) -> str:
+    """A roster whose row `b` merges the variables of row `a` `merges`
+    times, and then each alias of `more`."""
     variables = ", ".join(f"K{n}: v" for n in range(PAIRS))
-    aliases = ["*e"] * merges
-    head = _row("a", f"&e {{{variables}}}")
-    if one_more:
-        head += _row("one", "&one {Z: v}")
-        aliases.append("*one")
+    aliases = ", ".join(["*e"] * merges + list(more))
+    head = _row("one", "&one {Z: v}") + _row("a", f"&e {{{variables}}}")
 
-    return head + _row("b", f"{{<<: [{', '.join(aliases)}]}}")
+    return head + _row("b", f"{{<<: [{aliases}]}}")
 
 
 def _doubling(levels: int) -> str:
@@ -120,7 +119,7 @@ def test_merge_keys_that_copy_as_many_pairs_as_the_limit_read(tmp_path: Path) ->
 
 
 def test_one_copied_pair_past_the_limit_is_a_file_that_will_not_parse(tmp_path: Path) -> None:
-    path = _file(tmp_path, _copies(MERGES_AT_THE_LIMIT, one_more=True))
+    path = _file(tmp_path, _copies(MERGES_AT_THE_LIMIT, ONE_MORE_PAIR))
 
     with pytest.raises(yaml.YAMLError) as caught:
         load_upstreams(path)
@@ -129,7 +128,7 @@ def test_one_copied_pair_past_the_limit_is_a_file_that_will_not_parse(tmp_path: 
 
 
 def test_the_refusal_names_the_file_as_each_file_failure_does(tmp_path: Path) -> None:
-    path = _file(tmp_path, _copies(MERGES_AT_THE_LIMIT, one_more=True))
+    path = _file(tmp_path, _copies(MERGES_AT_THE_LIMIT, ONE_MORE_PAIR))
 
     with pytest.raises(UpstreamError) as caught:
         RosterSource(upstreams_file=path).upstreams()
