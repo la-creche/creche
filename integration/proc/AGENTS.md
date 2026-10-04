@@ -135,7 +135,9 @@ the pi stand-in                          found through AGENT_PI_BIN
    wrapper sets what the sandbox image supplies.
 9. A socket is a Unix socket in the root or a loopback port. Never bind
    `0.0.0.0`. Keep the root path short: macOS refuses a socket path over 104
-   bytes.
+   bytes. Take a port from `Supervisor.free_port`, which holds the port for
+   the test. The lock files of the ports are in `creche-proc-ports-<uid>` in
+   the system temporary directory, the one place outside the root.
 10. Each service leads its own process group. The teardown sends `SIGTERM` to
     each group, waits, then sends `SIGKILL`.
 11. No test leaves a process behind. A teardown that had to kill a process
@@ -171,7 +173,7 @@ that the suite cannot run. Add one only when a scenario needs it.
 5. Read the record back with `calls_of`. Assert on the pid and the arguments.
    Do not read the memory of a process.
 6. Give a stand-in that listens a Unix socket in the root or a loopback port
-   from `free_port`.
+   from `Supervisor.free_port`.
 
 Do not grow `fake-pi.mjs` here. It belongs to `playpen/`.
 
@@ -221,8 +223,8 @@ down this list.
   file, the credential file and the grant file from the contracts. No
   scenario proves that `caregiver` writes them, or that it makes the switch
   call. A `caregiver` process needs three stand-ins that do not exist: `sbx`
-  with its create, list and remove verbs, the LiteLLM key API, and
-  `systemctl --user`.
+  with the verbs `caregiver` runs, for example `create` and `policy`, the
+  LiteLLM key API, and `systemctl --user`.
 - **No bridge on the path.** In `test_proc_delegate.py` a test sends the
   requests that the bridge sends. The playpen bundle fixes `PEP_URL` at build
   time: the LAN address of the site, port 8300. A pi process under the real

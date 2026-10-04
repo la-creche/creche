@@ -9,7 +9,9 @@ command and an environment, and gives back a `Child`:
    its report (`conftest.py`).
 3. `wait_ready` polls an address until an HTTP answer arrives, the child
    exits, or the deadline passes.
-4. `stop_all` ends every group and says which one it had to kill.
+4. `free_port` gives a loopback port and holds it for the test, so two runs
+   of this suite on one machine never take the same port.
+5. `stop_all` ends every group and says which one it had to kill.
 
 The registry at the bottom is the suite's check at session end: a group that
 no teardown confirmed gone is a leak.
@@ -18,10 +20,12 @@ no teardown confirmed gone is a leak.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import os
 import signal
 import socket
 import subprocess
+import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -57,6 +61,13 @@ _PORT_FLOOR: Final = 20_000
 _PORT_CEILING: Final = 32_000
 _PORT_ATTEMPTS: Final = 50
 LOOPBACK: Final = "127.0.0.1"
+
+#: One file per port, shared by every run of this suite that one user starts
+#: on one machine. A run holds a port by a lock on its file. The system drops
+#: the lock when the process ends, so a killed run leaves no port held. This
+#: directory is the one thing a test touches outside its root.
+_PORT_LOCK_DIR: Final = Path(tempfile.gettempdir()) / f"creche-proc-ports-{os.getuid()}"
+_LOCK_FILE_MODE: Final = 0o600
 
 
 class ProcError(Exception):
@@ -136,6 +147,30 @@ class Supervisor:
 
     log_dir: Path
     children: list[Child] = field(default_factory=list[Child])
+    _held_ports: dict[int, int] = field(default_factory=dict[int, int])
+
+    def free_port(self) -> int:
+        """A loopback port nothing holds now, held for this test until `stop_all`.
+
+        A second run of this suite on the same machine cannot take the port
+        between the check here and the bind in the child.
+        """
+        for _ in range(_PORT_ATTEMPTS):
+            span = _PORT_CEILING - _PORT_FLOOR
+            port = _PORT_FLOOR + int.from_bytes(os.urandom(2), "big") % span
+            lock = hold_port(port)
+
+            if lock is None:
+                continue
+
+            if port_is_free(port):
+                self._held_ports[port] = lock
+
+                return port
+
+            os.close(lock)
+
+        raise ProcError(f"no free loopback port in {_PORT_ATTEMPTS} attempts")
 
     def spawn(self, name: str, words: Sequence[str], env: Mapping[str, str], cwd: Path) -> Child:
         """Start one command in its own process group.
@@ -164,7 +199,7 @@ class Supervisor:
 
         child = Child(name, tuple(words), popen, stdout_path, stderr_path)
         self.children.append(child)
-        _note_group(name, child.pgid)
+        _note_group(child)
 
         return child
 
@@ -232,6 +267,11 @@ class Supervisor:
 
             problems.append(f"the process group of {child.name} outlived SIGKILL")
 
+        for lock in self._held_ports.values():
+            os.close(lock)
+
+        self._held_ports.clear()
+
         return problems
 
     def output(self) -> str:
@@ -263,15 +303,22 @@ def is_listening(address: Address) -> bool:
         return False
 
 
-def free_port() -> int:
-    """A loopback port nothing holds now, below the ephemeral range."""
-    for _ in range(_PORT_ATTEMPTS):
-        port = _PORT_FLOOR + int.from_bytes(os.urandom(2), "big") % (_PORT_CEILING - _PORT_FLOOR)
+def hold_port(port: int) -> int | None:
+    """Take the lock of one port. Returns the lock, or None when another holds it.
 
-        if port_is_free(port):
-            return port
+    The lock is an open file. Close it to give the port back.
+    """
+    _PORT_LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    lock = os.open(_PORT_LOCK_DIR / str(port), os.O_CREAT | os.O_RDWR, _LOCK_FILE_MODE)
 
-    raise ProcError(f"no free loopback port in {_PORT_ATTEMPTS} attempts")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock)
+
+        return None
+
+    return lock
 
 
 def port_is_free(port: int) -> bool:
@@ -383,15 +430,13 @@ def _tail(path: Path) -> str:
 
 # ------------------------------------------------------------ the registry
 
-#: Every group this pytest process started and no teardown confirmed gone.
-#: A group leaves this map only in `stop_all`, a few seconds after it was
-#: started, so a pid that the system gave to another program later is never
-#: signalled from here.
-_open_groups: dict[int, str] = {}
+#: Every child this pytest process started and no teardown confirmed gone, by
+#: process group. A group leaves this map only in `stop_all`.
+_open_groups: dict[int, Child] = {}
 
 
-def _note_group(name: str, pgid: int) -> None:
-    _open_groups[pgid] = name
+def _note_group(child: Child) -> None:
+    _open_groups[child.pgid] = child
 
 
 def _note_gone(pgid: int) -> None:
@@ -399,18 +444,27 @@ def _note_gone(pgid: int) -> None:
 
 
 def end_leaked_groups() -> list[str]:
-    """Kill every group no teardown ended. Returns one line per group.
+    """Report every group no teardown ended. Returns one line per group.
 
     The check at session end. An empty list is the only passing answer.
+
+    A group is killed only while its leader still runs as a child of this
+    process: the system gives the pid of such a leader to no other program.
+    A leader that ended earlier may have lost its pid to another program, so
+    its group is reported and never signalled.
     """
     leaked: list[str] = []
 
-    for pgid, name in sorted(_open_groups.items()):
-        if _group_is_alive(pgid):
-            leaked.append(f"{name} (process group {pgid}) was still running")
-            _signal_group(pgid, signal.SIGKILL)
-        else:
-            leaked.append(f"{name} (process group {pgid}) was never stopped by its test")
+    for pgid in sorted(_open_groups):
+        child = _open_groups[pgid]
+
+        if child.exit_code() is not None:
+            leaked.append(f"{child.name} (process group {pgid}) was never stopped by its test")
+            continue
+
+        _signal_group(pgid, signal.SIGKILL)
+        child.popen.wait()
+        leaked.append(f"{child.name} (process group {pgid}) was still running")
 
     _open_groups.clear()
 

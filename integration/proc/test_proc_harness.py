@@ -18,7 +18,7 @@ from proc_harness import (
     Supervisor,
     UnixAddress,
     end_leaked_groups,
-    free_port,
+    hold_port,
     pid_is_alive,
     pids_gone_by,
     port_is_free,
@@ -122,11 +122,36 @@ def test_a_group_that_no_teardown_ended_is_a_leak(tree: Tree) -> None:
     assert end_leaked_groups() == []
 
 
-def test_a_free_port_is_below_the_ephemeral_range() -> None:
-    port = free_port()
+def test_a_group_whose_leader_ended_is_reported_and_left_alone(tree: Tree) -> None:
+    """A pid that ended can belong to another program now. It gets no signal."""
+    forgotten = Supervisor(tree.proc_logs)
+    finished = forgotten.run("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    pgid = forgotten.children[0].pgid
+
+    leaked = end_leaked_groups()
+
+    assert finished.exit_code == 0
+    assert leaked == [f"one-shot (process group {pgid}) was never stopped by its test"]
+
+
+def test_a_free_port_is_below_the_ephemeral_range(supervisor: Supervisor) -> None:
+    port = supervisor.free_port()
 
     assert 20_000 <= port < 32_000
     assert port_is_free(port)
+
+
+def test_a_port_is_held_until_the_teardown(supervisor: Supervisor) -> None:
+    """No second run of this suite takes the port between the check and the bind."""
+    port = supervisor.free_port()
+
+    assert hold_port(port) is None
+
+    supervisor.stop_all()
+    lock = hold_port(port)
+
+    assert lock is not None
+    os.close(lock)
 
 
 def _read_when_written(path: Path) -> str:

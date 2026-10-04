@@ -21,7 +21,7 @@ from pathlib import Path
 import httpx
 import pytest
 from proc_chat import SESSIONS_PATH, chat_id, session_of
-from proc_harness import LOOPBACK, TcpAddress, free_port, is_listening
+from proc_harness import LOOPBACK, TcpAddress, is_listening
 from proc_owui import OwuiStack, door_env
 from proc_services import Service
 from proc_stack import attendance_env
@@ -154,7 +154,7 @@ async def test_sighup_reloads_the_token_files(
 def test_the_door_refuses_a_short_key(owui_prepared: OwuiStack) -> None:
     """Contract 02 §3 rule 7, as the door applies it to its own key."""
     tree = owui_prepared.tree
-    port = free_port()
+    port = owui_prepared.supervisor.free_port()
     _replace(tree.door_key_file, SHORT_SECRET)
 
     child = owui_prepared.spawn(Service.DOOR_OWUI, door_env(tree, f"{LOOPBACK}:{port}"))
@@ -167,7 +167,7 @@ def test_the_door_refuses_a_short_key(owui_prepared: OwuiStack) -> None:
 def test_the_door_refuses_to_bind_every_interface(owui_prepared: OwuiStack) -> None:
     """Contract 02 §3 rule 9: a door refuses `0.0.0.0` whatever its config says."""
     tree = owui_prepared.tree
-    port = free_port()
+    port = owui_prepared.supervisor.free_port()
 
     child = owui_prepared.spawn(Service.DOOR_OWUI, door_env(tree, f"{EVERY_INTERFACE}:{port}"))
 
@@ -178,7 +178,7 @@ def test_the_door_refuses_to_bind_every_interface(owui_prepared: OwuiStack) -> N
 def test_the_door_check_validates_and_binds_nothing(owui_prepared: OwuiStack) -> None:
     """`ExecStartPre` of the unit: `--check` reads the config and exits 0."""
     tree = owui_prepared.tree
-    port = free_port()
+    port = owui_prepared.supervisor.free_port()
     env = door_env(tree, f"{LOOPBACK}:{port}")
 
     child = owui_prepared.spawn(Service.DOOR_OWUI, env, CHECK_FLAG)

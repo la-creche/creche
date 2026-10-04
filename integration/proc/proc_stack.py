@@ -32,7 +32,6 @@ from proc_harness import (
     Supervisor,
     TcpAddress,
     UnixAddress,
-    free_port,
     kill_pid,
     port_is_free,
 )
@@ -154,7 +153,7 @@ class Stack:
         an error.
         """
         for _ in range(_BIND_ATTEMPTS):
-            port = free_port()
+            port = self.supervisor.free_port()
             child = self.spawn(service, env_for(f"{LOOPBACK}:{port}"))
 
             try:
