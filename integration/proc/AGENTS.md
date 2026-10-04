@@ -147,6 +147,7 @@ attendance, door-owui and the chaperone      only in the house
 | `test_proc_switch.py` | door and `attendance` | the switch call of contract 05 §5, with a test in the place of `caregiver` |
 | `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
 | `test_proc_delegate.py` | chaperone and `attendance` | the delegate path of contract 04 §7, the manifest and the audit |
+| `test_proc_caregiver_stage2.py` | the house | the stage 2 scenarios, with the names of the old suite |
 | `test_proc_caregiver_start.py` | `caregiver` alone, and the house | a start, a refused start, a signal, a kill, and the verbs that run to an end |
 | `test_proc_override.py` | door and `attendance` | each service starts through its variable |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
