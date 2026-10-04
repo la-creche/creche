@@ -12,6 +12,7 @@
 // the operator's Open WebUI transcript that they never typed (contract 02 §10.5).
 
 import { MAX_ENTRY_BYTES } from "./constants.js";
+import { cutToBytes } from "./framing.js";
 import type { PiEntry, SessionEntry } from "./protocol.js";
 
 const BLOCK_SEPARATOR = "\n";
@@ -29,14 +30,7 @@ export function readEntry(raw: PiEntry): SessionEntry | null {
 
 /** §8. The cap is on bytes, and a cut must not split a UTF-8 sequence. */
 export function cap(text: string): string {
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.byteLength <= MAX_ENTRY_BYTES) {
-    return text;
-  }
-
-  // `toString` on a cut buffer replaces a split sequence with U+FFFD rather
-  // than throwing, so the answer stays valid JSON either way.
-  return bytes.subarray(0, MAX_ENTRY_BYTES).toString("utf8");
+  return cutToBytes(text, MAX_ENTRY_BYTES);
 }
 
 function readText(raw: PiEntry): string {

@@ -25,12 +25,15 @@
 //   FAKE_PI_NO_ENTRIES  refuse every get_entries                default off
 //   FAKE_PI_FORK_LOG  append one JSON line per fork call        default off
 //   FAKE_PI_HANDLED   answer every prompt as handled, run nothing  default off
+//   FAKE_PI_DIE_ON_ENTRIES  exit hard when a get_entries arrives    default off
+//   FAKE_PI_ERROR_TEXT  refuse every prompt with this error text    default off
 //
-// Four more make this process misbehave, as an untrusted pi may (invariant 12):
+// Five more make this process misbehave, as an untrusted pi may (invariant 12):
 //   FAKE_PI_RAW_BOOT    write this text as one record at start-up    default off
 //   FAKE_PI_RAW_LINE    write this text as one record in each turn   default off
 //   FAKE_PI_NULL_ENTRY  put a null first in every get_entries list   default off
 //   FAKE_PI_ODD_ERROR   refuse every prompt with an error that is not text  default off
+//   FAKE_PI_STDERR      write this text to stderr as one line at start-up  default off
 
 const DELTAS = Number(process.env.FAKE_PI_EVENTS || 6);
 const DELAY_MS = Number(process.env.FAKE_PI_DELAY_MS || 8);
@@ -39,10 +42,13 @@ const DIE_AT = Number(process.env.FAKE_PI_DIE_AT || 0);
 const NO_ENTRIES = process.env.FAKE_PI_NO_ENTRIES === "1";
 const FORK_LOG = process.env.FAKE_PI_FORK_LOG || "";
 const HANDLED = process.env.FAKE_PI_HANDLED === "1";
+const DIE_ON_ENTRIES = process.env.FAKE_PI_DIE_ON_ENTRIES === "1";
+const ERROR_TEXT = process.env.FAKE_PI_ERROR_TEXT || "";
 const RAW_BOOT = process.env.FAKE_PI_RAW_BOOT || "";
 const RAW_LINE = process.env.FAKE_PI_RAW_LINE || "";
 const NULL_ENTRY = process.env.FAKE_PI_NULL_ENTRY === "1";
 const ODD_ERROR = process.env.FAKE_PI_ODD_ERROR === "1";
+const STDERR_LINE = process.env.FAKE_PI_STDERR || "";
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -172,6 +178,12 @@ async function runTurn(text, prompt) {
 }
 
 function onGetEntries(command) {
+  // A process that dies after `agent_settled` and before the playpen has
+  // read the entries of the turn.
+  if (DIE_ON_ENTRIES) {
+    process.exit(9);
+  }
+
   if (NO_ENTRIES) {
     send({ type: "response", id: command.id, command: "get_entries", success: false });
     return;
@@ -247,6 +259,10 @@ function onCommand(command) {
       send({ type: "response", id: command.id, command: "prompt", success: false, error: { code: 1 } });
       return;
     }
+    if (ERROR_TEXT) {
+      send({ type: "response", id: command.id, command: "prompt", success: false, error: ERROR_TEXT });
+      return;
+    }
     if (HANDLED) {
       send({ type: "response", id: command.id, command: "prompt", success: true, data: { disposition: "handled" } });
       return;
@@ -308,6 +324,10 @@ async function main() {
 
   if (RAW_BOOT) {
     sendRaw(RAW_BOOT);
+  }
+
+  if (STDERR_LINE) {
+    process.stderr.write(STDERR_LINE + "\n");
   }
 
   process.stdin.setEncoding("utf8");

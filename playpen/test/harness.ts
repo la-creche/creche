@@ -52,6 +52,12 @@ export interface HarnessOptions {
   readonly lockBeatMs?: number;
   /** A control directory of the test's own, for the unwritable-mount case. */
   readonly controlDir?: string;
+  /** A turn file of the test's own, for a handler that throws. */
+  readonly turnFile?: (controlDir: string) => TurnFile;
+  /** A launcher of the test's own, around the real one, for a start that throws. */
+  readonly launcher?: (real: PiLauncher) => PiLauncher;
+  /** How long a start waits for the credential file, for a start that a test holds open. */
+  readonly credRetryMs?: number;
 }
 
 /**
@@ -120,16 +126,17 @@ export class Harness {
     });
 
     const control = options.controlDir ?? join(this.root, "control");
+    const launcher = fakeLauncher(options.piEnv ?? {}, this.spawns);
 
     this.playpen = new Playpen({
       sandbox: this.sandboxId,
       input: this.stdin,
       channel: new Channel(out),
-      launcher: fakeLauncher(options.piEnv ?? {}, this.spawns),
+      launcher: options.launcher?.(launcher) ?? launcher,
       lock: new PlaypenLock(control, options.lockBeatMs ?? LOCK_BEAT_MS),
-      creds: new CredReader(join(this.root, "creds")),
+      creds: new CredReader(join(this.root, "creds"), options.credRetryMs),
       configDir: join(this.root, "config"),
-      turnFile: new TurnFile(control),
+      turnFile: options.turnFile?.(control) ?? new TurnFile(control),
       toolState: new ToolStateFile(control),
       processes: new ProcessRecords(control, this.sandboxId),
       bridgePath: this.bridgePath,
