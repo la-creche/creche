@@ -33,7 +33,7 @@ defect that a test finds late.
 | `grants` | The grant file, the call body, the approval body and the audit record: contract 04. |
 | `status` | The status document: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
-| `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. |
+| `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
 ## Where a new type goes
@@ -183,6 +183,73 @@ The rule has two exceptions:
   row of the `DEVIATIONS` table in the test.
 - A number of more than 4300 digits in a version. Python reads no longer
   text as an integer, so the types refuse it. No vector holds such a number.
+
+## The config of a process
+
+`creche_contracts::config` holds one type for the config of each daemon, and
+one type for each config file. A type holds an address, a path or a duration,
+and never a raw text.
+
+| Module of `config` | What it holds |
+|---|---|
+| `site` | The site file: `SiteFile` is the raw form, and `Site` is the valid form. |
+| `attendance`, `caregiver`, `chaperone`, `door_owui`, `door_trigger`, `noticeboard`, `intake` | The config of one daemon. |
+| `roster` | The roster of the chaperone. `RawRoster` takes its tree through `serde`. |
+| `mounts` | `runtime.json`, `creds.json` and the env file of the playpen. |
+
+A binary crate loads its config in this sequence:
+
+1. Build the map of the variables one time, with
+   `Env::from_os(std::env::vars_os())`. Do not call `std::env::vars`. It
+   stops the process on a value that is not UTF-8.
+2. Read each file that the config needs, for example the site file or a key
+   file. Give the text to the constructor. No config type reads the
+   environment or a file.
+3. Call the constructor of the config type, for example
+   `AttendanceConfig::from_env`. It returns each error of the parse, not only
+   the first one.
+4. Give the result to `config::start`. It applies the failure action of the
+   type.
+5. For `Start::Exit`, write each error to the log. Then return the status
+   from `main` as an `ExitCode`. Do not call `std::process::exit`. The lint
+   gate refuses it.
+6. For `Start::RefuseEachCall`, start the listener, refuse each call and
+   publish the errors as a fault.
+7. At a reload, give the last good value and the new result to
+   `config::reload`. For `Reload::Kept`, publish the fault and continue.
+
+The rule against a crash loop:
+
+- A daemon must not start again in a loop on a config that is not valid. No
+  restart corrects such a config.
+- Each config type states its failure action: it implements `Checked`.
+  `config::start` takes only a type that does.
+- `AtStart::ExitConfig` exits with status 78, `EX_CONFIG`. The unit file of
+  that daemon must hold `RestartPreventExitStatus=78`.
+- Today each of the seven daemon units holds `Restart=always` and
+  `StartLimitIntervalSec=0`, and none holds that line. systemd thus starts a
+  daemon again after each exit status, with no limit. The delay is 5 seconds
+  at first and 120 seconds at most.
+- Add the line in the pull request that moves a unit to a Rust binary.
+  `bin/tests/test_rust_config_units.py` pins what the units hold today.
+  Change the pin in the same pull request.
+- `AtReload::KeepLastGood` never exits. A reload that fails keeps the last
+  good value.
+
+More rules for a config type:
+
+- An error names the variable and the reason. It never holds the value,
+  because a value can be a secret.
+- Give each default of the code as text to the parser of the type. A default
+  that is not valid is then an error and not a panic.
+- A config holds the path of a key file and never the key. The binary reads
+  the file and calls `config::key_of_file`.
+- Give each variable of a unit a constant in the module of its daemon.
+  `bin/tests/test_rust_config_units.py` fails for a variable of a unit that
+  has no constant.
+- `config/python.rs` holds the differential test of the module. Its table
+  `SURFACES` names each `config.` surface, and its table `DEVIATIONS` names
+  each difference on purpose.
 
 ## Code style
 

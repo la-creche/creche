@@ -129,7 +129,7 @@ impl Doors {
 /// restart corrects it. The Python service exits with 78 for no LAN address
 /// and for secrets that do not parse, with 2 for a necessary variable that
 /// is not set, and with 1 for a `PEP_BIND` that it cannot use. systemd
-/// starts the unit again each 5 seconds for each of the three.
+/// starts the unit again after each of the three, with no limit.
 ///
 /// At a reload (`SIGHUP`), the chaperone reads the roster and the secrets
 /// again, and not this config. A roster or a secrets file that does not

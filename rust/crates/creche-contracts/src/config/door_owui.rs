@@ -46,7 +46,7 @@ const DEFAULT_FAMILIES_DIR: &str = "/srv/agents/state/rework/families";
 /// the daemon with `EX_CONFIG`, and the unit file must hold
 /// `RestartPreventExitStatus=78`. The Python door exits with 1 today, and
 /// `ExecStartPre` runs the same check, so systemd starts the unit again
-/// each 5 seconds with no limit. The daemon does not read this config
+/// after each exit, with no limit. The daemon does not read this config
 /// again.
 ///
 /// The type is stricter than the Python reader in these places: the host

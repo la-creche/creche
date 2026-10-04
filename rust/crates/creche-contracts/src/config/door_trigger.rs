@@ -56,7 +56,7 @@ const DEFAULT_REFRESH_S: &str = "30.0";
 /// FAILURE ACTION. At start, a config or a token file that is not valid
 /// stops the daemon with `EX_CONFIG`, and the unit file must hold
 /// `RestartPreventExitStatus=78`. The Python door exits with 1 today, so
-/// systemd starts the unit again each 5 seconds with no limit. The daemon
+/// systemd starts the unit again after each exit, with no limit. The daemon
 /// does not read this config again. A `SIGHUP` reads the routes again: the
 /// registry and the webhook tokens. A route that is not valid keeps the
 /// last good routes.

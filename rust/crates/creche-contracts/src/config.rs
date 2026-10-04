@@ -75,7 +75,7 @@ pub enum AtStart {
     /// The unit file must then hold [`NO_RESTART_LINE`]. Today each daemon
     /// unit holds `Restart=always` and `StartLimitIntervalSec=0`, and none
     /// holds that line. Without the line, systemd starts the process again
-    /// after `RestartSec=5s`, with no limit.
+    /// after each exit status, with no limit.
     ExitConfig,
     /// The process starts, refuses each call and publishes the fault. Its
     /// unit file needs no change.

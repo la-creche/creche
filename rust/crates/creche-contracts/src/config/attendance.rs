@@ -281,7 +281,7 @@ impl OwuiCopy {
 /// with `EX_CONFIG`, and the unit file must hold
 /// `RestartPreventExitStatus=78`. The Python service exits with 2 today,
 /// and `ExecStartPre` runs the same check, so systemd starts the unit again
-/// each 5 seconds with no limit. The daemon does not read this config
+/// after each exit, with no limit. The daemon does not read this config
 /// again. A `SIGHUP` reads the token files again, and a token file that is
 /// not valid keeps the last good set.
 ///

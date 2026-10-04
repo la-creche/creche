@@ -245,7 +245,7 @@ impl Images {
 /// with `EX_CONFIG`, and the unit file must hold
 /// `RestartPreventExitStatus=78`. The Python service exits with 2 for no
 /// LAN address and for a flag that `argparse` refuses, so systemd starts
-/// the unit again each 5 seconds with no limit. The daemon does not read
+/// the unit again after each exit, with no limit. The daemon does not read
 /// this config again: a `SIGHUP` only starts a look at the registry.
 ///
 /// The type is stricter than the Python reader in these places:

@@ -59,8 +59,8 @@ impl PushHook {
 /// FAILURE ACTION. At start, a config that is not valid stops the daemon
 /// with `EX_CONFIG`, and the unit file must hold
 /// `RestartPreventExitStatus=78`. The Python daemon exits with 1 today for
-/// a site file that it cannot use, so systemd starts the unit again each 5
-/// seconds with no limit. The daemon does not read this config again.
+/// a site file that it cannot use, so systemd starts the unit again after
+/// each exit, with no limit. The daemon does not read this config again.
 ///
 /// A hook that is not set is not an error. The daemon then tells nobody
 /// about a token, so it drops each token and serves no page. That is the
