@@ -10,7 +10,8 @@ machines at once (.github/workflows/gate.yml).
 
 It also drops the variables that point a `git` child at the repository of
 the caller, when pytest imports this file. At the same time it gives each
-`git` child an empty global config file and no config file of the system.
+`git` child an empty global config file, no config file of the system, and
+no ignore file and no attributes file of a person.
 
 It also gives SIGINT the default handler of Python when the run starts with
 SIGINT ignored, so a run from a background job passes the same tests.
@@ -57,7 +58,22 @@ def _drop_git_env() -> None:
 #: What gives a `git` child an empty file in place of the global config file,
 #: and no config file of the system. The global file is the one of the person
 #: who runs the suite, in the home directory or in the variable.
-GIT_NO_CONFIG = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+#:
+#: `git` also reads an ignore file and an attributes file from the config
+#: directory of that person, and an attributes file of the system. No
+#: variable names another place for the first two, so the two pairs give each
+#: setting the empty file. A pair outranks the config of a repository: a
+#: fixture that needs one of the two settings passes it with `git -c`.
+GIT_NO_CONFIG = {
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_ATTR_NOSYSTEM": "1",
+    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_KEY_0": "core.excludesFile",
+    "GIT_CONFIG_VALUE_0": os.devnull,
+    "GIT_CONFIG_KEY_1": "core.attributesFile",
+    "GIT_CONFIG_VALUE_1": os.devnull,
+}
 
 
 def _drop_git_config() -> None:
@@ -66,7 +82,8 @@ def _drop_git_config() -> None:
     Some fixtures run `git` in a throwaway repository with the environment
     they inherit. `git` then reads the global config file of the person who
     runs the suite. One setting there, `core.fsmonitor`, starts a program for
-    each repository. Other settings change what a test sees.
+    each repository. Other settings change what a test sees. The ignore file
+    of that person can keep a file of a fixture out of `git add -A`.
     bin/tests/test_git_config_dropped.py holds the proof.
     """
     os.environ.update(GIT_NO_CONFIG)

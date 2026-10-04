@@ -20,6 +20,12 @@ workflow: branches, hooks, CI, tags and releases.
   `GIT_CONFIG_NOSYSTEM` to `1`. A `git` child of a test then reads no config
   file of the person who runs the suite, and none of the system. A fixture
   that needs a setting sets it in its own repository or with `git -c`.
+- The same file gives `core.excludesFile` and `core.attributesFile` an empty
+  file, through `GIT_CONFIG_COUNT`. It sets `GIT_ATTR_NOSYSTEM` to `1`. A
+  `git` child then reads no ignore file and no attributes file of that
+  person, and no attributes file of the system. The two settings outrank the
+  config of a repository. A fixture that needs one of the two passes it with
+  `git -c`.
 
 ## Hooks
 
