@@ -63,11 +63,6 @@ FIRE: Final = "fire"
 #: shorter one, and a scenario that sends SIGHUP gives a longer one.
 REFRESH_S: Final = 30.0
 
-#: The tuning of the pi stand-in for a turn that the next firing finds
-#: running: 250 deltas, 40 ms apart. It is long enough to read the journal of
-#: the turn, and to fill the queue behind it.
-HELD_TURN: Final = {"events": 250, "delay_ms": 40}
-
 #: Where the quiet check finds the chaperone. No chaperone runs here, and the
 #: family of this fixture gives the check no reason to call one.
 NO_CHAPERONE_URL: Final = f"http://{LOOPBACK}:9"

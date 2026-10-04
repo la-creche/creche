@@ -24,9 +24,9 @@ import httpx
 import pytest
 from proc_chat import until
 from proc_harness import Finished, Supervisor
-from proc_standins import set_pi_env
+from proc_standins import HELD_TURN, set_pi_env
 from proc_tree import Tree, append_audit, audit_record
-from proc_trigger import HELD_TURN, REVIEW, TriggerStack, hook_path
+from proc_trigger import REVIEW, TriggerStack, hook_path
 
 #: Contract 01 §3.15: the default floor. No scenario here runs that long, so
 #: the floor never is the reason for a wake.

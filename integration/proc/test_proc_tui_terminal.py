@@ -15,10 +15,12 @@ Each scenario reads four boundaries and no screen text:
 The three scenarios that `integration/tests/test_ct_tui_door.py` has keep
 their names, and so does the one of `test_cv_launcher.py`. Those suites run
 the door as an object in the test process, with an `sbx` that exits at once.
+The takeover scenario of `test_i4_stage4.py` keeps its name too.
 
-Each scenario but two starts a terminal on a session that ran a turn and
-that no terminal held before. The playpen then holds one pi process that
-runs and waits, and the door has it released before the launcher looks.
+Each scenario that gives pi a terminal, but two, starts on a session that
+ran a turn and that no terminal held before. The playpen then holds one pi
+process that runs and waits, and the door has it released before the
+launcher looks.
 
 In the two other scenarios the playpen starts a pi process at about the time
 the launcher looks: for a new session (contract 03 §4.7 rule 8), and after a
@@ -29,15 +31,16 @@ from run to run. The scenario of a new session and the scenario of
 
 from __future__ import annotations
 
+import asyncio
 import json
 import signal
 import time
 
 import pytest
-from proc_chat import until
+from proc_chat import TURN_SETTLED, TURN_STARTED, chat_id, run_stream, session_of, until
 from proc_harness import Child, pid_is_alive, pids_gone_by
 from proc_ids import ULID
-from proc_standins import PI, calls_of
+from proc_standins import HELD_TURN, PI, calls_of, set_pi_env
 from proc_terminal import ENTER, EOF, INTERRUPT, Terminal
 from proc_tree import FAMILY, SANDBOX
 from proc_tui import (
@@ -203,6 +206,36 @@ async def test_force_takes_an_idle_lease_from_another_terminal(tui: TuiStack) ->
         (HOLDER, TAKEN_OVER),
     ]
     assert await tui.writer(session) is None
+
+
+async def test_i4_a_running_turn_refuses_every_takeover(tui: TuiStack) -> None:
+    """Contract 02 §7.3 rule 4: no door and no flag takes a session with a turn in flight.
+
+    The chat runs a long turn. A terminal asks for the session, first with
+    no flag and then with `--force`. `attendance` refuses each one, so the
+    door runs no `sbx`, the lease stays with the chat, and the turn ends as
+    a turn with no terminal beside it ends.
+    """
+    tree = tui.tree
+    chat = chat_id()
+    session = session_of(chat)
+    set_pi_env(tree, **HELD_TURN)
+
+    async with tui.door_client() as door:
+        running = asyncio.create_task(run_stream(door, chat, "a long one"))
+        await until(lambda: TURN_STARTED in tree.journal_kinds(session), "the turn of the chat")
+        codes = [
+            tui.open_terminal(FAMILY, ARG_SESSION, session, *flags)[0].wait(EXIT_DEADLINE_S)
+            for flags in ((), (FORCE_FLAG,))
+        ]
+        ran_all_the_time = TURN_SETTLED not in tree.journal_kinds(session)
+        frames = await running
+
+    assert ran_all_the_time, "the turn ended before the second terminal asked"
+    assert all(code != 0 for code in codes), codes
+    assert tui.terminal_calls() == []
+    assert tui.lease_changes(session) == [("owui", GRANTED)]
+    assert not frames.error_chunks
 
 
 async def test_ct_a_new_session_exists_before_pi_runs(tui: TuiStack) -> None:

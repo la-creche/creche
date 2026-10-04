@@ -107,6 +107,10 @@ TERMINAL_FLAG: Final = "-it"
 #: The word that ends the words of `sbx` and starts the command.
 _COMMAND_SEPARATOR: Final = "--"
 
+#: A tuning of the pi stand-in for a turn of about 10 seconds: 250 deltas,
+#: 40 ms apart. A scenario acts while that turn runs.
+HELD_TURN: Final = {"events": 250, "delay_ms": 40}
+
 #: How many ports one start of a stand-in may try.
 _BIND_ATTEMPTS: Final = 3
 

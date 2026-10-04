@@ -30,7 +30,7 @@ from proc_chat import TURN_STARTED, until
 from proc_harness import LOOPBACK, TcpAddress, is_listening
 from proc_ids import AUTO_PREFIX
 from proc_services import Service
-from proc_standins import set_pi_env
+from proc_standins import HELD_TURN, set_pi_env
 from proc_tree import (
     AUTONOMOUS,
     MAX_QUEUED_TURNS,
@@ -43,7 +43,7 @@ from proc_tree import (
     write_status,
     write_webhook_token,
 )
-from proc_trigger import HELD_TURN, REVIEW, SERVE, WEBHOOK, TriggerStack, hook_path, serve_env
+from proc_trigger import REVIEW, SERVE, WEBHOOK, TriggerStack, hook_path, serve_env
 
 #: A job of the fixture family crosses four processes on a loaded machine.
 JOB_DEADLINE_S = 60.0

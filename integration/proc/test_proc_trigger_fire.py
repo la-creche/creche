@@ -25,9 +25,9 @@ import pytest
 from proc_chat import SESSIONS_PATH, TURN_STARTED, chat_id, message_id, session_of, until
 from proc_ids import AUTO_PREFIX, ULID
 from proc_services import Service
-from proc_standins import set_pi_env
+from proc_standins import HELD_TURN, set_pi_env
 from proc_tree import Tree, first_sandbox, replace_secret, token_of
-from proc_trigger import CHAT, FIRE, HELD_TURN, ORACLE, REVIEW, TriggerStack, fire_env
+from proc_trigger import CHAT, FIRE, ORACLE, REVIEW, TriggerStack, fire_env
 
 #: Contract 02 §13.1: the times of an outcome record are RFC 3339 in UTC.
 RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z")
