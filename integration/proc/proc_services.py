@@ -123,8 +123,12 @@ VARIABLE_PREFIX: Final = "CRECHE_PROC_"
 #: Set it to keep the root of every test on disk, to read after a run.
 KEEP_ROOTS_ENV: Final = "CRECHE_PROC_KEEP"
 
+#: Set it to make a skip a failure. A run in which every test skips is green,
+#: and it judged nothing. A CI job sets it.
+NO_SKIP_ENV: Final = "CRECHE_PROC_NO_SKIP"
+
 #: The variables of the suite that replace no command.
-SWITCHES: Final = frozenset({KEEP_ROOTS_ENV})
+SWITCHES: Final = frozenset({KEEP_ROOTS_ENV, NO_SKIP_ENV})
 
 #: What only the default command needs. Python holds a child's stdout in a
 #: buffer when it is a file, and the failure report reads that file while the

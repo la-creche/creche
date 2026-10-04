@@ -30,6 +30,10 @@ missing. A silent pass would be worse than a skip. The suite needs `node` on
 
 Set `CRECHE_PROC_KEEP=1` to keep the root of each test on disk after the run.
 
+Set `CRECHE_PROC_NO_SKIP=1` to make each skip a failure. A run in which
+every test skips is green, and it judged nothing. Set the variable in a CI
+job.
+
 ## Words
 
 | Word | Meaning |
@@ -208,7 +212,8 @@ path, the stdout and the stderr of each process, and each playpen log. A
 test that fails in its teardown carries the same output in the text of the
 failure. Work down this list.
 
-1. Every topology test skips: the bundle is missing. Build it.
+1. Every topology test skips: the bundle is missing. Build it. With
+   `CRECHE_PROC_NO_SKIP=1`, each of these tests fails with the same text.
 2. `exited N before it was ready`: the service refused to start. Read its
    stderr in the same message.
 3. `was not ready in 30 s`: the service runs and does not answer HTTP at its

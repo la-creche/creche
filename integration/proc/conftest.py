@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 
 import httpx
 import pytest
@@ -29,7 +29,7 @@ from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
 from proc_owui import OwuiStack
 from proc_report import describe, end_processes
-from proc_services import KEEP_ROOTS_ENV, describe_table, unknown_variables
+from proc_services import KEEP_ROOTS_ENV, NO_SKIP_ENV, describe_table, unknown_variables
 from proc_tree import Tree, make_root, playpen_bundle, remove_root, socket_path_fits
 
 _HERE = Path(__file__).resolve().parent
@@ -102,7 +102,7 @@ def bundle() -> Path:
     path = playpen_bundle()
 
     if not path.exists():
-        pytest.skip(f"{path} is missing: {_BUILD_HINT}")
+        _skip(f"{path} is missing: {_BUILD_HINT}")
 
     return path
 
@@ -126,7 +126,7 @@ def tree() -> Iterator[Tree]:
 
     if not socket_path_fits(built):
         remove_root(root)
-        pytest.skip(f"this platform cannot bind a Unix socket path as long as {root}/sock")
+        _skip(f"this platform cannot bind a Unix socket path as long as {root}/sock")
 
     yield built
 
@@ -195,3 +195,11 @@ async def sandbox(delegate: DelegateStack) -> AsyncIterator[httpx.AsyncClient]:
     """A client that plays the sandbox of the caller family at the chaperone."""
     async with delegate.sandbox_client() as client:
         yield client
+
+
+def _skip(reason: str) -> NoReturn:
+    """Skip a test that cannot run here. Fail it when the run forbids a skip."""
+    if os.environ.get(NO_SKIP_ENV):
+        pytest.fail(f"{reason} ({NO_SKIP_ENV} is set, so a skip is a failure)")
+
+    pytest.skip(reason)

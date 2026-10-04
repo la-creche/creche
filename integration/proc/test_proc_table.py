@@ -13,6 +13,7 @@ import pytest
 from proc_services import (
     DEFAULT_ONLY_ENV,
     SERVICES,
+    SWITCHES,
     CommandError,
     Origin,
     Service,
@@ -125,6 +126,11 @@ def test_every_variable_of_the_table_is_known() -> None:
     environ = dict.fromkeys((entry.override for entry in SERVICES.values()), "/bin/sh")
 
     assert unknown_variables(environ) == []
+
+
+def test_every_switch_of_the_suite_is_known() -> None:
+    assert frozenset({"CRECHE_PROC_KEEP", "CRECHE_PROC_NO_SKIP"}) == SWITCHES
+    assert unknown_variables(dict.fromkeys(SWITCHES, "1")) == []
 
 
 def _exec_start(unit: str) -> str:
