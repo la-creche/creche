@@ -703,6 +703,10 @@ def _keep_last_good(
         validation=validation,
         sandboxes=tuple(sandboxes.status_of(one) for one in _live_records(state_root, family_name)),
         faults=folded,
+        # A rotation does not wait for a valid file, so the epoch is read
+        # on every pass. Without it `attendance` sends epoch 1, and a
+        # resident process keeps the key the rotation deleted.
+        credentials=steps.kept_credentials(family_name, state_root),
         # The last good definition is what serves, so its limits are what
         # `attendance` must still enforce. Publishing the defaults instead
         # would silently move `max_running_turns` on a family that never
@@ -752,6 +756,7 @@ def _refuse_immutable(
         validation=validation,
         sandboxes=tuple(sandboxes.status_of(one) for one in _live_records(state_root, family.name)),
         faults=folded,
+        credentials=steps.kept_credentials(family.name, state_root),
         limits=steps.limits_for(applied.family),
         chaperone=chaperone,
     )

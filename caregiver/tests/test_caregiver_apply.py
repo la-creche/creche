@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from agent_family import FamilyState
 from caregiver.apply import ApplyResult, FamilyNotFoundError, apply_once
-from caregiver.credentials import read_creds
+from caregiver.credentials import read_creds, write_creds
 from caregiver.driver import DriverError, FakeDriver, SandboxSpec
 from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
 from caregiver.playpen_env import read_playpen_env
@@ -328,6 +329,33 @@ def test_an_invalid_revision_keeps_the_last_good_applied_rev(
     assert bad.status.state is FamilyState.INVALID
     assert bad.status.applied_rev == good.status.applied_rev
     assert bad.status.validation.never_valid is False
+
+
+def test_an_invalid_revision_still_publishes_the_epoch(
+    registry_root: Path, state_root: Path
+) -> None:
+    """A rotation raises the epoch in `creds.json` whatever the family file
+    says, and the status document is where `attendance` reads it."""
+    apply_chat(registry_root, state_root)
+    creds_path = paths.creds_path(state_root, "chat")
+    creds = read_creds(creds_path)
+    assert creds is not None
+    write_creds(creds_path, replace(creds, epoch=creds.epoch + 1))
+
+    write_registry(registry_root, kind="not-a-real-kind")
+    bad = apply_chat(registry_root, state_root)
+
+    assert bad.status.state is FamilyState.INVALID
+    assert bad.status.credentials is not None
+    assert bad.status.credentials.epoch == creds.epoch + 1
+
+
+def test_a_family_thats_never_validated_publishes_no_credentials(
+    registry_root: Path, state_root: Path
+) -> None:
+    write_registry(registry_root, kind="not-a-real-kind")
+    result = apply_chat(registry_root, state_root)
+    assert result.status.credentials is None
 
 
 def test_an_invalid_revision_does_not_touch_the_existing_grant_file(

@@ -85,6 +85,8 @@ host where something has gone wrong.
   `rotate_serving` takes the key's router and budget from the applied
   snapshot. It writes the token digests into the grant file.
 - `settle` writes the token digests alone. It reads no family file.
+- An `invalid` status document carries the credentials block. `attendance`
+  reads the epoch from that document alone.
 - Never build a grant from the applied snapshot. `all` expands against
   the current server files, and no validation approved that result.
 - A cron line with no `OnCalendar` spelling gets no unit.
@@ -160,5 +162,3 @@ Nothing here touches a real sandbox or LiteLLM.
 - `apply-once` publishes no chaperone fault (`apply.py`).
 - `settle` and `rotate_serving` write token digests while a family file is
   invalid. Contract 05 §3.1 and §6.3 do not agree on this (`loop.py`).
-- An `invalid` status document has no credentials block. A rotation in that
-  state may not reach a resident process (`reconcile.py`).
