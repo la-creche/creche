@@ -863,6 +863,28 @@ pub fn key_of_file(text: &str) -> Result<Secret, KeyError> {
     Secret::try_from(key.to_owned()).map_err(|_| KeyError::TooShort)
 }
 
+/// The text without the space at its two ends, as `str.strip` of Python gives
+/// it.
+///
+/// A reader of a token file or of a header calls this function, so the crate
+/// holds one copy of the rule. Python removes each `White_Space` character of
+/// Unicode and the four separators U+001C to U+001F. `str::trim` keeps the
+/// four separators.
+///
+/// ```
+/// use creche_contracts::config::python_strip;
+///
+/// assert_eq!(python_strip(" \t token\r\n"), "token");
+/// assert_eq!(python_strip("\u{1c}token\u{1f}"), "token");
+/// assert_eq!(python_strip("\u{85}token\u{a0}"), "token");
+/// assert_eq!(python_strip("to ken"), "to ken");
+/// assert_eq!("\u{1c}token\u{1f}".trim(), "\u{1c}token\u{1f}");
+/// ```
+#[must_use]
+pub fn python_strip(text: &str) -> &str {
+    pytext::strip(text)
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::ffi::OsStringExt;
