@@ -232,13 +232,29 @@ def is_under(path: str, root: str) -> bool:
     return path.startswith(root + "/")
 
 
+#: The most digits of a count that `int` reads here. Each range of a count
+#: in this file ends below six digits. `int` raises on a run of digits past
+#: the digit limit of the interpreter, so a longer run reads as
+#: `_COUNT_PAST_RANGE`, and the range check of the caller refuses it.
+_COUNT_DIGITS_MAX: Final = 18
+_COUNT_PAST_RANGE: Final = 10**_COUNT_DIGITS_MAX
+
+
+def _count(digits: str) -> int:
+    """A run of ASCII digits as a number, or a number past each range."""
+    if len(digits) > _COUNT_DIGITS_MAX:
+        return _COUNT_PAST_RANGE
+
+    return int(digits)
+
+
 def memory_mb(value: str) -> int | None:
     """`[1-9][0-9]*[mg]` to megabytes. None when the spelling is wrong."""
     match = re.fullmatch(r"([1-9][0-9]*)([mg])", value)
     if match is None:
         return None
 
-    size = int(match.group(1))
+    size = _count(match.group(1))
     return size * 1024 if match.group(2) == "g" else size
 
 
@@ -251,7 +267,7 @@ def duration_s(value: str) -> int | None:
     if match is None:
         return None
 
-    return int(match.group(1)) * _DURATION_SECONDS[match.group(2)]
+    return _count(match.group(1)) * _DURATION_SECONDS[match.group(2)]
 
 
 _IPV4: Final = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")

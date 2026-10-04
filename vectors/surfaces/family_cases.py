@@ -820,6 +820,11 @@ approval:
     # --- one more edge of a rule ---
     _case("rule-sandbox-memory-over", HEAD + "sandbox: { memory: 16385m }\n"),
     _case(
+        "rule-sandbox-memory-digits",
+        HEAD + "sandbox: { memory: " + "9" * _HUGE_DIGITS + "g }\n",
+    ),
+    _case("rule-job-timeout-digits", HEAD + "job: { timeout: " + "9" * _HUGE_DIGITS + "s }\n"),
+    _case(
         "rule-approval-all-undeclared",
         ATTENDED_HEAD + "tools:\n  kagi: all\napproval: [kagi__no_such_tool, kagi__kagi_extract]\n",
     ),

@@ -506,6 +506,9 @@ SANDBOX_CASES = (
     ({"cpus": 2, "memory": "2x"}, "must match [1-9][0-9]*[mg]"),
     ({"cpus": 2, "memory": "64m"}, "is outside 256m to 16g"),
     ({"cpus": 2, "memory": "32g"}, "is outside 256m to 16g"),
+    # A count of more digits than the interpreter converts is past the range.
+    ({"cpus": 2, "memory": "9" * 5000 + "g"}, "is outside 256m to 16g"),
+    ({"cpus": 2, "memory": "9" * 5000 + "m"}, "is outside 256m to 16g"),
     ({"cpus": 2, "memory": "2g", "max_resident_processes": 0}, "is outside 1 to 32"),
     ({"cpus": 2, "memory": "2g", "max_resident_processes": 33}, "is outside 1 to 32"),
 )
@@ -605,6 +608,7 @@ JOB_CASES = (
     ({"timeout": "10x"}, "must match [1-9][0-9]*[smh]"),
     ({"timeout": "0s"}, "must match [1-9][0-9]*[smh]"),  # [1-9] leads, so "0s" is a bad shape
     ({"timeout": "2h"}, "outside 1s to 1h"),
+    ({"timeout": "9" * 5000 + "s"}, "outside 1s to 1h"),
 )
 
 
