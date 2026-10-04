@@ -30,9 +30,9 @@ Three rules make this safe.
 
 This module owns the only YAML library in the noticeboard, and it owns no meaning:
 it moves values between two structures the reader already produced. The
-registry still has exactly one PARSER, `agent_family`, and
-`registrywrite.py` still re-reads what it wrote and refuses a save whose
-model does not match (`AGENTS.md` rule 24).
+registry still has exactly one PARSER, `agent_family`. `app.py` gives the
+patched text back to it and writes the emitter's document when the model
+does not match (`AGENTS.md` rule 24).
 """
 
 from __future__ import annotations

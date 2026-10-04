@@ -350,6 +350,35 @@ def test_a_save_keeps_the_files_comments(board: Harness) -> None:
     assert "- { path: /srv/agents/vault, mode: ro }" in saved
 
 
+@pytest.mark.parametrize(
+    "patched", [CHAT_FAMILY_YAML, "name: chat\n{}\n"], ids=["another-model", "no-model"]
+)
+def test_a_patch_that_does_not_read_as_the_edit_gives_way_to_the_emitter(
+    board: Harness, monkeypatch: pytest.MonkeyPatch, patched: str
+) -> None:
+    """The patched text goes back through the reader. A text that reads as
+    another model, or as none, must not be what the save writes."""
+    from agent_family import parse_family
+
+    from noticeboard import app as app_module
+
+    monkeypatch.setattr(app_module, "edited_text", lambda original, before, after: patched)
+    board.get("/families/chat/edit")
+    before = commit_count(board.config.registry_dir)
+    body = posted_form(board)
+    body["description"] = "the house assistant, rewritten"
+    body["verb"] = "save"
+
+    answer = board.post("/families/chat/edit", body)
+
+    saved = (board.config.registry_dir / "families/chat/family.yaml").read_text(encoding="utf-8")
+    family, _ = parse_family(saved)
+    assert answer.status_code == 303
+    assert commit_count(board.config.registry_dir) == before + 1
+    assert family is not None
+    assert family.description == "the house assistant, rewritten"
+
+
 def test_a_save_that_changes_nothing_makes_no_commit(board: Harness) -> None:
     """The form posts every field back, so a save with no edit must not
     rewrite the whole file from the model and commit the difference. The

@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Final
 from urllib.parse import parse_qsl
 
-from agent_family import Diff, load_registry
+from agent_family import Diff, load_registry, parse_family
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -325,7 +325,8 @@ def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any
 
     `None` whenever the file cannot be read or round-tripped, and the caller
     then writes the emitter's document instead. A save must not fail over a
-    comment.
+    comment. `None` also when the patched text does not read back as the
+    model that the form asked for: a save must not write another edit.
     """
     before, after = models
 
@@ -334,7 +335,24 @@ def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any
     except OSError:
         return None
 
-    return edited_text(original, before, after)
+    kept = edited_text(original, before, after)
+
+    if kept is None or not _reads_as(kept, after):
+        return None
+
+    return kept
+
+
+def _reads_as(text: str, wanted: dict[str, Any]) -> bool:
+    """True when `agent_family` reads `text` as the model `wanted`.
+
+    `yamlkeep` moves values and reads no meaning, so a fault there gives a
+    text that is valid and wrong, or no YAML at all. The one reader of the
+    registry says which.
+    """
+    family, _ = parse_family(text)
+
+    return family is not None and family.model_dump(mode="json") == wanted
 
 
 async def _form_of(request: Request) -> tuple[dict[str, str], Refusal | None]:
