@@ -19,6 +19,7 @@ from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
 from caregiver.sandboxes import (
     create_sandbox,
     destroy_sandbox,
+    fail_planned,
     live_record,
     mark_ready,
     read_ledger,
@@ -165,6 +166,85 @@ def test_a_failed_create_is_recorded_as_failed(state_root: Path, family: FamilyF
 def test_a_failed_sandbox_is_not_the_live_one(state_root: Path, family: FamilyFile) -> None:
     create(state_root, family, FailingCreate())
     assert live_record(state_root, "chat") is None
+
+
+# --- a destroy that fails where the destroy is best effort ---------------------
+
+DESTROY_FAILED = "chat: destroy of chat-s1 failed: simulated sbx outage at the destroy"
+
+
+class FailingDestroy(FakeDriver):
+    def destroy(self, name: str, allow: tuple[str, ...]) -> None:
+        super().destroy(name, allow)
+        raise DriverError("simulated sbx outage at the destroy")
+
+
+class FailingCreateAndDestroy(FailingCreate, FailingDestroy):
+    """Each of the two calls reports a failure."""
+
+
+def test_a_destroy_that_fails_after_a_failed_create_is_said(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The destroy after a failed create is best effort. One that fails
+    leaves the virtual machine, and the row reads `failed`, so no later
+    pass destroys it. The log must say it."""
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        outcome = create(state_root, family, FailingCreateAndDestroy())
+
+    assert outcome.fault is not None
+    assert outcome.fault.detail["message"] == "simulated sbx outage"
+    assert [(one.levelno, one.getMessage()) for one in caplog.records] == [
+        (logging.ERROR, DESTROY_FAILED)
+    ]
+
+
+def test_a_destroy_that_works_after_a_failed_create_says_nothing(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        create(state_root, family, FailingCreate())
+
+    assert caplog.records == []
+
+
+def leave_a_planned_row(state_root: Path, family: FamilyFile) -> None:
+    """The ledger as a kill inside a create leaves it."""
+    create(state_root, family, FakeDriver())
+    record = live_record(state_root, "chat")
+    assert record is not None
+    write_ledger(state_root, "chat", (record.with_state(SandboxLifecycle.PLANNED),))
+
+
+def test_a_destroy_that_fails_for_a_planned_row_is_said(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The row still becomes `failed`: a `planned` row that stays is one
+    that a pass adopts. The log says that the destroy did not run."""
+    leave_a_planned_row(state_root, family)
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        retired = fail_planned(state_root, "chat", FailingDestroy())
+
+    assert retired == ("chat-s1",)
+    assert [one.state for one in read_ledger(state_root, "chat")] == [SandboxLifecycle.FAILED]
+    assert [(one.levelno, one.getMessage()) for one in caplog.records] == [
+        (logging.ERROR, DESTROY_FAILED)
+    ]
+
+
+def test_a_destroy_that_works_for_a_planned_row_says_nothing(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    leave_a_planned_row(state_root, family)
+    driver = FakeDriver()
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        retired = fail_planned(state_root, "chat", driver)
+
+    assert retired == ("chat-s1",)
+    assert driver.ops() == ("destroy",)
+    assert caplog.records == []
 
 
 # --- the control directory ---------------------------------------------------

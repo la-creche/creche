@@ -211,6 +211,10 @@ Nothing here touches a real sandbox or LiteLLM.
   as an absent file. The next rewrite replaces the file and writes one error
   line. No pass then destroys a sandbox that the old file named
   (`sandboxes.py`).
+- A destroy that fails after a failed create, or for a `planned` row,
+  leaves the virtual machine. The row reads `failed`, and the log holds one
+  error line. No later pass destroys that virtual machine. Contract 05 §4.2
+  rule 5 has no rule for a destroy that fails (`sandboxes.py`).
 - A pass takes a `creds.json` that is present and does not read as an
   absent file. It mints a new key and a new token, writes epoch 1 and
   writes one error line. Contract 03 §12 rule 3 says that the epoch

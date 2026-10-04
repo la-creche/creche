@@ -265,9 +265,7 @@ def fail_planned(state_root: Path, family_name: str, driver: SandboxDriver) -> t
         # Best effort, like every other destroy after a failed create: a
         # VM that was never made answers "not found", which `destroy`
         # already tolerates.
-        with contextlib.suppress(DriverError):
-            driver.destroy(record.id, record.allow)
-
+        _try_destroy(family_name, record, driver)
         _put(state_root, family_name, record.with_state(SandboxLifecycle.FAILED))
         _forget_control(state_root, family_name, record.id)
         retired.append(record.id)
@@ -554,9 +552,7 @@ def _failed(
     The destroy is best effort: a driver that could not create is a driver
     that may not be able to destroy either, and a second exception here
     would hide the first."""
-    with contextlib.suppress(DriverError):
-        driver.destroy(record.id, record.allow)
-
+    _try_destroy(family_name, record, driver)
     _put(state_root, family_name, record.with_state(SandboxLifecycle.FAILED))
     fault = FaultEntry(
         code="sandbox_start_failed",
@@ -566,6 +562,22 @@ def _failed(
         detail={"message": str(exc), "sandbox": record.id},
     )
     return CreateOutcome(record=None, fault=fault)
+
+
+def _try_destroy(family_name: str, record: SandboxRecord, driver: SandboxDriver) -> None:
+    """Destroy a sandbox whose row becomes `failed` in each case.
+
+    CONTRACT-QUESTION: contract 05 §4.2 rule 5 says that `caregiver`
+    destroys such a sandbox and then sets `failed`. It has no rule for a
+    destroy that fails. The caller sets `failed` in each case, as it did:
+    a row that stays `planned` is one that a pass adopts with egress that
+    was never proved. The cost is a virtual machine that no later pass
+    destroys, so the log must say it. To destroy it later, the ledger needs
+    a state that a pass reads as "destroy again"."""
+    try:
+        driver.destroy(record.id, record.allow)
+    except DriverError as exc:
+        log.error("%s: destroy of %s failed: %s", family_name, record.id, exc)
 
 
 def _put(state_root: Path, family_name: str, record: SandboxRecord) -> None:
