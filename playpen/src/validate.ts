@@ -74,6 +74,14 @@ const MAX_GRACE_MS = 600000;
 /** Contract 03 §7.1. A mount path is absolute and holds no parent segment. */
 const MAX_PATH_LENGTH = 4096;
 
+/**
+ * CONTRACT-QUESTION: contract 03 §4.1, §4.6 and §4.8 give no cap for
+ * `config_rev`, a pi entry id and the nonce of a `ping`. Each one arrives
+ * from outside, so the playpen refuses one of more than 200 units. Another
+ * cap changes this one number.
+ */
+const MAX_OPAQUE_LENGTH = 200;
+
 function refuse(detail: string, at?: { session?: string; turn?: string }): Refusal {
   if (!at) {
     return { ok: false, detail };
@@ -199,7 +207,7 @@ function readBranch(raw: Record<string, unknown>): Branch | null | Refusal {
   }
 
   const from = str(value, "fork_from");
-  if (from === null || from.length === 0 || from.length > MAX_SESSION_ID_LENGTH) {
+  if (from === null || from.length === 0 || from.length > MAX_OPAQUE_LENGTH) {
     return refuse("branch.fork_from is not an entry id");
   }
 
@@ -350,7 +358,7 @@ function readProcessCore(
   }
 
   const configRev = str(raw, "config_rev");
-  if (configRev === null || configRev.length === 0 || configRev.length > MAX_SESSION_ID_LENGTH) {
+  if (configRev === null || configRev.length === 0 || configRev.length > MAX_OPAQUE_LENGTH) {
     return refuse("config_rev is missing or malformed", at);
   }
 
@@ -544,7 +552,7 @@ function readGetEntries(raw: Record<string, unknown>): GetEntriesMessage | Refus
   }
 
   const since = str(raw, "since");
-  if (since !== null && (since.length === 0 || since.length > MAX_SESSION_ID_LENGTH)) {
+  if (since !== null && (since.length === 0 || since.length > MAX_OPAQUE_LENGTH)) {
     return refuse("get_entries.since is malformed");
   }
 
@@ -565,7 +573,7 @@ function readGetEntries(raw: Record<string, unknown>): GetEntriesMessage | Refus
 
 function readPing(raw: Record<string, unknown>): PingMessage | Refusal {
   const nonce = str(raw, "nonce");
-  if (nonce !== null && nonce.length > MAX_SESSION_ID_LENGTH) {
+  if (nonce !== null && nonce.length > MAX_OPAQUE_LENGTH) {
     return refuse("ping.nonce is over the length limit");
   }
 
