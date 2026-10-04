@@ -29,7 +29,7 @@ defect that a test finds late.
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
 | `session` | The session API: contract 02. |
-| `channel` | The channel protocol: contract 03. |
+| `channel` | The channel protocol: contract 03. "The channel module" below has its parts. |
 | `grants` | The grant file, the call body, the approval body and the audit record: contract 04. |
 | `status` | The status document: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
@@ -184,6 +184,62 @@ The rule has two exceptions:
 - A number of more than 4300 digits in a version. Python reads no longer
   text as an integer, so the types refuse it. No vector holds such a number.
 
+## The channel module
+
+`crates/creche-contracts/src/channel.rs` declares the parts. Each part is a
+file under `src/channel/`.
+
+| Part | What it holds |
+|---|---|
+| `frame` | `LineSplitter`: one record for each line. `Refusal`: why the host drops a line. |
+| `host` | `HostMessage`: what the host writes and the playpen reads. |
+| `claim` | `PlaypenLine`: what the host reads from a line of the playpen. `parse` reads one record. |
+| `playpen` | `PlaypenMessage`: what the playpen writes. |
+| `vocabulary` | Each closed set of names of a line, as an enum. |
+| `json`, `text`, `number` | The JSON reader and the values of a line from the sandbox. |
+
+The direction from the playpen to the host has two types. The host reads
+each field as a claim and keeps what the Python host keeps. The playpen
+writes only what the contract permits.
+
+Rule 1 names a raw `serde` type. The `channel` module is the one exception.
+Its raw type is `channel::json::Json`, from a reader of its own. The Python
+host reads a line with `json.loads`, and `serde_json` does not read what
+`json.loads` reads:
+
+1. `json.loads` reads `NaN`, `Infinity` and `-Infinity`. `serde_json`
+   refuses them.
+2. `json.loads` keeps an integer of 4300 digits. `serde_json` reads an
+   integer past 64 bits as a float.
+3. `json.loads` reads a surrogate that has no partner, for example
+   `\ud800`. `serde_json` refuses it.
+4. Python 3.12 reads a line that nests 9997 levels. `serde_json` stops at
+   128 levels.
+
+The reader has these properties:
+
+- It uses no recursion. The depth of a line cannot exhaust the stack.
+- It stops at 9000 levels. Each supported Python version reads that depth.
+- The `parse` of `claim` gives `malformed` for a line of 9001 levels or
+  more. The Python host gives `malformed` when `json.loads` raises
+  `RecursionError`. The deepest line that it accepts has 9997 levels on
+  Python 3.12, 9998 on 3.13 and about 116,000 on 3.14. The reader thus
+  refuses a line that each supported Python version accepts, up to the limit
+  of that version. One vector holds such a line, and it is a row of the
+  `DEVIATIONS` table of `claim`.
+- The `parse` of `claim` gives `malformed` for an integer of more than 4300
+  digits. Python raises `ValueError` there, and the Python host gives
+  `malformed`.
+- `Json` drops, copies, compares and prints with no recursion.
+
+Rule 7 holds. One field holds a `Json`: the `event` of a line. Contract 03
+§5.1 makes that value opaque.
+
+The writer of `json` makes the bytes of
+`json.dumps(value, separators=(",", ":"), ensure_ascii=False)`. The host
+counts those bytes against the size limit of an event. A float has the text
+that `repr` of Python gives.
+
 ## The config of a process
 
 `creche_contracts::config` holds one type for the config of each daemon, and
@@ -330,6 +386,12 @@ the reason in the commit message.
 - An error code on a `compile_fail` test, for example `E0423`, is a note for
   the reader. The toolchain of this workspace does not check the code. The
   test passes on each compile error.
+- Make the private field the only compile error of a `compile_fail` test. A
+  struct literal that omits a field fails for the absent field, also when
+  each field is public. Name each field, or take the other fields from a
+  valid value: `Ready { caps: Vec::new(), ..line }`.
+- To prove a `compile_fail` test, make each field of the type public for one
+  local run. The test must then fail.
 - A Rust test reads no file outside `rust/` and `vectors/data`. The gate
   runs cargo only for a change under `rust/` or `vectors/`, so a change to a
   file elsewhere does not run the test. If a later change needs such a file,
@@ -393,9 +455,8 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- Seven modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session`, `channel`, `grants`, `status` and
-  `manifest`.
+- Six modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session`, `grants`, `status` and `manifest`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
@@ -427,6 +488,75 @@ Rules for the test:
   1. A version number of 4300 digits. The number does not fit `u64`.
   2. A version number with a zero at its start.
   3. A sandbox number with a zero at its start.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/channel/`:
+  1. `json::MAX_LINE_DEPTH`, contract 03 §13 rule 1. The contract gives no
+     nesting limit for a line. The limit of Python changes with its version:
+     9997 levels on 3.12, 9998 on 3.13 and about 116,000 on 3.14. The reader
+     stops at 9000 levels. It refuses a line of 9001 levels or more, and each
+     supported Python version accepts such a line up to its own limit.
+  2. `claim::MAX_EVENT_DEPTH`, contract 03 §13 rule 6. The contract gives no
+     nesting limit for an event. The Python host keeps only the type of an
+     event that nests more than 64 levels. The reader does the same.
+  3. `claim::MAX_LOG_CHARS`, contract 03 §8. The contract caps a message at
+     4 KiB. The Python host cuts at 4096 code points. The reader does the
+     same.
+  4. `host::ConfigRev` and `host::EntryId`, contract 03 §4.1. The contract
+     gives no grammar. The types take the rule of the playpen: 1 to 200
+     bytes.
+  5. `host::PromptText`, contract 03 §4.3. The contract gives no cap for the
+     message of `steer`. The type takes the cap of a prompt, as the playpen
+     does.
+  6. `host::Model`, contract 03 §4.1. The contract gives no grammar. The type
+     takes 1 to 200 bytes.
+  7. `host::ProtocolVersion`, contract 03 §3. The contract gives no grammar
+     for a number. The type takes two numbers of 1 to 9 ASCII digits.
+- The host side of `channel` accepts what the Python host accepts, also
+  where a stricter reading of contract 03 is possible. The owner decides each
+  case. Five examples:
+  1. A session id and a turn id of a line can be each text.
+     `TurnAddress` is the check that follows.
+  2. `turn_seq` and each count can be an integer past 64 bits.
+  3. `cost_usd` can be `NaN` or `Infinity`.
+  4. A text outside an event can hold a lone surrogate.
+  5. `turn_failed` with no session, no turn and the `turn_seq` 0 is
+     `malformed`. Contract 03 §5.1 permits that line.
+- No vector covers the side of the playpen: `HostMessage::parse` and
+  `PlaypenMessage`. The tests read each line of one side with the parser of
+  the other side. `HostMessage::parse` is stricter than the TypeScript
+  playpen in ten places:
+  1. A required number with a fraction or an exponent is a fault: `600.0`.
+     The same applies to `grace_ms`. The playpen reads `600.0` as 600.
+  2. A session id has 128 bytes at most. The playpen permits 200.
+  3. A sandbox number has 9 digits at most.
+  4. A text with a lone surrogate is not a text.
+  5. A protocol version is two numbers. The playpen takes each text with a
+     `.`.
+  6. A workspace kind is `code-sandbox`. The playpen reads each text.
+  7. A cap counts bytes. The playpen counts UTF-16 code units.
+  8. A `model` has 200 bytes at most. The playpen keeps each text.
+  9. An `env_epoch` is less than 2^64. The playpen reads a larger one as a
+     float.
+  10. A line with an integer of more than 4300 digits is not JSON, in each
+      field. The playpen reads that integer as a float.
+- `HostMessage::parse` and the playpen accept two lines with different
+  values:
+  1. An empty `model` is no model. The playpen keeps the empty text.
+  2. An optional number of `hello` is absent when it has a fraction or an
+     exponent, and when it is 2^64 or more. The playpen keeps `900.0` as 900
+     and keeps the large number as a float.
+- Only `HostMessage::parse` holds the range of `deadline_s`, the range of
+  `grace_ms` and the count of attachment names. `Seconds`, `Millis` and the
+  list of names have no bound, as the Python builders have none. A host can
+  write a line that the playpen refuses for one of the three.
+- `channel::claim::Event::from_json` refuses an event over a limit. The
+  playpen truncates such an event (contract 03 §8). No Rust code does that.
+- `Event::from_json` and `playpen::EventMessage::new` refuse an event with a
+  number that is not finite, for example `1e999`. The playpen writes `null`
+  for that number. The host side keeps such a number, as the Python host
+  does.
+- `channel` has no function that maps a `FailReason` to a turn reason of
+  contract 02 §14. The `session` module holds no turn reason yet.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/config/`:
   1. `LanAddress`. No contract gives the LAN address of the site file a
