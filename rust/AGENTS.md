@@ -438,8 +438,13 @@ Rules for the test:
   again.
 - Each view of `status::views` takes what its Python reader takes, and the
   five Python readers do not agree. The table `DISAGREEMENTS` in
-  `status/python.rs` lists the documents. The owner decides which reading
-  each port keeps.
+  `status/python.rs` names each class of such documents, with one or two
+  documents of the class. The owner decides which reading each port keeps.
+- A view of `status` does not refuse a document for these three values. It
+  reads a time with no UTC offset as no time. It reads a time outside the
+  years 1 to 9999 as no time. It reads a number above the range of a float as
+  no number. The document is then stale, or it shows no spend. No vector
+  holds such a value. A unit test covers each one.
 - `status::outcome` holds the view of the noticeboard and no valid type.
   Contract 02 §13.1 owns the outcome record and its writer.
 - `status` holds no code for `rescope_by_fleet` and `drop_superseded` of

@@ -1045,6 +1045,15 @@ const STATUS_READERS: [&str; 5] = [
 
 use Took::{Accepted, Field, Lacks, Refused};
 
+/// Each class of document on which two readers of `status.json` differ, with
+/// one or two documents of the class. The table does not hold each document.
+/// The vectors hold more documents of some classes: `empty-object`,
+/// `kind-upper` and `kind-number` for the kind, `state-display-form` for the
+/// state, `fault-code-number` for a fault with no code, and `epoch-true` and
+/// `epoch-float` for the epoch.
+///
+/// The test below holds each row equal to the vector files. No test fails
+/// when a new document splits the readers and no row names it.
 const DISAGREEMENTS: &[Disagreement] = &[
     Disagreement {
         vector: "kind-unknown",
@@ -1201,6 +1210,17 @@ const DISAGREEMENTS: &[Disagreement] = &[
             Field("/sandboxes/20/id", r#""chat-s21""#),
             Lacks("/sandboxes/20"),
             Refused,
+            Refused,
+            Accepted,
+        ],
+    },
+    Disagreement {
+        vector: "faults-21",
+        contract: "§3.3: faults is a list. The contract gives no cap.",
+        took: [
+            Field("/fault_codes/20", r#""fault_9""#),
+            Lacks("/faults/20"),
+            Accepted,
             Refused,
             Accepted,
         ],
