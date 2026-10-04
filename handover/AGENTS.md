@@ -62,8 +62,9 @@ The console script is `handover`. The verify hook and the operator's
 ## Trust rules
 
 1. Every input is hostile. A `component.yaml` can come from a branch an agent
-   wrote. A byte cap before the parse, `yaml.safe_load` only, a closed key
-   set, a strict pattern per scalar, and a refusal that names the field.
+   wrote. A byte cap before the parse, the safe loader of PyYAML only, a
+   closed key set, a strict pattern per scalar, and a refusal that names the
+   field.
 2. Every pattern is `re.fullmatch`. A pattern writes a digit as `[0-9]`.
    On text, `\d` also matches a digit that is not ASCII.
 3. `errors.safe_token` is the one door untrusted text goes through. Anything
@@ -73,6 +74,14 @@ The console script is `handover`. The verify hook and the operator's
 6. A parser answers a refusal for each error of its reader library. PyYAML
    raises more than `YAMLError`: a scalar that it cannot build raises
    `ValueError`, and a text that nests too deep raises `RecursionError`.
+7. A JSON integer has no largest value. A reader that makes a float of a
+   number answers a refusal for a number that no float holds. A whole
+   number that becomes a time limit has a range.
+8. Each YAML reader calls `boundedyaml.load`, and never `yaml.safe_load`.
+   PyYAML gives a merge key no limit, so a short text can make it use time
+   and memory with no bound. No `except` clause stops that. `boundedyaml`
+   counts the pairs that the merge keys copy, and the levels of a chain of
+   merge keys. Past a limit, the text does not parse.
 
 ## Rules the design depends on
 
@@ -104,6 +113,11 @@ The console script is `handover`. The verify hook and the operator's
    that deploys code is not deployed by code.
 9. A step that raises an error it does not name is a failed step. The
    ledger gets the type of the error, and never its text.
+10. A unit file longer than 64 KiB stops the stage, for a `venv` component
+    and for a `binary` component. A line after the cap can start a program
+    that no reader saw.
+11. A staged venv tree is a directory, as a staged binary tree is. A link in
+    its place is a fault: step 9 renames the link, and not the directory.
 
 ## Rules `follow/` adds
 
@@ -236,6 +250,7 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | Module | Owns |
 |---|---|
 | `errors.py`, `catalog.py`, `site.py` | the closed refusal list, the component list, the site file |
+| `boundedyaml.py` | the YAML loader of each reader, with its two merge limits |
 | `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | `component.yaml` as hostile input, the walk, the order, rules C1 to C5 |
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, `server.yaml` as hostile bytes, the uninstalled component |
 | `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow` |
@@ -292,10 +307,26 @@ that wants a refusal changes one field.
   list. For an error that no step names, the reason also holds the type of
   the error and the symbol of its number. Both come from code
   (`executor/steps.py`).
+- Contract 06 §5.2 says that the executor stops when the hook of a restored
+  component fails. §5.1 says that a release goes back whole. The restore
+  puts each other component back first, and the step then fails. A fault
+  that is no failed hook still stops the restore at its component
+  (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`executor/roster.py`).
 - PyYAML reads a digit that is not ASCII in a number with the tag `!!int`.
   A whole number of a manifest can thus hold one. Contract 06 §8 names no
   YAML form for a number (`manifest.py`).
+- Contract 06 §8 and §10 and contract 01b give no limit for a merge key. A
+  manifest takes a chain of 128 merge keys and 65,536 copied pairs. A server
+  file takes a chain of 400 and 100,000 copied pairs. Each pair of limits is
+  that of the Rust reader of the same file, so the two readers refuse the
+  same text (`manifest.py`, `mcpserver.py`).
+- No contract names the sops file. Its reader takes the two merge limits of
+  a manifest (`intake/store.py`).
+- A manifest whose chain of merge keys passes the limit gets the refusal
+  text `nests deeper than 128 levels`. The Rust reader gives such a chain
+  that text. The Python reader still reads plain nesting deeper than 128
+  levels (`manifest.py`).
 - The intake reads `Content-Length` with `int`. That reader takes a sign,
   an underscore and a digit that is not ASCII (`intake/service.py`).
 - The secret-name pattern is copied into five modules, and the copies agree
@@ -340,8 +371,15 @@ that wants a refusal changes one field.
   does not read `rust/rust-toolchain.toml`. It also downloads a toolchain
   that the host does not have. The operator decides how the host gets its
   toolchain (`executor/install.py`).
-- The executor does not remove `work/<id>`. A binary build leaves its
-  `target` directory there (`executor/steps.py`).
-- The unit rule reads the first 64 KiB of a unit file. A line after that
-  can start a program outside the tree. The binary walk refuses a longer
-  file, and the unit rule does not (`executor/install.py`).
+- A run that ends in the way of a crash keeps `work/<id>`. No later run
+  removes it. A binary build leaves its `target` directory there
+  (`executor/steps.py`).
+- `stage7-releases.md` §2.4 row 8 names no rule for the set-user-ID bit, the
+  set-group-ID bit and the sticky bit of a staged file. The mode pass drops
+  the three bits (`executor/install.py`).
+- Contract 06 §1 rule 8 names no size for a unit file. A unit file longer
+  than 64 KiB stops the stage, for a `venv` component and for a `binary`
+  component (`executor/install.py`).
+- Contract 06 §8.2 names no rule for a staged venv tree that is a link. The
+  walk reports the link as a fault with the code `editable`
+  (`executor/selfcontained.py`).

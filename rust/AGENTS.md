@@ -11,7 +11,7 @@ defect that a test finds late.
 
 | Path | What it holds |
 |---|---|
-| `Cargo.toml` | The workspace, the dependency versions and the lint gate. |
+| `Cargo.toml` | The workspace, the dependency versions, the lint gate and the two build profiles. |
 | `Cargo.lock` | The locked versions. Commit it. Each gate command uses `--locked`. |
 | `rust-toolchain.toml` | The one toolchain version. rustup reads it for each cargo command under `rust/`. |
 | `rustfmt.toml` | The line width: 100, the same as ruff. |
@@ -22,6 +22,8 @@ defect that a test finds late.
 |---|---|
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
+| `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
+| `creche-testkit` | Test helpers for each crate. No release holds it. `crates/creche-testkit/AGENTS.md` holds its rules. |
 
 | Module of `creche-contracts` | What it holds |
 |---|---|
@@ -35,6 +37,7 @@ defect that a test finds late.
 | `status` | The status document, the fault files and one view for each reader: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
 | `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
+| `untrusted` | Readers for an answer of another service. A field of a wrong type reads as empty. The raw type of an answer uses them. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
 `src/manifest.rs` holds the closed sets, the catalog and the differential
@@ -404,6 +407,90 @@ More rules for a config type:
   `SURFACES` names each `config.` surface, and its table `DEVIATIONS` names
   each difference on purpose.
 
+## The rules for a service
+
+A service crate makes a daemon or a command of the platform. It uses
+`creche-runtime`. These rules apply to each service crate. Each rule has its
+reason. `crates/creche-runtime/AGENTS.md` holds the rules for a change to the
+runtime itself.
+
+The compiler does not check what a dropped future leaves behind. In `tokio`,
+a future that its caller drops stops at its next `await`. No code after that
+`await` runs. A Python handler runs to its end after its client left. Rules 1
+to 5 give a Rust service the Python behavior on purpose.
+
+1. **One owner task holds each child program.** No other task reads the
+   pipes of the child, writes to it, kills it or waits for it. Each other
+   task asks the owner through a message.
+   Reason: a child with two holders has no task that must stop it. A caller
+   that goes away then leaves a child that no task waits for.
+2. **Give each write that must complete to `Tasks::spawn_must_complete` or
+   to `Tasks::spawn_blocking`.** Then await the `Completion`.
+   Reason: the task runs to its end when its caller goes away. A dropped
+   caller then cuts no line and no file in two.
+3. **In each loop and in each stream, select on the `Shutdown` token.**
+   Reason: the token is the one stop signal of a process. A loop that does
+   not read it holds the process until systemd kills it.
+4. **Start a child only through `command::spawn_piped` or a
+   `CommandRunner`.** A service crate does not use
+   `tokio::process::Command` directly.
+   Reason: the two set `kill_on_drop` in one place. Without it, a child
+   continues to run after its owner stopped.
+5. **Do not write cleanup code after an `await` when a caller can drop the
+   future.** Write the cleanup in the owner task.
+   Reason: the code after such an `await` does not run when the caller goes
+   away.
+6. **Do not change `panic = "unwind"`. Give each `Router` to
+   `http::layers::edge`. Run each daemon loop through `Tasks::spawn_loop`.**
+   Reason: a panic then ends one request or one pass, and the service
+   continues. A router with no `edge` also loses its handler when a client
+   leaves. No compiler check finds such a router.
+7. **Do not block a thread of the runtime.** Run `fsync`, a call of
+   `std::fs` and a call of `git` in `Tasks::spawn_blocking` or through a
+   `CommandRunner`.
+   Reason: a blocking call holds a thread of the runtime. Each task of that
+   thread waits.
+   Exception: the write of one line to stdout or to stderr, and the read of
+   the random device.
+8. **Do not turn `overflow-checks` off. For arithmetic on a number that
+   another process gave, use a checked or a saturating call.**
+   Reason: without the checks, a release build wraps the number and
+   continues with a wrong value. With the checks, an overflow is a panic. A
+   checked call makes it an error that the code handles.
+9. **Use only a channel with a bound.** In its doc comment, say what a
+   sender gets from a full channel.
+   Reason: a channel with no bound grows without limit when its reader is
+   slow.
+10. **Set a total time limit on each call to another service.** Only a
+    stream with `StreamLimit::UntilShutdown` has none.
+    Reason: the limit of one phase does not end a call to a peer that sends
+    one byte in each interval.
+11. **Let `service::run` build the runtime. `main` returns the `ExitCode`
+    of that call.** A service does not use `#[tokio::main]`.
+    Reason: the code of `#[tokio::main]` calls `expect`. `service::run`
+    drains the tracked tasks and gives the runtime a time limit at the stop.
+12. **Call `Env::from_os` one time, at the start.** That call is the only
+    read of the environment.
+    Reason: the parse of the config is the one check of each variable. A
+    later read gets a value that no parse checked.
+13. **Lock a std `Mutex` only through `tasks::locked`. Between two
+    statements, each value under a lock must be valid.**
+    Reason: a panic poisons a lock. `lock().unwrap()` then stops each later
+    request. `locked` takes the value, so the value must be valid after each
+    statement.
+14. **For a write to stdout or to stderr, use only `log::out_line`,
+    `log::err_line` and the log macros.**
+    Reason: a closed stream makes `println!` and `eprintln!` panic.
+15. **State the `AtShutdown` of each `Command`. Select `Finish` when the
+    step of the child must end whole.**
+    Reason: `subprocess.run` of Python runs to its end at a stop of the
+    service. A child that a stop kills in the middle of a step can leave
+    state that the next start cannot use.
+
+The lint gate checks rule 13 in part: `await_holding_lock` refuses a guard
+that the code holds across an `await`. No check holds the other rules. The
+reviewer checks them.
+
 ## Code style
 
 The code style rules of the root `AGENTS.md` apply. In Rust they read:
@@ -436,8 +523,9 @@ gives no reason. Without them, one attribute lifts the lint gate for an item
 or for a crate.
 
 `bin/tests/test_rust_workspace.py` pins each entry of the lint gate and of
-`clippy.toml`. To change an entry, change the pin in the same commit. Give
-the reason in the commit message.
+`clippy.toml`. It also pins the two `[profile]` tables of `Cargo.toml`. To
+change an entry, change the pin in the same commit. Give the reason in the
+commit message.
 
 - Each crate has these two lines in its `Cargo.toml`: `[lints]`, then
   `workspace = true`. Write them in that form. `bin/rust-gate.sh` reads no
@@ -525,6 +613,18 @@ Rules for the test:
 - A crate has no `version` key. No number lives in a file. A version is a
   tag that CI allocates.
 - Commit `Cargo.lock` with each change to a dependency.
+- Turn the default features of a third-party crate off in
+  `[workspace.dependencies]`. Name each feature that the code needs. A
+  feature that no code needs adds crates to the lock file.
+- `serde` and `serde_json` keep their default features. The default of each
+  one is the feature `std` only, and it adds no crate.
+- A service crate that needs one more feature names it in its own
+  `Cargo.toml`, for example `json` of `axum`.
+- The workspace has no TLS crate. The client of `creche-runtime` refuses an
+  `https` URL.
+- Build the program of a service with `cargo build -p <crate>`. A build of
+  the whole workspace also builds `creche-testkit`. That build turns on the
+  feature `test-util` of `tokio` for each crate.
 - `serde_json` has the feature `float_roundtrip`. It then reads each JSON
   float as the nearest float, as Python does. Without the feature, a float of
   16 digits or more can differ from the Python value in its last bit. Do not
@@ -535,6 +635,22 @@ Rules for the test:
 - CI does not run `cargo deny`. No check reads the advisories or the
   licenses of the locked crates.
 - No release uses Rust code.
+- Most bodies of `creche-runtime`, of `creche-testkit` and of the module
+  `untrusted` are stubs. A stub panics when code calls it.
+  `crates/creche-runtime/AGENTS.md` and `crates/creche-testkit/AGENTS.md`
+  list each stub and the packet that writes its body.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/log.rs`: no contract gives the form of a log
+  line. The Python services write five forms. Three stamp the local time,
+  and two have no time. The runtime writes one form, with the time in UTC.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/token.rs`: two rules of a token file check no
+  mode, `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`. Contract 02 §3 rule 5
+  gives each token file a mode. The Python readers behind the two rules
+  check none, and the rules do the same.
+- No check holds the rules of "The rules for a service", except a part of
+  rule 13. A service crate that breaks a rule builds and passes the lint
+  gate.
 - `family` and `server` use the id types of `ids`. They refuse three texts
   that the Python package `agent_family` accepts. Each vector with such a
   text is a row of `DEVIATIONS` in `crates/agent-family/tests/vectors.rs`.
@@ -980,6 +1096,14 @@ Rules for the test:
 - No type reads the text of a roster file, and no type writes it. PyYAML
   reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
   the crate selects one. `roster::RawRoster` then takes its tree.
+- The Python reader of a roster refuses a text past one of three limits. A
+  Rust reader of that text must hold the same limits. No vector holds such a
+  text. The first two limits are the limits of `manifest/yaml.rs`. No Rust
+  reader has the third limit.
+  1. The merge keys copy more than 65,536 pairs.
+  2. The merge keys make a chain of more than 128 levels.
+  3. The aliases stand for more than 262,144 nodes. An alias stands for the
+     node of its anchor and for each node that this node holds.
 - `config::mounts` defines `ModelAlias`, `SandboxTool` and `SystemPrompt`.
   The family file uses the same three. The owner of the crate moves them
   when the `family` module has its types.

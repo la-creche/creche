@@ -111,6 +111,17 @@ def test_the_interval_comes_from_the_unit(monkeypatch: pytest.MonkeyPatch) -> No
         assert _sweep_interval() == FAULT_SWEEP_INTERVAL_S
 
 
+@pytest.mark.parametrize("not_finite", ["nan", "inf", "-inf", "infinity", "1e999"])
+def test_an_interval_that_is_not_finite_takes_the_default(
+    monkeypatch: pytest.MonkeyPatch, not_finite: str
+) -> None:
+    """`float` reads each of these texts. A sleep of such a time does not
+    end, or raises, so the sweep would not run."""
+    monkeypatch.setenv("PEP_FAULT_SWEEP_INTERVAL_S", not_finite)
+
+    assert _sweep_interval() == FAULT_SWEEP_INTERVAL_S
+
+
 def test_the_interval_stays_under_the_refresh() -> None:
     """Contract 04 §1.6 rule 4 rewrites an open fault every 30 s and contract
     05 §3.3.1 rule 7 calls a file older than 90 s stale. A sweep slower than

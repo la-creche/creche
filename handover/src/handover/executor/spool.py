@@ -75,6 +75,12 @@ TMP_SUFFIX: Final = ".tmp"
 #: A ledger entry carries the whole resolved manifest and a 200 line tail.
 MAX_RECORD_BYTES: Final = 1 << 20
 
+#: The bounds of a hook's time limit, in seconds. They are the bounds that
+#: `manifest.py` gives the field `verify.timeout_s`, and a test holds the two
+#: copies equal. This module is stdlib only, and `manifest.py` is not.
+HOOK_TIMEOUT_MIN_S: Final = 1
+HOOK_TIMEOUT_MAX_S: Final = 300
+
 #: `done/` is readable by the group so the noticeboard can read an outcome
 #: (§2.6). It informs and never decides.
 LEDGER_FILE_MODE: Final = 0o640
@@ -256,7 +262,15 @@ def _read_hook(value: object) -> VerifyHook | None:
 
     fields = cast("dict[str, object]", value)
     command, user, timeout = fields.get("command"), fields.get("user"), fields.get("timeout_s")
-    if not isinstance(command, list) or not isinstance(user, str) or not isinstance(timeout, int):
+    if not isinstance(command, list) or not isinstance(user, str):
+        return None
+
+    # A JSON bool is a Python int, and a JSON integer has no largest value.
+    # The hook runs with this number as its time limit.
+    if isinstance(timeout, bool) or not isinstance(timeout, int):
+        return None
+
+    if not HOOK_TIMEOUT_MIN_S <= timeout <= HOOK_TIMEOUT_MAX_S:
         return None
 
     words = cast("list[object]", command)
@@ -547,7 +561,7 @@ class Spool:
 
         try:
             body: object = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
+        except (UnicodeDecodeError, ValueError, RecursionError):
             return None
 
         if not isinstance(body, dict):

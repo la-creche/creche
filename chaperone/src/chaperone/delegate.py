@@ -149,6 +149,10 @@ def read_door_token(path: Path) -> str:
     except OSError as exc:
         # The path is not a secret. The content is, and it is not in the text.
         raise DoorTokenError(f"delegate door token: cannot read {path} ({exc.strerror})") from exc
+    except UnicodeDecodeError:
+        # Not the text of the error, and not its chain: it holds a byte of
+        # the file.
+        raise DoorTokenError(f"delegate door token: {path} is not UTF-8 text") from None
 
     if len(value.encode("utf-8")) < MIN_DOOR_TOKEN_BYTES:
         raise DoorTokenError(

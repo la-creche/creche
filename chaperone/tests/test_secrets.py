@@ -50,3 +50,92 @@ def test_sops_failure_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setattr(subprocess, "run", _fake_sops("", returncode=1))
     with pytest.raises(SecretsError):
         load_sops_secrets(tmp_path / "s.enc.yaml")
+
+
+#: A value that the decrypted file holds. It must reach no error text.
+LEAK = "LEAK-5d1e77a0"
+
+#: The pairs of the mapping that `_merged` merges, and the count of merges
+#: that copies as many pairs as the reader takes.
+PAIRS = 256
+MERGES_AT_THE_LIMIT = 256
+
+
+#: Where `_merged` puts its merge key: in the file itself, or in the value
+#: of one name. `{merge}` stands for the merge key and its value.
+IN_THE_FILE = "{merge}\n"
+IN_A_VALUE = "other: {{{merge}}}\n"
+
+
+def _merged(merges: int, place: str) -> str:
+    """A monolith that merges one mapping of `PAIRS` names `merges` times,
+    at `place`."""
+    names = ", ".join(f"k{n}: {LEAK}" for n in range(PAIRS))
+    aliases = ", ".join(["*a"] * merges)
+
+    return f"base: &a {{{names}}}\n" + place.format(merge=f"<<: [{aliases}]")
+
+
+def test_merge_keys_at_the_limit_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(subprocess, "run", _fake_sops(_merged(MERGES_AT_THE_LIMIT, IN_THE_FILE)))
+
+    found = load_sops_secrets(tmp_path / "s.enc.yaml")
+
+    assert found == {f"k{n}": LEAK for n in range(PAIRS)}
+
+
+@pytest.mark.parametrize("place", [IN_THE_FILE, IN_A_VALUE], ids=["in-the-file", "in-a-value"])
+def test_merge_keys_past_the_limit_are_a_file_that_will_not_parse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, place: str
+) -> None:
+    """The error names a line and nothing of the content, as each other
+    error of this reader does."""
+    text = _merged(MERGES_AT_THE_LIMIT + 1, place)
+    monkeypatch.setattr(subprocess, "run", _fake_sops(text))
+
+    with pytest.raises(SecretsFormatError) as caught:
+        load_sops_secrets(tmp_path / "s.enc.yaml")
+
+    assert "merge keys past a limit at line 1, column 7" in str(caught.value)
+    assert LEAK not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__
+
+
+#: The items of the list that `_shared` shares, and the count of aliases
+#: that stands for as many nodes as the reader takes. One alias stands for
+#: the list and for each item: 512 nodes.
+ITEMS = 511
+ALIASES_AT_THE_LIMIT = 512
+
+
+def _shared(aliases: int) -> str:
+    """A monolith with one name, and with `aliases` aliases of one list of
+    `ITEMS` items in the value of another name."""
+    items = ", ".join([LEAK] * ITEMS)
+
+    return f"base: &a [{items}]\nall: [{', '.join(['*a'] * aliases)}]\nkagi_api_key: {LEAK}\n"
+
+
+def test_aliases_at_the_limit_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(subprocess, "run", _fake_sops(_shared(ALIASES_AT_THE_LIMIT)))
+
+    found = load_sops_secrets(tmp_path / "s.enc.yaml")
+
+    assert found == {"kagi_api_key": LEAK}
+
+
+def test_aliases_past_the_limit_are_a_file_that_will_not_parse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The error names a line and nothing of the content, as each other
+    error of this reader does."""
+    monkeypatch.setattr(subprocess, "run", _fake_sops(_shared(ALIASES_AT_THE_LIMIT + 1)))
+
+    with pytest.raises(SecretsFormatError) as caught:
+        load_sops_secrets(tmp_path / "s.enc.yaml")
+
+    assert "aliases past a limit at line 1, column 7" in str(caught.value)
+    assert LEAK not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__

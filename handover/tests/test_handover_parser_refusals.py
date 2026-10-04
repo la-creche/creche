@@ -14,7 +14,11 @@ import os
 from pathlib import Path
 
 import pytest
+from handover.allocate import TagOutcome, plan_tags
+from handover.catalog import Repo
 from handover.errors import Refusal, RefusalCode
+from handover.executor.provenance import check_monotonic
+from handover.executor.source import newest_tagged_version
 from handover.intake.store import recipients_of
 from handover.manifest import MAX_MANIFEST_BYTES, parse_manifest
 from handover.mcpserver import parse_server
@@ -134,6 +138,47 @@ def test_a_state_document_that_is_no_utf8_text_is_refused() -> None:
     refusal = _state_refusal(f'{{"live": "{LONE_SURROGATE}"}}')
 
     assert refusal.detail == "is not UTF-8"
+
+
+# -- a tag and a version ------------------------------------------------------
+
+#: One version for each of its three numbers, with that number too long.
+LONG_VERSIONS = (
+    pytest.param(f"{DIGITS}.0.0", id="major"),
+    pytest.param(f"0.{DIGITS}.0", id="minor"),
+    pytest.param(f"0.0.{DIGITS}", id="patch"),
+)
+
+
+@pytest.mark.parametrize("version", LONG_VERSIONS)
+def test_a_tag_number_too_long_to_read_is_no_version(version: str) -> None:
+    """Such a tag is not a version of its component, as a tag of another
+    scheme is not. The newest version is the newest tag that is one."""
+    tag = f"chaperone-v{version}"
+
+    assert newest_tagged_version([tag], "chaperone") is None
+    assert newest_tagged_version(["chaperone-v0.1.0", tag], "chaperone") == "0.1.0"
+
+
+@pytest.mark.parametrize("version", LONG_VERSIONS)
+def test_the_allocator_does_not_count_from_a_tag_too_long_to_read(version: str) -> None:
+    tags = ("chaperone-v0.1.0", f"chaperone-v{version}")
+    plans = plan_tags(("chaperone/src/x.py",), (), tags, (), Repo.AGENT_CONTROL)
+    plan = next(one for one in plans if one.component == "chaperone")
+
+    assert plan.outcome is TagOutcome.CREATE
+    assert plan.tag == "chaperone-v0.1.1"
+
+
+@pytest.mark.parametrize("version", LONG_VERSIONS)
+def test_the_monotonic_rule_refuses_a_version_too_long_to_read(version: str) -> None:
+    """The rule cannot compare the two versions, which is its refusal."""
+    for target, live in ((version, "1.2.0"), ("1.2.0", version)):
+        with pytest.raises(Refusal) as caught:
+            check_monotonic("chaperone", target, live)
+
+        assert caught.value.code is RefusalCode.MONOTONIC
+        assert caught.value.detail == "cannot compare the target with the installed version"
 
 
 # -- server.yaml and the sops file --------------------------------------------

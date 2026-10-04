@@ -26,7 +26,9 @@ directory is not a workspace package, so a change here does not change
 7. The output is the same on every machine and under each supported Python
    version. `--check` under each version is the proof.
 8. One test builds the vectors. The other tests read the committed files.
-   A second build doubles the cost of the suite.
+   A second build doubles the cost of the suite. The one exception is
+   `tests/test_vectors_runtime.py`. It builds the group `runtime` alone, in
+   about one second.
 9. `pyright` checks this directory in strict mode.
 
 ## Module map
@@ -52,6 +54,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/manifest.py` | the eleven `manifest.<name>` surfaces of contract 06 |
 | `surfaces/session_cases.py` | the written inputs of the session API surfaces |
 | `surfaces/session.py` | the session API: `session.request.*`, `session.query.*`, `session.error_body`, `session.answer.*`, `session.journal.*`, `session.stream.*`, `session.turn.move`, `session.state.derive`, `session.outcome.*` |
+| `surfaces/runtime.py` | the helper code that each service copies: `runtime.untrusted.<copy>.<helper>`, `runtime.parse_object.noticeboard`, `runtime.token.<reader>`, `runtime.bearer.<copy>`, `runtime.edge.<service>` |
 
 ## Known gaps
 
@@ -185,8 +188,13 @@ directory is not a workspace package, so a change here does not change
   has a run.
 - `config.roster` holds the tree of a roster file and no YAML text. No
   vector covers what PyYAML does with the text of a file: a comment, an
-  alias, a tab or a plain `yes`.
+  alias, a tab or a plain `yes`. No vector covers the three limits that the
+  chaperone holds on the merge keys and on the aliases of that text. No Rust
+  type reads the text of a roster.
 - No vector covers the roster writer, `handover.executor.roster`.
+- No vector covers `handover.mcpserver.parse_server` or the reader of the
+  sops file in `handover.intake.store`. Each one has merge limits of its
+  own. Only the tests of `handover` hold those limits.
 - No vector covers the roster reader of the caregiver,
   `caregiver.mcp_release.served_servers`. It gives one answer for a roster
   that it refuses and for a roster with no row, so a vector cannot hold a
@@ -194,8 +202,10 @@ directory is not a workspace package, so a change here does not change
 - Four configs have no entry point that takes a map of variables, so no
   vector covers them: `chaperone.__main__`, `caregiver.cli`,
   `agent_door_owui.config` and `agent_door_trigger.config`. The two doors
-  read a key file while they parse. `config.chaperone.site` covers the four
-  readers of `chaperone.site`.
+  read a key file while they parse. `config.chaperone.site` covers four
+  readers of `chaperone.site`. No vector covers the fifth reader,
+  `listener`. It gives the host and the port of the bind that `bind` gives
+  as text.
 - No vector covers `handover.intake.run`. It reads the site file and the
   environment of the process.
 - `config.playpen_env.read` takes a text. No vector covers an env file
@@ -207,3 +217,54 @@ directory is not a workspace package, so a change here does not change
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
   reads that file.
+- The group `runtime` covers the lenient readers, the token files, the
+  bearer of a request and the answers of the web framework. No vector
+  covers an atomic write, a read with a size cap or a path under the state
+  root. No vector covers the mint of a random token or a signal.
+- No vector covers the text that a service decodes from the output of a
+  child program. The locale gives the encoding of that decode, and the
+  locale is a value of the machine.
+- `_text` of `chaperone.delegate` has no public entry point and no vector.
+  The reply reader of the delegate client calls it, and no surface covers
+  that reader.
+- The group `runtime` has no surface for `read_object`, `moment`, `age_s` and
+  `missing` of `noticeboard.jsonfiles`, or for `read_json` of
+  `attendance.atomic`.
+- A `runtime.untrusted` surface of the noticeboard uses the default of each
+  optional argument: the limit of `text` and the fallback of `integer`.
+- A refused vector of `runtime.parse_object.noticeboard` holds no reason. The
+  problem text of the entry point holds a message of the interpreter.
+- Two token readers are private functions: `_read_token` of
+  `attendance.auth` and `_read_key` of `agent_door_owui.config`. A
+  `runtime.token` surface calls the public caller of each one:
+  `TokenBook.load` and `from_env`.
+- No vector covers `_read_token` of `agent_door_tui.config` or of
+  `agent_door_trigger.config`. Each one is a copy of the reader that
+  `runtime.token.door` covers.
+- `runtime.token.attendance` and `runtime.token.attendance_pep_read` hold no
+  token. `TokenBook.load` returns nothing, and the tokens that it keeps are
+  private.
+- A `runtime.token` surface holds one path with no file, the vector
+  `absent`. Each other vector is a file that the generator can read. No
+  vector covers a directory at the path, a file that the generator cannot
+  read or a file of more than 1 MiB.
+- Each bearer reader is a private function: `_bearer_value` of
+  `attendance.auth` and of `agent_door_trigger.webhooks`, `_authenticate` of
+  `agent_door_owui.app`, `_bearer` and `_bearer_matches` of `chaperone.app`.
+  A `runtime.bearer` surface calls its reader through one route of the app.
+- `runtime.bearer.chaperone` covers the bearer of the approval callback. No
+  vector covers the bearer of a family on `GET /manifest` and on
+  `POST /call`. The chaperone looks up that bearer in the grant files.
+- A `runtime.bearer` surface gives the app the bytes of a header with no
+  server. A server removes each space and each tab at the two ends of a
+  header value. No network client can thus send the header of five vectors:
+  `scheme-and-space`, `scheme-and-spaces`, `space-before-the-scheme`,
+  `space-at-the-end` and `tab-at-the-end`.
+- The answers of a `runtime.edge` surface come from the versions of
+  Starlette and of FastAPI that `uv.lock` pins. A vector can move when
+  `uv.lock` takes a newer version.
+- No `runtime.edge` vector holds the answer of the web framework to a
+  handler that raises. Each of the five services has its own handler for an
+  exception. The vector `handler-raises` holds the answer of that handler.
+- `runtime.edge.door_trigger` has no vector for HEAD on a GET route. The
+  listener has no GET route.

@@ -28,12 +28,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol, cast
 
-import yaml
 from handover.mcpserver import DEFAULT_PYTHON, ServerFile, ServerPin, Source
 from mcp import ClientSession, MCPError, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import ListToolsResult, TextContent, ToolAnnotations
 
+from . import bounded_yaml
 from .fences import ArgDeny
 from .run_as import CHILD_ENV_VAR
 
@@ -147,7 +147,10 @@ def _parse_arg_denies(path: Path, name: str, raw: object) -> tuple[ArgDeny, ...]
 
 
 def load_upstreams(path: Path) -> dict[str, UpstreamSpec]:
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    # Not `yaml.safe_load`: that reader has no limit for the copies of a
+    # merge key, and none for the nodes of an alias (`bounded_yaml`). The
+    # rows below make a copy of each list and of each mapping they read.
+    raw = bounded_yaml.load(path.read_text(encoding="utf-8"))
     if raw is None:
         return {}
     if not isinstance(raw, dict):
