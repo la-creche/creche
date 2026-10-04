@@ -160,7 +160,7 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 | `test_bin_hook_env.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
 | `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. |
-| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
+| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`, and the two `[profile]` tables there. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
 | `test_rust_config_units.py` | Each Rust config type names one daemon unit. Each daemon unit holds `Restart=always` and no `RestartPreventExitStatus`. Three daemon units hold an `ExecStartPre=` check, and the Rust config type of each one says so. Each variable of a unit has a constant in the Rust module of its daemon. |
 | `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job and the same `rust` job, and `!retest` restarts one run. |
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |

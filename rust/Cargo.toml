@@ -24,6 +24,38 @@ serde = { version = "1.0", features = ["derive"] }
 # from the Python value in its last bit.
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 
+# The common stack of a service. creche-runtime uses each crate below, and
+# rust/AGENTS.md, "The rules for a service", says how. Each entry turns the
+# default features off and names each feature that the code needs. A feature
+# that no code needs adds crates that no person here reviews.
+#
+# No TLS crate is here. The client of creche-runtime refuses an `https` URL.
+tokio = { version = "1.53.2", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "process",
+    "signal",
+    "time",
+    "io-util",
+    "sync",
+] }
+# `rt`: the tracker of the tasks that must end before the process exits.
+tokio-util = { version = "0.7.19", default-features = false, features = ["rt"] }
+# A service adds `json`, `query` or `form` in its own Cargo.toml when it
+# needs one.
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
+hyper = { version = "1.11.1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
+http = { version = "1.5.0", default-features = false, features = ["std"] }
+http-body-util = { version = "0.1.5", default-features = false }
+bytes = { version = "1.12.1", default-features = false, features = ["std"] }
+# Two calls with no `unsafe` code here: a signal to a child program, and the
+# open of a file that refuses a symlink and never blocks.
+rustix = { version = "1.1.5", default-features = false, features = ["std", "process", "fs"] }
+# creche-testkit only: one request through a router with no socket.
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
+
 # The lint gate. A crate inherits it with `[lints] workspace = true`, and
 # bin/rust-gate.sh refuses a crate that does not. An exception is written
 # `#[expect(clippy::<lint>, reason = "...")]` at the one item, never
@@ -56,3 +88,17 @@ mem_forget = "deny"
 # so.
 allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
+
+# A panic unwinds, in each profile. The edge layer of creche-runtime then
+# catches the panic of one request, and the process serves the next request.
+# With `abort`, one panic stops the service.
+#
+# `overflow-checks`: an integer overflow panics in a release build too. Without
+# it, a release build wraps the number and continues with a wrong value.
+# bin/tests/test_rust_workspace.py pins the two profiles.
+[profile.release]
+panic = "unwind"
+overflow-checks = true
+
+[profile.dev]
+panic = "unwind"

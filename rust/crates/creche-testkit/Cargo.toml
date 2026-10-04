@@ -1,0 +1,22 @@
+[package]
+name = "creche-testkit"
+description = "Test helpers for each crate of the creche workspace"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+creche-contracts = { path = "../creche-contracts" }
+creche-runtime = { path = "../creche-runtime" }
+axum = { workspace = true }
+http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# `test-util`: a test stops the clock of tokio and moves it by hand. A build
+# of the whole workspace turns this feature on for each crate.
+tokio = { workspace = true, features = ["test-util"] }
+tower = { workspace = true }

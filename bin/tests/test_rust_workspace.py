@@ -15,6 +15,12 @@ a check here:
 3. **Two toolchain versions.** `rust-toolchain.toml` names the compiler, and
    `rust-version` in `Cargo.toml` names the oldest one a crate builds with.
    They are one version here.
+4. **A panic that stops the process, or an overflow that does not.** The two
+   `[profile]` tables keep `panic = "unwind"`, and the release one keeps
+   `overflow-checks = true`. With `abort`, one panic in one request stops a
+   service, and its edge layer cannot answer. Without the checks, a release
+   build wraps a number and continues with a wrong value
+   (`rust/AGENTS.md`, "The rules for a service").
 
 A push that changes only `rust/` runs no pytest suite (`bin/lib/rustrule.sh`),
 so for such a change these checks run in CI.
@@ -74,6 +80,12 @@ IN_TESTS = {
     "allow-indexing-slicing-in-tests": True,
 }
 
+#: The two profile tables of the workspace, entry for entry.
+PROFILES = {
+    "release": {"panic": "unwind", "overflow-checks": True},
+    "dev": {"panic": "unwind"},
+}
+
 #: A file that makes its directory a part of a Cargo build.
 CARGO_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchain")
 
@@ -87,6 +99,9 @@ def _toml(name: str) -> dict[str, Any]:
 
 WORKSPACE = _toml("Cargo.toml")["workspace"]
 
+#: The `[profile]` tables. They are beside `[workspace]`, not inside it.
+PROFILE = _toml("Cargo.toml").get("profile", {})
+
 
 def test_the_gate_forbids_unsafe_code() -> None:
     assert WORKSPACE["lints"]["rust"] == RUST_LINTS
@@ -98,6 +113,10 @@ def test_the_gate_denies_every_clippy_lint_it_names() -> None:
 
 def test_only_a_test_can_break_a_lint_and_only_these_four() -> None:
     assert _toml("clippy.toml") == IN_TESTS
+
+
+def test_a_panic_unwinds_and_a_release_build_checks_each_overflow() -> None:
+    assert PROFILE == PROFILES
 
 
 def test_the_toolchain_is_the_rust_version_of_the_workspace() -> None:
