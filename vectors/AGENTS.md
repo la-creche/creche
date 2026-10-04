@@ -39,7 +39,8 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/family_cases.py` | the written `family.yaml` inputs |
 | `surfaces/family_file.py` | `family_file` and `family_file.host` |
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
-| `surfaces/grants.py` | `grants.parse`, `chaperone.call_body`, `chaperone.approval_body` |
+| `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
+| `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
 | `surfaces/status_files.py` | the writer of `status.json`, the fault files and the outcome record: `status.write`, `status.fault_file.<package>`, `status.outcome.noticeboard` |
 
@@ -59,12 +60,26 @@ directory is not a workspace package, so a change here does not change
 - No vector covers contract 06, the component manifest and the release
   request file.
 - No vector covers `server.yaml`, contract 01b.
+- `grants.write` calls `write_grant_file`. No vector covers
+  `build_grant_file`, which expands `all` and `<server>__*`.
+- `grants.write` holds valid fields only. The writer does not validate a
+  field, so an invalid field has no refusal to record. It holds no file of
+  more than 256 KiB. The writer writes such a file, and the chaperone then
+  refuses it.
+- No vector covers `rewrite_digests` or `grant_file_matches` of the
+  caregiver.
+- The two log surfaces replace the clock of `chaperone.audit` and of
+  `chaperone.family_audit` while the entry point runs. The two modules give
+  no other way to set the time of a record.
+- No vector covers the retention sweep of a log, or a log directory that
+  the chaperone cannot write.
 - `channel.parse` gives no vector for `unknown_address` or `sequence_gap`.
   Those refusals need the state of a channel.
-- No vector covers the size cap of a grant file or the body cap of the
-  chaperone. The caller applies each cap before it calls the entry point.
-  No vector covers the size cap of a status reader, of the fault file
-  reader or of the outcome reader.
+- No vector covers the size cap of a grant file. No vector of the two body
+  surfaces covers the body cap of the chaperone. The caller applies each cap
+  before it calls the entry point. `chaperone.unidentified_line` holds two
+  vectors of a body over the cap. No vector covers the size cap of a status
+  reader, of the fault file reader or of the outcome reader.
 - Five patterns have no public entry point: `_ENV_NAME_RE` in the four
   `verify.py` modules, `_LOCK_PATH` and `_ARG_NAME` in
   `agent_family.serverrules`, `_REPO_NAME` in `handover.site` and
@@ -78,6 +93,11 @@ directory is not a workspace package, so a change here does not change
   file.
 - `host_reason` of `attendance.wire` has no vector. `cap_event` and
   `read_usage` have vectors only through `channel.parse`.
+- No vector covers the playpen side of contract 03: what the playpen accepts
+  from the host, and what it writes. The playpen is TypeScript, and the
+  generator calls Python.
+- `channel.build` has no vector for `prompt`. `attendance.wire` has no
+  builder for that message.
 - `status.door_trigger` lists only an autonomous family, and a refused
   vector holds no reason. Most status documents are attended, so that
   reader refuses them on `kind` alone. The surface pins little of how that
@@ -86,5 +106,9 @@ directory is not a workspace package, so a change here does not change
   name that depends on the file system of the host has no vector.
 - The vectors with a 400,000-deep nesting assume the default stack size. A
   larger stack can let Python 3.14 read that input.
+- The vector with a 9,100-deep nesting is under the limit of each supported
+  Python version: 9,997 levels on 3.12 and 9,998 on 3.13. Python refuses that
+  input when the caller is about 900 C calls deep. Python 3.14 refuses it on
+  a small stack.
 - The generator runs on macOS, and CI runs it on Linux. No other system
   has a run.
