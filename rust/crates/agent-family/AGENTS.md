@@ -132,6 +132,10 @@ error. The program does not stop on such a file.
      `Stricter`.
 - A YAML integer of more than 4300 decimal digits has no value here, in
   each base. This crate refuses the text.
+- The Python validator gives one message for each text that has no value:
+  such an integer, a date that the calendar does not hold, a tag on a text
+  that is no value of the tag. This crate gives the cause. Each such vector
+  is a row of `DEVIATIONS`.
 - A `!!set` gives its members in the order of the text. Python gives them in
   an order that changes from run to run.
 - `zones::SystemZones` reads the four directories that Python reads by

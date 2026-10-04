@@ -76,9 +76,59 @@ mod walk {
     const LONG_TOOL_ERROR: &str = "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
                                    is not a tool name; a tool name has 64 bytes or less";
 
+    /// A row for a text that has no value. The Python reader gives one
+    /// message for each such text. The Rust reader gives the cause, in
+    /// `message`.
+    const fn no_value(vector: &'static str, message: &'static str) -> Deviation {
+        Deviation {
+            surface: "family_file",
+            vector,
+            contract: "contract 01 §7: no message for a text that has no value",
+            difference: Difference::OtherRefusal(message),
+        }
+    }
+
     /// Each vector on which the Rust code differs from the Python code on
     /// purpose.
-    const DEVIATIONS: [Deviation; 9] = [
+    const DEVIATIONS: [Deviation; 17] = [
+        no_value(
+            "yaml-huge-int",
+            "YAML will not parse: an integer has more than 4300 digits",
+        ),
+        no_value(
+            "yaml-huge-hex-int",
+            "YAML will not parse: an integer has more than 4300 digits",
+        ),
+        no_value(
+            "yaml-date-no-day",
+            "YAML will not parse: a value with the tag timestamp is no date and no time",
+        ),
+        no_value(
+            "yaml-tag-int-empty",
+            "YAML will not parse: an integer has no digit",
+        ),
+        no_value(
+            "yaml-tag-bool-word",
+            "YAML will not parse: a value with the tag bool is not a boolean word",
+        ),
+        no_value(
+            "yaml-tag-timestamp-word",
+            "YAML will not parse: a value with the tag timestamp is no date and no time",
+        ),
+        no_value(
+            "yaml-sexagesimal-float-huge",
+            "YAML will not parse: a base 60 float has too many parts",
+        ),
+        Deviation {
+            surface: "family_file",
+            vector: "yaml-deep-flow",
+            contract: "contract 01 §1 and §2: no limit for the nesting of a file",
+            // The Python reader refuses a text that nests deeper than its
+            // interpreter follows. The Rust reader stops at 128 levels.
+            difference: Difference::OtherRefusal(
+                "YAML will not parse: the text nests deeper than 128 levels",
+            ),
+        },
         Deviation {
             surface: "family_file",
             vector: "yaml-escape-surrogate",

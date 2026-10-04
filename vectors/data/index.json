@@ -66,7 +66,7 @@
   {"accepted":2,"entry":"handover.executor.source.OBJECT_ID_RE.fullmatch","path":"ids/git_object_id.handover_source.json","raised":0,"refused":16,"surface":"id.git_object_id.handover_source","vectors":18},
   {"accepted":2,"entry":"chaperone.gates.GATE_ID_RE.match","path":"ids/gate_id.chaperone.json","raised":0,"refused":15,"surface":"id.gate_id.chaperone","vectors":17},
   {"accepted":7,"entry":"attendance.ids.is_attachment","path":"ids/attachment_name.attendance.json","raised":0,"refused":18,"surface":"id.attachment_name.attendance","vectors":25},
-  {"accepted":103,"entry":"agent_family.load_registry","path":"family_file.json","raised":0,"refused":165,"surface":"family_file","vectors":268},
+  {"accepted":103,"entry":"agent_family.load_registry","path":"family_file.json","raised":0,"refused":173,"surface":"family_file","vectors":276},
   {"accepted":10,"entry":"agent_family.load_registry","path":"family_file.host.json","raised":0,"refused":3,"surface":"family_file.host","vectors":13},
   {"accepted":31,"entry":"agent_family.load_registry","path":"server_file.json","raised":0,"refused":59,"surface":"server_file","vectors":90},
   {"accepted":86,"entry":"agent_family.classify","path":"family_file.classify.json","raised":0,"refused":0,"surface":"family_file.classify","vectors":86},

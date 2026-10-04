@@ -132,6 +132,18 @@ tools:
 #: cases. The mapping at the top is one level more.
 NEST_INNER: Final = 127
 
+#: A count of flow sequences that no supported Python version reads.
+_DEEP_FLOW: Final = 10_000
+
+#: A count of decimal digits past the limit of 4300 digits of Python.
+_HUGE_DIGITS: Final = 5_000
+
+#: A count of base 16 digits whose number has more than 4300 decimal digits.
+_HUGE_HEX_DIGITS: Final = 4_000
+
+#: A count of base 60 parts whose number is past the largest float.
+_HUGE_PARTS: Final = 200
+
 CASES: Final[tuple[Case, ...]] = (
     # --- the control: nothing wrong ---------------------------------------
     _case("ok-minimal", HEAD),
@@ -376,6 +388,7 @@ files:
     _case("yaml-unclosed-flow", HEAD + "files: [ { path: /srv/agents/vault, mode: ro }\n"),
     _case("yaml-bad-indent", "name: %NAME%\n  kind: thin\ndescription: x\n"),
     _case("yaml-big-int", HEAD + "max_inflight_delegations: 99999999999999999999999\n"),
+    _case("yaml-huge-int", HEAD + "max_inflight_delegations: " + "9" * _HUGE_DIGITS + "\n"),
     _case("yaml-tag-str", HEAD + "sandbox: { cpus: !!str 2 }\n"),
     _case("yaml-tag-int", HEAD + 'sandbox: { cpus: !!int "2" }\n'),
     _case("yaml-tag-float", HEAD + "sandbox: { cpus: !!float 2 }\n"),
@@ -394,6 +407,7 @@ files:
     _case("yaml-c1-control", _head(description='description: "a\x85b"')),
     _case("yaml-escape-surrogate", _head(description='description: "\\ud800"')),
     _case("yaml-escape-nul", _head(description='description: "a\\0b"')),
+    _case("yaml-deep-flow", HEAD + "skills: " + "[" * _DEEP_FLOW + "]" * _DEEP_FLOW + "\n"),
     _case("yaml-multiline-str", _head(description="description: >\n  folded\n  text\n")),
     _case("yaml-doc-end", HEAD + "...\n"),
     _case("yaml-doc-start", "---\n" + HEAD),
@@ -777,6 +791,19 @@ approval:
     _case("yaml-doc-top-set", "!!set { a }\n"),
     _case("yaml-line-separator", HEAD + "shell: true\u2028egress: []\n"),
     _case("yaml-long-snippet", HEAD + "egress: [" + "a" * 90 + ", @bad, " + "b" * 90 + "]\n"),
+    # --- a scalar that has no value ---
+    _case(
+        "yaml-huge-hex-int",
+        HEAD + "max_inflight_delegations: 0x" + "f" * _HUGE_HEX_DIGITS + "\n",
+    ),
+    _case("yaml-date-no-day", HEAD + "shell: 2001-02-30\n"),
+    _case("yaml-tag-int-empty", HEAD + 'sandbox: { cpus: !!int "" }\n'),
+    _case("yaml-tag-bool-word", HEAD + "shell: !!bool maybe\n"),
+    _case("yaml-tag-timestamp-word", HEAD + "shell: !!timestamp soon\n"),
+    _case(
+        "yaml-sexagesimal-float-huge",
+        HEAD + "sandbox: { cpus: 1" + ":0" * _HUGE_PARTS + ".5 }\n",
+    ),
     # --- an unknown field near more than one known field ---
     _case("unknown-tie", HEAD + "skils: []\nshel: true\ntool: {}\n"),
     _case("unknown-long", HEAD + "x" * 250 + ": 1\n"),

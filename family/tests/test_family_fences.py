@@ -833,3 +833,67 @@ def test_unparsable_yaml_is_refused() -> None:
     family, issues = parse_family("name: [unclosed\n")
     assert family is None
     assert any("YAML will not parse" in issue.msg for issue in issues)
+
+
+# --- a text with no value (contract 01 §7, invariant 19) ---------------------
+
+_HEAD = (
+    "name: chat\nkind: attended\ndescription: x\n"
+    "model: {router: agent-router, budget_usd_per_day: 1}\n"
+)
+
+#: YAML that the reader has no value for. Each one is past the syntax check.
+NO_VALUE_TEXTS = {
+    # A decimal integer of more digits than the interpreter converts.
+    "decimal-integer": "max_inflight_delegations: " + "9" * 5000 + "\n",
+    # The same size in base 16, which the reader converts and nothing prints.
+    "base-16-integer": "max_inflight_delegations: 0x" + "f" * 4000 + "\n",
+    "base-16-nested": "sandbox: { cpus: 0x" + "f" * 4000 + " }\n",
+    "base-16-key": "? 0x" + "f" * 4000 + "\n: 1\n",
+    # A date that the calendar does not hold.
+    "date": "shell: 2001-02-30\n",
+    # A tag on a text that is no value of the tag.
+    "int-tag-word": "sandbox: { cpus: !!int two }\n",
+    "int-tag-empty": 'sandbox: { cpus: !!int "" }\n',
+    "float-tag-word": "sandbox: { cpus: !!float two }\n",
+    "bool-tag-word": "shell: !!bool maybe\n",
+    "timestamp-tag-word": "shell: !!timestamp soon\n",
+    # A base 60 float past the largest float.
+    "base-60-float": "sandbox: { cpus: 1" + ":0" * 200 + ".5 }\n",
+}
+
+
+@pytest.mark.parametrize("case", NO_VALUE_TEXTS)
+def test_a_text_with_no_value_is_refused(case: str) -> None:
+    family, issues = parse_family(_HEAD + NO_VALUE_TEXTS[case])
+    assert family is None
+    assert [issue.loc for issue in issues] == ["<document>"]
+    assert "YAML will not parse" in issues[0].msg
+
+
+def test_a_text_that_nests_too_deep_is_refused() -> None:
+    family, issues = parse_family(_HEAD + "skills: " + "[" * 10_000 + "]" * 10_000 + "\n")
+    assert family is None
+    assert [issue.msg for issue in issues] == ["YAML will not parse: the text nests too deep"]
+
+
+def test_an_anchor_that_holds_itself_is_read_to_its_end() -> None:
+    family, issues = parse_family(_HEAD + "skills: &again [*again]\n")
+    assert family is None
+    assert [issue.loc for issue in issues] == ["skills[0]"]
+
+
+def test_one_file_with_no_value_does_not_stop_the_registry_read(tmp_path: Path) -> None:
+    """§7 rule 5: the other families keep their reports."""
+    registry_copy = tmp_path / "registry"
+    shutil.copytree(FIXTURES, registry_copy)
+    broken = registry_copy / "families" / "no-value"
+    broken.mkdir()
+    (broken / "family.yaml").write_text(_HEAD + NO_VALUE_TEXTS["decimal-integer"], encoding="utf-8")
+
+    loaded = load_registry(registry_copy, host())
+    assert "YAML will not parse" in messages(loaded.reports["no-value"])
+    assert not loaded.reports["no-value"].ok
+    assert "no-value" not in loaded.families
+    assert loaded.reports["chat"].ok
+    assert "chat" in loaded.families
