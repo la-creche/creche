@@ -107,6 +107,8 @@ host where something has gone wrong.
   delete. `reconcile.has_family_file` is the one test for it.
 - `rotate` deletes the old key before it mints the new one. The token
   overlaps. The key does not.
+- `rotate` publishes the new epoch. It writes the credentials block of
+  the status document and no other field, so `written_at` stays.
 - `rotate` takes a `ValidFamily`. Only `rotate.valid_family` makes one. The
   report must have no error, and the applied snapshot must not refuse the
   edit.

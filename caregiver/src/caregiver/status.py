@@ -331,6 +331,29 @@ def restamp_status(path: Path, *, older_than_s: float) -> bool:
         return True
 
 
+def publish_credentials(path: Path, credentials: CredentialsBlock) -> bool:
+    """Put `credentials` into the document on disk, and change no other
+    field. Answers whether it did.
+
+    Contract 05 section 6.3 step 3: a rotation publishes the new epoch in
+    the status document, and `attendance` reads it from there alone. The
+    `rotate` verb runs in a process of its own and has not looked at the
+    family, so `written_at` stays: the document is as old as its last pass.
+
+    A document that is absent or does not read gets no write. The next pass
+    publishes a whole document from `creds.json`. A pass of `serve` that is
+    in flight can write the block it read before the rotation. Its next
+    pass corrects that."""
+    with _lock_for(path):
+        body = _read_json(path)
+        if body is None:
+            return False
+
+        body["credentials"] = credentials.as_json()
+        _write_json(path, body)
+        return True
+
+
 def _write(path: Path, doc: StatusDocument) -> None:
     _write_json(path, doc.as_json())
 

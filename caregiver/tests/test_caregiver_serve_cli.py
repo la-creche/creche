@@ -287,6 +287,41 @@ def test_rotate_with_write_raises_the_epoch(bench: Bench) -> None:
     assert after.epoch == 2
 
 
+def test_rotate_publishes_the_new_epoch(bench: Bench) -> None:
+    """Contract 05 §6.3 step 3. `attendance` reads the epoch from the status
+    document alone, so the verb puts it there. It changes no other field:
+    the verb did not look at the family, so `written_at` stays."""
+    bench.reconcile("--write")
+    before = published(bench.state_root)
+
+    assert bench.rotate("--write") == EXIT_OK
+
+    after = published(bench.state_root)
+    assert after["credentials"]["epoch"] == 2
+    assert after["credentials"]["rotated_at"] >= before["credentials"]["rotated_at"]
+    assert {**after, "credentials": None} == {**before, "credentials": None}
+
+
+def test_rotate_of_an_invalid_family_publishes_the_new_epoch(bench: Bench) -> None:
+    """The rotation that keeps the grants as applied publishes too."""
+    bench.reconcile("--write")
+    write_registry(bench.registry_root, tools=REFUSED_TOOLS)
+
+    assert bench.rotate("--write") == EXIT_OK
+
+    assert published_epoch(bench.state_root) == 2
+
+
+def test_rotate_writes_no_document_where_none_is(bench: Bench) -> None:
+    """A family with no status document gets its first one from a pass."""
+    bench.reconcile("--write")
+    paths.status_path(bench.state_root, "chat").unlink()
+
+    assert bench.rotate("--write") == EXIT_OK
+
+    assert not paths.status_path(bench.state_root, "chat").exists()
+
+
 def test_rotate_says_the_key_half_is_not_graceful(
     bench: Bench, capsys: pytest.CaptureFixture[str]
 ) -> None:
