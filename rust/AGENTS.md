@@ -660,8 +660,12 @@ Rules for the test:
 - The same rule applies to each other entry, for example an advisory that
   the check ignores.
 - The checks read each crate that a build for one of four targets can use:
-  Linux and macOS, each on x86-64 and on arm64. `deny.toml` lists the
-  targets.
+  Linux with glibc and macOS, each on x86-64 and on arm64. `deny.toml` lists
+  the targets.
+- A crate that only a test uses is in the `licenses` check and in the count
+  of versions. Two keys of `deny.toml` do this: `include-dev` and
+  `multiple-versions-include-dev`. Without its key, each of the two checks
+  skips such a crate.
 - A crate of this workspace names another one by its path, with no version.
   `deny.toml` permits that only for a crate with `publish = false`.
 - The check does not read the code of a crate. A crate that passes is not a
@@ -670,9 +674,17 @@ Rules for the test:
 ## Known gaps
 
 - The owner did not decide if the advisory check blocks a merge. Today it
-  does: step 5 of `bin/rust-gate.sh` makes the four checks. A new advisory
-  can thus fail a pull request that changes no dependency. The other choice
-  is an advisory check on a schedule.
+  does: step 5 of `bin/rust-gate.sh` makes the four checks. A change with no
+  new dependency can thus fail on a new advisory. The other choice is an
+  advisory check on a schedule.
+- `release.yml` runs the same step after a merge that touches `rust/` or
+  `vectors/`. A new advisory there fails the `rust` job, and that push gets
+  no tag. The next push that passes gets the tags of both.
+- The check of the locked crates reads four targets. A crate that only a
+  build for another target uses gets no check, for example a build for Linux
+  with musl or for Windows. `Cargo.lock` holds such crates.
+- `bin/rust-gate.sh` does not check the version of the `cargo-deny` on
+  `PATH`. Another version can read `deny.toml` in another way.
 - No release uses Rust code.
 - Most bodies of `creche-runtime`, of `creche-testkit` and of the module
   `untrusted` are stubs. A stub panics when code calls it.
