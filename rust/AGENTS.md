@@ -31,9 +31,9 @@ defect that a test finds late.
 | `session` | The session API: contract 02. |
 | `channel` | The channel protocol: contract 03. "The channel module" below has its parts. |
 | `grants` | The grant file, the call body, the approval body, the audit record and the words of a decision: contract 04. |
-| `status` | The status document: contract 05. |
+| `status` | The status document, the fault files and one view for each reader: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
-| `config` | The config of each process. |
+| `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
 ## Where a new type goes
@@ -96,10 +96,10 @@ Each rule has its reason. Do not break a rule without a change to this file.
    conversion never sees an invalid value.
    Reason: one conversion holds every check, so no code path can skip a
    check.
-   Exception: the modules `channel` and `grants` use no raw `serde` type.
-   Each one reads a document with a reader of its own. "The channel module"
-   and "Known gaps" give the reasons. The owner decides if the exception of
-   `grants` stays.
+   Exception: the modules `channel`, `grants` and `status` use no raw `serde`
+   type. Each one reads a document with a reader of its own. "The channel
+   module", "The JSON reader of `status`" and "Known gaps" give the reasons.
+   The owner decides if the exception of `grants` stays.
 2. **Give each id, name, path, size, duration and token its own type.** The
    type has a private field and a parsing constructor. Do not implement
    `Default`. Do not derive `Deserialize` directly. Use
@@ -208,7 +208,7 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
-Rule 1 names a raw `serde` type. The `channel` module is one of two
+Rule 1 names a raw `serde` type. The `channel` module is one of three
 exceptions.
 Its raw type is `channel::json::Json`, from a reader of its own. The Python
 host reads a line with `json.loads`, and `serde_json` does not read what
@@ -246,6 +246,130 @@ The writer of `json` makes the bytes of
 `json.dumps(value, separators=(",", ":"), ensure_ascii=False)`. The host
 counts those bytes against the size limit of an event. A float has the text
 that `repr` of Python gives.
+
+## A reader that accepts more than the contract
+
+A Python reader can accept a document that the contract does not permit. The
+module `status` shows what to do:
+
+1. The raw type reads each document. It checks no field.
+2. The valid type refuses each field that the contract does not permit. A
+   writer uses the valid type.
+3. One view for each Python reader takes from the raw type what that reader
+   takes. The port of a reader uses its view, so the port keeps the behavior
+   of the reader.
+4. The differential test holds each view equal to its reader. Where two
+   readers differ, a table in the test names the document, the contract
+   section and what each reader takes.
+
+Reason: a port that refuses a document that the Python reader accepts changes
+what runs on the host. The owner decides each such change. A view keeps the
+change out of the port.
+
+## The JSON reader of `status`
+
+`status` does not read a file with `serde_json`. `status::json` holds a
+reader and a writer of its own, and the raw type of `status` has no `serde`
+derive.
+
+Reason: `vectors/data/status` holds four forms of a JSON text that each
+Python reader accepts and `serde_json` refuses.
+
+1. The words `NaN`, `Infinity` and `-Infinity`.
+2. An integer of more than 64 bits.
+3. A key that an object holds two times.
+4. A nesting of more than 128 levels.
+
+The writer gives the bytes of `json.dumps` of Python. `serde_json` writes a
+float and a character that is not ASCII in another form.
+
+Rule 1 holds in each other part. The reader makes the raw type first, and a
+conversion that can fail makes the valid type. Rule 7 holds too. Only the
+detail of a fault holds a `status::json::Json`, and contract 05 §3.3 makes
+that value opaque.
+
+## The config of a process
+
+`creche_contracts::config` holds one type for the config of each daemon, and
+one type for each config file. A type holds an address, a path or a duration,
+and never a raw text.
+
+| Module of `config` | What it holds |
+|---|---|
+| `site` | The site file: `SiteFile` is the raw form, and `Site` is the valid form. |
+| `attendance`, `caregiver`, `chaperone`, `door_owui`, `door_trigger`, `noticeboard`, `intake` | The config of one daemon. |
+| `roster` | The roster of the chaperone. `RawRoster` takes its tree through `serde`. |
+| `mounts` | `runtime.json`, `creds.json` and the env file of the playpen. |
+
+A binary crate loads its config in this sequence:
+
+1. Build the map of the variables one time, with
+   `Env::from_os(std::env::vars_os())`. Do not call `std::env::vars`. It
+   stops the process on a value that is not UTF-8.
+2. Read each file that the config needs, for example the site file or a key
+   file. Give the text to the constructor. No config type reads the
+   environment or a file.
+3. Call the constructor of the config type, for example
+   `AttendanceConfig::from_env`. It returns each error of the parse, not only
+   the first one.
+4. Give the result to `config::start`. It applies the failure action of the
+   type.
+5. For `Start::Exit`, write each error to the log. Then return the status
+   from `main` as an `ExitCode`. Do not call `std::process::exit`. The lint
+   gate refuses it.
+6. For `Start::RefuseEachCall`, start the listener, refuse each call and
+   publish the errors as a fault.
+7. At a reload, give the last good value and the new result to
+   `config::reload`. For `Reload::Kept`, publish the fault and continue.
+
+The rule against a crash loop:
+
+- A daemon must not start again in a loop on a config that is not valid. No
+  restart corrects such a config.
+- Each config type states its failure action: it implements `Checked`.
+  `config::start` takes only a type that does.
+- `AtStart::ExitConfig` exits with status 78, `EX_CONFIG`. The unit file of
+  that daemon must hold `RestartPreventExitStatus=78`.
+- Today each of the seven daemon units holds `Restart=always` and
+  `StartLimitIntervalSec=0`, and none holds that line. systemd thus starts a
+  daemon again after each exit status, with no limit. The delay is 5 seconds
+  at first and 120 seconds at most.
+- Add the line in the pull request that moves a unit to a Rust binary.
+  `bin/tests/test_rust_config_units.py` pins what the units hold today.
+  Change the pin in the same pull request.
+- systemd reads `RestartPreventExitStatus` only for the exit status of the
+  main process. It does not read the line for a process of `ExecStartPre=`.
+- Three units hold `ExecStartPre=<service> --check` today:
+  `creche-attendance`, `creche-door-owui` and `creche-noticeboard`. With a
+  config that is not valid, the check fails before the main process starts.
+  systemd then starts the unit again, also when the unit file holds the line.
+- In the pull request that moves such a unit to a Rust binary, remove its
+  `ExecStartPre=` line. The main process does the same parse.
+- Then prove on a Linux host that the unit stays stopped after exit status
+  78. No test in this repository runs systemd.
+- `AtReload::KeepLastGood` never exits. A reload that fails keeps the last
+  good value.
+- `config::reload` takes only a type that says `AtReload::KeepLastGood`. A
+  call with a type that says `AtReload::NotRead` does not build.
+  `cargo build` and `cargo test` report that error, and `cargo check` does
+  not.
+- `config::start` and `config::reload` take the error type of each parse.
+  The roster and the site file have an error type of their own.
+
+More rules for a config type:
+
+- An error names the variable and the reason. It never holds the value,
+  because a value can be a secret.
+- Give each default of the code as text to the parser of the type. A default
+  that is not valid is then an error and not a panic.
+- A config holds the path of a key file and never the key. The binary reads
+  the file and calls `config::key_of_file`.
+- Give each variable of a unit a constant in the module of its daemon.
+  `bin/tests/test_rust_config_units.py` fails for a variable of a unit that
+  has no constant.
+- `config/python.rs` holds the differential test of the module. Its table
+  `SURFACES` names each `config.` surface, and its table `DEVIATIONS` names
+  each difference on purpose.
 
 ## Code style
 
@@ -368,6 +492,10 @@ Rules for the test:
 - A crate has no `version` key. No number lives in a file. A version is a
   tag that CI allocates.
 - Commit `Cargo.lock` with each change to a dependency.
+- `serde_json` has the feature `float_roundtrip`. It then reads each JSON
+  float as the nearest float, as Python does. Without the feature, a float of
+  16 digits or more can differ from the Python value in its last bit. Do not
+  remove the feature.
 
 ## Known gaps
 
@@ -375,8 +503,8 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- Six modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session`, `status`, `manifest` and `config`.
+- Four modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session` and `manifest`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
@@ -426,12 +554,12 @@ Rules for the test:
   does not read a grant file or a request body. The Python code takes JSON
   that is not strict, and it reports each issue of a document. `grants::Value`
   is the document. It has no `Deserialize`.
-- The crate has two JSON readers that do what `json.loads` of Python does:
-  `channel::json` and `grants::json`. The two differ in two decisions. The
-  reader of `channel` stops at 9000 levels, and the reader of `grants` stops
-  at 256 levels. The reader of `channel` keeps a lone surrogate in a text,
-  and the reader of `grants` refuses the document. The owner of the crate
-  decides if one reader replaces the two.
+- The crate has three JSON readers that do what `json.loads` of Python does:
+  `channel::json`, `grants::json` and `status::json`. They differ in two
+  decisions. The reader of `channel` stops at 9000 levels, and the readers of
+  `grants` and of `status` stop at 256 levels. The reader of `channel` keeps
+  a lone surrogate in a text, and the other two readers refuse the document.
+  The owner of the crate decides if one reader replaces the three.
 - The types of `grants` accept what the Python code accepts, also where a
   stricter reading of contract 04 is possible. The owner decides each case.
   Four examples:
@@ -539,3 +667,154 @@ Rules for the test:
   does.
 - `channel` has no function that maps a `FailReason` to a turn reason of
   contract 02 §14. The `session` module holds no turn reason yet.
+- These `CONTRACT-QUESTION` comments are open under
+  `crates/creche-contracts/src/status/`:
+  1. `json::DEPTH_MAX`, contract 05 §2. The contract gives no cap on the
+     nesting of a file. The reader stops at 256 levels. The Python reader
+     stops at a depth that depends on the interpreter. A value of 256 levels
+     needs less than 384 KiB of stack.
+  2. `Json::parse_bytes`, contract 05 §2. The contract does not name the
+     encoding of a file. The reader takes UTF-8. The Python reader of the
+     noticeboard also takes UTF-16 and UTF-32.
+  3. `JsonError::LoneSurrogate`, contract 05 §2. The Python reader keeps an
+     escape of one half of a surrogate pair. The reader refuses the file.
+  4. `time::Timestamp`, contract 05 §2.1. The contract names RFC 3339. The
+     Python readers take each text that `datetime.fromisoformat` takes, and
+     three of them read a time with no offset as UTC. The type takes RFC 3339
+     with an offset.
+  5. `document::HostPath`, contract 05 §3.2, §4.1.1 and §6.4. The contract
+     gives no grammar for a host path. The type takes an absolute path with
+     no control character.
+  6. `Sandbox::supervisor_env`, contract 05 §4.1.1. `caregiver` writes an
+     empty path for a row of its ledger that holds no path, in each
+     lifecycle state. The type takes it in each lifecycle state.
+  7. `Credentials::epoch`, contract 05 §6.1. The contract gives no range.
+     The type refuses 0. The Python reader of `attendance` takes 0.
+  8. `Fault::new`, contract 05 §3.3. `caregiver` writes `blocks_turns: false`
+     for `sandbox_start_failed` when another sandbox serves. The type takes
+     that one difference from the table.
+  9. `DocumentParts::kind`, contract 05 §2.1. `caregiver` writes an empty
+     kind for a family with no valid revision. The type takes it.
+  10. `DocumentParts::faults`, contract 05 §2.1. `caregiver` writes a fault
+      for a family in the state `invalid`. The type takes a fault in each
+      state.
+  11. `DocumentParts::credentials`, contract 05 §2.1. `caregiver` writes
+      `null` for a family with no credentials. The type takes it.
+  12. `fault_file::FAULT_FILE_CAP_BYTES`, contract 05 §3.3.1. The contract
+      gives no size cap. The reader has a cap of 1 MiB.
+  13. `ReconcileStep::WriteTimers`, contract 05 §3.4. The contract names
+      eight steps. `caregiver` also writes the step `write_timers`. The type
+      takes it.
+- The valid status document takes these forms. Contract 05 excludes each
+  one. The owner decides each case:
+  1. An empty `supervisor_env` for a sandbox in the state `ready` (§4.1.1
+     rule 4).
+  2. An empty kind with `never_valid: false`, or with a sandbox in
+     `sandboxes` (§2.1 and §3.1).
+  3. A fault in the state `in_sync` or `reconciling` (§2.1).
+  4. The state `degraded` with no fault (§3).
+- Contract 05 gives no grammar for these texts of the status document. Each
+  one is a `String`: `registry_rev`, `applied_rev`, `config_rev`,
+  `validation.rev`, `key_id`, `token_id`, `image`, `spec_hash`, `memory` and
+  the URL of the `pep` block.
+- The valid status document keeps no key that contract 05 does not name. A
+  document from a newer writer loses such a key when a program writes it
+  again.
+- Each view of `status::views` takes what its Python reader takes, and the
+  five Python readers do not agree. The table `DISAGREEMENTS` in
+  `status/python.rs` names each class of such documents, with one or two
+  documents of the class. The owner decides which reading each port keeps.
+- A view of `status` does not refuse a document for these three values. It
+  reads a time with no UTC offset as no time. It reads a time outside the
+  years 1 to 9999 as no time. It reads a number above the range of a float as
+  no number. The document is then stale, or it shows no spend. A unit test
+  covers each value, and no vector holds one.
+- `status::outcome` holds the view of the noticeboard and no valid type.
+  Contract 02 §13.1 owns the outcome record and its writer.
+- `status` holds no code for `rescope_by_fleet` and `drop_superseded` of
+  `caregiver.faults`. They are rules of the reconciler, not of a file.
+- No vector covers the size cap of a reader of contract 05. A unit test
+  covers each cap.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/config/`:
+  1. `LanAddress`. No contract gives the LAN address of the site file a
+     grammar. One Python copy of six takes labels with dots, and five take
+     each text. The type takes the strictest copy. It also refuses `0.0.0.0`
+     and a text that ends in a number and is not one IPv4 address.
+  2. `BindHost`, contract 02 §3 rule 2. The contract gives no grammar. The
+     type takes an IP address or a host name, and refuses each spelling of
+     each interface.
+  3. `SocketPath`, `DirPath`, `TokenFilePath` and `FilePath`. No contract
+     gives a config path a grammar. The types refuse a relative path and a
+     NUL byte. `SocketPath` has the cap of 107 bytes.
+  4. `Seconds`, contract 03 §11.4 rule 4. The contract does not say which
+     numbers are permitted. The type refuses a value that is not finite and
+     a value of less than 1 nanosecond.
+  5. `HttpUrl`. No contract gives a config URL a grammar. The type demands
+     `http://` or `https://` and a host, and refuses a user part.
+  6. `attendance::ChannelCommand`, contract 03 §1. The contract gives one
+     command and no grammar for another one. The type refuses a text that
+     does not split into words.
+  7. `caregiver::ImageRef`, contract 01 §3.9. The contract gives an image
+     reference no grammar. The type demands a reference with a digest.
+  8. `roster`, `stage7-releases.md` §4.4. The contract names no YAML
+     version. The module holds no YAML reader.
+  9. `caregiver::CaregiverConfig`, `spec.md` §5.4. The spec does not say
+     what the caregiver does with no master key of LiteLLM. The type refuses
+     `--write` without the key. The Python service starts.
+  10. `chaperone::ChaperoneConfig`, contract 04 §10 rule 7. A generated
+      roster with no base roster fails the verify hook. The contract does not
+      say what the service does at start. The type reads no roster then, as
+      the Python service does.
+  11. `chaperone::ChaperoneConfig`. No contract gives the action at start for
+      a config that is not valid. The type exits with `EX_CONFIG`. The other
+      choice is `AtStart::RefuseEachCall`.
+  12. `mounts::Credentials`, contract 03 §12 rule 3. The contract gives the
+      epoch no range. The type holds 64 bits with a sign. It takes zero and a
+      negative epoch.
+  13. `mounts::Credentials`, contract 03 §12. The contract does not say what
+      a reader does with a secret that is not a JSON string. The type refuses
+      it, and an empty secret. The Python reader makes text of each value.
+- No type reads the text of a roster file, and no type writes it. PyYAML
+  reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
+  the crate selects one. `roster::RawRoster` then takes its tree.
+- `config::mounts` defines `ModelAlias`, `SandboxTool` and `SystemPrompt`.
+  The family file uses the same three. The owner of the crate moves them
+  when the `family` module has its types.
+- The config types follow the Python readers where a reader is lax against
+  a contract. The owner decides each case. Three examples:
+  1. `creds.json` with an `epoch` that is `true`, `7.9` or `"7"`.
+  2. A roster row with an empty `command`, or with a name that is no server
+     name.
+  3. A `VIEW_COOKIE_SECURE` of `off`, which leaves the switch on.
+- Sixteen types of `config` have a private field and no `compile_fail` doc
+  test. The rule in "Tests" asks for one. The types are in four groups:
+  1. A part of a daemon config: `attendance::OwuiCopy`, `caregiver::Images`,
+     `chaperone::RosterFiles`, `chaperone::Doors` and `intake::PushHook`.
+     Only the parse of that config makes one.
+  2. A raw form, which checks nothing: `roster::RawRoster`,
+     `roster::RawUpstream`, `roster::RawArgDeny` and
+     `mounts::RawRuntimeConfig`.
+  3. An error type: `roster::RosterIssue`, `roster::RosterErrors`,
+     `site::SiteError`, `site::SiteErrors`, `mounts::RuntimeConfigErrors` and
+     `mounts::PlaypenEnvErrors`.
+  4. `FailureAction`. Its constructor is public and takes each pair.
+- No vector covers five configs: the chaperone without its `site` readers,
+  the caregiver, the two doors and the intake. No Python entry point takes
+  their variables as a map. The tests of those types use a copy of the
+  variables of each unit file. No test holds a copy equal to its unit file,
+  except for the names of the variables.
+- No vector covers a reader of the playpen. `mounts::RuntimeView` follows
+  `playpen/src/runtime-config.ts`, and its tests are a copy of that file.
+- The three mount files state their failure action only in a doc comment:
+  `mounts::RuntimeView`, `mounts::Credentials` and `mounts::PlaypenEnv` do
+  not implement `Checked`. `AtStart` and `AtReload` have no variant for their
+  actions: a safe default for each field, a retry and then
+  `stale_credentials`, and the fatal `mount_dir_unset`. The port of the
+  playpen adds the variants.
+- No unit file holds `RestartPreventExitStatus=78`, and no service exits
+  with 78 for each config error. The failure action of each config type
+  states what the port of its service must do.
+- No test runs systemd. The rule about `RestartPreventExitStatus` and
+  `ExecStartPre=` comes from the manual page `systemd.service(5)`. No run on
+  a host proves it.
