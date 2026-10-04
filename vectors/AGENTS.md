@@ -57,6 +57,10 @@ directory is not a workspace package, so a change here does not change
 
 - An input that makes the Python code raise has no vector until its fix
   merges. Rule 5 states why.
+- No vector covers a scalar of `component.yaml` that PyYAML cannot build,
+  such as a word with the tag `!!int`. The Python code refuses it and names
+  no line. The Rust reader refuses it and names a line. Such a vector first
+  needs a row in the Rust table of details.
 - `status.write` builds the `reconcile` block and the `spend` block by hand.
   `caregiver` builds them in two private functions of `caregiver.reconcile`.
   The generator copies the key order of those functions.
