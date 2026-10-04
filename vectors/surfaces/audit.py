@@ -415,9 +415,14 @@ def _expected_status(request: Request) -> int:
     return HTTP_TOO_MANY if request.limited else HTTP_FORBIDDEN
 
 
-def _request_vector(request: Request, scratch: Path) -> Vector:
-    given: dict[str, Json] = {"args": normalize(request.args())}
-    root = scratch / request.id
+#: How many times the generator sends a request that must meet an empty
+#: bucket. The bucket fills again with time: one token in two seconds. On a
+#: slow machine a token can come between the last take and the request.
+LIMITED_ATTEMPTS: Final = 5
+
+
+def _answer(request: Request, root: Path) -> tuple[int, Path] | Raised:
+    """One request to a chaperone of its own. Answers the status and the log."""
     directory = root / "unidentified"
     app = create_app(PepConfig(audit_dir=directory, rework_dir=root / "rework"))
     if request.limited:
@@ -429,14 +434,28 @@ def _request_vector(request: Request, scratch: Path) -> Vector:
         outcome = attempt(lambda: _send(client, request))
 
     if isinstance(outcome, Raised):
-        return raised(request.id, given, outcome.exc)
+        return outcome
 
-    if outcome != _expected_status(request):
-        raise ValueError(f"{request.id}: the chaperone answers {outcome}")
+    return outcome, directory
 
-    name, raw = _one_line(directory)
 
-    return accepted(request.id, given, file=name, output=text_input(raw.decode("utf-8")))
+def _request_vector(request: Request, scratch: Path) -> Vector:
+    given: dict[str, Json] = {"args": normalize(request.args())}
+    wanted = _expected_status(request)
+    attempts = LIMITED_ATTEMPTS if request.limited else 1
+    status = 0
+    for number in range(attempts):
+        answer = _answer(request, scratch / f"{request.id}-{number}")
+        if isinstance(answer, Raised):
+            return raised(request.id, given, answer.exc)
+
+        status, directory = answer
+        if status == wanted:
+            name, raw = _one_line(directory)
+
+            return accepted(request.id, given, file=name, output=text_input(raw.decode("utf-8")))
+
+    raise ValueError(f"{request.id}: the chaperone answers {status}")
 
 
 # --- the reasons ---------------------------------------------------------------------
