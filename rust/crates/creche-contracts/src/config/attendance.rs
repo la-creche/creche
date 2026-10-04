@@ -77,6 +77,10 @@ const TRUE_WORDS: [&str; 4] = ["1", "true", "yes", "on"];
 const FALSE_WORDS: [&str; 4] = ["0", "false", "no", "off"];
 
 /// Whether `attendance` also binds TCP (contract 02 §3 rule 2).
+///
+/// The set is closed. It does not cross a process boundary: the parse of
+/// `SESSIOND_BIND_LAN` makes it, and a word outside the two word lists is an
+/// error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bind {
     /// The Unix socket only. This is the default.

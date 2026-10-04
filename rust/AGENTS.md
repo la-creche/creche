@@ -429,9 +429,7 @@ Rules for the test:
      does not split into words.
   7. `caregiver::ImageRef`, contract 01 §3.9. The contract gives an image
      reference no grammar. The type demands a reference with a digest.
-  8. `mounts::ModelAlias`, contract 01 §3.2. The contract gives no cap. The
-     type has the cap of 128 bytes.
-  9. `roster`, `stage7-releases.md` §4.4. The contract names no YAML
+  8. `roster`, `stage7-releases.md` §4.4. The contract names no YAML
      version. The module holds no YAML reader.
 - No type reads the text of a roster file, and no type writes it. PyYAML
   reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of

@@ -151,15 +151,10 @@ impl SystemPrompt {
     }
 }
 
-/// The largest count of bytes that a model alias can have here.
-///
-/// CONTRACT-QUESTION: contract 01 §3.2 gives a model alias no cap, and
-/// `agent_family.grammar.MODEL_ALIAS` has none. The alias goes to pi on an
-/// argument list. The type takes 128 bytes, the cap of a session id. A
-/// longer alias in a registry needs a larger number here.
-const MODEL_ALIAS_MAX: usize = 128;
-
 /// A LiteLLM alias: `[a-z0-9][a-z0-9._/-]*` (contract 01 §3.2).
+///
+/// The grammar is the one of `agent_family.grammar.MODEL_ALIAS`. It has no
+/// cap, as the contract has none.
 ///
 /// The alias is bare. The playpen puts `litellm/` before it for pi, and that
 /// form never leaves the sandbox (contract 01 §6.1 rule 3).
@@ -195,8 +190,8 @@ impl FromStr for ModelAlias {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let bytes = text.as_bytes();
-        if bytes.is_empty() || bytes.len() > MODEL_ALIAS_MAX {
-            return Err(ModelAliasError::BadLength);
+        if bytes.is_empty() {
+            return Err(ModelAliasError::Empty);
         }
 
         let plain = |byte: &u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
@@ -215,8 +210,8 @@ impl FromStr for ModelAlias {
 /// Why a text is not a model alias.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelAliasError {
-    /// The text is empty, or it has more than 128 bytes.
-    BadLength,
+    /// The text has no byte.
+    Empty,
     /// The first byte is not `a` to `z` or a digit, or a later byte is not
     /// `a` to `z`, a digit, `.`, `_`, `/` or `-`.
     BadByte,
@@ -225,7 +220,7 @@ pub enum ModelAliasError {
 impl fmt::Display for ModelAliasError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BadLength => write!(f, "a model alias has 1 to {MODEL_ALIAS_MAX} bytes"),
+            Self::Empty => f.write_str("a model alias has 1 byte or more"),
             Self::BadByte => f.write_str(
                 "a model alias starts with a to z or 0 to 9 and holds a to z, 0 to 9, ., _, / and -",
             ),
@@ -1263,13 +1258,12 @@ mod tests {
 
     #[test]
     fn a_model_alias_is_a_litellm_alias() {
-        for text in ["agent-router", "a", "0", "a.b_c/d-e", &"a".repeat(128)] {
+        for text in ["agent-router", "a", "0", "a.b_c/d-e", &"a".repeat(300)] {
             assert_eq!(text.parse::<ModelAlias>().unwrap().as_str(), text);
         }
 
         for (text, error) in [
-            ("", ModelAliasError::BadLength),
-            (&*"a".repeat(129), ModelAliasError::BadLength),
+            ("", ModelAliasError::Empty),
             ("*", ModelAliasError::BadByte),
             ("Agent", ModelAliasError::BadByte),
             ("-a", ModelAliasError::BadByte),
