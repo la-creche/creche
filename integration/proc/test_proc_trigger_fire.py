@@ -17,12 +17,13 @@ started nothing. A change to fixed codes costs one assertion per scenario.
 from __future__ import annotations
 
 import re
+import signal
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
-from proc_chat import SESSIONS_PATH, until
+from proc_chat import SESSIONS_PATH, TURN_STARTED, until
 from proc_ids import AUTO_PREFIX
 from proc_services import Service
 from proc_standins import set_pi_env
@@ -53,6 +54,9 @@ SHORT_SECRET = "short-trigger-token"
 
 CHECK_FLAG = "--check"
 NO_FAMILY = "no-such-family"
+
+#: `creche-attendance.service`: a stop takes less than its `TimeoutStopSec`.
+STOP_DEADLINE_S = 30.0
 
 
 async def ended_jobs(tree: Tree, family: str, count: int = 1) -> list[dict[str, Any]]:
@@ -169,6 +173,51 @@ async def test_the_queue_runs_in_fire_order(timer: TriggerStack) -> None:
     assert ended == sorted(ended)
 
 
+async def test_a_restart_ends_every_queued_turn(timer: TriggerStack) -> None:
+    """Contract 02 §13.3. The queue is in memory, so a restart ends it.
+
+    Each queued turn becomes `aborted` with `queue_lost` (§4.3), and its job
+    leaves a record that says `cancelled` (§13.1). The old suite makes a
+    second service object over the same state. Here the process stops and
+    starts, as the unit does it.
+    """
+    tree = timer.tree
+    set_pi_env(tree, **HELD_TURN)
+    codes = [timer.fire(REVIEW).exit_code for _ in range(FIRES_AT_ONCE)]
+    # The door mints each session id at its firing, so the first id ran.
+    queued = sorted(tree.sessions_of(REVIEW))[1:]
+
+    restart_attendance(timer)
+
+    records = await ended_jobs(tree, REVIEW, FIRES_AT_ONCE)
+    by_session = {str(record["session"]): record for record in records}
+
+    assert codes == [0] * FIRES_AT_ONCE
+    assert len(queued) == FIRES_AT_ONCE - 1
+    assert [by_session[session]["status"] for session in queued] == ["cancelled"] * len(queued)
+    assert all(not tree.session_dir(session, REVIEW).exists() for session in queued)
+
+
+async def test_a_restart_sweeps_the_job_it_interrupted(timer: TriggerStack) -> None:
+    """The turn that ran at the stop is `failed` (contract 03 §11.4 rule 1), and its job ends."""
+    tree = timer.tree
+    set_pi_env(tree, **HELD_TURN)
+    assert timer.fire(REVIEW).exit_code == 0
+    await until(
+        lambda: TURN_STARTED in _kinds_of_the_one_session(tree),
+        "the turn of the job to start",
+        JOB_DEADLINE_S,
+    )
+
+    restart_attendance(timer)
+
+    (record,) = await ended_jobs(tree, REVIEW)
+    await until(lambda: tree.sessions_of(REVIEW) == [], "the session of the job to go")
+
+    assert record["status"] == "failed"
+    assert record["turns"] == 1
+
+
 async def test_a_fire_with_attendance_down_starts_nothing(trigger_prepared: TriggerStack) -> None:
     """The socket does not answer. The command fails, and the next tick is the retry."""
     fired = trigger_prepared.fire(REVIEW)
@@ -207,6 +256,22 @@ def test_a_fire_with_no_family_is_a_usage_error(trigger_prepared: TriggerStack) 
     finished = trigger_prepared.run(Service.DOOR_TRIGGER, fire_env(trigger_prepared.tree), FIRE)
 
     assert finished.exit_code != 0
+
+
+def restart_attendance(stack: TriggerStack) -> None:
+    """Stop `attendance` with SIGTERM, as a stop of its unit does, and start it again."""
+    assert stack.attendance is not None
+    stack.attendance.send(signal.SIGTERM)
+    stack.attendance.wait(STOP_DEADLINE_S)
+    stack.spawn_attendance()
+    stack.await_attendance()
+
+
+def _kinds_of_the_one_session(tree: Tree) -> list[str]:
+    """The journal line kinds of the one session the family has, or none."""
+    sessions = tree.sessions_of(REVIEW)
+
+    return tree.journal_kinds(sessions[0], REVIEW) if sessions else []
 
 
 def _replace(path: Path, content: str | None) -> None:

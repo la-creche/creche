@@ -141,7 +141,7 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
 | `test_proc_delegate.py` | chaperone and `attendance` | the delegate path of contract 04 §7, the manifest and the audit |
 | `test_proc_override.py` | each topology but the chaperone one | a service starts through its variable: one that serves, one that runs to its end, one on a terminal |
-| `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: one job and its outcome record, a refused family, the queue, a refused start |
+| `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: one job and its outcome record, a refused family, the queue, a restart of `attendance`, a refused start |
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
 | `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
