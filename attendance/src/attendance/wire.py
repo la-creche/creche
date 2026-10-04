@@ -698,29 +698,30 @@ def cap_event(event: dict[str, Any]) -> dict[str, Any]:
     keeps unchanged.
     """
     text = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
-    encoded = text.encode("utf-8", _KEEP_HALF_PAIRS)
-    whole = _has_utf8_form(text)
+    size, whole = _utf8_size(text)
 
-    if whole and len(encoded) <= MAX_EVENT_BYTES and not _nests_past(event, MAX_EVENT_DEPTH):
+    if whole and size <= MAX_EVENT_BYTES and not _nests_past(event, MAX_EVENT_DEPTH):
         return event
 
     kind = _text(event.get("type"))
 
     return {
-        "type": kind if kind and _has_utf8_form(kind) else _UNKNOWN_EVENT_TYPE,
+        "type": kind if kind and _utf8_size(kind)[1] else _UNKNOWN_EVENT_TYPE,
         "truncated": True,
-        "original_bytes": len(encoded),
+        "original_bytes": size,
     }
 
 
-def _has_utf8_form(text: str) -> bool:
-    """False for a text that holds one half of a surrogate pair."""
-    try:
-        text.encode("utf-8")
-    except UnicodeEncodeError:
-        return False
+def _utf8_size(text: str) -> tuple[int, bool]:
+    """The count of UTF-8 bytes of a text, and whether it has a UTF-8 form.
 
-    return True
+    A text with one half of a surrogate pair has none. Its count takes each
+    half as three bytes.
+    """
+    try:
+        return len(text.encode("utf-8")), True
+    except UnicodeEncodeError:
+        return len(text.encode("utf-8", _KEEP_HALF_PAIRS)), False
 
 
 def _nests_past(event: dict[str, Any], limit: int) -> bool:
