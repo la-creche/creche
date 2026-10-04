@@ -230,7 +230,9 @@ async def _drained(reader: asyncio.StreamReader | None) -> None:
         return
 
     # RuntimeError: another coroutine is still reading, and sees the end itself.
-    with contextlib.suppress(RuntimeError, ConnectionResetError):
+    # OSError: a pipe whose read failed keeps the error and gives it to each
+    # later read. The pipe is at its end, and `close` must still reap the child.
+    with contextlib.suppress(RuntimeError, OSError):
         while await reader.read(READ_CHUNK_BYTES):
             continue
 

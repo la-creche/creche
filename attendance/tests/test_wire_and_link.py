@@ -910,6 +910,22 @@ async def test_a_long_stderr_line_does_not_end_the_log(tmp_path: Path) -> None:
         await channel.close()
 
 
+@pytest.mark.slow
+async def test_close_ends_after_a_stderr_read_failed() -> None:
+    """A pipe that failed keeps its error. `close` must still reap the child,
+    or the link keeps a channel that is gone and the next dial fails."""
+    channel = ExecChannel(dial=dial(), command="cat")
+    await channel.start()
+    process = channel._process
+    assert process is not None
+    assert process.stderr is not None
+    process.stderr.set_exception(OSError("the read failed"))
+
+    await channel.close()
+
+    assert process.returncode is not None
+
+
 #: A child that says its pid and then waits on stdin, as the playpen does.
 PID_THEN_WAIT = "sh -c 'echo $$; exec cat'"
 
