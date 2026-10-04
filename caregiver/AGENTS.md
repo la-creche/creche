@@ -123,6 +123,11 @@ host where something has gone wrong.
 
 `SIGHUP` means "look now". `SIGTERM` stops the loop after the look in flight.
 
+Each step of a look ends in a handler of the loop: a dispatch, a pass, a
+delete, the MCP pass. The handler writes the first error with its
+traceback. It counts each repeat. The loop continues, and the other
+families pass.
+
 ## `mcp_release.py`
 
 1. It installs nothing and reads no secret value.
@@ -166,6 +171,9 @@ Nothing here touches a real sandbox or LiteLLM.
 - `apply-once` publishes no chaperone fault (`apply.py`).
 - `settle` and `rotate_serving` write token digests while a family file is
   invalid. Contract 05 §3.1 and §6.3 do not agree on this (`loop.py`).
+- A pass that raises publishes no fault. Contract 05 §3.3 has no code for
+  it. The log holds the error, and the status document keeps its last
+  content (`loop.py`).
 - `read_creds` converts a field with `int` and `str`. It reads `true` as
   epoch 1. Contract 03 §12 gives no rule for a field of another type
   (`credentials.py`).

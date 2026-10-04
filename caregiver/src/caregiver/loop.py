@@ -264,7 +264,14 @@ class Passes:
         thread = threading.Thread(
             target=self._run, args=(name, work), name=f"pass-{name}", daemon=True
         )
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            # A thread that did not start runs no pass, so nothing else
+            # releases the name. The caller's guard says the error.
+            self._release(name)
+            raise
+
         return True
 
     def running(self) -> frozenset[str]:
@@ -297,9 +304,12 @@ class Passes:
             # ever, and the family would never converge again.
             log.exception("%s: pass raised", name)
         finally:
-            with self._done:
-                self._running.discard(name)
-                self._done.notify_all()
+            self._release(name)
+
+    def _release(self, name: str) -> None:
+        with self._done:
+            self._running.discard(name)
+            self._done.notify_all()
 
 
 @dataclass(frozen=True)
@@ -697,8 +707,22 @@ def _finish(
     passes: Passes,
     revision: str,
 ) -> None:
-    _forget_deleted(config, actors, registry, state, passes)
-    _mcp_servers(config, registry, state)
+    """The tail of a look: the deletes, the MCP pass, the revision.
+
+    Each of the two steps has a guard of its own, so one that raises does
+    not stop the other. The revision is recorded whatever they did. A look
+    that left it unrecorded would read every later tick as an edit, and an
+    edit reads the whole registry and clears each create backoff."""
+    try:
+        _forget_deleted(config, actors, registry, state, passes)
+    except Exception as exc:
+        state.said.say("deleted families", exc)
+
+    try:
+        _mcp_servers(config, registry, state)
+    except Exception as exc:
+        state.said.say("mcp", exc)
+
     state.revision = revision
 
 
@@ -719,10 +743,14 @@ def _dispatch(
     family and no other. A guard only at the top would abandon the
     sweep, so ten healthy families would stop converging for the
     eleventh's bad mode.
+
+    `Exception`, not `OSError`, for the same reason. An error of another
+    class from one family's document or thread would end the sweep in the
+    same way.
     """
     try:
         return _dispatch_one(config, actors, registry, name, state, passes, stop)
-    except OSError as exc:
+    except Exception as exc:
         state.said.say(f"{name}: dispatch", exc)
         return False
 
@@ -896,6 +924,13 @@ def _pass(
             # pass raised a `ValueError` would retry every two seconds for
             # as long as it lasted. One line per pass here, and the first
             # traceback through the ledger.
+            #
+            # CONTRACT-QUESTION: contract 05 §3.3 fixes the fault codes and
+            # has none for a pass that raised. This handler publishes no
+            # fault: the log holds the error, and the document keeps what
+            # the pass last wrote. A new code would say it in the document.
+            # Each reader with a closed set of codes then refuses that
+            # document until it knows the code.
             log.error("%s: pass raised %s: %s", name, type(exc).__name__, exc)
             state.said.say(f"{name}: pass", exc)
             # No `revision`: nothing converged. A wait, because a pass that
@@ -979,7 +1014,14 @@ def _delete_work(
     config: LoopConfig, actors: Actors, name: str, state: LoopState
 ) -> Callable[[], None]:
     def run() -> None:
-        if not _delete_one(config, actors, name):
+        try:
+            _delete_one(config, actors, name)
+        except Exception as exc:
+            # `Exception`, not `(OSError, RuntimeError)`, and every step of
+            # the delete is inside it. The state of the family stays, so
+            # the next look starts the delete again. Through the ledger,
+            # because that look comes two seconds later.
+            state.said.say(f"{name}: delete", exc)
             return
 
         state.forget(name)
@@ -988,7 +1030,7 @@ def _delete_work(
     return run
 
 
-def _delete_one(config: LoopConfig, actors: Actors, name: str) -> bool:
+def _delete_one(config: LoopConfig, actors: Actors, name: str) -> None:
     """The last applied file names the egress rows this family's sandboxes
     carry, and those rows must come out with them (contract 05 §4.4 step
     3).
@@ -997,20 +1039,14 @@ def _delete_one(config: LoopConfig, actors: Actors, name: str) -> bool:
     keep asking for a session for a family with no key."""
     remove_timers(name, actors.units)
     applied = read_applied(config.state_root, name)
-    try:
-        delete_family(
-            name,
-            state_root=config.state_root,
-            driver=actors.driver,
-            litellm=actors.litellm,
-            egress=tuple(applied.family.egress) if applied is not None else (),
-            egress_config=actors.egress,
-        )
-    except (OSError, RuntimeError) as exc:
-        log.error("%s: delete raised %s: %s", name, type(exc).__name__, exc)
-        return False
-
-    return True
+    delete_family(
+        name,
+        state_root=config.state_root,
+        driver=actors.driver,
+        litellm=actors.litellm,
+        egress=tuple(applied.family.egress) if applied is not None else (),
+        egress_config=actors.egress,
+    )
 
 
 def _families_with_state(state_root: Path, said: Said) -> tuple[str, ...]:

@@ -204,6 +204,26 @@ def test_a_pass_that_raises_frees_its_slot_and_is_logged(
     assert "chat" in caplog.text
 
 
+def test_a_pass_that_cannot_start_frees_its_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The name of a family is its lock. A thread that does not start runs
+    no pass, so nothing would release the name, and the family would never
+    converge again."""
+
+    def refuse(self: threading.Thread) -> None:
+        del self
+        raise RuntimeError("can't start new thread")
+
+    with Passes(bound=1, grace_s=SHORT_GRACE_S) as passes:
+        with monkeypatch.context() as patch:
+            patch.setattr(threading.Thread, "start", refuse)
+            with pytest.raises(RuntimeError):
+                passes.start("chat", lambda: None)
+
+        assert passes.running() == frozenset()
+        assert passes.start("chat", lambda: None) is True
+        assert passes.drain(WAIT_S) is True
+
+
 # --- families converge independently -------------------------------------------
 
 
