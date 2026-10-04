@@ -9,9 +9,12 @@
 
 pub mod atomic;
 pub mod clock;
+pub mod command;
 pub mod entropy;
 pub mod faults;
 pub mod layout;
 pub mod log;
 pub mod readfile;
+pub mod signals;
+pub mod tasks;
 pub mod token;
