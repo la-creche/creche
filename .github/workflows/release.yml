@@ -215,7 +215,7 @@ jobs:
   #
   # The time limit: a teardown waits 20 s for each process group. A fault
   # in the harness can cost every test that wait, and a job has 6 hours by
-  # default. On a laptop the suite runs in about 3 minutes.
+  # default. On a laptop the suite runs in about 5 minutes.
   proc:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
