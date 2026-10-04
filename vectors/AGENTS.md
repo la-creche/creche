@@ -242,9 +242,13 @@ directory is not a workspace package, so a change here does not change
   `POST /call`. The chaperone looks up that bearer in the grant files.
 - A `runtime.bearer` surface gives the app the bytes of a header with no
   server. A server removes each space and each tab at the two ends of a
-  header value. No network client can thus send the header of the vectors
+  header value. No network client can thus send the header of five vectors:
+  `scheme-and-space`, `scheme-and-spaces`, `space-before-the-scheme`,
   `space-at-the-end` and `tab-at-the-end`.
 - A `runtime.edge` surface holds what the installed web framework answers.
   An upgrade of Starlette or of FastAPI in `uv.lock` can move a vector.
+- No `runtime.edge` vector holds the answer of the web framework to a
+  handler that raises. Each of the five services has its own handler for an
+  exception. The vector `handler-raises` holds the answer of that handler.
 - `runtime.edge.door_trigger` has no vector for HEAD on a GET route. The
   listener has no GET route.
