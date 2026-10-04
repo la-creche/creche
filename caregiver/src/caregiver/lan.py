@@ -1,7 +1,7 @@
 """The host's LAN address, and the plane endpoints on it.
 
 The address is the site's: the unit's
-`EnvironmentFile=/etc/agent-control/site.env` sets `AGENT_LAN_ADDRESS`.
+`EnvironmentFile=/etc/creche/site.env` sets `AGENT_LAN_ADDRESS`.
 The ports are this code's. There is no default address: a default would be
 somebody's host, so a missing one stops with the variable's name.
 
@@ -40,7 +40,7 @@ def lan_address() -> str:
     """`AGENT_LAN_ADDRESS`, or `ConfigError` naming it."""
     address = os.environ.get(LAN_ADDRESS_ENV, "").strip()
     if not address:
-        raise ConfigError(f"{LAN_ADDRESS_ENV} is not set (/etc/agent-control/site.env)")
+        raise ConfigError(f"{LAN_ADDRESS_ENV} is not set (/etc/creche/site.env)")
 
     return address
 

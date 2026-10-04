@@ -1,6 +1,6 @@
 """The PEP's site values: its bind, TEI and Home Assistant.
 
-The unit's `EnvironmentFile=/etc/agent-control/site.env` sets
+The unit's `EnvironmentFile=/etc/creche/site.env` sets
 `AGENT_LAN_ADDRESS` and `AGENT_HA_URL`. An explicit `PEP_BIND` or `HA_URL`
 still wins. There is no default address: a missing one stops the PEP with
 `os.EX_CONFIG` and a line that names the variable and the file.
@@ -37,7 +37,7 @@ def test_no_lan_address_and_no_bind_names_the_variable() -> None:
         site.bind({})
 
     assert "AGENT_LAN_ADDRESS" in str(caught.value)
-    assert "/etc/agent-control/site.env" in str(caught.value)
+    assert "/etc/creche/site.env" in str(caught.value)
 
 
 def test_tei_answers_on_the_lan_address() -> None:
@@ -80,4 +80,4 @@ def test_the_pep_stops_with_ex_config_when_the_site_names_no_address(
     lines = [one.getMessage() for one in caplog.records]
     assert len(lines) == 1, lines
     assert "AGENT_LAN_ADDRESS" in lines[0]
-    assert "/etc/agent-control/site.env" in lines[0]
+    assert "/etc/creche/site.env" in lines[0]

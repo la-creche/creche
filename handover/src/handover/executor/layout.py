@@ -1,11 +1,10 @@
 """Root's own root: every path root writes during a release.
 
-    /var/lib/agent-release/        root:root   0755
+    /var/lib/creche-handover/      root:root   0755
       work/                        root:root   0755   fetched source, clones, staged closures
       releases/                    root:agents 0750   the spool (`spool.py`)
       secrets/                     root:agents 0750   sealed values (`intake/store.py`)
       upstreams.yaml               root:root   0644   the roster (`roster.py`)
-      .moved                       root:root   0644   `relocate.py`'s one-time record
 
 THE RULE. Root reads only from roots root owns, and that is a fact about the
 PATH: every ancestor of these four is root's — `/`, `/var`, `/var/lib` and
@@ -36,7 +35,7 @@ from typing import Final
 
 #: `root:root 0755`. Under `/var/lib` and not `/srv/agents`, because
 #: `/srv/agents` is the operator's, group `agents`, 0755, and a root under it could be renamed.
-RELEASE_ROOT: Final = "/var/lib/agent-release"
+RELEASE_ROOT: Final = "/var/lib/creche-handover"
 
 #: Where a release fetches and builds, before anything is swapped.
 WORK_ROOT: Final = f"{RELEASE_ROOT}/work"

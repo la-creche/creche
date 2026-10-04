@@ -38,7 +38,7 @@ not `ok`: a healthy PEP passes on `/healthz` alone.
 **The environment.** Contract 06 §4 rule 7: root's executor hands every
 hook a small, fixed environment (`stage7-releases.md` §2.4) that carries
 none of `creche-chaperone.service`'s own. The bind is the site's:
-`chaperone/component.yaml` passes `--env-file /etc/agent-control/site.env`, the
+`chaperone/component.yaml` passes `--env-file /etc/creche/site.env`, the
 unit's own `EnvironmentFile=`, and the hook reads `PEP_BIND`, else
 `AGENT_LAN_ADDRESS` on port 8300, from the merged environment (`site.py`),
 the way `__main__` does. With neither, the hook reports one failed check

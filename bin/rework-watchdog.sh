@@ -78,7 +78,7 @@
 # Prerequisites, copy-pasteable:
 #   command -v curl date grep find systemctl mktemp
 #   [ -r /srv/agents/state/rework/hooks.env ]   # APPROVAL_URL/APPROVAL_TOKEN
-#   [ -r /etc/agent-control/site.env ]          # AGENT_LAN_ADDRESS
+#   [ -r /etc/creche/site.env ]          # AGENT_LAN_ADDRESS
 #
 # RUN IT AS THE OPERATOR, never as root. There is no `id -u` refusal, because a
 # watchdog that refuses is a watchdog that is silent, which is the failure
@@ -124,7 +124,7 @@ DEPRECATED_ENV="$TEST_PREFIX/srv/agents/state/materializer/env"
 
 # The deployment's site file (handover/src/handover/site.py).
 # `AGENT_SITE_FILE` names another one, which is how a test points at a fixture.
-SITE_FILE="${AGENT_SITE_FILE:-/etc/agent-control/site.env}"
+SITE_FILE="${AGENT_SITE_FILE:-/etc/creche/site.env}"
 
 # Services bind the LAN address. Loopback answers nothing on this host.
 # `WATCHDOG_PEP_URL` wins; otherwise the PEP is on the site's address.

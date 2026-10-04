@@ -2,7 +2,7 @@
 
 The library's sandbox may reach TEI on the host's LAN address and nothing
 else, and the image it runs fixes that address at build time. The address
-is the site's (`/etc/agent-control/site.env`). `LAN_ADDRESS` still wins.
+is the site's (`/etc/creche/site.env`). `LAN_ADDRESS` still wins.
 
 The script acts on absolute host paths, so every case here stops at the
 first one: the corpus directory, which no test machine has. A case that

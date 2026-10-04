@@ -15,7 +15,7 @@ STATE_ROOT: Final = Path("/srv/agents/state/rework")
 #: every ancestor root's. `handover.executor.layout`'s `RELEASE_ROOT`
 #: spelled a second time, because the two packages share no module.
 #: `handover/tests/test_handover_r7h_roster.py` holds the two equal.
-RELEASE_ROOT: Final = Path("/var/lib/agent-release")
+RELEASE_ROOT: Final = Path("/var/lib/creche-handover")
 
 #: Contract 03 §7.1: outside
 #: `STATE_ROOT`. The session store belongs to the runtime, not the family

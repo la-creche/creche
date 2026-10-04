@@ -32,7 +32,7 @@
 # FALLBACK, and every read of it logs one DEPRECATED line
 # (`bin/lib/envfile.sh`, `bin/rework-watchdog.sh`).
 #
-# The host's LAN address is AGENT_LAN_ADDRESS in /etc/agent-control/site.env
+# The host's LAN address is AGENT_LAN_ADDRESS in /etc/creche/site.env
 # (handover/src/handover/site.py). Without it the script stops before it
 # asks sbx anything: no default, because a default would be somebody's host.
 set -uo pipefail
@@ -56,7 +56,7 @@ APPROVAL_TOKEN="$(envfile_hook_value "$HOOKS_ENV" "$DEPRECATED_ENV" APPROVAL_TOK
 
 # `AGENT_SITE_FILE` names another site file, which is how a test points at a
 # fixture. LiteLLM :4000, PEP :8300, TEI :8085 on this address: any port.
-SITE_FILE="${AGENT_SITE_FILE:-/etc/agent-control/site.env}"
+SITE_FILE="${AGENT_SITE_FILE:-/etc/creche/site.env}"
 ALLOWED_HOST="$(envfile_value "$SITE_FILE" AGENT_LAN_ADDRESS)"
 if [[ -z "$ALLOWED_HOST" ]]; then
   printf 'sbx-drift-check: no AGENT_LAN_ADDRESS in %s\n' "$SITE_FILE" >&2

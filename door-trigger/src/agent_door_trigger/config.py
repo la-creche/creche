@@ -49,7 +49,7 @@ DEFAULT_STATE_ROOT = "/srv/agents/state/rework"
 PEP_PORT = 8300
 
 #: The host's LAN address, from the site file the unit names
-#: (`/etc/agent-control/site.env`). The webhook listener must be reachable
+#: (`/etc/creche/site.env`). The webhook listener must be reachable
 #: from Node-RED and Home Assistant automations elsewhere on the LAN,
 #: unlike a door whose only caller lives on this same host.
 ENV_LAN_ADDRESS = "AGENT_LAN_ADDRESS"
@@ -194,7 +194,7 @@ def _lan_address(env: dict[str, str]) -> str:
     """The site's LAN address. No default: a default would be somebody's host."""
     address = env.get(ENV_LAN_ADDRESS, "").strip()
     if not address:
-        raise ConfigError(f"{ENV_LAN_ADDRESS} is not set (/etc/agent-control/site.env).")
+        raise ConfigError(f"{ENV_LAN_ADDRESS} is not set (/etc/creche/site.env).")
 
     return address
 

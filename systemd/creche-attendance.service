@@ -41,7 +41,7 @@ Environment=XDG_CONFIG_HOME=%h/.config
 # names paths only. It is written 0600 by `bin/rework-cutover.sh up`.
 EnvironmentFile=/srv/agents/state/rework/sessiond.env
 # The site's AGENT_LAN_ADDRESS: the address a LAN bind uses.
-EnvironmentFile=/etc/agent-control/site.env
+EnvironmentFile=/etc/creche/site.env
 ExecStart=%h/.local/components/attendance/bin/python -m attendance
 # `--check` validates the environment and all seven token files, prints what
 # the service would bind, and exits. It opens no socket and touches no

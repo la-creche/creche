@@ -1,7 +1,7 @@
 """One file per secret, encrypt only (`stage7-releases.md` §4.3).
 
 ```
-/var/lib/agent-release/secrets/<name>.enc     root:root 0600
+/var/lib/creche-handover/secrets/<name>.enc     root:root 0600
 ```
 
 Each file is encrypted to the recipient set `.sops.yaml` already names, so

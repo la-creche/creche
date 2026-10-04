@@ -223,7 +223,7 @@ def fake_sops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.mark.usefixtures("fake_sops")
 def test_the_reload_reads_the_per_secret_store(tmp_path: Path) -> None:
     """The value the operator pastes lands in
-    `/var/lib/agent-release/secrets/<name>.enc`, which is the only
+    `/var/lib/creche-handover/secrets/<name>.enc`, which is the only
     layout the host can author, so the reload reads it as well as the
     monolith."""
     roster = tmp_path / "upstreams.yaml"

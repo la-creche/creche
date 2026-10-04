@@ -59,7 +59,7 @@ the file unparseable, so `steps._say_unapplied_allows` puts one `manual`
 line in the ledger naming every server whose allows are not applied.
 
 **Where the file lives** is `host.ROSTER_FILE`, beside the other paths
-root writes: `/var/lib/agent-release/upstreams.yaml`, under root's own root
+root writes: `/var/lib/creche-handover/upstreams.yaml`, under root's own root
 (`layout.py`). NOT `/opt/creche/chaperone/upstreams.yaml`, which is inside
 the `chaperone` component's artifact — a `chaperone` release swaps that whole tree, so every
 generated row would vanish on the PEP's next release with nothing

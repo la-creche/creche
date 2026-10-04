@@ -4,7 +4,7 @@ This repository names no host, no account and no owner. Whoever runs a
 deployment writes those into ONE file, and everything here that must know
 one reads it from there:
 
-    /etc/agent-control/site.env          KEY=VALUE lines, `#` comments
+    /etc/creche/site.env          KEY=VALUE lines, `#` comments
 
         AGENT_GITHUB_OWNER=example-owner     who owns the repositories a
                                              release is read from
@@ -48,7 +48,7 @@ from typing import Final
 from .errors import Refusal, RefusalCode, safe_token
 
 #: Where a deployment writes its values.
-SITE_FILE: Final = Path("/etc/agent-control/site.env")
+SITE_FILE: Final = Path("/etc/creche/site.env")
 
 #: Names another file. Read on every call, so a test can move it.
 SITE_FILE_ENV: Final = "AGENT_SITE_FILE"

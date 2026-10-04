@@ -1,6 +1,6 @@
 """The release spool as ROOT reads it (`stage7-releases.md` §2.2, §3.2).
 
-    /var/lib/agent-release/releases/   (`layout.SPOOL_ROOT`)
+    /var/lib/creche-handover/releases/   (`layout.SPOOL_ROOT`)
       requests/<ULID>.json   written by operator-side code   <- HOSTILE INPUT
       running/<ULID>.json    written by root: the validated request
       running/<ULID>-<component>.switch

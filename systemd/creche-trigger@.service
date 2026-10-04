@@ -28,7 +28,7 @@ WorkingDirectory=/opt/creche
 Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
 # The site's AGENT_LAN_ADDRESS: where the quiet check reaches the PEP.
-EnvironmentFile=/etc/agent-control/site.env
+EnvironmentFile=/etc/creche/site.env
 # The same component venv `creche-trigger-webhooks.service` runs from: the
 # trigger door ships inside `attendance` (contract 06 §1 rule 1).
 ExecStart=%h/.local/components/attendance/bin/agent-trigger fire %i

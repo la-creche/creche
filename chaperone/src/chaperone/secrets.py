@@ -5,7 +5,7 @@ Two layouts, both read, because each holds real credentials.
 1. **The monolith**, the `PEP_SECRETS` file: one sops file holding every
    name. `load_sops_secrets` reads it. Every upstream that predates the
    intake has its credential here.
-2. **One file per secret**, `/var/lib/agent-release/secrets/<name>.enc`:
+2. **One file per secret**, `/var/lib/creche-handover/secrets/<name>.enc`:
    what the release executor's intake writes when the operator pastes a value
    (§4.3). `load_secret_dir` reads it. Adding a secret is then an
    ENCRYPT-ONLY operation, so the host can write a secret it cannot read.

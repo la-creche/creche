@@ -9,7 +9,7 @@ can decrypt that file to add a key to it, and a key minted on the host has
 to be carried to a machine that can.
 
 The fix is the file layout before it is the service. One file per secret,
-`/var/lib/agent-release/secrets/<name>.enc`, each encrypted to the same
+`/var/lib/creche-handover/secrets/<name>.enc`, each encrypted to the same
 recipient set. Adding a secret is then **encrypt only**, and encryption
 needs public keys alone. The host writes a new secret while holding no
 private key at all.

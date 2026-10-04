@@ -1,7 +1,7 @@
 """`bin/sbx-drift-check.sh` reads the one allowed LAN host from the site file.
 
 Every sandbox may reach LiteLLM, the PEP and TEI on the host's LAN address,
-at any port. That address is the site's (`/etc/agent-control/site.env`), so
+at any port. That address is the site's (`/etc/creche/site.env`), so
 a rule that allows it is no drift, a rule that allows any other LAN host is,
 and a host with no site file stops before it judges anything.
 

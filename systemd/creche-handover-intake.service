@@ -5,7 +5,7 @@
 # link for each, and serves the one-field form over https on port 8380 of
 # the host's LAN address while a token is alive. A pasted value goes to
 # sops's stdin and lands sealed at
-# /var/lib/agent-release/secrets/<name>.enc, root:root 0600, under root's own
+# /var/lib/creche-handover/secrets/<name>.enc, root:root 0600, under root's own
 # root.
 #
 # The port is bound only while a token is pending. A host with no open gap
@@ -78,7 +78,7 @@ WorkingDirectory=/etc/agent-intake
 # directory, start one sops child, bind one port, reach one Node-RED hook.
 # Everything else is closed.
 ProtectSystem=strict
-ReadWritePaths=/var/lib/agent-release/secrets /srv/agents/state/rework/secret-gaps
+ReadWritePaths=/var/lib/creche-handover/secrets /srv/agents/state/rework/secret-gaps
 # tmpfs and not yes. ProtectHome=yes makes /home, /root and /run/user
 # inaccessible and empty, and the wrapper decrypts secrets.enc.env with
 # SOPS_AGE_KEY_FILE=/root/.config/sops/age/keys.txt. The wrapper then exits

@@ -73,7 +73,8 @@ def test_the_unit_writes_only_the_two_directories_it_must() -> None:
     assert "ProtectSystem=strict" in unit
     # Root's own root. The gaps stay the operator's.
     assert (
-        "ReadWritePaths=/var/lib/agent-release/secrets /srv/agents/state/rework/secret-gaps" in unit
+        "ReadWritePaths=/var/lib/creche-handover/secrets"
+        " /srv/agents/state/rework/secret-gaps" in unit
     )
 
 
