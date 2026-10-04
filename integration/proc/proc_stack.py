@@ -49,6 +49,7 @@ from proc_standins import (
     install_pi,
     install_sbx,
 )
+from proc_terminal import Terminal
 from proc_tree import LAN_ADDRESS, Tree, build_tree, playpen_bundle, token_of
 
 #: A Unix socket has no host. An HTTP client still needs one for the request
@@ -132,6 +133,16 @@ class Stack:
         whole = base_env(self.tree) | env_of(command) | env
 
         return self.supervisor.spawn(service.value, [*command.words, *args], whole, self.tree.root)
+
+    def spawn_on_terminal(
+        self, service: Service, env: dict[str, str], *args: str
+    ) -> tuple[Child, Terminal]:
+        """Start one service on a pseudo-terminal, as a person at a keyboard does."""
+        command = command_of(service)
+        whole = base_env(self.tree) | env_of(command) | env
+        words = [*command.words, *args]
+
+        return self.supervisor.spawn_on_terminal(service.value, words, whole, self.tree.root)
 
     def run(
         self, service: Service, env: dict[str, str], *args: str, deadline_s: float = RUN_DEADLINE_S

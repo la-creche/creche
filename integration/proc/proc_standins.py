@@ -12,6 +12,9 @@ Two stand-ins exist, and neither is under test:
     `integration/tests/fake_sbx.py`, unchanged, behind a wrapper. The wrapper
     records the call. It also sets the variables that stand for what the
     sandbox image supplies, so no service holds them in its own environment.
+    It drops `-it` after the record: the real `sbx exec -it` gives the
+    command the terminal of the caller, and a program that becomes the
+    command keeps that terminal with no flag.
 `pi`
     `playpen/test/fake-pi.mjs`, the playpen's own double, behind a wrapper.
     The playpen reaches it through `AGENT_PI_BIN`.
@@ -50,9 +53,21 @@ LOCK_BEAT_MS: Final = 150
 LOCK_STALE_S: Final = 0.6
 LOCK_POLL_S: Final = 0.05
 
+#: Contract 03 §7.1 rule 6: where the sessions of the family are in the
+#: sandbox. On the host the path in the sandbox is the path on the host, and
+#: nothing sets the variable. The launcher of the terminal door reads it
+#: (contract 03 §7.6 rule 4). The playpen does not: `attendance` tells it.
+SESSIONS_MOUNT_ENV: Final = "SESSIOND_SANDBOX_SESSIONS_MOUNT"
+
 #: The variables that stand for what the sandbox image supplies. `fake_sbx.py`
 #: forwards these by name and forwards nothing else of its own environment.
-_IMAGE_SEAMS: Final = ("AGENT_PI_BIN", "AGENT_LOCK_BEAT_MS")
+_IMAGE_SEAMS: Final = ("AGENT_PI_BIN", "AGENT_LOCK_BEAT_MS", SESSIONS_MOUNT_ENV)
+
+#: What `sbx exec` takes to give the command the terminal of the caller.
+TERMINAL_FLAG: Final = "-it"
+
+#: The word that ends the words of `sbx` and starts the command.
+_COMMAND_SEPARATOR: Final = "--"
 
 #: How long a stand-in process has to end after its service ended. The
 #: playpen exits when its stdin closes, and pi exits when the playpen does.
@@ -94,8 +109,9 @@ def install_sbx(tree: Tree) -> None:
     }
     exports = "".join(f"export {name}={shlex.quote(value)}\n" for name, value in seams.items())
     target = shlex.join([sys.executable, str(fake_sbx_script())])
+    head = f"{_recorder(tree, SBX)}{exports}{_sandbox_facts(tree)}"
 
-    _write_program(tree, SBX, f'{_recorder(tree, SBX)}{exports}exec {target} "$@"\n')
+    _write_program(tree, SBX, f'{head}exec {target} "$@"\n')
 
 
 def install_pi(tree: Tree) -> None:
@@ -190,6 +206,34 @@ def _recorder(tree: Tree, name: str) -> str:
         'printf "%s\\n" "$@" > "$d/.$$.tmp"\n'
         f'mv "$d/.$$.tmp" "$d/$${_ARGV_SUFFIX}"\n'
         f'printf "%s\\n" "$$" >> "$d/{_ORDER_FILE}"\n'
+    )
+
+
+def _sandbox_facts(tree: Tree) -> str:
+    """The part of the `sbx` wrapper that reads the words of one call.
+
+    1. The sandbox id is the word before the command separator. Its family
+       names the sessions mount (contract 03 §7.6 rule 4), so one wrapper
+       serves each family of a root.
+    2. `-it` before the separator is dropped. The stand-in becomes the
+       command, so the command has the terminal of the caller already.
+    """
+    sessions = shlex.quote(str(tree.sessions_root))
+
+    return (
+        "box=\n"
+        "count=$#\n"
+        "past=\n"
+        'while [ "$count" -gt 0 ]; do\n'
+        "  word=$1\n"
+        "  shift\n"
+        "  count=$((count - 1))\n"
+        f'  if [ -z "$past" ] && [ "$word" = "{TERMINAL_FLAG}" ]; then continue; fi\n'
+        f'  if [ -z "$past" ] && [ "$word" = "{_COMMAND_SEPARATOR}" ]; then past=1; fi\n'
+        '  if [ -z "$past" ]; then box=$word; fi\n'
+        '  set -- "$@" "$word"\n'
+        "done\n"
+        f'export {SESSIONS_MOUNT_ENV}={sessions}/"${{box%-s*}}"\n'
     )
 
 

@@ -33,6 +33,7 @@ from proc_report import describe, end_processes
 from proc_services import KEEP_ROOTS_ENV, NO_SKIP_ENV, describe_table, unknown_variables
 from proc_tree import Tree, make_root, playpen_bundle, remove_root, socket_path_fits
 from proc_trigger import TriggerStack
+from proc_tui import TuiStack, launch_bundle
 
 _HERE = Path(__file__).resolve().parent
 _BUILD_HINT = "run `pnpm install && pnpm run build` in playpen/ first"
@@ -102,6 +103,17 @@ def bundle() -> Path:
     Skip rather than fail. A silent pass would be worse than either.
     """
     path = playpen_bundle()
+
+    if not path.exists():
+        _skip(f"{path} is missing: {_BUILD_HINT}")
+
+    return path
+
+
+@pytest.fixture(scope="session")
+def launcher(bundle: Path) -> Path:
+    """The built launcher of the terminal door. The same build writes both bundles."""
+    path = launch_bundle()
 
     if not path.exists():
         _skip(f"{path} is missing: {_BUILD_HINT}")
@@ -248,6 +260,23 @@ def trigger(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
     trigger_prepared.start()
 
     return trigger_prepared
+
+
+@pytest.fixture
+def tui_prepared(tree: Tree, supervisor: Supervisor) -> TuiStack:
+    """The fifth topology on disk, with no service started."""
+    stack = TuiStack(tree, supervisor)
+    stack.prepare()
+
+    return stack
+
+
+@pytest.fixture
+def tui(tui_prepared: TuiStack, launcher: Path) -> TuiStack:
+    """The fifth topology, serving. A test opens each terminal itself."""
+    tui_prepared.start()
+
+    return tui_prepared
 
 
 def _skip(reason: str) -> NoReturn:

@@ -34,8 +34,10 @@ each service before its result line. Each line ends with the origin of the
 command: `default` or `override`.
 
 A test that needs `playpen/dist/playpen.js` skips itself when the file is
-missing. A silent pass would be worse than a skip. The suite needs `node` on
-`PATH`. Every test is marked `slow` in `conftest.py`.
+missing. A silent pass would be worse than a skip. The same applies to
+`playpen/dist/agent-pi-launch.js`, which the same build writes. The suite
+needs `node` and `git` on `PATH`. Every test is marked `slow` in
+`conftest.py`.
 
 Set `CRECHE_PROC_KEEP=1` to keep the root of each test on disk after the run.
 
@@ -51,6 +53,7 @@ the variable.
 | root | The temporary directory of one test. Every file and every Unix socket of the test is in it. |
 | stand-in | A program that takes the place of a program the suite cannot run: `sbx` and `pi`. |
 | topology | The services that one fixture starts together. |
+| terminal | A pseudo-terminal. A test holds the master side. A program holds the other side as its controlling terminal. |
 
 ## The service table
 
@@ -102,7 +105,7 @@ misspelled name would start the default command.
 
 ## What runs
 
-Four topologies exist. `attendance` and the two stand-ins are in each.
+Five topologies exist. `attendance` and the two stand-ins are in each.
 The first two are in the picture. The table after it gives the others.
 
 ```
@@ -127,6 +130,7 @@ the pi stand-in                          found through AGENT_PI_BIN
 | Topology | A test plays | The service |
 |---|---|---|
 | `proc_trigger.py`: the trigger door and `attendance` | an automation on the LAN, over HTTP on a loopback port, and a systemd timer, which runs `agent-trigger fire` to its end | reads the registry, the status documents, the webhook bearer files and the outcome records. Dials `attendance` as `door-trigger`. |
+| `proc_tui.py`: the terminal door, the Open WebUI door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Runs `sbx exec -it` with the real launcher bundle, which starts the pi stand-in on the terminal. |
 | `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
 
 | File | Topology | What the scenarios check |
@@ -140,6 +144,8 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: one job and its outcome record, a refused family, the queue, a refused start |
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
 | `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
+| `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, the release at exit and at a signal, a terminal exchange |
+| `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
 | `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, the one commit, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
@@ -160,6 +166,7 @@ the pi stand-in                          found through AGENT_PI_BIN
    - a file under the root: a journal, the audit file, a file in a mount
    - the record of a stand-in
    - the git repository of the registry, through `git`
+   - what a program wrote on its terminal
 4. Nothing under test may be faked. The two stand-ins are not under test.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
@@ -200,6 +207,12 @@ the pi stand-in                          found through AGENT_PI_BIN
     link, a field. Do not compare a whole page with a text.
 18. Run `git` only through `proc_registry.py`. It gives `git` a whole
     environment, so no config file of a person reaches a test.
+19. Start a program that a person types with `spawn_on_terminal`. End it as
+    a person does: with a key, with a signal or with a closed terminal.
+    Read the lease and the exit code. Do not assert on a sentence that the
+    program shows, unless a contract gives the sentence.
+20. A scenario with a terminal starts on a session that ran a turn. The
+    first Known gap of the terminal door says why.
 
 ## Add a stand-in program
 
@@ -223,6 +236,12 @@ that the suite cannot run. Add one only when a scenario needs it.
 
 Do not grow `fake-pi.mjs` here. It belongs to `playpen/`.
 
+The `sbx` wrapper does two more things for the terminal door. It drops `-it`
+after it recorded the call, because `fake_sbx.py` takes no such word. It
+sets `SESSIOND_SANDBOX_SESSIONS_MOUNT` from the family of the sandbox id,
+because the launcher finds the session store through it (contract 03 §7.6
+rule 4). The launcher itself is the real bundle, not a stand-in.
+
 ## Add a topology
 
 1. Add a module that holds a class on `Stack` in `proc_stack.py`.
@@ -242,8 +261,9 @@ code for this suite.
 
 A failed test carries a section named `processes at call`. It holds the root
 path, the stdout and the stderr of each process, and each playpen log. A
-test that fails in its teardown carries the same output in the text of the
-failure. Work down this list.
+program on a terminal has one part there, named `terminal`. A test that
+fails in its teardown carries the same output in the text of the failure.
+Work down this list.
 
 1. Every topology test skips: the bundle is missing. Build it. With
    `CRECHE_PROC_NO_SKIP=1`, each of these tests fails with the same text.
@@ -291,8 +311,33 @@ failure. Work down this list.
   requests that the bridge sends. The playpen bundle fixes `PEP_URL` at build
   time: the LAN address of the site, port 8300. A pi process under the real
   playpen cannot dial a chaperone on another port.
-- **No scenario for `door-tui`.** It has a row in the service table and no
-  topology.
+- **A terminal on a new session meets a pi process of the playpen.**
+  `attendance` starts a pi process for a session when a door creates it, and
+  does not wait (contract 03 §4.7 rules 8 and 9). The terminal door creates
+  the session, takes the lease and asks `attendance` to release that process
+  (contract 02 §5.11). The start is still on its way then, so `attendance`
+  answers `released: false` and sends nothing. The order of the next two
+  events is a matter of timing. When the launcher looks first, two pi
+  processes hold one session store. When the playpen starts its process
+  first, the launcher exits 8. This is a defect of the product, not of the
+  suite. `test_ct_a_new_session_exists_before_pi_runs` asserts only what
+  holds in each order. Each other scenario starts on a session that ran a
+  turn, where the release is a real one.
+- **CONTRACT-QUESTION, the exit code of a refusal of the terminal door.** No
+  contract names one. Contract 03 §7.6 names the codes of the launcher, and
+  the suite asserts that the door passes code 10 through. For a refusal of
+  the door itself the suite accepts each code that is not 0. A change costs
+  one assertion per scenario in `test_proc_tui_start.py`.
+- **No scenario for a lease that is renewed or that expires.** The terminal
+  door renews every 20 seconds, and the lease of `attendance` lives 60
+  seconds (contract 02 §7.1, §7.4). Neither number has a variable, so each
+  scenario would wait that long.
+- **The pi stand-in is not the screen of pi.** On a terminal it reads one
+  command per line and ends at the end of the input. No scenario says
+  anything about what the real pi does with a key.
+- **A closed terminal differs by system.** Linux sends `SIGHUP` to the
+  leader of the session and to the foreground group. macOS sends it to the
+  leader alone. The scenario reads the lease and not the end of pi.
 - **CONTRACT-QUESTION, the exit code of `agent-trigger fire`.** No contract
   names one. The suite reads 0 as a firing that `attendance` accepted or
   that the quiet check skipped, and each other code as a firing that
@@ -336,7 +381,7 @@ failure. Work down this list.
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the `sbx` and `pi` wrappers, and the record each one leaves |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
-| `proc_owui.py`, `proc_delegate.py`, `proc_trigger.py`, `proc_board.py` | one topology each |
+| `proc_owui.py`, `proc_delegate.py`, `proc_trigger.py`, `proc_tui.py`, `proc_board.py` | one topology each |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |
