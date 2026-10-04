@@ -1,0 +1,25 @@
+# Fires creche-follow.service every two minutes. USER timer, as the operator.
+#
+# Installed and enabled by the installer in the private repository.
+#
+# WHY TWO MINUTES. A tag reaches GitHub about four minutes after its merge,
+# and a set is filed on the second run that reads it. So the phone asks two
+# to four minutes after the tag. A shorter interval buys little against
+# those four minutes, and an unchanged run is one `git fetch` for each of
+# the two repositories, which transfers nothing.
+[Unit]
+Description=Look for newer component tags every two minutes
+
+[Timer]
+# Five minutes after boot, so every unit a release restarts has had its own
+# start, and the path unit is watching the spool.
+OnBootSec=5min
+OnUnitActiveSec=2min
+# The default would spread these over a minute, which is half the interval.
+AccuracySec=10s
+# NO Persistent=true. A missed run is two minutes of not looking, and the
+# next run reads every tag the missed one would have read.
+Unit=creche-follow.service
+
+[Install]
+WantedBy=timers.target

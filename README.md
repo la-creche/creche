@@ -54,7 +54,7 @@ turn. The `attendance` service takes that call from four doors.
 | `caregiver/` | `caregiver` | `creche-caregiver.service`, user | The reconciler. It converges every family to its file. | [caregiver/AGENTS.md](caregiver/AGENTS.md) |
 | `noticeboard/` | `noticeboard` | `creche-noticeboard.service`, user | The one view: every family, sandbox, session and audit line. | [noticeboard/AGENTS.md](noticeboard/AGENTS.md) |
 | `playpen/` | `playpen` | none, an OCI image | The process inside each sandbox, the pi bridge and the terminal launcher. | [playpen/AGENTS.md](playpen/AGENTS.md) |
-| `handover/` | `handover` | `creche-handover.{path,service}`, system, root | The release tool: resolver, tag allocator, executor, requester, secret intake. | [handover/AGENTS.md](handover/AGENTS.md) |
+| `handover/` | `handover` | `creche-handover.{path,service}`, system, root. `creche-follow.{service,timer}`, user | The release tool: resolver, tag allocator, executor, requester, follower, secret intake. | [handover/AGENTS.md](handover/AGENTS.md) |
 | `family/` | in `caregiver` | none, a library | The `family.yaml` and `server.yaml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
 | `library/` | none | `index@.timer`, `index-code@.timer`, user | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
 | `toybox/` | none | none | The one pi version pin. | [toybox/AGENTS.md](toybox/AGENTS.md) |
@@ -89,6 +89,7 @@ The other directories:
 | Change the release steps | `handover/src/handover/executor/steps.py` |
 | Change what a `component.yaml` may say | `handover/src/handover/manifest.py` |
 | Change how a merge allocates a tag | `handover/src/handover/allocate.py`, `handover/bin/allocate-tags.sh` |
+| Change when a new tag files a request | `handover/src/handover/follow/`, `systemd/creche-follow.service` |
 | Change what a deploy does | `bin/creche-deploy` |
 | Change the quality gate or the docs rule | `bin/quality-gate.sh`, `bin/lib/docsrule.sh` |
 | Change the index schema | `library/src/library/library.py` and `playpen/bridge/index-store.ts`, together |
@@ -123,6 +124,9 @@ The two verbs differ, and the difference is a security property.
   or `~/.local/components/<name>`, then restarts that component's unit.
   The `handover` executor does this as root, from a request file, after a
   phone tap. Every other service runs from its own component tree.
+- **A request** comes from the operator, from one fenced agent family, or
+  from `creche-follow.timer`. The timer files a request for each newer tag
+  of a component that has a release. No requester can approve a release.
 
 Everything that differs between deployments is in the site file,
 `/etc/creche/site.env`. This repository names no host, no account and no
