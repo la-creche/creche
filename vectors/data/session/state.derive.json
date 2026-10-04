@@ -1,0 +1,32 @@
+{
+ "context": {},
+ "contract": "contract 02 \u00a74.1",
+ "entry": "attendance.states.derive_session_state",
+ "format": 1,
+ "notes": ["args.turns is the state of each turn of one session, the oldest first. args.last_settled_failed is true when the last turn that ended has the state failed.","value is the state of the session."],
+ "surface": "session.state.derive",
+ "vectors": [
+  {"id":"no-turn","input":{"args":{"last_settled_failed":false,"turns":[]}},"result":"accepted","value":"idle"},
+  {"id":"no-turn-last-failed","input":{"args":{"last_settled_failed":true,"turns":[]}},"result":"accepted","value":"failed"},
+  {"id":"one-queued","input":{"args":{"last_settled_failed":false,"turns":["queued"]}},"result":"accepted","value":"queued"},
+  {"id":"one-running","input":{"args":{"last_settled_failed":false,"turns":["running"]}},"result":"accepted","value":"running"},
+  {"id":"one-waiting-approval","input":{"args":{"last_settled_failed":false,"turns":["waiting-approval"]}},"result":"accepted","value":"waiting-approval"},
+  {"id":"one-settled","input":{"args":{"last_settled_failed":false,"turns":["settled"]}},"result":"accepted","value":"idle"},
+  {"id":"one-failed","input":{"args":{"last_settled_failed":false,"turns":["failed"]}},"result":"accepted","value":"idle"},
+  {"id":"one-aborted","input":{"args":{"last_settled_failed":false,"turns":["aborted"]}},"result":"accepted","value":"idle"},
+  {"id":"one-queued-last-failed","input":{"args":{"last_settled_failed":true,"turns":["queued"]}},"result":"accepted","value":"queued"},
+  {"id":"one-running-last-failed","input":{"args":{"last_settled_failed":true,"turns":["running"]}},"result":"accepted","value":"running"},
+  {"id":"one-waiting-approval-last-failed","input":{"args":{"last_settled_failed":true,"turns":["waiting-approval"]}},"result":"accepted","value":"waiting-approval"},
+  {"id":"one-settled-last-failed","input":{"args":{"last_settled_failed":true,"turns":["settled"]}},"result":"accepted","value":"failed"},
+  {"id":"one-failed-last-failed","input":{"args":{"last_settled_failed":true,"turns":["failed"]}},"result":"accepted","value":"failed"},
+  {"id":"one-aborted-last-failed","input":{"args":{"last_settled_failed":true,"turns":["aborted"]}},"result":"accepted","value":"failed"},
+  {"id":"running-and-waiting","input":{"args":{"last_settled_failed":false,"turns":["running","waiting-approval"]}},"result":"accepted","value":"waiting-approval"},
+  {"id":"waiting-and-running","input":{"args":{"last_settled_failed":false,"turns":["waiting-approval","running"]}},"result":"accepted","value":"waiting-approval"},
+  {"id":"queued-and-running","input":{"args":{"last_settled_failed":false,"turns":["queued","running"]}},"result":"accepted","value":"running"},
+  {"id":"queued-and-waiting","input":{"args":{"last_settled_failed":false,"turns":["queued","waiting-approval"]}},"result":"accepted","value":"waiting-approval"},
+  {"id":"failed-and-queued","input":{"args":{"last_settled_failed":false,"turns":["failed","queued"]}},"result":"accepted","value":"queued"},
+  {"id":"failed-and-settled","input":{"args":{"last_settled_failed":false,"turns":["failed","settled"]}},"result":"accepted","value":"idle"},
+  {"id":"settled-and-failed","input":{"args":{"last_settled_failed":true,"turns":["settled","failed"]}},"result":"accepted","value":"failed"},
+  {"id":"aborted-and-queued-last-failed","input":{"args":{"last_settled_failed":true,"turns":["aborted","queued"]}},"result":"accepted","value":"queued"}
+ ]
+}

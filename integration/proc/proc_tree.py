@@ -3,12 +3,16 @@
 Each writer here follows a contract, never a module of a service. A service
 in another language reads the same bytes, so no file below comes from a
 product writer. `caregiver` is the writer of most of these files on the
-host. A later topology starts it as a process and deletes the matching
-writer here.
+host. A topology with no `caregiver` process uses the writers here. A
+topology with one writes only the registry and the token files, and
+`caregiver` writes the rest.
 
     <root>/
+      registry/families/<family>/family.yaml       contract 01 §1
+      registry/families/<family>/instructions.md   contract 01 §1
       sessions/<family>/                 contract 02 §9, the session store
       state/families/<family>/status.json          contract 05 §2
+      state/families/<family>/validation.json      contract 05 §3.2
       state/families/<family>/supervisor-<id>.env  contract 03 §7.1
       state/families/<family>/creds/creds.json     contract 03 §12
       state/families/<family>/config/              contract 01 §6.1
@@ -16,13 +20,14 @@ writer here.
       state/tokens/<principal>.token     contract 02 §3 rule 5
       state/door-owui.key                contract 02 §3 rule 7
       state/grants/<family>.json         contract 04 §1, the grant file
+      state/faults/<writer>/<family>.json          contract 05 §3.3.1
       state/audit/<day>.jsonl            contract 04 §6, written by the chaperone
       state/outcomes/<family>/<id>.json  contract 02 §13.1, written by `attendance`
       state/triggers/webhooks/<family>/<name>.token   contract 05 §6.4
-      state/families/<family>/validation.json      contract 01 §7, the report
       state/view.key                     the key of the noticeboard
-      registry/                          contract 01 §1, `proc_registry.py`
       sock/                              contract 02 §3 rule 1
+      release/                           the root of the release executor, empty
+      home/.config/systemd/user/         the unit directory of a user manager
       work/  log/  home/  bin/  standins/  proc-logs/
 """
 
@@ -33,11 +38,14 @@ import json
 import os
 import shutil
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
+
+import yaml
 
 FAMILY: Final = "chat"
 SANDBOX: Final = "chat-s1"
@@ -50,6 +58,13 @@ AUTONOMOUS: Final = "autonomous"
 
 #: What `caregiver` puts in `instructions.md` of a fixture family.
 INSTRUCTIONS: Final = "Be helpful.\n"
+
+#: Contract 01 §3.2: the budget of a fixture family, in dollars each day.
+BUDGET_USD: Final = 15
+
+#: Contract 05 §3.3.1: the directory of the fault files that `attendance`
+#: writes.
+FAULTS_OF_ATTENDANCE: Final = "sessiond"
 
 
 class Validity(StrEnum):
@@ -200,6 +215,21 @@ class Tree:
         return self.root / "standins"
 
     @property
+    def registry_root(self) -> Path:
+        """The registry that `caregiver` watches (contract 01 §1)."""
+        return self.root / "registry"
+
+    @property
+    def release_root(self) -> Path:
+        """What plays the root of the release executor. The suite leaves it empty."""
+        return self.root / "release"
+
+    @property
+    def unit_dir(self) -> Path:
+        """Where a user manager reads a unit from: `$XDG_CONFIG_HOME/systemd/user`."""
+        return self.home / ".config" / "systemd" / "user"
+
+    @property
     def families_dir(self) -> Path:
         return self.state_root / "families"
 
@@ -216,11 +246,6 @@ class Tree:
         return self.root / "sock" / _SOCKET_NAME
 
     @property
-    def registry_root(self) -> Path:
-        """The registry checkout (contract 01 §1). `proc_registry.py` writes it."""
-        return self.root / "registry"
-
-    @property
     def audit_dir(self) -> Path:
         return self.state_root / "audit"
 
@@ -234,9 +259,6 @@ class Tree:
 
     def webhook_token_file(self, family: str, name: str) -> Path:
         return self.webhooks_dir / family / f"{name}.token"
-
-    def validation_file(self, family: str = FAMILY) -> Path:
-        return self.family_dir(family) / "validation.json"
 
     def outcomes(self, family: str) -> list[dict[str, Any]]:
         """Every outcome record one family has on disk now (contract 02 §13.1)."""
@@ -266,6 +288,39 @@ class Tree:
 
     def status_file(self, family: str = FAMILY) -> Path:
         return self.family_dir(family) / "status.json"
+
+    def status(self, family: str = FAMILY) -> dict[str, Any] | None:
+        """The status document of one family, or None while it has none.
+
+        Its writer puts it in place by rename (contract 05 §2 rule 2), so a
+        file that is there is a whole document.
+        """
+        try:
+            document: dict[str, Any] = json.loads(
+                self.status_file(family).read_text(encoding="utf-8")
+            )
+        except FileNotFoundError:
+            return None
+
+        return document
+
+    def validation_file(self, family: str = FAMILY) -> Path:
+        """The whole validation report (contract 05 §3.2)."""
+        return self.family_dir(family) / "validation.json"
+
+    def creds_file(self, family: str = FAMILY) -> Path:
+        """The credential file of contract 03 §12."""
+        return self.mounts(family).creds / "creds.json"
+
+    def fault_file(self, writer: str, family: str = FAMILY) -> Path:
+        """The open faults that one service reports for one family (contract 05 §3.3.1)."""
+        return self.state_root / "faults" / writer / f"{family}.json"
+
+    def registry_family_dir(self, family: str = FAMILY) -> Path:
+        return self.registry_root / "families" / family
+
+    def family_file(self, family: str = FAMILY) -> Path:
+        return self.registry_family_dir(family) / "family.yaml"
 
     def playpen_env(self, family: str = FAMILY, sandbox: str | None = None) -> Path:
         return self.family_dir(family) / f"supervisor-{sandbox or first_sandbox(family)}.env"
@@ -351,12 +406,85 @@ def pep_token_of(family: str) -> str:
 
 def build_tree(tree: Tree) -> None:
     """Write everything the first topology reads, for one attended family."""
+    build_bare_tree(tree)
+    add_family(tree, FAMILY, ATTENDED)
+
+
+def build_bare_tree(tree: Tree) -> None:
+    """Write what no family owns: the directories, the tokens and the door key.
+
+    A topology with a `caregiver` process starts from this tree and a
+    registry. `caregiver` publishes each family.
+    """
     for directory in (tree.work_root, tree.log_dir, tree.home, tree.bin_dir, tree.standins):
         directory.mkdir(parents=True, exist_ok=True)
 
-    add_family(tree, FAMILY, ATTENDED)
     write_tokens(tree)
     write_door_key(tree)
+
+
+def family_body(family: str = FAMILY, kind: str = ATTENDED, **fields: object) -> dict[str, Any]:
+    """One family file as a mapping (contract 01 §2).
+
+    Only the required fields, with an empty `egress` list: contract 01 §3.7
+    rule 5 makes that the normal case. `fields` adds a field or replaces one.
+    """
+    body: dict[str, Any] = {
+        "name": family,
+        "kind": kind,
+        "description": f"The {family} family of the process suite.",
+        "model": {"router": MODEL_ALIAS, "budget_usd_per_day": BUDGET_USD},
+        "egress": [],
+    }
+    body.update(fields)
+
+    return body
+
+
+def write_family_file(tree: Tree, body: Mapping[str, Any]) -> None:
+    """Put one `family.yaml` in the registry, whole, by rename.
+
+    This is the one action of invariant 9: an edit to one registry file.
+    """
+    text = yaml.safe_dump(dict(body), sort_keys=False)
+
+    write_registry_file(tree, tree.family_file(str(body["name"])), text)
+
+
+def write_family_prose(tree: Tree, family: str = FAMILY, text: str = INSTRUCTIONS) -> None:
+    """Put the `instructions.md` of one family in the registry (contract 01 §1)."""
+    write_registry_file(tree, tree.registry_family_dir(family) / "instructions.md", text)
+
+
+def publish_family(tree: Tree, body: Mapping[str, Any], prose: str = INSTRUCTIONS) -> None:
+    """Add one family to the registry: its prose first, then its file."""
+    write_family_prose(tree, str(body["name"]), prose)
+    write_family_file(tree, body)
+
+
+def write_skill(tree: Tree, skill: str, text: str) -> None:
+    """Put one skill in the registry, as `skills/<name>/SKILL.md` (contract 01 §3.10)."""
+    write_registry_file(tree, tree.registry_root / "skills" / skill / "SKILL.md", text)
+
+
+def remove_family(tree: Tree, family: str) -> None:
+    """Take one family out of the registry: its directory is gone in one rename."""
+    moved = tree.registry_root / f".removed-{family}"
+    tree.registry_family_dir(family).rename(moved)
+    shutil.rmtree(moved)
+
+
+def write_registry_file(tree: Tree, path: Path, text: str) -> None:
+    """Replace one registry file by rename.
+
+    The temporary file is in the root of the registry, outside `families/`.
+    So a reader of a family directory finds the old file or the new one, and
+    no third file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = tree.registry_root / f".{path.name}.tmp"
+    temp.write_text(text, encoding="utf-8")
+    temp.replace(path)
 
 
 def add_family(tree: Tree, family: str, kind: str, *, webhooks: tuple[str, ...] = ()) -> None:

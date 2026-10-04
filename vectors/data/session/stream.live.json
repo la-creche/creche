@@ -1,0 +1,16 @@
+{
+ "context": {},
+ "contract": "contract 02 \u00a75.5, \u00a78.1",
+ "entry": "attendance.streams.StreamHub.stream",
+ "format": 1,
+ "notes": ["The input is one stream. args.lines_on_disk is the count of lines of the journal. The reader starts after args.from_seq.","args.event is heartbeat or overrun. For heartbeat, no line arrives after the replay. For overrun, two lines arrive, and the reader has room for one.","value is the first record that the stream makes itself: a record with no journal_seq. value holds no ts. The ts is the time of the write."],
+ "surface": "session.stream.live",
+ "vectors": [
+  {"id":"heartbeat-empty-journal","input":{"args":{"event":"heartbeat","from_seq":0,"lines_on_disk":0}},"result":"accepted","value":{"body":{"last_seq":0},"journal_seq":null,"kind":"heartbeat","turn":null}},
+  {"id":"heartbeat-after-a-replay","input":{"args":{"event":"heartbeat","from_seq":0,"lines_on_disk":3}},"result":"accepted","value":{"body":{"last_seq":3},"journal_seq":null,"kind":"heartbeat","turn":null}},
+  {"id":"heartbeat-from-the-end","input":{"args":{"event":"heartbeat","from_seq":3,"lines_on_disk":3}},"result":"accepted","value":{"body":{"last_seq":3},"journal_seq":null,"kind":"heartbeat","turn":null}},
+  {"id":"heartbeat-from-past-the-end","input":{"args":{"event":"heartbeat","from_seq":7,"lines_on_disk":3}},"result":"accepted","value":{"body":{"last_seq":7},"journal_seq":null,"kind":"heartbeat","turn":null}},
+  {"id":"overrun-empty-journal","input":{"args":{"event":"overrun","from_seq":0,"lines_on_disk":0}},"result":"accepted","value":{"body":{"last_seq":1,"note":"stream_overrun"},"journal_seq":null,"kind":"note","turn":null}},
+  {"id":"overrun-after-a-replay","input":{"args":{"event":"overrun","from_seq":0,"lines_on_disk":3}},"result":"accepted","value":{"body":{"last_seq":5,"note":"stream_overrun"},"journal_seq":null,"kind":"note","turn":null}}
+ ]
+}

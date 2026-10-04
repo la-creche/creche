@@ -1,4 +1,4 @@
-"""The fifth topology: the terminal door, on a pseudo-terminal.
+"""The sixth topology: the terminal door, on a pseudo-terminal.
 
     a test (plays the operator at a keyboard)
       | a pseudo-terminal: the test holds the master side

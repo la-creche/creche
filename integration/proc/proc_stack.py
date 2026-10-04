@@ -27,7 +27,6 @@ from typing import Final
 import httpx
 from proc_harness import (
     LOOPBACK,
-    RUN_DEADLINE_S,
     Child,
     Finished,
     ProcError,
@@ -144,15 +143,12 @@ class Stack:
 
         return self.supervisor.spawn_on_terminal(service.value, words, whole, self.tree.root)
 
-    def run(
-        self, service: Service, env: dict[str, str], *args: str, deadline_s: float = RUN_DEADLINE_S
-    ) -> Finished:
-        """Run one service to its end, with the base environment under its own."""
+    def run(self, service: Service, env: dict[str, str], *args: str) -> Finished:
+        """Run one command of a service to its end, with the base environment under its own."""
         command = command_of(service)
         whole = base_env(self.tree) | env_of(command) | env
-        words = [*command.words, *args]
 
-        return self.supervisor.run(service.value, words, whole, self.tree.root, deadline_s)
+        return self.supervisor.run(service.value, [*command.words, *args], whole, self.tree.root)
 
     def spawn_attendance(self) -> Child:
         """Start `attendance`. `await_attendance` waits for it."""

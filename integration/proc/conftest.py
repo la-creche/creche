@@ -26,6 +26,7 @@ from typing import NoReturn, cast
 import httpx
 import pytest
 from proc_board import BoardStack
+from proc_caregiver import CaregiverStack
 from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
 from proc_owui import OwuiStack
@@ -212,8 +213,52 @@ async def sandbox(delegate: DelegateStack) -> AsyncIterator[httpx.AsyncClient]:
 
 
 @pytest.fixture
+def caregiver_prepared(tree: Tree, supervisor: Supervisor) -> CaregiverStack:
+    """The third topology on disk, with the LiteLLM stand-in and no service."""
+    stack = CaregiverStack(tree, supervisor)
+    stack.prepare()
+    stack.start_litellm()
+
+    return stack
+
+
+@pytest.fixture
+def caregiver_alone(caregiver_prepared: CaregiverStack) -> CaregiverStack:
+    """`caregiver` alone, after its first pass. The `supervisor` fixture ends it."""
+    caregiver_prepared.spawn_caregiver()
+    caregiver_prepared.await_published()
+
+    return caregiver_prepared
+
+
+@pytest.fixture
+def house_prepared(tree: Tree, supervisor: Supervisor, bundle: Path) -> CaregiverStack:
+    """The house on disk, with no service started. A test changes the registry first."""
+    stack = CaregiverStack(tree, supervisor)
+    stack.prepare()
+
+    return stack
+
+
+@pytest.fixture
+def house(house_prepared: CaregiverStack) -> CaregiverStack:
+    """The house, serving one attended family. The `supervisor` fixture ends it."""
+    house_prepared.start_house()
+    house_prepared.await_serving()
+
+    return house_prepared
+
+
+@pytest.fixture
+async def house_door(house: CaregiverStack) -> AsyncIterator[httpx.AsyncClient]:
+    """A client that plays Open WebUI against the door of the house."""
+    async with house.door_client() as client:
+        yield client
+
+
+@pytest.fixture
 def board_prepared(tree: Tree, supervisor: Supervisor) -> BoardStack:
-    """The fourth topology on disk, with no service started."""
+    """The fifth topology on disk, with no service started."""
     stack = BoardStack(tree, supervisor)
     stack.prepare()
 
@@ -222,7 +267,7 @@ def board_prepared(tree: Tree, supervisor: Supervisor) -> BoardStack:
 
 @pytest.fixture
 def board(board_prepared: BoardStack, bundle: Path) -> BoardStack:
-    """The fourth topology, serving. The `supervisor` fixture ends it."""
+    """The fifth topology, serving. The `supervisor` fixture ends it."""
     board_prepared.start()
 
     return board_prepared
@@ -238,7 +283,7 @@ def board_alone(board_prepared: BoardStack) -> BoardStack:
 
 @pytest.fixture
 def trigger_prepared(tree: Tree, supervisor: Supervisor) -> TriggerStack:
-    """The third topology on disk, with no service started."""
+    """The fourth topology on disk, with no service started."""
     stack = TriggerStack(tree, supervisor)
     stack.prepare()
 
@@ -256,7 +301,7 @@ def timer(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
 
 @pytest.fixture
 def trigger(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
-    """The third topology, serving: `attendance` and the webhook listener."""
+    """The fourth topology, serving: `attendance` and the webhook listener."""
     trigger_prepared.start()
 
     return trigger_prepared
@@ -264,7 +309,7 @@ def trigger(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
 
 @pytest.fixture
 def tui_prepared(tree: Tree, supervisor: Supervisor) -> TuiStack:
-    """The fifth topology on disk, with no service started."""
+    """The sixth topology on disk, with no service started."""
     stack = TuiStack(tree, supervisor)
     stack.prepare()
 
@@ -273,7 +318,7 @@ def tui_prepared(tree: Tree, supervisor: Supervisor) -> TuiStack:
 
 @pytest.fixture
 def tui(tui_prepared: TuiStack, launcher: Path) -> TuiStack:
-    """The fifth topology, serving. A test opens each terminal itself."""
+    """The sixth topology, serving. A test opens each terminal itself."""
     tui_prepared.start()
 
     return tui_prepared

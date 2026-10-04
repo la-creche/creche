@@ -115,6 +115,23 @@ triggers:
   - cron: "@daily"
 """
 
+#: A tool name of 65 characters. `agent_family` has no limit for a tool name.
+LONG_TOOL_NAME: Final = "a" * 65
+
+#: A server file that declares the tool `LONG_TOOL_NAME`.
+LONG_TOOL_SERVER: Final = f"""\
+name: long-tool-server
+identity: One written server.
+install: {{ source: agent-mcp }}
+run: {{ entrypoint: example-mcp }}
+tools:
+  - {{ name: {LONG_TOOL_NAME}, description: One tool. }}
+"""
+
+#: The count of collections around the innermost one, for the two nesting
+#: cases. The mapping at the top is one level more.
+NEST_INNER: Final = 127
+
 CASES: Final[tuple[Case, ...]] = (
     # --- the control: nothing wrong ---------------------------------------
     _case("ok-minimal", HEAD),
@@ -684,5 +701,111 @@ approval:
         + "quiet:\n  board: board-lead\n"
         + "  daily: { call: mail__send_standup_email, hour: 23, zone: Etc/UTC }\n"
         + "  floor_hours: 168\n",
+    ),
+    # --- more of how pydantic reads a text as a number or a boolean ---
+    _case("lax-int-forms", HEAD + 'sandbox: { cpus: "0-1", max_resident_processes: "0_1_2.00" }\n'),
+    _case("lax-int-plus", HEAD + 'sandbox: { cpus: "+02", max_resident_processes: " 1_2 " }\n'),
+    _case("lax-int-refused", HEAD + 'sandbox: { cpus: "2.", max_resident_processes: "1__2" }\n'),
+    _case(
+        "lax-int-sign-twice", HEAD + 'sandbox: { cpus: "-0-1", max_resident_processes: "+-1" }\n'
+    ),
+    _case("lax-int-float-edge", HEAD + "sandbox: { cpus: 9.3e+18, max_resident_processes: 2.5 }\n"),
+    _case("lax-int-not-finite", HEAD + "sandbox: { cpus: .inf, max_resident_processes: .nan }\n"),
+    _case(
+        "lax-float-forms",
+        _head(model='model: { router: fast, budget_usd_per_day: "1_0.5e+0" }'),
+    ),
+    _case(
+        "lax-float-space-underscore",
+        _head(model='model: { router: fast, budget_usd_per_day: " 1_0" }'),
+    ),
+    _case("lax-float-word", _head(model='model: { router: fast, budget_usd_per_day: "Infinity" }')),
+    _case(
+        "lax-float-large-int",
+        _head(model="model: { router: fast, budget_usd_per_day: 1" + "0" * 400 + " }"),
+    ),
+    _case("lax-bool-forms", HEAD + 'shell: "T"\n'),
+    _case("lax-bool-space", HEAD + 'shell: " yes"\n'),
+    _case("lax-bool-float", HEAD + "shell: 1.0\n"),
+    _case("lax-bool-float-other", HEAD + "shell: 0.5\n"),
+    _case("lax-bool-large-int", HEAD + "shell: 99999999999999999999999\n"),
+    _case("lax-binary-int", HEAD + "sandbox: { cpus: !!binary Mg== }\n"),
+    _case("lax-binary-not-utf8", _head(description="description: !!binary /w==")),
+    _case("lax-binary-key", HEAD + "tools:\n  !!binary a2FnaQ==: all\n"),
+    _case("lax-binary-model-key", HEAD + "!!binary c2hlbGw=: true\n"),
+    # --- more of what a YAML 1.1 reader gives ---
+    _case("yaml-merge-key-form", HEAD + "base: &base { shell: true }\n<<: *base\n"),
+    _case(
+        "yaml-merge-list",
+        "first: &first { name: %NAME%, kind: thin }\n"
+        "second: &second { kind: attended, description: Merged. }\n"
+        "<<: [*first, *second]\nmodel: { router: fast, budget_usd_per_day: 1 }\n",
+    ),
+    _case("yaml-merge-scalar", HEAD + "<<: 5\n"),
+    _case("yaml-anchor-alias-form", HEAD + "delegates: &list [vault-oracle]\napproval: *list\n"),
+    _case("yaml-alias-undefined", HEAD + "delegates: *nowhere\n"),
+    _case("yaml-anchor-twice", HEAD + "egress: [&a x.example, &a y.example]\n"),
+    _case("yaml-value-key", HEAD + "shell: =\n"),
+    _case(
+        "yaml-sexagesimal-float", _head(model="model: { router: fast, budget_usd_per_day: 1:30.5 }")
+    ),
+    _case("yaml-float-forms", _head(model="model: { router: fast, budget_usd_per_day: 1_0.2_5 }")),
+    _case("yaml-key-float", HEAD + "tools:\n  1.5: [a]\n.inf: 1\n"),
+    _case("yaml-key-date", HEAD + "2026-10-03: 1\n2026-10-03 10:20:30.5 +01:30: 2\n"),
+    _case("yaml-key-large-int", HEAD + "99999999999999999999999: 1\n-5: 2\n"),
+    _case("yaml-key-same-number", HEAD + "tools:\n  1: [a]\n  1.0: [b]\n  true: 5\n"),
+    _case("yaml-tag-pairs", HEAD + "skills: !!pairs [ a: b ]\negress: !!omap [ c: d ]\n"),
+    _case("yaml-tag-set-model", HEAD + "sandbox: !!set { cpus }\n"),
+    _case("yaml-tag-non-specific", HEAD + "sandbox: { cpus: ! 2 }\n"),
+    _case("yaml-tag-verbatim", HEAD + "sandbox: { cpus: !<tag:yaml.org,2002:int> 2 }\n"),
+    _case("yaml-tag-handle", "%TAG !y! tag:yaml.org,2002:\n---\n" + HEAD + "shell: !y!str yes\n"),
+    _case("yaml-tag-handle-unknown", HEAD + "shell: !y!str yes\n"),
+    _case("yaml-tag-binary-bad", _head(description="description: !!binary a")),
+    _case("yaml-tag-seq-on-scalar", HEAD + "skills: !!seq handoff\n"),
+    _case("yaml-block-scalars", _head(description="description: |+\n  kept\n\n")),
+    _case("yaml-block-indicator", _head(description="description: |0\n  text")),
+    _case("yaml-escape-unknown", _head(description='description: "a\\qb"')),
+    _case("yaml-escape-forms", _head(description='description: "\\x41\\u00e9\\U0001F600\\N\\_"')),
+    _case("yaml-quote-open", _head(description="description: 'open")),
+    _case("yaml-tab-indent", HEAD + "sandbox:\n\tcpus: 2\n"),
+    _case("yaml-block-in-flow", HEAD + "egress: [ - a ]\n"),
+    _case("yaml-doc-top-float", "1.5\n"),
+    _case("yaml-doc-top-bool", "yes\n"),
+    _case("yaml-doc-top-date", "2026-10-03\n"),
+    _case("yaml-doc-top-time", "2026-10-03T10:20:30Z\n"),
+    _case("yaml-doc-top-binary", "!!binary aGVsbG8=\n"),
+    _case("yaml-doc-top-set", "!!set { a }\n"),
+    _case("yaml-line-separator", HEAD + "shell: true\u2028egress: []\n"),
+    _case("yaml-long-snippet", HEAD + "egress: [" + "a" * 90 + ", @bad, " + "b" * 90 + "]\n"),
+    # --- an unknown field near more than one known field ---
+    _case("unknown-tie", HEAD + "skils: []\nshel: true\ntool: {}\n"),
+    _case("unknown-long", HEAD + "x" * 250 + ": 1\n"),
+    # --- one more edge of a rule ---
+    _case("rule-sandbox-memory-over", HEAD + "sandbox: { memory: 16385m }\n"),
+    _case(
+        "rule-approval-all-undeclared",
+        ATTENDED_HEAD + "tools:\n  kagi: all\napproval: [kagi__no_such_tool, kagi__kagi_extract]\n",
+    ),
+    _case(
+        "fence-withheld-all-auto",
+        CRON_HEAD + "tools:\n  github-platform: all\n",
+        files={"mcp/github-platform/server.yaml": PLATFORM_SERVER_WITH_MERGE},
+    ),
+    _case(
+        "rule-skills-no-file",
+        HEAD + "skills: [no-file-skill]\n",
+        files={"skills/no-file-skill/notes.txt": "A skill directory with no skill file.\n"},
+    ),
+    # --- collections inside collections ---
+    _case("nest-128-levels", HEAD + "egress: " + "[" * NEST_INNER + "]" * NEST_INNER + "\n"),
+    _case(
+        "nest-129-levels",
+        HEAD + "egress: " + "[" * (NEST_INNER + 1) + "]" * (NEST_INNER + 1) + "\n",
+    ),
+    # --- a tool name with no limit (contract 01 §3.4) ---
+    _case(
+        "long-tool-name",
+        HEAD + f"tools:\n  long-tool-server: [{LONG_TOOL_NAME}]\n",
+        files={"mcp/long-tool-server/server.yaml": LONG_TOOL_SERVER},
     ),
 )

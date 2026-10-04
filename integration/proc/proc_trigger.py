@@ -1,4 +1,4 @@
-"""The third topology: the trigger door in front of `attendance`.
+"""The fourth topology: the trigger door in front of `attendance`.
 
     a test (plays an automation on the LAN)      a test (plays a systemd timer)
       | HTTP, loopback port, the webhook bearer    | runs the command to its end

@@ -37,13 +37,21 @@ directory is not a workspace package, so a change here does not change
 | `generate.py` | the list of groups, the index, `write`, `--check`, `--counts` |
 | `surfaces/ids.py` | the id grammars and `ids/disagreements.json` |
 | `surfaces/family_cases.py` | the written `family.yaml` inputs |
-| `surfaces/family_file.py` | `family_file` and `family_file.host` |
+| `surfaces/family_file.py` | `family_file`, `family_file.host` and `family_file.registries.json` |
+| `surfaces/server_cases.py` | the written `server.yaml` inputs |
+| `surfaces/server_file.py` | `server_file` |
+| `surfaces/classify.py` | `family_file.classify` |
+| `surfaces/family_cli.py` | `family_file.cli` |
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
 | `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
 | `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
 | `surfaces/status_files.py` | the writer of `status.json`, the fault files and the outcome record: `status.write`, `status.fault_file.<package>`, `status.outcome.noticeboard` |
 | `surfaces/config.py` | the site file, the roster, the mount files and three env readers: `config.<name>` |
+| `surfaces/manifest_cases.py` | the written `component.yaml` inputs |
+| `surfaces/manifest.py` | the eleven `manifest.<name>` surfaces of contract 06 |
+| `surfaces/session_cases.py` | the written inputs of the session API surfaces |
+| `surfaces/session.py` | the session API: `session.request.*`, `session.query.*`, `session.error_body`, `session.answer.*`, `session.journal.*`, `session.stream.*`, `session.turn.move`, `session.state.derive`, `session.outcome.*` |
 
 ## Known gaps
 
@@ -58,9 +66,20 @@ directory is not a workspace package, so a change here does not change
   `status.outcome.noticeboard` reads records that this writer made.
 - No vector covers `rescope_by_fleet` and `drop_superseded` of
   `caregiver.faults`. They change a fault after `read_fault_file` reads it.
-- No vector covers contract 06, the component manifest and the release
-  request file.
-- No vector covers `server.yaml`, contract 01b.
+- No vector covers the resolver, the deploy order or rules C1 to C4 of
+  contract 06 §3.2. `manifest.resolved` starts from a resolution.
+- No vector covers the ledger entry or the spool. `manifest.operator`
+  covers two values of the site file, and `config.site_file` covers its form.
+- `manifest.component` reads the site file in two states: with both values
+  of the operator, and with no file. A site file with one of the two
+  values has no vector.
+- `manifest.resolved` gives `resolved_at` as a float only. With an integer,
+  Python writes no `.0`.
+- `family_file.cli` holds no text that `argparse` writes: no usage line and
+  no help text. That text differs between two Python versions. A vector for
+  such a command line holds the exit status only.
+- `server_file` and `family_file.cli` have no host. No vector covers the
+  program with a model router or with a mount that is a symbolic link.
 - `grants.write` calls `write_grant_file`. No vector covers
   `build_grant_file`, which expands `all` and `<server>__*`.
 - `grants.write` holds valid fields only. The writer does not validate a
@@ -111,6 +130,40 @@ directory is not a workspace package, so a change here does not change
   Python version: 9,997 levels on 3.12 and 9,998 on 3.13. Python refuses that
   input when the caller is about 900 C calls deep. Python 3.14 refuses it on
   a small stack.
+- The session surfaces go through the routes of `attendance.api`. The
+  service behind the routes is a stand-in. No vector covers a refusal that
+  the real service makes after the parse: a token, a family kind, a lease.
+- No vector covers the header `X-Door-Instance`, or a path parameter. The
+  parsers of `attendance.requests` do not check a path parameter.
+- No vector covers the bodies of `wait=accepted` and `wait=settled`. No
+  vector covers the answers of `/dispatch` and `/dispatch/jobs`. No vector
+  covers a file of `attendance.store`: `session.json`, a turn record, a
+  lease file, a dispatch ledger entry. Each one has no public entry point
+  without the real service.
+- No vector covers the readers in the three doors: the error body, a
+  session row, a settled turn, a line of the event stream.
+- `session.journal.write` and `session.stream.encode` take each body. The
+  entry point does not check a body against its kind. The service has no
+  public function that makes the body of a kind. The bodies in
+  `session_cases.py` copy the keys and their order from
+  `attendance.service`. A change there does not move a vector.
+- A vector file sorts keys. `session.journal.write` and
+  `session.stream.encode` thus give an object of free form its keys in
+  sorted order. No vector shows that the Python code keeps another order.
+  `session.error_body` writes a detail whose keys are not in sorted order as
+  an `$entries` marker. An object inside a detail has its keys in sorted
+  order.
+- `session.outcome.write` and `session.answer.*` use no time before the
+  year 1000. `attendance.clock.rfc3339` writes such a year with a width that
+  depends on the system.
+- A text of a time has a vector only when each supported Python version
+  reads it in the same way. `datetime.fromisoformat` differs between
+  versions on five forms:
+  1. A fraction with no digit.
+  2. A fraction after the hours or after the minutes.
+  3. A fraction in an offset of zero seconds.
+  4. Hour 24.
+  5. A colon and digits after the seconds, as in `06:00:23:599999`.
 - The generator runs on macOS, and CI runs it on Linux. No other system
   has a run.
 - `config.roster` holds the tree of a roster file and no YAML text. No

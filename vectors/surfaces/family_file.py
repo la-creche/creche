@@ -24,6 +24,7 @@ from agent_family import Registry, load_registry
 from agent_family.validate import HostFacts
 
 from vectors.core import (
+    FORMAT,
     Json,
     Raised,
     Surface,
@@ -31,6 +32,7 @@ from vectors.core import (
     accepted,
     attempt,
     bytes_input,
+    compact,
     normalize,
     raised,
     refused,
@@ -57,10 +59,15 @@ FAMILY_FILE: Final = "family.yaml"
 CONTRACT: Final = "contract 01"
 ENTRY: Final = "agent_family.load_registry"
 
+#: Every file of every registry a vector names, beside the vector files. A
+#: reader in another language reads no file outside `vectors/data/`.
+REGISTRIES_FILE: Final = "family_file.registries.json"
+
 NOTES: Final = (
     "The input is the bytes of one family.yaml.",
     "params.registry is a registry in this repository, as a path from the repository root. "
     "params.directory is the directory of the input under families/ in that registry.",
+    "family_file.registries.json holds each file of each such registry.",
     "params.files holds every other file a vector adds to the registry, by path from the "
     "registry root. A file there replaces the registry's own file at that path.",
     "A family file is validated against the whole registry. To replay a vector: copy the "
@@ -77,7 +84,31 @@ HOST_LINKS: Final = {
     "/srv/agents/vault/linked-out": "/etc/shadow",
     "/srv/agents/vault/linked-in": "/srv/agents/code/example",
     "/srv/agents/vault/linked-platform": "/srv/agents/work/platform/agent-control",
+    "/srv/agents/sessions/linked-store": "/etc/shadow",
 }
+
+#: The start of a name that is no file of a registry. A file browser writes
+#: such a file into a directory, and git does not track it.
+HIDDEN: Final = "."
+
+
+def _hidden(_directory: str, names: list[str]) -> set[str]:
+    return {name for name in names if name.startswith(HIDDEN)}
+
+
+def copy_registry(source: Path, target: Path) -> None:
+    """A copy of one registry at `target`, with no hidden file and no hidden directory."""
+    shutil.copytree(source, target, ignore=_hidden)
+
+
+def registry_files(base: Path) -> list[Path]:
+    """Each file that `copy_registry` copies, in a fixed order."""
+    return sorted(
+        path
+        for path in base.rglob("*")
+        if path.is_file()
+        and not any(part.startswith(HIDDEN) for part in path.relative_to(base).parts)
+    )
 
 
 @dataclass(frozen=True)
@@ -126,7 +157,7 @@ def _staged(registry: str, case: Case, scratch: Path) -> Generator[Path]:
     """
     if case.files or case.directory:
         root = scratch / case.id
-        shutil.copytree(REPO_ROOT / registry, root)
+        copy_registry(REPO_ROOT / registry, root)
         for path, text in case.files.items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +169,7 @@ def _staged(registry: str, case: Case, scratch: Path) -> Generator[Path]:
 
     shared = scratch / "shared"
     if not shared.is_dir():
-        shutil.copytree(REPO_ROOT / registry, shared)
+        copy_registry(REPO_ROOT / registry, shared)
 
     directory = _write_input(shared, case)
     try:
@@ -218,7 +249,32 @@ HOST_CASES: Final = (
         b"  - { path: /srv/agents/vault/linked-platform, mode: ro }\n"
         b"  - { path: /srv/agents/vault/plain, mode: ro }\n",
     ),
+    Case(
+        "host-link-session-store",
+        b"name: %NAME%\nkind: thin\ndescription: One written input.\n"
+        b"model: { router: fast, budget_usd_per_day: 1 }\n"
+        b"files:\n"
+        b"  - { path: /srv/agents/sessions/linked-store, mode: ro }\n",
+    ),
 )
+
+
+def render_registries() -> str:
+    """The bytes of `family_file.registries.json`. One file of a registry per line."""
+    rows: list[str] = []
+    for registry in FIXTURE_REGISTRIES:
+        base = REPO_ROOT / registry
+        for path in registry_files(base):
+            row: dict[str, Json] = {
+                "registry": registry,
+                "path": path.relative_to(base).as_posix(),
+                **bytes_input(path.read_bytes()),
+            }
+            rows.append(f"  {compact(row)}")
+
+    body = "[\n" + ",\n".join(rows) + "\n ]"
+
+    return f'{{\n "format": {FORMAT},\n "kind": "registries",\n "files": {body}\n}}\n'
 
 
 def surfaces() -> tuple[Surface, ...]:

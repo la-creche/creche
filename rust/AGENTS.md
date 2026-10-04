@@ -21,6 +21,7 @@ defect that a test finds late.
 | Crate | What it holds |
 |---|---|
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
+| `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 
 | Module of `creche-contracts` | What it holds |
 |---|---|
@@ -28,13 +29,35 @@ defect that a test finds late.
 | `secret` | `Secret`, the type of a token or a key. |
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
-| `session` | The session API: contract 02. |
+| `session` | The session API: contract 02. `session.rs` declares the files under `session/`. |
 | `channel` | The channel protocol: contract 03. "The channel module" below has its parts. |
 | `grants` | The grant file, the call body, the approval body, the audit record and the words of a decision: contract 04. |
 | `status` | The status document, the fault files and one view for each reader: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
 | `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
+
+`src/manifest.rs` holds the closed sets, the catalog and the differential
+test of `manifest`. Its other files are in `src/manifest/`. Three of them are
+private readers and writers. Each one gives what a Python library of the
+release tool gives:
+
+| File of `manifest` | What it holds |
+|---|---|
+| `component.rs` | `component.yaml`: `ComponentManifest` and the operator account. |
+| `request.rs` | The release request: one writer, one parser and the mint of an id. |
+| `state.rs` | The live-state document. |
+| `resolved.rs` | The resolved manifest, its hash, the gate id and the approval summary. |
+| `yaml.rs` | Private. A port of `yaml.safe_load` of PyYAML: YAML 1.1, with each tag and each anchor. |
+| `json.rs` | Private. A reader that takes what Python `json.loads` takes, and writers for the text of `json.dumps`. |
+| `sha256.rs` | Private. SHA-256, because the crate has no dependency that gives a hash. |
+
+No type of `manifest` implements a `serde` trait. The module is one of the
+four exceptions that rule 1 names. The raw type of `manifest` is the private
+value tree of its `yaml` reader or of its `json` reader. `Draft` is the raw
+type of a request that a requester plans. The reason is the reason of
+`channel`: no `serde` reader reads what `yaml.safe_load` and `json.loads`
+read.
 
 ## Where a new type goes
 
@@ -96,10 +119,11 @@ Each rule has its reason. Do not break a rule without a change to this file.
    conversion never sees an invalid value.
    Reason: one conversion holds every check, so no code path can skip a
    check.
-   Exception: the modules `channel`, `grants` and `status` use no raw `serde`
-   type. Each one reads a document with a reader of its own. "The channel
-   module", "The JSON reader of `status`" and "Known gaps" give the reasons.
-   The owner decides if the exception of `grants` stays.
+   Exception: the modules `channel`, `grants`, `manifest` and `status` use
+   no raw `serde` type. Each one reads a document with a reader of its own.
+   "Layout", "The channel module", "The JSON reader of `status`" and "Known
+   gaps" give the reasons. The owner decides if the exception of `grants`
+   stays.
 2. **Give each id, name, path, size, duration and token its own type.** The
    type has a private field and a parsing constructor. Do not implement
    `Default`. Do not derive `Deserialize` directly. Use
@@ -190,6 +214,15 @@ The rule has two exceptions:
 - A number of more than 4300 digits in a version. Python reads no longer
   text as an integer, so the types refuse it. No vector holds such a number.
 
+The `session` module has three more exceptions. The owner did not decide
+them yet. Each one is a row of `DEVIATIONS` in `session/python.rs`, and
+"Known gaps" lists them.
+
+- A JSON text that is not strict JSON in UTF-8, for example a text with a
+  byte order mark, with `NaN` or with a lone surrogate.
+- A JSON text that nests deeper than 128 levels.
+- A sequence number that does not fit 64 bits.
+
 ## The channel module
 
 `crates/creche-contracts/src/channel.rs` declares the parts. Each part is a
@@ -208,7 +241,7 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
-Rule 1 names a raw `serde` type. The `channel` module is one of three
+Rule 1 names a raw `serde` type. The `channel` module is one of four
 exceptions.
 Its raw type is `channel::json::Json`, from a reader of its own. The Python
 host reads a line with `json.loads`, and `serde_json` does not read what
@@ -501,10 +534,15 @@ Rules for the test:
 
 - CI does not run `cargo deny`. No check reads the advisories or the
   licenses of the locked crates.
-- No release uses Rust code. The component manifest has no kind for a
-  compiled binary.
-- Four modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session` and `manifest`.
+- No release uses Rust code.
+- `family` and `server` use the id types of `ids`. They refuse three texts
+  that the Python package `agent_family` accepts. Each vector with such a
+  text is a row of `DEVIATIONS` in `crates/agent-family/tests/vectors.rs`.
+  1. A tool name of more than 64 bytes.
+  2. The name of an environment variable of more than 64 bytes.
+  3. A package version with `+`, with `-` or of more than 64 bytes.
+- `crates/agent-family/AGENTS.md` lists the `CONTRACT-QUESTION` comments
+  and the known gaps of the family file and of the server file.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
@@ -554,12 +592,14 @@ Rules for the test:
   does not read a grant file or a request body. The Python code takes JSON
   that is not strict, and it reports each issue of a document. `grants::Value`
   is the document. It has no `Deserialize`.
-- The crate has three JSON readers that do what `json.loads` of Python does:
-  `channel::json`, `grants::json` and `status::json`. They differ in two
-  decisions. The reader of `channel` stops at 9000 levels, and the readers of
-  `grants` and of `status` stop at 256 levels. The reader of `channel` keeps
-  a lone surrogate in a text, and the other two readers refuse the document.
-  The owner of the crate decides if one reader replaces the three.
+- The crate has four JSON readers that do what `json.loads` of Python does:
+  `channel::json`, `grants::json`, `status::json` and `manifest::json`. They
+  differ in two decisions. The reader of `channel` stops at 9000 levels, and
+  the readers of `grants` and of `status` stop at 256 levels. The reader of
+  `manifest` has no nesting limit and uses no recursion. The reader of
+  `channel` keeps a lone surrogate in a text, and the readers of `grants` and
+  of `status` refuse the document. The reader of `manifest` writes U+FFFD.
+  The owner of the crate decides if one reader replaces the four.
 - The types of `grants` accept what the Python code accepts, also where a
   stricter reading of contract 04 is possible. The owner decides each case.
   Four examples:
@@ -584,10 +624,168 @@ Rules for the test:
 - `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
   The port of the chaperone adds the decision function and the function that
   approves a held call. No other code builds a value.
-- The crate has no SHA-256. The chaperone gives `grants::ArgsDigest` the
-  digest of `Arguments::digest_input`. The test has a SHA-256 of its own.
+- The crate has no public SHA-256. The chaperone gives `grants::ArgsDigest`
+  the digest of `Arguments::digest_input`. The test has a SHA-256 of its own.
 - No vector covers a request body with a content type that is not JSON. The
   HTTP layer of the port holds that rule.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/manifest.rs` and in the files of
+  `crates/creche-contracts/src/manifest/`:
+  1. `Kind`, contract 06 §8. The contract lists four kinds. The Python code
+     has `binary` as the fifth, and the type has the five kinds.
+  2. The YAML reader, contract 06 §8 and §10. The contract gives no limit
+     for the nesting. The reader refuses a text past 128 levels. PyYAML
+     has no such limit.
+  3. The YAML reader, `!!binary`. Two supported Python versions differ on
+     base64 data after a pad. The reader takes the rule of Python 3.13. No
+     field of a manifest takes bytes, so only the detail of a refusal
+     changes.
+  4. `Argv` and `Install`, contract 06 §4 and §8. The Python reader accepts
+     a word and an install path with a lone surrogate. The Rust reader
+     refuses them.
+  5. `Request`, `stage7-releases.md` §2.3 and contract 06 §9. The first
+     calls the id a lower-case ULID and the second calls it upper case. The
+     Python code takes upper case, and the type is `ids::Ulid`.
+  6. `Requester`, `stage7-releases.md` §2.3 and contract 06 §9. The two
+     texts list different words. The Python code checks only the grammar of
+     a name, and the type does the same.
+  7. `ResolvedAt`, contract 06 §9. The Python builder takes each float. The
+     type refuses NaN and an infinity, which JSON cannot hold.
+  8. The YAML reader, contract 06 §8 and §10. The contract gives no limit
+     for a merge key. The reader refuses a document whose merge keys copy
+     more than 65,536 pairs.
+  9. The JSON reader, `stage7-releases.md` §3.2 and contract 06 §11. Python
+     keeps a lone surrogate escape as one code point. The reader writes
+     U+FFFD. The detail of a refusal can then differ from the Python
+     detail. The result is a refusal in both.
+  10. The YAML reader, contract 06 §8 and §10. The contract gives no limit
+      for a chain of merge keys. An alias makes such a chain with no
+      nesting. The reader refuses a chain past 128 levels.
+  11. The YAML reader, contract 06 §8. Python reads a decimal digit and a
+      space that are not ASCII in a number with a tag: `!!int "\u0664"` is 4.
+      The reader refuses such a scalar, as rule 9 says for an id.
+  12. `mint_ulid`, contract 02 §2. For a time past 48 bits of milliseconds,
+      the Python requester mints 26 characters that hold more than 48 bits
+      of time. The function refuses that time. `ids::Ulid` accepts the text
+      of the Python requester.
+  13. `ComponentManifest::parse`, contract 06 §4 and §8. The Python reader
+      reads the account name and the home of the operator apart, each when
+      a manifest needs it. `Operator` holds both values or none. With a
+      site file that gives one value, the Rust reader refuses a manifest
+      that needs only that value. The Python reader accepts it. No vector
+      holds that case.
+- The types of `manifest` accept what the Python code accepts, also where
+  a stricter reading of a contract is possible. The owner decides each
+  case. The pull request of the module lists them.
+- `manifest::Operator` holds two values of the site file. `config::site`
+  holds the site file and has the types `OperatorUser` and `OperatorHome`.
+  `ComponentManifest::parse` does not use them yet. A change to those two
+  types also answers question 13 above.
+- No other module uses the private `yaml` and `json` readers of `manifest`.
+  The `family` module needs the same YAML reader. The owner of the crate
+  moves that reader when a second module uses it.
+- `manifest` has its own SHA-256, which is private. A crate for the hash
+  replaces it when the workspace takes one.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/session/`:
+  1. The JSON reader, contract 02 §3 rule 3. The contract gives a body no
+     nesting limit. Python reads a text until the recursion limit of the
+     interpreter. The reader stops at 128 levels.
+  2. `Timestamp`, contract 02 §13.2 rule 4 and §13.4.2. The contract says
+     RFC 3339. Python reads more forms: a week date, a date with no time,
+     one character between the time and the offset, and digits after
+     `HHMMSS`. The type reads each form that each supported Python version
+     reads in the same way. It refuses a form that two versions read in
+     different ways.
+  3. `SteerMessage`, contract 02 §5.6. The contract gives no cap. The Python
+     parser has a cap of 4096 bytes. The type has that cap.
+  4. `StopReason`, contract 02 §5.7. The contract gives no cap and no
+     grammar. The Python parser has a cap of 200 characters and takes each
+     text. The type does the same.
+  5. `Labels`, contract 02 §4.2. The contract gives a key no cap and no
+     grammar. The Python parser takes each key. The type does the same.
+  6. `Holder`, contract 02 §7.1. The contract lists four holders. The Python
+     code has a fifth, `dispatch`. The type has the five.
+  7. `TurnRef`, contract 02 §5.5 and §8. The contract says that a `turn` is
+     a ULID. The Python reader of a journal line and the events route take
+     each text. The type takes each text and gives a text that is not a ULID
+     no id.
+  8. `ErrorDetail`, contract 02 §14. The contract gives no closed set of
+     forms. The type has the holder block of §7.2 and keeps each other
+     object.
+  9. `OwuiRefs`, contract 02 §5.4 and §10. The contract gives the four ids
+     no grammar and no cap. The type takes each text of one character or
+     more.
+  10. `Trigger`, contract 02 §13.2. The contract gives the name no grammar.
+      The type takes each text.
+  11. `DispatchRequest`, contract 02 §13.4.1. The contract says that `chain`
+      is required. The Python parser takes a body with no chain. The type
+      does the same.
+  12. `SwitchRequest`, contract 05 §5.1. The Python parser checks no grammar
+      for `family`, `to` and `from`. The type keeps each one as text.
+  13. `EventsQuery`, contract 02 §5.5. The contract says that `follow` is a
+      bool. The Python route reads each text but `0`, `false` and `no` as
+      true. The type does the same.
+  14. `TurnView`, contract 02 §4.4. The Python code writes the empty text
+      as the sandbox of a turn that no sandbox served. The type does the
+      same.
+- The `session` module differs from the Python code on purpose in four
+  ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
+  1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
+     no `Infinity`. It holds no lone surrogate in a key or in a text that a
+     parser reads, and no bytes of a surrogate. The Python reader accepts a
+     lone surrogate in each place.
+  2. A JSON text nests 128 levels at most.
+  3. A number of a query has the digits 0 to 9 only.
+  4. A sequence number fits 64 bits. The body of a `pi_event` holds an
+     integer past 64 bits as a float.
+
+  Three more rows are vectors of the journal reader on which the two sides
+  accept the same line. The Rust reader keeps `journal_seq: true` as the
+  number 1, and it keeps a body as its JSON text.
+- The `session` module reads a JSON text with `serde_json`. The readers of
+  `channel`, `grants` and `status` do what `json.loads` of Python does, and
+  the reader of `session` is strict JSON. Deviation 1 and deviation 2 are
+  the result. The owner of the crate decides if one reader replaces them.
+- The writer of the `session` module sorts the keys of an object of free
+  form. The Python code keeps the order of its input. No vector shows the
+  difference. These objects have free form:
+  1. The labels.
+  2. The body of a `pi_event`.
+  3. A note that `attendance` does not write.
+  4. An object inside an error detail.
+- The writer keeps the order of the members of an error detail, as the
+  Python code does. `session::ErrorDetail::from_members` takes the members
+  in order. The vectors of `session.error_body` hold each detail of
+  `attendance` whose keys are not in sorted order.
+- `session::StoredLine` keeps the body of a line as the text of the file. A
+  body that the Python code did not write goes out with that text: its
+  white space, its number forms and each duplicate key. The Python code
+  parses the body and writes it again.
+- A typed body of free form reads the integer `-0` as the float `-0.0` and
+  writes `-0.0`. The Python code writes `0`. The Python code never writes
+  `-0` into a journal.
+- `session::JournalBody::read` has no Python counterpart. No Python code
+  reads the body of a journal line against its kind. The function refuses a
+  body that lacks a field of its kind.
+- The `session` module has no type for these parts of contract 02, because
+  no vector covers them:
+  1. The bodies of `wait=accepted` and `wait=settled`.
+  2. The answer of a session list.
+  3. The answers of `/dispatch` and `/dispatch/jobs`.
+  4. The header `X-Door-Instance`.
+  5. The state files of `attendance`.
+- A request type of the `session` module has no writer. A door needs one to
+  send a body. The three Python doors write their bodies by hand, and no
+  vector covers them.
+- `session::Turn` has no constructor from a stored turn record.
+- `session::JournalLine::new` does not check the turn against the kind of
+  the body. A `turn_queued` line with no turn is a value of the type. The
+  Python writer has no such check.
+- The body types of a journal line, for example `session::TurnStarted`, and
+  `session::ServiceNote` have public fields. Some fields are a plain
+  `String`: the contract gives them no grammar. Code can build such a body
+  with each text.
 - `Secret` does not erase its bytes when the value drops. A sure erase needs
   `unsafe` code, and the lint gate forbids `unsafe` code.
 - `Secret::matches` has no branch on a byte of the secret. The compiler gives
