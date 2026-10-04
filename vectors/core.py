@@ -11,9 +11,12 @@ import base64
 import dataclasses
 import enum
 import json
+import logging
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Final, cast
 
 from pydantic import BaseModel
@@ -43,6 +46,17 @@ _SURROGATE_FIRST: Final = 0xD800
 _SURROGATE_LAST: Final = 0xDFFF
 
 type Json = bool | int | float | str | list[Json] | dict[str, Json] | None
+
+
+@contextmanager
+def quiet_logs() -> Generator[None]:
+    """No log line from an entry point that logs a refusal, and the level put back."""
+    previous = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+    try:
+        yield
+    finally:
+        logging.disable(previous)
 
 
 def has_surrogate(text: str) -> bool:
@@ -83,7 +97,8 @@ def normalize(value: object) -> Json:
     """One Python value as JSON a strict reader accepts, the same on every run.
 
     An enum is its value. A dataclass and a pydantic model are objects of
-    their fields. A tuple is an array. A set is a sorted array. A float that
+    their fields. A tuple is an array. A set is a sorted array. A time is its
+    ISO 8601 text. A float that
     is not finite, an integer past 64 bits, a string with a lone surrogate
     and bytes are marker objects (`vectors/README.md`).
     """
@@ -101,6 +116,9 @@ def normalize(value: object) -> Json:
 
     if isinstance(value, str):
         return {UTF16_MARKER: _utf16_units(value)} if has_surrogate(value) else value
+
+    if isinstance(value, datetime):
+        return value.isoformat()
 
     if isinstance(value, (bytes, bytearray)):
         return {BASE64_MARKER: base64.b64encode(bytes(value)).decode("ascii")}

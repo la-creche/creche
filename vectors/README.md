@@ -32,6 +32,7 @@ release replaces that surface.
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
 | `data/channel/` | the channel protocol: `parse`, `frame`, `build` |
 | `data/chaperone/` | the grant file, the call body, the approval body |
+| `data/status/` | the status document, one file per reader |
 | `tests/` | the test that holds `data/` equal to the generator |
 
 ## Regenerate
@@ -110,6 +111,7 @@ The generator makes one JSON projection of each Python value:
 
 - An enum is its value. A dataclass and a model are objects of their fields.
 - A tuple is an array. A set is a sorted array.
+- A time is its ISO 8601 text, in UTC.
 - Every default is present.
 
 Five Python values have no JSON form that a strict reader accepts. Each one

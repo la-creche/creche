@@ -36,10 +36,13 @@ workspace package, so it does not change `uv.lock`.
 | `surfaces/family_file.py` | `family_file` and `family_file.host` |
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
 | `surfaces/grants.py` | `grants.parse`, `chaperone.call_body`, `chaperone.approval_body` |
+| `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
 
 ## Known gaps
 
-- No vector covers contract 05, the status document readers.
+- No vector covers the writer of the status document, or a fault file, or
+  an outcome file of contract 05. The five readers of `status.json` have
+  vectors.
 - No vector covers contract 06, the component manifest and the release
   request file.
 - No vector covers `server.yaml`, contract 01b.

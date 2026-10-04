@@ -73,6 +73,11 @@
   {"accepted":20,"entry":"attendance.wire.encode(attendance.wire.<params.builder>(**args))","path":"channel/build.json","raised":0,"refused":2,"surface":"channel.build","vectors":22},
   {"accepted":32,"entry":"chaperone.family_grants.parse_grants","path":"chaperone/grants.json","raised":0,"refused":92,"surface":"grants.parse","vectors":124},
   {"accepted":20,"entry":"chaperone.app.CallBody","path":"chaperone/call_body.json","raised":0,"refused":23,"surface":"chaperone.call_body","vectors":43},
-  {"accepted":6,"entry":"chaperone.app.ApprovalBody","path":"chaperone/approval_body.json","raised":0,"refused":14,"surface":"chaperone.approval_body","vectors":20}
+  {"accepted":6,"entry":"chaperone.app.ApprovalBody","path":"chaperone/approval_body.json","raised":0,"refused":14,"surface":"chaperone.approval_body","vectors":20},
+  {"accepted":105,"entry":"attendance.family_status.StatusReader.read","path":"status/attendance.json","raised":0,"refused":9,"surface":"status.attendance","vectors":114},
+  {"accepted":106,"entry":"noticeboard.statusdocs.read_family","path":"status/noticeboard.json","raised":0,"refused":8,"surface":"status.noticeboard","vectors":114},
+  {"accepted":64,"entry":"agent_door_tui.status.StatusFiles.serving","path":"status/door_tui.json","raised":0,"refused":50,"surface":"status.door_tui","vectors":114},
+  {"accepted":11,"entry":"agent_door_trigger.families.StatusFiles.servable","path":"status/door_trigger.json","raised":0,"refused":103,"surface":"status.door_trigger","vectors":114},
+  {"accepted":85,"entry":"agent_door_owui.families.StatusFiles.serving","path":"status/door_owui.json","raised":0,"refused":29,"surface":"status.door_owui","vectors":114}
  ]
 }

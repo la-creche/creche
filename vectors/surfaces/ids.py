@@ -13,9 +13,7 @@ the method the package's own code calls on it.
 from __future__ import annotations
 
 import json
-import logging
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass
 from re import Pattern
 from typing import Final
@@ -42,7 +40,17 @@ from chaperone import run_as
 from chaperone import secrets as chaperone_secrets
 from handover import allocate, manifest, mcpserver, resolve, state
 from noticeboard import registrywrite
-from vectors.core import Json, Surface, Vector, accepted, compact, refused, run, text_input
+from vectors.core import (
+    Json,
+    Surface,
+    Vector,
+    accepted,
+    compact,
+    quiet_logs,
+    refused,
+    run,
+    text_input,
+)
 
 #: An outcome of one copy on one input: whether it took the input, and what
 #: it made of it (a normalized value, or a refusal code), when it says.
@@ -94,17 +102,6 @@ class Grammar:
     filler: str
     cases: tuple[tuple[str, str], ...]
     concepts: tuple[Concept, ...]
-
-
-@contextmanager
-def _quiet_logs() -> Generator[None]:
-    """No log line from a copy that logs a refusal, and the level put back."""
-    previous = logging.root.manager.disable
-    logging.disable(logging.CRITICAL)
-    try:
-        yield
-    finally:
-        logging.disable(previous)
 
 
 def _predicate(function: Callable[[str], bool]) -> Check:
@@ -161,14 +158,14 @@ def _grant_copy(field: str, check: Check) -> Copy:
 
 
 def _claimed_session(text: str) -> Outcome:
-    with _quiet_logs():
+    with quiet_logs():
         claimed = chaperone_headers.read_claimed({chaperone_headers.SESSION_ID_HEADER: text})
 
     return claimed.session_id is not None, None
 
 
 def _claimed_turn(text: str) -> Outcome:
-    with _quiet_logs():
+    with quiet_logs():
         claimed = chaperone_headers.read_claimed({chaperone_headers.TURN_ID_HEADER: text})
 
     return claimed.turn_id is not None, None
