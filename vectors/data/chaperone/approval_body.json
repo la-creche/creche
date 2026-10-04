@@ -1,0 +1,30 @@
+{
+ "context": {},
+ "contract": "contract 04 \u00a78.4",
+ "entry": "chaperone.app.ApprovalBody",
+ "format": 1,
+ "notes": ["The input is the bytes of a request body. The content type is application/json.","The entry point is FastAPI, with the model as the body parameter of a route. That is how the chaperone reads the body. The generator mounts the model on a route of its own.","refusal.status is the HTTP status that FastAPI answers with. refusal.detail is the detail of its answer. A validation error keeps its type, location and message.","An error of type json_invalid keeps no offset in its location. The offset belongs to the JSON reader of one interpreter version.","The body cap of the chaperone is a different layer. No vector here is about it."],
+ "surface": "chaperone.approval_body",
+ "vectors": [
+  {"id":"approve","input":{"text":"{\"decision\":\"approve\"}"},"result":"accepted","status":200,"value":{"decision":"approve"}},
+  {"id":"deny","input":{"text":"{\"decision\":\"deny\"}"},"result":"accepted","status":200,"value":{"decision":"deny"}},
+  {"id":"upper","input":{"text":"{\"decision\":\"Approve\"}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Input should be 'approve' or 'deny'","type":"literal_error"}],"status":422},"result":"refused"},
+  {"id":"trailing-space","input":{"text":"{\"decision\":\"approve \"}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Input should be 'approve' or 'deny'","type":"literal_error"}],"status":422},"result":"refused"},
+  {"id":"other-word","input":{"text":"{\"decision\":\"yes\"}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Input should be 'approve' or 'deny'","type":"literal_error"}],"status":422},"result":"refused"},
+  {"id":"empty","input":{"text":"{\"decision\":\"\"}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Input should be 'approve' or 'deny'","type":"literal_error"}],"status":422},"result":"refused"},
+  {"id":"true","input":{"text":"{\"decision\":true}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Input should be 'approve' or 'deny'","type":"literal_error"}],"status":422},"result":"refused"},
+  {"id":"number","input":{"text":"{\"decision\":1}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Input should be 'approve' or 'deny'","type":"literal_error"}],"status":422},"result":"refused"},
+  {"id":"null","input":{"text":"{\"decision\":null}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Input should be 'approve' or 'deny'","type":"literal_error"}],"status":422},"result":"refused"},
+  {"id":"list","input":{"text":"{\"decision\":[\"approve\"]}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Input should be 'approve' or 'deny'","type":"literal_error"}],"status":422},"result":"refused"},
+  {"id":"missing","input":{"text":"{}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Field required","type":"missing"}],"status":422},"result":"refused"},
+  {"id":"unknown-field","input":{"text":"{\"decision\":\"approve\",\"gate\":\"0123456789abcdef\"}"},"refusal":{"detail":[{"loc":["body","gate"],"msg":"Extra inputs are not permitted","type":"extra_forbidden"}],"status":422},"result":"refused"},
+  {"id":"duplicate-key","input":{"text":"{\"decision\":\"deny\",\"decision\":\"approve\"}"},"result":"accepted","status":200,"value":{"decision":"approve"}},
+  {"id":"escaped","input":{"text":"{\"decision\":\"\\u0061pprove\"}"},"result":"accepted","status":200,"value":{"decision":"approve"}},
+  {"id":"top-text","input":{"text":"\"approve\""},"refusal":{"detail":[{"loc":["body"],"msg":"Input should be a valid dictionary or object to extract fields from","type":"model_attributes_type"}],"status":422},"result":"refused"},
+  {"id":"top-array","input":{"text":"[\"approve\"]"},"refusal":{"detail":[{"loc":["body"],"msg":"Input should be a valid dictionary or object to extract fields from","type":"model_attributes_type"}],"status":422},"result":"refused"},
+  {"id":"body-empty","input":{"text":""},"refusal":{"detail":[{"loc":["body"],"msg":"Field required","type":"missing"}],"status":422},"result":"refused"},
+  {"id":"json-truncated","input":{"text":"{\"decision\":\"approve\""},"refusal":{"detail":[{"loc":["body"],"msg":"JSON decode error","type":"json_invalid"}],"status":422},"result":"refused"},
+  {"id":"bytes-utf16","input":{"base64":"//57ACIAZABlAGMAaQBzAGkAbwBuACIAOgAiAGEAcABwAHIAbwB2AGUAIgB9AA=="},"result":"accepted","status":200,"value":{"decision":"approve"}},
+  {"id":"bytes-bom","input":{"text":"\ufeff{\"decision\":\"approve\"}"},"result":"accepted","status":200,"value":{"decision":"approve"}}
+ ]
+}

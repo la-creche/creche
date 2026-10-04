@@ -70,6 +70,9 @@
   {"accepted":10,"entry":"agent_family.load_registry","path":"family_file.host.json","raised":0,"refused":2,"surface":"family_file.host","vectors":12},
   {"accepted":121,"entry":"attendance.wire.parse","path":"channel/parse.json","raised":0,"refused":80,"surface":"channel.parse","vectors":201},
   {"accepted":34,"entry":"attendance.wire.LineSplitter.feed","path":"channel/frame.json","raised":0,"refused":0,"surface":"channel.frame","vectors":34},
-  {"accepted":20,"entry":"attendance.wire.encode(attendance.wire.<params.builder>(**args))","path":"channel/build.json","raised":0,"refused":2,"surface":"channel.build","vectors":22}
+  {"accepted":20,"entry":"attendance.wire.encode(attendance.wire.<params.builder>(**args))","path":"channel/build.json","raised":0,"refused":2,"surface":"channel.build","vectors":22},
+  {"accepted":32,"entry":"chaperone.family_grants.parse_grants","path":"chaperone/grants.json","raised":0,"refused":92,"surface":"grants.parse","vectors":124},
+  {"accepted":20,"entry":"chaperone.app.CallBody","path":"chaperone/call_body.json","raised":0,"refused":23,"surface":"chaperone.call_body","vectors":43},
+  {"accepted":6,"entry":"chaperone.app.ApprovalBody","path":"chaperone/approval_body.json","raised":0,"refused":14,"surface":"chaperone.approval_body","vectors":20}
  ]
 }
