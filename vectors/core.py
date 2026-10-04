@@ -40,7 +40,16 @@ FLOAT_MARKER: Final = "$float"
 UTF16_MARKER: Final = "$utf16"
 BASE64_MARKER: Final = "$base64"
 ENTRIES_MARKER: Final = "$entries"
-MARKERS: Final = frozenset({INT_MARKER, FLOAT_MARKER, UTF16_MARKER, BASE64_MARKER, ENTRIES_MARKER})
+JSON_MARKER: Final = "$json"
+MARKERS: Final = frozenset(
+    {INT_MARKER, FLOAT_MARKER, UTF16_MARKER, BASE64_MARKER, ENTRIES_MARKER, JSON_MARKER}
+)
+
+#: The deepest nesting one field of a vector keeps as plain JSON. A reader
+#: in another language has a limit of its own: serde_json refuses level 129.
+#: A field sits three levels inside its file, so a file nests 99 levels at
+#: most. A field that nests deeper is written as its JSON text in a marker.
+DEPTH_MAX: Final = 96
 
 _SURROGATE_FIRST: Final = 0xD800
 _SURROGATE_LAST: Final = 0xDFFF
@@ -100,7 +109,8 @@ def normalize(value: object) -> Json:
     their fields. A tuple is an array. A set is a sorted array. A time is its
     ISO 8601 text. A float that
     is not finite, an integer past 64 bits, a string with a lone surrogate
-    and bytes are marker objects (`vectors/README.md`).
+    and bytes are marker objects (`vectors/README.md`). The nesting is as
+    deep as the value's: `bounded` is what holds a field under a limit.
     """
     if value is None or isinstance(value, bool):
         return value
@@ -145,11 +155,43 @@ def normalize(value: object) -> Json:
     raise TypeError(f"no JSON form for {type(value).__name__}")
 
 
+def depth(value: Json) -> int:
+    """How many arrays and objects nest at the deepest point of `value`."""
+    deepest = 0
+    stack: list[tuple[Json, int]] = [(value, 1)]
+    while stack:
+        item, level = stack.pop()
+        if isinstance(item, dict):
+            children = list(item.values())
+        elif isinstance(item, list):
+            children = item
+        else:
+            continue
+
+        deepest = max(deepest, level)
+        stack.extend((child, level + 1) for child in children)
+
+    return deepest
+
+
 def compact(value: Json) -> str:
     """One JSON value on one line: sorted keys, ASCII only, no NaN."""
     return json.dumps(
         value, sort_keys=True, ensure_ascii=True, allow_nan=False, separators=(",", ":")
     )
+
+
+def bounded(value: Json) -> Json:
+    """`value`, or its JSON text in a marker when it nests past `DEPTH_MAX`."""
+    if depth(value) <= DEPTH_MAX:
+        return value
+
+    return {JSON_MARKER: compact(value)}
+
+
+def _field(value: object) -> Json:
+    """One field of a vector: normalized, and readable under a nesting limit."""
+    return bounded(normalize(value))
 
 
 def text_input(text: str) -> dict[str, Json]:
@@ -202,9 +244,9 @@ def accepted(
     """The Python code took the input. `value` is what it parsed it into."""
     body: dict[str, Json] = {"input": given, "result": ACCEPTED}
     if value is not None:
-        body["value"] = normalize(value)
+        body["value"] = _field(value)
 
-    body.update({key: normalize(item) for key, item in extra.items()})
+    body.update({key: _field(item) for key, item in extra.items()})
 
     return Vector(vector_id, body)
 
@@ -215,9 +257,9 @@ def refused(
     """The Python code refused the input, the way its contract says it does."""
     body: dict[str, Json] = {"input": given, "result": REFUSED}
     if refusal is not None:
-        body["refusal"] = normalize(refusal)
+        body["refusal"] = _field(refusal)
 
-    body.update({key: normalize(item) for key, item in extra.items()})
+    body.update({key: _field(item) for key, item in extra.items()})
 
     return Vector(vector_id, body)
 
@@ -229,7 +271,7 @@ def raised(vector_id: str, given: dict[str, Json], exc: BaseException, **extra: 
     Python versions, and a vector file must not.
     """
     body: dict[str, Json] = {"input": given, "result": RAISED, "exception": type(exc).__name__}
-    body.update({key: normalize(item) for key, item in extra.items()})
+    body.update({key: _field(item) for key, item in extra.items()})
 
     return Vector(vector_id, body)
 
@@ -280,6 +322,9 @@ def render(surface: Surface) -> str:
     for vector in surface.vectors:
         if vector.id in seen:
             raise ValueError(f"{surface.name}: the id {vector.id} is used twice")
+
+        if depth(vector.body["input"]) > DEPTH_MAX:
+            raise ValueError(f"{surface.name}: the input of {vector.id} nests too deep")
 
         seen.add(vector.id)
 

@@ -114,8 +114,8 @@ The generator makes one JSON projection of each Python value:
 - A time is its ISO 8601 text, in UTC.
 - Every default is present.
 
-Five Python values have no JSON form that a strict reader accepts. Each one
-is an object with exactly one key:
+Six values have no JSON form that every strict reader accepts. Each one is
+an object with exactly one key:
 
 | Marker | Stands for |
 |---|---|
@@ -124,6 +124,15 @@ is an object with exactly one key:
 | `{"$utf16": [<code units>]}` | a string that holds a lone surrogate |
 | `{"$base64": "<bytes>"}` | bytes |
 | `{"$entries": [[key, value], ...]}` | a mapping with a key that is not a plain string |
+| `{"$json": "<text>"}` | a field that nests deeper than 96 levels. The text is the JSON of the field. |
+
+The generator writes the `$json` marker for a whole field of a vector, for
+example `value` or `refusal`. The text can hold the other markers. Parse the
+text with a reader that has no nesting limit.
+
+No file nests deeper than 100 levels. No string in a file holds a lone
+surrogate. A reader that stops at 128 levels reads every file. `serde_json`
+with its default settings is such a reader.
 
 ## How a Rust test reads a vector
 

@@ -16,7 +16,7 @@ import json
 from typing import Any
 
 from vectors import generate
-from vectors.core import ACCEPTED, FORMAT, RAISED, REFUSED
+from vectors.core import ACCEPTED, FORMAT, RAISED, REFUSED, Json, depth, has_surrogate
 
 REGENERATE = "run `uv run python -m vectors.generate` and read the diff"
 
@@ -24,6 +24,10 @@ REGENERATE = "run `uv run python -m vectors.generate` and read the diff"
 #: written as repeated parts, the named arguments of a builder, or the chunks
 #: of a byte stream.
 INPUT_FORMS = frozenset({"text", "base64", "repeat", "args", "chunks"})
+
+#: The deepest nesting a committed file may have. A reader in another
+#: language stops at a limit of its own: serde_json refuses level 129.
+MAX_FILE_DEPTH = 100
 
 
 def _refuse_constant(name: str) -> Any:
@@ -66,6 +70,32 @@ def test_every_file_is_strict_ascii_json() -> None:
         document = json.loads(text, parse_constant=_refuse_constant)
 
         assert document["format"] == FORMAT, path
+
+
+def _strings(value: Json) -> list[str]:
+    """Every key and every string value of one parsed document."""
+    found: list[str] = []
+    stack: list[Json] = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            found.append(item)
+        elif isinstance(item, list):
+            stack.extend(item)
+        elif isinstance(item, dict):
+            found.extend(item)
+            stack.extend(item.values())
+
+    return found
+
+
+def test_a_reader_with_limits_reads_every_file() -> None:
+    """Python's reader takes any depth and a lone surrogate escape. Others do not."""
+    for path, text in generate.committed().items():
+        document: Json = json.loads(text)
+
+        assert depth(document) <= MAX_FILE_DEPTH, path
+        assert not any(has_surrogate(string) for string in _strings(document)), path
 
 
 def _vector_files() -> dict[str, list[dict[str, Any]]]:
