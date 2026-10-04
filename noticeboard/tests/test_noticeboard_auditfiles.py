@@ -7,15 +7,20 @@ from pathlib import Path
 
 from noticeboard.auditfiles import (
     ARGS_NOTICE,
+    MAX_ARGS_CHARS,
     MAX_LINE_BYTES,
     AuditFilter,
     known_days,
     read_page,
 )
-from noticeboard_helpers import audit_line, deep_object, write_audit_day
+from noticeboard_helpers import audit_line, deep_object, peak_memory_of, write_audit_day
 
 #: A record under `MAX_LINE_BYTES` that nests past the limit of the JSON reader.
 DEEP_RECORD_LEVELS = 250_000
+
+#: Arguments that the JSON reader takes, and the most memory their page may take.
+DEEP_ARGS_LEVELS = 3_000
+PAGE_MEMORY_MAX = 4 * 1024 * 1024
 
 
 def test_the_page_says_it_shows_full_arguments() -> None:
@@ -154,6 +159,23 @@ def test_enormous_arguments_are_capped_and_say_so(tmp_path: Path) -> None:
     page = read_page(tmp_path, AuditFilter())
 
     assert page.rows[0].args_truncated
+
+
+def test_arguments_that_nest_deep_render_in_bounded_memory(tmp_path: Path) -> None:
+    """The indent of a level grows with its depth, so the whole text of
+    these arguments is far larger than the record."""
+    args = "[" * DEEP_ARGS_LEVELS + "]" * DEEP_ARGS_LEVELS
+    line = json.dumps(audit_line(args="@")).replace('"@"', args)
+    (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
+
+    page, peak = peak_memory_of(lambda: read_page(tmp_path, AuditFilter()))
+
+    row = page.rows[0]
+    assert row.problem == ""
+    assert row.args.startswith("[\n  [\n    [\n")
+    assert len(row.args) == MAX_ARGS_CHARS
+    assert row.args_truncated
+    assert peak < PAGE_MEMORY_MAX
 
 
 def test_a_record_that_will_not_parse_takes_a_row(tmp_path: Path) -> None:

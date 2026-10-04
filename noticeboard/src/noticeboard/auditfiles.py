@@ -61,6 +61,9 @@ MAX_ARGS_CHARS: Final = 20_000
 
 MAX_CHAIN: Final = 10
 
+#: How a page writes one record's arguments.
+_ARGS_ENCODER: Final = json.JSONEncoder(indent=2, sort_keys=True, ensure_ascii=False)
+
 
 @dataclass(frozen=True)
 class AuditFilter:
@@ -305,10 +308,23 @@ def _args(body: Json) -> tuple[str, bool]:
     if value is None:
         return "", False
 
+    chunks: list[str] = []
+    size = 0
+
     try:
-        rendered = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
-    except (TypeError, ValueError):
+        # The indent of a level grows with its depth, so the whole text of
+        # a value that nests deep grows with the square of that depth. The
+        # loop stops one chunk past the cap and never builds the rest.
+        for chunk in _ARGS_ENCODER.iterencode(value):
+            chunks.append(chunk)
+            size += len(chunk)
+
+            if size > MAX_ARGS_CHARS:
+                break
+    except (TypeError, ValueError, RecursionError):
         return "<arguments this noticeboard could not render>", False
+
+    rendered = "".join(chunks)
 
     if len(rendered) <= MAX_ARGS_CHARS:
         return rendered, False

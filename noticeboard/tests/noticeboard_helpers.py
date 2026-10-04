@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Mapping
+import tracemalloc
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -265,6 +266,18 @@ VERY_DEEP = 400_000
 def deep_object(depth: int = VERY_DEEP) -> bytes:
     """A JSON object whose one field nests `depth` lists."""
     return b'{"x":' + b"[" * depth + b"]" * depth + b"}"
+
+
+def peak_memory_of[T](call: Callable[[], T]) -> tuple[T, int]:
+    """What `call` returns, and the most bytes it held at one time."""
+    tracemalloc.start()
+    try:
+        result = call()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    return result, peak
 
 
 class FakeAttendance:

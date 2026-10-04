@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import tracemalloc
-from collections.abc import Callable
 from pathlib import Path
+
+from noticeboard_helpers import peak_memory_of
 
 from noticeboard import jsonfiles
 
@@ -14,18 +14,6 @@ PAST_EVERY_FLOAT = 10**400
 #: A file far past the cap of the reader, and the most memory its read may take.
 FAR_PAST_THE_CAP = 64 * jsonfiles.MAX_DOC_BYTES
 READ_MEMORY_MAX = 4 * jsonfiles.MAX_DOC_BYTES
-
-
-def peak_memory_of[T](call: Callable[[], T]) -> tuple[T, int]:
-    """What `call` returns, and the most bytes it held at one time."""
-    tracemalloc.start()
-    try:
-        result = call()
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-
-    return result, peak
 
 
 def test_a_number_reads_as_a_float() -> None:
