@@ -95,6 +95,9 @@ MERGED_ENTRIES_MAX: Final = 100_000
 #: The count of entries in the mapping that `merged_entries` merges.
 _MERGED_BLOCK: Final = 100
 
+#: The count of values in the list that `merged_empty_values` merges.
+_EMPTY_LIST: Final = 250
+
 
 def merge_chain(file: Repeated, keys: int) -> str:
     """A file with a chain of `keys` merge keys."""
@@ -125,6 +128,15 @@ def merged_entries(file: Repeated, count: int) -> str:
         values.extend([f"&r {_mapping(rest)}", "{ <<: *r }"])
 
     return file.text(values)
+
+
+def merged_empty_values(file: Repeated, count: int) -> str:
+    """A file whose merge keys take `count` values with no entry."""
+    lists, rest = divmod(count, _EMPTY_LIST)
+    merges = ["<<: *l"] * lists + ["<<: *e"] * rest
+    values = ["&e {}", "&l [" + ", ".join(["*e"] * _EMPTY_LIST) + "]"]
+
+    return file.text([*values, "{ " + ", ".join(merges) + " }"])
 
 
 def merge_levels(file: Repeated, levels: int, key: str = "<<") -> str:
@@ -868,6 +880,8 @@ approval:
     _case("yaml-merge-list-no-chain", merge_list(_REPEATED, MERGE_CHAIN_MAX + 1)),
     _case("yaml-merge-entries-at-limit", merged_entries(_REPEATED, MERGED_ENTRIES_MAX)),
     _case("yaml-merge-entries-past-limit", merged_entries(_REPEATED, MERGED_ENTRIES_MAX + 1)),
+    _case("yaml-merge-empty-at-limit", merged_empty_values(_REPEATED, MERGED_ENTRIES_MAX)),
+    _case("yaml-merge-empty-past-limit", merged_empty_values(_REPEATED, MERGED_ENTRIES_MAX + 1)),
     _case("yaml-merge-two-documents", _HALF_OF_LIMIT + "---\n" + _HALF_OF_LIMIT),
     _case("yaml-merge-levels-read", merge_levels(_REPEATED, 15)),
     _case("yaml-merge-levels-refused", merge_levels(_REPEATED, 16)),

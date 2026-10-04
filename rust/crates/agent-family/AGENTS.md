@@ -108,10 +108,11 @@ error. The program does not stop on such a file.
      This crate reads as Python 3.13 reads. No vector holds such a value.
   4. `yaml/construct.rs`, `MERGE_DEPTH_MAX` and `MERGED_ENTRIES_MAX`.
      Contract 01 gives no limit for merge keys. This crate follows a chain
-     of 400 merge keys and makes 100,000 entries from merge keys. It
-     refuses a text past a limit. The Python validator has the same two
-     limits. Four vectors hold a text at a limit or one past it. Their
-     names start with `yaml-merge-chain` and `yaml-merge-entries`.
+     of 400 merge keys and makes 100,000 entries from merge keys. A merged
+     value with no entry counts as one entry. It refuses a text past a
+     limit. The Python validator has the same two limits. Six vectors hold
+     a text at a limit or one past it. Their names start with
+     `yaml-merge-chain`, `yaml-merge-entries` and `yaml-merge-empty`.
   5. `yaml/text.rs`, `NOT_PRINTED`. No contract gives the text of a YAML
      error. Python escapes a code point that its Unicode version does not
      assign. This crate does not, so a message that quotes such a code

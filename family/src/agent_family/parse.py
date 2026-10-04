@@ -48,8 +48,9 @@ _NO_VALUE: Final = "YAML will not parse: the text holds a value that cannot be r
 
 #: The two limits on merge keys: the longest chain of merge keys that the
 #: reader follows, and the most entries that the merge keys of one text
-#: make. The reader refuses a text past a limit, so that a short text cannot
-#: use much time and memory.
+#: make. A merged value with no entry counts as one entry. The reader
+#: refuses a text past a limit, so that a short text cannot use much time
+#: and memory.
 #:
 #: CONTRACT-QUESTION: contract 01 §1 and contract 01b §1 give no limit for
 #: merge keys, and PyYAML has none. The reading here is two limits. The
@@ -202,8 +203,9 @@ class _BoundedLoader(yaml.SafeLoader):
             return
 
         # The caller is the merge key of another mapping. It takes these
-        # entries next.
-        self._merged_entries += len(node.value)
+        # entries next. A value with no entry counts as one entry, so that
+        # the limit also holds the count of values that a text merges.
+        self._merged_entries += max(1, len(node.value))
         if self._merged_entries > _MERGED_ENTRIES_MAX:
             raise _MergeRefusal(_MERGE_TOO_MANY)
 

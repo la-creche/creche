@@ -33,9 +33,15 @@ TOO_MANY: Final = "YAML will not parse: the merge keys make too many entries"
 #: The count of entries in the mapping that `_entries` merges.
 BLOCK: Final = 1_000
 
+#: The count of values in the list that `_empty_values` merges.
+EMPTY_LIST: Final = 250
+
 #: A count of levels and of merge keys that is far past the limit on
 #: entries.
 FAR: Final = 40
+
+#: The square of this count is far past the limit on entries.
+FAR_SIDE: Final = 4_000
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,20 @@ def _entries(reader: Reader, count: int) -> str:
     return reader.text(values)
 
 
+def _empty_values(reader: Reader, count: int, listed: int = EMPTY_LIST) -> str:
+    """A file whose merge keys take `count` values with no entry."""
+    lists, rest = divmod(count, listed)
+    merges = ["<<: *l"] * lists + ["<<: *e"] * rest
+    values = ["&e {}", "&l [" + ", ".join(["*e"] * listed) + "]"]
+
+    return reader.text([*values, "{ " + ", ".join(merges) + " }"])
+
+
+def _empty_square(reader: Reader, side: int) -> str:
+    """A file whose merge keys take `side` times `side` values with no entry."""
+    return _empty_values(reader, side * side, side)
+
+
 def _levels(reader: Reader, levels: int, key: str = "<<") -> str:
     """A file whose merge keys make more entries than the limit when `levels`
     is 16 or more."""
@@ -168,6 +188,17 @@ def test_entries_at_the_limit_read(reader: Reader) -> None:
 @READERS
 def test_entries_past_the_limit_are_refused(reader: Reader) -> None:
     assert _messages(reader, _entries(reader, ENTRIES_MAX + 1)) == [TOO_MANY]
+
+
+@READERS
+def test_values_with_no_entry_at_the_limit_read(reader: Reader) -> None:
+    """A merged value with no entry counts as one entry."""
+    assert _messages(reader, _empty_values(reader, ENTRIES_MAX)) is None
+
+
+@READERS
+def test_values_with_no_entry_past_the_limit_are_refused(reader: Reader) -> None:
+    assert _messages(reader, _empty_values(reader, ENTRIES_MAX + 1)) == [TOO_MANY]
 
 
 def test_the_entry_limit_holds_for_the_text_not_for_one_document() -> None:
@@ -299,14 +330,20 @@ def _in_child(text: str) -> list[list[str] | None]:
 
 
 @pytest.mark.parametrize(
-    "build",
-    [_levels, _merge_tag, _bad_later_document, _self_merge],
-    ids=["merge-key", "merge-tag", "bad-later-document", "self-merge"],
+    ("build", "size"),
+    [
+        (_levels, FAR),
+        (_merge_tag, FAR),
+        (_bad_later_document, FAR),
+        (_self_merge, FAR),
+        (_empty_square, FAR_SIDE),
+    ],
+    ids=["merge-key", "merge-tag", "bad-later-document", "self-merge", "no-entry"],
 )
 def test_a_text_far_past_the_entry_limit_is_refused_in_bounds(
-    build: Callable[[Reader, int], str],
+    build: Callable[[Reader, int], str], size: int
 ) -> None:
-    assert _in_child(build(FAMILY, FAR)) == [[TOO_MANY], [TOO_MANY]]
+    assert _in_child(build(FAMILY, size)) == [[TOO_MANY], [TOO_MANY]]
 
 
 def test_a_refused_character_is_a_report_in_a_child_process() -> None:
