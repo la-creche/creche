@@ -46,6 +46,10 @@ from vectors.core import (
 
 # --- the site file ----------------------------------------------------------
 
+#: The largest count of digits in a text that `int` reads. A zero at the start
+#: is a digit of that count.
+INT_DIGITS_MAX: Final = 4300
+
 #: No design contract holds the site file. `handover.site` holds its rules.
 SITE_CONTRACT: Final = "no contract: the module text of handover.site"
 
@@ -614,6 +618,10 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     _creds("epoch-text-word", epoch='"seven"'),
     _creds("epoch-text-empty", epoch='""'),
     _creds("epoch-text-digit-not-ascii", epoch='"\\u0667"'),
+    _creds("epoch-text-unit-separator", epoch='"\\u001f7"'),
+    _creds("epoch-text-next-line", epoch='"\\u00857"'),
+    _creds("epoch-text-4300-digits", epoch='"' + "0" * (INT_DIGITS_MAX - 1) + '7"'),
+    _creds("epoch-text-4301-digits", epoch='"' + "0" * INT_DIGITS_MAX + '7"'),
     _creds("epoch-null", epoch="null"),
     _creds("epoch-list", epoch="[7]"),
     _creds("epoch-object", epoch='{"n": 7}'),
@@ -965,6 +973,9 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("port-hex", LAN_PORT="0x209e"),
     _attendance("port-digits-not-ascii", LAN_PORT="\uff18\uff13\uff15\uff10"),
     _attendance("port-5000-digits", LAN_PORT="9" * 5000),
+    _attendance("port-4300-digits", LAN_PORT="0" * (INT_DIGITS_MAX - 2) + "80"),
+    _attendance("port-4301-digits", LAN_PORT="0" * (INT_DIGITS_MAX - 1) + "80"),
+    _attendance("port-unit-separator", LAN_PORT="\x1f8350"),
     # --- the two counts of seconds ---
     _attendance("seconds-whole", LOCK_STALE_S="30", LOCK_POLL_S="2"),
     _attendance("seconds-exponent", LOCK_STALE_S="1e3"),
@@ -1077,6 +1088,7 @@ NOTICEBOARD_ENVS: Final[tuple[Environment, ...]] = (
     _noticeboard("port-zero", PORT="0"),
     _noticeboard("port-65536", PORT="65536"),
     _noticeboard("port-word", PORT="http"),
+    _noticeboard("port-4301-digits", PORT="0" * (INT_DIGITS_MAX - 1) + "80"),
     _noticeboard("page-size-one", PAGE_SIZE="1"),
     _noticeboard("page-size-500", PAGE_SIZE="500"),
     _noticeboard("page-size-zero", PAGE_SIZE="0"),
@@ -1084,6 +1096,8 @@ NOTICEBOARD_ENVS: Final[tuple[Environment, ...]] = (
     _noticeboard("page-size-underscore", PAGE_SIZE="5_0"),
     _noticeboard("page-size-word", PAGE_SIZE="many"),
     _noticeboard("page-size-fraction", PAGE_SIZE="50.0"),
+    _noticeboard("page-size-4300-digits", PAGE_SIZE="0" * (INT_DIGITS_MAX - 2) + "50"),
+    _noticeboard("page-size-4301-digits", PAGE_SIZE="0" * (INT_DIGITS_MAX - 1) + "50"),
     # --- the cookie switch ---
     _noticeboard("cookie-zero", COOKIE_SECURE="0"),
     _noticeboard("cookie-false-upper", COOKIE_SECURE="FALSE"),

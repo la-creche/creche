@@ -76,13 +76,33 @@ fn split_sign(text: &str) -> (bool, &str) {
     (false, text.strip_prefix('+').unwrap_or(text))
 }
 
+/// The largest count of digits in a text that Python's `int` reads. A zero
+/// at the start is a digit of that count. An underscore and a sign are not.
+const INTEGER_DIGITS_MAX: usize = 4300;
+
+/// The text without the space that Python's `int` and `float` remove at the
+/// two ends.
+///
+/// The two functions remove the `White_Space` set of Unicode, which
+/// `str::trim` removes. They do not remove the four separators U+001C to
+/// U+001F, which `str.strip` removes. A reader that calls `str.strip` first
+/// calls [`strip`] first here.
+fn number_text(text: &str) -> &str {
+    text.trim()
+}
+
 /// Reads `text` as Python's `int(text)` does, for ASCII digits.
 ///
 /// Python takes space at the two ends, one sign, and single underscores
-/// between digits. It takes no prefix such as `0x`.
+/// between digits. It takes no prefix such as `0x`. It refuses a text of
+/// more than 4300 digits.
 pub(super) fn integer(text: &str) -> Option<Integer> {
-    let (negative, rest) = split_sign(strip(text));
+    let (negative, rest) = split_sign(number_text(text));
     let digits = digit_run(rest)?;
+    if digits.len() > INTEGER_DIGITS_MAX {
+        return None;
+    }
+
     let signed = if negative {
         format!("-{digits}")
     } else {
@@ -142,8 +162,9 @@ fn decimal(text: &str) -> Option<String> {
 /// The result can be a value that is not finite: Python reads `inf`,
 /// `infinity` and `nan` in each case of letters, and a number such as
 /// `1e999` as infinity. The caller decides what to do with such a value.
+/// Python has no cap on the digits of a float.
 pub(super) fn float(text: &str) -> Option<f64> {
-    let (negative, rest) = split_sign(strip(text));
+    let (negative, rest) = split_sign(number_text(text));
     let number = if NOT_FINITE_WORDS.contains(&rest.to_ascii_lowercase().as_str()) {
         rest.to_owned()
     } else {
@@ -220,7 +241,49 @@ mod tests {
         }
 
         assert_eq!(integer("9223372036854775808"), Some(Integer::TooLarge));
-        assert_eq!(integer(&"9".repeat(5000)), Some(Integer::TooLarge));
+        assert_eq!(integer(&"9".repeat(4300)), Some(Integer::TooLarge));
+    }
+
+    #[test]
+    fn an_integer_has_4300_digits_or_less() {
+        let zeros = "0".repeat(INTEGER_DIGITS_MAX - 2);
+
+        assert_eq!(INTEGER_DIGITS_MAX, 4300);
+        assert_eq!(integer(&format!("{zeros}80")), Some(Integer::Fits(80)));
+        assert_eq!(integer(&format!(" -{zeros}80\n")), Some(Integer::Fits(-80)));
+        assert_eq!(integer(&format!("{zeros}080")), None);
+        assert_eq!(integer(&"9".repeat(5000)), None);
+
+        // An underscore is not a digit: 4300 digits and 4299 underscores.
+        let spaced = "0_".repeat(INTEGER_DIGITS_MAX - 2);
+
+        assert_eq!(integer(&format!("{spaced}80")), Some(Integer::Fits(80)));
+        assert_eq!(integer(&format!("{spaced}0_80")), None);
+    }
+
+    #[test]
+    fn a_float_has_no_cap_on_its_digits() {
+        let zeros = "0".repeat(5000);
+
+        assert_eq!(float(&format!("{zeros}20")), Some(20.0));
+    }
+
+    #[test]
+    fn a_number_keeps_the_four_separators_that_strip_removes() {
+        for code in PYTHON_SPACES {
+            let space = char::from_u32(code).unwrap();
+            let removed = !matches!(space, '\u{1c}'..='\u{1f}');
+            let whole = integer(&format!("{space}7{space}"));
+            let fraction = float(&format!("{space}7.5{space}"));
+
+            assert_eq!(whole.is_some(), removed, "integer {code:#x}");
+            assert_eq!(fraction.is_some(), removed, "float {code:#x}");
+        }
+
+        assert_eq!(integer("\u{1f}7"), None);
+        assert_eq!(integer("7\u{1c}"), None);
+        assert_eq!(float("\u{1e}7.5"), None);
+        assert_eq!(float("7.5\u{1d}"), None);
     }
 
     #[test]

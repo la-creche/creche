@@ -1147,11 +1147,31 @@ mod tests {
 
         assert_eq!(Port::fixed(8300).unwrap().to_string(), "8300");
         assert_eq!(Port::fixed(0), None);
+
+        // Python's `int` reads 4300 digits at most. A zero at the start is
+        // a digit.
+        let zeros = "0".repeat(4298);
+
+        assert_eq!(format!("{zeros}80").parse::<Port>().unwrap().get(), 80);
+        assert_eq!(
+            format!("{zeros}080").parse::<Port>().unwrap_err(),
+            PortError::NotANumber
+        );
     }
 
     #[test]
     fn a_text_that_is_no_port_is_refused() {
-        for text in ["", "http", "80.0", "0x50", "８３５０", "8350a"] {
+        // Python's `int` does not remove U+001C to U+001F.
+        for text in [
+            "",
+            "http",
+            "80.0",
+            "0x50",
+            "８３５０",
+            "8350a",
+            "\u{1f}8350",
+            "8350\u{1c}",
+        ] {
             assert_eq!(
                 text.parse::<Port>().unwrap_err(),
                 PortError::NotANumber,
@@ -1220,6 +1240,14 @@ mod tests {
             (
                 "192.0.2.10:65536",
                 BindAddressError::Port(PortError::OutOfRange),
+            ),
+            (
+                "192.0.2.10:\u{1f}8300",
+                BindAddressError::Port(PortError::NotANumber),
+            ),
+            (
+                "192.0.2.10:8300\u{1c}",
+                BindAddressError::Port(PortError::NotANumber),
             ),
         ] {
             assert_eq!(text.parse::<BindAddress>().unwrap_err(), error, "{text:?}");
