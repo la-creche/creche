@@ -83,6 +83,16 @@
   {"accepted":106,"entry":"noticeboard.statusdocs.read_family","path":"status/noticeboard.json","raised":0,"refused":8,"surface":"status.noticeboard","vectors":114},
   {"accepted":64,"entry":"agent_door_tui.status.StatusFiles.serving","path":"status/door_tui.json","raised":0,"refused":50,"surface":"status.door_tui","vectors":114},
   {"accepted":11,"entry":"agent_door_trigger.families.StatusFiles.servable","path":"status/door_trigger.json","raised":0,"refused":103,"surface":"status.door_trigger","vectors":114},
-  {"accepted":85,"entry":"agent_door_owui.families.StatusFiles.serving","path":"status/door_owui.json","raised":0,"refused":29,"surface":"status.door_owui","vectors":114}
+  {"accepted":85,"entry":"agent_door_owui.families.StatusFiles.serving","path":"status/door_owui.json","raised":0,"refused":29,"surface":"status.door_owui","vectors":114},
+  {"accepted":83,"entry":"handover.site.read","path":"config/site_file.json","raised":0,"refused":6,"surface":"config.site_file","vectors":89},
+  {"accepted":22,"entry":"chaperone.mcp_client.load_upstreams","path":"config/roster.json","raised":0,"refused":50,"surface":"config.roster","vectors":72},
+  {"accepted":15,"entry":"caregiver.config_mount.write_config_mount","path":"config/runtime_json.write.json","raised":0,"refused":0,"surface":"config.runtime_json.write","vectors":15},
+  {"accepted":54,"entry":"caregiver.credentials.read_creds","path":"config/creds_json.read.json","raised":0,"refused":22,"surface":"config.creds_json.read","vectors":76},
+  {"accepted":12,"entry":"caregiver.credentials.write_creds","path":"config/creds_json.write.json","raised":0,"refused":0,"surface":"config.creds_json.write","vectors":12},
+  {"accepted":9,"entry":"caregiver.playpen_env.write_playpen_env","path":"config/playpen_env.write.json","raised":0,"refused":0,"surface":"config.playpen_env.write","vectors":9},
+  {"accepted":13,"entry":"caregiver.playpen_env.read_playpen_env","path":"config/playpen_env.read.json","raised":0,"refused":0,"surface":"config.playpen_env.read","vectors":13},
+  {"accepted":56,"entry":"attendance.config.from_env","path":"config/attendance.env.json","raised":0,"refused":18,"surface":"config.attendance.env","vectors":74},
+  {"accepted":34,"entry":"noticeboard.config.from_env","path":"config/noticeboard.env.json","raised":0,"refused":18,"surface":"config.noticeboard.env","vectors":52},
+  {"accepted":80,"entry":"chaperone.site.<params.function>","path":"config/chaperone.site.json","raised":0,"refused":24,"surface":"config.chaperone.site","vectors":104}
  ]
 }

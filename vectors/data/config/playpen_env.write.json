@@ -1,0 +1,19 @@
+{
+ "context": {},
+ "contract": "contract 03 \u00a77.1",
+ "entry": "caregiver.playpen_env.write_playpen_env",
+ "format": 1,
+ "notes": ["The input is the three named arguments of the entry point, as args. state_root is a path.","output is the exact bytes of the file that the entry point writes.","The entry point checks no argument."],
+ "surface": "config.playpen_env.write",
+ "vectors": [
+  {"id":"one-sandbox","input":{"args":{"family":"chat","sandbox":"chat-s3","state_root":"/srv/agents/state/rework"}},"output":{"text":"AGENT_CRED_DIR=/srv/agents/state/rework/families/chat/creds\nAGENT_FAMILY_CONFIG_DIR=/srv/agents/state/rework/families/chat/config\nAGENT_CONTROL_DIR=/srv/agents/state/rework/families/chat/control/chat-s3\nAGENT_SANDBOX=chat-s3\n"},"result":"accepted"},
+  {"id":"family-with-hyphens","input":{"args":{"family":"dev-team","sandbox":"dev-team-s12","state_root":"/srv/agents/state/rework"}},"output":{"text":"AGENT_CRED_DIR=/srv/agents/state/rework/families/dev-team/creds\nAGENT_FAMILY_CONFIG_DIR=/srv/agents/state/rework/families/dev-team/config\nAGENT_CONTROL_DIR=/srv/agents/state/rework/families/dev-team/control/dev-team-s12\nAGENT_SANDBOX=dev-team-s12\n"},"result":"accepted"},
+  {"id":"root-is-the-state-root","input":{"args":{"family":"chat","sandbox":"chat-s3","state_root":"/"}},"output":{"text":"AGENT_CRED_DIR=/families/chat/creds\nAGENT_FAMILY_CONFIG_DIR=/families/chat/config\nAGENT_CONTROL_DIR=/families/chat/control/chat-s3\nAGENT_SANDBOX=chat-s3\n"},"result":"accepted"},
+  {"id":"state-root-final-slash","input":{"args":{"family":"chat","sandbox":"chat-s3","state_root":"/tmp/state/"}},"output":{"text":"AGENT_CRED_DIR=/tmp/state/families/chat/creds\nAGENT_FAMILY_CONFIG_DIR=/tmp/state/families/chat/config\nAGENT_CONTROL_DIR=/tmp/state/families/chat/control/chat-s3\nAGENT_SANDBOX=chat-s3\n"},"result":"accepted"},
+  {"id":"state-root-two-slashes","input":{"args":{"family":"chat","sandbox":"chat-s3","state_root":"//net/state"}},"output":{"text":"AGENT_CRED_DIR=//net/state/families/chat/creds\nAGENT_FAMILY_CONFIG_DIR=//net/state/families/chat/config\nAGENT_CONTROL_DIR=//net/state/families/chat/control/chat-s3\nAGENT_SANDBOX=chat-s3\n"},"result":"accepted"},
+  {"id":"state-root-dot-segment","input":{"args":{"family":"chat","sandbox":"chat-s3","state_root":"/tmp/./state"}},"output":{"text":"AGENT_CRED_DIR=/tmp/state/families/chat/creds\nAGENT_FAMILY_CONFIG_DIR=/tmp/state/families/chat/config\nAGENT_CONTROL_DIR=/tmp/state/families/chat/control/chat-s3\nAGENT_SANDBOX=chat-s3\n"},"result":"accepted"},
+  {"id":"state-root-relative","input":{"args":{"family":"chat","sandbox":"chat-s3","state_root":"state"}},"output":{"text":"AGENT_CRED_DIR=state/families/chat/creds\nAGENT_FAMILY_CONFIG_DIR=state/families/chat/config\nAGENT_CONTROL_DIR=state/families/chat/control/chat-s3\nAGENT_SANDBOX=chat-s3\n"},"result":"accepted"},
+  {"id":"sandbox-of-another-family","input":{"args":{"family":"chat","sandbox":"code-s1","state_root":"/srv/agents/state/rework"}},"output":{"text":"AGENT_CRED_DIR=/srv/agents/state/rework/families/chat/creds\nAGENT_FAMILY_CONFIG_DIR=/srv/agents/state/rework/families/chat/config\nAGENT_CONTROL_DIR=/srv/agents/state/rework/families/chat/control/code-s1\nAGENT_SANDBOX=code-s1\n"},"result":"accepted"},
+  {"id":"sandbox-with-no-number","input":{"args":{"family":"chat","sandbox":"chat","state_root":"/srv/agents/state/rework"}},"output":{"text":"AGENT_CRED_DIR=/srv/agents/state/rework/families/chat/creds\nAGENT_FAMILY_CONFIG_DIR=/srv/agents/state/rework/families/chat/config\nAGENT_CONTROL_DIR=/srv/agents/state/rework/families/chat/control/chat\nAGENT_SANDBOX=chat\n"},"result":"accepted"}
+ ]
+}
