@@ -41,6 +41,9 @@ DEFAULT_COMMAND = (
 )
 _STDERR_LIMIT_BYTES = 4_096
 
+#: What the log holds in place of a stderr line that the reader dropped.
+_STDERR_DROPPED = b"(a line over the limit of the reader was dropped)"
+
 #: How long a terminated child has to exit before it is killed, and a killed
 #: one before `close` gives up on it. A healthy `sbx exec` exits at once.
 _EXIT_WAIT_S = 5.0
@@ -193,7 +196,15 @@ class ExecChannel:
             return
 
         while True:
-            chunk = await process.stderr.readline()
+            try:
+                chunk = await process.stderr.readline()
+            except ValueError:
+                # A line over the limit of the stream reader. The reader
+                # dropped what it held, so the next read starts after it.
+                # Without this guard the task ends, the text after it reaches
+                # no log, and the far side blocks on a full pipe.
+                self._write_log(_STDERR_DROPPED)
+                continue
 
             if not chunk:
                 return

@@ -855,6 +855,28 @@ async def test_the_exec_channel_round_trips_through_a_real_process() -> None:
     await channel.close()
 
 
+#: A child that writes one stderr line of 200,000 bytes, then one short line,
+#: then waits on stdin. The stream reader of the host holds 65,536 bytes.
+LONG_STDERR_LINE = (
+    f"{sys.executable} -c \"import sys; sys.stderr.write('x' * 200000 + '\\nafter\\n'); "
+    'sys.stderr.flush(); sys.stdin.read()"'
+)
+
+
+@pytest.mark.slow
+async def test_a_long_stderr_line_does_not_end_the_log(tmp_path: Path) -> None:
+    """stderr is free text from the far side. One long line must not stop the
+    reader, or the text after it reaches no log and the pipe fills."""
+    log = tmp_path / "playpen.log"
+    channel = ExecChannel(dial=dial(), command=LONG_STDERR_LINE, log_path=log)
+    await channel.start()
+
+    try:
+        await asyncio.wait_for(_until(lambda: log.is_file() and b"after" in log.read_bytes()), 5.0)
+    finally:
+        await channel.close()
+
+
 #: A child that says its pid and then waits on stdin, as the playpen does.
 PID_THEN_WAIT = "sh -c 'echo $$; exec cat'"
 
