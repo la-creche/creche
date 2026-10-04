@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -246,6 +247,26 @@ class _Listener:
         return None
 
 
+class _BoundListener:
+    """A listener that an earlier pass left bound."""
+
+    def __init__(self) -> None:
+        self.bound = True
+
+    def open(self) -> bool:
+        return True
+
+    def close(self) -> None:
+        self.bound = False
+
+
+class _StaysBound(_BoundListener):
+    """A bound listener whose close raises."""
+
+    def close(self) -> None:
+        raise RuntimeError(ERROR_TEXT)
+
+
 class _RaisesOnce(GapDirectory):
     """A gap directory whose first read raises an error that is no `OSError`."""
 
@@ -261,35 +282,88 @@ class _RaisesOnce(GapDirectory):
         return super().open_gaps()
 
 
+def _intake_wiring(
+    tmp_path: Path, gaps: GapDirectory, listener: intake_run.Binding
+) -> intake_run.Wiring:
+    secrets = tmp_path / "secrets"
+    secrets.mkdir(mode=0o700)
+
+    return intake_run.Wiring(
+        gaps=gaps,
+        store=SecretStore(secrets, lambda _: None, owner_uid=os.getuid()),
+        tokens=Tokens(lambda: 0.0),
+        push=lambda _gap, _token: False,
+        watch=Watch(lambda: 0.0),
+        listener=listener,
+    )
+
+
+def _stop_at(count: int) -> Callable[[float], None]:
+    """A sleep that ends the loop at its call number `count`."""
+    sleeps = {"n": 0}
+
+    def sleep(_: float) -> None:
+        sleeps["n"] += 1
+        if sleeps["n"] == count:
+            raise _Stop
+
+    return sleep
+
+
 def test_a_pass_that_raises_does_not_end_the_intake(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The unit starts a process that ended again. A file that made one
     pass raise then made each later process raise."""
     gaps = _RaisesOnce(_gaps(tmp_path))
-    secrets = tmp_path / "secrets"
-    secrets.mkdir(mode=0o700)
-    wiring = intake_run.Wiring(
-        gaps=gaps,
-        store=SecretStore(secrets, lambda _: None, owner_uid=os.getuid()),
-        tokens=Tokens(lambda: 0.0),
-        push=lambda _gap, _token: False,
-        watch=Watch(lambda: 0.0),
-        listener=_Listener(),
-    )
-    sleeps = {"n": 0}
-
-    def sleep(_: float) -> None:
-        sleeps["n"] += 1
-        if sleeps["n"] == 2:
-            raise _Stop
+    wiring = _intake_wiring(tmp_path, gaps, _Listener())
 
     with pytest.raises(_Stop):
-        intake_run._loop(wiring, sleep)
+        intake_run._loop(wiring, _stop_at(2))
 
     assert gaps.reads == 2
     said = capsys.readouterr().out
     assert "RuntimeError" in said
+    assert ERROR_TEXT not in said
+
+
+def test_a_pass_that_raises_leaves_no_listener_with_no_token(tmp_path: Path) -> None:
+    """The listener is bound only while a token is pending. A pass that
+    raises does not come to the step that closes the listener, so the loop
+    closes it."""
+    listener = _BoundListener()
+    wiring = _intake_wiring(tmp_path, _RaisesOnce(_gaps(tmp_path)), listener)
+
+    with pytest.raises(_Stop):
+        intake_run._loop(wiring, _stop_at(1))
+
+    assert wiring.tokens.pending_count() == 0
+    assert not listener.bound
+
+
+def test_a_pass_that_raises_keeps_the_listener_of_a_pending_token(tmp_path: Path) -> None:
+    listener = _BoundListener()
+    wiring = _intake_wiring(tmp_path, _RaisesOnce(_gaps(tmp_path)), listener)
+    wiring.tokens.mint(SERVER, SECRET)
+
+    with pytest.raises(_Stop):
+        intake_run._loop(wiring, _stop_at(1))
+
+    assert listener.bound
+
+
+def test_a_close_that_raises_does_not_end_the_intake(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The second error of one pass gets its own line, with the type of the
+    error and never its text. The loop then comes to its sleep."""
+    wiring = _intake_wiring(tmp_path, _RaisesOnce(_gaps(tmp_path)), _StaysBound())
+
+    with pytest.raises(_Stop):
+        intake_run._loop(wiring, _stop_at(1))
+
+    said = capsys.readouterr().out
+    assert said.count("RuntimeError") == 2
     assert ERROR_TEXT not in said
 
 
