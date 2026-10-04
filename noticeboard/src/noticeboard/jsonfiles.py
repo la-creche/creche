@@ -46,7 +46,10 @@ def read_object(path: Path, limit: int = MAX_DOC_BYTES) -> tuple[Json | None, st
     directory or a fault file (contract 05 §3.3.1 rule 5).
     """
     try:
-        raw = path.read_bytes()
+        with path.open("rb") as handle:
+            # One byte past the cap proves that the file is over it. The
+            # size of a file then never sets the memory of a page.
+            raw = handle.read(limit + 1)
     except FileNotFoundError:
         return None, None
     except OSError as error:
