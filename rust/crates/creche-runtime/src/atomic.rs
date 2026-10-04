@@ -439,11 +439,7 @@ impl Steps for Host {
     }
 
     fn create_temp(&self, temp: &Path, mode: FileMode) -> io::Result<File> {
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(mode.bits())
-            .open(temp)
+        open_temp(temp, mode.bits())
     }
 
     fn write_temp(&self, file: &mut File, bytes: &[u8]) -> io::Result<()> {
@@ -481,6 +477,19 @@ impl Steps for Host {
     fn remove_tree(&self, path: &Path) -> io::Result<()> {
         fs::remove_dir_all(path)
     }
+}
+
+/// Opens the new file `temp` for a write, with the permission bits `bits`.
+///
+/// This function is the one open of a temporary file. The open refuses a
+/// name that exists. It does not follow a symlink at that name, and it never
+/// writes into a file that another writer made.
+fn open_temp(temp: &Path, bits: u32) -> io::Result<File> {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(bits)
+        .open(temp)
 }
 
 /// The error of one step.
@@ -828,11 +837,7 @@ mod tests {
             self.temps.borrow_mut().push(temp.to_owned());
             self.pass(WriteStep::CreateTemp)?;
 
-            OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(mode.bits() & !self.umask)
-                .open(temp)
+            open_temp(temp, mode.bits() & !self.umask)
         }
 
         fn write_temp(&self, file: &mut File, bytes: &[u8]) -> io::Result<()> {
@@ -1129,6 +1134,32 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"{}");
         assert_eq!(fs::read(&other).unwrap(), b"the file of another writer");
         assert_eq!(names_in(root.path()), ["other.txt", "status.json"]);
+    }
+
+    #[test]
+    fn the_host_create_refuses_a_name_that_exists_and_follows_no_symlink() {
+        // The create of the host itself, with no test value between.
+        let root = TempRoot::new().unwrap();
+        let other = root.path().join("other.txt");
+        fs::write(&other, b"the file of another writer").unwrap();
+        let leftover = root.path().join(".status.json.1.0.tmp");
+        fs::write(&leftover, b"half of an old docu").unwrap();
+        let link = root.path().join(".status.json.1.1.tmp");
+        symlink(&other, &link).unwrap();
+
+        for temp in [&leftover, &link] {
+            let error = Host.create_temp(temp, FileMode::GroupRead).unwrap_err();
+
+            assert_eq!(
+                error.kind(),
+                io::ErrorKind::AlreadyExists,
+                "{}",
+                temp.display()
+            );
+        }
+
+        assert_eq!(fs::read(&leftover).unwrap(), b"half of an old docu");
+        assert_eq!(fs::read(&other).unwrap(), b"the file of another writer");
     }
 
     #[test]
