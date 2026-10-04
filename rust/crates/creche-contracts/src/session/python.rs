@@ -768,24 +768,6 @@ const DEPTH_LIMIT: &str = "The contract gives no nesting limit. Python reads a t
     recursion limit of the interpreter, which differs between two versions. The Rust reader \
     stops at 128 levels, the limit of serde_json for a typed value.";
 
-const RFC_3339_FORMS: &str = "The contract says RFC 3339. Python's fromisoformat also takes a \
-    week date, text between the time and the offset, and digits after HHMMSS as a fraction. RFC \
-    3339 has none of the three forms, and Python's own set of forms differs between two \
-    versions. The Rust type refuses the three forms.";
-
-/// The vectors with a time that Python reads and the Rust type refuses, after
-/// the prefix of the field.
-const TIMES_OF_PYTHON_ONLY: [&str; 8] = [
-    "week-date",
-    "week-date-and-time",
-    "basic-week-date",
-    "space-before-zulu",
-    "digit-before-zulu",
-    "colon-before-offset",
-    "text-after-a-fraction",
-    "basic-time-and-more-digits",
-];
-
 const ASCII_DIGITS: &str = "The contract says that the parameter is an int. Python's int reads \
     a decimal digit of each script. The Rust code reads the digits 0 to 9 (rust/AGENTS.md, \
     rule 9).";
@@ -824,38 +806,6 @@ const DEVIATIONS: &[Deviation] = &[
         differs: Differs::Refuses,
         contract: "contract 02 §3 rule 3",
         decision: DEPTH_LIMIT,
-    },
-    Deviation {
-        surfaces: &["session.request.run_turn"],
-        vectors: &[
-            "trigger-fired-at-week-date",
-            "trigger-fired-at-week-date-and-time",
-            "trigger-fired-at-basic-week-date",
-            "trigger-fired-at-space-before-zulu",
-            "trigger-fired-at-digit-before-zulu",
-            "trigger-fired-at-colon-before-offset",
-            "trigger-fired-at-text-after-a-fraction",
-            "trigger-fired-at-basic-time-and-more-digits",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 02 §13.2 rule 4",
-        decision: RFC_3339_FORMS,
-    },
-    Deviation {
-        surfaces: &["session.request.jobs"],
-        vectors: &[
-            "since-week-date",
-            "since-week-date-and-time",
-            "since-basic-week-date",
-            "since-space-before-zulu",
-            "since-digit-before-zulu",
-            "since-colon-before-offset",
-            "since-text-after-a-fraction",
-            "since-basic-time-and-more-digits",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 02 §13.4.2",
-        decision: RFC_3339_FORMS,
     },
     Deviation {
         surfaces: &["session.query.list"],
@@ -1078,23 +1028,6 @@ fn the_table_holds_each_session_surface_of_the_index_one_time() {
         "the table holds one surface twice"
     );
     assert_eq!(unique, in_index);
-}
-
-#[test]
-fn the_two_time_fields_have_the_same_deviations() {
-    for (surface, prefix) in [
-        ("session.request.run_turn", "trigger-fired-at-"),
-        ("session.request.jobs", "since-"),
-    ] {
-        for name in TIMES_OF_PYTHON_ONLY {
-            let vector = format!("{prefix}{name}");
-
-            assert!(
-                deviation_of(surface, &vector).is_some(),
-                "{surface} {vector}"
-            );
-        }
-    }
 }
 
 #[test]

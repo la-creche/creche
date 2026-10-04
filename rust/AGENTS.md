@@ -397,10 +397,11 @@ Rules for the test:
      nesting limit. Python reads a text until the recursion limit of the
      interpreter. The reader stops at 128 levels.
   2. `Timestamp`, contract 02 §13.2 rule 4 and §13.4.2. The contract says
-     RFC 3339. Python reads more forms. The type reads each form that each
-     supported Python version reads in the same way, but for three. The
-     three are a week date, text between the time and the offset, and
-     digits after `HHMMSS`.
+     RFC 3339. Python reads more forms: a week date, a date with no time,
+     one character between the time and the offset, and digits after
+     `HHMMSS`. The type reads each form that each supported Python version
+     reads in the same way. It refuses a form that two versions read in
+     different ways.
   3. `SteerMessage`, contract 02 §5.6. The contract gives no cap. The Python
      parser has a cap of 4096 bytes. The type has that cap.
   4. `StopReason`, contract 02 §5.7. The contract gives no cap and no
@@ -433,14 +434,13 @@ Rules for the test:
   14. `TurnView`, contract 02 §4.4. The Python code writes the empty text
       as the sandbox of a turn that no sandbox served. The type does the
       same.
-- The `session` module differs from the Python code on purpose in five
+- The `session` module differs from the Python code on purpose in four
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN`, no
      `Infinity` and no lone surrogate in a text that a parser reads.
   2. A JSON text nests 128 levels at most.
-  3. A time has none of the three forms of question 2.
-  4. A number of a query has the digits 0 to 9 only.
-  5. A sequence number fits 64 bits. The body of a `pi_event` holds an
+  3. A number of a query has the digits 0 to 9 only.
+  4. A sequence number fits 64 bits. The body of a `pi_event` holds an
      integer past 64 bits as a float.
 
   Three more rows are vectors of the journal reader on which the two sides

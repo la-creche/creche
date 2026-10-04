@@ -114,10 +114,11 @@ directory is not a workspace package, so a change here does not change
   depends on the system.
 - A text of a time has a vector only when each supported Python version
   reads it in the same way. `datetime.fromisoformat` differs between
-  versions on four forms:
+  versions on five forms:
   1. A fraction with no digit.
   2. A fraction after the hours or after the minutes.
   3. A fraction in an offset of zero seconds.
   4. Hour 24.
+  5. A colon and digits after the seconds, as in `06:00:23:599999`.
 - The generator runs on macOS, and CI runs it on Linux. No other system
   has a run.

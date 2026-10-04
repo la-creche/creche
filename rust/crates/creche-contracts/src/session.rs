@@ -17,14 +17,12 @@
 //! is lax against the contract, the type is lax in the same way, and a
 //! `CONTRACT-QUESTION` comment marks it.
 //!
-//! Five things differ from the Python code on purpose. The test holds each one
+//! Four things differ from the Python code on purpose. The test holds each one
 //! as a row of its `DEVIATIONS` table, and `rust/AGENTS.md` lists them.
 //!
 //! - A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and no
 //!   `Infinity`, and a text that a parser reads holds no lone surrogate.
 //! - A JSON text nests 128 levels at most.
-//! - A time is not a week date. It has no text between the time and the
-//!   offset, and no digit after `HHMMSS` but a fraction.
 //! - A number of a query is written with the digits 0 to 9.
 //! - A sequence number fits 64 bits.
 
