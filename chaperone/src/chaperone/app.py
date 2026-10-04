@@ -336,7 +336,9 @@ async def _retention_sweep_loop(sweeps: list[Callable[[], None]], interval_s: fl
         for sweep in sweeps:
             try:
                 sweep()
-            except OSError:
+            except Exception:
+                # Every failure, as in `fault_sweep_loop`: one that left
+                # this task would end the retention of both logs for good.
                 log.exception("audit retention sweep failed")
 
 

@@ -12,6 +12,7 @@ answer that a caller gets.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Callable
@@ -34,6 +35,7 @@ from chaperone_family_helpers import FAMILY_TOKEN, make_grants, write_grants
 from chaperone_helpers import FakePool
 from fastapi.testclient import TestClient
 
+from chaperone import app as app_module
 from chaperone import family_app
 
 KAGI: Final = UpstreamSpec(name="kagi", command="x", args=(), env={})
@@ -397,3 +399,32 @@ def test_a_refused_body_keeps_its_echo_when_the_echo_is_text(tmp_path: Path) -> 
     [error] = reply.json()["detail"]
     assert error["loc"] == ["body", "tool"]
     assert error["input"] == 5
+
+
+# ---- the retention sweep -------------------------------------------------------
+
+
+async def test_a_retention_sweep_that_raises_does_not_stop_the_next_one() -> None:
+    """One handler in the loop body: the failure is one log line, and the
+    loop goes on. The other log still gets its sweep in the same pass."""
+    runs: list[str] = []
+    enough = asyncio.Event()
+
+    def explode() -> None:
+        runs.append("raised")
+        raise RuntimeError("a failure nobody predicted")
+
+    def sweep() -> None:
+        runs.append("swept")
+        if runs.count("swept") >= 2:
+            enough.set()
+
+    loop = asyncio.create_task(app_module._retention_sweep_loop([explode, sweep], 0.01))
+    try:
+        await asyncio.wait_for(enough.wait(), 5.0)
+    finally:
+        loop.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await loop
+
+    assert runs[:4] == ["raised", "swept", "raised", "swept"]
