@@ -149,6 +149,7 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |
 | `test_unique_test_basenames.py` | No two test modules share a basename across the workspace. |
 | `test_git_env_dropped.py` | A test run that git starts writes nothing into the repository of the caller. The root `conftest.py` drops the five variables that the hooks unset. |
+| `test_git_config_dropped.py` | No `git` child of a test run reads the config file of a person or of the system. The root `conftest.py` sets the two variables that do this. |
 | `test_creche_deploy.py`, `test_rework_watchdog.py`, `test_rework_registry_sync.py`, `test_sbx_drift_check.py`, `test_sync_code_corpus.py`, `test_provision_library.py`, `test_rework_intake_unit.py` | Each script, against binstubs and a temp root. |
 
 ## Adding a script

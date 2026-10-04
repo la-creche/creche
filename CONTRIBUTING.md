@@ -16,6 +16,10 @@ workflow: branches, hooks, CI, tags and releases.
   imports a test. git also sets them for `git rebase --exec` and for
   `git bisect run`. A test run from there then cannot write into the
   repository of the caller.
+- The root `conftest.py` also sets `GIT_CONFIG_GLOBAL` to an empty file and
+  `GIT_CONFIG_NOSYSTEM` to `1`. A `git` child of a test then reads no config
+  file of the person who runs the suite, and none of the system. A fixture
+  that needs a setting sets it in its own repository or with `git -c`.
 
 ## Hooks
 

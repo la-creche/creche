@@ -9,7 +9,8 @@ It also holds `--shard K/N`, which CI's gate uses to run the one suite on N
 machines at once (.github/workflows/gate.yml).
 
 It also drops the variables that point a `git` child at the repository of
-the caller, when pytest imports this file.
+the caller, when pytest imports this file. At the same time it gives each
+`git` child an empty global config file and no config file of the system.
 """
 
 from __future__ import annotations
@@ -49,10 +50,30 @@ def _drop_git_env() -> None:
         os.environ.pop(name, None)
 
 
+#: What gives a `git` child an empty file in place of the global config file,
+#: and no config file of the system. The global file is the one of the person
+#: who runs the suite, in the home directory or in the variable.
+GIT_NO_CONFIG = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def _drop_git_config() -> None:
+    """Keep the config file of a person and of the system from each `git` child.
+
+    Some fixtures run `git` in a throwaway repository with the environment
+    they inherit. `git` then reads the global config file of the person who
+    runs the suite. One setting there, `core.fsmonitor`, starts a program for
+    each repository. Other settings change what a test sees.
+    bin/tests/test_git_config_dropped.py holds the proof.
+    """
+    os.environ.update(GIT_NO_CONFIG)
+
+
 # At import and not in a hook. pytest imports this file before it imports a
 # test module or a conftest.py below it, and before xdist starts a worker.
-# So no module, no fixture and no test ever sees one of the variables.
+# So no module, no fixture and no test ever sees one of the variables, and
+# each one runs `git` with no config file of a person.
 _drop_git_env()
+_drop_git_config()
 
 #: Every signal this platform names. Linux's unnamed real-time signals are
 #: left out: no test here touches them.
