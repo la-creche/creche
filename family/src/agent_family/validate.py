@@ -803,11 +803,19 @@ def _check_cron(expression: str, loc: str, issues: Issues) -> None:
     # `caregiver.timers`. A line that passes can still have no `OnCalendar`
     # spelling (`caregiver/AGENTS.md`, "Known gaps").
     fields = expression.split()
-    if len(fields) != CRON_FIELDS or any(CRON_FIELD.fullmatch(one) is None for one in fields):
+    if len(fields) != CRON_FIELDS:
         issues.error(
             f"{loc}.cron",
             f"'{expression}' is not a five-field cron expression or one of "
             f"{', '.join(CRON_SHORTHANDS)}",
+        )
+        return
+
+    if any(CRON_FIELD.fullmatch(one) is None for one in fields):
+        issues.error(
+            f"{loc}.cron",
+            f"'{expression}' has a cron field with a character other than "
+            "0-9, '*', ',', '-' or '/'",
         )
 
 

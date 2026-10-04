@@ -688,16 +688,21 @@ def test_autonomous_family_needs_at_least_one_trigger() -> None:
     assert "needs at least one trigger" in messages(report)
 
 
+CRON_CHARACTER = "has a cron field with a character other than 0-9, '*', ',', '-' or '/'"
+
 TRIGGER_CASES: tuple[tuple[list[dict[str, Any]], str], ...] = (
     ([{"cron": "@hourly", "webhook": "x"}], "exactly one of 'cron', 'webhook' or 'enqueue'"),
     ([{}], "exactly one of 'cron', 'webhook' or 'enqueue'"),
     ([{"cron": "@hourly", "enqueue": True}], "exactly one of 'cron', 'webhook' or 'enqueue'"),
     ([{"cron": "not a cron"}], "not a five-field cron expression"),
+    # The count of fields comes first: four fields get the message of the count.
+    ([{"cron": "0 9 * mon"}], "not a five-field cron expression"),
     # A field holds ASCII digits and `*`, `,`, `-`, `/`. U+0669 and U+00B2
     # are digits to `str.isdigit`, and the timer step converts neither.
-    ([{"cron": "0 \u0669 * * *"}], "not a five-field cron expression"),
-    ([{"cron": "*/\u00b2 * * * *"}], "not a five-field cron expression"),
-    ([{"cron": "0 9 * * mon"}], "not a five-field cron expression"),
+    # Such a line has five fields, so its message names the character rule.
+    ([{"cron": "0 \u0669 * * *"}], CRON_CHARACTER),
+    ([{"cron": "*/\u00b2 * * * *"}], CRON_CHARACTER),
+    ([{"cron": "0 9 * * mon"}], CRON_CHARACTER),
     ([{"webhook": "Bad_Name"}], "must match [a-z][a-z0-9-]"),
     # §3.13 rule 5: absence is denial, so a false trigger is not a trigger.
     ([{"enqueue": False}], "'enqueue: false' is not a trigger"),
@@ -709,6 +714,11 @@ TRIGGER_CASES: tuple[tuple[list[dict[str, Any]], str], ...] = (
 def test_trigger_fences(triggers: list[dict[str, object]], expect: str) -> None:
     report = check("scrum-lead", triggers=triggers)
     assert expect in messages(report)
+
+
+def test_a_cron_line_gets_one_message() -> None:
+    report = check("scrum-lead", triggers=[{"cron": "0 9 * * mon"}])
+    assert [issue.msg for issue in errors(report)] == [f"'0 9 * * mon' {CRON_CHARACTER}"]
 
 
 @pytest.mark.parametrize("cron", ["0 * * * *", "*/15 0-6,22 1 1,7 1-5", "0  9\t* * 0"])

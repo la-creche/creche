@@ -1767,9 +1767,17 @@ checked_text! {
 
 /// Why a text is not a cron expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CronError;
+pub enum CronError {
+    /// The text does not have five fields and is no short form.
+    Fields,
+    /// A field holds a character that no cron field takes.
+    Character,
+}
 
-error_texts!(CronError => "a cron expression has five fields, or is @hourly, @daily or @weekly");
+error_texts!(CronError {
+    Fields => "a cron expression has five fields, or is @hourly, @daily or @weekly",
+    Character => "a cron field holds ASCII digits and '*', ',', '-', '/'",
+});
 
 /// Whether a text is one field of a cron expression.
 fn is_cron_field(field: &str) -> bool {
@@ -1789,8 +1797,12 @@ impl FromStr for Cron {
             return Ok(Self(text.to_owned()));
         }
 
-        if py_words(text).count() != CRON_FIELDS || !py_words(text).all(is_cron_field) {
-            return Err(CronError);
+        if py_words(text).count() != CRON_FIELDS {
+            return Err(CronError::Fields);
+        }
+
+        if !py_words(text).all(is_cron_field) {
+            return Err(CronError::Character);
         }
 
         Ok(Self(text.to_owned()))
@@ -3241,19 +3253,20 @@ fn vet_trigger(
     let loc = format!("triggers[{position}]");
     match (&trigger.cron, &trigger.webhook, trigger.enqueue) {
         (Some(expression), None, None) => {
-            let cron = expression.parse::<Cron>().ok();
-            if cron.is_none() {
-                out.error(
-                    at,
-                    format!("{loc}.cron"),
-                    format!(
-                        "'{expression}' is not a five-field cron expression or one of {}",
-                        CRON_SHORTHANDS.join(", ")
-                    ),
-                );
-            }
+            let said = match expression.parse::<Cron>() {
+                Ok(cron) => return Some(Trigger::Cron(cron)),
+                Err(CronError::Fields) => format!(
+                    "is not a five-field cron expression or one of {}",
+                    CRON_SHORTHANDS.join(", ")
+                ),
+                Err(CronError::Character) => {
+                    "has a cron field with a character other than 0-9, '*', ',', '-' or '/'"
+                        .to_owned()
+                }
+            };
+            out.error(at, format!("{loc}.cron"), format!("'{expression}' {said}"));
 
-            cron.map(Trigger::Cron)
+            None
         }
         (None, Some(name), None) => {
             let webhook = name.parse::<WebhookName>().ok();
@@ -3770,12 +3783,12 @@ mod tests {
     use std::str::FromStr;
 
     use super::{
-        Cpus, Cron, DailyBudget, Description, EgressHost, EgressHostError, Family, FloorHours,
-        HaEntityId, HaIdentifier, InflightCap, JobTimeout, JobTimeoutError, Kind, LocalHour,
-        Memory, MemoryError, ModelAlias, ModelAliasError, MountPath, MountPathError, NO_REASON,
-        Placed, RawFamily, RawInt, RawModel, RawToolGrant, RawTrigger, Refused, ResidentProcs,
-        RunningTurns, Section, Severity, Slot, collapse, duration_s, is_under, memory_mb,
-        python_float_text,
+        Cpus, Cron, CronError, DailyBudget, Description, EgressHost, EgressHostError, Family,
+        FloorHours, HaEntityId, HaIdentifier, InflightCap, JobTimeout, JobTimeoutError, Kind,
+        LocalHour, Memory, MemoryError, ModelAlias, ModelAliasError, MountPath, MountPathError,
+        NO_REASON, Placed, RawFamily, RawInt, RawModel, RawToolGrant, RawTrigger, Refused,
+        ResidentProcs, RunningTurns, Section, Severity, Slot, collapse, duration_s, is_under,
+        memory_mb, python_float_text,
     };
     use crate::vectors::{self, Outcome};
 
@@ -4126,6 +4139,18 @@ mod tests {
                 "? ? ? ? ?",
             ],
         );
+        let refused = [
+            ("", CronError::Fields),
+            ("0 6 * *", CronError::Fields),
+            ("0 6 * mon", CronError::Fields),
+            ("0 6 * * 1 2", CronError::Fields),
+            ("@hourly ", CronError::Fields),
+            ("0 6 * * mon", CronError::Character),
+            ("0 \u{669} * * *", CronError::Character),
+        ];
+        for (text, error) in refused {
+            assert_eq!(text.parse::<Cron>(), Err(error), "{text:?}");
+        }
     }
 
     #[test]
