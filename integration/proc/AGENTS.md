@@ -214,16 +214,28 @@ start no service, for a scenario that changes the registry first.
    the grant file. It stops `caregiver` first.
 2. An edit to one registry file is the one action of a scenario. Do not send
    a signal to make `caregiver` look, unless the signal is the scenario.
-3. Write a registry file with `write_family_file`, `write_family_prose` or
-   `write_registry_file`. Each one replaces the file by rename.
+3. Change the registry with a function of `proc_tree.py`:
+   - `write_family_file`, `write_family_prose`, `write_skill` and
+     `write_registry_file` replace one file by rename.
+   - `publish_family` adds one family: its prose first, then its file.
+   - `remove_family` removes the directory of one family in one rename.
 4. Wait for a file that `caregiver` writes: the status document or the grant
    file. Use `wait_until` in a fixture and in a test with no request in
    flight. Use `until` of `proc_chat.py` when a request is in flight.
-5. Assert on a boundary of `caregiver`: the status document, the grant file,
-   the credential file, the config mount, an env file, a fault file, the
-   record of a stand-in, the state of a stand-in, an HTTP answer or an exit
-   code. Do not read `sandboxes.json` or the `applied` directory. Each one
-   is the private state of `caregiver`.
+5. Assert on a boundary of `caregiver`:
+   - the status document
+   - the grant file
+   - the credential file
+   - the config mount
+   - an env file
+   - a fault file
+   - the record of a stand-in
+   - the state of a stand-in
+   - an HTTP answer
+   - an exit code
+
+   Do not read `sandboxes.json` or the `applied` directory. Each one is the
+   private state of `caregiver`.
 6. Start `attendance` before `caregiver`. `caregiver` asks for the first
    handshake in its first pass. When no `attendance` answers, the next
    attempt comes 20 seconds later.
@@ -348,19 +360,20 @@ failure. Work down this list.
   costs one assertion in that file.
 - **CONTRACT-QUESTION, the exit codes of `caregiver`.** No contract names
   one. `caregiver/AGENTS.md` gives three codes: 0, 1 and 2. The suite holds
-  those three where `caregiver` selects one. It accepts each code that is
-  not 0 where `caregiver` ends with no code of its own: a start with no
-  `LITELLM_MASTER_KEY`, and a `delete` that fails. A change costs one
-  assertion in each scenario of `test_proc_caregiver_start.py`.
+  those three where `caregiver` selects one. `caregiver` ends with no code
+  of its own in two cases: a start with no `LITELLM_MASTER_KEY`, and a
+  `delete` that fails. There the suite accepts each code that is not 0. A
+  change costs one assertion in each scenario of
+  `test_proc_caregiver_start.py`.
 - **No flag for the session store in `caregiver`.** `SESSIONS_ROOT` in
   `caregiver/src/caregiver/paths.py` is a constant. The first mount of each
   `sbx create` is `/srv/agents/sessions/<family>`, and `attendance` of a
   test reads another directory. No scenario proves that the two services
   name one session store.
-- **No flag for three times of the loop.** `HEARTBEAT_S`, `SPEND_INTERVAL_S`
-  and `BACKOFF_FIRST_S` in `caregiver/src/caregiver/loop.py` are constants:
-  20, 60 and 5 seconds. A scenario that waits for one of them takes that
-  long.
+- **No flag for three intervals of the loop.** `HEARTBEAT_S`,
+  `SPEND_INTERVAL_S` and `BACKOFF_FIRST_S` in
+  `caregiver/src/caregiver/loop.py` are constants: 20, 60 and 5 seconds. A
+  scenario that waits for one of them takes that long.
 - **No flag for the model cache time.** `MODEL_CACHE_S` in
   `caregiver/src/caregiver/reconcile.py` is 10 seconds. No scenario changes
   the model of a family.
@@ -380,8 +393,9 @@ failure. Work down this list.
 - **CONTRACT-QUESTION, a second key for one alias.** Contract 05 §6.3 has
   two keys for one alias during a rotation. Contract 05 §10 row 5 says that
   no probe of LiteLLM shows that it takes the second one. The LiteLLM
-  stand-in refuses it. A change costs one check in `standin_litellm.py` and
-  its test.
+  stand-in refuses it. A `caregiver` that mints the new key under the same
+  alias before it deletes the old key fails the rotation scenario. A change
+  costs one check in `standin_litellm.py` and its test.
 - **CONTRACT-QUESTION, a failed create and its id.** Contract 05 §4.3, last
   paragraph, and §10 row 7 leave the choice to the reconciler. The suite
   holds the choice of `caregiver/AGENTS.md`: a failed create burns its id. A
