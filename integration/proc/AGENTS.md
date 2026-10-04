@@ -161,7 +161,9 @@ the pi stand-in                          found through AGENT_PI_BIN
 10. Each service leads its own process group. The teardown sends `SIGTERM` to
     each group. Then it waits 20 seconds at most for each group to become
     empty. It sends `SIGKILL` only to a group that is not empty after that
-    time. A group that ended before the teardown gets no signal.
+    time. A group that ended before the teardown gets no signal. A process
+    that ended is not a process of its group, also before its parent reaps
+    it.
 11. No test leaves a process behind. A teardown that had to kill a process
     fails the test. This applies to each process of a group, not only to the
     service. A group that no teardown ended fails the session.

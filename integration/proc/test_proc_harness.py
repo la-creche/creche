@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -20,6 +22,7 @@ from proc_harness import (
     UnixAddress,
     end_leaked_groups,
     hold_port,
+    kill_pid,
     pid_is_alive,
     pids_gone_by,
     port_is_free,
@@ -38,6 +41,51 @@ IDLE = "sleep 30"
 MARK_DEADLINE_S = 5.0
 SHORT_GRACE_S = 0.3
 SHORT_DEADLINE_S = 0.2
+
+#: A leader that leaves one ended process in its group, with a parent that
+#: never reaps it. `sh` cannot do this: it has no call that changes a group.
+#:
+#:   the leader    waits for SIGTERM
+#:     the holder  moves to a group of its own, and reaps nothing
+#:       ended     stays in the group of the leader, and ends at once
+#:
+#: The holder writes its pid and the pid of `ended`. It ends by itself when a
+#: test loses it.
+ENDED_MEMBER = """
+import os, sys, time
+
+holder = os.fork()
+if holder:
+    time.sleep(30)
+    os._exit(0)
+
+ended = os.fork()
+if ended == 0:
+    os._exit(0)
+
+os.setpgid(0, 0)
+with open(sys.argv[1] + ".tmp", "w") as mark:
+    mark.write(f"{os.getpid()} {ended}")
+os.replace(sys.argv[1] + ".tmp", sys.argv[1])
+time.sleep(30)
+os._exit(0)
+"""
+
+#: One line of `/proc/<pid>/stat` on Linux, as proc(5) gives it. The name of
+#: the program holds a space and a bracket on purpose. The fields are the
+#: pid, the state, the group and the thread count.
+STAT_LINE = (
+    "{pid} (a (odd) name) {state} 1 {pgid} {pgid} 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 {threads} 0 "
+    "5309 0 0 18446744073709551615 0 0 0 0 0 0 0 0 0 0 0 0 0 17 1 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+)
+
+#: The states of proc(5): a process that runs, one that sleeps, a zombie.
+RUNS = "R"
+SLEEPS = "S"
+ZOMBIE = "Z"
+
+#: A pid for a `stat` file that no test starts a process for.
+OTHER_PID = 70_000
 
 
 def test_a_child_leads_its_own_process_group(tree: Tree, supervisor: Supervisor) -> None:
@@ -206,6 +254,118 @@ def test_a_group_whose_leader_ended_is_reported_and_left_alone(tree: Tree) -> No
     assert leaked == [f"one-shot (process group {pgid}) was never stopped by its test"]
 
 
+def test_a_group_that_holds_only_an_ended_process_is_empty(tree: Tree) -> None:
+    """A process that ended stays in its group until its parent reaps it,
+    and a signal to the group still finds the group. Such a process runs
+    nothing. The teardown does not wait for it and does not report it."""
+    mark = tree.root / "holder.pids"
+    keeper = Supervisor(tree.proc_logs)
+    keeper.spawn("leader", [sys.executable, "-c", ENDED_MEMBER, str(mark)], BASE_ENV, tree.root)
+    holder, ended = (int(pid) for pid in _read_when_written(mark).split())
+
+    try:
+        problems = keeper.stop_all(grace_s=MARK_DEADLINE_S)
+    finally:
+        kill_pid(holder)
+
+    assert problems == []
+    assert pids_gone_by([holder, ended], time.monotonic() + MARK_DEADLINE_S) == []
+
+
+def test_a_child_that_ended_and_was_not_reaped_is_not_alive() -> None:
+    """A signal finds a pid that ended until its parent reaps it. The wait
+    for a stand-in asks about one pid, so it must not count such a pid."""
+    unreaped = subprocess.Popen([SH, "-c", "exit 0"])
+
+    try:
+        assert pids_gone_by([unreaped.pid], time.monotonic() + MARK_DEADLINE_S) == []
+    finally:
+        unreaped.wait()
+
+
+@pytest.mark.parametrize(
+    ("states", "gone"),
+    [
+        ([ZOMBIE], True),
+        ([ZOMBIE, ZOMBIE], True),
+        ([ZOMBIE, SLEEPS], False),
+        ([RUNS], False),
+    ],
+    ids=["one ended", "two ended", "one of two runs", "one runs"],
+)
+def test_a_group_is_gone_when_each_process_of_it_ended(
+    tree: Tree,
+    supervisor: Supervisor,
+    monkeypatch: pytest.MonkeyPatch,
+    states: list[str],
+    gone: bool,
+) -> None:
+    """The first look at a group, with the answers that Linux gives: the
+    signal finds the group, and `/proc` holds the state of each process."""
+    child = supervisor.spawn("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    proc = _fake_proc(tree, monkeypatch)
+    for number, state in enumerate(states):
+        _write_stat(proc, OTHER_PID + number, state, pgid=child.pgid)
+    _write_stat(proc, OTHER_PID + len(states), SLEEPS, pgid=child.pgid + 1)
+    monkeypatch.setattr(proc_harness.os, "killpg", _group_answers)
+
+    assert child.wait(MARK_DEADLINE_S) == 0
+    assert child.group_gone is gone
+    child.close_group()
+
+
+def test_a_group_that_proc_does_not_list_counts_as_alive(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The signal found the group, and `/proc` shows no process of it: the
+    last one left between the two looks, or this `/proc` hides it. The
+    signal is the answer then. A group that can run is never called empty."""
+    child = supervisor.spawn("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    proc = _fake_proc(tree, monkeypatch)
+    _write_stat(proc, OTHER_PID, ZOMBIE, pgid=child.pgid + 1)
+    (proc / "self").mkdir()
+    (proc / str(OTHER_PID + 1)).mkdir()
+    monkeypatch.setattr(proc_harness.os, "killpg", _group_answers)
+
+    assert child.wait(MARK_DEADLINE_S) == 0
+    assert child.group_gone is False
+    child.close_group()
+
+
+def test_an_ended_first_thread_beside_one_that_runs_is_alive(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first thread of a program can end while another thread runs.
+    Linux then gives the process the state `Z`, and the program runs."""
+    child = supervisor.spawn("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    proc = _fake_proc(tree, monkeypatch)
+    _write_stat(proc, OTHER_PID, ZOMBIE, pgid=child.pgid, threads=3)
+    monkeypatch.setattr(proc_harness.os, "killpg", _group_answers)
+
+    assert child.wait(MARK_DEADLINE_S) == 0
+    assert child.group_gone is False
+    child.close_group()
+
+
+@pytest.mark.parametrize(("state", "alive"), [(ZOMBIE, False), (SLEEPS, True), (RUNS, True)])
+def test_the_state_in_proc_says_whether_a_pid_is_alive(
+    tree: Tree, monkeypatch: pytest.MonkeyPatch, state: str, alive: bool
+) -> None:
+    """One pid, with the answers that Linux gives: the signal finds the pid,
+    and `/proc` holds its state."""
+    proc = _fake_proc(tree, monkeypatch)
+    _write_stat(proc, os.getpid(), state, pgid=os.getpgrp())
+
+    assert pid_is_alive(os.getpid()) is alive
+
+
+def test_a_pid_is_alive_where_no_proc_exists(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> None:
+    """macOS has no `/proc`. A pid that has a process group runs."""
+    monkeypatch.setattr(proc_harness, "_PROC_DIR", tree.root / "no-proc")
+
+    assert pid_is_alive(os.getpid())
+
+
 def test_a_free_port_is_below_the_ephemeral_range(supervisor: Supervisor) -> None:
     port = supervisor.free_port()
 
@@ -240,6 +400,26 @@ def _record_group_signals(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     monkeypatch.setattr(proc_harness.os, "killpg", recording)
 
     return signalled
+
+
+def _group_answers(pgid: int, signum: int) -> None:
+    """`os.killpg` as Linux answers it for a group of ended processes."""
+
+
+def _fake_proc(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """An empty directory in the place of `/proc`, for the rest of the test."""
+    proc = tree.root / "proc"
+    proc.mkdir()
+    monkeypatch.setattr(proc_harness, "_PROC_DIR", proc)
+
+    return proc
+
+
+def _write_stat(proc: Path, pid: int, state: str, *, pgid: int, threads: int = 1) -> None:
+    """The `stat` file of one process, as Linux writes it."""
+    (proc / str(pid)).mkdir()
+    line = STAT_LINE.format(pid=pid, state=state, pgid=pgid, threads=threads)
+    (proc / str(pid) / "stat").write_text(line, encoding="utf-8")
 
 
 def _read_when_written(path: Path) -> str:
