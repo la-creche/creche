@@ -44,8 +44,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final, cast
 
-import yaml
-
+from ..boundedyaml import MergeLimits, load
 from ..executor import layout
 
 #: The one door a plaintext secret goes through: hand it bytes, get sealed
@@ -86,6 +85,11 @@ DEFAULT_OWNER_UID: Final = 0
 
 #: What `recipients_of` will read. `.sops.yaml` is a short file.
 MAX_SOPS_BYTES: Final = 64 * 1024
+
+#: What the merge keys of the sops file can copy (`boundedyaml.py`). No
+#: contract names this file, and it needs no merge key. The two limits are
+#: those of a manifest.
+MERGE_LIMITS: Final = MergeLimits(depth=128, pairs=65_536)
 
 #: An age public key: `age1` and 58 characters of bech32. Every recipient
 #: becomes part of one `--age` argument, and a value that is not a key is
@@ -134,7 +138,7 @@ def recipients_of(
         return ()
 
     try:
-        loaded: Any = yaml.safe_load(raw.decode("utf-8", "replace"))
+        loaded: Any = load(raw.decode("utf-8", "replace"), MERGE_LIMITS)
     except Exception:
         # This file is root's, so a malformed one is a foot-gun and not an
         # attack — and a raise here would escape `build_wiring`, so `main`

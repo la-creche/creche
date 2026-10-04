@@ -62,8 +62,9 @@ The console script is `handover`. The verify hook and the operator's
 ## Trust rules
 
 1. Every input is hostile. A `component.yaml` can come from a branch an agent
-   wrote. A byte cap before the parse, `yaml.safe_load` only, a closed key
-   set, a strict pattern per scalar, and a refusal that names the field.
+   wrote. A byte cap before the parse, the safe loader of PyYAML only, a
+   closed key set, a strict pattern per scalar, and a refusal that names the
+   field.
 2. Every pattern is `re.fullmatch`. A pattern writes a digit as `[0-9]`.
    On text, `\d` also matches a digit that is not ASCII.
 3. `errors.safe_token` is the one door untrusted text goes through. Anything
@@ -76,6 +77,11 @@ The console script is `handover`. The verify hook and the operator's
 7. A JSON integer has no largest value. A reader that makes a float of a
    number answers a refusal for a number that no float holds. A reader that
    keeps a whole number gives the number a range.
+8. Each YAML reader calls `boundedyaml.load`, and never `yaml.safe_load`.
+   PyYAML gives a merge key no limit, so a short text can make it use time
+   and memory with no bound. No `except` clause stops that. `boundedyaml`
+   counts the pairs that the merge keys copy, and the levels of a chain of
+   merge keys. Past a limit, the text does not parse.
 
 ## Rules the design depends on
 
@@ -239,6 +245,7 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | Module | Owns |
 |---|---|
 | `errors.py`, `catalog.py`, `site.py` | the closed refusal list, the component list, the site file |
+| `boundedyaml.py` | the YAML loader of each reader, with its two merge limits |
 | `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | `component.yaml` as hostile input, the walk, the order, rules C1 to C5 |
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, `server.yaml` as hostile bytes, the uninstalled component |
 | `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow` |
@@ -299,6 +306,11 @@ that wants a refusal changes one field.
 - PyYAML reads a digit that is not ASCII in a number with the tag `!!int`.
   A whole number of a manifest can thus hold one. Contract 06 §8 names no
   YAML form for a number (`manifest.py`).
+- Contract 06 §8 and §10 and contract 01b give no limit for a merge key. A
+  manifest takes a chain of 128 merge keys and 65,536 copied pairs. A server
+  file takes a chain of 400 and 100,000 copied pairs. Each pair of limits is
+  that of the Rust reader of the same file, so the two readers refuse the
+  same text (`manifest.py`, `mcpserver.py`).
 - The intake reads `Content-Length` with `int`. That reader takes a sign,
   an underscore and a digit that is not ASCII (`intake/service.py`).
 - The secret-name pattern is copied into five modules, and the copies agree
