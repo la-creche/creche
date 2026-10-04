@@ -22,6 +22,7 @@ from typing import cast
 
 import pytest
 from handover.catalog import CATALOG_BY_NAME
+from handover.executor import drain as drain_module
 from handover.executor import steps
 from handover.executor.drain import Counter, drain, handle, repair_unfinished
 from handover.executor.install import Installer, Paths
@@ -399,3 +400,39 @@ def test_an_error_inside_the_swap_leaves_the_note_for_the_next_run(
     assert installed_version(bench.live) == LIVE_VERSION
     assert not bench.staged.exists()
     assert bench.entry(f"{REQUEST_ID}-{COMPONENT}")["status"] == "restored"
+
+
+# -- the repair loop ----------------------------------------------------------
+
+
+def test_a_repair_that_raises_does_not_end_the_pass(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The repairs run before `requests/` is drained. The loop caught two
+    types of error. Any other one ended the run before the drain, and the
+    note stayed, so each later run ended at the same place."""
+    spool = Spool(str(bench.spool_root), this_uid())
+    for request_id in (REQUEST_ID, OTHER_ID):
+        note = SwitchNote(COMPONENT, str(bench.live), f"{bench.live}.prev", None)
+        spool.note_switch(request_id, note)
+
+    seen: list[str] = []
+
+    def raise_one(spool: Spool, wiring: Wiring, request_id: str, note: SwitchNote) -> None:
+        del spool, wiring, note
+        seen.append(request_id)
+        raise ValueError(ERROR_TEXT)
+
+    monkeypatch.setattr(drain_module, "repair", raise_one)
+    try:
+        lines = repair_unfinished(spool, bench.wiring)
+        left = spool.unfinished()
+    finally:
+        spool.close()
+
+    assert seen == [REQUEST_ID, OTHER_ID]
+    assert lines == [
+        f"{REQUEST_ID}: repair failed (ValueError)",
+        f"{OTHER_ID}: repair failed (ValueError)",
+    ]
+    assert left == []

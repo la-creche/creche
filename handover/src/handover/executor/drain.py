@@ -239,9 +239,12 @@ def repair_unfinished(spool: Spool, wiring: Wiring) -> list[str]:
     """
     lines: list[str] = []
     for found in spool.unfinished():
+        # Every error, not two types of it: the repairs run before
+        # `requests/` is drained, so an error that left here ended each run
+        # at the same note.
         try:
             lines.append(_repair_one(spool, wiring, found))
-        except (SpoolError, OSError) as exc:
+        except Exception as exc:
             spool.clear_switch(found.name)
             lines.append(f"{found.request_id}: repair failed ({type(exc).__name__})")
 
