@@ -13,7 +13,4 @@ workspace = true
 serde = { workspace = true }
 # `raw_value`: the session module reads a member of a body as its JSON text,
 # so a number of any size and an unknown member cost no parse.
-# `float_roundtrip`: the reader gives the float that is nearest to the text,
-# as Python does. Without it the reader can be one unit in the last place off,
-# and the writer then writes other digits than the text held.
-serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
+serde_json = { workspace = true, features = ["raw_value"] }
