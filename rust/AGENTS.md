@@ -31,7 +31,7 @@ defect that a test finds late.
 | `session` | The session API: contract 02. |
 | `channel` | The channel protocol: contract 03. "The channel module" below has its parts. |
 | `grants` | The grant file, the call body, the approval body, the audit record and the words of a decision: contract 04. |
-| `status` | The status document: contract 05. |
+| `status` | The status document, the fault files and one view for each reader: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
 | `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
@@ -96,10 +96,10 @@ Each rule has its reason. Do not break a rule without a change to this file.
    conversion never sees an invalid value.
    Reason: one conversion holds every check, so no code path can skip a
    check.
-   Exception: the modules `channel` and `grants` use no raw `serde` type.
-   Each one reads a document with a reader of its own. "The channel module"
-   and "Known gaps" give the reasons. The owner decides if the exception of
-   `grants` stays.
+   Exception: the modules `channel`, `grants` and `status` use no raw `serde`
+   type. Each one reads a document with a reader of its own. "The channel
+   module", "The JSON reader of `status`" and "Known gaps" give the reasons.
+   The owner decides if the exception of `grants` stays.
 2. **Give each id, name, path, size, duration and token its own type.** The
    type has a private field and a parsing constructor. Do not implement
    `Default`. Do not derive `Deserialize` directly. Use
@@ -208,7 +208,7 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
-Rule 1 names a raw `serde` type. The `channel` module is one of two
+Rule 1 names a raw `serde` type. The `channel` module is one of three
 exceptions.
 Its raw type is `channel::json::Json`, from a reader of its own. The Python
 host reads a line with `json.loads`, and `serde_json` does not read what
@@ -246,6 +246,47 @@ The writer of `json` makes the bytes of
 `json.dumps(value, separators=(",", ":"), ensure_ascii=False)`. The host
 counts those bytes against the size limit of an event. A float has the text
 that `repr` of Python gives.
+
+## A reader that accepts more than the contract
+
+A Python reader can accept a document that the contract does not permit. The
+module `status` shows what to do:
+
+1. The raw type reads each document. It checks no field.
+2. The valid type refuses each field that the contract does not permit. A
+   writer uses the valid type.
+3. One view for each Python reader takes from the raw type what that reader
+   takes. The port of a reader uses its view, so the port keeps the behavior
+   of the reader.
+4. The differential test holds each view equal to its reader. Where two
+   readers differ, a table in the test names the document, the contract
+   section and what each reader takes.
+
+Reason: a port that refuses a document that the Python reader accepts changes
+what runs on the host. The owner decides each such change. A view keeps the
+change out of the port.
+
+## The JSON reader of `status`
+
+`status` does not read a file with `serde_json`. `status::json` holds a
+reader and a writer of its own, and the raw type of `status` has no `serde`
+derive.
+
+Reason: `vectors/data/status` holds four forms of a JSON text that each
+Python reader accepts and `serde_json` refuses.
+
+1. The words `NaN`, `Infinity` and `-Infinity`.
+2. An integer of more than 64 bits.
+3. A key that an object holds two times.
+4. A nesting of more than 128 levels.
+
+The writer gives the bytes of `json.dumps` of Python. `serde_json` writes a
+float and a character that is not ASCII in another form.
+
+Rule 1 holds in each other part. The reader makes the raw type first, and a
+conversion that can fail makes the valid type. Rule 7 holds too. Only the
+detail of a fault holds a `status::json::Json`, and contract 05 §3.3 makes
+that value opaque.
 
 ## The config of a process
 
@@ -462,8 +503,8 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- Five modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session`, `status` and `manifest`.
+- Four modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session` and `manifest`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
@@ -513,12 +554,12 @@ Rules for the test:
   does not read a grant file or a request body. The Python code takes JSON
   that is not strict, and it reports each issue of a document. `grants::Value`
   is the document. It has no `Deserialize`.
-- The crate has two JSON readers that do what `json.loads` of Python does:
-  `channel::json` and `grants::json`. The two differ in two decisions. The
-  reader of `channel` stops at 9000 levels, and the reader of `grants` stops
-  at 256 levels. The reader of `channel` keeps a lone surrogate in a text,
-  and the reader of `grants` refuses the document. The owner of the crate
-  decides if one reader replaces the two.
+- The crate has three JSON readers that do what `json.loads` of Python does:
+  `channel::json`, `grants::json` and `status::json`. They differ in two
+  decisions. The reader of `channel` stops at 9000 levels, and the readers of
+  `grants` and of `status` stop at 256 levels. The reader of `channel` keeps
+  a lone surrogate in a text, and the other two readers refuse the document.
+  The owner of the crate decides if one reader replaces the three.
 - The types of `grants` accept what the Python code accepts, also where a
   stricter reading of contract 04 is possible. The owner decides each case.
   Four examples:
@@ -626,6 +667,74 @@ Rules for the test:
   does.
 - `channel` has no function that maps a `FailReason` to a turn reason of
   contract 02 §14. The `session` module holds no turn reason yet.
+- These `CONTRACT-QUESTION` comments are open under
+  `crates/creche-contracts/src/status/`:
+  1. `json::DEPTH_MAX`, contract 05 §2. The contract gives no cap on the
+     nesting of a file. The reader stops at 256 levels. The Python reader
+     stops at a depth that depends on the interpreter. A value of 256 levels
+     needs less than 384 KiB of stack.
+  2. `Json::parse_bytes`, contract 05 §2. The contract does not name the
+     encoding of a file. The reader takes UTF-8. The Python reader of the
+     noticeboard also takes UTF-16 and UTF-32.
+  3. `JsonError::LoneSurrogate`, contract 05 §2. The Python reader keeps an
+     escape of one half of a surrogate pair. The reader refuses the file.
+  4. `time::Timestamp`, contract 05 §2.1. The contract names RFC 3339. The
+     Python readers take each text that `datetime.fromisoformat` takes, and
+     three of them read a time with no offset as UTC. The type takes RFC 3339
+     with an offset.
+  5. `document::HostPath`, contract 05 §3.2, §4.1.1 and §6.4. The contract
+     gives no grammar for a host path. The type takes an absolute path with
+     no control character.
+  6. `Sandbox::supervisor_env`, contract 05 §4.1.1. `caregiver` writes an
+     empty path for a row of its ledger that holds no path, in each
+     lifecycle state. The type takes it in each lifecycle state.
+  7. `Credentials::epoch`, contract 05 §6.1. The contract gives no range.
+     The type refuses 0. The Python reader of `attendance` takes 0.
+  8. `Fault::new`, contract 05 §3.3. `caregiver` writes `blocks_turns: false`
+     for `sandbox_start_failed` when another sandbox serves. The type takes
+     that one difference from the table.
+  9. `DocumentParts::kind`, contract 05 §2.1. `caregiver` writes an empty
+     kind for a family with no valid revision. The type takes it.
+  10. `DocumentParts::faults`, contract 05 §2.1. `caregiver` writes a fault
+      for a family in the state `invalid`. The type takes a fault in each
+      state.
+  11. `DocumentParts::credentials`, contract 05 §2.1. `caregiver` writes
+      `null` for a family with no credentials. The type takes it.
+  12. `fault_file::FAULT_FILE_CAP_BYTES`, contract 05 §3.3.1. The contract
+      gives no size cap. The reader has a cap of 1 MiB.
+  13. `ReconcileStep::WriteTimers`, contract 05 §3.4. The contract names
+      eight steps. `caregiver` also writes the step `write_timers`. The type
+      takes it.
+- The valid status document takes these forms. Contract 05 excludes each
+  one. The owner decides each case:
+  1. An empty `supervisor_env` for a sandbox in the state `ready` (§4.1.1
+     rule 4).
+  2. An empty kind with `never_valid: false`, or with a sandbox in
+     `sandboxes` (§2.1 and §3.1).
+  3. A fault in the state `in_sync` or `reconciling` (§2.1).
+  4. The state `degraded` with no fault (§3).
+- Contract 05 gives no grammar for these texts of the status document. Each
+  one is a `String`: `registry_rev`, `applied_rev`, `config_rev`,
+  `validation.rev`, `key_id`, `token_id`, `image`, `spec_hash`, `memory` and
+  the URL of the `pep` block.
+- The valid status document keeps no key that contract 05 does not name. A
+  document from a newer writer loses such a key when a program writes it
+  again.
+- Each view of `status::views` takes what its Python reader takes, and the
+  five Python readers do not agree. The table `DISAGREEMENTS` in
+  `status/python.rs` names each class of such documents, with one or two
+  documents of the class. The owner decides which reading each port keeps.
+- A view of `status` does not refuse a document for these three values. It
+  reads a time with no UTC offset as no time. It reads a time outside the
+  years 1 to 9999 as no time. It reads a number above the range of a float as
+  no number. The document is then stale, or it shows no spend. A unit test
+  covers each value, and no vector holds one.
+- `status::outcome` holds the view of the noticeboard and no valid type.
+  Contract 02 §13.1 owns the outcome record and its writer.
+- `status` holds no code for `rescope_by_fleet` and `drop_superseded` of
+  `caregiver.faults`. They are rules of the reconciler, not of a file.
+- No vector covers the size cap of a reader of contract 05. A unit test
+  covers each cap.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/config/`:
   1. `LanAddress`. No contract gives the LAN address of the site file a

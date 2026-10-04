@@ -33,7 +33,7 @@ release replaces that surface.
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
 | `data/channel/` | the channel protocol: `parse`, `frame`, `build` |
 | `data/chaperone/` | the grant file and its writer, the call body, the approval body, the two logs, the reasons, the verb catalog |
-| `data/status/` | the status document, one file per reader |
+| `data/status/` | the status document, one file per reader. The writer of the status document, the fault files and the outcome record |
 | `data/config/` | the configs: the site file, the roster, `runtime.json`, `creds.json`, the env file of the playpen and three env readers |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 

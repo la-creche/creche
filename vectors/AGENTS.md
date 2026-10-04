@@ -42,15 +42,22 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
 | `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
+| `surfaces/status_files.py` | the writer of `status.json`, the fault files and the outcome record: `status.write`, `status.fault_file.<package>`, `status.outcome.noticeboard` |
 | `surfaces/config.py` | the site file, the roster, the mount files and three env readers: `config.<name>` |
 
 ## Known gaps
 
 - An input that makes the Python code raise has no vector until its fix
   merges. Rule 5 states why.
-- No vector covers the writer of the status document, or a fault file, or
-  an outcome file of contract 05. The five readers of `status.json` have
-  vectors.
+- `status.write` builds the `reconcile` block and the `spend` block by hand.
+  `caregiver` builds them in two private functions of `caregiver.reconcile`.
+  The generator copies the key order of those functions.
+- `status.fault_file.attendance` gives `attendance.faults` a clock with
+  `unittest.mock`. That writer has no parameter for a clock.
+- No vector covers the writer of an outcome record, `attendance.outcomes`.
+  `status.outcome.noticeboard` reads records that this writer made.
+- No vector covers `rescope_by_fleet` and `drop_superseded` of
+  `caregiver.faults`. They change a fault after `read_fault_file` reads it.
 - No vector covers contract 06, the component manifest and the release
   request file.
 - No vector covers `server.yaml`, contract 01b.
@@ -73,7 +80,7 @@ directory is not a workspace package, so a change here does not change
   surfaces covers the body cap of the chaperone. The caller applies each cap
   before it calls the entry point. `chaperone.unidentified_line` holds two
   vectors of a body over the cap. No vector covers the size cap of a status
-  reader.
+  reader, of the fault file reader or of the outcome reader.
 - Five patterns have no public entry point: `_ENV_NAME_RE` in the four
   `verify.py` modules, `_LOCK_PATH` and `_ARG_NAME` in
   `agent_family.serverrules`, `_REPO_NAME` in `handover.site` and
