@@ -289,6 +289,16 @@ def _handler_for(store: KeyStore) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+class Server(ThreadingHTTPServer):
+    """The listener. Its queue holds each caller of a pass with many families.
+
+    The default queue of 5 resets a connection when more callers arrive at
+    one time.
+    """
+
+    request_queue_size = 128
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         sys.stderr.write("usage: standin_litellm.py <state directory> <port>\n")
@@ -296,7 +306,7 @@ def main(argv: list[str]) -> int:
         return 64
 
     store = KeyStore(Path(argv[0]))
-    server = ThreadingHTTPServer((LOOPBACK, int(argv[1])), _handler_for(store))
+    server = Server((LOOPBACK, int(argv[1])), _handler_for(store))
     server.daemon_threads = True
     server.serve_forever()
 
