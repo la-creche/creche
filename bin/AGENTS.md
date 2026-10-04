@@ -1,6 +1,6 @@
 # bin
 
-Every script that runs on the host, plus the two shell libraries and the
+Every script that runs on the host, plus the three shell libraries and the
 tests behind them. One house style across every file. The root `AGENTS.md`
 applies here too.
 
