@@ -187,6 +187,8 @@ it on a development machine.
 56. Send a refused host line that names a turn to `SessionPool.refuseTurn`.
     Only the pool knows the `turn_seq` of that turn. `turn_seq` 0 is only for
     a line with no session and no turn.
+57. Send the code of a launcher error, not its text. Node writes the refused
+    value in that text, and the environment of pi holds the credentials.
 
 ## Environment the playpen expects
 
