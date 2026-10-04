@@ -414,9 +414,8 @@ class _RosterLoader(yaml.SafeLoader):
     passes a bound. An alias with no merge key copies nothing: each node
     has one value.
 
-    A `<<` value with no pair counts as one pair. It copies nothing, and
-    the loader still does work for it, so a count of zero leaves the time
-    of a read with no bound. The Rust reader counts zero there."""
+    A `<<` value with no pair counts as one pair. The Rust reader of a
+    component manifest counts no pair for it."""
 
     def __init__(self, stream: str) -> None:
         super().__init__(stream)
