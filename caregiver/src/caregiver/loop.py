@@ -64,7 +64,7 @@ from .delete import delete_family
 from .mcp_release import McpPaths
 from .mcp_wire import McpReport, mcp_pass
 from .reconcile import Actors, SpendRead, reconcile_family
-from .rotate import settle
+from .rotate import settle, valid_family
 from .status import restamp_status
 from .timers import remove_timers
 
@@ -906,8 +906,14 @@ def _settle_rotation(config: LoopConfig, registry: Registry, name: str) -> None:
     one-shot verb cannot hold and this loop can.
 
     It runs BEFORE the pass, so the pass's own `write_grants` and this
-    never disagree about which digests the file should carry."""
-    family = registry.families.get(name)
+    never disagree about which digests the file should carry.
+
+    CONTRACT-QUESTION: contract 05 §6.3 step 5 ends the overlap when its
+    grace runs out, and §3.1 touches nothing while a file is invalid. This
+    takes §3.1: no settle for a family whose report has an error, so the
+    previous token stays accepted until the file is valid again. Ending
+    the overlap on time needs a write that changes the digests alone."""
+    family = valid_family(registry, name)
     if family is None:
         return
 

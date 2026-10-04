@@ -39,9 +39,9 @@ import logging
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Final
+from typing import Final, NewType
 
-from agent_family import FamilyFile, Index
+from agent_family import FamilyFile, Index, Registry
 
 from . import paths, steps
 from .clock import now_rfc3339, seconds_from_now
@@ -55,6 +55,11 @@ log = logging.getLogger("caregiver.rotate")
 #: Contract 05 §6.3 step 5. Above the thin job limit of 120 s on purpose,
 #: so a job started under the old epoch finishes under it.
 ROTATION_GRACE_S: Final = 300
+
+#: A family file whose validation report is ok. `valid_family` is the only
+#: maker. `rotate` and `settle` write the grant file the chaperone enforces,
+#: so they take this type and never a file that only parsed.
+ValidFamily = NewType("ValidFamily", FamilyFile)
 
 
 class Scope(StrEnum):
@@ -110,9 +115,22 @@ class RotateOutcome:
     webhooks: tuple[WebhookToken, ...] = ()
 
 
+def valid_family(registry: Registry, name: str) -> ValidFamily | None:
+    """The family `name`, when its report has no error. `registry.families`
+    holds every file that PARSED, and one the validator refused is among
+    them. An ok report also proves `name` is the directory's own name, so
+    it is safe as a path component."""
+    family = registry.families.get(name)
+    report = registry.reports.get(name)
+    if family is None or report is None or not report.ok:
+        return None
+
+    return ValidFamily(family)
+
+
 def rotate(
     request: RotateRequest,
-    family: FamilyFile,
+    family: ValidFamily,
     index: Index,
     *,
     state_root: Path,
@@ -160,7 +178,7 @@ def rotate(
     )
 
 
-def settle(family: FamilyFile, index: Index, *, state_root: Path) -> bool:
+def settle(family: ValidFamily, index: Index, *, state_root: Path) -> bool:
     """Drop an overlap whose grace has run out (contract 05 §6.3 step 5).
 
     The watch loop calls this: a grace period is a fact over time, and a
