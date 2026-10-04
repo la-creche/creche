@@ -279,6 +279,10 @@ mod tests {
     /// The number of the error `EINVAL`, on Linux and on macOS.
     const EINVAL: i32 = 22;
 
+    /// The number of SIGKILL, on Linux and on macOS. No process takes that
+    /// signal.
+    const SIGKILL: i32 = 9;
+
     #[test]
     fn an_error_names_the_answer_of_the_system() {
         let error = SignalError {
@@ -324,7 +328,7 @@ mod tests {
     }
 
     // A test of this file must not install a handler: the handler stays in
-    // the test program and takes the signal from each other test. The two
+    // the test program and takes the signal from each other test. The three
     // tests below get an error before the first handler. `tests/signals.rs`
     // holds each test that installs one, in a child.
 
@@ -369,5 +373,23 @@ mod tests {
             );
             assert!(!shutdown.is_cancelled());
         }
+    }
+
+    #[test]
+    fn a_refused_handler_gives_the_kind_and_the_text_of_its_error() {
+        // `tokio` refuses SIGKILL before it asks the operating system, so
+        // the call installs nothing.
+        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+        let error = runtime
+            .block_on(async { listen(SignalKind::from_raw(SIGKILL)) })
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            SignalError {
+                kind: io::ErrorKind::Other,
+                os_text: String::from("Refusing to register signal 9"),
+            }
+        );
     }
 }
