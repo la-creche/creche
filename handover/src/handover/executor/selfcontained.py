@@ -216,9 +216,10 @@ LINK_OUTSIDE: Final = "is a link to a path outside the tree"
 #: cannot tell a path that a program opens from a path that it only prints:
 #: code that a build script generates carries its own path into a panic
 #: message. A build that makes such a program must remap the path
-#: (`--remap-path-prefix`). The looser reading costs the case this check is
-#: for: a program that reads a template out of the work tree passes its
-#: verify hook, because the work tree is still on disk.
+#: (`--remap-path-prefix`), and the path holds the request id, so a fixed
+#: cargo configuration cannot name it. The looser reading costs the case
+#: this check is for: a program that reads a template out of the work tree
+#: passes its verify hook, because the work tree is still on disk.
 NAMES_WORK_TREE: Final = "holds the path of the fetched work tree"
 SHARED_FILE: Final = "is a file with a second name"
 UNREADABLE_FILE: Final = "is a file root cannot read"

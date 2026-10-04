@@ -159,7 +159,9 @@ The console script is `handover`. The verify hook and the operator's
 1. A `kind: binary` component is a tree of compiled programs. Each program
    is at `<install.to>/bin/<name>`, the layout of a venv.
 2. Root builds it on the host from the manifest's own `build` argv, as it
-   builds a venv: the same user, the same environment and the same limit.
+   builds a venv. The user, the environment and the time limit are the
+   same. Every `build` argv carries `--locked`, and `cargo install` carries
+   `--no-track`.
 3. The executor sets `CARGO_INSTALL_ROOT` to the staged tree. No venv step
    runs: no `uv venv --relocatable` and no walk of `site-packages`.
 4. The unit rules of a venv apply. The unit must start a program inside
@@ -169,7 +171,8 @@ The console script is `handover`. The verify hook and the operator's
 6. No link in the staged tree has an absolute target or leaves the tree. No
    file holds the path of the fetched work tree or has a second name.
 7. `catalog.BINARY_BUILD_FILES` move every binary component and no other
-   kind. Its input digest covers those files and not `uv.lock`.
+   kind. The input digest of a binary component covers those files and not
+   `uv.lock`.
 8. Change a component's kind in its catalog row and in its manifest in one
    commit.
 9. Release `handover` before the first manifest says `kind: binary`. An
@@ -278,7 +281,8 @@ that wants a refusal changes one field.
 - A binary tree is refused when a file holds the path of the fetched work
   tree. The walk cannot tell a path that a program opens from a path that
   it only prints. Code that a build script generates can carry its own path
-  into a panic message. Such a build must remap the path
+  into a panic message. Such a build must remap the path. That path holds
+  the request id, so a fixed cargo configuration cannot name it
   (`executor/selfcontained.py`).
 - A binary build runs in the root of the fetched tree. A `rustup` proxy
   reads a toolchain file from the working directory and its parents, so it

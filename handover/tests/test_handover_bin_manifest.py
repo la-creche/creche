@@ -122,3 +122,42 @@ def test_the_fixture_is_not_a_declaration() -> None:
     found = discover([REPO_ROOT])
 
     assert found.manifests()["noticeboard"].kind is Kind.VENV
+
+
+#: The flag that makes cargo build what the lock file pins, and refuse when
+#: the lock file is not up to date.
+LOCKED = "--locked"
+
+
+def _unlocked(manifest: ComponentManifest) -> list[str]:
+    """Each build argv of a binary component that does not carry `LOCKED`."""
+    if manifest.kind is not Kind.BINARY:
+        return []
+
+    return [" ".join(argv) for argv in manifest.build if LOCKED not in argv]
+
+
+def test_every_binary_component_builds_what_the_lock_file_pins() -> None:
+    """A venv build carries `--frozen`, so root installs what `uv.lock`
+    pins and resolves nothing. `--locked` is the same rule for cargo.
+    Without it a build may resolve a newer crate than the one a reviewer
+    read, and root runs that crate's build script.
+
+    No fence after the build can see this fault, so the manifests of this
+    repository are held to the flag here. None is binary today.
+    """
+    for name, manifest in discover([REPO_ROOT]).manifests().items():
+        if manifest.kind is Kind.BINARY:
+            assert manifest.build, f"{name}: a binary component with no build"
+
+        assert _unlocked(manifest) == [], name
+
+
+def test_the_fixture_build_is_locked_and_an_unlocked_one_is_seen() -> None:
+    """The check above passes over an empty set today. This shows that it
+    reads a binary manifest, and that it finds the missing flag."""
+    locked = _parse(_fixture())
+    unlocked = _parse(_fixture().replace(f'"{LOCKED}", ', ""))
+
+    assert _unlocked(locked) == []
+    assert len(_unlocked(unlocked)) == 1
