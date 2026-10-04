@@ -21,6 +21,7 @@ defect that a test finds late.
 | Crate | What it holds |
 |---|---|
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
+| `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 
 | Module of `creche-contracts` | What it holds |
 |---|---|
@@ -534,8 +535,14 @@ Rules for the test:
 - CI does not run `cargo deny`. No check reads the advisories or the
   licenses of the locked crates.
 - No release uses Rust code.
-- Two modules of `creche-contracts` hold a doc comment and no type: `family`
-  and `server`.
+- `family` and `server` use the id types of `ids`. They refuse three texts
+  that the Python package `agent_family` accepts. Each vector with such a
+  text is a row of `DEVIATIONS` in `crates/agent-family/tests/vectors.rs`.
+  1. A tool name of more than 64 bytes.
+  2. The name of an environment variable of more than 64 bytes.
+  3. A package version with `+`, with `-` or of more than 64 bytes.
+- `crates/agent-family/AGENTS.md` lists the `CONTRACT-QUESTION` comments
+  and the known gaps of the family file and of the server file.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
