@@ -11,16 +11,28 @@ from pathlib import Path
 import pytest
 from agent_family import FamilyState, load_registry
 from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE, main
-from caregiver.credentials import read_creds
+from caregiver.credentials import read_creds, token_sha256
 from caregiver.driver import FakeDriver
-from caregiver.litellm_keys import FakeLiteLLMKeys
+from caregiver.litellm_keys import FakeLiteLLMKeys, key_alias
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import KIND_MOVED, REFUSED_TOOLS, expire_overlap, write_registry
+from caregiver_helpers import (
+    KIND_MOVED,
+    REFUSED_TOOLS,
+    accepted_digests,
+    current_digest,
+    grants_alone,
+    write_registry,
+)
 
 from caregiver import paths
 
 IMAGE: str = "sha256:deadbeef"
+
+#: What the default `chat` family asks LiteLLM for. An invalid or refused
+#: file in these tests asks for `OTHER_MODEL`, which must reach no key.
+APPLIED_KEY: tuple[list[str], float] = (["agent-router"], 15)
+OTHER_MODEL: dict[str, object] = {"router": "agent-router", "budget_usd_per_day": 99}
 
 
 class Bench:
@@ -217,35 +229,83 @@ def test_rotating_an_unknown_family_is_a_usage_mistake(bench: Bench) -> None:
     )
 
 
-def test_rotating_an_invalid_family_writes_nothing(bench: Bench) -> None:
-    """A file the validator refused still parses. Its tools must never reach
-    the grant file, and its budget must never reach a new key."""
+def test_rotating_an_invalid_family_keeps_its_grants(bench: Bench) -> None:
+    """A file the validator refused still parses. A rotation on suspicion
+    must not wait for a valid file, so it rotates the credentials of the
+    applied definition: no tool of the refused file reaches the grant file,
+    and its budget reaches no key."""
     bench.reconcile("--write")
-    expire_overlap(bench.state_root)
-    creds = paths.creds_path(bench.state_root, "chat").read_bytes()
-    grant = paths.grant_path(bench.state_root, "chat").read_bytes()
+    grants = grants_alone(bench.state_root)
+    old = current_digest(bench.state_root)
 
-    write_registry(bench.registry_root, tools=REFUSED_TOOLS)
+    write_registry(bench.registry_root, tools=REFUSED_TOOLS, model=OTHER_MODEL)
 
-    assert bench.rotate("--write") == EXIT_USAGE
-    assert paths.creds_path(bench.state_root, "chat").read_bytes() == creds
-    assert paths.grant_path(bench.state_root, "chat").read_bytes() == grant
-    assert bench.litellm.deleted == []
+    assert bench.rotate("--write") == EXIT_OK
+    after = read_creds(paths.creds_path(bench.state_root, "chat"))
+    assert after is not None
+    assert after.epoch == 2
+    assert grants_alone(bench.state_root) == grants
+    assert accepted_digests(bench.state_root) == [token_sha256(after.pep_token), old]
+    assert bench.litellm.budgets[key_alias("chat")] == APPLIED_KEY
 
 
-def test_rotating_a_refused_kind_move_writes_nothing(bench: Bench) -> None:
+def test_rotating_a_refused_kind_move_keeps_its_grants(bench: Bench) -> None:
     """A file whose `kind` moved has an ok report, and the reconciler
     refuses it against the applied snapshot. Its grants must never reach
     the grant file, and its budget must never reach a new key."""
     bench.reconcile("--write")
-    expire_overlap(bench.state_root)
-    creds = paths.creds_path(bench.state_root, "chat").read_bytes()
-    grant = paths.grant_path(bench.state_root, "chat").read_bytes()
+    grants = grants_alone(bench.state_root)
 
-    write_registry(bench.registry_root, **KIND_MOVED)
+    write_registry(bench.registry_root, **KIND_MOVED, model=OTHER_MODEL)
 
     assert load_registry(bench.registry_root).reports["chat"].ok
+    assert bench.rotate("--write") == EXIT_OK
+    assert grants_alone(bench.state_root) == grants
+    assert bench.litellm.budgets[key_alias("chat")] == APPLIED_KEY
+
+
+def test_the_plan_says_when_the_grants_stay(
+    bench: Bench, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bench.reconcile("--write")
+    write_registry(bench.registry_root, tools=REFUSED_TOOLS)
+    capsys.readouterr()
+
+    assert bench.rotate() == EXIT_OK
+    assert "the grants stay as applied" in capsys.readouterr().out
+
+
+def test_rotating_an_invalid_family_that_was_never_applied_is_a_usage_mistake(
+    bench: Bench,
+) -> None:
+    """No snapshot means no definition serves, so there is nothing whose
+    credentials a rotation could move."""
+    write_registry(bench.registry_root, tools=REFUSED_TOOLS)
+
     assert bench.rotate("--write") == EXIT_USAGE
-    assert paths.creds_path(bench.state_root, "chat").read_bytes() == creds
-    assert paths.grant_path(bench.state_root, "chat").read_bytes() == grant
     assert bench.litellm.deleted == []
+
+
+def test_a_kept_grant_file_that_is_gone_refuses_a_token_rotation(bench: Bench) -> None:
+    """The digests have no file to go into. The refusal comes before the
+    old key is deleted, so nothing was rotated and nothing was lost."""
+    bench.reconcile("--write")
+    write_registry(bench.registry_root, tools=REFUSED_TOOLS)
+    paths.grant_path(bench.state_root, "chat").unlink()
+
+    assert bench.rotate("--write") == EXIT_PROBLEM
+    after = read_creds(paths.creds_path(bench.state_root, "chat"))
+    assert after is not None
+    assert after.epoch == 1
+    assert bench.litellm.deleted == []
+
+
+def test_a_key_rotation_of_an_invalid_family_needs_no_grant_file(bench: Bench) -> None:
+    """The key is the half a leak makes urgent, and it has no digest."""
+    bench.reconcile("--write")
+    write_registry(bench.registry_root, tools=REFUSED_TOOLS)
+    paths.grant_path(bench.state_root, "chat").unlink()
+
+    assert bench.rotate("--scope", "key", "--write") == EXIT_OK
+    assert bench.litellm.deleted == [key_alias("chat")]
+    assert not paths.grant_path(bench.state_root, "chat").exists()

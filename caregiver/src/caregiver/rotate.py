@@ -31,11 +31,22 @@ holds AND `/key/delete` accepts `{"keys": ["<value>"]}` so the old one can
 be named exactly, or `/key/update` can move `key_alias` so the new key can
 be minted under a suffixed alias and renamed back. One of those two, on
 the host's own image. Until then `mode: graceful` and `mode: immediate`
-run the same key sequence and `RotateOutcome.note` says so."""
+run the same key sequence and `RotateOutcome.note` says so.
+
+## A family file that cannot be applied
+
+A rotation on suspicion must not wait for a valid file, and an overlap
+must end when its grace does. So the credentials move without the file.
+`settle` and `rotate_serving` write the digests into the grant file the
+last pass wrote, and the key takes its router and budget from the applied
+snapshot. Neither renders a grant: the snapshot was valid against the
+registry of its own pass, and `all` expands against today's server files,
+so a grant rendered from it is one no validation approved."""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -59,9 +70,15 @@ ROTATION_GRACE_S: Final = 300
 
 #: A family file the reconciler would apply: its validation report is ok,
 #: and the applied snapshot does not refuse the edit. `valid_family` is the
-#: only maker. `rotate` and `settle` write the grant file the chaperone
-#: enforces, so they take this type and never a file that only parsed.
+#: only maker. `rotate` renders the grant file the chaperone enforces, so
+#: it takes this type and never a file that only parsed.
 ValidFamily = NewType("ValidFamily", FamilyFile)
+
+#: The definition that serves while the registry file cannot be applied:
+#: the applied snapshot. `serving_family` is the only maker.
+#: `rotate_serving` takes the key's router and budget from it and renders
+#: no grant from it.
+ServingFamily = NewType("ServingFamily", FamilyFile)
 
 
 class Scope(StrEnum):
@@ -141,6 +158,24 @@ def valid_family(registry: Registry, name: str, *, state_root: Path) -> ValidFam
     return ValidFamily(family)
 
 
+def serving_family(registry: Registry, name: str, *, state_root: Path) -> ServingFamily | None:
+    """The definition that serves `name`: the applied snapshot. It is what
+    a rotation has left when `valid_family` answers `None`.
+
+    `None` for a name the registry does not hold, which is not a path
+    component to trust. `None` when no pass ever succeeded, because then
+    nothing serves. `None` when the snapshot carries another name: its
+    `name` becomes a path and a key alias."""
+    if name not in registry.reports:
+        return None
+
+    applied = read_applied(state_root, name)
+    if applied is None or applied.family.name != name:
+        return None
+
+    return ServingFamily(applied.family)
+
+
 def rotate(
     request: RotateRequest,
     family: ValidFamily,
@@ -151,6 +186,61 @@ def rotate(
     grace_s: int = ROTATION_GRACE_S,
 ) -> RotateOutcome:
     """Mint, write, publish. The caller republishes the status document.
+    The grant file is rendered from the family file, new digests and all."""
+
+    def land(creds: Credentials) -> None:
+        steps.write_grants(family, index, state_root, creds)
+
+    return _rotate(request, family, land, state_root=state_root, litellm=litellm, grace_s=grace_s)
+
+
+def rotate_serving(
+    request: RotateRequest,
+    family: ServingFamily,
+    *,
+    state_root: Path,
+    litellm: LiteLLMKeys,
+    grace_s: int = ROTATION_GRACE_S,
+) -> RotateOutcome:
+    """The same rotation for a family whose file cannot be applied: the
+    credentials move, and no grant does.
+
+    The key takes its router and budget from the applied definition, which
+    is what the live key holds. The token's digests go into the grant file
+    the last pass wrote. A rotation that moves no token writes no grant
+    file at all.
+
+    The grant file is read BEFORE the key half, so a token with no file
+    for its digest is refused while nothing has been deleted."""
+    moves_token = _does_token(request)
+    if moves_token and not steps.has_grants(family.name, state_root):
+        raise RotateError(
+            f"{family.name} has no grant file to keep, so a new token's digest has no file; "
+            "scope=key needs none"
+        )
+
+    def land(creds: Credentials) -> None:
+        if moves_token and not steps.write_digests(family.name, state_root, creds):
+            log.error(
+                "%s: the grant file went away during the rotation, so the new token's "
+                "digest is in no file",
+                family.name,
+            )
+
+    return _rotate(request, family, land, state_root=state_root, litellm=litellm, grace_s=grace_s)
+
+
+def _rotate(
+    request: RotateRequest,
+    family: FamilyFile,
+    land: Callable[[Credentials], None],
+    *,
+    state_root: Path,
+    litellm: LiteLLMKeys,
+    grace_s: int,
+) -> RotateOutcome:
+    """Both rotations. `land` puts the new credentials' digests into the
+    grant file, and is the one step they do differently.
 
     Order: the key first, because it is the half that can fail. A token
     rotation cannot fail — it is one `secrets.token_bytes` call — so doing
@@ -165,7 +255,7 @@ def rotate(
     token = mint_token() if _does_token(request) else None
     fresh = _next(existing, request, key, token, grace_s)
     write_creds(creds_path, fresh)
-    steps.write_grants(family, index, state_root, fresh)
+    land(fresh)
 
     # Contract 05 §6.4: a webhook bearer is a token, so `scope: token` and
     # `scope: both` move it. It has no overlap of its own — one file holds
@@ -191,12 +281,21 @@ def rotate(
     )
 
 
-def settle(family: ValidFamily, index: Index, *, state_root: Path) -> bool:
+def settle(name: str, *, state_root: Path) -> bool:
     """Drop an overlap whose grace has run out (contract 05 §6.3 step 5).
 
     The watch loop calls this: a grace period is a fact over time, and a
-    one-shot verb cannot hold one. Answers whether anything changed."""
-    creds_path = paths.creds_path(state_root, family.name)
+    one-shot verb cannot hold one. Answers whether anything changed.
+
+    It moves the digests alone, so it takes no family definition and a
+    file that cannot be applied does not hold the previous token open.
+    `name` is a directory of the registry, never a field of a file.
+
+    The grant file first, then `creds.json`. A settle that could not drop
+    the digest must not record that it did, or no later settle would try.
+    With no grant file to keep there is nothing to settle yet: the pass
+    that writes one lists only the tokens still accepted."""
+    creds_path = paths.creds_path(state_root, name)
     existing = read_creds(creds_path)
     if existing is None or existing.previous_expires_at is None:
         return False
@@ -205,9 +304,11 @@ def settle(family: ValidFamily, index: Index, *, state_root: Path) -> bool:
         return False
 
     settled = replace(existing, previous_pep_token=None, previous_expires_at=None)
+    if not steps.write_digests(name, state_root, settled):
+        return False
+
     write_creds(creds_path, settled)
-    steps.write_grants(family, index, state_root, settled)
-    log.info("%s: rotation settled, the previous token is no longer accepted", family.name)
+    log.info("%s: rotation settled, the previous token is no longer accepted", name)
     return True
 
 

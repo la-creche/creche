@@ -7,13 +7,15 @@ in a module with a unique basename and are imported by name."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import yaml
 from agent_family import FamilyFile, parse_family
-from caregiver.credentials import read_creds, write_creds
+from caregiver.credentials import read_creds, token_sha256, write_creds
+from caregiver.grants import UNCOMPARED
 
 from caregiver import paths
 
@@ -36,6 +38,9 @@ KIND_MOVED: dict[str, object] = {"kind": "thin", "max_inflight_delegations": 7}
 
 #: Before any clock this suite runs under.
 LONG_AGO: str = "2020-01-01T00:00:00Z"
+
+#: The token of the epoch before a rotation, as `expire_overlap` leaves it.
+OLD_TOKEN: str = "OLDTOKEN"
 
 
 def family_yaml(**overrides: object) -> str:
@@ -71,12 +76,38 @@ def write_registry(root: Path, **overrides: object) -> Path:
 
 
 def expire_overlap(state_root: Path, family: str = "chat") -> None:
-    """`creds.json` as a graceful rotation leaves it once the grace has run
-    out: a previous token, and an overlap that is over. The next `settle`
-    has a write to make."""
+    """`creds.json` and the grant file as a graceful rotation leaves them
+    once the grace has run out: a previous token whose overlap is over, and
+    a grant file that still accepts it. The next `settle` has a write to
+    make."""
     path = paths.creds_path(state_root, family)
     creds = read_creds(path)
     if creds is None:
         raise AssertionError(f"{family} has no credentials to expire")
 
-    write_creds(path, replace(creds, previous_pep_token="OLDTOKEN", previous_expires_at=LONG_AGO))
+    write_creds(path, replace(creds, previous_pep_token=OLD_TOKEN, previous_expires_at=LONG_AGO))
+    grant = paths.grant_path(state_root, family)
+    body = json.loads(grant.read_text(encoding="utf-8"))
+    body["token_sha256"] = [token_sha256(creds.pep_token), token_sha256(OLD_TOKEN)]
+    grant.write_text(json.dumps(body), encoding="utf-8")
+
+
+def accepted_digests(state_root: Path, family: str = "chat") -> list[str]:
+    """Every token digest the chaperone accepts for this family."""
+    body = json.loads(paths.grant_path(state_root, family).read_text(encoding="utf-8"))
+    return list(body["token_sha256"])
+
+
+def grants_alone(state_root: Path, family: str = "chat") -> dict[str, Any]:
+    """The grant file with `rev` and the digests left out: what the family
+    may do, and nothing about which token proves it."""
+    body = json.loads(paths.grant_path(state_root, family).read_text(encoding="utf-8"))
+    return {key: value for key, value in body.items() if key not in UNCOMPARED}
+
+
+def current_digest(state_root: Path, family: str = "chat") -> str:
+    creds = read_creds(paths.creds_path(state_root, family))
+    if creds is None:
+        raise AssertionError(f"{family} has no credentials")
+
+    return token_sha256(creds.pep_token)
