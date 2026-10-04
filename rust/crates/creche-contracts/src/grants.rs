@@ -12,7 +12,7 @@
 //!
 //! Each reader here does what the Python code does with the same bytes, and
 //! each writer writes the same bytes. `vectors/data/chaperone` records the
-//! Python behavior.
+//! Python behavior, and the test in `python.rs` walks each vector.
 //!
 //! The readers do not use `serde_json`. The Python code reads JSON that is not
 //! strict, and it reports each issue of a document, not only the first.
@@ -117,6 +117,9 @@ mod decision;
 mod file;
 mod issue;
 mod json;
+
+#[cfg(test)]
+mod python;
 
 pub use audit::{
     AUDIT_TEXT_MAX_CHARS, ArgsDigest, AuditAction, AuditRecord, AuditTime, AuditTimeError, Claimed,
