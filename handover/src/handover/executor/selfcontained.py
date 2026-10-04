@@ -162,7 +162,14 @@ def _inside(root: Path, site: Path, line: str) -> bool:
     does too, and then asks whether the result is still under the tree."""
     try:
         candidate = (site / line.rstrip()).resolve()
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
+        # Python 3.12 raises `RuntimeError` for a link loop, and it is no
+        # `OSError`.
+        return False
+
+    # Python 3.13 raises nothing for a loop. It gives back the link at
+    # which it stopped, and a path that resolved in full is never a link.
+    if candidate.is_symlink():
         return False
 
     return candidate == root or root in candidate.parents

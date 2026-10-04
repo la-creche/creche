@@ -22,8 +22,8 @@ from pathlib import Path
 import pytest
 from handover.catalog import Kind
 from handover.errors import Refusal, RefusalCode
-from handover.executor.install import Installer, paths_of
-from handover.executor.selfcontained import check_tree, escapes
+from handover.executor.install import Installer, StepFailed, paths_of
+from handover.executor.selfcontained import OUTSIDE, check_tree, escapes
 from handover.manifest import ComponentManifest, parse_manifest
 from handover_executor_fixtures import FakeRun, fake_host, git_host_answers
 from handover_fixtures import manifest_text
@@ -95,6 +95,40 @@ def test_a_pth_line_inside_the_tree_is_allowed(tmp_path: Path) -> None:
     """A relative line that stays inside is what a plain wheel may write."""
     tree = _tree(tmp_path)
     (_site(tree) / "inside.pth").write_text("./extra\n", encoding="utf-8")
+
+    assert escapes(tree) == ()
+
+
+def test_a_pth_line_that_names_a_link_loop_is_found(tmp_path: Path) -> None:
+    """Two links name each other. Python 3.12 raises `RuntimeError` when
+    it resolves one, and that error is no `OSError`. Python 3.13 raises
+    nothing and gives back the link at which it stopped. Each version
+    reports the same fault: a path that root cannot resolve is a path that
+    root cannot call inside the tree."""
+    tree = _tree(tmp_path)
+    (_site(tree) / "this").symlink_to("that")
+    (_site(tree) / "that").symlink_to("this")
+    (_site(tree) / "loop.pth").write_text("this\n", encoding="utf-8")
+
+    assert escapes(tree) == (f"loop.pth {OUTSIDE}: this",)
+
+
+def test_a_pth_line_that_names_a_link_to_itself_is_found(tmp_path: Path) -> None:
+    tree = _tree(tmp_path)
+    (_site(tree) / "self").symlink_to("self")
+    (_site(tree) / "loop.pth").write_text("self\n", encoding="utf-8")
+
+    assert escapes(tree) == (f"loop.pth {OUTSIDE}: self",)
+
+
+def test_a_pth_line_through_a_link_inside_the_tree_stays_allowed(tmp_path: Path) -> None:
+    """The loop test must not catch a link that resolves, or a name that
+    is not there. Both stay inside the tree."""
+    tree = _tree(tmp_path)
+    (_site(tree) / "extra").mkdir()
+    (_site(tree) / "linked").symlink_to("extra")
+    (_site(tree) / "later").symlink_to("not-built")
+    (_site(tree) / "inside.pth").write_text("linked\nlater\nabsent\n", encoding="utf-8")
 
     assert escapes(tree) == ()
 
@@ -227,6 +261,40 @@ def test_a_refused_build_swaps_nothing(tmp_path: Path) -> None:
         _build(tmp_path, "/opt/creche/chaperone/src\n")
 
     assert (live / "bin" / "marker").is_file()
+
+
+def test_a_staged_hook_that_is_a_link_loop_stops_the_stage(tmp_path: Path) -> None:
+    """The check of the staged hook resolves it. Python 3.12 raised
+    `RuntimeError` there for a link in a loop. Each version now gives the
+    answer of a hook that is not there."""
+    manifest = _manifest(tmp_path)
+    paths = paths_of(manifest, (tmp_path / "components",))
+
+    def make(_: object) -> None:
+        hook = _tree(paths.new.parent, paths.new.name) / "bin" / "chaperone-verify"
+        hook.unlink()
+        hook.symlink_to(hook.name)
+
+    run = FakeRun(answers=git_host_answers(), hooks={"sync": make})
+    source = tmp_path / "work" / "chaperone"
+    source.mkdir(parents=True)
+
+    with pytest.raises(StepFailed, match="the staged verify hook is missing or escapes"):
+        Installer(fake_host(tmp_path, run)).build(manifest, source, paths)
+
+
+def test_a_carried_unit_that_is_a_link_loop_is_no_unit(tmp_path: Path) -> None:
+    """The fetched tree holds a link to itself at the name of the unit
+    file. It is no file, so the release carries no unit and stages none."""
+    manifest = _manifest(tmp_path, **{"unit: null": "unit: creche-chaperone.service"})
+    source = tmp_path / "work" / "chaperone"
+    (source / "systemd").mkdir(parents=True)
+    (source / "systemd" / "creche-chaperone.service").symlink_to("creche-chaperone.service")
+    staged = _tree(tmp_path / "components")
+
+    Installer(fake_host(tmp_path, FakeRun())).stage_unit(manifest, source, staged)
+
+    assert not (staged / "systemd").exists()
 
 
 def test_a_self_contained_staged_tree_builds(tmp_path: Path) -> None:
