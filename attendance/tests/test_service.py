@@ -13,6 +13,7 @@ import pytest
 from attendance.auth import Principal
 from attendance.config import Config
 from attendance.errors import ApiError, ErrorCode, TurnReason
+from attendance.family_status import StatusReader
 from attendance.faults import FaultCode
 from attendance.models import Holder, JournalLine, LineKind, OwuiRefs, Usage
 from attendance.paths import fault_file, journal_file
@@ -199,6 +200,22 @@ async def test_a_session_takes_no_turn_once_the_kind_is_gone(tmp_path: Path) -> 
 
     assert caught.value.code is ErrorCode.FORBIDDEN
     assert harness.kinds().count(LineKind.TURN_STARTED) == 0
+    await harness.stop()
+
+
+async def test_no_channel_opens_for_a_family_of_no_known_kind(tmp_path: Path) -> None:
+    """A channel takes the kind of its family. Each caller checks the kind
+    first, and the place that makes the channel checks it again."""
+    harness = await build(tmp_path, kind="robot")
+    status = StatusReader(harness.config.state_root).require(FAMILY)
+
+    with pytest.raises(ApiError) as caught:
+        await harness.service._link_for(FAMILY, status, SANDBOX)
+
+    assert caught.value.code is ErrorCode.FORBIDDEN
+    assert caught.value.detail == {"kind": None}
+    assert harness.service.link(SANDBOX) is None
+    assert harness.fleet.dials == []
     await harness.stop()
 
 
