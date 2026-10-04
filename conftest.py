@@ -13,8 +13,8 @@ the caller, when pytest imports this file. At the same time it gives each
 `git` child an empty global config file, no config file of the system, and
 no ignore file and no attributes file of a person.
 
-It also gives SIGINT the default handler of Python when the run starts with
-SIGINT ignored, so a run from a background job passes the same tests.
+A run that starts with a signal ignored, from a background job or under
+`nohup`, passes the same tests and keeps that signal ignored.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ import os
 import pwd
 import signal
 import tempfile
-import threading
 import zlib
 from collections.abc import Iterator
 from pathlib import Path
@@ -96,32 +95,6 @@ def _drop_git_config() -> None:
 _drop_git_env()
 _drop_git_config()
 
-
-def _unignore_sigint() -> None:
-    """Give SIGINT the default handler of Python when the run starts with it ignored.
-
-    A shell with no job control starts a background job with SIGINT ignored.
-    A service that runs in the test process takes SIGINT in its asyncio loop.
-    When that loop closes, asyncio puts the default handler of Python back,
-    not the handler that it found. `_signals_kept` then failed each such
-    test, and only in a run from a background job. With the default handler
-    from the start, that run is the same as a run from a terminal.
-    bin/tests/test_sigint_default.py holds the proof.
-
-    Only the main thread can set a handler. A run in another thread keeps
-    what it has.
-    """
-    if threading.current_thread() is not threading.main_thread():
-        return
-
-    if signal.getsignal(signal.SIGINT) is signal.SIG_IGN:
-        signal.signal(signal.SIGINT, signal.default_int_handler)
-
-
-# At import too, for the same reason: before a test module, a fixture or an
-# xdist worker reads how this process takes the signal.
-_unignore_sigint()
-
 #: Every signal this platform names. Linux's unnamed real-time signals are
 #: left out: no test here touches them.
 NAMED = [one for one in signal.Signals if one in signal.valid_signals()]
@@ -130,6 +103,19 @@ NAMED = [one for one in signal.Signals if one in signal.valid_signals()]
 def _dispositions() -> dict[signal.Signals, object]:
     """How this process takes each signal, as `signal.getsignal` reports it."""
     return {one: signal.getsignal(one) for one in NAMED}
+
+
+def _loop_writes(one: signal.Signals) -> object:
+    """What asyncio writes for a signal when a loop stops taking it.
+
+    A loop keeps no record of how the process took the signal before. It
+    writes the default handler of Python for SIGINT, and the default action
+    for each other signal.
+    """
+    if one is signal.SIGINT:
+        return signal.default_int_handler
+
+    return signal.SIG_DFL
 
 
 @pytest.fixture(autouse=True)
@@ -141,6 +127,16 @@ def _signals_kept() -> Iterator[None]:
     write to a closed socket killed the whole worker. xdist then blamed
     whichever release test it was running: "worker 'gw6' crashed while
     running ...".
+
+    One change is not a fault of the test. A shell with no job control starts
+    a background job with SIGINT ignored, and `nohup` starts a command with
+    SIGHUP ignored. A service that runs in the test process takes signals in
+    its asyncio loop, and that loop cannot ignore a signal again when it
+    closes. For a signal that the run ignored before the test, this fixture
+    ignores the signal again and does not fail the test for the value that a
+    loop writes. A run that starts with the default has that same value
+    before the test, so this run judges the test as that run does.
+    bin/tests/test_ignored_signal_kept.py holds the proof.
     """
     before = _dispositions()
 
@@ -160,7 +156,15 @@ def _signals_kept() -> Iterator[None]:
 
         signal.signal(one, previous)  # pyright: ignore[reportArgumentType]
 
-    names = ", ".join(one.name for one in changed)
+    faults = [
+        one
+        for one in changed
+        if not (before[one] is signal.SIG_IGN and after[one] is _loop_writes(one))
+    ]
+    if not faults:
+        return
+
+    names = ", ".join(one.name for one in faults)
     pytest.fail(f"the test left {names} changed. Restore every signal handler a test sets.")
 
 
