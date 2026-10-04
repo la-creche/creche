@@ -12,6 +12,7 @@ import subprocess
 import tracemalloc
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -406,3 +407,64 @@ def git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 def commit_count(root: Path) -> int:
     return len(git(root, "log", "--format=%H").stdout.split())
+
+
+#: What a browser posts for a checked box that names no value.
+CHECKED_VALUE = "on"
+
+
+class _FormReader(HTMLParser):
+    """Collects what a browser posts for the controls of a page."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.values: dict[str, str] = {}
+        #: The name of the open text area. Empty for one that posts nothing.
+        self._area: str | None = None
+        self._text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        held = dict(attrs)
+        name = held.get("name") or ""
+        posts = bool(name) and "disabled" not in held
+
+        if tag == "textarea":
+            self._area = name if posts else ""
+            self._text = []
+            return
+
+        if tag != "input" or not posts:
+            return
+
+        if held.get("type") != "checkbox":
+            self.values[name] = held.get("value") or ""
+        elif "checked" in held:
+            self.values[name] = held.get("value") or CHECKED_VALUE
+
+    def handle_data(self, data: str) -> None:
+        if self._area is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "textarea" or self._area is None:
+            return
+
+        if self._area:
+            # A browser drops one line end directly after the start tag.
+            self.values[self._area] = "".join(self._text).removeprefix("\n")
+
+        self._area = None
+
+
+def browser_values(page: str) -> dict[str, str]:
+    """What a browser posts for the form of a page, before a button adds its
+    own value.
+
+    A control with no name posts nothing. A disabled control posts nothing.
+    A box that is not checked posts nothing.
+    """
+    reader = _FormReader()
+    reader.feed(page)
+    reader.close()
+
+    return reader.values

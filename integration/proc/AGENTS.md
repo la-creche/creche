@@ -168,7 +168,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
 | `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
-| `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, the one commit, a refused save |
+| `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, a save after a preview, the one commit, saves at one time, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
@@ -618,6 +618,12 @@ the text of the failure. Work down this list.
   is. That answer is a 303 to the page of the family, with the start of the
   commit id in `saved`. A change costs three assertions in
   `test_proc_board_edit.py`.
+- **CONTRACT-QUESTION, the values in the edit form of the noticeboard.**
+  `docs/rework/spec.md` §8.2 says what a save writes. No section says which
+  values the edit form shows on the page that answers a post. The suite
+  holds the reading of the noticeboard: the values that the browser posted.
+  A save after a preview then writes the edit. A change costs one scenario
+  in `test_proc_board_edit.py`.
 - **A save of the noticeboard ends at the commit.** No `caregiver` runs
   beside the noticeboard, so no scenario proves that a saved family file
   converges.

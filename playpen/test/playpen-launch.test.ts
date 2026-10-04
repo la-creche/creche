@@ -223,6 +223,8 @@ describe("the launcher's fences", () => {
       ["--session", SESSION],
       ["--sandbox", "not a sandbox", "--session", SESSION],
       ["--sandbox", SANDBOX, "--session", "../../etc"],
+      // Contract 02 §2: a session id has 128 characters at most.
+      ["--sandbox", SANDBOX, "--session", `tui-${"a".repeat(125)}`],
       [...ATTACH, "--cwd", "relative/path"],
       [...ATTACH, "--cwd", "/work/../../etc"],
     ];

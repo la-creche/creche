@@ -24,7 +24,7 @@ would be refused by the very rule the form just displayed.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from types import UnionType
 from typing import Any, Final, Union, cast, get_args, get_origin
@@ -110,6 +110,52 @@ def form_of(family: FamilyFile, index: Index) -> Form:
         family=family.name,
         fields=tuple(_fields(document, rules)),
     )
+
+
+def with_posted(form: Form, posted: Mapping[str, str]) -> Form:
+    """The same controls, with what the reader typed in each free one.
+
+    The page that answers a post renders this form. The next post from that
+    page then holds the same values, so a save after a preview writes what
+    the preview showed. A locked control keeps the value of the registry: a
+    disabled control posts nothing.
+    """
+    return replace(form, fields=tuple(_typed(one, posted) for one in form.fields))
+
+
+def _typed(own: Field, posted: Mapping[str, str]) -> Field:
+    """One control as the post left it.
+
+    A browser names each free text control in a post. A control that the
+    post does not name shows what the document takes.
+    """
+    if own.locked:
+        return own
+
+    if own.control is Control.CHECKBOX:
+        return replace(own, checked=own.name in posted)
+
+    return replace(own, value=posted.get(own.name, _unnamed(own))[:MAX_FIELD_CHARS])
+
+
+def _unnamed(own: Field) -> str:
+    """What a free text control shows when the post does not name it.
+
+    The document takes the block of the registry for a block, and the
+    control shows it. The document drops each other key, so the family takes
+    the default of the schema. A list shows that default, because an empty
+    list control posts an empty list. Each other control is empty, and an
+    empty control drops the key again.
+    """
+    if own.control is Control.BLOCK:
+        return own.value
+
+    info = FamilyFile.model_fields.get(own.name)
+
+    if own.control is not Control.LINES or info is None:
+        return ""
+
+    return _rendered(own.name, own.control, info.get_default(call_default_factory=True))
 
 
 def document_of(form: Form, posted: Mapping[str, str]) -> tuple[str, str]:

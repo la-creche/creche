@@ -11,6 +11,7 @@ standalone, protocol-level fake is a different tool (contract 02 §15.1's
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -41,6 +42,8 @@ class FakeAttendance:
       `settled`    -- the SettledTurn a non-streamed turn returns.
       `turn_error` -- a AttendanceError raised by the very next `settled_turn`
                       or `stream_turn` call, then cleared.
+      `open_delay_s` -- how long `stream_turn` waits before it answers, with
+                      lines or with `turn_error`.
 
     Recorded for assertions:
       `ensured`       -- every (family, session) `ensure_session` saw.
@@ -60,6 +63,7 @@ class FakeAttendance:
     # connection to the real attendance looks like once attendance.py has
     # already turned it into StreamBroken (see test_attendance.py).
     stream_error: Exception | None = None
+    open_delay_s: float = 0.0
 
     ensured: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     requests: list[TurnRequest] = field(default_factory=list[TurnRequest])
@@ -96,6 +100,7 @@ class FakeAttendance:
     ) -> AsyncGenerator[AsyncIterator[JournalLine], None]:
         self.requests.append(request)
         self.with_parent_flags.append(with_parent)
+        await asyncio.sleep(self.open_delay_s)
         stored = self._stored(request)
         if stored is not None:
             assert isinstance(stored, list)

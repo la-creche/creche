@@ -30,7 +30,7 @@ export interface TurnContext {
 /** Contract 02 §2 and the shared identifiers. No shape here admits CR or LF. */
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
-const MAX_SESSION_ID_LENGTH = 200;
+const MAX_SESSION_ID_LENGTH = 128;
 const MAX_TURN_FILE_BYTES = 4096;
 
 function sessionId(value: unknown): string | null {

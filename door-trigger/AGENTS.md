@@ -28,9 +28,10 @@ Two processes, one shared core:
   `refresh()` share one lock.
 - No secret on argv, in a URL or in a log line. `cli.py` quiets `httpx` and
   `httpcore` to `WARNING`.
-- Fail closed. A missing or short `attendance` token, or a `serve` bind on
-  `0.0.0.0`, refuses to start. A webhook token that fails the same floor never
-  becomes a route, and does not crash the service.
+- Fail closed. A missing or short `attendance` token, a token file that is
+  not UTF-8, or a `serve` bind on `0.0.0.0`, refuses to start. A webhook
+  token that fails the same floor never becomes a route, and does not crash
+  the service.
 - The `SIGHUP` route reload is best-effort. The periodic refresh is the
   mechanism that always works.
 - ULIDs are minted here, in `ulid.py`. This package imports nothing from
@@ -61,6 +62,7 @@ did.
 | an oversized or invalid payload | `fire`: exit 2. `serve`: `413` or `400`. |
 | `attendance` cannot be reached | `fire`: exit 2, a different message than a refusal. `serve`: `502 attendance_unreachable`. |
 | a route refresh fails | the listener logs the failure and keeps the last route table |
+| the first route refresh fails | the listener logs the failure and starts with no route. Each call answers `404` until a refresh passes. |
 | a failure of `serve` that no handler names | `500 internal` in the error shape of the listener. The log holds the traceback. |
 | a `quiet:` family's cron firing finds nothing changed | exit 0, no session |
 
@@ -120,3 +122,8 @@ is `door-owui`'s. Basenames are unique across the workspace. Run
   listener answers `502 attendance_unreachable` when `attendance` does not
   answer. It answers `500 internal` for a failure that no handler names
   (`errors.py`, `webhooks.py`).
+- `spec.md` §3.6 and contract 05 §6.4 rule 6 give no rule for a first route
+  refresh that fails. The listener starts with no route and logs the
+  failure. Only a periodic refresh that passes or a `SIGHUP` then fills the
+  table. The unit stays active, so the log line is the only signal
+  (`webhooks.py`).
