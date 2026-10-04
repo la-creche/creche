@@ -292,6 +292,9 @@ async def test_a_wrong_method_gets_405(listener: Listener) -> None:
 # when the request has no `Content-Type` header, as it does today. A reading
 # that demands the header costs this scenario, and each caller that sends
 # none.
+#
+# The door also reads such a body today, and the chaperone answers 422 to
+# it. No scenario holds either.
 async def test_attendance_reads_a_body_with_no_content_type(
     owui: OwuiStack, attendance_api: httpx.AsyncClient
 ) -> None:

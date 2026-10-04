@@ -665,6 +665,9 @@ the text of the failure. Work down this list.
   Contract 02 §3 rule 3 says that a request body is JSON. It names no
   header. The suite holds that `attendance` reads such a body, as it does
   today. A change costs one scenario in `test_proc_edges.py`.
+
+  The Open WebUI door also reads such a body today. The chaperone answers
+  422 to it. No scenario holds either.
 - **CONTRACT-QUESTION, a body that is not JSON.** Contract 02 §14 gives
   `attendance` the code `bad_request` with status 400. No contract gives the
   Open WebUI door or the chaperone an answer, and contract 04 §5 has no row
