@@ -263,6 +263,20 @@ def family_names(families_dir: Path) -> tuple[str, ...]:
         return ()
 
 
+def listing_problem(families_dir: Path) -> str:
+    """Why the families directory cannot be listed, or an empty string.
+
+    `family_names` answers empty for such a directory. A page asks here, so
+    that it does not say "no families" for a directory it cannot read.
+    """
+    try:
+        next(families_dir.iterdir(), None)
+    except OSError as error:
+        return f"cannot list the families directory: {error.strerror or error}"
+
+    return ""
+
+
 def read_family(families_dir: Path, name: str, now: datetime) -> FamilyRow:
     """One family's status document, read as untrusted input."""
     path = families_dir / name / STATUS_FILE

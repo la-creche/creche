@@ -109,7 +109,11 @@ def home(config: Config, now: datetime) -> Home:
     if not directory.is_dir():
         return Home(families=(), now=now, problem=f"no families directory at {directory}")
 
-    return Home(families=statusdocs.read_families(directory, now), now=now)
+    return Home(
+        families=statusdocs.read_families(directory, now),
+        now=now,
+        problem=statusdocs.listing_problem(directory),
+    )
 
 
 def family_page(config: Config, reader: SessionReader, name: str, now: datetime) -> FamilyPage:

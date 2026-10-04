@@ -6,6 +6,7 @@ dir, and a fake `attendance`. No host, no socket, no live service.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -222,6 +223,21 @@ def test_an_exception_nobody_predicted_answers_the_refusal_body(
     assert answer.status_code == 500
     assert answer.json() == {"ok": False, "error": "internal"}
     assert "detail" not in answer.text
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a 0000 directory anyway")
+def test_a_families_directory_that_cannot_be_listed_says_so(board: Harness) -> None:
+    """ "No families" and "cannot look" are different sentences."""
+    families = board.config.families_dir
+    families.chmod(0o000)
+
+    try:
+        answer = board.get("/")
+    finally:
+        families.chmod(0o755)
+
+    assert answer.status_code == 200
+    assert "cannot list the families directory" in answer.text
 
 
 def test_a_missing_state_file_renders_a_report(board: Harness) -> None:
