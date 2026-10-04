@@ -500,8 +500,32 @@ impl HaAllow {
 /// one key at most, and a key that it does not read has no effect. A fence
 /// with no key is the fence of `embed` and of `job_status`.
 ///
-/// Code outside this module cannot build a fence. A fence comes from a
-/// [`GrantFile`]:
+/// A fence comes from a [`GrantFile`]:
+///
+/// ```
+/// use creche_contracts::grants::{GrantFile, VerbFence, VerbName};
+/// use creche_contracts::ids::FamilyName;
+///
+/// let family: FamilyName = "chat".parse()?;
+/// let bytes = br#"{
+///     "version": 2,
+///     "family": "chat",
+///     "rev": "reg-9f21c4",
+///     "token_sha256": ["0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"],
+///     "model_alias": "fast",
+///     "verbs": {"enqueue": {"targets": ["scrum-lead"]}}
+/// }"#;
+/// let grants = GrantFile::parse(bytes, &family)?;
+/// let name: VerbName = "enqueue".parse()?;
+/// let fence: &VerbFence = grants.verbs().get(&name).ok_or("the file grants no enqueue")?;
+/// let target: FamilyName = "scrum-lead".parse()?;
+///
+/// assert_eq!(fence.targets(), Some(&[target][..]));
+/// assert_eq!(fence.allow(), None);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build a fence:
 ///
 /// ```compile_fail,E0451
 /// use creche_contracts::grants::VerbFence;
@@ -674,8 +698,32 @@ impl Error for LimitError {}
 
 /// The three limits of one family (contract 04 §1.2).
 ///
-/// Code outside this module cannot build the limits. They come from a
-/// [`GrantFile`]:
+/// The limits come from a [`GrantFile`]. A limit that the file does not give
+/// has its default:
+///
+/// ```
+/// use creche_contracts::grants::{GrantFile, Limit, Limits};
+/// use creche_contracts::ids::FamilyName;
+///
+/// let family: FamilyName = "chat".parse()?;
+/// let bytes = br#"{
+///     "version": 2,
+///     "family": "chat",
+///     "rev": "reg-9f21c4",
+///     "token_sha256": ["0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"],
+///     "model_alias": "fast",
+///     "limits": {"max_inflight_delegations": 8}
+/// }"#;
+/// let grants = GrantFile::parse(bytes, &family)?;
+/// let limits: &Limits = grants.limits();
+///
+/// assert_eq!(limits.max_inflight_delegations(), &Limit::new(8)?);
+/// assert_eq!(limits.pep_rpm().get(), Some(60));
+/// assert_eq!(limits.max_open_gates().get(), Some(10));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build the limits:
 ///
 /// ```compile_fail,E0451
 /// use creche_contracts::grants::{Limit, Limits};
@@ -1265,11 +1313,11 @@ impl Error for GrantWriteError {}
 /// name that is not the name of the file. Each one has a safe grammar.
 ///
 /// ```
-/// use creche_contracts::grants::{GrantError, GrantFile};
+/// use creche_contracts::grants::{GrantError, GrantFile, GrantFileError};
 /// use creche_contracts::ids::FamilyName;
 ///
 /// let family: FamilyName = "chat".parse()?;
-/// let error = GrantFile::parse(br#"{"version": 3}"#, &family).unwrap_err();
+/// let error: GrantFileError = GrantFile::parse(br#"{"version": 3}"#, &family).unwrap_err();
 ///
 /// assert_eq!(error.to_string(), "grants/chat.json: unknown version 3");
 /// assert!(matches!(error.error(), GrantError::UnknownVersion(_)));

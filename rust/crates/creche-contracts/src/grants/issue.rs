@@ -157,14 +157,15 @@ impl fmt::Display for IssueKind {
 /// count of the issues to a file that another process reads, and not a path.
 ///
 /// ```
-/// use creche_contracts::grants::{ApprovalBody, BodyError, IssueKind, Step};
+/// use creche_contracts::grants::{ApprovalBody, BodyError, Issue, IssueKind, Step};
 ///
 /// let Err(BodyError::Invalid(issues)) = ApprovalBody::parse(b"{}") else {
 ///     panic!("the body has no decision");
 /// };
-/// assert_eq!(issues.len(), 1);
-/// assert_eq!(issues[0].kind(), IssueKind::Missing);
-/// assert_eq!(issues[0].path(), [Step::Key("decision".to_owned())]);
+/// let [issue]: [Issue; 1] = issues.try_into().expect("the body has one issue");
+///
+/// assert_eq!(issue.kind(), IssueKind::Missing);
+/// assert_eq!(issue.path(), [Step::Key("decision".to_owned())]);
 /// ```
 ///
 /// Code outside this module cannot build an issue:
