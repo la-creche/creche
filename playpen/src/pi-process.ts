@@ -21,7 +21,7 @@ import {
   STOP_SIGKILL_DELAY_MS,
   STOP_SIGTERM_DELAY_MS,
 } from "./constants.js";
-import { LineReader } from "./framing.js";
+import { cutToBytes, LineReader } from "./framing.js";
 import { boundRecord, readResponse } from "./pi-record.js";
 import type { PiCommand, PiResponse } from "./protocol.js";
 
@@ -241,7 +241,7 @@ export class PiProcess {
     // "creating a new session with that id" one on a first turn. It must
     // never reach the channel's stdout directly.
     const reader = new LineReader(
-      (line) => this.handlers.onLog(line.slice(0, MAX_LOG_BYTES)),
+      (line) => this.handlers.onLog(cutToBytes(line, MAX_LOG_BYTES)),
       (bytes) => this.handlers.onLog(`pi wrote a ${bytes} byte stderr line and it was dropped`),
     );
 

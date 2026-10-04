@@ -13,7 +13,8 @@
 // so a spare could never be handed on.
 
 import { CredReader } from "./creds.js";
-import { MAX_LOG_BYTES } from "./constants.js";
+import { FIRST_TURN_SEQ, MAX_LOG_BYTES } from "./constants.js";
+import { cutToBytes } from "./framing.js";
 import { piModelId, writeModelsJson } from "./models-json.js";
 import { bridgeAt, buildPiStart, PiMode } from "./pi-args.js";
 import type { PiArgsSpec, PiStart } from "./pi-args.js";
@@ -81,6 +82,24 @@ type SpawnOutcome =
   | { readonly ok: true; readonly session: SandboxSession }
   | { readonly ok: false; readonly reason: TurnFailReason; readonly detail: string };
 
+/** The two ids that address one turn on the channel (contract 03 §5.1). */
+interface TurnAddress {
+  readonly session: string;
+  readonly turn: string;
+}
+
+/** The `code` of a Node error. It names the failure and holds no value. */
+function errorCode(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+
+  return typeof code === "string" ? code : "no error code";
+}
+
+/** One key for one turn. A session id holds no `/` (contract 02 §2). */
+function turnKey(at: TurnAddress): string {
+  return `${at.session}/${at.turn}`;
+}
+
 /**
  * Why a held-open process cannot serve the next turn (§6 rule 5).
  *
@@ -140,6 +159,12 @@ export class SessionPool {
    */
   private readonly toolRevs = new Map<string, string>();
 
+  /**
+   * The turns that `startTurn` took and that wait for their pi process.
+   * `refuseTurn` removes one, and that turn then never runs.
+   */
+  private readonly waitingTurns = new Set<string>();
+
   private readonly links: CodeSandboxLinks;
   private sweep: NodeJS.Timeout | null = null;
   private throttled: SandboxSession | null = null;
@@ -190,26 +215,75 @@ export class SessionPool {
       return;
     }
 
+    const key = turnKey(message);
+    this.waitingTurns.add(key);
+
+    let opened: SpawnOutcome;
+    let wanted: boolean;
+    try {
+      opened = await this.sessionFor(message);
+    } finally {
+      wanted = this.waitingTurns.delete(key);
+    }
+
+    if (!wanted) {
+      // `refuseTurn` failed this turn while it waited, so nothing runs.
+      if (opened.ok) {
+        this.reapUnheld(opened.session);
+      }
+
+      return;
+    }
+
+    if (!opened.ok) {
+      this.failTurn(message, opened.reason, opened.detail);
+      return;
+    }
+
+    // §6 rule 2 again. Another turn can take the process while this one waits.
+    if (this.busyWith(message)) {
+      return;
+    }
+
+    await this.runTurn(opened.session, message);
+  }
+
+  /**
+   * The process a `start_turn` runs on. A held process serves the turn when
+   * nothing moved under it (§6 rule 5). Each other one is recycled, and a new
+   * process starts.
+   */
+  private async sessionFor(message: StartTurnMessage): Promise<SpawnOutcome> {
     await this.settleStart(message.session);
 
     const existing = this.sessions.get(message.session);
     const stale = existing === undefined ? Staleness.Binding : this.staleness(existing, message);
     if (existing !== undefined && stale === Staleness.None) {
-      await this.runTurn(existing, message);
-      return;
+      return { ok: true, session: existing };
     }
 
     if (existing !== undefined) {
       await this.recycle(existing, stale);
     }
 
-    const opened = await this.open(message);
-    if (!opened.ok) {
-      this.failTurn(message, opened.reason, opened.detail);
+    return this.open(message);
+  }
+
+  /**
+   * Contract 03 §5.3. A host line that the playpen refused named this turn,
+   * so the turn fails with `internal`.
+   *
+   * A turn that runs fails with its next `turn_seq`, and pi gets an abort. A
+   * turn that waits for its pi process never starts. A turn that this pool
+   * does not hold sent no line, so the failure is its first line (§5.1).
+   */
+  public refuseTurn(at: TurnAddress, detail: string): void {
+    if (this.sessions.get(at.session)?.failRunning(at.turn, "internal", detail) === true) {
       return;
     }
 
-    await this.runTurn(opened.session, message);
+    this.waitingTurns.delete(turnKey(at));
+    this.failTurn(at, "internal", detail);
   }
 
   /**
@@ -580,28 +654,43 @@ export class SessionPool {
 
     const turnFilePath = this.deps.turnFile.pathFor(spec.session);
     const toolStatePath = this.deps.toolState.pathFor(spec.session);
-    const session = new SandboxSession(
-      sessionSpec,
-      this.deps.launcher,
-      start.args,
-      buildTurnEnv({
-        sessionDir: spec.session_dir,
-        family: this.settings.family,
-        sandbox: this.settings.sandbox,
-        session: spec.session,
-        ...(spec.turn === undefined ? {} : { turn: spec.turn }),
-        ...(turnFilePath === null ? {} : { turnFile: turnFilePath }),
-        ...(toolStatePath === null ? {} : { toolStateFile: toolStatePath }),
-        creds,
-      }),
-      this.settings.coalesceMs,
-      {
-        emit: this.deps.emit,
-        residentAfterTurn: () => this.settings.idleTtlS > 0,
-        onTurnEnd: (ended) => this.afterTurn(ended),
-        onExit: (ended) => this.forget(ended),
-      },
-    );
+    const env = buildTurnEnv({
+      sessionDir: spec.session_dir,
+      family: this.settings.family,
+      sandbox: this.settings.sandbox,
+      session: spec.session,
+      ...(spec.turn === undefined ? {} : { turn: spec.turn }),
+      ...(turnFilePath === null ? {} : { turnFile: turnFilePath }),
+      ...(toolStatePath === null ? {} : { toolStateFile: toolStatePath }),
+      creds,
+    });
+
+    let session: SandboxSession;
+    try {
+      session = new SandboxSession(
+        sessionSpec,
+        this.deps.launcher,
+        start.args,
+        env,
+        this.settings.coalesceMs,
+        {
+          emit: this.deps.emit,
+          residentAfterTurn: () => this.settings.idleTtlS > 0,
+          onTurnEnd: (ended) => this.afterTurn(ended),
+          onExit: (ended) => this.forget(ended),
+        },
+      );
+    } catch (error) {
+      // The launcher throws when the operating system refuses the start
+      // itself. The text of that error holds the value that was refused,
+      // and the environment of pi holds the credentials. Only the code of
+      // the error goes on the channel.
+      return {
+        ok: false,
+        reason: "pi_start_failed",
+        detail: `cannot start the pi process: ${errorCode(error)}`,
+      };
+    }
 
     this.sessions.set(spec.session, session);
 
@@ -666,8 +755,16 @@ export class SessionPool {
   private afterTurn(session: SandboxSession): void {
     this.sayWhatTheToolsDid(session);
 
-    // `pi_idle_ttl_s` 0 is the thin and autonomous default: nothing is held.
-    if (this.settings.idleTtlS <= 0 && this.sessions.get(session.id) === session) {
+    this.reapUnheld(session);
+  }
+
+  /** `pi_idle_ttl_s` 0 is the thin and autonomous default: nothing is held. */
+  private reapUnheld(session: SandboxSession): void {
+    if (this.settings.idleTtlS > 0 || session.busy) {
+      return;
+    }
+
+    if (this.sessions.get(session.id) === session) {
       void this.reap(session, "reaped");
     }
   }
@@ -798,6 +895,14 @@ export class SessionPool {
     });
   }
 
+  /**
+   * §4.8 rule 1, for a `get_entries` whose handler threw. The host holds the
+   * correlation id until an answer comes.
+   */
+  public refuseEntries(message: GetEntriesMessage, detail: string): void {
+    this.noEntries(message, "internal", detail);
+  }
+
   /** §4.8 rule 1. Every `get_entries` is answered, refusals included. */
   private noEntries(
     message: GetEntriesMessage,
@@ -824,22 +929,22 @@ export class SessionPool {
       session,
       resident: false,
       reason,
-      message: detail.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(detail, MAX_LOG_BYTES),
     });
   }
 
-  private failTurn(message: TurnRequest, reason: TurnFailReason, detail: string): void {
+  private failTurn(at: TurnAddress, reason: TurnFailReason, detail: string): void {
     this.deps.emit({
       type: "turn_failed",
-      session: message.session,
-      turn: message.turn,
-      turn_seq: 1,
+      session: at.session,
+      turn: at.turn,
+      turn_seq: FIRST_TURN_SEQ,
       reason,
-      message: detail.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(detail, MAX_LOG_BYTES),
     });
   }
 
   private log(level: "warn" | "info", session: string | null, message: string): void {
-    this.deps.emit({ type: "log", level, session, message });
+    this.deps.emit({ type: "log", level, session, message: cutToBytes(message, MAX_LOG_BYTES) });
   }
 }
