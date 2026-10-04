@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from noticeboard.jsonfiles import MAX_TEXT_CHARS
 from noticeboard.statusdocs import (
+    NOT_TEXT,
     Health,
+    IssueRow,
     read_families,
     read_family,
     read_outcomes,
@@ -13,6 +16,7 @@ from noticeboard.statusdocs import (
 )
 from noticeboard_helpers import (
     NOW,
+    deep_object,
     fault_doc,
     make_state_root,
     outcome_doc,
@@ -86,6 +90,18 @@ def test_a_malformed_document_reports_and_does_not_raise(tmp_path: Path) -> None
 
     assert row.health is Health.UNREADABLE
     assert "is not JSON" in row.problem
+
+
+def test_a_document_that_nests_too_deep_reports(tmp_path: Path) -> None:
+    """The JSON reader raises RecursionError on this document, not ValueError."""
+    path = tmp_path / "families" / "chat" / "status.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(deep_object())
+
+    row = read_family(tmp_path / "families", "chat", NOW)
+
+    assert row.health is Health.UNREADABLE
+    assert row.problem == "status.json is not JSON: it nests deeper than the reader allows"
 
 
 def test_a_document_that_is_not_an_object_reports(tmp_path: Path) -> None:
@@ -265,6 +281,19 @@ def test_null_spend_is_not_a_number(tmp_path: Path) -> None:
     assert row.spend is None
 
 
+def test_a_spend_number_past_every_float_reads_unknown(tmp_path: Path) -> None:
+    root = tmp_path / "state"
+    spend = {"spend_usd": 10**400, "budget_usd": 10**400, "window": "day"}
+    write_json(root / "families" / "chat" / "status.json", status_doc(spend=spend))
+
+    row = read_family(root / "families", "chat", NOW)
+
+    assert row.problem == ""
+    assert row.spend is not None
+    assert not row.spend.known
+    assert row.spend.budget_usd is None
+
+
 def test_spend_share_needs_both_numbers(tmp_path: Path) -> None:
     root = tmp_path / "state"
     write_json(
@@ -332,11 +361,46 @@ def test_the_validation_report_is_read_from_its_own_file(tmp_path: Path) -> None
     assert len(issues) == 2
 
 
+def test_an_issue_reads_as_two_texts_with_a_bound(tmp_path: Path) -> None:
+    """Contract 01 §7: `loc` and `msg` are text. A page gets each one through
+    the display cap, and a marker for a value that is no text."""
+    path = tmp_path / "validation.json"
+    write_json(
+        path,
+        {
+            "issues": [
+                {"severity": "error", "loc": "tools.kagi", "msg": "m" * (MAX_TEXT_CHARS + 1)},
+                {"severity": "error", "loc": ["tools", ["kagi"]], "msg": None},
+                {"severity": "error"},
+            ],
+        },
+    )
+
+    issues, problem = read_report(path)
+
+    assert problem == ""
+    assert issues == (
+        IssueRow(loc="tools.kagi", msg="m" * MAX_TEXT_CHARS),
+        IssueRow(loc=NOT_TEXT, msg=NOT_TEXT),
+        IssueRow(loc="", msg=""),
+    )
+
+
 def test_a_missing_report_is_reported(tmp_path: Path) -> None:
     issues, problem = read_report(tmp_path / "validation.json")
 
     assert issues == ()
     assert problem == "validation.json is missing"
+
+
+def test_a_report_that_nests_too_deep_is_reported(tmp_path: Path) -> None:
+    path = tmp_path / "validation.json"
+    path.write_bytes(deep_object())
+
+    issues, problem = read_report(path)
+
+    assert issues == ()
+    assert "nests deeper than the reader allows" in problem
 
 
 def test_outcomes_come_back_newest_first(tmp_path: Path) -> None:
@@ -363,6 +427,17 @@ def test_a_malformed_outcome_reports_on_its_own_row(tmp_path: Path) -> None:
 
     assert len(rows) == 1
     assert "is not JSON" in rows[0].problem
+
+
+def test_an_outcome_that_nests_too_deep_reports_on_its_own_row(tmp_path: Path) -> None:
+    root = tmp_path / "state" / "outcomes" / "scrum-lead"
+    root.mkdir(parents=True)
+    (root / "01JBQ80M4F7S2YQ1VZK6W3TDEN.json").write_bytes(deep_object())
+
+    rows = read_outcomes(tmp_path / "state" / "outcomes", "scrum-lead", limit=10)
+
+    assert len(rows) == 1
+    assert "nests deeper than the reader allows" in rows[0].problem
 
 
 def test_a_missing_outcome_directory_is_not_an_error(tmp_path: Path) -> None:

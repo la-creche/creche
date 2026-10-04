@@ -19,10 +19,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from agent_family import parse_family
-from noticeboard.yamlkeep import edited_text
+from noticeboard.yamlkeep import YAML_WIDTH, edited_text
 
 FIXTURE = Path(__file__).parent / "fixtures" / "commented-family.yaml"
+
+#: A second family file, with the three shapes that a save once rewrote.
+STYLED = FIXTURE.with_name("styled-family.yaml")
 
 #: Lines from the fixture that no save may drop. One per shape: a header
 #: comment, a comment inside a list, a comment inside a mapping, and an
@@ -54,6 +58,23 @@ def saved(**changes: object) -> str:
     after.update(changes)
 
     return edited_text(text, before, after) or ""
+
+
+def styled(**changes: object) -> str:
+    """The styled fixture, saved through the form with those fields changed."""
+    text = STYLED.read_text(encoding="utf-8")
+    before = model_of(text)
+    after = dict(before)
+    after.update(changes)
+
+    return edited_text(text, before, after) or ""
+
+
+def lines_that_moved(text: str) -> list[str]:
+    """Each line of `text` that the styled fixture does not hold."""
+    held = set(STYLED.read_text(encoding="utf-8").splitlines())
+
+    return [line for line in text.splitlines() if line not in held]
 
 
 def test_a_save_that_changes_nothing_returns_the_same_bytes() -> None:
@@ -135,3 +156,100 @@ def test_text_that_is_not_a_mapping_is_refused() -> None:
 
 def test_text_that_does_not_parse_is_refused() -> None:
     assert edited_text("name: [unclosed\n", {}, {"name": "chat"}) is None
+
+
+def test_a_flow_mapping_with_a_comment_after_it_comes_back_as_it_was() -> None:
+    """The emitter writes `{a: b}` and keeps the comment at its column. The
+    line gets its spaces back, and the comment stays where it was."""
+    text = styled(shell=True)
+
+    assert "model: { router: agent-router, budget_usd_per_day: 15 } # the chat router" in text
+    assert "  - { path: /srv/agents/vault, mode: ro } # the whole vault, to read" in text
+
+
+@pytest.mark.parametrize("key", ["description:", "skills:"])
+def test_a_line_past_the_width_comes_back_on_one_line(key: str) -> None:
+    """The emitter folds a line at `YAML_WIDTH`. A line that the file held
+    whole comes back whole."""
+    held = STYLED.read_text(encoding="utf-8").splitlines()
+    line = next(one for one in held if one.startswith(key))
+    assert len(line) > YAML_WIDTH
+
+    assert line in styled(shell=True).splitlines()
+
+
+def test_an_edited_line_past_the_width_takes_the_new_value() -> None:
+    text = styled(description="A short description.")
+
+    assert lines_that_moved(text) == ["description: A short description."]
+
+
+def test_a_one_field_edit_moves_one_line() -> None:
+    """The git log of the registry is the audit trail of the grants. A save
+    that rewrites a line it did not edit is noise in that log."""
+    text = styled(shell=True)
+
+    assert lines_that_moved(text) == ["shell: true"]
+    assert len(text.splitlines()) == len(STYLED.read_text(encoding="utf-8").splitlines())
+
+
+def test_an_edit_inside_a_flow_mapping_keeps_its_comment_at_its_column() -> None:
+    text = styled(model={"router": "agent-router", "budget_usd_per_day": 9})
+
+    assert lines_that_moved(text) == [
+        "model: { router: agent-router, budget_usd_per_day: 9 }  # the chat router"
+    ]
+
+
+def test_removing_the_only_tool_leaves_a_file_that_parses() -> None:
+    """The comment above the tool goes with the tool. The block that stays
+    is one the reader takes."""
+    text = styled(tools={})
+
+    assert model_of(text)["tools"] == {}
+    assert "kagi" not in text
+    assert "tools: {}" in text.splitlines()
+    assert "egress: []" in text.splitlines()
+
+
+#: A small family file for the shapes below. Each test adds its own lines.
+SMALL = """\
+name: chat
+kind: attended
+description: the house assistant
+model: { router: agent-router, budget_usd_per_day: 15 }
+"""
+
+KNOWN_GAP = "a known gap of yamlkeep.py, listed in noticeboard/AGENTS.md"
+
+
+def small_saved(lines: str, **changes: object) -> list[str]:
+    """`SMALL` with `lines` after it, saved with those fields changed."""
+    text = SMALL + lines
+    before = model_of(text)
+    after = dict(before)
+    after.update(changes)
+
+    return (edited_text(text, before, after) or "").splitlines()
+
+
+@pytest.mark.xfail(strict=True, reason=KNOWN_GAP)
+def test_a_flow_mapping_inside_a_flow_mapping_comes_back_as_it_was() -> None:
+    line = "verbs: { enqueue: { targets: [scrum-lead] } }"
+
+    assert line in small_saved(f"{line}\nshell: false\n", shell=True)
+
+
+@pytest.mark.xfail(strict=True, reason=KNOWN_GAP)
+def test_a_flow_mapping_past_the_width_comes_back_on_one_line() -> None:
+    line = "  - { path: /srv/agents/vault/" + "deep/" * 16 + "memories, mode: rw }"
+    assert len(line) > YAML_WIDTH
+
+    assert line in small_saved(f"files:\n{line}\nshell: false\n", shell=True)
+
+
+@pytest.mark.xfail(strict=True, reason=KNOWN_GAP)
+def test_a_comment_after_a_removed_last_key_is_kept() -> None:
+    lines = "tools:\n  kagi: all\n  ha: all\n# No reach but the chaperone.\negress: []\n"
+
+    assert "# No reach but the chaperone." in small_saved(lines, tools={"kagi": "all"})

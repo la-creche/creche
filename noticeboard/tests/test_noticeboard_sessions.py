@@ -5,12 +5,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from noticeboard.sessions import (
     MAX_STREAM_LINES,
+    SESSION_ID_MAX,
     SessionReader,
+    UsageRow,
+    is_session,
 )
 from noticeboard_helpers import (
     FakeAttendance,
+    deep_object,
     journal_line,
     ndjson,
     session_doc,
@@ -30,6 +35,41 @@ LINE_SEP = chr(0x2028)
 
 def reader(tmp_path: Path, fake: FakeAttendance) -> SessionReader:
     return SessionReader(transport=fake, token_file=write_token(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["a", "0", "A.b_c-d", OWUI, "auto-01J9ZQ5V7Y8X4W3T2S1R0QPNMK", "a..b", "a" * SESSION_ID_MAX],
+)
+def test_a_session_id_of_contract_02_is_taken(value: str) -> None:
+    assert is_session(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        ".",
+        "..",
+        ".hidden",
+        "-x",
+        "_x",
+        "a/b",
+        "a\\b",
+        "a b",
+        "a:b",
+        "a%2Fb",
+        "a\tb",
+        "\u00e4",
+        "a" + LINE_SEP + "b",
+        "a" * (SESSION_ID_MAX + 1),
+        "\na",
+        "a\n",
+        "a\r\n",
+    ],
+)
+def test_a_text_that_is_no_session_id_is_refused(value: str) -> None:
+    assert not is_session(value)
 
 
 def test_the_session_list_is_read(tmp_path: Path) -> None:
@@ -68,6 +108,18 @@ def test_an_empty_token_file_is_refused(tmp_path: Path) -> None:
     answer = SessionReader(transport=fake, token_file=write_token(tmp_path, "")).sessions()
 
     assert "empty" in answer.problem
+    assert fake.calls == []
+
+
+def test_a_token_file_that_is_not_text_reports_and_makes_no_call(tmp_path: Path) -> None:
+    """The decoder raises UnicodeDecodeError for these bytes, not OSError."""
+    fake = FakeAttendance()
+    token_file = write_token(tmp_path)
+    token_file.write_bytes(b"\xff\xfe" + b"v" * 40)
+
+    answer = SessionReader(transport=fake, token_file=token_file).sessions()
+
+    assert "token" in answer.problem
     assert fake.calls == []
 
 
@@ -141,6 +193,21 @@ def test_a_malformed_body_becomes_a_report(tmp_path: Path) -> None:
     assert "not JSON" in answer.problem
 
 
+def test_a_body_that_nests_too_deep_becomes_a_report(tmp_path: Path) -> None:
+    """The JSON reader raises RecursionError on this body, not ValueError."""
+    fake = FakeAttendance()
+    fake.answer(LIST_PATH, deep_object())
+    fake.answer(DETAIL_PATH, deep_object())
+
+    listed = reader(tmp_path, fake).sessions()
+    detail = reader(tmp_path, fake).detail(CHAT, OWUI)
+
+    assert listed.rows == ()
+    assert "nests deeper than the reader allows" in listed.problem
+    assert detail.session is None
+    assert "nests deeper than the reader allows" in detail.problem
+
+
 def test_the_turns_carry_their_state_and_usage(tmp_path: Path) -> None:
     fake = FakeAttendance()
     body = session_doc()
@@ -166,6 +233,14 @@ def test_a_turn_without_usage_reads_zero_not_a_crash(tmp_path: Path) -> None:
 
     assert answer.turns[0].usage.tokens == 0
     assert answer.turns[0].usage.cost_usd is None
+
+
+def test_the_token_sum_has_a_text_for_each_usage() -> None:
+    """A sum past the digit limit of the interpreter reads `unknown`."""
+    longest = int("9" * 4300)
+
+    assert UsageRow(input=4120, output=188).tokens_text == "4308"
+    assert UsageRow(input=longest, output=longest).tokens_text == "unknown"
 
 
 def test_the_event_stream_is_split_on_line_feed_alone(tmp_path: Path) -> None:
@@ -203,6 +278,18 @@ def test_a_broken_journal_line_never_hides_the_rest(tmp_path: Path) -> None:
 
     assert len(stream.lines) == 1
     assert stream.problems
+
+
+def test_a_journal_line_that_nests_too_deep_never_hides_the_rest(tmp_path: Path) -> None:
+    fake = FakeAttendance()
+    fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {})]) + deep_object() + b"\n")
+
+    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+
+    assert len(stream.lines) == 1
+    assert stream.problems == (
+        "a journal line is not JSON: it nests deeper than the reader allows",
+    )
 
 
 def test_an_enormous_stream_is_capped_and_says_so(tmp_path: Path) -> None:

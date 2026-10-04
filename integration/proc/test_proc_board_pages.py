@@ -59,14 +59,22 @@ SETTLE_DEADLINE_S = 60.0
 #: Each page of §8.1 that needs no session.
 PAGES = ["/", f"/families/{FAMILY}", f"/families/{REVIEW}", "/audit", f"/families/{FAMILY}/edit"]
 
-#: A route parameter that names no family and no session, or is no name at all.
+#: A route parameter that has the form of an id and names no family and no
+#: session.
 BAD_PARAMETERS = [
     "/families/no-such-family",
-    "/families/Not%20A%20Name",
-    "/families/%2e%2e",
     "/families/no-such-family/edit",
     f"/sessions/{FAMILY}/owui-no-such-session",
     "/sessions/no-such-family/owui-x",
+]
+
+#: A route parameter that is no family name (contract 01 §2) and no session
+#: id (contract 02 §2).
+NOT_AN_ID = [
+    "/families/Not%20A%20Name",
+    "/families/%2e%2e",
+    "/families/Not%20A%20Name/edit",
+    "/sessions/Not%20A%20Name/owui-x",
     f"/sessions/{FAMILY}/not%20an%20id",
 ]
 
@@ -265,6 +273,21 @@ async def test_a_bad_route_parameter_gets_a_report(board: BoardStack) -> None:
 
     for path, page in pages.items():
         assert page.all("p", "problem") + page.all("ul", "problems") != [], path
+
+
+async def test_a_route_parameter_that_is_no_id_is_not_found(board_alone: BoardStack) -> None:
+    """The noticeboard checks each route parameter before it reads a file.
+
+    CONTRACT-QUESTION: `docs/rework/spec.md` §8.1 lists the routes and gives
+    no answer for a parameter that is not an id. Reading taken: the answer of
+    the noticeboard as it is, the 404 of a path that no route has. A change
+    costs this scenario.
+    """
+    async with board_alone.client() as browser:
+        answers = {path: await browser.get(path) for path in NOT_AN_ID}
+
+    for path, answer in answers.items():
+        assert answer.status_code == httpx.codes.NOT_FOUND, path
 
 
 async def test_a_bad_query_of_the_audit_page_is_ignored(board_alone: BoardStack) -> None:

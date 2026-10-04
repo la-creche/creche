@@ -7,12 +7,25 @@ from pathlib import Path
 
 from noticeboard.auditfiles import (
     ARGS_NOTICE,
+    MAX_ARGS_CHARS,
     MAX_LINE_BYTES,
     AuditFilter,
     known_days,
     read_page,
 )
-from noticeboard_helpers import audit_line, write_audit_day
+from noticeboard_helpers import audit_line, deep_object, peak_memory_of, write_audit_day
+
+#: A record under `MAX_LINE_BYTES` that nests past the limit of the JSON reader.
+DEEP_RECORD_LEVELS = 250_000
+
+#: Decimal digits of Unicode that are not ASCII. Written as escapes so the
+#: source file holds no character that looks like another.
+FULLWIDTH_2026 = "\uff12\uff10\uff12\uff16"
+ARABIC_INDIC_ONE = "\u0661"
+
+#: Arguments that the JSON reader takes, and the most memory their page may take.
+DEEP_ARGS_LEVELS = 3_000
+PAGE_MEMORY_MAX = 4 * 1024 * 1024
 
 
 def test_the_page_says_it_shows_full_arguments() -> None:
@@ -53,6 +66,15 @@ def test_a_day_name_with_a_trailing_newline_is_ignored(tmp_path: Path) -> None:
     # A `$` also matches before a final newline. `\Z` does not.
     write_audit_day(tmp_path, "2026-09-19", [audit_line()])
     (tmp_path / "2026-09-20.jsonl\n").write_text("{}\n", encoding="utf-8")
+
+    assert known_days(tmp_path) == ("2026-09-19",)
+
+
+def test_a_day_name_with_digits_outside_ascii_is_ignored(tmp_path: Path) -> None:
+    # `\d` takes every decimal digit of Unicode unless the pattern says ASCII.
+    write_audit_day(tmp_path, "2026-09-19", [audit_line()])
+    (tmp_path / f"{FULLWIDTH_2026}-09-20.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / f"2026-09-2{ARABIC_INDIC_ONE}.jsonl").write_text("{}\n", encoding="utf-8")
 
     assert known_days(tmp_path) == ("2026-09-19",)
 
@@ -153,6 +175,22 @@ def test_enormous_arguments_are_capped_and_say_so(tmp_path: Path) -> None:
     assert page.rows[0].args_truncated
 
 
+def test_arguments_that_nest_deep_render_in_bounded_memory(tmp_path: Path) -> None:
+    """The reader stops at the display cap."""
+    args = "[" * DEEP_ARGS_LEVELS + "]" * DEEP_ARGS_LEVELS
+    line = json.dumps(audit_line(args="@")).replace('"@"', args)
+    (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
+
+    page, peak = peak_memory_of(lambda: read_page(tmp_path, AuditFilter()))
+
+    row = page.rows[0]
+    assert row.problem == ""
+    assert row.args.startswith("[\n  [\n    [\n")
+    assert len(row.args) == MAX_ARGS_CHARS
+    assert row.args_truncated
+    assert peak < PAGE_MEMORY_MAX
+
+
 def test_a_record_that_will_not_parse_takes_a_row(tmp_path: Path) -> None:
     """Invariant 15: a hole a filter hides is worse than an odd row."""
     path = write_audit_day(tmp_path, "2026-09-19", [audit_line()])
@@ -163,6 +201,20 @@ def test_a_record_that_will_not_parse_takes_a_row(tmp_path: Path) -> None:
     problems = [one for one in page.rows if one.problem]
     assert len(problems) == 1
     assert "is not JSON" in problems[0].problem
+
+
+def test_a_record_that_nests_too_deep_takes_a_row(tmp_path: Path) -> None:
+    """The JSON reader raises RecursionError on this record, not ValueError."""
+    path = write_audit_day(tmp_path, "2026-09-19", [audit_line()])
+    deep = deep_object(DEEP_RECORD_LEVELS)
+    assert len(deep) < MAX_LINE_BYTES
+    path.write_bytes(path.read_bytes() + deep + b"\n")
+
+    page = read_page(tmp_path, AuditFilter())
+
+    assert len(page.rows) == 2
+    assert "nests deeper than the reader allows" in page.rows[0].problem
+    assert page.rows[1].tool == "kagi__kagi_search_fetch"
 
 
 def test_an_absurd_record_is_not_parsed_and_says_so(tmp_path: Path) -> None:

@@ -38,6 +38,10 @@ view that also applied would be a second writer to the same state.
    key is set, never what it is.
 6. `/static` stays styling only. Nothing that holds a fact may live there.
 
+A route parameter is an id. `app.py` checks a family name against
+`registrywrite.NAME_RE` and a session id with `sessions.is_session` before
+any use. A value that fails answers 404.
+
 ## Reading another process's files
 
 7. Nothing that reads a file may raise. `jsonfiles.py` answers a problem
@@ -72,11 +76,15 @@ view that also applied would be a second writer to the same state.
 21. Build git's environment from an allowlist, not by filtering.
 22. Take no lock. Git's own `index.lock` makes a concurrent writer fail, and a
     failed commit restores.
-23. Validate the whole registry before you commit.
+23. Validate the whole registry with the new text before you write. The
+    validator reads a copy of `families`, `mcp` and `skills`. `caregiver`
+    then never reads a text that the validator refuses. Write the family
+    file to a temporary file in its own directory. Rename it into place.
 24. The noticeboard never parses YAML itself. `agent_family` owns the reader.
     `yamlkeep.py` is the one module that touches a YAML library, and it reads
-    no meaning. `registrywrite` re-reads what it wrote and refuses a save whose
-    model does not match.
+    no meaning. `app.py` gives the patched text back to `agent_family`. When
+    the text does not read as the model of the form, the save writes the
+    document of `yamlout.py`.
 
 ## Run it
 
@@ -134,6 +142,25 @@ prefixed `test_noticeboard_`.
   (`registrywrite.py`).
 - The family page reads whatever `report_path` the status document names
   (`pages.py`).
+- Contract 05 §2 names no encoding for a file. `jsonfiles.py` takes UTF-8,
+  UTF-16 and UTF-32, as `json.loads` does.
+- No contract gives a range for a count. `jsonfiles.integer` takes an integer
+  of any size.
+- `spec.md` §8.1 names no answer for a route parameter that is not an id.
+  The route answers the 404 of a path that has no route (`app.py`).
+- `spec.md` §8.3 names no answer for an exception that no reader predicted.
+  The service answers 500 with the refusal body and the word `internal`
+  (`app.py`).
+- A save still rewrites two shapes that it did not edit (`yamlkeep.py`). The
+  first is a flow mapping inside a flow mapping. The second is a flow mapping
+  on a line past column 100.
+- A save that removes the last key of a block also removes the comment lines
+  and the blank lines after that key (`yamlkeep.py`).
+- The copy that a save validates keeps each link as a link
+  (`registrywrite.py`). A relative link that leaves `families`, `mcp` and
+  `skills` does not resolve there. When the validator needs its target, the
+  save is refused, and the error can name a file that the checkout holds.
+  A `families` directory that is a link refuses each save.
 - A user unit started before its user joined the `agents` group cannot read
   the chaperone's 0640 audit files until the host reboots. The audit page
   shows a banner and renders the rest.

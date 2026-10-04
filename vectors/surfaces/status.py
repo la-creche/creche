@@ -34,9 +34,11 @@ from vectors.core import (
     accepted,
     attempt,
     bytes_input,
+    expand,
     quiet_logs,
     raised,
     refused,
+    repeat_input,
 )
 
 CONTRACT: Final = "contract 05"
@@ -56,6 +58,7 @@ NOW: Final = datetime(2999, 1, 1, 0, 0, 30, tzinfo=UTC)
 #: What stands for the temporary directory in a message that names it.
 ROOT_MARK: Final = "<root>"
 
+VERY_DEEP: Final = 400_000
 HUGE_DIGITS: Final = 5_000
 
 _STATE_DIR: Final = "/srv/agents/state/rework/families/chat"
@@ -168,10 +171,14 @@ class Document:
     """One status document: an id and its bytes."""
 
     id: str
-    raw: bytes
+    raw: bytes = b""
+    parts: tuple[tuple[str, int], ...] = ()
+
+    def data(self) -> bytes:
+        return expand(self.parts).encode("ascii") if self.parts else self.raw
 
     def given(self) -> dict[str, Json]:
-        return bytes_input(self.raw)
+        return repeat_input(self.parts) if self.parts else bytes_input(self.raw)
 
 
 def _doc(doc_id: str, **fields: object) -> Document:
@@ -444,6 +451,10 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
         "json-deep-unknown-field",
         _TEXT[:-1].encode() + b', "x": ' + b"[" * 200 + b"]" * 200 + b"}",
     ),
+    Document(
+        "json-very-deep",
+        parts=(('{"kind":"attended","x":', 1), ("[", VERY_DEEP), ("]", VERY_DEEP), ("}", 1)),
+    ),
 )
 
 
@@ -551,7 +562,7 @@ def _vector(reader: Reader, document: Document, scratch: Path) -> Vector:
     root = scratch / reader.owner / document.id
     target = root / FAMILIES_DIR / FAMILY / STATUS_FILE
     target.parent.mkdir(parents=True)
-    target.write_bytes(document.raw)
+    target.write_bytes(document.data())
     with quiet_logs():
         outcome = attempt(lambda: reader.read(root))
 

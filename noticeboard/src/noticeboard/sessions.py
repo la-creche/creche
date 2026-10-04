@@ -23,6 +23,7 @@ argv, and it appears in one place: an `Authorization` header (invariant
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +50,10 @@ MAX_STREAM_LINES: Final = 5_000
 
 _OK: Final = 200
 
+#: Contract 02 §2: a session id is 1 to 128 characters.
+SESSION_ID_MAX: Final = 128
+_SESSION_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
 #: Contract 02 §2's session id prefixes, mapped to the door that owns
 #: them. §3.1 names the matching tokens: `door-owui`, `door-tui`,
 #: `door-delegate`, `door-trigger`.
@@ -63,6 +68,18 @@ DOOR_BY_PREFIX: Final = (
     ("job-", "delegate"),
     ("auto-", "trigger"),
 )
+
+#: What a page shows for a count that it cannot write.
+NO_COUNT: Final = "unknown"
+
+
+def is_session(value: str) -> bool:
+    """A session id of contract 02 §2.
+
+    A session id becomes one segment of a path on `attendance`, so a route
+    checks it before the reader builds that path.
+    """
+    return len(value) <= SESSION_ID_MAX and _SESSION_RE.match(value) is not None
 
 
 @dataclass(frozen=True)
@@ -113,6 +130,18 @@ class UsageRow:
     @property
     def tokens(self) -> int:
         return self.input + self.output + self.cache_read + self.cache_write
+
+    @property
+    def tokens_text(self) -> str:
+        """The sum, as a page shows it.
+
+        The interpreter writes no text for an integer past its digit limit.
+        The page then shows `unknown`.
+        """
+        try:
+            return str(self.tokens)
+        except ValueError:
+            return NO_COUNT
 
 
 @dataclass(frozen=True)
@@ -297,6 +326,10 @@ class SessionReader:
             # The file is mode 0600 and owned by attendance's user, so "not
             # readable" is the ordinary first-run failure here.
             return "", f"cannot read the noticeboard-ro token: {error.strerror or error}"
+        except UnicodeDecodeError:
+            # Not OSError. The text of this error quotes a byte of the file,
+            # and no byte of a token file belongs on a page.
+            return "", "the noticeboard-ro token file is not UTF-8 text"
 
         if not found:
             return "", "the noticeboard-ro token file is empty"

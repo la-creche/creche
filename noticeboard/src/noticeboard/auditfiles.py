@@ -38,8 +38,9 @@ ARGS_NOTICE: Final = (
 )
 
 #: Contract 04 §6: one file per UTC day. Anything else in the directory is
-#: not an audit file and is not read.
-DAY_NAME: Final = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl\Z")
+#: not an audit file and is not read. `re.ASCII` keeps `\d` to 0 through 9:
+#: without it the class takes every decimal digit of Unicode.
+DAY_NAME: Final = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl\Z", re.ASCII)
 
 #: A record can hold a 256 KiB request's arguments, with one string value
 #: capped at 8 KiB (§6.1). Half a megabyte is past any real line.
@@ -60,6 +61,9 @@ MAX_DAYS: Final = 30
 MAX_ARGS_CHARS: Final = 20_000
 
 MAX_CHAIN: Final = 10
+
+#: How a page writes one record's arguments.
+_ARGS_ENCODER: Final = json.JSONEncoder(indent=2, sort_keys=True, ensure_ascii=False)
 
 
 @dataclass(frozen=True)
@@ -305,10 +309,24 @@ def _args(body: Json) -> tuple[str, bool]:
     if value is None:
         return "", False
 
+    chunks: list[str] = []
+    size = 0
+
     try:
-        rendered = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
-    except (TypeError, ValueError):
+        # The loop stops one chunk past the cap and never builds the rest of
+        # the text.
+        for chunk in _ARGS_ENCODER.iterencode(value):
+            chunks.append(chunk)
+            size += len(chunk)
+
+            if size > MAX_ARGS_CHARS:
+                break
+    except (TypeError, ValueError, RecursionError):
+        # RecursionError is a guard only. The cap stops the loop before the
+        # encoder goes that deep, so no test reaches that type.
         return "<arguments this noticeboard could not render>", False
+
+    rendered = "".join(chunks)
 
     if len(rendered) <= MAX_ARGS_CHARS:
         return rendered, False

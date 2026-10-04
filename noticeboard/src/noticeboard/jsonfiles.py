@@ -34,6 +34,9 @@ MAX_TEXT_CHARS: Final = 500
 
 _MISSING: Final = "missing"
 
+#: What a page says for a text that nests past the limit of the JSON reader.
+_TOO_DEEP: Final = "it nests deeper than the reader allows"
+
 
 def read_object(path: Path, limit: int = MAX_DOC_BYTES) -> tuple[Json | None, str | None]:
     """One JSON object from a file, or a reason it could not be read.
@@ -43,13 +46,20 @@ def read_object(path: Path, limit: int = MAX_DOC_BYTES) -> tuple[Json | None, st
     directory or a fault file (contract 05 §3.3.1 rule 5).
     """
     try:
-        raw = path.read_bytes()
+        with path.open("rb") as handle:
+            # One byte past the cap proves that the file is over it. The
+            # size of a file then never sets the memory of a page.
+            raw = handle.read(limit + 1)
     except FileNotFoundError:
         return None, None
     except OSError as error:
         # A permission error belongs here too: the noticeboard's user may not be in
         # the writer's group yet (README gotcha 4).
         return None, f"cannot read {path.name}: {error.strerror or error}"
+    except ValueError:
+        # A name with a NUL is no path, and `open` raises this type for it.
+        # A status document names its report by path, so the name is input.
+        return None, f"cannot read {path.name!r}: the system takes no such path"
 
     if len(raw) > limit:
         return None, f"{path.name} is over {limit} bytes; refusing to parse it"
@@ -59,8 +69,16 @@ def read_object(path: Path, limit: int = MAX_DOC_BYTES) -> tuple[Json | None, st
 
 def parse_object(raw: bytes, name: str) -> tuple[Json | None, str | None]:
     """The same checks, on bytes already in hand."""
+    # CONTRACT-QUESTION: contract 05 §2 names no encoding for a file.
+    # `json.loads` takes UTF-8, UTF-16 and UTF-32, so this reader takes the
+    # three. The reading stays, because a stricter reader would refuse a file
+    # that a page shows today. A reader of UTF-8 alone costs one decode step.
     try:
         parsed: object = json.loads(raw)
+    except RecursionError:
+        # Deep nesting raises this type, not ValueError. Its text names the
+        # interpreter's stack, which differs between two Python versions.
+        return None, f"{name} is not JSON: {_TOO_DEEP}"
     except (ValueError, UnicodeDecodeError) as error:
         return None, f"{name} is not JSON: {error}"
 
@@ -98,6 +116,10 @@ def integer(body: Json, key: str, fallback: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         return fallback
 
+    # CONTRACT-QUESTION: contracts 02, 04 and 05 give no range for a count.
+    # This reader takes an integer of any size that JSON can write. The
+    # reading stays, because a range would refuse a value that a page shows
+    # today. A range costs one comparison here.
     return value
 
 
@@ -107,7 +129,12 @@ def number(body: Json, key: str) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
 
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError:
+        # JSON writes an integer of any size, and no float holds one past
+        # about 1.8e308. That is a malformed amount, not a number.
+        return None
 
 
 def flag(body: Json, key: str) -> bool:

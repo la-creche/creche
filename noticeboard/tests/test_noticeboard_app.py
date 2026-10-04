@@ -6,6 +6,7 @@ dir, and a fake `attendance`. No host, no socket, no live service.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,17 @@ KEY = "k" * 40
 CHAT = "chat"
 OWUI = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 HOST = "noticeboard.example.test"
+
+#: A text that holds one half of a surrogate pair. JSON writes it as an escape.
+HALF_PAIR = "a\ud800b"
+
+#: How deep the `loc` of one issue nests in a test. One supported Python reads
+#: this depth, and the others refuse it.
+ISSUE_NESTING = 100_000
+
+#: The largest count that the interpreter writes as text, and so the largest
+#: that the JSON reader keeps.
+LONGEST_COUNT = int("9" * 4300)
 
 
 class Harness:
@@ -185,6 +197,73 @@ def test_a_malformed_state_file_renders_a_report_not_a_stack_trace(board: Harnes
     assert "Traceback" not in answer.text
 
 
+def test_a_text_with_half_a_surrogate_pair_renders_as_its_escape(board: Harness) -> None:
+    """JSON can escape one half of a surrogate pair, and UTF-8 has no form
+    for it. The page shows the escape."""
+    from noticeboard_helpers import audit_line, status_doc, write_audit_day, write_json
+
+    write_json(board.config.families_dir / "chat" / "status.json", status_doc(kind=HALF_PAIR))
+    write_audit_day(board.config.audit_dir, "2026-09-19", [audit_line(args={"query": HALF_PAIR})])
+
+    home = board.get("/")
+    audit = board.get("/audit")
+
+    assert home.status_code == 200
+    assert "a\\ud800b" in home.text
+    assert audit.status_code == 200
+    assert "a\\ud800b" in audit.text
+
+
+def test_an_exception_nobody_predicted_answers_the_refusal_body(
+    board: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The answer holds one word and no text of the exception."""
+    from noticeboard import pages
+
+    def broken(*args: object) -> None:
+        raise RuntimeError("a detail that belongs in the log")
+
+    monkeypatch.setattr(pages, "home", broken)
+
+    with TestClient(board.client.app, raise_server_exceptions=False) as client:
+        answer = client.get("/", headers={ACCESS_HEADER: KEY})
+
+    assert answer.status_code == 500
+    assert answer.json() == {"ok": False, "error": "internal"}
+    assert "detail" not in answer.text
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a 0000 directory anyway")
+def test_a_families_directory_that_cannot_be_listed_says_so(board: Harness) -> None:
+    """ "No families" and "cannot look" are different sentences."""
+    families = board.config.families_dir
+    families.chmod(0o000)
+
+    try:
+        answer = board.get("/")
+    finally:
+        families.chmod(0o755)
+
+    assert answer.status_code == 200
+    assert "cannot list the families directory" in answer.text
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads each entry of a 0444 directory")
+def test_a_families_directory_that_gives_names_and_no_entry_says_so(board: Harness) -> None:
+    """A directory with no search permission lists its names, and the
+    service can read no entry. That is not "no families" either."""
+    families = board.config.families_dir
+    families.chmod(0o444)
+
+    try:
+        answer = board.get("/")
+    finally:
+        families.chmod(0o755)
+
+    assert answer.status_code == 200
+    assert "cannot read the families directory" in answer.text
+
+
 def test_a_missing_state_file_renders_a_report(board: Harness) -> None:
     (board.config.families_dir / "chat" / "status.json").unlink()
 
@@ -194,12 +273,48 @@ def test_a_missing_state_file_renders_a_report(board: Harness) -> None:
     assert "missing" in answer.text
 
 
+def test_an_issue_field_that_is_no_text_still_renders(board: Harness, tmp_path: Path) -> None:
+    """An issue field is text in contract 01 §7. The page shows a marker for
+    another value and never the form of that value."""
+    from noticeboard_helpers import status_doc, write_json
+
+    report = tmp_path / "validation.json"
+    nested = "[" * ISSUE_NESTING + "]" * ISSUE_NESTING
+    report.write_text(f'{{"issues": [{{"loc": {nested}, "msg": "unknown"}}]}}', encoding="utf-8")
+    validation = {"ok": False, "error_count": 1, "report_path": str(report)}
+    write_json(
+        board.config.families_dir / "chat" / "status.json",
+        status_doc(state="invalid", validation=validation),
+    )
+
+    answer = board.get("/families/chat")
+
+    assert answer.status_code == 200
+    assert "[[" not in answer.text
+
+
 def test_the_family_page_lists_sandboxes_and_sessions(board: Harness) -> None:
     answer = board.get("/families/chat")
 
     assert answer.status_code == 200
     assert "chat-s3" in answer.text
     assert "Boiler service date" in answer.text
+
+
+def test_the_outcomes_of_a_family_come_from_its_own_directory(board: Harness) -> None:
+    """A status document also names a family. That text is input from
+    another process, and the page takes the directory from the route."""
+    from noticeboard_helpers import status_doc, write_json
+
+    write_json(
+        board.config.families_dir / "scrum-lead" / "status.json",
+        status_doc(family="chat", kind="autonomous"),
+    )
+
+    answer = board.get("/families/scrum-lead")
+
+    assert answer.status_code == 200
+    assert "01JBQ80M4F7S2YQ1VZK6W3TDEN" in answer.text
 
 
 def test_the_session_page_shows_the_transcript_and_the_turns(board: Harness) -> None:
@@ -218,6 +333,20 @@ def test_a_dead_attendance_still_renders_the_session_page(board: Harness) -> Non
 
     assert answer.status_code == 200
     assert "cannot reach attendance" in answer.text
+
+
+def test_a_token_sum_with_no_text_form_shows_as_unknown(board: Harness) -> None:
+    """The page shows `unknown` for a sum that the interpreter cannot write
+    as text."""
+    usage = dict.fromkeys(("input", "output", "cache_read", "cache_write"), LONGEST_COUNT)
+    detail = session_doc()
+    detail["turns"] = [turn_doc(usage=usage)]
+    board.fake.answer(f"/v1/sessions/{CHAT}/{OWUI}", detail)
+
+    answer = board.get(f"/sessions/{CHAT}/{OWUI}")
+
+    assert answer.status_code == 200
+    assert "<td>unknown" in answer.text
 
 
 def test_the_audit_page_says_it_shows_full_arguments(board: Harness) -> None:
@@ -330,6 +459,35 @@ def test_a_save_keeps_the_files_comments(board: Harness) -> None:
     assert "- { path: /srv/agents/vault, mode: ro }" in saved
 
 
+@pytest.mark.parametrize(
+    "patched", [CHAT_FAMILY_YAML, "name: chat\n{}\n"], ids=["another-model", "no-model"]
+)
+def test_a_patch_that_does_not_read_as_the_edit_gives_way_to_the_emitter(
+    board: Harness, monkeypatch: pytest.MonkeyPatch, patched: str
+) -> None:
+    """The patched text goes back through the reader. A text that reads as
+    another model, or as none, must not be what the save writes."""
+    from agent_family import parse_family
+
+    from noticeboard import app as app_module
+
+    monkeypatch.setattr(app_module, "edited_text", lambda original, before, after: patched)
+    board.get("/families/chat/edit")
+    before = commit_count(board.config.registry_dir)
+    body = posted_form(board)
+    body["description"] = "the house assistant, rewritten"
+    body["verb"] = "save"
+
+    answer = board.post("/families/chat/edit", body)
+
+    saved = (board.config.registry_dir / "families/chat/family.yaml").read_text(encoding="utf-8")
+    family, _ = parse_family(saved)
+    assert answer.status_code == 303
+    assert commit_count(board.config.registry_dir) == before + 1
+    assert family is not None
+    assert family.description == "the house assistant, rewritten"
+
+
 def test_a_save_that_changes_nothing_makes_no_commit(board: Harness) -> None:
     """The form posts every field back, so a save with no edit must not
     rewrite the whole file from the model and commit the difference. The
@@ -387,6 +545,78 @@ def test_a_live_only_preview_says_the_sandbox_keeps_running(board: Harness) -> N
     answer = board.post("/families/chat/edit", body)
 
     assert "lands live" in answer.text
+
+
+#: Path segments that are not a family name (contract 01 §2), as a URL holds them.
+NOT_A_FAMILY = ("Chat", "c", "chat_1", "chat%20", "%2E%2E", "caf%C3%A9", "a" * 32)
+
+#: Path segments that are not a session id (contract 02 §2), as a URL holds them.
+NOT_A_SESSION = ("-x", "%2Ehidden", "a%20b", "a%3Ab", "%C3%A4", "a" * 129)
+
+
+@pytest.mark.parametrize("name", NOT_A_FAMILY)
+def test_a_family_page_answers_404_for_a_name_that_is_no_family_name(
+    board: Harness, name: str
+) -> None:
+    for path in (f"/families/{name}", f"/families/{name}/edit"):
+        answer = board.get(path)
+
+        assert answer.status_code == 404
+        assert answer.json() == {"detail": "Not Found"}
+
+    # Nothing asked `attendance` for the sessions of such a name.
+    assert board.fake.calls == []
+
+
+@pytest.mark.parametrize("name", NOT_A_FAMILY)
+def test_a_save_answers_404_for_a_name_that_is_no_family_name(board: Harness, name: str) -> None:
+    board.get("/families/chat/edit")
+    before = commit_count(board.config.registry_dir)
+
+    answer = board.post(f"/families/{name}/edit", {"verb": "save"})
+
+    assert answer.status_code == 404
+    assert commit_count(board.config.registry_dir) == before
+
+
+@pytest.mark.parametrize("family", NOT_A_FAMILY)
+def test_a_session_page_answers_404_for_a_family_that_is_no_family_name(
+    board: Harness, family: str
+) -> None:
+    answer = board.get(f"/sessions/{family}/{OWUI}")
+
+    assert answer.status_code == 404
+    assert board.fake.calls == []
+
+
+@pytest.mark.parametrize("session", NOT_A_SESSION)
+def test_a_session_page_answers_404_for_a_session_that_is_no_session_id(
+    board: Harness, session: str
+) -> None:
+    answer = board.get(f"/sessions/{CHAT}/{session}")
+
+    assert answer.status_code == 404
+    assert board.fake.calls == []
+
+
+def test_a_family_name_of_the_longest_form_reaches_its_page(board: Harness) -> None:
+    """31 characters is a family name. The page then says what it cannot read."""
+    answer = board.get("/families/" + "a" * 31)
+
+    assert answer.status_code == 200
+    assert "status.json is missing" in answer.text
+
+
+def test_a_session_id_of_the_longest_form_reaches_its_page(board: Harness) -> None:
+    session = "a" * 128
+
+    answer = board.get(f"/sessions/{CHAT}/{session}")
+
+    assert answer.status_code == 200
+    assert [path for path, _ in board.fake.calls] == [
+        f"/v1/sessions/{CHAT}/{session}",
+        f"/v1/sessions/{CHAT}/{session}/events",
+    ]
 
 
 def test_the_fixture_family_is_the_one_the_registry_holds(board: Harness) -> None:

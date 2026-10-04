@@ -30,9 +30,9 @@ Three rules make this safe.
 
 This module owns the only YAML library in the noticeboard, and it owns no meaning:
 it moves values between two structures the reader already produced. The
-registry still has exactly one PARSER, `agent_family`, and
-`registrywrite.py` still re-reads what it wrote and refuses a save whose
-model does not match (`AGENTS.md` rule 24).
+registry still has exactly one PARSER, `agent_family`. `app.py` gives the
+patched text back to it and writes the emitter's document when the model
+does not match (`AGENTS.md` rule 24).
 """
 
 from __future__ import annotations
@@ -66,13 +66,15 @@ def edited_text(original: str, before: Mapping[str, Any], after: Mapping[str, An
 
     _merge(document, before, after)
 
-    return _spaced_like(original, _dump(document))
+    return _spaced_like(original, _unfolded_like(original, _dump(document)))
 
 
 #: A whole line that is nothing but a flow mapping, behind an optional
-#: sequence dash and an optional key. Every value in contract 01's file is a
-#: path, a slug or a number, so the closing brace is unambiguous.
-_FLOW_LINE: Final = re.compile(r"^(\s*(?:- )?(?:[a-z_]+: )?)\{(\S(?:.*\S)?)\}\s*$")
+#: sequence dash and an optional key, with an optional comment after it.
+#: Every value in contract 01's file is a path, a slug or a number, so the
+#: closing brace is the last one before the comment. A mapping that holds a
+#: `#` does not match, and stays as ruamel wrote it.
+_FLOW_LINE: Final = re.compile(r"^(\s*(?:- )?(?:[a-z_]+: )?)\{(\S(?:[^#]*\S)?)\}(\s*|\s+#.*)\Z")
 
 _SPACED_FLOW: Final = re.compile(r"\{ \S")
 
@@ -99,15 +101,75 @@ def _spaced_like(original: str, dumped: str) -> str:
     lines = dumped.splitlines(keepends=True)
 
     for index, line in enumerate(lines):
-        found = _FLOW_LINE.match(line.rstrip("\n"))
+        text = line.rstrip("\n")
+        found = _FLOW_LINE.match(text)
 
         if found is None:
             continue
 
         tail = "\n" if line.endswith("\n") else ""
-        lines[index] = f"{found.group(1)}{{ {found.group(2)} }}{tail}"
+        flow = f"{found.group(1)}{{ {found.group(2)} }}"
+        lines[index] = f"{flow}{_comment_at_its_column(text, flow, found.group(3))}{tail}"
 
     return "".join(lines)
+
+
+def _comment_at_its_column(dumped: str, flow: str, rest: str) -> str:
+    """The comment after a flow mapping, back where the author put it.
+
+    ruamel keeps the column of a comment. The two spaces that `flow` got back
+    thus come out of the padding before the comment, and one space stays.
+    """
+    comment = rest.lstrip()
+
+    if not comment:
+        return ""
+
+    column = len(dumped) - len(comment)
+
+    return " " * max(1, column - len(flow)) + comment
+
+
+def _unfolded_like(original: str, dumped: str) -> str:
+    """ruamel folds a line at `YAML_WIDTH`. A hand-written file can hold a
+    longer one, and each save then rewrote a line that it did not edit.
+
+    A YAML reader joins the lines of a folded value with one space. So when
+    that join gives back a line of the original, the value did not move and
+    the line returns whole. No other line changes.
+    """
+    held = {one for one in original.splitlines() if len(one) > YAML_WIDTH}
+
+    if not held:
+        return dumped
+
+    lines = dumped.split("\n")
+    kept: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        # ruamel leaves a space at the end of a flow sequence line that it
+        # folds after a comma.
+        joined = lines[index].rstrip()
+        after = index + 1
+
+        while after < len(lines) and lines[after].strip() and _starts_one_of(joined, held):
+            joined = f"{joined} {lines[after].strip()}"
+            after += 1
+
+        if joined in held:
+            kept.append(joined)
+            index = after
+        else:
+            kept.append(lines[index])
+            index += 1
+
+    return "\n".join(kept)
+
+
+def _starts_one_of(text: str, held: set[str]) -> bool:
+    """True when `text` and one space start a line that the original holds."""
+    return any(one.startswith(f"{text} ") for one in held)
 
 
 class _RoundTrip(Protocol):
@@ -168,8 +230,9 @@ def _set(node: MutableMapping[str, Any], key: str, was: object, wanted: object) 
     """One key. A nested mapping recurses, so a one-field edit inside a
     block leaves that block's other keys and their comments alone."""
     inner: object = node.get(key)
+    was_block = isinstance(inner, MutableMapping)
 
-    if isinstance(inner, MutableMapping) and isinstance(wanted, Mapping):
+    if was_block and isinstance(wanted, Mapping) and wanted:
         _merge(
             cast("MutableMapping[str, Any]", inner),
             cast("Mapping[str, Any]", was) if isinstance(was, Mapping) else {},
@@ -177,7 +240,46 @@ def _set(node: MutableMapping[str, Any], key: str, was: object, wanted: object) 
         )
         return
 
+    if was_block:
+        # The block goes whole: the edit removed each key of it, or put a
+        # value of another kind in its place.
+        _drop_block_comment(node, key)
+
     # A list is replaced whole. Matching an edited item to the item it came
     # from is guesswork, and a wrong guess moves a comment onto the wrong
     # grant -- which is worse than losing it.
     node[key] = wanted
+
+
+class _Comments(Protocol):
+    """What ruamel keeps beside a mapping: for each key, a list of four
+    comment slots. ruamel ships no type information, so the one member this
+    module reads is named here."""
+
+    items: dict[str, list[object]]
+
+
+class _Commented(Protocol):
+    ca: _Comments
+
+
+#: The slot of a comment that stands between a key and its value: a comment
+#: above the first key of a block.
+_BEFORE_VALUE: Final = 3
+
+
+def _drop_block_comment(node: MutableMapping[str, Any], key: str) -> None:
+    """Forget the comment above the first key of a block that goes.
+
+    ruamel keeps that comment on the parent. Left there, it comes out
+    between the key and its new value, and the emitter then writes an empty
+    mapping at column 0, which no reader parses. The comment explained a key
+    that the edit removed.
+    """
+    if not isinstance(node, CommentedMap):
+        return
+
+    slots = cast("_Commented", node).ca.items.get(key)
+
+    if slots is not None and len(slots) > _BEFORE_VALUE:
+        slots[_BEFORE_VALUE] = None

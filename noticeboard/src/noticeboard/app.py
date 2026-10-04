@@ -35,8 +35,8 @@ from pathlib import Path
 from typing import Any, Final
 from urllib.parse import parse_qsl
 
-from agent_family import Diff, load_registry
-from fastapi import FastAPI, Request
+from agent_family import Diff, load_registry, parse_family
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.concurrency import run_in_threadpool
@@ -47,9 +47,9 @@ from .auditfiles import ARGS_NOTICE, AuditFilter, known_days
 from .config import Config
 from .familyform import Form, document_of, form_of, parse_posted
 from .pages import EditPage
-from .registrywrite import family_path, save_family
+from .registrywrite import NAME_RE, family_path, save_family
 from .security import CSRF_COOKIE, CSRF_FIELD, Origin, Refusal
-from .sessions import SessionReader
+from .sessions import SessionReader, is_session
 from .yamlkeep import edited_text
 
 HERE: Final = Path(__file__).parent
@@ -57,6 +57,11 @@ TEMPLATES: Final = HERE / "templates"
 STATIC: Final = HERE / "static"
 
 _FORBIDDEN: Final = 403
+_NOT_FOUND: Final = 404
+_SERVER_ERROR: Final = 500
+
+#: The word for an exception that no reader turned into a report.
+_INTERNAL: Final = "internal"
 _SEE_OTHER: Final = 303
 _MAX_BODY_BYTES: Final = 1 << 20
 
@@ -79,6 +84,7 @@ def build_app(
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     _perimeter(app, config)
+    _last_resort(app)
     _routes(app, config, reader, render, clock or _now)
 
     return app
@@ -107,7 +113,11 @@ def _renderer(config: Config) -> Callable[[Request, str, dict[str, object]], HTM
             "verb_save": VERB_SAVE,
         }
 
-        return HTMLResponse(template.render(**shared, **body))
+        text = template.render(**shared, **body)
+
+        # JSON can escape one half of a surrogate pair, and a reader keeps
+        # it. UTF-8 has no form for it, so the page shows the escape.
+        return HTMLResponse(text.encode("utf-8", "backslashreplace"))
 
     return render
 
@@ -133,6 +143,27 @@ def _perimeter(app: FastAPI, config: Config) -> None:
         _set_csrf(response, cookie, config)
 
         return response
+
+
+def _last_resort(app: FastAPI) -> None:
+    """One handler for an exception that no code below predicted.
+
+    Each reader answers a problem string, so this handler runs only for a
+    fault of the service itself. The framework raises the exception again
+    after the answer, and the server then logs it.
+    """
+
+    @app.exception_handler(Exception)
+    async def _unexpected(  # pyright: ignore[reportUnusedFunction]
+        request: Request, error: Exception
+    ) -> JSONResponse:
+        # CONTRACT-QUESTION: spec.md §8.3 rule 4 gives the refusal body for
+        # a 403 and names no answer for an exception. The reading taken:
+        # status 500, the same body, the word `internal`, and no text of the
+        # exception. An HTML page in place of the body would cost a template.
+        del request, error
+
+        return JSONResponse({"ok": False, "error": _INTERNAL}, status_code=_SERVER_ERROR)
 
 
 def _set_csrf(response: Response, token: str, config: Config) -> None:
@@ -172,6 +203,7 @@ def _routes(
 
     @app.get("/families/{name}", response_class=HTMLResponse)
     def _family(request: Request, name: str) -> HTMLResponse:  # pyright: ignore[reportUnusedFunction]
+        _require_family(name)
         body = pages.family_page(config, reader, name, clock())
 
         return render(request, "family.html", {"page": body})
@@ -180,6 +212,8 @@ def _routes(
     def _session(  # pyright: ignore[reportUnusedFunction]
         request: Request, family: str, session: str
     ) -> HTMLResponse:
+        _require_family(family)
+        _require_session(session)
         body = pages.session_page(reader, family, session)
 
         return render(request, "session.html", {"page": body})
@@ -201,10 +235,13 @@ def _routes(
 
     @app.get("/families/{name}/edit", response_class=HTMLResponse)
     def _edit(request: Request, name: str) -> HTMLResponse:  # pyright: ignore[reportUnusedFunction]
+        _require_family(name)
+
         return render(request, "edit.html", {"page": pages.edit_page(config, name)})
 
     @app.post("/families/{name}/edit")
     async def _save(request: Request, name: str) -> Response:  # pyright: ignore[reportUnusedFunction]
+        _require_family(name)
         posted, refusal = await _form_of(request)
 
         if refusal is not None:
@@ -217,6 +254,34 @@ def _routes(
             return RedirectResponse(f"/families/{name}?saved={page.saved}", status_code=_SEE_OTHER)
 
         return render(request, "edit.html", {"page": page})
+
+
+def _require_family(name: str) -> None:
+    """Answer 404 unless the route parameter has the form of a family name.
+
+    The parameter becomes a path under the state root, a path in the
+    registry and a query to `attendance`. This check runs before each one.
+    """
+    if not NAME_RE.match(name):
+        raise _no_such_page()
+
+
+def _require_session(session: str) -> None:
+    """Answer 404 unless the route parameter has the form of a session id.
+
+    The parameter becomes one segment of a path on `attendance`.
+    """
+    if not is_session(session):
+        raise _no_such_page()
+
+
+def _no_such_page() -> HTTPException:
+    # CONTRACT-QUESTION: spec.md §8.1 lists the routes and names no answer
+    # for a parameter that is not an id. The reading taken: such a value
+    # names no page, so the answer is the 404 of a path with no route. It
+    # holds nothing of the value. A body in the form of the 403 refusal
+    # would cost one exception handler.
+    return HTTPException(status_code=_NOT_FOUND)
 
 
 def _apply(config: Config, name: str, posted: dict[str, str]) -> EditPage:
@@ -286,7 +351,8 @@ def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any
 
     `None` whenever the file cannot be read or round-tripped, and the caller
     then writes the emitter's document instead. A save must not fail over a
-    comment.
+    comment. `None` also when the patched text does not read back as the
+    model that the form asked for: a save must not write another edit.
     """
     before, after = models
 
@@ -295,7 +361,24 @@ def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any
     except OSError:
         return None
 
-    return edited_text(original, before, after)
+    kept = edited_text(original, before, after)
+
+    if kept is None or not _reads_as(kept, after):
+        return None
+
+    return kept
+
+
+def _reads_as(text: str, wanted: dict[str, Any]) -> bool:
+    """True when `agent_family` reads `text` as the model `wanted`.
+
+    `yamlkeep` moves values and reads no meaning, so a fault there gives a
+    text that is valid and wrong, or no YAML at all. The one reader of the
+    registry says which.
+    """
+    family, _ = parse_family(text)
+
+    return family is not None and family.model_dump(mode="json") == wanted
 
 
 async def _form_of(request: Request) -> tuple[dict[str, str], Refusal | None]:

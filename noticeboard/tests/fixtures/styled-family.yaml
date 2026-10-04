@@ -1,0 +1,21 @@
+# A family file with the shapes that a save must leave alone: a flow mapping
+# with a comment after it, a text and a list past column 100, and a tools
+# block that holds one tool under a comment.
+name: chat
+kind: attended
+description: General assistant. It knows the operator, it searches the web, it delegates work and it asks for tickets.
+
+model: { router: agent-router, budget_usd_per_day: 15 } # the chat router
+
+files:
+  - { path: /srv/agents/vault, mode: ro } # the whole vault, to read
+  - { path: /srv/agents/vault/house/memories, mode: rw }
+
+tools:
+  # Search only. No other server is granted.
+  kagi: [kagi_search_fetch]
+
+skills: [grill-me, handoff, memory-writing, meeting-notes, travel-planning, house-inventory, reading-list]
+
+egress: []
+shell: false
