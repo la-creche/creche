@@ -397,6 +397,21 @@ describe("a process that dies", () => {
     expect(failed[0]?.reason).toBe("process_died");
     expect(failed[0]?.session).toBe("owui-doomed");
   });
+
+  it("sends no settled line for a turn that failed while it settled", async () => {
+    // §5.2 reads pi's entries before `turn_settled`. A process that dies in
+    // that read fails the turn, and a turn has one last line.
+    const harness = open({ piEnv: { "owui-late": { FAKE_PI_DIE_ON_ENTRIES: "1" } } });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-late", turnId(1));
+
+    await until(() => harness.of("process_exit").length === 1, "the exit report");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(harness.of("turn_failed").map((line) => line.reason)).toEqual(["process_died"]);
+    expect(harness.of("turn_settled")).toHaveLength(0);
+  });
 });
 
 describe("liveness", () => {

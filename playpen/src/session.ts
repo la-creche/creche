@@ -474,6 +474,11 @@ export class SandboxSession {
     }
 
     const entries = await this.readEntries();
+    if (state.finished) {
+      // The turn failed while pi listed its entries. `fail` sent its last line.
+      return;
+    }
+
     state.seq += 1;
     const resident = this.hooks.residentAfterTurn();
 
