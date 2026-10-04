@@ -18,8 +18,14 @@ def now() -> datetime:
 
 
 def rfc3339(moment: datetime) -> str:
-    """Second precision. Session, turn and fault fields (contract 02 §4.2)."""
-    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Second precision. Session, turn and fault fields (contract 02 §4.2).
+
+    `isoformat` writes a year of four digits on each system. `strftime`
+    writes a year below 1000 with a width that depends on the system, and
+    `parse_rfc3339` does not read a year of fewer digits.
+    """
+    text = moment.astimezone(UTC).isoformat(timespec="seconds")
+    return text.replace(_UTC_OFFSET_SUFFIX, _ZULU)
 
 
 def rfc3339_ms(moment: datetime) -> str:
