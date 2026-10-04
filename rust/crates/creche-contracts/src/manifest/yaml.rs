@@ -37,8 +37,15 @@ const INT_DIGITS_MAX: usize = 4300;
 /// its `:`.
 const SIMPLE_KEY_MAX: usize = 1024;
 
-/// The largest count of calls of the merge step that nest.
-const MERGE_DEPTH_MAX: usize = 2048;
+/// The longest chain of merge keys that the reader takes: a `<<` value that
+/// has a `<<` value of its own, and so on.
+///
+/// CONTRACT-QUESTION: contract 06 §8 and §10 give no limit for a chain of
+/// merge keys. An alias makes a chain with no nesting, so [`DEPTH_MAX`] does
+/// not bound it. This reader refuses a chain past 128 levels, which is the
+/// limit for the nesting. No manifest of this repository has a merge key. A
+/// larger limit costs stack for each level.
+const MERGE_DEPTH_MAX: usize = DEPTH_MAX;
 
 /// The largest count of pairs that the merge keys of one document copy.
 ///
@@ -84,7 +91,8 @@ pub(super) enum Fault {
     /// The text breaks a rule of YAML. The mark of the problem is on this
     /// line, from 0.
     Line(usize),
-    /// A collection nests deeper than [`DEPTH_MAX`] levels.
+    /// A collection nests deeper than [`DEPTH_MAX`] levels, or a chain of
+    /// merge keys is longer than [`MERGE_DEPTH_MAX`] levels.
     Deep,
     /// The merge keys copy more than [`MERGE_PAIRS_MAX`] pairs.
     Merge,
@@ -3903,6 +3911,34 @@ mod tests {
 
         assert!(load(&document(256, 256)).is_ok());
         assert_eq!(load(&document(256, 257)).unwrap_err(), Fault::Merge);
+    }
+
+    #[test]
+    fn a_merge_chain_past_the_depth_limit_is_refused() {
+        // `last` merges the last mapping of a chain of `levels` merge keys.
+        // The reader fills `last` before a mapping of the chain, so the merge
+        // of `last` walks the whole chain.
+        let document = |levels: usize| {
+            let chain: String = (1..levels)
+                .map(|level| format!("  - &m{level} {{<<: *m{}}}\n", level - 1))
+                .collect();
+
+            format!(
+                "chain:\n  - &m0 {{k: 1}}\n{chain}last: {{<<: *m{}}}\n",
+                levels - 1
+            )
+        };
+        let at_limit = load(&document(128)).unwrap();
+        let Value::Map(root) = at_limit.root() else {
+            panic!("the root is a mapping");
+        };
+
+        assert_eq!(
+            text_of(&at_limit, at_limit.get(root.get("last").unwrap())),
+            "{k: 1}"
+        );
+        assert_eq!(load(&document(129)).unwrap_err(), Fault::Deep);
+        assert_eq!(read("a: {<<: {<<: {k: 1}}}\n"), "{a: {k: 1}}");
     }
 
     #[test]

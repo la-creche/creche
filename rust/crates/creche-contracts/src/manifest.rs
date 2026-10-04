@@ -860,12 +860,18 @@ mod tests {
 
     /// Each vector that the Python code accepts and the Rust code refuses, on
     /// purpose: the surface, the vector, the contract section and the reason.
-    const DEVIATIONS: [(&str, &str, &str, &str); 12] = [
+    const DEVIATIONS: [(&str, &str, &str, &str); 13] = [
         (
             "manifest.component",
             "version-arabic-indic",
             "contract 06 §3",
             "a contract version has ASCII digits (rust/AGENTS.md, rule 9)",
+        ),
+        (
+            "manifest.component",
+            "yaml-merge-chain-200",
+            "contract 06 §10",
+            "the YAML reader refuses a chain of merge keys past 128 levels",
         ),
         (
             "manifest.component",

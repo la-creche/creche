@@ -1195,8 +1195,8 @@ pub enum YamlFault {
     Unreadable,
     /// The text breaks a rule of YAML on this line, from 1.
     Line(usize),
-    /// A collection nests deeper than 128 levels. The Python reader has no
-    /// such refusal: its limit is the stack of its interpreter.
+    /// A collection nests deeper than 128 levels, or a chain of merge keys
+    /// is longer than 128 levels. The Python reader has no such refusal.
     Deep,
     /// The merge keys of the document copy more than 65,536 pairs.
     Merge,

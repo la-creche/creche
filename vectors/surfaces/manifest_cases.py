@@ -164,6 +164,22 @@ _BINARY_FIELDS: Final = {
     "secrets": "secrets: []",
 }
 
+
+def _merge_chain(levels: int) -> dict[str, str]:
+    """A `restore` that merges the last mapping of a chain of `levels` merge keys.
+
+    The mappings of the chain are in a first value of `unit`, which a second
+    `unit` line replaces. PyYAML reads `restore` before it reads a mapping of
+    the chain, so the merge of `restore` walks the whole chain.
+    """
+    chain = "".join(f"\n  - &m{n} {{<<: *m{n - 1}}}" for n in range(1, levels))
+
+    return {
+        "unit": "unit:\n  - &m0 {mode: automatic}" + chain + "\n" + FIELDS["unit"],
+        "restore": f"restore:\n  <<: *m{levels - 1}\n  keep: 1",
+    }
+
+
 _OPTIONAL: Final = ("build", "provides", "requires", "depends_on", "secrets")
 _REQUIRED: Final = tuple(name for name in FIELDS if name not in _OPTIONAL)
 
@@ -647,6 +663,8 @@ CASES: Final[tuple[Case, ...]] = (
     _with("yaml-merge-text", restore="restore:\n  <<: automatic\n  keep: 1"),
     _with("yaml-merge-list-of-text", restore="restore:\n  <<: [automatic]\n  keep: 1"),
     _with("yaml-merge-as-value", unit="unit: <<"),
+    _with("yaml-merge-chain-128", **_merge_chain(128)),
+    _with("yaml-merge-chain-200", **_merge_chain(200)),
     _with("yaml-value-key", restore="restore:\n  =: x\n  mode: automatic\n  keep: 1"),
     _with("yaml-value-as-value", unit="unit: ="),
     _with(

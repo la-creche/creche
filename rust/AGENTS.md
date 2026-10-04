@@ -436,6 +436,9 @@ Rules for the test:
      keeps a lone surrogate escape as one code point. The reader writes
      U+FFFD. The detail of a refusal can then differ from the Python
      detail. The result is a refusal in both.
+  10. The YAML reader, contract 06 §8 and §10. The contract gives no limit
+      for a chain of merge keys. An alias makes such a chain with no
+      nesting. The reader refuses a chain past 128 levels.
 - The types of `manifest` accept what the Python code accepts, also where
   a stricter reading of a contract is possible. The owner decides each
   case. The pull request of the module lists them.

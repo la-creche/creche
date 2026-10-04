@@ -79,7 +79,7 @@
   {"accepted":64,"entry":"agent_door_tui.status.StatusFiles.serving","path":"status/door_tui.json","raised":0,"refused":50,"surface":"status.door_tui","vectors":114},
   {"accepted":11,"entry":"agent_door_trigger.families.StatusFiles.servable","path":"status/door_trigger.json","raised":0,"refused":103,"surface":"status.door_trigger","vectors":114},
   {"accepted":85,"entry":"agent_door_owui.families.StatusFiles.serving","path":"status/door_owui.json","raised":0,"refused":29,"surface":"status.door_owui","vectors":114},
-  {"accepted":157,"entry":"handover.manifest.parse_manifest","path":"manifest/component.json","raised":0,"refused":336,"surface":"manifest.component","vectors":493},
+  {"accepted":159,"entry":"handover.manifest.parse_manifest","path":"manifest/component.json","raised":0,"refused":336,"surface":"manifest.component","vectors":495},
   {"accepted":7,"entry":"handover.site.operator_user, handover.site.operator_home","path":"manifest/operator.json","raised":0,"refused":21,"surface":"manifest.operator","vectors":28},
   {"accepted":17,"entry":"handover.catalog","path":"manifest/catalog.json","raised":0,"refused":0,"surface":"manifest.catalog","vectors":17},
   {"accepted":23,"entry":"handover.errors.RefusalCode","path":"manifest/refusal_code.json","raised":0,"refused":9,"surface":"manifest.refusal_code","vectors":32},
