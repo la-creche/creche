@@ -36,6 +36,11 @@ pub struct OpenFault {
 /// The file holds the faults that are open now. It is not a log: a file with
 /// no fault clears each fault of its writer.
 ///
+/// The file holds one fault at most for each code. The faults are in the
+/// order of the text of their codes, which is the order of the Python writer
+/// of `attendance`. The chaperone has one code, so its file holds one fault
+/// at most.
+///
 /// ```
 /// use creche_contracts::status::fault_file::{FaultFile, OpenFault};
 /// use creche_contracts::status::json::Object;
@@ -76,18 +81,19 @@ pub struct FaultFile {
 }
 
 impl FaultFile {
-    /// The fault file of one family.
+    /// The fault file of one family. The caller gives the faults in each
+    /// order, and the file holds them in the order of the text of their codes.
     ///
     /// # Errors
     ///
     /// [`FaultFileError`] when `caregiver` is the source, when a fault has a
-    /// code that the source does not detect, and when a detail has the name
-    /// of a field.
+    /// code that the source does not detect, when a detail has the name of a
+    /// field, and when two faults have one code.
     pub fn new(
         family: FamilyName,
         source: FaultSource,
         written_at: Timestamp,
-        faults: Vec<OpenFault>,
+        mut faults: Vec<OpenFault>,
     ) -> Result<Self, FaultFileError> {
         if source == FaultSource::Managerd {
             return Err(FaultFileError::SourceWritesNoFile);
@@ -105,7 +111,20 @@ impl FaultFile {
             {
                 return Err(FaultFileError::DetailNamesField { item });
             }
+
+            let earlier = faults.iter().take(item);
+            if earlier
+                .into_iter()
+                .any(|earlier| earlier.code == fault.code)
+            {
+                return Err(FaultFileError::CodeTwice { item });
+            }
         }
+
+        // `attendance.faults.FaultReporter` writes its faults in this order.
+        // The noticeboard names the first fault of a document, so the order
+        // has an effect.
+        faults.sort_by_key(|fault| fault.code.as_str());
 
         Ok(Self {
             family,
@@ -133,7 +152,7 @@ impl FaultFile {
         self.written_at
     }
 
-    /// The open faults.
+    /// The open faults, in the order of the file.
     #[must_use]
     pub fn faults(&self) -> &[OpenFault] {
         &self.faults
@@ -190,6 +209,12 @@ pub enum FaultFileError {
         /// The place of the fault, from 0.
         item: usize,
     },
+    /// An earlier fault has the code of this fault. A writer holds one open
+    /// fault for each code.
+    CodeTwice {
+        /// The place of the second fault, from 0.
+        item: usize,
+    },
 }
 
 impl fmt::Display for FaultFileError {
@@ -201,6 +226,9 @@ impl fmt::Display for FaultFileError {
             }
             Self::DetailNamesField { item } => {
                 write!(f, "fault {item}: a detail has the name of a field")
+            }
+            Self::CodeTwice { item } => {
+                write!(f, "fault {item}: an earlier fault has the same code")
             }
         }
     }
@@ -384,6 +412,37 @@ mod tests {
                 "{key}"
             );
         }
+    }
+
+    #[test]
+    fn a_file_holds_one_fault_for_each_code_in_the_order_of_the_codes() {
+        let orphan = || fault(FaultCode::OrphanProcesses, &[]);
+        let start = || fault(FaultCode::SandboxStartFailed, &[]);
+        let audit = || fault(FaultCode::AuditUnreadable, &[]);
+        let stale = || fault(FaultCode::GrantsStale, &[]);
+        let sorted = file(FaultSource::Sessiond, vec![start(), orphan(), audit()]).unwrap();
+        let codes: Vec<&str> = sorted
+            .faults()
+            .iter()
+            .map(|fault| fault.code.as_str())
+            .collect();
+
+        assert_eq!(
+            codes,
+            [
+                "audit_unreadable",
+                "orphan_processes",
+                "sandbox_start_failed"
+            ]
+        );
+        assert_eq!(
+            file(FaultSource::Sessiond, vec![orphan(), start(), orphan()]),
+            Err(FaultFileError::CodeTwice { item: 2 })
+        );
+        assert_eq!(
+            file(FaultSource::Pep, vec![stale(), stale()]),
+            Err(FaultFileError::CodeTwice { item: 1 })
+        );
     }
 
     #[test]

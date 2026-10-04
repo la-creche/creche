@@ -953,6 +953,31 @@ fn each_fault_file_writer_makes_the_bytes_of_its_python_writer() {
 }
 
 #[test]
+fn a_fault_file_has_the_order_of_the_python_writer_for_each_order_of_the_caller() {
+    let writer = FAULT_WRITERS
+        .iter()
+        .find(|writer| writer.source == FaultSource::Sessiond)
+        .unwrap();
+    let vectors = vectors::surface(writer.surface).vectors;
+    let vector = vectors
+        .iter()
+        .find(|vector| vector.id == "each-code")
+        .unwrap();
+    let mut reversed = vector.input.args().unwrap().clone();
+    let faults = reversed["faults"].as_array_mut().unwrap();
+    let given = faults.clone();
+    faults.reverse();
+
+    assert_ne!(*faults, given, "the vector holds more than one fault");
+
+    let file = fault_file_of(&reversed, writer).unwrap();
+    let written = String::from_utf8(file.encode()).unwrap();
+    let wanted = String::from_utf8(output_of(vector)).unwrap();
+
+    assert_eq!(written, wanted);
+}
+
+#[test]
 fn each_surface_of_contract_05_has_a_row_in_a_table() {
     let named: HashSet<&str> = READERS
         .iter()
