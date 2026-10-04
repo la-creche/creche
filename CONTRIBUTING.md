@@ -12,6 +12,10 @@ workflow: branches, hooks, CI, tags and releases.
   `GIT_COMMON_DIR` and `GIT_OBJECT_DIRECTORY` before they run. A hook that
   runs from a linked worktree then does not leak those into the test suite's
   own `git` subprocesses.
+- The root `conftest.py` removes the same five variables before pytest
+  imports a test. git also sets them for `git rebase --exec` and for
+  `git bisect run`. A test run from there then cannot write into the
+  repository of the caller.
 
 ## Hooks
 
