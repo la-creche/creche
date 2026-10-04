@@ -68,7 +68,7 @@ Each rule has its reason. Do not break a rule without a change to this file.
    Do not use `anyhow` in a library crate.
    Reason: the signature shows each failure, and the compiler makes the
    caller handle each one. An error with no type hides them.
-5. **Do not use `unwrap`, `expect`, `panic!` or an index outside a test.**
+5. **Do not use `unwrap`, `expect`, `panic!` or a `[]` index outside a test.**
    The lint gate refuses them. Write an exception as
    `#[expect(clippy::<lint>, reason = "...")]` on one item. Never write
    `#[allow]`.
@@ -125,23 +125,30 @@ The code style rules of the root `AGENTS.md` apply. In Rust they read:
 ## The lint gate
 
 `[workspace.lints]` in `Cargo.toml` is the lint gate. It forbids `unsafe`
-code. It denies the lints of rule 5 and these: `todo`, `unimplemented`,
-`unreachable`, `string_slice`, `as_conversions`, `unwrap_in_result`,
-`panic_in_result_fn`, `await_holding_lock`, `dbg_macro`, `exit` and
-`mem_forget`.
+code. It denies a `Result` that the code drops without a check. It denies
+the lints of rule 5 and these: `todo`, `unimplemented`, `unreachable`,
+`string_slice`, `as_conversions`, `unwrap_in_result`, `panic_in_result_fn`,
+`await_holding_lock`, `dbg_macro`, `exit` and `mem_forget`. It warns about a
+public type with no `Debug`. clippy runs with `-D warnings`, so a warning
+also fails the gate.
+
+`bin/tests/test_rust_workspace.py` pins each entry of the lint gate and of
+`clippy.toml`. To change an entry, change the pin in the same commit. Give
+the reason in the commit message.
 
 - Each crate has these two lines in its `Cargo.toml`: `[lints]`, then
   `workspace = true`. Write them in that form. `bin/rust-gate.sh` reads no
   other spelling and refuses a crate without them.
 - A crate without the two lines builds with no lint of the workspace. cargo
   does not tell you.
-- `clippy.toml` lets a test use `unwrap`, `expect`, `panic!` and an index.
+- `clippy.toml` lets a test use `unwrap`, `expect`, `panic!` and a `[]`
+  index.
 - A test function returns `()`. The lint gate refuses an assertion or an
   `unwrap` in a function that returns `Result`, in a test too.
 - Put a test helper in a `#[cfg(test)]` module. clippy does not count a
   helper outside such a module as test code, in a file under `tests/` too.
-- The lint gate checks syntax. It does not prove that a program cannot
-  panic.
+- The lint gate reads the text of the code. Code that passes it can panic,
+  for example on a division by zero.
 
 ## Tests
 
@@ -160,8 +167,9 @@ code. It denies the lints of rule 5 and these: `todo`, `unimplemented`,
   `bin/lib/rustrule.sh` first.
 - A Rust source file includes no Markdown file. A push of Markdown files
   only runs no cargo step.
-- A Python test reads no file under `rust/`. A push that changes only
-  `rust/` runs no pytest suite.
+- A push that changes only `rust/` runs no pytest suite. A Python test that
+  reads a file under `rust/` then runs first in CI.
+  `bin/tests/test_rust_workspace.py` is such a test.
 
 ## Dependencies
 
