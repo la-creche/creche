@@ -10,11 +10,17 @@ parser as it was, and a caller that catches `Refusal` did not catch it.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 from handover.errors import Refusal, RefusalCode
+from handover.intake.store import recipients_of
 from handover.manifest import MAX_MANIFEST_BYTES, parse_manifest
+from handover.mcpserver import parse_server
 from handover.state import MAX_STATE_BYTES, parse_state
 from handover_fixtures import manifest_text
+from handover_mcp_fixtures import KAGI_LOCK_PATH, KAGI_YAML
 
 SUBJECT = "chaperone/component.yaml"
 STATE_SUBJECT = "live-state.json"
@@ -128,3 +134,29 @@ def test_a_state_document_that_is_no_utf8_text_is_refused() -> None:
     refusal = _state_refusal(f'{{"live": "{LONE_SURROGATE}"}}')
 
     assert refusal.detail == "is not UTF-8"
+
+
+# -- server.yaml and the sops file --------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["!!int abc", "!!bool x", "!!timestamp x", "2001-99-99"])
+def test_a_server_file_that_the_reader_cannot_build_is_refused(value: str) -> None:
+    text = f"{KAGI_YAML.format(lock=KAGI_LOCK_PATH)}extra: {value}\n"
+    with pytest.raises(Refusal) as caught:
+        parse_server(text.encode("utf-8"), "kagi")
+
+    assert caught.value.code is RefusalCode.SERVER
+    assert caught.value.detail == "server.yaml is not readable YAML"
+
+
+@pytest.mark.parametrize("value", ["!!int abc", "!!bool x", "2001-99-99"])
+def test_a_sops_file_that_the_reader_cannot_build_names_no_recipient(
+    tmp_path: Path, value: str
+) -> None:
+    """The intake reads this file before its loop starts. An error here
+    ended the process, and the unit started it again."""
+    path = tmp_path / ".sops.yaml"
+    path.write_text(f"creation_rules: {value}\n", encoding="utf-8")
+    path.chmod(0o600)
+
+    assert recipients_of(path, "secrets/mcp/kagi.env", owner_uid=os.getuid()) == ()
