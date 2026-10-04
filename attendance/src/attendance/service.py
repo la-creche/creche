@@ -47,6 +47,7 @@ from .family_status import (
     SandboxInfo,
     StatusReader,
     check_may_serve,
+    served_kind,
 )
 from .faults import FaultCode, FaultReporter
 from .ids import SessionPrefix, is_family, is_sandbox, is_session, new_ulid, sha256_hex
@@ -418,7 +419,7 @@ class SessionService:
         """Contract 02 §5.1. One call serves both (invariant 3)."""
         check_access(principal, Access.WRITE)
         status = self._status.require(request.family)
-        check_family_kind(principal, request.family, status.kind)
+        check_family_kind(principal, request.family, served_kind(status))
         check_session_prefix(principal, request.family, request.session)
         check_may_serve(status)
 
@@ -564,10 +565,11 @@ class SessionService:
         """Contract 02 §5.4. Returns the turn; the caller picks the wait mode."""
         check_access(principal, Access.WRITE)
         status = self._status.require(family)
-        check_family_kind(principal, family, status.kind)
+        kind = served_kind(status)
+        check_family_kind(principal, family, kind)
         check_may_serve(status)
         record = self._require_session(family, session)
-        self._set_trigger(record, status.kind, request)
+        self._set_trigger(record, kind, request)
 
         if request.idempotency_key is not None:
             repeat = self._repeat_of(family, session, request)
@@ -709,7 +711,7 @@ class SessionService:
         status = self._status.require(family)
         # The delegate door's grant is `thin`, so a family of any other kind
         # is refused here before a session exists (contract 02 §3.1).
-        check_family_kind(principal, family, status.kind)
+        check_family_kind(principal, family, served_kind(status))
         check_may_serve(status)
 
         owner = request.claimed_session_id
@@ -795,7 +797,7 @@ class SessionService:
         status = self._status.require(target)
         # The dispatch door's grant is `autonomous`, so a thin or attended
         # target is refused before a session exists (contract 02 §3.1).
-        check_family_kind(principal, target, status.kind)
+        check_family_kind(principal, target, served_kind(status))
         check_may_serve(status)
         self._check_dispatchable(status)
 
@@ -1206,7 +1208,7 @@ class SessionService:
         record = Session(
             family=request.family,
             session=request.session,
-            kind=status.kind,
+            kind=served_kind(status),
             created_at=moment,
             updated_at=moment,
             title=request.title,
@@ -1405,7 +1407,14 @@ class SessionService:
         return True
 
     def _slot_for(self, status: FamilyStatus) -> Slot:
-        """Contract 02 §13 rule 2. The limit counts the whole family."""
+        """Contract 02 §13 rule 2. The limit counts the whole family.
+
+        A document that states no kind proves no limit, so nothing starts
+        on it: a queued turn stays in the queue (`served_kind`).
+        """
+        if status.kind is None:
+            return Slot.QUEUE
+
         running = len(self._turns.active_in_family(status.family))
         return slot_for(status.kind, status.max_running_turns, running)
 
@@ -1704,7 +1713,7 @@ class SessionService:
                     ErrorCode.SANDBOX_UNAVAILABLE,
                     f"family {family} has no ready sandbox",
                     family=family,
-                    detail={"family_state": current.state.value},
+                    detail={"family_state": current.state_text},
                 )
 
             await asyncio.sleep(COLD_START_POLL_S)
@@ -1809,7 +1818,7 @@ class SessionService:
         if link is None:
             link = PlaypenLink(
                 family=family,
-                kind=status.kind,
+                kind=served_kind(status),
                 events=_SandboxEvents(self, family, sandbox),
                 factory=self._factory,
                 faults=self._faults,

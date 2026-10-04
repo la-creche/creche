@@ -74,8 +74,8 @@ macro_rules! words {
 words! {
     /// The kind of a family (contract 05 §2.1).
     ///
-    /// A reader that gets another word refuses the document. The Python
-    /// reader of `attendance` reads another word as `attended`.
+    /// A reader that gets another word refuses the document. The reader of
+    /// `attendance` keeps the document and reads another word as no kind.
     Kind, KindError, "a family kind" {
         /// A person talks to the family in sessions.
         Attended => "attended",
@@ -89,8 +89,8 @@ words! {
 words! {
     /// The state of a family (contract 05 §3).
     ///
-    /// A reader that gets another word refuses the document. The Python
-    /// reader of `attendance` reads another word as `in_sync`.
+    /// A reader that gets another word refuses the document. The reader of
+    /// `attendance` keeps the document and reads another word as no state.
     FamilyState, FamilyStateError, "a family state" {
         /// `caregiver` applied the newest registry revision. No fault is open.
         InSync => "in_sync",

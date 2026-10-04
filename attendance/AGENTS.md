@@ -175,6 +175,13 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   from the work root (`service.py`).
 - Contract 03 §13 rule 6 names no nesting limit for an event. `cap_event`
   reads an event of more than 64 levels as oversized (`wire.py`).
+- Contract 05 §2.1 does not say what a reader does with a `kind` that is
+  not one of its three words. `served_kind` refuses each door with
+  `forbidden`. A family that never validated has an empty `kind` and gets
+  `family_invalid` (`family_status.py`).
+- Contract 05 §3 does not say what a reader does with a `state` that is not
+  one of its four words. The reader keeps no state for it. The detail
+  `family_state` of a refusal is then null (`family_status.py`).
 - Contract 02 §4.3 has no move from `queued` to `failed`, and no failure for
   a turn that did not start. Two functions start a turn only to fail it:
   `_refuse_toolless_job` and `_start_queued` (`service.py`).

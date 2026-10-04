@@ -529,6 +529,34 @@ async def test_a_queued_turn_with_no_sandbox_ends_the_job(tmp_path: Path) -> Non
     await harness.stop()
 
 
+async def test_a_queued_turn_waits_while_the_kind_is_gone(tmp_path: Path) -> None:
+    """Contract 02 §13 rule 2. The limit belongs to an autonomous family.
+
+    The document states no kind when the slot frees, so nothing proves which
+    limit holds. The turn stays `queued`. A reader that takes such a document
+    as `attended` starts it with no limit at all.
+    """
+    harness = await build(tmp_path, max_running_turns=1)
+    harness.create()
+    harness.create(session=SECOND_SESSION)
+    first = await harness.run(None)
+    queued = await harness.queue(SECOND_SESSION)
+    write_status(
+        harness.config.state_root,
+        family=AUTO_FAMILY,
+        kind="",
+        sandboxes=((AUTO_SANDBOX, "ready"),),
+    )
+
+    await harness.settle(first)
+
+    assert queued.record.state is TurnState.QUEUED
+    assert harness.service.queue_depth(AUTO_FAMILY) == 1
+    started = [start["turn"] for start in harness.fleet.playpen(AUTO_SANDBOX).started]
+    assert queued.record.turn not in started
+    await harness.stop()
+
+
 async def test_a_queued_turn_whose_start_raises_ends_the_job(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

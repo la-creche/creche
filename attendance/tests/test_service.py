@@ -141,6 +141,67 @@ async def test_a_full_turn_reaches_settled(tmp_path: Path) -> None:
     await harness.stop()
 
 
+#: Each door that writes, with a session id of its own prefix (contract 02 §3.1).
+DOOR_SESSIONS = [
+    (OWUI, CHAT_SESSION),
+    (TUI, "tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK"),
+    (Principal.DOOR_DELEGATE, "job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"),
+    (Principal.DOOR_TRIGGER, "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"),
+]
+
+
+@pytest.mark.parametrize(("door", "session"), DOOR_SESSIONS)
+async def test_a_family_of_no_known_kind_takes_no_session(
+    tmp_path: Path, door: Principal, session: str
+) -> None:
+    """Contract 02 §3.1. A status document that states no kind opens no door.
+
+    The attended doors are in the list on purpose: a reader that takes such
+    a document as `attended` gives them a family of another kind.
+    """
+    harness = await build(tmp_path, kind="robot")
+
+    with pytest.raises(ApiError) as caught:
+        harness.service.create_or_find(door, CreateRequest(family=FAMILY, session=session))
+
+    assert caught.value.detail == {"kind": None}
+
+    assert caught.value.code is ErrorCode.FORBIDDEN
+    assert harness.fleet.dials == []
+    await harness.stop()
+
+
+@pytest.mark.parametrize("door", [OWUI, Principal.DOOR_DELEGATE])
+async def test_a_family_that_never_validated_is_invalid_for_each_door(
+    tmp_path: Path, door: Principal
+) -> None:
+    """Contract 05 §3.1 and contract 02 §14. `caregiver` writes an empty kind
+    for this family, so no door can be the wrong one."""
+    harness = await build(tmp_path, kind="", state="invalid", never_valid=True, sandboxes=())
+
+    with pytest.raises(ApiError) as caught:
+        harness.service.create_or_find(door, CreateRequest(family=FAMILY, session=CHAT_SESSION))
+
+    assert caught.value.code is ErrorCode.FAMILY_INVALID
+    await harness.stop()
+
+
+async def test_a_session_takes_no_turn_once_the_kind_is_gone(tmp_path: Path) -> None:
+    """The kind is read for each turn. A session made earlier does not keep it."""
+    harness = await build(tmp_path)
+    harness.create()
+    write_status(harness.config.state_root, kind="")
+
+    with pytest.raises(ApiError) as caught:
+        await harness.service.run_turn(
+            OWUI, FAMILY, CHAT_SESSION, RunTurnRequest(prompt=PROMPT), DOOR
+        )
+
+    assert caught.value.code is ErrorCode.FORBIDDEN
+    assert harness.kinds().count(LineKind.TURN_STARTED) == 0
+    await harness.stop()
+
+
 async def test_creating_a_session_pre_starts_its_pi_process(tmp_path: Path) -> None:
     """Contract 03 §4.7 rules 8 and 9. The cold start is paid before the prompt."""
     harness = await build(tmp_path)
