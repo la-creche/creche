@@ -11,6 +11,9 @@ machines at once (.github/workflows/gate.yml).
 It also drops the variables that point a `git` child at the repository of
 the caller, when pytest imports this file. At the same time it gives each
 `git` child an empty global config file and no config file of the system.
+
+It also gives SIGINT the default handler of Python when the run starts with
+SIGINT ignored, so a run from a background job passes the same tests.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import os
 import pwd
 import signal
 import tempfile
+import threading
 import zlib
 from collections.abc import Iterator
 from pathlib import Path
@@ -74,6 +78,32 @@ def _drop_git_config() -> None:
 # each one runs `git` with no config file of a person.
 _drop_git_env()
 _drop_git_config()
+
+
+def _unignore_sigint() -> None:
+    """Give SIGINT the default handler of Python when the run starts with it ignored.
+
+    A shell with no job control starts a background job with SIGINT ignored.
+    A service that runs in the test process takes SIGINT in its asyncio loop.
+    When that loop closes, asyncio puts the default handler of Python back,
+    not the handler that it found. `_signals_kept` then failed each such
+    test, and only in a run from a background job. With the default handler
+    from the start, that run is the same as a run from a terminal.
+    bin/tests/test_sigint_default.py holds the proof.
+
+    Only the main thread can set a handler. A run in another thread keeps
+    what it has.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return
+
+    if signal.getsignal(signal.SIGINT) is signal.SIG_IGN:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+
+
+# At import too, for the same reason: before a test module, a fixture or an
+# xdist worker reads how this process takes the signal.
+_unignore_sigint()
 
 #: Every signal this platform names. Linux's unnamed real-time signals are
 #: left out: no test here touches them.
