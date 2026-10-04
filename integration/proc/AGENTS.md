@@ -176,6 +176,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_standin_programs.py` | none | each rule of a stand-in program that a scenario relies on |
 | `test_proc_terminal.py` | none | the pseudo-terminal of the harness: the keys, the signals, what it showed |
 | `test_proc_html.py`, `test_proc_ids.py` | none | the HTML reader, and the ids a test mints |
+| `test_proc_registry.py` | none | the `git` of the registry module: no repository above the root, and no config file of a person |
 
 ## Rules
 
