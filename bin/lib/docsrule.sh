@@ -16,6 +16,11 @@
 # What this cannot read counts as code, e.g. a revision git does not have,
 # or a file one side lacks: the full suite is the safe answer.
 #
+# The tag planner holds a second copy of `docs_path`, in Python, because it
+# must drop prose before it cuts a path (`handover/src/handover/allocate.py`,
+# `is_prose`). `handover/tests/test_handover_bin_path_cut.py` holds the two
+# equal: change both, or neither.
+#
 # Bash 3.2-clean: macOS runs the hook too.
 
 # docs_path PATH: whether PATH is prose, e.g. docs/rework/spec.md or
