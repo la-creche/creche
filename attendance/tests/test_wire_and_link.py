@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from attendance.atomic import write_json
+from attendance.atomic import read_json, write_json
 from attendance.channel import FakeChannel, SandboxDial
 from attendance.clock import now, rfc3339_ms
 from attendance.errors import TurnReason
@@ -76,6 +76,20 @@ def dial(sandbox: str = SANDBOX) -> SandboxDial:
 # U+2028 and U+2029 are legal inside a JSON string. A generic line reader
 # splits on them, which would tear one record into two (contract 03 §2 rule 4).
 UNICODE_SEPARATORS = f"line{chr(0x2028)}sep{chr(0x2029)}arator"
+
+# Three lines under the line cap that are not a `JSONDecodeError`. Each one
+# raised a different exception type at a different place in `parse`: the JSON
+# reader's recursion limit, the interpreter's integer digit limit, and the
+# UTF-8 encode of a lone surrogate in `cap_event`.
+RAISING_LINES = {
+    "deep_nesting": "[" * 200_000,
+    "long_integer": "1" * 5_000,
+    "lone_surrogate": (
+        '{"type":"event","session":"s","turn":"t","turn_seq":1,"event":{"text":"\\ud800"}}'
+    ),
+}
+
+LOG_LINE = '{"type":"log","message":"pi started"}'
 
 
 def test_the_splitter_uses_lf_and_nothing_else() -> None:
@@ -142,6 +156,13 @@ def test_parse_refuses_what_contract_13_rule_1_names() -> None:
     assert parse("{}") is Refusal.UNKNOWN_TYPE
     assert parse('{"type":"event","session":"s"}') is Refusal.MALFORMED
     assert parse('{"type":"event","session":"s","turn":"t","turn_seq":0}') is Refusal.MALFORMED
+
+
+@pytest.mark.parametrize("line", list(RAISING_LINES.values()), ids=list(RAISING_LINES))
+def test_parse_refuses_a_line_that_made_it_raise(line: str) -> None:
+    """Trust rule 1: `parse` returns a refusal, never raises."""
+    assert len(line) < MAX_LINE_BYTES
+    assert parse(line) is Refusal.MALFORMED
 
 
 def test_parse_reads_each_playpen_line() -> None:
@@ -307,6 +328,18 @@ class Recorder:
 
     async def on_channel_lost(self, sandbox: str) -> None:
         self.lost.append(sandbox)
+
+
+class FailingRecorder(Recorder):
+    """A LinkEvents whose log callback raises.
+
+    It stands for any fault that ends the reader loop with an exception
+    instead of a return.
+    """
+
+    async def on_log(self, message: LogLine) -> None:
+        await super().on_log(message)
+        raise RuntimeError("the log callback failed")
 
 
 def make_link(
@@ -506,6 +539,21 @@ async def test_one_unreadable_read_never_unlocks_the_family(tmp_path: Path) -> N
     await link.close()
 
 
+@pytest.mark.parametrize(
+    "content",
+    ["[" * 200_000, '{"beat":' + "1" * 5_000 + "}"],
+    ids=["deep_nesting", "long_integer"],
+)
+def test_read_json_reads_content_that_made_it_raise_as_nothing(
+    tmp_path: Path, content: str
+) -> None:
+    """The lock file comes from inside the sandbox, and this is its reader."""
+    path = tmp_path / "supervisor.lock"
+    path.write_text(content, encoding="utf-8")
+
+    assert read_json(path) is None
+
+
 async def test_a_fatal_in_place_of_ready_raises_a_fault(tmp_path: Path) -> None:
     """Contract 03 §5.7 rule 3: the mount is read before the first line."""
     events = Recorder()
@@ -550,6 +598,57 @@ async def test_session_opened_never_spends_the_refusal_budget(tmp_path: Path) ->
     assert link.is_open is True
     assert events.lost == []
     assert events.opened[0].resident is True
+    await link.close()
+
+
+@pytest.mark.parametrize("line", list(RAISING_LINES.values()), ids=list(RAISING_LINES))
+async def test_a_line_that_made_parse_raise_is_one_refusal(tmp_path: Path, line: str) -> None:
+    """Contract 03 §13 rule 2. The line spends one refusal and the reader reads on."""
+    events = Recorder()
+    link, playpens = make_link(tmp_path, events)
+    await link.ensure_open(dial(), 7)
+    await playpens[SANDBOX].send_raw(line)
+
+    for _ in range(REFUSAL_BUDGET - 2):
+        await playpens[SANDBOX].send_malformed()
+
+    await playpens[SANDBOX].open_session(SESSION)
+    await asyncio.wait_for(_until(lambda: bool(events.opened)), 2.0)
+
+    assert link.is_open is True
+    assert events.lost == []
+
+    await playpens[SANDBOX].send_malformed()
+    await asyncio.wait_for(_until(lambda: bool(events.lost)), 2.0)
+
+    assert link.is_open is False
+    await link.close()
+
+
+async def test_close_drops_the_channel_after_a_loop_died(tmp_path: Path) -> None:
+    """A dead loop keeps its exception. `close` must close the channel anyway."""
+    events = FailingRecorder()
+    link, playpens = make_link(tmp_path, events)
+    await link.ensure_open(dial(), 7)
+    await playpens[SANDBOX].send_raw(LOG_LINE)
+    await asyncio.wait_for(_until(lambda: bool(events.logs)), 2.0)
+
+    await link.close()
+
+    assert link.is_open is False
+
+
+async def test_a_dead_reader_still_ends_in_channel_lost(tmp_path: Path) -> None:
+    """Contract 03 §10 rule 4. With no reader no pong arrives, so the ping
+    loop drops the channel. The dead reader must not stop that."""
+    events = FailingRecorder()
+    link, playpens = make_link(tmp_path, events, ping_interval_s=0.02)
+    await link.ensure_open(dial(), 7)
+    await playpens[SANDBOX].send_raw(LOG_LINE)
+    await asyncio.wait_for(_until(lambda: bool(events.lost)), 2.0)
+
+    assert events.lost == [SANDBOX]
+    assert link.is_open is False
     await link.close()
 
 

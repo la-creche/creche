@@ -40,7 +40,7 @@ from .loop import LoopConfig, SignalControl, serve
 from .mcp_release import paths_under
 from .reconcile import Actors, SpendRead, reconcile_family
 from .released import RELEASED_IMAGES, ReleasedImages
-from .rotate import Mode, Reason, RotateError, RotateRequest, Scope, rotate
+from .rotate import Mode, Reason, RotateError, RotateRequest, Scope, rotate, valid_family
 from .switch import HttpSwitchClient, SwitchClient, SwitchError, read_token
 from .timers import UnitWriter, UserUnits
 
@@ -527,7 +527,7 @@ def _reconcile_once_command(
 
 def _rotate_command(args: argparse.Namespace, litellm: LiteLLMKeys | None) -> int:
     registry = load_registry(args.registry)
-    family = registry.families.get(args.family)
+    family = valid_family(registry, args.family)
     if family is None:
         print(f"caregiver: no valid family '{args.family}'", file=sys.stderr)
         return EXIT_USAGE

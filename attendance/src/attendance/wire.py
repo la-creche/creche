@@ -400,10 +400,19 @@ def parse(text: str) -> PlaypenMessage | Refusal:
     exceptional.
     """
     try:
-        decoded: object = json.loads(text)
+        return _parse_record(text)
     except json.JSONDecodeError:
         return Refusal.NOT_JSON
+    except Exception:
+        # Every exception, not a list of types. Three lines under the size cap
+        # raised three types in three places: RecursionError on deep nesting,
+        # a plain ValueError on an integer past the interpreter's digit limit,
+        # and UnicodeEncodeError in `cap_event` on a lone surrogate.
+        return Refusal.MALFORMED
 
+
+def _parse_record(text: str) -> PlaypenMessage | Refusal:
+    decoded: object = json.loads(text)
     record = as_object(decoded)
 
     if record is None:
