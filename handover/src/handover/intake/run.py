@@ -452,11 +452,31 @@ def _loop(wiring: Wiring, sleep: Callable[[float], None]) -> None:
     An `OSError` here is a directory that came and went, which is a normal
     thing for a directory another process writes. The pass after it reads
     the same gaps again.
+
+    Each other error is caught too. The unit starts a process that ended
+    again, and a file that made one pass raise makes the next process
+    raise. The line holds the type of the error and never its text.
     """
     while True:
         try:
             one_pass(wiring)
-        except OSError as exc:
+        except Exception as exc:
             print(f"{LOG_PREFIX}: a pass failed ({type(exc).__name__})", flush=True)
+            _settle_listener(wiring)
 
         sleep(POLL_S)
+
+
+def _settle_listener(wiring: Wiring) -> None:
+    """The rule of `_match_listener`, after a pass that raised.
+
+    Such a pass did not come to `_match_listener`. A process that ended
+    there closed its socket, and this loop does not end. A pass that raises
+    each time thus left the listener bound with no token pending.
+
+    A second error here gets its own line and does not end the loop.
+    """
+    try:
+        _match_listener(wiring)
+    except Exception as exc:
+        print(f"{LOG_PREFIX}: the listener check failed ({type(exc).__name__})", flush=True)

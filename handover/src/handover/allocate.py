@@ -401,7 +401,12 @@ def _versions_of(tags: tuple[str, ...], component: str) -> list[Version]:
         if matched is None or matched.group(1) != component:
             continue
 
-        found.append((int(matched.group(2)), int(matched.group(3)), int(matched.group(4))))
+        # Python reads no text of more than 4300 digits as an integer. A
+        # tag with such a number is no version, as an alien tag is none.
+        try:
+            found.append((int(matched.group(2)), int(matched.group(3)), int(matched.group(4))))
+        except ValueError:
+            continue
 
     return found
 

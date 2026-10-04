@@ -23,7 +23,7 @@ import pytest
 from handover.catalog import Kind
 from handover.errors import Refusal, RefusalCode
 from handover.executor.install import Installer, StepFailed, paths_of
-from handover.executor.selfcontained import OUTSIDE, check_tree, escapes
+from handover.executor.selfcontained import NOT_A_TREE, OUTSIDE, check_tree, escapes
 from handover.manifest import ComponentManifest, parse_manifest
 from handover_executor_fixtures import FakeRun, fake_host, git_host_answers
 from handover_fixtures import manifest_text
@@ -179,6 +179,26 @@ def test_a_tree_with_no_site_packages_is_found(tmp_path: Path) -> None:
     (tree / "bin").mkdir(parents=True)
 
     assert len(escapes(tree)) == 1
+
+
+def test_a_staged_tree_that_is_a_link_is_found(tmp_path: Path) -> None:
+    """Step 9 renames the staged tree, and a rename moves a link and not
+    the directory behind it. The walk read the directory behind the link
+    and found no fault there."""
+    behind = _tree(tmp_path, "behind")
+    staged = tmp_path / "chaperone.new"
+    staged.symlink_to(behind, target_is_directory=True)
+
+    assert escapes(behind) == ()
+    assert escapes(staged) == (f"chaperone.new {NOT_A_TREE}",)
+
+
+def test_a_staged_tree_that_is_no_directory_is_found(tmp_path: Path) -> None:
+    plain = tmp_path / "chaperone.new"
+    plain.write_text("no tree\n", encoding="utf-8")
+
+    assert escapes(plain) == (f"chaperone.new {NOT_A_TREE}",)
+    assert escapes(tmp_path / "absent.new") == (f"absent.new {NOT_A_TREE}",)
 
 
 def test_every_escape_is_reported_at_once(tmp_path: Path) -> None:

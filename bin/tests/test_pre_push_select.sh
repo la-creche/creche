@@ -9,7 +9,9 @@
 # (bin/lib/rustrule.sh, with every other Rust case in test_rust_gate.py).
 # A path in a product package also picks vectors/tests, so a change that
 # moves a vector fails before the push. A path under vectors/ also runs the
-# cargo tests, which read vectors/data.
+# cargo tests, which read vectors/data. A path under integration/proc/ picks
+# the process-level suite, which no testpaths entry holds, and does not start
+# the full suite. Prose under integration/proc/ picks no suite.
 # CI runs the full suite for any other change and is the merge gate: the
 # scope decides whether a regression in the package just changed is caught
 # before the push or only in CI.
@@ -62,6 +64,7 @@ cat > "$WORK/bin/uv" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$UV_LOG"
 if [[ "${2:-}" == "pytest" ]]; then
+  printf '%s\n' "${CRECHE_PROC_NO_SKIP:-unset}" >> "$NO_SKIP_LOG"
   exit "${PYTEST_RC:-0}"
 fi
 FAKE
@@ -77,16 +80,23 @@ chmod 0755 "$WORK/bin/cargo"
 RUST_STEPS="fmt clippy test"
 
 # gate ARG...: the real gate, with the fake uv and the fake cargo. Sets RC,
-# PYTEST to the pytest line uv was asked for ("" when pytest never ran) and
-# CARGO to the subcommands cargo was asked for ("" when cargo never ran).
+# PYTEST to the pytest lines uv was asked for, one per pytest process (""
+# when pytest never ran), NO_SKIP to what CRECHE_PROC_NO_SKIP held for each
+# of those processes, and CARGO to the subcommands cargo was asked for (""
+# when cargo never ran). A CRECHE_PROC_NO_SKIP of the caller does not reach
+# the gate.
 gate() {
   OUT="$WORK/gate.out"
   : > "$WORK/uv.log"
   : > "$WORK/cargo.log"
-  PATH="$WORK/bin:$PATH" UV_LOG="$WORK/uv.log" CARGO_LOG="$WORK/cargo.log" \
+  : > "$WORK/no_skip.log"
+  env -u CRECHE_PROC_NO_SKIP PATH="$WORK/bin:$PATH" UV_LOG="$WORK/uv.log" \
+    CARGO_LOG="$WORK/cargo.log" NO_SKIP_LOG="$WORK/no_skip.log" \
     "$GATE" "$@" > "$OUT" 2>&1
   RC=$?
   PYTEST="$(grep '^run pytest' "$WORK/uv.log")"
+  NO_SKIP="$(tr '\n' ' ' < "$WORK/no_skip.log")"
+  NO_SKIP="${NO_SKIP% }"
   CARGO="$(tr '\n' ' ' < "$WORK/cargo.log")"
   CARGO="${CARGO% }"
 }
@@ -167,6 +177,96 @@ gate --tests-for chaperone/src/chaperone/app.py rust/Cargo.lock
 [[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" && "$CARGO" == "$RUST_STEPS" ]] \
   && pass "a push of Python and Rust runs the suite and the cargo tests" \
   || fail "python and rust: rc=$RC, pytest line '$PYTEST', cargo ran '$CARGO'"
+
+# The process-level suite, as integration/proc/AGENTS.md runs it on four
+# workers: a pytest process of its own. Each skip is a failure, as in the
+# `proc` job of CI (.github/workflows/gate.yml).
+PROC="run pytest integration/proc -m slow -n 4"
+
+gate --tests-for integration/proc/proc_tree.py integration/proc/test_proc_table.py
+[[ "$RC" == "0" && "$PYTEST" == "$PROC" && -z "$CARGO" ]] \
+  && pass "a path under integration/proc/ runs the process suite and no other suite" \
+  || fail "process suite paths: rc=$RC, pytest lines '$PYTEST', cargo ran '$CARGO'"
+said "integration/proc, for integration/proc/proc_tree.py and 1 more" \
+  && pass "the gate says which path picked the process suite" \
+  || fail "no reason line for integration/proc: $(cat "$OUT")"
+[[ "$NO_SKIP" == "1" ]] \
+  && pass "a skip in the process suite is a failure, as in CI" \
+  || fail "process suite paths: CRECHE_PROC_NO_SKIP was '$NO_SKIP'"
+
+# Prose under integration/proc/ (bin/lib/docsrule.sh) picks no suite: no test
+# reads it. A push of a package and one line of that document then needs no
+# playpen bundle.
+NO_PROC="no process suite: each path under integration/proc/ is prose"
+
+gate --tests-for integration/proc/proc_tree.py integration/proc/AGENTS.md
+[[ "$RC" == "0" && "$PYTEST" == "$PROC" ]] \
+  && said "integration/proc, for integration/proc/proc_tree.py" && ! said "and 1 more" \
+  && pass "prose beside a process suite path is not a reason for the process suite" \
+  || fail "a process suite path and prose: rc=$RC, pytest lines '$PYTEST', $(cat "$OUT")"
+
+gate --tests-for chaperone/src/chaperone/app.py integration/proc/AGENTS.md
+[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] && said "$NO_PROC" \
+  && pass "a package and prose under integration/proc/ run the suite of the package only" \
+  || fail "a package and process suite prose: rc=$RC, pytest lines '$PYTEST', $(cat "$OUT")"
+
+gate --tests-for integration/proc/AGENTS.md integration/proc/README.md
+[[ "$RC" == "0" && -z "$PYTEST" ]] && said "$NO_PROC" \
+  && pass "prose under integration/proc/ alone runs no pytest, and the gate says why" \
+  || fail "process suite prose alone: rc=$RC, pytest lines '$PYTEST', $(cat "$OUT")"
+
+# A .md under tests/ or fixtures/ is data that a test loads, not prose.
+gate --tests-for integration/proc/fixtures/registry/instructions.md
+[[ "$RC" == "0" && "$PYTEST" == "$PROC" ]] \
+  && pass "a .md of a fixture under integration/proc/ runs the process suite" \
+  || fail "a fixture .md under integration/proc: rc=$RC, pytest lines '$PYTEST'"
+
+gate --tests-for '"integration/proc/a\tb.py"'
+[[ "$RC" == "0" && "$PYTEST" == "$PROC" ]] \
+  && pass "a process suite path that git wrote in quotes picks the process suite" \
+  || fail "a quoted process suite path: rc=$RC, pytest lines '$PYTEST'"
+
+gate --tests-for chaperone/src/chaperone/app.py integration/proc/proc_tree.py
+[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS"$'\n'"$PROC" ]] \
+  && pass "a package and the process suite run as two pytest processes" \
+  || fail "a package and the process suite: rc=$RC, pytest lines '$PYTEST'"
+[[ "$NO_SKIP" == "unset 1" ]] \
+  && pass "only the process suite gets CRECHE_PROC_NO_SKIP" \
+  || fail "a package and the process suite: CRECHE_PROC_NO_SKIP was '$NO_SKIP'"
+
+gate --tests-for uv.lock integration/proc/proc_tree.py
+[[ "$RC" == "0" && "$PYTEST" == "$FULL"$'\n'"$PROC" ]] && said "full suite, for uv.lock" \
+  && pass "a path in no package and a process suite path run the full suite, then the process suite" \
+  || fail "uv.lock and the process suite: rc=$RC, pytest lines '$PYTEST'"
+
+gate --tests-for rust/Cargo.lock integration/proc/proc_tree.py
+[[ "$RC" == "0" && "$PYTEST" == "$PROC" && "$CARGO" == "$RUST_STEPS" ]] \
+  && pass "a Rust path and a process suite path run the cargo tests and the process suite" \
+  || fail "rust and the process suite: rc=$RC, pytest lines '$PYTEST', cargo ran '$CARGO'"
+
+# The two old suites stay paths in no package (integration/AGENTS.md).
+for old in integration/tests/stack.py integration/tests_manager/conftest.py \
+  integration/fixtures/stage3-registry/families/chat/family.yaml; do
+  gate --tests-for "$old"
+  [[ "$RC" == "0" && "$PYTEST" == "$FULL" ]] && said "full suite, for $old" \
+    && pass "$old is in no package: full suite, and no process suite" \
+    || fail "$old: rc=$RC, pytest lines '$PYTEST'"
+done
+
+PYTEST_RC=1 gate --tests-for integration/proc/proc_tree.py
+[[ "$RC" != "0" ]] && ! said "quality-gate: PASS" \
+  && pass "a failing process suite fails the gate (rc=$RC)" \
+  || fail "a failing process suite: rc=$RC, $(cat "$OUT")"
+
+PYTEST_RC=1 gate --tests-for chaperone/src/chaperone/app.py integration/proc/proc_tree.py
+[[ "$RC" != "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] \
+  && pass "a failing package suite stops the gate before the process suite" \
+  || fail "a failing package suite: rc=$RC, pytest lines '$PYTEST'"
+
+gate --tests
+[[ "$RC" == "0" && "$PYTEST" == "$FULL" ]] \
+  && pass "--tests does not hold the process suite: CI runs it for every change" \
+  || fail "--tests: rc=$RC, pytest lines '$PYTEST'"
 
 gate --tests-for
 [[ "$RC" == "0" && -z "$PYTEST" && -z "$CARGO" ]] \
