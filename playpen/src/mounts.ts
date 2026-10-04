@@ -14,6 +14,7 @@
 // the cause only in a log file.
 
 import { MAX_LOG_BYTES } from "./constants.js";
+import { cutToBytes } from "./framing.js";
 import type { FatalMessage } from "./protocol.js";
 
 /** Each names one host path, which is also the path inside the VM. */
@@ -76,6 +77,6 @@ export function unsetMountFatal(detail: string): FatalMessage {
   return {
     type: "fatal",
     reason: "mount_dir_unset",
-    message: `contract 03 §7.1: ${detail}`.slice(0, MAX_LOG_BYTES),
+    message: cutToBytes(`contract 03 §7.1: ${detail}`, MAX_LOG_BYTES),
   };
 }

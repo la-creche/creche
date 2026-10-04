@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MAX_LINE_BYTES } from "../src/constants.js";
-import { byteLength, LineReader } from "../src/framing.js";
+import { byteLength, cutToBytes, LineReader } from "../src/framing.js";
 
 function collect(maxBytes?: number): {
   reader: LineReader;
@@ -108,5 +108,40 @@ describe("byteLength", () => {
 
   it("names the contract's limit", () => {
     expect(MAX_LINE_BYTES).toBe(1048576);
+  });
+});
+
+describe("cutToBytes", () => {
+  // Contract 03 §8 gives each cap in bytes. One character of UTF-8 takes
+  // 1 to 4 bytes, and a character past U+FFFF is two units of a JS string.
+  const WIDE = "\u{1F600}";
+
+  it("returns a text that fits as it is", () => {
+    const text = `caf\u00e9 ${WIDE}`;
+
+    expect(cutToBytes(text, byteLength(text))).toBe(text);
+    expect(cutToBytes("", 8)).toBe("");
+  });
+
+  it("counts bytes, not units of the string", () => {
+    expect(cutToBytes("a".repeat(5000), 4096)).toBe("a".repeat(4096));
+    expect(cutToBytes("\u00e9".repeat(5000), 4096)).toBe("\u00e9".repeat(2048));
+    expect(cutToBytes("\u20ac".repeat(5000), 4096)).toBe("\u20ac".repeat(1365));
+    expect(cutToBytes(WIDE.repeat(5000), 4096)).toBe(WIDE.repeat(1024));
+  });
+
+  it("never splits a character", () => {
+    for (let lead = 0; lead < 4; lead += 1) {
+      const cut = cutToBytes("a".repeat(lead) + WIDE.repeat(8), 10);
+      const whole = Math.floor((10 - lead) / 4);
+
+      expect(cut).toBe("a".repeat(lead) + WIDE.repeat(whole));
+      expect(byteLength(cut)).toBeLessThanOrEqual(10);
+    }
+  });
+
+  it("answers the empty text when no character fits", () => {
+    expect(cutToBytes(WIDE, 3)).toBe("");
+    expect(cutToBytes("abc", 0)).toBe("");
   });
 });
