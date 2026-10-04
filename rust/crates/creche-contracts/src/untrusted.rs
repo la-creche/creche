@@ -44,7 +44,8 @@
 //! that order for two reasons:
 //!
 //! 1. A value of a wrong kind has no error. The only error of a function is
-//!    the error of the deserializer, for a text that is not JSON.
+//!    the error of the deserializer, for a text that is not JSON or that nests
+//!    too deep.
 //! 2. [`object`], [`block`], [`list`] and [`list_first`] give the tree to the
 //!    raw type `T`. An object or a member that `T` refuses is then empty or
 //!    dropped, and the answer stays.
@@ -58,7 +59,8 @@
 //! - A struct with named fields reads from an object only. A derived `serde`
 //!   type alone also takes a list and fills its fields by position. No Python
 //!   reader does that.
-//! - A value nests 128 levels of lists and objects at most.
+//! - A value nests 128 levels of lists and objects at most. `serde_json`
+//!   stops one level before, so [`parse_object`] reads 127 levels.
 //!
 //! # What is JSON here
 //!
@@ -73,7 +75,12 @@
 //! - An answer with one half of a surrogate pair, as an escape or as bytes.
 //! - An answer that starts with a byte order mark.
 //! - An answer in UTF-16 or in UTF-32.
-//! - An answer that nests 128 levels or more. `serde_json` reads 127.
+//! - An answer that nests 128 levels or more.
+//!
+//! The differential test at the end of this file walks the vectors
+//! `runtime.untrusted.*` and `runtime.parse_object.*` of `vectors/data`. Its
+//! table `DEVIATIONS` holds each of these differences, and each other
+//! difference from a Python copy.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -131,8 +138,8 @@ where
 // CONTRACT-QUESTION: contracts 02, 04 and 05 give a count no range. The
 // Python readers keep an integer of each size. This reader holds 64 bits with
 // a sign, and it reads a larger integer as 0, the value of a field of a wrong
-// type. No service of this platform writes such a count. A reader that keeps
-// each size costs a type for a large integer in each raw type.
+// type. A reader that keeps each size costs a type for a large integer in
+// each raw type.
 pub fn int<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,
@@ -260,6 +267,11 @@ where
 ///
 /// The result does not tell a value that is no list from an empty list.
 ///
+/// A member is a `T` when the `serde` reader of `T` takes it. A `String`
+/// takes a text only, and an `i64` takes an integer only. A struct with named
+/// fields takes an object only. An `Option` also takes `null`, so a list of
+/// it keeps a member that is `null`.
+///
 /// The Python origin is `as_list` of
 /// `door-tui/src/agent_door_tui/untrusted.py:30-32` and `as_array` of
 /// `attendance/src/attendance/atomic.py:106-111`. The drop of a member is the
@@ -367,11 +379,11 @@ impl Error for NotAnObject {}
 // not say if a reader takes what `json.loads` of Python takes past strict
 // JSON: `NaN`, a number outside the range of a float, one half of a surrogate
 // pair, a byte order mark, UTF-16 and UTF-32. Each Python client takes them.
-// This reader refuses them, as the `session` module does for a request. A
-// Python service can write two of them: `json.dumps` writes `NaN` for a float
-// that is not a number, and an escape for one half of a surrogate pair. A
-// Rust client then refuses the whole answer. A reader that takes them costs a
-// JSON reader of this module in place of `serde_json`.
+// This reader refuses them, as the `session` module does for a request. With
+// its default settings, `json.dumps` of Python writes `NaN`, `Infinity` and
+// the escape of one half of a surrogate pair. A Rust client refuses the whole
+// answer of a writer that does. A reader that takes them costs a JSON reader
+// of this module in place of `serde_json`.
 pub fn parse_object<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, NotAnObject> {
     let mut reader = serde_json::Deserializer::from_slice(bytes);
     let value = read(&mut reader).map_err(|_| NotAnObject::NotJson)?;
@@ -405,8 +417,8 @@ pub fn cut(text: &str, max_chars: usize) -> &str {
         return text;
     };
 
-    // `end` is the first byte of a character, so the cut is always there.
-    // The empty text keeps the cap when it is not.
+    // `end` is the first byte of a character, so `get` always gives the
+    // text. The other result is the empty text, which is under each cap.
     text.get(..end).unwrap_or_default()
 }
 
@@ -417,17 +429,19 @@ pub fn cut(text: &str, max_chars: usize) -> &str {
 /// A list inside a list has two levels. The tree of a value that nests deeper
 /// is an error of the deserializer.
 ///
-/// `serde_json` stops a text before this count, so the limit of `serde_json`
-/// is the limit of [`parse_object`]. This limit is for a deserializer that
-/// has none. The drop of a tree and the read of a raw type from a tree use
-/// the stack for each level, so the count of levels needs a bound here.
-///
+/// `serde_json` stops a text one level before this count, so the limit of
+/// `serde_json` is the limit of [`parse_object`]. This limit is for a
+/// deserializer that has none. The drop of a tree and the read of a raw type
+/// from a tree use the stack for each level, so the count of levels needs a
+/// bound here.
+//
 // CONTRACT-QUESTION: contract 02 §3 rule 3 says that a body is JSON and gives
 // no nesting limit. Python reads a text until its own recursion limit, which
 // differs between two versions of the interpreter. This reader takes the
-// limit above. No answer of a service nests deeper than a pi event, and the
-// host caps a pi event at 64 levels. A higher limit costs one number here and
-// a reader with no limit in place of `serde_json`.
+// limit above, and `parse_object` takes the limit of `serde_json`. The Python
+// host keeps only the type of a pi event that nests more than 64 levels
+// (contract 03 §13 rule 6). A higher limit costs one number here and a reader
+// with no limit in place of `serde_json`.
 const DEPTH_MAX: usize = 128;
 
 /// What the deserializer error says for a value past [`DEPTH_MAX`].
@@ -1065,6 +1079,15 @@ mod tests {
         assert_eq!(lists, [["x"]]);
     }
 
+    /// The reader of `T` says what a member of a wrong type is. An `Option`
+    /// takes `null`, so a list of it keeps that member.
+    #[test]
+    fn a_list_keeps_each_member_that_its_raw_type_takes() {
+        let texts: Vec<Option<String>> = direct(MIXED, |reader| list(reader)).unwrap();
+
+        assert_eq!(texts, [Some("a".to_owned()), None, Some("b".to_owned())]);
+    }
+
     #[test]
     fn a_value_that_is_no_list_reads_as_the_empty_list() {
         let others = ["null", "true", "7", "1.5", r#""a""#, "{}", r#"{"0":"a"}"#];
@@ -1121,7 +1144,10 @@ mod tests {
     #[test]
     fn an_enum_reads_as_serde_json_reads_it() {
         let taken = r#"["plain",{"named":"a"},{"sized":{"count":2}}]"#;
-        let mixed = r#"["plain","other",7,null,{"named":7},{"named":"a","sized":{"count":2}},{},{"named":"b"}]"#;
+        let mixed = r#"[
+            "plain", "other", 7, null, {"named": 7},
+            {"named": "a", "sized": {"count": 2}}, {}, {"named": "b"}
+        ]"#;
         let wanted = [
             Shape::Plain,
             Shape::Named("a".to_owned()),
@@ -1687,5 +1713,777 @@ mod tests {
 
         assert_eq!(kept.chars().count(), 500);
         assert!(long.starts_with(kept));
+    }
+
+    // --- each reader against the Python implementation ---
+
+    /// The differential test: each vector of each surface
+    /// `runtime.untrusted.*` and `runtime.parse_object.*` of `vectors/data`,
+    /// against the functions of this module.
+    ///
+    /// `SURFACES` names each surface and the function that replays one vector
+    /// of it. A vector outside `DEVIATIONS` must be equal: the Rust reader
+    /// gives the value that the Python helper gives, and it refuses what the
+    /// Python helper refuses.
+    mod python {
+        use std::collections::{BTreeMap, HashSet};
+
+        use serde::Serialize;
+        use serde_json::{Value, json};
+
+        use super::super::*;
+        use super::direct;
+        use crate::vectors::{self, Outcome, Vector};
+
+        /// The count of characters that the noticeboard keeps of one text:
+        /// `MAX_TEXT_CHARS` of `noticeboard/src/noticeboard/jsonfiles.py:33`.
+        const TEXT_CAP: usize = 500;
+
+        /// The separator between the id of an input and its cap, in the id of
+        /// a vector of a helper with a cap: `list.limit-2`.
+        const CAP_MARK: &str = ".limit-";
+
+        /// What a reader did with one input.
+        #[derive(Debug, Clone, PartialEq)]
+        enum Did {
+            /// The reader gives this value.
+            Gives(Value),
+            /// The reader refuses the input. A field reader refuses with the
+            /// error of the deserializer, and the caller then has no answer.
+            Refuses,
+        }
+
+        /// Whether two results are equal, with the sign of a zero and the
+        /// kind of a number. A `Value` alone reads `-0.0` as equal to `0.0`.
+        fn same(left: &Did, right: &Did) -> bool {
+            match (left, right) {
+                (Did::Gives(left), Did::Gives(right)) => {
+                    // The text of a value has the sign of a zero. The keys of
+                    // an object are in sorted order in each text.
+                    let (left_text, right_text) = (left.to_string(), right.to_string());
+
+                    left == right && left_text == right_text
+                }
+                (Did::Refuses, Did::Refuses) => true,
+                (Did::Gives(_), Did::Refuses) | (Did::Refuses, Did::Gives(_)) => false,
+            }
+        }
+
+        fn json_of(text: &str) -> Value {
+            serde_json::from_str(text).unwrap()
+        }
+
+        /// How the Rust reader of a surface stands for its Python helper.
+        #[derive(Debug, Clone, Copy)]
+        enum Stands {
+            /// The reader gives the value that the helper gives.
+            Same,
+            /// The helper says if a value is of one kind. The module has no
+            /// such function: a raw type names the reader of that kind. For
+            /// `true` the reader gives the value itself. For `false` it gives
+            /// this JSON value, the empty value of the reader.
+            Kind(&'static str),
+            /// The helper gives `None` for a value that is no list. The
+            /// reader gives the empty list.
+            NoneIsNoMember,
+        }
+
+        /// One surface, and how the Rust code replays one vector of it.
+        struct Against {
+            surface: &'static str,
+            replay: fn(&Vector) -> Did,
+            stands: Stands,
+        }
+
+        const fn equal(surface: &'static str, replay: fn(&Vector) -> Did) -> Against {
+            Against {
+                surface,
+                replay,
+                stands: Stands::Same,
+            }
+        }
+
+        const fn kind(
+            surface: &'static str,
+            replay: fn(&Vector) -> Did,
+            empty: &'static str,
+        ) -> Against {
+            Against {
+                surface,
+                replay,
+                stands: Stands::Kind(empty),
+            }
+        }
+
+        const fn no_member(surface: &'static str, replay: fn(&Vector) -> Did) -> Against {
+            Against {
+                surface,
+                replay,
+                stands: Stands::NoneIsNoMember,
+            }
+        }
+
+        /// The prefix of the surfaces of the field readers.
+        const READERS: &str = "runtime.untrusted.";
+
+        /// The prefix of the surfaces of the reader of a whole document.
+        const DOCUMENTS: &str = "runtime.parse_object.";
+
+        const SURFACES: &[Against] = &[
+            kind("runtime.untrusted.door_owui.is_object", any_block, "null"),
+            kind("runtime.untrusted.door_owui.is_list", any_list, "[]"),
+            equal("runtime.untrusted.door_owui.as_object", any_object),
+            equal("runtime.untrusted.door_owui.as_text", any_text),
+            equal("runtime.untrusted.door_owui.field_text", field_text),
+            kind(
+                "runtime.untrusted.door_trigger.is_object",
+                any_block,
+                "null",
+            ),
+            kind("runtime.untrusted.door_trigger.is_list", any_list, "[]"),
+            equal("runtime.untrusted.door_trigger.as_object", any_object),
+            equal("runtime.untrusted.door_trigger.as_text", any_text),
+            equal("runtime.untrusted.door_trigger.field_text", field_text),
+            kind("runtime.untrusted.door_tui.is_object", any_block, "null"),
+            kind("runtime.untrusted.door_tui.is_list", any_list, "[]"),
+            equal("runtime.untrusted.door_tui.as_object", any_object),
+            equal("runtime.untrusted.door_tui.as_list", any_list),
+            equal("runtime.untrusted.door_tui.as_text", any_text),
+            equal("runtime.untrusted.door_tui.field_text", field_text),
+            equal("runtime.untrusted.door_tui.field_int", field_int),
+            equal("runtime.untrusted.noticeboard.text", field_text_cut),
+            equal("runtime.untrusted.noticeboard.whole", field_text_cut),
+            equal("runtime.untrusted.noticeboard.integer", field_int),
+            equal("runtime.untrusted.noticeboard.number", field_number),
+            equal("runtime.untrusted.noticeboard.flag", field_flag),
+            equal("runtime.untrusted.noticeboard.block", field_block),
+            equal("runtime.untrusted.noticeboard.child", field_object),
+            equal("runtime.untrusted.noticeboard.children", field_children),
+            equal("runtime.untrusted.noticeboard.strings", field_strings),
+            equal("runtime.untrusted.attendance.as_object", any_block),
+            no_member("runtime.untrusted.attendance.as_array", any_list),
+            equal("runtime.parse_object.noticeboard", document),
+        ];
+
+        // --- how the test replays a vector ---
+
+        /// An object of free form. It is a raw type of this test only: a
+        /// contract type holds no `Value` (`rust/AGENTS.md`, rule 7).
+        ///
+        /// The type is not `serde_json::Map`. That type also reads `null`, as
+        /// an empty object, so a list of it keeps a member that is `null`.
+        type AnyObject = BTreeMap<String, Value>;
+
+        fn gives<T: Serialize>(value: T) -> Did {
+            Did::Gives(serde_json::to_value(value).unwrap())
+        }
+
+        /// The JSON text of the input of a vector.
+        fn source(vector: &Vector) -> String {
+            vector.input.text().unwrap()
+        }
+
+        /// What a function gives for a vector whose input is one JSON value.
+        /// The function reads from `serde_json` itself.
+        fn of_value<T: Serialize>(read: Result<T, serde_json::Error>) -> Did {
+            read.map_or(Did::Refuses, gives)
+        }
+
+        fn any_text(vector: &Vector) -> Did {
+            of_value(direct(&source(vector), |reader| text(reader)))
+        }
+
+        fn any_object(vector: &Vector) -> Did {
+            of_value(direct(&source(vector), |reader| {
+                object::<_, AnyObject>(reader)
+            }))
+        }
+
+        fn any_block(vector: &Vector) -> Did {
+            of_value(direct(&source(vector), |reader| {
+                block::<_, AnyObject>(reader)
+            }))
+        }
+
+        fn any_list(vector: &Vector) -> Did {
+            of_value(direct(&source(vector), |reader| list::<_, Value>(reader)))
+        }
+
+        /// A raw type with the one field `field`, which names one reader. A
+        /// vector of a helper for one field holds an object with that key.
+        macro_rules! probe {
+            ($name:ident, $reader:literal, $held:ty) => {
+                #[derive(Deserialize)]
+                struct $name {
+                    #[serde(default, deserialize_with = $reader)]
+                    field: $held,
+                }
+            };
+        }
+
+        probe!(TextField, "text", String);
+        probe!(IntField, "int", i64);
+        probe!(NumberField, "number", Option<f64>);
+        probe!(FlagField, "flag", bool);
+        probe!(ObjectField, "object", AnyObject);
+        probe!(BlockField, "block", Option<AnyObject>);
+        probe!(TwoObjects, "list_first::<2, _, _>", Vec<AnyObject>);
+        probe!(FiftyObjects, "list_first::<50, _, _>", Vec<AnyObject>);
+        probe!(TwoTexts, "list_first::<2, _, _>", Vec<String>);
+        probe!(FiftyTexts, "list_first::<50, _, _>", Vec<String>);
+
+        /// What a raw type gives for a vector whose input is one object. The
+        /// raw type reads through `parse_object`.
+        fn of_field<P: DeserializeOwned, T: Serialize>(vector: &Vector, held: fn(P) -> T) -> Did {
+            match parse_object::<P>(&vector.input.bytes().unwrap()) {
+                Ok(probe) => gives(held(probe)),
+                Err(NotAnObject::NotJson) => Did::Refuses,
+                Err(NotAnObject::NotObject) => panic!("{}: the input is no object", vector.id),
+            }
+        }
+
+        fn field_text(vector: &Vector) -> Did {
+            of_field(vector, |probe: TextField| probe.field)
+        }
+
+        /// `text` and `whole` of the noticeboard cut the text at the cap.
+        fn field_text_cut(vector: &Vector) -> Did {
+            of_field(vector, |probe: TextField| {
+                cut(&probe.field, TEXT_CAP).to_owned()
+            })
+        }
+
+        fn field_int(vector: &Vector) -> Did {
+            of_field(vector, |probe: IntField| probe.field)
+        }
+
+        fn field_number(vector: &Vector) -> Did {
+            of_field(vector, |probe: NumberField| probe.field)
+        }
+
+        fn field_flag(vector: &Vector) -> Did {
+            of_field(vector, |probe: FlagField| probe.field)
+        }
+
+        fn field_object(vector: &Vector) -> Did {
+            of_field(vector, |probe: ObjectField| probe.field)
+        }
+
+        fn field_block(vector: &Vector) -> Did {
+            of_field(vector, |probe: BlockField| probe.field)
+        }
+
+        /// The cap of a vector of a helper with a cap: `params.limit`.
+        fn cap_of(vector: &Vector) -> u64 {
+            vector.field("params").unwrap()["limit"].as_u64().unwrap()
+        }
+
+        fn field_children(vector: &Vector) -> Did {
+            match cap_of(vector) {
+                2 => of_field(vector, |probe: TwoObjects| probe.field),
+                50 => of_field(vector, |probe: FiftyObjects| probe.field),
+                cap => panic!("{}: no raw type of this test has the cap {cap}", vector.id),
+            }
+        }
+
+        /// Each text of a list, cut at the cap of a text.
+        fn cut_each(members: Vec<String>) -> Vec<String> {
+            members
+                .iter()
+                .map(|member| cut(member, TEXT_CAP).to_owned())
+                .collect()
+        }
+
+        /// `strings` of the noticeboard cuts each member at the cap of a text.
+        fn field_strings(vector: &Vector) -> Did {
+            match cap_of(vector) {
+                2 => of_field(vector, |probe: TwoTexts| cut_each(probe.field)),
+                50 => of_field(vector, |probe: FiftyTexts| cut_each(probe.field)),
+                cap => panic!("{}: no raw type of this test has the cap {cap}", vector.id),
+            }
+        }
+
+        /// The object of a whole document, with each member as it is.
+        fn document(vector: &Vector) -> Did {
+            parse_object::<AnyObject>(&vector.input.bytes().unwrap()).map_or(Did::Refuses, gives)
+        }
+
+        /// What the Rust reader must give when the Python helper did what the
+        /// vector holds.
+        fn python_did(against: &Against, vector: &Vector, at: &str) -> Did {
+            if vector.result != Outcome::Accepted {
+                return Did::Refuses;
+            }
+
+            let Some(value) = vector.value() else {
+                panic!("{at}: the vector holds no value");
+            };
+
+            Did::Gives(match (against.stands, value) {
+                (Stands::Same, value) => value.clone(),
+                (Stands::Kind(_), Value::Bool(true)) => json_of(&source(vector)),
+                (Stands::Kind(empty), Value::Bool(false)) => json_of(empty),
+                (Stands::Kind(_), other) => panic!("{at}: {other} is no answer of a check"),
+                (Stands::NoneIsNoMember, Value::Null) => json!([]),
+                (Stands::NoneIsNoMember, value) => value.clone(),
+            })
+        }
+
+        // --- each difference on purpose ---
+
+        /// How the Rust code differs from the Python code on one input.
+        #[derive(Debug, Clone, Copy)]
+        enum Differs {
+            /// The Python code gives a value. The Rust code refuses the text.
+            Refuses,
+            /// Both give a value. The Rust code gives this JSON value.
+            Gives(&'static str),
+        }
+
+        /// The surfaces that a decision holds for.
+        #[derive(Debug, Clone, Copy)]
+        enum Surfaces {
+            /// Each surface of a field reader: each row of `SURFACES` with the
+            /// prefix `READERS`.
+            EachReader,
+            /// These surfaces.
+            Named(&'static [&'static str]),
+        }
+
+        impl Surfaces {
+            fn hold(self, surface: &str) -> bool {
+                match self {
+                    Self::EachReader => surface.starts_with(READERS),
+                    Self::Named(names) => names.contains(&surface),
+                }
+            }
+        }
+
+        /// Where the Python side of a decision is.
+        #[derive(Clone, Copy)]
+        enum At {
+            /// Each vector with one of these ids, in each of the surfaces. For
+            /// a helper with a cap, an id stands for the vector of each cap.
+            Vectors(Surfaces, &'static [&'static str]),
+            /// No vector covers the case. The row names the Python file and
+            /// the line, and it holds the case itself.
+            Line(Line),
+        }
+
+        /// One case that no vector covers.
+        #[derive(Clone, Copy)]
+        struct Line {
+            /// The Python file and the line.
+            python: &'static str,
+            /// The bytes that the Python line reads.
+            input: &'static [u8],
+            /// What the Python line gives for the bytes, as JSON text. A run
+            /// of the Python code gave this text. No test holds it.
+            python_gives: &'static str,
+            /// What the Rust code does with the bytes.
+            replay: fn(&[u8]) -> Did,
+        }
+
+        /// One decision to differ from the Python code.
+        struct Deviation {
+            at: At,
+            differs: Differs,
+            /// The contract section that the decision reads.
+            contract: &'static str,
+            /// The decision, and its reason.
+            decision: &'static str,
+        }
+
+        /// The surface of the reader of a whole document.
+        const DOCUMENT: &[&str] = &["runtime.parse_object.noticeboard"];
+
+        /// The two surfaces of a reader of a whole number.
+        const INTEGERS: &[&str] = &[
+            "runtime.untrusted.door_tui.field_int",
+            "runtime.untrusted.noticeboard.integer",
+        ];
+
+        const STRICT_JSON: &str = "contract 02 §3 rule 3";
+
+        const NOT_FINITE: &str = "The contract says that a body is JSON. JSON has no word for a \
+            number that is not finite. json.loads of Python reads NaN, Infinity and -Infinity. \
+            The Rust reader is serde_json, which refuses the text.";
+
+        const PAST_A_FLOAT: &str = "The contract says that a body is JSON and gives a number no \
+            range. Python reads 1e400 as infinity and keeps an integer of 400 digits. serde_json \
+            refuses a text with a number outside the range of a float.";
+
+        const LONE_SURROGATE: &str = "The contract says that a body is JSON. Python keeps one \
+            half of a surrogate pair in a text, from an escape or from its bytes. A Rust text \
+            cannot hold one, so serde_json refuses the text.";
+
+        const BYTE_ORDER_MARK: &str = "The contract says that a body is JSON and names no \
+            encoding. json.loads of Python reads UTF-8 that starts with a byte order mark. \
+            serde_json refuses the mark.";
+
+        const UTF_16: &str = "The contract says that a body is JSON and names no encoding. \
+            json.loads of Python finds UTF-16 from the first bytes, with a byte order mark and \
+            without. serde_json reads UTF-8 only.";
+
+        const UTF_32: &str = "The contract says that a body is JSON and names no encoding. \
+            json.loads of Python finds UTF-32 from the first bytes, with a byte order mark and \
+            without. serde_json reads UTF-8 only.";
+
+        const DEPTH_LIMIT: &str = "The contract gives no nesting limit. Python reads a text \
+            until the recursion limit of the interpreter, which differs between two versions. \
+            serde_json stops at 128 levels.";
+
+        const FITS_64_BITS: &str = "No contract gives a count a range. The Python helper keeps \
+            an integer of each size. The Rust reader gives an i64, and it reads an integer that \
+            no i64 holds as 0, the value of a field of a wrong type.";
+
+        const PAST_64_BITS_IS_A_FLOAT: &str = "No difference in what the reader accepts. \
+            Python keeps each digit of an integer. serde_json gives an integer past 64 bits as \
+            the nearest float, and the raw type of this test keeps that float.";
+
+        const ZERO_SIGN: &str = "JSON has one number form. Python reads -0 as the int 0, and \
+            float(0) is 0.0. serde_json reads -0 as the float -0.0, so the reader cannot tell -0 \
+            from -0.0 and gives -0.0 for both. The two floats are equal in each comparison.";
+
+        const ABSENT_IS_EMPTY: &str = "The Python helper gives None for a field that is no \
+            text, and its caller writes None into the reply. The reader `text` gives the empty \
+            text, so a raw type cannot tell a field that is no text from an empty text. The \
+            port of the delegate client decides what an empty text means.";
+
+        /// `number` of the noticeboard, for the field `field` of an object.
+        fn line_number(input: &[u8]) -> Did {
+            parse_object::<NumberField>(input).map_or(Did::Refuses, |probe| gives(probe.field))
+        }
+
+        /// `_text` of the delegate client, with a cap of 3 characters.
+        fn line_text_cut(input: &[u8]) -> Did {
+            parse_object::<TextField>(input)
+                .map_or(Did::Refuses, |probe| gives(cut(&probe.field, 3)))
+        }
+
+        fn line_document(input: &[u8]) -> Did {
+            parse_object::<AnyObject>(input).map_or(Did::Refuses, gives)
+        }
+
+        /// Each input on which the Rust code differs from the Python code on
+        /// purpose. A vector outside this table must be equal.
+        const DEVIATIONS: &[Deviation] = &[
+            Deviation {
+                at: At::Vectors(
+                    Surfaces::EachReader,
+                    &["float-nan", "float-infinity", "float-negative-infinity"],
+                ),
+                differs: Differs::Refuses,
+                contract: STRICT_JSON,
+                decision: NOT_FINITE,
+            },
+            Deviation {
+                at: At::Vectors(
+                    Surfaces::EachReader,
+                    &["float-too-large", "integer-400-digits"],
+                ),
+                differs: Differs::Refuses,
+                contract: STRICT_JSON,
+                decision: PAST_A_FLOAT,
+            },
+            Deviation {
+                at: At::Vectors(Surfaces::EachReader, &["string-lone-surrogate"]),
+                differs: Differs::Refuses,
+                contract: STRICT_JSON,
+                decision: LONE_SURROGATE,
+            },
+            Deviation {
+                at: At::Vectors(
+                    Surfaces::Named(INTEGERS),
+                    &[
+                        "integer-i64-max-plus-one",
+                        "integer-i64-min-minus-one",
+                        "integer-u64-max",
+                        "integer-u64-max-plus-one",
+                        "integer-30-digits",
+                    ],
+                ),
+                differs: Differs::Gives("0"),
+                contract: "contracts 02, 04 and 05",
+                decision: FITS_64_BITS,
+            },
+            Deviation {
+                at: At::Vectors(Surfaces::Named(DOCUMENT), &["nan", "infinity"]),
+                differs: Differs::Refuses,
+                contract: STRICT_JSON,
+                decision: NOT_FINITE,
+            },
+            Deviation {
+                at: At::Vectors(Surfaces::Named(DOCUMENT), &["lone-surrogate"]),
+                differs: Differs::Refuses,
+                contract: STRICT_JSON,
+                decision: LONE_SURROGATE,
+            },
+            Deviation {
+                at: At::Vectors(Surfaces::Named(DOCUMENT), &["byte-order-mark"]),
+                differs: Differs::Refuses,
+                contract: "contract 02 §3 rule 3, contract 05 §2",
+                decision: BYTE_ORDER_MARK,
+            },
+            Deviation {
+                at: At::Vectors(
+                    Surfaces::Named(DOCUMENT),
+                    &["utf16-with-mark", "utf16-little-endian", "utf16-big-endian"],
+                ),
+                differs: Differs::Refuses,
+                contract: "contract 02 §3 rule 3, contract 05 §2",
+                decision: UTF_16,
+            },
+            Deviation {
+                at: At::Vectors(
+                    Surfaces::Named(DOCUMENT),
+                    &["utf32-with-mark", "utf32-little-endian", "utf32-big-endian"],
+                ),
+                differs: Differs::Refuses,
+                contract: "contract 02 §3 rule 3, contract 05 §2",
+                decision: UTF_32,
+            },
+            Deviation {
+                at: At::Vectors(Surfaces::Named(DOCUMENT), &["nested-200"]),
+                differs: Differs::Refuses,
+                contract: STRICT_JSON,
+                decision: DEPTH_LIMIT,
+            },
+            Deviation {
+                at: At::Vectors(Surfaces::Named(DOCUMENT), &["integer-30-digits"]),
+                differs: Differs::Gives(r#"{"a":1.2345678901234568e29}"#),
+                contract: "contracts 02, 04 and 05",
+                decision: PAST_64_BITS_IS_A_FLOAT,
+            },
+            Deviation {
+                at: At::Line(Line {
+                    python: "noticeboard/src/noticeboard/jsonfiles.py:77",
+                    input: b"{\"a\": \"\xed\xa0\x80\"}",
+                    python_gives: r#"{"a":{"$utf16":[55296]}}"#,
+                    replay: line_document,
+                }),
+                differs: Differs::Refuses,
+                contract: STRICT_JSON,
+                decision: LONE_SURROGATE,
+            },
+            Deviation {
+                at: At::Line(Line {
+                    python: "noticeboard/src/noticeboard/jsonfiles.py:133",
+                    input: br#"{"field":-0}"#,
+                    python_gives: "0.0",
+                    replay: line_number,
+                }),
+                differs: Differs::Gives("-0.0"),
+                contract: "contracts 02, 04 and 05",
+                decision: ZERO_SIGN,
+            },
+            Deviation {
+                at: At::Line(Line {
+                    python: "chaperone/src/chaperone/delegate.py:226-232",
+                    input: br#"{"field":7}"#,
+                    python_gives: "null",
+                    replay: line_text_cut,
+                }),
+                differs: Differs::Gives(r#""""#),
+                contract: "contract 04 §7.3",
+                decision: ABSENT_IS_EMPTY,
+            },
+        ];
+
+        /// The id of the input of a vector: the id with no cap.
+        fn input_id(vector: &str) -> &str {
+            vector
+                .split_once(CAP_MARK)
+                .map_or(vector, |(input, _)| input)
+        }
+
+        /// Each decision that covers one vector of one surface, with its
+        /// place in the table and the id that it names.
+        fn deviations_of(
+            surface: &str,
+            vector: &str,
+        ) -> Vec<(usize, &'static str, &'static Deviation)> {
+            let input = input_id(vector);
+
+            DEVIATIONS
+                .iter()
+                .enumerate()
+                .filter_map(|(place, deviation)| {
+                    let At::Vectors(surfaces, vectors) = deviation.at else {
+                        return None;
+                    };
+                    let named = vectors.iter().find(|named| **named == input)?;
+
+                    surfaces.hold(surface).then_some((place, *named, deviation))
+                })
+                .collect()
+        }
+
+        /// Each pair of a decision and a vector id that names one surface.
+        fn deviations_in(surface: &str) -> HashSet<(usize, &'static str)> {
+            DEVIATIONS
+                .iter()
+                .enumerate()
+                .filter_map(|(place, deviation)| match deviation.at {
+                    At::Vectors(surfaces, vectors) if surfaces.hold(surface) => {
+                        Some(vectors.iter().map(move |vector| (place, *vector)))
+                    }
+                    At::Vectors(..) | At::Line(_) => None,
+                })
+                .flatten()
+                .collect()
+        }
+
+        /// Makes sure that the Rust code differs from the Python code as the
+        /// decision says, and in no other way.
+        fn differs_as_decided(differs: Differs, python: &Did, rust: &Did, at: &str) {
+            assert!(
+                matches!(python, Did::Gives(_)),
+                "{at}: the Python code refuses"
+            );
+            match differs {
+                Differs::Refuses => assert_eq!(rust, &Did::Refuses, "{at}"),
+                Differs::Gives(value) => {
+                    let decided = Did::Gives(json_of(value));
+
+                    assert!(!same(python, &decided), "{at}: the row names no difference");
+                    assert!(same(rust, &decided), "{at}: {rust:?} is not {decided:?}");
+                }
+            }
+        }
+
+        /// Walks each vector of one surface. It prints the counts, and a run
+        /// with `--nocapture` shows them.
+        fn walk(against: &Against) {
+            let surface = vectors::surface(against.surface);
+            let mut equal = 0;
+            let mut deviated = HashSet::new();
+            for vector in &surface.vectors {
+                let at = format!("{} {}", against.surface, vector.id);
+                let rust = (against.replay)(vector);
+                let decisions = deviations_of(against.surface, &vector.id);
+
+                assert!(decisions.len() <= 1, "{at}: two rows name the vector");
+                if let Some((place, named, deviation)) = decisions.first() {
+                    let python = Did::Gives(vector.value().cloned().unwrap_or(Value::Null));
+
+                    assert_eq!(vector.result, Outcome::Accepted, "{at}: the Python code");
+                    differs_as_decided(deviation.differs, &python, &rust, &at);
+                    deviated.insert((*place, *named));
+                } else if vector.result == Outcome::Raised {
+                    assert_eq!(rust, Did::Refuses, "{at}: the Python code raises");
+                    equal += 1;
+                } else {
+                    let python = python_did(against, vector, &at);
+
+                    assert!(same(&rust, &python), "{at}: {rust:?} is not {python:?}");
+                    equal += 1;
+                }
+            }
+
+            assert_eq!(
+                deviated,
+                deviations_in(against.surface),
+                "{}: a row names a vector that the surface does not hold",
+                against.surface
+            );
+            println!(
+                "{}: {} vectors: {equal} equal, {} inputs that differ on purpose",
+                against.surface,
+                surface.vectors.len(),
+                deviated.len()
+            );
+        }
+
+        #[test]
+        fn the_table_holds_each_surface_of_the_readers_one_time() {
+            let listed: Vec<&str> = SURFACES.iter().map(|against| against.surface).collect();
+            let unique: HashSet<&str> = listed.iter().copied().collect();
+            let index = vectors::index();
+            let in_index: HashSet<&str> = index
+                .iter()
+                .map(|row| row.surface.as_str())
+                .filter(|surface| surface.starts_with(READERS) || surface.starts_with(DOCUMENTS))
+                .collect();
+
+            assert_eq!(
+                unique.len(),
+                listed.len(),
+                "the table holds one surface twice"
+            );
+            assert_eq!(unique, in_index);
+        }
+
+        #[test]
+        fn each_deviation_names_a_surface_of_the_table_and_its_reason() {
+            let listed: HashSet<&str> = SURFACES.iter().map(|against| against.surface).collect();
+            for deviation in DEVIATIONS {
+                assert!(deviation.contract.starts_with("contract"));
+                assert!(!deviation.decision.is_empty());
+                match deviation.at {
+                    At::Vectors(Surfaces::Named(surfaces), vectors) => {
+                        assert!(!surfaces.is_empty() && !vectors.is_empty());
+                        for surface in surfaces {
+                            assert!(listed.contains(surface), "{surface}");
+                        }
+                    }
+                    At::Vectors(Surfaces::EachReader, vectors) => assert!(!vectors.is_empty()),
+                    At::Line(line) => {
+                        assert!(line.python.contains(".py:"), "{}", line.python);
+                    }
+                }
+            }
+        }
+
+        /// The walk reads the table, so each surface of the table has a walk.
+        #[test]
+        fn each_vector_of_each_surface_is_what_the_python_code_does() {
+            for against in SURFACES {
+                walk(against);
+            }
+        }
+
+        /// A row with no vector holds its case. The test makes sure that the
+        /// Rust code does what the row says, and that the row names a
+        /// difference.
+        #[test]
+        fn each_deviation_with_no_vector_is_a_difference() {
+            let mut lines = 0;
+            for deviation in DEVIATIONS {
+                let At::Line(line) = deviation.at else {
+                    continue;
+                };
+                let python = Did::Gives(json_of(line.python_gives));
+                let rust = (line.replay)(line.input);
+
+                differs_as_decided(deviation.differs, &python, &rust, line.python);
+                lines += 1;
+            }
+
+            assert!(lines > 0, "the table holds no row with no vector");
+        }
+
+        /// A test of the test: a row that names no difference fails.
+        #[test]
+        #[should_panic(expected = "the row names no difference")]
+        fn a_row_that_names_no_difference_fails() {
+            let python = Did::Gives(json!(0));
+
+            differs_as_decided(Differs::Gives("0"), &python, &python, "a row");
+        }
+
+        /// A test of the test: a value differs from the same number with the
+        /// other sign of zero and from the same number of the other kind.
+        #[test]
+        fn two_results_are_equal_only_with_the_same_text() {
+            let gives = |text: &str| Did::Gives(json_of(text));
+
+            assert!(same(&gives("0.0"), &gives("0.0")));
+            assert!(!same(&gives("0.0"), &gives("-0.0")));
+            assert!(!same(&gives("7"), &gives("7.0")));
+            assert!(same(&gives(r#"{"a":1,"b":2}"#), &gives(r#"{"b":2,"a":1}"#)));
+            assert!(!same(&gives("null"), &Did::Refuses));
+            assert!(same(&Did::Refuses, &Did::Refuses));
+        }
     }
 }
