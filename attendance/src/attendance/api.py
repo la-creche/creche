@@ -234,7 +234,7 @@ async def _json(request: Request) -> dict[str, Any]:
     try:
         raw: object = await request.json()
     except (ValueError, UnicodeDecodeError, RecursionError) as error:
-        raise ApiError(ErrorCode.BAD_REQUEST, "body is not JSON") from error
+        raise ApiError(ErrorCode.BAD_REQUEST, parse.NOT_JSON) from error
 
     record = as_object(raw)
 

@@ -36,6 +36,8 @@
   {"id":"intent-null","input":{"text":"{\"intent\":null}"},"result":"accepted","value":{"force":false,"holder":null,"intent":"acquire"}},
   {"id":"intent-empty","input":{"text":"{\"intent\":\"\"}"},"result":"accepted","value":{"force":false,"holder":null,"intent":"acquire"}},
   {"id":"intent-number","input":{"text":"{\"intent\":5}"},"result":"accepted","value":{"force":false,"holder":null,"intent":"acquire"}},
-  {"id":"holder-and-intent-unknown","input":{"text":"{\"holder\":\"view\",\"intent\":\"release\"}"},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":"chat","message":"holder is not a door","session":"owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33","turn":null}},"http_status":400},"result":"refused"}
+  {"id":"holder-and-intent-unknown","input":{"text":"{\"holder\":\"view\",\"intent\":\"release\"}"},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":"chat","message":"holder is not a door","session":"owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33","turn":null}},"http_status":400},"result":"refused"},
+  {"id":"half-pair-in-holder","input":{"text":"{\"holder\":\"tui\\ud800\"}"},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"body is not JSON","session":null,"turn":null}},"http_status":400},"result":"refused"},
+  {"id":"half-pair-in-intent","input":{"text":"{\"intent\":\"renew\\ud800\"}"},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"body is not JSON","session":null,"turn":null}},"http_status":400},"result":"refused"}
  ]
 }

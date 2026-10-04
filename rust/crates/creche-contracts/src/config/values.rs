@@ -198,10 +198,11 @@ const LOOPBACK_TEXTS: [&str; 3] = ["127.0.0.1", "::1", "localhost"];
 
 // CONTRACT-QUESTION: contract 02 §3 rule 2 says that a service binds the LAN
 // address and never `0.0.0.0`. It gives a bind host no grammar. Three Python
-// services refuse a small set of wildcard texts, and `attendance` and the
-// chaperone refuse no text. The type refuses each address of each interface
-// in each spelling, and each text that is not an IP address or a host name.
-// A laxer reading lets `0` or `::0` publish a service.
+// services refuse a small set of wildcard texts. `attendance` refuses each
+// spelling of each interface, and the chaperone refuses no text. The type
+// refuses each address of each interface in each spelling, and each text
+// that is not an IP address or a host name. A laxer reading lets `0` or
+// `::0` publish a service.
 /// The host that a service binds: an IPv4 address, an IPv6 address or a host
 /// name.
 ///
@@ -587,12 +588,13 @@ fn normal_path(text: &str) -> Result<String, PathError> {
 }
 
 // CONTRACT-QUESTION: no contract gives a config path a grammar. Each Python
-// service takes each text, a relative path and a text with a NUL byte too.
-// The path types refuse a relative path, because its meaning depends on the
-// working directory of the unit. They refuse a NUL byte, because each open of
-// such a path raises. `SocketPath` refuses a path of more than 107 bytes,
-// because the kernel refuses the bind. A laxer reading makes the process stop
-// at its first use of the path, after the config parse passed.
+// service takes each text and a relative path. Each one but `attendance`
+// takes a text with a NUL byte too. The path types refuse a relative path,
+// because its meaning depends on the working directory of the unit. They
+// refuse a NUL byte, because each open of such a path raises. `SocketPath`
+// refuses a path of more than 107 bytes, because the kernel refuses the bind.
+// A laxer reading makes the process stop at its first use of the path, after
+// the config parse passed.
 /// Makes one path type. Each type is an absolute path with no NUL byte, in
 /// the normal form of Python's `pathlib`.
 macro_rules! path_type {
@@ -759,10 +761,11 @@ path_type! {
 
 // CONTRACT-QUESTION: contract 03 §11.4 rule 4 and the other sections that
 // give a count of seconds do not say which numbers are permitted. Python's
-// `float` reads `nan`, `inf` and `1e999`, and each Python service accepts
-// them: `nan <= 0` is false. The type refuses a value that is not finite and
-// a value that rounds to no time. `Duration::from_secs_f64` stops the process
-// on the first, and a loop with the second never waits.
+// `float` reads `nan`, `inf` and `1e999`, and each Python service but
+// `attendance` accepts them: `nan <= 0` is false. The type refuses a value
+// that is not finite and a value that rounds to no time.
+// `Duration::from_secs_f64` stops the process on the first, and a loop with
+// the second never waits.
 /// A count of seconds that a config gives: finite and more than zero.
 ///
 /// The value always converts to a [`Duration`] of 1 nanosecond or more.

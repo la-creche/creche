@@ -7,6 +7,7 @@ lives in a file here and nothing important lives only in memory.
 
 from __future__ import annotations
 
+import math
 import shutil
 from collections.abc import Iterator
 from datetime import datetime
@@ -192,7 +193,14 @@ def _as_float(raw: dict[str, Any], key: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0.0
 
-    return float(value)
+    # A record from an older service can hold NaN, and no answer can hold
+    # it. An integer past the range of a float has no float either.
+    try:
+        number = float(value)
+    except OverflowError:
+        return 0.0
+
+    return number if math.isfinite(number) else 0.0
 
 
 def _as_time(raw: dict[str, Any], key: str) -> datetime:
