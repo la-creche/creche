@@ -270,6 +270,24 @@ async def test_a_writer_that_ends_with_an_error_says_so(
     assert "task owui writer ended with an error" in caplog.text
 
 
+async def test_close_ends_after_the_writer_ended_with_an_error() -> None:
+    """`close` is an early step of the close of the service. The error of a
+    writer that is gone must not stop the steps after it."""
+    copy = ChatCopy(FakeChats())
+    copy.start()
+    queue = copy._queue
+    writer = copy._writer
+    assert queue is not None
+    assert writer is not None
+    # Not the pair that `submit` adds, so the read of the queue raises.
+    queue.put_nowait(None)  # pyright: ignore[reportArgumentType]
+    await wait_until(writer.done)
+
+    await copy.close()
+
+    assert copy._writer is None
+
+
 def test_a_deleted_session_is_forgotten() -> None:
     chats = FakeChats(down=True)
     copy = ChatCopy(chats)

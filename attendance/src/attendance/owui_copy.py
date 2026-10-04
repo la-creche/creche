@@ -244,7 +244,9 @@ class ChatCopy:
 
         writer.cancel()
 
-        with contextlib.suppress(asyncio.CancelledError):
+        # A writer that ended with an error keeps the error, and its
+        # done-callback logged it. It is not an error of this close.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await writer
 
     async def drained(self) -> None:
