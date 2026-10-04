@@ -9,8 +9,13 @@
 //! | [`frame`] | The framing: one record for each line, and the size limit. |
 //! | [`host`] | [`host::HostMessage`]: what the host writes and the playpen reads. |
 //! | [`claim`] | [`claim::PlaypenLine`]: what the host reads from a line of the playpen. |
+//! | [`playpen`] | [`playpen::PlaypenMessage`]: what the playpen writes. |
 //! | [`vocabulary`] | Each closed set of names of a line. |
 //! | [`json`], [`text`], [`number`] | The values of a line from the sandbox. |
+//!
+//! The direction from the playpen to the host has two types. The playpen is
+//! in the sandbox, so the host reads each field as a claim and keeps what
+//! the Python host keeps. The playpen writes only what the contract permits.
 //!
 //! The host side accepts and refuses what the Python implementation does.
 //! The vector files under `vectors/data/channel` hold that behavior.
@@ -20,6 +25,7 @@ pub mod frame;
 pub mod host;
 pub mod json;
 pub mod number;
+pub mod playpen;
 pub mod text;
 pub mod vocabulary;
 

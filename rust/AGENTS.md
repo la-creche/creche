@@ -29,7 +29,7 @@ defect that a test finds late.
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
 | `session` | The session API: contract 02. |
-| `channel` | The channel protocol: contract 03. |
+| `channel` | The channel protocol: contract 03. "The channel module" below has its parts. |
 | `grants` | The grant file, the call body, the approval body and the audit record: contract 04. |
 | `status` | The status document: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
@@ -183,6 +183,55 @@ The rule has two exceptions:
   row of the `DEVIATIONS` table in the test.
 - A number of more than 4300 digits in a version. Python reads no longer
   text as an integer, so the types refuse it. No vector holds such a number.
+
+## The channel module
+
+`crates/creche-contracts/src/channel.rs` declares the parts. Each part is a
+file under `src/channel/`.
+
+| Part | What it holds |
+|---|---|
+| `frame` | `LineSplitter`: one record for each line. `Refusal`: why the host drops a line. |
+| `host` | `HostMessage`: what the host writes and the playpen reads. |
+| `claim` | `PlaypenLine`: what the host reads from a line of the playpen. `parse` reads one record. |
+| `playpen` | `PlaypenMessage`: what the playpen writes. |
+| `vocabulary` | Each closed set of names of a line, as an enum. |
+| `json`, `text`, `number` | The JSON reader and the values of a line from the sandbox. |
+
+The direction from the playpen to the host has two types. The host reads
+each field as a claim and keeps what the Python host keeps. The playpen
+writes only what the contract permits.
+
+Rule 1 names a raw `serde` type. The `channel` module is the one exception.
+Its raw type is `channel::json::Json`, from a reader of its own. The Python
+host reads a line with `json.loads`, and `serde_json` does not read what
+`json.loads` reads:
+
+1. `json.loads` reads `NaN`, `Infinity` and `-Infinity`. `serde_json`
+   refuses them.
+2. `json.loads` keeps an integer of 4300 digits. `serde_json` reads an
+   integer past 64 bits as a float.
+3. `json.loads` reads a surrogate that has no partner, for example
+   `\ud800`. `serde_json` refuses it.
+4. Python 3.12 reads a line that nests 9997 levels. `serde_json` stops at
+   128 levels.
+
+The reader has these properties:
+
+- It uses no recursion. The depth of a line cannot exhaust the stack.
+- It stops at 9000 levels. Each supported Python version reads that depth.
+- The `parse` of `claim` gives `malformed` for a deeper line and for an
+  integer of more than 4300 digits. Python raises `RecursionError` and
+  `ValueError` there, and the Python host gives `malformed`.
+- `Json` drops with no recursion.
+
+Rule 7 holds. One field holds a `Json`: the `event` of a line. Contract 03
+§5.1 makes that value opaque.
+
+The writer of `json` makes the bytes of
+`json.dumps(value, separators=(",", ":"), ensure_ascii=False)`. The host
+counts those bytes against the size limit of an event. A float has the text
+that `repr` of Python gives.
 
 ## Code style
 
@@ -340,3 +389,52 @@ Rules for the test:
   1. A version number of 4300 digits. The number does not fit `u64`.
   2. A version number with a zero at its start.
   3. A sandbox number with a zero at its start.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/channel/`:
+  1. `json::MAX_LINE_DEPTH`, contract 03 §13 rule 1. The contract gives no
+     nesting limit for a line. The limit of Python changes with its version.
+     The reader stops at 9000 levels.
+  2. `claim::MAX_EVENT_DEPTH`, contract 03 §13 rule 6. The contract gives no
+     nesting limit for an event. The Python host keeps only the type of an
+     event that nests more than 64 levels. The reader does the same.
+  3. `claim::MAX_LOG_CHARS`, contract 03 §8. The contract caps a message at
+     4 KiB. The Python host cuts at 4096 code points. The reader does the
+     same.
+  4. `host::ConfigRev` and `host::EntryId`, contract 03 §4.1. The contract
+     gives no grammar. The types take the rule of the playpen: 1 to 200
+     bytes.
+  5. `host::PromptText`, contract 03 §4.3. The contract gives no cap for the
+     message of `steer`. The type takes the cap of a prompt, as the playpen
+     does.
+  6. `host::Model`, contract 03 §4.1. The contract gives no grammar. The type
+     takes 1 to 200 bytes.
+  7. `host::ProtocolVersion`, contract 03 §3. The contract gives no grammar
+     for a number. The type takes two numbers of 1 to 9 ASCII digits.
+- The host side of `channel` accepts what the Python host accepts, also
+  where a stricter reading of contract 03 is possible. The owner decides each
+  case. Five examples:
+  1. A session id and a turn id of a line can be each text.
+     `TurnAddress` is the check that follows.
+  2. `turn_seq` and each count can be an integer past 64 bits.
+  3. `cost_usd` can be `NaN` or `Infinity`.
+  4. A text outside an event can hold a lone surrogate.
+  5. `turn_failed` with no session, no turn and the `turn_seq` 0 is
+     `malformed`. Contract 03 §5.1 permits that line.
+- No vector covers the side of the playpen: `HostMessage::parse` and
+  `PlaypenMessage`. The tests read each line of one side with the parser of
+  the other side. `HostMessage::parse` is stricter than the TypeScript
+  playpen in seven places:
+  1. A number with a fraction or an exponent is not an integer: `600.0`.
+  2. A session id has 128 bytes at most. The playpen permits 200.
+  3. A sandbox number has 9 digits at most.
+  4. A text with a lone surrogate is not a text.
+  5. A protocol version is two numbers. The playpen takes each text with a
+     `.`.
+  6. A workspace kind is `code-sandbox`. The playpen reads each text.
+  7. A cap counts bytes. The playpen counts UTF-16 code units.
+- `HostMessage::parse` reads an empty `model` as no model. The playpen keeps
+  the empty text.
+- `channel::claim::Event::from_json` refuses an event over a limit. The
+  playpen truncates such an event (contract 03 §8). No Rust code does that.
+- `channel` has no function that maps a `FailReason` to a turn reason of
+  contract 02 §14. The `session` module holds no turn reason yet.

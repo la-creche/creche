@@ -775,6 +775,11 @@ impl ObjectWriter {
         }
     }
 
+    /// A field whose value is a number, or `null` for no number.
+    pub(super) fn raw_or_null(self, key: &str, value: Option<String>) -> Self {
+        self.raw(key, value.as_deref().unwrap_or(NULL))
+    }
+
     /// A field whose value is a string, and no field for no string.
     pub(super) fn text_if(self, key: &str, value: Option<&str>) -> Self {
         match value {
@@ -800,6 +805,11 @@ impl ObjectWriter {
 
 /// The text of `null`.
 const NULL: &str = "null";
+
+/// The text of a flag.
+pub(super) const fn flag_text(flag: bool) -> &'static str {
+    if flag { "true" } else { "false" }
+}
 
 /// The text of one array of strings.
 pub(super) fn array_text<'a>(items: impl Iterator<Item = &'a str>) -> String {
@@ -1409,17 +1419,20 @@ mod tests {
             .raw("n", "7")
             .text_or_null("a", Some("b"))
             .text_or_null("c", None)
+            .raw_or_null("d", Some("1.5".to_owned()))
+            .raw_or_null("e", None)
             .text_if("f", Some("g"))
             .text_if("h", None)
-            .raw_if("i", Some("true".to_owned()))
+            .raw_if("i", Some(flag_text(true).to_owned()))
             .raw_if("j", None)
             .raw("k", &array_text(["l", "m\""].into_iter()))
             .raw("o", &array_text(std::iter::empty()))
+            .raw("p", flag_text(false))
             .finish();
 
         assert_eq!(
             written,
-            r#"{"type":"x\n","n":7,"a":"b","c":null,"f":"g","i":true,"k":["l","m\""],"o":[]}"#
+            r#"{"type":"x\n","n":7,"a":"b","c":null,"d":1.5,"e":null,"f":"g","i":true,"k":["l","m\""],"o":[],"p":false}"#
         );
         assert_eq!(ObjectWriter::new().finish(), "{}");
         assert_eq!(object_text(&JsonObject::default()), Ok("{}".to_owned()));
