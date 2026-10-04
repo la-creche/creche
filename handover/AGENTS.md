@@ -154,6 +154,27 @@ The console script is `handover`. The verify hook and the operator's
 8. The intake reads the gap directory the way `spool.py` reads `requests/`.
    One refused entry never refuses the directory.
 
+## Binary builds
+
+1. A `kind: binary` component is a tree of compiled programs. Each program
+   is at `<install.to>/bin/<name>`, the layout of a venv.
+2. Root builds it on the host from the manifest's own `build` argv, as it
+   builds a venv: the same user, the same environment and the same limit.
+3. The executor sets `CARGO_INSTALL_ROOT` to the staged tree. No venv step
+   runs: no `uv venv --relocatable` and no walk of `site-packages`.
+4. The unit rules of a venv apply. The unit must start a program inside
+   `install.to`, and a sibling unit travels with the component's own unit.
+5. Every program that a unit or the verify command starts is a regular,
+   executable file of the staged tree.
+6. No link in the staged tree has an absolute target or leaves the tree. No
+   file holds the path of the fetched work tree or has a second name.
+7. `catalog.BINARY_BUILD_FILES` move every binary component and no other
+   kind. Its input digest covers those files and not `uv.lock`.
+8. Change a component's kind in its catalog row and in its manifest in one
+   commit.
+9. Release `handover` before the first manifest says `kind: binary`. An
+   older executor or requester refuses that manifest.
+
 ## The chaperone's upstream roster (`executor/roster.py`)
 
 1. Root writes it. `caregiver` must never write it.
@@ -204,7 +225,8 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 uv run pytest handover/tests
 ```
 
-No test needs a host. A real `git`, `uv` or `sops` runs against `tmp_path`.
+No test needs a host. A real `git`, `uv`, `cargo` or `sops` runs against
+`tmp_path`. The `cargo` test skips on a machine that has no `cargo`.
 TLS runs on loopback. Every test file's basename starts with
 `test_handover_`. `handover_fixtures.py` builds valid manifests only. A test
 that wants a refusal changes one field.
@@ -250,3 +272,18 @@ that wants a refusal changes one field.
 - A component's kind is written in its catalog row and in its manifest. The
   allocator reads the row and the executor reads the manifest. Only a test
   holds the two equal (`tests/test_handover_bin_lock_files.py`).
+- Contract 06 §8.2 names the code `editable` for a venv tree. A binary tree
+  that is not self-contained gets the same code
+  (`executor/selfcontained.py`).
+- A binary tree is refused when a file holds the path of the fetched work
+  tree. The walk cannot tell a path that a program opens from a path that
+  it only prints. Code that a build script generates can carry its own path
+  into a panic message. Such a build must remap the path
+  (`executor/selfcontained.py`).
+- A binary build runs in the root of the fetched tree. A `rustup` proxy
+  reads a toolchain file from the working directory and its parents, so it
+  does not read `rust/rust-toolchain.toml`. It also downloads a toolchain
+  that the host does not have. The operator decides how the host gets its
+  toolchain (`executor/install.py`).
+- The executor does not remove `work/<id>`. A binary build leaves its
+  `target` directory there (`executor/steps.py`).

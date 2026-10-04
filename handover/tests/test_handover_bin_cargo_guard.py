@@ -12,6 +12,8 @@ machine has, and asks the built tree three questions:
    the directory that the build ran in.
 3. With the tree renamed and the fetched work tree GONE, does a program
    still run?
+4. Does the executor's own walk pass the tree, and refuse it when the
+   records are there (contract 06 §8.2)?
 
 The workspace is written into `tmp_path`: one crate, two programs and no
 dependency, so the build reads no index and needs no network. The test
@@ -32,6 +34,7 @@ from typing import Final
 
 import pytest
 from handover.executor.install import BINARY_ENV_NAME
+from handover.executor.selfcontained import NAMES_WORK_TREE, binary_escapes
 from handover.manifest import ComponentManifest, parse_manifest
 from handover_bin_fixtures import BINARY_MANIFEST, BINARY_NAME
 
@@ -198,6 +201,31 @@ def test_without_no_track_cargo_records_the_work_tree(tmp_path: Path) -> None:
 
     for name in TRACK_FILES:
         assert str(source) in (new / name).read_text(encoding="utf-8"), name
+
+
+def _programs(tree: Path) -> tuple[Path, ...]:
+    return (tree / "bin" / BINARY_NAME, tree / "bin" / VERIFY_NAME)
+
+
+def test_the_walk_passes_what_the_fixture_build_makes(built: tuple[Path, Path]) -> None:
+    """Question 4. No link, one name per file, and no path of the work
+    tree in a program that has no dependency and no build script."""
+    source, new = built
+
+    assert binary_escapes(new, _programs(new), source) == ()
+
+
+def test_the_walk_refuses_cargos_records(tmp_path: Path) -> None:
+    """The same build without `--no-track`. The walk finds both records."""
+    source = _workspace(tmp_path / "work" / BINARY_NAME)
+    new = tmp_path / "components" / f"{BINARY_NAME}.new"
+    new.parent.mkdir(parents=True)
+    (argv,) = _manifest().build
+    _build(tmp_path, tuple(word for word in argv if word != NO_TRACK), source, new)
+
+    found = binary_escapes(new, _programs(new), source)
+
+    assert found == tuple(f"{name} {NAMES_WORK_TREE}" for name in TRACK_FILES)
 
 
 def test_a_program_runs_after_the_rename_with_the_work_tree_gone(
