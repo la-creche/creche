@@ -264,6 +264,31 @@ def test_sbx_create_refuses_another_kit(programs: Tree, supervisor: Supervisor) 
     assert sbx_sandboxes(programs) == {}
 
 
+def test_sbx_create_refuses_a_flag_it_does_not_know(programs: Tree, supervisor: Supervisor) -> None:
+    """Fail closed. A service that passes a new flag gets no sandbox here."""
+    done = _sbx(programs, supervisor, *_create_words(), "--publish", "8080:80")
+
+    assert done.exit_code == EXIT_USAGE
+    assert sbx_sandboxes(programs) == {}
+
+
+def test_sbx_policy_rm_leaves_the_allow_row_of_the_kit(
+    programs: Tree, supervisor: Supervisor
+) -> None:
+    """No command removes the allow row of the kit. A removed deny row opens the host again."""
+    _create(programs, supervisor, deny=KIT_HOST)
+
+    removed = _policy(programs, supervisor, "rm", "--resource", KIT_HOST)
+    again = _policy(programs, supervisor, "rm", "--resource", KIT_HOST)
+    check = _policy(programs, supervisor, "check", KIT_HOST)
+
+    assert removed.exit_code == 0, removed.stderr
+    assert again.exit_code != 0
+    assert check.stdout.strip() == "Allowed"
+    assert sbx_rows(programs, BOX, ALLOW) == [KIT_HOST]
+    assert sbx_rows(programs, BOX, DENY) == []
+
+
 def test_sbx_policy_rm_refuses_a_row_that_does_not_exist(
     programs: Tree, supervisor: Supervisor
 ) -> None:
@@ -360,6 +385,20 @@ def test_systemctl_refuses_a_verb_it_does_not_know(programs: Tree, supervisor: S
 
     assert _systemctl(programs, supervisor, "--user", "start", UNIT).exit_code == EXIT_USAGE
     assert enabled_units(programs) == []
+
+
+def test_systemctl_refuses_to_disable_a_unit_with_no_file(
+    programs: Tree, supervisor: Supervisor
+) -> None:
+    """A service that removes the unit file before the disable leaves the unit enabled."""
+    _unit_file(programs)
+    _systemctl(programs, supervisor, "--user", "enable", "--now", UNIT)
+    (programs.unit_dir / UNIT).unlink()
+
+    disabled = _systemctl(programs, supervisor, "--user", "disable", "--now", UNIT)
+
+    assert disabled.exit_code != 0
+    assert enabled_units(programs) == [UNIT]
 
 
 # -------------------------------------------------------------------- LiteLLM

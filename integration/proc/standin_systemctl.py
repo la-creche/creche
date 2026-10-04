@@ -23,6 +23,12 @@ Three things here copy what the real program does:
 2. `is-enabled` prints one word. It exits 0 only for `enabled`.
 3. A call with no `--user` fails. A user unit runs none of these as root.
 
+One thing follows what `caregiver/src/caregiver/timers.py` records, and no
+run of the real program checked it for this suite:
+
+4. `disable` fails for a unit with no file, and the unit stays enabled. On
+   the host, a unit file that goes first leaves the link that enabled it.
+
 A test tunes one call with a file under `tune/`:
 
     tune/refuse-enable-<unit>     `enable` fails for that unit
@@ -69,9 +75,7 @@ def main(argv: list[str]) -> int:
         return _enable(state, unit)
 
     if verb == "disable":
-        (state / ENABLED_DIR / unit).unlink(missing_ok=True)
-
-        return EXIT_OK
+        return _disable(state, unit)
 
     if verb == "is-enabled":
         return _is_enabled(state, unit)
@@ -89,6 +93,16 @@ def _enable(state: Path, unit: str) -> int:
     marker = state / ENABLED_DIR / unit
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.touch()
+
+    return EXIT_OK
+
+
+def _disable(state: Path, unit: str) -> int:
+    """A unit with no file stays enabled: the removal of the file came too soon."""
+    if not _unit_file(unit).is_file():
+        return _fail(EXIT_FAILED, f"Unit file {unit} does not exist")
+
+    (state / ENABLED_DIR / unit).unlink(missing_ok=True)
 
     return EXIT_OK
 

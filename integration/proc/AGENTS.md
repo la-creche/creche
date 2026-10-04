@@ -369,7 +369,10 @@ failure. Work down this list.
   machine. No scenario declares one.
 - **The stand-ins copy facts that no test of this suite can check.** The
   `sbx` stand-in follows the facts that `caregiver/src/caregiver/driver.py`
-  records about the real program.
+  records about the real program. The `systemctl` stand-in refuses a
+  `disable` of a unit with no file. That rule follows
+  `caregiver/src/caregiver/timers.py`. No run of the real program checked
+  it for this suite.
 - **CONTRACT-QUESTION, `sbx create` with a name that exists.** Contract 05
   §10 row 7 leaves it open. The `sbx` stand-in fails that create. A change
   costs one check in `standin_sbx.py` and its test.

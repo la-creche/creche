@@ -26,7 +26,7 @@ test reads the same files that the next call reads:
 Four things here copy what the real program does on the host:
 
 1. `create` gives each sandbox the allow row of the `shell` kit. Only a deny
-   row takes that host away.
+   row takes that host away. `policy rm` leaves the allow row of the kit.
 2. `policy check` prints `Allowed` or `Denied`. A deny row wins over an
    allow row, and a host with no row is denied.
 3. `rm` removes the sandbox and leaves its policy rows.
@@ -61,6 +61,10 @@ EXIT_USAGE: Final = 64
 #: kit allows with no flag.
 KIT: Final = "shell"
 KIT_ALLOW: Final = ("openrouter.ai",)
+
+#: Each flag of `create` that this stand-in knows. Another flag is a usage
+#: mistake, so a service that passes a new flag fails here.
+_CREATE_FLAGS: Final = frozenset({"-t", "--name", "--cpus", "-m", "--deny-network", "-q"})
 
 ALLOWED: Final = "Allowed"
 DENIED: Final = "Denied"
@@ -136,6 +140,11 @@ def _create(state: Path, rest: list[str]) -> int:
         raise UsageError(f"create needs the kit {KIT}")
 
     mounts, flags = _split_at_flag(rest[1:])
+    unknown = [word for word in flags if word.startswith("-") and word not in _CREATE_FLAGS]
+
+    if unknown:
+        raise UsageError(f"create has no flag named {unknown[0]}")
+
     name = _one(flags, "--name")
     _hold(state, f"create-{name}")
     vm = _vm_file(state, name)
@@ -207,7 +216,9 @@ def _policy(state: Path, rest: list[str]) -> int:
 
 
 def _policy_remove(state: Path, name: str, host: str) -> int:
-    rows = [_row(state, name, kind, host) for kind in (ALLOW, DENY)]
+    """Remove each row of one host. No command removes the allow row of the kit."""
+    kinds = (DENY,) if host in KIT_ALLOW else (ALLOW, DENY)
+    rows = [_row(state, name, kind, host) for kind in kinds]
     found = [row for row in rows if row.exists()]
 
     if not found:
