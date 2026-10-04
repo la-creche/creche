@@ -772,9 +772,10 @@ struct Deviation {
 }
 
 const STRICT_JSON: &str = "The contract says that a body is JSON. Python's reader takes more: a \
-    byte order mark, UTF-16 and UTF-32, the words NaN and Infinity, and a lone surrogate in a \
-    text. The Rust reader is serde_json, which takes JSON in UTF-8 only. A Rust text cannot \
-    hold a lone surrogate.";
+    byte order mark, UTF-16 and UTF-32, the words NaN and Infinity, and a lone surrogate, as an \
+    escape or as its bytes. The Rust reader is serde_json, which takes JSON in UTF-8 only. A \
+    Rust text cannot hold a lone surrogate, so the reader refuses one in each key and in each \
+    text that a parser reads.";
 
 const DEPTH_LIMIT: &str = "The contract gives no nesting limit. Python reads a text until the \
     recursion limit of the interpreter, which differs between two versions. The Rust reader \
@@ -796,6 +797,8 @@ const DEVIATIONS: &[Deviation] = &[
         vectors: &[
             "json-nan-unknown-field",
             "json-infinity-unknown-field",
+            "json-lone-surrogate-unknown-key",
+            "bytes-surrogate-unknown-field",
             "bytes-bom",
             "bytes-utf16",
             "bytes-utf16-le-no-bom",

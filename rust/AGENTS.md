@@ -184,6 +184,15 @@ The rule has two exceptions:
 - A number of more than 4300 digits in a version. Python reads no longer
   text as an integer, so the types refuse it. No vector holds such a number.
 
+The `session` module has three more exceptions. The owner did not decide
+them yet. Each one is a row of `DEVIATIONS` in `session/python.rs`, and
+"Known gaps" lists them.
+
+- A JSON text that is not strict JSON in UTF-8, for example a text with a
+  byte order mark, with `NaN` or with a lone surrogate.
+- A JSON text that nests deeper than 128 levels.
+- A sequence number that does not fit 64 bits.
+
 ## The channel module
 
 `crates/creche-contracts/src/channel.rs` declares the parts. Each part is a
@@ -436,8 +445,10 @@ Rules for the test:
       same.
 - The `session` module differs from the Python code on purpose in four
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
-  1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN`, no
-     `Infinity` and no lone surrogate in a text that a parser reads.
+  1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
+     no `Infinity`. It holds no lone surrogate in a key or in a text that a
+     parser reads, and no bytes of a surrogate. The Python reader accepts a
+     lone surrogate in each place.
   2. A JSON text nests 128 levels at most.
   3. A number of a query has the digits 0 to 9 only.
   4. A sequence number fits 64 bits. The body of a `pi_event` holds an

@@ -79,7 +79,7 @@
   {"accepted":64,"entry":"agent_door_tui.status.StatusFiles.serving","path":"status/door_tui.json","raised":0,"refused":50,"surface":"status.door_tui","vectors":114},
   {"accepted":11,"entry":"agent_door_trigger.families.StatusFiles.servable","path":"status/door_trigger.json","raised":0,"refused":103,"surface":"status.door_trigger","vectors":114},
   {"accepted":85,"entry":"agent_door_owui.families.StatusFiles.serving","path":"status/door_owui.json","raised":0,"refused":29,"surface":"status.door_owui","vectors":114},
-  {"accepted":47,"entry":"attendance.requests.read_create","path":"session/request.create.json","raised":0,"refused":55,"surface":"session.request.create","vectors":102},
+  {"accepted":49,"entry":"attendance.requests.read_create","path":"session/request.create.json","raised":0,"refused":55,"surface":"session.request.create","vectors":104},
   {"accepted":135,"entry":"attendance.requests.read_run_turn","path":"session/request.run_turn.json","raised":0,"refused":105,"surface":"session.request.run_turn","vectors":240},
   {"accepted":23,"entry":"attendance.requests.read_writer","path":"session/request.writer.json","raised":0,"refused":8,"surface":"session.request.writer","vectors":31},
   {"accepted":5,"entry":"attendance.requests.read_steer","path":"session/request.steer.json","raised":0,"refused":9,"surface":"session.request.steer","vectors":14},

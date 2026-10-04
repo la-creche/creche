@@ -21,7 +21,8 @@
 //! as a row of its `DEVIATIONS` table, and `rust/AGENTS.md` lists them.
 //!
 //! - A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and no
-//!   `Infinity`, and a text that a parser reads holds no lone surrogate.
+//!   `Infinity`. A key, and a text that a parser reads, holds no lone
+//!   surrogate.
 //! - A JSON text nests 128 levels at most.
 //! - A number of a query is written with the digits 0 to 9.
 //! - A sequence number fits 64 bits.

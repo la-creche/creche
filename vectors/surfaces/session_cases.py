@@ -112,6 +112,8 @@ READER_BODIES: Final[tuple[Body, ...]] = (
     Body("json-infinity-unknown-field", _CREATE_HEAD.encode() + b',"x":-Infinity}'),
     Body("json-float-out-of-range", _CREATE_HEAD.encode() + b',"x":1e400}'),
     Body("json-lone-surrogate-unknown-field", _CREATE_HEAD.encode() + b',"x":"\\udc00"}'),
+    Body("json-lone-surrogate-unknown-key", _CREATE_HEAD.encode() + b',"\\ud800":1}'),
+    Body("bytes-surrogate-unknown-field", _CREATE_HEAD.encode() + b',"x":"\xed\xa0\x80"}'),
     _long("json-integer-4300-digits", _CREATE_HEAD + ',"x":', "9", INT_DIGITS_MAX, "}"),
     _long("json-integer-4301-digits", _CREATE_HEAD + ',"x":', "9", INT_DIGITS_MAX + 1, "}"),
     _long("json-negative-integer-4300-digits", _CREATE_HEAD + ',"x":-', "9", INT_DIGITS_MAX, "}"),
