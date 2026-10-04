@@ -694,6 +694,13 @@ the text of the failure. Work down this list.
 
   A listener that ignores `SIGHUP` fails one scenario. A fixed exit status
   costs one assertion in each of the three scenarios.
+- **A run that ignores `SIGHUP` cannot judge the `SIGHUP` scenario.** A
+  process that the suite starts ignores each signal that the run ignores. A
+  run under `nohup` ignores `SIGHUP`. systemd starts a unit with the default
+  action for `SIGHUP`, and the harness does not set that action. The
+  `SIGHUP` scenario of `test_proc_edges.py` fails at its first line in such
+  a run, and the failure names the cause. A harness that sets the default
+  action costs one step in `Supervisor.spawn` of `proc_harness.py`.
 - **The unit of the chaperone names no `TimeoutStopSec`.** systemd then
   applies its default, which is 90 seconds unless the host sets another.
   `test_proc_edges.py` gives the chaperone 90 seconds to end at `SIGINT`.

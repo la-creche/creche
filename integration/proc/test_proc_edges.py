@@ -162,6 +162,12 @@ STOP_LIMIT_S = {
     Service.DOOR_TRIGGER: 30.0,
 }
 
+#: What the `SIGHUP` scenario says in a run that cannot judge it.
+RUN_IGNORES_SIGHUP = (
+    "this run of the suite ignores SIGHUP, and each service takes that from it. "
+    "Start the suite with no `nohup`."
+)
+
 #: `integration/proc/test_proc_edges.py` is 3 deep in the checkout.
 UNIT_DIR = Path(__file__).resolve().parents[2] / "systemd"
 STOP_LIMIT_KEY = "TimeoutStopSec="
@@ -460,7 +466,15 @@ def test_sigint_ends_a_listener(listener: Listener) -> None:
 # assertions here.
 @pytest.mark.parametrize("listener", NO_RELOAD, indirect=True)
 def test_sighup_ends_a_listener_with_no_reload(listener: Listener) -> None:
-    """The process ends inside the stop limit of its unit, and its port closes."""
+    """The process ends inside the stop limit of its unit, and its port closes.
+
+    A child ignores each signal that the process which started it ignores,
+    until the child installs a handler. A run of the suite under `nohup`
+    ignores `SIGHUP`, so each service of that run ignores it too. Such a run
+    cannot judge this scenario, and it fails here with the reason.
+    """
+    assert signal.getsignal(signal.SIGHUP) is not signal.SIG_IGN, RUN_IGNORES_SIGHUP
+
     listener.child.send(signal.SIGHUP)
     listener.child.wait(STOP_LIMIT_S[listener.service])
 
