@@ -48,11 +48,16 @@ include-dev = true
 
 # One version of each crate, and no `*` as the version of a crate.
 #
+# `multiple-versions-include-dev`: a crate that only a `[dev-dependencies]`
+# table brings is in the count of versions too. Without the key, cargo-deny
+# does not count it.
+#
 # A crate of this workspace names another one by its path, with no version.
 # cargo-deny reads that as `*`. `allow-wildcard-paths` permits it, and only
 # in a crate that no registry can take. Each crate here has `publish = false`.
 [bans]
 multiple-versions = "deny"
+multiple-versions-include-dev = true
 wildcards = "deny"
 allow-wildcard-paths = true
 

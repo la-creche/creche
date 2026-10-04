@@ -107,9 +107,15 @@ SOURCES = {
     "allow-git": [],
 }
 
-#: One version of each crate, and no `*` as a version. The last entry permits
-#: the path of one workspace crate in another, which has no version.
-BANS = {"multiple-versions": "deny", "wildcards": "deny", "allow-wildcard-paths": True}
+#: One version of each crate, and no `*` as a version. The second entry puts
+#: a crate that only a test uses in the count of versions. The last entry
+#: permits the path of one workspace crate in another, which has no version.
+BANS = {
+    "multiple-versions": "deny",
+    "multiple-versions-include-dev": True,
+    "wildcards": "deny",
+    "allow-wildcard-paths": True,
+}
 
 #: A yanked version fails the check. The table ignores no advisory.
 ADVISORIES = {"yanked": "deny"}
