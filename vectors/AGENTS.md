@@ -41,6 +41,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
 | `surfaces/grants.py` | `grants.parse`, `chaperone.call_body`, `chaperone.approval_body` |
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
+| `surfaces/config.py` | the site file, the roster, the mount files and three env readers: `config.<name>` |
 
 ## Known gaps
 
@@ -80,3 +81,20 @@ directory is not a workspace package, so a change here does not change
   larger stack can let Python 3.14 read that input.
 - The generator runs on macOS, and CI runs it on Linux. No other system
   has a run.
+- `config.roster` holds the tree of a roster file and no YAML text. No
+  vector covers what PyYAML does with the text of a file: a comment, an
+  alias, a tab or a plain `yes`.
+- No vector covers the roster writer, `handover.executor.roster`.
+- Four configs have no entry point that takes a map of variables, so no
+  vector covers them: `chaperone.__main__`, `caregiver.cli`,
+  `agent_door_owui.config` and `agent_door_trigger.config`. The two doors
+  read a key file while they parse. `config.chaperone.site` covers the four
+  readers of `chaperone.site`.
+- No vector covers `handover.intake.run`. It reads the site file and the
+  environment of the process.
+- No vector covers a reader of the playpen: `runtime-config.ts`, `creds.ts`
+  and `mounts.ts` are TypeScript and have no Python entry point.
+- `config.site_file` has no vector for a file that another account owns. The
+  generator cannot change the owner of a file.
+- `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
+  reads that file.
