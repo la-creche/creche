@@ -26,7 +26,7 @@
   {"accepted":11,"entry":"chaperone.headers.read_claimed, header x-session-id","path":"ids/session_id.chaperone.json","raised":0,"refused":27,"surface":"id.session_id.chaperone","vectors":38},
   {"accepted":11,"entry":"agent_door_tui.ids.is_session","path":"ids/session_id.door_tui.json","raised":0,"refused":27,"surface":"id.session_id.door_tui","vectors":38},
   {"accepted":11,"entry":"handover.executor.request.SESSION_ID_RE.fullmatch","path":"ids/session_id.handover_executor.json","raised":0,"refused":27,"surface":"id.session_id.handover_executor","vectors":38},
-  {"accepted":17,"entry":"agent_door_owui.headers.read_ids, header x-owui-chat-id","path":"ids/owui_chat_id.door_owui.json","raised":0,"refused":21,"surface":"id.owui_chat_id.door_owui","vectors":38},
+  {"accepted":20,"entry":"agent_door_owui.headers.read_ids, header x-owui-chat-id","path":"ids/owui_chat_id.door_owui.json","raised":0,"refused":24,"surface":"id.owui_chat_id.door_owui","vectors":44},
   {"accepted":10,"entry":"agent_door_owui.openai_api.family_of","path":"ids/owui_model.door_owui.json","raised":0,"refused":33,"surface":"id.owui_model.door_owui","vectors":43},
   {"accepted":4,"entry":"attendance.ids.is_ulid","path":"ids/ulid.attendance.json","raised":0,"refused":23,"surface":"id.ulid.attendance","vectors":27},
   {"accepted":4,"entry":"chaperone.headers.read_claimed, header x-turn-id","path":"ids/ulid.chaperone.json","raised":0,"refused":23,"surface":"id.ulid.chaperone","vectors":27},

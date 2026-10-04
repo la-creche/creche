@@ -278,6 +278,26 @@ SESSION_CASES: Final = (
     ("crlf", "a\r\n"),
 )
 
+#: Every character that `str.strip` removes under each supported Python: the
+#: `White_Space` property of Unicode and the four separators U+001C to U+001F.
+#: `str::trim` of Rust leaves those four in place.
+_STRIPPED: Final = (
+    "\t\n\x0b\x0c\r\x1c\x1d\x1e\x1f \x85\xa0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
+
+#: The white space at the ends of a header value. The Open WebUI door strips
+#: it before it validates the id.
+HEADER_SPACE_CASES: Final = (
+    ("every-stripped-character", _STRIPPED + "a" + _STRIPPED),
+    ("leading-unit-separator", "\x1fa"),
+    ("trailing-no-break-space", "a\u00a0"),
+    ("zero-width-space", "a\u200b"),
+    ("mongolian-vowel-separator", "a\u180e"),
+    ("byte-order-mark", "\ufeffa"),
+)
+
 _ULID: Final = "01J9ZQ5V7Y8X4W3T2S1R0QPNMK"
 
 ULID_CASES: Final = (
@@ -699,7 +719,7 @@ GRAMMARS: Final = (
         "owui_chat_id",
         "3f2b1c9e-8a55-4c1e-9f0a-2b6d7e8f9a12",
         "a",
-        SESSION_CASES,
+        SESSION_CASES + HEADER_SPACE_CASES,
         (
             Concept(
                 "owui_chat_id",

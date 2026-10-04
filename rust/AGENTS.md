@@ -22,6 +22,43 @@ defect that a test finds late.
 |---|---|
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 
+| Module of `creche-contracts` | What it holds |
+|---|---|
+| `ids` | Each id grammar that `vectors/data/ids` covers. One type for each grammar. |
+| `secret` | `Secret`, the type of a token or a key. |
+| `family` | The family file: contract 01. |
+| `server` | The MCP server file: contract 01b. |
+| `session` | The session API: contract 02. |
+| `channel` | The channel protocol: contract 03. |
+| `grants` | The grant file, the call body, the approval body and the audit record: contract 04. |
+| `status` | The status document: contract 05. |
+| `manifest` | The component manifest and the release request: contract 06. |
+| `config` | The config of each process. |
+| `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
+
+## Where a new type goes
+
+1. Put the types of one contract in the module of that contract. The table
+   above names each module.
+2. Change only the file of your module. `lib.rs` declares each module.
+3. Use the id types of `ids`. Do not write a second check for a grammar that
+   `ids` holds.
+4. If `ids` lacks an id type that your module needs, define the type in your
+   module. Say so in the pull request. The owner of the crate moves the type
+   to `ids` when a second contract needs it. Give the vectors of that type a
+   surface name that starts with the name of your module, not with `id.`. A
+   test of `ids` fails on an `id.` surface that no table of `ids` names.
+5. Ask the owner of the crate before you change `ids`, `secret` or
+   `vectors`. A change there reaches each module.
+6. In `ids`, for an id that is one run of ASCII bytes, write a `Run`
+   constant. Then call `run_id!`. The macro makes the type and its error
+   type in the form of `FamilyName`. `Run` and `run_id!` are private to
+   `ids`. In another module, write the check by hand over ASCII bytes.
+7. For an id with parts, write a struct with a private field for the text
+   and for each part. `ids::Tag` is the pattern.
+8. Give each type its own doc comment and its own error type. The doc
+   comment names the contract section.
+
 ## Checks
 
 You need rustup. It installs the toolchain at the first cargo command under
@@ -82,9 +119,12 @@ Each rule has its reason. Do not break a rule without a change to this file.
    expect. `#[expect]` fails the build when the exception is not necessary,
    and `#[allow]` stays.
 6. **Give a secret its own type.** The type has a `Debug` that prints no
-   secret. It has no `Display` and no `Serialize`.
+   secret. It has no `Display` and no `Serialize`. `secret::Secret` is that
+   type. Compare a secret only with `Secret::matches`. Read its bytes only
+   with `Secret::expose_secret`.
    Reason: the secret then cannot go to a log line, to a page or to a wire by
-   accident.
+   accident. A search for `expose_secret` finds each place where a secret
+   leaves the type.
 7. **Do not put `serde_json::Value` in a contract type.** The exception is a
    field that the contract calls opaque.
    Reason: a `Value` holds any shape, so the type checks nothing.
@@ -101,8 +141,9 @@ Each rule has its reason. Do not break a rule without a change to this file.
    Reason: in a Rust pattern, `\d` and `\w` also match characters that are
    not ASCII. A check over bytes has one meaning and needs no crate.
 10. **Give each contract type a differential test against the Python
-    implementation.** A later change adds shared vector files under
-    `vectors/`.
+    implementation.** The vector files under `vectors/data/` hold what the
+    Python code does. "The differential test" below says how a test reads
+    them.
     Reason: the Python code is the behavior that runs on the host. A port
     that passes only its own tests can differ from that behavior.
 11. **Keep Rust code under `rust/` until a release of its component uses
@@ -112,6 +153,36 @@ Each rule has its reason. Do not break a rule without a change to this file.
     tag for a component when a path under that component changes. A path
     under `rust/` is under no component, so a change here mints no tag and
     starts no release.
+
+## When two Python copies of a grammar disagree
+
+The Python code holds more than one copy of most id grammars.
+`vectors/data/ids/disagreements.json` lists each input on which two copies of
+one grammar give different results.
+
+1. The Rust type takes the strictest copy. It refuses each input that one
+   copy refuses.
+2. Mark the type with a `CONTRACT-QUESTION` comment. The comment names each
+   copy and what the copy does.
+3. List the question under "Known gaps".
+4. In the test table of the type, give each surface one stance. `equal` means
+   that the type and the copy agree on each vector. `stricter` means that the
+   copy accepts an input of `disagreements.json` and the type refuses it.
+
+Reason: a value passes more than one copy before the platform uses it. The
+strictest copy is thus the grammar that holds on the host. A type that takes
+a laxer copy accepts a value that a Python component refuses later.
+
+When each Python copy accepts an input, the Rust type accepts it too. This
+rule also applies when a stricter reading of the contract is possible. Name
+such a case in the pull request. The owner decides it.
+
+The rule has two exceptions:
+
+- A digit that is not ASCII. Rule 9 refuses it. Each such difference is a
+  row of the `DEVIATIONS` table in the test.
+- A number of more than 4300 digits in a version. Python reads no longer
+  text as an integer, so the types refuse it. No vector holds such a number.
 
 ## Code style
 
@@ -188,6 +259,37 @@ the reason in the commit message.
   reads a file under `rust/` then runs first in CI.
   `bin/tests/test_rust_workspace.py` is such a test.
 
+### The differential test
+
+`crates/creche-contracts/src/vectors.rs` reads the vector files under
+`vectors/data/`. It is test code. `vectors/README.md` holds the file format.
+
+1. Call `vectors::surface` with the name of a surface. The function finds
+   the file in `vectors/data/index.json`. It stops the test on a format that
+   is not 1 and on a count that differs from the index.
+2. Read the input of each vector with `Input::text`, `Input::bytes` or
+   `Input::args`.
+3. Call the Rust code with the input.
+4. Compare the result with the `result` of the vector. Compare the value with
+   `Vector::value` and the refusal with `Vector::refusal`, as parsed JSON.
+5. For the result `raised`, make sure that the Rust code refuses the input.
+
+A value, a refusal and an argument of a vector can hold a marker object.
+`vectors::Marker::of` reads one. `vectors/README.md` lists the six markers.
+
+Rules for the test:
+
+- Write one test for each type. The test walks each vector of each surface
+  that the type implements.
+- Put a table in the test that names each surface. Make the test fail when
+  the index holds a surface of your module that no table names.
+- Write each difference on purpose as a row of a `DEVIATIONS` table in the
+  test. The row names the surface, the vector and the contract section. Make
+  the test fail for a row that names no difference.
+- Do not compare against a count of vectors that the test holds. A change to
+  a product package can add a vector with no change under `rust/`.
+- `ids::tests::python` is the pattern.
+
 ## Dependencies
 
 - Write each dependency version one time, in `[workspace.dependencies]`. A
@@ -200,11 +302,41 @@ the reason in the commit message.
 
 ## Known gaps
 
-- `FamilyName` has no differential test against the Python implementation.
-  Rule 10 needs the shared vector files, and they do not exist.
 - CI does not run `cargo deny`. No check reads the advisories or the
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- No `CONTRACT-QUESTION` is open in this directory. The two Python copies of
-  the family name grammar agree.
+- Eight modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session`, `channel`, `grants`, `status`, `manifest`
+  and `config`.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/ids.rs`:
+  1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
+     newline. The type refuses it.
+  2. `ToolName`, contract 01 §3.4 and contract 01b §5. The contracts give no
+     cap. The three Python copies have no cap, a cap of 128 and a cap of 64.
+     The type has the cap of 64.
+  3. `EnvName`, contract 01b §4.1. The contract gives no grammar. One Python
+     copy has no cap, and one has a cap of 64. The type has the cap of 64.
+  4. `PackageVersion`, contract 01b §3.1. The contract gives no grammar. One
+     Python copy permits `+` and `-` and has no cap. The type takes the other
+     copy: no `+`, no `-` and a cap of 64.
+  5. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. Each
+     Python copy accepts a decimal digit that is not ASCII. The types refuse
+     it.
+  6. `OwuiChatId::session_id`, contract 02 §2. The Python door makes a
+     session id of 133 bytes from a chat id of 128 bytes. The function
+     refuses to make that session id.
+  7. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. The
+     contract gives no cap on the digits of a number. Python reads a text of
+     4300 digits at most as an integer. The types have that cap.
+- `Secret` does not erase its bytes when the value drops. A sure erase needs
+  `unsafe` code, and the lint gate forbids `unsafe` code.
+- `Secret::matches` has no branch on a byte of the secret. The compiler gives
+  no proof that its time is constant.
+- The id types accept what each Python copy accepts, also where a stricter
+  reading of a contract is possible. The owner decides each case. Three
+  examples:
+  1. A version number of 4300 digits. The number does not fit `u64`.
+  2. A version number with a zero at its start.
+  3. A sandbox number with a zero at its start.
