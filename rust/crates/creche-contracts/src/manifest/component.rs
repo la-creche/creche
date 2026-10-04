@@ -1198,6 +1198,8 @@ pub enum YamlFault {
     /// A collection nests deeper than 128 levels. The Python reader has no
     /// such refusal: its limit is the stack of its interpreter.
     Deep,
+    /// The merge keys of the document copy more than 65,536 pairs.
+    Merge,
 }
 
 impl From<yaml::Fault> for YamlFault {
@@ -1206,6 +1208,7 @@ impl From<yaml::Fault> for YamlFault {
             yaml::Fault::Unreadable => Self::Unreadable,
             yaml::Fault::Line(line) => Self::Line(line.saturating_add(1)),
             yaml::Fault::Deep => Self::Deep,
+            yaml::Fault::Merge => Self::Merge,
         }
     }
 }
@@ -1354,6 +1357,11 @@ impl fmt::Display for ManifestFault {
                 f,
                 "does not parse: nests deeper than {} levels",
                 yaml::DEPTH_MAX
+            ),
+            Self::Yaml(YamlFault::Merge) => write!(
+                f,
+                "does not parse: the merge keys copy more than {} pairs",
+                yaml::MERGE_PAIRS_MAX
             ),
             Self::NotMapping => f.write_str("is not a mapping"),
             Self::NonStringKey { field } => write!(f, "field '{field}' has a non-string key"),

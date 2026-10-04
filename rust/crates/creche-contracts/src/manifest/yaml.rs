@@ -40,6 +40,15 @@ const SIMPLE_KEY_MAX: usize = 1024;
 /// The largest count of calls of the merge step that nest.
 const MERGE_DEPTH_MAX: usize = 2048;
 
+/// The largest count of pairs that the merge keys of one document copy.
+///
+/// CONTRACT-QUESTION: contract 06 §8 and §10 give no limit for a merge key.
+/// This reader refuses a document whose merge keys copy more than 65,536
+/// pairs, which is four pairs for each byte of the largest manifest. No
+/// manifest of this repository has a merge key. A larger limit costs memory:
+/// one copied pair is 16 bytes.
+pub(super) const MERGE_PAIRS_MAX: usize = 65_536;
+
 const NUL: char = '\0';
 const BOM: char = '\u{feff}';
 const NEL: char = '\u{85}';
@@ -77,6 +86,8 @@ pub(super) enum Fault {
     Line(usize),
     /// A collection nests deeper than [`DEPTH_MAX`] levels.
     Deep,
+    /// The merge keys copy more than [`MERGE_PAIRS_MAX`] pairs.
+    Merge,
 }
 
 /// The place of one value in a [`Tree`].
@@ -2974,6 +2985,8 @@ struct Constructor {
     values: Vec<Value>,
     constructed: BTreeMap<NodeId, ValueId>,
     pending: VecDeque<Pending>,
+    /// The count of pairs that the merge keys can still copy.
+    merge_budget: usize,
 }
 
 impl Constructor {
@@ -2983,6 +2996,7 @@ impl Constructor {
             values: Vec::new(),
             constructed: BTreeMap::new(),
             pending: VecDeque::new(),
+            merge_budget: MERGE_PAIRS_MAX,
         }
     }
 
@@ -3257,6 +3271,18 @@ impl Constructor {
         }
     }
 
+    /// The pairs of a mapping node, as a copy that a merge key adds to
+    /// another mapping. The copy counts against the budget of the document.
+    fn copied_pairs(&mut self, node: NodeId) -> Result<Vec<(NodeId, NodeId)>, Fault> {
+        let pairs = self.pairs_of(node).unwrap_or_default();
+        self.merge_budget = self
+            .merge_budget
+            .checked_sub(pairs.len())
+            .ok_or(Fault::Merge)?;
+
+        Ok(pairs)
+    }
+
     fn pairs_of(&self, node: NodeId) -> Option<Vec<(NodeId, NodeId)>> {
         match self.nodes.get(node.0).map(|node| &node.kind) {
             Some(NodeKind::Mapping(pairs)) => Some(pairs.clone()),
@@ -3273,7 +3299,7 @@ impl Constructor {
         let children = match self.nodes.get(value_node.0).map(|node| &node.kind) {
             Some(NodeKind::Mapping(_)) => {
                 self.flatten_mapping(value_node, depth + 1)?;
-                return Ok(self.pairs_of(value_node).unwrap_or_default());
+                return self.copied_pairs(value_node);
             }
             Some(NodeKind::Sequence(children)) => children.clone(),
             _ => return Err(self.fault(value_node)),
@@ -3285,7 +3311,7 @@ impl Constructor {
             }
 
             self.flatten_mapping(child, depth + 1)?;
-            submerge.push(self.pairs_of(child).unwrap_or_default());
+            submerge.push(self.copied_pairs(child)?);
         }
 
         Ok(submerge.into_iter().rev().flatten().collect())
@@ -3647,6 +3673,7 @@ mod tests {
             Err(Fault::Unreadable) => "unreadable".to_owned(),
             Err(Fault::Line(line)) => format!("line {}", line + 1),
             Err(Fault::Deep) => "deep".to_owned(),
+            Err(Fault::Merge) => "merge".to_owned(),
         }
     }
 
@@ -3842,6 +3869,23 @@ mod tests {
         };
 
         assert_eq!(items.as_slice(), [list], "the list holds itself");
+    }
+
+    #[test]
+    fn a_document_past_the_merge_budget_is_refused() {
+        let document = |keys: usize, merges: usize| {
+            let pairs: Vec<String> = (0..keys).map(|key| format!("k{key}: 1")).collect();
+            let aliases = vec!["*a"; merges];
+
+            format!(
+                "a: &a {{{}}}\nb: {{<<: [{}]}}\n",
+                pairs.join(", "),
+                aliases.join(", ")
+            )
+        };
+
+        assert!(load(&document(256, 256)).is_ok());
+        assert_eq!(load(&document(256, 257)).unwrap_err(), Fault::Merge);
     }
 
     #[test]

@@ -367,7 +367,10 @@ Rules for the test:
      a name, and the type does the same.
   7. `ResolvedAt`, contract 06 §9. The Python builder takes each float. The
      type refuses NaN and an infinity, which JSON cannot hold.
-  8. The JSON reader, `stage7-releases.md` §3.2 and contract 06 §11. Python
+  8. The YAML reader, contract 06 §8 and §10. The contract gives no limit
+     for a merge key. The reader refuses a document whose merge keys copy
+     more than 65,536 pairs.
+  9. The JSON reader, `stage7-releases.md` §3.2 and contract 06 §11. Python
      keeps a lone surrogate escape as one code point. The reader writes
      U+FFFD. The detail of a refusal can then differ from the Python
      detail. The result is a refusal in both.
