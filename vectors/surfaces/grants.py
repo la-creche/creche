@@ -525,17 +525,18 @@ def _body_vector(document: Document, reader: BodyReader) -> Vector:
 
     status, body, detail = outcome
     if body is not None:
-        return accepted(document.id, given, body, status=status)
+        return accepted(document.id, given, body, http_status=status)
 
-    return refused(document.id, given, {"status": status, "detail": _detail(detail)})
+    return refused(document.id, given, {"http_status": status, "detail": _detail(detail)})
 
 
 _BODY_NOTES: Final = (
     "The input is the bytes of a request body. The content type is application/json.",
     "The entry point is FastAPI, with the model as the body parameter of a route. That is "
     "how the chaperone reads the body. The generator mounts the model on a route of its own.",
-    "refusal.status is the HTTP status that FastAPI answers with. refusal.detail is the detail "
-    "of its answer. A validation error keeps its type, location and message.",
+    "http_status is the HTTP status that FastAPI answers with. On a refused vector it is "
+    "refusal.http_status. refusal.detail is the detail of the answer. A validation error "
+    "keeps its type, location and message.",
     "An error of type json_invalid keeps no offset in its location. The offset belongs to the "
     "JSON reader of one interpreter version.",
     "The body cap of the chaperone is a different layer. No vector here is about it.",

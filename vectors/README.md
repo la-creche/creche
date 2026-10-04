@@ -87,6 +87,7 @@ It ends with one newline. Each vector is on one line.
 | `value` | when the Python code parsed the input into a value | the normalized value |
 | `refusal` | when the Python code gives a reason | the refusal code, or an object that holds the reason |
 | `issues`, `status` | on `family_file` | the validation report |
+| `http_status` | on the two body surfaces of `data/chaperone/` | the HTTP status of the answer. On a refused vector it is inside `refusal`. |
 | `output` | on `channel.build` | the exact bytes that the Python code writes, as an input form |
 | `exception` | when `result` is `raised` | the name of the exception type |
 
@@ -107,7 +108,7 @@ An `input` object has exactly one key.
 | `text` | this text. For an entry point that takes bytes, the input is the UTF-8 bytes of the text. |
 | `base64` | these bytes. The generator uses this form only for bytes that are not UTF-8. |
 | `repeat` | a long text. Each item is `[text, count]`. Repeat each text `count` times, and join the results in order. |
-| `args` | the named arguments of a builder |
+| `args` | the named arguments of a builder. A value can be a marker object. |
 | `chunks` | the chunks of one byte stream, in order. Each chunk is a `text` or a `base64` object. |
 
 ### The normalized value
@@ -116,7 +117,7 @@ The generator makes one JSON projection of each Python value:
 
 - An enum is its value. A dataclass and a model are objects of their fields.
 - A tuple is an array. A set is a sorted array.
-- A time is its ISO 8601 text, in UTC.
+- A time is its ISO 8601 text, with the offset that the Python value holds.
 - Every default is present.
 
 Six values have no JSON form that every strict reader accepts. Each one is
