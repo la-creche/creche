@@ -457,6 +457,13 @@ Rules for the test:
   Python code does. `session::ErrorDetail::from_members` takes the members
   in order. The vectors of `session.error_body` hold each detail of
   `attendance` whose keys are not in sorted order.
+- `session::StoredLine` keeps the body of a line as the text of the file. A
+  body that the Python code did not write goes out with that text: its
+  white space, its number forms and each duplicate key. The Python code
+  parses the body and writes it again.
+- A typed body of free form reads the integer `-0` as the float `-0.0` and
+  writes `-0.0`. The Python code writes `0`. The Python code never writes
+  `-0` into a journal.
 - `session::JournalBody::read` has no Python counterpart. No Python code
   reads the body of a journal line against its kind. The function refuses a
   body that lacks a field of its kind.

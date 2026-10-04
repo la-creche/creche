@@ -733,6 +733,9 @@ impl StreamRecord {
 /// The JSON text of a body that a line does not have.
 const EMPTY_BODY: &str = "{}";
 
+/// The byte that ends a line of a journal file.
+const LF: u8 = b'\n';
+
 /// One line of a journal file, as a replay reads it (contract 02 §8, §9).
 ///
 /// The reader is the reader of `attendance.journal`: it is lax where that
@@ -783,7 +786,16 @@ impl StoredLine {
     ///
     /// A journal file has a line that does not parse only after a crash in
     /// the middle of a write. A replay skips such a line.
+    ///
+    /// The bytes hold no LF before the white space at their end. A replay
+    /// reads a file line by line, so no line of a file holds one. This type
+    /// keeps the body as its text, and an LF there goes out as two lines of
+    /// the event stream.
     pub fn parse(line: &[u8]) -> Result<Self, LineError> {
+        if line.trim_ascii_end().contains(&LF) {
+            return Err(LineError::NotOneLine);
+        }
+
         let object = Object::read(line)?;
         let journal_seq = match object.kind("journal_seq") {
             Some(Kind::Integer) => object.int("journal_seq"),
@@ -882,6 +894,8 @@ impl StoredLine {
 /// error to a log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineError {
+    /// The bytes hold an LF before their end, so they are not one line.
+    NotOneLine,
     /// The bytes are not one JSON text.
     NotJson,
     /// The JSON text is not an object.
@@ -905,6 +919,7 @@ impl From<Fault> for LineError {
 impl fmt::Display for LineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
+            Self::NotOneLine => "a line of a journal holds no LF before its end",
             Self::NotJson => "a line of a journal is one JSON text",
             Self::NotObject => "a line of a journal is a JSON object",
             Self::BadSeq => "the journal_seq of a line is a whole number from 1",
@@ -1063,6 +1078,28 @@ mod tests {
         assert_eq!(StoredLine::parse(b"").unwrap_err(), LineError::NotJson);
         assert_eq!(StoredLine::parse(b"[]").unwrap_err(), LineError::NotObject);
         assert_eq!(StoredLine::parse(b"{}").unwrap_err(), LineError::BadSeq);
+    }
+
+    #[test]
+    fn a_stored_line_is_one_line() {
+        let inside = b"{\"journal_seq\":7,\"kind\":\"note\",\"body\":{\"a\":\n1}}";
+        let before = b"\n{\"journal_seq\":7,\"kind\":\"note\"}";
+        let at_the_end = b"{\"journal_seq\":7,\"kind\":\"note\"} \r\n";
+        let escaped = br#"{"journal_seq":7,"kind":"note","body":{"a":"\n"}}"#;
+
+        assert_eq!(
+            StoredLine::parse(inside).unwrap_err(),
+            LineError::NotOneLine
+        );
+        assert_eq!(
+            StoredLine::parse(before).unwrap_err(),
+            LineError::NotOneLine
+        );
+        assert!(StoredLine::parse(at_the_end).is_ok());
+        assert_eq!(
+            StoredLine::parse(escaped).unwrap().body_json(),
+            r#"{"a":"\n"}"#
+        );
     }
 
     #[test]
