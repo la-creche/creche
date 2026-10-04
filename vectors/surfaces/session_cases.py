@@ -975,7 +975,8 @@ class Refusal:
     turn: str | None = None
     detail: dict[str, Any] | None = None
     #: `detail` is the holder block of contract 02 §7.2, with its keys in
-    #: the order of `attendance.leases`. Each other detail has sorted keys.
+    #: the order of `attendance.leases`. Each other detail has its keys in
+    #: the order that `attendance` writes them.
     holder_block: bool = False
 
 
@@ -1063,7 +1064,35 @@ REFUSALS: Final[tuple[Refusal, ...]] = (
         turn=TURN,
     ),
     Refusal(
-        "forbidden", ErrorCode.FORBIDDEN, "no", detail={"kind": "thin", "principal": "door-owui"}
+        "forbidden", ErrorCode.FORBIDDEN, "no", detail={"principal": "door-owui", "kind": "thin"}
+    ),
+    Refusal(
+        "forbidden-prefix",
+        ErrorCode.FORBIDDEN,
+        "no",
+        family=FAMILY,
+        session=OTHER_SESSION,
+        detail={"principal": "door-owui", "expected_prefix": "owui-"},
+    ),
+    Refusal(
+        "idempotency-mismatch-other-family",
+        ErrorCode.IDEMPOTENCY_MISMATCH,
+        "the key is in use",
+        family="scrum-lead",
+        detail={"session": JOB_SESSION, "family": "chat"},
+    ),
+    Refusal(
+        "sandbox-unavailable-handshake",
+        ErrorCode.SANDBOX_UNAVAILABLE,
+        "the sandbox gave no answer",
+        family=FAMILY,
+        detail={"sandbox": SANDBOX, "message": "the channel closed"},
+    ),
+    Refusal(
+        "detail-keys-not-sorted",
+        ErrorCode.INTERNAL,
+        "x",
+        detail={"z": 1, "a": {"b": 1, "c": [2]}, "m": None},
     ),
     Refusal(
         "text-forms",

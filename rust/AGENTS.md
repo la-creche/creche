@@ -447,12 +447,16 @@ Rules for the test:
   accept the same line. The Rust reader keeps `journal_seq: true` as the
   number 1, and it keeps a body as its JSON text.
 - The writer of the `session` module sorts the keys of an object of free
-  form. The Python code keeps the order that it is given. No vector shows
-  the difference. These objects have free form:
+  form. The Python code keeps the order of its input. No vector shows the
+  difference. These objects have free form:
   1. The labels.
   2. The body of a `pi_event`.
   3. A note that `attendance` does not write.
-  4. An error detail that is not the holder block.
+  4. An object inside an error detail.
+- The writer keeps the order of the members of an error detail, as the
+  Python code does. `session::ErrorDetail::from_members` takes the members
+  in order. The vectors of `session.error_body` hold each detail of
+  `attendance` whose keys are not in sorted order.
 - `session::JournalBody::read` has no Python counterpart. No Python code
   reads the body of a journal line against its kind. The function refuses a
   body that lacks a field of its kind.

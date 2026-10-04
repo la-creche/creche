@@ -240,6 +240,60 @@ impl TryFrom<RawHolderBlock> for HolderBlock {
     }
 }
 
+/// A detail that is not the holder block: its members, in the order of the
+/// writer. `attendance` writes each of its details with a fixed order of
+/// keys, and the writer here keeps the order that it gets.
+///
+/// Only [`ErrorDetail::from_members`] and the conversion from a JSON object
+/// make one. A value thus never holds the four fields of a holder block.
+///
+/// ```
+/// use creche_contracts::session::{ErrorDetail, OtherDetail};
+/// use serde_json::json;
+///
+/// let detail = ErrorDetail::from_members([
+///     ("principal".to_owned(), json!("door-owui")),
+///     ("kind".to_owned(), json!("thin")),
+/// ]);
+/// let ErrorDetail::Other(other) = &detail else {
+///     return;
+/// };
+/// let other: &OtherDetail = other;
+/// assert_eq!(other.get("kind"), Some(&json!("thin")));
+/// ```
+///
+/// Code outside this module cannot build one from raw members:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::session::{ErrorDetail, OtherDetail};
+/// use serde_json::json;
+///
+/// let detail = ErrorDetail::Other(OtherDetail(vec![("holder".to_owned(), json!("tui"))]));
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct OtherDetail(Vec<(String, Value)>);
+
+impl OtherDetail {
+    /// The value of one key.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.members()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| value)
+    }
+
+    /// Each member, in the order of the writer.
+    pub fn members(&self) -> impl Iterator<Item = (&str, &Value)> {
+        self.0.iter().map(|(key, value)| (key.as_str(), value))
+    }
+}
+
+impl Serialize for OtherDetail {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.members())
+    }
+}
+
 /// What the `detail` of an error body holds (contract 02 §14).
 // CONTRACT-QUESTION: contract 02 §14 shows `detail` as an object and gives no
 // closed set of forms. §7.2 gives one form, the holder block. `attendance`
@@ -252,23 +306,44 @@ pub enum ErrorDetail {
     None,
     /// The holder of the writer lease (contract 02 §7.2, §7.4).
     Holder(HolderBlock),
-    /// An object of another form. The writer sorts its keys.
-    Other(Map<String, Value>),
+    /// An object of another form. The writer keeps the order of its keys.
+    Other(OtherDetail),
 }
 
-impl From<Map<String, Value>> for ErrorDetail {
-    /// An object with the four fields of a holder block is the holder block.
-    /// An empty object is no detail.
-    fn from(detail: Map<String, Value>) -> Self {
-        if detail.is_empty() {
+impl ErrorDetail {
+    /// The detail with these members, in this order.
+    ///
+    /// No member is no detail. The four fields of a holder block, in each
+    /// order, are the holder block. A key that comes two times keeps its
+    /// first place and takes its last value, as a Python `dict` does.
+    #[must_use]
+    pub fn from_members(members: impl IntoIterator<Item = (String, Value)>) -> Self {
+        let mut ordered: Vec<(String, Value)> = Vec::new();
+        for (key, value) in members {
+            match ordered.iter_mut().find(|(name, _)| *name == key) {
+                Some((_, held)) => *held = value,
+                None => ordered.push((key, value)),
+            }
+        }
+
+        if ordered.is_empty() {
             return Self::None;
         }
 
-        let block = RawHolderBlock::deserialize(&Value::Object(detail.clone()))
+        let object: Map<String, Value> = ordered.iter().cloned().collect();
+        let block = RawHolderBlock::deserialize(&Value::Object(object))
             .ok()
             .and_then(|raw| HolderBlock::try_from(raw).ok());
 
-        block.map_or(Self::Other(detail), Self::Holder)
+        block.map_or(Self::Other(OtherDetail(ordered)), Self::Holder)
+    }
+}
+
+impl From<Map<String, Value>> for ErrorDetail {
+    /// The detail with the members of a JSON object. A JSON object of this
+    /// crate holds its keys in sorted order.
+    fn from(detail: Map<String, Value>) -> Self {
+        Self::from_members(detail)
     }
 }
 
@@ -464,6 +539,48 @@ mod tests {
 
     use super::*;
 
+    fn members<const N: usize>(members: [(&str, Value); N]) -> ErrorDetail {
+        ErrorDetail::from_members(members.map(|(key, value)| (key.to_owned(), value)))
+    }
+
+    #[test]
+    fn a_detail_keeps_the_order_of_its_members() {
+        let detail = members([("principal", json!("door-owui")), ("kind", json!("thin"))]);
+        let twice = members([("b", json!(1)), ("a", json!(2)), ("b", json!(3))]);
+
+        assert_eq!(
+            serde_json::to_string(&detail).unwrap(),
+            r#"{"principal":"door-owui","kind":"thin"}"#
+        );
+        assert_eq!(serde_json::to_string(&twice).unwrap(), r#"{"b":3,"a":2}"#);
+    }
+
+    #[test]
+    fn the_four_fields_in_each_order_are_the_holder_block() {
+        let detail = members([
+            ("turn", Value::Null),
+            ("expires_at", json!("2026-10-06T08:16:20Z")),
+            ("since", json!("2026-10-06T08:15:20Z")),
+            ("holder", json!("tui")),
+        ]);
+        let not_a_time = members([
+            ("holder", json!("tui")),
+            ("since", json!("soon")),
+            ("expires_at", json!("2026-10-06T08:16:20Z")),
+            ("turn", Value::Null),
+        ]);
+
+        assert!(matches!(&detail, ErrorDetail::Holder(block) if block.holder() == Holder::Tui));
+        assert_eq!(
+            serde_json::to_string(&detail).unwrap(),
+            concat!(
+                r#"{"holder":"tui","since":"2026-10-06T08:15:20Z","#,
+                r#""expires_at":"2026-10-06T08:16:20Z","turn":null}"#
+            )
+        );
+        assert!(matches!(not_a_time, ErrorDetail::Other(_)));
+    }
+
     #[test]
     fn each_code_has_the_status_of_the_contract() {
         let statuses = [
@@ -550,6 +667,7 @@ mod tests {
         );
         assert!(matches!(ErrorDetail::from(other), ErrorDetail::Other(_)));
         assert_eq!(ErrorDetail::from(Map::new()), ErrorDetail::None);
+        assert_eq!(ErrorDetail::from_members([]), ErrorDetail::None);
         assert_eq!(
             String::from_utf8(refusal.body().unwrap()).unwrap(),
             concat!(

@@ -72,6 +72,7 @@ from starlette.testclient import TestClient
 
 from attendance import outcomes
 from vectors.core import (
+    ENTRIES_MARKER,
     Json,
     Raised,
     Surface,
@@ -499,19 +500,32 @@ def _sorted_at_each_level(value: object) -> bool:
     return True
 
 
-def _refusal_vector(door: Door, refusal: Refusal) -> Vector:
-    if not refusal.holder_block and not _sorted_at_each_level(refusal.detail):
-        raise ValueError(f"{refusal.id}: a detail of free form has its keys in sorted order")
+def _detail_arg(refusal: Refusal) -> Json:
+    """The detail of a refusal, in a form that keeps the order of its keys.
 
+    A vector file sorts keys. A detail whose keys are not in sorted order is
+    an `$entries` marker: its members as pairs, in the order of the writer.
+    """
+    detail = refusal.detail
+    if detail is None or refusal.holder_block or _sorted_at_each_level(detail):
+        return normalize(detail)
+
+    if not all(_sorted_at_each_level(value) for value in detail.values()):
+        raise ValueError(f"{refusal.id}: an object inside a detail has its keys in sorted order")
+
+    return {ENTRIES_MARKER: [[key, normalize(value)] for key, value in detail.items()]}
+
+
+def _refusal_vector(door: Door, refusal: Refusal) -> Vector:
     args: dict[str, object] = {
         "code": refusal.code,
         "message": refusal.message,
         "family": refusal.family,
         "session": refusal.session,
         "turn": refusal.turn,
-        "detail": refusal.detail,
     }
-    given: dict[str, Json] = {"args": normalize(args)}
+    plain = cast("dict[str, Json]", normalize(args))
+    given: dict[str, Json] = {"args": {**plain, "detail": _detail_arg(refusal)}}
     door.service.reset()
     door.service.refusal = ApiError(
         refusal.code,
@@ -1367,7 +1381,10 @@ def _door_surfaces(door: Door) -> tuple[Surface, ...]:
                 "it, and the handler of attendance.api writes the answer.",
                 "A detail with the four keys holder, since, expires_at and turn is the holder "
                 "block of contract 02 §7.2. The Python code writes those keys in that order.",
-                "Each other detail has free form. " + _NOTE_SORTED,
+                "Each other detail has free form, and the Python code keeps the order of "
+                "its keys. A detail whose keys are not in sorted order is an $entries marker: "
+                "its members as pairs, in that order. An object inside a detail has its keys "
+                "in sorted order.",
                 "http_status is the HTTP status of the answer.",
                 _NOTE_OUTPUT,
             ),

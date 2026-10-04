@@ -106,9 +106,12 @@ directory is not a workspace package, so a change here does not change
   public function that makes the body of a kind. The bodies in
   `session_cases.py` copy the keys and their order from
   `attendance.service`. A change there does not move a vector.
-- A vector file sorts keys. `session.journal.write`, `session.stream.encode`
-  and `session.error_body` thus give an object of free form its keys in
+- A vector file sorts keys. `session.journal.write` and
+  `session.stream.encode` thus give an object of free form its keys in
   sorted order. No vector shows that the Python code keeps another order.
+  `session.error_body` writes a detail whose keys are not in sorted order as
+  an `$entries` marker. An object inside a detail has its keys in sorted
+  order.
 - `session.outcome.write` and `session.answer.*` use no time before the
   year 1000. `attendance.clock.rfc3339` writes such a year with a width that
   depends on the system.

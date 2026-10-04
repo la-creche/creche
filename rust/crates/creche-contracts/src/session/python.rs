@@ -457,8 +457,20 @@ fn error_body(vector: &Vector, _: &Context) -> Did {
     if let Some(turn) = text(args, "turn") {
         refusal = refusal.in_turn(turn);
     }
-    if let Value::Object(detail) = &args["detail"] {
-        refusal = refusal.with_detail(ErrorDetail::from(detail.clone()));
+    // A detail whose keys are not in sorted order is an `$entries` marker.
+    match (Marker::of(&args["detail"]), &args["detail"]) {
+        (Some(Marker::Entries(members)), _) => {
+            let members = members
+                .into_iter()
+                .map(|(key, value)| (key.as_str().unwrap().to_owned(), value));
+
+            refusal = refusal.with_detail(ErrorDetail::from_members(members));
+        }
+        (Some(marker), _) => panic!("{marker:?} is not a detail"),
+        (None, Value::Object(detail)) => {
+            refusal = refusal.with_detail(ErrorDetail::from(detail.clone()));
+        }
+        (None, _) => {}
     }
 
     Did::Accepted {

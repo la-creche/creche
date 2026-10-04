@@ -137,7 +137,7 @@ an object with exactly one key:
 | `{"$float": "NaN"}`, `"Infinity"`, `"-Infinity"` | a float that is not finite |
 | `{"$utf16": [<code units>]}` | a string that holds a lone surrogate |
 | `{"$base64": "<bytes>"}` | bytes |
-| `{"$entries": [[key, value], ...]}` | a mapping with a key that is not a plain string |
+| `{"$entries": [[key, value], ...]}` | a mapping with a key that is not a plain string. On `session.error_body`, also a mapping whose keys are not in sorted order. The pairs are in the order of the mapping. |
 | `{"$json": "<text>"}` | a field that nests deeper than 96 levels. The text is the JSON of the field. |
 
 The generator writes the `$json` marker for a whole field of a vector, for

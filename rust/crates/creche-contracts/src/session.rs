@@ -41,7 +41,8 @@ mod view;
 mod python;
 
 pub use error::{
-    ApiError, ErrorCode, ErrorCodeError, ErrorDetail, HolderBlock, TurnReason, TurnReasonError,
+    ApiError, ErrorCode, ErrorCodeError, ErrorDetail, HolderBlock, OtherDetail, TurnReason,
+    TurnReasonError,
 };
 pub use fields::{
     DeadlineS, DeadlineSError, DispatchKey, DispatchKeyError, Follow, FollowError, Holder,
