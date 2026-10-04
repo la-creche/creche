@@ -775,6 +775,21 @@ STREAMS: Final[tuple[Stream, ...]] = (
         (b"a" * (_SMALL_CAP + 1), b"x\nfirst\nsecond\n"),
         _SMALL_CAP,
     ),
+    Stream(
+        "dropping-with-no-lf",
+        (b"a" * (_SMALL_CAP + 1), b"more of the same record", b"and more"),
+        _SMALL_CAP,
+    ),
+    Stream(
+        "dropping-then-partial",
+        (b"a" * (_SMALL_CAP + 1), b"x\nfir"),
+        _SMALL_CAP,
+    ),
+    Stream(
+        "dropping-then-over-the-cap",
+        (b"a" * (_SMALL_CAP + 1), b"x\n" + b"b" * (_SMALL_CAP + 1), b"more", b"\nok\n"),
+        _SMALL_CAP,
+    ),
     Stream("empty-chunk", (b"", b"ok\n", b"")),
 )
 

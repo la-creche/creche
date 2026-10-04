@@ -70,6 +70,7 @@ REFUSAL_BUDGET = 10
 REFUSAL_WINDOW_S = 60.0
 
 _LF = "\n"
+_LF_BYTE = b"\n"
 _CR = "\r"
 
 
@@ -330,6 +331,9 @@ class LineSplitter:
     A record over `MAX_LINE_BYTES` is refused, and the bytes up to the next LF
     are discarded so the channel stays usable. Probe 0a measured that exact
     behaviour: one byte over was refused and the channel kept working (§14, A8).
+
+    The buffer holds the start of one record and never more than the cap.
+    No byte of a chunk enters it before the size check, in each state.
     """
 
     def __init__(self, max_line_bytes: int = MAX_LINE_BYTES) -> None:
@@ -338,42 +342,60 @@ class LineSplitter:
         self._dropping = False
 
     def feed(self, chunk: bytes) -> list[RawLine]:
-        self._buffer.extend(chunk)
         lines: list[RawLine] = []
+        view = memoryview(chunk)
+        start = 0
 
         while True:
-            index = self._buffer.find(b"\n")
+            index = chunk.find(_LF_BYTE, start)
 
             if index < 0:
                 break
 
-            record = bytes(self._buffer[:index])
-            del self._buffer[: index + 1]
+            tail = view[start:index]
+            start = index + 1
 
             if self._dropping:
                 self._dropping = False
                 continue
 
-            lines.append(_decode_record(record, self._max))
+            lines.append(self._record(tail))
+            self._buffer.clear()
+
+        # The record that is being dropped has no LF yet. Its bytes go.
+        if self._dropping:
+            return lines
+
+        rest = view[start:]
+        size = len(self._buffer) + len(rest)
 
         # A partial record already over the cap can be refused now. Holding it
         # would let one bad sender grow this buffer without bound.
-        if not self._dropping and len(self._buffer) > self._max:
-            lines.append(RawLine(text=None, size=len(self._buffer), refusal=Refusal.TOO_LARGE))
+        if size > self._max:
+            lines.append(RawLine(text=None, size=size, refusal=Refusal.TOO_LARGE))
             self._buffer.clear()
             self._dropping = True
+            return lines
+
+        self._buffer.extend(rest)
 
         return lines
 
     def pending_bytes(self) -> int:
         return len(self._buffer)
 
+    def _record(self, tail: memoryview) -> RawLine:
+        """The record that `tail` completes. The size check comes first."""
+        size = len(self._buffer) + len(tail)
 
-def _decode_record(record: bytes, max_bytes: int) -> RawLine:
+        if size > self._max:
+            return RawLine(text=None, size=size, refusal=Refusal.TOO_LARGE)
+
+        return _decode_record(bytes(self._buffer) + bytes(tail))
+
+
+def _decode_record(record: bytes) -> RawLine:
     size = len(record)
-
-    if size > max_bytes:
-        return RawLine(text=None, size=size, refusal=Refusal.TOO_LARGE)
 
     try:
         text = record.decode("utf-8")

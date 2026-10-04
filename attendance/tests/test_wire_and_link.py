@@ -97,6 +97,9 @@ RAISING_LINES = {
 
 LOG_LINE = '{"type":"log","message":"pi started"}'
 
+# A cap of a few bytes, so a test passes it with a short record.
+SMALL_CAP = 16
+
 
 def test_the_splitter_uses_lf_and_nothing_else() -> None:
     splitter = LineSplitter()
@@ -148,6 +151,54 @@ def test_an_oversized_partial_record_is_refused_before_its_lf() -> None:
     assert splitter.pending_bytes() == 0
 
     splitter.feed(b'rest of the bad line\n{"type":"pong","nonce":"1"}\n')
+
+
+def test_the_splitter_keeps_no_byte_of_a_record_that_it_drops() -> None:
+    """The bytes between the refusal and the next LF are not kept."""
+    splitter = LineSplitter(SMALL_CAP)
+
+    assert splitter.feed(b"x" * (SMALL_CAP + 1))[0].refusal is Refusal.TOO_LARGE
+
+    for _ in range(5):
+        assert splitter.feed(b"y" * 1000) == []
+        assert splitter.pending_bytes() == 0
+
+    lines = splitter.feed(b'the end of the record\n{"a":1}\n')
+
+    assert [line.text for line in lines] == ['{"a":1}']
+    assert splitter.pending_bytes() == 0
+
+
+@pytest.mark.parametrize("chunk_bytes", [1, 3, SMALL_CAP, SMALL_CAP + 1, 64, 1000])
+def test_the_splitter_holds_the_cap_at_most_in_each_state(chunk_bytes: int) -> None:
+    """The result does not change with the size of a chunk."""
+    stream = (
+        b"a" * 40
+        + b"\nok\n"
+        + b"b" * 100
+        + b"\n"
+        + b"c" * SMALL_CAP
+        + b"\n"
+        + b"d" * (SMALL_CAP + 1)
+        + b"e" * 100
+    )
+    splitter = LineSplitter(SMALL_CAP)
+    texts: list[str] = []
+    refusals: list[Refusal] = []
+
+    for start in range(0, len(stream), chunk_bytes):
+        for line in splitter.feed(stream[start : start + chunk_bytes]):
+            if line.text is not None:
+                texts.append(line.text)
+
+            if line.refusal is not None:
+                refusals.append(line.refusal)
+
+        assert splitter.pending_bytes() <= SMALL_CAP
+
+    assert texts == ["ok", "c" * SMALL_CAP]
+    assert refusals == [Refusal.TOO_LARGE] * 3
+    assert splitter.pending_bytes() == 0
 
 
 def test_encode_refuses_a_lone_surrogate_as_a_value_error() -> None:
