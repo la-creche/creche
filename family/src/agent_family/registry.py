@@ -102,7 +102,10 @@ def revision_of(root: Path) -> str:
     file therefore moves the revision even when no byte inside it changed."""
     digest = hashlib.sha256()
     for path in sorted(_registry_files(root)):
-        digest.update(str(path.relative_to(root)).encode())
+        # A file name that is not UTF-8 gives surrogate characters in its path
+        # string. `surrogateescape` turns them back into their bytes, so this
+        # never raises and a bad name cannot stop a read of the registry.
+        digest.update(str(path.relative_to(root)).encode("utf-8", "surrogateescape"))
         digest.update(b"\0")
         digest.update(_read(path)[0].encode())
         digest.update(b"\0")

@@ -40,15 +40,26 @@ def _select(reports: tuple[Report, ...], only: str | None) -> tuple[Report, ...]
     return chosen or None
 
 
+def _emit(line: str) -> None:
+    """Print one line. A report message can hold a lone surrogate, because a
+    family file may carry one in a value. A strict terminal encoder refuses
+    that character, so this writes a backslash escape for it instead of
+    raising. JSON mode escapes the character already."""
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        print(line.encode("utf-8", "backslashreplace").decode("ascii"))
+
+
 def _print_text(reports: tuple[Report, ...]) -> None:
     for report in reports:
         mark = "ok" if report.ok else "INVALID"
-        print(f"{report.family}: {mark} ({report.errors} errors, {report.warnings} warnings)")
-        print(f"  {report.file}")
+        _emit(f"{report.family}: {mark} ({report.errors} errors, {report.warnings} warnings)")
+        _emit(f"  {report.file}")
         for issue in report.issues:
             flag = " [downgraded]" if issue.downgraded else ""
             label = "error" if issue.severity is Severity.ERROR else "warning"
-            print(f"  {label}: {issue.loc}: {issue.msg}{flag}")
+            _emit(f"  {label}: {issue.loc}: {issue.msg}{flag}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
