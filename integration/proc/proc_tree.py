@@ -409,6 +409,18 @@ def publish_family(tree: Tree, body: Mapping[str, Any], prose: str = INSTRUCTION
     write_family_file(tree, body)
 
 
+def write_skill(tree: Tree, skill: str, text: str) -> None:
+    """Put one skill in the registry, as `skills/<name>/SKILL.md` (contract 01 §3.10)."""
+    write_registry_file(tree, tree.registry_root / "skills" / skill / "SKILL.md", text)
+
+
+def remove_family(tree: Tree, family: str) -> None:
+    """Take one family out of the registry: its directory is gone in one rename."""
+    moved = tree.registry_root / f".removed-{family}"
+    tree.registry_family_dir(family).rename(moved)
+    shutil.rmtree(moved)
+
+
 def write_registry_file(tree: Tree, path: Path, text: str) -> None:
     """Replace one registry file by rename.
 

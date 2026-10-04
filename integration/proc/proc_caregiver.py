@@ -208,6 +208,12 @@ class CaregiverStack(Stack):
         """Run one verb of `caregiver` to its end."""
         return self.run(Service.CAREGIVER, caregiver_env() if env is None else env, *words)
 
+    def start_chaperone(self) -> None:
+        """Start the chaperone on a free loopback port, and wait for it."""
+        self.chaperone, self.chaperone_port = self.start_on_port(
+            Service.CHAPERONE, lambda bind: chaperone_env(self.tree, bind)
+        )
+
     def start_house(self) -> None:
         """Start `attendance`, the door and the chaperone. Then start `caregiver`.
 
@@ -218,9 +224,7 @@ class CaregiverStack(Stack):
         self.door, self.door_port = self.start_on_port(
             Service.DOOR_OWUI, lambda bind: door_env(self.tree, bind)
         )
-        self.chaperone, self.chaperone_port = self.start_on_port(
-            Service.CHAPERONE, lambda bind: chaperone_env(self.tree, bind)
-        )
+        self.start_chaperone()
         self.start_litellm()
         self.await_attendance()
         self.spawn_caregiver()
