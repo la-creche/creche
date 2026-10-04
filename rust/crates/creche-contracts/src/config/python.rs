@@ -278,13 +278,7 @@ const DEVIATIONS: &[Deviation] = &[
     },
     Deviation {
         surface: "config.attendance.env",
-        vectors: &[
-            "lan-each-interface",
-            "lan-each-interface-ipv6",
-            "lan-not-a-host",
-            "site-lan-each-interface",
-            "site-lan-ipv6",
-        ],
+        vectors: &["lan-not-a-host", "site-lan-ipv6"],
         differs: Differs::Refuses,
         contract: "contract 02 §3 rule 2",
         decision: NOT_A_HOST,

@@ -8,7 +8,9 @@ reads, and the family key and PEP token never reach this process at all
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -46,6 +48,19 @@ ENV_PREFIX = "SESSIOND_"
 
 _TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
 _FALSE_WORDS = frozenset({"0", "false", "no", "off"})
+
+# Two texts that a listener or a URL writer reads as each interface, and
+# that are not an IP address.
+_EACH_INTERFACE_WORDS = frozenset({"*", "[::]"})
+
+# What starts the zone of an IPv6 address, as in `::%1`.
+_ZONE_SEPARATOR = "%"
+
+_IPV4_SEPARATOR = "."
+_IPV4_PARTS_MAX = 4
+
+# One number of an IPv4 address that is zero: decimal, octal or hexadecimal.
+_ZERO_NUMBER = re.compile(r"0+|0[xX]0*")
 
 
 class Bind(Enum):
@@ -144,12 +159,69 @@ def _path(source: dict[str, str], name: str, fallback: str) -> Path:
 
 def _lan_address(source: dict[str, str]) -> str:
     """`SESSIOND_LAN_ADDRESS` when set, else the site's `AGENT_LAN_ADDRESS`."""
-    value = _text(source, "LAN_ADDRESS", source.get(LAN_ADDRESS_ENV, "").strip())
+    own = _text(source, "LAN_ADDRESS", "")
+    name = ENV_PREFIX + "LAN_ADDRESS" if own else LAN_ADDRESS_ENV
+    value = own or source.get(LAN_ADDRESS_ENV, "").strip()
 
     if not value:
         raise ConfigError(f"{LAN_ADDRESS_ENV} is not set (/etc/creche/site.env)")
 
+    if _is_each_interface(value):
+        raise ConfigError(f"{name} is the address of each interface. Give the LAN address")
+
     return value
+
+
+def _is_each_interface(text: str) -> bool:
+    """True for each spelling of the address that stands for each interface.
+
+    A listener on that address answers on each interface of the host. The
+    resolver reads more spellings than `0.0.0.0` and `::` as that address.
+
+    CONTRACT-QUESTION: contract 02 §3 rule 2 says never `0.0.0.0` and gives
+    the address no grammar. This reading refuses each spelling of the address
+    of each interface and no other text: the stricter reading of the rule. A
+    grammar for the address costs each deployment that names its host.
+    """
+    plain = _resolver_text(text).partition(_ZONE_SEPARATOR)[0]
+
+    if plain in _EACH_INTERFACE_WORDS:
+        return True
+
+    try:
+        address = ipaddress.ip_address(plain)
+    except ValueError:
+        return _is_zero_ipv4(plain)
+
+    mapped = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) else None
+
+    return int(address) == 0 or (mapped is not None and int(mapped) == 0)
+
+
+def _resolver_text(text: str) -> str:
+    """The text that the resolver gets for a host.
+
+    The socket module makes a host that is not ASCII an ASCII text first,
+    with IDNA. That step makes a digit and a dot of another script an ASCII
+    digit and an ASCII dot, and it removes some characters. A text that has
+    no IDNA form does not resolve, so it stays as it is.
+    """
+    try:
+        return text.encode("idna").decode("ascii")
+    except UnicodeError:
+        return text
+
+
+def _is_zero_ipv4(text: str) -> bool:
+    """True for a short or a prefixed form of `0.0.0.0`, for example `0`.
+
+    The resolver reads one to four numbers, each one decimal, octal or
+    hexadecimal. The text is the address of each interface when each number
+    is zero.
+    """
+    parts = text.split(_IPV4_SEPARATOR)
+
+    return len(parts) <= _IPV4_PARTS_MAX and all(_ZERO_NUMBER.fullmatch(part) for part in parts)
 
 
 def _bind(source: dict[str, str]) -> Bind:

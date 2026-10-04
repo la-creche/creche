@@ -76,6 +76,60 @@ def test_a_missing_lan_address_names_the_variable() -> None:
         from_env({})
 
 
+# Each text that a bind reads as the address of each interface.
+EACH_INTERFACE = (
+    "0.0.0.0",
+    "::",
+    "::0",
+    "0:0:0:0:0:0:0:0",
+    "::0.0.0.0",
+    "::ffff:0.0.0.0",
+    "::ffff:0:0",
+    "::%1",
+    "[::]",
+    "*",
+    "0",
+    "0.0",
+    "0.0.0",
+    "00.0.0.0",
+    "0x0",
+    "0X0.0",
+    "\uff10.\uff10.\uff10.\uff10",
+    "0\u30020\u30020\u30020",
+    "0\u200b",
+    "0\u00ad.0",
+)
+
+# Texts near the ones above that name one interface, or a host.
+ONE_INTERFACE = (
+    "192.0.2.10",
+    "127.0.0.1",
+    "0.0.0.1",
+    "::1",
+    "::ffff:192.0.2.10",
+    "10.0",
+    "host-0.example",
+    "zero",
+)
+
+
+@pytest.mark.parametrize("address", EACH_INTERFACE)
+def test_the_address_of_each_interface_is_refused(address: str) -> None:
+    """Never bind `0.0.0.0` (contract 02 §3 rule 2). The error names the
+    variable that holds the address."""
+    with pytest.raises(ConfigError, match=r"\ASESSIOND_LAN_ADDRESS is the address of each"):
+        from_env(_site(SESSIOND_LAN_ADDRESS=address))
+
+    with pytest.raises(ConfigError, match=rf"\A{LAN_ADDRESS_ENV} is the address of each"):
+        from_env({LAN_ADDRESS_ENV: address})
+
+
+@pytest.mark.parametrize("address", ONE_INTERFACE)
+def test_an_address_of_one_interface_is_read(address: str) -> None:
+    assert from_env(_site(SESSIOND_LAN_ADDRESS=address)).lan_address == address
+    assert from_env({LAN_ADDRESS_ENV: address}).lan_address == address
+
+
 def test_a_nonsense_bind_flag_refuses() -> None:
     with pytest.raises(ConfigError):
         from_env(_site(SESSIOND_BIND_LAN="maybe"))

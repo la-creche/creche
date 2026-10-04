@@ -99,7 +99,7 @@
   {"accepted":12,"entry":"caregiver.credentials.write_creds","path":"config/creds_json.write.json","raised":0,"refused":0,"surface":"config.creds_json.write","vectors":12},
   {"accepted":9,"entry":"caregiver.playpen_env.write_playpen_env","path":"config/playpen_env.write.json","raised":0,"refused":0,"surface":"config.playpen_env.write","vectors":9},
   {"accepted":13,"entry":"caregiver.playpen_env.read_playpen_env","path":"config/playpen_env.read.json","raised":0,"refused":0,"surface":"config.playpen_env.read","vectors":13},
-  {"accepted":56,"entry":"attendance.config.from_env","path":"config/attendance.env.json","raised":0,"refused":18,"surface":"config.attendance.env","vectors":74},
+  {"accepted":54,"entry":"attendance.config.from_env","path":"config/attendance.env.json","raised":0,"refused":27,"surface":"config.attendance.env","vectors":81},
   {"accepted":34,"entry":"noticeboard.config.from_env","path":"config/noticeboard.env.json","raised":0,"refused":18,"surface":"config.noticeboard.env","vectors":52},
   {"accepted":80,"entry":"chaperone.site.<params.function>","path":"config/chaperone.site.json","raised":0,"refused":24,"surface":"config.chaperone.site","vectors":104},
   {"accepted":163,"entry":"handover.manifest.parse_manifest","path":"manifest/component.json","raised":0,"refused":337,"surface":"manifest.component","vectors":500},

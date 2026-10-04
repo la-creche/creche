@@ -206,6 +206,9 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 05 §5.3 rule 8 names no refusal for a switch on a status document
   with no known `kind`. `_check_switch` refuses that switch with
   `bad_request` (`service.py`).
+- Contract 02 §3 rule 2 says never `0.0.0.0` and gives the LAN address no
+  grammar. `from_env` refuses each spelling of the address of each interface.
+  It takes each other text as the address (`config.py`).
 - `_pump_queue` runs only when a turn ends. A queued turn does not start
   while the status document is unreadable or states no kind. Nothing tries
   again until another turn of the family ends (`service.py`).
