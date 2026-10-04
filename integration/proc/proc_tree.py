@@ -295,7 +295,12 @@ def add_family(tree: Tree, family: str, kind: str) -> None:
 
 
 def write_status(
-    tree: Tree, family: str = FAMILY, kind: str = ATTENDED, *, job_timeout_s: int | None = None
+    tree: Tree,
+    family: str = FAMILY,
+    kind: str = ATTENDED,
+    *,
+    job_timeout_s: int | None = None,
+    sandboxes: tuple[tuple[str, str], ...] | None = None,
 ) -> None:
     """One whole status document (contract 05 §2.1, §4.1, §9).
 
@@ -305,9 +310,12 @@ def write_status(
     (§2.2 rule 1).
 
     `job_timeout_s` is the one limit a scenario moves. Only a thin family
-    has one (§9).
+    has one (§9). `sandboxes` is every row as an id and a state of §4.2, for
+    a scenario that plays `caregiver` during a replacement. The default is
+    the one ready sandbox of the family.
     """
     now = _rfc3339()
+    rows = sandboxes if sandboxes is not None else ((first_sandbox(family), "ready"),)
     document: dict[str, Any] = {
         "family": family,
         "kind": kind,
@@ -328,7 +336,7 @@ def write_status(
         },
         "faults": [],
         "reconcile": None,
-        "sandboxes": [_sandbox_row(tree, family, now)],
+        "sandboxes": [_sandbox_row(tree, family, box, state, now) for box, state in rows],
         "credentials": {
             "epoch": CRED_EPOCH,
             "key_id": f"fixture-key-{CRED_EPOCH}",
@@ -356,20 +364,23 @@ def write_status(
     _atomic_write(tree.status_file(family), json.dumps(document) + "\n", STATUS_MODE)
 
 
-def write_playpen_env(tree: Tree, family: str = FAMILY) -> None:
-    """The file `sbx exec --env-file` reads (contract 03 §7.1).
+def write_playpen_env(tree: Tree, family: str = FAMILY, sandbox: str | None = None) -> None:
+    """The file `sbx exec --env-file` reads (contract 03 §7.1), for one sandbox.
 
-    Four lines, each a host path or an identifier, and no secret.
+    Four lines, each a host path or an identifier, and no secret. The control
+    directory of the sandbox is made too, as a create leaves it: empty.
     """
-    mounts = tree.mounts(family)
+    box = sandbox or first_sandbox(family)
+    mounts = tree.mounts(family, box)
+    mounts.control.mkdir(parents=True, exist_ok=True)
     lines = [
         f"AGENT_CRED_DIR={mounts.creds}",
         f"AGENT_FAMILY_CONFIG_DIR={mounts.config}",
         f"AGENT_CONTROL_DIR={mounts.control}",
-        f"AGENT_SANDBOX={first_sandbox(family)}",
+        f"AGENT_SANDBOX={box}",
     ]
 
-    _atomic_write(tree.playpen_env(family), "\n".join(lines) + "\n", PLAYPEN_ENV_MODE)
+    _atomic_write(tree.playpen_env(family, box), "\n".join(lines) + "\n", PLAYPEN_ENV_MODE)
 
 
 def write_creds(tree: Tree, family: str = FAMILY) -> None:
@@ -437,19 +448,19 @@ def write_door_key(tree: Tree) -> None:
     _atomic_write(tree.door_key_file, DOOR_KEY + "\n", SECRET_MODE)
 
 
-def _sandbox_row(tree: Tree, family: str, now: str) -> dict[str, Any]:
+def _sandbox_row(tree: Tree, family: str, sandbox: str, state: str, now: str) -> dict[str, Any]:
     return {
-        "id": first_sandbox(family),
-        "state": "ready",
+        "id": sandbox,
+        "state": state,
         "power": "running",
         "image": IMAGE,
         "spec_hash": "00000001",
         "cpus": 2,
         "memory": "4g",
         "created_at": now,
-        "ready_at": now,
+        "ready_at": now if state == "ready" else None,
         "channel": "closed",
-        "supervisor_env": str(tree.playpen_env(family)),
+        "supervisor_env": str(tree.playpen_env(family, sandbox)),
     }
 
 
