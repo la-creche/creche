@@ -31,7 +31,7 @@
   {"accepted":4,"entry":"attendance.ids.is_ulid","path":"ids/ulid.attendance.json","raised":0,"refused":23,"surface":"id.ulid.attendance","vectors":27},
   {"accepted":4,"entry":"chaperone.headers.read_claimed, header x-turn-id","path":"ids/ulid.chaperone.json","raised":0,"refused":23,"surface":"id.ulid.chaperone","vectors":27},
   {"accepted":4,"entry":"agent_door_tui.ids.is_ulid","path":"ids/ulid.door_tui.json","raised":0,"refused":23,"surface":"id.ulid.door_tui","vectors":27},
-  {"accepted":5,"entry":"agent_door_trigger.ulid.ULID_PATTERN.match","path":"ids/ulid.door_trigger.json","raised":0,"refused":22,"surface":"id.ulid.door_trigger","vectors":27},
+  {"accepted":4,"entry":"agent_door_trigger.ulid.ULID_PATTERN.match","path":"ids/ulid.door_trigger.json","raised":0,"refused":23,"surface":"id.ulid.door_trigger","vectors":27},
   {"accepted":4,"entry":"caregiver.mcp_release.ULID_RE.fullmatch","path":"ids/ulid.caregiver.json","raised":0,"refused":23,"surface":"id.ulid.caregiver","vectors":27},
   {"accepted":4,"entry":"handover.resolve.ULID_RE.fullmatch","path":"ids/ulid.handover_requester.json","raised":0,"refused":23,"surface":"id.ulid.handover_requester","vectors":27},
   {"accepted":4,"entry":"handover.executor.request.ULID_RE.fullmatch","path":"ids/ulid.handover_executor.json","raised":0,"refused":23,"surface":"id.ulid.handover_executor","vectors":27},

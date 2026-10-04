@@ -535,11 +535,10 @@ run_id! {
 /// The count of bytes in a ULID.
 const ULID_BYTES: usize = 26;
 
-// CONTRACT-QUESTION: contract 02 §2 writes the ULID pattern with `$`. One of
-// the seven Python copies, `agent_door_trigger.ulid.ULID_PATTERN`, calls
-// `match` on that pattern, so it accepts a ULID with a final newline. The six
-// other copies refuse it. This type takes the strictest copy and refuses it.
-// A change to accept the newline costs every reader a strip of its own.
+// CONTRACT-QUESTION: contract 02 §2 writes the ULID pattern with `$`. In a
+// Python pattern, `$` also matches before a final newline. Each of the seven
+// Python copies refuses a ULID with a final newline, and this type refuses
+// it. A change to accept the newline costs every reader a strip of its own.
 const ULID: Run = Run {
     noun: "a ULID",
     min: ULID_BYTES,
@@ -2728,7 +2727,7 @@ mod tests {
             equal("id.ulid.attendance", takes::<Ulid>),
             equal("id.ulid.caregiver", takes::<Ulid>),
             equal("id.ulid.chaperone", takes::<Ulid>),
-            stricter("id.ulid.door_trigger", takes::<Ulid>),
+            equal("id.ulid.door_trigger", takes::<Ulid>),
             equal("id.ulid.door_tui", takes::<Ulid>),
             equal("id.ulid.handover_executor", takes::<Ulid>),
             equal("id.ulid.handover_requester", takes::<Ulid>),
@@ -3129,7 +3128,7 @@ mod tests {
         }
 
         #[test]
-        fn a_ulid_is_what_the_strictest_python_copy_takes() {
+        fn a_ulid_is_what_each_python_copy_takes() {
             walk("Ulid");
         }
 

@@ -545,8 +545,9 @@ Rules for the test:
   and the known gaps of the family file and of the server file.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
-  1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
-     newline. The type refuses it.
+  1. `Ulid`, contract 02 §2. The contract writes the pattern with `$`. In
+     Python, `$` also matches before a final newline. Each Python copy
+     refuses a final newline, and the type refuses it.
   2. `ToolName`, contract 01 §3.4 and contract 01b §5. The contracts give no
      cap. The three Python copies have no cap, a cap of 128 and a cap of 64.
      The type has the cap of 64.

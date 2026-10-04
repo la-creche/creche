@@ -24,6 +24,11 @@ def test_a_ulid_matches_contract_02s_own_pattern() -> None:
     assert value == value.upper()
 
 
+def test_the_pattern_refuses_a_ulid_with_a_final_newline() -> None:
+    # `$` also matches before a final newline. `\Z` matches at the end only.
+    assert ULID_PATTERN.match(new_ulid() + "\n") is None
+
+
 def test_no_ulid_carries_i_l_o_or_u() -> None:
     # Generate a handful: a single draw could get lucky and never land on
     # the excluded letters' positions by chance.

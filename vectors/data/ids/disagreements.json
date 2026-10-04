@@ -2,7 +2,6 @@
  "format": 1,
  "kind": "disagreements",
  "rows": [
-  {"grammar":"ulid","id":"probe-trailing-newline","input":{"text":"01J9ZQ5V7Y8X4W3T2S1R0QPNM2\n"},"results":{"accepted":["id.ulid.door_trigger"],"refused":["id.ulid.attendance","id.ulid.caregiver","id.ulid.chaperone","id.ulid.door_tui","id.ulid.handover_executor","id.ulid.handover_requester"]}},
   {"grammar":"tool_name","id":"probe-overlong","input":{"text":"search2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"results":{"accepted":["id.tool_name.family_file"],"refused":["id.tool_name.chaperone_grants","id.tool_name.handover_mcpserver"]}},
   {"grammar":"tool_name","id":"len-65","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"results":{"accepted":["id.tool_name.chaperone_grants","id.tool_name.family_file"],"refused":["id.tool_name.handover_mcpserver"]}},
   {"grammar":"tool_name","id":"len-128","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"results":{"accepted":["id.tool_name.chaperone_grants","id.tool_name.family_file"],"refused":["id.tool_name.handover_mcpserver"]}},
