@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from attendance.atomic import write_json
+from attendance.atomic import read_json, write_json
 from attendance.channel import FakeChannel, SandboxDial
 from attendance.clock import now, rfc3339_ms
 from attendance.errors import TurnReason
@@ -537,6 +537,21 @@ async def test_one_unreadable_read_never_unlocks_the_family(tmp_path: Path) -> N
     assert waited >= 0.2
     assert link.is_open is True
     await link.close()
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["[" * 200_000, '{"beat":' + "1" * 5_000 + "}"],
+    ids=["deep_nesting", "long_integer"],
+)
+def test_read_json_reads_content_that_made_it_raise_as_nothing(
+    tmp_path: Path, content: str
+) -> None:
+    """The lock file comes from inside the sandbox, and this is its reader."""
+    path = tmp_path / "supervisor.lock"
+    path.write_text(content, encoding="utf-8")
+
+    assert read_json(path) is None
 
 
 async def test_a_fatal_in_place_of_ready_raises_a_fault(tmp_path: Path) -> None:

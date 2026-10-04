@@ -128,6 +128,16 @@ async def test_a_malformed_body_is_bad_request(rig: Rig) -> None:
     assert answer.json()["error"]["code"] == "bad_request"
 
 
+async def test_a_body_nested_too_deep_is_bad_request(rig: Rig) -> None:
+    """The JSON reader raises RecursionError on this body, not ValueError."""
+    answer = await rig.client.post(
+        SESSIONS, content=b"[" * 200_000, headers=rig.head(Principal.DOOR_OWUI)
+    )
+
+    assert answer.status_code == HTTP_BAD_REQUEST
+    assert answer.json()["error"]["code"] == "bad_request"
+
+
 async def test_an_unknown_session_is_not_found(rig: Rig) -> None:
     answer = await rig.client.get(rig.path("owui-nope"), headers=rig.head(Principal.DOOR_OWUI))
 
