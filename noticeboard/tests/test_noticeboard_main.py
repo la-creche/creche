@@ -64,6 +64,20 @@ def test_a_wildcard_bind_refuses_to_start(
     assert "never a wildcard" in capsys.readouterr().err
 
 
+def test_a_key_file_that_is_not_text_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The start ends with the exit code of a bad config and one line. It
+    does not end with a traceback."""
+    path = tmp_path / "noticeboard.key"
+    path.write_bytes(b"\xff" * MIN_KEY_BYTES)
+
+    code = run(monkeypatch, env(VIEW_ACCESS_KEY_FILE=str(path)), "--check")
+
+    assert code == EXIT_BAD_CONFIG
+    assert "VIEW_ACCESS_KEY_FILE cannot be read" in capsys.readouterr().err
+
+
 def test_a_lan_bind_with_a_long_key_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     code = run(monkeypatch, {"VIEW_BIND": "192.0.2.10", "VIEW_ACCESS_KEY": KEY}, "--check")
 
