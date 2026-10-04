@@ -67,6 +67,14 @@ MAX_LINE_CHARS = 512
 
 REPO_ROOT_PATH = "."
 
+#: What marks prose, and the two directories whose documents are not prose:
+#: a `.md` under either is a fixture, such as the instructions of a registry
+#: family, and a test loads it. `bin/lib/docsrule.sh` holds the same rule
+#: for the hook and CI (`docs_path`), and
+#: `handover/tests/test_handover_bin_path_cut.py` holds the two equal.
+PROSE_SUFFIX = ".md"
+FIXTURE_DIRS = ("/tests/", "/fixtures/")
+
 #: A changed-path line may name the component whose RANGE it came from:
 #: `<component><RANGE_SEPARATOR><path>`.
 #:
@@ -220,13 +228,35 @@ def cut_path(path: str, repo: Repo) -> str:
     return _cut(path, _nested_tops(repo))
 
 
+def is_prose(path: str) -> bool:
+    """Whether a changed path is a document that no build reads.
+
+    Prose moves no tag. A tag is a version somebody can release, and since
+    the follower (`follow/`) a new tag asks the operator for that release. A
+    release of prose restarts a unit, or rebuilds the sandbox images, and
+    changes nothing that runs.
+    """
+    anchored = f"/{path}"
+    if any(part in anchored for part in FIXTURE_DIRS):
+        return False
+
+    return anchored.endswith(PROSE_SUFFIX)
+
+
 def cut_paths(paths: Iterable[str], repo: Repo) -> tuple[str, ...]:
     """`cut_path` over the changed paths of one range: sorted, each line
-    once, blank lines dropped. It reads one line at a time and holds only
-    the cut lines, so it has no cap on how many lines come in."""
+    once, blank lines and prose dropped. It reads one line at a time and
+    holds only the cut lines, so it has no cap on how many lines come in.
+
+    Prose is dropped HERE, before the cut, because the cut keeps a prefix
+    and loses the file name: `playpen/AGENTS.md` and `playpen/src/index.ts`
+    both cut to `playpen`. A range of prose alone is cut to nothing, so the
+    component is not touched and its window stays open. The next code change
+    tags it once, and that tag covers both.
+    """
     nested = _nested_tops(repo)
 
-    return tuple(sorted({_cut(path, nested) for path in paths if path}))
+    return tuple(sorted({_cut(path, nested) for path in paths if path and not is_prose(path)}))
 
 
 def _check_path(path: str) -> str:
@@ -262,7 +292,8 @@ def touched(paths: tuple[str, ...], repo: Repo) -> tuple[str, ...]:
     `attendance`'s window, and it tags neither.
 
     A path under no component reaches nothing, which is contract 06 §2.1's
-    fourth case: a docs-only merge produces no tag.
+    fourth case: a docs-only merge produces no tag. Prose under a component
+    never reaches this function: `cut_paths` drops it before the cut.
     """
     rows = [row for row in CATALOG if row.repo is repo]
     names = frozenset(row.name for row in rows)

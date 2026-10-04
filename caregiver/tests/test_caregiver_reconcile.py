@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 
 import httpx
@@ -81,6 +82,13 @@ class AwaySpend(FakeLiteLLMKeys):
         return real.read_spend(key)
 
 
+class Stopped(StrEnum):
+    """Whether the pass runs with its stop already set."""
+
+    NO = "no"
+    YES = "yes"
+
+
 @dataclass
 class Fleet:
     """One family's whole world: a registry, a state root, three fakes."""
@@ -95,7 +103,13 @@ class Fleet:
     def write(self, **overrides: object) -> None:
         write_registry(self.registry_root, **overrides)
 
-    def run(self, *, spend: SpendRead = SpendRead.SKIP, image: str = IMAGE) -> ReconcileResult:
+    def run(
+        self,
+        *,
+        spend: SpendRead = SpendRead.SKIP,
+        image: str = IMAGE,
+        stopped: Stopped = Stopped.NO,
+    ) -> ReconcileResult:
         actors = Actors(self.driver, self.litellm, self.switch, EgressConfig(), self.units)
         return reconcile_family(
             load_registry(self.registry_root),
@@ -104,6 +118,7 @@ class Fleet:
             image=image,
             actors=actors,
             spend=spend,
+            stop=lambda: stopped is Stopped.YES,
         )
 
     def ops(self) -> tuple[str, ...]:
@@ -973,3 +988,37 @@ def test_a_new_image_is_reconciling_while_its_sandbox_is_built(fleet: Fleet) -> 
     # And the pass ends where it always did.
     assert result.status.state is FamilyState.IN_SYNC
     assert [one.image for one in result.status.sandboxes if one.state == "ready"] == [NEWER_IMAGE]
+
+
+# --- a pass that stops in front of a slow step ------------------------------------
+
+MOVED_IMAGE: str = "sha256:" + "5" * 64
+
+
+def test_a_stopped_pass_whose_image_moved_never_reads_in_sync(fleet: Fleet) -> None:
+    """Only the image moved, so the registry revision and the applied one
+    are equal. The pass stops in front of the create it still has to run.
+    Read as `in_sync`, its document would call a sandbox on the OLD image
+    converged, under a new `written_at`."""
+    fleet.run()
+    applied = read_applied(fleet.state_root, FAMILY)
+    fleet.forget_calls()
+
+    result = fleet.run(image=MOVED_IMAGE, stopped=Stopped.YES)
+
+    assert result.halted is True
+    assert result.status.state is FamilyState.RECONCILING
+    assert result.status.as_json()["reconcile"] is not None
+    assert "create" not in fleet.ops()
+    assert read_applied(fleet.state_root, FAMILY) == applied
+
+
+def test_a_stopped_pass_with_no_slow_step_to_run_is_a_whole_pass(fleet: Fleet) -> None:
+    """Nothing moved, so the pass reaches no slow step and no stop. It is
+    converged, and it says so."""
+    fleet.run()
+
+    result = fleet.run(stopped=Stopped.YES)
+
+    assert result.halted is False
+    assert result.status.state is FamilyState.IN_SYNC
