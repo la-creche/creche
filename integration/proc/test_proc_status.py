@@ -118,6 +118,11 @@ async def test_a_family_that_was_never_valid_serves_nothing(
     created = await attendance_api.post(SESSIONS_PATH, json={"family": FAMILY, "session": session})
 
     assert models.status_code == HTTP_OK
+    # CONTRACT-QUESTION: contract 05 §3.1 and contract 02 §5.1 give only the
+    # refusal `family_invalid` by `attendance`. No contract says what the
+    # door lists. Reading taken: the door hides a family that was never
+    # valid, because no turn of that family can run. A change costs this one
+    # assertion.
     assert models.json()["data"] == []
     assert created.status_code == HTTP_CONFLICT
     assert created.json()["error"]["code"] == "family_invalid"

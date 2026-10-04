@@ -165,7 +165,7 @@ def test_the_door_refuses_a_short_key(owui_prepared: OwuiStack) -> None:
 
 
 def test_the_door_refuses_to_bind_every_interface(owui_prepared: OwuiStack) -> None:
-    """Contract 02 §3 rule 9: a door refuses `0.0.0.0` whatever its config says."""
+    """Contract 02 §3 rule 9: no door binds every interface, even when its bind names it."""
     tree = owui_prepared.tree
     port = owui_prepared.supervisor.free_port()
 

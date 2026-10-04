@@ -243,6 +243,11 @@ failure. Work down this list.
   `config_rev` is not one of them. The playpen starts a new process at the
   next turn, and `test_proc_status.py` holds that. A change costs one count
   in that file.
+- **CONTRACT-QUESTION, the model list and a family that was never valid.**
+  Contract 05 §3.1 and contract 02 §5.1 give only the refusal
+  `family_invalid` by `attendance`. No contract says what the door lists.
+  The door hides the family, and `test_proc_status.py` checks that. A change
+  costs one assertion in that file.
 - **No `caregiver` process.** The suite writes the status document, the env
   file, the credential file and the grant file from the contracts. No
   scenario proves that `caregiver` writes them, or that it makes the switch
