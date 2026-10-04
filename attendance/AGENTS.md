@@ -206,6 +206,11 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 05 §5.3 rule 8 names no refusal for a switch on a status document
   with no known `kind`. `_check_switch` refuses that switch with
   `bad_request` (`service.py`).
+- Contract 02 §3 rule 3 says that a body is JSON. It does not say what a
+  reader does with the escape of one half of a surrogate pair. Such a text
+  has no UTF-8 form. A parser refuses the body with `bad_request` for each
+  text that it reads. A member that no parser reads can hold the escape
+  (`requests.py`).
 - Contract 02 §3 rule 2 says never `0.0.0.0` and gives the LAN address no
   grammar. `from_env` refuses each spelling of the address of each interface.
   It takes each other text as the address (`config.py`).

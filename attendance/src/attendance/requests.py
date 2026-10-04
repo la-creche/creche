@@ -54,6 +54,10 @@ STEER_MESSAGE_MAX = 4_096
 REASON_MAX = 200
 DEADLINE_MIN_S = 1
 
+# The message for a body that is not JSON. A text with no UTF-8 form gets
+# the same message: such a body is not JSON in UTF-8.
+NOT_JSON = "body is not JSON"
+
 LIST_LIMIT_DEFAULT = 50
 LIST_LIMIT_MAX = 200
 TURNS_DEFAULT = 10
@@ -455,12 +459,34 @@ def _require_text(
     if not isinstance(value, str) or not value:
         raise _bad(f"{name} is missing or not a string", family=family, session=session)
 
-    return value
+    return _utf8_text(value)
 
 
 def _optional_text(raw: dict[str, Any], name: str) -> str | None:
     value = raw.get(name)
-    return value if isinstance(value, str) and value else None
+    return _utf8_text(value) if isinstance(value, str) and value else None
+
+
+def _utf8_text(text: str) -> str:
+    """The text, or `bad_request` for a text that has no UTF-8 form.
+
+    The JSON reader makes a text with one half of a surrogate pair from an
+    escape such as `\\ud800`. No answer, no line of the channel and no byte
+    count can hold that text, so each of them raises on it. The refusal
+    names no family and no session: either one can be the text.
+
+    CONTRACT-QUESTION: contract 02 §3 rule 3 says that a body is JSON and
+    does not say what a reader does with such an escape. This reading
+    refuses the body for each text that a parser reads, and takes such an
+    escape in a member that no parser reads. The other reading replaces the
+    character, which changes a text that a door sent.
+    """
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ApiError(ErrorCode.BAD_REQUEST, NOT_JSON) from error
+
+    return text
 
 
 def _optional_int(raw: dict[str, Any], name: str) -> int | None:
@@ -506,10 +532,12 @@ def _labels(raw: dict[str, Any], family: str, session: str) -> dict[str, str]:
     found: dict[str, str] = {}
 
     for key, value in typed.items():
+        _utf8_text(key)
+
         if not isinstance(value, str) or len(value) > LABEL_VALUE_MAX:
             raise _bad(f"label {key} is not a short string", family=family, session=session)
 
-        found[key] = value
+        found[key] = _utf8_text(value)
 
     return found
 
@@ -552,7 +580,7 @@ def _persona(raw: dict[str, Any], family: str, session: str) -> str:
     if not isinstance(text, str):
         raise _bad("persona_text is not a string", family=family, session=session)
 
-    return text
+    return _utf8_text(text)
 
 
 def _attachments(raw: dict[str, Any], family: str, session: str) -> list[str]:

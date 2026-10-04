@@ -445,6 +445,168 @@ async def test_switch_sandbox_takes_only_the_caregiver_token(rig: Rig) -> None:
     assert reached.json()["error"]["code"] == "bad_request"
 
 
+# One half of a surrogate pair, as the JSON escape of a body. A text that
+# holds it has no UTF-8 form, so no answer and no line can hold the text.
+HALF_PAIR = "\\ud800"
+NOT_JSON_ERROR = {
+    "code": "bad_request",
+    "message": "body is not JSON",
+    "family": None,
+    "session": None,
+    "turn": None,
+    "detail": {},
+}
+DELEGATION = {
+    "caller_family": FAMILY,
+    "target_family": FAMILY,
+    "delegation_id": "01JBQ7WZ0X4T9V6K2H8M3N5PQR",
+    "message": "Summarise the ticket.",
+}
+
+
+def _body(**fields: object) -> bytes:
+    """A JSON body. `@` in a text stands for one half of a surrogate pair."""
+    return json.dumps(fields).replace("@", HALF_PAIR).encode()
+
+
+CREATE_TEXTS: dict[str, dict[str, object]] = {
+    "title": {"title": "Kitchen@"},
+    "label_value": {"labels": {"room": "@"}},
+    "label_key": {"labels": {"@": "kitchen"}},
+    "family": {"family": "chat@"},
+    "session": {"session": "owui-@"},
+    "owner_session": {"owner_session": "owui-@"},
+}
+
+TURN_TEXTS: dict[str, dict[str, object]] = {
+    "prompt": {"prompt": "Which sensor@"},
+    "idempotency_key": {"idempotency_key": "key-@"},
+    "persona_text": {"persona_text": "You answer@"},
+    "label_value": {"labels": {"room": "@"}},
+    "label_key": {"labels": {"@": "kitchen"}},
+    "owui_chat_id": {"owui": {"chat_id": "@", "message_id": "m"}},
+    "owui_message_id": {"owui": {"chat_id": "c", "message_id": "@"}},
+    "owui_user_message_id": {"owui": {"chat_id": "c", "message_id": "m", "user_message_id": "@"}},
+    "owui_parent_id": {"owui": {"chat_id": "c", "message_id": "m", "parent_id": "@"}},
+    "trigger_name": {"trigger": {"kind": "timer", "name": "@"}},
+    "wait": {"wait": "accepted@"},
+}
+
+# One route, the token that reaches it and one body for each text of the
+# route. No such body needs a session.
+OTHER_TEXTS: dict[str, tuple[str, Principal, dict[str, object]]] = {
+    "delegate_message": ("/delegate", Principal.DOOR_DELEGATE, {**DELEGATION, "message": "@"}),
+    "delegate_caller": (
+        "/delegate",
+        Principal.DOOR_DELEGATE,
+        {**DELEGATION, "caller_family": "chat@"},
+    ),
+    "dispatch_message": ("/dispatch", Principal.DOOR_DISPATCH, {**DELEGATION, "message": "@"}),
+    "dispatch_target": (
+        "/dispatch",
+        Principal.DOOR_DISPATCH,
+        {**DELEGATION, "target_family": "chat@"},
+    ),
+    "dispatch_key": (
+        "/dispatch",
+        Principal.DOOR_DISPATCH,
+        {**DELEGATION, "idempotency_key": "@"},
+    ),
+    "jobs_caller": ("/dispatch/jobs", Principal.DOOR_DISPATCH, {"caller_family": "chat@"}),
+    "jobs_session": (
+        "/dispatch/jobs",
+        Principal.DOOR_DISPATCH,
+        {"caller_family": FAMILY, "session": "auto-@"},
+    ),
+    "switch_family": (
+        "/internal/switch-sandbox",
+        Principal.CAREGIVER,
+        {"family": "chat@", "to": SANDBOX, "mode": "drain"},
+    ),
+    "switch_reason": (
+        "/internal/switch-sandbox",
+        Principal.CAREGIVER,
+        {"family": FAMILY, "to": SANDBOX, "mode": "drain", "reason": "@"},
+    ),
+}
+
+
+@pytest.mark.parametrize("fields", list(CREATE_TEXTS.values()), ids=list(CREATE_TEXTS))
+async def test_a_create_text_with_no_utf8_form_is_refused(
+    rig: Rig, fields: dict[str, object]
+) -> None:
+    """The parser refuses the text. No session with such a text reaches the
+    store, so each later list of sessions has an answer."""
+    body = _body(**{"family": FAMILY, "session": CHAT_SESSION, **fields})
+    answer = await rig.client.post(SESSIONS, content=body, headers=rig.head(Principal.DOOR_OWUI))
+    listed = await rig.client.get(SESSIONS, headers=rig.head(Principal.VIEW_RO))
+
+    assert answer.status_code == HTTP_BAD_REQUEST
+    assert answer.json()["error"] == NOT_JSON_ERROR
+    assert listed.status_code == HTTP_OK
+    assert listed.json()["sessions"] == []
+
+
+@pytest.mark.parametrize("fields", list(TURN_TEXTS.values()), ids=list(TURN_TEXTS))
+async def test_a_turn_text_with_no_utf8_form_is_refused(
+    rig: Rig, fields: dict[str, object]
+) -> None:
+    """No turn starts, and the session still has an answer."""
+    await rig.create()
+    body = _body(**{"prompt": PROMPT, "wait": "accepted", **fields})
+    answer = await rig.client.post(
+        f"{rig.path()}/turns", content=body, headers=rig.head(Principal.DOOR_OWUI)
+    )
+    session = await rig.client.get(rig.path(), headers=rig.head(Principal.DOOR_OWUI))
+
+    assert answer.status_code == HTTP_BAD_REQUEST
+    assert answer.json()["error"] == NOT_JSON_ERROR
+    assert session.status_code == HTTP_OK
+    assert session.json()["turns_total"] == 0
+
+
+@pytest.mark.parametrize("call", list(OTHER_TEXTS.values()), ids=list(OTHER_TEXTS))
+async def test_a_text_with_no_utf8_form_is_refused_on_each_route(
+    rig: Rig, call: tuple[str, Principal, dict[str, object]]
+) -> None:
+    path, principal, fields = call
+    answer = await rig.client.post(path, content=_body(**fields), headers=rig.head(principal))
+
+    assert answer.status_code == HTTP_BAD_REQUEST
+    assert answer.json()["error"] == NOT_JSON_ERROR
+
+
+async def test_a_steer_and_a_stop_text_with_no_utf8_form_are_refused(rig: Rig) -> None:
+    """The turn runs on. A stop with a reason that is a text then ends it."""
+    await rig.create()
+    head = rig.head(Principal.DOOR_OWUI)
+    started = await rig.client.post(
+        f"{rig.path()}/turns", json={"prompt": PROMPT, "wait": "accepted"}, headers=head
+    )
+    turn = f"{rig.path()}/turns/{started.json()['turn']}"
+    steered = await rig.client.post(f"{turn}/steer", content=_body(message="@"), headers=head)
+    stopped = await rig.client.post(f"{turn}/stop", content=_body(reason="@"), headers=head)
+    session = await rig.client.get(rig.path(), headers=head)
+    ended = await rig.client.post(f"{turn}/stop", json={"reason": "enough"}, headers=head)
+
+    assert steered.status_code == HTTP_BAD_REQUEST
+    assert steered.json()["error"] == NOT_JSON_ERROR
+    assert stopped.status_code == HTTP_BAD_REQUEST
+    assert stopped.json()["error"] == NOT_JSON_ERROR
+    assert session.json()["state"] == "running"
+    assert ended.status_code == HTTP_OK
+    assert ended.json()["state"] == "aborted"
+
+
+async def test_a_text_with_a_whole_surrogate_pair_is_read(rig: Rig) -> None:
+    """The escape of a pair is one character, and it has a UTF-8 form."""
+    body = b'{"family":"chat","session":"' + CHAT_SESSION.encode() + b'","title":"\\ud83d\\ude00"}'
+    answer = await rig.client.post(SESSIONS, content=body, headers=rig.head(Principal.DOOR_OWUI))
+
+    assert answer.status_code == HTTP_CREATED
+    assert answer.json()["title"] == "\U0001f600"
+
+
 async def _await_playpen(rig: Rig) -> FakePlaypen:
     """The channel is dialled inside the request, so wait for the dial."""
     for _ in range(400):
