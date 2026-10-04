@@ -19,7 +19,7 @@ import asyncio
 import base64
 import contextlib
 import logging
-from collections.abc import AsyncGenerator, Coroutine
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
 from . import dispatch, jobs, outcomes, owui_copy, wire
@@ -286,8 +286,20 @@ class SessionService:
         """
         while True:
             await asyncio.sleep(FLUSH_INTERVAL_S)
-            self._journal.flush_due()
-            self.read_gates()
+            self._upkeep_step("the journal sync", self._journal.flush_due)
+            self._upkeep_step("the gate poll", self.read_gates)
+
+    def _upkeep_step(self, name: str, step: Callable[[], None]) -> None:
+        """Run one step of the upkeep loop. A failure never ends the loop.
+
+        A loop that died would stop the sync and the gate poll until the
+        process restarts, and nothing would say so. Each step has its own
+        guard, so a sync that fails on each tick does not stop the gate poll.
+        """
+        try:
+            step()
+        except Exception:
+            _LOG.exception("upkeep: %s failed", name)
 
     def read_gates(self) -> None:
         """Contract 04 §8.6. Show a turn that waits for a phone tap.
@@ -297,7 +309,12 @@ class SessionService:
         `FLUSH_INTERVAL_S` of the PEP writing its `pending` record.
         """
         for gate in self._gates.poll():
-            self._apply_gate(gate)
+            try:
+                self._apply_gate(gate)
+            except Exception:
+                # The tail does not read a record again. Without this guard
+                # one record that fails drops each record after it.
+                _LOG.exception("gate %s of family %s was not applied", gate.gate, gate.family)
 
         self._report_audit(self._gates.unreadable())
 
@@ -311,14 +328,16 @@ class SessionService:
         if message == self._audit_fault:
             return
 
-        self._audit_fault = message
-
         for family in self._status.families():
             if message is None:
                 self._faults.clear(family, FaultCode.AUDIT_UNREADABLE)
                 continue
 
             self._faults.raise_fault(family, FaultCode.AUDIT_UNREADABLE, message)
+
+        # After the writes. A write that failed leaves the change not
+        # published, so the next poll writes it again.
+        self._audit_fault = message
 
     async def owui_drained(self) -> None:
         """Wait until the Open WebUI copy is level with every settled turn.
