@@ -12,7 +12,7 @@ import dataclasses
 import enum
 import json
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, cast
 
@@ -140,6 +140,23 @@ def text_input(text: str) -> dict[str, Json]:
         raise ValueError("an input text holds a lone surrogate; no reader can decode it")
 
     return {"text": text}
+
+
+def repeat_input(parts: Sequence[tuple[str, int]]) -> dict[str, Json]:
+    """A long text input, written short: each part is a text and a count.
+
+    The input is every part's text, repeated its count of times, joined in
+    order. It keeps a 400,000-deep nesting out of the file as bytes, and a
+    reader of the file sees what the input is.
+    """
+    rows: list[Json] = [[text_input(text)["text"], count] for text, count in parts]
+
+    return {"repeat": rows}
+
+
+def expand(parts: Sequence[tuple[str, int]]) -> str:
+    """The text a `repeat` input stands for."""
+    return "".join(text * count for text, count in parts)
 
 
 def bytes_input(raw: bytes) -> dict[str, Json]:

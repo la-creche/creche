@@ -20,9 +20,10 @@ from vectors.core import ACCEPTED, FORMAT, RAISED, REFUSED
 
 REGENERATE = "run `uv run python -m vectors.generate` and read the diff"
 
-#: The forms an input takes: text, bytes that are not UTF-8, the named
-#: arguments of a builder, or the chunks of a byte stream.
-INPUT_FORMS = frozenset({"text", "base64", "args", "chunks"})
+#: The forms an input takes: text, bytes that are not UTF-8, a long text
+#: written as repeated parts, the named arguments of a builder, or the chunks
+#: of a byte stream.
+INPUT_FORMS = frozenset({"text", "base64", "repeat", "args", "chunks"})
 
 
 def _refuse_constant(name: str) -> Any:

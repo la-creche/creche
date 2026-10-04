@@ -67,6 +67,9 @@
   {"accepted":2,"entry":"chaperone.gates.GATE_ID_RE.match","path":"ids/gate_id.chaperone.json","raised":0,"refused":15,"surface":"id.gate_id.chaperone","vectors":17},
   {"accepted":7,"entry":"attendance.ids.is_attachment","path":"ids/attachment_name.attendance.json","raised":0,"refused":18,"surface":"id.attachment_name.attendance","vectors":25},
   {"accepted":88,"entry":"agent_family.load_registry","path":"family_file.json","raised":0,"refused":116,"surface":"family_file","vectors":204},
-  {"accepted":10,"entry":"agent_family.load_registry","path":"family_file.host.json","raised":0,"refused":2,"surface":"family_file.host","vectors":12}
+  {"accepted":10,"entry":"agent_family.load_registry","path":"family_file.host.json","raised":0,"refused":2,"surface":"family_file.host","vectors":12},
+  {"accepted":121,"entry":"attendance.wire.parse","path":"channel/parse.json","raised":0,"refused":80,"surface":"channel.parse","vectors":201},
+  {"accepted":34,"entry":"attendance.wire.LineSplitter.feed","path":"channel/frame.json","raised":0,"refused":0,"surface":"channel.frame","vectors":34},
+  {"accepted":20,"entry":"attendance.wire.encode(attendance.wire.<params.builder>(**args))","path":"channel/build.json","raised":0,"refused":2,"surface":"channel.build","vectors":22}
  ]
 }
