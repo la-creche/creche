@@ -32,6 +32,17 @@ from chaperone import bounded_yaml
 #: The pairs of the mapping that `_copies` merges.
 PAIRS: Final = 256
 
+#: The two ways that a text writes a merge key: the key `<<`, and the merge
+#: tag on a key of another name. PyYAML merges the two in the same way.
+MERGE_KEYS: Final = (
+    pytest.param("<<", id="the-merge-key"),
+    pytest.param("!!merge m", id="the-merge-tag"),
+)
+
+#: The merge keys of `_itself` that copy 65,535 pairs: one pair less than
+#: the limit. One more merge key copies 131,071 pairs.
+ITSELF_AT_THE_LIMIT: Final = 16
+
 #: The items of the list that `_aliases` shares. One alias of that list
 #: stands for the list and for each item: 512 nodes.
 ITEMS: Final = 511
@@ -44,26 +55,34 @@ NESTED_ALIASES: Final = "a: &a [1, 1, 1]\nb: &b [*a, *a]\nc: [*b, *b]\ns: &s x\n
 NESTED_ALIAS_NODES: Final = 28
 
 
-def _chain(levels: int) -> str:
+def _chain(levels: int, key: str = "<<") -> str:
     """A mapping `last` that merges the last mapping of a chain of `levels`
-    merge keys.
+    merge keys. `key` is the text of each merge key.
 
     The mappings of the chain are items of a list. PyYAML builds `last`
     before it builds an item of that list, so the merge of `last` walks the
     whole chain.
     """
-    links = "".join(f"\n  - &m{n} {{<<: *m{n - 1}}}" for n in range(1, levels))
+    links = "".join(f"\n  - &m{n} {{{key}: *m{n - 1}}}" for n in range(1, levels))
 
-    return "chain:\n  - &m0 {k: 1}" + links + f"\nlast: {{<<: *m{levels - 1}}}\n"
+    return "chain:\n  - &m0 {k: 1}" + links + f"\nlast: {{{key}: *m{levels - 1}}}\n"
 
 
-def _copies(merges: int, more: str = "") -> str:
+def _copies(merges: int, more: str = "", key: str = "<<") -> str:
     """A mapping `all` that merges one mapping of `PAIRS` pairs `merges`
-    times, and then the mappings that `more` names."""
+    times, and then the mappings that `more` names. `key` is the text of
+    the merge key."""
     pairs = ", ".join(f"k{n}: 1" for n in range(PAIRS))
     aliases = ", ".join(["*a"] * merges)
 
-    return f"one: &one {{z: 1}}\nbase: &a {{{pairs}}}\nall: {{<<: [{aliases}{more}]}}\n"
+    return f"one: &one {{z: 1}}\nbase: &a {{{pairs}}}\nall: {{{key}: [{aliases}{more}]}}\n"
+
+
+def _itself(merges: int, key: str = "<<") -> str:
+    """A mapping of one pair that merges itself `merges` times."""
+    keys = ", ".join([f"{key}: *a"] * merges)
+
+    return f"&a {{k: v, {keys}}}"
 
 
 def _aliases(count: int, more: str = "") -> str:
@@ -86,6 +105,9 @@ UNDER_THE_LIMITS: Final = (
     pytest.param("{a: 0, <<: {a: 1}}", id="own-key-wins"),
     pytest.param("{<<: {<<: {a: 1}, b: 2}, c: 3}", id="a-merge-in-a-merge"),
     pytest.param("&a {k: v, <<: *a}", id="a-mapping-that-merges-itself"),
+    pytest.param(_itself(3), id="a-mapping-that-merges-itself-three-times"),
+    pytest.param("base: &b {a: 1}\nrow: {!!merge m: *b, c: 2}\n", id="the-merge-tag"),
+    pytest.param("base: &b {a: 1}\nrow: {!!merge m: [*b, *b]}\n", id="the-merge-tag-on-a-list"),
     pytest.param("&a {<<: [*a, {y: 2}], k: v}", id="a-list-that-holds-its-mapping"),
     pytest.param("!!set {<<: {a: null}, b: null}", id="a-set"),
     pytest.param("!!str {=: text, <<: {a: 1}}", id="a-text-from-a-mapping"),
@@ -116,32 +138,53 @@ def test_under_the_limits_the_reader_does_what_pyyaml_does(text: str) -> None:
     assert _outcome(bounded_yaml.load, text) == _outcome(yaml.safe_load, text)
 
 
-def test_a_chain_of_merge_keys_at_the_limit_reads() -> None:
-    value = bounded_yaml.load(_chain(MERGE_DEPTH_MAX))
+@pytest.mark.parametrize("key", MERGE_KEYS)
+def test_a_chain_of_merge_keys_at_the_limit_reads(key: str) -> None:
+    assert MERGE_DEPTH_MAX == 128
+
+    value = bounded_yaml.load(_chain(MERGE_DEPTH_MAX, key))
 
     assert isinstance(value, dict)
     assert value["last"] == {"k": 1}
 
 
-def test_a_chain_of_merge_keys_one_level_past_the_limit_is_refused() -> None:
+@pytest.mark.parametrize("key", MERGE_KEYS)
+def test_a_chain_of_merge_keys_one_level_past_the_limit_is_refused(key: str) -> None:
     with pytest.raises(MergeLimitError) as caught:
-        bounded_yaml.load(_chain(MERGE_DEPTH_MAX + 1))
+        bounded_yaml.load(_chain(MERGE_DEPTH_MAX + 1, key))
 
     assert f"more than {MERGE_DEPTH_MAX} levels" in str(caught.value)
 
 
-def test_copied_pairs_at_the_limit_read() -> None:
-    assert PAIRS * PAIRS == MERGE_PAIRS_MAX
+@pytest.mark.parametrize("key", MERGE_KEYS)
+def test_copied_pairs_at_the_limit_read(key: str) -> None:
+    assert PAIRS * PAIRS == MERGE_PAIRS_MAX == 65_536
 
-    value = bounded_yaml.load(_copies(PAIRS))
+    value = bounded_yaml.load(_copies(PAIRS, key=key))
 
     assert isinstance(value, dict)
     assert len(value["all"]) == PAIRS
 
 
-def test_one_copied_pair_past_the_limit_is_refused() -> None:
+@pytest.mark.parametrize("key", MERGE_KEYS)
+def test_one_copied_pair_past_the_limit_is_refused(key: str) -> None:
     with pytest.raises(MergeLimitError) as caught:
-        bounded_yaml.load(_copies(PAIRS, more=", *one"))
+        bounded_yaml.load(_copies(PAIRS, more=", *one", key=key))
+
+    assert f"more than {MERGE_PAIRS_MAX} pairs" in str(caught.value)
+
+
+@pytest.mark.parametrize("key", MERGE_KEYS)
+def test_a_mapping_that_merges_itself_reads_under_the_limit(key: str) -> None:
+    assert 2**ITSELF_AT_THE_LIMIT - 1 == MERGE_PAIRS_MAX - 1
+
+    assert bounded_yaml.load(_itself(ITSELF_AT_THE_LIMIT, key)) == {"k": "v"}
+
+
+@pytest.mark.parametrize("key", MERGE_KEYS)
+def test_a_mapping_that_merges_itself_past_the_limit_is_refused(key: str) -> None:
+    with pytest.raises(MergeLimitError) as caught:
+        bounded_yaml.load(_itself(ITSELF_AT_THE_LIMIT + 1, key))
 
     assert f"more than {MERGE_PAIRS_MAX} pairs" in str(caught.value)
 
