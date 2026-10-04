@@ -104,9 +104,7 @@ RestartMaxDelaySec=120s
 
 # The site's values: AGENT_LAN_ADDRESS (the bind, and TEI on the same
 # address), AGENT_HA_URL when the site has a Home Assistant, and PEP_SECRETS.
-# /etc/agent-control keeps its name beside /opt/creche: every unit and root
-# wrapper reads it, so it moves in a later change of its own.
-EnvironmentFile=/etc/agent-control/site.env
+EnvironmentFile=/etc/creche/site.env
 Environment=PEP_AUDIT_DIR=/srv/agents/state/pep/audit
 Environment=PEP_UPSTREAMS=/opt/creche/chaperone/upstreams.yaml
 # Installed by bin/rework-release-visit.sh.
@@ -116,13 +114,13 @@ Environment=PEP_UPSTREAMS=/opt/creche/chaperone/upstreams.yaml
 # fail-closed end. The directory is <operator>:agents 2770 and root still refuses
 # a request owned by any uid but the operator's or chaperone's. Its parents are root's
 # all the way up.
-Environment=PEP_RELEASE_REQUESTS_DIR=/var/lib/agent-release/releases/requests
+Environment=PEP_RELEASE_REQUESTS_DIR=/var/lib/creche-handover/releases/requests
 # PEP_UPSTREAMS_GENERATED is the roster ROOT writes at the end of a verified
 # mcp-servers release (executor/roster.py). It is outside every
 # component install tree on purpose: a `chaperone` release swaps the whole `chaperone`
 # tree, so a roster inside it would vanish with nothing to say why. Without
 # this line a released MCP server is installed and never served.
-Environment=PEP_UPSTREAMS_GENERATED=/var/lib/agent-release/upstreams.yaml
+Environment=PEP_UPSTREAMS_GENERATED=/var/lib/creche-handover/upstreams.yaml
 Environment=SOPS_AGE_KEY_FILE=/etc/agent-pep/age.key
 # The PEP's own writable HOME. Pep-owned subdirectory, not the
 # /var/lib/creche-chaperone parent — see the header comment.
@@ -257,7 +255,7 @@ InaccessiblePaths=-/srv/agents/vault -/srv/agents/registry -/srv/agents/work -/s
 # add, rename or replace an entry in it. It must EXIST when this unit starts,
 # or the "-" skips it until the next restart, so bin/rework-release-visit.sh
 # makes it before it restarts the PEP.
-ReadWritePaths=/srv/agents/state/pep/audit /var/lib/creche-chaperone/home -/srv/agents/state/rework/audit -/srv/agents/state/rework/faults/pep -/srv/agents/state/rework/sock -/var/lib/agent-release/releases/requests -/var/lib/agent-mcp
+ReadWritePaths=/srv/agents/state/pep/audit /var/lib/creche-chaperone/home -/srv/agents/state/rework/audit -/srv/agents/state/rework/faults/pep -/srv/agents/state/rework/sock -/var/lib/creche-handover/releases/requests -/var/lib/agent-mcp
 
 [Install]
 WantedBy=multi-user.target

@@ -11,7 +11,6 @@ Module map, in the order one release walks through them:
 | Module | What it owns |
 |---|---|
 | `layout` | Root's own root: every path root writes, under root's parents. |
-| `relocate` | The one-time move of those paths out from under the operator's. |
 | `spool` | The five directories, `O_NOFOLLOW` everywhere, the lock. |
 | `request` | §2.3's request, parsed as hostile bytes. |
 | `live_state` | Contract 06 §11's document, held to the version stamps. |

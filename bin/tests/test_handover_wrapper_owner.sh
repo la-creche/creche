@@ -119,9 +119,9 @@ grep -q '^for path in "$INTAKE" "$SOPS" "$SECRETS"; do$' "$INTAKE_SCRIPT" \
 # neither wrapper may read a file of the deployed tree.
 for script in "$SCRIPT" "$INTAKE_SCRIPT"; do
   name="$(basename "$script")"
-  grep -q '^SITE_SECRETS=/etc/agent-control/secrets.enc.env$' "$script" \
+  grep -q '^SITE_SECRETS=/etc/creche/secrets.enc.env$' "$script" \
     && pass "$name reads the site's sops file" \
-    || fail "$name does not read /etc/agent-control/secrets.enc.env"
+    || fail "$name does not read /etc/creche/secrets.enc.env"
   grep -q '^SECRETS="$(readlink -f "$SITE_SECRETS" 2>/dev/null)" || SECRETS="$SITE_SECRETS"$' "$script" \
     && pass "$name resolves a link before the guard" \
     || fail "$name hands the guard an unresolved path"

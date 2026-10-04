@@ -26,7 +26,7 @@ DEFAULT_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
 
 # Contract 02 §3 rule 2: TCP binds the LAN address and nothing else. Loopback
 # answers nothing on this host, and 0.0.0.0 would publish the service. The
-# address is the site's: the unit's `EnvironmentFile=/etc/agent-control/site.env`
+# address is the site's: the unit's `EnvironmentFile=/etc/creche/site.env`
 # sets it, and `SESSIOND_LAN_ADDRESS` overrides it. No default: a default
 # would be somebody's host. Contract 02 §3 rule 9 gives the optional LAN
 # port 8350.
@@ -147,7 +147,7 @@ def _lan_address(source: dict[str, str]) -> str:
     value = _text(source, "LAN_ADDRESS", source.get(LAN_ADDRESS_ENV, "").strip())
 
     if not value:
-        raise ConfigError(f"{LAN_ADDRESS_ENV} is not set (/etc/agent-control/site.env)")
+        raise ConfigError(f"{LAN_ADDRESS_ENV} is not set (/etc/creche/site.env)")
 
     return value
 

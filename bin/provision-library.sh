@@ -4,7 +4,7 @@
 #   ./bin/provision-library.sh notes           # vault scope (default)
 #   ./bin/provision-library.sh agent-control code
 #   ./bin/provision-library.sh alpha test      # gate fixture, no timer
-# Prerequisite: AGENT_LAN_ADDRESS in /etc/agent-control/site.env, or
+# Prerequisite: AGENT_LAN_ADDRESS in /etc/creche/site.env, or
 # LAN_ADDRESS in the environment.
 set -euo pipefail
 # sbx phones home on every invocation and that, not the work asked of it, is
@@ -33,7 +33,7 @@ REPO="$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # wins, then the site file.
 # `AGENT_SITE_FILE` names another site file, which is how a test points at a
 # fixture. No default: a default would be somebody's host.
-SITE_FILE="${AGENT_SITE_FILE:-/etc/agent-control/site.env}"
+SITE_FILE="${AGENT_SITE_FILE:-/etc/creche/site.env}"
 LAN_ADDRESS="${LAN_ADDRESS:-$(envfile_value "$SITE_FILE" AGENT_LAN_ADDRESS || true)}"
 [[ -n "$LAN_ADDRESS" ]] || { echo "no AGENT_LAN_ADDRESS in $SITE_FILE" >&2; exit 1; }
 

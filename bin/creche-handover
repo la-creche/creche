@@ -32,7 +32,7 @@ SOPS=/usr/local/bin/sops
 # and decrypts the file a link names, never the link, so the path is
 # resolved before `require_root_owned` sees it. The intake wrapper reads the
 # same file.
-SITE_SECRETS=/etc/agent-control/secrets.enc.env
+SITE_SECRETS=/etc/creche/secrets.enc.env
 SECRETS="$(readlink -f "$SITE_SECRETS" 2>/dev/null)" || SECRETS="$SITE_SECRETS"
 EXECUTOR=/opt/components/handover/bin/handover-exec
 export SOPS_AGE_KEY_FILE=/root/.config/sops/age/keys.txt

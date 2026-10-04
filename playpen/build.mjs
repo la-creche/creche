@@ -26,7 +26,7 @@ const address = (process.env[VARIABLE] ?? "").trim();
 if (!address) {
   process.stderr.write(
     `build.mjs: ${VARIABLE} is not set. Set it to the host's LAN address ` +
-      "(/etc/agent-control/site.env); the image cannot read it at run time.\n",
+      "(/etc/creche/site.env); the image cannot read it at run time.\n",
   );
   process.exit(EXIT_NO_ADDRESS);
 }

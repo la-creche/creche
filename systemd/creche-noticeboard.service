@@ -34,7 +34,7 @@ Environment=XDG_CONFIG_HOME=%h/.config
 # `systemctl show` as well.
 EnvironmentFile=/srv/agents/state/rework/view.env
 # The site's AGENT_LAN_ADDRESS: the bind when view.env sets no VIEW_BIND.
-EnvironmentFile=/etc/agent-control/site.env
+EnvironmentFile=/etc/creche/site.env
 # The component tree contract 06 §1 row 4 fixes (`noticeboard`), not
 # /opt/creche's shared workspace venv. The release executor swaps
 # `<install.to>` and restarts this unit, so a unit that ran from anywhere

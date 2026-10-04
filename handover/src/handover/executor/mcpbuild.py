@@ -138,7 +138,7 @@ own module.
     TRAVERSAL only, and the walk stops there — every other server's live
     tree under it is somebody else's release and is not re-moded. **No
     secret is in any of these trees.** A server's credentials live in
-    `/var/lib/agent-release/secrets/<name>.enc`, `root:root`, which the
+    `/var/lib/creche-handover/secrets/<name>.enc`, `root:root`, which the
     PEP decrypts and hands to the child in its environment (§4.3,
     invariant 13). `run.env` is not read by this module at all
     (assumption 7), so there is nothing in a staged tree for a wider mode

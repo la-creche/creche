@@ -79,7 +79,7 @@ def test_every_rw_path_without_the_dash_is_one_a_variable_names() -> None:
 
 #: The site's values reach the PEP through this one file, and the unit names
 #: no address, no Home Assistant and no sops path of its own.
-SITE_FILE_LINE: Final = "EnvironmentFile=/etc/agent-control/site.env"
+SITE_FILE_LINE: Final = "EnvironmentFile=/etc/creche/site.env"
 FROM_THE_SITE: Final = ("PEP_BIND", "HA_URL", "PEP_SECRETS")
 
 

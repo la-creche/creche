@@ -43,7 +43,7 @@ WorkingDirectory=/opt/creche
 Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
 # The site's AGENT_LAN_ADDRESS: the webhook listener's bind.
-EnvironmentFile=/etc/agent-control/site.env
+EnvironmentFile=/etc/creche/site.env
 # The trigger door ships INSIDE the `attendance` component (contract 06 §1
 # rule 1: a door cannot be at a different version from the session API it
 # serves), so it runs from that component's venv and moves with it. Not

@@ -21,7 +21,7 @@ ASKED: list[list[str]] = []
 SITE_BIND: Final = "192.0.2.10:8300"
 
 SINCE: Final = "2026-09-22T10:00:00Z"
-GENERATED: Final = "/var/lib/agent-release/upstreams.yaml"
+GENERATED: Final = "/var/lib/creche-handover/upstreams.yaml"
 BASE: Final = "/opt/creche/chaperone/upstreams.yaml"
 
 #: What `/healthz` answers on the host when nothing is wrong (contract 04 §10).

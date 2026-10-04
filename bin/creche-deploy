@@ -7,8 +7,7 @@
 set -euo pipefail
 
 # The product's root-owned checkout, and the site's beside it. The site's
-# configuration stays in /etc/agent-control: that path is wire every unit
-# and wrapper reads, and it moves in a later change of its own.
+# configuration is in /etc/creche, which every unit and wrapper reads.
 PRODUCT=/opt/creche
 SITE=/opt/private-docs
 

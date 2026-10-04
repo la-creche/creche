@@ -5,7 +5,7 @@ FROM python:3.12-slim
 # the build fixes it: `--build-arg AGENT_LAN_ADDRESS=...`, or the build fails.
 ARG AGENT_LAN_ADDRESS
 RUN test -n "$AGENT_LAN_ADDRESS" \
-    || { echo "set --build-arg AGENT_LAN_ADDRESS (/etc/agent-control/site.env)" >&2; exit 1; }
+    || { echo "set --build-arg AGENT_LAN_ADDRESS (/etc/creche/site.env)" >&2; exit 1; }
 ENV AGENT_LAN_ADDRESS=$AGENT_LAN_ADDRESS
 WORKDIR /app
 COPY pyproject.toml ./

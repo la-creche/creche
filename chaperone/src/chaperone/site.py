@@ -1,7 +1,7 @@
 """The site's values the PEP reads: its bind, TEI and Home Assistant.
 
 The address is the site's: the unit's
-`EnvironmentFile=/etc/agent-control/site.env` sets `AGENT_LAN_ADDRESS`, and
+`EnvironmentFile=/etc/creche/site.env` sets `AGENT_LAN_ADDRESS`, and
 `AGENT_HA_URL` when the site has a Home Assistant. The ports are this
 code's. An explicit `PEP_BIND` or `HA_URL` still wins.
 
@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from enum import IntEnum
 from typing import Final
 
-SITE_FILE: Final = "/etc/agent-control/site.env"
+SITE_FILE: Final = "/etc/creche/site.env"
 LAN_ADDRESS_ENV: Final = "AGENT_LAN_ADDRESS"
 SITE_HA_URL_ENV: Final = "AGENT_HA_URL"
 

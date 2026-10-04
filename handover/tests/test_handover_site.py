@@ -1,6 +1,6 @@
 """The site file: the one place a deployment's own values come from.
 
-`site.py` reads `/etc/agent-control/site.env` and nothing else knows a
+`site.py` reads `/etc/creche/site.env` and nothing else knows a
 host, an account or an owner. What is held here: a value is read from the
 file the environment names, a missing or malformed one refuses with the
 `site` code and never falls back to a default, and the provenance predicate
@@ -102,7 +102,7 @@ def test_with_no_variable_set_the_host_path_is_the_one_read(
 ) -> None:
     monkeypatch.delenv(site.SITE_FILE_ENV)
 
-    assert site.site_file() == Path("/etc/agent-control/site.env")
+    assert site.site_file() == Path("/etc/creche/site.env")
 
 
 def test_provenance_asks_github_about_the_sites_owner(site_file: Path) -> None:

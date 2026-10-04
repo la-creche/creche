@@ -23,7 +23,7 @@ DEFAULT_PORT: Final = 8370
 
 #: Services on this host bind the LAN IP (`noticeboard/AGENTS.md` rule 2). The
 #: default bind is the site's, from the unit's
-#: `EnvironmentFile=/etc/agent-control/site.env`. `VIEW_BIND` overrides it.
+#: `EnvironmentFile=/etc/creche/site.env`. `VIEW_BIND` overrides it.
 LAN_ADDRESS_ENV: Final = "AGENT_LAN_ADDRESS"
 
 DEFAULT_STATE_ROOT: Final = "/srv/agents/state/rework"
@@ -143,7 +143,7 @@ def _bind(source: dict[str, str]) -> str:
     if bind:
         return bind
 
-    raise ConfigError(f"{LAN_ADDRESS_ENV} is not set (/etc/agent-control/site.env)")
+    raise ConfigError(f"{LAN_ADDRESS_ENV} is not set (/etc/creche/site.env)")
 
 
 def _flag(source: dict[str, str], name: str) -> bool:

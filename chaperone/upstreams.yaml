@@ -5,7 +5,7 @@
 # Every MCP server the PEP runs is one file in agent-registry,
 # mcp/<name>/server.yaml (contract 01b). An `mcp-servers` release builds it
 # into /opt/mcp/<name> and names it in the roster root writes at
-# /var/lib/agent-release/upstreams.yaml, which is PEP_UPSTREAMS_GENERATED.
+# /var/lib/creche-handover/upstreams.yaml, which is PEP_UPSTREAMS_GENERATED.
 # That roster is the ONLY source for a server the registry declares. A row
 # here would be a second source, naming a tree no release installed.
 #

@@ -46,7 +46,7 @@ uid can. No port, no bearer, no listener, and nothing a sandbox can reach.
    secrets the process already had rather than dropping every credential.
 5. **BOTH secret layouts are read.** The monolith, the `PEP_SECRETS` file,
    holds every credential that predates the intake.
-   The per-secret store `/var/lib/agent-release/secrets/<name>.enc` is
+   The per-secret store `/var/lib/creche-handover/secrets/<name>.enc` is
    what the intake writes when the operator pastes a value, and it is the only one
    the host can author, because sealing needs public keys alone. Reading
    only the monolith would leave a pasted value where the PEP never looks,

@@ -60,7 +60,7 @@ Environment=XDG_CONFIG_HOME=%h/.config
 # log line. This file is root-owned and mode 0600; the unit only names it.
 EnvironmentFile=/srv/agents/state/rework/managerd.env
 # The site's AGENT_LAN_ADDRESS: where LiteLLM, attendance and the PEP answer.
-EnvironmentFile=/etc/agent-control/site.env
+EnvironmentFile=/etc/creche/site.env
 # The component tree contract 06 §1 row 3 fixes, not /opt/creche's
 # shared workspace venv. The release executor swaps `<install.to>` and
 # restarts this unit, so a unit that ran from anywhere else would relaunch
@@ -82,7 +82,7 @@ EnvironmentFile=/etc/agent-control/site.env
 # LAN URL; `bin/rework-cutover.sh` writes the same value into managerd.env.
 # An empty value turns the watch off and every document then says so.
 # NO `--release-root`, and that is deliberate. Its default is
-# root's own root, /var/lib/agent-release, and `bin/rework-cutover.sh up`
+# root's own root, /var/lib/creche-handover, and `bin/rework-cutover.sh up`
 # installs THIS file over a caregiver a release installed: a caregiver older
 # than ROOTS would refuse the flag and crash-loop. Name it only in a run
 # whose `--state-root` is not this one.

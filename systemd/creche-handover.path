@@ -14,13 +14,13 @@
 # thing that deploys code is not deployed by code". Harmless before the spool
 # exists — a glob under a missing directory matches nothing.
 #
-# The spool sits under root's own root, /var/lib/agent-release, every
+# The spool sits under root's own root, /var/lib/creche-handover, every
 # ancestor root's (handover/src/handover/executor/layout.py).
 [Unit]
 Description=Watch the rework release spool for requests
 
 [Path]
-PathExistsGlob=/var/lib/agent-release/releases/requests/*.json
+PathExistsGlob=/var/lib/creche-handover/releases/requests/*.json
 
 [Install]
 WantedBy=multi-user.target

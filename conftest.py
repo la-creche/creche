@@ -90,7 +90,7 @@ _example_site_file: list[Path] = []
 def _site_is_the_example(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point every test at the example site file.
 
-    No test may read the host's own `/etc/agent-control/site.env`: a suite
+    No test may read the host's own `/etc/creche/site.env`: a suite
     that passes only on the machine that has one proves nothing, and one that
     reads it would carry that machine's values into its assertions. A test
     that needs another site sets the variable again.
