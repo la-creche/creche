@@ -236,9 +236,14 @@ def test_a_non_autonomous_family_answers_403(tmp_path: Path) -> None:
 # --- attendance does not answer ---
 
 
-def test_no_answer_from_attendance_answers_502(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ConnectError("no answer"), ConnectionRefusedError("no answer")],
+    ids=["httpx-error", "os-error"],
+)
+def test_no_answer_from_attendance_answers_502(tmp_path: Path, failure: Exception) -> None:
     def no_answer(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("no answer", request=request)
+        raise failure
 
     target = AttendanceTarget(url="http://sessiond", socket=None, token="t" * 32)
     upstream = httpx.Client(base_url=target.url, transport=httpx.MockTransport(no_answer))
