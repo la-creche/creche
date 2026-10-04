@@ -862,19 +862,7 @@ mod tests {
 
     /// Each vector that the Python code accepts and the Rust code refuses, on
     /// purpose: the surface, the vector, the contract section and the reason.
-    const DEVIATIONS: [(&str, &str, &str, &str); 15] = [
-        (
-            "manifest.component",
-            "yaml-merge-chain-200",
-            "contract 06 §10",
-            "the YAML reader refuses a chain of merge keys past 128 levels",
-        ),
-        (
-            "manifest.component",
-            "yaml-merge-copies-65792",
-            "contract 06 §10",
-            "the YAML reader refuses merge keys that copy more than 65,536 pairs",
-        ),
+    const DEVIATIONS: [(&str, &str, &str, &str); 11] = [
         (
             "manifest.component",
             "yaml-nested-200-replaced",
@@ -905,18 +893,6 @@ mod tests {
             "install-lone-surrogate",
             "contract 06 §8",
             "an install path is a string, and a lone surrogate is in no string",
-        ),
-        (
-            "manifest.request.parse",
-            "id-not-a-ulid",
-            "contract 06 §9",
-            "the id of a request is a ULID, and the parser takes the id as that type",
-        ),
-        (
-            "manifest.request.plan",
-            "id-not-a-ulid",
-            "contract 06 §9",
-            "the id of a request is a ULID, and a draft holds the id as that type",
         ),
         (
             "manifest.request.ulid",
@@ -1573,7 +1549,8 @@ mod tests {
             let raw = vector.input.bytes().unwrap();
             let params = vector.field("params").unwrap().as_object().unwrap();
             // The parser takes the id of the file name as a `Ulid`. A file name
-            // that is no ULID has no request in Rust.
+            // that is no ULID has no request in Rust, and the Python parser
+            // refuses such an id.
             let parsed = text_field(params, "request_id")
                 .parse::<Ulid>()
                 .ok()
@@ -1584,7 +1561,7 @@ mod tests {
                     found.deviations.insert(id.clone());
                 }
                 (Outcome::Refused, Some(Err(error))) => check_request_refusal(vector, error),
-                (Outcome::Raised, Some(Err(_))) => {}
+                (Outcome::Raised, Some(Err(_))) | (Outcome::Refused | Outcome::Raised, None) => {}
                 (outcome, _) => panic!("{id}: Python {outcome:?}, and Rust differs"),
             }
         }
@@ -1640,7 +1617,9 @@ mod tests {
                     found.deviations.insert(id.clone());
                 }
                 (Outcome::Refused, Some(Err(error))) => check_request_refusal(vector, error),
-                (Outcome::Raised, Some(Err(_))) => {}
+                // A draft holds its id as a `Ulid`. An id that is no ULID has
+                // no draft in Rust, and the Python requester refuses such an id.
+                (Outcome::Raised, Some(Err(_))) | (Outcome::Refused | Outcome::Raised, None) => {}
                 (outcome, _) => panic!("{id}: Python {outcome:?}, and Rust differs"),
             }
         }
