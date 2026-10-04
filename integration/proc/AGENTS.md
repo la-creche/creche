@@ -689,6 +689,9 @@ the text of the failure. Work down this list.
   - After `SIGINT`, each listener exits with status 0.
   - `SIGHUP` ends the door and the noticeboard immediately. Neither has an
     exit status.
+  - The chaperone has a reload only with a roster source. The chaperone of
+    this suite has none, so `SIGHUP` ends it too. No scenario holds either
+    case.
   - At a stop with an open stream, the door sends the stream to its end.
     Then the signal ends the door.
 

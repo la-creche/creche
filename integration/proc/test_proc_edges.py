@@ -21,8 +21,8 @@ services do today, and what a change costs.
 CONTRACT-QUESTION: no contract names the exit status of a listener after a
 signal. The services differ today. After `SIGTERM`, `attendance` exits with
 status 0, and the signal ends each other listener, with no exit status.
-After `SIGINT`, each listener exits with status 0. `SIGHUP` ends the two
-listeners that have no reload, with no exit status. Reading taken: no
+After `SIGINT`, each listener exits with status 0. `SIGHUP` ends each
+listener that has no reload, with no exit status. Reading taken: no
 scenario here reads an exit status. A change to one fixed status costs one
 assertion in each of the three signal scenarios.
 """
@@ -114,7 +114,7 @@ DO_WORK = (Service.ATTENDANCE, Service.DOOR_OWUI, Service.CHAPERONE, Service.DOO
 #: another file. `test_proc_trigger_webhooks.py` holds the webhook listener.
 READ_JSON = (Service.ATTENDANCE, Service.DOOR_OWUI, Service.CHAPERONE)
 
-#: The two listeners that read nothing again at `SIGHUP`.
+#: The two listeners that have no reload at `SIGHUP` in each configuration.
 NO_RELOAD = (Service.DOOR_OWUI, Service.NOTICEBOARD)
 
 FINAL_SLASH = "/"
@@ -464,6 +464,9 @@ def test_sigint_ends_a_listener(listener: Listener) -> None:
 # signal ends the process, and its port closes. The other reading is a
 # listener that ignores the signal. A change to that reading costs the two
 # assertions here.
+#
+# The chaperone has a reload only with a roster source. The chaperone of this
+# suite has none, so `SIGHUP` ends it too. No scenario holds either case.
 @pytest.mark.parametrize("listener", NO_RELOAD, indirect=True)
 def test_sighup_ends_a_listener_with_no_reload(listener: Listener) -> None:
     """The process ends inside the stop limit of its unit, and its port closes.
