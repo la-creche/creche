@@ -103,6 +103,9 @@ them again.
     never holds a secret, the content of a file or the body of a request.
 15. Implement `Display` and `Error` for each error type yourself. The
     workspace takes neither `anyhow` nor `thiserror`.
+16. Give each type that can hold a token a `Debug` that prints no byte and no
+    count of the bytes. The size of a token file is such a count. Contract 02
+    §3 rule 6 keeps the length of a token out of each log line.
 
 ## The stubs
 

@@ -267,8 +267,17 @@ pub fn read(path: &Path, rule: TokenRule) -> Result<Secret, TokenError> {
 /// value of the last read.
 ///
 /// The Python origin is `chaperone/src/chaperone/delegate.py:161-206`.
-#[derive(Debug)]
+///
+/// `Debug` prints no field. The facts of the last read hold the size of the
+/// file, and that size gives the length of the token (contract 02 §3 rule
+/// 6). Keep the `Debug` when you give the type its fields.
 pub struct CachedToken(());
+
+impl fmt::Debug for CachedToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CachedToken").finish_non_exhaustive()
+    }
+}
 
 impl CachedToken {
     /// A reader of the token file at `path` under `rule`. The call reads no
@@ -431,5 +440,10 @@ mod tests {
         for (error, text) in table {
             assert_eq!(error.to_string(), text);
         }
+    }
+
+    #[test]
+    fn the_debug_of_a_cached_token_prints_no_field() {
+        assert_eq!(format!("{:?}", CachedToken(())), "CachedToken { .. }");
     }
 }

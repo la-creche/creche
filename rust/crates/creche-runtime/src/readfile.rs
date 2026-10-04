@@ -95,6 +95,10 @@ pub enum Follow {
 /// of a file compares the facts and reads again only after a change. The
 /// facts come from one `stat`, so they are facts of one moment.
 ///
+/// The `len` of a token file gives the length of the token. `Debug` prints
+/// each fact, so do not write the facts of a token file to a log line
+/// (contract 02 §3 rule 6).
+///
 /// ```
 /// use creche_runtime::readfile::FileFacts;
 ///
@@ -187,8 +191,9 @@ impl From<&Metadata> for FileFacts {
 
 /// What [`read_capped`] found at a path.
 ///
-/// `Debug` prints the count of the bytes and never a byte: the file can be a
-/// token file.
+/// `Debug` prints no byte of the file, no count of the bytes and no fact of
+/// the file. The file can be a token file, and its size then gives the
+/// length of the token (contract 02 §3 rule 6).
 #[derive(Clone, PartialEq, Eq)]
 pub enum FileRead {
     /// The content of the file, and the facts of the file that the read had
@@ -209,11 +214,7 @@ pub enum FileRead {
 impl fmt::Debug for FileRead {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Bytes { bytes, facts } => f
-                .debug_struct("Bytes")
-                .field("bytes", &format_args!("<{} bytes>", bytes.len()))
-                .field("facts", facts)
-                .finish(),
+            Self::Bytes { .. } => f.debug_struct("Bytes").finish_non_exhaustive(),
             Self::Absent => f.write_str("Absent"),
             Self::Refused(refusal) => f.debug_tuple("Refused").field(refusal).finish(),
         }
@@ -378,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn the_debug_of_a_read_prints_no_byte_of_the_file() {
+    fn the_debug_of_a_read_prints_no_byte_and_no_size_of_the_file() {
         let root = TempRoot::new().unwrap();
         let path = root.path().join("token");
         fs::write(&path, b"correct horse").unwrap();
@@ -386,11 +387,10 @@ mod tests {
             bytes: b"correct horse".to_vec(),
             facts: FileFacts::from(&fs::metadata(&path).unwrap()),
         };
-        let text = format!("{read:?}");
 
-        assert!(text.contains("<13 bytes>"), "{text}");
-        assert!(!text.contains("correct"), "{text}");
-        assert!(!text.contains("99, 111"), "{text}");
+        // The size of a token file gives the length of the token, so the
+        // text holds neither the count of the bytes nor the facts.
+        assert_eq!(format!("{read:?}"), "Bytes { .. }");
         assert_eq!(format!("{:?}", FileRead::Absent), "Absent");
         assert_eq!(
             format!("{:?}", FileRead::Refused(ReadRefusal::Symlink)),

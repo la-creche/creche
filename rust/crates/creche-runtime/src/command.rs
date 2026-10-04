@@ -104,8 +104,8 @@ impl fmt::Debug for EnvPolicy {
 
 /// The standard input of a child program.
 ///
-/// `Debug` prints the count of the bytes and never a byte: a service gives a
-/// secret to a child in this way.
+/// `Debug` prints no byte and no count of the bytes: a service gives a secret
+/// to a child in this way, and the count is the length of that secret.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Stdin {
     /// The child reads end of file at once.
@@ -121,7 +121,7 @@ impl fmt::Debug for Stdin {
         match self {
             Self::Null => f.write_str("Null"),
             Self::Inherit => f.write_str("Inherit"),
-            Self::Bytes(bytes) => write!(f, "Bytes(<{} bytes>)", bytes.len()),
+            Self::Bytes(_) => f.write_str("Bytes(..)"),
         }
     }
 }
@@ -165,7 +165,7 @@ pub enum Output {
 /// assert_eq!(command.at_shutdown(), AtShutdown::Finish);
 ///
 /// let text = format!("{command:?}");
-/// assert!(text.contains("Bytes(<13 bytes>)"));
+/// assert!(text.contains("stdin: Bytes(..)"));
 /// assert!(!text.contains("correct"));
 /// ```
 ///
@@ -831,9 +831,11 @@ mod tests {
 
         assert!(text.contains("\"--decrypt\""), "{text}");
         assert!(text.contains("InheritAnd([\"AGE_KEY\"])"), "{text}");
-        assert!(text.contains("Bytes(<28 bytes>)"), "{text}");
+        assert!(text.contains("stdin: Bytes(..)"), "{text}");
         assert!(!text.contains("correct"), "{text}");
         assert!(!text.contains("99, 111"), "{text}");
+        // The input can be a token, so the text holds no count of its bytes.
+        assert!(!text.contains(&SECRET_VALUE.len().to_string()), "{text}");
     }
 
     #[test]
@@ -858,12 +860,12 @@ mod tests {
     }
 
     #[test]
-    fn the_debug_of_each_input_prints_no_byte() {
+    fn the_debug_of_each_input_prints_no_byte_and_no_count() {
         assert_eq!(format!("{:?}", Stdin::Null), "Null");
         assert_eq!(format!("{:?}", Stdin::Inherit), "Inherit");
         assert_eq!(
             format!("{:?}", Stdin::Bytes(SECRET_VALUE.as_bytes().to_vec())),
-            "Bytes(<28 bytes>)"
+            "Bytes(..)"
         );
     }
 
