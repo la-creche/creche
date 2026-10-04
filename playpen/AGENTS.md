@@ -218,6 +218,6 @@ delivers them. Three test seams exist and nothing in the image sets them:
   (`src/pi-record.ts`).
 - The verify hook does not start an image. The image build runs each bundle
   once and stops on a bundle that does not load (`bin/playpen-verify`).
-- No host has run `bin/playpen-build`. The tests use a stub `docker`
-  (`bin/tests/test_playpen_release.py`).
+- No test builds an image. The tests give `bin/playpen-build` a stub
+  `docker` (`bin/tests/test_playpen_release.py`).
 - A release never removes an image from the registry (`bin/playpen-build`).

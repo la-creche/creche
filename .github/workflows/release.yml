@@ -32,10 +32,15 @@
 # repo secret is involved. Only the `release` job may write: every other job
 # runs the merged code with a read-only token.
 #
-# THIS WORKFLOW FILES NO RELEASE REQUEST, and that is a decision rather than
-# a gap (stage7-releases.md §3.3, threat table row 20). What CI produces is
-# a Release. Naming it in a request stays a separate, deliberate act by
-# the operator or by the fenced `release` verb, and step 5's tap is unconditional.
+# THIS WORKFLOW FILES NO RELEASE REQUEST (stage7-releases.md §3.3, threat
+# table row 20). What CI produces is a Release. On the host,
+# `creche-follow.timer` files the request for each new tag of a component
+# that has had a release (`handover/src/handover/follow/`). CI reaches no
+# host, and step 5's tap is unconditional.
+#
+# SO A TAG ASKS THE OPERATOR FOR A RELEASE, and a tag for prose would ask for
+# a release of nothing. The planner drops a `.md` path outside `tests/` and
+# `fixtures/` before it decides what a range touched (`allocate.is_prose`).
 #
 # A docs-only push onto a commit whose own run passed runs only the tests
 # marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
@@ -215,7 +220,7 @@ jobs:
   #
   # The time limit: a teardown waits 20 s for each process group. A fault
   # in the harness can cost every test that wait, and a job has 6 hours by
-  # default. On a laptop the suite runs in about 1 minute.
+  # default. On a laptop the suite runs in about 5 minutes.
   proc:
     needs: scope
     if: needs.scope.outputs.scope == 'code'

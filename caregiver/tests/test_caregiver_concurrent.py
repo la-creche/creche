@@ -32,7 +32,7 @@ from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.loop import LoopConfig, LoopState, Passes, look, serve
 from caregiver.reconcile import Actors
-from caregiver.status import SandboxLifecycle, forget_published
+from caregiver.status import SandboxLifecycle, forget_published, restamp_status
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
 from caregiver_helpers import write_registry
@@ -327,42 +327,140 @@ def test_a_fresh_document_is_not_restamped(bench: Bench) -> None:
         assert passes.drain(WAIT_S) is True
 
 
-def test_a_document_this_process_never_wrote_is_never_restamped(bench: Bench) -> None:
-    """A reconciler restarted with a NEW sandbox image must not restamp the
-    documents the OLD reconciler wrote: they say `in_sync` and `ready`
-    about the OLD image, and a new `written_at` is all they would get.
-    `rework-cutover.sh up` waits for fresh, `in_sync`, `ready` documents, so
-    it would call the fleet converged before the first replacement is
-    over. §2 rule 8 lets the loop restamp what is "still true", and only a
-    document THIS process published is known to be: a verdict from before the
-    restart is a verdict about another commit, another image, or both. It
-    stays as old as it is until this process has looked."""
+def _restart_into_a_new_image(bench: Bench) -> dict[str, int]:
+    """Three families the previous process converged, then a restart whose
+    every create is held. Answers when each document was last written."""
     for name in ("ops", "code"):
         write_registry(bench.registry_root, name=name)
 
-    # The previous process converged all three and wrote their documents.
     with Passes(bound=4) as earlier:
         bench.look(earlier)
         assert earlier.drain(WAIT_S) is True
 
     before = {name: bench.written_ns(name) for name in ("chat", "code", "ops")}
-
-    # A restart: nothing is remembered, and a new image holds every create.
     bench.state = LoopState()
     forget_published()
     bench.driver = HoldingDriver(hold=("chat", "code", "ops"))
+
+    return before
+
+
+def test_a_restamp_never_touches_a_document_this_process_never_wrote(bench: Bench) -> None:
+    """Contract 05 §2 rule 8. A document from before a restart says
+    `in_sync` and `ready` about the OLD image. A new `written_at` is all a
+    restamp would give it, and `rework-cutover.sh up` reads fresh, `in_sync`
+    and `ready` as a converged fleet."""
+    _restart_into_a_new_image(bench)
+
+    for name in ("chat", "code", "ops"):
+        path = paths.status_path(bench.state_root, name)
+        assert restamp_status(path, older_than_s=0.0) is False
+
+
+def test_a_family_that_waits_for_a_slot_after_a_restart_is_looked_at(bench: Bench) -> None:
+    """The fault of 2026-10-04. A release restarted the manager while the
+    fleet moved onto a new image. Four creates held the four slots for
+    minutes. Each family behind them kept the old process's document, which
+    rule 8 forbids a restamp of, so it went stale and the verify hook failed
+    on `heartbeat`.
+
+    The waiting family now gets a look: every cheap step of its pass, and a
+    stop before the first slow one. The document that follows is this
+    process's own. It is never `in_sync`, because the look found a create
+    to do and did not do it."""
+    before = _restart_into_a_new_image(bench)
     held = bench.driver
+    assert isinstance(held, HoldingDriver)
     with Passes(bound=1) as passes:
         assert bench.look(passes, image=NEWER_IMAGE, heartbeat_s=0.0) == ("chat",)
         held.wait_inside(1)
-        bench.look(passes, image=NEWER_IMAGE, heartbeat_s=0.0)
 
-        # `code` and `ops` wait for the one slot. Nothing this process knows
-        # about them is true yet, so their documents are untouched.
-        assert bench.written_ns("code") == before["code"]
-        assert bench.written_ns("ops") == before["ops"]
-        # `chat` is inside its create, and its own pass said so.
+        for name in ("code", "ops"):
+            assert passes.wait_done(name, WAIT_S) is True
+            assert bench.written_ns(name) > before[name]
+            document = bench.status_of(name)
+            assert document["state"] == FamilyState.RECONCILING
+            assert document["reconcile"] is not None
+            # The sandbox the old process left is still the one that serves.
+            assert [one["state"] for one in document["sandboxes"]] == [SandboxLifecycle.READY]
+
+        # The look created nothing: the one slot is still `chat`'s.
+        assert held.peak == 1
         assert bench.status_of("chat")["state"] == FamilyState.RECONCILING
+
+        held.release.set()
+        assert passes.drain(WAIT_S) is True
+
+
+def test_a_look_is_not_the_pass(bench: Bench) -> None:
+    """The family stays behind after its look. It takes the first slot that
+    comes free, and the pass that follows does the create."""
+    _restart_into_a_new_image(bench)
+    held = bench.driver
+    assert isinstance(held, HoldingDriver)
+    old = {name: bench.live_ids(name) for name in ("code", "ops")}
+    with Passes(bound=1) as passes:
+        bench.look(passes, image=NEWER_IMAGE, heartbeat_s=0.0)
+        held.wait_inside(1)
+        for name in ("code", "ops"):
+            assert passes.wait_done(name, WAIT_S) is True
+
+        held.release.set()
+        assert passes.drain(WAIT_S) is True
+        for _ in range(4):
+            bench.look(passes, image=NEWER_IMAGE, heartbeat_s=0.0)
+            assert passes.drain(WAIT_S) is True
+
+    for name in ("code", "ops"):
+        assert bench.live_ids(name) != old[name]
+        assert bench.status_of(name)["state"] == FamilyState.IN_SYNC
+
+
+def test_a_family_is_looked_at_once(bench: Bench) -> None:
+    """The look published this process's own document, so a restamp keeps
+    it fresh from then on (rule 8). A second look would run every cheap
+    step again, every two seconds, for as long as the slots are full."""
+    _restart_into_a_new_image(bench)
+    held = bench.driver
+    assert isinstance(held, HoldingDriver)
+    with Passes(bound=1) as passes:
+        bench.look(passes, image=NEWER_IMAGE, heartbeat_s=0.0)
+        held.wait_inside(1)
+        for name in ("code", "ops"):
+            assert passes.wait_done(name, WAIT_S) is True
+
+        looked = {name: bench.written_ns(name) for name in ("code", "ops")}
+        # A heartbeat far away: nothing is due a restamp, so any write here
+        # would be a second look.
+        assert bench.look(passes, image=NEWER_IMAGE, heartbeat_s=3600.0) == ()
+        assert passes.running() == frozenset({"chat"})
+        assert {name: bench.written_ns(name) for name in ("code", "ops")} == looked
+
+        held.release.set()
+        assert passes.drain(WAIT_S) is True
+
+
+def test_a_waiting_family_with_nothing_to_do_reads_in_sync(bench: Bench) -> None:
+    """A look runs the whole pass of a family that needs no slow step. Only
+    `chat` moved here, so `ops` is converged, and its look says so."""
+    write_registry(bench.registry_root, name="ops")
+    with Passes(bound=4) as earlier:
+        bench.look(earlier)
+        assert earlier.drain(WAIT_S) is True
+
+    bench.state = LoopState()
+    forget_published()
+    bench.driver = HoldingDriver(hold=("chat",))
+    held = bench.driver
+    # An edit that replaces `chat`'s sandbox and leaves `ops` alone.
+    write_registry(bench.registry_root, sandbox={"cpus": 3, "memory": "3g"})
+    with Passes(bound=1) as passes:
+        assert bench.look(passes, heartbeat_s=0.0) == ("chat",)
+        held.wait_inside(1)
+        assert passes.wait_done("ops", WAIT_S) is True
+
+        assert bench.status_of("ops")["state"] == FamilyState.IN_SYNC
+        assert bench.state.of("ops").revision != ""
 
         held.release.set()
         assert passes.drain(WAIT_S) is True
