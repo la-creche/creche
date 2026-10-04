@@ -177,6 +177,9 @@ class ReconcileResult:
     status: StatusDocument
     ran: tuple[str, ...]
     note: str
+    #: The pass stopped before a slow step and did not run it. It converged
+    #: to nothing, so the loop records no revision for it.
+    halted: bool = False
 
     @property
     def ok(self) -> bool:
@@ -439,6 +442,7 @@ def _converge(
         settled=settled,
         applied_now=done,
         webhooks=webhooks,
+        halted=halted,
         chaperone=chaperone,
     )
 
@@ -784,12 +788,18 @@ def _publish(
     applied_now: bool = False,
     webhooks: tuple[WebhookToken, ...] = (),
     in_flight: bool = False,
+    halted: bool = False,
     chaperone: PepReport,
 ) -> ReconcileResult:
     """Contract 05 §2: one document, rewritten atomically on every state
-    change."""
+    change.
+
+    A halted pass stopped in front of a slow step it still has to run, so
+    it is `reconciling` whatever the two revisions say. When only the image
+    moved they are equal, and without `halted` the document would read
+    `in_sync` about a sandbox the pass was about to replace."""
     applied_rev = revision if applied_now else (applied.rev if applied is not None else "")
-    state = _state_of(faults, applied_rev, revision, settled, in_flight=in_flight)
+    state = _state_of(faults, applied_rev, revision, settled, in_flight=in_flight or halted)
     validation = ValidationBlock(
         rev=revision,
         checked_at=now_rfc3339(),
@@ -819,7 +829,7 @@ def _publish(
         chaperone=chaperone,
     )
     write_status(paths.status_path(state_root, family.name), doc)
-    return ReconcileResult(family.name, doc, ran, note)
+    return ReconcileResult(family.name, doc, ran, note, halted)
 
 
 def _state_of(
