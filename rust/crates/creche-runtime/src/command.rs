@@ -145,6 +145,13 @@ pub enum Output {
 /// the environment of this process, the working directory of this process,
 /// an empty standard input, and a capture of 1 MiB for each output stream.
 ///
+/// The last two parts differ from `subprocess.run` of Python. That call gives
+/// the child the standard input of the process, and it captures output with
+/// no cap. A port of such a call states its standard input: [`Stdin::Inherit`],
+/// or [`Stdin::Null`] on purpose. It also states its cap. Each default that
+/// the port keeps is a difference from the Python call, and a row of the
+/// `DEVIATIONS` table of its test.
+///
 /// ```
 /// use std::time::Duration;
 ///
@@ -202,7 +209,9 @@ impl Command {
     /// A run of `program` with no argument.
     ///
     /// `program` is a path, or a name that the operating system finds on
-    /// `PATH`. The caller states the time limit and what a stop does.
+    /// `PATH`. The caller states the time limit and what a stop does. The doc
+    /// comment of [`Command`] names the two parts that differ from
+    /// `subprocess.run` of Python.
     #[must_use]
     pub fn new(program: impl Into<String>, limit: TimeLimit, at_shutdown: AtShutdown) -> Self {
         Self {

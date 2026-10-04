@@ -95,6 +95,11 @@ them again.
 11. Write each difference from a Python copy as a row of a `DEVIATIONS`
     table in the test of the module. The row names the vector. When no
     vector covers the case, the row names the Python file and the line.
+    - A new `Command` has an empty standard input and an output cap of 1 MiB.
+      `subprocess.run` of Python gives the child the standard input of the
+      process and has no cap.
+    - A port of such a call that keeps one of the two defaults has a
+      difference. Write it as a row.
 12. Name the Python origin of each function in its doc comment, with the file
     and the line.
 13. Write no `println!` and no `eprintln!` in code that is not a test. Use
