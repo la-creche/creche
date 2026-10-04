@@ -69,6 +69,10 @@ def read_object(path: Path, limit: int = MAX_DOC_BYTES) -> tuple[Json | None, st
 
 def parse_object(raw: bytes, name: str) -> tuple[Json | None, str | None]:
     """The same checks, on bytes already in hand."""
+    # CONTRACT-QUESTION: contract 05 §2 names no encoding for a file.
+    # `json.loads` takes UTF-8, UTF-16 and UTF-32, so this reader takes the
+    # three. The reading stays, because a stricter reader would refuse a file
+    # that a page shows today. A reader of UTF-8 alone costs one decode step.
     try:
         parsed: object = json.loads(raw)
     except RecursionError:
@@ -112,6 +116,10 @@ def integer(body: Json, key: str, fallback: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         return fallback
 
+    # CONTRACT-QUESTION: contracts 02, 04 and 05 give no range for a count.
+    # This reader takes an integer of any size that JSON can write. The
+    # reading stays, because a range would refuse a value that a page shows
+    # today. A range costs one comparison here.
     return value
 
 

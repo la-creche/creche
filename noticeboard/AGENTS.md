@@ -142,6 +142,10 @@ prefixed `test_noticeboard_`.
   (`registrywrite.py`).
 - The family page reads whatever `report_path` the status document names
   (`pages.py`).
+- Contract 05 §2 names no encoding for a file. `jsonfiles.py` takes UTF-8,
+  UTF-16 and UTF-32, as `json.loads` does.
+- No contract gives a range for a count. `jsonfiles.integer` takes an integer
+  of any size.
 - `spec.md` §8.1 names no answer for a route parameter that is not an id.
   The route answers the 404 of a path that has no route (`app.py`).
 - `spec.md` §8.3 names no answer for an exception that no reader predicted.
