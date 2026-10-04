@@ -1,7 +1,7 @@
 """When the quality gate runs cargo, and what it runs.
 
 `bin/quality-gate.sh` runs the Rust checks only for a change that touches
-`rust/` (`bin/lib/rustrule.sh`). Four things could go wrong without one red
+`rust/` (`bin/lib/rustrule.sh`). Five things could go wrong without one red
 line, and each gets a check here:
 
 1. **A Python change that needs cargo.** Some sessions commit from a sandbox
@@ -17,6 +17,9 @@ line, and each gets a check here:
 4. **A crate outside the lint gate.** A crate with no `[lints] workspace =
    true` builds with none of `[workspace.lints]`, and cargo does not say so.
    `bin/rust-gate.sh` refuses it.
+5. **A Rust file that reads a Markdown file.** A change of nothing but
+   Markdown runs no cargo step, so it could break a doc test with no red
+   line. `bin/rust-gate.sh` refuses the include.
 
 Everything runs the real gate in a throwaway repository. `uv` and `cargo`
 are fakes that write their argv to a file. PATH holds only those fakes and
@@ -650,6 +653,89 @@ def test_a_crate_file_in_cargos_build_directory_is_not_a_crate(tree: Tree) -> No
     done = tree.run(RUST_GATE)
 
     assert done.code == 0, done.out + done.err
+
+
+def test_a_crate_in_a_directory_named_target_is_still_a_crate(tree: Tree) -> None:
+    """Only `rust/target` is cargo's build directory. `crates/*` makes
+    `crates/target` a workspace member like any other."""
+    tree.write("rust/crates/target/Cargo.toml", OUTSIDE["no table"])
+
+    done = tree.run(RUST_GATE)
+
+    assert done.code == 1
+    assert done.cargo == []
+    assert done.err.splitlines() == [
+        "rust-gate: rust/crates/target/Cargo.toml has no `[lints] workspace = true`"
+    ]
+
+
+def test_a_check_that_read_no_crate_fails(tree: Tree) -> None:
+    """A search that finds nothing has checked nothing: a moved workspace,
+    or a `find` that failed."""
+    (tree.root / CRATE / "Cargo.toml").unlink()
+
+    done = tree.run(RUST_GATE)
+
+    assert done.code == 1
+    assert done.cargo == []
+    assert done.err.splitlines() == [
+        "rust-gate: the `[lints]` check read no crate under rust/",
+    ]
+
+
+#: Lines of Rust that include a Markdown file.
+MD_INCLUDES = {
+    "a crate doc": '#![doc = include_str!("../README.md")]\n',
+    "an item doc": '#[doc = include_str!("../../../AGENTS.md")]\npub struct One;\n',
+    "bytes": 'const TEXT: &[u8] = include_bytes!("notes.md");\n',
+    "code": 'include!("generated.md");\n',
+    "a built path": 'const TEXT: &str = include_str!(concat!(env!("OUT_DIR"), "/a.md"));\n',
+}
+
+#: Lines of Rust that include none.
+OTHER_INCLUDES = {
+    "a text file": 'const TEXT: &str = include_str!("vectors.txt");\n',
+    "a name in a string": 'const NAME: &str = "README.md";\n',
+    "no include": "pub struct One;\n",
+}
+
+
+@pytest.mark.parametrize("body", MD_INCLUDES.values(), ids=MD_INCLUDES.keys())
+def test_a_rust_file_that_includes_markdown_is_refused(tree: Tree, body: str) -> None:
+    """A push of nothing but Markdown runs no cargo step. A doc test that
+    reads a `.md` would then break on main with no cargo run."""
+    tree.write(RUST_PATH, body)
+
+    done = tree.run(RUST_GATE)
+
+    assert done.code == 1
+    assert done.cargo == []
+    assert done.err.splitlines() == [f"rust-gate: {RUST_PATH} includes a Markdown file"]
+
+
+@pytest.mark.parametrize("body", OTHER_INCLUDES.values(), ids=OTHER_INCLUDES.keys())
+def test_a_rust_file_that_includes_no_markdown_passes(tree: Tree, body: str) -> None:
+    tree.write(RUST_PATH, body)
+
+    done = tree.run(RUST_GATE)
+
+    assert done.code == 0, done.out + done.err
+    assert done.cargo == LINT_STEPS
+
+
+def test_every_rust_file_that_includes_markdown_gets_its_own_line(tree: Tree) -> None:
+    tree.write(RUST_PATH, MD_INCLUDES["a crate doc"])
+    tree.write(f"{CRATE}/tests/wire.rs", MD_INCLUDES["bytes"])
+    tree.write("rust/target/debug/build/out.rs", MD_INCLUDES["code"])
+    tree.write("rust/AGENTS.md", 'Do not write `include_str!("README.md")`.\n')
+
+    done = tree.run(RUST_GATE)
+
+    assert done.code == 1
+    assert done.err.splitlines() == [
+        f"rust-gate: {RUST_PATH} includes a Markdown file",
+        f"rust-gate: {CRATE}/tests/wire.rs includes a Markdown file",
+    ]
 
 
 # --- the rule CI asks: does this change touch rust/? -------------------------

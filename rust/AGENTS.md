@@ -34,9 +34,10 @@ You need rustup. It installs the toolchain at the first cargo command under
 `bin/rust-gate.sh` runs these steps in this order:
 
 1. The `[lints]` check. Each crate must take the lint gate.
-2. `cargo fmt --all --check`.
-3. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
-4. `cargo test --workspace --locked`, with `--tests` only.
+2. The include check. No Rust source file includes a Markdown file.
+3. `cargo fmt --all --check`.
+4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+5. `cargo test --workspace --locked`, with `--tests` only.
 
 `bin/quality-gate.sh` starts `bin/rust-gate.sh` only for a change that
 touches `rust/`. `bin/AGENTS.md` has the table. Every path under `rust/`
@@ -172,7 +173,9 @@ the reason in the commit message.
   test. If a later change needs such a file, add its directory to
   `bin/lib/rustrule.sh` first.
 - A Rust source file includes no Markdown file. A push of Markdown files
-  only runs no cargo step.
+  only runs no cargo step. `bin/rust-gate.sh` refuses a line that holds
+  `include_str!`, `include_bytes!` or `include!` and a name that ends in
+  `.md`.
 - A push that changes only `rust/` runs no pytest suite. A Python test that
   reads a file under `rust/` then runs first in CI.
   `bin/tests/test_rust_workspace.py` is such a test.

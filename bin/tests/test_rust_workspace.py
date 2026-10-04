@@ -108,6 +108,18 @@ def test_the_toolchain_is_the_rust_version_of_the_workspace() -> None:
     assert set(toolchain["components"]) == {"rustfmt", "clippy"}
 
 
+def test_every_crate_takes_the_lint_gate() -> None:
+    """`bin/rust-gate.sh` reads the text of each crate file. This reads the
+    TOML, so a spelling that the text check misreads still fails here."""
+    manifests = sorted((REPO / RUST_DIR / "crates").glob("*/Cargo.toml"))
+
+    assert manifests, f"no crate under {RUST_DIR}/crates"
+    for manifest in manifests:
+        lints = tomllib.loads(manifest.read_text(encoding="utf-8")).get("lints")
+
+        assert lints == {"workspace": True}, f"{manifest.parent.name} is outside the lint gate"
+
+
 def test_no_crate_carries_a_version_to_bump() -> None:
     """No number lives in a file (`test_gate_workflow.py` holds the Python
     half). cargo reads a crate with no version as 0.0.0."""

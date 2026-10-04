@@ -70,7 +70,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `sync-code-corpus.sh` | OPERATOR, hourly | Refreshes the dedicated code clones the library indexes. The repository list lives outside the corpus. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. |
-| `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, `cargo fmt` and `cargo clippy` on the workspace under `rust/`. `--tests` adds `cargo test`. |
+| `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, the include check, `cargo fmt` and `cargo clippy` on the workspace under `rust/`. `--tests` adds `cargo test`. |
 
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
 only after `sudo creche-deploy`.
@@ -93,7 +93,7 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 
 | Mode | The change touches `rust/` when | `rust-gate.sh` runs |
 |---|---|---|
-| no flag | the index or the work tree differs from `HEAD` under `rust/` | the `[lints]` check, `cargo fmt`, `cargo clippy` |
+| no flag | the index or the work tree differs from `HEAD` under `rust/` | the `[lints]` check, the include check, `cargo fmt`, `cargo clippy` |
 | `--tests-for` | one path or more is under `rust/` | the same, then `cargo test` |
 | `--tests` | always | the same, then `cargo test` |
 | `--docs` | never | nothing |
@@ -113,6 +113,10 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
   a path in no package, so it does not start the full Python suite.
 - The `[lints]` check refuses a crate that has no `[lints]` table with the
   line `workspace = true`. Such a crate builds with no lint of the workspace.
+  The check also fails when it finds no crate.
+- The include check refuses a Rust source file that includes a Markdown
+  file. A change of Markdown only runs no cargo step, so such a file can
+  break a doc test with no cargo run.
 
 ## Tests
 
@@ -122,7 +126,7 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
 | `test_bin_hook_env.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
-| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, and the `[lints]` check. |
+| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the `[lints]` check and the include check. |
 | `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
 | `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command and the same `rust` job, and `!retest` restarts one run. |
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |
