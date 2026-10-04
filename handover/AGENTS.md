@@ -51,6 +51,11 @@ child and opens no socket. The fetch is `corpus/`'s and the request is
 `bin/allocate-tags.sh` runs in GitHub Actions. It never runs on a host. Its
 arithmetic lives in `allocate.py`, which is pure.
 
+Prose moves no tag. `allocate.cut_paths` drops each `.md` path outside
+`tests/` and `fixtures/` before the cut, because the cut loses the file
+name. `bin/lib/docsrule.sh` holds the same rule for the hook and CI. A test
+holds the two copies equal.
+
 The console script is `handover`. The verify hook and the operator's
 `request` command run it by that name.
 

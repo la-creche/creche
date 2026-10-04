@@ -12,11 +12,12 @@ path reaches.
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from handover.allocate import cut_path, cut_paths, touched
+from handover.allocate import cut_path, cut_paths, is_prose, touched
 from handover.catalog import BINARY_BUILD_FILES, CATALOG, CATALOG_BY_NAME, Kind, Repo
 from handover.cli import EXIT_OK, main
 from handover_bin_fixtures import BINARY_NAME, NESTED_BUNDLE, catalog_with, use_binary_catalog
@@ -178,11 +179,13 @@ def test_the_command_prints_the_cut_of_a_file(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     changed = tmp_path / "changed"
-    changed.write_text("chaperone/a.py\nchaperone/b.py\n\ndocs/x.md\n", encoding="utf-8")
+    lines = "chaperone/a.py\nchaperone/b.py\n\ndocs/x.md\ndocs/figure.svg\nplaypen/AGENTS.md\n"
+    changed.write_text(lines, encoding="utf-8")
 
     code = main(["allocate-tags", "--repo", str(CONTROL), "--cut", str(changed)])
 
     assert code == EXIT_OK
+    # Prose is dropped before the cut: neither `.md` line prints anything.
     assert capsys.readouterr().out == "chaperone\ndocs\n"
 
 
@@ -213,3 +216,75 @@ def test_the_command_reads_a_path_that_is_not_utf8(
 
     assert code == EXIT_OK
     assert capsys.readouterr().out == "chaperone\n"
+
+
+# -- prose moves no tag ------------------------------------------------------
+
+#: `bin/lib/docsrule.sh`, the one copy of the rule the hook and CI source.
+DOCS_RULE = Path(__file__).resolve().parents[2] / "bin" / "lib" / "docsrule.sh"
+
+#: Paths of every shape the rule must judge: prose under a component, prose
+#: at the root, a document under `tests/` or `fixtures/`, and code.
+PROSE_SAMPLES = (
+    "playpen/AGENTS.md",
+    "README.md",
+    "docs/writing-standard.md",
+    "rust/crates/agent-family/AGENTS.md",
+    "caregiver/tests/notes.md",
+    "integration/fixtures/eq-registry/families/chat/instructions.md",
+    "tests/README.md",
+    "playpen/src/index.ts",
+    "playpen/component.yaml",
+    "noticeboard/src/noticeboard/pages.py",
+    "handover/md",
+    "chaperone/notes.md.py",
+    "x.MD",
+)
+
+
+def test_a_prose_only_range_is_cut_to_nothing() -> None:
+    """A `playpen` release rebuilds both sandbox images, and the fleet then
+    replaces every sandbox. An edit to `playpen/AGENTS.md` changes nothing
+    that runs, so it must not ask for one."""
+    assert cut_paths(["playpen/AGENTS.md", "caregiver/AGENTS.md", "README.md"], CONTROL) == ()
+
+
+def test_a_range_of_prose_and_code_keeps_the_code() -> None:
+    """The window of a component is measured from its own newest tag. A
+    code change that follows a prose change tags the component once, and
+    that tag covers both."""
+    changed = ["playpen/AGENTS.md", "playpen/src/index.ts", "caregiver/AGENTS.md"]
+
+    assert cut_paths(changed, CONTROL) == ("playpen",)
+
+
+def test_a_document_under_tests_or_fixtures_is_not_prose() -> None:
+    """It is a fixture: the instructions of a registry family, or a skill.
+    A test loads it, so a change to it is a change to what the suite proves."""
+    assert cut_paths(["caregiver/tests/notes.md"], CONTROL) == ("caregiver",)
+
+
+def test_prose_at_the_root_moves_no_whole_repository_component() -> None:
+    """`mcp-servers` is the whole MCP repository, so each path reaches it.
+    Its README must not."""
+    assert cut_paths(["README.md", "docs/servers.md"], Repo.AGENT_MCP) == ()
+    assert cut_paths(["README.md", "src/agent_mcp/x.py"], Repo.AGENT_MCP) == ("src",)
+
+
+def _hook_calls_it_prose(path: str) -> bool:
+    done = subprocess.run(
+        ["bash", "-c", '. "$1" && docs_path "$2"', "docs_path", str(DOCS_RULE), path],
+        capture_output=True,
+        check=False,
+    )
+
+    return done.returncode == 0
+
+
+@pytest.mark.parametrize("path", PROSE_SAMPLES)
+def test_the_planner_and_the_hook_hold_one_prose_rule(path: str) -> None:
+    """Two languages, one rule. The hook and CI ask `docs_path` whether a
+    change is prose and run fewer tests when it is. The planner asks
+    `is_prose` whether a change moves a tag. A path the two judged
+    differently would be tested as prose and released as code."""
+    assert is_prose(path) is _hook_calls_it_prose(path)
