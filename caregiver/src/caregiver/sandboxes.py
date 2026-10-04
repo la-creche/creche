@@ -27,6 +27,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -445,15 +446,32 @@ def write_ledger(state_root: Path, family_name: str, records: tuple[SandboxRecor
 
 def _read_rows(state_root: Path, family_name: str) -> tuple[SandboxRecord | _Unread, ...]:
     """Every row of the ledger file, in file order."""
-    body = read_json(paths.sandboxes_path(state_root, family_name))
-    if body is None:
+    # CONTRACT-QUESTION: no contract defines this file, so none says what a
+    # file that is present and gives no list of rows means. This reader
+    # takes it as an absent file, as it did for text that is not JSON. The
+    # next rewrite replaces the file and says so in the log. Each sandbox
+    # that the file named then has no row, and no pass destroys it. To keep
+    # the file, each pass of that family must stop until the operator
+    # repairs the file.
+    rows = _row_list(paths.sandboxes_path(state_root, family_name))
+    if rows is None:
         return ()
+
+    return tuple(_one_record(raw) or _Unread(raw) for raw in rows)
+
+
+def _row_list(path: Path) -> list[Any] | None:
+    """The list of rows that the ledger file holds. None when the file is
+    absent or gives no list."""
+    body = read_json(path)
+    if body is None:
+        return None
 
     rows = body.get("sandboxes")
     if not isinstance(rows, list):
-        return ()
+        return None
 
-    return tuple(_one_record(raw) or _Unread(raw) for raw in cast("list[Any]", rows))
+    return cast("list[Any]", rows)
 
 
 def _write_rows(
@@ -469,10 +487,14 @@ def _write_rows(
     if unread:
         log.warning("%s: the ledger keeps %d row(s) that do not read", family_name, unread)
 
+    path = paths.sandboxes_path(state_root, family_name)
+    if _row_list(path) is None and os.path.exists(path):
+        # `_read_rows` took this file as no rows, so the text below holds
+        # none of the rows that the file held.
+        log.error("%s: the ledger replaces a file that does not read", family_name)
+
     atomic_write(
-        paths.sandboxes_path(state_root, family_name),
-        _ledger_text(family_name, kept).encode("utf-8") + b"\n",
-        mode=LEDGER_FILE_MODE,
+        path, _ledger_text(family_name, kept).encode("utf-8") + b"\n", mode=LEDGER_FILE_MODE
     )
 
 

@@ -5,6 +5,7 @@ failure."""
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -268,6 +269,68 @@ def test_a_second_apply_still_reaches_in_sync(registry_root: Path, state_root: P
     result = apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
     assert result.ok is True
     assert result.status.state is FamilyState.IN_SYNC
+
+
+# --- a creds.json that does not read ---------------------------------------
+
+#: Content of `creds.json` that `read_creds` refuses.
+NO_CREDS: dict[str, bytes] = {
+    **UNREADABLE_JSON,
+    "empty": b"",
+    "not-json": b"{not json",
+    "no-epoch": b'{"litellm_key": "sk-x", "pep_token": "tok", "written_at": "w"}',
+}
+
+REPLACES_CREDS = (
+    "chat: creds.json does not read. The pass replaces it with a new key, a new token and epoch 1"
+)
+
+
+@pytest.mark.parametrize("raw", NO_CREDS.values(), ids=NO_CREDS.keys())
+def test_an_apply_over_creds_that_do_not_read_says_so(
+    registry_root: Path, state_root: Path, caplog: pytest.LogCaptureFixture, raw: bytes
+) -> None:
+    """A `creds.json` that does not read is taken as an absent file. The
+    pass mints again and the epoch starts again at 1, so the pass says it,
+    one time."""
+    litellm = FakeLiteLLMKeys()
+    apply_chat(registry_root, state_root, litellm=litellm)
+    paths.creds_path(state_root, "chat").write_bytes(raw)
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.steps"):
+        apply_chat(registry_root, state_root, litellm=litellm)
+        apply_chat(registry_root, state_root, litellm=litellm)
+
+    assert litellm.minted == 2
+    assert [(one.levelno, one.getMessage()) for one in caplog.records] == [
+        (logging.ERROR, REPLACES_CREDS)
+    ]
+
+
+def test_an_apply_over_creds_that_read_says_nothing(
+    registry_root: Path, state_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The first apply finds no file. The second finds one that reads."""
+    with caplog.at_level(logging.WARNING, logger="caregiver.steps"):
+        apply_chat(registry_root, state_root)
+        apply_chat(registry_root, state_root)
+
+    assert caplog.records == []
+
+
+def test_a_failed_mint_over_creds_that_do_not_read_keeps_the_file(
+    registry_root: Path, state_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No write, so nothing to say: the file is as it was."""
+    apply_chat(registry_root, state_root)
+    creds_path = paths.creds_path(state_root, "chat")
+    creds_path.write_bytes(NO_CREDS["not-json"])
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.steps"):
+        apply_chat(registry_root, state_root, litellm=FailingLiteLLM())
+
+    assert creds_path.read_bytes() == NO_CREDS["not-json"]
+    assert caplog.records == []
 
 
 # --- family not in the registry ----------------------------------------

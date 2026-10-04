@@ -300,6 +300,61 @@ def test_a_ledger_that_does_not_read_is_empty(state_root: Path, raw: bytes) -> N
     assert read_ledger(state_root, "chat") == ()
 
 
+#: Content of a ledger file that gives no list of rows.
+NO_ROW_LIST: dict[str, bytes] = {
+    **UNREADABLE_JSON,
+    "empty": b"",
+    "not-json": b"{not json",
+    "no-object": b'["chat-s1"]',
+    "rows-are-text": b'{"sandboxes": "chat-s1"}',
+}
+
+REPLACES_A_FILE = "chat: the ledger replaces a file that does not read"
+
+
+@pytest.mark.parametrize("raw", NO_ROW_LIST.values(), ids=NO_ROW_LIST.keys())
+def test_a_rewrite_over_a_ledger_that_does_not_read_says_so(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture, raw: bytes
+) -> None:
+    """A ledger file that gives no rows reads as an absent file, and the
+    next rewrite replaces it. The rows that the file held are gone then,
+    so the rewrite says it, one time."""
+    path = paths.sandboxes_path(state_root, "chat")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        outcome = create(state_root, family, FakeDriver())
+
+    assert read_ledger(state_root, "chat") == (outcome.record,)
+    assert [(one.levelno, one.getMessage()) for one in caplog.records] == [
+        (logging.ERROR, REPLACES_A_FILE)
+    ]
+
+
+def test_a_rewrite_over_a_ledger_that_reads_says_nothing(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The first write finds no file. The second finds one that reads."""
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        create(state_root, family, FakeDriver())
+        create(state_root, family, FakeDriver())
+
+    assert caplog.records == []
+
+
+def test_a_rewrite_over_a_ledger_with_no_rows_says_nothing(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An empty list of rows is a ledger that reads."""
+    write_ledger(state_root, "chat", ())
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        create(state_root, family, FakeDriver())
+
+    assert caplog.records == []
+
+
 # --- a row that does not read ---------------------------------------------------
 
 

@@ -204,3 +204,11 @@ Nothing here touches a real sandbox or LiteLLM.
 - No pass manages a sandbox whose ledger row does not read. The row stays
   in the file, and the log names the family at each rewrite
   (`sandboxes.py`).
+- The ledger reader takes a file that is present and gives no list of rows
+  as an absent file. The next rewrite replaces the file and writes one error
+  line. No pass then destroys a sandbox that the old file named
+  (`sandboxes.py`).
+- A pass takes a `creds.json` that is present and does not read as an
+  absent file. It mints a new key and a new token, writes epoch 1 and
+  writes one error line. Contract 03 §12 rule 3 says that the epoch
+  increases on every write (`steps.py`).
