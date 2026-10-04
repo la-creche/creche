@@ -744,12 +744,19 @@ async def test_the_token_survives_a_reapply(caregiver_prepared: CaregiverStack) 
 async def test_deleting_the_grant_file_revokes_the_family(
     caregiver_prepared: CaregiverStack,
 ) -> None:
-    """Contract 04 §1.3 rule 5. No grant file, no family, with no restart."""
+    """Contract 04 §1.3 rule 5. No grant file, no family, with no restart.
+
+    `caregiver` is the one writer of the grant file. The test stops it
+    first, so no pass writes the file again after the test removes it.
+    """
     stack = _with_chaperone(caregiver_prepared, family_body(verbs=VERBS))
     assert stack.chaperone is not None
+    assert stack.caregiver is not None
 
     async with stack.sandbox_client() as sandbox:
         before = await sandbox.get(MANIFEST_PATH)
+        stack.caregiver.send(signal.SIGTERM)
+        assert stack.caregiver.wait(EXIT_DEADLINE_S) == EXIT_OK
         stack.tree.grant_file().unlink()
         after = await sandbox.get(MANIFEST_PATH)
 

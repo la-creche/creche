@@ -210,7 +210,8 @@ start no service, for a scenario that changes the registry first.
 
 1. A test changes the registry and nothing else. `caregiver` publishes each
    family from it. Do not write a status document, a grant file, a
-   credential file or an env file in this topology.
+   credential file or an env file in this topology. One scenario removes
+   the grant file. It stops `caregiver` first.
 2. An edit to one registry file is the one action of a scenario. Do not send
    a signal to make `caregiver` look, unless the signal is the scenario.
 3. Write a registry file with `write_family_file`, `write_family_prose` or
