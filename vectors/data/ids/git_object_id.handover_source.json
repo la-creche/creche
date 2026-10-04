@@ -1,0 +1,28 @@
+{
+ "context": {"grammar":"git_object_id"},
+ "contract": "contract 06 \u00a74",
+ "entry": "handover.executor.source.OBJECT_ID_RE.fullmatch",
+ "format": 1,
+ "notes": ["The entry point is a pattern. The package's own code calls this method on it. A caller can add a length cap of its own."],
+ "surface": "id.git_object_id.handover_source",
+ "vectors": [
+  {"id":"probe-sample","input":{"text":"0123456789abcdef0123456789abcdef01234562"},"result":"accepted"},
+  {"id":"probe-empty","input":{"text":""},"result":"refused"},
+  {"id":"probe-trailing-newline","input":{"text":"0123456789abcdef0123456789abcdef01234562\n"},"result":"refused"},
+  {"id":"probe-trailing-cr","input":{"text":"0123456789abcdef0123456789abcdef01234562\r"},"result":"refused"},
+  {"id":"probe-leading-space","input":{"text":" 0123456789abcdef0123456789abcdef01234562"},"result":"refused"},
+  {"id":"probe-trailing-space","input":{"text":"0123456789abcdef0123456789abcdef01234562 "},"result":"refused"},
+  {"id":"probe-nul-at-end","input":{"text":"0123456789abcdef0123456789abcdef01234562\u0000"},"result":"refused"},
+  {"id":"probe-nul-inside","input":{"text":"0\u0000123456789abcdef0123456789abcdef01234562"},"result":"refused"},
+  {"id":"probe-arabic-digit","input":{"text":"0123456789abcdef0123456789abcdef0123456\u0661"},"result":"refused"},
+  {"id":"probe-fullwidth-digit","input":{"text":"0123456789abcdef0123456789abcdef0123456\uff11"},"result":"refused"},
+  {"id":"probe-overlong","input":{"text":"0123456789abcdef0123456789abcdef0123456200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"},"result":"refused"},
+  {"id":"all-zero","input":{"text":"0000000000000000000000000000000000000000"},"result":"accepted"},
+  {"id":"upper","input":{"text":"0123456789ABCDEF0123456789ABCDEF01234567"},"result":"refused"},
+  {"id":"short-39-chars","input":{"text":"0123456789abcdef0123456789abcdef0123456"},"result":"refused"},
+  {"id":"long-41-chars","input":{"text":"0123456789abcdef0123456789abcdef012345670"},"result":"refused"},
+  {"id":"sha256-length","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"result":"refused"},
+  {"id":"short-sha","input":{"text":"0123456"},"result":"refused"},
+  {"id":"letter-g","input":{"text":"g123456789abcdef0123456789abcdef01234567"},"result":"refused"}
+ ]
+}
