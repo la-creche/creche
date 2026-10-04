@@ -14,6 +14,7 @@
 
 import { CredReader } from "./creds.js";
 import { FIRST_TURN_SEQ, MAX_LOG_BYTES } from "./constants.js";
+import { cutToBytes } from "./framing.js";
 import { piModelId, writeModelsJson } from "./models-json.js";
 import { bridgeAt, buildPiStart, PiMode } from "./pi-args.js";
 import type { PiArgsSpec, PiStart } from "./pi-args.js";
@@ -893,7 +894,7 @@ export class SessionPool {
       session,
       resident: false,
       reason,
-      message: detail.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(detail, MAX_LOG_BYTES),
     });
   }
 
@@ -904,7 +905,7 @@ export class SessionPool {
       turn: at.turn,
       turn_seq: FIRST_TURN_SEQ,
       reason,
-      message: detail.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(detail, MAX_LOG_BYTES),
     });
   }
 

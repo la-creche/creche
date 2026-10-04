@@ -33,7 +33,7 @@ import {
   PLAYPEN_NAME,
 } from "./constants.js";
 import { CredReader } from "./creds.js";
-import { LineReader } from "./framing.js";
+import { cutToBytes, LineReader } from "./framing.js";
 import { LockState, PlaypenLock } from "./lock.js";
 import type { PiLauncher } from "./pi-process.js";
 import { SessionPool } from "./pool.js";
@@ -172,7 +172,7 @@ export class Playpen {
     this.options.channel.send({
       type: "fatal",
       reason: "control_mount_unwritable",
-      message: `cannot write the playpen lock: ${outcome.detail}`.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(`cannot write the playpen lock: ${outcome.detail}`, MAX_LOG_BYTES),
     });
     this.note(`control mount is not writable: ${outcome.detail}`);
     this.options.onExit(EXIT_CONTROL_MOUNT);
@@ -507,7 +507,7 @@ export class Playpen {
       type: "log",
       level,
       session,
-      message: message.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(message, MAX_LOG_BYTES),
     });
   }
 

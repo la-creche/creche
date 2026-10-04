@@ -24,6 +24,7 @@ import {
   PI_SETTLED_EVENT,
 } from "./constants.js";
 import { readEntry } from "./entry-text.js";
+import { cutToBytes } from "./framing.js";
 import { PiCommandError, PiProcess } from "./pi-process.js";
 import type { PiLauncher } from "./pi-process.js";
 import { entryList } from "./pi-record.js";
@@ -603,7 +604,7 @@ export class SandboxSession {
       turn: state.id,
       turn_seq: state.seq,
       reason,
-      message: message.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(message, MAX_LOG_BYTES),
     });
 
     this.release(state);
@@ -677,7 +678,7 @@ export class SandboxSession {
       type: "log",
       level: "info",
       session: this.id,
-      message: message.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(message, MAX_LOG_BYTES),
     });
   }
 }

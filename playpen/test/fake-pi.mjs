@@ -27,11 +27,12 @@
 //   FAKE_PI_HANDLED   answer every prompt as handled, run nothing  default off
 //   FAKE_PI_DIE_ON_ENTRIES  exit hard when a get_entries arrives    default off
 //
-// Four more make this process misbehave, as an untrusted pi may (invariant 12):
+// Five more make this process misbehave, as an untrusted pi may (invariant 12):
 //   FAKE_PI_RAW_BOOT    write this text as one record at start-up    default off
 //   FAKE_PI_RAW_LINE    write this text as one record in each turn   default off
 //   FAKE_PI_NULL_ENTRY  put a null first in every get_entries list   default off
 //   FAKE_PI_ODD_ERROR   refuse every prompt with an error that is not text  default off
+//   FAKE_PI_STDERR      write this text to stderr as one line at start-up  default off
 
 const DELTAS = Number(process.env.FAKE_PI_EVENTS || 6);
 const DELAY_MS = Number(process.env.FAKE_PI_DELAY_MS || 8);
@@ -45,6 +46,7 @@ const RAW_BOOT = process.env.FAKE_PI_RAW_BOOT || "";
 const RAW_LINE = process.env.FAKE_PI_RAW_LINE || "";
 const NULL_ENTRY = process.env.FAKE_PI_NULL_ENTRY === "1";
 const ODD_ERROR = process.env.FAKE_PI_ODD_ERROR === "1";
+const STDERR_LINE = process.env.FAKE_PI_STDERR || "";
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -316,6 +318,10 @@ async function main() {
 
   if (RAW_BOOT) {
     sendRaw(RAW_BOOT);
+  }
+
+  if (STDERR_LINE) {
+    process.stderr.write(STDERR_LINE + "\n");
   }
 
   process.stdin.setEncoding("utf8");
