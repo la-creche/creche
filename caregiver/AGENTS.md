@@ -159,6 +159,9 @@ Nothing here touches a real sandbox or LiteLLM.
 - `degraded` wins over `reconciling` while a fault is open (`reconcile.py`).
 - A cron line with no `OnCalendar` spelling gets no timer and no fault
   (`timers.py`).
+- `CONTRACT-QUESTION` in `timers.py`, `_atom`. Contract 01 §3.13 gives no
+  grammar for a cron field. The timer step reads `1-` as `1` and `*/` as
+  `*`. It does not check the size of a step.
 - `apply-once` publishes no chaperone fault (`apply.py`).
 - `settle` and `rotate_serving` write token digests while a family file is
   invalid. Contract 05 §3.1 and §6.3 do not agree on this (`loop.py`).
