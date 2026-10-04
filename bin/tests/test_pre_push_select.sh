@@ -11,7 +11,7 @@
 # moves a vector fails before the push. A path under vectors/ also runs the
 # cargo tests, which read vectors/data. A path under integration/proc/ picks
 # the process-level suite, which no testpaths entry holds, and does not start
-# the full suite.
+# the full suite. Prose under integration/proc/ picks no suite.
 # CI runs the full suite for any other change and is the merge gate: the
 # scope decides whether a regression in the package just changed is caught
 # before the push or only in CI.
@@ -183,7 +183,7 @@ gate --tests-for chaperone/src/chaperone/app.py rust/Cargo.lock
 # `proc` job of CI (.github/workflows/gate.yml).
 PROC="run pytest integration/proc -m slow -n 4"
 
-gate --tests-for integration/proc/proc_tree.py integration/proc/AGENTS.md
+gate --tests-for integration/proc/proc_tree.py integration/proc/test_proc_table.py
 [[ "$RC" == "0" && "$PYTEST" == "$PROC" && -z "$CARGO" ]] \
   && pass "a path under integration/proc/ runs the process suite and no other suite" \
   || fail "process suite paths: rc=$RC, pytest lines '$PYTEST', cargo ran '$CARGO'"
@@ -193,6 +193,33 @@ said "integration/proc, for integration/proc/proc_tree.py and 1 more" \
 [[ "$NO_SKIP" == "1" ]] \
   && pass "a skip in the process suite is a failure, as in CI" \
   || fail "process suite paths: CRECHE_PROC_NO_SKIP was '$NO_SKIP'"
+
+# Prose under integration/proc/ (bin/lib/docsrule.sh) picks no suite: no test
+# reads it. A push of a package and one line of that document then needs no
+# playpen bundle.
+NO_PROC="no process suite: each path under integration/proc/ is prose"
+
+gate --tests-for integration/proc/proc_tree.py integration/proc/AGENTS.md
+[[ "$RC" == "0" && "$PYTEST" == "$PROC" ]] \
+  && said "integration/proc, for integration/proc/proc_tree.py" && ! said "and 1 more" \
+  && pass "prose beside a process suite path is not a reason for the process suite" \
+  || fail "a process suite path and prose: rc=$RC, pytest lines '$PYTEST', $(cat "$OUT")"
+
+gate --tests-for chaperone/src/chaperone/app.py integration/proc/AGENTS.md
+[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] && said "$NO_PROC" \
+  && pass "a package and prose under integration/proc/ run the suite of the package only" \
+  || fail "a package and process suite prose: rc=$RC, pytest lines '$PYTEST', $(cat "$OUT")"
+
+gate --tests-for integration/proc/AGENTS.md integration/proc/README.md
+[[ "$RC" == "0" && -z "$PYTEST" ]] && said "$NO_PROC" \
+  && pass "prose under integration/proc/ alone runs no pytest, and the gate says why" \
+  || fail "process suite prose alone: rc=$RC, pytest lines '$PYTEST', $(cat "$OUT")"
+
+# A .md under tests/ or fixtures/ is data that a test loads, not prose.
+gate --tests-for integration/proc/fixtures/registry/instructions.md
+[[ "$RC" == "0" && "$PYTEST" == "$PROC" ]] \
+  && pass "a .md of a fixture under integration/proc/ runs the process suite" \
+  || fail "a fixture .md under integration/proc: rc=$RC, pytest lines '$PYTEST'"
 
 gate --tests-for '"integration/proc/a\tb.py"'
 [[ "$RC" == "0" && "$PYTEST" == "$PROC" ]] \

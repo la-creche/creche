@@ -11,8 +11,8 @@
 #                          --tests-for PATH...: only the suites of the
 #                          packages PATH... touch (pre-push), and
 #                          vectors/tests for a product package. A path under
-#                          integration/proc/ picks the process-level suite,
-#                          in a pytest process of its own
+#                          integration/proc/ that is not prose picks the
+#                          process-level suite, in a pytest process of its own
 #                          --docs: only the tests marked `docs`, for a
 #                          change bin/lib/docsrule.sh calls docs only
 #   bin/rust-gate.sh       only for a change under rust/ (bin/lib/rustrule.sh):
@@ -27,6 +27,9 @@ cd "$(dirname -- "${BASH_SOURCE[0]}")/.."
 # rust_path, rust_dirty and RUST_DIR: what counts as a Rust change.
 # vectors_path: what the Rust tests read outside rust/.
 . bin/lib/rustrule.sh
+
+# docs_path: what counts as prose.
+. bin/lib/docsrule.sh
 
 #: One pytest command for the full run, a scoped one and the docs one, so
 #: all use the same flags.
@@ -232,15 +235,23 @@ tests_for() {
 }
 
 # proc_for PATH...: the process-level suite, when one PATH or more is under
-# integration/proc/, with one line saying which path picked it. The full
-# suite holds no test of that directory, so only this run tests such a path
-# before the push. A skip is a failure here: with no playpen bundle the suite
-# would pass and judge nothing.
+# integration/proc/ and is not prose, with one line saying which path picked
+# it. The full suite holds no test in that directory, so only this run tests
+# such a path before the push. A skip is a failure here: with no playpen
+# bundle the suite would pass and judge nothing.
+#
+# Prose there (docs_path) picks no suite, because no test reads it. A push of
+# a package and one line of integration/proc/AGENTS.md then needs no bundle.
 proc_for() {
-  local path first="" count=0
+  local path first="" count=0 prose=0
 
   for path in "$@"; do
     if ! proc_path "$path"; then
+      continue
+    fi
+
+    if docs_path "$path"; then
+      prose=$((prose + 1))
       continue
     fi
 
@@ -251,6 +262,10 @@ proc_for() {
   done
 
   if [[ "$count" -eq 0 ]]; then
+    if [[ "$prose" -gt 0 ]]; then
+      echo "quality-gate: no process suite: each path under $PROC_DIR/ is prose"
+    fi
+
     return 0
   fi
 

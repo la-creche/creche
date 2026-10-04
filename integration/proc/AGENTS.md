@@ -17,7 +17,8 @@ cannot judge a service that Python cannot import.
 The suite owns no product code. It is not in the root `testpaths`, so the
 full suite does not run it. CI runs it in the `proc` job of `gate.yml` and of
 `release.yml`. The pre-push hook runs it for a push that changes a path of
-this directory, with `CRECHE_PROC_NO_SKIP=1`.
+this directory, with `CRECHE_PROC_NO_SKIP=1`. A Markdown document of this
+directory does not start it.
 
 ## Run it
 
