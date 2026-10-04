@@ -53,7 +53,8 @@ host where something has gone wrong.
   error: `DriverError`, `LiteLLMError`, `SwitchError`. A step names that
   error in its handler, with two exceptions.
 - The destroy step of a replacement and `delete_family` have no handler.
-  In `serve`, their error ends in a handler of the loop.
+  In `serve`, their error ends in a handler of the loop. In each other
+  verb it ends in `cli.main`: one line, and exit code 1.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
   the grant file, then `creds.json`, then the sandboxes. `test_delete.py`
   checks the order from inside the fake driver.

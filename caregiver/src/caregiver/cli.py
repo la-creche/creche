@@ -32,7 +32,7 @@ from .chaperone_watch import (
     PepWatch,
 )
 from .delete import delete_family
-from .driver import SandboxDriver, SbxDriver
+from .driver import DriverError, SandboxDriver, SbxDriver
 from .egress import EgressConfig
 from .images import SandboxImages
 from .lan import ConfigError, Port, url
@@ -730,9 +730,11 @@ def main(
     except ConfigError as exc:
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_USAGE
-    except LiteLLMError as exc:
-        # No master key, or a call that LiteLLM refused. The message holds
-        # no secret: the client puts none into its error.
+    except (DriverError, LiteLLMError) as exc:
+        # No master key, or a call that LiteLLM or `sbx` refused in a step
+        # with no handler of its own: a delete, and the destroy step of a
+        # replacement. The message holds no secret: no client puts one
+        # into its error.
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_PROBLEM
 

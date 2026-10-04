@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE, main
 from caregiver.credentials import read_creds
-from caregiver.driver import FakeDriver
-from caregiver.litellm_keys import FakeLiteLLMKeys
+from caregiver.driver import DriverError, FakeDriver
+from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError
 from caregiver_helpers import UNREADABLE_JSON, write_registry
 
 from caregiver import paths
@@ -397,3 +397,70 @@ def test_delete_with_write_actually_deletes(registry_root: Path, state_root: Pat
     assert code == EXIT_OK
     assert not paths.family_dir(state_root, "chat").exists()
     assert any(call.op == "destroy" for call in driver.calls)
+
+
+class KeyStays(FakeLiteLLMKeys):
+    """A LiteLLM that refuses the delete of a key."""
+
+    def delete_key(self, family: str) -> None:
+        raise LiteLLMError(f"key delete failed for {family!r}: HTTP 500")
+
+
+class NoDestroy(FakeDriver):
+    """A driver whose destroy fails."""
+
+    def destroy(self, name: str, allow: tuple[str, ...]) -> None:
+        raise DriverError(f"sbx rm {name} failed: the daemon does not answer")
+
+
+def _applied(registry_root: Path, state_root: Path, driver: FakeDriver) -> None:
+    """One family with its credentials and one sandbox."""
+    words = ["apply-once", str(registry_root), "chat", "--image", "sha256:x"]
+    code = main(
+        [*words, "--state-root", str(state_root), "--write"],
+        driver=driver,
+        litellm=FakeLiteLLMKeys(),
+    )
+    assert code == EXIT_OK
+
+
+def test_delete_says_a_key_that_stays_in_one_line(
+    registry_root: Path, state_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Invariant 13: the key is first. The delete stops there, and the verb
+    says why in one line. The credential file and the sandbox stay."""
+    driver = FakeDriver()
+    _applied(registry_root, state_root, driver)
+    capsys.readouterr()
+
+    code = main(
+        ["delete", "chat", "--state-root", str(state_root), "--write"],
+        driver=driver,
+        litellm=KeyStays(),
+    )
+
+    assert code == EXIT_PROBLEM
+    assert capsys.readouterr().err.strip() == "caregiver: key delete failed for 'chat': HTTP 500"
+    assert paths.creds_path(state_root, "chat").exists()
+    assert "destroy" not in driver.ops()
+
+
+def test_delete_says_a_destroy_that_fails_in_one_line(
+    registry_root: Path, state_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The credentials are gone when the destroy fails, and the state of
+    the family stays. A second run of the verb ends the work."""
+    _applied(registry_root, state_root, FakeDriver())
+    capsys.readouterr()
+    delete = ["delete", "chat", "--state-root", str(state_root), "--write"]
+
+    code = main(delete, driver=NoDestroy(), litellm=FakeLiteLLMKeys())
+
+    assert code == EXIT_PROBLEM
+    assert capsys.readouterr().err.strip() == (
+        "caregiver: sbx rm chat-s1 failed: the daemon does not answer"
+    )
+    assert not paths.creds_path(state_root, "chat").exists()
+    assert paths.family_dir(state_root, "chat").exists()
+    assert main(delete, driver=FakeDriver(), litellm=FakeLiteLLMKeys()) == EXIT_OK
+    assert not paths.family_dir(state_root, "chat").exists()
