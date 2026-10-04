@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from agent_family import Registry
-from noticeboard.registrywrite import COMMIT_TRAILER, head_sha, save_family
+from noticeboard.registrywrite import COMMIT_TRAILER, TEMP_SUFFIX, head_sha, save_family
 from noticeboard.yamlout import to_yaml
 from noticeboard_helpers import CHAT_FAMILY_YAML, commit_count, git, make_registry
 
@@ -167,6 +167,21 @@ def test_a_save_of_a_new_family_leaves_one_file(tmp_path: Path) -> None:
     assert result.ok, result.problem
     assert names_in(root / "families" / "second") == ["family.yaml"]
     assert family_file(root, "second").read_text(encoding="utf-8") == text
+
+
+def test_a_temporary_file_of_a_killed_save_does_not_reach_the_commit(tmp_path: Path) -> None:
+    """A save that the system killed between its write and its rename leaves
+    its temporary file. The next save must not commit that file."""
+    root = make_registry(tmp_path)
+    stale = root / "families" / "chat" / f".family.yaml.0123456789abcdef{TEMP_SUFFIX}"
+    stale.write_text(BAD, encoding="utf-8")
+
+    result = save_family(root, "chat", GOOD, "widen the description")
+
+    changed = git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
+    assert result.ok
+    assert changed == ["families/chat/family.yaml"]
+    assert names_in(root / "families" / "chat") == ["family.yaml", "instructions.md"]
 
 
 def test_an_invalid_edit_leaves_the_tree_clean(tmp_path: Path) -> None:

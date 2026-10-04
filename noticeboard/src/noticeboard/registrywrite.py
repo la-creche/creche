@@ -76,6 +76,10 @@ GIT_METADATA: Final = ".git"
 #: then never share a name.
 TEMP_NAME_BYTES: Final = 8
 
+#: The end of a temporary file name. A save removes each file with this end
+#: that a killed save left, so nothing else may use it.
+TEMP_SUFFIX: Final = ".noticeboard-tmp"
+
 #: The mode a new file asks for. The umask of the process narrows it, as it
 #: does for every file this service creates.
 NEW_FILE_MODE: Final = 0o666
@@ -150,6 +154,7 @@ def _write_and_commit(
     done = False
 
     try:
+        _sweep(base)
         base.mkdir(parents=True, exist_ok=True)
         _replace(target, text.encode("utf-8"))
 
@@ -208,7 +213,7 @@ def _replace(path: Path, body: bytes) -> None:
     The bytes go to a temporary file in the same directory, so the rename
     stays on one file system and is atomic. An existing file keeps its mode.
     """
-    temp = path.with_name(f".{path.name}.{secrets.token_hex(TEMP_NAME_BYTES)}.tmp")
+    temp = path.with_name(f".{path.name}.{secrets.token_hex(TEMP_NAME_BYTES)}{TEMP_SUFFIX}")
 
     try:
         handle = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, NEW_FILE_MODE)
@@ -225,6 +230,16 @@ def _replace(path: Path, body: bytes) -> None:
     except BaseException:
         temp.unlink(missing_ok=True)
         raise
+
+
+def _sweep(base: Path) -> None:
+    """Remove each temporary file that a killed save left in the directory.
+
+    The commit takes every file of the directory. A file that a save wrote
+    and never renamed would otherwise ride along.
+    """
+    for stale in base.rglob(f".*{TEMP_SUFFIX}"):
+        stale.unlink(missing_ok=True)
 
 
 def _refuse(registry_dir: Path, name: str, text: str) -> str:
