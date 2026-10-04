@@ -124,4 +124,6 @@ is `door-owui`'s. Basenames are unique across the workspace. Run
   (`errors.py`, `webhooks.py`).
 - `spec.md` §3.6 and contract 05 §6.4 rule 6 give no rule for a first route
   refresh that fails. The listener starts with no route and logs the
-  failure. The periodic refresh then fills the table (`webhooks.py`).
+  failure. Only a periodic refresh that passes or a `SIGHUP` then fills the
+  table. The unit stays active, so the log line is the only signal
+  (`webhooks.py`).
