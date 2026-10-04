@@ -5,6 +5,10 @@ process, from the command that the service's systemd unit runs. A test talks
 to a service only through sockets, files and child programs. The root
 `AGENTS.md` and `integration/AGENTS.md` apply here too.
 
+Rules 11 and 15 of `integration/AGENTS.md` do not apply here. No `caregiver`
+process runs yet, so this suite writes the status document and the env file
+from the contracts.
+
 The suite is the judge of a port. A service in another language passes or
 fails the same tests, and no test changes. The suites in `integration/tests`
 and `integration/tests_manager` host every service in the test process. They
@@ -19,6 +23,10 @@ full suite does not run it.
 cd playpen && pnpm install && AGENT_LAN_ADDRESS=192.0.2.10 pnpm run build && cd ..   # once, and after any playpen change
 uv run pytest integration/proc -m slow
 ```
+
+Run this suite in its own pytest command. One command for this suite and an
+old suite fails at collection, because the old tests import `conftest` by
+name.
 
 Add `-n 4` to run the tests on four workers. Each run prints the command of
 each service before its result line. Each line ends with the origin of the
@@ -114,7 +122,7 @@ node playpen/dist/playpen.js             the real bundle
 the pi stand-in                          found through AGENT_PI_BIN
 ```
 
-| File | Topology | What the scenarios hold |
+| File | Topology | What the scenarios check |
 |---|---|---|
 | `test_proc_owui_turns.py` | door and `attendance` | the thirteen stage 1 scenarios, with the numbers of the old suite |
 | `test_proc_owui_start.py` | door and `attendance` | a start, a refused start, the socket mode, a token reload |
@@ -122,7 +130,8 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
 | `test_proc_delegate.py` | chaperone and `attendance` | the delegate path of contract 04 §7, the manifest and the audit |
 | `test_proc_override.py` | door and `attendance` | each service starts through its variable |
-| `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, held to their own rules |
+| `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
+| `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
 
 ## Rules
 
@@ -146,7 +155,7 @@ the pi stand-in                          found through AGENT_PI_BIN
    wrapper sets what the sandbox image supplies.
 9. A socket is a Unix socket in the root or a loopback port. Never bind
    `0.0.0.0`. Keep the root path short: macOS refuses a socket path over 104
-   bytes. Take a port from `Supervisor.free_port`, which holds the port for
+   bytes. Take a port from `Supervisor.free_port`, which keeps the port for
    the test. The lock files of the ports are in `creche-proc-ports-<uid>` in
    the system temporary directory, the one place outside the root.
 10. Each service leads its own process group. The teardown sends `SIGTERM` to
@@ -156,7 +165,7 @@ the pi stand-in                          found through AGENT_PI_BIN
 11. No test leaves a process behind. A teardown that had to kill a process
     fails the test. This applies to each process of a group, not only to the
     service. A group that no teardown ended fails the session.
-12. A scenario that acts during a turn slows the fake pi first, with
+12. A scenario that acts during a turn slows the pi stand-in first, with
     `set_pi_env`. The tuning reaches the next pi process that starts. A
     session keeps its pi process, so set the tuning before the first turn of
     the session.
@@ -174,11 +183,11 @@ the pi stand-in                          found through AGENT_PI_BIN
 A stand-in takes the place of a program that a service starts or dials, and
 that the suite cannot run. Add one only when a scenario needs it.
 
-1. Decide how the service finds the real program: by name through `PATH`, by
-   a path in a variable, or by an address in a variable.
-2. Write the stand-in as a program. Put its source in this directory, or
-   use a double that another package owns, as `fake_sbx.py` and `fake-pi.mjs`
-   are used.
+1. Decide how the service finds the real program. It finds it by name
+   through `PATH`, by a path in a variable, or by an address in a variable.
+2. Write the stand-in as a program. Put its source in this directory, or use
+   a program that another package owns. This suite uses `fake_sbx.py` and
+   `fake-pi.mjs` that way.
 3. Add an `install_` function to `proc_standins.py`. It writes a wrapper into
    the `bin` directory of the root. The wrapper records the call, then runs
    `exec` on the stand-in. The recorded pid is then the pid of the stand-in.
@@ -216,8 +225,8 @@ failure. Work down this list.
    `CRECHE_PROC_NO_SKIP=1`, each of these tests fails with the same text.
 2. `exited N before it was ready`: the service refused to start. Read its
    stderr in the same message.
-3. `was not ready in 30 s`: the service runs and does not answer HTTP at its
-   address. Read its stderr.
+3. `was not ready in 30.0 s`: the service runs and does not answer HTTP at
+   its address. Read its stderr.
 4. The stream ends with an error chunk: read the journal of the session
    under `sessions/` in the root, and the playpen log.
 5. `the teardown had to end a process`: a service ignored `SIGTERM`, a
@@ -238,11 +247,11 @@ failure. Work down this list.
 - **CONTRACT-QUESTION, the exit code of a refused start.** Contract 02 §3
   rule 7 names no exit code. The suite accepts each code that is not 0. A
   change to one fixed code costs one assertion in `test_proc_owui_start.py`.
-- **CONTRACT-QUESTION, a new `config_rev` and the held pi process.** Contract
-  03 §6 rule 5 gives three reasons to reap a held process. A new
-  `config_rev` is not one of them. The playpen starts a new process at the
-  next turn, and `test_proc_status.py` holds that. A change costs one count
-  in that file.
+- **CONTRACT-QUESTION, a new `config_rev` and the pi process of a session.**
+  Contract 03 §6 rule 5 gives three reasons to reap the pi process that a
+  session keeps. A new `config_rev` is not one of them. The playpen starts a
+  new process at the next turn, and `test_proc_status.py` checks that. A
+  change costs one count in that file.
 - **CONTRACT-QUESTION, the model list and a family that was never valid.**
   Contract 05 §3.1 and contract 02 §5.1 give only the refusal
   `family_invalid` by `attendance`. No contract says what the door lists.

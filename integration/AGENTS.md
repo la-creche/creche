@@ -62,6 +62,10 @@ before you edit it.
 uv run pytest integration/proc -m slow
 ```
 
+Run each suite in its own pytest command. One command for `proc/` and one of
+the suites above fails at collection, because the tests in `tests/` import
+`conftest` by name.
+
 ## Rules
 
 1. Nothing under test may be faked. Four stand-ins exist, none under test:
