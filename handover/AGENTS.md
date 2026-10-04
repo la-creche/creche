@@ -214,8 +214,10 @@ that wants a refusal changes one field.
 - The checker runs C2, C3, C4, then C1 (`contracts.py`).
 - A component named at its live version is `unchanged`, and step 9 restarts
   nothing (`resolve.py`).
-- Every build uses `UV_PROJECT_ENVIRONMENT` and every unit file is
-  `systemd/<unit>` (`manifest.py`, `executor/install.py`).
+- Every build uses `UV_PROJECT_ENVIRONMENT`, or `CARGO_INSTALL_ROOT` for a
+  binary component. Every unit file is `systemd/<unit>`. No manifest can
+  name another variable or another place (`manifest.py`,
+  `executor/install.py`).
 - Every component with no tag gets `0.1.0` (`allocate.py`).
 - The per-requester cap counts one drain pass and keys on `requested_by`,
   which the requester writes (`executor/drain.py`).

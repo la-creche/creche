@@ -121,8 +121,17 @@ UNIT_DIR_IN_TREE: Final = "systemd"
 #: `uv` puts the project environment where this names, which is how a
 #: `build` entry with no interpolation still lands in `<install.to>.new`.
 #: CONTRACT-QUESTION: contract 06 §8's `output` defaults to this, and
-#: `manifest.py` refuses the key, so every build gets this variable.
+#: `manifest.py` refuses the key, so every build gets this variable or
+#: `BINARY_ENV_NAME`, by its kind. Reading the key would let a manifest name
+#: a variable in the environment of a child that runs as root.
 VENV_ENV_NAME: Final = "UV_PROJECT_ENVIRONMENT"
+
+#: The same, for a `kind: binary` build. `cargo install` with no `--root`
+#: writes each program at `<this>/bin/<name>`, so the staged tree has the
+#: layout a venv has and every `ExecStart=` path keeps its shape.
+#: Measured against cargo 1.92.0 on 2026-10-03, and again by
+#: `handover/tests/test_handover_bin_cargo_guard.py`.
+BINARY_ENV_NAME: Final = "CARGO_INSTALL_ROOT"
 
 SYSTEMCTL: Final = "/usr/bin/systemctl"
 INSTALL: Final = "/usr/bin/install"
@@ -497,7 +506,7 @@ class Installer:
                 BUILD_TIMEOUT_S,
                 f"{manifest.name}: build failed",
                 cwd=source,
-                env={VENV_ENV_NAME: str(paths.new)},
+                env={_output_env(manifest.kind): str(paths.new)},
             )
 
         self._check_staged_hook(manifest, paths)
@@ -1076,6 +1085,12 @@ def _stderr_suffix(stderr: str) -> str:
         return ""
 
     return f": {' | '.join(tail)}"
+
+
+def _output_env(kind: Kind) -> str:
+    """The variable through which a build of this kind learns where
+    `<install.to>.new` is. Every kind but `binary` keeps the one it had."""
+    return BINARY_ENV_NAME if kind is Kind.BINARY else VENV_ENV_NAME
 
 
 def restorable(manifest: ComponentManifest) -> bool:
