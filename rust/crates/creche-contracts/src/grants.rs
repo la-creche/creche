@@ -8,7 +8,7 @@
 //! | [`AuditRecord`], [`UnidentifiedRecord`] | One line of each of the two logs of the chaperone. |
 //! | [`Claimed`] | The three advisory headers of a request. |
 //! | [`Decision`], [`Reason`], [`AuditOutcome`] | The words of a decision. |
-//! | [`Allowed`] | The proof that a decision allowed a call. A sketch for the port of the chaperone. |
+//! | [`Allowed`], [`Held`] | The proof that a decision allowed a call: one for a call that runs now, one for a call that waits for the operator. A sketch for the port of the chaperone. |
 //!
 //! Each reader here does what the Python code does with the same bytes, and
 //! each writer writes the same bytes. `vectors/data/chaperone` records the
@@ -130,7 +130,7 @@ pub use body::{
     ApprovalBody, Arguments, BODY_MAX_BYTES, BodyError, CallBody, CallTool, CallToolError, Verdict,
 };
 pub use decision::{
-    AfterAllow, Allowed, AuditOutcome, Decision, Executor, Gate, Reason, UnknownReason,
+    AfterAllow, Allowed, AuditOutcome, Decision, Executor, Held, Reason, UnknownReason,
 };
 pub use file::{
     ActionName, ActionNameError, DEFAULT_MAX_INFLIGHT_DELEGATIONS, DEFAULT_MAX_OPEN_GATES,

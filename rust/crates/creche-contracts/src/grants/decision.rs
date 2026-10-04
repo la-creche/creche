@@ -1,4 +1,4 @@
-//! The words of a decision (contract 04 §5, §6.1), and the proof that a
+//! The words of a decision (contract 04 §5, §6.1), and the two proofs that a
 //! decision allowed a call.
 //!
 //! This module holds no decision logic. The port of the chaperone adds the
@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{FamilyName, ServerName, ToolName};
+use crate::ids::{FamilyName, GateId, ServerName, ToolName};
 
 use super::body::Arguments;
 use super::file::{GrantsRev, Verb};
@@ -307,31 +307,28 @@ pub enum Executor {
     Delegate,
 }
 
-/// Whether an allowed call waits for the operator (contract 04 §5 row 9, §8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Gate {
-    /// The action is not in `approval`. The call runs at once.
-    NotGated,
-    /// The action is in `approval`. The call blocks until the operator
-    /// approves it.
-    Gated,
-}
-
-/// The proof that the decision function allowed one call (contract 04 §5).
+/// The proof that the decision function allowed one call, and that the call
+/// can run now (contract 04 §5 rows 9 and 10).
 ///
 /// This type is a sketch for the port of the chaperone. It states the design
 /// and holds no logic:
 ///
-/// 1. The decision function is the only code that builds a value. The type
-///    has no constructor, no `Default`, no `Clone` and no `Deserialize`. The
-///    port puts the decision function in this module, or moves this type to
-///    the module of that function. In each other module the fields are
-///    private, so no other code can build a value.
-/// 2. The function that executes a call takes an `Allowed` by value. A call
+/// 1. The decision function gives one of two proofs. An `Allowed` is for a
+///    call whose action is not in `approval`. A [`Held`] is for a call whose
+///    action is in `approval`.
+/// 2. Two functions build an `Allowed`, and no other code does. The first is
+///    the decision function. The second takes a `Held` when the operator
+///    approves its gate. The type has no constructor, no `Default`, no `Clone`
+///    and no `Deserialize`. The port puts the two functions in this module, or
+///    moves the two types to the module of those functions. In each other
+///    module the fields are private, so no other code can build a value.
+/// 3. The function that executes a call takes an `Allowed` by value. A call
 ///    that no decision allowed cannot reach an upstream, because no code can
-///    name its arguments to the executor.
-/// 3. The value moves into the executor. One decision executes one time.
-/// 4. The value holds what the decision checked: the arguments, the executor
+///    name its arguments to the executor. A gated call cannot reach an
+///    upstream before the operator approves it, because the executor does not
+///    take a `Held`.
+/// 4. The value moves into the executor. One decision executes one time.
+/// 5. The value holds what the decision checked: the arguments, the executor
 ///    and the revision of the grant file. The executor reads them from the
 ///    value and not from the request, so the call that runs is the call that
 ///    the decision allowed.
@@ -342,22 +339,21 @@ pub enum Gate {
 /// Code outside this module reads a value and cannot build one:
 ///
 /// ```
-/// use creche_contracts::grants::{Allowed, Gate};
+/// use creche_contracts::grants::{Allowed, Executor};
 ///
-/// fn dispatch(call: Allowed) -> bool {
-///     call.gate() == Gate::NotGated
+/// fn is_a_delegate_call(call: &Allowed) -> bool {
+///     matches!(call.executor(), Executor::Delegate)
 /// }
 /// ```
 ///
 /// ```compile_fail,E0451
-/// use creche_contracts::grants::{Allowed, Arguments, Executor, Gate};
+/// use creche_contracts::grants::{Allowed, Arguments, Executor};
 ///
 /// let call = Allowed {
 ///     family: "chat".parse().unwrap(),
 ///     grants_rev: "reg-9f21c4".parse().unwrap(),
 ///     executor: Executor::Delegate,
 ///     args: Arguments::empty(),
-///     gate: Gate::NotGated,
 /// };
 /// ```
 ///
@@ -370,13 +366,24 @@ pub enum Gate {
 ///     (call.clone(), call)
 /// }
 /// ```
+///
+/// An executor does not take a call that waits for the operator:
+///
+/// ```compile_fail,E0308
+/// use creche_contracts::grants::{Allowed, Held};
+///
+/// fn execute(call: Allowed) {}
+///
+/// fn skip_the_operator(call: Held) {
+///     execute(call);
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Allowed {
     family: FamilyName,
     grants_rev: GrantsRev,
     executor: Executor,
     args: Arguments,
-    gate: Gate,
 }
 
 impl Allowed {
@@ -403,11 +410,106 @@ impl Allowed {
     pub fn args(&self) -> &Arguments {
         &self.args
     }
+}
 
-    /// Whether the call waits for the operator.
+/// The proof that the decision function allowed one call whose action is in
+/// `approval` (contract 04 §5 row 9, §8). The call waits for the operator.
+///
+/// This type is a sketch for the port of the chaperone, as [`Allowed`] is. It
+/// states the design and holds no logic:
+///
+/// 1. No executor takes a `Held`. The call runs only after a function of this
+///    module turns the value into an [`Allowed`]. The port adds that function.
+///    It takes the `Held` by value when the operator approves the gate
+///    (contract 04 §8.4).
+/// 2. Each other end of the wait drops the value, and nothing runs: the
+///    operator denies the gate, the wait passes its limit, the grant goes
+///    away, the chaperone cannot send the gate, or the caller goes away
+///    (contract 04 §1.5, §8.4, §8.5, §8.7).
+/// 3. The value holds the gate. The two audit records of the call then name
+///    the same gate (contract 04 §6.4).
+/// 4. The type has no constructor, no `Default`, no `Clone` and no
+///    `Deserialize`. One approval executes one call.
+///
+/// Code outside this module reads a value and cannot build one:
+///
+/// ```
+/// use creche_contracts::grants::Held;
+///
+/// fn gate_of(call: &Held) -> &str {
+///     call.gate().as_str()
+/// }
+/// ```
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::grants::{Arguments, Executor, Held};
+///
+/// let call = Held {
+///     family: "chat".parse().unwrap(),
+///     grants_rev: "reg-9f21c4".parse().unwrap(),
+///     executor: Executor::Delegate,
+///     args: Arguments::empty(),
+///     gate: "0123456789abcdef".parse().unwrap(),
+/// };
+/// ```
+///
+/// Code outside this module cannot turn a value into an [`Allowed`]:
+///
+/// ```compile_fail,E0308
+/// use creche_contracts::grants::{Allowed, Held};
+///
+/// fn approve_with_no_operator(call: Held) -> Allowed {
+///     Allowed::from(call)
+/// }
+/// ```
+///
+/// A value has no copy, so one approval cannot execute two calls:
+///
+/// ```compile_fail,E0599
+/// use creche_contracts::grants::Held;
+///
+/// fn twice(call: Held) -> (Held, Held) {
+///     (call.clone(), call)
+/// }
+/// ```
+#[derive(Debug)]
+pub struct Held {
+    family: FamilyName,
+    grants_rev: GrantsRev,
+    executor: Executor,
+    args: Arguments,
+    gate: GateId,
+}
+
+impl Held {
+    /// The family that the bearer of the call named.
     #[must_use]
-    pub fn gate(&self) -> Gate {
-        self.gate
+    pub fn family(&self) -> &FamilyName {
+        &self.family
+    }
+
+    /// The revision of the grant file that the decision read.
+    #[must_use]
+    pub fn grants_rev(&self) -> &GrantsRev {
+        &self.grants_rev
+    }
+
+    /// Who executes the call after the operator approves it.
+    #[must_use]
+    pub fn executor(&self) -> &Executor {
+        &self.executor
+    }
+
+    /// The arguments that the decision checked.
+    #[must_use]
+    pub fn args(&self) -> &Arguments {
+        &self.args
+    }
+
+    /// The gate that the operator approves or denies (contract 04 §8.2).
+    #[must_use]
+    pub fn gate(&self) -> &GateId {
+        &self.gate
     }
 }
 
@@ -494,21 +596,32 @@ mod tests {
     }
 
     #[test]
-    fn the_test_module_can_build_the_witness_and_read_it() {
-        // Only this module can write the literal. The decision function of
-        // the port will be the one place that does.
+    fn the_test_module_can_build_the_two_witnesses_and_read_them() {
+        // Only this module can write the two literals. The decision function
+        // of the port and its approval function will be the only places that
+        // do.
         let call = Allowed {
             family: "chat".parse().unwrap(),
             grants_rev: "reg-9f21c4".parse().unwrap(),
             executor: Executor::Verb(Verb::Embed),
             args: Arguments::empty(),
-            gate: Gate::Gated,
+        };
+        let held = Held {
+            family: "chat".parse().unwrap(),
+            grants_rev: "reg-9f21c4".parse().unwrap(),
+            executor: Executor::Delegate,
+            args: Arguments::empty(),
+            gate: "0123456789abcdef".parse().unwrap(),
         };
 
         assert_eq!(call.family().as_str(), "chat");
         assert_eq!(call.grants_rev().as_str(), "reg-9f21c4");
         assert_eq!(call.executor(), &Executor::Verb(Verb::Embed));
         assert!(call.args().as_map().is_empty());
-        assert_eq!(call.gate(), Gate::Gated);
+        assert_eq!(held.family().as_str(), "chat");
+        assert_eq!(held.grants_rev().as_str(), "reg-9f21c4");
+        assert_eq!(held.executor(), &Executor::Delegate);
+        assert!(held.args().as_map().is_empty());
+        assert_eq!(held.gate().as_str(), "0123456789abcdef");
     }
 }

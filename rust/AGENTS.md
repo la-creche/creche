@@ -362,8 +362,9 @@ Rules for the test:
   2. A fence key that its verb does not read.
   3. `NaN` and an integer past 64 bits in the arguments of a call.
   4. A request body in UTF-16 or in UTF-32.
-- `grants::Allowed` is a sketch. No code builds a value. The port of the
-  chaperone adds the decision function, which is the one constructor.
+- `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
+  The port of the chaperone adds the decision function and the function that
+  approves a held call. No other code builds a value.
 - The crate has no SHA-256. The chaperone gives `grants::ArgsDigest` the
   digest of `Arguments::digest_input`. The test has a SHA-256 of its own.
 - No vector covers a request body with a content type that is not JSON. The
