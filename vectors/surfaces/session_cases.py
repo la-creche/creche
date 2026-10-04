@@ -38,6 +38,10 @@ PROMPT_BYTES: Final = 262_144
 MESSAGE_BYTES: Final = 65_536
 STEER_BYTES: Final = 4_096
 
+#: A float whose shortest text has 17 digits. A reader that is not exact to
+#: the last bit reads the float below it, and then writes other digits.
+LONG_FLOAT: Final = 3.7615293000000003
+
 
 def _json(value: object) -> bytes:
     """One compact JSON document, the way a door writes a body."""
@@ -1069,6 +1073,7 @@ REFUSALS: Final[tuple[Refusal, ...]] = (
             "u64": 2**64 - 1,
         },
     ),
+    Refusal("detail-long-float", ErrorCode.INTERNAL, "x", detail={"cost_usd": LONG_FLOAT}),
 )
 
 # --- one journal line to the record a replay gives (§8) ---------------------------------
@@ -1492,6 +1497,7 @@ APPENDS: Final[tuple[Append, ...]] = (
             # and in 3, and each is as near. Python writes the even digit.
             ("between-two-digits", 1315490761899226.25),
             ("between-two-other-digits", 146218358399002.625),
+            ("long-fraction", LONG_FLOAT),
         )
     ),
     _settled("turn-settled-large-counts", input=2**53, output=2**63, cache_read=2**64 - 1),
@@ -1553,6 +1559,7 @@ APPENDS: Final[tuple[Append, ...]] = (
     _event("pi-event-past-64-bits", a=2**64, b=-(2**63) - 1),
     _event("pi-event-nested", a=_NESTED),
     _event("pi-event-capped", original_bytes=300000, truncated=True),
+    _event("pi-event-long-float", a=LONG_FLOAT),
 )
 
 
@@ -1582,6 +1589,7 @@ RECORDS: Final[tuple[Record, ...]] = (
     Record(
         "line-turn-settled", 63, LineKind.TURN_SETTLED, KIND_BODIES[LineKind.TURN_SETTLED], TURN
     ),
+    Record("line-long-float", 64, LineKind.PI_EVENT, {"a": LONG_FLOAT, "type": "x"}, TURN),
 )
 
 # --- what the stream itself makes (§5.5, §8.1) ------------------------------------------

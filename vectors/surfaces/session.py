@@ -768,6 +768,10 @@ TURN_REPLIES: Final[tuple[Reply, ...]] = (
         },
     ),
     Reply("owui-two-ids", {**_TURN_ARGS, "owui": {**_TURN_ARGS["owui"], "user_message_id": None}}),
+    Reply(
+        "cost-long-float",
+        {**_TURN_ARGS, "usage": {**_USAGE_ARGS, "cost_usd": cases.LONG_FLOAT}},
+    ),
 )
 
 
@@ -1175,6 +1179,7 @@ OUTCOMES: Final[tuple[Outcome, ...]] = (
     ),
     Outcome("spend-zero", {**_OUTCOME_ARGS, "spend_usd": 0.0}),
     Outcome("spend-small", {**_OUTCOME_ARGS, "spend_usd": 0.000015}),
+    Outcome("spend-long-float", {**_OUTCOME_ARGS, "spend_usd": cases.LONG_FLOAT}),
     Outcome(
         "approvals-denied-and-timed-out",
         {
