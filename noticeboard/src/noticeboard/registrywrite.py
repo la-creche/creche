@@ -11,11 +11,14 @@ is no `agentctl`, no systemd call and no daemon verb in this module.
 The order is fixed, and every step after the write can undo it.
 
 1. Refuse a name, a path or a link that does not belong to this family.
-2. Snapshot every file in the family's directory.
-3. Write the new text.
-4. Validate the WHOLE registry, not just this file. A family's delegates,
-   skills and MCP servers are other files, so a change here can break a
-   neighbour (contract 01 §7).
+2. Validate the WHOLE registry with the new text, not just this file. A
+   family's delegates, skills and MCP servers are other files, so a change
+   here can break a neighbour (contract 01 §7). The validator reads a copy
+   of the checkout, so the checkout never holds a text that it refuses.
+3. Snapshot every file in the family's directory.
+4. Write the new text to a temporary file in the same directory and rename
+   it into place. `caregiver` reads the checkout at any time, and a rename
+   shows it the old file or the new one, never a part of one.
 5. Commit, scoped to this family's pathspec alone.
 6. Restore the snapshot on any failure in steps 4 or 5, including one
    nobody predicted: the restore runs from a `finally`, so a git that
@@ -31,13 +34,16 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import shutil
+import stat
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from agent_family import Issue, Report, Severity, load_registry
+from agent_family import Issue, Registry, Report, Severity, load_registry
 
 FAMILY_FILE: Final = "family.yaml"
 FAMILIES_DIR: Final = "families"
@@ -61,6 +67,18 @@ MAX_SUBJECT: Final = 200
 MAX_TEXT_BYTES: Final = 256 * 1024
 
 GIT_TIMEOUT_S: Final = 30
+
+#: git's own directory. The validator reads none of it, so the copy that it
+#: reads leaves it out.
+GIT_METADATA: Final = ".git"
+
+#: The random part of a temporary file name, in bytes. Two saves at one time
+#: then never share a name.
+TEMP_NAME_BYTES: Final = 8
+
+#: The mode a new file asks for. The umask of the process narrows it, as it
+#: does for every file this service creates.
+NEW_FILE_MODE: Final = 0o666
 
 #: Git's environment is built from scratch, not filtered. This process
 #: may carry the family's LiteLLM key and PEP token, and git has no
@@ -114,18 +132,40 @@ def _write_and_commit(
     registry_dir: Path, base: Path, target: Path, text: str, subject: str
 ) -> SaveResult:
     """Steps 2 to 6. The snapshot is restored unless the save succeeds."""
+    try:
+        registry = _with_new_text(registry_dir, base.name, text)
+    except OSError as error:
+        return SaveResult(
+            ok=False, problem=f"cannot copy the registry to validate it: {error.strerror or error}"
+        )
+
+    if not registry.ok:
+        # Every report, not only this family's: the point of validating
+        # the whole registry is to catch the neighbour this edit broke.
+        # Nothing in the checkout changed, so there is nothing to restore.
+        return SaveResult(ok=False, issues=_issues(registry.all_reports()))
+
     existed = base.is_dir()
     snapshot = _snapshot(base)
     done = False
 
     try:
         base.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
+        _replace(target, text.encode("utf-8"))
 
-        result = _validate_then_commit(registry_dir, base.name, subject)
-        done = result.ok
+        problem = _commit(registry_dir, base.name, subject)
 
-        return result
+        if problem:
+            return SaveResult(ok=False, problem=problem)
+
+        done = True
+
+        return SaveResult(
+            ok=True,
+            # A save with warnings is still a save. They are shown, not thrown.
+            issues=_warnings(registry.all_reports()),
+            commit=head_sha(registry_dir),
+        )
     except OSError as error:
         return SaveResult(
             ok=False, problem=f"cannot write {target.name}: {error.strerror or error}"
@@ -137,26 +177,54 @@ def _write_and_commit(
             _restore(base, existed, snapshot)
 
 
-def _validate_then_commit(registry_dir: Path, name: str, subject: str) -> SaveResult:
-    """Steps 4 and 5, with the new bytes already on disk."""
-    registry = load_registry(registry_dir)
+def _with_new_text(registry_dir: Path, name: str, text: str) -> Registry:
+    """Step 2: the whole registry as it reads with the new text in place.
 
-    if not registry.ok:
-        # Every report, not only this family's: the point of validating
-        # the whole registry is to catch the neighbour this edit broke.
-        return SaveResult(ok=False, issues=_issues(registry.all_reports()))
+    The validator reads a copy. The checkout keeps its bytes until the new
+    text validates, so `caregiver` never reads a text that is refused here.
+    """
+    with tempfile.TemporaryDirectory(prefix="noticeboard-save-") as scratch:
+        copy = Path(scratch) / "registry"
+        # A link is copied as a link. Nothing outside the checkout is read.
+        shutil.copytree(
+            registry_dir, copy, symlinks=True, ignore=shutil.ignore_patterns(GIT_METADATA)
+        )
+        base = copy / FAMILIES_DIR / name
 
-    problem = _commit(registry_dir, name, subject)
+        # A copied link can still point into the checkout. The new text must
+        # land in the copy, or step 2 is a write with no validation.
+        if _escapes(copy, base):
+            raise OSError(f"{FAMILIES_DIR}/{name} resolves outside the copy")
 
-    if problem:
-        return SaveResult(ok=False, problem=problem)
+        base.mkdir(parents=True, exist_ok=True)
+        (base / FAMILY_FILE).write_text(text, encoding="utf-8")
 
-    return SaveResult(
-        ok=True,
-        # A save with warnings is still a save. They are shown, not thrown.
-        issues=_warnings(registry.all_reports()),
-        commit=head_sha(registry_dir),
-    )
+        return load_registry(copy)
+
+
+def _replace(path: Path, body: bytes) -> None:
+    """Step 4: put `body` at `path` with one rename.
+
+    The bytes go to a temporary file in the same directory, so the rename
+    stays on one file system and is atomic. An existing file keeps its mode.
+    """
+    temp = path.with_name(f".{path.name}.{secrets.token_hex(TEMP_NAME_BYTES)}.tmp")
+
+    try:
+        handle = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, NEW_FILE_MODE)
+
+        with os.fdopen(handle, "wb") as out:
+            out.write(body)
+            out.flush()
+            os.fsync(out.fileno())
+
+        if path.is_file():
+            temp.chmod(stat.S_IMODE(path.stat().st_mode))
+
+        temp.replace(path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 def _refuse(registry_dir: Path, name: str, text: str) -> str:
@@ -221,7 +289,11 @@ def _restore(base: Path, existed: bool, snapshot: dict[Path, bytes]) -> None:
 
     for path, body in snapshot.items():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(body)
+
+        # Only a file that the save changed is put back, and with a rename.
+        # A write in place would show a reader a part of a file.
+        if not path.is_file() or path.read_bytes() != body:
+            _replace(path, body)
 
 
 def _commit(registry_dir: Path, name: str, subject: str) -> str:

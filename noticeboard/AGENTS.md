@@ -76,7 +76,10 @@ any use. A value that fails answers 404.
 21. Build git's environment from an allowlist, not by filtering.
 22. Take no lock. Git's own `index.lock` makes a concurrent writer fail, and a
     failed commit restores.
-23. Validate the whole registry before you commit.
+23. Validate the whole registry with the new text before you write. The
+    validator reads a copy of the checkout. `caregiver` then never reads a
+    text that the validator refuses. Write the family file to a temporary
+    file in its own directory. Rename it into place.
 24. The noticeboard never parses YAML itself. `agent_family` owns the reader.
     `yamlkeep.py` is the one module that touches a YAML library, and it reads
     no meaning. `registrywrite` re-reads what it wrote and refuses a save whose
