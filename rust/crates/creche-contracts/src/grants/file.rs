@@ -1727,18 +1727,19 @@ fn float_integer(number: f64) -> Result<Integer, IssueKind> {
 /// - one `_` between two digits
 /// - a zero at the start
 /// - a `.` and one zero or more at the end
+/// - a `-` after the zeros at the start, which is then the sign
 fn text_integer(text: &str) -> Result<Integer, IssueKind> {
-    let text = text.trim();
-    let (sign, text) = match text.strip_prefix('-') {
+    let trimmed = text.trim();
+    let (sign, unsigned) = match trimmed.strip_prefix('-') {
         Some(rest) => (Sign::Minus, rest),
-        None => (Sign::Plus, text.strip_prefix('+').unwrap_or(text)),
+        None => (Sign::Plus, trimmed.strip_prefix('+').unwrap_or(trimmed)),
     };
-    let whole = match text.split_once('.') {
+    let whole = match unsigned.split_once('.') {
         Some((whole, zeros)) if !zeros.is_empty() && zeros.bytes().all(|byte| byte == b'0') => {
             whole
         }
         Some(_) => return Err(IssueKind::NotIntegerText),
-        None => text,
+        None => unsigned,
     };
     if !whole.starts_with(|first: char| first.is_ascii_digit()) {
         return Err(IssueKind::NotIntegerText);
@@ -1747,6 +1748,10 @@ fn text_integer(text: &str) -> Result<Integer, IssueKind> {
     // The Python code skips each `0` and each `_` at the start. What stays
     // has one `_` between two digits at most.
     let significant = whole.trim_start_matches(['0', '_']);
+    if let (Sign::Plus, Some(tail)) = (sign, significant.strip_prefix('-')) {
+        return negative_tail(tail);
+    }
+
     let grouped = !significant.ends_with('_')
         && !significant.contains("__")
         && significant
@@ -1759,10 +1764,51 @@ fn text_integer(text: &str) -> Result<Integer, IssueKind> {
     let digits: String = significant.chars().filter(char::is_ascii_digit).collect();
     // The cap counts the `-` of a negative number as one digit.
     if digits.len() + usize::from(sign == Sign::Minus) > json::INT_MAX_DIGITS {
-        return Err(IssueKind::IntegerTooLarge);
+        // The Python code names the size only for digits with no other form
+        // before them or between them: no white space, no `+`, no zero and
+        // no `_`.
+        let plain = text.trim_end().len() == trimmed.len()
+            && !trimmed.starts_with('+')
+            && significant.len() == whole.len()
+            && !significant.contains('_');
+
+        return Err(if plain {
+            IssueKind::IntegerTooLarge
+        } else {
+            IssueKind::NotIntegerText
+        });
     }
 
     Ok(Integer::from_digits(sign, &format!("0{digits}")))
+}
+
+/// The integer of a text that has a `-` after the zeros at its start, for
+/// example `0-8`. `tail` is what follows the `-`.
+///
+/// The Python code reads the `-` as the sign of the tail. The tail has a
+/// stricter form than a text with its `-` at the start:
+///
+/// - one `_` can come first
+/// - a zero at the start is the whole number
+/// - a tail with too many digits is not an integer text, and not an integer
+///   that is too large
+fn negative_tail(tail: &str) -> Result<Integer, IssueKind> {
+    let number = tail.strip_prefix('_').unwrap_or(tail);
+    let grouped = number.starts_with(|first: char| first.is_ascii_digit())
+        && !number.ends_with('_')
+        && !number.contains("__")
+        && number
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'_');
+    let digits: String = number.chars().filter(char::is_ascii_digit).collect();
+    let zero_first = digits.len() > 1 && digits.starts_with('0');
+
+    // The cap counts the `-` as one digit.
+    if !grouped || zero_first || digits.len() >= json::INT_MAX_DIGITS {
+        return Err(IssueKind::NotIntegerText);
+    }
+
+    Ok(Integer::from_digits(Sign::Minus, &digits))
 }
 
 #[cfg(test)]
@@ -1981,6 +2027,15 @@ mod tests {
             ("60.000", "60"),
             ("0.0", "0"),
             (" +0_6_0.0 ", "60"),
+            // A `-` after the zeros at the start is the sign.
+            ("0-8", "-8"),
+            ("00__-2", "-2"),
+            ("0_-9", "-9"),
+            ("0-0", "0"),
+            ("0-_8", "-8"),
+            ("0-8_0", "-80"),
+            ("0-8.0", "-8"),
+            (" +0-8 ", "-8"),
         ];
         let refused = [
             "",
@@ -2009,6 +2064,20 @@ mod tests {
             "6\u{660}",
             "inf",
             "true",
+            "0-",
+            "0-08",
+            "0-0_8",
+            "0-00",
+            "0-__8",
+            "0-8_",
+            "0-.0",
+            "0-8.5",
+            "0--8",
+            "0-+8",
+            "0+8",
+            "-0-8",
+            "8-8",
+            "_0-8",
         ];
 
         for (text, number) in accepted {
@@ -2038,6 +2107,51 @@ mod tests {
         assert_eq!(
             text_integer(&format!("-{most}")),
             Err(IssueKind::IntegerTooLarge)
+        );
+    }
+
+    #[test]
+    fn a_long_integer_text_names_its_size_only_in_the_plain_form() {
+        let most = "9".repeat(4300);
+        let plain = [
+            format!("{most}9"),
+            format!("{most}9 "),
+            format!("{most}9.0"),
+            format!("-{most}"),
+            format!("-{most}.00\u{3000}"),
+        ];
+        let other = [
+            format!("+{most}9"),
+            format!(" {most}9"),
+            format!("0{most}9"),
+            format!("0_{most}9"),
+            format!("9_{most}"),
+            format!(" -{most}"),
+            format!("-0{most}"),
+            format!("-9_{}", "9".repeat(4299)),
+        ];
+
+        for text in plain {
+            assert_eq!(text_integer(&text), Err(IssueKind::IntegerTooLarge));
+        }
+
+        for text in other {
+            assert_eq!(text_integer(&text), Err(IssueKind::NotIntegerText));
+        }
+    }
+
+    #[test]
+    fn a_minus_after_zeros_counts_as_one_digit_of_4300() {
+        let most = "9".repeat(4299);
+
+        assert_eq!(
+            text_integer(&format!("0-{most}")).unwrap().to_string(),
+            format!("-{most}")
+        );
+        assert!(text_integer(&format!("{}-_{most}.0", "0".repeat(5000))).is_ok());
+        assert_eq!(
+            text_integer(&format!("0-{most}9")),
+            Err(IssueKind::NotIntegerText)
         );
     }
 

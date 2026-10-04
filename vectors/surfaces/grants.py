@@ -440,6 +440,12 @@ GRANT_DOCUMENTS: Final[tuple[Document, ...]] = (
         "json-float-5000-digits",
         _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": ' + b"9" * HUGE_DIGITS + b".0}}",
     ),
+    # --- a limit text with a minus after its zeros, and a long one ---------
+    _doc("limits-text-zero-then-minus", limits={"pep_rpm": "0-8"}),
+    _doc("limits-text-zero-then-minus-zero", limits={"pep_rpm": "0-08"}),
+    _doc("limits-text-zero-then-minus-underscore", limits={"pep_rpm": "0_-_8_0"}),
+    _doc("limits-text-plus-4301-digits", limits={"pep_rpm": "+" + "9" * 4301}),
+    _doc("limits-text-zero-then-4301-digits", limits={"pep_rpm": "0" + "9" * 4301}),
 )
 
 #: The fixed start of each reason `parse_grants` gives, after the file name.
