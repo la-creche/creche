@@ -21,6 +21,19 @@ class Repo(StrEnum):
 
 class Kind(StrEnum):
     VENV = "venv"
+    #: A tree of compiled programs, each at `<install.to>/bin/<name>`, so a
+    #: unit's `ExecStart=` path and a verify command path keep the shape a
+    #: venv gives them. Root builds it on the host from the manifest's own
+    #: `build` argv, as it builds a venv.
+    #: CONTRACT-QUESTION: contract 06 §8 lists four kinds and not this one.
+    #: The reading taken keeps the trust model of a venv: root fetches the
+    #: source at the approved tag and builds it on the host. The other
+    #: reading verifies an artifact that CI built and attested, and the
+    #: operator decides between them. A cargo build script runs arbitrary
+    #: code as the user that runs the build, so that user matters. A change
+    #: costs a new provenance rule and a download path, which root does not
+    #: have today.
+    BINARY = "binary"
     OCI_IMAGE = "oci-image"
     COMPOSE = "compose"
     DATA = "data"

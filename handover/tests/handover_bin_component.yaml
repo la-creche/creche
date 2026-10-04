@@ -1,0 +1,34 @@
+# A fixture, not a declaration: no component of the catalog is `kind: binary`.
+# The file name is not `component.yaml`, so `handover check` never reads it.
+#
+# It is the shape a component takes when its artifact is a compiled program:
+# the build installs each program at `<install.to>/bin/<name>`, so the unit's
+# `ExecStart=` path and the verify command path keep the shape a venv has.
+manifest_version: "0.4"
+name: noticeboard
+repo: agent-control
+path: noticeboard
+kind: binary
+unit: creche-noticeboard.service
+runs_as: operator
+# `--locked`: the build installs what `rust/Cargo.lock` pins and resolves
+# nothing. `--no-track`: cargo writes no record that names the source tree.
+build:
+  - ["/usr/local/bin/cargo", "install", "--locked", "--no-track",
+     "--path", "rust/crates/noticeboard"]
+install:
+  to: ~/.local/components/noticeboard
+  prev: ~/.local/components/noticeboard.prev
+provides: []
+requires:
+  - { contract: session-api, major: 0, min_minor: 12 }
+depends_on: [attendance]
+verify:
+  command: ["~/.local/components/noticeboard/bin/noticeboard-verify", "--json"]
+  user: operator
+  timeout_s: 60
+restore:
+  mode: automatic
+  keep: 1
+secrets: []
+release: yes

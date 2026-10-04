@@ -237,3 +237,7 @@ that wants a refusal changes one field.
   (`requester/file.py`).
 - The `chaperone` venv carries `handover`'s console scripts
   (`chaperone/pyproject.toml`).
+- Contract 06 §8 does not list `kind: binary`. Build on the host or verify
+  an artifact that CI built and attested: the operator decides. Root builds
+  on the host today, as it builds a venv. A cargo build script runs
+  arbitrary code, so the user that runs the build matters (`catalog.py`).
