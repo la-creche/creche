@@ -48,7 +48,12 @@ def parse_rfc3339(text: str) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
 
-    return parsed.astimezone(UTC)
+    # The offset can move the time in UTC out of the years 1 to 9999, which
+    # are the years that a `datetime` holds.
+    try:
+        return parsed.astimezone(UTC)
+    except OverflowError:
+        return None
 
 
 def age_seconds(moment: datetime, reference: datetime | None = None) -> float:

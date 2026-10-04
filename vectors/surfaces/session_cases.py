@@ -342,6 +342,9 @@ TIMES: Final[tuple[tuple[str, str], ...]] = (
     ("week-53-of-a-short-year", "2025-W53-1"),
     ("week-date-day-8", "2026-W38-8"),
     ("week-date-past-year-9999", "9999-W52-6"),
+    ("offset-moves-before-year-one", "0001-01-01T00:00:00+00:01"),
+    ("offset-moves-past-year-9999", "9999-12-31T23:59:59-00:01"),
+    ("offset-moves-to-year-one", "0001-01-01T00:01:00+00:01"),
 )
 
 RUN_TURN_BODIES: Final[tuple[Body, ...]] = (
@@ -1278,6 +1281,7 @@ JOURNAL_LINES: Final[tuple[Body, ...]] = (
     _l("ts-space-before-offset", ts="2026-10-05 21:22:05 +0200"),
     _l("ts-week-date", ts="2026-W41-1T19:22:05Z"),
     _l("ts-words", ts="just now"),
+    _l("ts-offset-moves-before-year-one", ts="0001-01-01T00:00:00+00:01"),
     _l("ts-empty", ts=""),
     _l("ts-null", ts=None),
     _l("ts-number", ts=1789759325),
