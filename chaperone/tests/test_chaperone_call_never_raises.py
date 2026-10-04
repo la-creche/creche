@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Final
@@ -28,7 +29,14 @@ from chaperone.family_audit import (
     AUDIT_TRUNCATION_MARKER,
     UNRECORDABLE_ARGS,
 )
-from chaperone.gatekeeper import GateHeld, Gatekeeper, GateNotice, GateTicket, ReachCheck
+from chaperone.gatekeeper import (
+    GateHeld,
+    Gatekeeper,
+    GateNotice,
+    GateTicket,
+    ReachCheck,
+    Verdict,
+)
 from chaperone.gates import gate_id
 from chaperone.mcp_client import UpstreamSpec
 from chaperone_family_helpers import FAMILY_TOKEN, make_grants, write_grants
@@ -50,6 +58,14 @@ LONE: Final = "\\ud800"
 DEEP: Final = 5000
 DEEP_JSON: Final = "[" * DEEP + "]" * DEEP
 
+#: The depths around the last one that the audit writer walks. That depth
+#: is the recursion limit of the interpreter less the frames of the caller,
+#: so the walk starts under it and ends over it.
+EDGE_DEPTHS: Final = range(sys.getrecursionlimit() - 200, sys.getrecursionlimit() + 1)
+
+#: More calls in a minute than the walk of `EDGE_DEPTHS` makes.
+NO_RATE_LIMIT: Final = {"pep_rpm": 10 * len(EDGE_DEPTHS)}
+
 INTERNAL_ERROR: Final = {"ok": False, "reason": "internal_error", "detail": None}
 
 
@@ -61,6 +77,20 @@ class Notified:
 
     async def notify(self, notice: GateNotice) -> bool:
         self.notices.append(notice)
+
+        return True
+
+
+class Approves:
+    """A phone rail whose operator approves each gate when the call waits."""
+
+    def __init__(self) -> None:
+        self.keeper: Gatekeeper | None = None
+
+    async def notify(self, notice: GateNotice) -> bool:
+        assert self.keeper is not None
+        tap = self.keeper.resolve
+        asyncio.get_running_loop().call_soon(tap, notice.gate, Verdict.APPROVE)
 
         return True
 
@@ -213,6 +243,38 @@ def test_a_gated_call_that_no_line_can_hold_opens_no_gate(tmp_path: Path) -> Non
     assert rail.notices == []
     assert pool.calls == []
     assert [record["decision"] for record in family_lines(tmp_path)] == ["deny"]
+
+
+@pytest.mark.parametrize(
+    "approval",
+    [pytest.param([], id="plain"), pytest.param([SEARCH], id="approved-at-a-gate")],
+)
+def test_no_line_of_a_call_with_an_effect_holds_the_marker(
+    tmp_path: Path, approval: list[str]
+) -> None:
+    """`chaperone/AGENTS.md`: a call has no effect when no audit line can
+    hold its arguments in full. The check before the effect and the write
+    after it must agree at each depth, also at the last one that the writer
+    walks. A call is refused before its effect and before its gate, or each
+    of its lines holds its arguments."""
+    write_grants(grants_dir(tmp_path), make_grants(approval=approval, limits=NO_RATE_LIMIT))
+    pool = FakePool()
+    rail = Approves()
+    rail.keeper = Gatekeeper(rail)
+    client = build(tmp_path, pool=pool, gatekeeper=rail.keeper)
+
+    statuses: list[int] = []
+    for depth in EDGE_DEPTHS:
+        nested = "[" * depth + "]" * depth
+        statuses.append(call(client, body_of(SEARCH, f'{{"query":{nested}}}')).status_code)
+
+    records = family_lines(tmp_path)
+    marked = [r["decision"] for r in records if r["args"] == UNRECORDABLE_ARGS]
+    assert set(marked) == {"deny"}
+    assert len(pool.calls) == [r["decision"] for r in records].count("allow")
+    # The walk passes the last depth: the first call runs, the last does not.
+    assert (statuses[0], statuses[-1]) == (200, 500)
+    assert len(pool.calls) == statuses.count(200)
 
 
 def test_a_detail_that_is_not_text_still_reaches_the_caller(tmp_path: Path) -> None:

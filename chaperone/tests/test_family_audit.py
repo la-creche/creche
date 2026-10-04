@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import stat
+import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from chaperone.family_audit import (
     AUDIT_ARG_STRING_MAX_CHARS,
     AUDIT_DIR_MODE,
     AUDIT_TRUNCATION_MARKER,
+    HOLD_RESERVE_LEVELS,
     UNRECORDABLE_ARGS,
     AuditEntry,
     FamilyAudit,
@@ -249,9 +252,50 @@ def test_arguments_that_no_line_can_hold_do_not_cost_the_record(
     )
 
 
+@pytest.mark.parametrize("outcome", [Outcome.ALLOW, Outcome.PENDING])
+@pytest.mark.parametrize("args", NOT_FOR_A_LINE)
+def test_only_the_line_of_a_denial_can_end_with_the_marker(
+    tmp_path: Path, args: dict[str, object], outcome: Outcome
+) -> None:
+    """The service refuses such a call before its effect and before its
+    gate. If one still comes to the writer, the line stays and the write
+    fails, so the route answers 500 (non-negotiable 5)."""
+    audit = FamilyAudit(tmp_path)
+
+    with pytest.raises(AuditError) as raised:
+        audit.write(allowed(args=args, outcome=outcome))
+
+    assert "\ud800" not in str(raised.value)
+    (record,) = lines(tmp_path)
+    assert (record["args"], record["decision"]) == (UNRECORDABLE_ARGS, outcome.value)
+
+
 @pytest.mark.parametrize("args", NOT_FOR_A_LINE)
 def test_such_arguments_are_not_held(args: dict[str, object]) -> None:
     assert can_hold(args) is False
+
+
+def _from_deeper(frames: int, walk: Callable[[], object]) -> object:
+    """Call `walk` from `frames` more frames than the caller has."""
+    if frames == 0:
+        return walk()
+
+    return _from_deeper(frames - 1, walk)
+
+
+def test_the_check_keeps_levels_free_for_the_write() -> None:
+    """The write of a line starts deeper in the stack than the check before
+    the effect. What the check passes, a caller that is deeper by half of
+    the reserve still walks."""
+    depth = sys.getrecursionlimit() - 200
+    assert can_hold({"x": _nested(depth)}) is True
+    while can_hold({"x": _nested(depth + 1)}):
+        depth += 1
+
+    args: dict[str, object] = {"x": _nested(depth)}
+    walked = _from_deeper(HOLD_RESERVE_LEVELS // 2, lambda: truncate_strings(args))
+
+    assert walked == args
 
 
 def test_a_string_that_is_not_text_after_the_cut_is_not_held() -> None:

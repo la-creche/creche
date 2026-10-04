@@ -29,7 +29,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Final, cast
 
-from .audit import AuditLog
+from .audit import AuditError, AuditLog
 from .family_ids import rfc3339_ms
 from .headers import NO_CLAIMS, Claimed
 
@@ -54,6 +54,12 @@ AUDIT_TRUNCATION_MARKER: Final = "...<truncated>"
 #: reading here: the record holds this marker, and `family_app` refuses the
 #: call before any effect. A change costs each reader of the audit.
 UNRECORDABLE_ARGS: Final[dict[str, object]] = {"$unrecordable": True}
+
+#: Levels that `can_hold` keeps free under the arguments. The write of a
+#: line starts some frames deeper in the stack than the check before the
+#: effect, and `truncate_strings` takes one frame for each level. Without
+#: this reserve the check passes arguments that the write cannot walk.
+HOLD_RESERVE_LEVELS: Final = 32
 
 
 class Outcome(Enum):
@@ -111,10 +117,17 @@ def can_hold(args: dict[str, object]) -> bool:
 
     The whole arguments are checked, not what the cap leaves of them. An
     effect gets the whole arguments.
+
+    The check walks `HOLD_RESERVE_LEVELS` more levels than the arguments
+    have. A write from a deeper frame then walks what this check passed.
     """
+    deeper: object = args
+    for _ in range(HOLD_RESERVE_LEVELS):
+        deeper = [deeper]
+
     try:
-        truncate_strings(args)
-        json.dumps(args, ensure_ascii=False).encode("utf-8")
+        truncate_strings(deeper)
+        json.dumps(deeper, ensure_ascii=False).encode("utf-8")
     except (RecursionError, ValueError):
         return False
 
@@ -162,11 +175,23 @@ class FamilyAudit:
         effect already happened — unrecorded effects are worse.
 
         Arguments that no line can hold do not cost the record: the line
-        then holds `UNRECORDABLE_ARGS` in their place."""
+        then holds `UNRECORDABLE_ARGS` in their place.
+
+        Only a denial can end with that line. `family_app` refuses such a
+        call before its effect and before its gate (`can_hold`). If one
+        still comes here with another decision, the line is written and
+        the write fails: no call with an effect ends well with a line that
+        does not hold its arguments."""
         try:
             self._append(entry, truncate_strings(entry.args))
         except (RecursionError, ValueError):
             self._append(entry, UNRECORDABLE_ARGS)
+            if entry.outcome is not Outcome.DENY:
+                # Not the text of the failure: it can quote the arguments.
+                raise AuditError(
+                    f"the audit line of {entry.tool} for {entry.family} "
+                    f"({entry.outcome.value}) does not hold its arguments"
+                ) from None
 
     def _append(self, entry: AuditEntry, args: object) -> None:
         chain = entry.chain or (entry.family,)
