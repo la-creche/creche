@@ -248,6 +248,22 @@ def test_a_families_directory_that_cannot_be_listed_says_so(board: Harness) -> N
     assert "cannot list the families directory" in answer.text
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads each entry of a 0444 directory")
+def test_a_families_directory_that_gives_names_and_no_entry_says_so(board: Harness) -> None:
+    """A directory with no search permission lists its names, and the
+    service can read no entry. That is not "no families" either."""
+    families = board.config.families_dir
+    families.chmod(0o444)
+
+    try:
+        answer = board.get("/")
+    finally:
+        families.chmod(0o755)
+
+    assert answer.status_code == 200
+    assert "cannot read the families directory" in answer.text
+
+
 def test_a_missing_state_file_renders_a_report(board: Harness) -> None:
     (board.config.families_dir / "chat" / "status.json").unlink()
 

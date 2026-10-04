@@ -281,9 +281,22 @@ def listing_problem(families_dir: Path) -> str:
     that it does not say "no families" for a directory it cannot read.
     """
     try:
-        next(families_dir.iterdir(), None)
+        first = next(families_dir.iterdir(), None)
     except OSError as error:
         return f"cannot list the families directory: {error.strerror or error}"
+
+    if first is None:
+        return ""
+
+    try:
+        # A directory with no search permission gives its names and no
+        # entry. `family_names` finds no family there.
+        first.lstat()
+    except FileNotFoundError:
+        # The entry went away after the listing. `family_names` skips it.
+        return ""
+    except OSError as error:
+        return f"cannot read the families directory: {error.strerror or error}"
 
     return ""
 
