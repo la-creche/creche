@@ -17,6 +17,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
+from attendance.branching import Branch, Decision
+from attendance.jobs import Delegation
+from attendance.workspace import CODE_SANDBOX_FAMILY, workspace_of
+
 from attendance import wire
 from vectors.core import (
     Json,
@@ -155,6 +159,7 @@ LINES: Final[tuple[Line, ...]] = (
         "ready-unknown-field",
         _line(type="ready", protocol="1.0", sandbox=SANDBOX, future={"nested": [1, 2]}),
     ),
+    _l("ready-lone-surrogate", '{"type":"ready","protocol":"1.\\ud800","sandbox":"\\udc00"}'),
     # --- session_opened (§5.6) ----------------------------------------------
     _l(
         "opened-full",
@@ -267,6 +272,30 @@ LINES: Final[tuple[Line, ...]] = (
     _l("event-nul-escape", _EVENT_HEAD + '{"type":"x","text":"a\\u0000b"}}'),
     _l("event-huge-integer", _EVENT_HEAD + '{"type":"x","n":' + "9" * HUGE_DIGITS + "}}"),
     _l("event-4300-digits", _EVENT_HEAD + '{"type":"x","a":' + _nested(64, "9" * 4300) + "}}"),
+    _l(
+        "event-seq-4300-digits",
+        _EVENT_HEAD.replace('"turn_seq":1', '"turn_seq":' + "9" * 4300) + "{}}",
+    ),
+    _l("event-key-lone-surrogate", _EVENT_HEAD + '{"type":"x","\\udc00":1}}'),
+    _l("event-type-empty-depth-65", _EVENT_HEAD + '{"type":"","a":' + _nested(64) + "}}"),
+    _l(
+        "event-duplicate-key-last-shallow",
+        _EVENT_HEAD + '{"type":"x","a":' + _nested(64) + ',"a":1}}',
+    ),
+    _l(
+        "event-duplicate-key-last-deep",
+        _EVENT_HEAD + '{"type":"x","a":1,"b":"bb","a":' + _nested(64) + "}}",
+    ),
+    _l(
+        "event-float-forms", _EVENT_HEAD + '{"f":[1e16,1e15,1e-5,0.0001,1.5E+300,5e-324,2.5,-0.0]}}'
+    ),
+    _l(
+        "event-float-ties-depth-65",
+        _EVENT_HEAD
+        + '{"type":"f","f":[669758432410385.25,20278963822605.3125,669758432410385.75],"a":'
+        + _nested(64)
+        + "}}",
+    ),
     Line(
         "event-very-deep",
         parts=(
@@ -309,6 +338,20 @@ LINES: Final[tuple[Line, ...]] = (
     _l("settled-cost-int", _turn("turn_settled", usage={"cost_usd": 2})),
     _l("settled-cost-negative", _turn("turn_settled", usage={"cost_usd": -0.5})),
     _l("settled-cost-true", _turn("turn_settled", usage={"cost_usd": True})),
+    _l("settled-cost-negative-int", _turn("turn_settled", usage={"cost_usd": -3})),
+    _l("settled-cost-minus-zero", _turn("turn_settled", usage={"cost_usd": -0.0})),
+    _l("settled-cost-int-rounds", _turn("turn_settled", usage={"cost_usd": 2**53 + 1})),
+    _l("settled-cost-int-largest", _turn("turn_settled", usage={"cost_usd": 10**308})),
+    _l("settled-cost-int-past-float", _turn("turn_settled", usage={"cost_usd": 10**309})),
+    _l(
+        "settled-cost-negative-int-past-float",
+        _turn("turn_settled", usage={"cost_usd": -(10**309)}),
+    ),
+    _l(
+        "settled-cost-negative-infinity",
+        '{"type":"turn_settled","session":"s","turn":"t","turn_seq":1,'
+        '"usage":{"cost_usd":-Infinity}}',
+    ),
     _l(
         "settled-cost-nan",
         '{"type":"turn_settled","session":"s","turn":"t","turn_seq":1,"usage":{"cost_usd":NaN}}',
@@ -359,6 +402,12 @@ LINES: Final[tuple[Line, ...]] = (
     _l("failed-message-number", _turn("turn_failed", reason="internal", message=5)),
     _l("failed-message-4097", _turn("turn_failed", reason="internal", message="m" * 4097)),
     _l(
+        "failed-message-lone-surrogate",
+        _EVENT_HEAD.replace('"type":"event"', '"type":"turn_failed"').replace(
+            '"event":', '"reason":"internal","message":"cut \\ud83d"}'
+        ),
+    ),
+    _l(
         "failed-no-turn",
         _line(type="turn_failed", session=None, turn=None, turn_seq=0, reason="line_too_large"),
     ),
@@ -380,6 +429,11 @@ LINES: Final[tuple[Line, ...]] = (
     ),
     _l("exit-reason-number", _line(type="process_exit", session=SESSION, reason=7, turn=7)),
     _l("exit-reason-long", _line(type="process_exit", session=SESSION, reason="r" * 300)),
+    _l("exit-reason-empty", _line(type="process_exit", session=SESSION, reason="")),
+    *(
+        _l(f"exit-reason-{reason}", _line(type="process_exit", session=SESSION, reason=reason))
+        for reason in ("reaped", "stopped", "shutdown")
+    ),
     # --- pong and log (§5.5) ---
     _l("pong-full", _line(type="pong", nonce="5f3a9c1e")),
     _l("pong-no-nonce", _line(type="pong")),
@@ -390,6 +444,8 @@ LINES: Final[tuple[Line, ...]] = (
     _l("log-minimal", _line(type="log")),
     _l("log-wrong-types", _line(type="log", level=3, message=["a"], session=7)),
     _l("log-unknown-level", _line(type="log", level="LOUD", message="x")),
+    _l("log-level-empty", _line(type="log", level="", message="x", session="")),
+    *(_l(f"log-level-{level}", _line(type="log", level=level)) for level in ("debug", "error")),
     _l("log-message-4096", _line(type="log", message="m" * 4096)),
     _l("log-message-4097", _line(type="log", message="m" * 4097)),
     _l("log-message-4097-two-byte", _line(type="log", message="\u00e9" * 4097)),
@@ -494,6 +550,11 @@ LINES: Final[tuple[Line, ...]] = (
         "entries-reason-long",
         _line(type="entries", request=TURN, session=SESSION, reason="r" * 65, leaf_id=9),
     ),
+    _l(
+        "entries-lone-surrogate",
+        f'{{"type":"entries","request":"{TURN}","session":"{SESSION}","ok":true,'
+        '"entries":[{"id":"e-\\ud800","role":"\\ud800","text":"a\\ud83d"}]}',
+    ),
     # --- fatal (§5.7) ---
     _l(
         "fatal-full",
@@ -506,6 +567,7 @@ LINES: Final[tuple[Line, ...]] = (
     _l("fatal-reason-unknown-word", _line(type="fatal", reason="unknown")),
     _l("fatal-reason-number", _line(type="fatal", reason=5, message=5)),
     _l("fatal-message-4097", _line(type="fatal", message="m" * 4097)),
+    _l("fatal-mount-dir-unset", _line(type="fatal", reason="mount_dir_unset")),
     # --- the type field (§13 rule 2) ---
     _l("type-missing", "{}"),
     _l("type-missing-with-fields", _line(session=SESSION, nonce="x")),
@@ -520,6 +582,7 @@ LINES: Final[tuple[Line, ...]] = (
     _l("type-empty", _line(type="", nonce="x")),
     _l("type-duplicate-last-wins", '{"type":"pong","type":"log","nonce":"x"}'),
     _l("type-duplicate-last-unknown", '{"type":"pong","nonce":"x","type":"teleport"}'),
+    _l("type-lone-surrogate", '{"type":"pong\\ud800","nonce":"x"}'),
     # --- not an object (§13 rule 1) ---
     _l("top-array", '[{"type":"pong","nonce":"x"}]'),
     _l("top-string", '"pong"'),
@@ -552,17 +615,57 @@ LINES: Final[tuple[Line, ...]] = (
     _l("json-nbsp-before", "\u00a0" + '{"type":"pong","nonce":"x"}'),
     _l("json-upper-true", '{"type":"session_opened","session":"s","resident":True}'),
     _l("json-undefined", '{"type":"pong","nonce":undefined}'),
+    *(
+        _l(f"json-number-{name}", '{"type":"pong","nonce":"x","n":' + number + "}")
+        for name, number in (
+            ("dot-no-digit", "1."),
+            ("exponent-no-digit", "1e"),
+            ("exponent-sign-no-digit", "1.5e+"),
+            ("minus-only", "-"),
+            ("minus-leading-zero", "-01"),
+            ("minus-nan", "-NaN"),
+            ("lower-infinity", "infinity"),
+        )
+    ),
+    _l("json-literal-then-text", '{"type":"pong","nonce":"x","n":nullx}'),
+    _l("json-surrogate-then-bad-escape", '{"type":"pong","nonce":"\\ud83d\\uzzzz"}'),
+    _l("json-vertical-tab-before", "\x0b" + '{"type":"pong","nonce":"x"}'),
+    _l("json-bad-then-huge-integer", '{"type":"pong",,"n":' + "9" * HUGE_DIGITS + "}"),
     # --- JSON that a strict reader may refuse and this one takes ---
     _l("lax-leading-spaces", '  \t{"type":"pong","nonce":"x"}'),
     _l("lax-trailing-spaces", '{"type":"pong","nonce":"x"}  \t'),
     _l("lax-inner-newline", '{"type":"pong",\n"nonce":"x"}'),
     _l("lax-trailing-cr", '{"type":"pong","nonce":"x"}\r'),
     _l("lax-escaped-slash", '{"type":"pong","nonce":"a\\/b"}'),
+    _l("lax-delete-in-string", '{"type":"pong","nonce":"a\x7fb"}'),
     _l("lax-escaped-type", '{"\\u0074ype":"\\u0070ong","nonce":"x"}'),
     _l("lax-deep-unknown-200", '{"type":"pong","nonce":"x","extra":' + _nested(200) + "}"),
     _l("lax-big-exponent", '{"type":"pong","nonce":"x","n":1e400}'),
     _l("lax-many-digits-float", '{"type":"pong","nonce":"x","n":0.' + "3" * 400 + "}"),
     _l("lax-4300-digits", '{"type":"pong","nonce":"x","n":' + "9" * 4300 + "}"),
+    _l("lax-negative-4300-digits", '{"type":"pong","nonce":"x","n":-' + "9" * 4300 + "}"),
+    *(
+        _l(f"lax-number-{name}", '{"type":"pong","nonce":"x","n":' + number + "}")
+        for name, number in (
+            ("minus-zero", "-0"),
+            ("minus-infinity", "-Infinity"),
+            ("upper-exponent", "1E+2"),
+            ("zero-exponent", "0e0"),
+            ("tiny-exponent", "1e-999"),
+        )
+    ),
+    _l(
+        "lax-surrogate-forms",
+        '{"type":"pong","nonce":"\\ud83d\\ud83d\\ude00\\ude00\\ud83d\\u0041"}',
+    ),
+    _l("lax-surrogate-then-escaped-backslash", '{"type":"pong","nonce":"\\ud83d\\\\ude00"}'),
+    _l("lax-upper-hex-escape", '{"type":"pong","nonce":"\\u00E9\\uD83D\\uDE00"}'),
+    _l("4301-digits", '{"type":"pong","nonce":"x","n":' + "9" * 4301 + "}"),
+    _l("huge-integer-then-bad-json", '{"type":"pong","nonce":"x","n":' + "9" * HUGE_DIGITS),
+    _l(
+        "huge-integer-exponent-no-digit",
+        '{"type":"pong","nonce":"x","n":' + "9" * HUGE_DIGITS + "e}",
+    ),
     _l("huge-integer-unknown-field", '{"type":"pong","nonce":"x","n":' + "9" * HUGE_DIGITS + "}"),
     _l("huge-negative-integer", '{"type":"pong","nonce":"x","n":-' + "9" * HUGE_DIGITS + "}"),
     _l("huge-float-digits", '{"type":"pong","nonce":"x","n":' + "9" * HUGE_DIGITS + ".5}"),
@@ -576,6 +679,7 @@ LINES: Final[tuple[Line, ...]] = (
         ),
     ),
     Line("very-deep-top", parts=(("[", VERY_DEEP), ("]", VERY_DEEP))),
+    Line("very-deep-then-bad-json", parts=(("[", VERY_DEEP),)),
 )
 
 
@@ -722,6 +826,17 @@ _OPEN: Final[dict[str, Any]] = {
     "config_rev": "reg-9f21c4",
 }
 
+#: The three objects that the host makes for a turn, from the producer of
+#: each one. A typed reader can hold these. `to_channel` writes `id` before
+#: `caller_session`, so that object is the one whose key order is not the
+#: sorted order.
+_OWNER: Final = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
+_DELEGATION_ID: Final = "01JBQ7WZ0X4T9V6K2H8M3N5PQS"
+_HOST_WORKSPACE: Final = workspace_of(CODE_SANDBOX_FAMILY, _OWNER)
+_HOST_BRANCH: Final = Decision(Branch.FORK, fork_from="e-4").wire_branch
+_HOST_DELEGATION: Final = Delegation(_DELEGATION_ID, "chat", _OWNER).to_channel()
+_HOST_DELEGATION_NO_CALLER: Final = Delegation(_DELEGATION_ID, "chat").to_channel()
+
 BUILDS: Final[tuple[Build, ...]] = (
     Build(
         "hello-attended",
@@ -747,6 +862,12 @@ BUILDS: Final[tuple[Build, ...]] = (
         {**_OPEN, "model": "code-router", "workspace": _WORKSPACE},
     ),
     Build("open-session-empty-model", "open_session", {**_OPEN, "model": "", "workspace": {}}),
+    Build(
+        "open-session-host-shapes",
+        "open_session",
+        {**_OPEN, "model": "code-router", "workspace": _HOST_WORKSPACE},
+    ),
+    Build("open-session-empty-model-only", "open_session", {**_OPEN, "model": ""}),
     Build("get-entries-minimal", "get_entries", {"request": TURN, **_OPEN}),
     Build(
         "get-entries-every-argument",
@@ -754,6 +875,11 @@ BUILDS: Final[tuple[Build, ...]] = (
         {"request": TURN, **_OPEN, "since": "e-7", "workspace": _WORKSPACE},
     ),
     Build("get-entries-empty-since", "get_entries", {"request": TURN, **_OPEN, "since": ""}),
+    Build(
+        "get-entries-host-shapes",
+        "get_entries",
+        {"request": TURN, **_OPEN, "since": "e-7", "workspace": _HOST_WORKSPACE},
+    ),
     Build("start-turn-minimal", "start_turn", dict(_START)),
     Build(
         "start-turn-every-argument",
@@ -786,12 +912,36 @@ BUILDS: Final[tuple[Build, ...]] = (
         {**_START, "deadline_s": 0, "epoch": 2**64, "workspace": {"f": 1.0, "g": 1e100, "h": 0.1}},
     ),
     Build("start-turn-lone-surrogate", "start_turn", {**_START, "prompt": "a\ud800b"}),
+    Build(
+        "start-turn-host-shapes",
+        "start_turn",
+        {
+            **_START,
+            "persona": "Answer in one sentence.",
+            "attachments": ["notes.txt", "plan-2.pdf"],
+            "workspace": _HOST_WORKSPACE,
+            "branch": _HOST_BRANCH,
+            "delegation": _HOST_DELEGATION,
+        },
+    ),
+    Build(
+        "start-turn-host-delegation-no-caller",
+        "start_turn",
+        {**_START, "delegation": _HOST_DELEGATION_NO_CALLER},
+    ),
+    Build("start-turn-empty-texts", "start_turn", {**_START, "persona": "", "attachments": []}),
+    Build(
+        "start-turn-number-limits",
+        "start_turn",
+        {**_START, "deadline_s": 0, "epoch": 2**64 - 1},
+    ),
     Build("start-turn-over-the-cap", "start_turn", dict(_START), 64),
     Build("steer", "steer", {"session": SESSION, "turn": TURN, "message": "Check the garage too."}),
     Build("abort", "abort", {"session": SESSION, "turn": TURN}),
     Build("stop-process-default", "stop_process", {"session": SESSION}),
     Build("stop-process-grace", "stop_process", {"session": SESSION, "grace_ms": 0}),
     Build("ping", "ping", {"nonce": "5f3a9c1e"}),
+    Build("ping-empty-nonce", "ping", {"nonce": ""}),
     Build("shutdown-default", "shutdown", {}),
     Build("shutdown-grace", "shutdown", {"grace_ms": 250}),
 )
@@ -876,7 +1026,14 @@ def surfaces() -> tuple[Surface, ...]:
             notes=(
                 "The input is the named arguments of the builder that params.builder names.",
                 "A builder keeps the key order of an object it is given. Every object "
-                "inside args has its keys in sorted order.",
+                "inside args has its keys in sorted order, with one exception.",
+                "The exception is the delegation of a vector whose id starts with "
+                "start-turn-host-. The host makes that object with "
+                "attendance.jobs.Delegation.to_channel, which writes the key id and then "
+                "the key caller_session.",
+                "In a vector whose id holds host-shapes, workspace, branch and delegation "
+                "are the objects that the host makes: attendance.workspace.workspace_of, "
+                "attendance.branching.Decision.wire_branch and to_channel.",
                 "output is the exact line the host writes, with its LF.",
                 "A refused vector is an input for which the entry point raises ValueError. "
                 "Each caller of the entry point catches that type.",

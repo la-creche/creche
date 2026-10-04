@@ -70,6 +70,11 @@ directory is not a workspace package, so a change here does not change
   file.
 - `host_reason` of `attendance.wire` has no vector. `cap_event` and
   `read_usage` have vectors only through `channel.parse`.
+- No vector covers the playpen side of contract 03: what the playpen accepts
+  from the host, and what it writes. The playpen is TypeScript, and the
+  generator calls Python.
+- `channel.build` has no vector for `prompt`. `attendance.wire` has no
+  builder for that message.
 - `status.door_trigger` lists only an autonomous family, and a refused
   vector holds no reason. Most status documents are attended, so that
   reader refuses them on `kind` alone. The surface pins little of how that
