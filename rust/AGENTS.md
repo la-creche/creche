@@ -233,6 +233,16 @@ The rule against a crash loop:
 - Add the line in the pull request that moves a unit to a Rust binary.
   `bin/tests/test_rust_config_units.py` pins what the units hold today.
   Change the pin in the same pull request.
+- systemd reads `RestartPreventExitStatus` only for the exit status of the
+  main process. It does not read the line for a process of `ExecStartPre=`.
+- Three units hold `ExecStartPre=<service> --check` today:
+  `creche-attendance`, `creche-door-owui` and `creche-noticeboard`. With a
+  config that is not valid, the check fails before the main process starts.
+  systemd then starts the unit again, also when the unit file holds the line.
+- In the pull request that moves such a unit to a Rust binary, remove its
+  `ExecStartPre=` line. The main process does the same parse.
+- Then prove on a Linux host that the unit stays stopped after exit status
+  78. No test in this repository runs systemd.
 - `AtReload::KeepLastGood` never exits. A reload that fails keeps the last
   good value.
 
@@ -457,3 +467,6 @@ Rules for the test:
 - No unit file holds `RestartPreventExitStatus=78`, and no service exits
   with 78 for each config error. The failure action of each config type
   states what the port of its service must do.
+- No test runs systemd. The rule about `RestartPreventExitStatus` and
+  `ExecStartPre=` comes from the manual page `systemd.service(5)`. No run on
+  a host proves it.

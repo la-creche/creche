@@ -289,6 +289,11 @@ impl OwuiCopy {
 /// again. A `SIGHUP` reads the token files again, and a token file that is
 /// not valid keeps the last good set.
 ///
+/// systemd reads `RestartPreventExitStatus` only for the main process. After
+/// a check in `ExecStartPre` that fails, systemd starts the unit again, also
+/// when the unit file holds that line. The port of this service to Rust
+/// removes the `ExecStartPre` line: the main process does the same parse.
+///
 /// The type is stricter than the Python reader in these places:
 ///
 /// 1. The LAN address is a [`BindHost`]. The Python reader takes each text,

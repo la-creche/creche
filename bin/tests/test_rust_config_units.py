@@ -15,6 +15,12 @@ change without one red line, and each gets a check here:
 3. **A variable of a unit that no config type knows.** Each `Environment=`
    name with the prefix of its service, and each flag of the caregiver
    command, is in the Rust module of that daemon.
+4. **A unit that checks its config before the main process starts, with a
+   doc that does not say so.** systemd reads `RestartPreventExitStatus` only
+   for the main process. A unit with an `ExecStartPre=... --check` line
+   starts again after a check that fails, with that line too. Three units
+   hold such a check today, and the Rust module of each one says what the
+   port must do with it.
 
 A Rust test reads no file outside `rust/` and `vectors/data`, so these
 checks are here. A push that changes only `rust/` runs no pytest suite
@@ -57,6 +63,23 @@ RESTART_ALWAYS = "Restart=always"
 NO_START_LIMIT = "StartLimitIntervalSec=0"
 PREVENT = "RestartPreventExitStatus"
 
+#: A line that runs a process before the main process of a unit.
+PRE_START = "ExecStartPre="
+
+#: The flag of a service that parses its config and exits.
+CHECK_FLAG = "--check"
+
+#: The units that check their config before the main process starts.
+#: `RestartPreventExitStatus` does not read the exit status of that check.
+PRE_CHECKED = {
+    "creche-attendance.service",
+    "creche-door-owui.service",
+    "creche-noticeboard.service",
+}
+
+#: What the doc comment of a config type says when its unit holds the check.
+REMOVE_THE_CHECK = "removes the `ExecStartPre` line"
+
 
 def _unit(name: str) -> str:
     return (UNITS / name).read_text(encoding="utf-8")
@@ -95,6 +118,28 @@ def test_each_daemon_unit_starts_again_after_each_exit_status() -> None:
         assert RESTART_ALWAYS in lines, unit
         assert NO_START_LIMIT in lines, unit
         assert not [line for line in lines if line.startswith(PREVENT)], unit
+
+
+def test_a_unit_with_a_check_before_the_start_says_so_in_its_config_type() -> None:
+    checked = {
+        unit
+        for unit in MODULES
+        if any(
+            line.startswith(PRE_START) and line.endswith(CHECK_FLAG) for line in _lines(_unit(unit))
+        )
+    }
+
+    assert checked == PRE_CHECKED, (
+        "the units with an ExecStartPre check changed: change PRE_CHECKED here, the FAILURE "
+        "ACTION comment of each config type and the crash loop rule in rust/AGENTS.md"
+    )
+    for unit, (module, _) in MODULES.items():
+        says_so = REMOVE_THE_CHECK in _module(module)
+
+        assert says_so == (unit in PRE_CHECKED), (
+            f"{unit}: the FAILURE ACTION comment in rust/.../config/{module}.rs must say "
+            f"'{REMOVE_THE_CHECK}' exactly when the unit holds an ExecStartPre check"
+        )
 
 
 def test_the_exit_status_of_a_bad_config_is_ex_config() -> None:

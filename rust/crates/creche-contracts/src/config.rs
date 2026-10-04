@@ -61,7 +61,12 @@ pub const EX_CONFIG: u8 = 78;
 
 /// The line that the unit file of a daemon must hold when the daemon exits
 /// with [`EX_CONFIG`]. With the line, systemd does not start the daemon
-/// again after that exit status.
+/// again after that exit status of the main process.
+///
+/// systemd reads the line only for the main process. A process of
+/// `ExecStartPre=` that exits with 78 still starts the unit again. A unit
+/// that holds this line must thus hold no `ExecStartPre=` check of the
+/// config: the main process does the parse.
 pub const NO_RESTART_LINE: &str = "RestartPreventExitStatus=78";
 
 /// What a process does when the parse of its config fails at start.
@@ -72,10 +77,11 @@ pub enum AtStart {
     /// The process writes each error to its log and exits with
     /// [`EX_CONFIG`].
     ///
-    /// The unit file must then hold [`NO_RESTART_LINE`]. Today each daemon
-    /// unit holds `Restart=always` and `StartLimitIntervalSec=0`, and none
-    /// holds that line. Without the line, systemd starts the process again
-    /// after each exit status, with no limit.
+    /// The unit file must then hold [`NO_RESTART_LINE`], and no
+    /// `ExecStartPre=` check of the same config. Today each daemon unit
+    /// holds `Restart=always` and `StartLimitIntervalSec=0`, and none holds
+    /// that line. Without the line, systemd starts the process again after
+    /// each exit status, with no limit.
     ExitConfig,
     /// The process starts, refuses each call and publishes the fault. Its
     /// unit file needs no change.
