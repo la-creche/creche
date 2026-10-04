@@ -207,6 +207,27 @@ def test_every_system_message_joins_the_persona() -> None:
     assert request.persona == "first\nsecond"
 
 
+# One half of a surrogate pair. A JSON escape can name it. The text then has
+# no UTF-8 form, and the door sends UTF-8 to `attendance`.
+_HALF_PAIR = "\ud800"
+
+
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [{"role": "user", "content": f"a{_HALF_PAIR}b"}],
+        [{"role": "system", "content": f"a{_HALF_PAIR}b"}, {"role": "user", "content": "go"}],
+    ],
+    ids=["prompt", "persona"],
+)
+def test_a_text_with_no_utf8_form_is_refused(messages: list[dict[str, str]]) -> None:
+    with pytest.raises(DoorError) as caught:
+        parse_chat_request(_body(messages=messages))
+
+    assert caught.value.status == 400
+    assert caught.value.code == "bad_body"
+
+
 def test_a_request_with_no_user_message_is_refused() -> None:
     with pytest.raises(DoorError) as caught:
         parse_chat_request(_body(messages=[{"role": "system", "content": "only a persona"}]))
