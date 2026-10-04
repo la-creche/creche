@@ -483,6 +483,11 @@ def _parse_typed(kind: PlaypenType, record: dict[str, Any]) -> PlaypenMessage | 
         return _parse_ready(record)
 
     if kind is PlaypenType.PONG:
+        # CONTRACT-QUESTION: contract 03 §4.6 and §5.5 show a `nonce` that
+        # is a text and do not say that a `ping` can have none. The playpen
+        # answers a `ping` with no nonce with `nonce: null`. This host sends
+        # a nonce in each `ping`, so it refuses a `pong` with no text there:
+        # the stricter reading. A host that sends no nonce must read null.
         nonce = _text(record.get("nonce"))
         return PongLine(nonce=nonce) if nonce is not None else Refusal.MALFORMED
 

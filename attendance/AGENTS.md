@@ -186,6 +186,10 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   from the work root (`service.py`).
 - Contract 03 §13 rule 6 names no nesting limit for an event. `cap_event`
   reads an event of more than 64 levels as oversized (`wire.py`).
+- Contract 03 §4.6 and §5.5 do not say that a `ping` can have no nonce. The
+  playpen answers such a `ping` with `nonce: null`. `wire.parse` refuses a
+  `pong` whose nonce is not a text. This host sends a nonce in each `ping`
+  (`wire.py`).
 - Contract 03 §13 rule 5 names no event that the host cannot record. An
   event with one half of a surrogate pair has no UTF-8 form. `cap_event`
   reads it as oversized (`wire.py`).
