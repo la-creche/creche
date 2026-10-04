@@ -250,12 +250,14 @@ impl Error for MintError {
     }
 }
 
-// CONTRACT-QUESTION: contract 02 §2 gives a ULID 48 bits of milliseconds. It
-// does not say what a mint does when the clock shows a time before 1970 or a
-// time past those 48 bits. Each Python copy mints 26 characters for both
-// times. `new_ulid` refuses both, as `manifest::mint_ulid` refuses them for a
-// request id. No host shows such a time today. A change costs one more mint
-// in `creche-contracts`: `manifest::Timestamp` holds no time below zero.
+// CONTRACT-QUESTION: contract 02 §2 gives the length and the alphabet of a
+// ULID and no layout of its bits. Each Python copy writes 48 bits of
+// milliseconds, then 80 random bits. The contract does not say what a mint
+// does when the clock shows a time before 1970 or a time past those 48 bits.
+// Each Python copy mints 26 characters for both times. `new_ulid` refuses
+// both, as `manifest::mint_ulid` refuses them for a request id. No host shows
+// such a time today. A change costs one more mint in `creche-contracts`:
+// `manifest::Timestamp` holds no time below zero.
 /// Mints one ULID: the time of `clock`, then 80 random bits of `entropy`
 /// (contract 02 §2).
 ///
