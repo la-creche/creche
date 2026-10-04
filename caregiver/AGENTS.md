@@ -43,12 +43,17 @@ host where something has gone wrong.
 - `atomic.py` is the only place that writes a file another process reads.
 - `atomic.read_json` reads a JSON file. It answers `None` for content that
   it cannot read. It does not raise on content.
-- A reader with a size cap of its own keeps its own read. It refuses the
-  same content: bytes that are not UTF-8, an integer past the digit limit
-  and nesting past the limit of the parser.
+- `grants.py`, `mcp_release.py`, `live_manifest.py` and `verify.py` keep a
+  read of their own. Each one refuses an integer past the digit limit and
+  nesting past the limit of the parser.
+- The grant file reader takes each encoding that `json.loads` finds in
+  bytes: UTF-8, UTF-16 and UTF-32. The other three refuse bytes that are
+  not UTF-8.
 - A client maps each failure of its transport and of its answer to its own
-  error: `DriverError`, `LiteLLMError`, `SwitchError`. Each step names
-  that error in its handler.
+  error: `DriverError`, `LiteLLMError`, `SwitchError`. A step names that
+  error in its handler, with two exceptions.
+- The destroy step of a replacement and `delete_family` have no handler.
+  In `serve`, their error ends in a handler of the loop.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
   the grant file, then `creds.json`, then the sandboxes. `test_delete.py`
   checks the order from inside the fake driver.
@@ -140,8 +145,8 @@ host where something has gone wrong.
 
 Each step of a look ends in a handler of the loop: a dispatch, a pass, a
 delete, the MCP pass. The handler writes the first error with its
-traceback. It counts each repeat. The loop continues, and the other
-families pass.
+traceback. It counts each repeat. The loop continues, and each other
+family gets its pass.
 
 A delete that fails gets the backoff of a failed create. The loop starts
 the delete again when the backoff ends or the registry changes.
@@ -204,6 +209,8 @@ Nothing here touches a real sandbox or LiteLLM.
   (`credentials.py`).
 - The ledger reader converts a field with `int` and `str`. No contract
   defines the ledger file (`sandboxes.py`).
+- No contract gives the encoding of the grant file. The reader takes each
+  encoding that `json.loads` finds in bytes (`grants.py`).
 - No pass manages a sandbox whose ledger row does not read. The row stays
   in the file, and the log names the family at each rewrite
   (`sandboxes.py`).

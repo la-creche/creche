@@ -7,9 +7,11 @@ package that publishes a file another process reads goes through here, so
 caller. `atomic_replace_dir` is the same idea for a whole directory (the
 family config mount, contract 01 §6.1 rule 1).
 
-`read_json` is the one reader of a JSON file. Every module of this package
-that reads a JSON object from a file goes through it, so "content that does
-not read is a refusal, not an exception" is one implementation too."""
+`read_json` reads a JSON object from a file. Each module of this package
+that has no read of its own goes through it, so "content that does not read
+is a refusal, not an exception" is one implementation for them. `grants.py`,
+`mcp_release.py`, `live_manifest.py` and `verify.py` keep a read of their
+own."""
 
 from __future__ import annotations
 

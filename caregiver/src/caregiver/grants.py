@@ -182,6 +182,13 @@ def _write_body(path: Path, body: dict[str, Any]) -> None:
 
 
 def _read_body(path: Path) -> dict[str, Any] | None:
+    # CONTRACT-QUESTION: contract 04 §1 gives no encoding for the grant
+    # file. This reader keeps the lax reading it had: `json.loads` takes the
+    # bytes and finds the encoding, so it reads UTF-8, UTF-16 and UTF-32,
+    # each with or without a byte order mark. This package writes UTF-8
+    # alone. A strict reader refuses a file that this one keeps today. A
+    # pass then writes that file again, and `rewrite_digests` keeps no
+    # grant from it.
     try:
         on_disk = json.loads(path.read_bytes())
     except (OSError, ValueError, RecursionError):
