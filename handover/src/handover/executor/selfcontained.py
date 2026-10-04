@@ -214,6 +214,7 @@ NOT_EXECUTABLE: Final = "is not executable"
 PROGRAM_OUTSIDE: Final = "is reached through a link out of the tree"
 ABSOLUTE_LINK: Final = "is a link with an absolute target"
 LINK_OUTSIDE: Final = "is a link to a path outside the tree"
+LINK_LOOP: Final = "is a link in a loop"
 #: CONTRACT-QUESTION: contract 06 §8.2 says a tree reads no code from
 #: outside itself, and names no test for a compiled program. The reading
 #: taken refuses every file that holds the work tree's path. The walk
@@ -227,6 +228,7 @@ LINK_OUTSIDE: Final = "is a link to a path outside the tree"
 NAMES_WORK_TREE: Final = "holds the path of the fetched work tree"
 SHARED_FILE: Final = "is a file with a second name"
 UNREADABLE_FILE: Final = "is a file root cannot read"
+UNLISTED_DIRECTORY: Final = "is a directory root cannot list"
 NOT_A_FILE: Final = "is not a file, a directory or a link"
 
 #: The bit `install.normalize_modes` reads: a file that its owner can run
@@ -267,7 +269,8 @@ def binary_escapes(tree: Path, programs: Sequence[Path], source: Path) -> tuple[
        that path changes the tree with no release.
 
     Nothing here raises. A file root cannot read is a fault, because a
-    file root cannot read is a file root cannot say is clean.
+    file root cannot read is a file root cannot say is clean. The same
+    holds for a directory root cannot list and a link root cannot resolve.
     """
     if not _is_own_directory(tree):
         return (f"{safe_token(tree.name)} {NOT_A_TREE}",)
@@ -344,9 +347,16 @@ def _needles(source: Path) -> tuple[bytes, ...]:
 
 def _walk_faults(tree: Path, root: Path, needles: tuple[bytes, ...]) -> list[str]:
     """Properties 2 and 3 of `binary_escapes`, over every entry of the
-    tree, in name order. No link is followed."""
+    tree, in name order. No link is followed. `os.walk` skips a directory
+    that it cannot list, so `unlisted` makes that directory a fault."""
     faults: list[str] = []
-    for current, directories, files in os.walk(tree, followlinks=False):
+
+    def unlisted(error: OSError) -> None:
+        where = error.filename
+        name = _name(tree, Path(where)) if isinstance(where, str) else safe_token(where)
+        faults.append(f"{name} {UNLISTED_DIRECTORY}")
+
+    for current, directories, files in os.walk(tree, onerror=unlisted, followlinks=False):
         directories.sort()
         here = Path(current)
         for entry in sorted([*directories, *files]):
@@ -392,6 +402,14 @@ def _link_fault(name: str, root: Path, path: Path) -> str | None:
         real = (path.parent / target).resolve()
     except (OSError, ValueError):
         return f"{name} {UNREADABLE_FILE}"
+    except RuntimeError:
+        # Python 3.12 raises this for a link loop, and it is no `OSError`.
+        return f"{name} {LINK_LOOP}"
+
+    # Python 3.13 raises nothing for a loop. It gives back the link at
+    # which it stopped, and a path that resolved in full is never a link.
+    if real.is_symlink():
+        return f"{name} {LINK_LOOP}"
 
     if real != root and root not in real.parents:
         return f"{name} {LINK_OUTSIDE}"

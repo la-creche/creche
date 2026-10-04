@@ -27,6 +27,7 @@ from handover.errors import Refusal, RefusalCode
 from handover.executor.install import StepFailed
 from handover.executor.selfcontained import (
     ABSOLUTE_LINK,
+    LINK_LOOP,
     LINK_OUTSIDE,
     MAX_REPORTED,
     NAMES_WORK_TREE,
@@ -38,6 +39,7 @@ from handover.executor.selfcontained import (
     PROGRAM_OUTSIDE,
     SCAN_CHUNK_BYTES,
     SHARED_FILE,
+    UNLISTED_DIRECTORY,
     UNREADABLE_FILE,
     binary_escapes,
     check_binary_tree,
@@ -242,6 +244,51 @@ def test_a_linked_directory_is_not_walked(tmp_path: Path) -> None:
     (tree / "target").symlink_to(os.path.relpath(source / "rust" / "target", tree))
 
     assert _faults(tree, source) == (f"target {LINK_OUTSIDE}",)
+
+
+def test_a_link_loop_is_a_fault_and_never_an_error(tmp_path: Path) -> None:
+    """Two links name each other. Python 3.12 raises `RuntimeError` when
+    it resolves one, and that error would end the run with no ledger
+    entry. Python 3.13 raises nothing and gives back the link at which it
+    stopped. Each version reports the same fault."""
+    tree, source = _tree(tmp_path)
+    (tree / "bin" / "this").symlink_to("that")
+    (tree / "bin" / "that").symlink_to("this")
+
+    assert _faults(tree, source) == (f"bin/that {LINK_LOOP}", f"bin/this {LINK_LOOP}")
+
+
+def test_a_link_to_itself_is_a_fault(tmp_path: Path) -> None:
+    tree, source = _tree(tmp_path)
+    (tree / "bin" / "self").symlink_to("self")
+
+    assert _faults(tree, source) == (f"bin/self {LINK_LOOP}",)
+
+
+def test_a_link_to_a_name_that_is_not_there_stays_allowed(tmp_path: Path) -> None:
+    """The loop test must not catch a link whose target is absent. Such a
+    link stays inside the tree and reads nothing."""
+    tree, source = _tree(tmp_path)
+    (tree / "bin" / "later").symlink_to("not-built")
+
+    assert _faults(tree, source) == ()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root lists every directory")
+def test_a_directory_that_cannot_be_listed_is_a_fault(tmp_path: Path) -> None:
+    """The walk skipped a directory that it could not list, and reported
+    nothing. What the walk cannot list, it cannot call clean."""
+    tree, source = _tree(tmp_path)
+    sealed = tree / "sealed"
+    sealed.mkdir()
+    (sealed / "extra").symlink_to("/usr/bin/env")
+    sealed.chmod(0o000)
+    try:
+        found = _faults(tree, source)
+    finally:
+        sealed.chmod(0o755)
+
+    assert found == (f"sealed {UNLISTED_DIRECTORY}",)
 
 
 # ---- the walk: what a file holds ---------------------------------------------
