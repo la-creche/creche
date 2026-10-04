@@ -776,15 +776,26 @@ fn noticeboard_env(vector: &Vector) -> Did {
     })))
 }
 
+/// The text of a bind with no bracket.
+fn no_brackets(text: &str) -> String {
+    text.replace(['[', ']'], "")
+}
+
 /// The text of the bind of the chaperone. The Python reader returns the
-/// text of `PEP_BIND` as it is, so an IPv6 host can have brackets. The two
-/// are equal when the Python text is the same bind.
+/// text of `PEP_BIND` as it is, so an IPv6 host can have brackets or none.
+/// The Rust type writes an IPv6 host with brackets. The two are equal when
+/// the two texts are equal without their brackets. That is one fixed rule:
+/// the test does not parse the Python text with the Rust parser.
+///
+/// Only `chaperone.__main__` splits the text into a host and a port. It has
+/// no entry point that takes a map, so no vector proves that split.
 fn bind_text(vector: &Vector, bind: &BindAddress) -> String {
+    let rust = bind.to_string();
     let python = vector.value().and_then(|value| value["text"].as_str());
 
     match python {
-        Some(text) if text.parse::<BindAddress>().as_ref() == Ok(bind) => text.to_owned(),
-        _ => bind.to_string(),
+        Some(text) if no_brackets(text) == no_brackets(&rust) => text.to_owned(),
+        _ => rust,
     }
 }
 

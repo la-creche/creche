@@ -107,17 +107,35 @@ def test_each_config_type_names_one_daemon_unit() -> None:
             assert unit not in named, f"{unit}: {named[unit]} and {path.stem}"
             named[unit] = path.stem
 
-    assert named == {unit: module for unit, (module, _) in MODULES.items()}
-    assert set(named) == _restarting_units()
+    expected = {unit: module for unit, (module, _) in MODULES.items()}
+    restarting = _restarting_units()
+
+    assert named == expected, (
+        f"the units that a `const UNIT` names are {sorted(named)}, and MODULES in this test "
+        f"holds {sorted(expected)}: change MODULES and rust/.../config/<module>.rs together"
+    )
+    assert set(named) == restarting, (
+        f"the units with {RESTART_ALWAYS} and no config type: {sorted(restarting - set(named))}. "
+        f"The config types with no such unit: {sorted(set(named) - restarting)}. A new daemon "
+        "unit needs a config type with `impl ProcessConfig` in rust/.../config/<module>.rs, "
+        "a row of MODULES in this test and a line in rust/AGENTS.md"
+    )
 
 
 def test_each_daemon_unit_starts_again_after_each_exit_status() -> None:
     for unit in MODULES:
         lines = _lines(_unit(unit))
 
-        assert RESTART_ALWAYS in lines, unit
-        assert NO_START_LIMIT in lines, unit
-        assert not [line for line in lines if line.startswith(PREVENT)], unit
+        module = MODULES[unit][0]
+        where = (
+            f"{unit}: the FAILURE ACTION comment in rust/.../config/{module}.rs and the crash "
+            "loop rule in rust/AGENTS.md say what the unit holds today. Change them and this "
+            "pin in the same pull request"
+        )
+
+        assert RESTART_ALWAYS in lines, where
+        assert NO_START_LIMIT in lines, where
+        assert not [line for line in lines if line.startswith(PREVENT)], where
 
 
 def test_a_unit_with_a_check_before_the_start_says_so_in_its_config_type() -> None:
@@ -145,8 +163,14 @@ def test_a_unit_with_a_check_before_the_start_says_so_in_its_config_type() -> No
 def test_the_exit_status_of_a_bad_config_is_ex_config() -> None:
     root = (CONFIG.parent / "config.rs").read_text(encoding="utf-8")
 
-    assert f"pub const EX_CONFIG: u8 = {os.EX_CONFIG};" in root
-    assert f'pub const NO_RESTART_LINE: &str = "{PREVENT}={os.EX_CONFIG}";' in root
+    where = "rust/crates/creche-contracts/src/config.rs"
+
+    assert f"pub const EX_CONFIG: u8 = {os.EX_CONFIG};" in root, (
+        f"{where}: EX_CONFIG is not {os.EX_CONFIG}, the EX_CONFIG of sysexits.h"
+    )
+    assert f'pub const NO_RESTART_LINE: &str = "{PREVENT}={os.EX_CONFIG}";' in root, (
+        f"{where}: NO_RESTART_LINE is not `{PREVENT}={os.EX_CONFIG}`"
+    )
 
 
 def test_each_variable_of_a_unit_has_a_constant() -> None:
@@ -165,8 +189,10 @@ def test_the_chaperone_unit_gives_its_variables_in_the_unit_file() -> None:
     """The check above reads no name for a unit with no `Environment=` line."""
     names = ENVIRONMENT.findall(_unit("creche-chaperone.service"))
 
-    assert "PEP_REWORK_DIR" in names
-    assert "PEP_AUDIT_DIR" in names
+    where = "creche-chaperone.service: the unit no longer sets the variable in an Environment= line"
+
+    assert "PEP_REWORK_DIR" in names, where
+    assert "PEP_AUDIT_DIR" in names, where
 
 
 def test_each_flag_of_the_caregiver_command_has_a_field() -> None:
@@ -181,5 +207,12 @@ def test_each_flag_of_the_caregiver_command_has_a_field() -> None:
     flags = FLAG.findall(" ".join(command))
     source = _module("caregiver")
 
-    assert "--image" in flags and "--write" in flags
-    assert not [flag for flag in flags if f"`{flag}`" not in source and f'"{flag}"' not in source]
+    missing = [flag for flag in flags if f"`{flag}`" not in source and f'"{flag}"' not in source]
+
+    assert "--image" in flags and "--write" in flags, (
+        "creche-caregiver.service: this test did not read the flags of the ExecStart command"
+    )
+    assert not missing, (
+        f"creche-caregiver.service: rust/.../config/caregiver.rs has no field of RawServe for "
+        f"{missing}"
+    )

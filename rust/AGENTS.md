@@ -246,8 +246,9 @@ The rule against a crash loop:
 - `AtReload::KeepLastGood` never exits. A reload that fails keeps the last
   good value.
 - `config::reload` takes only a type that says `AtReload::KeepLastGood`. A
-  call with a type that says `AtReload::NotRead` does not build. `cargo
-  build` and `cargo test` report that error, and `cargo check` does not.
+  call with a type that says `AtReload::NotRead` does not build.
+  `cargo build` and `cargo test` report that error, and `cargo check` does
+  not.
 - `config::start` and `config::reload` take the error type of each parse.
   The roster and the site file have an error type of their own.
 
