@@ -1,0 +1,20 @@
+[package]
+name = "agent-family"
+description = "The validator of the family file and of the MCP server file, the registry loader and the agent-family program"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "agent-family"
+path = "src/main.rs"
+
+[dependencies]
+creche-contracts = { path = "../creche-contracts" }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -37,7 +37,11 @@ directory is not a workspace package, so a change here does not change
 | `generate.py` | the list of groups, the index, `write`, `--check`, `--counts` |
 | `surfaces/ids.py` | the id grammars and `ids/disagreements.json` |
 | `surfaces/family_cases.py` | the written `family.yaml` inputs |
-| `surfaces/family_file.py` | `family_file` and `family_file.host` |
+| `surfaces/family_file.py` | `family_file`, `family_file.host` and `family_file.registries.json` |
+| `surfaces/server_cases.py` | the written `server.yaml` inputs |
+| `surfaces/server_file.py` | `server_file` |
+| `surfaces/classify.py` | `family_file.classify` |
+| `surfaces/family_cli.py` | `family_file.cli` |
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
 | `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
 | `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
@@ -71,7 +75,11 @@ directory is not a workspace package, so a change here does not change
   values has no vector.
 - `manifest.resolved` gives `resolved_at` as a float only. With an integer,
   Python writes no `.0`.
-- No vector covers `server.yaml`, contract 01b.
+- `family_file.cli` holds no text that `argparse` writes: no usage line and
+  no help text. That text differs between two Python versions. A vector for
+  such a command line holds the exit status only.
+- `server_file` and `family_file.cli` have no host. No vector covers the
+  program with a model router or with a mount that is a symbolic link.
 - `grants.write` calls `write_grant_file`. No vector covers
   `build_grant_file`, which expands `all` and `<server>__*`.
 - `grants.write` holds valid fields only. The writer does not validate a

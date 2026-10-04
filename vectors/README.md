@@ -31,6 +31,10 @@ release replaces that surface.
 | `data/ids/` | the id grammars, one file per copy of a grammar |
 | `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
+| `data/server_file.json` | `server.yaml` to its validation report |
+| `data/family_file.classify.json` | two family files to the diff between them |
+| `data/family_file.cli.json` | a command line of `agent-family` to its output |
+| `data/family_file.registries.json` | each file of each registry that a vector names |
 | `data/channel/` | the channel protocol: `parse`, `frame`, `build` |
 | `data/chaperone/` | the grant file and its writer, the call body, the approval body, the two logs, the reasons, the verb catalog |
 | `data/status/` | the status document, one file per reader. The writer of the status document, the fault files and the outcome record |
@@ -96,7 +100,7 @@ It ends with one newline. Each vector is on one line.
 | `result` | always | `accepted`, `refused` or `raised` |
 | `value` | when the Python code parsed the input into a value | the normalized value |
 | `refusal` | when the Python code gives a reason | the refusal code, or an object that holds the reason |
-| `issues`, `status` | on `family_file` | the validation report |
+| `issues`, `status` | on `family_file` and on `server_file` | the validation report |
 | `http_status` | on the two body surfaces, on `chaperone.reason` and on a surface of `data/session/` that writes an answer | the HTTP status of the answer. On a refused vector of a body surface or of `data/session/` it is inside `refusal`. |
 | `output` | on a surface that writes bytes | the exact bytes that the Python code writes, as an input form |
 | `file` | on the two log surfaces of `data/chaperone/` | the name of the file that takes the line |
@@ -182,5 +186,38 @@ the decision. Do not delete the vector.
    differs between two Python versions. Rule 6 finds such a text.
 6. Run `--check` under each Python version that the workspace supports. The
    files must be the same.
+
+## The registry file
+
+A vector of `family_file`, of `server_file` and of `family_file.cli` names a
+registry of this repository in `params.registry`. A Rust test reads no file
+outside `rust/` and `vectors/data`. `data/family_file.registries.json` thus
+holds each file of each such registry.
+
+| Key | Meaning |
+|---|---|
+| `format` | the version of this format. It is `1`. |
+| `kind` | `registries` |
+| `files` | one row for each file, in a fixed order |
+
+One row has three keys:
+
+| Key | Meaning |
+|---|---|
+| `registry` | the path of the registry from the repository root |
+| `path` | the path of the file from the root of that registry |
+| `text` or `base64` | the bytes of the file, as an input form |
+
+The generator reads no file and no directory whose name starts with `.`.
+git does not track such a file in a registry of this repository. The file
+of a file browser thus does not change a vector.
+
+To replay a vector:
+
+1. Make an empty directory.
+2. Write each file of the registry there.
+3. Write each file of `params.files`.
+4. Write the input.
+5. Call the entry point.
 
 `vectors/AGENTS.md` holds the rules for an edit and the known gaps.

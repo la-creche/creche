@@ -21,11 +21,14 @@ from vectors.core import FORMAT, Json, Surface, compact, render
 from vectors.surfaces import (
     audit,
     channel,
+    classify,
     config,
+    family_cli,
     family_file,
     grants,
     ids,
     manifest,
+    server_file,
     session,
     status,
     status_files,
@@ -58,6 +61,9 @@ def _files_of(surfaces: tuple[Surface, ...]) -> dict[str, str]:
 GROUPS: Final[dict[str, Callable[[], tuple[Surface, ...]]]] = {
     "ids": ids.surfaces,
     "family_file": family_file.surfaces,
+    "server_file": server_file.surfaces,
+    "classify": classify.surfaces,
+    "family_cli": family_cli.surfaces,
     "channel": channel.surfaces,
     "chaperone": grants.surfaces,
     "audit": audit.surfaces,
@@ -73,6 +79,9 @@ def _extra_files(name: str, surfaces: tuple[Surface, ...]) -> dict[str, str]:
     """Files of a group that are not vector files."""
     if name == "ids":
         return {DISAGREEMENTS_FILE: ids.render_disagreements(surfaces)}
+
+    if name == "family_file":
+        return {family_file.REGISTRIES_FILE: family_file.render_registries()}
 
     return {}
 
