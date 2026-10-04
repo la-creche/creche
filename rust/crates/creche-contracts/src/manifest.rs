@@ -453,10 +453,12 @@ word_enum! {
 /// The list is in the code and not in a file, so no merge makes it longer.
 ///
 /// ```
-/// use creche_contracts::manifest::{Kind, catalog_row};
+/// use creche_contracts::manifest::{CatalogRow, Kind, Releases, Repo, catalog_row};
 ///
-/// let row = catalog_row("playpen").ok_or("no such component")?;
+/// let row: &CatalogRow = catalog_row("playpen").ok_or("no such component")?;
+/// assert_eq!(row.repo(), Repo::AgentControl);
 /// assert_eq!(row.kind(), Kind::OciImage);
+/// assert_eq!(row.releases(), Releases::Yes);
 /// assert_eq!(row.bundles(), ["toybox"]);
 /// # Ok::<(), &str>(())
 /// ```
@@ -464,7 +466,7 @@ word_enum! {
 /// Code outside this module cannot build a row:
 ///
 /// ```compile_fail,E0451
-/// use creche_contracts::manifest::{CatalogRow, Kind, Releases, Repo};
+/// use creche_contracts::manifest::{CatalogRow, Kind, Releases, Repo, catalog_row};
 ///
 /// let row = CatalogRow {
 ///     name: "extra",

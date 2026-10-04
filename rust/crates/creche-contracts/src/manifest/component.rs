@@ -637,11 +637,11 @@ bounded_number! {
 /// [`ComponentManifest::parse`] makes a value.
 ///
 /// ```
-/// use creche_contracts::manifest::ComponentManifest;
+/// use creche_contracts::manifest::{Argv, ComponentManifest};
 ///
 /// let text = r#"{manifest_version: "0.6", name: chaperone, repo: agent-control, path: chaperone, kind: venv, unit: null, runs_as: root, install: {to: /opt/x, prev: /opt/x.prev}, verify: {command: [/bin/true, --json], user: root, timeout_s: 5}, restore: {mode: automatic, keep: 1}, release: yes}"#;
 /// let manifest = ComponentManifest::parse(text, None)?;
-/// let command = manifest.verify().command();
+/// let command: &Argv = manifest.verify().command();
 /// assert_eq!(command.program().as_str(), "/bin/true");
 /// assert_eq!(command.words(), ["/bin/true", "--json"]);
 /// # Ok::<(), creche_contracts::manifest::ManifestError>(())
@@ -650,7 +650,7 @@ bounded_number! {
 /// Code outside this module cannot build a value from raw words:
 ///
 /// ```compile_fail,E0451
-/// use creche_contracts::manifest::Argv;
+/// use creche_contracts::manifest::{Argv, ComponentManifest};
 ///
 /// let command = Argv {
 ///     program: "/bin/sh".parse().unwrap(),
@@ -718,20 +718,20 @@ contract_reference! {
     /// Only [`ComponentManifest::parse`] makes a value.
     ///
     /// ```
-    /// use creche_contracts::manifest::{ComponentManifest, ContractId};
+    /// use creche_contracts::manifest::{ComponentManifest, ContractId, ContractNumber, Provided};
     ///
     /// let text = r#"{manifest_version: "0.6", name: chaperone, repo: agent-control, path: chaperone, kind: venv, unit: null, runs_as: root, install: {to: /opt/x, prev: /opt/x.prev}, provides: [{contract: pep-grant, major: 2, minor: 1}], verify: {command: [/bin/true], user: root, timeout_s: 5}, restore: {mode: automatic, keep: 1}, release: yes}"#;
     /// let manifest = ComponentManifest::parse(text, None)?;
-    /// let provided = manifest.provides().first().ok_or("no entry")?;
+    /// let provided: &Provided = manifest.provides().first().ok_or("no entry")?;
     /// assert_eq!(provided.contract(), ContractId::PepGrant);
-    /// assert_eq!(provided.minor().get(), 1);
+    /// assert_eq!(provided.minor(), ContractNumber::new(1)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// Code outside this module cannot build a value from raw parts:
     ///
     /// ```compile_fail,E0451
-    /// use creche_contracts::manifest::{ContractId, ContractNumber, Provided};
+    /// use creche_contracts::manifest::{ComponentManifest, ContractId, ContractNumber, Provided};
     ///
     /// let number = ContractNumber::new(1).unwrap();
     /// let provided = Provided { contract: ContractId::Channel, major: number, minor: number };
@@ -749,20 +749,20 @@ contract_reference! {
     /// Only [`ComponentManifest::parse`] makes a value.
     ///
     /// ```
-    /// use creche_contracts::manifest::{ComponentManifest, ContractId};
+    /// use creche_contracts::manifest::{ComponentManifest, ContractId, ContractNumber, Required};
     ///
     /// let text = r#"{manifest_version: "0.6", name: chaperone, repo: agent-control, path: chaperone, kind: venv, unit: null, runs_as: root, install: {to: /opt/x, prev: /opt/x.prev}, requires: [{contract: session-api, major: 1, min_minor: 2}], verify: {command: [/bin/true], user: root, timeout_s: 5}, restore: {mode: automatic, keep: 1}, release: yes}"#;
     /// let manifest = ComponentManifest::parse(text, None)?;
-    /// let required = manifest.requires().first().ok_or("no entry")?;
+    /// let required: &Required = manifest.requires().first().ok_or("no entry")?;
     /// assert_eq!(required.contract(), ContractId::SessionApi);
-    /// assert_eq!(required.min_minor().get(), 2);
+    /// assert_eq!(required.min_minor(), ContractNumber::new(2)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// Code outside this module cannot build a value from raw parts:
     ///
     /// ```compile_fail,E0451
-    /// use creche_contracts::manifest::{ContractId, ContractNumber, Required};
+    /// use creche_contracts::manifest::{ComponentManifest, ContractId, ContractNumber, Required};
     ///
     /// let number = ContractNumber::new(1).unwrap();
     /// let required = Required { contract: ContractId::Channel, major: number, min_minor: number };
@@ -778,13 +778,14 @@ contract_reference! {
 /// Only [`ComponentManifest::parse`] makes a value.
 ///
 /// ```
-/// use creche_contracts::manifest::{ComponentManifest, VerifyUser};
+/// use creche_contracts::manifest::{ComponentManifest, Timeout, Verify, VerifyUser};
 ///
 /// let text = r#"{manifest_version: "0.6", name: chaperone, repo: agent-control, path: chaperone, kind: venv, unit: null, runs_as: root, install: {to: /opt/x, prev: /opt/x.prev}, verify: {command: [/bin/true], user: root, timeout_s: 5}, restore: {mode: automatic, keep: 1}, release: yes}"#;
 /// let manifest = ComponentManifest::parse(text, None)?;
-/// assert_eq!(manifest.verify().user(), VerifyUser::Root);
-/// assert_eq!(manifest.verify().timeout().get(), 5);
-/// # Ok::<(), creche_contracts::manifest::ManifestError>(())
+/// let verify: &Verify = manifest.verify();
+/// assert_eq!(verify.user(), VerifyUser::Root);
+/// assert_eq!(verify.timeout(), Timeout::new(5)?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Code outside this module cannot build a value from raw parts:
@@ -833,19 +834,20 @@ impl Verify {
 /// Only [`ComponentManifest::parse`] makes a value.
 ///
 /// ```
-/// use creche_contracts::manifest::{ComponentManifest, RestoreMode};
+/// use creche_contracts::manifest::{ComponentManifest, Keep, Restore, RestoreMode};
 ///
 /// let text = r#"{manifest_version: "0.6", name: chaperone, repo: agent-control, path: chaperone, kind: venv, unit: null, runs_as: root, install: {to: /opt/x, prev: /opt/x.prev}, verify: {command: [/bin/true], user: root, timeout_s: 5}, restore: {mode: manual, keep: 3}, release: yes}"#;
 /// let manifest = ComponentManifest::parse(text, None)?;
-/// assert_eq!(manifest.restore().mode(), RestoreMode::Manual);
-/// assert_eq!(manifest.restore().keep().get(), 3);
-/// # Ok::<(), creche_contracts::manifest::ManifestError>(())
+/// let restore: Restore = manifest.restore();
+/// assert_eq!(restore.mode(), RestoreMode::Manual);
+/// assert_eq!(restore.keep(), Keep::new(3)?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Code outside this module cannot build a value from raw parts:
 ///
 /// ```compile_fail,E0451
-/// use creche_contracts::manifest::{Keep, Restore, RestoreMode};
+/// use creche_contracts::manifest::{ComponentManifest, Keep, Restore, RestoreMode};
 ///
 /// let restore = Restore { mode: RestoreMode::Automatic, keep: Keep::new(1).unwrap() };
 /// ```
@@ -875,20 +877,21 @@ impl Restore {
 /// Only [`ComponentManifest::parse`] makes a value.
 ///
 /// ```
-/// use creche_contracts::manifest::{ComponentManifest, Operator};
+/// use creche_contracts::manifest::{ComponentManifest, Install, Operator};
 ///
 /// let text = r#"{manifest_version: "0.6", name: attendance, repo: agent-control, path: attendance, kind: venv, unit: null, runs_as: operator, install: {to: ~/x, prev: ~/x.prev}, verify: {command: [/bin/true], user: root, timeout_s: 5}, restore: {mode: automatic, keep: 1}, release: yes}"#;
 /// let operator = Operator::new("keeper", "/home/keeper")?;
 /// let manifest = ComponentManifest::parse(text, Some(&operator))?;
-/// assert_eq!(manifest.install().to().as_str(), "/home/keeper/x");
-/// assert_eq!(manifest.install().prev().as_str(), "/home/keeper/x.prev");
+/// let install: &Install = manifest.install();
+/// assert_eq!(install.to().as_str(), "/home/keeper/x");
+/// assert_eq!(install.prev().as_str(), "/home/keeper/x.prev");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Code outside this module cannot build a value from raw parts:
 ///
 /// ```compile_fail,E0451
-/// use creche_contracts::manifest::Install;
+/// use creche_contracts::manifest::{ComponentManifest, Install, Operator};
 ///
 /// let install = Install { to: "/opt/x".parse().unwrap(), prev: "/opt/x".parse().unwrap() };
 /// ```
