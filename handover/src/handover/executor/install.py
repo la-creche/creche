@@ -209,6 +209,10 @@ FILE_OTHER_RX: Final = 0o005
 #: opens, never a program a shell could run.
 FILE_OTHER_R: Final = 0o004
 OWNER_EXECUTE_BIT: Final = 0o100
+#: What no file of a staged tree keeps: the set-user-ID bit, the
+#: set-group-ID bit, the sticky bit, and write for its group and for
+#: everyone. A build can leave each one, and root installs the tree.
+FILE_DROPPED_BITS: Final = stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX | stat.S_IWGRP | stat.S_IWOTH
 
 #: The setting that says what a unit starts, and the one prefix of it that
 #: does not. `ExecStartPre` is a check that runs and exits; `creche-noticeboard.
@@ -1427,12 +1431,18 @@ def normalize_modes(root: Path) -> None:
     build's own output, the version stamp, the manifest stamp), so every
     mode is fixed in one pass and nothing written after is missed.
 
-    Every directory becomes `0755`. Every file keeps its own bits and gains
+    Every directory becomes `0755`. Every file keeps its own bits, less
+    `FILE_DROPPED_BITS`, and gains
     read for OTHER, plus execute for OTHER when it was already executable
     for its owner — that second half is what lets `ExecStart=` and a verify
     hook's `argv[0]` run as the unit's own user; read alone would leave
     every console script unusable. Nothing gains a write bit: root built
     this tree and stays the only writer.
+
+    A file that kept its set-user-ID bit ran as its owner for each account,
+    and this pass gives each account read and execute. So no file keeps
+    that bit, and none keeps a write bit that a build gave its group or
+    everyone.
 
     Symlinks are skipped entirely, never followed. `chmod` follows a
     symlink to its target, and a relocatable venv's tree can hold one that
@@ -1472,7 +1482,7 @@ def _normalize_file(path: Path) -> None:
 
     mode = stat.S_IMODE(path.stat().st_mode)
     grant = FILE_OTHER_RX if mode & OWNER_EXECUTE_BIT else FILE_OTHER_R
-    os.chmod(path, mode | grant)
+    os.chmod(path, (mode & ~FILE_DROPPED_BITS) | grant)
 
 
 def remove_tree(path: Path) -> None:
