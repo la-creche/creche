@@ -408,12 +408,16 @@ def test_an_oversized_roster_is_read_as_nothing_served(bench: Bench) -> None:
         "weather: " + "[" * DEEPER_THAN_THE_YAML_READER + "]" * DEEPER_THAN_THE_YAML_READER + "\n",
         "weather: {port: " + "9" * MORE_DIGITS_THAN_AN_INTEGER + "}\n",
         "weather: {command: \xff}\n",
+        "weather: {command: x}\n---\nother: {command: x}\n",
     ],
-    ids=["very-deep", "huge-integer", "not-utf8"],
+    ids=["very-deep", "huge-integer", "not-utf8", "two-documents"],
 )
 def test_a_roster_that_does_not_read_is_nothing_served(bench: Bench, text: str) -> None:
     """A roster that this process cannot read asks for a release, and the
-    release writes the roster again. A raise here would stop that repair."""
+    release writes the roster again. A raise here would stop that repair.
+
+    A roster is one document. The reader does not take the first document
+    of a file that holds two."""
     from caregiver.mcp_release import served_servers
 
     bench.mcp.roster.write_bytes(text.encode("latin-1"))
@@ -491,6 +495,17 @@ MERGED_KEYS: Final = 256
 #: The text of the roster is smaller than 1 KiB.
 CHAIN_LEVELS: Final = 26
 
+#: A row that merges itself this many times copies more pairs than the
+#: limit permits.
+OWN_MERGES: Final = 30
+
+#: The two limits of the roster reader as numbers, not as the names of
+#: `mcp_release`. They are the numbers of the Rust reader of a component
+#: manifest. A number that changes in `mcp_release` fails a test that uses
+#: these.
+CHAIN_AT_THE_LIMIT: Final = 128
+PAIRS_AT_THE_LIMIT: Final = 65_536
+
 
 def _merged(times: int) -> str:
     """A roster with one row whose merge key copies `MERGED_KEYS` pairs
@@ -516,15 +531,56 @@ def _empty_values(values: int, times: int) -> str:
     return f"list: &list [{listed}]\nweather: {{{merges}}}\n"
 
 
-def _chain(levels: int) -> str:
-    """A roster where each row merges the row before it two times."""
+def _chain(levels: int, key: str = "<<") -> str:
+    """A roster where each row merges the row before it two times. `key`
+    is the text of each merge key."""
     rows = ["row0: &row0 {command: x}"]
     rows.extend(
-        f"row{level}: &row{level} {{<<: [*row{level - 1}, *row{level - 1}]}}"
+        f"row{level}: &row{level} {{{key}: [*row{level - 1}, *row{level - 1}]}}"
         for level in range(1, levels + 1)
     )
 
     return "\n".join(rows) + "\n"
+
+
+def _own_merges(times: int) -> str:
+    """A roster with one row that merges itself `times` times."""
+    merges = ", ".join(["<<: [*row, *row]"] * times)
+
+    return f"weather: &row {{{merges}, command: x}}\n"
+
+
+def _linked(links: int) -> str:
+    """A roster with `links` merge keys, where each row merges the row
+    before it one time. The reader makes each row before the row that
+    merges it, so it follows one merge key at a time."""
+    lines = ["row0: &row0 {command: x}"]
+    lines.extend(f"row{row}: &row{row} {{<<: *row{row - 1}}}" for row in range(1, links))
+    lines.append(f"weather: {{<<: *row{links - 1}}}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _alias_chain(levels: int) -> str:
+    """A roster whose last row merges the end of a chain of `levels` merge
+    keys. The value of each merge key is an alias, so the chain adds no
+    nesting to the text. The rows of the chain are in a list, so the
+    reader makes the last row first and follows the full chain.
+
+    The Rust reader of a component manifest has a test of this form at
+    the same limit: `a_merge_chain_past_the_depth_limit_is_refused`."""
+    chain = "".join(f"  - &m{level} {{<<: *m{level - 1}}}\n" for level in range(1, levels))
+
+    return f"chain:\n  - &m0 {{command: x}}\n{chain}weather: {{<<: *m{levels - 1}}}\n"
+
+
+def _copied(pairs: int) -> str:
+    """A roster with one row whose merge key copies `pairs` pairs."""
+    times, rest = divmod(pairs, MERGED_KEYS)
+    keys = ", ".join(f"k{number}: 0" for number in range(MERGED_KEYS))
+    aliases = ", ".join(["*base"] * times + ["*one"] * rest)
+
+    return f"base: &base {{{keys}}}\none: &one {{k0: 0}}\nweather: {{<<: [{aliases}]}}\n"
 
 
 def test_a_roster_with_a_merge_key_names_what_is_served(bench: Bench) -> None:
@@ -577,12 +633,72 @@ def test_a_merge_of_an_empty_value_counts_against_the_bound(bench: Bench) -> Non
     assert served_servers(bench.mcp) == ()
 
 
-def test_a_small_roster_cannot_take_the_memory_of_the_reader(bench: Bench) -> None:
+@pytest.mark.parametrize(
+    "text",
+    [
+        _nested(CHAIN_AT_THE_LIMIT),
+        _alias_chain(CHAIN_AT_THE_LIMIT),
+        _linked(CHAIN_AT_THE_LIMIT + 1),
+        _copied(PAIRS_AT_THE_LIMIT),
+        _empty_values(MERGED_KEYS, PAIRS_AT_THE_LIMIT // MERGED_KEYS),
+    ],
+    ids=["chain", "alias-chain", "rows", "pairs", "empty-values"],
+)
+def test_the_last_roster_inside_a_limit_names_what_is_served(bench: Bench, text: str) -> None:
+    """The reader takes a chain of 128 merge keys and 65,536 copied pairs.
+    A chain is a merge key that holds a merge key, in the text or through
+    an alias. Rows that each merge the row before it make no chain, so 129
+    such merge keys read. A merged value with no pair counts as one pair,
+    so 65,536 such values read."""
+    from caregiver.mcp_release import served_servers
+
+    bench.mcp.roster.write_text(text, encoding="utf-8")
+
+    assert SERVER in served_servers(bench.mcp)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _nested(CHAIN_AT_THE_LIMIT + 1),
+        _alias_chain(CHAIN_AT_THE_LIMIT + 1),
+        _copied(PAIRS_AT_THE_LIMIT + 1),
+    ],
+    ids=["chain", "alias-chain", "pairs"],
+)
+def test_the_first_roster_past_a_limit_is_nothing_served(bench: Bench, text: str) -> None:
+    """One more merge key in the chain, or one more copied pair, and the
+    roster does not read."""
+    from caregiver.mcp_release import served_servers
+
+    bench.mcp.roster.write_text(text, encoding="utf-8")
+
+    assert served_servers(bench.mcp) == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _chain(CHAIN_LEVELS),
+        _chain(CHAIN_LEVELS, "!!merge m"),
+        _chain(CHAIN_LEVELS) + "---\n*none\n",
+        _own_merges(OWN_MERGES),
+        _chain(CHAIN_LEVELS) + "# \x00\n",
+    ],
+    ids=["merge-key", "merge-tag", "second-document", "own-merge", "refused-character"],
+)
+def test_a_small_roster_cannot_take_the_memory_of_the_reader(bench: Bench, text: str) -> None:
     """The reader refuses the file before its merge keys copy more pairs
     than the bound. A child process reads the file inside a time limit and
     a memory limit, so a reader with no bound fails here and takes no more
-    than the limit."""
-    bench.mcp.roster.write_text(_chain(CHAIN_LEVELS), encoding="utf-8")
+    than the limit.
+
+    The cases: a merge key, the merge tag on a key that is not `<<`, a
+    second document that does not read, a row that merges itself, and a
+    character that the YAML library does not accept. The answer is that
+    of each roster that does not read. A reader that raises fails here
+    too."""
+    bench.mcp.roster.write_text(text, encoding="utf-8")
 
     done = subprocess.run(
         [sys.executable, "-c", ROSTER_CHILD, str(bench.mcp.roster), str(CHILD_BYTES)],

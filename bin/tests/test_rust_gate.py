@@ -103,6 +103,19 @@ if [[ "${1:-}" == "${CARGO_FAIL:-}" ]]; then
 fi
 """
 
+#: What each `git` command of the throwaway repository gets: the author of a
+#: commit, and no maintenance. After a commit or a merge, git starts its
+#: maintenance and does not wait for it. That process holds a lock file under
+#: `.git` for a short time, and two tests here remove `.git`.
+GIT_SETTINGS = (
+    "-c",
+    "user.email=t@t",
+    "-c",
+    "user.name=t",
+    "-c",
+    "maintenance.auto=false",
+)
+
 FIXTURE = {
     "pyproject.toml": (
         f'[tool.pytest.ini_options]\ntestpaths = [\n    "{SUITE}",\n    "{VECTORS_SUITE}",\n]\n'
@@ -140,7 +153,7 @@ class Tree:
 
     def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["git", "-C", str(self.root), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+            ["git", "-C", str(self.root), *GIT_SETTINGS, *args],
             env=_git_env(),
             capture_output=True,
             text=True,
@@ -408,6 +421,24 @@ def test_a_rust_commit_without_cargo_fails_before_any_check(tree: Tree) -> None:
         "quality-gate: cargo not on PATH: the Rust checks must run for "
         "a change under rust/ in the index or the work tree"
     ]
+
+
+def test_a_commit_of_the_tree_starts_no_maintenance(
+    tree: Tree, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two tests below remove `.git`. After a commit, git starts its
+    maintenance and does not wait for it. That process holds a lock file
+    under `.git` for a short time. A delete of `.git` in that time finds a
+    file that is gone, and the test fails. So no commit of the tree starts
+    the maintenance."""
+    trace = tmp_path / "trace"
+    monkeypatch.setenv("GIT_TRACE", str(trace))
+
+    tree.commit(PYTHON_PATH, "x = 1\n")
+
+    commands = trace.read_text(encoding="utf-8")
+    assert "git commit" in commands
+    assert "maintenance" not in commands
 
 
 def test_a_state_git_cannot_read_counts_as_a_rust_change(tree: Tree) -> None:
