@@ -158,7 +158,8 @@ def _error_of(status: int, raw: str) -> AttendanceError:
 def _json_object(raw: str) -> dict[str, object]:
     try:
         parsed: object = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
+        # RecursionError: an answer that nests too deep is not a ValueError.
         return {}
 
     return as_object(parsed)

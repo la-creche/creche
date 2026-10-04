@@ -111,3 +111,6 @@ is `door-owui`'s. Basenames are unique across the workspace. Run
   not checked at all (`quiet/gate.py`).
 - The quiet check is a second reader of the chaperone's audit. A user unit
   that cannot read the audit treats the daily call as owed (`quiet/records.py`).
+- Contract 01 §3.13 gives no cap on the nesting of a payload. The door
+  refuses a payload that its JSON parser cannot read. That depth differs
+  between Python versions (`payload.py`).

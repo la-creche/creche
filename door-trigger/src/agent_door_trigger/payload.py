@@ -54,5 +54,12 @@ def read_payload(raw: bytes) -> str:
         json.loads(text)
     except ValueError as exc:
         raise PayloadInvalid(f"payload is not valid JSON: {exc}") from exc
+    except RecursionError as exc:
+        # CONTRACT-QUESTION: contract 01 §3.13 defines the webhook trigger
+        # and gives no cap on the nesting of its payload. This door refuses
+        # a payload that its JSON parser cannot read, and that depth differs
+        # between Python versions. A fixed cap costs a check of the depth
+        # before the parse.
+        raise PayloadInvalid("payload is not valid JSON: it nests too deep") from exc
 
     return text

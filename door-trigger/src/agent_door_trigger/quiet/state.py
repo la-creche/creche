@@ -59,7 +59,7 @@ class StateFiles:
             body = as_object(json.loads(path.read_text(encoding="utf-8")))
         except FileNotFoundError:
             return GateState()
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             _LOG.warning("quiet: %s: unreadable gate record (%s)", family, type(exc).__name__)
             return GateState()
 

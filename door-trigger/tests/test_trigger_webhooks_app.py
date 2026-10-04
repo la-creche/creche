@@ -14,6 +14,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agent_door_trigger import payload
 from agent_door_trigger.attendance import AcceptedTurn, AttendanceClient, HttpAttendance
 from agent_door_trigger.config import AttendanceTarget, ServeConfig
 from agent_door_trigger.errors import AttendanceError
@@ -27,6 +28,7 @@ from agent_door_trigger.webhooks import (  # pyright: ignore[reportPrivateUsage]
 )
 from starlette.testclient import TestClient
 from trigger_fake_attendance import FakeAttendance
+from trigger_json_limit import ParserAtItsLimit
 
 TOKEN = "w" * MIN_WEBHOOK_TOKEN_BYTES
 ROUTE = Route(family="scrum-lead", name="deploy-notify", token=TOKEN)
@@ -183,6 +185,18 @@ def test_invalid_json_body_is_400(tmp_path: Path) -> None:
         )
 
     assert response.status_code == 400
+
+
+def test_a_body_that_nests_too_deep_is_400(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(payload, "json", ParserAtItsLimit)
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    with _client(tmp_path, FakeAttendance(), routes) as client:
+        response = client.post(
+            "/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN), json=[[1]]
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "bad_request"
 
 
 def test_an_oversized_body_is_413(tmp_path: Path) -> None:
