@@ -369,7 +369,7 @@ mod tests {
     use creche_testkit::root::TempRoot;
 
     use super::*;
-    use crate::clock::{Monotonic, SystemClock};
+    use crate::clock::Monotonic;
 
     /// A clock that shows one wall time.
     #[derive(Debug)]
@@ -724,6 +724,16 @@ mod tests {
     }
 
     #[test]
+    fn a_time_before_1970_asks_the_source_for_no_byte() {
+        // A source that fails gives `MintError::Entropy` when the mint asks
+        // it for a byte. The mint thus refuses the time first.
+        assert_eq!(
+            new_ulid(&before_1970(1, 0), &Broken),
+            Err(MintError::TimeOutOfRange)
+        );
+    }
+
+    #[test]
     fn a_source_that_fails_gives_no_id() {
         assert_eq!(
             new_ulid(&after_1970(1_790_869_849, 0), &Broken),
@@ -733,7 +743,9 @@ mod tests {
 
     #[test]
     fn two_ids_of_the_host_differ() {
-        let clock = SystemClock::new();
+        // One fixed time for the two mints: only the random bytes of the
+        // host keep the two ids apart.
+        let clock = after_1970(1_700_000_000, 0);
         let entropy = OsEntropy::new();
         let first = new_ulid(&clock, &entropy).unwrap();
         let second = new_ulid(&clock, &entropy).unwrap();
@@ -866,7 +878,8 @@ mod tests {
             python: "door-trigger/src/agent_door_trigger/ulid.py:37",
             difference: "On Linux, `os.urandom` asks the kernel with `getrandom` and opens no \
                          file. `OsEntropy::fill` opens the random device. It gives an error \
-                         when the device does not open.",
+                         when the device does not open. `os.urandom` also waits until the \
+                         kernel has seeded its pool, and the read of the device does not wait.",
             holds: || {
                 TempRoot::new()
                     .is_ok_and(|root| fill_at(&root.path().join("absent"), &mut [0_u8; 1]).is_err())
@@ -876,8 +889,11 @@ mod tests {
             python: "noticeboard/src/noticeboard/security.py:76",
             difference: "`secrets.token_urlsafe` takes the count 0 and gives the empty text. \
                          `url_token` takes no count of 0: the type of its argument has no such \
-                         value.",
-            holds: || NonZeroUsize::new(0).is_none(),
+                         value. The smallest count gives a token of 2 characters.",
+            holds: || {
+                url_token(&Counted, NonZeroUsize::MIN)
+                    .is_ok_and(|token| token.expose_secret().len() == 2)
+            },
         },
     ];
 
