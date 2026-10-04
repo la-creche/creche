@@ -191,6 +191,18 @@ The console script is `handover`. The verify hook and the operator's
    row, with the code `catalog`.
 9. Release `handover` before the first manifest says `kind: binary`. An
    older executor or requester refuses that manifest.
+10. Release `handover` alone before each release of a component that
+    changes its kind. Root compares a manifest with the catalog of the
+    installed code. Until the installed catalog holds the new row:
+    - Root refuses the release of that component, with the code `catalog`.
+    - Root refuses a set that holds that component and `handover`. Root
+      reads each manifest of a set before it swaps a tree. The follower
+      then holds that set (`follow/` rule 4).
+    - The installed `handover request` refuses each request. It reads each
+      manifest of its roots.
+11. File the request for that release from a checkout that holds the new
+    catalog, with `uv run handover request handover`. The `release` verb
+    of the chaperone reads no manifest, so it can file the request too.
 
 ## The chaperone's upstream roster (`executor/roster.py`)
 
@@ -308,6 +320,15 @@ that wants a refusal changes one field.
 - Contract 06 §8.2 names no rule for a `.pth` line that does not resolve.
   The walk reports such a line as a path outside the tree, under each
   Python version (`executor/selfcontained.py`).
+- One manifest whose kind is not the kind of its row refuses the whole walk
+  of `discover`. The installed `handover request` then files no request,
+  also for another component, until a `handover` release holds the new row
+  (`discovery.py`, `cli.py`).
+- For a component with a version stamp and no stamped manifest, root reads
+  the manifest at the live tag of that component. After the catalog row of
+  that component changes its kind, that manifest states the old kind. Root
+  then refuses each release that does not deploy that component
+  (`discovery.py`, `executor/steps.py`).
 - The executor refuses a binary tree when a file holds the path of the
   fetched work tree. The walk cannot tell a path that a program opens from
   a path that it only prints. Code that a build script generates can carry
