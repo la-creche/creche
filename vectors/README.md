@@ -32,7 +32,7 @@ release replaces that surface.
 | `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
 | `data/channel/` | the channel protocol: `parse`, `frame`, `build` |
-| `data/chaperone/` | the grant file, the call body, the approval body |
+| `data/chaperone/` | the grant file and its writer, the call body, the approval body, the two logs, the reasons, the verb catalog |
 | `data/status/` | the status document, one file per reader |
 | `data/config/` | the configs: the site file, the roster, `runtime.json`, `creds.json`, the env file of the playpen and three env readers |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
@@ -95,8 +95,9 @@ It ends with one newline. Each vector is on one line.
 | `value` | when the Python code parsed the input into a value | the normalized value |
 | `refusal` | when the Python code gives a reason | the refusal code, or an object that holds the reason |
 | `issues`, `status` | on `family_file` | the validation report |
-| `http_status` | on the two body surfaces of `data/chaperone/` | the HTTP status of the answer. On a refused vector it is inside `refusal`. |
-| `output` | on `channel.build` | the exact bytes that the Python code writes, as an input form |
+| `http_status` | on the two body surfaces and on `chaperone.reason` | the HTTP status of the answer. On a refused vector of a body surface it is inside `refusal`. |
+| `output` | on a surface that writes bytes | the exact bytes that the Python code writes, as an input form |
+| `file` | on the two log surfaces of `data/chaperone/` | the name of the file that takes the line |
 | `exception` | when `result` is `raised` | the name of the exception type |
 
 ### The three results

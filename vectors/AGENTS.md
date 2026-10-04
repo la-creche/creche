@@ -39,7 +39,8 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/family_cases.py` | the written `family.yaml` inputs |
 | `surfaces/family_file.py` | `family_file` and `family_file.host` |
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
-| `surfaces/grants.py` | `grants.parse`, `chaperone.call_body`, `chaperone.approval_body` |
+| `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
+| `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
 | `surfaces/config.py` | the site file, the roster, the mount files and three env readers: `config.<name>` |
 
@@ -53,11 +54,26 @@ directory is not a workspace package, so a change here does not change
 - No vector covers contract 06, the component manifest and the release
   request file.
 - No vector covers `server.yaml`, contract 01b.
+- `grants.write` calls `write_grant_file`. No vector covers
+  `build_grant_file`, which expands `all` and `<server>__*`.
+- `grants.write` holds valid fields only. The writer does not validate a
+  field, so an invalid field has no refusal to record. It holds no file of
+  more than 256 KiB. The writer writes such a file, and the chaperone then
+  refuses it.
+- No vector covers `rewrite_digests` or `grant_file_matches` of the
+  caregiver.
+- The two log surfaces replace the clock of `chaperone.audit` and of
+  `chaperone.family_audit` while the entry point runs. The two modules give
+  no other way to set the time of a record.
+- No vector covers the retention sweep of a log, or a log directory that
+  the chaperone cannot write.
 - `channel.parse` gives no vector for `unknown_address` or `sequence_gap`.
   Those refusals need the state of a channel.
-- No vector covers the size cap of a grant file or the body cap of the
-  chaperone. The caller applies each cap before it calls the entry point.
-  No vector covers the size cap of a status reader.
+- No vector covers the size cap of a grant file. No vector of the two body
+  surfaces covers the body cap of the chaperone. The caller applies each cap
+  before it calls the entry point. `chaperone.unidentified_line` holds two
+  vectors of a body over the cap. No vector covers the size cap of a status
+  reader.
 - Five patterns have no public entry point: `_ENV_NAME_RE` in the four
   `verify.py` modules, `_LOCK_PATH` and `_ARG_NAME` in
   `agent_family.serverrules`, `_REPO_NAME` in `handover.site` and

@@ -1,0 +1,24 @@
+{
+ "context": {},
+ "contract": "contract 04 \u00a74.1",
+ "entry": "chaperone.verbs.VERB_CATALOG",
+ "format": 1,
+ "notes": ["The input is one text. An accepted vector is the name of an entry of the verb catalog. A refused vector is a text that the catalog does not hold.","The surface holds each entry that the catalog holds, in the order of the catalog.","invoke_agent is an entry of the catalog. A family file grants it through delegates, and not through verbs."],
+ "surface": "chaperone.verb",
+ "vectors": [
+  {"id":"embed","input":{"text":"embed"},"result":"accepted"},
+  {"id":"ha-call","input":{"text":"ha_call"},"result":"accepted"},
+  {"id":"enqueue","input":{"text":"enqueue"},"result":"accepted"},
+  {"id":"job-status","input":{"text":"job_status"},"result":"accepted"},
+  {"id":"release","input":{"text":"release"},"result":"accepted"},
+  {"id":"invoke-agent","input":{"text":"invoke_agent"},"result":"accepted"},
+  {"id":"not-a-verb-unknown","input":{"text":"teleport"},"result":"refused"},
+  {"id":"not-a-verb-empty","input":{"text":""},"result":"refused"},
+  {"id":"not-a-verb-upper-case","input":{"text":"Embed"},"result":"refused"},
+  {"id":"not-a-verb-hyphen","input":{"text":"ha-call"},"result":"refused"},
+  {"id":"not-a-verb-space-last","input":{"text":"embed "},"result":"refused"},
+  {"id":"not-a-verb-newline-last","input":{"text":"embed\n"},"result":"refused"},
+  {"id":"not-a-verb-tool-with-server","input":{"text":"kagi__kagi_search_fetch"},"result":"refused"},
+  {"id":"not-a-verb-manifest","input":{"text":"$manifest"},"result":"refused"}
+ ]
+}
