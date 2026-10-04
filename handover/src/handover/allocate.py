@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .catalog import ARRIVING, CATALOG, RETIRING, CatalogRow, Kind, Repo
+from .catalog import ARRIVING, BINARY_BUILD_FILES, CATALOG, RETIRING, CatalogRow, Kind, Repo
 from .errors import Refusal, RefusalCode, safe_token
 
 #: Contract 06 §2: one expression reads every component tag, in every repo.
@@ -163,6 +163,11 @@ def _matches(path: str, row: CatalogRow) -> bool:
 
     # The lock file pins what every venv build installs (`LOCK_FILE`).
     if row.kind is Kind.VENV and path == LOCK_FILE:
+        return True
+
+    # The Cargo workspace files decide what every binary build makes, and
+    # they move no other kind (`catalog.BINARY_BUILD_FILES`).
+    if row.kind is Kind.BINARY and path in BINARY_BUILD_FILES:
         return True
 
     # A directory the build installs counts as the component's own (contract

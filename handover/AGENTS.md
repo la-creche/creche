@@ -241,3 +241,10 @@ that wants a refusal changes one field.
   an artifact that CI built and attested: the operator decides. Root builds
   on the host today, as it builds a venv. A cargo build script runs
   arbitrary code, so the user that runs the build matters (`catalog.py`).
+- Contract 06 §1 rule 10 names no file of a Cargo workspace. Three files
+  move a binary component: `rust/Cargo.lock`, `rust/Cargo.toml` and
+  `rust/rust-toolchain.toml`. A `rust/.cargo/config.toml` moves none
+  (`catalog.py`).
+- A component's kind is written in its catalog row and in its manifest. The
+  allocator reads the row and the executor reads the manifest. Only a test
+  holds the two equal (`tests/test_handover_bin_lock_files.py`).
