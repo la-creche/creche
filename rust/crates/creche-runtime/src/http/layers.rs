@@ -20,7 +20,7 @@
 //! in the task of the handler. A body stream owns no cleanup, and it selects
 //! on the stop signal.
 //!
-//! The Python origins are `attendance/src/attendance/api.py:39-67` and
+//! The Python origins are `attendance/src/attendance/api.py:38-67` and
 //! `:232-244`, and the answers of the web framework itself.
 //!
 //! Each function body here is a stub. `AGENTS.md` of this crate lists the

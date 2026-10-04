@@ -7,7 +7,7 @@
 //! of [`FileRead`], so the caller states what it does with each one.
 //!
 //! The Python services hold more than ten copies of this read, for example
-//! `noticeboard/src/noticeboard/jsonfiles.py:41-62` and
+//! `noticeboard/src/noticeboard/jsonfiles.py:41-67` and
 //! `attendance/src/attendance/atomic.py:64-91`. They differ in the cap, in
 //! the order of the stat and the read, and in what they do with a symlink.
 //!
