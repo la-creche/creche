@@ -7,6 +7,8 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { MAX_ENTRY_BYTES, MAX_LOG_BYTES } from "../src/constants.js";
+import { readEntry } from "../src/entry-text.js";
 import { Harness, until } from "./harness.js";
 
 function turnId(n: number): string {
@@ -153,6 +155,22 @@ describe("get_entries", () => {
     expect(answer?.leaf_id).toBeNull();
   });
 
+  it("cuts the log line of a failed read to 4 KiB", async () => {
+    // §8 caps each `log` message. The error text of the file system holds
+    // the path, and a path can have 4096 characters.
+    const harness = open();
+    harness.start();
+    harness.hello({ pi_idle_ttl_s: 900 });
+    getEntries(harness, "tui-longpath", { session_dir: `/${"a".repeat(4090)}` });
+
+    await until(() => harness.of("entries").length === 1, "the answer");
+    const line = harness.of("log").find((one) => one.message.startsWith("no entries read"));
+
+    expect(harness.of("entries")[0]?.ok).toBe(false);
+    expect(line).toBeDefined();
+    expect(Buffer.byteLength(line?.message ?? "", "utf8")).toBeLessThanOrEqual(MAX_LOG_BYTES);
+  });
+
   it("refuses a message with no request id", async () => {
     const harness = open();
     harness.start();
@@ -169,5 +187,20 @@ describe("get_entries", () => {
     await until(() => harness.of("log").length > 0, "the refusal log");
 
     expect(harness.of("entries")).toHaveLength(0);
+  });
+});
+
+describe("the text of one entry", () => {
+  it("takes at most MAX_ENTRY_BYTES of UTF-8, and ends on a whole character", () => {
+    // §8 gives the cap in bytes. The characters here take 2, 3 and 4 bytes.
+    for (const wide of ["\u00e9", "\u20ac", "\u{1F600}"]) {
+      for (let lead = 0; lead < 4; lead += 1) {
+        const content = "a".repeat(MAX_ENTRY_BYTES - lead) + wide.repeat(4);
+        const text = readEntry({ id: "e1", message: { role: "user", content } })?.text ?? "";
+
+        expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MAX_ENTRY_BYTES);
+        expect(content.startsWith(text)).toBe(true);
+      }
+    }
   });
 });

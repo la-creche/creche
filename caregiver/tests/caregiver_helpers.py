@@ -103,6 +103,15 @@ def write_registry(root: Path, **overrides: object) -> Path:
     return root
 
 
+def write_no_file_dir(root: Path, name: str = "stray") -> Path:
+    """A directory under `families/` that holds no `family.yaml`. Contract
+    01 §5.6 rule 3: the registry reports a warning for it."""
+    directory = root / "families" / name
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "instructions.md").write_text("Notes.\n", encoding="utf-8")
+    return directory
+
+
 def expire_overlap(state_root: Path, family: str = "chat") -> None:
     """`creds.json` and the grant file as a graceful rotation leaves them
     once the grace has run out: a previous token whose overlap is over, and

@@ -2,7 +2,7 @@
 // pi. Each case is a rule from the contract rather than a property of this
 // implementation.
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,12 +10,16 @@ import { join } from "node:path";
 import {
   EXIT_CONTROL_MOUNT,
   EXIT_DEADLINE,
+  EXIT_INTERNAL,
   EXIT_LOCK_HELD,
   EXIT_PROTOCOL,
 } from "../src/playpen.js";
-import { MAX_LINE_BYTES } from "../src/constants.js";
+import { MAX_LINE_BYTES, MAX_LOG_BYTES } from "../src/constants.js";
+import type { PiSpawnSpec } from "../src/pi-process.js";
+import { SessionPool } from "../src/pool.js";
 import type { EventMessage } from "../src/protocol.js";
-import { Harness, until } from "./harness.js";
+import { TurnFile } from "../src/turn-file.js";
+import { FIXTURE_LITELLM_KEY, Harness, until } from "./harness.js";
 
 /** A ULID is 26 characters of Crockford base 32. These are fixtures, not ids. */
 function turnId(n: number): string {
@@ -31,12 +35,28 @@ function open(options: ConstructorParameters<typeof Harness>[0] = {}): Harness {
   return harness;
 }
 
+/** One character that is 2 bytes of UTF-8 and one unit of a JS string. */
+const WIDE = "\u00e9";
+
+/**
+ * Contract 03 §8. True when a text was cut at the cap: it has at most 4 KiB
+ * of UTF-8, it ends on a whole character, and it lost at most one character
+ * to the cap.
+ */
+function cutAtCap(message: string | undefined): boolean {
+  const bytes = Buffer.byteLength(message ?? "", "utf8");
+
+  return bytes <= MAX_LOG_BYTES && bytes >= MAX_LOG_BYTES - 1 && !(message ?? "").includes("\ufffd");
+}
+
 /** Every event of one turn, in the order the channel carried them. */
 function eventsOf(harness: Harness, turn: string): EventMessage[] {
   return harness.of("event").filter((event) => event.turn === turn);
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
+
   while (live.length > 0) {
     await live.pop()?.dispose();
   }
@@ -202,6 +222,32 @@ function readLock(harness: Harness): Record<string, unknown> {
   return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
 }
 
+/** A turn file with a defect: it throws where the real one answers a path. */
+class BrokenTurnFile extends TurnFile {
+  public override pathFor(): string | null {
+    throw new Error("the turn file broke");
+  }
+}
+
+/**
+ * A start that the operating system refuses. Node throws an error with a
+ * code, and the text of that error holds the value that it refused.
+ */
+function refuseStart(spec: PiSpawnSpec): never {
+  const refused = spec.env["LITELLM_VIRTUAL_KEY"] ?? "";
+  const error: NodeJS.ErrnoException = new Error(`the start was refused. Received '${refused}'`);
+  error.code = "ERR_INVALID_ARG_VALUE";
+
+  throw error;
+}
+
+/** A turn file with a defect, and an error text of 10000 bytes of UTF-8. */
+class LoudTurnFile extends TurnFile {
+  public override pathFor(): string | null {
+    throw new Error(WIDE.repeat(5000));
+  }
+}
+
 /** A control path whose parent is a file. Every write under it is ENOTDIR. */
 function unwritableDir(): string {
   const file = join(mkdtempSync(join(tmpdir(), "playpen-nomount-")), "not-a-dir");
@@ -334,6 +380,43 @@ describe("turns", () => {
     await until(() => harness.of("turn_failed").length === 1, "the refusal");
     expect(harness.of("turn_failed")[0]?.reason).toBe("session_busy_in_sandbox");
   });
+
+  it("refuses a second turn that waited for the same pi process", async () => {
+    // §6 rule 2. The three lines arrive in one chunk, so both turns wait for
+    // the process that `open_session` starts.
+    const harness = open();
+    harness.start();
+    harness.hello();
+
+    const process = {
+      session: "owui-pair",
+      cwd: harness.cwd("owui-pair"),
+      session_dir: harness.sessionDir("owui-pair"),
+      env_epoch: 1,
+      config_rev: "reg-test",
+    };
+    const start = { ...process, type: "start_turn", prompt: "hello", deadline_s: 30 };
+    harness.sendRaw(
+      [
+        JSON.stringify({ ...process, type: "open_session" }),
+        JSON.stringify({ ...start, turn: turnId(1) }),
+        JSON.stringify({ ...start, turn: turnId(2) }),
+      ].join("\n"),
+    );
+
+    await until(() => harness.of("turn_settled").length === 1, "the first turn");
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+
+    const failed = harness.of("turn_failed")[0];
+    const seqs = eventsOf(harness, turnId(1)).map((event) => event.turn_seq);
+
+    expect(harness.of("turn_settled")[0]?.turn).toBe(turnId(1));
+    expect(seqs).toEqual(seqs.map((_, at) => at + 1));
+    expect(failed?.turn).toBe(turnId(2));
+    expect(failed?.reason).toBe("session_busy_in_sandbox");
+    expect(failed?.turn_seq).toBe(1);
+    expect(eventsOf(harness, turnId(2))).toHaveLength(0);
+  });
 });
 
 describe("steer and abort", () => {
@@ -396,6 +479,21 @@ describe("a process that dies", () => {
     expect(failed).toHaveLength(1);
     expect(failed[0]?.reason).toBe("process_died");
     expect(failed[0]?.session).toBe("owui-doomed");
+  });
+
+  it("sends no settled line for a turn that failed while it settled", async () => {
+    // §5.2 reads pi's entries before `turn_settled`. A process that dies in
+    // that read fails the turn, and a turn has one last line.
+    const harness = open({ piEnv: { "owui-late": { FAKE_PI_DIE_ON_ENTRIES: "1" } } });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-late", turnId(1));
+
+    await until(() => harness.of("process_exit").length === 1, "the exit report");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(harness.of("turn_failed").map((line) => line.reason)).toEqual(["process_died"]);
+    expect(harness.of("turn_settled")).toHaveLength(0);
   });
 });
 
@@ -484,6 +582,44 @@ describe("ending the channel", () => {
     expect(harness.exitCode).toBe(0);
     await until(() => harness.of("process_exit").length === 1, "the process to go");
   });
+
+  it("exits when the shutdown handler throws", async () => {
+    // §11.1 rule 5: exiting is always correct. A playpen that reads no line
+    // and holds the lock must not stay.
+    const harness = open();
+    harness.start();
+    harness.hello({ pi_idle_ttl_s: 900 });
+    harness.startTurn("owui-stuck", turnId(1));
+    await until(() => harness.of("turn_settled").length === 1, "the turn");
+
+    vi.spyOn(SessionPool.prototype, "shutdown").mockRejectedValueOnce(new Error("the stop broke"));
+    harness.send({ type: "shutdown", grace_ms: 500 });
+
+    await until(() => harness.exitCode !== null, "the exit");
+    expect(harness.exitCode).toBe(EXIT_INTERNAL);
+    expect(harness.of("log").some((line) => line.message.includes("the stop broke"))).toBe(true);
+    expect(existsSync(join(harness.root, "control", "supervisor.lock"))).toBe(false);
+
+    // No pi process stays behind the playpen.
+    await until(() => harness.of("process_exit").length === 1, "the process to go");
+  });
+
+  it("exits when the hello handler throws", async () => {
+    // Half a handshake leaves a playpen with no pool. It answers no turn,
+    // so it must not stay.
+    const harness = open();
+    harness.start();
+
+    vi.spyOn(SessionPool.prototype, "start").mockImplementationOnce(() => {
+      throw new Error("the pool broke");
+    });
+    harness.hello();
+
+    await until(() => harness.exitCode !== null, "the exit");
+    expect(harness.exitCode).toBe(EXIT_INTERNAL);
+    expect(harness.of("log").some((line) => line.message.includes("the pool broke"))).toBe(true);
+    expect(existsSync(join(harness.root, "control", "supervisor.lock"))).toBe(false);
+  });
 });
 
 describe("untrusted input", () => {
@@ -539,5 +675,318 @@ describe("untrusted input", () => {
     expect(failed?.session).toBe("owui-bad-deadline");
     expect(failed?.turn).toBe(turnId(1));
     expect(failed?.message).toContain("deadline_s");
+    // §5.3 gives the reason. §5.1 numbers a line of a turn from 1, and keeps
+    // 0 for a line with no session and no turn.
+    expect(failed?.reason).toBe("internal");
+    expect(failed?.turn_seq).toBe(1);
+  });
+
+  it("numbers a refused line that names a turn from 1 before hello too", async () => {
+    const harness = open();
+    harness.start();
+    harness.send({ type: "steer", session: "owui-early-steer", turn: turnId(1), message: 7 });
+
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    const failed = harness.of("turn_failed")[0];
+
+    expect(failed?.turn).toBe(turnId(1));
+    expect(failed?.reason).toBe("internal");
+    expect(failed?.turn_seq).toBe(1);
+  });
+
+  it("fails the running turn that a refused line names", async () => {
+    // §5.3: the line names a session and a turn, so that turn fails. The turn
+    // runs, so the failure takes its next number and pi gets an abort.
+    const harness = open({ piEnv: { "owui-bad-steer": { FAKE_PI_DELAY_MS: "40" } } });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-bad-steer", turnId(1));
+
+    await until(() => eventsOf(harness, turnId(1)).length > 0, "the turn to start");
+    harness.send({ type: "steer", session: "owui-bad-steer", turn: turnId(1), message: 7 });
+
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    const failed = harness.of("turn_failed")[0];
+    const before = eventsOf(harness, turnId(1)).length;
+
+    expect(failed?.turn).toBe(turnId(1));
+    expect(failed?.reason).toBe("internal");
+    expect(failed?.message).toContain("steer.message");
+    expect(failed?.turn_seq).toBe(before + 1);
+
+    // pi ends the run after the abort. No line of that turn follows the
+    // failure, and the process stays for the next turn.
+    await until(
+      () => harness.of("log").some((line) => line.message.includes("agent_settled")),
+      "pi to end the run",
+    );
+    expect(eventsOf(harness, turnId(1))).toHaveLength(before);
+    expect(harness.of("turn_settled")).toHaveLength(0);
+    expect(harness.of("process_exit")).toHaveLength(0);
+
+    harness.startTurn("owui-bad-steer", turnId(2));
+    await until(() => harness.of("turn_settled").length === 1, "the next turn");
+    expect(harness.of("turn_settled")[0]?.turn).toBe(turnId(2));
+  });
+
+  it("does not run a turn that a refused line failed while it waited", async () => {
+    // Both lines arrive in one chunk, so the refusal is read while the turn
+    // still waits for its pi process.
+    const harness = open();
+    harness.start();
+    harness.hello();
+
+    const start = {
+      type: "start_turn",
+      turn: turnId(1),
+      session: "owui-waiting",
+      cwd: harness.cwd("owui-waiting"),
+      session_dir: harness.sessionDir("owui-waiting"),
+      prompt: "hello",
+      deadline_s: 30,
+      env_epoch: 1,
+      config_rev: "reg-test",
+    };
+    const steer = { type: "steer", session: "owui-waiting", turn: turnId(1), message: 7 };
+    harness.sendRaw(`${JSON.stringify(start)}\n${JSON.stringify(steer)}`);
+
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    expect(harness.of("turn_failed")[0]?.turn_seq).toBe(1);
+
+    // The fake pi answers a prompt in well under this time.
+    await until(() => harness.spawns.length === 1, "the pi process");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(eventsOf(harness, turnId(1))).toHaveLength(0);
+    expect(harness.of("turn_settled")).toHaveLength(0);
+    expect(harness.of("turn_failed")).toHaveLength(1);
+
+    harness.startTurn("owui-waiting", turnId(2));
+    await until(() => harness.of("turn_settled").length === 1, "the next turn");
+    expect(harness.spawns).toHaveLength(1);
+  });
+
+  it("fails the turn and keeps serving when the pi process cannot start", async () => {
+    // The launcher throws when the operating system refuses the start, so
+    // no process exists. The failure names the code of that error. Its text
+    // stays off the channel, because it can hold a value of the environment.
+    const harness = open({
+      launcher: (real) => (spec) =>
+        spec.env["AGENT_SESSION"] === "owui-nostart" ? refuseStart(spec) : real(spec),
+    });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-nostart", turnId(1));
+
+    await until(() => harness.of("turn_failed").length === 1, "the failure");
+    const failed = harness.of("turn_failed")[0];
+
+    expect(failed?.turn).toBe(turnId(1));
+    expect(failed?.reason).toBe("pi_start_failed");
+    expect(failed?.turn_seq).toBe(1);
+    expect(failed?.message).toContain("ERR_INVALID_ARG_VALUE");
+    expect(JSON.stringify(harness.lines)).not.toContain(FIXTURE_LITELLM_KEY);
+    expect(harness.exitCode).toBeNull();
+
+    harness.startTurn("owui-after-nostart", turnId(2));
+    await until(() => harness.of("turn_settled").length === 1, "a turn after the failure");
+  });
+
+  it("fails the turn and keeps serving when a handler throws", async () => {
+    // A bug in one handler must not end the process that serves each
+    // session of the family. §5.3: the turn that the line named fails.
+    const harness = open({ turnFile: (dir) => new BrokenTurnFile(dir) });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-broken", turnId(1));
+
+    await until(() => harness.of("turn_failed").length === 1, "the failure");
+    const failed = harness.of("turn_failed")[0];
+
+    expect(failed?.turn).toBe(turnId(1));
+    expect(failed?.reason).toBe("internal");
+    expect(failed?.turn_seq).toBe(1);
+    expect(failed?.message).toContain("the turn file broke");
+
+    // §4.8 rule 1: a `get_entries` gets its answer, whatever happens.
+    harness.send({
+      type: "get_entries",
+      request: turnId(9),
+      session: "owui-broken",
+      cwd: harness.cwd("owui-broken"),
+      session_dir: harness.sessionDir("owui-broken"),
+      env_epoch: 1,
+      config_rev: "reg-test",
+    });
+    await until(() => harness.of("entries").length === 1, "the answer");
+    expect(harness.of("entries")[0]).toMatchObject({ ok: false, reason: "internal" });
+
+    // A line with no turn and no answer of its own is reported.
+    harness.send({
+      type: "open_session",
+      session: "owui-broken",
+      cwd: harness.cwd("owui-broken"),
+      session_dir: harness.sessionDir("owui-broken"),
+      env_epoch: 1,
+      config_rev: "reg-test",
+    });
+    await until(
+      () => harness.of("log").some((line) => line.message.includes("open_session")),
+      "the report",
+    );
+
+    harness.send({ type: "ping", nonce: "n1" });
+    await until(() => harness.of("pong").length === 1, "the pong");
+    expect(harness.exitCode).toBeNull();
+  });
+
+  it("sends pi an abort for a running turn that a refused line failed", async () => {
+    // This run takes minutes. pi ends it in the test time only when the
+    // abort arrives.
+    const slow = { FAKE_PI_EVENTS: "100000", FAKE_PI_DELAY_MS: "20" };
+    const harness = open({ piEnv: { "owui-long": slow } });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-long", turnId(1));
+
+    await until(() => eventsOf(harness, turnId(1)).length > 0, "the turn to start");
+    harness.send({ type: "steer", session: "owui-long", turn: turnId(1), message: 7 });
+
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    await until(
+      () => harness.of("log").some((line) => line.message.includes("agent_settled")),
+      "pi to end the run",
+    );
+
+    expect(harness.of("turn_settled")).toHaveLength(0);
+    expect(harness.of("process_exit")).toHaveLength(0);
+  });
+
+  it("leaves a running turn alone when a refused turn waited for its process", async () => {
+    // §6 rule 5: a process that runs a turn is never reaped. The start waits
+    // for the credential file here, so the second turn waits for the process
+    // of the first. With `pi_idle_ttl_s` 0 a refused turn holds no process.
+    const deltas = 20;
+    const harness = open({
+      credRetryMs: 5000,
+      piEnv: { "owui-two": { FAKE_PI_EVENTS: String(deltas) } },
+    });
+    harness.start();
+    harness.hello({ pi_idle_ttl_s: 0 });
+    harness.startTurn("owui-two", turnId(1), { env_epoch: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    harness.startTurn("owui-two", turnId(2), { env_epoch: 2 });
+    harness.send({ type: "steer", session: "owui-two", turn: turnId(2), message: 7 });
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    expect(harness.of("turn_failed")[0]).toMatchObject({ turn: turnId(2), turn_seq: 1 });
+
+    harness.writeCreds(2);
+    await until(() => harness.of("turn_settled").length === 1, "the first turn");
+
+    const updates = eventsOf(harness, turnId(1)).filter(
+      (line) => line.event["type"] === "message_update",
+    );
+
+    expect(harness.of("turn_settled")[0]?.turn).toBe(turnId(1));
+    expect(updates).toHaveLength(deltas);
+    expect(harness.of("turn_failed")).toHaveLength(1);
+    expect(harness.spawns).toHaveLength(1);
+  });
+
+  it("keeps no process for a refused turn when the family holds none", async () => {
+    // §6 rule 4. With `pi_idle_ttl_s` 0 a process stays only for its turn.
+    const harness = open();
+    harness.start();
+    harness.hello({ pi_idle_ttl_s: 0 });
+
+    const start = {
+      type: "start_turn",
+      turn: turnId(1),
+      session: "owui-thin",
+      cwd: harness.cwd("owui-thin"),
+      session_dir: harness.sessionDir("owui-thin"),
+      prompt: "hello",
+      deadline_s: 30,
+      env_epoch: 1,
+      config_rev: "reg-test",
+    };
+    const steer = { type: "steer", session: "owui-thin", turn: turnId(1), message: 7 };
+    harness.sendRaw(`${JSON.stringify(start)}\n${JSON.stringify(steer)}`);
+
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+    await until(() => harness.of("process_exit").length === 1, "the process to go");
+
+    expect(eventsOf(harness, turnId(1))).toHaveLength(0);
+    expect(harness.of("process_exit")[0]?.turn).toBeNull();
+  });
+});
+
+describe("the 4 KiB cap of a message", () => {
+  // §8 gives the cap in bytes. Each text here has more than 4096 bytes and
+  // less than 4096 units of a JS string before the cut, or more of both.
+  it("holds for a start that failed, in each answer", async () => {
+    // The error text of the file system holds the path of the session store.
+    const harness = open();
+    harness.start();
+    harness.hello({ pi_idle_ttl_s: 900 });
+
+    const process = {
+      session: "owui-wide",
+      cwd: harness.cwd("owui-wide"),
+      session_dir: `/nonexistent-${WIDE.repeat(3990)}`,
+      env_epoch: 1,
+      config_rev: "reg-test",
+    };
+    harness.send({ ...process, type: "open_session" });
+    await until(() => harness.of("session_opened").length === 1, "the answer");
+
+    const start = { ...process, type: "start_turn", prompt: "hello", deadline_s: 30 };
+    harness.send({ ...start, turn: turnId(1) });
+    await until(() => harness.of("turn_failed").length === 1, "the failure");
+
+    expect(harness.of("session_opened")[0]?.resident).toBe(false);
+    expect(cutAtCap(harness.of("session_opened")[0]?.message)).toBe(true);
+    expect(cutAtCap(harness.of("turn_failed")[0]?.message)).toBe(true);
+  });
+
+  it("holds for a turn that pi refused", async () => {
+    const harness = open({ piEnv: { "owui-no": { FAKE_PI_ERROR_TEXT: WIDE.repeat(3000) } } });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-no", turnId(1));
+
+    await until(() => harness.of("turn_failed").length === 1, "the failure");
+
+    expect(harness.of("turn_failed")[0]?.reason).toBe("pi_rejected_prompt");
+    expect(cutAtCap(harness.of("turn_failed")[0]?.message)).toBe(true);
+  });
+
+  it("holds for a log line of the dispatcher", async () => {
+    const harness = open({ turnFile: (dir) => new LoudTurnFile(dir) });
+    harness.start();
+    harness.hello();
+    harness.send({
+      type: "open_session",
+      session: "owui-loud",
+      cwd: harness.cwd("owui-loud"),
+      session_dir: harness.sessionDir("owui-loud"),
+      env_epoch: 1,
+      config_rev: "reg-test",
+    });
+
+    await until(() => harness.of("log").some((line) => line.level === "error"), "the report");
+
+    expect(cutAtCap(harness.of("log").find((line) => line.level === "error")?.message)).toBe(true);
+  });
+
+  it("holds for the fatal line of an unwritable control mount", () => {
+    // The error text of the file system holds the path of the mount.
+    const deep = Array.from({ length: 40 }, () => WIDE.repeat(100));
+    const harness = open({ controlDir: join(unwritableDir(), ...deep) });
+
+    expect(harness.start()).toBe(false);
+    expect(harness.of("fatal")[0]?.reason).toBe("control_mount_unwritable");
+    expect(cutAtCap(harness.of("fatal")[0]?.message)).toBe(true);
   });
 });

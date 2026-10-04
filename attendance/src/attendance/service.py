@@ -210,6 +210,10 @@ class SessionService:
         self._upkeep: asyncio.Task[None] | None = None
         self._pre_starts: set[asyncio.Task[None]] = set()
         self._followups: set[asyncio.Task[None]] = set()
+        # Queued turns that left the FIFO and are not `running` yet, for each
+        # family. The start can wait for a sandbox, and the turn holds its
+        # slot in that time.
+        self._starting: dict[str, list[LiveTurn]] = {}
         # Contract 02 §10.5. One entry read in flight per request id, so the
         # answer knows which session it belongs to. An answer for a request
         # this service never sent is dropped (contract 03 §5.8 rule 4).
@@ -300,6 +304,7 @@ class SessionService:
             await asyncio.sleep(FLUSH_INTERVAL_S)
             self._upkeep_step("the journal sync", self._journal.flush_due)
             self._upkeep_step("the gate poll", self.read_gates)
+            self._upkeep_step("the queue pump", self.pump_queues)
 
     def _upkeep_step(self, name: str, step: Callable[[], None]) -> None:
         """Run one step of the upkeep loop. A failure never ends the loop.
@@ -329,6 +334,24 @@ class SessionService:
                 _LOG.exception("gate %s of family %s was not applied", gate.gate, gate.family)
 
         self._report_audit(self._gates.unreadable())
+
+    def pump_queues(self) -> None:
+        """Try the head of each queue again (contract 02 §13 rule 3).
+
+        A turn that ends starts the head of the queue of its family. That
+        start does not happen while the status document is unreadable or
+        states no kind, and no later turn of the family can end to try
+        again. The upkeep loop calls this, so the head starts within
+        `FLUSH_INTERVAL_S` of a document that can be read. It is public so a
+        test can drive it without a clock.
+        """
+        for family in self._queue.families():
+            try:
+                self._pump_queue(family)
+            except Exception:
+                # Each tick tries the families in the same order. Without
+                # this guard one family that fails hides each family after it.
+                _LOG.exception("queue of family %s was not tried", family)
 
     def _report_audit(self, message: str | None) -> None:
         """Contract 05 §3.3's `audit_unreadable`.
@@ -599,17 +622,22 @@ class SessionService:
         # later, it would leave the turn running with nothing to run it.
         self._dial_for(family, status, sandbox)
         live = self._open_turn(record, request, sandbox, persona, status)
-        start = self._send_start(live, request, persona, status, sandbox, branch)
+        # The start is work of the service, not of the request. The server
+        # can cancel a request during the dial. The turn is in the book by
+        # then, so its start must still end: with a `start_turn` and a
+        # deadline watcher, or with a turn that failed.
+        started = self._start_apart(
+            self._send_start(live, request, persona, status, sandbox, branch)
+        )
 
         # Contract 02 §5.4: `accepted` answers at once. The dial can be a cold
         # start of 10 to 15 seconds (contract 03 §10 rule 5), and after an
         # idle close (rule 3) it usually is. `_send_start` settles the turn
         # itself on every failure, so nothing is lost by not waiting.
         if request.wait is Wait.ACCEPTED:
-            self._run_later(start)
             return live
 
-        await start
+        await asyncio.shield(started)
         return live
 
     async def steer(
@@ -1436,7 +1464,18 @@ class SessionService:
             return Slot.QUEUE
 
         running = len(self._turns.active_in_family(status.family))
-        return slot_for(status.kind, status.max_running_turns, running)
+        starting = self._starting_in(status.family)
+        return slot_for(status.kind, status.max_running_turns, running + starting)
+
+    def _starting_in(self, family: str) -> int:
+        """The count of turns that left the queue and do not run yet.
+
+        Each one holds a slot. Without this count, a second try of the queue
+        starts the next turn while the first one waits for its sandbox, and
+        the family runs more turns than its limit.
+        """
+        starting = self._starting.get(family, [])
+        return sum(1 for live in starting if live.record.state is TurnState.QUEUED)
 
     def _queue_turn(
         self,
@@ -1492,10 +1531,18 @@ class SessionService:
         if waiting is None:
             return
 
+        self._starting.setdefault(family, []).append(waiting.live)
+
         if not self._run_later(self._start_waiting(waiting, status)):
             # No event loop, so nothing can dial a sandbox. The turn stays
             # `queued` on disk and the next start aborts it (§13.3).
+            self._forget_starting(waiting.live)
             self._queue.add(family, waiting)
+
+    def _forget_starting(self, live: LiveTurn) -> None:
+        """The start of this queued turn ended: it runs, or it did not start."""
+        starting = self._starting.get(live.record.family, [])
+        self._starting[live.record.family] = [one for one in starting if one is not live]
 
     def _run_later(self, work: Coroutine[Any, Any, None]) -> bool:
         """Do this after the turn that asked for it has settled, or behind an
@@ -1516,22 +1563,35 @@ class SessionService:
         task.add_done_callback(report_failure)
         return True
 
+    def _start_apart(self, work: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        """Run the start of a turn as a task that no request owns.
+
+        The caller is a request, so an event loop runs. `close()` ends the
+        task with each other follow-up.
+        """
+        task = asyncio.create_task(work, name="turn start")
+        self._followups.add(task)
+        task.add_done_callback(self._followups.discard)
+        task.add_done_callback(report_failure)
+        return task
+
     async def _start_waiting(self, waiting: Waiting, status: FamilyStatus) -> None:
         """Move one queued turn to `running` (contract 02 §4.3)."""
         live = waiting.live
         family = live.record.family
         session = live.record.session
 
-        # It may have been stopped, or its session deleted, while it waited.
-        if live.record.state is not TurnState.QUEUED:
-            return
-
-        record = self._sessions.get((family, session))
-
-        if record is None:
-            return
-
         try:
+            # It may have been stopped, or its session deleted, while it
+            # waited.
+            if live.record.state is not TurnState.QUEUED:
+                return
+
+            record = self._sessions.get((family, session))
+
+            if record is None:
+                return
+
             await self._start_queued(waiting, status, record)
         except Exception:
             # Nothing awaits this task. Without this handler the turn stays
@@ -1540,6 +1600,8 @@ class SessionService:
                 "queued turn %s of %s/%s did not start", live.record.turn, family, session
             )
             self._fail_start(live)
+        finally:
+            self._forget_starting(live)
 
     async def _start_queued(self, waiting: Waiting, status: FamilyStatus, record: Session) -> None:
         """The start itself. `_start_waiting` ends the turn when this raises."""
@@ -1953,6 +2015,12 @@ class SessionService:
         if live is None or not live.is_active:
             return
 
+        self._leave_approval(live)
+
+        # The decision of the gate can end the turn.
+        if not live.is_active:
+            return
+
         live.record.usage.add(message.usage)
         self._map_owui(family, live, message)
         self._settle(
@@ -1966,6 +2034,28 @@ class SessionService:
                 "user_entry_id": message.user_entry_id,
             },
         )
+
+    def _leave_approval(self, live: LiveTurn) -> None:
+        """Let a turn that waits for approval settle (contract 03 §13 rule 8).
+
+        pi settles after the gated call returned, so the PEP decided the
+        gate. Its record can be in the audit file and not read yet: the gate
+        poll runs once in `FLUSH_INTERVAL_S`. The poll runs here first, so
+        the decision reaches the journal and the tally before the settle.
+
+        CONTRACT-QUESTION: contract 03 §13 rule 8 accepts the settle, and
+        contract 02 §4.3 has no move from `waiting-approval` to `settled`. A
+        turn that still waits after the poll goes through `running`. Left as
+        it is, the turn stays in flight until its deadline. A direct move in
+        §4.3 removes the pass through `running`.
+        """
+        if live.record.state is not TurnState.WAITING_APPROVAL:
+            return
+
+        self._upkeep_step("the gate poll", self.read_gates)
+
+        if live.record.state is TurnState.WAITING_APPROVAL:
+            live.record.state = TurnState.RUNNING
 
     async def handle_failed(self, family: str, message: FailedLine) -> None:
         live = self._turns.get(family, message.session, message.turn)

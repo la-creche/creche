@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { MAX_LOG_BYTES } from "../src/constants.js";
 import {
   CONTROL_DIR_ENV,
   CRED_DIR_ENV,
@@ -96,5 +97,15 @@ describe("unsetMountFatal", () => {
     const line = unsetMountFatal("AGENT_CRED_DIR names no directory");
 
     expect(line.message).toContain("7.1");
+  });
+
+  it("cuts the message at 4 KiB of UTF-8, on a whole character", () => {
+    // §5.7 caps the message in bytes. One character here is 2 bytes.
+    const line = unsetMountFatal("\u00e9".repeat(5000));
+    const bytes = Buffer.byteLength(line.message, "utf8");
+
+    expect(bytes).toBeLessThanOrEqual(MAX_LOG_BYTES);
+    expect(bytes).toBeGreaterThanOrEqual(MAX_LOG_BYTES - 1);
+    expect(line.message).not.toContain("\ufffd");
   });
 });

@@ -22,6 +22,33 @@ export function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
+/** A UTF-8 byte of the form `10xxxxxx` continues a character. */
+const CONTINUATION_MASK = 0xc0;
+const CONTINUATION_BITS = 0x80;
+
+/**
+ * The longest start of `text` that takes at most `maxBytes` of UTF-8.
+ *
+ * Contract 03 §8 gives each cap in bytes. `slice` counts the units of a JS
+ * string: one character is 1 to 4 bytes, and a character past U+FFFF is two
+ * units. The cut is at a byte that starts a character, so the result holds
+ * no half of a character and no half of a surrogate pair. A text that fits
+ * is returned as it is.
+ */
+export function cutToBytes(text: string, maxBytes: number): string {
+  if (byteLength(text) <= maxBytes) {
+    return text;
+  }
+
+  const bytes = Buffer.from(text, "utf8");
+  let end = maxBytes;
+  while (end > 0 && ((bytes[end] ?? 0) & CONTINUATION_MASK) === CONTINUATION_BITS) {
+    end -= 1;
+  }
+
+  return bytes.subarray(0, end).toString("utf8");
+}
+
 /**
  * Splits a stream into LF-delimited records and refuses oversize ones.
  *

@@ -5,18 +5,24 @@ the right OpenAI-shaped answer out. `FakeAttendance` plays attendance's part;
 from __future__ import annotations
 
 import json
+import logging
 import time
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from agent_door_owui import app as door_app
 from agent_door_owui.app import create_app
 from agent_door_owui.attendance import (
     AttendanceError,
     HttpAttendance,
     SettledTurn,
     StreamBroken,
+    TurnRequest,
 )
 from agent_door_owui.config import DoorConfig
 from agent_door_owui.families import StatusFiles
@@ -28,6 +34,8 @@ from agent_door_owui.headers import (
     USER_MESSAGE_ID_HEADER,
 )
 from agent_door_owui.journal import JournalLine
+from agent_door_owui.sse import KEEPALIVE_FRAME
+from agent_door_owui.stream import with_keepalive
 from fake_attendance import FakeAttendance
 from starlette.testclient import TestClient
 
@@ -279,6 +287,9 @@ def test_a_failed_streamed_turn_is_a_visible_error(tmp_path: Path) -> None:
 
     assert "budget_exceeded" in out
     assert '"status":"failed"' in out
+    # One ending. The door reads no line after the line that failed the turn.
+    assert out.count("data: [DONE]") == 1
+    assert out.endswith("data: [DONE]\n\n")
 
 
 def test_a_connection_dropped_mid_stream_is_a_visible_error(tmp_path: Path) -> None:
@@ -429,6 +440,94 @@ def test_no_answer_from_attendance_is_a_502_in_the_error_shape(
     assert "cannot reach attendance" in error["message"]
 
 
+# --- a refusal after the first frame ---
+
+#: The relay sends a keepalive frame after this silence, in a test.
+_SHORT_IDLE_S = 0.01
+#: A stream that opens after the first keepalive frame of such a relay.
+_LATE_OPEN_S = 0.2
+
+
+def _with_a_short_keepalive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(door_app, "with_keepalive", partial(with_keepalive, idle_s=_SHORT_IDLE_S))
+
+
+def test_a_refusal_after_the_first_frame_is_a_visible_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The status is sent with the first keepalive frame. A refusal that comes
+    # later cannot be a status, so it must be a frame that the reader sees.
+    _with_a_short_keepalive(monkeypatch)
+    fake = FakeAttendance(open_delay_s=_LATE_OPEN_S)
+    fake.turn_error = AttendanceError("sandbox_unavailable", "family chat has no sandbox", 503)
+    client = _client(tmp_path, fake)
+
+    with (
+        caplog.at_level(logging.WARNING),
+        client.stream(
+            "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+        ) as response,
+    ):
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert "attendance refused the turn after the first frame" in caplog.text
+    assert out.startswith(KEEPALIVE_FRAME)
+    assert '"code":"sandbox_unavailable"' in out
+    assert "no sandbox to run the turn on" in out
+    assert '"status":"failed"' in out
+    assert out.endswith("data: [DONE]\n\n")
+    assert out.count("data: [DONE]") == 1
+
+
+def test_a_late_refusal_of_the_branch_retry_is_a_visible_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _with_a_short_keepalive(monkeypatch)
+
+    class _RefusesTwice(FakeAttendance):
+        """Answers `not_implemented` to the branch, then refuses the retry."""
+
+        def _take_error(self) -> AttendanceError:
+            error = super()._take_error()
+            if error.code == "not_implemented":
+                self.turn_error = AttendanceError("session_busy", "another door writes", 409)
+
+            return error
+
+    fake = _RefusesTwice(open_delay_s=_LATE_OPEN_S)
+    fake.turn_error = AttendanceError("not_implemented", "branching is not built yet", 501)
+    client = _client(tmp_path, fake)
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers=_headers(**{PARENT_ID_HEADER: "9f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f"}),
+        json=_body(stream=True),
+    ) as response:
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert fake.with_parent_flags == [True, False]
+    assert '"code":"session_busy"' in out
+    assert '"code":"not_implemented"' not in out
+    assert out.endswith("data: [DONE]\n\n")
+
+
+def test_a_refusal_before_the_first_frame_is_still_a_status(tmp_path: Path) -> None:
+    # The default keepalive time applies here. A short one can send its
+    # frame before the refusal on a busy machine, and the answer is then a
+    # stream. With no wait before the refusal, the door answers a status.
+    fake = FakeAttendance()
+    fake.turn_error = AttendanceError("sandbox_unavailable", "family chat has no sandbox", 503)
+    client = _client(tmp_path, fake)
+
+    response = client.post("/v1/chat/completions", headers=_headers(), json=_body(stream=True))
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "sandbox_unavailable"
+
+
 # --- a request body that nests too deep ---
 
 
@@ -488,3 +587,67 @@ def test_an_unexpected_failure_is_a_500_in_the_error_shape(tmp_path: Path, strea
     assert error["code"] == "internal"
     assert error["type"] == "server_error"
     assert "a defect of the door" not in error["message"]
+
+
+# --- a failure that no handler names, after the first frame ---
+
+
+def test_an_unexpected_failure_after_the_first_frame_is_a_visible_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeAttendance(
+        lines=[_pi_text("partial answer")],
+        stream_error=RuntimeError("a defect of the door"),
+    )
+    client = _client(tmp_path, fake)
+
+    with (
+        caplog.at_level(logging.ERROR),
+        client.stream(
+            "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+        ) as response,
+    ):
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert "partial answer" in out
+    assert '"code":"internal"' in out
+    assert '"status":"failed"' in out
+    assert out.endswith("data: [DONE]\n\n")
+    # The text of the failure is in the log and not in the answer.
+    assert "a defect of the door" not in out
+    assert "a defect of the door" in caplog.text
+
+
+class _FailsAtClose(FakeAttendance):
+    """Gives a whole turn, then raises when the door closes the stream."""
+
+    @asynccontextmanager
+    async def stream_turn(
+        self, request: TurnRequest, *, with_parent: bool = True
+    ) -> AsyncGenerator[AsyncIterator[JournalLine], None]:
+        async with super().stream_turn(request, with_parent=with_parent) as lines:
+            yield lines
+
+        raise RuntimeError("a close that fails")
+
+
+def test_a_failure_after_the_end_marker_adds_no_second_ending(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = _client(tmp_path, _FailsAtClose(lines=_success_lines()))
+
+    with (
+        caplog.at_level(logging.ERROR),
+        client.stream(
+            "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+        ) as response,
+    ):
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert '"status":"done"' in out
+    assert '"error"' not in out
+    assert out.count("data: [DONE]") == 1
+    assert out.endswith("data: [DONE]\n\n")
+    assert "a close that fails" in caplog.text

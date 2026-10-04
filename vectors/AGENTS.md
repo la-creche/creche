@@ -168,9 +168,6 @@ directory is not a workspace package, so a change here does not change
   `session.error_body` writes a detail whose keys are not in sorted order as
   an `$entries` marker. An object inside a detail has its keys in sorted
   order.
-- `session.outcome.write` and `session.answer.*` use no time before the
-  year 1000. `attendance.clock.rfc3339` writes such a year with a width that
-  depends on the system.
 - A text of a time has a vector only when each supported Python version
   reads it in the same way. `datetime.fromisoformat` differs between
   versions on five forms:
@@ -188,6 +185,10 @@ directory is not a workspace package, so a change here does not change
 - No vector covers `handover.mcpserver.parse_server` or the reader of the
   sops file in `handover.intake.store`. Each one has merge limits of its
   own. Only the tests of `handover` hold those limits.
+- No vector covers the roster reader of the caregiver,
+  `caregiver.mcp_release.served_servers`. It gives one answer for a roster
+  that it refuses and for a roster with no row, so a vector cannot hold a
+  refusal. `caregiver/tests` holds its two limits for merge keys.
 - Four configs have no entry point that takes a map of variables, so no
   vector covers them: `chaperone.__main__`, `caregiver.cli`,
   `agent_door_owui.config` and `agent_door_trigger.config`. The two doors

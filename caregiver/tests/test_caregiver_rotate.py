@@ -7,6 +7,7 @@ outside and be worth nothing."""
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import replace
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from caregiver.rotate import (
     settle,
 )
 from caregiver.status import RotationState
+from caregiver.webhook_tokens import ensure_webhooks
 from caregiver_helpers import (
     LONG_AGO,
     OLD_TOKEN,
@@ -457,6 +459,41 @@ def test_a_graceful_key_rotation_says_it_was_not_graceful(
     """Honesty in the outcome, not only in a docstring."""
     start(state_root, litellm)
     assert "no overlap" in turn(state_root, family, litellm).note
+
+
+# --- the status document --------------------------------------------------------------
+
+
+def test_a_document_write_that_fails_does_not_stop_the_rotation(
+    state_root: Path,
+    litellm: Watching,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The credential file and the grant file moved before the publish. A
+    write of the status document that fails is one error line, and the
+    rotation ends its work: each webhook bearer moves. The next pass
+    publishes the document."""
+    hooked = chat_family(kind="autonomous", triggers=[{"webhook": "boiler-alert"}])
+    start(state_root, litellm)
+    bearer = ensure_webhooks(hooked, state_root)[0].path
+    before = bearer.read_text(encoding="utf-8")
+
+    def refuse(path: Path, block: object) -> bool:
+        del block
+        raise PermissionError(f"no write to {path}")
+
+    monkeypatch.setattr("caregiver.rotate.publish_credentials", refuse)
+
+    with caplog.at_level(logging.ERROR, logger="caregiver.rotate"):
+        outcome = turn(state_root, hooked, litellm)
+
+    assert outcome.epoch == 2
+    assert bearer.read_text(encoding="utf-8") != before
+    assert [one.getMessage() for one in caplog.records] == [
+        f"{FAMILY}: the status document did not take epoch 2, the next pass publishes it: "
+        f"no write to {paths.status_path(state_root, FAMILY)}"
+    ]
 
 
 def end_overlap(state_root: Path) -> None:

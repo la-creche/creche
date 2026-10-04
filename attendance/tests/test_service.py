@@ -797,6 +797,33 @@ async def test_an_event_nested_too_deep_reaches_the_journal_capped(tmp_path: Pat
     await harness.stop()
 
 
+async def test_an_event_with_no_utf8_form_does_not_fail_the_turn(tmp_path: Path) -> None:
+    """A text of a model can end in one half of a surrogate pair. The event
+    reaches the journal with its type only, and the turn settles."""
+    harness = await build(tmp_path)
+    harness.create()
+    live = await harness.start_turn()
+    playpen = harness.fleet.playpen()
+    await playpen.emit_text(CHAT_SESSION, live.record.turn, "cut \ud83d")
+    await playpen.emit_text(CHAT_SESSION, live.record.turn, "and whole")
+    await playpen.settle(CHAT_SESSION, live.record.turn)
+    await settle_now(live.done)
+
+    events = [
+        line.body
+        for line in harness.service.store.journal.replay(FAMILY, CHAT_SESSION)
+        if line.kind is LineKind.PI_EVENT
+    ]
+
+    assert live.record.state is TurnState.SETTLED
+    assert [sorted(event) for event in events] == [
+        ["original_bytes", "truncated", "type"],
+        ["assistantMessageEvent", "type"],
+    ]
+    assert live.answer() == "and whole"
+    await harness.stop()
+
+
 async def test_steer_reaches_the_playpen(tmp_path: Path) -> None:
     harness = await build(tmp_path)
     harness.create()

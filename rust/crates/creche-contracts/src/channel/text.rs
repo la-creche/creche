@@ -10,9 +10,9 @@ use std::fmt;
 /// A text that the sandbox wrote. It is a claim, and it can hold a lone
 /// surrogate (contract 03 §13).
 ///
-/// The playpen cuts a long message at a count of UTF-16 code units. The cut
-/// can fall inside a surrogate pair, and the line then holds one half. The
-/// host keeps that text, as the Python implementation does.
+/// A playpen of an older image cut a long message at a count of UTF-16 code
+/// units. That cut can fall inside a surrogate pair, and the line then holds
+/// one half. The host keeps that text, as the Python implementation does.
 ///
 /// ```
 /// use creche_contracts::channel::text::Text;
