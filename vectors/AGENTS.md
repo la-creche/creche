@@ -113,7 +113,8 @@ directory is not a workspace package, so a change here does not change
   file.
 - `noticeboard.sessions.is_session` is a copy of the session id grammar
   with no id surface. A new `id.` surface needs a row in the `ids` module of
-  the Rust crate, and rule 5 of `rust/AGENTS.md` applies to that change.
+  the Rust crate. Rule 5 of "Where a new type goes" in `rust/AGENTS.md`
+  applies to that change.
 - `host_reason` of `attendance.wire` has no vector. `cap_event` and
   `read_usage` have vectors only through `channel.parse`.
 - No vector covers the playpen side of contract 03: what the playpen accepts
