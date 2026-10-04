@@ -217,13 +217,15 @@ def _read_token(env: dict[str, str]) -> str:
             f"{ENV_ATTENDANCE_TOKEN_FILE}: cannot read {path} ({exc.strerror})."
         ) from exc
     except UnicodeDecodeError:
-        # The decode error holds bytes of the token, so it is not the cause.
-        raise ConfigError(
-            f"{ENV_ATTENDANCE_TOKEN_FILE}: the token in {path} is not UTF-8 text."
-        ) from None
+        value = None
     except ValueError as exc:
         # A path that the system refuses before the read: a NUL byte.
         raise ConfigError(f"{ENV_ATTENDANCE_TOKEN_FILE}: cannot read {path!r} ({exc}).") from exc
+
+    if value is None:
+        # The decode error holds bytes of the token. The refusal starts after
+        # the handler, so that it holds no decode error.
+        raise ConfigError(f"{ENV_ATTENDANCE_TOKEN_FILE}: the token in {path} is not UTF-8 text.")
 
     if len(value.encode("utf-8")) < MIN_TOKEN_BYTES:
         raise ConfigError(

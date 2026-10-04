@@ -114,6 +114,7 @@ def test_a_token_file_that_is_not_utf8_refuses_to_start(tmp_path: Path) -> None:
         assert ENV_ATTENDANCE_TOKEN_FILE in str(caught.value)
         # The decode error holds bytes of the token. The refusal does not carry it.
         assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
 
 
 def test_a_token_path_that_the_system_refuses_refuses_to_start(tmp_path: Path) -> None:

@@ -127,11 +127,15 @@ def _read_key(env: dict[str, str], name: str, *, required: bool) -> str:
         # The path is not a secret. The content is, and it is not in the text.
         raise ConfigError(f"{name}: cannot read {path} ({exc.strerror}).") from exc
     except UnicodeDecodeError:
-        # The decode error holds bytes of the key, so it is not the cause.
-        raise ConfigError(f"{name}: the key in {path} is not UTF-8 text.") from None
+        value = None
     except ValueError as exc:
         # A path that the system refuses before the read: a NUL byte.
         raise ConfigError(f"{name}: cannot read {path!r} ({exc}).") from exc
+
+    if value is None:
+        # The decode error holds bytes of the key. The refusal starts after
+        # the handler, so that it holds no decode error.
+        raise ConfigError(f"{name}: the key in {path} is not UTF-8 text.")
 
     if len(value.encode("utf-8")) < MIN_KEY_BYTES:
         raise ConfigError(

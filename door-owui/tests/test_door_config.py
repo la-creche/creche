@@ -109,6 +109,7 @@ def test_a_key_file_that_is_not_utf8_refuses_to_start(tmp_path: Path, variable: 
     assert "not UTF-8" in str(caught.value)
     # The decode error holds bytes of the key. The refusal does not carry it.
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 @pytest.mark.parametrize("variable", [ENV_KEY_FILE, ENV_TOKEN_FILE])
