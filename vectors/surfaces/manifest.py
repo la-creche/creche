@@ -503,6 +503,7 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
     _req_ts("ts-largest", "1.7976931348623157e308"),
     _req_ts("ts-integer-past-64-bits", "36893488147419103232"),
     _req_ts("ts-integer-40-digits", "1" + "0" * 39),
+    _req_ts("ts-integer-309-digits", "1" + "0" * 308),
     _req_ts("ts-rounds-half-even", "9007199254740993"),
     RequestFile(
         "size-at-cap",
@@ -643,6 +644,7 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
     _req_ts("ts-infinity", "Infinity"),
     _req_ts("ts-negative-infinity", "-Infinity"),
     _req_ts("ts-overflows-to-infinity", "1e999"),
+    _req_ts("ts-integer-310-digits", "1" + "0" * 309),
     _req_ts("ts-nested-64", "[" * 64 + "]" * 64),
     # --- the order of the checks -----------------------------------------
     _req("order-keys-before-id", id=OTHER_ULID, extra=1),

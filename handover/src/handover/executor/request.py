@@ -173,7 +173,13 @@ def _timestamp(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise _refuse("field 'ts' is malformed")
 
-    stamp = float(value)
+    # A whole number past the largest float has no float. Python raises
+    # there, and a request file holds such a number in a few hundred bytes.
+    try:
+        stamp = float(value)
+    except OverflowError:
+        raise _refuse("field 'ts' is malformed") from None
+
     if not math.isfinite(stamp) or stamp < 0:
         raise _refuse("field 'ts' is malformed")
 
