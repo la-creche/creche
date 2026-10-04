@@ -219,6 +219,11 @@ down this list.
 - **CONTRACT-QUESTION, the exit code of a refused start.** Contract 02 §3
   rule 7 names no exit code. The suite accepts each code that is not 0. A
   change to one fixed code costs one assertion in `test_proc_owui_start.py`.
+- **CONTRACT-QUESTION, a new `config_rev` and the held pi process.** Contract
+  03 §6 rule 5 gives three reasons to reap a held process. A new
+  `config_rev` is not one of them. The playpen starts a new process at the
+  next turn, and `test_proc_status.py` holds that. A change costs one count
+  in that file.
 - **No `caregiver` process.** The suite writes the status document, the env
   file, the credential file and the grant file from the contracts. No
   scenario proves that `caregiver` writes them, or that it makes the switch

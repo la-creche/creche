@@ -39,6 +39,12 @@ async def test_a_new_config_revision_replaces_pi_at_the_next_turn(
     The held-open process is replaced at the NEXT turn, never between two
     turns. The instructions reach pi as a path on its command line
     (contract 03 §7.1), so the record of the pi stand-in shows the path.
+
+    CONTRACT-QUESTION: contract 03 §6 rule 5 lists three reasons to reap a
+    held process, and a new `config_rev` is not one of them. Contract 01 §6.1
+    rule 4 promises only that the change reaches the next turn. Reading
+    taken: what the playpen does and the old stage 2 suite holds, a new
+    process at the next turn. A change costs the count of pi starts below.
     """
     instructions = owui.tree.mounts().config / "instructions.md"
     chat = chat_id()
