@@ -378,8 +378,13 @@ failure. Work down this list.
   no probe of LiteLLM shows that it takes the second one. The LiteLLM
   stand-in refuses it. A change costs one check in `standin_litellm.py` and
   its test.
-- **No scenario for `rotate` and for `apply-once`.** Each is a verb of
-  `caregiver` with no scenario here.
+- **No scenario for `apply-once`.** It is a verb of `caregiver` with no
+  scenario here.
+- **The epoch after `rotate`.** Contract 05 §6.3 step 3 publishes the new
+  epoch in the status document. The `rotate` verb writes the credential
+  file and the grant file. `caregiver serve` publishes the epoch at its
+  next pass, 20 seconds later at most. The scenario of `rotate` does not
+  wait for that pass.
 - **The two seams of `integration/tests_manager` with a bridge are not
   here.** `test_bridge_to_chaperone.py` and `test_cp_approval_to_chaperone.py`
   need stand-ins that do not exist: the embedding service, Home Assistant

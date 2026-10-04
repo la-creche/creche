@@ -29,11 +29,14 @@ from proc_caregiver import (
     CANARIES,
     CREATING,
     DEGRADED,
+    EXIT_OK,
     IN_SYNC,
     PLANE_ENDPOINTS,
     PYTHON_IMAGE,
     RECONCILING,
+    WRITE_FLAG,
     CaregiverStack,
+    litellm_url,
     wait_until,
 )
 from proc_chat import await_settled, chat_id, run_stream, session_of
@@ -734,6 +737,50 @@ async def test_deleting_the_grant_file_revokes_the_family(
     assert before.status_code == HTTP_OK
     assert after.status_code != HTTP_OK
     assert stack.chaperone.exit_code() is None
+
+
+async def test_a_rotation_keeps_the_old_token_for_the_overlap(
+    caregiver_prepared: CaregiverStack,
+) -> None:
+    """Contract 05 §6.3 and contract 04 §2.2. A graceful rotation ends no call.
+
+    The `rotate` verb writes a new key and a new token with the next epoch.
+    The grant file lists the digest of each token, so the chaperone accepts
+    the old token and the new one until the grace ends.
+    """
+    stack = _with_chaperone(caregiver_prepared, family_body(verbs=VERBS))
+    tree = stack.tree
+    before = stack.credentials()
+
+    done = stack.run_caregiver(
+        "rotate",
+        str(tree.registry_root),
+        FAMILY,
+        "--state-root",
+        str(tree.state_root),
+        "--litellm-base-url",
+        litellm_url(stack.litellm_port),
+        WRITE_FLAG,
+    )
+    after = stack.credentials()
+
+    assert done.exit_code == EXIT_OK, done.stderr
+    assert after["epoch"] == before["epoch"] + 1
+    assert after["pep_token"] != before["pep_token"]
+    assert after["litellm_key"] != before["litellm_key"]
+    assert after["litellm_key"] in [entry["key"] for entry in litellm_keys(tree).values()]
+    assert _mode(tree.creds_file()) == SECRET_MODE
+
+    async with stack.sandbox_client() as sandbox:
+        for token in (before["pep_token"], after["pep_token"]):
+            manifest = await sandbox.get(
+                MANIFEST_PATH, headers={"Authorization": f"Bearer {token}"}
+            )
+            assert manifest.status_code == HTTP_OK, manifest.text
+            assert manifest.json()["family"] == FAMILY
+
+    for secret in (after["pep_token"], after["litellm_key"], MASTER_KEY):
+        assert secret not in done.stdout + done.stderr
 
 
 def test_the_watch_reports_a_chaperone_that_stopped(caregiver_prepared: CaregiverStack) -> None:
