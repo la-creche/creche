@@ -4,15 +4,19 @@ A stand-in is not under test. A stand-in that is too kind makes a wrong
 service look right, so each rule that a scenario relies on has one test here.
 No test here starts a service: each one runs a stand-in as a service runs it,
 through its wrapper or over its port.
+
+The last test holds one rule of the pi wrapper, which each topology uses.
 """
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 import pytest
+from proc_caregiver import wait_until
 from proc_harness import LOOPBACK, Finished, ProcError, Supervisor
 from proc_stack import base_env
 from proc_standins import (
@@ -20,10 +24,12 @@ from proc_standins import (
     DENY,
     LITELLM,
     MASTER_KEY,
+    PI,
     SBX,
     SYSTEMCTL,
     calls_of,
     enabled_units,
+    install_pi,
     install_sbx_verbs,
     install_systemctl,
     litellm_calls,
@@ -46,6 +52,9 @@ GENERATE = "/key/generate"
 UPDATE = "/key/update"
 DELETE = "/key/delete"
 INFO = "/key/info"
+
+#: What the playpen gives each pi process of a session (contract 03 §6).
+PI_WORDS = ("--mode", "rpc", "--session-id", "s1")
 
 EXIT_USAGE = 64
 EXIT_NOT_FOUND = 4
@@ -497,6 +506,38 @@ def test_litellm_fails_a_request_when_a_test_says_so(litellm: Litellm) -> None:
     assert litellm_keys(litellm.tree) == {}
 
 
+# ------------------------------------------------------------------------- pi
+
+
+def test_pi_runs_with_the_rpc_mode_as_one_word(tree: Tree, supervisor: Supervisor) -> None:
+    """A sandbox of a test has no process table of its own.
+
+    On Linux the playpen counts each process of the machine whose arguments
+    hold `--mode` and `rpc` as two words (contract 03 §3 rule 4). The pi
+    stand-in runs with one word, so the playpen of another sandbox does not
+    count it. The record keeps the two words that the playpen sent.
+    """
+    build_bare_tree(tree)
+    install_pi(tree)
+    # The double of pi ends at the end of its stdin, and `sleep` holds it open.
+    words = ["/bin/sh", "-c", 'sleep 30 | "$0" "$@"', str(tree.bin_dir / PI), *PI_WORDS]
+
+    supervisor.spawn(PI, words, base_env(tree), tree.root)
+    wait_until(lambda: calls_of(tree, PI) != [], "the pi stand-in to start", EXIT_DEADLINE_S)
+    [call] = calls_of(tree, PI)
+    wait_until(
+        lambda: "fake-pi.mjs" in _command_line(call.pid),
+        "the wrapper to become the program",
+        EXIT_DEADLINE_S,
+    )
+    running = _command_line(call.pid).split()
+
+    assert "--mode=rpc" in running
+    assert "--mode" not in running
+    assert "rpc" not in running
+    assert call.argv == PI_WORDS
+
+
 # -------------------------------------------------------------------- helpers
 
 
@@ -542,6 +583,19 @@ def _env_file(tree: Tree) -> Path:
     path.write_text(f"AGENT_CONTROL_DIR=/a/control\nAGENT_SANDBOX={BOX}\n", encoding="utf-8")
 
     return path
+
+
+def _command_line(pid: int) -> str:
+    """The arguments of one process as `ps` prints them, or no text for a pid that left."""
+    done = subprocess.run(
+        ["ps", "-ww", "-o", "args=", "-p", str(pid)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    return done.stdout.strip()
 
 
 def _unit_file(tree: Tree) -> None:

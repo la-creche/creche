@@ -432,6 +432,15 @@ failure. Work down this list.
   §4.3 step 7 sets `ready` after the handshake. The kill scenario of
   `test_proc_caregiver_stage2.py` holds the ids of the two sandboxes at that
   moment, and it holds no state.
+- **One process table for each sandbox of a test.** A sandbox on the host
+  is a microVM with a process table of its own. A test has no microVM, so
+  each playpen of the machine is in one table. On Linux the playpen counts
+  each process of that table whose arguments hold `--mode` and `rpc` as two
+  words (contract 03 §3 rule 4). The pi wrapper gives its program one word,
+  `--mode=rpc`, so no playpen counts the pi stand-in of another sandbox.
+  Without that, each replacement of a sandbox with a resident pi process
+  ends `degraded` with the fault `orphan_processes` on Linux, and `in_sync`
+  on macOS. The cost is that no scenario can show that fault.
 - **No scenario for `apply-once`.** It is a verb of `caregiver` with no
   scenario here.
 - **The epoch after `rotate`.** Contract 05 §6.3 step 3 publishes the new

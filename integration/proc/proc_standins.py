@@ -17,7 +17,9 @@ Four stand-ins exist, and none is under test:
     environment.
 `pi`
     `playpen/test/fake-pi.mjs`, the playpen's own double, behind a wrapper.
-    The playpen reaches it through `AGENT_PI_BIN`.
+    The playpen reaches it through `AGENT_PI_BIN`. The wrapper gives the
+    double `--mode=rpc` as one word, so that no playpen of another sandbox
+    counts it as a pi process of its own sandbox.
 `systemctl`
     `standin_systemctl.py`, behind a wrapper. `caregiver` finds it through
     `PATH`.
@@ -97,6 +99,34 @@ _BIND_ATTEMPTS: Final = 3
 #: How long a stand-in process has to end after its service ended. The
 #: playpen exits when its stdin closes, and pi exits when the playpen does.
 _EXIT_DEADLINE_S: Final = 10.0
+
+#: The part of the pi wrapper that joins the words `--mode` and `rpc` into
+#: `--mode=rpc` for the program that runs.
+#:
+#: A sandbox on the host is a microVM with a process table of its own. A
+#: sandbox of a test has none: each playpen of the machine is in one table.
+#: On Linux the playpen counts each process of that table whose arguments
+#: hold `--mode` and `rpc` as two words, and it reports the count as the pi
+#: processes that an earlier channel left (contract 03 §3 rule 4). With the
+#: two words, the pi stand-in of one sandbox is such a process for the
+#: playpen of another sandbox, and each replacement of a sandbox with a
+#: resident pi process ends with the fault `orphan_processes`. With one
+#: word, no playpen counts a pi stand-in. The double of pi reads only
+#: `--session-id`, so it runs the same.
+_ONE_MODE_WORD: Final = (
+    "n=$#\n"
+    'while [ "$n" -gt 0 ]; do\n'
+    "  word=$1\n"
+    "  shift\n"
+    "  n=$((n - 1))\n"
+    '  if [ "$word" = --mode ] && [ "$n" -gt 0 ]; then\n'
+    '    word="--mode=$1"\n'
+    "    shift\n"
+    "    n=$((n - 1))\n"
+    "  fi\n"
+    '  set -- "$@" "$word"\n'
+    "done\n"
+)
 
 _ORDER_FILE: Final = "order"
 _ARGV_SUFFIX: Final = ".argv"
@@ -202,12 +232,16 @@ def install_pi(tree: Tree) -> None:
     It reads `pi-env.sh` at every start, because the playpen passes a fixed
     set of names to pi and no `FAKE_PI_*` name is in it. `set_pi_env`
     rewrites that file.
+
+    The program gets `--mode=rpc` as one word. `_ONE_MODE_WORD` says why.
+    The record keeps the words that the playpen sent.
     """
     set_pi_env(tree)
     env_file = shlex.quote(str(_pi_env_file(tree)))
     target = shlex.join(["node", str(fake_pi_script())])
+    head = f"{_recorder(tree, PI)}. {env_file}\n{_ONE_MODE_WORD}"
 
-    _write_program(tree, PI, f'{_recorder(tree, PI)}. {env_file}\nexec {target} "$@"\n')
+    _write_program(tree, PI, f'{head}exec {target} "$@"\n')
 
 
 def set_pi_env(tree: Tree, **values: int) -> None:
