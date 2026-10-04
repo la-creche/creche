@@ -186,6 +186,10 @@ directory is not a workspace package, so a change here does not change
   vector covers what PyYAML does with the text of a file: a comment, an
   alias, a tab or a plain `yes`.
 - No vector covers the roster writer, `handover.executor.roster`.
+- No vector covers the roster reader of the caregiver,
+  `caregiver.mcp_release.served_servers`. It gives one answer for a roster
+  that it refuses and for a roster with no row, so a vector cannot hold a
+  refusal. `caregiver/tests` holds its two limits for merge keys.
 - Four configs have no entry point that takes a map of variables, so no
   vector covers them: `chaperone.__main__`, `caregiver.cli`,
   `agent_door_owui.config` and `agent_door_trigger.config`. The two doors

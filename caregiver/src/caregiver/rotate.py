@@ -59,7 +59,7 @@ from .applied import read_applied
 from .clock import now_rfc3339, seconds_from_now
 from .credentials import Credentials, mint_token, read_creds, write_creds
 from .litellm_keys import LiteLLMError, LiteLLMKeys
-from .status import RotationState
+from .status import RotationState, publish_credentials
 from .webhook_tokens import WebhookToken, rotate_webhooks
 
 log = logging.getLogger("caregiver.rotate")
@@ -185,8 +185,8 @@ def rotate(
     litellm: LiteLLMKeys,
     grace_s: int = ROTATION_GRACE_S,
 ) -> RotateOutcome:
-    """Mint, write, publish. The caller republishes the status document.
-    The grant file is rendered from the family file, new digests and all."""
+    """Mint, write, publish: the three steps of contract 05 §6.3. The
+    grant file is rendered from the family file, new digests and all."""
 
     def land(creds: Credentials) -> None:
         steps.write_grants(family, index, state_root, creds)
@@ -256,6 +256,22 @@ def _rotate(
     fresh = _next(existing, request, key, token, grace_s)
     write_creds(creds_path, fresh)
     land(fresh)
+    # Contract 05 §6.3 step 3, after the grant file accepts the new token.
+    # `attendance` puts this epoch on the channel, and a process that
+    # starts under it reads the new credentials.
+    try:
+        publish_credentials(
+            paths.status_path(state_root, family.name), steps.credentials_block(family.name, fresh)
+        )
+    except OSError as exc:
+        # The credential file and the grant file hold the new epoch. The
+        # rotation continues, so that each webhook bearer moves too.
+        log.error(
+            "%s: the status document did not take epoch %d, the next pass publishes it: %s",
+            family.name,
+            fresh.epoch,
+            exc,
+        )
 
     # Contract 05 §6.4: a webhook bearer is a token, so `scope: token` and
     # `scope: both` move it. It has no overlap of its own — one file holds

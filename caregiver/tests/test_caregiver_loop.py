@@ -8,8 +8,10 @@ id, and what it does about a family file that disappeared."""
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import signal
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -39,9 +41,11 @@ from caregiver_helpers import (
     current_digest,
     expire_overlap,
     grants_alone,
+    write_no_file_dir,
     write_registry,
 )
 
+from caregiver import loop as loop_module
 from caregiver import paths, sandboxes
 
 IMAGE: str = "sha256:deadbeef"
@@ -330,6 +334,75 @@ def test_an_invalid_family_file_is_never_treated_as_deleted(bench: Bench) -> Non
     assert bench.litellm.deleted == []
 
 
+def _errors(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [one.getMessage() for one in caplog.records if one.levelno >= logging.ERROR]
+
+
+def test_a_directory_with_no_family_file_is_ignored(
+    bench: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Contract 01 §5.6 rule 3. The loop starts no pass for the directory
+    and writes no state for it. The family beside it converges."""
+    write_no_file_dir(bench.registry_root)
+
+    assert bench.look() == ("chat",)
+
+    assert not paths.family_dir(bench.state_root, "stray").exists()
+    assert _errors(caplog) == []
+
+
+def test_a_family_whose_file_went_away_keeps_its_state(
+    bench: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The directory stays and holds no file. The loop ignores it: no pass
+    and no delete, so the key and the sandbox of the family stay."""
+    write_registry(bench.registry_root, name="ops")
+    bench.look()
+    (bench.registry_root / "families" / "ops" / "family.yaml").unlink()
+
+    assert bench.look() == ("chat",)
+
+    assert paths.creds_path(bench.state_root, "ops").exists()
+    assert bench.litellm.deleted == []
+    assert "destroy" not in bench.driver.ops()
+    assert _errors(caplog) == []
+
+
+def test_a_family_whose_file_went_away_is_named_one_time(
+    bench: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No pass keeps the status document of that family fresh, so the loop
+    says it. One warning names the family, and the next look adds none. A
+    directory that never had state gets no line."""
+    write_registry(bench.registry_root, name="ops")
+    bench.look()
+    (bench.registry_root / "families" / "ops" / "family.yaml").unlink()
+    write_no_file_dir(bench.registry_root)
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.loop"):
+        bench.look()
+        bench.state.force_pass()
+        assert bench.look() == ("chat",)
+
+    warnings = [one.getMessage() for one in caplog.records if one.levelno == logging.WARNING]
+    named = [line for line in warnings if line.startswith("ops: ")]
+    assert len(named) == 1
+    assert "family.yaml" in named[0]
+    assert not [line for line in warnings if line.startswith("stray: ")]
+
+
+def test_an_ignored_directory_does_not_keep_the_loop_due(bench: Bench) -> None:
+    """A family that the loop ignores is behind no revision. Without that,
+    each poll reads the whole registry for as long as the directory stays."""
+    write_registry(bench.registry_root, name="ops")
+    bench.look()
+    (bench.registry_root / "families" / "ops" / "family.yaml").unlink()
+    bench.look()
+
+    assert bench.look() == ()
+    assert not bench.state.due(bench.state.revision, LONG_WAIT_S, frozenset())
+
+
 def test_an_invalid_family_file_still_ends_a_rotation_overlap(bench: Bench) -> None:
     """The settle runs before the pass and moves the digests alone. A file
     the validator refused cannot hold the previous token open, and no grant
@@ -403,6 +476,79 @@ def test_a_second_wait_after_a_hangup_still_sleeps(restored_handlers: object) ->
     started = time.monotonic()
     control.wait(0.05)
     assert time.monotonic() - started >= 0.05
+
+
+def test_a_wait_says_when_a_hangup_ended_it(restored_handlers: object) -> None:
+    """The loop asks the wait whether a signal asked for a look now."""
+    del restored_handlers
+    control = SignalControl()
+    control.install()
+    signal.raise_signal(signal.SIGHUP)
+
+    assert control.wait(LONG_WAIT_S) is True
+    assert control.wait(0.01) is False
+
+
+class Asked(FixedControl):
+    """A control whose first wait ends as a `SIGHUP` ends it, or as the
+    poll interval ends it. The wait returns when the first pass of the
+    family ended and its thread is gone, so the second look does not find
+    that pass in flight."""
+
+    def __init__(self, states: list[LoopState], *, hangup: bool) -> None:
+        super().__init__(looks=2)
+        self._states = states
+        self._hangup = hangup
+
+    def wait(self, seconds: float) -> bool:
+        super().wait(seconds)
+        deadline = time.monotonic() + LONG_WAIT_S
+        while self._states[0].of("chat").revision == "" or self._in_flight():
+            assert time.monotonic() < deadline, "the first pass did not end"
+            time.sleep(0.01)
+
+        return self._hangup and len(self.waits) == 1
+
+    @staticmethod
+    def _in_flight() -> bool:
+        """`Passes` names the thread of a pass after its family."""
+        return any(one.name == "pass-chat" for one in threading.enumerate())
+
+
+@pytest.fixture
+def loop_states(monkeypatch: pytest.MonkeyPatch) -> list[LoopState]:
+    """Each `LoopState` that `serve` makes, for a control that reads one."""
+    made: list[LoopState] = []
+
+    class Recorded(LoopState):
+        def __init__(self) -> None:
+            super().__init__()
+            made.append(self)
+
+    monkeypatch.setattr(loop_module, "LoopState", Recorded)
+    return made
+
+
+def test_a_hangup_brings_the_next_pass_forward(bench: Bench, loop_states: list[LoopState]) -> None:
+    """`SIGHUP` says "look now". A pass that must try a step again, such as
+    a switch call that `attendance` refused, then runs at the next look. It
+    does not wait for the heartbeat."""
+    bench.switch = FakeSwitchClient(refuse="attendance answered 503")
+
+    serve(bench.config(), bench.actors(), Asked(loop_states, hangup=True))
+
+    assert len(bench.switch.requests) == 2
+
+
+def test_a_wait_that_runs_out_brings_no_pass_forward(
+    bench: Bench, loop_states: list[LoopState]
+) -> None:
+    """Without the signal, the family waits for its heartbeat."""
+    bench.switch = FakeSwitchClient(refuse="attendance answered 503")
+
+    serve(bench.config(), bench.actors(), Asked(loop_states, hangup=False))
+
+    assert len(bench.switch.requests) == 1
 
 
 def test_a_termination_signal_stops_the_loop(restored_handlers: object) -> None:
