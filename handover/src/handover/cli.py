@@ -4,7 +4,7 @@
 (`handover/component.yaml`, `name: handover`), and nothing else declares
 it.
 
-Four subcommands, and only the last one writes anything.
+Five subcommands, and only the last two write anything.
 
 1. `check` validates what is on disk: every manifest parses, every name
    matches contract 06 §1, `depends_on` is acyclic, and rules C1 to C3 hold
@@ -21,6 +21,11 @@ Four subcommands, and only the last one writes anything.
    every ten seconds until every named component would move, so a request
    typed right after a merge waits for its tag instead of being
    refused. A dry run that waits fetches too, and still files nothing.
+5. `follow <name> …` is `request` on a timer (`follow/`). It fetches, reads
+   which of the named components a newer tag would move, and files ONE
+   request for that set. It files a set once, after it read the same set on
+   two runs, and it approves nothing. A run with nothing new prints one
+   line and exits 0.
 
 Exit codes: 0 pass, 1 refusal, 2 a usage mistake or a spool this host cannot
 write.
@@ -38,7 +43,7 @@ from pathlib import Path
 from time import monotonic, sleep
 
 from .allocate import plan_tags, read_lines
-from .catalog import Repo
+from .catalog import Repo, releasable_names
 from .contracts import ContractRow
 from .corpus import (
     BEHIND_NOTE,
@@ -51,6 +56,22 @@ from .corpus import (
 )
 from .discovery import ManifestSet, discover, require_complete
 from .errors import Refusal, RefusalCode, safe_token
+from .follow import (
+    REQUESTED_BY as FOLLOWED_BY,
+)
+from .follow import (
+    Answer,
+    Step,
+    asked_marker,
+    decide,
+    default_marker,
+    done_dir_of,
+    moving_of,
+    read_answer,
+    read_marker,
+    seen_marker,
+    write_marker,
+)
 from .requester import (
     REQUESTS_PATH,
     BuiltState,
@@ -115,6 +136,10 @@ NO_TAG_MOVES = "no tag moves {names}"
 #: What `--wait` prints between two polls, and adds to its deadline refusal.
 WAITING = "waiting for a tag that moves {names} ({elapsed}s of {limit}s)"
 WAITED = "after waiting {limit}s"
+
+#: `follow`'s clock. The marker carries a time from one run to the next, so
+#: `monotonic` cannot serve. A module name, so a test swaps it like `sleep`.
+wall_time = time.time
 
 Document = dict[str, object]
 Handler = Callable[[argparse.Namespace], int]
@@ -662,6 +687,63 @@ def _print_corpus(report: CorpusReport | None) -> None:
         print(f"  {BEHIND_NOTE}")
 
 
+def _set_text(moving: dict[str, str]) -> str:
+    return ", ".join(f"{name} {version}" for name, version in sorted(moving.items()))
+
+
+def _run_follow(args: argparse.Namespace) -> int:
+    """One run of the timer: fetch, read what a newer tag moves, and file
+    one request for a set that is new (`follow/`, rules 2 to 6)."""
+    wanted = dict.fromkeys(args.components, LATEST)
+    corpus = Path(args.corpus)
+    # A failed fetch is a printed line, and the run reads the corpus as it
+    # is: the next firing fetches again.
+    _note_failed(refresh(repos_of(wanted), corpus))
+    built = build_state(tuple(_install_roots(args)), wanted, local_readers(corpus))
+    moving, notes = moving_of(built.state, wanted)
+    for line in notes:
+        print(f"note: {line}", file=sys.stderr)
+
+    marker_file = Path(args.marker) if args.marker else default_marker()
+    marker = read_marker(marker_file)
+    now = wall_time()
+    answer = Answer.NONE
+    if moving and moving == marker.asked:
+        answer = read_answer(done_dir_of(args.spool), marker.request_id)
+
+    step = decide(moving, marker, answer, now)
+    if step is Step.IDLE:
+        print("nothing new")
+
+        return EXIT_OK
+
+    if step is Step.HELD:
+        print(f"held: {_set_text(moving)} is asked already, as {marker.request_id}")
+
+        return EXIT_OK
+
+    if step is Step.SEEN:
+        if not args.dry_run:
+            write_marker(marker_file, seen_marker(moving, marker))
+
+        print(f"seen: {_set_text(moving)}. The next run files it if it reads the same set")
+
+        return EXIT_OK
+
+    request = plan_request(moving, requested_by=FOLLOWED_BY, now=now)
+    if args.dry_run:
+        print(f"dry run: would file {_set_text(moving)}")
+
+        return EXIT_OK
+
+    # The marker FIRST (`follow/`, rule 6).
+    write_marker(marker_file, asked_marker(moving, marker, request.id, now))
+    filed = file_request(request, args.spool)
+    print(f"filed: {_set_text(moving)} as {filed}")
+
+    return EXIT_OK
+
+
 def _add_shared(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", action="append", help="repository root to search (repeatable)")
     parser.add_argument("--json", action="store_true", help="one JSON object instead of a table")
@@ -722,6 +804,36 @@ def _add_request(ask: argparse.ArgumentParser) -> None:
     ask.set_defaults(handler=_run_request)
 
 
+def _add_follow(watch: argparse.ArgumentParser) -> None:
+    """`request` on a timer. It takes names and no version: the version is
+    the newest tag, and that is the whole point."""
+    watch.add_argument("components", nargs="+", metavar="NAME", choices=releasable_names())
+    watch.add_argument(
+        "--install-root",
+        dest="install_root",
+        action="append",
+        help="where components install; repeatable, defaults to the executor's own two",
+    )
+    watch.add_argument(
+        "--corpus",
+        default=CORPUS_ROOT,
+        help="the clones this side fetches and reads tags out of",
+    )
+    watch.add_argument("--spool", default=REQUESTS_PATH, help="the requests directory")
+    watch.add_argument(
+        "--marker",
+        help="where this command remembers the set it asked for (default: under the home)",
+    )
+    watch.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="fetch, print the step, and write nothing",
+    )
+    # `main` reads it for every subcommand.
+    watch.set_defaults(handler=_run_follow, json=False)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROG, description="the rework release command")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -765,6 +877,7 @@ def build_parser() -> argparse.ArgumentParser:
     tags.set_defaults(handler=_run_allocate)
 
     _add_request(sub.add_parser("request", help="file one release request (§2.3)"))
+    _add_follow(sub.add_parser("follow", help="file a request for every newer tag, once"))
 
     return parser
 

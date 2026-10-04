@@ -1,6 +1,6 @@
 # handover
 
-The release tool. Five jobs, and two of them touch nothing. The root
+The release tool. Six jobs, and two of them touch nothing. The root
 `AGENTS.md` applies here too.
 
 1. **The resolver.** Every component declares itself in a `component.yaml`.
@@ -20,11 +20,15 @@ The release tool. Five jobs, and two of them touch nothing. The root
 5. **The secret intake** (`intake/`). It drains the gap directory, pushes
    the operator one link per missing secret, and seals what the operator
    pastes to a public recipient set. Root writes a secret it cannot read.
+6. **The follower** (`follow/`). A timer runs `handover follow` as the
+   operator. It fetches the corpus and reads which followed components have
+   a newer tag. It files one request for that set. It approves nothing.
 
 ## The rule that contains every other one
 
-**Nothing outside `executor/`, `intake/`, `requester/` and `corpus/` touches
-a host.** The top level reads files the caller names and writes nothing. No
+**Nothing outside `executor/`, `intake/`, `requester/`, `corpus/` and
+`follow/` touches a host.** The top level reads files the caller names and
+writes nothing. No
 `subprocess`, no network, no environment variable that changes a decision.
 
 1. The pure half never imports `executor/`.
@@ -39,6 +43,10 @@ prints no gate id, because root alone computes `manifest_sha256`.
 `corpus/` runs `git fetch` in the corpus root, as the operator, before a
 request is filed. It refuses to run as root. Nothing in it raises.
 `chaperone/` never imports it, and neither does `requester/`.
+
+`follow/` reads one ledger entry and writes one marker file. It starts no
+child and opens no socket. The fetch is `corpus/`'s and the request is
+`requester/`'s. `cli.py` calls all three. `chaperone/` never imports it.
 
 `bin/allocate-tags.sh` runs in GitHub Actions. It never runs on a host. Its
 arithmetic lives in `allocate.py`, which is pure.
@@ -85,6 +93,23 @@ The console script is `handover`. The verify hook and the operator's
 7. `runuser` is `/usr/sbin/runuser`, by absolute path.
 8. The path unit and the root wrapper are outside every release. The thing
    that deploys code is not deployed by code.
+
+## Rules `follow/` adds
+
+1. It follows a component only while the tree of that component carries a
+   release stamp. The operator files a first release by hand.
+2. It files a set on the second run that reads the same set. CI makes a tag
+   before the Release of that tag, and one merge can tag many components.
+3. The marker names the set and the request. A run that finds its own set
+   in the marker files nothing.
+4. A denial, a refusal and a failed release hold the set. Only a newer tag
+   asks again.
+5. A gate that closed with no tap is not an answer. The follower asks again
+   after one hour, and four times in all.
+6. The marker is written before the request. A marker that cannot be
+   written costs no request.
+7. A followed name is a releasable component of the catalog. It carries no
+   version: the version is the newest tag.
 
 ## Rules `mcpbuild.py` adds
 
@@ -143,10 +168,14 @@ The console script is `handover`. The verify hook and the operator's
 uv run handover check --partial                     # this repository's manifests
 uv run handover resolve chaperone=2.1.0 --root . --state live-state.json --id <ULID>
 uv run handover request attendance chaperone@2.1.0 --root . --dry-run
+uv run handover follow attendance chaperone --dry-run   # what the timer would do
 ```
 
 `--partial` is what this repository needs: two of the catalog's components
 live in other repositories. Exit codes: 0 pass, 1 refusal, 2 a usage mistake.
+
+The follower runs as the operator from `creche-follow.timer`, out of the
+`handover` component tree. The marker is `~/.local/state/creche/follow.json`.
 
 The executor runs as root from `creche-handover.path`, through the wrapper
 `bin/creche-handover`, which decrypts the site's sops file and execs
@@ -159,8 +188,9 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `errors.py`, `catalog.py`, `site.py` | the closed refusal list, the component list, the site file |
 | `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | `component.yaml` as hostile input, the walk, the order, rules C1 to C5 |
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, `server.yaml` as hostile bytes, the uninstalled component |
-| `cli.py` | `check`, `resolve`, `allocate-tags`, `request` |
+| `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow` |
 | `requester/`, `corpus/` | one request file, one `git fetch` |
+| `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P5 |
 | `executor/approval.py`, `phone.py`, `notice.py`, `quiesce.py`, `quiet.py` | the gate, the transport, the outcome push, step 7, the quiet minutes |
 | `executor/host.py`, `install.py`, `mcpbuild.py`, `roster.py`, `self_switch.py` | the one spawn, steps 8 to 10, a server tree, the roster, the self-release |
@@ -189,6 +219,12 @@ that wants a refusal changes one field.
 - Every component with no tag gets `0.1.0` (`allocate.py`).
 - The per-requester cap counts one drain pass and keys on `requested_by`,
   which the requester writes (`executor/drain.py`).
+- The follower does not ask again for a request that root never ledgered.
+  A newer tag or a request by hand recovers (`follow/`).
+- The follower reads tags out of the corpus. Root refuses a tag that has no
+  Release, and that refusal holds the set (`follow/`).
+- The follower and `caregiver` can each file a request for `mcp-servers`.
+  Root refuses the second one, because it moves no component (`follow/`).
 - The requester's wake-up is not built. Root writes the ledger entry and
   pushes the phone only (`executor/notice.py`).
 - A switch keeps the unit it replaces as `<unit>.prev` (`executor/install.py`).
