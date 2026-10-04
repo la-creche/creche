@@ -151,8 +151,9 @@ async def test_the_audit_holds_the_call_and_its_chain(
     """
     session = session_of(chat_id())
 
-    await _ask(sandbox, session)
+    response = await _ask(sandbox, session)
 
+    assert response.status_code == HTTP_OK, response.text
     line = _delegate_lines(delegate)[-1]
     assert line["family"] == CALLER
     assert line["grants_rev"] == FIRST_REV
