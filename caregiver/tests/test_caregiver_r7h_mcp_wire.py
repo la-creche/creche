@@ -622,13 +622,19 @@ def test_a_merge_of_an_empty_value_counts_against_the_bound(bench: Bench) -> Non
 
 @pytest.mark.parametrize(
     "text",
-    [_nested(CHAIN_AT_THE_LIMIT), _linked(CHAIN_AT_THE_LIMIT + 1), _copied(PAIRS_AT_THE_LIMIT)],
-    ids=["chain", "rows", "pairs"],
+    [
+        _nested(CHAIN_AT_THE_LIMIT),
+        _linked(CHAIN_AT_THE_LIMIT + 1),
+        _copied(PAIRS_AT_THE_LIMIT),
+        _empty_values(MERGED_KEYS, PAIRS_AT_THE_LIMIT // MERGED_KEYS),
+    ],
+    ids=["chain", "rows", "pairs", "empty-values"],
 )
 def test_the_last_roster_inside_a_limit_names_what_is_served(bench: Bench, text: str) -> None:
     """The reader takes a chain of 128 merge keys and 65,536 copied pairs.
     A chain is a merge key that holds a merge key. Rows that each merge
-    the row before it make no chain, so 129 such merge keys read."""
+    the row before it make no chain, so 129 such merge keys read. A merged
+    value with no pair counts as one pair, so 65,536 such values read."""
     from caregiver.mcp_release import served_servers
 
     bench.mcp.roster.write_text(text, encoding="utf-8")
