@@ -196,8 +196,6 @@ Nothing here touches a real sandbox or LiteLLM.
 - A pass that raises publishes no fault. Contract 05 §3.3 has no code for
   it. The log holds the error, and the status document keeps its last
   content (`loop.py`).
-- A registry file that is not UTF-8 makes the pass raise. The validator of
-  the family file does not refuse such a file (`reconcile.py`).
 - `read_creds` converts a field with `int` and `str`. It reads `true` as
   epoch 1. Contract 03 §12 gives no rule for a field of another type
   (`credentials.py`).
