@@ -7,6 +7,8 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { MAX_ENTRY_BYTES } from "../src/constants.js";
+import { readEntry } from "../src/entry-text.js";
 import { Harness, until } from "./harness.js";
 
 function turnId(n: number): string {
@@ -169,5 +171,20 @@ describe("get_entries", () => {
     await until(() => harness.of("log").length > 0, "the refusal log");
 
     expect(harness.of("entries")).toHaveLength(0);
+  });
+});
+
+describe("the text of one entry", () => {
+  it("takes at most MAX_ENTRY_BYTES of UTF-8, and ends on a whole character", () => {
+    // §8 gives the cap in bytes. The characters here take 2, 3 and 4 bytes.
+    for (const wide of ["\u00e9", "\u20ac", "\u{1F600}"]) {
+      for (let lead = 0; lead < 4; lead += 1) {
+        const content = "a".repeat(MAX_ENTRY_BYTES - lead) + wide.repeat(4);
+        const text = readEntry({ id: "e1", message: { role: "user", content } })?.text ?? "";
+
+        expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MAX_ENTRY_BYTES);
+        expect(content.startsWith(text)).toBe(true);
+      }
+    }
   });
 });
