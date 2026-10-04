@@ -76,6 +76,9 @@ def dial(sandbox: str = SANDBOX) -> SandboxDial:
     return SandboxDial(sandbox=sandbox, env_file=ENV_FILE)
 
 
+# One half of a surrogate pair. A text that holds it has no UTF-8 form.
+LONE_SURROGATE = "a\ud800b"
+
 # U+2028 and U+2029 are legal inside a JSON string. A generic line reader
 # splits on them, which would tear one record into two (contract 03 §2 rule 4).
 UNICODE_SEPARATORS = f"line{chr(0x2028)}sep{chr(0x2029)}arator"
@@ -145,6 +148,15 @@ def test_an_oversized_partial_record_is_refused_before_its_lf() -> None:
     assert splitter.pending_bytes() == 0
 
     splitter.feed(b'rest of the bad line\n{"type":"pong","nonce":"1"}\n')
+
+
+def test_encode_refuses_a_lone_surrogate_as_a_value_error() -> None:
+    """Such a text has no UTF-8 form. The error is a subtype of `ValueError`,
+    which is the one type that each caller of `encode` catches."""
+    with pytest.raises(ValueError, match="surrogates not allowed") as caught:
+        encode({"type": "steer", "message": LONE_SURROGATE})
+
+    assert isinstance(caught.value, UnicodeEncodeError)
 
 
 def test_encode_refuses_an_oversized_outbound_line() -> None:
@@ -685,6 +697,27 @@ async def test_a_dead_reader_still_ends_in_channel_lost(tmp_path: Path) -> None:
 
     assert events.lost == [SANDBOX]
     assert link.is_open is False
+    await link.close()
+
+
+async def test_a_message_that_cannot_be_encoded_leaves_the_channel_open(
+    tmp_path: Path,
+) -> None:
+    """`send` refuses the one message. The channel carries the next one."""
+    events = Recorder()
+    link, playpens = make_link(tmp_path, events)
+    await link.ensure_open(dial(), 7)
+
+    with pytest.raises(ValueError, match="surrogates not allowed"):
+        await link.send(
+            {"type": "steer", "session": SESSION, "turn": TURN, "message": LONE_SURROGATE}
+        )
+
+    await link.send({"type": "steer", "session": SESSION, "turn": TURN, "message": "go on"})
+    await asyncio.wait_for(_until(lambda: bool(playpens[SANDBOX].steers)), 2.0)
+
+    assert link.is_open is True
+    assert [steer["message"] for steer in playpens[SANDBOX].steers] == ["go on"]
     await link.close()
 
 
