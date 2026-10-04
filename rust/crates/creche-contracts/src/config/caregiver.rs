@@ -248,13 +248,29 @@ impl Images {
 /// the unit again after each exit, with no limit. The daemon does not read
 /// this config again: a `SIGHUP` only starts a look at the registry.
 ///
+/// The type reads the text of a flag as `argparse` does, with no strip. The
+/// empty text reads as a flag that is not set for three flags only:
+/// `--image-python`, `--litellm-base-url` and `--sessiond-url`. An empty
+/// `--pep-url` turns the watch off. The master key is the exact text of its
+/// variable.
+///
 /// The type is stricter than the Python reader in these places:
 ///
-/// 1. An image is a reference with a digest.
+/// 1. An image is a reference with a digest. `argparse` takes each text.
 /// 2. `LITELLM_MASTER_KEY` is necessary for `--write`. The Python service
 ///    starts without it, and each call to LiteLLM then fails.
-/// 3. Each path is absolute, each URL is an [`HttpUrl`] and each count of
-///    seconds is finite.
+/// 3. Each path is absolute. `argparse` takes each text as a path, and reads
+///    the empty text as the directory `.`.
+/// 4. Each URL is an [`HttpUrl`]. The Python service takes each text.
+/// 5. Each count of seconds is finite and more than zero. `argparse` takes
+///    each number that `float` reads: zero, a negative number, `nan` and
+///    `inf` too.
+/// 6. `--max-concurrent-passes` is 1 to 65535. `argparse` takes each
+///    integer.
+/// 7. A state root of its own needs a release root of its own in the two
+///    modes. The Python service makes that check only with `--write`.
+/// 8. A LAN address that is set must be a [`LanAddress`], also when each
+///    plane has a flag. The Python service then does not read the variable.
 ///
 /// ```
 /// use creche_contracts::config::caregiver::{CaregiverConfig, PepWatch, RawServe};
@@ -296,11 +312,17 @@ impl ProcessConfig for CaregiverConfig {
     const UNIT: &'static str = "creche-caregiver.service";
 }
 
-/// The text of a flag without the space at its two ends. `None` for a flag
-/// that is not set or empty.
-fn flag(text: Option<&String>) -> Option<&str> {
-    text.map(|text| pytext::strip(text))
-        .filter(|text| !text.is_empty())
+/// The text of a flag that the command line holds, with no strip.
+/// `argparse` gives that text to the type of the flag, the empty text too.
+fn given(text: Option<&String>) -> Option<&str> {
+    text.map(String::as_str)
+}
+
+/// The text of a flag for which the Python service reads the empty text as
+/// a flag that is not set: `--image-python`, `--litellm-base-url` and
+/// `--sessiond-url`.
+fn or_unset(text: Option<&String>) -> Option<&str> {
+    given(text).filter(|text| !text.is_empty())
 }
 
 /// The value of a flag as a `T`.
@@ -315,7 +337,7 @@ fn parse_or<T: super::Value>(
     text: Option<&String>,
     default: &str,
 ) -> Parsed<T> {
-    parse(flag_name, flag(text).unwrap_or(default))
+    parse(flag_name, given(text).unwrap_or(default))
 }
 
 /// A count of seconds of a flag, or the default of the code.
@@ -325,7 +347,7 @@ fn seconds(flag_name: &'static str, text: Option<&String>, default: f64) -> Pars
         error,
     };
 
-    match flag(text) {
+    match given(text) {
         Some(text) => text.parse().map_err(|error| refuse(error).into()),
         None => Seconds::try_from(default).map_err(|error| refuse(error).into()),
     }
@@ -353,14 +375,15 @@ fn on_lan(lan: &Lan, port: u16) -> Parsed<HttpUrl> {
     }
 }
 
-/// The URL of a flag, or the URL of the plane on the LAN address.
+/// The URL of a flag, or the URL of the plane on the LAN address. `text` is
+/// `None` for a flag that is not set.
 fn url_or_lan(
     flag_name: &'static str,
-    text: Option<&String>,
+    text: Option<&str>,
     lan: &Lan,
     port: u16,
 ) -> Parsed<HttpUrl> {
-    match flag(text) {
+    match text {
         Some(text) => parse(flag_name, text),
         None => on_lan(lan, port),
     }
@@ -375,7 +398,7 @@ fn images(raw: &RawServe, state_root: &Parsed<DirPath>) -> Parsed<Images> {
             })
         })
     };
-    let python = flag(raw.image_python.as_ref())
+    let python = or_unset(raw.image_python.as_ref())
         .map(|text| image("--image-python", text))
         .transpose();
     // The default file is the file of the real plane. A run with a state
@@ -383,16 +406,12 @@ fn images(raw: &RawServe, state_root: &Parsed<DirPath>) -> Parsed<Images> {
     let on_real_plane = state_root
         .as_ref()
         .is_ok_and(|root| root.as_str() == DEFAULT_STATE_ROOT);
-    let released = match (flag(raw.released_images.as_ref()), on_real_plane) {
+    let released = match (given(raw.released_images.as_ref()), on_real_plane) {
         (Some(text), _) => parse("--released-images", text).map(Some),
         (None, true) => parse("--released-images", RELEASED_IMAGES).map(Some),
         (None, false) => Ok(None),
     };
-    let (base, python, released) = all3(
-        image("--image", pytext::strip(&raw.image)),
-        python,
-        released,
-    )?;
+    let (base, python, released) = all3(image("--image", &raw.image), python, released)?;
 
     Ok(Images {
         base,
@@ -402,13 +421,13 @@ fn images(raw: &RawServe, state_root: &Parsed<DirPath>) -> Parsed<Images> {
 }
 
 fn attendance(raw: &RawServe, lan: &Lan) -> Parsed<AttendanceTarget> {
-    if let Some(socket) = flag(raw.sessiond_socket.as_ref()) {
+    if let Some(socket) = given(raw.sessiond_socket.as_ref()) {
         return parse("--sessiond-socket", socket).map(AttendanceTarget::Socket);
     }
 
     url_or_lan(
         "--sessiond-url",
-        raw.sessiond_url.as_ref(),
+        or_unset(raw.sessiond_url.as_ref()),
         lan,
         ATTENDANCE_PORT,
     )
@@ -416,16 +435,8 @@ fn attendance(raw: &RawServe, lan: &Lan) -> Parsed<AttendanceTarget> {
 }
 
 fn pep_watch(raw: &RawServe, lan: &Lan) -> Parsed<PepWatch> {
-    let off = raw
-        .pep_url
-        .as_ref()
-        .is_some_and(|text| pytext::strip(text).is_empty());
-    if off {
-        return Ok(PepWatch::Off);
-    }
-
-    let (url, interval, unreachable_after) = all3(
-        url_or_lan("--pep-url", raw.pep_url.as_ref(), lan, PEP_PORT),
+    // `argparse` parses the two times also when the watch is off.
+    let times = all2(
         seconds(
             "--pep-probe-interval-s",
             raw.pep_probe_interval_s.as_ref(),
@@ -436,7 +447,14 @@ fn pep_watch(raw: &RawServe, lan: &Lan) -> Parsed<PepWatch> {
             raw.pep_unreachable_after_s.as_ref(),
             DEFAULT_PEP_UNREACHABLE_AFTER_S,
         ),
-    )?;
+    );
+    let pep_url = given(raw.pep_url.as_ref());
+    if pep_url.is_some_and(str::is_empty) {
+        return times.map(|_| PepWatch::Off);
+    }
+
+    let url = url_or_lan("--pep-url", pep_url, lan, PEP_PORT);
+    let (url, (interval, unreachable_after)) = all2(url, times)?;
 
     Ok(PepWatch::On {
         url,
@@ -446,7 +464,7 @@ fn pep_watch(raw: &RawServe, lan: &Lan) -> Parsed<PepWatch> {
 }
 
 fn max_passes(raw: &RawServe) -> Parsed<u16> {
-    let Some(text) = flag(raw.max_concurrent_passes.as_ref()) else {
+    let Some(text) = given(raw.max_concurrent_passes.as_ref()) else {
         return Ok(DEFAULT_MAX_PASSES);
     };
     let passes = match pytext::integer(text) {
@@ -462,6 +480,23 @@ fn max_passes(raw: &RawServe) -> Parsed<u16> {
         }
         .into()
     })
+}
+
+/// The master key as its variable holds it. The Python service reads the
+/// variable with no strip. `None` for a variable that is not set or empty.
+fn master_key(env: &Env) -> Parsed<Option<Secret>> {
+    let Some(text) = env.exact(MASTER_KEY)?.filter(|text| !text.is_empty()) else {
+        return Ok(None);
+    };
+
+    match Secret::try_from(text.to_owned()) {
+        Ok(key) => Ok(Some(key)),
+        Err(error) => Err(ConfigError::Secret {
+            variable: MASTER_KEY,
+            error,
+        }
+        .into()),
+    }
 }
 
 /// The release root. A state root of its own needs a release root of its
@@ -500,7 +535,7 @@ impl CaregiverConfig {
         let lan = env.parse::<LanAddress>(LAN_ADDRESS);
         let state_root = parse_or("--state-root", raw.state_root.as_ref(), DEFAULT_STATE_ROOT);
         let mode = if raw.write { Mode::Write } else { Mode::Plan };
-        let master_key = match (super::secret(env, MASTER_KEY), mode) {
+        let master_key = match (master_key(env), mode) {
             (Ok(None), Mode::Write) => Err(ConfigError::Unset {
                 variable: MASTER_KEY,
             }
@@ -508,14 +543,14 @@ impl CaregiverConfig {
             (key, _) => key,
         };
         let roots = all3(
-            parse("--registry", pytext::strip(&raw.registry)),
+            parse("--registry", &raw.registry),
             release_root(raw, &state_root),
             images(raw, &state_root),
         );
         let planes = all4(
             url_or_lan(
                 "--litellm-base-url",
-                raw.litellm_base_url.as_ref(),
+                or_unset(raw.litellm_base_url.as_ref()),
                 &lan,
                 LITELLM_PORT,
             ),
@@ -957,6 +992,138 @@ mod tests {
                 MASTER_KEY,
                 "--poll-interval-s"
             ]
+        );
+    }
+
+    #[test]
+    fn an_empty_flag_with_a_type_is_an_error_as_in_argparse() {
+        // `argparse` gives the text to `float`, `int` or `Path`. The first
+        // two refuse the empty text. `Path` reads it as `.`, which is not
+        // absolute.
+        type Change = fn(&mut RawServe);
+        let cases: [(&str, Change); 9] = [
+            ("--poll-interval-s", |raw| {
+                raw.poll_interval_s = Some(String::new());
+            }),
+            ("--stop-grace-s", |raw| {
+                raw.stop_grace_s = Some(String::new())
+            }),
+            ("--pep-probe-interval-s", |raw| {
+                raw.pep_probe_interval_s = Some(String::new());
+            }),
+            ("--pep-unreachable-after-s", |raw| {
+                raw.pep_unreachable_after_s = Some(String::new());
+            }),
+            ("--max-concurrent-passes", |raw| {
+                raw.max_concurrent_passes = Some(String::new());
+            }),
+            ("--state-root", |raw| raw.state_root = Some(String::new())),
+            ("--release-root", |raw| {
+                raw.release_root = Some(String::new())
+            }),
+            ("--released-images", |raw| {
+                raw.released_images = Some(String::new());
+            }),
+            ("--sessiond-socket", |raw| {
+                raw.sessiond_socket = Some(String::new());
+            }),
+        ];
+        for (flag_name, change) in cases {
+            let mut raw = unit_args();
+            change(&mut raw);
+
+            assert_eq!(one_error(&raw, &unit_env()).variable(), flag_name);
+        }
+    }
+
+    #[test]
+    fn a_flag_is_read_with_no_strip_as_in_argparse() {
+        type Change = fn(&mut RawServe);
+        let cases: [(&str, Change); 6] = [
+            ("--registry", |raw| {
+                raw.registry = String::from(" /srv/agents/registry");
+            }),
+            ("--image", |raw| {
+                raw.image = format!(" {}", image("playpen"))
+            }),
+            ("--image-python", |raw| {
+                raw.image_python = Some(String::from(" "))
+            }),
+            ("--state-root", |raw| {
+                raw.state_root = Some(String::from(" /srv/agents/state/rework"));
+            }),
+            ("--litellm-base-url", |raw| {
+                raw.litellm_base_url = Some(String::from(" "));
+            }),
+            ("--pep-url", |raw| raw.pep_url = Some(String::from(" "))),
+        ];
+        for (flag_name, change) in cases {
+            let mut raw = unit_args();
+            change(&mut raw);
+
+            assert_eq!(one_error(&raw, &unit_env()).variable(), flag_name);
+        }
+
+        // `float` and `int` remove the space themselves.
+        let raw = RawServe {
+            poll_interval_s: Some(String::from(" 2.5 ")),
+            max_concurrent_passes: Some(String::from(" 3\n")),
+            ..unit_args()
+        };
+        let config = CaregiverConfig::from_parts(&raw, &unit_env()).unwrap();
+
+        assert_eq!(config.poll_interval().as_secs_f64(), 2.5);
+        assert_eq!(config.max_passes(), 3);
+    }
+
+    #[test]
+    fn three_flags_read_the_empty_text_as_not_set() {
+        let raw = RawServe {
+            image_python: Some(String::new()),
+            litellm_base_url: Some(String::new()),
+            sessiond_socket: None,
+            sessiond_url: Some(String::new()),
+            ..unit_args()
+        };
+        let config = CaregiverConfig::from_parts(&raw, &unit_env()).unwrap();
+
+        assert_eq!(config.images().python(), None);
+        assert_eq!(config.litellm_url().as_str(), "http://192.0.2.10:4000");
+        assert_eq!(
+            config.attendance(),
+            &AttendanceTarget::Url("http://192.0.2.10:8350".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn a_watch_that_is_off_still_parses_its_two_times() {
+        let raw = RawServe {
+            pep_url: Some(String::new()),
+            pep_probe_interval_s: Some(String::from("soon")),
+            ..unit_args()
+        };
+
+        assert_eq!(
+            one_error(&raw, &unit_env()).variable(),
+            "--pep-probe-interval-s"
+        );
+    }
+
+    #[test]
+    fn the_master_key_is_the_exact_text_of_its_variable() {
+        // The Python service reads the variable with no strip.
+        let env = Env::from_pairs([(LAN_ADDRESS, "192.0.2.10"), (MASTER_KEY, " sk-master \n")]);
+        let config = CaregiverConfig::from_parts(&unit_args(), &env).unwrap();
+
+        assert!(config.master_key().unwrap().matches(b" sk-master \n"));
+
+        let empty = Env::from_pairs([(LAN_ADDRESS, "192.0.2.10"), (MASTER_KEY, "")]);
+
+        assert_eq!(
+            one_error(&unit_args(), &empty),
+            ConfigError::Unset {
+                variable: MASTER_KEY
+            }
         );
     }
 
