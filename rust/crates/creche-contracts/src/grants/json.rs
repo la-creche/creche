@@ -302,8 +302,8 @@ impl Map {
     ///
     /// The function reads each entry of the map to find the key. Its cost is
     /// the count of entries, so `n` calls cost `n` times `n`. Call it only
-    /// for a count of keys that the code sets. The reader of a document does
-    /// not call it, and [`Map::map_values`] copies a map with no search.
+    /// for a count of keys that the code sets. The reader of a document and
+    /// the writer of an audit record do not call it for a key of a caller.
     pub fn insert(&mut self, key: &str, value: Value) {
         match self.entries.iter_mut().find(|(name, _)| name == key) {
             Some((_, held)) => *held = value,
