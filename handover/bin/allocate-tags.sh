@@ -89,7 +89,10 @@ die() { printf '::error::%s\n' "$*" >&2; exit 1; }
 # names inside double quotes: with its default `core.quotePath`, each name
 # that is not ASCII. The first segment of a quoted line names no component,
 # so a merge that changed only such a path made no tag.
-lines() { tr '\0' '\n'; }
+#
+# A name can hold a line feed. That byte becomes `?` here, so each name
+# stays one line and the planner reads one path for one name.
+lines() { tr '\n\0' '?\n'; }
 
 # Two roots, and in agent-control they are one directory. SELF_ROOT is where
 # this script and the `handover` project live, and it is used for nothing else.

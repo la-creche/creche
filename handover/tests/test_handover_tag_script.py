@@ -348,6 +348,34 @@ def test_a_directory_that_git_would_quote_does_not_stop_the_run(
     assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
 
 
+#: Two names that hold a line feed. git ends each name of a `-z` list with
+#: NUL, so each one is one path: the first under `docs/`, the second under
+#: `chaperone/`.
+LINE_FEED_IN_DOCS = "docs/one\nattendance/two.py"
+LINE_FEED_IN_CHAPERONE = "chaperone/src/one\ntwo.py"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("path", "moved"),
+    [(LINE_FEED_IN_DOCS, []), (LINE_FEED_IN_CHAPERONE, ["chaperone-v0.1.1"])],
+)
+def test_a_name_with_a_line_feed_stays_one_path(
+    repo: Path, shims: Path, tmp_path: Path, path: str, moved: list[str]
+) -> None:
+    """The script gives the planner one line for each changed path. A name
+    with a line feed is one line, and it moves the component of its own
+    first segment and no other."""
+    _commit(repo, "chaperone/src/one.py")
+    assert _run(repo, shims, tmp_path).returncode == 0
+
+    _commit(repo, path)
+    done = _run(repo, shims, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, *moved])
+
+
 @pytest.mark.slow
 def test_a_file_that_leaves_a_component_moves_that_component(
     repo: Path, shims: Path, tmp_path: Path
