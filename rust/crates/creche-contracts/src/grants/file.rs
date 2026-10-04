@@ -1833,13 +1833,14 @@ fn text_integer(text: &str) -> Result<Integer, IssueKind> {
 /// The integer of a text that has a `-` after the zeros at its start, for
 /// example `0-8`. `tail` is what follows the `-`.
 ///
-/// The Python code reads the `-` as the sign of the tail. The tail has a
-/// stricter form than a text with its `-` at the start:
+/// The Python code reads the `-` as the sign of the tail. The tail has a form
+/// of its own. It differs from a text with its `-` at the start in three
+/// rules:
 ///
-/// - one `_` can come first
-/// - a zero at the start is the whole number
-/// - a tail with too many digits is not an integer text, and not an integer
-///   that is too large
+/// - One `_` can come first.
+/// - A zero at the start is the whole number: `0-08` is not an integer text.
+/// - A tail with too many digits is not an integer text. It is not an
+///   integer that is too large.
 fn negative_tail(tail: &str) -> Result<Integer, IssueKind> {
     let number = tail.strip_prefix('_').unwrap_or(tail);
     let grouped = number.starts_with(|first: char| first.is_ascii_digit())
