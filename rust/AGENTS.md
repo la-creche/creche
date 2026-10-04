@@ -648,6 +648,12 @@ Rules for the test:
   mode, `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`. Contract 02 §3 rule 5
   gives each token file a mode. The Python readers behind the two rules
   check none, and the rules do the same.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/atomic.rs`: contract 04 §1.3 step 2 names the
+  temporary file of a grant file `<family>.json.tmp`. The Python writer of
+  the grant file uses another name. The runtime names each temporary file
+  `.<name>.<pid>.<count>.tmp`, as the Python `attendance` does. A change of
+  the name costs one function, `temp_name`.
 - No check holds the rules of "The rules for a service", except a part of
   rule 13. A service crate that breaks a rule builds and passes the lint
   gate.
