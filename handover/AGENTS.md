@@ -293,3 +293,6 @@ that wants a refusal changes one field.
   toolchain (`executor/install.py`).
 - The executor does not remove `work/<id>`. A binary build leaves its
   `target` directory there (`executor/steps.py`).
+- The unit rule reads the first 64 KiB of a unit file. A line after that
+  can start a program outside the tree. The binary walk refuses a longer
+  file, and the unit rule does not (`executor/install.py`).

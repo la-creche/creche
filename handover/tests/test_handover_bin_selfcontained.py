@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 from handover.catalog import Kind
 from handover.errors import Refusal, RefusalCode
-from handover.executor.install import StepFailed
+from handover.executor.install import MAX_UNIT_BYTES, StepFailed
 from handover.executor.selfcontained import (
     ABSOLUTE_LINK,
     LINK_LOOP,
@@ -583,6 +583,45 @@ def test_a_carried_unit_that_cannot_be_read_stops_the_stage(tmp_path: Path) -> N
 
     with pytest.raises(StepFailed, match="cannot read"):
         staging.build()
+
+
+def _over_the_cap(staging: Staging) -> str:
+    """A unit file longer than the cap. Its first program is staged. Its
+    last `ExecStart=` line is after the cap and starts one that is not."""
+    filler = "# filler\n" * (MAX_UNIT_BYTES // len("# filler\n") + 1)
+
+    return unit_text(staging.program()) + filler + f"ExecStart={staging.program('unseen')}\n"
+
+
+def test_a_carried_unit_over_the_cap_stops_the_stage(tmp_path: Path) -> None:
+    """The reader took the first 64 KiB of the file and parsed that. A
+    line after the cap started a program that no check saw."""
+    staging = make_staging(tmp_path, unit=UNIT)
+    staging.carry_unit(_over_the_cap(staging))
+
+    with pytest.raises(StepFailed, match="is longer than"):
+        staging.build()
+
+
+def test_a_unit_in_force_over_the_cap_stops_the_stage(tmp_path: Path) -> None:
+    """The same file, where a unit is installed and step 9 refreshes it
+    from the release's own copy."""
+    staging = make_staging(tmp_path, unit=UNIT)
+    staging.install_unit(unit_text(staging.program()))
+    staging.carry_unit(_over_the_cap(staging))
+
+    with pytest.raises(StepFailed, match="is longer than"):
+        staging.build()
+
+
+def test_a_unit_at_the_cap_is_read_whole(tmp_path: Path) -> None:
+    """The cap refuses a file that is longer, and no file that fits."""
+    staging = make_staging(tmp_path, unit=UNIT)
+    text = unit_text(staging.program())
+    filler = "#" * (MAX_UNIT_BYTES - len(text) - 1) + "\n"
+    staging.carry_unit(text + filler)
+
+    staging.build()
 
 
 def test_a_unit_whose_programs_are_staged_builds(tmp_path: Path) -> None:

@@ -613,7 +613,9 @@ class Installer:
         it, or None when no host and no fetched tree holds the file."""
         found = self._effective_unit(manifest, source)
         if found is not None:
-            return found[1]
+            # Read again, and whole: `_effective_unit` cuts its text at the
+            # cap, and `_unit_text` refuses a file that is longer.
+            return _unit_text(manifest, found[0])
 
         carried = _carried_unit(manifest, source)
         if carried is None:
@@ -1303,13 +1305,20 @@ def _carried_unit(manifest: ComponentManifest, source: Path) -> Path | None:
 
 
 def _unit_text(manifest: ComponentManifest, path: Path) -> str:
-    """The text of one unit file of the fetched tree, as `_effective_unit`
-    reads it. A file that cannot be read stops the stage: its programs are
-    unknown, so nothing can say the staged tree holds them."""
+    """The text of one unit file that this release leaves in force. A file
+    that cannot be read stops the stage: its programs are unknown, so
+    nothing can say the staged tree holds them. A file longer than
+    `MAX_UNIT_BYTES` stops it too, as `_read_unit` refuses one: a line
+    after the cap can start a program that this reader never saw."""
     try:
-        data = path.read_bytes()[:MAX_UNIT_BYTES]
+        data = path.read_bytes()
     except OSError:
         raise StepFailed(f"{manifest.name}: cannot read {path.name}") from None
+
+    if len(data) > MAX_UNIT_BYTES:
+        name = safe_token(path.name)
+
+        raise StepFailed(f"{manifest.name}: {name} is longer than {MAX_UNIT_BYTES} bytes")
 
     return data.decode("utf-8", errors="replace")
 
