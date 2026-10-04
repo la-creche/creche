@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import json
 import time
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from agent_door_owui import app as door_app
 from agent_door_owui.app import create_app
 from agent_door_owui.attendance import (
     AttendanceError,
@@ -28,6 +30,8 @@ from agent_door_owui.headers import (
     USER_MESSAGE_ID_HEADER,
 )
 from agent_door_owui.journal import JournalLine
+from agent_door_owui.sse import KEEPALIVE_FRAME
+from agent_door_owui.stream import with_keepalive
 from fake_attendance import FakeAttendance
 from starlette.testclient import TestClient
 
@@ -427,6 +431,92 @@ def test_no_answer_from_attendance_is_a_502_in_the_error_shape(
     assert error["code"] == "attendance_unreachable"
     assert error["type"] == "server_error"
     assert "cannot reach attendance" in error["message"]
+
+
+# --- a refusal after the first frame ---
+
+#: The relay sends a keepalive frame after this silence, in a test.
+_SHORT_IDLE_S = 0.01
+#: A stream that opens after the first keepalive frame of such a relay.
+_LATE_OPEN_S = 0.2
+
+
+def _with_a_short_keepalive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(door_app, "with_keepalive", partial(with_keepalive, idle_s=_SHORT_IDLE_S))
+
+
+def test_a_refusal_after_the_first_frame_is_a_visible_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The status is sent with the first keepalive frame. A refusal that comes
+    # later cannot be a status, so it must be a frame that the reader sees.
+    _with_a_short_keepalive(monkeypatch)
+    fake = FakeAttendance(open_delay_s=_LATE_OPEN_S)
+    fake.turn_error = AttendanceError("sandbox_unavailable", "family chat has no sandbox", 503)
+    client = _client(tmp_path, fake)
+
+    with client.stream(
+        "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+    ) as response:
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert out.startswith(KEEPALIVE_FRAME)
+    assert '"code":"sandbox_unavailable"' in out
+    assert "no sandbox to run the turn on" in out
+    assert '"status":"failed"' in out
+    assert out.endswith("data: [DONE]\n\n")
+    assert out.count("data: [DONE]") == 1
+
+
+def test_a_late_refusal_of_the_branch_retry_is_a_visible_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _with_a_short_keepalive(monkeypatch)
+
+    class _RefusesTwice(FakeAttendance):
+        """Answers `not_implemented` to the branch, then refuses the retry."""
+
+        def _take_error(self) -> AttendanceError:
+            error = super()._take_error()
+            if error.code == "not_implemented":
+                self.turn_error = AttendanceError("session_busy", "another door writes", 409)
+
+            return error
+
+    fake = _RefusesTwice(open_delay_s=_LATE_OPEN_S)
+    fake.turn_error = AttendanceError("not_implemented", "branching is not built yet", 501)
+    client = _client(tmp_path, fake)
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers=_headers(**{PARENT_ID_HEADER: "9f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f"}),
+        json=_body(stream=True),
+    ) as response:
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert fake.with_parent_flags == [True, False]
+    assert '"code":"session_busy"' in out
+    assert '"code":"not_implemented"' not in out
+    assert out.endswith("data: [DONE]\n\n")
+
+
+def test_a_refusal_before_the_first_frame_is_still_a_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The relay of this test is the relay of the two tests above. With no
+    # wait before the refusal, the door still answers a status and no stream.
+    _with_a_short_keepalive(monkeypatch)
+    fake = FakeAttendance()
+    fake.turn_error = AttendanceError("sandbox_unavailable", "family chat has no sandbox", 503)
+    client = _client(tmp_path, fake)
+
+    response = client.post("/v1/chat/completions", headers=_headers(), json=_body(stream=True))
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "sandbox_unavailable"
 
 
 # --- a request body that nests too deep ---

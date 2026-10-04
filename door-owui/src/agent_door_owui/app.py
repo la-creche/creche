@@ -37,7 +37,7 @@ from .journal import JournalLine
 from .openai_api import ChatRequest, completion_body, models_body, parse_chat_request
 from .sse import SseWriter
 from .stream import with_keepalive
-from .translate import TurnTranslator
+from .translate import TurnTranslator, failure_frames
 
 _LOG = logging.getLogger(__name__)
 
@@ -239,14 +239,36 @@ async def _streamed(
     first = await anext(relay)
 
     return StreamingResponse(
-        _prepend(first, relay), media_type=_SSE_MEDIA_TYPE, headers=_SSE_HEADERS
+        _after_first(first, relay, writer), media_type=_SSE_MEDIA_TYPE, headers=_SSE_HEADERS
     )
 
 
-async def _prepend(first: str, rest: AsyncIterator[str]) -> AsyncIterator[str]:
+async def _after_first(
+    first: str, rest: AsyncIterator[str], writer: SseWriter
+) -> AsyncIterator[str]:
+    """The body of a response whose status is already sent.
+
+    The first frame can be a keepalive frame: `attendance` did not answer
+    yet. A refusal that comes after it cannot be a status. It becomes the
+    frames of a failed turn, so that the stream does not end silently.
+
+    CONTRACT-QUESTION: contract 02 §5.4 and §14 give the refusal of
+    `attendance` and no form for it in a stream of a door that already
+    started. The door writes the frames of a failed turn, with the code and
+    the text that the status answer holds. A form that a contract fixes
+    later costs a change to `failure_frames` (translate.py).
+    """
     yield first
-    async for item in rest:
-        yield item
+
+    try:
+        async for item in rest:
+            yield item
+    except AttendanceError as exc:
+        _LOG.warning("attendance refused the turn after the first frame: %s", exc)
+        refusal = from_attendance(exc.code, exc.message)
+
+        for frame in failure_frames(writer, refusal):
+            yield frame
 
 
 async def _stream_turn_frames(

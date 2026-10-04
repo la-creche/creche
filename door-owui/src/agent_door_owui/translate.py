@@ -18,7 +18,7 @@ error. Failing silently would leave a chat that looks like it answered.
 
 from __future__ import annotations
 
-from .errors import turn_failure
+from .errors import DoorError, turn_failure
 from .journal import JournalLine, LineKind
 from .sse import DONE_FRAME, KEEPALIVE_FRAME, SseWriter, ToolOutcome, tool_result_text
 from .untrusted import field_text, is_object
@@ -40,6 +40,21 @@ _AGENT_SETTLED = "agent_settled"
 _TEXT_DELTA = "text_delta"
 _THINKING_DELTA = "thinking_delta"
 _FAILED_STOP_REASONS = frozenset({"error", "aborted"})
+
+
+def failure_frames(writer: SseWriter, error: DoorError) -> list[str]:
+    """The frames that end a stream with an error the reader can see.
+
+    One shape for each failure: a turn that did not settle (`fail` below),
+    and a refusal that comes after the first frame (app.py).
+    """
+    return [
+        writer.text(f"\n\n[error: {error.code}]"),
+        writer.stop(),
+        writer.error(error.body()),
+        writer.settled(_STATUS_FAILED),
+        DONE_FRAME,
+    ]
 
 
 class TurnTranslator:
@@ -103,14 +118,9 @@ class TurnTranslator:
         if self._settled:
             return []
 
-        frames = [
-            self._writer.text(f"\n\n[error: {reason}]"),
-            self._writer.stop(),
-            self._writer.error(turn_failure(reason).body()),
-        ]
-        frames.extend(self._close(_STATUS_FAILED))
+        self._settled = True
 
-        return frames
+        return failure_frames(self._writer, turn_failure(reason))
 
     def _end_by_state(self) -> list[str]:
         if self._failed:
