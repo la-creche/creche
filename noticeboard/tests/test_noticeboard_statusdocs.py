@@ -278,6 +278,19 @@ def test_null_spend_is_not_a_number(tmp_path: Path) -> None:
     assert row.spend is None
 
 
+def test_a_spend_number_past_every_float_reads_unknown(tmp_path: Path) -> None:
+    root = tmp_path / "state"
+    spend = {"spend_usd": 10**400, "budget_usd": 10**400, "window": "day"}
+    write_json(root / "families" / "chat" / "status.json", status_doc(spend=spend))
+
+    row = read_family(root / "families", "chat", NOW)
+
+    assert row.problem == ""
+    assert row.spend is not None
+    assert not row.spend.known
+    assert row.spend.budget_usd is None
+
+
 def test_spend_share_needs_both_numbers(tmp_path: Path) -> None:
     root = tmp_path / "state"
     write_json(

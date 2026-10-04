@@ -114,7 +114,12 @@ def number(body: Json, key: str) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
 
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError:
+        # JSON writes an integer of any size, and no float holds one past
+        # about 1.8e308. That is a malformed amount, not a number.
+        return None
 
 
 def flag(body: Json, key: str) -> bool:
