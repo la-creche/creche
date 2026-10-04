@@ -295,10 +295,10 @@ def _apply(config: Config, name: str, posted: dict[str, str]) -> EditPage:
     form = form_of(current, pages.index_of(registry))
     wanted, issues = parse_posted(form, posted)
     # CONTRACT-QUESTION: spec.md §8.2 gives what a save writes and does not
-    # say what the form of an answer holds. The reading taken: the values
-    # that the reader posted, so the next post holds them too. A form with
-    # the values of the registry would cost this one call, and a save after
-    # a preview would then write no edit.
+    # say which values the edit form shows on the page that answers a post.
+    # The reading taken: the values that the reader posted, so the next post
+    # holds them too. A form with the values of the registry would cost this
+    # one call, and a save after a preview would then write no edit.
     typed = with_posted(form, posted)
 
     if wanted is None:

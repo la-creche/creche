@@ -158,10 +158,11 @@ async def test_a_preview_writes_nothing(board_alone: BoardStack) -> None:
 async def test_a_save_after_a_preview_is_the_commit_of_the_edit(board_alone: BoardStack) -> None:
     """A browser posts the form of the preview page with the save button.
 
-    CONTRACT-QUESTION: §8.2 says what a save writes. No section says what
-    the form of an answer holds. Reading taken: the values that the browser
-    posted, so that a save after a preview writes the edit that the preview
-    showed. A change costs this scenario.
+    CONTRACT-QUESTION: §8.2 says what a save writes. No section says which
+    values the edit form shows on the page that answers a post. Reading
+    taken: the values that the browser posted, so that a save after a
+    preview writes the edit that the preview showed. A change costs this
+    scenario.
     """
     tree = board_alone.tree
 

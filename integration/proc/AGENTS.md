@@ -617,12 +617,12 @@ the text of the failure. Work down this list.
   is. That answer is a 303 to the page of the family, with the start of the
   commit id in `saved`. A change costs three assertions in
   `test_proc_board_edit.py`.
-- **CONTRACT-QUESTION, the form of an answer of the noticeboard.**
-  `docs/rework/spec.md` §8.2 says what a save writes. No section says what
-  the form of an answer holds. The suite holds the reading of the
-  noticeboard: the values that the browser posted. A save after a preview
-  then writes the edit. A change costs one scenario in
-  `test_proc_board_edit.py`.
+- **CONTRACT-QUESTION, the values in the edit form of the noticeboard.**
+  `docs/rework/spec.md` §8.2 says what a save writes. No section says which
+  values the edit form shows on the page that answers a post. The suite
+  holds the reading of the noticeboard: the values that the browser posted.
+  A save after a preview then writes the edit. A change costs one scenario
+  in `test_proc_board_edit.py`.
 - **A save of the noticeboard ends at the commit.** No `caregiver` runs
   beside the noticeboard, so no scenario proves that a saved family file
   converges.

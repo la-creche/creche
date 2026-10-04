@@ -169,8 +169,8 @@ prefixed `test_noticeboard_`.
   `skills` does not resolve there. When the validator needs its target, the
   save is refused, and the error can name a file that the checkout holds.
   A `families` directory that is a link refuses each save.
-- `spec.md` §8.2 does not say what the form of an answer holds. The page
-  that answers a post shows the posted values (`app.py`).
+- `spec.md` §8.2 does not say which values the edit form shows on the page
+  that answers a post. The form shows the posted values (`app.py`).
 - `spec.md` §8.2 names no rule for two saves at one time. One save runs at
   a time for each registry, and a save that waits more than 10 seconds for
   its turn writes nothing (`registrywrite.py`).
