@@ -669,7 +669,7 @@ pub const CREDS_FILE_MODE: u32 = 0o600;
 /// use creche_contracts::config::mounts::Credentials;
 ///
 /// let text = br#"{"epoch": 7, "litellm_key": "sk-test", "pep_token": "TOKEN",
-///                 "written_at": "2026-09-18T19:20:00Z"}"#;
+///                 "written_at": "2030-01-02T03:04:05Z"}"#;
 /// let creds = Credentials::parse(text)?;
 /// assert_eq!(creds.epoch(), 7);
 /// assert!(creds.pep_token().matches(b"TOKEN"));
@@ -1537,14 +1537,14 @@ mod tests {
             7,
             secret("sk-test"),
             secret("TOKEN"),
-            String::from("2026-09-18T19:20:00Z"),
+            String::from("2030-01-02T03:04:05Z"),
         );
         let text = creds.to_json().unwrap();
 
         assert_eq!(
             text,
             "{\n  \"epoch\": 7,\n  \"litellm_key\": \"sk-test\",\n  \"pep_token\": \"TOKEN\",\n  \
-             \"written_at\": \"2026-09-18T19:20:00Z\",\n  \"previous_pep_token\": null,\n  \
+             \"written_at\": \"2030-01-02T03:04:05Z\",\n  \"previous_pep_token\": null,\n  \
              \"previous_expires_at\": null\n}\n"
         );
 
@@ -1553,7 +1553,7 @@ mod tests {
         assert_eq!(parsed.epoch(), 7);
         assert!(parsed.litellm_key().matches(b"sk-test"));
         assert!(parsed.pep_token().matches(b"TOKEN"));
-        assert_eq!(parsed.written_at(), "2026-09-18T19:20:00Z");
+        assert_eq!(parsed.written_at(), "2030-01-02T03:04:05Z");
         assert!(parsed.previous_pep_token().is_none());
         assert_eq!(parsed.previous_expires_at(), None);
     }

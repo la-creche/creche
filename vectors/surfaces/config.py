@@ -536,8 +536,8 @@ def _runtime_surface(scratch: Path) -> Surface:
 
 CREDS_CONTRACT: Final = "contract 03 §12"
 
-_WRITTEN: Final = "2026-09-18T19:20:00Z"
-_LATER: Final = "2026-09-18T19:25:00Z"
+_WRITTEN: Final = "2030-01-02T03:04:05Z"
+_LATER: Final = "2030-01-02T03:09:05Z"
 
 #: The two values are text of a test. No LiteLLM and no chaperone takes them.
 _KEY: Final = "sk-test-key"
