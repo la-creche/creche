@@ -218,9 +218,11 @@ def _tell(wiring: Wiring, entry: Entry, component: str | None = None) -> None:
     """§2.6's push. Never raises: an unreachable phone is a journal line,
     not a release that changes its mind about what it did."""
     notice = notice_of(entry, component)
+    # Every error, not `OSError` alone: the entry is on disk, and an error
+    # that left here ended the pass before the next request.
     try:
         delivered = wiring.notify(notice)
-    except OSError as exc:
+    except Exception as exc:
         print(f"{LOG_PREFIX}: the outcome push failed ({type(exc).__name__})", flush=True)
 
         return

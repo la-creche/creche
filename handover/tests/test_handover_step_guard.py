@@ -17,7 +17,7 @@ import errno
 import fcntl
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -28,6 +28,7 @@ from handover.executor import steps
 from handover.executor.drain import Counter, drain, handle, repair_unfinished
 from handover.executor.install import Installer, Paths
 from handover.executor.live_state import STAMP_FILE, installed_version
+from handover.executor.notice import Notice
 from handover.executor.spool import DONE_DIR, REQUESTS_DIR, Spool, SpoolError, SwitchNote
 from handover.executor.steps import NOTHING_SWAPPED, UNNAMED_ERROR, Wiring
 from handover.manifest import ComponentManifest
@@ -505,3 +506,96 @@ def test_a_repair_that_raises_does_not_end_the_pass(
         f"{OTHER_ID}: repair failed (ValueError)",
     ]
     assert left == []
+
+
+def _note_a_crashed_switch(bench: Bench, spool: Spool) -> None:
+    """What a run leaves when it ends after the swap: the new tree in
+    service, the previous one beside it, and the switch note."""
+    os.rename(bench.live, f"{bench.live}.prev")
+    stamp_tree(bench.components, COMPONENT, NEW_VERSION)
+    note = SwitchNote(COMPONENT, str(bench.live), f"{bench.live}.prev", None)
+    spool.note_switch(REQUEST_ID, note)
+
+
+def test_a_repair_that_raises_ends_in_the_ledger(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§2.4: every outcome is a ledger entry. A repair that raised an error
+    it does not name spent its note and wrote no entry, and the phone got
+    no push. Nothing then said that a component needs a person."""
+
+    def raise_one(self: Installer, paths: Paths) -> None:
+        del self, paths
+        raise OSError(errno.EIO, ERROR_TEXT)
+
+    monkeypatch.setattr(Installer, "swap_back", raise_one)
+    pushed: list[str] = []
+
+    def record(notice: Notice) -> bool:
+        pushed.append(notice.line())
+
+        return True
+
+    spool = Spool(str(bench.spool_root), this_uid())
+    try:
+        _note_a_crashed_switch(bench, spool)
+        lines = repair_unfinished(spool, replace(bench.wiring, notify=record))
+        left = spool.unfinished()
+    finally:
+        spool.close()
+
+    name = f"{REQUEST_ID}-{COMPONENT}"
+    entry = bench.entry(name)
+    restore = _step(entry, "restore")
+    assert lines == [f"{REQUEST_ID}: {COMPONENT} repaired (failed)"]
+    assert entry["status"] == "failed"
+    assert entry["reason"] == f"restore: {UNNAMED_ERROR}: OSError (EIO)"
+    assert restore is not None
+    assert restore["status"] == "failed"
+    assert entry["manual"] == [f"restore: the repair of {COMPONENT} did not finish"]
+    assert "OSError raised at steps.py:" in bench.whole_record(name)
+    assert ERROR_TEXT not in bench.whole_record(name)
+    assert len(pushed) == 1
+    assert "failed" in pushed[0]
+    assert left == []
+
+
+def _raise_in_the_push(notice: Notice) -> bool:
+    """An error of the push that is no `OSError`."""
+    del notice
+    raise ValueError(ERROR_TEXT)
+
+
+def test_a_push_that_raises_does_not_end_the_pass(bench: Bench) -> None:
+    """The push comes after the entry. A push that fails is a journal
+    line, and the request after it is still handled."""
+    _build_leaves_a_directory_at_the_stamp(bench)
+    _file(bench)
+    _file(bench, OTHER_ID)
+    spool = Spool(str(bench.spool_root), this_uid())
+    try:
+        handled = drain(spool, replace(bench.wiring, notify=_raise_in_the_push))
+    finally:
+        spool.close()
+
+    assert handled == 2
+    assert bench.entry()["status"] == "failed"
+    assert bench.entry(OTHER_ID)["status"] == "failed"
+
+
+def test_a_push_that_raises_does_not_change_what_a_repair_says(
+    bench: Bench, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The repair put the previous tree back and wrote its entry. The line
+    for the journal says so, whatever the push did."""
+    spool = Spool(str(bench.spool_root), this_uid())
+    try:
+        _note_a_crashed_switch(bench, spool)
+        lines = repair_unfinished(spool, replace(bench.wiring, notify=_raise_in_the_push))
+    finally:
+        spool.close()
+
+    assert lines == [f"{REQUEST_ID}: {COMPONENT} repaired (restored)"]
+    assert bench.entry(f"{REQUEST_ID}-{COMPONENT}")["status"] == "restored"
+    assert installed_version(bench.live) == LIVE_VERSION
+    assert "the outcome push failed (ValueError)" in capsys.readouterr().out

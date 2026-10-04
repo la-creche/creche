@@ -1486,6 +1486,14 @@ def repair(spool: Spool, wiring: Wiring, request_id: str, note: SwitchNote) -> E
         detail, status, outcome = failure.detail, StepStatus.FAILED, Outcome.FAILED
         not_back = isinstance(failure, UnitNotBack)
         entry.reason = CRASH_UNIT_NOT_BACK if not_back else CRASH_VERIFY_FAILED
+    except Exception as error:
+        # Every outcome is a ledger entry (§2.4), as in `Release._step`. An
+        # error that left here spent the note with no entry and no push,
+        # and nothing said that the component needs a person.
+        detail, status, outcome = _unnamed(error), StepStatus.FAILED, Outcome.FAILED
+        entry.reason = f"{StepName.RESTORE}: {detail}"
+        entry.manual.append(f"restore: the repair of {note.component} did not finish")
+        entry.say(f"step {StepName.RESTORE}: {type(error).__name__} raised at {_raised_at(error)}")
 
     entry.status = outcome
     entry.add(
