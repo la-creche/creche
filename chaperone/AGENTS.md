@@ -154,6 +154,8 @@ authenticated path into the process that holds every credential.
    `SIGHUP` reads again. Never read the roster in `__main__`.
 8. A `sops` failure keeps the credentials already in memory.
 9. One reload task at a time, with a repeat flag.
+10. The read of the roster and of the credentials runs off the event loop
+    thread. `sops -d` can take seconds, and the loop holds every call.
 
 Both secret layouts are read, and that is permanent. The monolith holds every
 credential that predates the intake. The per-secret store is the only layout
