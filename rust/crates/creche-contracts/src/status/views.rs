@@ -76,12 +76,13 @@ pub struct AttendanceStatus {
     /// The family that the caller asked for. The reader does not read the
     /// `family` field of the document.
     pub family: FamilyName,
-    /// The kind. A document with no kind, or with an unknown word, reads as
-    /// `attended`.
-    pub kind: Kind,
-    /// The state. A document with no state, or with an unknown word, reads as
-    /// `in_sync`.
-    pub state: FamilyState,
+    /// The kind. `None` when the document has no kind, or has an unknown
+    /// word. The reader has no default kind: a default opens the family to
+    /// the doors of that kind.
+    pub kind: Option<Kind>,
+    /// The state. `None` when the document has no state, or has an unknown
+    /// word.
+    pub state: Option<FamilyState>,
     /// When `caregiver` wrote the document. `None` when the reader cannot
     /// read the field.
     pub written_at: Option<Timestamp>,
@@ -116,8 +117,8 @@ pub fn attendance(raw: &RawStatus, family: &FamilyName) -> AttendanceStatus {
 
     AttendanceStatus {
         family: family.clone(),
-        kind: raw.kind.text().parse().unwrap_or(Kind::Attended),
-        state: raw.state.text().parse().unwrap_or(FamilyState::InSync),
+        kind: raw.kind.text().parse().ok(),
+        state: raw.state.text().parse().ok(),
         written_at: raw.written_at.text().parse().ok(),
         config_rev: raw.config_rev.text().to_owned(),
         epoch: raw
@@ -903,6 +904,18 @@ mod tests {
         assert_eq!(serving.freshness, Freshness::Fresh);
         assert_eq!(door_owui(&read), Ok(()));
         assert_eq!(door_trigger(&read), Err(ListingRefusal::WrongKind));
+    }
+
+    #[test]
+    fn attendance_has_no_default_kind_and_no_default_state() {
+        let served = attendance(&raw(&document("")), &chat());
+        let unknown = attendance(&raw(r#"{"kind": "robot", "state": "in sync"}"#), &chat());
+        let empty = attendance(&raw("{}"), &chat());
+
+        assert_eq!(served.kind, Some(Kind::Attended));
+        assert_eq!(served.state, Some(FamilyState::InSync));
+        assert_eq!((unknown.kind, unknown.state), (None, None));
+        assert_eq!((empty.kind, empty.state), (None, None));
     }
 
     #[test]

@@ -349,6 +349,25 @@ async def test_a_malformed_pair_is_refused(tmp_path: Path, over: dict[str, Any])
     await harness.stop()
 
 
+async def test_a_family_of_no_known_kind_is_not_switched(tmp_path: Path) -> None:
+    """§5.3 rule 8 names the refusals of a switch. A channel needs the kind of
+    its family, so this service would not dial a sandbox of such a document."""
+    harness = SwitchHarness(tmp_path)
+    write_status(
+        harness.config.state_root,
+        kind="robot",
+        sandboxes=((SANDBOX, "ready"), (NEXT_SANDBOX, "ready")),
+    )
+
+    with pytest.raises(ApiError) as refused:
+        await harness.service.switch_sandbox(CAREGIVER, harness.request())
+
+    assert refused.value.code is ErrorCode.BAD_REQUEST
+    assert refused.value.message == "the status document states no kind"
+    assert harness.fleet.dials == []
+    await harness.stop()
+
+
 async def test_an_unknown_family_is_refused(tmp_path: Path) -> None:
     harness = SwitchHarness(tmp_path)
 
@@ -470,6 +489,32 @@ async def test_a_refused_switch_is_retried_not_replayed(tmp_path: Path) -> None:
 
     with pytest.raises(ApiError):
         await asyncio.wait_for(harness.switch(), 2.0)
+
+    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan())
+    body = await asyncio.wait_for(harness.switch(), 2.0)
+
+    assert body["switched"] is True
+    await harness.stop()
+
+
+async def test_a_refused_switch_with_no_caller_is_retried(tmp_path: Path) -> None:
+    """A refused run is forgotten, with a caller or with none.
+
+    The caller leaves before the run ends, and the run is then refused. No
+    caller is there to forget the run. The retry must start a run of its own.
+    """
+    harness = SwitchHarness(tmp_path)
+    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan(fatal="control_mount_unwritable"))
+    harness.create(FIRST)
+    call = harness.switch()
+    await asyncio.sleep(0)
+    call.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await call
+
+    await wait_until(lambda: NEXT_SANDBOX in harness.fleet.dials)
+    await asyncio.sleep(NOT_YET_S)
 
     harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan())
     body = await asyncio.wait_for(harness.switch(), 2.0)
