@@ -201,21 +201,23 @@ def test_a_wedged_daemon_names_the_recovery_command(monkeypatch: pytest.MonkeyPa
         SbxDriver().create(SPEC)
 
 
-# --- FakeDriver ---------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
-    "error",
+    ("error", "said"),
     [
-        FileNotFoundError(2, "No such file or directory", "sbx"),
-        PermissionError(13, "Permission denied", "sbx"),
-        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
-        ValueError("embedded null byte"),
+        (FileNotFoundError(2, "No such file or directory", "sbx"), "did not run"),
+        (PermissionError(13, "Permission denied", "sbx"), "did not run"),
+        (ValueError("embedded null byte"), "did not run"),
+        # This command ran. A message that says "did not run" after a
+        # destroy would tell the reader that the virtual machine is there.
+        (
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+            "gave output that is not text",
+        ),
     ],
-    ids=["no-program", "no-permission", "output-not-utf8", "bad-argument"],
+    ids=["no-program", "no-permission", "bad-argument", "output-not-utf8"],
 )
 def test_a_command_that_does_not_run_is_a_driver_error(
-    monkeypatch: pytest.MonkeyPatch, error: Exception
+    monkeypatch: pytest.MonkeyPatch, error: Exception, said: str
 ) -> None:
     """Each caller names `DriverError` in its handler and turns it into a
     fault. An error of another class would leave the step and the pass
@@ -225,10 +227,13 @@ def test_a_command_that_does_not_run_is_a_driver_error(
         raise error
 
     monkeypatch.setattr(subprocess, "run", refuse)
-    with pytest.raises(DriverError, match="sbx create shell"):
+    with pytest.raises(DriverError, match=f"sbx create shell… {said}"):
         SbxDriver().create(SPEC)
 
     assert SbxDriver().list_names() == set()
+
+
+# --- FakeDriver ---------------------------------------------------------------
 
 
 def test_fake_driver_records_calls_in_order() -> None:
