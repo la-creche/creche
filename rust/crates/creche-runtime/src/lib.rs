@@ -7,4 +7,11 @@
 //! `rust/AGENTS.md`, "The rules for a service", holds the rules for a service
 //! crate.
 
+pub mod atomic;
+pub mod clock;
+pub mod entropy;
+pub mod faults;
+pub mod layout;
 pub mod log;
+pub mod readfile;
+pub mod token;
