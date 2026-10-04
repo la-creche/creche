@@ -28,7 +28,8 @@ The door holds no session state. `attendance` owns the transcript.
 - Prime, do not buffer. `app._streamed` pulls one frame before it builds the
   `StreamingResponse`, so a refusal is a real HTTP status, not a `200` stream
   with an error frame. A refusal after the first frame cannot be a status.
-  `app._after_first` writes it as the frames of a failed turn.
+  `app._after_first` writes it as the frames of a failed turn. A stream
+  that has its `[DONE]` gets no second ending.
 - A client disconnect never stops the turn. `SessiondClient` has no stop
   method. Keep it that way.
 - The NDJSON stream splits on LF and nothing else. `_iter_lines` reads bytes.
@@ -47,6 +48,7 @@ The door holds no session state. `attendance` owns the transcript.
 | `attendance` does not answer | `502 attendance_unreachable`, also for a streamed request |
 | `attendance` refuses a streamed turn after the first keepalive frame | a visible OpenAI-shaped error chunk with the code of the refusal, then `[DONE]` |
 | a failure that no handler names, before the first frame | `500 internal` in the OpenAI error shape. The log holds the traceback. |
+| a failure that no handler names, after the first frame | a visible OpenAI-shaped error chunk with the code `internal`, then `[DONE]`. The log holds the traceback. |
 | the family is reconciling, degraded, or invalid with a last good definition | still served |
 | a turn ends any way other than `settled` | a visible OpenAI-shaped error chunk |
 | the client disconnects mid-stream | streaming stops, the turn keeps running |

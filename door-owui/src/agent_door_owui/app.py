@@ -35,7 +35,7 @@ from .families import FamilyDirectory
 from .headers import read_ids
 from .journal import JournalLine
 from .openai_api import ChatRequest, completion_body, models_body, parse_chat_request
-from .sse import SseWriter
+from .sse import DONE_FRAME, SseWriter
 from .stream import with_keepalive
 from .translate import TurnTranslator, failure_frames
 
@@ -250,7 +250,9 @@ async def _after_first(
 
     The first frame can be a keepalive frame: `attendance` did not answer
     yet. A refusal that comes after it cannot be a status. It becomes the
-    frames of a failed turn, so that the stream does not end silently.
+    frames of a failed turn, so that the stream does not end silently. A
+    failure that no handler names becomes the same frames, with the code
+    and the text of the last handler of the app.
 
     CONTRACT-QUESTION: contract 02 §5.4 and §14 give the refusal of
     `attendance` and no form for it in a stream of a door that already
@@ -260,15 +262,30 @@ async def _after_first(
     """
     yield first
 
+    ended = False
     try:
         async for item in rest:
+            ended = ended or item == DONE_FRAME
             yield item
+
+        return
     except AttendanceError as exc:
         _LOG.warning("attendance refused the turn after the first frame: %s", exc)
-        refusal = from_attendance(exc.code, exc.message)
+        failure = from_attendance(exc.code, exc.message)
+    except Exception:
+        # The last handler of a stream. No handler of the app can answer
+        # after the status is sent, so the traceback goes to the log here.
+        _LOG.exception("the door failed after the first frame of a stream")
+        failure = DoorError(
+            HTTP_INTERNAL, _UNEXPECTED_MESSAGE, code=_UNEXPECTED_CODE, error_type=ErrorType.SERVER
+        )
 
-        for frame in failure_frames(writer, refusal):
-            yield frame
+    # A stream that already has its end marker gets no second ending.
+    if ended:
+        return
+
+    for frame in failure_frames(writer, failure):
+        yield frame
 
 
 async def _stream_turn_frames(

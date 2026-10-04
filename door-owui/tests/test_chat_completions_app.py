@@ -5,7 +5,10 @@ the right OpenAI-shaped answer out. `FakeAttendance` plays attendance's part;
 from __future__ import annotations
 
 import json
+import logging
 import time
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -19,6 +22,7 @@ from agent_door_owui.attendance import (
     HttpAttendance,
     SettledTurn,
     StreamBroken,
+    TurnRequest,
 )
 from agent_door_owui.config import DoorConfig
 from agent_door_owui.families import StatusFiles
@@ -578,3 +582,67 @@ def test_an_unexpected_failure_is_a_500_in_the_error_shape(tmp_path: Path, strea
     assert error["code"] == "internal"
     assert error["type"] == "server_error"
     assert "a defect of the door" not in error["message"]
+
+
+# --- a failure that no handler names, after the first frame ---
+
+
+def test_an_unexpected_failure_after_the_first_frame_is_a_visible_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = FakeAttendance(
+        lines=[_pi_text("partial answer")],
+        stream_error=RuntimeError("a defect of the door"),
+    )
+    client = _client(tmp_path, fake)
+
+    with (
+        caplog.at_level(logging.ERROR),
+        client.stream(
+            "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+        ) as response,
+    ):
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert "partial answer" in out
+    assert '"code":"internal"' in out
+    assert '"status":"failed"' in out
+    assert out.endswith("data: [DONE]\n\n")
+    # The text of the failure is in the log and not in the answer.
+    assert "a defect of the door" not in out
+    assert "a defect of the door" in caplog.text
+
+
+class _FailsAtClose(FakeAttendance):
+    """Gives a whole turn, then raises when the door closes the stream."""
+
+    @asynccontextmanager
+    async def stream_turn(
+        self, request: TurnRequest, *, with_parent: bool = True
+    ) -> AsyncGenerator[AsyncIterator[JournalLine], None]:
+        async with super().stream_turn(request, with_parent=with_parent) as lines:
+            yield lines
+
+        raise RuntimeError("a close that fails")
+
+
+def test_a_failure_after_the_end_marker_adds_no_second_ending(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = _client(tmp_path, _FailsAtClose(lines=_success_lines()))
+
+    with (
+        caplog.at_level(logging.ERROR),
+        client.stream(
+            "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+        ) as response,
+    ):
+        assert response.status_code == 200
+        out = "".join(response.iter_text())
+
+    assert '"status":"done"' in out
+    assert '"error"' not in out
+    assert out.count("data: [DONE]") == 1
+    assert out.endswith("data: [DONE]\n\n")
+    assert "a close that fails" in caplog.text

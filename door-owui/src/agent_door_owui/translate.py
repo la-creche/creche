@@ -46,7 +46,7 @@ def failure_frames(writer: SseWriter, error: DoorError) -> list[str]:
     """The frames that end a stream with an error the reader can see.
 
     One shape for each failure: a turn that did not settle (`fail` below),
-    and a refusal that comes after the first frame (app.py).
+    and a refusal or a failure of the door after the first frame (app.py).
     """
     return [
         writer.text(f"\n\n[error: {error.code}]"),
