@@ -15,17 +15,20 @@ Three rules are enforced here and not left to a test:
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from pathlib import Path
 from typing import cast
 
+import httpx
 import pytest
 from proc_harness import Supervisor, end_leaked_groups
+from proc_owui import OwuiStack
 from proc_services import describe_table
 from proc_standins import end_standins
-from proc_tree import Tree, make_root, remove_root, socket_path_fits
+from proc_tree import Tree, make_root, playpen_bundle, remove_root, socket_path_fits
 
 _HERE = Path(__file__).resolve().parent
+_BUILD_HINT = "run `pnpm install && pnpm run build` in playpen/ first"
 
 #: Set it to keep the root of every test on disk, to read after a run.
 KEEP_ROOTS_ENV = "CRECHE_PROC_KEEP"
@@ -58,6 +61,20 @@ def pytest_runtest_makereport(
         report.sections.append((f"processes at {call.when}", describe()))
 
     return report
+
+
+@pytest.fixture(scope="session")
+def bundle() -> Path:
+    """The built playpen. A test that needs it and has none skips.
+
+    Skip rather than fail. A silent pass would be worse than either.
+    """
+    path = playpen_bundle()
+
+    if not path.exists():
+        pytest.skip(f"{path} is missing: {_BUILD_HINT}")
+
+    return path
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -100,6 +117,30 @@ def supervisor(tree: Tree, request: pytest.FixtureRequest) -> Iterator[Superviso
 
     if problems:
         pytest.fail("the teardown had to end a process:\n" + "\n".join(problems))
+
+
+@pytest.fixture
+def owui(tree: Tree, supervisor: Supervisor, bundle: Path) -> OwuiStack:
+    """The first topology, serving. The `supervisor` fixture ends it."""
+    stack = OwuiStack(tree, supervisor)
+    stack.prepare()
+    stack.start()
+
+    return stack
+
+
+@pytest.fixture
+async def door(owui: OwuiStack) -> AsyncIterator[httpx.AsyncClient]:
+    """A client that plays Open WebUI against the door."""
+    async with owui.door_client() as client:
+        yield client
+
+
+@pytest.fixture
+async def attendance_api(owui: OwuiStack) -> AsyncIterator[httpx.AsyncClient]:
+    """A client to `attendance`, with the token the Open WebUI door holds."""
+    async with owui.attendance_client() as client:
+        yield client
 
 
 def _describe(tree: Tree, supervisor: Supervisor) -> str:
