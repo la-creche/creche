@@ -8,7 +8,7 @@
  "vectors": [
   {"id":"probe-sample","input":{"text":"01J9ZQ5V7Y8X4W3T2S1R0QPNM2"},"result":"accepted"},
   {"id":"probe-empty","input":{"text":""},"result":"refused"},
-  {"id":"probe-trailing-newline","input":{"text":"01J9ZQ5V7Y8X4W3T2S1R0QPNM2\n"},"result":"accepted"},
+  {"id":"probe-trailing-newline","input":{"text":"01J9ZQ5V7Y8X4W3T2S1R0QPNM2\n"},"result":"refused"},
   {"id":"probe-trailing-cr","input":{"text":"01J9ZQ5V7Y8X4W3T2S1R0QPNM2\r"},"result":"refused"},
   {"id":"probe-leading-space","input":{"text":" 01J9ZQ5V7Y8X4W3T2S1R0QPNM2"},"result":"refused"},
   {"id":"probe-trailing-space","input":{"text":"01J9ZQ5V7Y8X4W3T2S1R0QPNM2 "},"result":"refused"},

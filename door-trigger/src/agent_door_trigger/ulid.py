@@ -19,7 +19,7 @@ from collections.abc import Callable
 _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 ULID_LENGTH = 26
-ULID_PATTERN = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+ULID_PATTERN = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}\Z")
 
 _RANDOM_BITS = 80
 _RANDOM_BYTES = _RANDOM_BITS // 8
