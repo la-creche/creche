@@ -256,6 +256,43 @@ def test_sbx_refuses_a_verb_it_does_not_know(programs: Tree, supervisor: Supervi
     assert _sbx(programs, supervisor, "stop", BOX).exit_code == EXIT_USAGE
 
 
+def test_sbx_create_refuses_another_kit(programs: Tree, supervisor: Supervisor) -> None:
+    """Fail closed. Only the `shell` kit has the allow row that this stand-in copies."""
+    words = ["create", "another-kit", *_create_words()[2:]]
+
+    assert _sbx(programs, supervisor, *words).exit_code == EXIT_USAGE
+    assert sbx_sandboxes(programs) == {}
+
+
+def test_sbx_policy_rm_refuses_a_row_that_does_not_exist(
+    programs: Tree, supervisor: Supervisor
+) -> None:
+    _create(programs, supervisor)
+
+    assert _policy(programs, supervisor, "rm", "--resource", A_HOST).exit_code != 0
+    assert sbx_rows(programs, BOX, ALLOW) == [KIT_HOST]
+
+
+def test_sbx_policy_refuses_a_sandbox_that_no_create_made(
+    programs: Tree, supervisor: Supervisor
+) -> None:
+    done = _policy(programs, supervisor, "allow", A_HOST)
+
+    assert done.exit_code != 0
+    assert "not found" in done.stderr
+    assert sbx_rows(programs, BOX, ALLOW) == []
+
+
+def test_sbx_refuses_a_policy_action_it_does_not_know(
+    programs: Tree, supervisor: Supervisor
+) -> None:
+    """Fail closed. A service that runs another policy action gets no silent success."""
+    _create(programs, supervisor)
+
+    assert _policy(programs, supervisor, "reset", A_HOST).exit_code == EXIT_USAGE
+    assert sbx_rows(programs, BOX, ALLOW) == [KIT_HOST]
+
+
 # ------------------------------------------------------------------ systemctl
 
 
@@ -303,9 +340,26 @@ def test_systemctl_refuses_to_enable_when_a_test_says_so(
 
 
 def test_systemctl_refuses_a_call_with_no_user_flag(programs: Tree, supervisor: Supervisor) -> None:
-    """Fail closed. `caregiver` runs as the operator and owns no system unit."""
-    assert _systemctl(programs, supervisor, "daemon-reload").exit_code == EXIT_USAGE
+    """Fail closed. `caregiver` runs as the operator and owns no system unit.
+
+    The unit has a file, so only the flag makes each call fail.
+    """
+    _unit_file(programs)
+
+    bare = _systemctl(programs, supervisor, "enable", "--now", UNIT)
+    system = _systemctl(programs, supervisor, "--system", "enable", "--now", UNIT)
+
+    assert (bare.exit_code, system.exit_code) == (EXIT_USAGE, EXIT_USAGE)
+    assert enabled_units(programs) == []
     assert _systemctl(programs, supervisor, "--user", "daemon-reload").exit_code == 0
+
+
+def test_systemctl_refuses_a_verb_it_does_not_know(programs: Tree, supervisor: Supervisor) -> None:
+    """Fail closed. A service that runs another verb gets no silent success."""
+    _unit_file(programs)
+
+    assert _systemctl(programs, supervisor, "--user", "start", UNIT).exit_code == EXIT_USAGE
+    assert enabled_units(programs) == []
 
 
 # -------------------------------------------------------------------- LiteLLM
@@ -384,6 +438,16 @@ def test_litellm_records_each_call_and_no_secret(litellm: Litellm) -> None:
     assert key not in text
 
 
+def test_litellm_answers_not_found_on_a_route_it_does_not_know(litellm: Litellm) -> None:
+    """Fail closed. A service that asks another route gets no silent success."""
+    with _client(litellm) as client:
+        posted = client.post("/key/regenerate", json=_generate_body())
+        asked = client.get("/key/list")
+
+    assert (posted.status_code, asked.status_code) == (HTTP_NOT_FOUND, HTTP_NOT_FOUND)
+    assert litellm_keys(litellm.tree) == {}
+
+
 def test_litellm_fails_a_request_when_a_test_says_so(litellm: Litellm) -> None:
     tune(litellm.tree, LITELLM, "fail-generate")
 
@@ -408,6 +472,11 @@ def _sbx(
     whole = base_env(tree) | (env or {})
 
     return supervisor.run(SBX, _words(tree, SBX, *args), whole, tree.root)
+
+
+def _policy(tree: Tree, supervisor: Supervisor, action: str, *words: str) -> Finished:
+    """One `sbx policy` command for the sandbox of this file."""
+    return _sbx(tree, supervisor, "policy", action, "network", "--sandbox", BOX, *words)
 
 
 def _systemctl(tree: Tree, supervisor: Supervisor, *args: str) -> Finished:
