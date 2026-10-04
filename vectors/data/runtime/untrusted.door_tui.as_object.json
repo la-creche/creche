@@ -3,7 +3,7 @@
  "contract": "spec.md invariants 12 and 14",
  "entry": "agent_door_tui.untrusted.as_object",
  "format": 1,
- "notes": ["The input is the JSON text of one value. The helper takes that value.","The generator reads the input with json.loads of Python and gives the helper the result. That reader takes NaN, Infinity, an integer of each size and an escape of one half of a surrogate pair.","Each vector is accepted: the helper returns a value for each input. value is what the helper returns. A value of null means that the helper returns None."],
+ "notes": ["The input is the JSON text of one value. The helper takes that value.","The generator reads the input with json.loads of Python and gives the helper the result. That reader takes NaN, Infinity, an integer of 4300 digits or less and an escape of one half of a surrogate pair.","Each vector is accepted: the helper returns a value for each input. value is what the helper returns. A value of null means that the helper returns None."],
  "surface": "runtime.untrusted.door_tui.as_object",
  "vectors": [
   {"id":"string","input":{"text":"\"family\""},"result":"accepted","value":{}},

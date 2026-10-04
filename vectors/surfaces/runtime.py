@@ -98,6 +98,10 @@ LIMITS: Final = (2, 50)
 #: The count of characters that the noticeboard keeps of one text.
 CUT: Final = jsonfiles.MAX_TEXT_CHARS
 
+#: The most digits that `int` reads from a text. The JSON reader of Python
+#: refuses an integer with one digit more.
+INT_DIGITS_MAX: Final = 4300
+
 
 @dataclass(frozen=True)
 class Sample:
@@ -333,8 +337,8 @@ def _helper_vectors(helper: Helper) -> tuple[Vector, ...]:
 
 _NOTE_PARSED: Final = (
     "The generator reads the input with json.loads of Python and gives the helper the result. "
-    "That reader takes NaN, Infinity, an integer of each size and an escape of one half of a "
-    "surrogate pair."
+    f"That reader takes NaN, Infinity, an integer of {INT_DIGITS_MAX} digits or less and an "
+    "escape of one half of a surrogate pair."
 )
 _NOTE_RETURNS: Final = (
     "Each vector is accepted: the helper returns a value for each input. value is what the "
@@ -396,7 +400,7 @@ VERY_DEEP: Final = 400_000
 DEEP: Final = 200
 
 #: One more digit than `int` reads from a text.
-TOO_MANY_DIGITS: Final = 4301
+TOO_MANY_DIGITS: Final = INT_DIGITS_MAX + 1
 
 _SMALL: Final = '{"a": 1}'
 
