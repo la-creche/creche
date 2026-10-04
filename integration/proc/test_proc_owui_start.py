@@ -22,8 +22,9 @@ import httpx
 import pytest
 from proc_chat import SESSIONS_PATH, chat_id, session_of
 from proc_harness import LOOPBACK, TcpAddress, free_port, is_listening
-from proc_owui import OwuiStack, attendance_env, door_env
+from proc_owui import OwuiStack, door_env
 from proc_services import Service
+from proc_stack import attendance_env
 from proc_tree import DOOR_KEY, FAMILY, PRINCIPALS, SECRET_MODE, token_of
 
 #: One byte under the floor of contract 02 §3 rule 7. Its text is one a test

@@ -21,6 +21,7 @@ from typing import cast
 
 import httpx
 import pytest
+from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
 from proc_owui import OwuiStack
 from proc_services import describe_table
@@ -147,6 +148,23 @@ async def door(owui: OwuiStack) -> AsyncIterator[httpx.AsyncClient]:
 async def attendance_api(owui: OwuiStack) -> AsyncIterator[httpx.AsyncClient]:
     """A client to `attendance`, with the token the Open WebUI door holds."""
     async with owui.attendance_client() as client:
+        yield client
+
+
+@pytest.fixture
+def delegate(tree: Tree, supervisor: Supervisor, bundle: Path) -> DelegateStack:
+    """The second topology, serving. The `supervisor` fixture ends it."""
+    stack = DelegateStack(tree, supervisor)
+    stack.prepare()
+    stack.start()
+
+    return stack
+
+
+@pytest.fixture
+async def sandbox(delegate: DelegateStack) -> AsyncIterator[httpx.AsyncClient]:
+    """A client that plays the sandbox of the caller family at the chaperone."""
+    async with delegate.sandbox_client() as client:
         yield client
 
 

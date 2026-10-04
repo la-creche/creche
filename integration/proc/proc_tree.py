@@ -15,12 +15,15 @@ writer here.
       state/families/<family>/control/<id>/        contract 03 §7.1
       state/tokens/<principal>.token     contract 02 §3 rule 5
       state/door-owui.key                contract 02 §3 rule 7
+      state/grants/<family>.json         contract 04 §1, the grant file
+      state/audit/<day>.jsonl            contract 04 §6, written by the chaperone
       sock/                              contract 02 §3 rule 1
       work/  log/  home/  bin/  standins/  proc-logs/
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -33,6 +36,10 @@ from typing import Any, Final
 FAMILY: Final = "chat"
 SANDBOX: Final = "chat-s1"
 MODEL: Final = f"agent:{FAMILY}"
+
+#: The three family kinds of contract 02 §2 that a fixture can publish.
+ATTENDED: Final = "attended"
+THIN: Final = "thin"
 MODEL_ALIAS: Final = "agent-router"
 CONFIG_REV: Final = "reg-c1-proc"
 CRED_EPOCH: Final = 7
@@ -45,8 +52,16 @@ IMAGE: Final = "sha256:" + "0" * 63 + "1"
 #: 32-byte floor of contract 02 §3 rule 7.
 DOOR_KEY: Final = "fixture-door-key-" + "d" * 32
 FIXTURE_LITELLM_KEY: Final = "FIXTURE-LITELLM-KEY"
-FIXTURE_PEP_TOKEN: Final = "FIXTURE-PEP-TOKEN"
 _TOKEN_FILL: Final = "x" * 32
+
+#: Contract 01 §3.12: the default limit of one thin job, in seconds.
+JOB_TIMEOUT_S: Final = 120
+
+#: Contract 04 §1.2: the two defaults `caregiver` writes, and the default of
+#: the family file for `max_inflight_delegations`.
+GRANT_LIMITS: Final = {"pep_rpm": 60, "max_inflight_delegations": 2, "max_open_gates": 10}
+GRANT_VERSION: Final = 2
+GRANT_MODE: Final = 0o640
 
 #: Contract 02 §3.1, one token file per row.
 #:
@@ -171,20 +186,39 @@ class Tree:
     def status_file(self, family: str = FAMILY) -> Path:
         return self.family_dir(family) / "status.json"
 
-    def playpen_env(self, sandbox: str = SANDBOX, family: str = FAMILY) -> Path:
-        return self.family_dir(family) / f"supervisor-{sandbox}.env"
+    def playpen_env(self, family: str = FAMILY, sandbox: str | None = None) -> Path:
+        return self.family_dir(family) / f"supervisor-{sandbox or first_sandbox(family)}.env"
 
-    def mounts(self, sandbox: str = SANDBOX, family: str = FAMILY) -> Mounts:
+    def mounts(self, family: str = FAMILY, sandbox: str | None = None) -> Mounts:
         return Mounts(
             sessions=self.sessions_root / family,
             creds=self.family_dir(family) / "creds",
             config=self.family_dir(family) / "config",
-            control=self.family_dir(family) / "control" / sandbox,
+            control=self.family_dir(family) / "control" / (sandbox or first_sandbox(family)),
         )
 
-    def playpen_lock(self, sandbox: str = SANDBOX, family: str = FAMILY) -> Path:
+    def playpen_lock(self, family: str = FAMILY, sandbox: str | None = None) -> Path:
         """The lease of contract 03 §11.1, in the control directory."""
-        return self.mounts(sandbox, family).control / "supervisor.lock"
+        return self.mounts(family, sandbox).control / "supervisor.lock"
+
+    def grant_file(self, family: str = FAMILY) -> Path:
+        return self.state_root / "grants" / f"{family}.json"
+
+    def sessions_of(self, family: str) -> list[str]:
+        """Every session directory one family has on disk now."""
+        directory = self.sessions_root / family
+
+        return sorted(entry.name for entry in directory.iterdir() if entry.is_dir())
+
+    def audit_lines(self) -> list[dict[str, Any]]:
+        """Every audit record the chaperone wrote, in file order (contract 04 §6)."""
+        lines: list[dict[str, Any]] = []
+
+        for path in sorted((self.state_root / "audit").glob("*.jsonl")):
+            complete = path.read_bytes().split(b"\n")[:-1]
+            lines.extend(json.loads(line) for line in complete if line.strip())
+
+        return lines
 
     def session_dir(self, session: str, family: str = FAMILY) -> Path:
         return self.sessions_root / family / session
@@ -224,51 +258,60 @@ def socket_path_fits(tree: Tree) -> bool:
     return len(os.fsencode(tree.attendance_socket)) <= MAX_SOCKET_PATH
 
 
+def first_sandbox(family: str) -> str:
+    """The id of the one sandbox a fixture family has (contract 02 §2)."""
+    return f"{family}-s1"
+
+
+def pep_token_of(family: str) -> str:
+    """The fixture family token (contract 04 §2). Never a credential."""
+    return f"FIXTURE-PEP-TOKEN-{family}"
+
+
 def build_tree(tree: Tree) -> None:
     """Write everything the first topology reads, for one attended family."""
-    mounts = tree.mounts()
-
-    for directory in (
-        mounts.sessions,
-        mounts.creds,
-        mounts.config,
-        mounts.control,
-        tree.work_root,
-        tree.log_dir,
-        tree.home,
-        tree.bin_dir,
-        tree.standins,
-    ):
+    for directory in (tree.work_root, tree.log_dir, tree.home, tree.bin_dir, tree.standins):
         directory.mkdir(parents=True, exist_ok=True)
 
-    write_playpen_env(tree)
-    write_status(tree)
-    write_creds(tree)
-    write_runtime(tree)
+    add_family(tree, FAMILY, ATTENDED)
     write_tokens(tree)
     write_door_key(tree)
 
 
+def add_family(tree: Tree, family: str, kind: str) -> None:
+    """Publish one family with one ready sandbox, as `caregiver` does.
+
+    A thin family gets the default job limit of contract 01 §3.12.
+    """
+    mounts = tree.mounts(family)
+
+    for directory in (mounts.sessions, mounts.creds, mounts.config, mounts.control):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    write_playpen_env(tree, family)
+    write_creds(tree, family)
+    write_runtime(tree, family)
+    write_status(tree, family, kind, job_timeout_s=JOB_TIMEOUT_S if kind == THIN else None)
+
+
 def write_status(
-    tree: Tree,
-    *,
-    family: str = FAMILY,
-    kind: str = "attended",
-    state: str = "in_sync",
-    sandboxes: tuple[tuple[str, str], ...] = ((SANDBOX, "ready"),),
+    tree: Tree, family: str = FAMILY, kind: str = ATTENDED, *, job_timeout_s: int | None = None
 ) -> None:
     """One whole status document (contract 05 §2.1, §4.1, §9).
 
     Every field of §2.1 is present, so a reader that refuses a document with
-    a field missing still accepts this one. `pep.watch` is `off`: no test of
-    the first topology starts the chaperone, and `off` means nobody asked
+    a field missing still accepts this one. `pep.watch` is `off`: nothing in
+    this suite runs the watch of `caregiver`, and `off` means nobody asked
     (§2.2 rule 1).
+
+    `job_timeout_s` is the one limit a scenario moves. Only a thin family
+    has one (§9).
     """
     now = _rfc3339()
     document: dict[str, Any] = {
         "family": family,
         "kind": kind,
-        "state": state,
+        "state": "in_sync",
         "written_at": now,
         "registry_rev": CONFIG_REV,
         "applied_rev": CONFIG_REV,
@@ -285,9 +328,7 @@ def write_status(
         },
         "faults": [],
         "reconcile": None,
-        "sandboxes": [
-            _sandbox_row(tree, family, box, box_state, now) for box, box_state in sandboxes
-        ],
+        "sandboxes": [_sandbox_row(tree, family, now)],
         "credentials": {
             "epoch": CRED_EPOCH,
             "key_id": f"fixture-key-{CRED_EPOCH}",
@@ -303,7 +344,11 @@ def write_status(
             "as_of": now,
             "source": "litellm",
         },
-        "limits": {"max_running_turns": None, "max_queued_turns": None, "job_timeout_s": None},
+        "limits": {
+            "max_running_turns": None,
+            "max_queued_turns": None,
+            "job_timeout_s": job_timeout_s,
+        },
         "triggers": {"webhooks": [], "enqueue": False},
         "pep": {"watch": "off", "url": "", "checked_at": None, "unreachable_since": None},
     }
@@ -311,44 +356,67 @@ def write_status(
     _atomic_write(tree.status_file(family), json.dumps(document) + "\n", STATUS_MODE)
 
 
-def write_playpen_env(tree: Tree, *, sandbox: str = SANDBOX, family: str = FAMILY) -> None:
+def write_playpen_env(tree: Tree, family: str = FAMILY) -> None:
     """The file `sbx exec --env-file` reads (contract 03 §7.1).
 
     Four lines, each a host path or an identifier, and no secret.
     """
-    mounts = tree.mounts(sandbox, family)
-    mounts.control.mkdir(parents=True, exist_ok=True)
+    mounts = tree.mounts(family)
     lines = [
         f"AGENT_CRED_DIR={mounts.creds}",
         f"AGENT_FAMILY_CONFIG_DIR={mounts.config}",
         f"AGENT_CONTROL_DIR={mounts.control}",
-        f"AGENT_SANDBOX={sandbox}",
+        f"AGENT_SANDBOX={first_sandbox(family)}",
     ]
 
-    _atomic_write(tree.playpen_env(sandbox, family), "\n".join(lines) + "\n", PLAYPEN_ENV_MODE)
+    _atomic_write(tree.playpen_env(family), "\n".join(lines) + "\n", PLAYPEN_ENV_MODE)
 
 
-def write_creds(tree: Tree, *, family: str = FAMILY) -> None:
+def write_creds(tree: Tree, family: str = FAMILY) -> None:
     """The credential file the playpen reads at each pi start (contract 03 §12)."""
     document = {
         "epoch": CRED_EPOCH,
         "litellm_key": FIXTURE_LITELLM_KEY,
-        "pep_token": FIXTURE_PEP_TOKEN,
+        "pep_token": pep_token_of(family),
         "written_at": _rfc3339(),
     }
 
     _atomic_write(
-        tree.mounts(family=family).creds / "creds.json", json.dumps(document) + "\n", SECRET_MODE
+        tree.mounts(family).creds / "creds.json", json.dumps(document) + "\n", SECRET_MODE
     )
 
 
-def write_runtime(tree: Tree, *, family: str = FAMILY) -> None:
+def write_runtime(tree: Tree, family: str = FAMILY) -> None:
     """`runtime.json` of the family config mount (contract 01 §6.1)."""
     document: dict[str, object] = {"shell": False, "sandbox_tools": [], "model_alias": MODEL_ALIAS}
 
     _atomic_write(
-        tree.mounts(family=family).config / "runtime.json", json.dumps(document) + "\n", STATUS_MODE
+        tree.mounts(family).config / "runtime.json", json.dumps(document) + "\n", STATUS_MODE
     )
+
+
+def write_grants(tree: Tree, family: str, *, rev: str, delegates: tuple[str, ...]) -> None:
+    """The grant file of one family (contract 04 §1.2), by temp file and rename.
+
+    It holds the digest of the family token and never the token (§2.2). No
+    MCP server and no verb is granted: `delegates` is the one reach a
+    scenario of this suite needs.
+    """
+    digest = hashlib.sha256(pep_token_of(family).encode("utf-8")).hexdigest()
+    document: dict[str, Any] = {
+        "version": GRANT_VERSION,
+        "family": family,
+        "rev": rev,
+        "token_sha256": [digest],
+        "model_alias": MODEL_ALIAS,
+        "tools": {},
+        "verbs": {},
+        "delegates": list(delegates),
+        "approval": [],
+        "limits": dict(GRANT_LIMITS),
+    }
+
+    _atomic_write(tree.grant_file(family), json.dumps(document) + "\n", GRANT_MODE)
 
 
 def write_tokens(tree: Tree) -> None:
@@ -369,19 +437,19 @@ def write_door_key(tree: Tree) -> None:
     _atomic_write(tree.door_key_file, DOOR_KEY + "\n", SECRET_MODE)
 
 
-def _sandbox_row(tree: Tree, family: str, sandbox: str, state: str, now: str) -> dict[str, Any]:
+def _sandbox_row(tree: Tree, family: str, now: str) -> dict[str, Any]:
     return {
-        "id": sandbox,
-        "state": state,
+        "id": first_sandbox(family),
+        "state": "ready",
         "power": "running",
         "image": IMAGE,
         "spec_hash": "00000001",
         "cpus": 2,
         "memory": "4g",
         "created_at": now,
-        "ready_at": now if state == "ready" else None,
+        "ready_at": now,
         "channel": "closed",
-        "supervisor_env": str(tree.playpen_env(sandbox, family)),
+        "supervisor_env": str(tree.playpen_env(family)),
     }
 
 
