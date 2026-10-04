@@ -54,6 +54,7 @@ the variable.
 | stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `pi`, `systemctl` and the LiteLLM key API. |
 | topology | The services that one fixture starts together. |
 | terminal | A pseudo-terminal. A test holds the master side. A program holds the other side as its controlling terminal. |
+| listener | A service that listens for HTTP requests: `attendance`, the Open WebUI door, the chaperone, the noticeboard, and the `serve` command of the trigger door. |
 
 ## The service table
 
@@ -674,7 +675,7 @@ the text of the failure. Work down this list.
   `test_proc_edges.py`.
 - **CONTRACT-QUESTION, a listener at a signal.** No contract says what a
   listener does at `SIGINT`, at `SIGHUP` with no reload, or at a stop with an
-  open stream. No contract names an exit status after a signal.
+  open stream. No contract names an exit code after a signal.
   `test_proc_edges.py` holds three things:
   - `SIGINT` ends each listener inside the `TimeoutStopSec` of its unit.
     Nothing answers at its address after that.
@@ -683,19 +684,19 @@ the text of the failure. Work down this list.
   - A stop of the Open WebUI door with one open stream ends the process
     inside 30 seconds. The turn settles in the journal.
 
-  No scenario there reads an exit status. The services differ today:
-  - After `SIGTERM`, `attendance` exits with status 0. The signal ends each
-    other listener, so none of them has an exit status.
-  - After `SIGINT`, each listener exits with status 0.
+  No scenario there reads an exit code. The services differ today:
+  - After `SIGTERM`, `attendance` exits with code 0. The signal ends each
+    other listener, so none of them has an exit code.
+  - After `SIGINT`, each listener exits with code 0.
   - `SIGHUP` ends the door and the noticeboard immediately. Neither has an
-    exit status.
+    exit code.
   - The chaperone has a reload only with a roster source. The chaperone of
     this suite has none, so `SIGHUP` ends it too. No scenario holds either
     case.
   - At a stop with an open stream, the door sends the stream to its end.
     Then the signal ends the door.
 
-  A listener that ignores `SIGHUP` fails one scenario. A fixed exit status
+  A listener that ignores `SIGHUP` fails one scenario. A fixed exit code
   costs one assertion in each of the three scenarios.
 - **A run that ignores `SIGHUP` cannot judge the `SIGHUP` scenario.** A
   process that the suite starts ignores each signal that the run ignores,

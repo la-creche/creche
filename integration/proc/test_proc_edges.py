@@ -18,13 +18,13 @@ No contract gives the result of most scenarios here. Each such scenario has a
 `CONTRACT-QUESTION:` comment. The comment gives the reading taken, what the
 services do today, and what a change costs.
 
-CONTRACT-QUESTION: no contract names the exit status of a listener after a
+CONTRACT-QUESTION: no contract names the exit code of a listener after a
 signal. The services differ today. After `SIGTERM`, `attendance` exits with
-status 0, and the signal ends each other listener, with no exit status.
-After `SIGINT`, each listener exits with status 0. `SIGHUP` ends each
-listener that has no reload, with no exit status. Reading taken: no
-scenario here reads an exit status. A change to one fixed status costs one
-assertion in each of the three signal scenarios.
+code 0, and the signal ends each other listener, with no exit code. After
+`SIGINT`, each listener exits with code 0. `SIGHUP` ends each listener that
+has no reload, with no exit code. Reading taken: no scenario here reads an
+exit code. A change to one fixed code costs one assertion in each of the
+three signal scenarios.
 """
 
 from __future__ import annotations
