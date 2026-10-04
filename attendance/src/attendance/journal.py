@@ -232,7 +232,10 @@ def _write_all(fd: int, payload: bytes) -> None:
 def _parse_line(raw: bytes) -> JournalLine | None:
     try:
         parsed: object = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (ValueError, RecursionError):
+        # ValueError covers bad UTF-8, bad JSON and an integer past the
+        # interpreter's digit limit. Deep nesting raises RecursionError, and
+        # a journal older than `wire.MAX_EVENT_DEPTH` can hold such a line.
         return None
 
     record = as_object(parsed)
