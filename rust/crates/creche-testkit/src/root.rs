@@ -2,7 +2,7 @@
 
 use std::fs::{self, DirBuilder};
 use std::io;
-use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -21,7 +21,8 @@ static MADE: AtomicU64 = AtomicU64::new(0);
 ///
 /// The name holds the id of the process and a count, so two tests of one
 /// process and two test processes never share a directory. The value removes
-/// the directory and each file in it when it drops.
+/// the directory and each file in it when it drops. It also removes a
+/// directory that the test left with no mode bit for its owner.
 ///
 /// ```
 /// use creche_testkit::root::TempRoot;
@@ -78,7 +79,7 @@ impl TempRoot {
         match builder.create(&path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                fs::remove_dir_all(&path)?;
+                remove_tree(&path)?;
                 builder.create(&path)?;
             }
             Err(error) => return Err(error),
@@ -98,14 +99,52 @@ impl Drop for TempRoot {
     fn drop(&mut self) {
         // A test that removed the directory itself leaves nothing to remove,
         // and a drop has no caller to give an error to.
-        let _ = fs::remove_dir_all(&self.path);
+        let _ = remove_tree(&self.path);
+    }
+}
+
+/// Removes the tree at `path`.
+///
+/// The first try fails on a directory that its owner cannot list or cannot
+/// write. A test that sets such a mode and fails before it restores the mode
+/// leaves that tree. The function then opens each directory of the tree to
+/// its owner and tries one more time.
+fn remove_tree(path: &Path) -> io::Result<()> {
+    if fs::remove_dir_all(path).is_ok() {
+        return Ok(());
+    }
+
+    open_each_dir(path);
+
+    fs::remove_dir_all(path)
+}
+
+/// Sets the mode `0700` on the directory `root` and on each directory below
+/// it.
+///
+/// The function follows no symlink, so it changes no mode outside the tree.
+/// It skips a step that fails: the remove that follows gives the error.
+fn open_each_dir(root: &Path) {
+    let mut pending = vec![root.to_owned()];
+
+    while let Some(dir) = pending.pop() {
+        // `symlink_metadata` reads a symlink itself and not its target.
+        if !fs::symlink_metadata(&dir).is_ok_and(|metadata| metadata.is_dir()) {
+            continue;
+        }
+
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(OWNER_ONLY));
+
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+
+        pending.extend(entries.flatten().map(|entry| entry.path()));
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
     use super::*;
 
     /// The longest name of a directory, in bytes: the start, an id of a
@@ -180,6 +219,80 @@ mod tests {
             fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
             0o700
         );
+    }
+
+    /// Makes a directory at `path` that holds one file and one directory,
+    /// and then takes each bit of its mode away. The owner then cannot list
+    /// it and cannot remove what it holds.
+    fn closed_dir(path: &Path) {
+        fs::create_dir_all(path.join("inner")).unwrap();
+        fs::write(path.join("old.json"), b"{}").unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+    }
+
+    #[test]
+    fn a_leftover_tree_with_a_closed_directory_is_removed_first() {
+        let outer = TempRoot::new().unwrap();
+        let path = outer.path().join("leftover");
+        closed_dir(&path.join("closed"));
+
+        let root = TempRoot::at(path.clone()).unwrap();
+
+        assert_eq!(root.path(), path);
+        assert_eq!(fs::read_dir(&path).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_leftover_root_that_is_closed_itself_is_removed_first() {
+        let outer = TempRoot::new().unwrap();
+        let path = outer.path().join("leftover");
+        closed_dir(&path);
+
+        let root = TempRoot::at(path.clone()).unwrap();
+
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn the_drop_removes_a_tree_with_a_closed_directory() {
+        let root = TempRoot::new().unwrap();
+        let path = root.path().to_owned();
+        closed_dir(&path.join("faults").join("closed"));
+        drop(root);
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn the_second_try_changes_no_target_of_a_symlink() {
+        let outside = TempRoot::new().unwrap();
+        let target = outside.path().join("target");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("kept.json"), b"{}").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let root = TempRoot::new().unwrap();
+        let path = root.path().to_owned();
+        std::os::unix::fs::symlink(&target, path.join("link")).unwrap();
+        closed_dir(&path.join("closed"));
+        drop(root);
+
+        assert!(!path.exists());
+        assert!(target.join("kept.json").is_file());
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+            0o500
+        );
+    }
+
+    #[test]
+    fn a_leftover_file_with_the_same_name_is_an_error() {
+        let outer = TempRoot::new().unwrap();
+        let path = outer.path().join("leftover");
+        fs::write(&path, b"{}").unwrap();
+
+        assert!(TempRoot::at(path.clone()).is_err());
+        assert!(path.is_file());
     }
 
     #[test]
