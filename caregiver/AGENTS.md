@@ -47,7 +47,8 @@ host where something has gone wrong.
   same content: bytes that are not UTF-8, an integer past the digit limit
   and nesting past the limit of the parser.
 - A client maps each failure of its transport and of its answer to its own
-  error. Each step names that error and turns it into a fault.
+  error: `DriverError`, `LiteLLMError`, `SwitchError`. Each step names
+  that error in its handler.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
   the grant file, then `creds.json`, then the sandboxes. `test_delete.py`
   checks the order from inside the fake driver.
@@ -82,8 +83,8 @@ host where something has gone wrong.
 - A stop is checked between steps, never inside one.
 - A `planned` sandbox row is a create a kill cut short. `fail_planned`
   retires it at the top of every pass.
-- A sandbox row that does not read stays in the ledger file. No rewrite
-  removes it.
+- A sandbox row that does not read stays in the ledger file. A rewrite
+  removes it only when the JSON encoder cannot write it again.
 - An empty registry deletes no family.
 - `rotate` deletes the old key before it mints the new one. The token
   overlaps. The key does not.
