@@ -323,7 +323,7 @@ mod tests {
     const KEY: &str = "0123456789abcdef0123456789abcdef";
 
     /// The variables that `systemd/creche-noticeboard.service` gives the
-    /// daemon: the site file and the key file of `view.env`.
+    /// daemon: the site file and a key file that `view.env` names.
     fn unit_env() -> Vec<(&'static str, &'static str)> {
         vec![
             ("HOME", "/home/operator"),
@@ -331,7 +331,7 @@ mod tests {
             ("AGENT_LAN_ADDRESS", "192.0.2.10"),
             (
                 ACCESS_KEY_FILE,
-                "/srv/agents/state/rework/tokens/view-access.key",
+                "/srv/agents/state/rework/tokens/noticeboard.key",
             ),
         ]
     }
@@ -368,7 +368,7 @@ mod tests {
         assert_eq!(config.cookie_secure(), CookieSecure::On);
         assert!(matches!(
             config.access_key(),
-            AccessKey::File(path) if path.as_str().ends_with("view-access.key")
+            AccessKey::File(path) if path.as_str().ends_with("noticeboard.key")
         ));
     }
 
@@ -530,7 +530,7 @@ mod tests {
             (REGISTRY_DIR, "registry"),
             (SESSIOND_SOCKET, "sessiond.sock"),
             (SESSIOND_URL, "192.0.2.10:8350"),
-            (ACCESS_KEY_FILE, "view-access.key"),
+            (ACCESS_KEY_FILE, "noticeboard.key"),
             (BIND, "not a host"),
         ] {
             assert_eq!(
