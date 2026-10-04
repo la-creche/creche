@@ -136,7 +136,7 @@ class Tree:
         """Merges `branch`. The merge must stop at a conflict."""
         done = self._git("merge", "-q", branch)
         assert done.returncode == 1, done.stdout + done.stderr
-        assert "CONFLICT" in done.stdout, done.stdout + done.stderr
+        assert self.git("ls-files", "--unmerged"), "the merge stopped with no conflict"
 
     def write(self, name: str, body: str) -> None:
         path = self.root / name
