@@ -178,7 +178,8 @@ The console script is `handover`. The verify hook and the operator's
    kind. The input digest of a binary component covers those files and not
    `uv.lock`.
 8. Change a component's kind in its catalog row and in its manifest in one
-   commit.
+   commit. Discovery refuses a manifest whose kind is not the kind of its
+   row, with the code `catalog`.
 9. Release `handover` before the first manifest says `kind: binary`. An
    older executor or requester refuses that manifest.
 
@@ -280,9 +281,6 @@ that wants a refusal changes one field.
   move a binary component: `rust/Cargo.lock`, `rust/Cargo.toml` and
   `rust/rust-toolchain.toml`. A `rust/.cargo/config.toml` moves none
   (`catalog.py`).
-- The catalog row and the manifest each state the kind of a component. The
-  allocator reads the row and the executor reads the manifest. Only a test
-  holds the two equal (`tests/test_handover_bin_lock_files.py`).
 - Only a test of this repository holds a binary build to `--locked`. The
   executor does not check the flag (`tests/test_handover_bin_manifest.py`).
 - Contract 06 §8.2 names the code `editable` for a venv tree. A binary tree

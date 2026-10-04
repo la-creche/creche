@@ -150,6 +150,10 @@ def _check_against_catalog(found: FoundManifest) -> None:
         detail = f"{manifest.name} releases: {row.releases}, not {manifest.release}"
         raise Refusal(RefusalCode.CATALOG, found.subject, detail)
 
+    if manifest.kind is not row.kind:
+        detail = f"{manifest.name} is kind {row.kind}, not {manifest.kind}"
+        raise Refusal(RefusalCode.CATALOG, found.subject, detail)
+
 
 def read_one(root: Path, name: str) -> FoundManifest:
     """One component's `component.yaml`, at the path the catalog fixes.
