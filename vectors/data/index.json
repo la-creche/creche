@@ -75,6 +75,7 @@
   {"accepted":12,"entry":"caregiver.grants.write_grant_file","path":"chaperone/grants_write.json","raised":0,"refused":0,"surface":"grants.write","vectors":12},
   {"accepted":33,"entry":"chaperone.app.CallBody","path":"chaperone/call_body.json","raised":0,"refused":40,"surface":"chaperone.call_body","vectors":73},
   {"accepted":7,"entry":"chaperone.app.ApprovalBody","path":"chaperone/approval_body.json","raised":0,"refused":17,"surface":"chaperone.approval_body","vectors":24},
+  {"accepted":6,"entry":"chaperone.verbs.VERB_CATALOG","path":"chaperone/verb.json","raised":0,"refused":8,"surface":"chaperone.verb","vectors":14},
   {"accepted":53,"entry":"chaperone.family_audit.FamilyAudit.write","path":"chaperone/audit_line.json","raised":0,"refused":0,"surface":"chaperone.audit_line","vectors":53},
   {"accepted":16,"entry":"chaperone.app.create_app, a request with no bearer","path":"chaperone/unidentified_line.json","raised":0,"refused":0,"surface":"chaperone.unidentified_line","vectors":16},
   {"accepted":13,"entry":"chaperone.family_decisions.FAMILY_DENY_STATUS","path":"chaperone/reason.json","raised":0,"refused":12,"surface":"chaperone.reason","vectors":25},

@@ -32,7 +32,7 @@ release replaces that surface.
 | `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
 | `data/channel/` | the channel protocol: `parse`, `frame`, `build` |
-| `data/chaperone/` | the grant file and its writer, the call body, the approval body, the two logs, the reasons |
+| `data/chaperone/` | the grant file and its writer, the call body, the approval body, the two logs, the reasons, the verb catalog |
 | `data/status/` | the status document, one file per reader |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 

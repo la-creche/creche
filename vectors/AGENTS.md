@@ -39,7 +39,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/family_cases.py` | the written `family.yaml` inputs |
 | `surfaces/family_file.py` | `family_file` and `family_file.host` |
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
-| `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body` |
+| `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
 | `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
 

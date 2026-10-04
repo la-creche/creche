@@ -25,6 +25,7 @@ const APPROVAL_BODY: &str = "chaperone.approval_body";
 const AUDIT_LINE: &str = "chaperone.audit_line";
 const UNIDENTIFIED_LINE: &str = "chaperone.unidentified_line";
 const REASON: &str = "chaperone.reason";
+const VERB: &str = "chaperone.verb";
 
 /// Each type of this module and the surfaces that it implements.
 const TYPES: &[(&str, &[&str])] = &[
@@ -34,6 +35,7 @@ const TYPES: &[(&str, &[&str])] = &[
     ("AuditRecord", &[AUDIT_LINE]),
     ("UnidentifiedRecord", &[UNIDENTIFIED_LINE]),
     ("Reason", &[REASON]),
+    ("Verb", &[VERB]),
 ];
 
 /// The start of the name of each surface of this module. An id surface starts
@@ -79,6 +81,8 @@ enum Refusal {
     /// The document is not valid. The row holds each issue, as [`Issue`]
     /// shows it.
     Invalid(&'static [&'static str]),
+    /// The text is not a value of the closed set of the type.
+    NotInSet,
 }
 
 /// One decision to differ from the Python code on one vector.
@@ -176,6 +180,15 @@ const DEVIATIONS: &[Deviation] = &[
         rust: Refusal::Unreadable(JsonError::TooDeep),
         contract: "contract 04 §8.4",
         decision: NESTING_HAS_A_CAP,
+    },
+    Deviation {
+        surface: VERB,
+        vector: "invoke-agent",
+        rust: Refusal::NotInSet,
+        contract: "contract 01 §3.5, §3.6 and contract 04 §4.1",
+        decision: "`Verb` holds the five verbs that the `verbs` block of a grant file can \
+            name. The Python catalog holds one more entry, `invoke_agent`. A family file grants \
+            it through `delegates`, and `Executor::Delegate` stands for it.",
     },
 ];
 
@@ -1045,6 +1058,52 @@ fn a_reason_is_what_the_python_chaperone_answers_with() {
     assert_eq!(deviations_in(REASON), 0);
     assert_eq!(accepted, HashSet::from(Reason::ALL));
     println!("Reason: {} vectors: each one equal", surface.vectors.len());
+}
+
+#[test]
+fn a_verb_is_an_entry_of_the_python_catalog() {
+    let surface = vectors::surface(VERB);
+    let mut accepted = Vec::new();
+    let mut deviated = 0;
+    for vector in &surface.vectors {
+        let at = format!("{VERB} {}", vector.id);
+        let text = vector.input.text().unwrap();
+        let rust = text.parse::<VerbName>().ok().and_then(|name| name.verb());
+
+        // The two readers of a verb agree: the name of a grant file and the
+        // word on a wire.
+        assert_eq!(
+            serde_json::from_value::<Verb>(Json::from(text.as_str())).ok(),
+            rust,
+            "{at}"
+        );
+        if let Some(deviation) = deviation_of(VERB, &vector.id) {
+            assert_eq!(deviation.rust, Refusal::NotInSet, "{at}");
+            assert_eq!((vector.result, rust), (Outcome::Accepted, None), "{at}");
+            deviated += 1;
+
+            continue;
+        }
+
+        match (vector.result, rust) {
+            (Outcome::Accepted, Some(verb)) => {
+                assert_eq!(verb.as_str(), text, "{at}");
+                accepted.push(verb);
+            }
+            (Outcome::Refused | Outcome::Raised, None) => {}
+            (python, rust) => panic!("{at}: the Python code: {python:?}, the Rust code: {rust:?}"),
+        }
+    }
+
+    // The catalog holds each verb, in the order of `Verb::ALL`.
+    assert_eq!(surfaces_of("Verb"), [VERB]);
+    assert_eq!(deviated, deviations_in(VERB));
+    assert_eq!(accepted, Verb::ALL);
+    println!(
+        "Verb: {} vectors: {} equal, {deviated} deviations",
+        surface.vectors.len(),
+        surface.vectors.len() - deviated
+    );
 }
 
 /// Two id surfaces record what `chaperone.headers.read_claimed` keeps. The

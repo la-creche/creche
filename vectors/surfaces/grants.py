@@ -1,6 +1,7 @@
-"""The grant file and the two request bodies of the chaperone (contract 04).
+"""The grant file, the two request bodies of the chaperone and its verb
+catalog (contract 04).
 
-Four surfaces:
+Five surfaces:
 
 - `grants.parse`: the bytes of one grant file to `parse_grants`, the typed
   grants or the reason the family fails closed.
@@ -9,6 +10,8 @@ Four surfaces:
 - `chaperone.call_body`: the bytes of a `POST /call` body to `CallBody`.
 - `chaperone.approval_body`: the bytes of a `POST /approval/<gate>` body to
   `ApprovalBody`.
+- `chaperone.verb`: one text to an entry of the verb catalog, or to a
+  refusal when the catalog has no such entry.
 
 The two bodies are read the way the chaperone reads them: by FastAPI, as a
 JSON body parameter. The generator mounts the two model classes on an
@@ -29,6 +32,7 @@ from caregiver.grants import GrantFile as WrittenGrantFile
 from caregiver.grants import write_grant_file
 from chaperone.app import ApprovalBody, CallBody
 from chaperone.family_grants import FamilyGrants, parse_grants
+from chaperone.verbs import VERB_CATALOG
 from fastapi import FastAPI
 from pydantic import BaseModel, ValidationError
 from starlette.testclient import TestClient
@@ -46,6 +50,7 @@ from vectors.core import (
     raised,
     refused,
     repeat_input,
+    text_input,
 )
 
 CONTRACT: Final = "contract 04"
@@ -884,6 +889,47 @@ def _write_surface() -> Surface:
     )
 
 
+# --- the verb catalog ------------------------------------------------------------
+
+#: Texts that are not the name of an entry of the catalog, each with the id
+#: of its vector.
+NOT_VERBS: Final = (
+    ("unknown", "teleport"),
+    ("empty", ""),
+    ("upper-case", "Embed"),
+    ("hyphen", "ha-call"),
+    ("space-last", "embed "),
+    ("newline-last", "embed\n"),
+    ("tool-with-server", "kagi__kagi_search_fetch"),
+    ("manifest", "$manifest"),
+)
+
+
+def _verb_surface() -> Surface:
+    entries = tuple(accepted(name.replace("_", "-"), text_input(name)) for name in VERB_CATALOG)
+    others = tuple(
+        accepted(f"not-a-verb-{name}", text_input(text))
+        if text in VERB_CATALOG
+        else refused(f"not-a-verb-{name}", text_input(text))
+        for name, text in NOT_VERBS
+    )
+
+    return Surface(
+        name="chaperone.verb",
+        path="chaperone/verb.json",
+        entry="chaperone.verbs.VERB_CATALOG",
+        contract=f"{CONTRACT} §4.1",
+        notes=(
+            "The input is one text. An accepted vector is the name of an entry of the verb "
+            "catalog. A refused vector is a text that the catalog does not hold.",
+            "The surface holds each entry that the catalog holds, in the order of the catalog.",
+            "invoke_agent is an entry of the catalog. A family file grants it through "
+            "delegates, and not through verbs.",
+        ),
+        vectors=(*entries, *others),
+    )
+
+
 def surfaces() -> tuple[Surface, ...]:
     return (
         Surface(
@@ -914,4 +960,5 @@ def surfaces() -> tuple[Surface, ...]:
         _body_surface(
             "approval_body", "chaperone.app.ApprovalBody", "§8.4", APPROVAL_BODIES, _approval_reader
         ),
+        _verb_surface(),
     )
