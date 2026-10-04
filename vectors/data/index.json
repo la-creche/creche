@@ -78,6 +78,11 @@
   {"accepted":106,"entry":"noticeboard.statusdocs.read_family","path":"status/noticeboard.json","raised":0,"refused":8,"surface":"status.noticeboard","vectors":114},
   {"accepted":64,"entry":"agent_door_tui.status.StatusFiles.serving","path":"status/door_tui.json","raised":0,"refused":50,"surface":"status.door_tui","vectors":114},
   {"accepted":11,"entry":"agent_door_trigger.families.StatusFiles.servable","path":"status/door_trigger.json","raised":0,"refused":103,"surface":"status.door_trigger","vectors":114},
-  {"accepted":85,"entry":"agent_door_owui.families.StatusFiles.serving","path":"status/door_owui.json","raised":0,"refused":29,"surface":"status.door_owui","vectors":114}
+  {"accepted":85,"entry":"agent_door_owui.families.StatusFiles.serving","path":"status/door_owui.json","raised":0,"refused":29,"surface":"status.door_owui","vectors":114},
+  {"accepted":51,"entry":"caregiver.status.write_status","path":"status/write.json","raised":0,"refused":0,"surface":"status.write","vectors":51},
+  {"accepted":14,"entry":"attendance.faults.FaultReporter.raise_fault","path":"status/fault_file.attendance.json","raised":0,"refused":0,"surface":"status.fault_file.attendance","vectors":14},
+  {"accepted":6,"entry":"chaperone.faults.FaultWriter.raise_stale","path":"status/fault_file.chaperone.json","raised":0,"refused":1,"surface":"status.fault_file.chaperone","vectors":7},
+  {"accepted":41,"entry":"caregiver.faults.read_fault_file","path":"status/fault_file.caregiver.json","raised":0,"refused":14,"surface":"status.fault_file.caregiver","vectors":55},
+  {"accepted":42,"entry":"noticeboard.statusdocs.read_outcomes","path":"status/outcome.noticeboard.json","raised":0,"refused":8,"surface":"status.outcome.noticeboard","vectors":50}
  ]
 }

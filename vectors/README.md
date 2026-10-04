@@ -33,7 +33,7 @@ release replaces that surface.
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
 | `data/channel/` | the channel protocol: `parse`, `frame`, `build` |
 | `data/chaperone/` | the grant file, the call body, the approval body |
-| `data/status/` | the status document, one file per reader |
+| `data/status/` | the status document, one file per reader. The writer of the status document, the fault files and the outcome record |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 
 ## Regenerate
@@ -95,7 +95,7 @@ It ends with one newline. Each vector is on one line.
 | `refusal` | when the Python code gives a reason | the refusal code, or an object that holds the reason |
 | `issues`, `status` | on `family_file` | the validation report |
 | `http_status` | on the two body surfaces of `data/chaperone/` | the HTTP status of the answer. On a refused vector it is inside `refusal`. |
-| `output` | on `channel.build` | the exact bytes that the Python code writes, as an input form |
+| `output` | on `channel.build`, `status.write` and the two `status.fault_file` writers | the exact bytes that the Python code writes, as an input form |
 | `exception` | when `result` is `raised` | the name of the exception type |
 
 ### The three results
