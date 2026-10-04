@@ -9,9 +9,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agent_door_owui.errors import turn_failure
 from agent_door_owui.journal import parse_line
 from agent_door_owui.sse import SseWriter, ToolOutcome, tool_result_text
-from agent_door_owui.translate import TurnTranslator
+from agent_door_owui.translate import TurnTranslator, failure_frames
 
 TURN = "01JBQ7WZ0X4T9V6K2H8M3N5PQR"
 
@@ -77,6 +78,37 @@ def test_golden_stream_is_byte_identical() -> None:
         'data: {"choices":[],"type":"agent_settled","status":"done"}\n\n'
         "data: [DONE]\n\n"
     )
+
+
+_GOLDEN_FAILURE = (
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":0,'
+    '"model":"agent:dev/repo","choices":[{"index":0,"delta":{"content":"\\n\\n[error: '
+    'model_error]"},"finish_reason":null}]}\n\n'
+    'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":0,'
+    '"model":"agent:dev/repo","choices":[{"index":0,"delta":{},'
+    '"finish_reason":"stop"}]}\n\n'
+    'data: {"error":{"message":"the turn did not finish: model_error",'
+    '"type":"server_error","code":"model_error"}}\n\n'
+    'data: {"choices":[],"type":"agent_settled","status":"failed"}\n\n'
+    "data: [DONE]\n\n"
+)
+
+
+def test_golden_failure_is_byte_identical() -> None:
+    # A failure has five frames: the text that the chat shows, the stop
+    # chunk, the error, the settled marker and the end marker.
+    writer = SseWriter("chatcmpl-test", 0, "agent:dev/repo")
+
+    frames = failure_frames(writer, turn_failure("model_error"))
+
+    assert len(frames) == 5
+    assert "".join(frames) == _GOLDEN_FAILURE
+
+
+def test_a_failed_turn_ends_with_the_golden_failure() -> None:
+    out = _run([_line("turn_failed", {"reason": "model_error"})])
+
+    assert out == "".join(_translator().start()) + _GOLDEN_FAILURE
 
 
 def test_nothing_follows_the_terminal_frame() -> None:

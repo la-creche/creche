@@ -453,7 +453,7 @@ def _with_a_short_keepalive(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_a_refusal_after_the_first_frame_is_a_visible_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     # The status is sent with the first keepalive frame. A refusal that comes
     # later cannot be a status, so it must be a frame that the reader sees.
@@ -462,12 +462,16 @@ def test_a_refusal_after_the_first_frame_is_a_visible_error(
     fake.turn_error = AttendanceError("sandbox_unavailable", "family chat has no sandbox", 503)
     client = _client(tmp_path, fake)
 
-    with client.stream(
-        "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
-    ) as response:
+    with (
+        caplog.at_level(logging.WARNING),
+        client.stream(
+            "POST", "/v1/chat/completions", headers=_headers(), json=_body(stream=True)
+        ) as response,
+    ):
         assert response.status_code == 200
         out = "".join(response.iter_text())
 
+    assert "attendance refused the turn after the first frame" in caplog.text
     assert out.startswith(KEEPALIVE_FRAME)
     assert '"code":"sandbox_unavailable"' in out
     assert "no sandbox to run the turn on" in out
