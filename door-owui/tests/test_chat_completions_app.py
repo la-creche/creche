@@ -510,12 +510,10 @@ def test_a_late_refusal_of_the_branch_retry_is_a_visible_error(
     assert out.endswith("data: [DONE]\n\n")
 
 
-def test_a_refusal_before_the_first_frame_is_still_a_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The relay of this test is the relay of the two tests above. With no
-    # wait before the refusal, the door still answers a status and no stream.
-    _with_a_short_keepalive(monkeypatch)
+def test_a_refusal_before_the_first_frame_is_still_a_status(tmp_path: Path) -> None:
+    # The default keepalive time applies here. A short one can send its
+    # frame before the refusal on a busy machine, and the answer is then a
+    # stream. With no wait before the refusal, the door answers a status.
     fake = FakeAttendance()
     fake.turn_error = AttendanceError("sandbox_unavailable", "family chat has no sandbox", 503)
     client = _client(tmp_path, fake)
