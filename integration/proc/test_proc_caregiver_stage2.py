@@ -453,10 +453,10 @@ async def test_a_kill_between_publish_and_destroy_converges(
     untune(house.tree, SBX, "hold-rm")
 
     # The kill came after the publish and before the end of the destroy. The
-    # assertion holds the ids and no state. `caregiver` publishes no document
-    # between the answer of the switch call and the end of the destroy.
-    # Contract 05 §3.4 and §4.3 step 7 make the incoming sandbox `ready` at
-    # this moment, so a service that follows them shows other states here.
+    # assertion holds the ids and no state. Contract 05 §3.4 and §4.3 step 7
+    # make the incoming sandbox `ready` at this moment, and `caregiver`
+    # publishes that document before the destroy. A service that publishes
+    # it after the destroy shows other states here.
     assert [box for box, _ in house.sandboxes()] == [SANDBOX, NEXT_SANDBOX]
     assert list(sbx_sandboxes(house.tree)) == [SANDBOX, NEXT_SANDBOX]
 
