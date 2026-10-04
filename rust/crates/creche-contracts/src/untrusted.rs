@@ -1559,6 +1559,28 @@ mod tests {
         }
     }
 
+    /// The kind of the document comes first. A raw type that takes another
+    /// kind gets no document of that kind.
+    #[test]
+    fn a_document_of_another_kind_is_no_answer_for_a_raw_type_that_takes_it() {
+        assert_eq!(
+            parse_object::<Vec<i64>>(b"[1]"),
+            Err(NotAnObject::NotObject)
+        );
+        assert_eq!(
+            parse_object::<String>(br#""a""#),
+            Err(NotAnObject::NotObject)
+        );
+        assert_eq!(
+            parse_object::<Option<Part>>(b"null"),
+            Err(NotAnObject::NotObject)
+        );
+        assert_eq!(
+            parse_object::<Option<Part>>(br#"{"name":"a"}"#),
+            Ok(Some(part("a", 0)))
+        );
+    }
+
     /// What `json.loads` of Python reads and `serde_json` refuses. The rule
     /// holds in a member that the raw type does not read, too.
     #[test]
@@ -1720,6 +1742,174 @@ mod tests {
             reads_as_serde_json_reads::<serde_json::Value>(input);
             reads_as_serde_json_reads::<Wrapped>(input);
             reads_as_serde_json_reads::<Shape>(input);
+        }
+    }
+
+    /// A visitor that takes each kind of value. It gives the name of the
+    /// kind that it got.
+    struct TakesEach;
+
+    impl<'de> Visitor<'de> for TakesEach {
+        type Value = &'static str;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a value of each kind")
+        }
+
+        fn visit_unit<E>(self) -> Result<&'static str, E> {
+            Ok("null")
+        }
+
+        fn visit_bool<E>(self, _: bool) -> Result<&'static str, E> {
+            Ok("bool")
+        }
+
+        fn visit_i64<E>(self, _: i64) -> Result<&'static str, E> {
+            Ok("number")
+        }
+
+        fn visit_u64<E>(self, _: u64) -> Result<&'static str, E> {
+            Ok("number")
+        }
+
+        fn visit_f64<E>(self, _: f64) -> Result<&'static str, E> {
+            Ok("number")
+        }
+
+        fn visit_str<E>(self, _: &str) -> Result<&'static str, E> {
+            Ok("text")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<&'static str, A::Error> {
+            while seq.next_element::<de::IgnoredAny>()?.is_some() {}
+
+            Ok("list")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<&'static str, A::Error> {
+            while map
+                .next_entry::<de::IgnoredAny, de::IgnoredAny>()?
+                .is_some()
+            {}
+
+            Ok("object")
+        }
+    }
+
+    /// One request of a raw type, and the kinds that it takes.
+    type Request = (
+        &'static str,
+        fn(Json) -> Result<&'static str, Mismatch>,
+        &'static [&'static str],
+    );
+
+    const REQUESTS: &[Request] = &[
+        ("unit", |value| value.deserialize_unit(TakesEach), &["null"]),
+        (
+            "unit_struct",
+            |value| value.deserialize_unit_struct("", TakesEach),
+            &["null"],
+        ),
+        ("bool", |value| value.deserialize_bool(TakesEach), &["bool"]),
+        ("i8", |value| value.deserialize_i8(TakesEach), &["number"]),
+        ("i16", |value| value.deserialize_i16(TakesEach), &["number"]),
+        ("i32", |value| value.deserialize_i32(TakesEach), &["number"]),
+        ("i64", |value| value.deserialize_i64(TakesEach), &["number"]),
+        (
+            "i128",
+            |value| value.deserialize_i128(TakesEach),
+            &["number"],
+        ),
+        ("u8", |value| value.deserialize_u8(TakesEach), &["number"]),
+        ("u16", |value| value.deserialize_u16(TakesEach), &["number"]),
+        ("u32", |value| value.deserialize_u32(TakesEach), &["number"]),
+        ("u64", |value| value.deserialize_u64(TakesEach), &["number"]),
+        (
+            "u128",
+            |value| value.deserialize_u128(TakesEach),
+            &["number"],
+        ),
+        ("f32", |value| value.deserialize_f32(TakesEach), &["number"]),
+        ("f64", |value| value.deserialize_f64(TakesEach), &["number"]),
+        ("char", |value| value.deserialize_char(TakesEach), &["text"]),
+        ("str", |value| value.deserialize_str(TakesEach), &["text"]),
+        (
+            "string",
+            |value| value.deserialize_string(TakesEach),
+            &["text"],
+        ),
+        (
+            "identifier",
+            |value| value.deserialize_identifier(TakesEach),
+            &["text"],
+        ),
+        (
+            "bytes",
+            |value| value.deserialize_bytes(TakesEach),
+            &["text", "list"],
+        ),
+        (
+            "byte_buf",
+            |value| value.deserialize_byte_buf(TakesEach),
+            &["text", "list"],
+        ),
+        ("seq", |value| value.deserialize_seq(TakesEach), &["list"]),
+        (
+            "tuple",
+            |value| value.deserialize_tuple(1, TakesEach),
+            &["list"],
+        ),
+        (
+            "tuple_struct",
+            |value| value.deserialize_tuple_struct("", 1, TakesEach),
+            &["list"],
+        ),
+        ("map", |value| value.deserialize_map(TakesEach), &["object"]),
+        (
+            "struct",
+            |value| value.deserialize_struct("", &[], TakesEach),
+            &["object"],
+        ),
+        (
+            "any",
+            |value| value.deserialize_any(TakesEach),
+            &["null", "bool", "number", "text", "list", "object"],
+        ),
+    ];
+
+    /// One JSON text of each kind, with the name of the kind.
+    const KINDS: &[(&str, &str)] = &[
+        ("null", "null"),
+        ("true", "bool"),
+        ("7", "number"),
+        ("-3", "number"),
+        ("18446744073709551615", "number"),
+        ("1.5", "number"),
+        (r#""a""#, "text"),
+        ("[]", "list"),
+        ("[1]", "list"),
+        ("{}", "object"),
+        (r#"{"a":1}"#, "object"),
+    ];
+
+    /// A visitor gets a value only of a kind that its request takes, also
+    /// when the visitor itself takes each kind.
+    #[test]
+    fn each_request_of_a_raw_type_takes_its_kinds_and_no_other_kind() {
+        for (request, ask, taken) in REQUESTS {
+            for (input, kind) in KINDS {
+                let wanted = if taken.contains(kind) {
+                    Ok(*kind)
+                } else {
+                    Err(Mismatch)
+                };
+
+                assert_eq!(
+                    ask(tree(input)),
+                    wanted,
+                    "{input} for a request of {request}"
+                );
+            }
         }
     }
 
