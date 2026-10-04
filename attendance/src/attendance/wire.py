@@ -13,6 +13,7 @@ also splits on U+2028 and U+2029, which are legal inside a JSON string
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -926,10 +927,17 @@ def _optional_count(value: object) -> int | None:
 
 
 def _money(value: object) -> float:
+    """A cost from the sandbox, or 0.0 for a value that is no cost.
+
+    NaN is not below zero, so the range check alone lets it pass. A cost
+    that is not finite has no JSON text, and an answer cannot hold it.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return 0.0
 
-    return float(value)
+    cost = float(value)
+
+    return cost if math.isfinite(cost) else 0.0
 
 
 def _str_list(value: object) -> list[str]:

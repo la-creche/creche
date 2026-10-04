@@ -1751,10 +1751,16 @@ pub(super) mod tests {
         );
         assert_eq!(cost(&format!("-1{}", "0".repeat(309))), Ok(0.0));
         assert_eq!(cost("9007199254740993"), Ok(9_007_199_254_740_992.0));
-        assert_eq!(cost("1e999"), Ok(f64::INFINITY));
-        assert_eq!(cost("-1e999"), Ok(0.0));
         assert_eq!(cost("-0.0").map(f64::to_bits), Ok((-0.0_f64).to_bits()));
-        assert!(cost("NaN").unwrap().is_nan());
+
+        // A cost that is not finite is no cost.
+        for not_finite in ["1e999", "-1e999", "NaN", "Infinity", "-Infinity"] {
+            assert_eq!(
+                cost(not_finite).map(f64::to_bits),
+                Ok(0.0_f64.to_bits()),
+                "{not_finite}"
+            );
+        }
     }
 
     #[test]

@@ -820,13 +820,12 @@ Rules for the test:
      for a number. The type takes two numbers of 1 to 9 ASCII digits.
 - The host side of `channel` accepts what the Python host accepts, also
   where a stricter reading of contract 03 is possible. The owner decides each
-  case. Five examples:
+  case. Four examples:
   1. A session id and a turn id of a line can be each text.
      `TurnAddress` is the check that follows.
   2. `turn_seq` and each count can be an integer past 64 bits.
-  3. `cost_usd` can be `NaN` or `Infinity`.
-  4. A text outside an event can hold a lone surrogate.
-  5. `turn_failed` with no session, no turn and the `turn_seq` 0 is
+  3. A text outside an event can hold a lone surrogate.
+  4. `turn_failed` with no session, no turn and the `turn_seq` 0 is
      `malformed`. Contract 03 §5.1 permits that line.
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of

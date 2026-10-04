@@ -333,6 +333,20 @@ def test_usage_from_the_playpen_is_read_defensively() -> None:
     assert usage.cache_read == 0
 
 
+@pytest.mark.parametrize("cost", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"])
+def test_a_cost_that_is_not_finite_reads_as_no_cost(cost: str) -> None:
+    """A JSON answer and a strict journal reader hold a finite number only."""
+    settled = parse(
+        f'{{"type":"turn_settled","session":"{SESSION}","turn":"{TURN}","turn_seq":1,'
+        f'"usage":{{"input":7,"cost_usd":{cost}}}}}'
+    )
+
+    assert isinstance(settled, SettledLine)
+    assert settled.usage.input == 7
+    assert settled.usage.cost_usd == 0.0
+    assert json.dumps(settled.usage.to_api(), allow_nan=False)
+
+
 def test_every_playpen_reason_maps_to_a_turn_reason() -> None:
     """Contract 03 §5.3. The host never forwards a reason verbatim."""
     mapped = {reason: host_reason(reason) for reason in PlaypenReason}
