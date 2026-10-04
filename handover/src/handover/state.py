@@ -139,7 +139,11 @@ def _read_provided(value: Any, subject: str) -> dict[ContractId, tuple[int, int]
         if matched is None:
             raise _refuse(subject, f"'provided.{contract}' must be MAJOR.MINOR")
 
-        provided[contract] = (int(matched.group(1)), int(matched.group(2)))
+        # Python reads no text of more than 4300 digits as an integer.
+        try:
+            provided[contract] = (int(matched.group(1)), int(matched.group(2)))
+        except ValueError:
+            raise _refuse(subject, f"'provided.{contract}' must be MAJOR.MINOR") from None
 
     return provided
 
@@ -180,12 +184,17 @@ def _read_facts(value: Any, subject: str) -> dict[str, SourceFacts]:
 
 def parse_state(text: str, subject: str) -> ReleaseState:
     """Parse one live-state document. Every key is optional and defaults empty."""
-    if len(text.encode("utf-8")) > MAX_STATE_BYTES:
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise _refuse(subject, "is not UTF-8") from None
+
+    if size > MAX_STATE_BYTES:
         raise _refuse(subject, f"larger than {MAX_STATE_BYTES} bytes")
 
     try:
         loaded: Any = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         raise _refuse(subject, "does not parse as JSON") from None
 
     body = _as_mapping(loaded, subject, "<top level>")
