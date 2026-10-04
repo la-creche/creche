@@ -9,7 +9,12 @@ It also holds `--shard K/N`, which CI's gate uses to run the one suite on N
 machines at once (.github/workflows/gate.yml).
 
 It also drops the variables that point a `git` child at the repository of
-the caller, when pytest imports this file.
+the caller, when pytest imports this file. At the same time it gives each
+`git` child an empty global config file, no config file of the system, and
+no ignore file and no attributes file of a person.
+
+A run that starts with a signal ignored, from a background job or under
+`nohup`, passes the same tests and keeps that signal ignored.
 """
 
 from __future__ import annotations
@@ -49,10 +54,46 @@ def _drop_git_env() -> None:
         os.environ.pop(name, None)
 
 
+#: What gives a `git` child an empty file in place of the global config file,
+#: and no config file of the system. The global file is the one of the person
+#: who runs the suite, in the home directory or in the variable.
+#:
+#: `git` also reads an ignore file and an attributes file from the config
+#: directory of that person, and an attributes file of the system. No
+#: variable names another place for the first two, so the two pairs give each
+#: setting the empty file. A pair outranks the config of a repository: a
+#: fixture that needs one of the two settings passes it with `git -c`.
+GIT_NO_CONFIG = {
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_ATTR_NOSYSTEM": "1",
+    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_KEY_0": "core.excludesFile",
+    "GIT_CONFIG_VALUE_0": os.devnull,
+    "GIT_CONFIG_KEY_1": "core.attributesFile",
+    "GIT_CONFIG_VALUE_1": os.devnull,
+}
+
+
+def _drop_git_config() -> None:
+    """Keep the config file of a person and of the system from each `git` child.
+
+    Some fixtures run `git` in a throwaway repository with the environment
+    they inherit. `git` then reads the global config file of the person who
+    runs the suite. One setting there, `core.fsmonitor`, starts a program for
+    each repository. Other settings change what a test sees. The ignore file
+    of that person can keep a file of a fixture out of `git add -A`.
+    bin/tests/test_git_config_dropped.py holds the proof.
+    """
+    os.environ.update(GIT_NO_CONFIG)
+
+
 # At import and not in a hook. pytest imports this file before it imports a
 # test module or a conftest.py below it, and before xdist starts a worker.
-# So no module, no fixture and no test ever sees one of the variables.
+# So no module, no fixture and no test ever sees one of the variables, and
+# each one runs `git` with no config file of a person.
 _drop_git_env()
+_drop_git_config()
 
 #: Every signal this platform names. Linux's unnamed real-time signals are
 #: left out: no test here touches them.
@@ -64,6 +105,19 @@ def _dispositions() -> dict[signal.Signals, object]:
     return {one: signal.getsignal(one) for one in NAMED}
 
 
+def _loop_writes(one: signal.Signals) -> object:
+    """What asyncio writes for a signal when a loop stops taking it.
+
+    A loop keeps no record of how the process took the signal before. It
+    writes the default handler of Python for SIGINT, and the default action
+    for each other signal.
+    """
+    if one is signal.SIGINT:
+        return signal.default_int_handler
+
+    return signal.SIG_DFL
+
+
 @pytest.fixture(autouse=True)
 def _signals_kept() -> Iterator[None]:
     """Fail a test that leaves a signal disposition changed, and put it back.
@@ -73,6 +127,16 @@ def _signals_kept() -> Iterator[None]:
     write to a closed socket killed the whole worker. xdist then blamed
     whichever release test it was running: "worker 'gw6' crashed while
     running ...".
+
+    One change is not a fault of the test. A shell with no job control starts
+    a background job with SIGINT ignored, and `nohup` starts a command with
+    SIGHUP ignored. A service that runs in the test process takes signals in
+    its asyncio loop, and that loop cannot ignore a signal again when it
+    closes. For a signal that the run ignored before the test, this fixture
+    ignores the signal again and does not fail the test for the value that a
+    loop writes. A run that starts with the default has that same value
+    before the test, so this run judges the test as that run does.
+    bin/tests/test_ignored_signal_kept.py holds the proof.
     """
     before = _dispositions()
 
@@ -92,7 +156,15 @@ def _signals_kept() -> Iterator[None]:
 
         signal.signal(one, previous)  # pyright: ignore[reportArgumentType]
 
-    names = ", ".join(one.name for one in changed)
+    faults = [
+        one
+        for one in changed
+        if not (before[one] is signal.SIG_IGN and after[one] is _loop_writes(one))
+    ]
+    if not faults:
+        return
+
+    names = ", ".join(one.name for one in faults)
     pytest.fail(f"the test left {names} changed. Restore every signal handler a test sets.")
 
 

@@ -16,11 +16,13 @@
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
 
 # Resolve the repo root from the worktree git is actually operating on, not
-# from this script's own location. core.hooksPath in this repo is an
-# ABSOLUTE path, so $0 always points at the primary checkout's githooks/ —
-# deriving ROOT from dirname($0) would silently run every worktree's quality
-# gate against the primary checkout's files instead of the worktree's own,
-# so a worktree commit would pass or fail on the wrong copy of a file.
+# from this script's own location. The setup step writes a RELATIVE
+# core.hooksPath (AGENTS.md), and git then runs the copy of this hook in the
+# worktree that commits. A clone can hold an ABSOLUTE path instead. Then $0
+# always points at the primary checkout's githooks/, and deriving ROOT from
+# dirname($0) would silently run every worktree's quality gate against the
+# primary checkout's files instead of the worktree's own, so a worktree
+# commit would pass or fail on the wrong copy of a file.
 # githooks(5) guarantees a non-push hook's CWD is the root of the
 # working tree performing the operation, and the GIT_* vars that would
 # confuse that are already unset above, so `git rev-parse --show-toplevel`
