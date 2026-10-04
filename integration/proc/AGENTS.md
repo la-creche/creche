@@ -378,6 +378,36 @@ failure. Work down this list.
   no probe of LiteLLM shows that it takes the second one. The LiteLLM
   stand-in refuses it. A change costs one check in `standin_litellm.py` and
   its test.
+- **CONTRACT-QUESTION, a failed create and its id.** Contract 05 §4.3, last
+  paragraph, and §10 row 7 leave the choice to the reconciler. The suite
+  holds the choice of `caregiver/AGENTS.md`: a failed create burns its id. A
+  change costs one id in `test_a_failed_create_burns_its_id`.
+- **CONTRACT-QUESTION, the value of `config_rev`.** Contract 01 §6.1 gives
+  the config mount a revision counter of its own. No contract says which
+  value the counter holds. The suite holds that `config_rev` equals
+  `applied_rev` in the first document of a family. A change costs one term
+  of one assertion in `test_proc_caregiver_files.py`.
+- **CONTRACT-QUESTION, a stop inside a step.** No contract says what a stop
+  inside `sbx create` leaves. The suite holds what the unit file and
+  `caregiver/AGENTS.md` say:
+  - the step ends whole
+  - the exit code is 0
+  - the document stays `reconciling`, and the sandbox stays `creating`
+  - the next start keeps that sandbox
+
+  A change costs the assertions after the signal in one scenario of
+  `test_proc_caregiver_start.py`.
+- **CONTRACT-QUESTION, `blocks_turns` of `sandbox_start_failed`.** The table
+  of contract 05 §3.3 fixes `yes` for that code. Contract 05 §5.3 rule 8
+  says that the family keeps serving after a refused switch. The suite holds
+  `false` for the fault of an incoming sandbox while another sandbox serves.
+  `integration/tests` holds the same. A change costs one assertion in
+  `test_proc_caregiver_stage2.py`, and the turn after that assertion then
+  fails.
+- **CONTRACT-QUESTION, a registry with no family.** No contract says what
+  it means. The suite holds the rule of `caregiver/AGENTS.md`: an empty
+  registry deletes no family. A change costs one scenario in
+  `test_proc_caregiver_files.py`.
 - **The document between a switch and the end of a destroy.** `caregiver`
   publishes no document between the answer of the switch call and the end
   of the destroy. Contract 05 §3.4 publishes the block before each step, and

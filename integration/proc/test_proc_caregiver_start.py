@@ -196,6 +196,13 @@ def test_a_stop_during_a_create_ends_the_step_and_starts_no_other(
     assert house.caregiver is not None
     wait_until(lambda: house.sbx_commands() != [], "the create to start")
 
+    # CONTRACT-QUESTION: no contract says what a stop inside a step leaves.
+    # Contract 05 §4.2 rule 5 retires only a `planned` row at a start.
+    # Reading taken: what the unit file and `caregiver/AGENTS.md` say. The
+    # step in flight ends whole, the service exits 0, the document stays
+    # `reconciling` with the sandbox `creating`, and the next start keeps
+    # that sandbox. A service that ends the step at once costs each
+    # assertion after the signal.
     house.caregiver.send(signal.SIGTERM)
     time.sleep(QUIET_S)
     assert house.caregiver.exit_code() is None, "the stop cut the create in flight"

@@ -332,6 +332,13 @@ async def test_a_switch_that_cannot_complete_keeps_serving(
     # the incoming sandbox, and the outgoing one answers each turn.
     fault = _one_fault(_status(house), "sandbox_start_failed")
     assert fault["sandbox"] == NEXT_SANDBOX
+    # CONTRACT-QUESTION: the table of contract 05 §3.3 fixes `blocks_turns` as
+    # yes for this code. §5.3 rule 8 says that the family keeps serving on
+    # the outgoing sandbox, and `attendance` refuses each turn of a family
+    # with a fault that blocks turns. Reading taken: the fault of an incoming
+    # sandbox blocks no turn while another sandbox serves. The old suite
+    # holds the same. A service that follows the table costs this assertion,
+    # and it then fails the turn below.
     assert fault["blocks_turns"] is False
 
     assert (await run_stream(house_door, chat, "two")).error_chunks == []

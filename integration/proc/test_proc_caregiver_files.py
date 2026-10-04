@@ -174,6 +174,11 @@ def test_the_status_document_holds_each_field(caregiver_alone: CaregiverStack) -
     assert _mode(tree.status_file()) == STATUS_MODE
     assert (document["family"], document["kind"]) == (FAMILY, "attended")
     assert RFC3339.fullmatch(document["written_at"])
+    # CONTRACT-QUESTION: contract 01 §6.1 gives the config mount one revision
+    # counter of its own, and no contract says which value it holds. Reading
+    # taken: at `in_sync` it holds the registry revision, in the form that
+    # the document of contract 05 §9 shows. A service with another counter
+    # costs the last term of this assertion.
     assert document["registry_rev"] == document["applied_rev"] == document["config_rev"]
     assert document["faults"] == []
     assert document["reconcile"] is None
@@ -525,6 +530,11 @@ def test_an_empty_registry_deletes_no_family(caregiver_alone: CaregiverStack) ->
     body = family_body()
     instructions = tree.mounts().config / "instructions.md"
 
+    # CONTRACT-QUESTION: contract 05 §4.4 gives the order of a family
+    # deletion, and no contract says what a registry with no family means.
+    # Reading taken: the rule of `caregiver/AGENTS.md`, that it deletes no
+    # family. A wrong delete ends each key and each sandbox of the host. A
+    # service that deletes costs each assertion of this scenario.
     remove_family(tree, FAMILY)
     time.sleep(QUIET_S)
     publish_family(tree, body, NEW_INSTRUCTIONS)
@@ -556,7 +566,7 @@ def test_a_refused_mint_is_a_fault_and_makes_no_sandbox(caregiver_prepared: Care
 
 
 def test_a_failed_create_burns_its_id(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 05 §4.1: an id is never used again.
+    """Contract 05 §4.3, last paragraph, and §10 row 7. The next attempt has the next id.
 
     `sbx create` fails, so the family has a fault that stops turns and no
     sandbox. An edit of the registry makes `caregiver` try again at once, and
@@ -573,6 +583,11 @@ def test_a_failed_create_burns_its_id(caregiver_prepared: CaregiverStack) -> Non
 
     untune(stack.tree, SBX, "fail-create")
     write_family_prose(stack.tree, text=NEW_INSTRUCTIONS)
+    # CONTRACT-QUESTION: contract 05 §4.3, last paragraph, and §10 row 7 leave
+    # to the reconciler whether a failed create burns its id. Reading taken:
+    # it does, as `caregiver/AGENTS.md` says. Then no id names two attempts,
+    # and §4.1 holds with no exception. A service that tries the same id
+    # again costs the id in the wait and in the assertion below.
     wait_until(
         lambda: stack.state() == IN_SYNC and stack.sandboxes() == [(NEXT_SANDBOX, CREATING)],
         f"{NEXT_SANDBOX} after the failed {SANDBOX}",
