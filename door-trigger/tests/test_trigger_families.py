@@ -9,6 +9,9 @@ from typing import Any
 
 from agent_door_trigger.families import StatusFiles
 
+# More levels than the JSON parser of each supported Python reads.
+_TOO_DEEP = 100_000
+
 
 def _write_status(root: Path, family: str, **fields: Any) -> None:
     directory = root / family
@@ -88,5 +91,25 @@ def test_a_missing_root_is_an_empty_set(tmp_path: Path) -> None:
 def test_an_oversized_status_document_is_ignored(tmp_path: Path) -> None:
     _write_status(tmp_path, "scrum-lead")
     _write_status(tmp_path, "huge", labels={"pad": "x" * 300_000})
+
+    assert StatusFiles(tmp_path).servable() == frozenset({"scrum-lead"})
+
+
+def test_a_document_that_is_not_utf8_is_ignored(tmp_path: Path) -> None:
+    _write_status(tmp_path, "scrum-lead")
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "status.json").write_bytes(b'{"kind":"autonomous\xff"}')
+
+    assert StatusFiles(tmp_path).servable() == frozenset({"scrum-lead"})
+
+
+def test_a_document_that_nests_too_deep_is_ignored(tmp_path: Path) -> None:
+    # The file is under the size cap, so the reader parses it.
+    _write_status(tmp_path, "scrum-lead")
+    other = tmp_path / "other"
+    other.mkdir()
+    text = '{"kind":"autonomous","x":' + "[" * _TOO_DEEP + "]" * _TOO_DEEP + "}"
+    (other / "status.json").write_text(text, encoding="utf-8")
 
     assert StatusFiles(tmp_path).servable() == frozenset({"scrum-lead"})

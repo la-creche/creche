@@ -18,6 +18,9 @@ from agent_door_tui.status import StatusFiles
 FAMILY = "chat"
 ENV_PATH = "/srv/agents/state/rework/families/chat/supervisor.env"
 
+# More levels than the JSON parser of each supported Python reads.
+TOO_DEEP = 100_000
+
 
 def write_status(root: Path, **overrides: Any) -> Path:
     """One status document, as contract 05 §2 shapes it."""
@@ -179,6 +182,32 @@ def test_a_document_that_is_not_json_refuses(tmp_path: Path) -> None:
         read(tmp_path)
 
     assert caught.value.code is Exit.NO_SANDBOX
+
+
+def test_a_document_that_is_not_utf8_refuses(tmp_path: Path) -> None:
+    path = write_status(tmp_path)
+    path.write_bytes(b'{"kind":"attended\xff"}')
+
+    with pytest.raises(DoorError) as caught:
+        read(tmp_path)
+
+    assert caught.value.code is Exit.NO_SANDBOX
+    assert "no readable status document" in caught.value.message
+    assert StatusFiles(tmp_path).attended() == []
+
+
+def test_a_document_that_nests_too_deep_refuses(tmp_path: Path) -> None:
+    """The file is under the size cap, so the reader parses it."""
+    path = write_status(tmp_path)
+    text = '{"kind":"attended","x":' + "[" * TOO_DEEP + "]" * TOO_DEEP + "}"
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(DoorError) as caught:
+        read(tmp_path)
+
+    assert caught.value.code is Exit.NO_SANDBOX
+    assert "no readable status document" in caught.value.message
+    assert StatusFiles(tmp_path).attended() == []
 
 
 def test_a_huge_document_is_refused_unread(tmp_path: Path) -> None:
