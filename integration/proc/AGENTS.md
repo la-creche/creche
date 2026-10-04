@@ -416,9 +416,9 @@ the text of the failure. Work down this list.
   costs one assertion in that file.
 - **CONTRACT-QUESTION, the exit codes of `caregiver`.** No contract names
   one. `caregiver/AGENTS.md` gives three codes: 0, 1 and 2. The suite holds
-  those three where `caregiver` selects one. `caregiver` ends with no code
-  of its own in two cases: a start with no `LITELLM_MASTER_KEY`, and a
-  `delete` that fails. There the suite accepts each code that is not 0. A
+  those three where `caregiver` selects one. Two cases are different: a
+  start with no `LITELLM_MASTER_KEY`, and a `delete` that fails. `caregiver`
+  ends with code 1 there, and the suite accepts each code that is not 0. A
   change costs one assertion in each scenario of
   `test_proc_caregiver_start.py`.
 - **No flag for the session store in `caregiver`.** `SESSIONS_ROOT` in
@@ -482,12 +482,11 @@ the text of the failure. Work down this list.
   it means. The suite holds the rule of `caregiver/AGENTS.md`: an empty
   registry deletes no family. A change costs one scenario in
   `test_proc_caregiver_files.py`.
-- **The document between a switch and the end of a destroy.** `caregiver`
-  publishes no document between the answer of the switch call and the end
-  of the destroy. Contract 05 §3.4 publishes the block before each step, and
-  §4.3 step 7 sets `ready` after the handshake. The kill scenario of
-  `test_proc_caregiver_stage2.py` holds the ids of the two sandboxes at that
-  moment, and it holds no state.
+- **The document between a switch and the end of a destroy.** Contract 05
+  §3.4 publishes the block before each step, and §4.3 step 7 sets `ready`
+  after the handshake. `caregiver` publishes that document before the
+  destroy. The kill scenario of `test_proc_caregiver_stage2.py` holds the
+  ids of the two sandboxes at that moment, and it holds no state.
 - **One process table for each sandbox of a test.** A sandbox on the host
   is a microVM with a process table of its own. A test has no microVM, so
   each playpen of the machine is in one table. On Linux the playpen counts
@@ -501,9 +500,8 @@ the text of the failure. Work down this list.
   scenario here.
 - **The epoch after `rotate`.** Contract 05 §6.3 step 3 publishes the new
   epoch in the status document. The `rotate` verb writes the credential
-  file and the grant file. `caregiver serve` publishes the epoch at its
-  next pass, 20 seconds later at most. The scenario of `rotate` does not
-  wait for that pass.
+  file, the grant file and the credentials block of the document. The
+  scenario of `rotate` does not read the document.
 - **The two seams of `integration/tests_manager` with a bridge are not
   here.** `test_bridge_to_chaperone.py` and `test_cp_approval_to_chaperone.py`
   need stand-ins that do not exist: the embedding service, Home Assistant

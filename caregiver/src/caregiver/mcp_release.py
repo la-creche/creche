@@ -133,6 +133,20 @@ ROSTER_FILE: Final = RELEASE_ROOT / ROSTER_NAME
 #: spend the manager.
 MAX_ROSTER_BYTES: Final = 1024 * 1024
 
+#: The longest chain of merge keys that the roster reader follows, and the
+#: most pairs that the merge keys of one roster copy.
+#:
+#: CONTRACT-QUESTION: `stage7-releases.md` §4.4 gives no limit for a merge
+#: key in the roster, and PyYAML has none. A merge key copies the pairs of
+#: its value, so a short text can make the reader use much memory and
+#: time. The reading here is two limits, and a roster past one of them does
+#: not read. The numbers are those of the Rust reader of a component
+#: manifest (`rust/crates/creche-contracts/src/manifest/yaml.rs`). The
+#: writer of the roster makes no merge key, so its file copies no pair. A
+#: larger limit costs memory and time in each look.
+MERGE_DEPTH_MAX: Final = 128
+MERGE_PAIRS_MAX: Final = 65_536
+
 #: How long an un-ledgered request that is GONE from `requests/` holds the
 #: next one back. Past it, the reconciler asks again: root took the first
 #: and never answered (a crash between `running/` and the ledger), so a
@@ -370,19 +384,79 @@ def served_servers(paths: McpPaths) -> tuple[str, ...]:
         if len(raw) > MAX_ROSTER_BYTES:
             return ()
 
-        loaded: Any = yaml.safe_load(raw.decode("utf-8"))
+        loaded: Any = _load_roster(raw.decode("utf-8"))
     except (OSError, ValueError, yaml.YAMLError, RecursionError):
         # ValueError covers bytes that are not UTF-8 and an integer past
         # the digit limit of the interpreter. Nesting past the limit of
-        # the reader raises RecursionError.
+        # the reader raises RecursionError. A merge key past a bound
+        # raises a YAML error.
         return ()
 
     if not isinstance(loaded, dict):
         return ()
 
     names = cast("dict[object, object]", loaded)
+    try:
+        return tuple(sorted(str(name) for name in names))
+    except ValueError:
+        # A name is an integer past the digit limit of the interpreter.
+        # The reader makes such an integer from a scalar in base 16.
+        return ()
 
-    return tuple(sorted(str(name) for name in names))
+
+class _RosterLoader(yaml.SafeLoader):
+    """The safe loader of PyYAML, with the two bounds on merge keys.
+
+    `flatten_mapping` puts the pairs of each `<<` value into its mapping.
+    It calls itself for a `<<` value, and its caller then copies the pairs
+    of that value. This class counts the levels of those calls and the
+    pairs before each copy, so the loader stops before the copy that
+    passes a bound. An alias with no merge key copies nothing: each node
+    has one value.
+
+    A `<<` value with no pair counts as one pair. The Rust reader of a
+    component manifest counts no pair for it."""
+
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self._merge_depth = 0
+        self._merged_pairs = 0
+
+    def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        if self._merge_depth > MERGE_DEPTH_MAX:
+            raise _merge_refusal("the merge keys nest too deep", node)
+
+        self._merge_depth += 1
+        try:
+            super().flatten_mapping(node)
+        finally:
+            self._merge_depth -= 1
+
+        if self._merge_depth == 0:
+            return
+
+        # The caller is the `<<` key of another mapping. It copies these
+        # pairs next.
+        self._merged_pairs += max(1, len(node.value))
+        if self._merged_pairs > MERGE_PAIRS_MAX:
+            raise _merge_refusal("the merge keys copy too many pairs", node)
+
+
+def _merge_refusal(problem: str, node: yaml.MappingNode) -> yaml.YAMLError:
+    return yaml.constructor.ConstructorError(None, None, problem, node.start_mark)
+
+
+def _load_roster(text: str) -> Any:
+    """The value of the one document of `text`, as `yaml.safe_load` gives
+    it. Raises a YAML error for a document past a merge bound."""
+    loader = _RosterLoader(text)
+    try:
+        # The loader makes the node graph first. An alias shares the node
+        # of its anchor, so that step costs no more than the text. The
+        # bounds apply to the step after it, which makes the value.
+        return loader.get_single_data()
+    finally:
+        loader.dispose()
 
 
 def stale_servers(paths: McpPaths, declared: tuple[str, ...]) -> tuple[str, ...]:
