@@ -367,3 +367,11 @@ that wants a refusal changes one field.
 - A run that ends as a crash does keeps `work/<id>`, and no later run
   removes it. A binary build leaves its `target` directory there
   (`executor/steps.py`).
+- `stage7-releases.md` §2.4 row 8 names no rule for the set-user-ID bit, the
+  set-group-ID bit and the sticky bit of a staged file. The mode pass drops
+  the three bits (`executor/install.py`).
+- Contract 06 §1 rule 8 names no size for a unit file. A unit file longer
+  than 64 KiB stops the stage, for each kind (`executor/install.py`).
+- Contract 06 §8.2 names no rule for a staged venv tree that is a link. The
+  walk reports the link as a fault with the code `editable`
+  (`executor/selfcontained.py`).

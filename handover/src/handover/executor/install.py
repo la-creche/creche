@@ -212,6 +212,11 @@ OWNER_EXECUTE_BIT: Final = 0o100
 #: What no file of a staged tree keeps: the set-user-ID bit, the
 #: set-group-ID bit, the sticky bit, and write for its group and for
 #: everyone. A build can leave each one, and root installs the tree.
+#:
+#: CONTRACT-QUESTION: `stage7-releases.md` §2.4 row 8 says who reads and who
+#: writes a staged tree. It names no rule for the three special bits. The
+#: reading taken drops them. A component that needs such a bit on a file
+#: cannot have it, and a change costs this constant.
 FILE_DROPPED_BITS: Final = stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX | stat.S_IWGRP | stat.S_IWOTH
 
 #: The setting that says what a unit starts, and the one prefix of it that
@@ -231,6 +236,11 @@ EXEC_PREFIXES: Final = "@-:+!"
 
 #: The most of a unit file that is read. A unit is a few hundred bytes, and
 #: root reads this one off disk as a file some other installer wrote.
+#:
+#: CONTRACT-QUESTION: contract 06 §1 rule 8 names no size for a unit file.
+#: The reading taken stops the stage for a longer file, for each kind: a
+#: reader that judges a part of a file passes each line after that part. A
+#: larger cap costs this constant.
 MAX_UNIT_BYTES: Final = 64 * 1024
 
 #: Rule 8: the most siblings one component may have. `attendance` has three.
