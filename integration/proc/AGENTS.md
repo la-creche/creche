@@ -606,6 +606,11 @@ the text of the failure. Work down this list.
 - **The names that the suite reads in the markup.** The suite finds a table
   by its class, and a cell by the text of its column head. It finds a report
   by the classes `problem`, `problems` and `issues`.
+- **CONTRACT-QUESTION, the answer to a route parameter that is no id.**
+  `docs/rework/spec.md` §8.1 lists the routes. No section gives the answer
+  for a parameter that is not a family name or a session id. The suite holds
+  the answer of the noticeboard as it is: 404. A change costs one scenario
+  in `test_proc_board_pages.py`.
 - **CONTRACT-QUESTION, the answer to a save of the noticeboard.**
   `docs/rework/spec.md` §8.2 says what a save writes. No section gives the
   answer to the browser. The suite holds the answer of the noticeboard as it
