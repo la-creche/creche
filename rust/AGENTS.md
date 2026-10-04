@@ -445,6 +445,22 @@ Rules for the test:
      reference no grammar. The type demands a reference with a digest.
   8. `roster`, `stage7-releases.md` §4.4. The contract names no YAML
      version. The module holds no YAML reader.
+  9. `caregiver::CaregiverConfig`, `spec.md` §5.4. The spec does not say
+     what the caregiver does with no master key of LiteLLM. The type refuses
+     `--write` without the key. The Python service starts.
+  10. `chaperone::ChaperoneConfig`, contract 04 §10 rule 7. A generated
+      roster with no base roster fails the verify hook. The contract does not
+      say what the service does at start. The type reads no roster then, as
+      the Python service does.
+  11. `chaperone::ChaperoneConfig`. No contract gives the action at start for
+      a config that is not valid. The type exits with `EX_CONFIG`. The other
+      choice is `AtStart::RefuseEachCall`.
+  12. `mounts::Credentials`, contract 03 §12 rule 3. The contract gives the
+      epoch no range. The type holds 64 bits with a sign. It takes zero and a
+      negative epoch.
+  13. `mounts::Credentials`, contract 03 §12. The contract does not say what
+      a reader does with a secret that is not a JSON string. The type refuses
+      it, and an empty secret. The Python reader makes text of each value.
 - No type reads the text of a roster file, and no type writes it. PyYAML
   reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
   the crate selects one. `roster::RawRoster` then takes its tree.

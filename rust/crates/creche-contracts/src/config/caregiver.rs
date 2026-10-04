@@ -482,6 +482,12 @@ fn max_passes(raw: &RawServe) -> Parsed<u16> {
     })
 }
 
+// CONTRACT-QUESTION: `spec.md` §5.4 says where the master key of LiteLLM
+// lives, and not what the caregiver does without it. The Python service
+// starts with no key, and each call to LiteLLM then fails. The type refuses
+// `--write` with no key: the service cannot mint a family key without it.
+// The laxer reading gives a daemon that runs and converges no family. To
+// take it, let `Mode::Write` hold no key.
 /// The master key as its variable holds it. The Python service reads the
 /// variable with no strip. `None` for a variable that is not set or empty.
 fn master_key(env: &Env) -> Parsed<Option<Secret>> {

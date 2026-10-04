@@ -176,6 +176,13 @@ pub struct ChaperoneConfig {
     sweep_fault: Option<ConfigError>,
 }
 
+// CONTRACT-QUESTION: no contract says what the chaperone does at start with
+// a config that is not valid. `rust/AGENTS.md` rule 8 gives the choices. The
+// comment in the unit file says that the chaperone must return by itself
+// when a dependency returns. The type takes `AtStart::ExitConfig`: no
+// restart corrects a config. The other reading, `AtStart::RefuseEachCall`,
+// keeps `/healthz` in service. It costs a listener that binds before the
+// config is valid, and the bind is a part of that config.
 impl Checked for ChaperoneConfig {
     const FAILURE: FailureAction = FailureAction::new(AtStart::ExitConfig, AtReload::NotRead);
 }
@@ -242,6 +249,13 @@ pub fn ha_url(env: &Env) -> Result<Option<HttpUrl>, ConfigErrors> {
     env.first_set(&[HA_URL, SITE_HA_URL])
 }
 
+// CONTRACT-QUESTION: contract 04 §10 rule 7 makes the verify hook of the
+// chaperone fail when the unit sets `PEP_UPSTREAMS_GENERATED` and the
+// roster state is `off`, which is the state with no `PEP_UPSTREAMS`. The
+// contract does not say what the service does at start in that state. The
+// Python service starts and reads no roster. The type takes that reading,
+// so the two accept the same environments. The stricter reading refuses
+// to start. It costs a refusal that only the verify hook reports today.
 /// The two roster files. `None` when `PEP_UPSTREAMS` is not set: the
 /// chaperone then reads no roster, and the generated file is not read.
 fn roster(env: &Env) -> Parsed<Option<RosterFiles>> {

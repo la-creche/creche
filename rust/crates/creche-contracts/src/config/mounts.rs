@@ -771,6 +771,13 @@ impl fmt::Display for CredentialsError {
 
 impl Error for CredentialsError {}
 
+// CONTRACT-QUESTION: contract 03 §12 rule 3 gives the epoch as an integer
+// that increases at each write, and gives it no range. The Python reader
+// takes an integer of each size and of each sign. The type holds an integer
+// of 64 bits with a sign: it takes zero and a negative epoch as Python
+// does, and it refuses an epoch outside 64 bits. A range of 1 or more
+// refuses a file that the Python reader takes today. A wider type costs
+// each reader of the epoch an integer type of its own.
 /// The size from which a float is no epoch: 2^63. The largest epoch is
 /// 2^63 - 1.
 const EPOCH_FLOAT_END: f64 = 9_223_372_036_854_775_808.0;
@@ -803,6 +810,12 @@ fn epoch_of(value: &Value) -> Option<i64> {
     }
 }
 
+// CONTRACT-QUESTION: contract 03 §12 gives the key, the token and the time
+// of the write as text. It does not say what a reader does with another
+// JSON value. The Python reader makes text of each value with `str()`, so a
+// JSON null is the token `None`. The type takes only a JSON string, and no
+// empty secret. The laxer reading gives a sandbox a token that no writer
+// wrote. It also needs a copy of Python's `str()` in the Rust reader.
 /// A secret of one field. The value must be a JSON string that is not
 /// empty.
 fn secret_of(
