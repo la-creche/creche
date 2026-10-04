@@ -115,6 +115,8 @@ The console script is `handover`. The verify hook and the operator's
    ledger gets the type of the error, and never its text.
 10. A unit file longer than 64 KiB stops the stage, for each kind. A line
     after the cap can start a program that no reader saw.
+11. A staged venv tree is a directory, as a staged binary tree is. A link in
+    its place is a fault: step 9 renames the link, and not the directory.
 
 ## Rules `follow/` adds
 
