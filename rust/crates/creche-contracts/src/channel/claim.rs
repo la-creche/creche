@@ -289,12 +289,16 @@ impl Event {
     /// The playpen truncates a larger event before it sends it (contract 03
     /// §8). This constructor does not truncate. It refuses.
     ///
+    /// It also refuses a number that is not finite, for example `1e999`. A
+    /// record is JSON (§2 rule 2), and JSON has no text for such a number.
+    ///
     /// ```
     /// use creche_contracts::channel::claim::{Event, EventError};
     ///
     /// let event = Event::from_json(r#"{"type":"message_update","delta":"S"}"#)?;
     /// assert_eq!(event.to_json(), r#"{"type":"message_update","delta":"S"}"#);
     /// assert_eq!(Event::from_json("[]"), Err(EventError::NotObject));
+    /// assert_eq!(Event::from_json(r#"{"n":1e999}"#), Err(EventError::NotFinite));
     /// # Ok::<(), EventError>(())
     /// ```
     ///
@@ -321,7 +325,20 @@ impl Event {
             return Err(EventError::TooDeep);
         }
 
-        value.into_object().map(Self).ok_or(EventError::NotObject)
+        let event = Self(value.into_object().ok_or(EventError::NotObject)?);
+        if !event.is_finite() {
+            return Err(EventError::NotFinite);
+        }
+
+        Ok(event)
+    }
+
+    /// Whether each number of the event is finite. JSON has no text for
+    /// `NaN`, `Infinity` and `-Infinity`. The Python host reads the three
+    /// names, so an event of a line from the playpen can hold one.
+    #[must_use]
+    pub fn is_finite(&self) -> bool {
+        !json::holds_non_finite(&self.0)
     }
 
     /// Applies rule 6 of §13 to the `event` of a line.
@@ -366,6 +383,9 @@ pub enum EventError {
     TooLarge,
     /// The event nests more than [`MAX_EVENT_DEPTH`] levels.
     TooDeep,
+    /// A number of the event is not finite. JSON has no text for it, so a
+    /// record cannot hold it (contract 03 §2 rule 2).
+    NotFinite,
 }
 
 impl fmt::Display for EventError {
@@ -376,6 +396,7 @@ impl fmt::Display for EventError {
             Self::LoneSurrogate => f.write_str("an event holds no lone surrogate"),
             Self::TooLarge => write!(f, "an event has {MAX_EVENT_BYTES} bytes at most"),
             Self::TooDeep => write!(f, "an event nests {MAX_EVENT_DEPTH} levels at most"),
+            Self::NotFinite => f.write_str("each number of an event is finite"),
         }
     }
 }

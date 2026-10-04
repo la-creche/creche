@@ -1106,6 +1106,22 @@ pub(super) fn nests_past(value: &Json, limit: usize) -> bool {
     false
 }
 
+/// Whether a value of `object` holds a float that is not finite: `NaN`,
+/// `Infinity` or `-Infinity`. JSON has no text for such a number.
+pub(super) fn holds_non_finite(object: &JsonObject) -> bool {
+    let mut pending: Vec<&Json> = object.0.iter().map(|(_, item)| item).collect();
+    while let Some(holder) = pending.pop() {
+        match holder {
+            Json::Float(float) if !float.is_finite() => return true,
+            Json::Array(array) => pending.extend(array.0.iter()),
+            Json::Object(object) => pending.extend(object.0.iter().map(|(_, item)| item)),
+            _ => {}
+        }
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1450,6 +1466,35 @@ mod tests {
         assert!(!nests_past(&value, 3));
         assert!(!nests_past(&python("1").unwrap(), 0));
         assert!(nests_past(&python("[]").unwrap(), 0));
+    }
+
+    #[test]
+    fn a_float_that_is_not_finite_is_found_at_each_depth() {
+        let holds = |text: &str| holds_non_finite(&python(text).unwrap().into_object().unwrap());
+
+        for text in [
+            r#"{"n":NaN}"#,
+            r#"{"n":1e999}"#,
+            r#"{"n":-Infinity}"#,
+            r#"{"a":1,"b":[2,{"c":[Infinity]}]}"#,
+        ] {
+            assert!(holds(text), "{text}");
+        }
+
+        for text in [
+            "{}",
+            r#"{"n":1e308}"#,
+            r#"{"n":-0.0,"text":"NaN","a":[null,true,7,{"b":[]}]}"#,
+        ] {
+            assert!(!holds(text), "{text}");
+        }
+
+        let deep = format!(
+            "{{\"a\":{}NaN{}}}",
+            "[".repeat(MAX_LINE_DEPTH - 1),
+            "]".repeat(MAX_LINE_DEPTH - 1)
+        );
+        assert!(holds(&deep));
     }
 
     #[test]

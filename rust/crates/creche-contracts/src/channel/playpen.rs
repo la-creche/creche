@@ -11,7 +11,7 @@ use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU64;
 
-use super::claim::{Event, MAX_ENTRIES_PER_READ, TurnAddress};
+use super::claim::{Event, EventError, MAX_ENTRIES_PER_READ, TurnAddress};
 use super::frame::{EncodeError, MAX_LINE_BYTES, framed};
 use super::host::{EntryId, Nonce, ProcessCap, ProtocolVersion};
 use super::json::{ObjectWriter, array_text, flag_text, float_text};
@@ -387,7 +387,7 @@ impl SessionOpened {
 /// let address = TurnAddress::new("tui-1".parse().unwrap(), "01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap());
 /// let seq = NonZeroU64::MIN;
 /// let event = Event::from_json(r#"{"type":"agent_start"}"#).unwrap();
-/// let message = PlaypenMessage::Event(EventMessage::new(address, seq, event));
+/// let message = PlaypenMessage::Event(EventMessage::new(address, seq, event).unwrap());
 /// assert!(message.encode().is_ok());
 /// ```
 ///
@@ -414,13 +414,26 @@ pub struct EventMessage {
 
 impl EventMessage {
     /// The event at the place `turn_seq` of the turn at `address`.
-    #[must_use]
-    pub fn new(address: TurnAddress, turn_seq: NonZeroU64, event: Event) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// [`EventError::NotFinite`] for an event with a number that is not
+    /// finite. The host keeps such an event when it reads a line, and a
+    /// record cannot hold it (contract 03 §2 rule 2).
+    pub fn new(
+        address: TurnAddress,
+        turn_seq: NonZeroU64,
+        event: Event,
+    ) -> Result<Self, EventError> {
+        if !event.is_finite() {
+            return Err(EventError::NotFinite);
+        }
+
+        Ok(Self {
             address,
             turn_seq,
             event,
-        }
+        })
     }
 
     fn body(&self) -> String {
@@ -1106,7 +1119,7 @@ mod tests {
 
     use super::*;
     use crate::channel::claim::tests::normalized;
-    use crate::channel::claim::{EventError, parse};
+    use crate::channel::claim::{PlaypenLine, parse};
     use crate::channel::frame::Refusal;
 
     const SESSION: &str = "tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK";
@@ -1238,7 +1251,7 @@ mod tests {
                 }}),
             ),
             (
-                PlaypenMessage::Event(EventMessage::new(address(), seq(17), event)),
+                PlaypenMessage::Event(EventMessage::new(address(), seq(17), event).unwrap()),
                 json!({"kind": "EventLine", "message": {
                     "session": SESSION, "turn": TURN, "turn_seq": 17,
                     "event": {"type": "message_update", "delta": "Sensor "},
@@ -1521,6 +1534,11 @@ mod tests {
         assert_eq!(Event::from_json(&large), Err(EventError::TooLarge));
         assert_eq!(Event::from_json("{\"a\":NaN}"), Err(EventError::NotJson));
         assert_eq!(Event::from_json("7"), Err(EventError::NotObject));
+        for text in ["{\"n\":1e999}", "{\"n\":-1e999}", "{\"a\":[{\"n\":1e999}]}"] {
+            assert_eq!(Event::from_json(text), Err(EventError::NotFinite), "{text}");
+        }
+
+        assert!(Event::from_json("{\"n\":1e308}").is_ok());
         assert_eq!(
             Event::from_json("{\"a\":\"\\ud800\"}"),
             Err(EventError::LoneSurrogate)
@@ -1531,8 +1549,36 @@ mod tests {
             EventError::LoneSurrogate,
             EventError::TooLarge,
             EventError::TooDeep,
+            EventError::NotFinite,
         ] {
             assert!(!error.to_string().is_empty());
         }
+    }
+
+    #[test]
+    fn no_message_holds_an_event_with_a_number_that_is_not_finite() {
+        // The Python host reads `NaN` and `Infinity` in an event and keeps
+        // them, so the parser of the host does too. No line can hold them.
+        for number in ["NaN", "Infinity", "-Infinity", "1e999"] {
+            let record = format!(
+                "{{\"type\":\"event\",\"session\":\"{SESSION}\",\"turn\":\"{TURN}\",\
+                 \"turn_seq\":1,\"event\":{{\"type\":\"x\",\"a\":[{number}]}}}}"
+            );
+            let Ok(PlaypenLine::Event(line)) = parse(&record) else {
+                panic!("{record}");
+            };
+
+            assert!(!line.event().is_finite(), "{number}");
+            assert_eq!(
+                EventMessage::new(address(), seq(1), line.event().clone()),
+                Err(EventError::NotFinite),
+                "{number}"
+            );
+        }
+
+        let event = Event::from_json("{\"type\":\"x\",\"a\":[1.5,-0.0,1e308]}").unwrap();
+        let message = PlaypenMessage::Event(EventMessage::new(address(), seq(1), event).unwrap());
+
+        assert!(serde_json::from_str::<Value>(&record(&message)).is_ok());
     }
 }

@@ -442,5 +442,9 @@ Rules for the test:
   the empty text.
 - `channel::claim::Event::from_json` refuses an event over a limit. The
   playpen truncates such an event (contract 03 §8). No Rust code does that.
+- `Event::from_json` and `playpen::EventMessage::new` refuse an event with a
+  number that is not finite, for example `1e999`. The playpen writes `null`
+  for that number. The host side keeps such a number, as the Python host
+  does.
 - `channel` has no function that maps a `FailReason` to a turn reason of
   contract 02 §14. The `session` module holds no turn reason yet.
