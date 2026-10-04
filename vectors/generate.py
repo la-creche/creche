@@ -18,7 +18,16 @@ from pathlib import Path
 from typing import Final
 
 from vectors.core import FORMAT, Json, Surface, compact, render
-from vectors.surfaces import channel, family_file, grants, ids, status
+from vectors.surfaces import (
+    audit,
+    channel,
+    config,
+    family_file,
+    grants,
+    ids,
+    status,
+    status_files,
+)
 
 DATA_DIR: Final = Path(__file__).resolve().parent / "data"
 
@@ -49,7 +58,10 @@ GROUPS: Final[dict[str, Callable[[], tuple[Surface, ...]]]] = {
     "family_file": family_file.surfaces,
     "channel": channel.surfaces,
     "chaperone": grants.surfaces,
+    "audit": audit.surfaces,
     "status": status.surfaces,
+    "status_files": status_files.surfaces,
+    "config": config.surfaces,
 }
 
 
