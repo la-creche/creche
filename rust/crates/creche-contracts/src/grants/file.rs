@@ -1238,6 +1238,15 @@ impl Error for GrantError {}
 /// assert!(matches!(error.error(), GrantError::UnknownVersion(_)));
 /// # Ok::<(), creche_contracts::ids::FamilyNameError>(())
 /// ```
+///
+/// Code outside this module cannot build an error for a file that it did not
+/// read:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::grants::{GrantError, GrantFileError};
+///
+/// let error = GrantFileError { family: "chat".parse().unwrap(), error: GrantError::NotObject };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantFileError {
     family: FamilyName,

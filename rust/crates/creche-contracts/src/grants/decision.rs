@@ -239,6 +239,9 @@ const REASON_PENDING: &str = "approval_required";
 /// The type holds each pair that the chaperone writes, and no other pair: a
 /// record cannot say `deny` with the reason `granted`.
 ///
+/// The type is for the writer of a record. A reader of an audit file reads
+/// the two fields as text: see [`Decision`].
+///
 /// ```
 /// use creche_contracts::grants::{AuditOutcome, Decision, Reason};
 ///

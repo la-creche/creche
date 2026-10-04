@@ -557,6 +557,9 @@ pub struct ArgsDigest {
 
 /// Why the chaperone refused a request with a bearer that names no family
 /// (contract 04 §5 row 1).
+///
+/// The type is for the writer of a record. The set is closed for one release
+/// of the chaperone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Unidentified {
     /// The chaperone answered `unknown_token`.

@@ -502,7 +502,9 @@ fn decode_utf8(bytes: &[u8]) -> Result<Vec<u32>, JsonError> {
             }
             Err(fault) => fault,
         };
-        let (valid, after) = rest.split_at(fault.valid_up_to());
+        let (valid, after) = rest
+            .split_at_checked(fault.valid_up_to())
+            .ok_or(JsonError::NotText)?;
         let text = std::str::from_utf8(valid).map_err(|_| JsonError::NotText)?;
         points.extend(text.chars().map(u32::from));
 
@@ -1607,6 +1609,35 @@ mod tests {
             Err(JsonError::Syntax { at: 2 })
         ));
         assert!(matches!(read_body(b""), Err(JsonError::Syntax { at: 0 })));
+    }
+
+    #[test]
+    fn the_first_bytes_of_a_body_give_its_encoding() {
+        // Each row is what `json.loads` of Python does with the bytes.
+        assert_eq!(read_body(b"\x00\x00\x005"), Ok(integer(5)));
+        assert_eq!(read_body(b"5\x00\x00\x00"), Ok(integer(5)));
+        assert_eq!(read_body(b"\x005\x00 "), Ok(integer(5)));
+        assert_eq!(read_body(b"5\x00 \x00"), Ok(integer(5)));
+        for body in [
+            &b"\x00"[..],
+            b"\x00\x00",
+            b"\x00\x00\x00",
+            b"5\x00 ",
+            b"5\x00\x00 ",
+            b"\xef\xbb\xbf",
+            b"\xff\xfe",
+            b"\xff\xfe\x00\x00",
+            b"\xff\xfe{\x00}\x00\x00\xd8",
+            b"{}\xed\xa0\x80",
+        ] {
+            assert!(
+                matches!(read_body(body), Err(JsonError::Syntax { .. })),
+                "{body:?}"
+            );
+        }
+
+        assert_eq!(read_body(b"5\x00 \x00 "), Err(JsonError::NotText));
+        assert_eq!(read_body(b"{}\xed\xa0"), Err(JsonError::NotText));
     }
 
     #[test]
