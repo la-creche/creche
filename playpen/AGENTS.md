@@ -176,6 +176,16 @@ it on a development machine.
 53. `bin/tests/test_playpen_release.py` runs both scripts against a stub
     `docker` and a stub registry. No test builds an image.
 
+## Caps and failures
+
+54. Cut a text with `cutToBytes` from `src/framing.ts`. A cap of contract 03
+    §8 counts bytes. `slice` counts the units of a JS string.
+55. Keep the one handler of the dispatcher in `src/playpen.ts`. A handler
+    that throws must not end the process.
+56. Send a refused host line that names a turn to `SessionPool.refuseTurn`.
+    Only the pool knows the `turn_seq` of that turn. `turn_seq` 0 is only for
+    a line with no session and no turn.
+
 ## Environment the playpen expects
 
 | Variable | Meaning | Absent |
@@ -221,3 +231,14 @@ delivers them. Three test seams exist and nothing in the image sets them:
 - No test builds an image. The tests give `bin/playpen-build` a stub
   `docker` (`bin/tests/test_playpen_release.py`).
 - A release never removes an image from the registry (`bin/playpen-build`).
+- The `turn_failed` for an oversize line names no turn and carries `turn_seq`
+  0, as contract 03 §5.1 says. The host reads that line as malformed
+  (`src/playpen.ts`).
+- Contract 03 gives no cap for `config_rev`, a pi entry id and the nonce of a
+  `ping`. The playpen refuses one of more than 200 units (`src/validate.ts`).
+- Contract 03 §3 gives no count of digits for the number in a sandbox id. The
+  playpen takes each count. The host takes 1 to 9 digits
+  (`src/constants.ts`).
+- Contract 03 §4.6 does not say that a `ping` needs a nonce. The playpen
+  answers a `ping` with no nonce with a null nonce. The host refuses that
+  `pong` (`src/playpen.ts`).
