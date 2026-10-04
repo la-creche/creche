@@ -48,14 +48,16 @@ pub use fields::{
     DeadlineS, DeadlineSError, DispatchKey, DispatchKeyError, Follow, FollowError, Holder,
     HolderError, IdempotencyKey, IdempotencyKeyError, Intent, IntentError, JobMessage,
     JobMessageError, JournalSeq, JournalSeqError, Labels, LabelsError, LeaseReason,
-    LeaseReasonError, PageLimit, PageLimitError, Prompt, PromptError, SteerMessage,
-    SteerMessageError, StopReason, StopReasonError, SwitchMode, SwitchModeError, Title, TitleError,
-    TriggerKind, TriggerKindError, TurnRef, TurnsWanted, TurnsWantedError, Wait, WaitError,
+    LeaseReasonError, PageLimit, PageLimitError, Prompt, PromptError, QueueDepth, QueueDepthError,
+    SteerMessage, SteerMessageError, StopReason, StopReasonError, SwitchMode, SwitchModeError,
+    Title, TitleError, TriggerKind, TriggerKindError, TurnRef, TurnsWanted, TurnsWantedError, Wait,
+    WaitError,
 };
 pub use journal::{
     ApprovalRequested, ApprovalResolved, BodyError, BranchFallback, GateReason, JournalBody,
-    JournalLine, LineError, LineKind, LineKindError, Note, ServiceNote, SessionTitled, StoredLine,
-    StreamRecord, TerminalExchange, TurnEnded, TurnQueued, TurnSettled, TurnStarted, WriterChanged,
+    JournalLine, LineError, LineKind, LineKindError, Note, OtherGateReason, OtherNote, ServiceNote,
+    SessionTitled, StoredLine, StreamRecord, TerminalExchange, TurnEnded, TurnQueued, TurnSettled,
+    TurnStarted, WriterChanged,
 };
 pub use json::EncodeError;
 pub use outcome::{

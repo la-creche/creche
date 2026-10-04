@@ -771,6 +771,33 @@ ranged_number! {
     "a journal sequence number"
 }
 
+ranged_number! {
+    /// The place of a turn in the queue of its family: 1 or more (contract 02
+    /// §8.1). The first turn in a queue has the place 1.
+    ///
+    /// ```
+    /// use creche_contracts::session::QueueDepth;
+    ///
+    /// let depth = QueueDepth::try_from(3_u64)?;
+    /// assert_eq!(depth.get(), 3);
+    /// # Ok::<(), creche_contracts::session::QueueDepthError>(())
+    /// ```
+    ///
+    /// Code outside this module cannot build a value from a raw number:
+    ///
+    /// ```compile_fail,E0423
+    /// use creche_contracts::session::QueueDepth;
+    ///
+    /// let depth = QueueDepth(0);
+    /// ```
+    QueueDepth(u64),
+    /// Why a number is not the place of a turn in a queue.
+    QueueDepthError,
+    1,
+    u64::MAX,
+    "the place of a turn in a queue"
+}
+
 // --- the text that names a turn ---
 
 /// The text that names a turn, where the Python code checks no grammar: the
@@ -1184,6 +1211,9 @@ mod tests {
         );
         assert_eq!(TurnsWanted::try_from(101_u64), Err(TurnsWantedError));
         assert_eq!(JournalSeq::try_from(0_u64), Err(JournalSeqError));
+        assert_eq!(QueueDepth::try_from(0_u64), Err(QueueDepthError));
+        assert_eq!(QueueDepth::try_from(1_u64).map(QueueDepth::get), Ok(1));
+        assert!(serde_json::from_str::<QueueDepth>("0").is_err());
         assert_eq!(
             JournalSeq::try_from(u64::MAX).map(JournalSeq::get),
             Ok(u64::MAX)

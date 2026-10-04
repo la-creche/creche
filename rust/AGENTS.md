@@ -478,6 +478,13 @@ Rules for the test:
   send a body. The three Python doors write their bodies by hand, and no
   vector covers them.
 - `session::Turn` has no constructor from a stored turn record.
+- `session::JournalLine::new` does not check the turn against the kind of
+  the body. A `turn_queued` line with no turn is a value of the type. The
+  Python writer has no such check.
+- The body types of a journal line, for example `session::TurnStarted`, and
+  `session::ServiceNote` have public fields. Some fields are a plain
+  `String`: the contract gives them no grammar. Code can build such a body
+  with each text.
 - `Secret` does not erase its bytes when the value drops. A sure erase needs
   `unsafe` code, and the lint gate forbids `unsafe` code.
 - `Secret::matches` has no branch on a byte of the secret. The compiler gives

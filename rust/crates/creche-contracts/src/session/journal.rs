@@ -20,8 +20,8 @@ use serde_json::{Map, Value};
 
 use super::error::TurnReason;
 use super::fields::{
-    DeadlineS, Holder, IdempotencyKey, JournalSeq, LeaseReason, Prompt, SwitchMode, Title, TurnRef,
-    words,
+    DeadlineS, Holder, IdempotencyKey, JournalSeq, LeaseReason, Prompt, QueueDepth, SwitchMode,
+    Title, TurnRef, words,
 };
 use super::json::{self, EncodeError, Fault, Kind, Object};
 use super::time::Timestamp;
@@ -104,7 +104,39 @@ pub enum GateReason {
     /// The caller left before a person decided.
     ApprovalAbandoned,
     /// A word that a newer chaperone writes.
-    Other(String),
+    Other(OtherGateReason),
+}
+
+/// A word of a gate that [`GateReason`] does not know. Only the conversion
+/// from a text makes one, so a value never holds a word that the type knows.
+///
+/// ```
+/// use creche_contracts::session::{GateReason, OtherGateReason};
+///
+/// let reason = GateReason::from("approval_escalated".to_owned());
+/// let GateReason::Other(other) = &reason else {
+///     return;
+/// };
+/// let other: &OtherGateReason = other;
+/// assert_eq!(other.as_str(), "approval_escalated");
+/// ```
+///
+/// Code outside this module cannot give a known word the variant `Other`:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::session::{GateReason, OtherGateReason};
+///
+/// let reason = GateReason::Other(OtherGateReason("approved".to_owned()));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OtherGateReason(String);
+
+impl OtherGateReason {
+    /// The word on the wire.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Each word of a [`GateReason`] that this type knows.
@@ -122,7 +154,7 @@ impl GateReason {
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
-            Self::Other(word) => word,
+            Self::Other(word) => word.as_str(),
             known => GATE_REASONS
                 .iter()
                 .find(|(_, reason)| reason == known)
@@ -136,7 +168,9 @@ impl From<String> for GateReason {
         GATE_REASONS
             .iter()
             .find(|(known, _)| *known == word)
-            .map_or(Self::Other(word), |(_, reason)| reason.clone())
+            .map_or(Self::Other(OtherGateReason(word)), |(_, reason)| {
+                reason.clone()
+            })
     }
 }
 
@@ -178,7 +212,7 @@ pub struct TurnQueued {
     /// The idempotency key of the turn.
     pub idempotency_key: Option<IdempotencyKey>,
     /// The place of the turn in the queue of its family, from 1.
-    pub queue_depth: u64,
+    pub queue_depth: QueueDepth,
 }
 
 /// The body of a `turn_started` line.
@@ -365,6 +399,43 @@ impl ServiceNote {
     }
 }
 
+/// The body of a note that is not a note of `attendance`. Only the conversion
+/// from a JSON object makes one, so a value never holds the exact fields of a
+/// [`ServiceNote`].
+///
+/// ```
+/// use creche_contracts::session::{Note, OtherNote};
+/// use serde_json::{Map, json};
+///
+/// let mut body = Map::new();
+/// body.insert("note".to_owned(), json!("written_by_hand"));
+/// let note = Note::from(body);
+/// let Note::Other(other) = &note else {
+///     return;
+/// };
+/// let other: &OtherNote = other;
+/// assert_eq!(other.body().get("note"), Some(&json!("written_by_hand")));
+/// ```
+///
+/// Code outside this module cannot build one from a raw object:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::session::{Note, OtherNote};
+/// use serde_json::{Map, json};
+///
+/// let note = Note::Other(OtherNote(Map::new()));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OtherNote(Map<String, Value>);
+
+impl OtherNote {
+    /// The body. The writer sorts its keys.
+    #[must_use]
+    pub fn body(&self) -> &Map<String, Value> {
+        &self.0
+    }
+}
+
 /// The body of a `note` line (contract 02 §8.1). The contract leaves it free.
 ///
 /// A body with the exact fields of a note that `attendance` writes is that
@@ -376,7 +447,7 @@ pub enum Note {
     /// A note that `attendance` writes.
     Service(ServiceNote),
     /// A note of another form.
-    Other(Map<String, Value>),
+    Other(OtherNote),
 }
 
 impl From<Map<String, Value>> for Note {
@@ -385,8 +456,8 @@ impl From<Map<String, Value>> for Note {
         let body = Value::Object(body);
         match (ServiceNote::deserialize(&body), body) {
             (Ok(note), _) if note.members() == members => Self::Service(note),
-            (_, Value::Object(body)) => Self::Other(body),
-            (_, _) => Self::Other(Map::new()),
+            (_, Value::Object(body)) => Self::Other(OtherNote(body)),
+            (_, _) => Self::Other(OtherNote(Map::new())),
         }
     }
 }
@@ -956,7 +1027,7 @@ mod tests {
 
         let other = GateReason::from("approval_escalated".to_owned());
 
-        assert_eq!(other, GateReason::Other("approval_escalated".to_owned()));
+        assert!(matches!(&other, GateReason::Other(word) if word.as_str() == "approval_escalated"));
         assert_eq!(
             serde_json::to_string(&other).unwrap(),
             "\"approval_escalated\""
@@ -985,7 +1056,9 @@ mod tests {
             })
         );
         for body in [extra, missing, wrong_type, other_word, Map::new()] {
-            assert_eq!(Note::from(body.clone()), Note::Other(body));
+            assert!(
+                matches!(Note::from(body.clone()), Note::Other(other) if other.body() == &body)
+            );
         }
     }
 
