@@ -19,6 +19,9 @@ EXIT_OK: Final = 0
 EXIT_INVALID: Final = 1
 EXIT_USAGE: Final = 2
 
+#: The codec for an escaped line when the output stream names none.
+_FALLBACK_ENCODING: Final = "utf-8"
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -40,15 +43,29 @@ def _select(reports: tuple[Report, ...], only: str | None) -> tuple[Report, ...]
     return chosen or None
 
 
+def _emit(line: str) -> None:
+    """Print one line of the text report.
+
+    A report line can hold a character that the terminal refuses: a message
+    quotes a value of the file. Such a character goes out as a backslash
+    escape, so the print does not raise. The codec of the terminal makes the
+    escape and reads it back, so each other character stays as it is."""
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or _FALLBACK_ENCODING
+        print(line.encode(encoding, "backslashreplace").decode(encoding))
+
+
 def _print_text(reports: tuple[Report, ...]) -> None:
     for report in reports:
         mark = "ok" if report.ok else "INVALID"
-        print(f"{report.family}: {mark} ({report.errors} errors, {report.warnings} warnings)")
-        print(f"  {report.file}")
+        _emit(f"{report.family}: {mark} ({report.errors} errors, {report.warnings} warnings)")
+        _emit(f"  {report.file}")
         for issue in report.issues:
             flag = " [downgraded]" if issue.downgraded else ""
             label = "error" if issue.severity is Severity.ERROR else "warning"
-            print(f"  {label}: {issue.loc}: {issue.msg}{flag}")
+            _emit(f"  {label}: {issue.loc}: {issue.msg}{flag}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
