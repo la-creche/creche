@@ -159,6 +159,30 @@ async def test_upkeep_reads_gates_after_a_failed_sync(
     await rig.stop()
 
 
+async def test_upkeep_tries_the_queues_after_a_failed_try(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Contract 02 §13 rule 3. A try of the queues that fails does not end
+    the task, and the next tick tries again."""
+    monkeypatch.setattr("attendance.service.FLUSH_INTERVAL_S", TICK_S)
+    rig = await build(tmp_path)
+    calls = 0
+
+    def failing() -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("the try failed")
+
+    monkeypatch.setattr(rig.service, "pump_queues", failing)
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        rig.service.start_upkeep()
+        await wait_until(lambda: calls >= TICKS_WANTED)
+
+    assert "the queue pump" in caplog.text
+    await rig.stop()
+
+
 async def test_a_gate_that_fails_does_not_drop_the_next(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

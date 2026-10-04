@@ -217,9 +217,6 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 02 §3 rule 2 says never `0.0.0.0` and gives the LAN address no
   grammar. `from_env` refuses each spelling of the address of each interface.
   It takes each other text as the address (`config.py`).
-- `_pump_queue` runs only when a turn ends. A queued turn does not start
-  while the status document is unreadable or states no kind. Nothing tries
-  again until another turn of the family ends (`service.py`).
 - `_settle` does not raise `IllegalTransition`. For a move that contract 02
   §4.3 does not allow, it writes one log line and one `note` line. The turn
   does not move. No known path makes such a move (`service.py`, `states.py`).

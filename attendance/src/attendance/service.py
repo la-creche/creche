@@ -210,6 +210,10 @@ class SessionService:
         self._upkeep: asyncio.Task[None] | None = None
         self._pre_starts: set[asyncio.Task[None]] = set()
         self._followups: set[asyncio.Task[None]] = set()
+        # Queued turns that left the FIFO and are not `running` yet, for each
+        # family. The start can wait for a sandbox, and the turn holds its
+        # slot in that time.
+        self._starting: dict[str, list[LiveTurn]] = {}
         # Contract 02 §10.5. One entry read in flight per request id, so the
         # answer knows which session it belongs to. An answer for a request
         # this service never sent is dropped (contract 03 §5.8 rule 4).
@@ -300,6 +304,7 @@ class SessionService:
             await asyncio.sleep(FLUSH_INTERVAL_S)
             self._upkeep_step("the journal sync", self._journal.flush_due)
             self._upkeep_step("the gate poll", self.read_gates)
+            self._upkeep_step("the queue pump", self.pump_queues)
 
     def _upkeep_step(self, name: str, step: Callable[[], None]) -> None:
         """Run one step of the upkeep loop. A failure never ends the loop.
@@ -329,6 +334,19 @@ class SessionService:
                 _LOG.exception("gate %s of family %s was not applied", gate.gate, gate.family)
 
         self._report_audit(self._gates.unreadable())
+
+    def pump_queues(self) -> None:
+        """Try the head of each queue again (contract 02 §13 rule 3).
+
+        A turn that ends starts the head of the queue of its family. That
+        start does not happen while the status document is unreadable or
+        states no kind, and no later turn of the family can end to try
+        again. The upkeep loop calls this, so the head starts within
+        `FLUSH_INTERVAL_S` of a document that can be read. It is public so a
+        test can drive it without a clock.
+        """
+        for family in self._queue.families():
+            self._pump_queue(family)
 
     def _report_audit(self, message: str | None) -> None:
         """Contract 05 §3.3's `audit_unreadable`.
@@ -1441,7 +1459,18 @@ class SessionService:
             return Slot.QUEUE
 
         running = len(self._turns.active_in_family(status.family))
-        return slot_for(status.kind, status.max_running_turns, running)
+        starting = self._starting_in(status.family)
+        return slot_for(status.kind, status.max_running_turns, running + starting)
+
+    def _starting_in(self, family: str) -> int:
+        """The count of turns that left the queue and do not run yet.
+
+        Each one holds a slot. Without this count, a second try of the queue
+        starts the next turn while the first one waits for its sandbox, and
+        the family runs more turns than its limit.
+        """
+        starting = self._starting.get(family, [])
+        return sum(1 for live in starting if live.record.state is TurnState.QUEUED)
 
     def _queue_turn(
         self,
@@ -1497,10 +1526,18 @@ class SessionService:
         if waiting is None:
             return
 
+        self._starting.setdefault(family, []).append(waiting.live)
+
         if not self._run_later(self._start_waiting(waiting, status)):
             # No event loop, so nothing can dial a sandbox. The turn stays
             # `queued` on disk and the next start aborts it (§13.3).
+            self._forget_starting(waiting.live)
             self._queue.add(family, waiting)
+
+    def _forget_starting(self, live: LiveTurn) -> None:
+        """The start of this queued turn ended: it runs, or it did not start."""
+        starting = self._starting.get(live.record.family, [])
+        self._starting[live.record.family] = [one for one in starting if one is not live]
 
     def _run_later(self, work: Coroutine[Any, Any, None]) -> bool:
         """Do this after the turn that asked for it has settled, or behind an
@@ -1539,16 +1576,17 @@ class SessionService:
         family = live.record.family
         session = live.record.session
 
-        # It may have been stopped, or its session deleted, while it waited.
-        if live.record.state is not TurnState.QUEUED:
-            return
-
-        record = self._sessions.get((family, session))
-
-        if record is None:
-            return
-
         try:
+            # It may have been stopped, or its session deleted, while it
+            # waited.
+            if live.record.state is not TurnState.QUEUED:
+                return
+
+            record = self._sessions.get((family, session))
+
+            if record is None:
+                return
+
             await self._start_queued(waiting, status, record)
         except Exception:
             # Nothing awaits this task. Without this handler the turn stays
@@ -1557,6 +1595,8 @@ class SessionService:
                 "queued turn %s of %s/%s did not start", live.record.turn, family, session
             )
             self._fail_start(live)
+        finally:
+            self._forget_starting(live)
 
     async def _start_queued(self, waiting: Waiting, status: FamilyStatus, record: Session) -> None:
         """The start itself. `_start_waiting` ends the turn when this raises."""

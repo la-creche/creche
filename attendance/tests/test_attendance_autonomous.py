@@ -7,6 +7,7 @@ the host, `sbx` or a live `attendance`.
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import json
 import logging
@@ -36,6 +37,7 @@ AUTO_FAMILY = "scrum-lead"
 AUTO_SANDBOX = "scrum-lead-s1"
 AUTO_SESSION = "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
 SECOND_SESSION = "auto-01JBQ80M4F7S2YQ1VZK6W3TDEN"
+THIRD_SESSION = "auto-01JBQ81P8G9T3ZR2WAM7X4VEFP"
 CHAT_FAMILY = "chat"
 CHAT_SESSION = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 DOOR = "trigger-1"
@@ -554,6 +556,88 @@ async def test_a_queued_turn_waits_while_the_kind_is_gone(tmp_path: Path) -> Non
     assert harness.service.queue_depth(AUTO_FAMILY) == 1
     started = [start["turn"] for start in harness.fleet.playpen(AUTO_SANDBOX).started]
     assert queued.record.turn not in started
+    await harness.stop()
+
+
+async def test_a_queued_turn_starts_when_the_kind_is_back(tmp_path: Path) -> None:
+    """The slot freed while the document stated no kind, so the head of the
+    queue did not start. No other turn of the family runs, so no turn ends
+    to start it. The upkeep tries the head again."""
+    harness = await build(tmp_path, max_running_turns=1)
+    harness.create()
+    harness.create(session=SECOND_SESSION)
+    first = await harness.run(None)
+    queued = await harness.queue(SECOND_SESSION)
+    write_status(
+        harness.config.state_root,
+        family=AUTO_FAMILY,
+        kind="",
+        sandboxes=((AUTO_SANDBOX, "ready"),),
+    )
+    await harness.settle(first)
+    harness.service.pump_queues()
+
+    assert queued.record.state is TurnState.QUEUED
+
+    write_status(
+        harness.config.state_root,
+        family=AUTO_FAMILY,
+        kind="autonomous",
+        sandboxes=((AUTO_SANDBOX, "ready"),),
+        max_running_turns=1,
+    )
+    harness.service.pump_queues()
+    started = await harness.fleet.playpen(AUTO_SANDBOX).next_start()
+
+    assert started["turn"] == queued.record.turn
+    assert queued.record.state is TurnState.RUNNING
+    assert harness.service.queue_depth(AUTO_FAMILY) == 0
+    await harness.stop()
+
+
+async def test_a_turn_that_starts_holds_its_slot(tmp_path: Path) -> None:
+    """Contract 02 §13 rule 2. The head left the queue and waits for a
+    sandbox, so it is not `running` yet. It holds the slot. A second try of
+    the queue in that time starts no second turn."""
+    harness = await build(tmp_path, max_running_turns=1)
+    harness.create()
+    harness.create(session=SECOND_SESSION)
+    harness.create(session=THIRD_SESSION)
+    first = await harness.run(None)
+    second = await harness.queue(SECOND_SESSION)
+    third = await harness.queue(THIRD_SESSION)
+    write_status(
+        harness.config.state_root,
+        family=AUTO_FAMILY,
+        kind="autonomous",
+        state="reconciling",
+        sandboxes=((AUTO_SANDBOX, "planned"),),
+        max_running_turns=1,
+    )
+    await harness.settle(first)
+
+    for _ in range(3):
+        harness.service.pump_queues()
+        await asyncio.sleep(0)
+
+    assert second.record.state is TurnState.QUEUED
+    assert third.record.state is TurnState.QUEUED
+    assert harness.service.queue_depth(AUTO_FAMILY) == 1
+
+    write_status(
+        harness.config.state_root,
+        family=AUTO_FAMILY,
+        kind="autonomous",
+        sandboxes=((AUTO_SANDBOX, "ready"),),
+        max_running_turns=1,
+    )
+    started = await harness.fleet.playpen(AUTO_SANDBOX).next_start()
+    harness.service.pump_queues()
+
+    assert started["turn"] == second.record.turn
+    assert second.record.state is TurnState.RUNNING
+    assert third.record.state is TurnState.QUEUED
+    assert harness.service.queue_depth(AUTO_FAMILY) == 1
     await harness.stop()
 
 
