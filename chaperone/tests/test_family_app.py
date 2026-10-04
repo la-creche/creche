@@ -49,6 +49,12 @@ EMBED_CALL: dict[str, object] = {"tool": "embed", "args": {"input": "hi"}}
 TEI_URL = "http://tei.invalid:8085"
 HA_URL = "http://ha.invalid:8123"
 
+JSON_BODY = {"content-type": "application/json"}
+
+#: More levels than the JSON reader of a supported interpreter reads.
+TOO_DEEP = 100_000
+TOO_DEEP_JSON = b"[" * TOO_DEEP + b"]" * TOO_DEEP
+
 
 def build(
     tmp_path: Path,
@@ -62,15 +68,25 @@ def build(
     secrets: dict[str, str] | None = None,
     tei_url: str = TEI_URL,
     ha_url: str = HA_URL,
+    embed_body: bytes | None = None,
+    info_body: bytes | None = None,
 ) -> TestClient:
-    """The app with the family path configured and no live service."""
+    """The app with the family path configured and no live service.
+
+    `embed_body` and `info_body` are the bytes of a reply of the embedding
+    service, for a test of a reply that is not the shape the service gives.
+    """
     pool = pool or FakePool()
 
     def handle(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if url.endswith("/embed"):
+            if embed_body is not None:
+                return httpx.Response(tei_status, content=embed_body, headers=JSON_BODY)
             return httpx.Response(tei_status, json=[[0.1] * 768])
         if url.endswith("/info"):
+            if info_body is not None:
+                return httpx.Response(info_status, content=info_body, headers=JSON_BODY)
             if info_status != 200:
                 return httpx.Response(info_status, text="boom")
             return httpx.Response(info_status, json={"model_id": model_id})
@@ -595,6 +611,72 @@ def test_an_unreadable_model_id_does_not_block_the_call(tmp_path: Path) -> None:
     write_grants(grants_dir(tmp_path), make_grants())
     client = build(tmp_path, info_status=500)
     reply = client.post("/call", json=EMBED_CALL, headers=family_auth())
+    assert reply.status_code == 200
+    assert reply.json()["result"]["model"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "embed_body",
+    [
+        pytest.param(b"not json", id="not-json"),
+        pytest.param(TOO_DEEP_JSON, id="nested-too-deep"),
+        pytest.param(b'{"error": "boom"}', id="an-object"),
+        pytest.param(b"[]", id="no-vector"),
+        pytest.param(b"[5]", id="a-vector-that-is-a-number"),
+        pytest.param(b'[["a"]]', id="a-text-in-the-vector"),
+        pytest.param(b"[[true]]", id="a-boolean-in-the-vector"),
+        pytest.param(b"[[null]]", id="a-null-in-the-vector"),
+        pytest.param(b"[[0.1, NaN]]", id="not-a-number-in-the-vector"),
+        pytest.param(b"[[0.1, Infinity]]", id="an-infinity-in-the-vector"),
+    ],
+)
+def test_an_embed_reply_of_another_shape_is_an_upstream_failure(
+    tmp_path: Path, embed_body: bytes
+) -> None:
+    """§4.1 fixes the reply of `embed`: one list of numbers. A reply of the
+    embedding service that holds no such list is §5 row 11: an allowed call
+    that failed, with its own audit line."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path, embed_body=embed_body)
+    reply = client.post("/call", json=EMBED_CALL, headers=family_auth())
+
+    assert reply.status_code == 502
+    assert reply.json()["reason"] == "upstream_failed"
+    record = last_call(tmp_path)
+    assert (record["decision"], record["reason"]) == ("allow", "upstream_failed")
+    assert len(v2_lines(tmp_path)) == 1
+
+
+def test_an_embed_reply_of_whole_numbers_is_a_vector(tmp_path: Path) -> None:
+    """A JSON integer is a number, of any length."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path, embed_body=b"[[1, -2, 0.5, 1" + b"0" * 400 + b"]]")
+    reply = client.post("/call", json=EMBED_CALL, headers=family_auth())
+
+    assert reply.status_code == 200
+    assert reply.json()["result"]["dims"] == 4
+
+
+@pytest.mark.parametrize(
+    "info_body",
+    [
+        pytest.param(TOO_DEEP_JSON, id="nested-too-deep"),
+        pytest.param(b'["BAAI/bge-base-en-v1.5"]', id="a-list"),
+        pytest.param(b"null", id="a-null"),
+        pytest.param(b"{}", id="no-model-id"),
+        pytest.param(b'{"model_id": 5}', id="a-number-for-the-id"),
+        pytest.param(b'{"model_id": null}', id="a-null-for-the-id"),
+        pytest.param(b'{"model_id": {"name": "x"}}', id="an-object-for-the-id"),
+    ],
+)
+def test_a_model_id_of_another_shape_reads_as_unknown(tmp_path: Path, info_body: bytes) -> None:
+    """The id is a string (§4.1). A reply of `/info` that holds no string id
+    reads as a reply that cannot be read: the call goes on, and the reply
+    says `unknown`."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path, info_body=info_body)
+    reply = client.post("/call", json=EMBED_CALL, headers=family_auth())
+
     assert reply.status_code == 200
     assert reply.json()["result"]["model"] == "unknown"
 

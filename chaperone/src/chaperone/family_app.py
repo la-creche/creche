@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -654,8 +655,14 @@ class FamilyGate:
         if reply.status_code != HTTP_OK:
             raise ExecutionFailed(f"embed failed: HTTP {reply.status_code}")
 
-        vectors = reply.json()
-        return {"embedding": vectors[0], "model": served, "dims": len(vectors[0])}
+        try:
+            vectors = reply.json()
+        except (ValueError, RecursionError):
+            # The reader's own text can quote the reply, so it stays out.
+            raise ExecutionFailed("embed failed: the reply is not JSON") from None
+
+        embedding = _first_vector(vectors)
+        return {"embedding": embedding, "model": served, "dims": len(embedding)}
 
     async def _embedding_model(self, client: httpx.AsyncClient) -> str:
         """The one model id the local service serves, read once per process."""
@@ -663,8 +670,8 @@ class FamilyGate:
             return self._tei_model
         try:
             info = await client.get(f"{self._deps.tei_url}/info", timeout=TEI_INFO_TIMEOUT_S)
-            self._tei_model = str(info.json().get("model_id", UNKNOWN_MODEL))
-        except (httpx.HTTPError, ValueError):
+            self._tei_model = _model_id(info.json())
+        except (httpx.HTTPError, ValueError, RecursionError):
             self._tei_model = UNKNOWN_MODEL
         return self._tei_model
 
@@ -860,6 +867,60 @@ def _holds_current_rev(headers: Mapping[str, str], rev: str) -> bool:
         tag = tag[1:-1]
 
     return tag == rev
+
+
+def _first_vector(reply: object) -> list[object]:
+    """The one vector of an `/embed` reply (contract 04 §4.1), or
+    `ExecutionFailed`.
+
+    The call sends one input, so the reply is a list that holds one list of
+    numbers. A value that is not a finite JSON number is refused: the reply
+    of this PEP is strict JSON, which has no word for one.
+
+    CONTRACT-QUESTION: §4.1 says "list of numbers" and gives no minimum
+    length. A vector of no number is taken, as it was before this check. A
+    change costs each caller that reads `dims`.
+    """
+    if not isinstance(reply, list) or not reply:
+        raise ExecutionFailed("embed failed: the reply holds no vector")
+
+    first = cast("list[object]", reply)[0]
+    if not isinstance(first, list):
+        raise ExecutionFailed("embed failed: the vector is not a list")
+
+    vector = cast("list[object]", first)
+    if not all(_is_finite_number(value) for value in vector):
+        raise ExecutionFailed("embed failed: the vector holds a value that is not a finite number")
+
+    return vector
+
+
+def _is_finite_number(value: object) -> bool:
+    """A JSON number that strict JSON can write. `True` is an `int` in
+    Python and is no number in JSON. An integer is finite at any length."""
+    if isinstance(value, bool):
+        return False
+
+    if isinstance(value, int):
+        return True
+
+    return isinstance(value, float) and math.isfinite(value)
+
+
+def _model_id(info: object) -> str:
+    """The `model_id` of an `/info` reply, or `UNKNOWN_MODEL`.
+
+    CONTRACT-QUESTION: §4.1 says that the reply reports the id "as the
+    service reports it" and is silent on a service that reports no string.
+    Such a reply reads as a reply that cannot be read: `unknown`, and the
+    call goes on. A change to an upstream failure costs every `embed` call
+    while `/info` is down.
+    """
+    if not isinstance(info, dict):
+        return UNKNOWN_MODEL
+
+    served = cast("dict[str, object]", info).get("model_id")
+    return served if isinstance(served, str) else UNKNOWN_MODEL
 
 
 def _text_or_none(value: object) -> str | None:

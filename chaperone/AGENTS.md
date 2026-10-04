@@ -204,3 +204,7 @@ Each line is an open contract question and the module it lives in.
   outlives its retirement until the unit stops (`mcp_client.py`, `run_as.py`).
 - A call held at a gate across a reload runs under the fences its decision
   read (`family_app.py`).
+- An `embed` reply takes a vector of no number. Contract 04 §4.1 gives no
+  minimum length (`family_app.py`).
+- An `/info` reply that holds no string id reads as `unknown`, and the
+  `embed` call continues (`family_app.py`).
