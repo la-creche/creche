@@ -497,7 +497,13 @@ SCOPES = [
 
 
 def _git(repo: Path, *args: str) -> str:
-    leaked = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
+    leaked = (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    )
     env = {name: value for name, value in os.environ.items() if name not in leaked}
     done = subprocess.run(
         ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", *args],
