@@ -351,10 +351,10 @@ async def test_a_final_slash_starts_no_work(listener: Listener) -> None:
 # CONTRACT-QUESTION: no contract says what a listener answers to `HEAD` on a
 # route that takes `GET`. Reading taken: the answer has no body, which
 # RFC 9110 §9.3.2 demands of each answer to `HEAD`, and the scenario asserts
-# no status. Each service answers 405 today, with an `Allow: GET` header,
-# with the `Content-Length` of a 405 body, and with no body. A listener that
-# answers as it does to `GET`, with status 200 and no body, passes this
-# scenario too. A change to one fixed status costs one assertion here.
+# no status. Each service answers 405 today, with an `Allow` header, with the
+# `Content-Length` of a 405 body, and with no body. A listener that answers
+# as it does to `GET`, with status 200 and no body, passes this scenario
+# too. A change to one fixed status costs one assertion here.
 @pytest.mark.parametrize("listener", tuple(GET_ROUTE), indirect=True)
 async def test_head_on_a_get_route_has_no_body(listener: Listener) -> None:
     """An answer to `HEAD` ends at its header block.
