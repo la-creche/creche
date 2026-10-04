@@ -378,6 +378,12 @@ failure. Work down this list.
   no probe of LiteLLM shows that it takes the second one. The LiteLLM
   stand-in refuses it. A change costs one check in `standin_litellm.py` and
   its test.
+- **The document between a switch and the end of a destroy.** `caregiver`
+  publishes no document between the answer of the switch call and the end
+  of the destroy. Contract 05 §3.4 publishes the block before each step, and
+  §4.3 step 7 sets `ready` after the handshake. The kill scenario of
+  `test_proc_caregiver_stage2.py` holds the ids of the two sandboxes at that
+  moment, and it holds no state.
 - **No scenario for `apply-once`.** It is a verb of `caregiver` with no
   scenario here.
 - **The epoch after `rotate`.** Contract 05 §6.3 step 3 publishes the new
