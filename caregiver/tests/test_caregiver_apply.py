@@ -19,7 +19,7 @@ from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
 from caregiver.playpen_env import read_playpen_env
 from caregiver.status import now_rfc3339
 from caregiver.switch import FakeSwitchClient, SwitchClient
-from caregiver_helpers import write_registry
+from caregiver_helpers import UNREADABLE_JSON, write_registry
 
 from caregiver import paths
 
@@ -329,6 +329,23 @@ def test_an_invalid_revision_keeps_the_last_good_applied_rev(
     assert bad.status.state is FamilyState.INVALID
     assert bad.status.applied_rev == good.status.applied_rev
     assert bad.status.validation.never_valid is False
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_an_invalid_revision_over_a_document_that_does_not_read(
+    registry_root: Path, state_root: Path, raw: bytes
+) -> None:
+    """The apply reads the last document for the revision it keeps. A
+    document that does not read gives no revision, and the apply still
+    publishes its report."""
+    apply_chat(registry_root, state_root)
+    paths.status_path(state_root, "chat").write_bytes(raw)
+
+    write_registry(registry_root, kind="not-a-real-kind")
+    bad = apply_chat(registry_root, state_root)
+
+    assert bad.status.state is FamilyState.INVALID
+    assert bad.status.applied_rev == ""
 
 
 def test_an_invalid_revision_still_publishes_the_epoch(

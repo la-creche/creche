@@ -18,7 +18,7 @@ host where something has gone wrong.
 
 | Module | Owns |
 |---|---|
-| `paths.py`, `clock.py`, `atomic.py` | every host path, the one timestamp, the atomic write |
+| `paths.py`, `clock.py`, `atomic.py` | every host path, the one timestamp, the atomic write and the JSON read |
 | `lan.py`, `images.py`, `released.py` | the LAN address from the site file, the image a flavor maps to, and the images a `playpen` release installed |
 | `driver.py` | `SandboxDriver`: `SbxDriver` (real) and `FakeDriver` |
 | `litellm_keys.py`, `credentials.py`, `grants.py`, `config_mount.py` | the key, the token, the grant file, the config mount |
@@ -41,6 +41,8 @@ host where something has gone wrong.
 - Every external dependency sits behind a Protocol with a fake. Add a third
   the same way.
 - `atomic.py` is the only place that writes a file another process reads.
+- `atomic.read_json` reads a JSON file. It answers `None` for content that
+  it cannot read. It does not raise on content.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
   the grant file, then `creds.json`, then the sandboxes. `test_delete.py`
   checks the order from inside the fake driver.

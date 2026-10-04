@@ -10,14 +10,14 @@ new one is the reconciler's classify()-based job, not this one's."""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from agent_family import FamilyFile, FamilyState, HostFacts, Index, Report, load_registry
 
 from . import paths, sandboxes, steps
+from .atomic import read_json
 from .credentials import read_creds
 from .driver import SandboxDriver
 from .egress import EgressConfig
@@ -177,15 +177,7 @@ def _previous_str(previous: dict[str, Any] | None, key: str, default: str) -> st
 
 
 def _read_previous_status_json(path: Path) -> dict[str, Any] | None:
-    try:
-        body = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    if not isinstance(body, dict):
-        return None
-
-    return cast("dict[str, Any]", body)
+    return read_json(path)
 
 
 def _apply_valid(

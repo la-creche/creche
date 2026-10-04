@@ -14,9 +14,9 @@ import json
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final
 
-from .atomic import atomic_write
+from .atomic import atomic_write, read_json
 
 #: Contract 04 section 2.2 rule 1: "at least 256 bits from the system
 #: random source, base32, no padding."
@@ -93,20 +93,10 @@ def read_creds(path: Path) -> Credentials | None:
     """`None` when no credentials exist yet (a new family) or the file is
     unreadable. Never raises: a corrupt `creds.json` is a fault for the
     caller to report, not a crash (invariant 19's spirit applied here)."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
+    fields = read_json(path)
+    if fields is None:
         return None
 
-    try:
-        body = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(body, dict):
-        return None
-
-    fields = cast("dict[str, Any]", body)
     try:
         return Credentials(
             epoch=int(fields["epoch"]),

@@ -8,7 +8,8 @@ import stat
 from pathlib import Path
 
 import pytest
-from caregiver.atomic import atomic_replace_dir, atomic_write
+from caregiver.atomic import atomic_replace_dir, atomic_write, read_json
+from caregiver_helpers import UNREADABLE_JSON
 
 
 def _mode(path: Path) -> int:
@@ -128,3 +129,40 @@ def test_replace_dir_clears_a_stale_displaced_copy_from_a_crashed_attempt(tmp_pa
 
     assert (target / "instructions.md").read_text(encoding="utf-8") == "newest"
     assert not stale.exists()
+
+
+# --- read_json -----------------------------------------------------------
+
+
+def test_read_json_answers_the_object(tmp_path: Path) -> None:
+    target = tmp_path / "status.json"
+    target.write_bytes(b' {"family": "chat", "n": [1, 2.5, null]}\r\n')
+    assert read_json(target) == {"family": "chat", "n": [1, 2.5, None]}
+
+
+def test_read_json_of_a_missing_file_is_none(tmp_path: Path) -> None:
+    assert read_json(tmp_path / "status.json") is None
+
+
+def test_read_json_of_a_directory_is_none(tmp_path: Path) -> None:
+    assert read_json(tmp_path) is None
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_read_json_refuses_content_it_cannot_read(tmp_path: Path, raw: bytes) -> None:
+    """The reader answers None. It does not raise, so one bad file cannot
+    end the pass or the loop that reads it."""
+    target = tmp_path / "status.json"
+    target.write_bytes(raw)
+    assert read_json(target) is None
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"", b"{not json", b'{"a": 1} x', b"[1]", b"null", b'"text"', b"7", b"\xef\xbb\xbf{}"],
+    ids=["empty", "not-json", "trailing-text", "array", "null", "text", "number", "bom"],
+)
+def test_read_json_takes_one_object_and_nothing_else(tmp_path: Path, raw: bytes) -> None:
+    target = tmp_path / "status.json"
+    target.write_bytes(raw)
+    assert read_json(target) is None

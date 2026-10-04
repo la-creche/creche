@@ -34,7 +34,7 @@ from typing import Any, Final, cast
 from agent_family import FamilyFile, SwitchMode
 
 from . import paths
-from .atomic import atomic_write
+from .atomic import atomic_write, read_json
 from .clock import now_rfc3339
 from .driver import DriverError, Mount, SandboxDriver, SandboxSpec
 from .egress import EgressConfig
@@ -419,15 +419,11 @@ def status_of(record: SandboxRecord) -> SandboxStatus:
 def read_ledger(state_root: Path, family_name: str) -> tuple[SandboxRecord, ...]:
     """Oldest first. An unreadable ledger answers empty, the same way a
     missing one does: `caregiver`'s own state is not a reason to crash."""
-    try:
-        body = json.loads(paths.sandboxes_path(state_root, family_name).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    body = read_json(paths.sandboxes_path(state_root, family_name))
+    if body is None:
         return ()
 
-    if not isinstance(body, dict):
-        return ()
-
-    rows = cast("dict[str, Any]", body).get("sandboxes")
+    rows = body.get("sandboxes")
     if not isinstance(rows, list):
         return ()
 

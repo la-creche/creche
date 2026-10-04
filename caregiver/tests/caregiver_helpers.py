@@ -42,6 +42,21 @@ LONG_AGO: str = "2020-01-01T00:00:00Z"
 #: The token of the epoch before a rotation, as `expire_overlap` leaves it.
 OLD_TOKEN: str = "OLDTOKEN"
 
+#: More levels than the JSON parser of each supported Python version reads.
+VERY_DEEP: int = 400_000
+
+#: More digits than the interpreter converts to an integer.
+HUGE_DIGITS: int = 5_000
+
+#: Content that no JSON reader of this package can use. Each one made a
+#: reader raise before `atomic.read_json` was the one reader.
+UNREADABLE_JSON: dict[str, bytes] = {
+    "not-utf8": b'{"family": "\xff"}',
+    "utf16": '{"family": "chat"}'.encode("utf-16"),
+    "huge-integer": b'{"n": ' + b"9" * HUGE_DIGITS + b"}",
+    "very-deep": b'{"x": ' + b"[" * VERY_DEEP + b"]" * VERY_DEEP + b"}",
+}
+
 
 def family_yaml(**overrides: object) -> str:
     """The default `chat` family as YAML text, with any field replaced."""

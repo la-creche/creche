@@ -7,6 +7,7 @@ import hashlib
 import stat
 from pathlib import Path
 
+import pytest
 from caregiver.credentials import (
     TOKEN_BYTES,
     Credentials,
@@ -15,6 +16,7 @@ from caregiver.credentials import (
     token_sha256,
     write_creds,
 )
+from caregiver_helpers import UNREADABLE_JSON
 
 
 def test_mint_token_is_base32_with_no_padding() -> None:
@@ -95,6 +97,13 @@ def test_read_creds_of_a_missing_file_is_none(tmp_path: Path) -> None:
 def test_read_creds_of_corrupt_json_is_none(tmp_path: Path) -> None:
     path = tmp_path / "creds.json"
     path.write_text("{not json", encoding="utf-8")
+    assert read_creds(path) is None
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_read_creds_of_content_that_does_not_read_is_none(tmp_path: Path, raw: bytes) -> None:
+    path = tmp_path / "creds.json"
+    path.write_bytes(raw)
     assert read_creds(path) is None
 
 

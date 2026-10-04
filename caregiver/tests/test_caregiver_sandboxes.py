@@ -22,7 +22,7 @@ from caregiver.sandboxes import (
     write_ledger,
 )
 from caregiver.status import SandboxLifecycle
-from caregiver_helpers import chat_family
+from caregiver_helpers import UNREADABLE_JSON, chat_family
 
 from caregiver import paths
 
@@ -279,6 +279,14 @@ def test_an_unreadable_ledger_reads_empty(state_root: Path) -> None:
     path = paths.sandboxes_path(state_root, "chat")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
+    assert read_ledger(state_root, "chat") == ()
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_a_ledger_that_does_not_read_is_empty(state_root: Path, raw: bytes) -> None:
+    path = paths.sandboxes_path(state_root, "chat")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
     assert read_ledger(state_root, "chat") == ()
 
 

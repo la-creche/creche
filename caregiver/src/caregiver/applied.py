@@ -23,12 +23,12 @@ import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Final
 
 from agent_family import FamilyFile, parse_family
 
 from . import paths
-from .atomic import atomic_write
+from .atomic import atomic_write, read_json
 from .clock import now_rfc3339
 
 #: The snapshot holds no secret: a family file names grants and mounts, and
@@ -83,13 +83,13 @@ def write_applied(
 def read_applied(state_root: Path, family_name: str) -> AppliedState | None:
     """`None` when this family has never been applied, or when the
     snapshot cannot be read or parsed."""
-    meta = _read_meta(paths.applied_meta_path(state_root, family_name))
+    meta = read_json(paths.applied_meta_path(state_root, family_name))
     if meta is None:
         return None
 
     try:
         text = paths.applied_family_path(state_root, family_name).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
 
     family, _ = parse_family(text)
@@ -112,7 +112,7 @@ def read_applied_text(state_root: Path, family_name: str) -> str:
     model, which would lose comments the author wrote."""
     try:
         return paths.applied_family_path(state_root, family_name).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 
@@ -120,12 +120,3 @@ def forget_applied(state_root: Path, family_name: str) -> None:
     """Drop the snapshot. A deleted family has no live revision, and a
     family whose next apply must start from nothing has none either."""
     shutil.rmtree(paths.applied_dir(state_root, family_name), ignore_errors=True)
-
-
-def _read_meta(path: Path) -> dict[str, Any] | None:
-    try:
-        body = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    return cast("dict[str, Any]", body) if isinstance(body, dict) else None

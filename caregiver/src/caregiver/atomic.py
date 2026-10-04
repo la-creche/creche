@@ -5,14 +5,20 @@ the directory so the rename survives a power loss. Every writer in this
 package that publishes a file another process reads goes through here, so
 "a reader never sees a half file" is one implementation, not one per
 caller. `atomic_replace_dir` is the same idea for a whole directory (the
-family config mount, contract 01 §6.1 rule 1)."""
+family config mount, contract 01 §6.1 rule 1).
+
+`read_json` is the one reader of a JSON file. Every module of this package
+that reads a JSON object from a file goes through it, so "content that does
+not read is a refusal, not an exception" is one implementation too."""
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 
 def atomic_write(path: Path, data: bytes, *, mode: int) -> None:
@@ -59,6 +65,32 @@ def atomic_replace_dir(staging: Path, target: Path) -> None:
     os.replace(staging, target)
     _fsync_dir(target.parent)
     shutil.rmtree(displaced, ignore_errors=True)
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    """The JSON object in the file at `path`, or None.
+
+    None is the refusal: the file is absent, it does not read, or its
+    content is not one JSON object. The caller decides what a refusal
+    means. This function does not raise on content, so one bad file
+    cannot end the pass or the loop that reads it."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+
+    try:
+        body: object = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        # ValueError covers bytes that are not UTF-8, text that is not
+        # JSON and an integer past the digit limit of the interpreter.
+        # Nesting past the limit of the parser raises RecursionError.
+        return None
+
+    if not isinstance(body, dict):
+        return None
+
+    return cast("dict[str, Any]", body)
 
 
 def _fsync_dir(directory: Path) -> None:

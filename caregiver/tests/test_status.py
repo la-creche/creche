@@ -8,6 +8,7 @@ import re
 import stat
 from pathlib import Path
 
+import pytest
 from agent_family import FamilyState, Issue, Report, Severity
 from caregiver.faults import FaultEntry
 from caregiver.status import (
@@ -22,9 +23,11 @@ from caregiver.status import (
     StatusDocument,
     ValidationBlock,
     now_rfc3339,
+    restamp_status,
     write_status,
     write_validation_report,
 )
+from caregiver_helpers import UNREADABLE_JSON
 
 
 def test_now_rfc3339_matches_the_contracts_examples() -> None:
@@ -169,6 +172,28 @@ def test_write_status_is_atomic_and_mode_0644(tmp_path: Path) -> None:
     write_status(path, doc)
     assert json.loads(path.read_text(encoding="utf-8")) == doc.as_json()
     assert stat.S_IMODE(path.stat().st_mode) == STATUS_FILE_MODE == 0o644
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_a_document_that_does_not_read_is_not_restamped(tmp_path: Path, raw: bytes) -> None:
+    """The restamp runs on the loop thread. A document that does not read
+    is left as it is, and the next pass publishes a whole new one."""
+    doc = StatusDocument(
+        family="chat",
+        kind="attended",
+        state=FamilyState.IN_SYNC,
+        written_at="x",
+        registry_rev="r",
+        applied_rev="r",
+        config_rev="r",
+        validation=VALIDATION,
+    )
+    path = tmp_path / "status.json"
+    write_status(path, doc)
+    path.write_bytes(raw)
+
+    assert restamp_status(path, older_than_s=0.0) is False
+    assert path.read_bytes() == raw
 
 
 def test_write_validation_report_publishes_agent_familys_report(tmp_path: Path) -> None:
