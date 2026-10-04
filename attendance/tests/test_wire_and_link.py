@@ -89,6 +89,8 @@ RAISING_LINES = {
     ),
 }
 
+LOG_LINE = '{"type":"log","message":"pi started"}'
+
 
 def test_the_splitter_uses_lf_and_nothing_else() -> None:
     splitter = LineSplitter()
@@ -326,6 +328,18 @@ class Recorder:
 
     async def on_channel_lost(self, sandbox: str) -> None:
         self.lost.append(sandbox)
+
+
+class FailingRecorder(Recorder):
+    """A LinkEvents whose log callback raises.
+
+    It stands for any fault that ends the reader loop with an exception
+    instead of a return.
+    """
+
+    async def on_log(self, message: LogLine) -> None:
+        await super().on_log(message)
+        raise RuntimeError("the log callback failed")
 
 
 def make_link(
@@ -592,6 +606,33 @@ async def test_a_line_that_made_parse_raise_is_one_refusal(tmp_path: Path, line:
     await playpens[SANDBOX].send_malformed()
     await asyncio.wait_for(_until(lambda: bool(events.lost)), 2.0)
 
+    assert link.is_open is False
+    await link.close()
+
+
+async def test_close_drops_the_channel_after_a_loop_died(tmp_path: Path) -> None:
+    """A dead loop keeps its exception. `close` must close the channel anyway."""
+    events = FailingRecorder()
+    link, playpens = make_link(tmp_path, events)
+    await link.ensure_open(dial(), 7)
+    await playpens[SANDBOX].send_raw(LOG_LINE)
+    await asyncio.wait_for(_until(lambda: bool(events.logs)), 2.0)
+
+    await link.close()
+
+    assert link.is_open is False
+
+
+async def test_a_dead_reader_still_ends_in_channel_lost(tmp_path: Path) -> None:
+    """Contract 03 §10 rule 4. With no reader no pong arrives, so the ping
+    loop drops the channel. The dead reader must not stop that."""
+    events = FailingRecorder()
+    link, playpens = make_link(tmp_path, events, ping_interval_s=0.02)
+    await link.ensure_open(dial(), 7)
+    await playpens[SANDBOX].send_raw(LOG_LINE)
+    await asyncio.wait_for(_until(lambda: bool(events.lost)), 2.0)
+
+    assert events.lost == [SANDBOX]
     assert link.is_open is False
     await link.close()
 

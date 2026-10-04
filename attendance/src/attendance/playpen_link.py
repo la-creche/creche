@@ -352,8 +352,15 @@ class PlaypenLink:
             task.cancel()
 
         for task in loops:
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                # A loop that died earlier keeps its exception and raises it
+                # here. Passing it on would leave the channel open with no
+                # reader, so it is logged and `close` goes on.
+                _LOG.exception("family=%s a channel loop had died", self._family)
 
     def register(self, session: str, turn: str) -> None:
         """Tell the link which turn to expect lines for (§13 rule 3)."""
