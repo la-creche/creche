@@ -336,10 +336,10 @@ Rules for the test:
   `crates/creche-contracts/src/grants/`:
   1. `json.rs`, contract 04. The contract gives no cap on the nesting of a
      grant file or of a request body. The Python reader stops at a limit of
-     its interpreter. The reader stops at 256 levels.
+     its interpreter. The Rust reader stops at 256 levels.
   2. `json.rs`, contract 04. The contract does not say which characters a
-     string holds. The Python reader keeps a lone surrogate. The reader
-     refuses the document.
+     string holds. The Python reader keeps a lone surrogate. The Rust
+     reader refuses the document.
   3. `BodyError`, contract 04 §5. The contract has no row for a request body
      that the chaperone cannot read. The type gives the three statuses of the
      Python chaperone: 413, 400 and 422.
