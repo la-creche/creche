@@ -1,0 +1,16 @@
+{
+ "context": {},
+ "contract": "contract 02 \u00a75.5, \u00a78",
+ "entry": "attendance.api.build_app",
+ "format": 1,
+ "notes": ["The input is the fields of one record of the event stream. args.ts is in the ISO 8601 form of Python. The stand-in service gives the record to the events route.","A record with a journal_seq of null is one that the stream makes itself: a heartbeat, or the note stream_overrun.","output is the exact line that a reader of the stream gets, with its LF."],
+ "surface": "session.stream.encode",
+ "vectors": [
+  {"http_status":200,"id":"heartbeat","input":{"args":{"body":{"last_seq":118},"journal_seq":null,"kind":"heartbeat","ts":"2026-10-05T19:22:31.070000+00:00","turn":null}},"output":{"text":"{\"journal_seq\":null,\"ts\":\"2026-10-05T19:22:31.070Z\",\"kind\":\"heartbeat\",\"turn\":null,\"body\":{\"last_seq\":118}}\n"},"result":"accepted"},
+  {"http_status":200,"id":"heartbeat-empty-journal","input":{"args":{"body":{"last_seq":0},"journal_seq":null,"kind":"heartbeat","ts":"2026-10-05T19:22:31.070000+00:00","turn":null}},"output":{"text":"{\"journal_seq\":null,\"ts\":\"2026-10-05T19:22:31.070Z\",\"kind\":\"heartbeat\",\"turn\":null,\"body\":{\"last_seq\":0}}\n"},"result":"accepted"},
+  {"http_status":200,"id":"stream-overrun","input":{"args":{"body":{"last_seq":118,"note":"stream_overrun"},"journal_seq":null,"kind":"note","ts":"2026-10-05T19:22:31.070000+00:00","turn":null}},"output":{"text":"{\"journal_seq\":null,\"ts\":\"2026-10-05T19:22:31.070Z\",\"kind\":\"note\",\"turn\":null,\"body\":{\"note\":\"stream_overrun\",\"last_seq\":118}}\n"},"result":"accepted"},
+  {"http_status":200,"id":"line","input":{"args":{"body":{"assistantMessageEvent":{"contentIndex":0,"delta":"Sensor ","type":"text_delta"},"type":"message_update"},"journal_seq":42,"kind":"pi_event","ts":"2026-10-05T19:22:31.070000+00:00","turn":"01JBQ7WZ0X4T9V6K2H8M3N5PQR"}},"output":{"text":"{\"journal_seq\":42,\"ts\":\"2026-10-05T19:22:31.070Z\",\"kind\":\"pi_event\",\"turn\":\"01JBQ7WZ0X4T9V6K2H8M3N5PQR\",\"body\":{\"assistantMessageEvent\":{\"contentIndex\":0,\"delta\":\"Sensor \",\"type\":\"text_delta\"},\"type\":\"message_update\"}}\n"},"result":"accepted"},
+  {"http_status":200,"id":"line-text-forms","input":{"args":{"body":{"note":"caf\u00e9 \"quoted\" \\ \u2028 \ud83d\ude00 \u007f\n"},"journal_seq":43,"kind":"note","ts":"2026-10-05T19:22:31.070000+00:00","turn":null}},"output":{"text":"{\"journal_seq\":43,\"ts\":\"2026-10-05T19:22:31.070Z\",\"kind\":\"note\",\"turn\":null,\"body\":{\"note\":\"caf\\u00e9 \\\"quoted\\\" \\\\ \\u2028 \\ud83d\\ude00 \\u007f\\n\"}}\n"},"result":"accepted"},
+  {"http_status":200,"id":"line-turn-settled","input":{"args":{"body":{"leaf_id":"e6","usage":{"cache_read":0,"cache_write":0,"cost_usd":0.014,"input":4120,"output":188},"user_entry_id":"e5"},"journal_seq":63,"kind":"turn_settled","ts":"2026-10-05T19:22:31.070000+00:00","turn":"01JBQ7WZ0X4T9V6K2H8M3N5PQR"}},"output":{"text":"{\"journal_seq\":63,\"ts\":\"2026-10-05T19:22:31.070Z\",\"kind\":\"turn_settled\",\"turn\":\"01JBQ7WZ0X4T9V6K2H8M3N5PQR\",\"body\":{\"usage\":{\"input\":4120,\"output\":188,\"cache_read\":0,\"cache_write\":0,\"cost_usd\":0.014},\"leaf_id\":\"e6\",\"user_entry_id\":\"e5\"}}\n"},"result":"accepted"}
+ ]
+}

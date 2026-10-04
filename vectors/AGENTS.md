@@ -41,6 +41,8 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
 | `surfaces/grants.py` | `grants.parse`, `chaperone.call_body`, `chaperone.approval_body` |
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
+| `surfaces/session_cases.py` | the written inputs of the session API surfaces |
+| `surfaces/session.py` | the session API: `session.request.*`, `session.query.*`, `session.error_body`, `session.answer.*`, `session.journal.*`, `session.stream.*`, `session.turn.move`, `session.state.derive`, `session.outcome.*` |
 
 ## Known gaps
 
@@ -87,5 +89,35 @@ directory is not a workspace package, so a change here does not change
   Python version: 9,997 levels on 3.12 and 9,998 on 3.13. Python refuses that
   input when the caller is about 900 C calls deep. Python 3.14 refuses it on
   a small stack.
+- The session surfaces go through the routes of `attendance.api`. The
+  service behind the routes is a stand-in. No vector covers a refusal that
+  the real service makes after the parse: a token, a family kind, a lease.
+- No vector covers the header `X-Door-Instance`, or a path parameter. The
+  parsers of `attendance.requests` do not check a path parameter.
+- No vector covers the bodies of `wait=accepted` and `wait=settled`. No
+  vector covers the answers of `/dispatch` and `/dispatch/jobs`. No vector
+  covers a file of `attendance.store`: `session.json`, a turn record, a
+  lease file, a dispatch ledger entry. Each one has no public entry point
+  without the real service.
+- No vector covers the readers in the three doors: the error body, a
+  session row, a settled turn, a line of the event stream.
+- `session.journal.write` and `session.stream.encode` take each body. The
+  entry point does not check a body against its kind. The service has no
+  public function that makes the body of a kind. The bodies in
+  `session_cases.py` copy the keys and their order from
+  `attendance.service`. A change there does not move a vector.
+- A vector file sorts keys. `session.journal.write`, `session.stream.encode`
+  and `session.error_body` thus give an object of free form its keys in
+  sorted order. No vector shows that the Python code keeps another order.
+- `session.outcome.write` and `session.answer.*` use no time before the
+  year 1000. `attendance.clock.rfc3339` writes such a year with a width that
+  depends on the system.
+- A text of a time has a vector only when each supported Python version
+  reads it in the same way. `datetime.fromisoformat` differs between
+  versions on four forms:
+  1. A fraction with no digit.
+  2. A fraction after the hours or after the minutes.
+  3. A fraction in an offset of zero seconds.
+  4. Hour 24.
 - The generator runs on macOS, and CI runs it on Linux. No other system
   has a run.

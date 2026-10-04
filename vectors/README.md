@@ -34,6 +34,7 @@ release replaces that surface.
 | `data/channel/` | the channel protocol: `parse`, `frame`, `build` |
 | `data/chaperone/` | the grant file, the call body, the approval body |
 | `data/status/` | the status document, one file per reader |
+| `data/session/` | the session API: the request bodies, the queries, the error body, the journal and the event stream |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 
 ## Regenerate
@@ -94,8 +95,8 @@ It ends with one newline. Each vector is on one line.
 | `value` | when the Python code parsed the input into a value | the normalized value |
 | `refusal` | when the Python code gives a reason | the refusal code, or an object that holds the reason |
 | `issues`, `status` | on `family_file` | the validation report |
-| `http_status` | on the two body surfaces of `data/chaperone/` | the HTTP status of the answer. On a refused vector it is inside `refusal`. |
-| `output` | on `channel.build` | the exact bytes that the Python code writes, as an input form |
+| `http_status` | on the two body surfaces of `data/chaperone/` and on a surface of `data/session/` that writes an answer | the HTTP status of the answer. On a refused vector it is inside `refusal`. |
+| `output` | on `channel.build` and on each surface of `data/session/` that writes bytes | the exact bytes that the Python code writes, as an input form |
 | `exception` | when `result` is `raised` | the name of the exception type |
 
 ### The three results
