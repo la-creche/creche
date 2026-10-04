@@ -10,7 +10,9 @@
 #                          release.yml)
 #                          --tests-for PATH...: only the suites of the
 #                          packages PATH... touch (pre-push), and
-#                          vectors/tests for a product package
+#                          vectors/tests for a product package. A path under
+#                          integration/proc/ picks the process-level suite,
+#                          in a pytest process of its own
 #                          --docs: only the tests marked `docs`, for a
 #                          change bin/lib/docsrule.sh calls docs only
 #   bin/rust-gate.sh       only for a change under rust/ (bin/lib/rustrule.sh):
@@ -53,6 +55,18 @@ VECTORS_SUITE="vectors/tests"
 #: no vector. Every other suite is the suite of a product package, so a new
 #: suite in testpaths counts as one until this list names it.
 NO_PRODUCT=("bin/tests" "$VECTORS_SUITE")
+
+#: The process-level suite (integration/proc/AGENTS.md). No testpaths entry
+#: holds it, so the full run does not hold it. It runs in a pytest process of
+#: its own, with the command of that document: four workers. The `proc` job
+#: of CI runs the same suite on one worker (.github/workflows/gate.yml).
+PROC_DIR="integration/proc"
+PROC_PYTEST=(uv run pytest "$PROC_DIR" -m slow -n 4)
+
+#: The variable that makes each skip of that suite a failure. The `proc` job
+#: sets it too. A test there skips itself when the playpen bundle is missing,
+#: and a run in which every test skips judged nothing.
+PROC_NO_SKIP="CRECHE_PROC_NO_SKIP"
 
 # The suites the full run collects, one per line: pyproject.toml's
 # testpaths, e.g. "chaperone/tests". A suite missing from disk is left out.
@@ -109,14 +123,28 @@ tally() {
   printf '%s and %d more' "$1" "$(($2 - 1))"
 }
 
+# proc_path PATH: whether PATH is under integration/proc/. A path that git
+# wrote in quotes counts, as for rust_path.
+proc_path() {
+  case "$1" in
+    "$PROC_DIR"/* | \""$PROC_DIR"/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 # tests_for PATH...: pytest on the suites of the packages PATH... touch, with
 # one line per suite saying which path picked it. A path in no package
 # (uv.lock, pyproject.toml, docs/, .github/, githooks/) can change what any
 # suite sees, so it runs the full suite instead. A path under rust/ is cargo's
 # to test, not pytest's: it picks no suite and is not a path in no package.
+# A path under integration/proc/ is proc_for's: the same two things hold.
 # A path in a product package also picks vectors/tests.
 tests_for() {
   local suites suite path first count stray="" strays=0 others=0 product=0
+  local procs=0
   local -a picked=()
 
   if [[ $# -eq 0 ]]; then
@@ -129,6 +157,11 @@ tests_for() {
   # One path outside every package is enough to run everything.
   for path in "$@"; do
     if rust_path "$path"; then
+      continue
+    fi
+
+    if proc_path "$path"; then
+      procs=$((procs + 1))
       continue
     fi
     others=$((others + 1))
@@ -144,7 +177,10 @@ tests_for() {
   done
 
   if [[ "$others" -eq 0 ]]; then
-    echo "quality-gate: no pytest: every path is under $RUST_DIR/"
+    if [[ "$procs" -eq 0 ]]; then
+      echo "quality-gate: no pytest: every path is under $RUST_DIR/"
+    fi
+
     return 0
   fi
 
@@ -193,6 +229,33 @@ tests_for() {
   fi
 
   "${PYTEST[@]}" "${picked[@]}"
+}
+
+# proc_for PATH...: the process-level suite, when one PATH or more is under
+# integration/proc/, with one line saying which path picked it. The full
+# suite holds no test of that directory, so only this run tests such a path
+# before the push. A skip is a failure here: with no playpen bundle the suite
+# would pass and judge nothing.
+proc_for() {
+  local path first="" count=0
+
+  for path in "$@"; do
+    if ! proc_path "$path"; then
+      continue
+    fi
+
+    if [[ -z "$first" ]]; then
+      first="$path"
+    fi
+    count=$((count + 1))
+  done
+
+  if [[ "$count" -eq 0 ]]; then
+    return 0
+  fi
+
+  echo "quality-gate: $PROC_DIR, for $(tally "$first" "$count")"
+  env "$PROC_NO_SKIP=1" "${PROC_PYTEST[@]}"
 }
 
 # rust_for MODE PATH...: why this run needs the Rust checks, e.g.
@@ -320,7 +383,10 @@ fi
 
 case "$MODE" in
   --tests) "${PYTEST[@]}" ;;
-  --tests-for) tests_for "$@" ;;
+  --tests-for)
+    tests_for "$@"
+    proc_for "$@"
+    ;;
   --docs) "${PYTEST[@]}" -m "$DOCS_MARKER" ;;
 esac
 

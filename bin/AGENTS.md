@@ -70,7 +70,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `sbx-drift-check.sh` | OPERATOR, daily | Read-only. Alarms when the global sbx policy holds any network allow, or when a per-sandbox rule allows a host that is not the LAN address and not in the seeded allowlist. |
 | `sync-code-corpus.sh` | OPERATOR, hourly | Refreshes the dedicated code clones the library indexes. The repository list lives outside the corpus. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
-| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. For a push that changes `vectors/`, it runs `rust-gate.sh` when `cargo` is on `PATH`. |
+| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. For a push that changes `vectors/`, it runs `rust-gate.sh` when `cargo` is on `PATH`. For a push that changes `integration/proc/`, it runs the process-level suite. |
 | `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, the include check, `cargo fmt` and `cargo clippy` on the workspace under `rust/`. `--tests` adds `cargo test`. |
 
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
@@ -89,6 +89,18 @@ A scoped run for a product package also runs `vectors/tests`. A product
 package is each package but `bin/` and `vectors/`. A change in a product
 package can move a vector. That suite fails when a committed vector differs
 from what the Python code does.
+
+A scoped run for a path under `integration/proc/` runs the process-level
+suite in a pytest process of its own, on four workers. Such a path does not
+start the full suite, because the full suite holds no test of that directory.
+A push with no other path runs no other suite.
+
+- The gate sets `CRECHE_PROC_NO_SKIP=1` for that run, as the `proc` job does.
+  A test that needs the playpen bundle then fails when the bundle is missing.
+- Build the bundle before the push. `integration/proc/AGENTS.md` gives the
+  command.
+- `--tests` does not run the process-level suite. CI runs it for each code
+  change.
 
 `lib/docsrule.sh` holds the one copy of "does this change touch nothing but
 prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
