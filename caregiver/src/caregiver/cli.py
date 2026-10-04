@@ -39,7 +39,7 @@ from .lan import ConfigError, Port, url
 from .litellm_keys import HttpLiteLLMKeys, LiteLLMError, LiteLLMKeys
 from .loop import LoopConfig, SignalControl, serve
 from .mcp_release import paths_under
-from .reconcile import Actors, SpendRead, reconcile_family
+from .reconcile import Actors, SpendRead, has_family_file, reconcile_family
 from .released import RELEASED_IMAGES, ReleasedImages
 from .rotate import (
     Mode,
@@ -315,7 +315,7 @@ def _apply_once_command(
 ) -> int:
     registry = load_registry(args.registry)
     report = registry.reports.get(args.family)
-    if report is None:
+    if report is None or not has_family_file(registry, args.family):
         print(f"caregiver: no family '{args.family}' in {args.registry}", file=sys.stderr)
         return EXIT_USAGE
 
@@ -447,7 +447,8 @@ def _serve_command(
     units: UnitWriter | None,
 ) -> int:
     registry = load_registry(args.registry)
-    for line in _watch_plan(args, sorted(registry.reports)):
+    families = sorted(name for name in registry.reports if has_family_file(registry, name))
+    for line in _watch_plan(args, families):
         print(line)
 
     # Not in `_watch_plan`: only `serve` holds an interval to probe over,
@@ -507,7 +508,7 @@ def _reconcile_once_command(
     units: UnitWriter | None,
 ) -> int:
     registry = load_registry(args.registry)
-    if args.family not in registry.reports:
+    if not has_family_file(registry, args.family):
         print(f"caregiver: no family '{args.family}' in {args.registry}", file=sys.stderr)
         return EXIT_USAGE
 

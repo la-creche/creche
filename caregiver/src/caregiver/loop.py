@@ -67,7 +67,7 @@ from .delete import delete_family
 from .images import SandboxImages
 from .mcp_release import McpPaths
 from .mcp_wire import McpReport, mcp_pass
-from .reconcile import Actors, SpendRead, reconcile_family
+from .reconcile import Actors, SpendRead, has_family_file, reconcile_family
 from .released import ReleasedImages
 from .rotate import settle
 from .status import published_here, restamp_status
@@ -764,6 +764,13 @@ def _dispatch(
     class from one family's document or thread would end the sweep in the
     same way.
     """
+    if not has_family_file(registry, name):
+        # Contract 01 §5.6 rule 3: a directory with no `family.yaml` is
+        # ignored. No pass, no document and no record of the loop, so the
+        # name is behind no revision.
+        state.forget(name)
+        return False
+
     try:
         return _dispatch_one(config, actors, registry, name, state, passes, stop)
     except Exception as exc:
@@ -1077,6 +1084,13 @@ def _forget_deleted(
 
     gone: list[str] = []
     for name in _families_with_state(config.state_root, state.said):
+        # CONTRACT-QUESTION: contract 01 §5.6 rule 3 says that `caregiver`
+        # ignores a family directory with no `family.yaml`. It does not say
+        # what a family with state is when its directory loses the file.
+        # Such a name has a report, so the reading here keeps the state: no
+        # pass and no delete, and the status document goes stale. To read
+        # the directory as absent, this line must ask for the file, and the
+        # loop then deletes the key and each sandbox of that family.
         if name in registry.reports:
             continue
 

@@ -103,6 +103,8 @@ host where something has gone wrong.
 - A sandbox row that does not read stays in the ledger file. A rewrite
   removes it only when the JSON encoder cannot write it again.
 - An empty registry deletes no family.
+- A directory under `families/` with no `family.yaml` gets no pass and no
+  delete. `reconcile.has_family_file` is the one test for it.
 - `rotate` deletes the old key before it mints the new one. The token
   overlaps. The key does not.
 - `rotate` takes a `ValidFamily`. Only `rotate.valid_family` makes one. The
@@ -231,6 +233,11 @@ Nothing here touches a real sandbox or LiteLLM.
   leaves the virtual machine. The row reads `failed`, and the log holds one
   error line. No later pass destroys that virtual machine. Contract 05 §4.2
   rule 5 has no rule for a destroy that fails (`sandboxes.py`).
+- `CONTRACT-QUESTION` in `loop.py`, `_forget_deleted`. Contract 01 §5.6
+  rule 3 says that `caregiver` ignores a directory with no `family.yaml`.
+  It has no rule for a family with state whose directory loses the file.
+  The loop keeps the state of that family, and its status document goes
+  stale. The other reading deletes its key and its sandboxes.
 - `CONTRACT-QUESTION` in `mcp_release.py`. `stage7-releases.md` §4.4 gives
   no limit for a merge key in the roster. The roster reader uses the two
   limits of the Rust reader of a component manifest.

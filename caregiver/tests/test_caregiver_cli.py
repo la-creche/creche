@@ -11,7 +11,7 @@ from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE, main
 from caregiver.credentials import read_creds
 from caregiver.driver import DriverError, FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError
-from caregiver_helpers import UNREADABLE_JSON, write_registry
+from caregiver_helpers import UNREADABLE_JSON, write_no_file_dir, write_registry
 
 from caregiver import paths
 
@@ -202,6 +202,23 @@ def test_apply_once_of_an_unknown_family_is_a_usage_error(
         litellm=FakeLiteLLMKeys(),
     )
     assert code == EXIT_USAGE
+
+
+def test_apply_once_of_a_directory_with_no_family_file_is_a_usage_error(
+    registry_root: Path, state_root: Path
+) -> None:
+    """Contract 01 §5.6 rule 3: `caregiver` ignores the directory."""
+    write_no_file_dir(registry_root)
+    words = ["apply-once", str(registry_root), "stray", "--image", "sha256:x"]
+    litellm = FakeLiteLLMKeys()
+
+    code = main(
+        [*words, "--state-root", str(state_root), "--write"], driver=FakeDriver(), litellm=litellm
+    )
+
+    assert code == EXIT_USAGE
+    assert litellm.minted == 0
+    assert not paths.family_dir(state_root, "stray").exists()
 
 
 def test_apply_once_a_second_time_reports_refresh_not_mint(

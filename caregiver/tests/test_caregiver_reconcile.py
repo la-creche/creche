@@ -27,13 +27,14 @@ from caregiver.reconcile import (
     DESTROY_STEP,
     SWITCH_STEP,
     Actors,
+    FamilyNotFoundError,
     ReconcileResult,
     SpendRead,
     reconcile_family,
 )
 from caregiver.switch import FakeSwitchClient, SwitchRequest
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import write_no_file_dir, write_registry
 
 from caregiver import paths, sandboxes
 
@@ -544,6 +545,25 @@ def test_an_instructions_edit_rewrites_the_config_mount(fleet: Fleet) -> None:
     config = paths.config_dir(fleet.state_root, FAMILY) / "instructions.md"
     assert config.read_text(encoding="utf-8") == "Be brief.\n"
     assert result.status.state is FamilyState.IN_SYNC
+
+
+def test_a_directory_with_no_family_file_has_no_pass(fleet: Fleet) -> None:
+    """Contract 01 §5.6 rule 3: `caregiver` ignores the directory. The
+    caller gets the answer for a name that the registry does not hold, and
+    the pass writes nothing."""
+    write_no_file_dir(fleet.registry_root)
+    actors = Actors(fleet.driver, fleet.litellm, fleet.switch, EgressConfig(), fleet.units)
+
+    with pytest.raises(FamilyNotFoundError):
+        reconcile_family(
+            load_registry(fleet.registry_root),
+            "stray",
+            state_root=fleet.state_root,
+            image=IMAGE,
+            actors=actors,
+        )
+
+    assert not paths.family_dir(fleet.state_root, "stray").exists()
 
 
 # --- the replace axis ------------------------------------------------------------

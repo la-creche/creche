@@ -154,9 +154,23 @@ class SpendRead(StrEnum):
 
 
 class FamilyNotFoundError(RuntimeError):
-    """No `families/<name>/` directory in the registry at all — not the
-    same as an invalid `family.yaml`, which does have a directory and gets
-    a report."""
+    """The registry holds no `family.yaml` for the name: no
+    `families/<name>/` directory, or a directory with no file. That is not
+    the same as an invalid `family.yaml`, which gets a report."""
+
+
+def has_family_file(registry: Registry, name: str) -> bool:
+    """Whether the registry holds a `family.yaml` for `name`.
+
+    Contract 01 §5.6 rule 3: a family directory with no `family.yaml` is a
+    warning, and `caregiver` ignores it. The registry gives that directory
+    a report with no error and no parsed file. A file that does not parse
+    has an error, and a file that parses is in `registry.families`."""
+    report = registry.reports.get(name)
+    if report is None:
+        return False
+
+    return name in registry.families or not report.ok
 
 
 @dataclass(frozen=True)
@@ -232,7 +246,7 @@ def reconcile_family(
     install belongs to all of them. A caller that passes none raises the
     fault on nobody: `apply-once` files no MCP request."""
     report = registry.reports.get(family_name)
-    if report is None:
+    if report is None or not has_family_file(registry, family_name):
         raise FamilyNotFoundError(family_name)
 
     watch = chaperone if chaperone is not None else unwatched()

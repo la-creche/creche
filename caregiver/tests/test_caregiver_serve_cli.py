@@ -24,6 +24,7 @@ from caregiver_helpers import (
     grants_alone,
     published,
     published_epoch,
+    write_no_file_dir,
     write_registry,
 )
 
@@ -137,6 +138,16 @@ def test_an_unknown_family_is_a_usage_mistake(bench: Bench) -> None:
         )
         == EXIT_USAGE
     )
+
+
+def test_a_directory_with_no_family_file_is_a_usage_mistake(bench: Bench) -> None:
+    """Contract 01 §5.6 rule 3: `caregiver` ignores the directory, so the
+    verb has no family of that name."""
+    write_no_file_dir(bench.registry_root)
+    words = ["reconcile-once", str(bench.registry_root), "stray", "--image", IMAGE]
+
+    assert bench.run(*words, "--state-root", str(bench.state_root), "--write") == EXIT_USAGE
+    assert not paths.family_dir(bench.state_root, "stray").exists()
 
 
 def test_a_degraded_family_exits_non_zero(bench: Bench) -> None:

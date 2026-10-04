@@ -8,6 +8,7 @@ id, and what it does about a family file that disappeared."""
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import signal
 import time
@@ -39,6 +40,7 @@ from caregiver_helpers import (
     current_digest,
     expire_overlap,
     grants_alone,
+    write_no_file_dir,
     write_registry,
 )
 
@@ -328,6 +330,52 @@ def test_an_invalid_family_file_is_never_treated_as_deleted(bench: Bench) -> Non
     bench.look()
     assert paths.family_dir(bench.state_root, "ops").exists()
     assert bench.litellm.deleted == []
+
+
+def _errors(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [one.getMessage() for one in caplog.records if one.levelno >= logging.ERROR]
+
+
+def test_a_directory_with_no_family_file_is_ignored(
+    bench: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Contract 01 §5.6 rule 3. The loop starts no pass for the directory
+    and writes no state for it. The family beside it converges."""
+    write_no_file_dir(bench.registry_root)
+
+    assert bench.look() == ("chat",)
+
+    assert not paths.family_dir(bench.state_root, "stray").exists()
+    assert _errors(caplog) == []
+
+
+def test_a_family_whose_file_went_away_keeps_its_state(
+    bench: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The directory stays and holds no file. The loop ignores it: no pass
+    and no delete, so the key and the sandbox of the family stay."""
+    write_registry(bench.registry_root, name="ops")
+    bench.look()
+    (bench.registry_root / "families" / "ops" / "family.yaml").unlink()
+
+    assert bench.look() == ("chat",)
+
+    assert paths.creds_path(bench.state_root, "ops").exists()
+    assert bench.litellm.deleted == []
+    assert "destroy" not in bench.driver.ops()
+    assert _errors(caplog) == []
+
+
+def test_an_ignored_directory_does_not_keep_the_loop_due(bench: Bench) -> None:
+    """A family that the loop ignores is behind no revision. Without that,
+    each poll reads the whole registry for as long as the directory stays."""
+    write_registry(bench.registry_root, name="ops")
+    bench.look()
+    (bench.registry_root / "families" / "ops" / "family.yaml").unlink()
+    bench.look()
+
+    assert bench.look() == ()
+    assert not bench.state.due(bench.state.revision, LONG_WAIT_S, frozenset())
 
 
 def test_an_invalid_family_file_still_ends_a_rotation_overlap(bench: Bench) -> None:
