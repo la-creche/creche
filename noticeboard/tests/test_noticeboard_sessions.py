@@ -72,6 +72,18 @@ def test_an_empty_token_file_is_refused(tmp_path: Path) -> None:
     assert fake.calls == []
 
 
+def test_a_token_file_that_is_not_text_reports_and_makes_no_call(tmp_path: Path) -> None:
+    """The decoder raises UnicodeDecodeError for these bytes, not OSError."""
+    fake = FakeAttendance()
+    token_file = write_token(tmp_path)
+    token_file.write_bytes(b"\xff\xfe" + b"v" * 40)
+
+    answer = SessionReader(transport=fake, token_file=token_file).sessions()
+
+    assert "token" in answer.problem
+    assert fake.calls == []
+
+
 def test_the_door_comes_from_the_session_id_prefix(tmp_path: Path) -> None:
     fake = FakeAttendance()
     fake.answer(

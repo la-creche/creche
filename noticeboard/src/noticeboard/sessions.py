@@ -297,6 +297,10 @@ class SessionReader:
             # The file is mode 0600 and owned by attendance's user, so "not
             # readable" is the ordinary first-run failure here.
             return "", f"cannot read the noticeboard-ro token: {error.strerror or error}"
+        except UnicodeDecodeError:
+            # Not OSError. The text of this error quotes a byte of the file,
+            # and no byte of a token file belongs on a page.
+            return "", "the noticeboard-ro token file is not UTF-8 text"
 
         if not found:
             return "", "the noticeboard-ro token file is empty"
