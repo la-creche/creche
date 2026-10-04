@@ -34,7 +34,7 @@ OTHER = CHAT_FAMILY_YAML.replace("the house assistant", "the house assistant, a 
 #: `kind` is not one of contract 01's three, so the whole registry fails.
 BAD = CHAT_FAMILY_YAML.replace("kind: attended", "kind: wizard")
 
-#: How long the first save holds its turn while the second one waits. A save
+#: How long the first save holds the lock while the second one waits. A save
 #: with no lock ends in less time than this.
 HELD_S = 0.5
 
@@ -294,7 +294,7 @@ def committed(root: Path, name: str = "chat") -> str:
     return git(root, "show", f"HEAD:families/{name}/family.yaml").stdout
 
 
-def test_a_save_that_cannot_take_its_turn_changes_nothing(
+def test_a_save_that_cannot_take_the_lock_changes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two saves at one time. The second one starts between the write and
@@ -328,7 +328,7 @@ def test_a_save_that_cannot_take_its_turn_changes_nothing(
 def test_a_save_waits_for_the_save_before_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The second save starts while the first one holds its turn. It waits,
+    """The second save starts while the first one holds the lock. It waits,
     and then it is the second commit."""
     root = make_registry(tmp_path)
     before = commit_count(root)
@@ -392,7 +392,7 @@ def test_saves_at_one_time_leave_no_edit_without_a_commit(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("text", [BAD, GOOD], ids=["a-refused-save", "a-save"])
-def test_a_save_that_ended_gives_its_turn_back(
+def test_a_save_that_ended_releases_the_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
 ) -> None:
     """The next save does not wait."""
@@ -407,7 +407,7 @@ def test_a_save_that_ended_gives_its_turn_back(
 
 
 def test_a_registry_that_is_not_there_refuses_the_save(tmp_path: Path) -> None:
-    """The save cannot take its turn on a directory that is not there. It
+    """The save cannot take the lock on a directory that is not there. It
     makes no directory."""
     root = tmp_path / "no-registry"
 
@@ -430,7 +430,7 @@ def test_a_registry_that_is_no_directory_refuses_the_save(tmp_path: Path) -> Non
 
 
 def test_a_concurrent_git_lock_rolls_the_save_back(tmp_path: Path) -> None:
-    """The turn of a save does not hold another program that writes the
+    """The lock of a save does not stop another program that writes the
     checkout. Git's index.lock does: the commit fails, and the save restores."""
     root = make_registry(tmp_path)
     (root / ".git" / "index.lock").write_text("", encoding="utf-8")

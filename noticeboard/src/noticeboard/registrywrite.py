@@ -11,7 +11,7 @@ is no `agentctl`, no systemd call and no daemon verb in this module.
 The order is fixed, and every step after the write can undo it.
 
 1. Refuse a name, a path or a link that does not belong to this family.
-   Then take the turn of this save: one save runs at a time.
+   Then take the lock of the registry: one save runs at a time.
 2. Validate the WHOLE registry with the new text, not just this file. A
    family's delegates, skills and MCP servers are other files, so a change
    here can break a neighbour (contract 01 §7). The validator reads a copy
@@ -33,7 +33,7 @@ take its snapshot between the write and the commit of the first. One of the
 two then restores bytes that the other one wrote, and the checkout holds an
 edit that no commit holds. `caregiver` converges on the checkout.
 
-The lock holds the saves of this service and no other program. Git's own
+The lock stops the saves of this service and no other program. Git's own
 `index.lock` makes the commit fail while another program writes the index,
 and a failed commit restores. "Fail and roll back" is the behaviour under a
 race, never "corrupt".
@@ -84,14 +84,14 @@ GIT_TIMEOUT_S: Final = 30
 # for each registry, and a save that waits past `LOCK_WAIT_S` is refused
 # and writes nothing. A rule that refuses the second save at once, or that
 # lets it wait with no limit, would cost this one constant.
-#: How long a save waits for its turn, in seconds. A save is one copy of the
+#: How long a save waits for the lock, in seconds. A save is one copy of the
 #: registry and three git calls.
 LOCK_WAIT_S: Final = 10.0
 
 #: How long a save that waits sleeps before it asks again, in seconds.
 LOCK_POLL_S: Final = 0.05
 
-#: What a save answers when its wait ends before its turn comes.
+#: What a save answers when its wait ends before it has the lock.
 BUSY: Final = "another save holds the registry, and nothing was written: save again"
 
 #: The directories of a registry that the validator reads. The copy that it
@@ -155,19 +155,19 @@ def save_family(registry_dir: Path, name: str, text: str, subject: str) -> SaveR
         return SaveResult(ok=False, problem=problem)
 
     try:
-        return _save_in_turn(registry_dir, name, text, subject)
+        return _save_locked(registry_dir, name, text, subject)
     finally:
         # The system releases the lock with the descriptor.
         os.close(lock)
 
 
 def _lock(registry_dir: Path) -> tuple[int | None, str]:
-    """The turn of one save: an exclusive lock on the registry directory.
+    """The lock of one save: an exclusive lock on the registry directory.
 
     The answer is the descriptor that holds the lock, or None and the reason.
     The lock is on the directory itself, so it needs no file and git does
-    not see it. Each save opens the directory again, so the lock holds a
-    second thread of this process as it holds a second process. The system
+    not see it. Each save opens the directory again, so the lock stops a
+    second thread of this process as it stops a second process. The system
     releases it when the process ends, so a killed save leaves no lock.
     """
     try:
@@ -197,7 +197,7 @@ def _lock(registry_dir: Path) -> tuple[int | None, str]:
         time.sleep(LOCK_POLL_S)
 
 
-def _save_in_turn(registry_dir: Path, name: str, text: str, subject: str) -> SaveResult:
+def _save_locked(registry_dir: Path, name: str, text: str, subject: str) -> SaveResult:
     """The save itself. The caller holds the lock."""
     base = registry_dir / FAMILIES_DIR / name
     target = base / FAMILY_FILE
