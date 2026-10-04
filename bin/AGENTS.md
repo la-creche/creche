@@ -17,7 +17,8 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 | Family | Files | Contract |
 |---|---|---|
 | Setup | `provision-library.sh` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
-| Operations | `creche-deploy`, `creche-handover`, `creche-handover-intake`, `rework-watchdog.sh`, `rework-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh`, `quality-gate.sh`, `rust-gate.sh` | Run unattended from units and timers. Fail loudly into the journal. |
+| Operations | `creche-deploy`, `creche-handover`, `creche-handover-intake`, `rework-watchdog.sh`, `rework-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh` | Run unattended from units and timers. Fail loudly into the journal. |
+| Checks | `quality-gate.sh`, `rust-gate.sh` | Run from the hooks and from CI. No unit runs them. They use `set -euo pipefail`: the first failed check stops the run. |
 | Library | `lib/envfile.sh`, `lib/docsrule.sh`, `lib/rustrule.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
 | Tests | `tests/test_*.py`, `tests/test_*.sh` | pytest collects the `.py` files. The `.sh` files run by hand: `bash bin/tests/<name>.sh`. None needs a host. |
 
