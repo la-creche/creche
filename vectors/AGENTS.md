@@ -41,6 +41,8 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
 | `surfaces/grants.py` | `grants.parse`, `chaperone.call_body`, `chaperone.approval_body` |
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
+| `surfaces/manifest_cases.py` | the written `component.yaml` inputs |
+| `surfaces/manifest.py` | the eleven `manifest.<name>` surfaces of contract 06 |
 
 ## Known gaps
 
@@ -49,8 +51,15 @@ directory is not a workspace package, so a change here does not change
 - No vector covers the writer of the status document, or a fault file, or
   an outcome file of contract 05. The five readers of `status.json` have
   vectors.
-- No vector covers contract 06, the component manifest and the release
-  request file.
+- No vector covers the resolver, the deploy order or rules C1 to C4 of
+  contract 06 §3.2. `manifest.resolved` starts from a resolution.
+- No vector covers the ledger entry, the spool or the form of the site
+  file. `manifest.operator` covers two values of the site file.
+- `manifest.component` reads the site file in two states: with both values
+  of the operator, and with no file. A site file with one of the two
+  values has no vector.
+- `manifest.resolved` gives `resolved_at` as a float only. With an integer,
+  Python writes no `.0`.
 - No vector covers `server.yaml`, contract 01b.
 - `channel.parse` gives no vector for `unknown_address` or `sequence_gap`.
   Those refusals need the state of a channel.

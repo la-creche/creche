@@ -1,0 +1,15 @@
+{
+ "context": {},
+ "contract": "stage7-releases.md \u00a72.5",
+ "entry": "handover.executor.approval.gate_id",
+ "format": 1,
+ "notes": ["The input is the hash of one resolved manifest and the id of its request.","value.gate is gate_id of the hash. value.action_id is action_id_of of the id. value.action is release_action of the two. value.action_matches says whether ACTION_RE matches the whole action."],
+ "surface": "manifest.gate",
+ "vectors": [
+  {"id":"one","input":{"args":{"id":"01K5J8M2Q7V3X9R4T6N0B8C2DE","manifest_sha256":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},"result":"accepted","value":{"action":"AGENT_APPROVE_01k5j8m2q7v3x9r4t6n0b8c2de_e50c74bac9cc8e18","action_id":"01k5j8m2q7v3x9r4t6n0b8c2de","action_matches":true,"gate":"e50c74bac9cc8e18"}},
+  {"id":"other-hash","input":{"args":{"id":"01K5J8M2Q7V3X9R4T6N0B8C2DE","manifest_sha256":"sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"}},"result":"accepted","value":{"action":"AGENT_APPROVE_01k5j8m2q7v3x9r4t6n0b8c2de_7882332d1a4a90fc","action_id":"01k5j8m2q7v3x9r4t6n0b8c2de","action_matches":true,"gate":"7882332d1a4a90fc"}},
+  {"id":"other-id","input":{"args":{"id":"01K5J8M2Q7V3X9R4T6N0B8C2DF","manifest_sha256":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},"result":"accepted","value":{"action":"AGENT_APPROVE_01k5j8m2q7v3x9r4t6n0b8c2df_e50c74bac9cc8e18","action_id":"01k5j8m2q7v3x9r4t6n0b8c2df","action_matches":true,"gate":"e50c74bac9cc8e18"}},
+  {"id":"id-of-digits","input":{"args":{"id":"00000000000000000000000000","manifest_sha256":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},"result":"accepted","value":{"action":"AGENT_APPROVE_00000000000000000000000000_e50c74bac9cc8e18","action_id":"00000000000000000000000000","action_matches":true,"gate":"e50c74bac9cc8e18"}},
+  {"id":"id-of-letters","input":{"args":{"id":"ZZZZZZZZZZZZZZZZZZZZZZZZZZ","manifest_sha256":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},"result":"accepted","value":{"action":"AGENT_APPROVE_zzzzzzzzzzzzzzzzzzzzzzzzzz_e50c74bac9cc8e18","action_id":"zzzzzzzzzzzzzzzzzzzzzzzzzz","action_matches":true,"gate":"e50c74bac9cc8e18"}}
+ ]
+}

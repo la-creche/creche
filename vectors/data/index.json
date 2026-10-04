@@ -78,6 +78,17 @@
   {"accepted":106,"entry":"noticeboard.statusdocs.read_family","path":"status/noticeboard.json","raised":0,"refused":8,"surface":"status.noticeboard","vectors":114},
   {"accepted":64,"entry":"agent_door_tui.status.StatusFiles.serving","path":"status/door_tui.json","raised":0,"refused":50,"surface":"status.door_tui","vectors":114},
   {"accepted":11,"entry":"agent_door_trigger.families.StatusFiles.servable","path":"status/door_trigger.json","raised":0,"refused":103,"surface":"status.door_trigger","vectors":114},
-  {"accepted":85,"entry":"agent_door_owui.families.StatusFiles.serving","path":"status/door_owui.json","raised":0,"refused":29,"surface":"status.door_owui","vectors":114}
+  {"accepted":85,"entry":"agent_door_owui.families.StatusFiles.serving","path":"status/door_owui.json","raised":0,"refused":29,"surface":"status.door_owui","vectors":114},
+  {"accepted":157,"entry":"handover.manifest.parse_manifest","path":"manifest/component.json","raised":0,"refused":336,"surface":"manifest.component","vectors":493},
+  {"accepted":7,"entry":"handover.site.operator_user, handover.site.operator_home","path":"manifest/operator.json","raised":0,"refused":21,"surface":"manifest.operator","vectors":28},
+  {"accepted":17,"entry":"handover.catalog","path":"manifest/catalog.json","raised":0,"refused":0,"surface":"manifest.catalog","vectors":17},
+  {"accepted":23,"entry":"handover.errors.RefusalCode","path":"manifest/refusal_code.json","raised":0,"refused":9,"surface":"manifest.refusal_code","vectors":32},
+  {"accepted":46,"entry":"handover.executor.request.parse_request","path":"manifest/request_parse.json","raised":0,"refused":132,"surface":"manifest.request.parse","vectors":178},
+  {"accepted":15,"entry":"handover.requester.file.plan_request","path":"manifest/request_plan.json","raised":0,"refused":20,"surface":"manifest.request.plan","vectors":35},
+  {"accepted":10,"entry":"handover.requester.file.new_ulid","path":"manifest/request_ulid.json","raised":0,"refused":0,"surface":"manifest.request.ulid","vectors":10},
+  {"accepted":22,"entry":"handover.state.parse_state","path":"manifest/state.json","raised":0,"refused":75,"surface":"manifest.state","vectors":97},
+  {"accepted":37,"entry":"handover.resolve.build_document","path":"manifest/resolved.json","raised":0,"refused":9,"surface":"manifest.resolved","vectors":46},
+  {"accepted":5,"entry":"handover.executor.approval.gate_id","path":"manifest/gate.json","raised":0,"refused":0,"surface":"manifest.gate","vectors":5},
+  {"accepted":10,"entry":"handover.executor.approval.Summary.as_dict","path":"manifest/summary.json","raised":0,"refused":0,"surface":"manifest.summary","vectors":10}
  ]
 }
