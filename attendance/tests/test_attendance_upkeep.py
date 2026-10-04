@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from attendance.atomic import write_json
 from attendance.auth import Principal
 from attendance.channel import Channel, SandboxDial
 from attendance.clock import now, rfc3339
@@ -222,6 +223,43 @@ async def test_an_audit_fault_that_was_not_written_is_written_again(
     finally:
         rig.audit.parent.chmod(0o700)
 
+    await rig.stop()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a 0000 directory anyway")
+async def test_an_audit_fault_that_was_not_cleared_is_cleared_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other direction. A clear that reached no file is not a published clear."""
+    rig = await build(tmp_path)
+    await rig.start()
+    rig.audit.parent.mkdir(parents=True, exist_ok=True)
+    rig.audit.parent.chmod(0o000)
+
+    try:
+        rig.service.read_gates()
+    finally:
+        rig.audit.parent.chmod(0o700)
+
+    assert rig.fault_codes() == [FaultCode.AUDIT_UNREADABLE.value]
+
+    failed: list[Path] = []
+
+    def failing_once(path: Path, *rest: Any) -> None:
+        if not failed:
+            failed.append(path)
+            raise OSError(errno.ENOSPC, "no space left")
+
+        write_json(path, *rest)
+
+    monkeypatch.setattr("attendance.faults.write_json", failing_once)
+
+    with pytest.raises(OSError, match="no space left"):
+        rig.service.read_gates()
+
+    rig.service.read_gates()
+
+    assert rig.fault_codes() == []
     await rig.stop()
 
 
