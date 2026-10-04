@@ -7,10 +7,12 @@ outside and be worth nothing."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from agent_family import FamilyFile, Index
+from agent_family import FamilyFile, Index, load_registry
+from caregiver.applied import write_applied
 from caregiver.credentials import Credentials, read_creds, token_sha256, write_creds
 from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, Spend, key_alias
 from caregiver.rotate import (
@@ -20,15 +22,24 @@ from caregiver.rotate import (
     RotateRequest,
     Scope,
     rotate,
+    rotate_serving,
+    serving_family,
     settle,
 )
 from caregiver.status import RotationState
-from caregiver_helpers import chat_family
+from caregiver_helpers import (
+    LONG_AGO,
+    OLD_TOKEN,
+    REFUSED_TOOLS,
+    chat_family,
+    family_yaml,
+    grants_alone,
+    write_registry,
+)
 
 from caregiver import paths
 
 FAMILY: str = "chat"
-OLD_TOKEN: str = "OLDTOKEN"
 
 
 class Watching(FakeLiteLLMKeys):
@@ -223,7 +234,7 @@ def test_the_overlap_ends_when_its_grace_runs_out(
         litellm=litellm,
         grace_s=-1,
     )
-    assert settle(family, Index(), state_root=state_root) is True
+    assert settle(FAMILY, state_root=state_root) is True
     assert grant_digests(state_root) == [token_sha256(_token_of(state_root))]
 
 
@@ -232,7 +243,7 @@ def test_an_overlap_that_is_still_open_is_left_alone(
 ) -> None:
     start(state_root, litellm)
     turn(state_root, family, litellm)
-    assert settle(family, Index(), state_root=state_root) is False
+    assert settle(FAMILY, state_root=state_root) is False
     assert len(grant_digests(state_root)) == 2
 
 
@@ -240,7 +251,178 @@ def test_settling_a_family_that_never_rotated_does_nothing(
     state_root: Path, family: FamilyFile, litellm: Watching
 ) -> None:
     start(state_root, litellm)
-    assert settle(family, Index(), state_root=state_root) is False
+    assert settle(FAMILY, state_root=state_root) is False
+
+
+def test_a_settle_moves_the_digests_and_no_grant(
+    state_root: Path, family: FamilyFile, litellm: Watching
+) -> None:
+    """The settle takes no family definition, so nothing it writes can come
+    from a file the validator refused."""
+    start(state_root, litellm)
+    turn(state_root, family, litellm)
+    plant_tool(state_root)
+    grants = grants_alone(state_root)
+    end_overlap(state_root)
+
+    assert settle(FAMILY, state_root=state_root) is True
+    assert grant_digests(state_root) == [token_sha256(_token_of(state_root))]
+    assert grants_alone(state_root) == grants
+
+
+def test_a_settle_with_no_grant_file_leaves_the_overlap_on_record(
+    state_root: Path, litellm: Watching
+) -> None:
+    """The grant file is written first. A settle that could not drop the
+    digest must not record that it did, or no later settle would try."""
+    start(state_root, litellm)
+    end_overlap(state_root)
+    before = paths.creds_path(state_root, FAMILY).read_bytes()
+
+    assert settle(FAMILY, state_root=state_root) is False
+    assert paths.creds_path(state_root, FAMILY).read_bytes() == before
+
+
+# --- a registry file that cannot be applied -------------------------------------------
+
+
+def applied(state_root: Path) -> None:
+    """The default `chat` family as the snapshot of a pass that succeeded."""
+    write_applied(state_root, FAMILY, rev="reg-1", image="sha256:abc", family_text=family_yaml())
+
+
+def serving(tmp_path: Path, state_root: Path) -> FamilyFile:
+    """The definition that serves `chat` while its registry file names a
+    tool the validator refuses and a budget of its own."""
+    registry = load_registry(
+        write_registry(
+            tmp_path / "registry",
+            tools=REFUSED_TOOLS,
+            model={"router": "agent-router", "budget_usd_per_day": 99},
+        )
+    )
+    answer = serving_family(registry, FAMILY, state_root=state_root)
+    assert answer is not None
+    return answer
+
+
+def test_the_serving_definition_is_the_applied_snapshot(tmp_path: Path, state_root: Path) -> None:
+    applied(state_root)
+    answer = serving(tmp_path, state_root)
+    assert answer.tools == {}
+    assert answer.model.budget_usd_per_day == 15
+
+
+def test_a_family_never_applied_has_no_serving_definition(tmp_path: Path, state_root: Path) -> None:
+    registry = load_registry(write_registry(tmp_path / "registry"))
+    assert serving_family(registry, FAMILY, state_root=state_root) is None
+
+
+def test_a_family_the_registry_does_not_hold_has_no_serving_definition(
+    tmp_path: Path, state_root: Path
+) -> None:
+    """A name the registry does not hold is not a path component to trust."""
+    applied(state_root)
+    registry = load_registry(write_registry(tmp_path / "registry", name="ops"))
+    assert serving_family(registry, FAMILY, state_root=state_root) is None
+
+
+def test_a_snapshot_under_another_name_serves_nobody(tmp_path: Path, state_root: Path) -> None:
+    write_applied(
+        state_root, FAMILY, rev="reg-1", image="sha256:abc", family_text=family_yaml(name="ops")
+    )
+    registry = load_registry(write_registry(tmp_path / "registry"))
+    assert serving_family(registry, FAMILY, state_root=state_root) is None
+
+
+def test_a_serving_rotation_moves_the_digests_and_no_grant(
+    tmp_path: Path, state_root: Path, family: FamilyFile, litellm: Watching
+) -> None:
+    start(state_root, litellm)
+    turn(state_root, family, litellm, scope=Scope.TOKEN, mode=Mode.IMMEDIATE)
+    plant_tool(state_root)
+    grants = grants_alone(state_root)
+    applied(state_root)
+
+    outcome = rotate_serving(
+        RotateRequest(), serving(tmp_path, state_root), state_root=state_root, litellm=litellm
+    )
+
+    assert outcome.epoch == 3
+    assert grants_alone(state_root) == grants
+    assert token_sha256(_token_of(state_root)) in grant_digests(state_root)
+    assert len(grant_digests(state_root)) == 2
+
+
+def test_a_serving_rotation_mints_the_key_the_applied_definition_asks_for(
+    tmp_path: Path, state_root: Path, family: FamilyFile, litellm: Watching
+) -> None:
+    start(state_root, litellm)
+    turn(state_root, family, litellm, scope=Scope.TOKEN)
+    applied(state_root)
+
+    rotate_serving(
+        RotateRequest(), serving(tmp_path, state_root), state_root=state_root, litellm=litellm
+    )
+
+    assert litellm.budgets[key_alias(FAMILY)] == (["agent-router"], 15)
+
+
+def test_a_serving_rotation_reads_the_grant_file_before_it_deletes_the_key(
+    tmp_path: Path, state_root: Path, litellm: Watching
+) -> None:
+    """`start` writes no grant file. A token with no file for its digest is
+    refused while the old key still lives."""
+    start(state_root, litellm)
+    applied(state_root)
+
+    with pytest.raises(RotateError):
+        rotate_serving(
+            RotateRequest(), serving(tmp_path, state_root), state_root=state_root, litellm=litellm
+        )
+
+    assert litellm.order == []
+
+
+def test_a_serving_key_rotation_writes_no_grant_file(
+    tmp_path: Path, state_root: Path, litellm: Watching
+) -> None:
+    start(state_root, litellm)
+    applied(state_root)
+
+    outcome = rotate_serving(
+        RotateRequest(scope=Scope.KEY),
+        serving(tmp_path, state_root),
+        state_root=state_root,
+        litellm=litellm,
+    )
+
+    assert outcome.key_rotated is True
+    assert not paths.grant_path(state_root, FAMILY).exists()
+
+
+def test_a_grant_file_that_goes_away_mid_rotation_is_not_rendered_again(
+    tmp_path: Path, state_root: Path, family: FamilyFile
+) -> None:
+    """The check ran, and then the file went. The credentials have moved by
+    then, and the applied definition must still render no grant."""
+
+    class Vanishing(Watching):
+        def rotate_key(self, family: str, models: list[str], budget_usd_per_day: float) -> str:
+            paths.grant_path(state_root, FAMILY).unlink()
+            return super().rotate_key(family, models, budget_usd_per_day)
+
+    litellm = Vanishing()
+    start(state_root, litellm)
+    turn(state_root, family, litellm, scope=Scope.TOKEN)
+    applied(state_root)
+
+    outcome = rotate_serving(
+        RotateRequest(), serving(tmp_path, state_root), state_root=state_root, litellm=litellm
+    )
+
+    assert outcome.epoch == 3
+    assert not paths.grant_path(state_root, FAMILY).exists()
 
 
 # --- scope ----------------------------------------------------------------------------
@@ -275,6 +457,23 @@ def test_a_graceful_key_rotation_says_it_was_not_graceful(
     """Honesty in the outcome, not only in a docstring."""
     start(state_root, litellm)
     assert "no overlap" in turn(state_root, family, litellm).note
+
+
+def end_overlap(state_root: Path) -> None:
+    """The previous token's grace has run out, and nothing has settled it."""
+    path = paths.creds_path(state_root, FAMILY)
+    creds = read_creds(path)
+    assert creds is not None
+    write_creds(path, replace(creds, previous_pep_token=OLD_TOKEN, previous_expires_at=LONG_AGO))
+
+
+def plant_tool(state_root: Path) -> None:
+    """A grant in the file that no family in these tests declares, so a
+    write that renders the file again loses it."""
+    path = paths.grant_path(state_root, FAMILY)
+    body = json.loads(path.read_text(encoding="utf-8"))
+    body["tools"] = {"kagi": ["kagi_extract"]}
+    path.write_text(json.dumps(body), encoding="utf-8")
 
 
 def _token_of(state_root: Path) -> str:

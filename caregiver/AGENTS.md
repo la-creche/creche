@@ -78,8 +78,15 @@ host where something has gone wrong.
 - An empty registry deletes no family.
 - `rotate` deletes the old key before it mints the new one. The token
   overlaps. The key does not.
-- `rotate` and `settle` take a `ValidFamily`. Only `rotate.valid_family`
-  makes one, and only from a family whose report has no error.
+- `rotate` takes a `ValidFamily`. Only `rotate.valid_family` makes one. The
+  report must have no error, and the applied snapshot must not refuse the
+  edit.
+- A family file that is invalid or refused does not stop a rotation.
+  `rotate_serving` takes the key's router and budget from the applied
+  snapshot. It writes the token digests into the grant file.
+- `settle` writes the token digests alone. It reads no family file.
+- Never build a grant from the applied snapshot. `all` expands against
+  the current server files, and no validation approved that result.
 - A cron line with no `OnCalendar` spelling gets no unit.
 - A fault's `blocks_turns` comes from `faults.BLOCKS_TURNS_BY_CODE`, never
   from the file.
@@ -151,5 +158,7 @@ Nothing here touches a real sandbox or LiteLLM.
 - A cron line with no `OnCalendar` spelling gets no timer and no fault
   (`timers.py`).
 - `apply-once` publishes no chaperone fault (`apply.py`).
-- An invalid family file holds a rotation overlap open. The chaperone
-  accepts the previous token until the file is valid (`loop.py`).
+- `settle` and `rotate_serving` write token digests while a family file is
+  invalid. Contract 05 §3.1 and §6.3 do not agree on this (`loop.py`).
+- An `invalid` status document has no credentials block. A rotation in that
+  state may not reach a resident process (`reconcile.py`).

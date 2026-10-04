@@ -24,7 +24,13 @@ from .credentials import Credentials, mint_token, read_creds, token_sha256, writ
 from .driver import DriverError, SandboxDriver
 from .egress import EgressConfig
 from .faults import FaultEntry, drop_superseded, read_fault_file, rescope_by_fleet
-from .grants import build_grant_file, grant_file_matches, write_grant_file
+from .grants import (
+    build_grant_file,
+    grant_file_matches,
+    holds_grants,
+    rewrite_digests,
+    write_grant_file,
+)
 from .litellm_keys import LiteLLMError, LiteLLMKeys
 from .playpen_env import write_playpen_env
 from .status import CredentialsBlock, LimitsBlock, RotationState, now_rfc3339
@@ -150,9 +156,31 @@ def write_grants(family: FamilyFile, index: Index, state_root: Path, creds: Cred
     graceful token rotation that is two: the new one and the one the
     previous epoch used, until its overlap runs out (contract 05 §6.3
     step 5). `accepted_tokens` decides which, from `creds.json` alone."""
-    digests = tuple(token_sha256(one) for one in creds.accepted_tokens(now_rfc3339()))
-    grant = build_grant_file(family, index, rev=grant_revision(), token_sha256=digests)
+    grant = build_grant_file(
+        family, index, rev=grant_revision(), token_sha256=_accepted_digests(creds)
+    )
     write_grant_file(paths.grant_path(state_root, family.name), grant)
+
+
+def write_digests(family_name: str, state_root: Path, creds: Credentials) -> bool:
+    """The digests `write_grants` would list, in the grant file as it
+    stands. No family file goes in, so no grant moves (contract 05 §6.3
+    step 5). Answers False when there is no grant file to keep."""
+    return rewrite_digests(
+        paths.grant_path(state_root, family_name),
+        family_name,
+        rev=grant_revision(),
+        token_sha256=_accepted_digests(creds),
+    )
+
+
+def has_grants(family_name: str, state_root: Path) -> bool:
+    """Would `write_digests` find a grant file to keep?"""
+    return holds_grants(paths.grant_path(state_root, family_name), family_name)
+
+
+def _accepted_digests(creds: Credentials) -> tuple[str, ...]:
+    return tuple(token_sha256(one) for one in creds.accepted_tokens(now_rfc3339()))
 
 
 def grants_current(family: FamilyFile, index: Index, state_root: Path) -> bool:

@@ -40,7 +40,20 @@ from .loop import LoopConfig, SignalControl, serve
 from .mcp_release import paths_under
 from .reconcile import Actors, SpendRead, reconcile_family
 from .released import RELEASED_IMAGES, ReleasedImages
-from .rotate import Mode, Reason, RotateError, RotateRequest, Scope, rotate, valid_family
+from .rotate import (
+    Mode,
+    Reason,
+    RotateError,
+    RotateOutcome,
+    RotateRequest,
+    Scope,
+    ServingFamily,
+    ValidFamily,
+    rotate,
+    rotate_serving,
+    serving_family,
+    valid_family,
+)
 from .switch import HttpSwitchClient, SwitchClient, SwitchError, read_token
 from .timers import UnitWriter, UserUnits
 
@@ -527,14 +540,18 @@ def _reconcile_once_command(
 
 def _rotate_command(args: argparse.Namespace, litellm: LiteLLMKeys | None) -> int:
     registry = load_registry(args.registry)
-    family = valid_family(registry, args.family)
-    if family is None:
+    family = valid_family(registry, args.family, state_root=args.state_root)
+    serving = serving_family(registry, args.family, state_root=args.state_root)
+    if family is None and serving is None:
         print(f"caregiver: no valid family '{args.family}'", file=sys.stderr)
         return EXIT_USAGE
 
     print(f"family: {args.family}")
     print(f"plan: rotate scope={args.scope} mode={args.mode} reason={args.reason}")
     print("plan: the KEY half runs brake, delete, mint, with no overlap")
+    if family is None:
+        print("plan: the family file is invalid or refused, so the grants stay as applied")
+
     if not args.write:
         return EXIT_OK
 
@@ -545,19 +562,32 @@ def _rotate_command(args: argparse.Namespace, litellm: LiteLLMKeys | None) -> in
         scope=Scope(args.scope), mode=Mode(args.mode), reason=Reason(args.reason)
     )
     try:
-        outcome = rotate(
-            request,
-            family,
-            _index_of(registry),
-            state_root=args.state_root,
-            litellm=resolved,
-        )
+        outcome = _rotated(request, registry, family, serving, args.state_root, resolved)
     except RotateError as exc:
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_PROBLEM
 
     print(f"result: epoch={outcome.epoch} state={outcome.state} ({outcome.note})")
     return EXIT_OK
+
+
+def _rotated(
+    request: RotateRequest,
+    registry: Registry,
+    family: ValidFamily | None,
+    serving: ServingFamily | None,
+    state_root: Path,
+    litellm: LiteLLMKeys,
+) -> RotateOutcome:
+    """The family file when it can be applied. The applied definition, and
+    the credentials alone, when it cannot."""
+    if family is not None:
+        return rotate(request, family, _index_of(registry), state_root=state_root, litellm=litellm)
+
+    if serving is None:
+        raise RotateError("no definition serves this family")
+
+    return rotate_serving(request, serving, state_root=state_root, litellm=litellm)
 
 
 def _index_of(registry: Registry) -> Index:

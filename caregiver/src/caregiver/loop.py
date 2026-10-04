@@ -55,7 +55,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Final, Protocol
 
-from agent_family import HostFacts, Index, Registry, load_registry, revision_of
+from agent_family import HostFacts, Registry, load_registry, revision_of
 
 from . import paths
 from .applied import read_applied
@@ -66,7 +66,7 @@ from .mcp_release import McpPaths
 from .mcp_wire import McpReport, mcp_pass
 from .reconcile import Actors, SpendRead, reconcile_family
 from .released import ReleasedImages
-from .rotate import settle, valid_family
+from .rotate import settle
 from .status import restamp_status
 from .timers import remove_timers
 
@@ -875,7 +875,7 @@ def _pass(
 
     def run() -> None:
         try:
-            _settle_rotation(config, registry, name)
+            _settle_rotation(config, name)
             images = images_now(config)
             result = reconcile_family(
                 registry,
@@ -918,7 +918,7 @@ def _pass(
     return run
 
 
-def _settle_rotation(config: LoopConfig, registry: Registry, name: str) -> None:
+def _settle_rotation(config: LoopConfig, name: str) -> None:
     """Drop a rotation overlap whose grace has run out (contract 05 §6.3
     step 5). A grace period is a fact over time, which is exactly what a
     one-shot verb cannot hold and this loop can.
@@ -928,22 +928,10 @@ def _settle_rotation(config: LoopConfig, registry: Registry, name: str) -> None:
 
     CONTRACT-QUESTION: contract 05 §6.3 step 5 ends the overlap when its
     grace runs out, and §3.1 touches nothing while a file is invalid. This
-    takes §3.1: no settle for a family whose report has an error, so the
-    previous token stays accepted until the file is valid again. Ending
-    the overlap on time needs a write that changes the digests alone."""
-    family = valid_family(registry, name)
-    if family is None:
-        return
-
-    settle(family, _index_of(registry), state_root=config.state_root)
-
-
-def _index_of(registry: Registry) -> Index:
-    return Index(
-        kinds={name: one.kind for name, one in registry.families.items()},
-        servers=registry.servers,
-        skills=registry.skills,
-    )
+    reads §3.1 as the family's DEFINITION: the settle moves the digests
+    and no grant, so it runs whatever the file says. Reading §3.1 as every
+    file would keep the previous token accepted until the file is valid."""
+    settle(name, state_root=config.state_root)
 
 
 def _backoff(slot: FamilyLoop, name: str) -> Backoff:

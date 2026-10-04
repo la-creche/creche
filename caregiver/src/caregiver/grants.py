@@ -141,23 +141,61 @@ def _expand_approval(family: FamilyFile, index: Index) -> list[str]:
 def write_grant_file(path: Path, grant: GrantFile) -> None:
     """Contract 04 section 1.3: `caregiver` validates first (the caller's
     job), then writes atomically, mode 0640."""
-    body = json.dumps(grant.as_json(), indent=2).encode("utf-8") + b"\n"
-    atomic_write(path, body, mode=GRANT_FILE_MODE)
+    _write_body(path, grant.as_json())
+
+
+def rewrite_digests(path: Path, family: str, *, rev: str, token_sha256: tuple[str, ...]) -> bool:
+    """The grants this file already holds, under new digests (contract 04
+    section 2.2). Which tokens the PEP accepts moves, and no grant does:
+    rotation's write for a family whose file cannot be applied.
+
+    Answers False and writes nothing unless `holds_grants`."""
+    body = _kept_body(path, family)
+    if body is None:
+        return False
+
+    _write_body(path, {**body, "rev": rev, "token_sha256": list(token_sha256)})
+    return True
+
+
+def holds_grants(path: Path, family: str) -> bool:
+    """Is this a grant file `rewrite_digests` can keep? Only one this
+    version wrote for this family. The PEP refuses every call on a missing,
+    unreadable or malformed file, and one of another version or family
+    holds content nobody here can answer for."""
+    return _kept_body(path, family) is not None
 
 
 def grant_file_matches(path: Path, grant: GrantFile) -> bool:
     """Does the file on disk already hold `grant`, `UNCOMPARED` aside? A
     missing, unreadable or malformed file does not: the PEP refuses every
     call on one of those, so each is a file to write again."""
+    on_disk = _read_body(path)
+    if on_disk is None:
+        return False
+
+    return _comparable(on_disk) == _comparable(grant.as_json())
+
+
+def _write_body(path: Path, body: dict[str, Any]) -> None:
+    atomic_write(path, json.dumps(body, indent=2).encode("utf-8") + b"\n", mode=GRANT_FILE_MODE)
+
+
+def _read_body(path: Path) -> dict[str, Any] | None:
     try:
         on_disk = json.loads(path.read_bytes())
     except (OSError, ValueError):
-        return False
+        return None
 
-    if not isinstance(on_disk, dict):
-        return False
+    return cast(dict[str, Any], on_disk) if isinstance(on_disk, dict) else None
 
-    return _comparable(cast(dict[str, Any], on_disk)) == _comparable(grant.as_json())
+
+def _kept_body(path: Path, family: str) -> dict[str, Any] | None:
+    body = _read_body(path)
+    if body is None or body.get("version") != GRANT_FILE_VERSION or body.get("family") != family:
+        return None
+
+    return body
 
 
 def _comparable(body: dict[str, Any]) -> dict[str, Any]:

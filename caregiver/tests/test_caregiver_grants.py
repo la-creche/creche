@@ -19,6 +19,7 @@ from caregiver.grants import (
     GrantFile,
     build_grant_file,
     delete_grant_file,
+    rewrite_digests,
     write_grant_file,
 )
 
@@ -200,3 +201,61 @@ def test_delete_grant_file_removes_it(tmp_path: Path) -> None:
 
 def test_delete_grant_file_of_an_absent_file_does_not_raise(tmp_path: Path) -> None:
     delete_grant_file(tmp_path / "never-existed.json")
+
+
+# --- the digests alone -----------------------------------------------------
+
+
+def written(tmp_path: Path) -> Path:
+    """A grant file on disk, with one tool and two accepted digests."""
+    path = tmp_path / "chat.json"
+    grant = build_grant_file(
+        family(tools={"kagi": ["kagi_extract"]}), index(), rev="old", token_sha256=("aaa", "bbb")
+    )
+    write_grant_file(path, grant)
+    return path
+
+
+def test_rewrite_digests_moves_the_digests_and_the_rev_alone(tmp_path: Path) -> None:
+    path = written(tmp_path)
+    before = json.loads(path.read_text(encoding="utf-8"))
+
+    assert rewrite_digests(path, "chat", rev="new", token_sha256=("ccc",)) is True
+
+    after = json.loads(path.read_text(encoding="utf-8"))
+    assert after == {**before, "rev": "new", "token_sha256": ["ccc"]}
+    assert stat.S_IMODE(path.stat().st_mode) == GRANT_FILE_MODE
+
+
+def test_rewrite_digests_of_an_absent_file_writes_nothing(tmp_path: Path) -> None:
+    path = tmp_path / "never-existed.json"
+    assert rewrite_digests(path, "chat", rev="new", token_sha256=("ccc",)) is False
+    assert not path.exists()
+
+
+def test_rewrite_digests_refuses_a_file_that_is_not_a_grant_file(tmp_path: Path) -> None:
+    for text in ("not json", "[]", "{}"):
+        path = tmp_path / "chat.json"
+        path.write_text(text, encoding="utf-8")
+        assert rewrite_digests(path, "chat", rev="new", token_sha256=("ccc",)) is False
+        assert path.read_text(encoding="utf-8") == text
+
+
+def test_rewrite_digests_refuses_another_version(tmp_path: Path) -> None:
+    """A file this version did not write holds content this version cannot
+    answer for."""
+    path = written(tmp_path)
+    body = json.loads(path.read_text(encoding="utf-8"))
+    body["version"] = GRANT_FILE_VERSION - 1
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+    assert rewrite_digests(path, "chat", rev="new", token_sha256=("ccc",)) is False
+    assert json.loads(path.read_text(encoding="utf-8")) == body
+
+
+def test_rewrite_digests_refuses_another_familys_file(tmp_path: Path) -> None:
+    path = written(tmp_path)
+    before = path.read_bytes()
+
+    assert rewrite_digests(path, "ops", rev="new", token_sha256=("ccc",)) is False
+    assert path.read_bytes() == before

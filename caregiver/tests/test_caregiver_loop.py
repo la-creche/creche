@@ -32,7 +32,15 @@ from caregiver.loop import (
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import REFUSED_TOOLS, expire_overlap, write_registry
+from caregiver_helpers import (
+    KIND_MOVED,
+    REFUSED_TOOLS,
+    accepted_digests,
+    current_digest,
+    expire_overlap,
+    grants_alone,
+    write_registry,
+)
 
 from caregiver import paths, sandboxes
 
@@ -322,21 +330,38 @@ def test_an_invalid_family_file_is_never_treated_as_deleted(bench: Bench) -> Non
     assert bench.litellm.deleted == []
 
 
-def test_an_invalid_family_file_never_settles_a_rotation(bench: Bench) -> None:
-    """The settle runs before the pass, and it writes the grant file from
-    the family it is handed. A file the validator refused still parses, so
-    it would land in the one file the chaperone enforces."""
+def test_an_invalid_family_file_still_ends_a_rotation_overlap(bench: Bench) -> None:
+    """The settle runs before the pass and moves the digests alone. A file
+    the validator refused cannot hold the previous token open, and no grant
+    of that file reaches the one file the chaperone enforces."""
     bench.look()
     expire_overlap(bench.state_root)
-    creds = paths.creds_path(bench.state_root, "chat").read_bytes()
-    grant = paths.grant_path(bench.state_root, "chat").read_bytes()
+    grants = grants_alone(bench.state_root)
 
     write_registry(bench.registry_root, tools=REFUSED_TOOLS)
     bench.look()
 
     assert bench.status_of("chat")["state"] == FamilyState.INVALID
-    assert paths.creds_path(bench.state_root, "chat").read_bytes() == creds
-    assert paths.grant_path(bench.state_root, "chat").read_bytes() == grant
+    assert accepted_digests(bench.state_root) == [current_digest(bench.state_root)]
+    assert grants_alone(bench.state_root) == grants
+
+
+def test_a_refused_kind_move_still_ends_a_rotation_overlap(bench: Bench) -> None:
+    """A file whose `kind` moved has an ok report: only the applied
+    snapshot proves the move. The pass refuses the file, so the settle
+    before it must write none of it."""
+    bench.look()
+    expire_overlap(bench.state_root)
+    grants = grants_alone(bench.state_root)
+
+    write_registry(bench.registry_root, **KIND_MOVED)
+    bench.look()
+
+    status = bench.status_of("chat")
+    assert status["state"] == FamilyState.INVALID
+    assert "kind changed" in str(status["validation"])
+    assert accepted_digests(bench.state_root) == [current_digest(bench.state_root)]
+    assert grants_alone(bench.state_root) == grants
 
 
 # --- the signals a unit sends ------------------------------------------------------
