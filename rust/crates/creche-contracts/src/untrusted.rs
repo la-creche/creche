@@ -255,14 +255,29 @@ pub fn parse_object<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, NotAnObject>
 
 /// The first `max_chars` characters of `text`. The function counts code
 /// points, as a Python slice does, and never cuts inside one.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
+///
+/// A reader of a page gives each text a cap, so one field cannot fill the
+/// page. The Python origin is the slice `value[:limit]` of
+/// `noticeboard/src/noticeboard/jsonfiles.py:101` and `:181`, and of
+/// `chaperone/src/chaperone/delegate.py:232`.
+///
+/// ```
+/// use creche_contracts::untrusted::cut;
+///
+/// assert_eq!(cut("family", 3), "fam");
+/// assert_eq!(cut("family", 6), "family");
+/// assert_eq!(cut("d\u{e9}j\u{e0} vu", 4), "d\u{e9}j\u{e0}");
+/// assert_eq!(cut("family", 0), "");
+/// ```
 #[must_use]
 pub fn cut(text: &str, max_chars: usize) -> &str {
-    todo!()
+    let Some((end, _)) = text.char_indices().nth(max_chars) else {
+        return text;
+    };
+
+    // `end` is the first byte of a character, so the cut is always there.
+    // The empty text keeps the cap when it is not.
+    text.get(..end).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -276,5 +291,41 @@ mod tests {
             NotAnObject::NotObject.to_string(),
             "the answer is not a JSON object"
         );
+    }
+
+    // --- cut ---
+
+    #[test]
+    fn a_cut_keeps_the_first_characters_and_counts_code_points() {
+        let cuts = [
+            ("", 0, ""),
+            ("", 3, ""),
+            ("family", 0, ""),
+            ("family", 1, "f"),
+            ("family", 5, "famil"),
+            ("family", 6, "family"),
+            ("family", 7, "family"),
+            ("family", usize::MAX, "family"),
+            // One character of two bytes, of three bytes and of four bytes.
+            ("\u{e9}\u{20ac}\u{1f600}", 1, "\u{e9}"),
+            ("\u{e9}\u{20ac}\u{1f600}", 2, "\u{e9}\u{20ac}"),
+            ("\u{e9}\u{20ac}\u{1f600}", 3, "\u{e9}\u{20ac}\u{1f600}"),
+            // A mark that combines is a code point of its own, as in Python.
+            ("e\u{301}a", 1, "e"),
+            ("e\u{301}a", 2, "e\u{301}"),
+        ];
+
+        for (text, max_chars, kept) in cuts {
+            assert_eq!(cut(text, max_chars), kept, "{text:?} at {max_chars}");
+        }
+    }
+
+    #[test]
+    fn a_cut_of_a_long_text_has_the_cap_as_its_count_of_characters() {
+        let long = "\u{1f600}".repeat(600);
+        let kept = cut(&long, 500);
+
+        assert_eq!(kept.chars().count(), 500);
+        assert!(long.starts_with(kept));
     }
 }
