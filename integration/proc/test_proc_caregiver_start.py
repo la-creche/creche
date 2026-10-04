@@ -35,6 +35,7 @@ from proc_caregiver import (
     caregiver_env,
     litellm_url,
     serve_words,
+    text_of,
     wait_until,
     watch_flags,
 )
@@ -174,7 +175,7 @@ def test_sighup_makes_the_service_look_now(caregiver_prepared: CaregiverStack) -
     child.send(signal.SIGHUP)
 
     wait_until(
-        lambda: instructions.read_text(encoding="utf-8") == NEW_INSTRUCTIONS,
+        lambda: text_of(instructions) == NEW_INSTRUCTIONS,
         "the new instructions in the config mount",
         LOOK_DEADLINE_S,
     )

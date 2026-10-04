@@ -37,6 +37,7 @@ from proc_caregiver import (
     WRITE_FLAG,
     CaregiverStack,
     litellm_url,
+    text_of,
     wait_until,
 )
 from proc_chat import await_settled, chat_id, run_stream, session_of
@@ -254,7 +255,7 @@ def test_the_key_is_minted_one_time(caregiver_alone: CaregiverStack) -> None:
     instructions = stack.tree.mounts().config / "instructions.md"
 
     write_family_prose(stack.tree, text=NEW_INSTRUCTIONS)
-    wait_until(lambda: instructions.read_text(encoding="utf-8") == NEW_INSTRUCTIONS, "a new pass")
+    wait_until(lambda: text_of(instructions) == NEW_INSTRUCTIONS, "a new pass")
 
     mints = [call for call in litellm_calls(stack.tree) if call["path"] == "/key/generate"]
     assert [call["as"] for call in mints] == ["master"]
@@ -538,7 +539,7 @@ def test_an_empty_registry_deletes_no_family(caregiver_alone: CaregiverStack) ->
     remove_family(tree, FAMILY)
     time.sleep(QUIET_S)
     publish_family(tree, body, NEW_INSTRUCTIONS)
-    wait_until(lambda: instructions.read_text(encoding="utf-8") == NEW_INSTRUCTIONS, "a new pass")
+    wait_until(lambda: text_of(instructions) == NEW_INSTRUCTIONS, "a new pass")
 
     mints = [call for call in litellm_calls(tree) if call["path"] == "/key/generate"]
     assert len(mints) == 1
