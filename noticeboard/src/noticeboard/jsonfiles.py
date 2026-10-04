@@ -34,6 +34,9 @@ MAX_TEXT_CHARS: Final = 500
 
 _MISSING: Final = "missing"
 
+#: What a page says for a text that nests past the limit of the JSON reader.
+_TOO_DEEP: Final = "it nests deeper than the reader allows"
+
 
 def read_object(path: Path, limit: int = MAX_DOC_BYTES) -> tuple[Json | None, str | None]:
     """One JSON object from a file, or a reason it could not be read.
@@ -61,6 +64,10 @@ def parse_object(raw: bytes, name: str) -> tuple[Json | None, str | None]:
     """The same checks, on bytes already in hand."""
     try:
         parsed: object = json.loads(raw)
+    except RecursionError:
+        # Deep nesting raises this type, not ValueError. Its text names the
+        # interpreter's stack, which differs between two Python versions.
+        return None, f"{name} is not JSON: {_TOO_DEEP}"
     except (ValueError, UnicodeDecodeError) as error:
         return None, f"{name} is not JSON: {error}"
 

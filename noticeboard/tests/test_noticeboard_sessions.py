@@ -11,6 +11,7 @@ from noticeboard.sessions import (
 )
 from noticeboard_helpers import (
     FakeAttendance,
+    deep_object,
     journal_line,
     ndjson,
     session_doc,
@@ -141,6 +142,21 @@ def test_a_malformed_body_becomes_a_report(tmp_path: Path) -> None:
     assert "not JSON" in answer.problem
 
 
+def test_a_body_that_nests_too_deep_becomes_a_report(tmp_path: Path) -> None:
+    """The JSON reader raises RecursionError on this body, not ValueError."""
+    fake = FakeAttendance()
+    fake.answer(LIST_PATH, deep_object())
+    fake.answer(DETAIL_PATH, deep_object())
+
+    listed = reader(tmp_path, fake).sessions()
+    detail = reader(tmp_path, fake).detail(CHAT, OWUI)
+
+    assert listed.rows == ()
+    assert "nests deeper than the reader allows" in listed.problem
+    assert detail.session is None
+    assert "nests deeper than the reader allows" in detail.problem
+
+
 def test_the_turns_carry_their_state_and_usage(tmp_path: Path) -> None:
     fake = FakeAttendance()
     body = session_doc()
@@ -203,6 +219,18 @@ def test_a_broken_journal_line_never_hides_the_rest(tmp_path: Path) -> None:
 
     assert len(stream.lines) == 1
     assert stream.problems
+
+
+def test_a_journal_line_that_nests_too_deep_never_hides_the_rest(tmp_path: Path) -> None:
+    fake = FakeAttendance()
+    fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {})]) + deep_object() + b"\n")
+
+    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+
+    assert len(stream.lines) == 1
+    assert stream.problems == (
+        "a journal line is not JSON: it nests deeper than the reader allows",
+    )
 
 
 def test_an_enormous_stream_is_capped_and_says_so(tmp_path: Path) -> None:

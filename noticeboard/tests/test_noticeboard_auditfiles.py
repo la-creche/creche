@@ -12,7 +12,10 @@ from noticeboard.auditfiles import (
     known_days,
     read_page,
 )
-from noticeboard_helpers import audit_line, write_audit_day
+from noticeboard_helpers import audit_line, deep_object, write_audit_day
+
+#: A record under `MAX_LINE_BYTES` that nests past the limit of the JSON reader.
+DEEP_RECORD_LEVELS = 250_000
 
 
 def test_the_page_says_it_shows_full_arguments() -> None:
@@ -163,6 +166,20 @@ def test_a_record_that_will_not_parse_takes_a_row(tmp_path: Path) -> None:
     problems = [one for one in page.rows if one.problem]
     assert len(problems) == 1
     assert "is not JSON" in problems[0].problem
+
+
+def test_a_record_that_nests_too_deep_takes_a_row(tmp_path: Path) -> None:
+    """The JSON reader raises RecursionError on this record, not ValueError."""
+    path = write_audit_day(tmp_path, "2026-09-19", [audit_line()])
+    deep = deep_object(DEEP_RECORD_LEVELS)
+    assert len(deep) < MAX_LINE_BYTES
+    path.write_bytes(path.read_bytes() + deep + b"\n")
+
+    page = read_page(tmp_path, AuditFilter())
+
+    assert len(page.rows) == 2
+    assert "nests deeper than the reader allows" in page.rows[0].problem
+    assert page.rows[1].tool == "kagi__kagi_search_fetch"
 
 
 def test_an_absurd_record_is_not_parsed_and_says_so(tmp_path: Path) -> None:

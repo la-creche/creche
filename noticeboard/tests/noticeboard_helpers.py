@@ -258,6 +258,15 @@ def ndjson(rows: list[dict[str, Any]]) -> bytes:
     return b"".join(json.dumps(row).encode("utf-8") + b"\n" for row in rows)
 
 
+#: Past the nesting limit of the JSON reader of every supported Python.
+VERY_DEEP = 400_000
+
+
+def deep_object(depth: int = VERY_DEEP) -> bytes:
+    """A JSON object whose one field nests `depth` lists."""
+    return b'{"x":' + b"[" * depth + b"]" * depth + b"}"
+
+
 class FakeAttendance:
     """A `sessions.Transport` that answers from a table, and records the
     bearer it was given so a test can prove the token never reached a URL."""
