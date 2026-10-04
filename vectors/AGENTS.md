@@ -210,8 +210,8 @@ directory is not a workspace package, so a change here does not change
   covers an atomic write, a read with a size cap or a path under the state
   root. No vector covers the mint of a random token or a signal.
 - No vector covers the text that a service decodes from the output of a
-  child program. That decode uses the locale of the machine, so two machines
-  can give two results.
+  child program. The locale gives the encoding of that decode, and the
+  locale is a value of the machine.
 - `_text` of `chaperone.delegate` has no public entry point and no vector.
   The reply reader of the delegate client calls it, and no surface covers
   that reader.
@@ -248,8 +248,9 @@ directory is not a workspace package, so a change here does not change
   header value. No network client can thus send the header of five vectors:
   `scheme-and-space`, `scheme-and-spaces`, `space-before-the-scheme`,
   `space-at-the-end` and `tab-at-the-end`.
-- A `runtime.edge` surface holds what the installed web framework answers.
-  An upgrade of Starlette or of FastAPI in `uv.lock` can move a vector.
+- The answers of a `runtime.edge` surface come from the versions of
+  Starlette and of FastAPI that `uv.lock` pins. A vector can move when
+  `uv.lock` takes a newer version.
 - No `runtime.edge` vector holds the answer of the web framework to a
   handler that raises. Each of the five services has its own handler for an
   exception. The vector `handler-raises` holds the answer of that handler.
