@@ -103,6 +103,12 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
   no Rust toolchain.
 - A change that touches `rust/` with no `cargo` on `PATH` fails before the
   first check.
+- The commit that concludes a merge is a special case of the no-flag mode.
+  When the index and the work tree hold exactly the `rust/` of the other
+  side, the change touches no `rust/`. A session with no `cargo` can then
+  merge `main`. An own edit under `rust/` in that commit still counts.
+- When git cannot read the state, the no-flag mode runs `rust-gate.sh`. The
+  gate names that cause in its line.
 - In `--tests-for` mode a path under `rust/` picks no pytest suite. It is not
   a path in no package, so it does not start the full Python suite.
 - The `[lints]` check refuses a crate that has no `[lints]` table with the

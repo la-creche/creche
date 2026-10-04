@@ -49,13 +49,32 @@ rust_touched() {
 # rust_dirty: whether the index or the work tree differs from HEAD under
 # rust/. A commit carries the index, and cargo reads the work tree, as ruff
 # does. An untracked file is in no commit and does not count.
+#   0  it differs
+#   1  it does not
+#   2  git cannot read the state. The caller counts that as a Rust change
+#
+# The commit that concludes a merge differs from HEAD by everything the other
+# side brings. Those files passed the checks where they were made. So while
+# the index and the work tree hold exactly the other side's rust/, nothing
+# here is this session's change, and a session with no cargo can still merge
+# main. An own edit on top, or a Rust change on both sides, still counts.
 rust_dirty() {
-  local changed
+  local changed theirs
 
   if ! changed="$(git --no-optional-locks status --porcelain \
     --untracked-files=no -- "$RUST_DIR" 2>/dev/null)"; then
-    return 0
+    return 2
   fi
 
-  [[ -n "$changed" ]]
+  if [[ -z "$changed" ]]; then
+    return 1
+  fi
+
+  if theirs="$(git rev-parse -q --verify MERGE_HEAD 2>/dev/null)" &&
+    git diff --quiet "$theirs" -- "$RUST_DIR" 2>/dev/null &&
+    git diff --quiet --cached "$theirs" -- "$RUST_DIR" 2>/dev/null; then
+    return 1
+  fi
+
+  return 0
 }

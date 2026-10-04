@@ -154,19 +154,23 @@ tests_for() {
 
 # rust_for MODE PATH...: why this run needs the Rust checks, e.g.
 # "rust/Cargo.lock and 1 more". Prints nothing when it needs none.
-#   no flag       the index or the work tree changes rust/
+#   no flag       the index or the work tree changes rust/, or git cannot
+#                 say whether it does
 #   --tests       always: the full run leaves nothing out
 #   --tests-for   one PATH or more is under rust/
 #   --docs        never
 rust_for() {
-  local mode="$1" path first="" count=0
+  local mode="$1" path first="" count=0 state=0
   shift
 
   case "$mode" in
     "")
-      if rust_dirty; then
-        printf '%s' "a change under $RUST_DIR/ in the index or the work tree"
-      fi
+      rust_dirty || state=$?
+      case "$state" in
+        0) printf '%s' "a change under $RUST_DIR/ in the index or the work tree" ;;
+        1) ;;
+        *) printf '%s' "a state of $RUST_DIR/ that git cannot read" ;;
+      esac
       ;;
     --tests)
       printf '%s' "the full run"

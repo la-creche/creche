@@ -39,6 +39,9 @@ The cargo steps are `bin/rust-gate.sh`. The rule that starts them is
   needs no `cargo` on `PATH`.
 - A commit or a push with a path under `rust/` needs `cargo`. Without it the
   gate fails before the first check.
+- The commit that concludes a merge needs no `cargo` when only the other
+  side changed `rust/`. An own change under `rust/` in that commit needs
+  `cargo`.
 - A push that changes Rust and Python runs the cargo steps and the Python
   suites.
 - When the hook cannot read what a push changes, it runs the full suite and

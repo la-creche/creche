@@ -7,6 +7,8 @@ line, and each gets a check here:
 1. **A Python change that needs cargo.** Some sessions commit from a sandbox
    with no Rust toolchain. A commit or a push that touches nothing under
    `rust/` must pass with no `cargo` on PATH and must start no cargo step.
+   So must the commit that concludes a merge, when only the other side
+   changed `rust/`.
 2. **A Rust change that passes on the Python checks alone.** With no `cargo`
    on PATH the gate fails closed, with one line, before any check runs.
 3. **A Rust path that starts the full Python suite.** `rust/` is in no Python
@@ -63,6 +65,9 @@ PYTHON_PATH = "chaperone/src/chaperone/app.py"
 CRATE = "rust/crates/one"
 RUST_PATH = f"{CRATE}/src/lib.rs"
 
+#: A second file in that crate, for a change this side of a merge makes.
+RUST_OWN = f"{CRATE}/src/own.rs"
+
 #: A crate file that takes the lint gate.
 INHERITS = '[package]\nname = "one"\n\n[lints]\nworkspace = true\n'
 
@@ -109,17 +114,26 @@ class Tree:
     with_cargo: str
     without_cargo: str
 
-    def git(self, *args: str) -> str:
-        done = subprocess.run(
+    def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
             ["git", "-C", str(self.root), "-c", "user.email=t@t", "-c", "user.name=t", *args],
             env=_git_env(),
             capture_output=True,
             text=True,
             timeout=60,
         )
+
+    def git(self, *args: str) -> str:
+        done = self._git(*args)
         assert done.returncode == 0, done.stdout + done.stderr
 
         return done.stdout.strip()
+
+    def conflict(self, branch: str) -> None:
+        """Merges `branch`. The merge must stop at a conflict."""
+        done = self._git("merge", "-q", branch)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "CONFLICT" in done.stdout, done.stdout + done.stderr
 
     def write(self, name: str, body: str) -> None:
         path = self.root / name
@@ -372,12 +386,105 @@ def test_a_rust_commit_without_cargo_fails_before_any_check(tree: Tree) -> None:
 
 
 def test_a_state_git_cannot_read_counts_as_a_rust_change(tree: Tree) -> None:
+    """The line names what happened: no path under `rust/` changed, and git
+    could not say so."""
     shutil.rmtree(tree.root / ".git")
 
     done = tree.run(GATE, cargo=False)
 
     assert done.code == 1
-    assert "cargo not on PATH" in done.err
+    assert done.uv == []
+    assert done.err.splitlines() == [
+        "quality-gate: cargo not on PATH: the Rust checks must run for "
+        "a state of rust/ that git cannot read"
+    ]
+    assert tree.run(GATE).cargo == LINT_STEPS
+
+
+def test_the_rule_tells_a_change_from_a_state_git_cannot_read(tree: Tree) -> None:
+    assert tree.rule("rust_dirty") == 1
+
+    _stage(tree)
+
+    assert tree.rule("rust_dirty") == 0
+
+    shutil.rmtree(tree.root / ".git")
+
+    assert tree.rule("rust_dirty") == 2
+
+
+# --- a merge that brings the other side's Rust change ------------------------
+
+
+def _merge(tree: Tree, *ours: str) -> None:
+    """Merges a branch that changed a Rust file, and resolves the one
+    conflict, which is in a Python file. Nothing concludes the merge: this is
+    the state the pre-commit hook sees at `git commit`. This side changed
+    `ours` before the merge."""
+    tree.git("checkout", "-q", "-b", "theirs")
+    tree.commit(RUST_PATH, "// theirs\n")
+    tree.commit(PYTHON_PATH, "theirs = 1\n")
+    tree.git("checkout", "-q", "main")
+    for name in (PYTHON_PATH, *ours):
+        tree.commit(name, "ours = 1\n")
+
+    tree.conflict("theirs")
+    tree.write(PYTHON_PATH, "merged = 1\n")
+    tree.git("add", PYTHON_PATH)
+
+
+def test_a_merge_of_the_other_sides_rust_needs_no_cargo(tree: Tree) -> None:
+    """A session with no toolchain merges main, and main holds a Rust change.
+    This side changed nothing under `rust/`. The other side's files passed
+    the checks where they were made."""
+    _merge(tree)
+
+    done = tree.run(GATE, cargo=False)
+
+    assert _passed(done), done.out + done.err
+    assert done.uv == PYTHON_LINT
+
+
+def test_a_merge_of_the_other_sides_rust_starts_no_cargo_step(tree: Tree) -> None:
+    _merge(tree)
+
+    done = tree.run(GATE)
+
+    assert _passed(done), done.out + done.err
+    assert done.cargo == []
+
+
+def _drop(tree: Tree) -> None:
+    """Deletes the file the merge brought. `-f`: the index holds the other
+    side's copy, not the one of `HEAD`."""
+    tree.git("rm", "-q", "-f", RUST_PATH)
+
+
+@pytest.mark.parametrize("change", [_stage, _edit, _drop], ids=["staged", "edited", "deleted"])
+def test_a_merge_with_an_own_rust_change_needs_cargo(
+    tree: Tree, change: Callable[[Tree], None]
+) -> None:
+    _merge(tree)
+    change(tree)
+
+    without = tree.run(GATE, cargo=False)
+
+    assert without.code == 1
+    assert without.uv == []
+    assert "cargo not on PATH" in without.err
+    assert tree.run(GATE).cargo == LINT_STEPS
+
+
+def test_a_merge_of_rust_from_both_sides_needs_cargo(tree: Tree) -> None:
+    """Each side changed a file under `rust/`. The merged workspace is the
+    tree of neither side, so no run checked it."""
+    _merge(tree, RUST_OWN)
+
+    without = tree.run(GATE, cargo=False)
+
+    assert without.code == 1
+    assert "cargo not on PATH" in without.err
+    assert tree.run(GATE).cargo == LINT_STEPS
 
 
 # --- a push that touches rust/ -----------------------------------------------
