@@ -96,6 +96,9 @@ Each rule has its reason. Do not break a rule without a change to this file.
    conversion never sees an invalid value.
    Reason: one conversion holds every check, so no code path can skip a
    check.
+   Exception: the module `grants` reads a document into `grants::Value`, and
+   not into a raw `serde` type. "Known gaps" gives the reason. The owner
+   decides if the exception stays.
 2. **Give each id, name, path, size, duration and token its own type.** The
    type has a private field and a parsing constructor. Do not implement
    `Default`. Do not derive `Deserialize` directly. Use
@@ -351,6 +354,11 @@ Rules for the test:
   5. `UnidentifiedRecord`, contract 04 §6. The contract does not describe the
      log of a request that names no family. The type writes what the Python
      chaperone writes.
+  6. `SandboxEvidence::Claimed`, contract 04 §3.2 and §6.2. The contract moves
+     a sandbox id with no proof into `claimed`, and `claimed` has no key for
+     it. The variant writes the id into `sandbox_id` with
+     `sandbox_id_trusted: false`, as the writer of the Python chaperone can.
+     The Python chaperone itself writes `null` in each record.
 - The module `grants` has its own JSON reader and writer, and `serde_json`
   does not read a grant file or a request body. The Python code takes JSON
   that is not strict, and it reports each issue of a document. `grants::Value`
@@ -362,6 +370,20 @@ Rules for the test:
   2. A fence key that its verb does not read.
   3. `NaN` and an integer past 64 bits in the arguments of a call.
   4. A request body in UTF-16 or in UTF-32.
+- `grants::AuditRecord` has public fields and holds no rule between two
+  fields. Contract 04 §6.4 has one: the two records of a gated call name the
+  same gate. The writer of the port holds that rule. The vectors of
+  `chaperone.audit_line` hold records that break the rule, because the Python
+  writer checks no field.
+- `GrantFile::to_bytes` refuses a file of more than 256 KiB (contract 04
+  §1.2). The Python caregiver writes such a file, and the Python chaperone
+  then refuses it. No vector holds such a file.
+- `GrantFile::rotated` and `GrantFile::same_grants` have no differential
+  test. They stand for `rewrite_digests` and `grant_file_matches` of the
+  Python caregiver, and no vector records those two functions. The Python
+  functions read the JSON of a file and check no field. So `same_grants`
+  differs: a file with no `limits` block is equal to a file with the three
+  defaults.
 - `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
   The port of the chaperone adds the decision function and the function that
   approves a held call. No other code builds a value.

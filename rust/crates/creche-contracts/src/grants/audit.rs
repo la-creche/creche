@@ -375,6 +375,15 @@ pub enum SandboxEvidence {
     /// The chaperone could not map the connection to a sandbox. The Python
     /// chaperone writes this value for each record.
     Unknown,
+    // CONTRACT-QUESTION: contract 04 §3.2 says that a sandbox id with no proof
+    // moves into `claimed`, and §6.2 gives `claimed` three keys and none for
+    // a sandbox. §6.1 keeps `sandbox_id_trusted` for an id that is not
+    // evidence. The Python chaperone writes `null` and `false` in each
+    // record, and its writer also takes an id with `false`. This variant
+    // writes what that writer writes: the id in `sandbox_id`, and
+    // `sandbox_id_trusted: false`. The port of the chaperone must not build
+    // this variant before the contract says where such an id goes. A change
+    // costs this variant and the vector `sandbox-claimed`.
     /// The caller names this sandbox, and the chaperone has no proof.
     Claimed(SandboxName),
     /// The connection comes from the one address of this sandbox.
@@ -404,8 +413,11 @@ impl AuditAction {
 /// One audit record, version 2: one decision of the chaperone for one family
 /// (contract 04 §6).
 ///
-/// Each field has a valid type, and the fields have no rule between them that
-/// this type holds. So each field is public.
+/// Each field has a valid type, and each field is public. The type holds no
+/// rule between two fields. The contract has one such rule: the two records
+/// of a gated call name the same gate, and the record of a call with no gate
+/// names none (contract 04 §6.4). The writer of the port holds that rule. It
+/// takes `gate` from the [`Held`](super::Held) of the call.
 ///
 /// A record keeps the trusted fields apart from the claimed fields. The claimed
 /// fields come only from a [`Claimed`].
