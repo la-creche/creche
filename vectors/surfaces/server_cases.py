@@ -10,7 +10,14 @@ from __future__ import annotations
 
 from typing import Final
 
-from vectors.surfaces.family_cases import Case
+from vectors.surfaces.family_cases import (
+    MERGE_CHAIN_MAX,
+    MERGED_ENTRIES_MAX,
+    Case,
+    Repeated,
+    merge_chain,
+    merged_entries,
+)
 
 #: A 64-character lowercase hexadecimal digest.
 DIGEST: Final = "0123456789abcdef" * 4
@@ -78,6 +85,9 @@ def _pypi(**lines: str) -> str:
 
     return "\n".join(out) + "\n"
 
+
+#: A server with the key that the cases about merge keys repeat.
+_REPEATED: Final = Repeated(HEAD, "tools", "[]")
 
 CASES: Final[tuple[Case, ...]] = (
     # --- the control: nothing wrong ---
@@ -301,4 +311,9 @@ run:
         "long-tool-name",
         HEAD + "tools:\n  - { name: " + "a" * 65 + ", description: One tool. }\n",
     ),
+    # --- the two limits on merge keys, as for a family file ---
+    _case("yaml-merge-chain-at-limit", merge_chain(_REPEATED, MERGE_CHAIN_MAX)),
+    _case("yaml-merge-chain-past-limit", merge_chain(_REPEATED, MERGE_CHAIN_MAX + 1)),
+    _case("yaml-merge-entries-at-limit", merged_entries(_REPEATED, MERGED_ENTRIES_MAX)),
+    _case("yaml-merge-entries-past-limit", merged_entries(_REPEATED, MERGED_ENTRIES_MAX + 1)),
 )
