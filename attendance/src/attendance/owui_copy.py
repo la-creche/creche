@@ -182,7 +182,7 @@ class HttpChatApi:
 
         try:
             parsed: object = answer.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             return {}
 
         found = as_object(parsed)

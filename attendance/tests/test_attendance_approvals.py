@@ -421,6 +421,20 @@ async def test_the_audit_fault_names_every_family(tmp_path: Path) -> None:
     await rig.stop()
 
 
+async def test_a_line_nested_too_deep_is_skipped(tmp_path: Path) -> None:
+    """The JSON reader raises RecursionError on this line, not ValueError."""
+    rig = await build(tmp_path)
+    turn = await rig.start()
+    rig.audit.parent.mkdir(parents=True, exist_ok=True)
+    rig.audit.write_text("[" * 200_000 + "\n", encoding="utf-8")
+    rig.append(claimed={"turn_id": turn})
+
+    rig.service.read_gates()
+
+    assert rig.state() is SessionState.WAITING_APPROVAL
+    await rig.stop()
+
+
 async def test_a_torn_line_waits_for_its_rest(tmp_path: Path) -> None:
     """An append-only file can be read mid-write."""
     rig = await build(tmp_path)

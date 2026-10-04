@@ -198,7 +198,7 @@ def _gate_of(line: str) -> Gate | None:
 
     try:
         parsed: object = json.loads(line)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
 
     record = as_object(parsed)
