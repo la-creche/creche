@@ -159,7 +159,12 @@ def _chosen(answer: str, rows: list[SessionRow]) -> Choice | None:
     if not answer.isdigit():
         return None
 
-    number = int(answer)
+    try:
+        number = int(answer)
+    except ValueError:
+        # `str.isdigit` takes a digit that `int` does not read, and a text
+        # of more digits than the interpreter converts.
+        return None
 
     if not 1 <= number <= len(rows):
         return None
