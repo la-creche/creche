@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from noticeboard.sessions import (
     MAX_STREAM_LINES,
+    SESSION_ID_MAX,
     SessionReader,
+    is_session,
 )
 from noticeboard_helpers import (
     FakeAttendance,
@@ -31,6 +34,41 @@ LINE_SEP = chr(0x2028)
 
 def reader(tmp_path: Path, fake: FakeAttendance) -> SessionReader:
     return SessionReader(transport=fake, token_file=write_token(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["a", "0", "A.b_c-d", OWUI, "auto-01J9ZQ5V7Y8X4W3T2S1R0QPNMK", "a..b", "a" * SESSION_ID_MAX],
+)
+def test_a_session_id_of_contract_02_is_taken(value: str) -> None:
+    assert is_session(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        ".",
+        "..",
+        ".hidden",
+        "-x",
+        "_x",
+        "a/b",
+        "a\\b",
+        "a b",
+        "a:b",
+        "a%2Fb",
+        "a\tb",
+        "\u00e4",
+        "a" + LINE_SEP + "b",
+        "a" * (SESSION_ID_MAX + 1),
+        "\na",
+        "a\n",
+        "a\r\n",
+    ],
+)
+def test_a_text_that_is_no_session_id_is_refused(value: str) -> None:
+    assert not is_session(value)
 
 
 def test_the_session_list_is_read(tmp_path: Path) -> None:

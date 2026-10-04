@@ -23,6 +23,7 @@ argv, and it appears in one place: an `Authorization` header (invariant
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +50,10 @@ MAX_STREAM_LINES: Final = 5_000
 
 _OK: Final = 200
 
+#: Contract 02 §2: a session id is 1 to 128 characters.
+SESSION_ID_MAX: Final = 128
+_SESSION_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
 #: Contract 02 §2's session id prefixes, mapped to the door that owns
 #: them. §3.1 names the matching tokens: `door-owui`, `door-tui`,
 #: `door-delegate`, `door-trigger`.
@@ -63,6 +68,15 @@ DOOR_BY_PREFIX: Final = (
     ("job-", "delegate"),
     ("auto-", "trigger"),
 )
+
+
+def is_session(value: str) -> bool:
+    """A session id of contract 02 §2.
+
+    A session id becomes one segment of a path on `attendance`, so a route
+    checks it before the reader builds that path.
+    """
+    return len(value) <= SESSION_ID_MAX and _SESSION_RE.match(value) is not None
 
 
 @dataclass(frozen=True)

@@ -38,6 +38,10 @@ view that also applied would be a second writer to the same state.
    key is set, never what it is.
 6. `/static` stays styling only. Nothing that holds a fact may live there.
 
+A route parameter is an id. `app.py` checks a family name against
+`registrywrite.NAME_RE` and a session id with `sessions.is_session` before
+any use. A value that fails answers 404.
+
 ## Reading another process's files
 
 7. Nothing that reads a file may raise. `jsonfiles.py` answers a problem
@@ -134,6 +138,8 @@ prefixed `test_noticeboard_`.
   (`registrywrite.py`).
 - The family page reads whatever `report_path` the status document names
   (`pages.py`).
+- `spec.md` §8.1 names no answer for a route parameter that is not an id.
+  The route answers the 404 of a path that has no route (`app.py`).
 - A user unit started before its user joined the `agents` group cannot read
   the chaperone's 0640 audit files until the host reboots. The audit page
   shows a banner and renders the rest.

@@ -36,7 +36,7 @@ from typing import Any, Final
 from urllib.parse import parse_qsl
 
 from agent_family import Diff, load_registry
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.concurrency import run_in_threadpool
@@ -47,9 +47,9 @@ from .auditfiles import ARGS_NOTICE, AuditFilter, known_days
 from .config import Config
 from .familyform import Form, document_of, form_of, parse_posted
 from .pages import EditPage
-from .registrywrite import family_path, save_family
+from .registrywrite import NAME_RE, family_path, save_family
 from .security import CSRF_COOKIE, CSRF_FIELD, Origin, Refusal
-from .sessions import SessionReader
+from .sessions import SessionReader, is_session
 from .yamlkeep import edited_text
 
 HERE: Final = Path(__file__).parent
@@ -57,6 +57,7 @@ TEMPLATES: Final = HERE / "templates"
 STATIC: Final = HERE / "static"
 
 _FORBIDDEN: Final = 403
+_NOT_FOUND: Final = 404
 _SEE_OTHER: Final = 303
 _MAX_BODY_BYTES: Final = 1 << 20
 
@@ -176,6 +177,7 @@ def _routes(
 
     @app.get("/families/{name}", response_class=HTMLResponse)
     def _family(request: Request, name: str) -> HTMLResponse:  # pyright: ignore[reportUnusedFunction]
+        _require_family(name)
         body = pages.family_page(config, reader, name, clock())
 
         return render(request, "family.html", {"page": body})
@@ -184,6 +186,8 @@ def _routes(
     def _session(  # pyright: ignore[reportUnusedFunction]
         request: Request, family: str, session: str
     ) -> HTMLResponse:
+        _require_family(family)
+        _require_session(session)
         body = pages.session_page(reader, family, session)
 
         return render(request, "session.html", {"page": body})
@@ -205,10 +209,13 @@ def _routes(
 
     @app.get("/families/{name}/edit", response_class=HTMLResponse)
     def _edit(request: Request, name: str) -> HTMLResponse:  # pyright: ignore[reportUnusedFunction]
+        _require_family(name)
+
         return render(request, "edit.html", {"page": pages.edit_page(config, name)})
 
     @app.post("/families/{name}/edit")
     async def _save(request: Request, name: str) -> Response:  # pyright: ignore[reportUnusedFunction]
+        _require_family(name)
         posted, refusal = await _form_of(request)
 
         if refusal is not None:
@@ -221,6 +228,34 @@ def _routes(
             return RedirectResponse(f"/families/{name}?saved={page.saved}", status_code=_SEE_OTHER)
 
         return render(request, "edit.html", {"page": page})
+
+
+def _require_family(name: str) -> None:
+    """Answer 404 unless the route parameter has the form of a family name.
+
+    The parameter becomes a path under the state root, a path in the
+    registry and a query to `attendance`. This check runs before each one.
+    """
+    if not NAME_RE.match(name):
+        raise _no_such_page()
+
+
+def _require_session(session: str) -> None:
+    """Answer 404 unless the route parameter has the form of a session id.
+
+    The parameter becomes one segment of a path on `attendance`.
+    """
+    if not is_session(session):
+        raise _no_such_page()
+
+
+def _no_such_page() -> HTTPException:
+    # CONTRACT-QUESTION: spec.md §8.1 lists the routes and names no answer
+    # for a parameter that is not an id. The reading taken: such a value
+    # names no page, so the answer is the 404 of a path with no route. It
+    # holds nothing of the value. A body in the form of the 403 refusal
+    # would cost one exception handler.
+    return HTTPException(status_code=_NOT_FOUND)
 
 
 def _apply(config: Config, name: str, posted: dict[str, str]) -> EditPage:

@@ -409,6 +409,78 @@ def test_a_live_only_preview_says_the_sandbox_keeps_running(board: Harness) -> N
     assert "lands live" in answer.text
 
 
+#: Path segments that are not a family name (contract 01 §2), as a URL holds them.
+NOT_A_FAMILY = ("Chat", "c", "chat_1", "chat%20", "%2E%2E", "caf%C3%A9", "a" * 32)
+
+#: Path segments that are not a session id (contract 02 §2), as a URL holds them.
+NOT_A_SESSION = ("-x", "%2Ehidden", "a%20b", "a%3Ab", "%C3%A4", "a" * 129)
+
+
+@pytest.mark.parametrize("name", NOT_A_FAMILY)
+def test_a_family_page_answers_404_for_a_name_that_is_no_family_name(
+    board: Harness, name: str
+) -> None:
+    for path in (f"/families/{name}", f"/families/{name}/edit"):
+        answer = board.get(path)
+
+        assert answer.status_code == 404
+        assert answer.json() == {"detail": "Not Found"}
+
+    # Nothing asked `attendance` for the sessions of such a name.
+    assert board.fake.calls == []
+
+
+@pytest.mark.parametrize("name", NOT_A_FAMILY)
+def test_a_save_answers_404_for_a_name_that_is_no_family_name(board: Harness, name: str) -> None:
+    board.get("/families/chat/edit")
+    before = commit_count(board.config.registry_dir)
+
+    answer = board.post(f"/families/{name}/edit", {"verb": "save"})
+
+    assert answer.status_code == 404
+    assert commit_count(board.config.registry_dir) == before
+
+
+@pytest.mark.parametrize("family", NOT_A_FAMILY)
+def test_a_session_page_answers_404_for_a_family_that_is_no_family_name(
+    board: Harness, family: str
+) -> None:
+    answer = board.get(f"/sessions/{family}/{OWUI}")
+
+    assert answer.status_code == 404
+    assert board.fake.calls == []
+
+
+@pytest.mark.parametrize("session", NOT_A_SESSION)
+def test_a_session_page_answers_404_for_a_session_that_is_no_session_id(
+    board: Harness, session: str
+) -> None:
+    answer = board.get(f"/sessions/{CHAT}/{session}")
+
+    assert answer.status_code == 404
+    assert board.fake.calls == []
+
+
+def test_a_family_name_of_the_longest_form_reaches_its_page(board: Harness) -> None:
+    """31 characters is a family name. The page then says what it cannot read."""
+    answer = board.get("/families/" + "a" * 31)
+
+    assert answer.status_code == 200
+    assert "status.json is missing" in answer.text
+
+
+def test_a_session_id_of_the_longest_form_reaches_its_page(board: Harness) -> None:
+    session = "a" * 128
+
+    answer = board.get(f"/sessions/{CHAT}/{session}")
+
+    assert answer.status_code == 200
+    assert [path for path, _ in board.fake.calls] == [
+        f"/v1/sessions/{CHAT}/{session}",
+        f"/v1/sessions/{CHAT}/{session}/events",
+    ]
+
+
 def test_the_fixture_family_is_the_one_the_registry_holds(board: Harness) -> None:
     held = (board.config.registry_dir / "families/chat/family.yaml").read_text(encoding="utf-8")
 
