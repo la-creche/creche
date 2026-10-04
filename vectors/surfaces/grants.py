@@ -1,9 +1,11 @@
 """The grant file and the two request bodies of the chaperone (contract 04).
 
-Three surfaces:
+Four surfaces:
 
 - `grants.parse`: the bytes of one grant file to `parse_grants`, the typed
   grants or the reason the family fails closed.
+- `grants.write`: the fields of one grant file to the bytes that
+  `write_grant_file` of the caregiver writes.
 - `chaperone.call_body`: the bytes of a `POST /call` body to `CallBody`.
 - `chaperone.approval_body`: the bytes of a `POST /approval/<gate>` body to
   `ApprovalBody`.
@@ -17,10 +19,14 @@ upstream.
 from __future__ import annotations
 
 import json
+import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Final, cast
 
+from caregiver.grants import GrantFile as WrittenGrantFile
+from caregiver.grants import write_grant_file
 from chaperone.app import ApprovalBody, CallBody
 from chaperone.family_grants import FamilyGrants, parse_grants
 from fastapi import FastAPI
@@ -307,6 +313,133 @@ GRANT_DOCUMENTS: Final[tuple[Document, ...]] = (
     # --- unknown fields ---
     _doc("unknown-top-field", note="written by hand"),
     _doc("unknown-token-field", token="not-a-digest"),
+    # --- a limit that is not a JSON integer -------------------------------
+    _doc("limits-false", limits={"pep_rpm": False}),
+    _doc("limits-list-value", limits={"pep_rpm": [60]}),
+    _doc("limits-float-one", limits={"pep_rpm": 1.0}),
+    _doc("limits-float-negative-zero", limits={"pep_rpm": -0.0}),
+    _doc("limits-float-below-2-to-63", limits={"pep_rpm": 9.223372036854775e18}),
+    _doc("limits-float-2-to-63", limits={"pep_rpm": 2.0**63}),
+    _doc("limits-text-spaces", limits={"pep_rpm": " 60 "}),
+    _doc("limits-text-wide-spaces", limits={"pep_rpm": "\u00a060\u3000"}),
+    _doc("limits-text-file-separator", limits={"pep_rpm": "\x1c60"}),
+    _doc("limits-text-plus", limits={"pep_rpm": "+60"}),
+    _doc("limits-text-two-signs", limits={"pep_rpm": "+-60"}),
+    _doc("limits-text-sign-then-space", limits={"pep_rpm": "+ 60"}),
+    _doc("limits-text-underscore", limits={"pep_rpm": "6_0"}),
+    _doc("limits-text-underscore-first", limits={"pep_rpm": "_60"}),
+    _doc("limits-text-underscore-last", limits={"pep_rpm": "60_"}),
+    _doc("limits-text-two-underscores", limits={"pep_rpm": "6__0"}),
+    _doc("limits-text-sign-then-underscore", limits={"pep_rpm": "+_60"}),
+    _doc("limits-text-zero-first", limits={"pep_rpm": "060"}),
+    _doc("limits-text-zero-then-underscore", limits={"pep_rpm": "0_60"}),
+    _doc("limits-text-decimal-zeros", limits={"pep_rpm": "60.000"}),
+    _doc("limits-text-every-form", limits={"pep_rpm": " +0_6_0.0 "}),
+    _doc("limits-text-dot-last", limits={"pep_rpm": "60."}),
+    _doc("limits-text-dot-first", limits={"pep_rpm": ".0"}),
+    _doc("limits-text-fraction", limits={"pep_rpm": "60.5"}),
+    _doc("limits-text-decimal-underscore", limits={"pep_rpm": "60.0_0"}),
+    _doc("limits-text-exponent", limits={"pep_rpm": "6e1"}),
+    _doc("limits-text-hex", limits={"pep_rpm": "0x3c"}),
+    _doc("limits-text-empty", limits={"pep_rpm": ""}),
+    _doc("limits-text-spaces-only", limits={"pep_rpm": "  "}),
+    _doc("limits-text-fullwidth-digits", limits={"pep_rpm": "\uff16\uff10"}),
+    _doc("limits-text-negative", limits={"pep_rpm": "-5"}),
+    _doc("limits-text-zeros", limits={"pep_rpm": "00"}),
+    _doc("limits-text-past-64-bits", limits={"pep_rpm": "9" * 30}),
+    _doc("limits-text-4300-digits", limits={"pep_rpm": "9" * 4300}),
+    _doc("limits-text-4301-digits", limits={"pep_rpm": "9" * 4301}),
+    # --- more than one error (the reason gives their count) ----------------
+    _doc("errors-two-fields", family="Chat", rev=""),
+    _doc("errors-digest-bad-then-good", token_sha256=["x", DIGEST]),
+    _doc("errors-digests-all-bad", token_sha256=["x", "y", "z"]),
+    _doc("errors-digests-two-good-one-bad", token_sha256=[DIGEST, DIGEST, "x"]),
+    _doc("errors-digests-three-good-one-bad", token_sha256=[DIGEST, DIGEST, DIGEST, "x"]),
+    _doc("errors-delegates-bad-then-33", delegates=["Bad", *["vault-oracle"] * 33]),
+    _doc("errors-tools-bad-key-and-65", tools={"Bad": [], **_servers(65)}),
+    _doc("errors-tools-bad-key-and-value", tools={"Bad": "all"}),
+    _doc("errors-tools-two-bad-tools", tools={"kagi": ["1a", "ok", "2b"]}),
+    _doc(
+        "errors-fence-fields-then-unknown",
+        verbs={"ha_call": {"zzz": 1, "allow": "x", "targets": ["Bad"]}},
+    ),
+    _doc("errors-allow-items-not-objects", verbs={"ha_call": {"allow": ["x", 5, None]}}),
+    _doc(
+        "errors-allow-item-every-field",
+        verbs={"ha_call": {"allow": [{"zz": 1, "domain": 5, "entity_id": 7}]}},
+    ),
+    Document("errors-missing-and-unknown", _json({"zzz": 1, "version": 2, "family": FAMILY})),
+    _doc(
+        "errors-limits-every-field",
+        limits={"zz": 1, "pep_rpm": 0, "max_inflight_delegations": "x", "max_open_gates": None},
+    ),
+    Document("family-other-file-and-invalid", _json(_minimal(rev="")), "code"),
+    # --- more shapes ---------------------------------------------------------
+    _doc(
+        "verbs-allow-entity-null",
+        verbs={
+            "ha_call": {"allow": [{"domain": "light", "service": "turn_on", "entity_id": None}]}
+        },
+    ),
+    _doc("verbs-list", verbs=[]),
+    _doc("delegates-object", delegates={"vault-oracle": 1}),
+    _doc("rev-true", rev=True),
+    _doc("rev-128-astral-chars", rev="\U0001f600" * 128),
+    _doc("rev-129-astral-chars", rev="\U0001f600" * 129),
+    _doc("rev-nul", rev="a\x00b"),
+    # --- more of the JSON reader ---------------------------------------------
+    Document("json-control-char", _MINIMAL_TEXT.replace("reg-9f21c4", "a\tb").encode()),
+    Document(
+        "json-escapes",
+        _MINIMAL_TEXT.replace("reg-9f21c4", '\\"\\\\\\/\\b\\f\\n\\r\\t\\u00e9\\u00E9').encode(),
+    ),
+    Document("json-bad-escape", _MINIMAL_TEXT.replace("reg-9f21c4", "a\\xb").encode()),
+    Document("json-bad-u-escape", _MINIMAL_TEXT.replace("reg-9f21c4", "\\u12G4").encode()),
+    Document("json-surrogate-pair", _MINIMAL_TEXT.replace("reg-9f21c4", "\\ud83d\\ude00").encode()),
+    Document("json-lone-surrogate", _MINIMAL_TEXT.replace("reg-9f21c4", "\\ud800").encode()),
+    Document(
+        "json-lone-surrogate-in-components",
+        _MINIMAL_TEXT[:-1].encode() + b', "verbs": {"release": {"components": ["\\udfff"]}}}',
+    ),
+    Document("json-form-feed", b"\x0c" + _MINIMAL_TEXT.encode()),
+    Document("json-empty-key", _MINIMAL_TEXT[:-1].encode() + b', "": 1}'),
+    Document(
+        "json-version-minus-zero", _MINIMAL_TEXT.replace('"version": 2', '"version": -0').encode()
+    ),
+    Document("json-true-capital", _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": True}}'),
+    Document(
+        "json-number-zero-first", _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": 060}}'
+    ),
+    Document(
+        "json-number-dot-last", _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": 60.}}'
+    ),
+    Document("json-number-plus", _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": +60}}'),
+    Document(
+        "json-number-exponent", _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": 6E1}}'
+    ),
+    Document(
+        "json-number-overflow", _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": 1e400}}'
+    ),
+    Document(
+        "json-number-underflow", _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": 1e-400}}'
+    ),
+    Document(
+        "json-minus-infinity-limit",
+        _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": -Infinity}}',
+    ),
+    Document("json-minus-nan", _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": -NaN}}'),
+    Document(
+        "json-integer-4300-digits",
+        _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": ' + b"9" * 4300 + b"}}",
+    ),
+    Document(
+        "json-negative-integer-4301-digits",
+        _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": -' + b"9" * 4301 + b"}}",
+    ),
+    Document(
+        "json-float-5000-digits",
+        _MINIMAL_TEXT[:-1].encode() + b', "limits": {"pep_rpm": ' + b"9" * HUGE_DIGITS + b".0}}",
+    ),
 )
 
 #: The fixed start of each reason `parse_grants` gives, after the file name.
@@ -419,6 +552,41 @@ CALL_BODIES: Final[tuple[Document, ...]] = (
         "json-very-deep",
         parts=(('{"tool":"embed","args":{"a":', 1), ("[", VERY_DEEP), ("]", VERY_DEEP), ("}}", 1)),
     ),
+    Document("errors-every-field", b'{"tool":5,"args":null,"x":1,"a":2}'),
+    Document("tool-true", b'{"tool":true}'),
+    Document("tool-200-astral-chars", _json({"tool": "\U0001f600" * 200})),
+    Document("tool-201-astral-chars", _json({"tool": "\U0001f600" * 201})),
+    Document("args-key-order", b'{"tool":"embed","args":{"b":1,"a":2,"b":3}}'),
+    Document(
+        "args-float-edges",
+        b'{"tool":"embed","args":{"a":1e16,"b":1e-5,"c":5e-324,"d":1.7976931348623157e308,'
+        b'"e":0.1,"f":1E2,"g":1e+2,"h":123456789.125,"i":-1e-7}}',
+    ),
+    Document(
+        "args-escapes",
+        b'{"tool":"embed","args":{"a":"\\"\\\\\\/\\b\\f\\n\\r\\t\\u00e9\\ud83d\\ude00"}}',
+    ),
+    Document("top-true", b"true"),
+    Document("top-number", b"5"),
+    Document("top-empty-text", b'""'),
+    Document("body-newline", b"\n"),
+    Document("json-number-zero-first", b'{"tool":"embed","args":{"a":01}}'),
+    Document("json-control-char", b'{"tool":"em\tbed"}'),
+    Document("json-integer-4300-digits", b'{"tool":"embed","args":{"a":' + b"9" * 4300 + b"}}"),
+    Document("json-integer-4301-digits", b'{"tool":"embed","args":{"a":' + b"9" * 4301 + b"}}"),
+    Document("bytes-utf32", '{"tool":"embed"}'.encode("utf-32")),
+    Document("bytes-utf32-be-no-bom", '{"tool":"embed"}'.encode("utf-32-be")),
+    Document("bytes-utf32-le-no-bom", '{"tool":"embed"}'.encode("utf-32-le")),
+    Document("bytes-utf32-odd-length", '{"tool":"embed"}'.encode("utf-32") + b"\x00"),
+    Document("bytes-utf16-be-no-bom", '{"tool":"embed"}'.encode("utf-16-be")),
+    Document("bytes-utf16-be-bom", b"\xfe\xff" + '{"tool":"embed"}'.encode("utf-16-be")),
+    Document("bytes-utf16-odd-length", '{"tool":"embed"}'.encode("utf-16") + b"\x00"),
+    Document("bytes-utf16-astral", '{"tool":"\U0001f600"}'.encode("utf-16")),
+    Document("bytes-two-nul-first", b"\x005"),
+    Document("bytes-two-nul-last", b"5\x00"),
+    Document("bytes-three-nul-last", b"{}\x00"),
+    Document("bytes-bom-twice", b'\xef\xbb\xbf\xef\xbb\xbf{"tool":"embed"}'),
+    Document("bytes-bom-then-spaces", b'\xef\xbb\xbf  {"tool":"embed"}'),
 )
 
 APPROVAL_BODIES: Final[tuple[Document, ...]] = (
@@ -442,6 +610,9 @@ APPROVAL_BODIES: Final[tuple[Document, ...]] = (
     Document("json-truncated", b'{"decision":"approve"'),
     Document("bytes-utf16", '{"decision":"approve"}'.encode("utf-16")),
     Document("bytes-bom", b'\xef\xbb\xbf{"decision":"approve"}'),
+    Document("errors-every-field", b'{"decision":1,"x":1}'),
+    Document("top-null", b"null"),
+    Document("bytes-utf16-le-no-bom", '{"decision":"deny"}'.encode("utf-16-le")),
 )
 
 
@@ -464,7 +635,7 @@ class BodyReader:
         return response.status_code, None, cast("dict[str, Any]", response.json()).get("detail")
 
 
-def _call_reader() -> BodyReader:
+def call_reader() -> BodyReader:
     app = FastAPI()
     seen: list[BaseModel] = []
 
@@ -564,6 +735,136 @@ def _body_surface(
     )
 
 
+# --- the writer of the grant file ------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Written:
+    """The fields of one grant file, as `caregiver.grants.GrantFile` takes them."""
+
+    id: str
+    family: str = FAMILY
+    rev: str = "reg-9f21c4"
+    token_sha256: tuple[str, ...] = (DIGEST,)
+    model_alias: str = "fast"
+    #: In sorted order, as `build_grant_file` gives the servers.
+    tools: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    #: In the order of `caregiver.grants._verbs_json`: embed, ha_call,
+    #: enqueue, job_status, release.
+    verbs: dict[str, Any] = field(default_factory=dict[str, Any])
+    delegates: tuple[str, ...] = ()
+    max_inflight_delegations: int = 2
+    approval: tuple[str, ...] = ()
+
+    def grant(self) -> WrittenGrantFile:
+        return WrittenGrantFile(
+            family=self.family,
+            rev=self.rev,
+            token_sha256=self.token_sha256,
+            model_alias=self.model_alias,
+            tools=self.tools,
+            verbs=self.verbs,
+            delegates=self.delegates,
+            max_inflight_delegations=self.max_inflight_delegations,
+            approval=self.approval,
+        )
+
+    def args(self) -> dict[str, object]:
+        return {
+            "family": self.family,
+            "rev": self.rev,
+            "token_sha256": self.token_sha256,
+            "model_alias": self.model_alias,
+            "tools": self.tools,
+            "verbs": self.verbs,
+            "delegates": self.delegates,
+            "max_inflight_delegations": self.max_inflight_delegations,
+            "approval": self.approval,
+        }
+
+
+WRITTEN: Final[tuple[Written, ...]] = (
+    Written("minimal"),
+    Written(
+        "full",
+        rev="01K5J9QW3R7T0ZP4YB2H6N8M1D",
+        token_sha256=(DIGEST, OTHER_DIGEST),
+        model_alias="agent-router",
+        tools={"ha-read": ["ha_get_state"], "kagi": ["kagi_search_fetch", "kagi_extract"]},
+        verbs={
+            "embed": {},
+            "ha_call": {
+                "allow": [
+                    {"domain": "notify", "service": "mobile_app_example_phone", "entity_id": None},
+                    {"domain": "light", "service": "turn_on", "entity_id": "light.example_lamp"},
+                ]
+            },
+            "enqueue": {"targets": ["scrum-lead", "issue-worker"]},
+            "job_status": {},
+            "release": {"components": ["chaperone", "attendance"]},
+        },
+        delegates=("vault-oracle",),
+        max_inflight_delegations=8,
+        approval=("ha_call", "invoke_agent", "kagi__kagi_extract"),
+    ),
+    Written("tools-empty-list", tools={"kagi": []}),
+    Written("tools-one-server", tools={"kagi": ["search"]}),
+    Written("verbs-embed-only", verbs={"embed": {}}),
+    Written("verbs-allow-empty", verbs={"ha_call": {"allow": []}}),
+    Written("verbs-targets-empty", verbs={"enqueue": {"targets": []}, "job_status": {}}),
+    Written("verbs-components-empty", verbs={"release": {"components": []}}),
+    Written("delegates-two", delegates=("vault-oracle", "scrum-lead")),
+    Written("approval-one", approval=("enqueue",)),
+    Written("inflight-one", max_inflight_delegations=1),
+    Written(
+        "text-outside-ascii",
+        rev='r\u00e9v "1" \\ \U0001f600 \x7f\t',
+        model_alias="mod\u00e8le",
+        approval=("caf\u00e9__\u2028",),
+    ),
+)
+
+
+def _written_vector(written: Written, scratch: Path) -> Vector:
+    given: dict[str, Json] = {"args": normalize(written.args())}
+    target = scratch / f"{written.id}.json"
+    outcome = attempt(lambda: write_grant_file(target, written.grant()))
+    if isinstance(outcome, Raised):
+        return raised(written.id, given, outcome.exc)
+
+    raw = target.read_bytes()
+    grants, message = parse_grants(raw, written.family)
+    if grants is None:
+        raise ValueError(f"{written.id}: the chaperone refuses what the caregiver wrote: {message}")
+
+    return accepted(written.id, given, grants, output=bytes_input(raw))
+
+
+def _write_surface() -> Surface:
+    with tempfile.TemporaryDirectory(prefix="vectors-grants-") as scratch_name:
+        scratch = Path(scratch_name)
+        vectors = tuple(_written_vector(written, scratch) for written in WRITTEN)
+
+    return Surface(
+        name="grants.write",
+        path="chaperone/grants_write.json",
+        entry="caregiver.grants.write_grant_file",
+        contract=f"{CONTRACT} §1.2, §1.3",
+        notes=(
+            "The input is the fields of caregiver.grants.GrantFile.",
+            "output is the exact bytes of the file that the entry point writes.",
+            "value is what chaperone.family_grants.parse_grants reads from those bytes.",
+            "The file holds the servers of tools in sorted order. It holds the verbs in this "
+            "order: embed, ha_call, enqueue, job_status, release. "
+            "caregiver.grants.build_grant_file gives the entry point that order.",
+            "The entry point writes pep_rpm 60 and max_open_gates 10 into each file.",
+            "The entry point does not validate a field. The caregiver validates the family "
+            "file before it calls the entry point. Each vector here holds valid fields.",
+        ),
+        vectors=vectors,
+    )
+
+
 def surfaces() -> tuple[Surface, ...]:
     return (
         Surface(
@@ -589,7 +890,8 @@ def surfaces() -> tuple[Surface, ...]:
             ),
             vectors=tuple(_grant_vector(document) for document in GRANT_DOCUMENTS),
         ),
-        _body_surface("call_body", "chaperone.app.CallBody", "§5", CALL_BODIES, _call_reader),
+        _write_surface(),
+        _body_surface("call_body", "chaperone.app.CallBody", "§5", CALL_BODIES, call_reader),
         _body_surface(
             "approval_body", "chaperone.app.ApprovalBody", "§8.4", APPROVAL_BODIES, _approval_reader
         ),

@@ -25,6 +25,9 @@
   {"id":"body-empty","input":{"text":""},"refusal":{"detail":[{"loc":["body"],"msg":"Field required","type":"missing"}],"http_status":422},"result":"refused"},
   {"id":"json-truncated","input":{"text":"{\"decision\":\"approve\""},"refusal":{"detail":[{"loc":["body"],"msg":"JSON decode error","type":"json_invalid"}],"http_status":422},"result":"refused"},
   {"http_status":200,"id":"bytes-utf16","input":{"base64":"//57ACIAZABlAGMAaQBzAGkAbwBuACIAOgAiAGEAcABwAHIAbwB2AGUAIgB9AA=="},"result":"accepted","value":{"decision":"approve"}},
-  {"http_status":200,"id":"bytes-bom","input":{"text":"\ufeff{\"decision\":\"approve\"}"},"result":"accepted","value":{"decision":"approve"}}
+  {"http_status":200,"id":"bytes-bom","input":{"text":"\ufeff{\"decision\":\"approve\"}"},"result":"accepted","value":{"decision":"approve"}},
+  {"id":"errors-every-field","input":{"text":"{\"decision\":1,\"x\":1}"},"refusal":{"detail":[{"loc":["body","decision"],"msg":"Input should be 'approve' or 'deny'","type":"literal_error"},{"loc":["body","x"],"msg":"Extra inputs are not permitted","type":"extra_forbidden"}],"http_status":422},"result":"refused"},
+  {"id":"top-null","input":{"text":"null"},"refusal":{"detail":[{"loc":["body"],"msg":"Field required","type":"missing"}],"http_status":422},"result":"refused"},
+  {"http_status":200,"id":"bytes-utf16-le-no-bom","input":{"text":"{\u0000\"\u0000d\u0000e\u0000c\u0000i\u0000s\u0000i\u0000o\u0000n\u0000\"\u0000:\u0000\"\u0000d\u0000e\u0000n\u0000y\u0000\"\u0000}\u0000"},"result":"accepted","value":{"decision":"deny"}}
  ]
 }
