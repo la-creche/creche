@@ -28,10 +28,15 @@ judge the same results differently. Its tag step runs only after that
 verdict, one allocation at a time, and only its last job may write.
 
 The `rust` job runs `bin/rust-gate.sh --tests` for a change that touches
-`rust/`, or a file of the Rust checks themselves (`bin/lib/rustrule.sh`). On
-any other code change it skips every step but the checkout and is still a
-success, so `gate` reads green. The toolchain is the one
-`rust/rust-toolchain.toml` names.
+`rust/`, `vectors/`, or a file of the Rust checks themselves
+(`bin/lib/rustrule.sh`). On any other code change it skips every step but the
+checkout and is still a success, so `gate` reads green. The toolchain is the
+one `rust/rust-toolchain.toml` names.
+
+The `proc` job runs the process-level suite (`integration/proc`), which is
+in no shard: `testpaths` does not hold it. The job builds the playpen first,
+and a test that skips is a failure there. A run in which every test skips
+because the bundle is missing would be green and would judge nothing.
 """
 
 from __future__ import annotations
@@ -115,6 +120,29 @@ RUST_DIR = "rust"
 
 #: The two files the cargo cache is good for.
 CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
+
+#: The whole test command of the `proc` job, as `integration/proc/AGENTS.md`
+#: gives it.
+PROC_RUN = "uv run pytest integration/proc -m slow"
+
+#: The switch that makes a skip a failure, and the file that reads it.
+PROC_ENV = {"CRECHE_PROC_NO_SKIP": "1"}
+PROC_SWITCHES = REPO / "integration" / "proc" / "proc_services.py"
+
+#: The build that the suite needs, and where it runs. No vitest and no
+#: typecheck: the `playpen` job runs those.
+PLAYPEN_BUILD = "pnpm install --frozen-lockfile && pnpm run build"
+PLAYPEN_DIR = "playpen"
+
+#: The build refuses to run without a LAN address (playpen/build.mjs). The
+#: example site's TEST-NET-1 address is the one the suite writes too.
+BUILD_ENV = {"AGENT_LAN_ADDRESS": "192.0.2.10"}
+
+#: The steps that give a job node and pnpm, by the start of `uses`.
+NODE_ACTIONS = ("pnpm/action-setup@", "actions/setup-node@")
+
+#: The local action that gives a job uv and the venv.
+UV_SYNC = "./.github/actions/uv-sync"
 
 #: What the lint job runs for each scope: lint alone beside the shards, and
 #: lint with the tests marked `docs` where there is no shard. The gate's lint
@@ -244,7 +272,7 @@ def test_the_docs_scope_runs_no_shard_no_playpen_and_no_rust(
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
     only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
 
-    assert only_code == {"tests", "playpen", "rust"}
+    assert only_code == {"tests", "playpen", "proc", "rust"}
     assert {name for name, rule in by_scope.items() if rule is None} == {"scope", "lint"}
 
 
@@ -258,11 +286,70 @@ def test_lint_runs_the_docs_tests_on_a_docs_change_and_no_test_beside_the_shards
 
 
 def test_the_release_runs_the_gates_test_jobs() -> None:
-    """A change to one file's shards, playpen steps or Rust steps that misses
-    the other would let a merge pass a release its PR could not, or the
-    reverse."""
-    for name in ("tests", "playpen", "rust"):
+    """A change to one file's shards, playpen steps, process suite or Rust
+    steps that misses the other would let a merge pass a release its PR could
+    not, or the reverse."""
+    for name in ("tests", "playpen", "proc", "rust"):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
+
+
+def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
+    return [step for step in job["steps"] if step.get("uses", "").startswith(NODE_ACTIONS)]
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_proc_job_builds_the_playpen_then_runs_the_process_suite(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """The suite starts `node playpen/dist/playpen.js`, so the build comes
+    first, and the venv comes before the suite. The suite is one command,
+    with no path of one test and no `-k`."""
+    proc = jobs["proc"]
+    runs = [step for step in proc["steps"] if "run" in step]
+    build, suite = runs
+    order = [step.get("uses") or step["run"] for step in proc["steps"]]
+
+    assert proc["needs"] == "scope"
+    assert proc["if"] == ONLY_CODE
+    assert build["run"] == PLAYPEN_BUILD
+    assert build["working-directory"] == PLAYPEN_DIR
+    assert build["env"] == BUILD_ENV
+    assert suite["run"] == PROC_RUN
+    assert order.index(PLAYPEN_BUILD) < order.index(UV_SYNC) < order.index(PROC_RUN)
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_proc_job_has_node_and_pnpm_as_the_playpen_job_has_them(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """One node version and one pnpm for the bundle, whichever job builds
+    it. The suite must judge the bundle that the `playpen` job tests."""
+    steps = _node_steps(jobs["proc"])
+
+    assert [step["uses"].split("@")[0] for step in steps] == [
+        name.rstrip("@") for name in NODE_ACTIONS
+    ]
+    assert steps == _node_steps(jobs["playpen"])
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_a_skip_in_the_proc_job_is_a_failure(jobs: dict[str, dict[str, Any]], last: str) -> None:
+    """Every topology test skips itself when the bundle is missing. The
+    switch must be one that the suite reads: the suite stops on a variable
+    with its prefix that it does not know, and a name with another prefix
+    would change nothing."""
+    (suite,) = [step for step in jobs["proc"]["steps"] if step.get("run") == PROC_RUN]
+
+    assert suite["env"] == PROC_ENV
+    for name in PROC_ENV:
+        assert f'"{name}"' in PROC_SWITCHES.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_proc_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: str) -> None:
+    """A teardown waits for each process group. A fault in the harness can
+    cost every test that wait, and a job with no limit has six hours."""
+    assert 0 < jobs["proc"]["timeout-minutes"] <= 30
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -421,7 +508,7 @@ def test_a_shard_outside_one_to_n_is_refused(text: str) -> None:
 
 def _needs(scope: str | None, results: dict[str, str]) -> str:
     """`toJSON(needs)` as the last job sees it: every job a success but for
-    the ones `results` names. Both workflows need the same five jobs."""
+    the ones `results` names. Both workflows need the same six jobs."""
     names = sorted(set(JOBS) - {GATE_NAME})
     assert names == sorted(set(RELEASE_JOBS) - {RELEASE_NAME})
     needs = {name: {"result": results.get(name, "success"), "outputs": {}} for name in names}
@@ -432,7 +519,7 @@ def _needs(scope: str | None, results: dict[str, str]) -> str:
 
 
 #: What a docs PR skips. A code PR skips nothing.
-DOCS = {"tests": "skipped", "playpen": "skipped", "rust": "skipped"}
+DOCS = {"tests": "skipped", "playpen": "skipped", "proc": "skipped", "rust": "skipped"}
 
 #: (what the jobs did, whether `gate` is green)
 VERDICTS = [
@@ -442,6 +529,7 @@ VERDICTS = [
     (_needs("code", {"tests": "failure"}), False),
     (_needs("code", {"playpen": "cancelled"}), False),
     (_needs("code", {"rust": "failure"}), False),
+    (_needs("code", {"proc": "failure"}), False),
     (_needs("code", {"lint": "failure"}), False),
     (_needs("docs", DOCS | {"lint": "failure"}), False),
     # A suite that did not run on a code PR is red, not skipped.
@@ -450,8 +538,12 @@ VERDICTS = [
     # The Rust checks run on every code PR. The job skips its own steps when
     # the PR touches nothing under rust/, and is a success.
     (_needs("code", {"rust": "skipped"}), False),
+    # The process suite is in no shard. A code PR on which it did not run
+    # is red.
+    (_needs("code", {"proc": "skipped"}), False),
     # A job that ran on a docs PR is not what the scope asks for.
     (_needs("docs", DOCS | {"rust": "success"}), False),
+    (_needs("docs", DOCS | {"proc": "success"}), False),
     # No scope: the scope job failed and everything behind it was skipped.
     (_needs(None, DOCS | {"scope": "failure"}), False),
 ]
@@ -490,6 +582,11 @@ SCOPES = [
     ([".github/workflows/gate.yml"], ("code", "true")),
     ([".github/workflows/release.yml"], ("code", "true")),
     ([".github/actions/scope/action.yml"], ("code", "true")),
+    # The Rust tests read vectors/data, so a vector that moves runs them.
+    (["vectors/data/index.json"], ("code", "true")),
+    (["vectors/generate.py"], ("code", "true")),
+    (["chaperone/src/chaperone/app.py", "vectors/data/ids/family.json"], ("code", "true")),
+    (["vectors/README.md"], ("docs", "true")),
     # The Python half of the gate starts no cargo step of its own in CI.
     (["bin/quality-gate.sh"], ("code", "false")),
     ([".github/actions/verdict/action.yml"], ("code", "false")),

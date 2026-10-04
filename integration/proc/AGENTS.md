@@ -15,7 +15,8 @@ and `integration/tests_manager` host every service in the test process. They
 cannot judge a service that Python cannot import.
 
 The suite owns no product code. It is not in the root `testpaths`, so the
-full suite does not run it.
+full suite does not run it. CI runs it in the `proc` job of `gate.yml` and of
+`release.yml`.
 
 ## Run it
 
@@ -39,8 +40,8 @@ missing. A silent pass would be worse than a skip. The suite needs `node` on
 Set `CRECHE_PROC_KEEP=1` to keep the root of each test on disk after the run.
 
 Set `CRECHE_PROC_NO_SKIP=1` to make each skip a failure. A run in which
-every test skips is green, and it judged nothing. Set the variable in a CI
-job.
+every test skips is green, and it judged nothing. The `proc` job of CI sets
+the variable.
 
 ## Words
 
@@ -161,7 +162,9 @@ the pi stand-in                          found through AGENT_PI_BIN
 10. Each service leads its own process group. The teardown sends `SIGTERM` to
     each group. Then it waits 20 seconds at most for each group to become
     empty. It sends `SIGKILL` only to a group that is not empty after that
-    time. A group that ended before the teardown gets no signal.
+    time. A group that ended before the teardown gets no signal. A process
+    that ended and that waits for its parent to reap it is not a process of
+    the group.
 11. No test leaves a process behind. A teardown that had to kill a process
     fails the test. This applies to each process of a group, not only to the
     service. A group that no teardown ended fails the session.
@@ -269,6 +272,11 @@ failure. Work down this list.
   playpen cannot dial a chaperone on another port.
 - **No scenario for `door-trigger`, `door-tui` and `noticeboard`.** Each has
   a row in the service table and no topology.
+- **The state of an ended process.** The harness reads it from `/proc` on
+  Linux and from `ps` on macOS. On another system, a process that ended
+  counts as a process that runs until its parent reaps it. On Linux, the
+  same applies when `/proc` lists a process and does not give the state of
+  that process.
 
 ## Layout
 

@@ -1,7 +1,7 @@
 """When the quality gate runs cargo, and what it runs.
 
 `bin/quality-gate.sh` runs the Rust checks only for a change that touches
-`rust/` (`bin/lib/rustrule.sh`). Five things could go wrong without one red
+`rust/` (`bin/lib/rustrule.sh`). Seven things could go wrong without one red
 line, and each gets a check here:
 
 1. **A Python change that needs cargo.** Some sessions commit from a sandbox
@@ -20,6 +20,13 @@ line, and each gets a check here:
 5. **A Rust file that reads a Markdown file.** A change of nothing but
    Markdown runs no cargo step, so it could break a doc test with no red
    line. `bin/rust-gate.sh` refuses the include.
+6. **A vector that moves and breaks a Rust test.** The Rust tests read
+   `vectors/data`. In CI a change under `vectors/` runs the Rust checks. A
+   push runs them where `cargo` is on PATH. Where it is not, the push passes
+   with one line: a Python session with no Rust toolchain regenerates the
+   vectors and must still push.
+7. **A product change that moves a vector, found first in CI.** A scoped run
+   for a product package carries `vectors/tests` too.
 
 Everything runs the real gate in a throwaway repository. `uv` and `cargo`
 are fakes that write their argv to a file. PATH holds only those fakes and
@@ -60,9 +67,18 @@ TEST_STEPS = [FMT, CLIPPY, TEST]
 PYTHON_LINT = ["run ruff check .", "run ruff format --check .", "run pyright"]
 PYTEST = "run pytest -n auto"
 
-#: The one suite of the throwaway repository, and a path in its package.
+#: The suite of the one product package of the throwaway repository, and a
+#: path in that package.
 SUITE = "chaperone/tests"
 PYTHON_PATH = "chaperone/src/chaperone/app.py"
+
+#: The suite that holds the vectors equal to the Python code, and a vector
+#: file. A scoped run for a product package carries the suite too.
+VECTORS_SUITE = "vectors/tests"
+VECTORS_PATH = "vectors/data/index.json"
+
+#: What a push of a product package runs: its own suite, then the vectors.
+PRODUCT_SUITES = f"{SUITE} {VECTORS_SUITE}"
 
 #: A crate of the throwaway workspace, and a file in it.
 CRATE = "rust/crates/one"
@@ -87,9 +103,13 @@ fi
 """
 
 FIXTURE = {
-    "pyproject.toml": f'[tool.pytest.ini_options]\ntestpaths = [\n    "{SUITE}",\n]\n',
+    "pyproject.toml": (
+        f'[tool.pytest.ini_options]\ntestpaths = [\n    "{SUITE}",\n    "{VECTORS_SUITE}",\n]\n'
+    ),
     f"{SUITE}/test_app.py": "",
     PYTHON_PATH: "",
+    f"{VECTORS_SUITE}/test_vectors_current.py": "",
+    VECTORS_PATH: "{}\n",
     "uv.lock": "",
     "rust/Cargo.toml": '[workspace]\nmembers = ["crates/*"]\n',
     f"{CRATE}/Cargo.toml": INHERITS,
@@ -231,8 +251,9 @@ def _fake(path: Path, body: str) -> None:
 
 @pytest.fixture
 def tree(tmp_path: Path) -> Tree:
-    """A committed repository with one Python package and one crate, the
-    real gate copied in, and a PATH with and without the fake cargo."""
+    """A committed repository with one Python package, the vectors and one
+    crate, the real gate copied in, and a PATH with and without the fake
+    cargo."""
     root = tmp_path / "repo"
     tools = tmp_path / "tools"
     rusty = tmp_path / "rusty"
@@ -307,7 +328,7 @@ def test_an_untracked_file_under_rust_is_in_no_commit(tree: Tree) -> None:
 @pytest.mark.parametrize(
     ("paths", "pytest_line"),
     [
-        ([PYTHON_PATH], f"{PYTEST} {SUITE}"),
+        ([PYTHON_PATH], f"{PYTEST} {PRODUCT_SUITES}"),
         ([PYTHON_PATH, "uv.lock"], PYTEST),
         (["docs/rust.md", "rustic/Cargo.toml"], PYTEST),
     ],
@@ -508,7 +529,7 @@ def test_a_push_of_rust_and_python_runs_both(tree: Tree) -> None:
 
     assert _passed(done), done.out + done.err
     assert done.cargo == TEST_STEPS
-    assert _pytest_calls(done) == [f"{PYTEST} {SUITE}"]
+    assert _pytest_calls(done) == [f"{PYTEST} {PRODUCT_SUITES}"]
 
 
 def test_a_rust_path_is_not_a_path_in_no_package(tree: Tree) -> None:
@@ -566,6 +587,138 @@ def test_a_failed_cargo_step_fails_the_gate(tree: Tree, fail: str, ran: list[str
     assert "quality-gate: PASS" not in done.out
     assert done.cargo == ran
     assert _pytest_calls(done) == []
+
+
+# --- a change under vectors/, which the Rust tests read -----------------------
+
+
+def _cargo_lines(done: Run) -> list[str]:
+    """Every line of a run that names cargo."""
+    return [line for line in (done.out + done.err).splitlines() if "cargo" in line]
+
+
+def test_a_vectors_push_runs_the_cargo_tests_where_cargo_is(tree: Tree) -> None:
+    done = tree.run(GATE, "--tests-for", VECTORS_PATH, "vectors/generate.py")
+
+    assert _passed(done), done.out + done.err
+    assert done.cargo == TEST_STEPS
+    assert _pytest_calls(done) == [f"{PYTEST} {VECTORS_SUITE}"]
+    assert f"{RUST_GATE}, for {VECTORS_PATH} and 1 more" in done.out
+
+
+def test_a_vectors_push_with_no_cargo_passes_with_one_line(tree: Tree) -> None:
+    """A Python session with no Rust toolchain regenerates the vectors. It
+    must still push. CI runs the Rust tests for that change."""
+    done = tree.run(GATE, "--tests-for", VECTORS_PATH, cargo=False)
+
+    assert _passed(done), done.out + done.err
+    assert done.uv == [*PYTHON_LINT, f"{PYTEST} {VECTORS_SUITE}"]
+    assert _cargo_lines(done) == [
+        f"quality-gate: cargo not on PATH: no Rust test for {VECTORS_PATH}. CI runs the Rust tests"
+    ]
+    assert done.err == ""
+
+
+def test_a_product_push_with_a_moved_vector_runs_both_suites(tree: Tree) -> None:
+    done = tree.run(GATE, "--tests-for", PYTHON_PATH, VECTORS_PATH)
+
+    assert _passed(done), done.out + done.err
+    assert done.cargo == TEST_STEPS
+    assert _pytest_calls(done) == [f"{PYTEST} {PRODUCT_SUITES}"]
+
+
+def test_a_product_push_alone_starts_no_cargo_step(tree: Tree) -> None:
+    """The push changes no vector file, so the Rust tests read what they
+    read before. `vectors/tests` fails when the change moves a vector."""
+    done = tree.run(GATE, "--tests-for", PYTHON_PATH)
+
+    assert _passed(done), done.out + done.err
+    assert done.cargo == []
+    assert f"{VECTORS_SUITE}, for a change in a product package" in done.out
+
+
+def test_a_tree_with_no_vectors_suite_runs_the_package_alone(tree: Tree) -> None:
+    """pytest fails on a path that the tree does not hold. When `testpaths`
+    names no `vectors/tests`, a product push runs the suite of its package
+    and nothing else."""
+    tree.write("pyproject.toml", f'[tool.pytest.ini_options]\ntestpaths = [\n    "{SUITE}",\n]\n')
+
+    done = tree.run(GATE, "--tests-for", PYTHON_PATH)
+
+    assert _passed(done), done.out + done.err
+    assert _pytest_calls(done) == [f"{PYTEST} {SUITE}"]
+
+
+def test_a_vectors_commit_runs_no_cargo_step(tree: Tree) -> None:
+    """A commit runs no test, in either language. `cargo fmt` and `cargo
+    clippy` do not read a vector."""
+    tree.write(VECTORS_PATH, '{"moved": 1}\n')
+    tree.git("add", "-A")
+
+    with_cargo = tree.run(GATE)
+    without = tree.run(GATE, cargo=False)
+
+    assert _passed(with_cargo), with_cargo.out + with_cargo.err
+    assert with_cargo.cargo == []
+    assert _passed(without), without.out + without.err
+    assert _cargo_lines(without) == []
+
+
+def test_a_push_of_vectors_and_rust_runs_the_rust_gate_one_time(tree: Tree) -> None:
+    done = tree.run(GATE, "--tests-for", VECTORS_PATH, RUST_PATH)
+
+    assert _passed(done), done.out + done.err
+    assert done.cargo == TEST_STEPS
+
+
+def test_a_push_of_vectors_and_rust_with_no_cargo_still_fails(tree: Tree) -> None:
+    """The path under `rust/` fails closed. The vector beside it lifts
+    nothing."""
+    done = tree.run(GATE, "--tests-for", VECTORS_PATH, RUST_PATH, cargo=False)
+
+    assert done.code == 1
+    assert done.uv == []
+    assert done.err.splitlines() == [
+        f"quality-gate: cargo not on PATH: the Rust checks must run for {RUST_PATH}"
+    ]
+
+
+def test_a_failed_cargo_test_fails_a_vectors_push(tree: Tree) -> None:
+    done = tree.run(GATE, "--tests-for", VECTORS_PATH, fail="test")
+
+    assert done.code != 0
+    assert "quality-gate: PASS" not in done.out
+    assert done.cargo == TEST_STEPS
+    assert _pytest_calls(done) == []
+
+
+def test_a_change_under_vectors_runs_the_rust_checks_in_ci(tree: Tree) -> None:
+    """A runner always has cargo, so CI takes no notice line: a vector that
+    moves runs the `rust` job."""
+    base = tree.git("rev-parse", "HEAD")
+    data = tree.commit(VECTORS_PATH, '{"moved": 1}\n')
+    generator = tree.commit("vectors/generate.py", "later = 1\n")
+
+    assert tree.rule(f"rust_touched {base} {data}") == 0
+    assert tree.rule(f"rust_touched {data} {generator}") == 0
+
+
+@pytest.mark.parametrize(
+    ("path", "under"),
+    [
+        ("vectors/data/index.json", True),
+        ("vectors/generate.py", True),
+        ("vectors/README.md", True),
+        ('"vectors/data/a\\tb.json"', True),
+        ("vectors", False),
+        ("vectorsx/data/index.json", False),
+        ("chaperone/vectors/index.json", False),
+        ("docs/vectors.md", False),
+        ("rust/vectors/index.json", False),
+    ],
+)
+def test_only_a_path_under_vectors_is_a_vectors_path(tree: Tree, path: str, under: bool) -> None:
+    assert (tree.rule(f"vectors_path '{path}'") == 0) == under
 
 
 # --- bin/rust-gate.sh by itself, as CI runs it -------------------------------
