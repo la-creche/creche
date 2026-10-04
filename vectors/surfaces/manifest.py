@@ -720,8 +720,8 @@ def _parse_surface() -> Surface:
             "The input is the bytes of one request file. params.request_id is the id of the "
             "file name, which the entry point takes as its second argument.",
             *_REQUEST_NOTES,
-            "The entry point does not check params.request_id against the grammar of a ULID. "
-            "Its caller reads the id from a file name that it checked.",
+            "The entry point checks params.request_id against the grammar of a ULID, after it "
+            "compares the id of the body with it.",
         ),
         vectors=vectors,
     )
@@ -846,7 +846,7 @@ def _plan_surface() -> Surface:
             "The order of the keys of `components` in this file is not the order of the call. "
             "The entry point gives the same result for each order.",
             *_REQUEST_NOTES,
-            "The entry point does not check request_id against the grammar of a ULID.",
+            "The entry point checks request_id against the grammar of a ULID.",
         ),
         vectors=vectors,
     )

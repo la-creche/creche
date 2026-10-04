@@ -75,6 +75,16 @@ def test_a_request_body_naming_another_id_is_refused() -> None:
         parse_request(_raw(body), REQUEST_ID)
 
 
+def test_a_request_under_an_id_that_is_no_ulid_is_refused() -> None:
+    """Each field of a request has its pattern, and the id is a field. A
+    caller that gives the parser another id gets the refusal."""
+    body = request_body({"chaperone": "2.1.0"}, request_id="not-a-ulid")
+    with pytest.raises(Refusal) as raised:
+        parse_request(_raw(body), "not-a-ulid")
+
+    assert raised.value.detail == "field 'id' is malformed"
+
+
 def test_a_version_with_a_trailing_newline_is_refused() -> None:
     """Rule 3: every pattern ends in `\\Z`. A `$` also matches before a
     trailing newline, and these values become git tags and argv words."""

@@ -210,6 +210,8 @@ def parse_request(raw: bytes, request_id: str) -> Request:
 
     `request_id` comes from the already-validated file name and must match:
     a file whose body names another id is a request root will not act on.
+    A requester can give an id of its own, so the id has its pattern too:
+    it is the name of the file that the requester writes.
     """
     if len(raw) > MAX_REQUEST_BYTES:
         raise _refuse(f"is larger than {MAX_REQUEST_BYTES} bytes")
@@ -220,6 +222,9 @@ def parse_request(raw: bytes, request_id: str) -> Request:
 
     if body["id"] != request_id:
         raise _refuse("field 'id' differs from the file name")
+
+    if not ULID_RE.fullmatch(request_id):
+        raise _refuse("field 'id' is malformed")
 
     kind = _kind(body["kind"])
 
