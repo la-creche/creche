@@ -90,6 +90,23 @@ fn exact<T: super::Value>(env: &Env, variable: &'static str, default: &'static s
         .map_err(|error| T::refuse(variable, error).into())
 }
 
+/// The token file of the door. A variable that is not set takes the
+/// default. A variable that is set to the empty text is an error, as in the
+/// Python door.
+fn token_file(env: &Env) -> Parsed<TokenFilePath> {
+    if env.exact(TOKEN_FILE)?.is_none() {
+        return DEFAULT_TOKEN_FILE.parse().map_err(|error| {
+            ConfigError::Path {
+                variable: TOKEN_FILE,
+                error,
+            }
+            .into()
+        });
+    }
+
+    env.require(TOKEN_FILE)
+}
+
 impl DoorOwuiConfig {
     /// Parses the variables of the unit. The function collects each error.
     ///
@@ -98,10 +115,7 @@ impl DoorOwuiConfig {
     /// [`ConfigErrors`] holds one error for each variable that the door
     /// cannot use.
     pub fn from_env(env: &Env) -> Result<Self, ConfigErrors> {
-        let files = all2(
-            env.require(KEY_FILE),
-            env.parse_or(TOKEN_FILE, || DEFAULT_TOKEN_FILE.parse()),
-        );
+        let files = all2(env.require(KEY_FILE), token_file(env));
         let (bind, (key_file, token_file), (attendance, families_dir)) = all3(
             exact(env, BIND, DEFAULT_BIND),
             files,
@@ -242,6 +256,16 @@ mod tests {
         assert_eq!(
             one_error(&[(KEY_FILE, "  ")]),
             ConfigError::Unset { variable: KEY_FILE }
+        );
+    }
+
+    #[test]
+    fn an_empty_token_file_variable_is_an_error() {
+        assert_eq!(
+            one_error(&[(TOKEN_FILE, " ")]),
+            ConfigError::Unset {
+                variable: TOKEN_FILE
+            }
         );
     }
 
