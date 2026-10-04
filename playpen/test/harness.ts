@@ -56,6 +56,8 @@ export interface HarnessOptions {
   readonly turnFile?: (controlDir: string) => TurnFile;
   /** A launcher of the test's own, around the real one, for a start that throws. */
   readonly launcher?: (real: PiLauncher) => PiLauncher;
+  /** How long a start waits for the credential file, for a start that a test holds open. */
+  readonly credRetryMs?: number;
 }
 
 /**
@@ -132,7 +134,7 @@ export class Harness {
       channel: new Channel(out),
       launcher: options.launcher?.(launcher) ?? launcher,
       lock: new PlaypenLock(control, options.lockBeatMs ?? LOCK_BEAT_MS),
-      creds: new CredReader(join(this.root, "creds")),
+      creds: new CredReader(join(this.root, "creds"), options.credRetryMs),
       configDir: join(this.root, "config"),
       turnFile: options.turnFile?.(control) ?? new TurnFile(control),
       toolState: new ToolStateFile(control),

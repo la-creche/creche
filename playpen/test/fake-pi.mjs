@@ -26,6 +26,7 @@
 //   FAKE_PI_FORK_LOG  append one JSON line per fork call        default off
 //   FAKE_PI_HANDLED   answer every prompt as handled, run nothing  default off
 //   FAKE_PI_DIE_ON_ENTRIES  exit hard when a get_entries arrives    default off
+//   FAKE_PI_ERROR_TEXT  refuse every prompt with this error text    default off
 //
 // Five more make this process misbehave, as an untrusted pi may (invariant 12):
 //   FAKE_PI_RAW_BOOT    write this text as one record at start-up    default off
@@ -42,6 +43,7 @@ const NO_ENTRIES = process.env.FAKE_PI_NO_ENTRIES === "1";
 const FORK_LOG = process.env.FAKE_PI_FORK_LOG || "";
 const HANDLED = process.env.FAKE_PI_HANDLED === "1";
 const DIE_ON_ENTRIES = process.env.FAKE_PI_DIE_ON_ENTRIES === "1";
+const ERROR_TEXT = process.env.FAKE_PI_ERROR_TEXT || "";
 const RAW_BOOT = process.env.FAKE_PI_RAW_BOOT || "";
 const RAW_LINE = process.env.FAKE_PI_RAW_LINE || "";
 const NULL_ENTRY = process.env.FAKE_PI_NULL_ENTRY === "1";
@@ -255,6 +257,10 @@ function onCommand(command) {
     // the prompt and no run started, so no `agent_settled` follows.
     if (ODD_ERROR) {
       send({ type: "response", id: command.id, command: "prompt", success: false, error: { code: 1 } });
+      return;
+    }
+    if (ERROR_TEXT) {
+      send({ type: "response", id: command.id, command: "prompt", success: false, error: ERROR_TEXT });
       return;
     }
     if (HANDLED) {
