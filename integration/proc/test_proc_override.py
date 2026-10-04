@@ -3,7 +3,7 @@
 A later packet points `CRECHE_PROC_ATTENDANCE` at another binary and runs
 this suite with no test change. This test is the proof that the variable
 reaches the process a scenario talks to: each service starts through a
-program that the default command never runs.
+program that the command of the run never runs by itself.
 """
 
 from __future__ import annotations
@@ -43,13 +43,15 @@ async def test_an_override_starts_each_service_of_a_topology(
 def _other_program(tree: Tree, service: Service, ran: Path) -> Path:
     """Another program for one service: it records its start, then serves.
 
-    It becomes the default command, because no second implementation of a
-    service exists yet. What the test proves is which program was started.
+    It becomes the command that this run gives the service: the default, or
+    the binary that the variable of the service names. So the test starts
+    no program that the run did not choose, and it proves the same thing for
+    each. What the test proves is which program was started.
     """
-    default = shlex.join(command_of(service, {}).words)
+    current = shlex.join(command_of(service).words)
     path = tree.root / f"other-{service.value}"
     path.write_text(
-        f'#!/bin/sh\necho {service.value} >> {shlex.quote(str(ran))}\nexec {default} "$@"\n',
+        f'#!/bin/sh\necho {service.value} >> {shlex.quote(str(ran))}\nexec {current} "$@"\n',
         encoding="utf-8",
     )
     path.chmod(0o755)
