@@ -1,10 +1,9 @@
 """`yaml.safe_load`, with a bound on what the merge keys of a text copy.
 
-PyYAML gives a merge key no limit. A mapping that merges one mapping two
-times holds two times its pairs. In a chain of such mappings, each level
-holds two times the pairs of the level before. A text of a few hundred
-bytes then makes the reader use time and memory with no bound. No `except`
-clause stops that: the reader does not raise, and it does not end.
+PyYAML gives a merge key no limit. A merge key copies the pairs of the
+mapping that it names, so the work of the reader does not follow the size
+of the text. A caller that puts a byte cap on the text has no bound on that
+work, and an `except` clause is none: the reader does not raise.
 
 `load` reads as `yaml.safe_load` reads. PyYAML makes the nodes of the whole
 text first. An alias there is the node of its anchor and no copy, so that
