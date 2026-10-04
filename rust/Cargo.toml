@@ -19,7 +19,10 @@ publish = false
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# `float_roundtrip`: serde_json then reads each JSON float as the nearest
+# float, as Python does. Without it, a float of 16 digits or more can differ
+# from the Python value in its last bit.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 
 # The lint gate. A crate inherits it with `[lints] workspace = true`, and
 # bin/rust-gate.sh refuses a crate that does not. An exception is written

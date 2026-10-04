@@ -148,6 +148,10 @@ const SECRET_RULE: &str = "The contract gives a key and a token as text. The Pyt
 const EPOCH_RANGE: &str = "The contract gives an integer that increases by one at each write. \
     Python holds an integer of each size. The Rust type holds 64 bits with a sign.";
 
+const EPOCH_FLOAT: &str = "The contract gives an integer. Python reads the float -2^63 as the \
+    integer -2^63, which fits 64 bits. serde_json gives each integer below -2^63 as that float, \
+    so the Rust code cannot tell the two apart. It refuses each float of the size 2^63 or more.";
+
 const STRICT_JSON: &str = "The contract gives a JSON file. Python's json reads NaN and a lone \
     surrogate escape. serde_json reads RFC 8259 and Unicode text, and refuses the two.";
 
@@ -211,11 +215,20 @@ const DEVIATIONS: &[Deviation] = &[
             "epoch-past-64-bit-signed",
             "epoch-max-64-bit",
             "epoch-30-digits",
+            "epoch-below-64-bit-signed",
             "epoch-large-float",
+            "epoch-float-2-to-63",
         ],
         differs: Differs::Refuses,
         contract: "contract 03 §12 rule 3",
         decision: EPOCH_RANGE,
+    },
+    Deviation {
+        surface: "config.creds_json.read",
+        vectors: &["epoch-float-minus-2-to-63"],
+        differs: Differs::Refuses,
+        contract: "contract 03 §12 rule 3",
+        decision: EPOCH_FLOAT,
     },
     Deviation {
         surface: "config.creds_json.read",

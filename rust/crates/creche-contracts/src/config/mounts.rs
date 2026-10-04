@@ -658,7 +658,9 @@ pub const CREDS_FILE_MODE: u32 = 0o600;
 /// The type is stricter than the Python reader in three places, because a
 /// secret is never empty and is never the text of another JSON value:
 /// `litellm_key`, `pep_token` and `written_at` must be JSON strings, the two
-/// secrets must not be empty, and `epoch` must fit 64 bits.
+/// secrets must not be empty, and `epoch` must fit 64 bits. An `epoch` that
+/// is a JSON number with a fraction or an exponent must be less than 2^63 in
+/// size: the float -2^63 is refused, and Python reads it.
 ///
 /// FAILURE ACTION. No reader stops on this file. The caregiver reads a
 /// file that it cannot parse as no credentials, and it reports a fault. The
@@ -765,15 +767,27 @@ impl fmt::Display for CredentialsError {
 
 impl Error for CredentialsError {}
 
+/// The size from which a float is no epoch: 2^63. The largest epoch is
+/// 2^63 - 1.
+const EPOCH_FLOAT_END: f64 = 9_223_372_036_854_775_808.0;
+
 /// The epoch of a JSON value, as Python's `int` reads the value.
+///
+/// `serde_json` gives a number as a float when the number has a fraction or
+/// an exponent, and when it is an integer that does not fit 64 bits. An
+/// integer below -2^63 is then the float -2^63, and its digits are lost. The
+/// function refuses each float of that size or more, so it never returns an
+/// epoch that the file does not hold.
 fn epoch_of(value: &Value) -> Option<i64> {
     match value {
         Value::Bool(flag) => Some(i64::from(*flag)),
         Value::Number(number) => number.as_i64().or_else(|| {
             // Python cuts the fraction. The text form of the whole part
-            // converts with no cast, and it fails for a number that does
-            // not fit 64 bits.
+            // converts with no cast.
             let whole = number.as_f64().filter(|float| float.is_finite())?.trunc();
+            if whole.abs() >= EPOCH_FLOAT_END {
+                return None;
+            }
 
             format!("{whole:.0}").parse().ok()
         }),
@@ -1606,6 +1620,13 @@ mod tests {
             ("\" 7 \"", 7),
             ("\"1_0\"", 10),
             ("9223372036854775807", i64::MAX),
+            ("-9223372036854775808", i64::MIN),
+            // A float of 16 digits or more: the nearest float, as in Python.
+            ("8848919470643385.0", 8_848_919_470_643_385),
+            ("123456789012345678.0", 123_456_789_012_345_680),
+            ("4611686018427387904.0", 4_611_686_018_427_387_904),
+            ("9.223372036854775e18", 9_223_372_036_854_774_784),
+            ("-9.223372036854775e18", -9_223_372_036_854_774_784),
         ] {
             let text = format!(
                 r#"{{"epoch": {json}, "litellm_key": "k", "pep_token": "t", "written_at": "w"}}"#
@@ -1676,6 +1697,26 @@ mod tests {
             ),
             (
                 field("epoch", "9223372036854775808"),
+                CredentialsError::BadValue(CredsField::Epoch),
+            ),
+            (
+                field("epoch", "-9223372036854775809"),
+                CredentialsError::BadValue(CredsField::Epoch),
+            ),
+            (
+                field("epoch", "-9223372036854776000"),
+                CredentialsError::BadValue(CredsField::Epoch),
+            ),
+            (
+                field("epoch", "-1e30"),
+                CredentialsError::BadValue(CredsField::Epoch),
+            ),
+            (
+                field("epoch", "9223372036854775807.0"),
+                CredentialsError::BadValue(CredsField::Epoch),
+            ),
+            (
+                field("epoch", "-9223372036854775808.0"),
                 CredentialsError::BadValue(CredsField::Epoch),
             ),
             (

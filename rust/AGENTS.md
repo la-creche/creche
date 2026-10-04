@@ -366,6 +366,10 @@ Rules for the test:
 - A crate has no `version` key. No number lives in a file. A version is a
   tag that CI allocates.
 - Commit `Cargo.lock` with each change to a dependency.
+- `serde_json` has the feature `float_roundtrip`. It then reads each JSON
+  float as the nearest float, as Python does. Without the feature, a float of
+  16 digits or more can differ from the Python value in its last bit. Do not
+  remove the feature.
 
 ## Known gaps
 
