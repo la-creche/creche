@@ -352,7 +352,6 @@ const DEVIATIONS: &[Deviation] = &[
     Deviation {
         surface: "config.chaperone.site",
         vectors: &[
-            "lan-address-each-interface.bind",
             "lan-address-each-interface.lan_address",
             "lan-address-each-interface.tei_url",
             "lan-address-ipv6.bind",
@@ -368,17 +367,11 @@ const DEVIATIONS: &[Deviation] = &[
     },
     Deviation {
         surface: "config.chaperone.site",
-        vectors: &[
-            "bind-each-interface.bind",
-            "bind-no-port.bind",
-            "bind-no-host.bind",
-            "bind-port-word.bind",
-            "bind-port-zero.bind",
-        ],
+        vectors: &["bind-port-zero.bind"],
         differs: Differs::Refuses,
         contract: "contract 02 §3 rule 2",
-        decision: "The Python reader takes each text as PEP_BIND. The Rust type takes \
-            host:port with a bind host and a port from 1 to 65535.",
+        decision: "The Python reader takes port 0: the system then selects a port. The Rust \
+            type takes a port from 1 to 65535.",
     },
     Deviation {
         surface: "config.chaperone.site",
@@ -777,8 +770,8 @@ fn no_brackets(text: &str) -> String {
 /// the two texts are equal without their brackets. That is one fixed rule:
 /// the test does not parse the Python text with the Rust parser.
 ///
-/// Only `chaperone.__main__` splits the text into a host and a port. It has
-/// no entry point that takes a map, so no vector proves that split.
+/// `chaperone.site.listener` splits the text into a host and a port. No
+/// vector holds the two parts.
 fn bind_text(vector: &Vector, bind: &BindAddress) -> String {
     let rust = bind.to_string();
     let python = vector.value().and_then(|value| value["text"].as_str());

@@ -183,7 +183,9 @@ directory is not a workspace package, so a change here does not change
   has a run.
 - `config.roster` holds the tree of a roster file and no YAML text. No
   vector covers what PyYAML does with the text of a file: a comment, an
-  alias, a tab or a plain `yes`.
+  alias, a tab or a plain `yes`. No vector covers the three limits that the
+  chaperone holds on the merge keys and on the aliases of that text. No Rust
+  type reads the text of a roster.
 - No vector covers the roster writer, `handover.executor.roster`.
 - No vector covers `handover.mcpserver.parse_server` or the reader of the
   sops file in `handover.intake.store`. Each one has merge limits of its
@@ -195,8 +197,10 @@ directory is not a workspace package, so a change here does not change
 - Four configs have no entry point that takes a map of variables, so no
   vector covers them: `chaperone.__main__`, `caregiver.cli`,
   `agent_door_owui.config` and `agent_door_trigger.config`. The two doors
-  read a key file while they parse. `config.chaperone.site` covers the four
-  readers of `chaperone.site`.
+  read a key file while they parse. `config.chaperone.site` covers four
+  readers of `chaperone.site`. No vector covers the fifth reader,
+  `listener`. It gives the host and the port of the bind that `bind` gives
+  as text.
 - No vector covers `handover.intake.run`. It reads the site file and the
   environment of the process.
 - `config.playpen_env.read` takes a text. No vector covers an env file

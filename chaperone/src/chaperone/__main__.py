@@ -18,7 +18,7 @@ without it the `release` verb stays a seam), PEP_APPROVAL_URL (contract 04
 without both approval tokens in PEP_SECRETS, a gated action stays a seam),
 PEP_FAULT_SWEEP_INTERVAL_S (contract 04 §1.6 rule 7: how often a faulted
 family's grant file is re-read with no call to drive it; a value that is not
-a positive number takes the default).
+a positive, finite number takes the default).
 
 `PEP_REWORK_DIR` is required: a PEP without it would resolve no bearer at
 all. So is a bind: `AGENT_LAN_ADDRESS` from the site file, or `PEP_BIND`
@@ -32,6 +32,7 @@ same reason."""
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 from pathlib import Path
@@ -86,7 +87,8 @@ def _sweep_interval() -> float:
 
     A typo must not stop the sweep: the fault it clears blocks every turn of
     the family, so a host that misspells the interval is better served by the
-    default than by a loop that spins or never runs.
+    default than by a loop that spins or never runs. `nan` and `inf` are
+    such values: a sleep of that time raises or does not end.
     """
     raw = os.environ.get("PEP_FAULT_SWEEP_INTERVAL_S", "").strip()
     try:
@@ -94,7 +96,7 @@ def _sweep_interval() -> float:
     except ValueError:
         return FAULT_SWEEP_INTERVAL_S
 
-    if seconds <= 0:
+    if not math.isfinite(seconds) or seconds <= 0:
         return FAULT_SWEEP_INTERVAL_S
 
     return seconds
@@ -113,7 +115,7 @@ def main() -> int:
         return 2
 
     try:
-        bind = site.bind(os.environ)
+        host, port = site.listener(os.environ)
     except site.ConfigError as exc:
         return _no_site(exc)
 
@@ -148,7 +150,6 @@ def main() -> int:
         except SecretsFormatError as exc:
             return _unparsable(exc)
 
-    host, _, port = bind.rpartition(":")
     attendance_socket = os.environ.get("PEP_SESSIOND_SOCKET")
     # `stage7-releases.md` §2.3. Unset leaves `release` a named seam.
     release_requests_dir = os.environ.get("PEP_RELEASE_REQUESTS_DIR")
@@ -175,7 +176,7 @@ def main() -> int:
             approval_callback_token=secrets.get("approval_callback_token", ""),
         )
     )
-    uvicorn.run(app, host=host or "127.0.0.1", port=int(port))
+    uvicorn.run(app, host=host, port=port)
     return 0
 
 
@@ -193,8 +194,10 @@ def _unparsable(exc: SecretsFormatError) -> int:
 
 def _no_site(exc: site.ConfigError) -> int:
     """Stop, in one line, as `_unparsable` does. A PEP with no address to
-    bind would serve nobody, and guessing one would be somebody's host."""
-    logging.getLogger("chaperone").error("no LAN address, the PEP stops: %s", exc)
+    bind would serve nobody, and guessing one would be somebody's host. A
+    bind that the PEP does not take (`site.listener`) stops it here too:
+    the server would raise on it, or answer on each interface."""
+    logging.getLogger("chaperone").error("no bind, the PEP stops: %s", exc)
 
     return os.EX_CONFIG
 
