@@ -80,6 +80,15 @@ host where something has gone wrong.
 - A slow step still publishes. A pass writes `reconciling` before
   `sbx create`. `loop._keep_fresh` restamps a document nothing is about to
   publish for.
+- `restamp_status` rewrites only a document that this process published. A
+  document from before a restart is the verdict of another process.
+- A family that waits for a slot after a restart gets one look.
+  `loop._look_at` runs the pass of that family with the stop already set.
+  Each cheap step runs. The pass stops before the first slow step, and it
+  publishes the document of this process.
+- A pass that stops before a slow step publishes `reconciling`, never
+  `in_sync`. The loop records no revision for it, so the family takes the
+  next free slot.
 - A stop is checked between steps, never inside one.
 - A `planned` sandbox row is a create a kill cut short. `fail_planned`
   retires it at the top of every pass.
@@ -177,6 +186,11 @@ Nothing here touches a real sandbox or LiteLLM.
 - `apply-once` publishes no chaperone fault (`apply.py`).
 - `settle` and `rotate_serving` write token digests while a family file is
   invalid. Contract 05 §3.1 and §6.3 do not agree on this (`loop.py`).
+- A look runs `fail_planned`, which destroys the virtual machine of a
+  `planned` row. That is one `sbx` call outside the bound (`loop.py`).
+- A restart during a fleet replacement still ends each create in flight.
+  The next process retires the `planned` row and burns one id
+  (`sandboxes.py`).
 - A pass publishes the step name `write_timers`. Contract 05 §3.4 lists
   eight step names, and that name is not one of them (`reconcile.py`).
 - A pass that raises publishes no fault. Contract 05 §3.3 has no code for
