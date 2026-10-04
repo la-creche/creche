@@ -35,6 +35,7 @@ release replaces that surface.
 | `data/chaperone/` | the grant file and its writer, the call body, the approval body, the two logs, the reasons, the verb catalog |
 | `data/status/` | the status document, one file per reader. The writer of the status document, the fault files and the outcome record |
 | `data/config/` | the configs: the site file, the roster, `runtime.json`, `creds.json`, the env file of the playpen and three env readers |
+| `data/manifest/` | the component manifest, the release request, the live-state document and the resolved manifest |
 | `data/session/` | the session API: the request bodies, the queries, the error body, the journal and the event stream |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 
@@ -99,6 +100,7 @@ It ends with one newline. Each vector is on one line.
 | `http_status` | on the two body surfaces, on `chaperone.reason` and on a surface of `data/session/` that writes an answer | the HTTP status of the answer. On a refused vector of a body surface or of `data/session/` it is inside `refusal`. |
 | `output` | on a surface that writes bytes | the exact bytes that the Python code writes, as an input form |
 | `file` | on the two log surfaces of `data/chaperone/` | the name of the file that takes the line |
+| `ts_bits` | on the two request surfaces of `data/manifest/` | the `ts` of the value as the 16 hexadecimal digits of its IEEE 754 bits |
 | `exception` | when `result` is `raised` | the name of the exception type |
 
 ### The three results
