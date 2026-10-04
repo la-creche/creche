@@ -5,9 +5,9 @@
 #           ├── playpen     code   the TypeScript suite and its build
 #           ├── proc        code   the process-level suite, each service
 #           │                      as a process, on the built playpen
-#           └── rust        code   cargo fmt, clippy and test, for a change
-#                                  under rust/ or vectors/. No such change:
-#                                  no cargo step
+#           └── rust        code   cargo fmt, clippy, deny and test, for a
+#                                  change under rust/ or vectors/. No such
+#                                  change: no cargo step
 #   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
 #                                 │   docs PR the tests marked `docs`
 #                                 └── gate   red unless every job passed
@@ -243,6 +243,40 @@ jobs:
           cargo --version
           cargo fmt --version
           cargo clippy --version
+
+      # cargo-deny: the program behind the `cargo deny` step of
+      # bin/rust-gate.sh, which checks the locked crates against
+      # rust/deny.toml. rustup does not install it, and no action does here.
+      # The step takes the archive from a release of the cargo-deny
+      # repository. It checks the SHA-256 of the archive against the
+      # constant before the unpack, so an archive that changed stops the job.
+      # bin/rust-gate.sh fails in CI when cargo-deny is not on PATH.
+      #
+      # To take another version, change the two constants together. Compute
+      # the SHA-256 of the new archive, and compare it with the `.sha256`
+      # file of that release. bin/tests/test_gate_workflow.py pins both.
+      - name: cargo-deny
+        if: needs.scope.outputs.rust != 'false'
+        working-directory: rust
+        env:
+          DENY_VERSION: "0.20.2"
+          DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+        run: |
+          set -euo pipefail
+          name="cargo-deny-$DENY_VERSION-x86_64-unknown-linux-musl"
+          archive="$RUNNER_TEMP/$name.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$DENY_VERSION/$name.tar.gz"
+          found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          if [[ "$found" != "$DENY_SHA256" ]]; then
+            echo "cargo-deny: the archive has the SHA-256 $found, not $DENY_SHA256" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/cargo-deny"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-deny" --strip-components 1 "$name/cargo-deny"
+          echo "$RUNNER_TEMP/cargo-deny" >> "$GITHUB_PATH"
+          PATH="$RUNNER_TEMP/cargo-deny:$PATH" cargo deny --version
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: needs.scope.outputs.rust != 'false'

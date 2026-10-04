@@ -31,7 +31,8 @@ The `rust` job runs `bin/rust-gate.sh --tests` for a change that touches
 `rust/`, `vectors/`, or a file of the Rust checks themselves
 (`bin/lib/rustrule.sh`). On any other code change it skips every step but the
 checkout and is still a success, so `gate` reads green. The toolchain is the
-one `rust/rust-toolchain.toml` names.
+one `rust/rust-toolchain.toml` names. The job takes `cargo-deny` from a
+release archive, and it checks the SHA-256 of that archive before the unpack.
 
 The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the playpen first,
@@ -117,6 +118,38 @@ TOOLCHAIN_RUN = "rustup toolchain install --no-self-update"
 
 #: The directory rustup reads that file from.
 RUST_DIR = "rust"
+
+#: The step that gives the job `cargo-deny`, the program behind the `cargo
+#: deny` step of `bin/rust-gate.sh`.
+DENY_STEP = "cargo-deny"
+
+#: The version, and the SHA-256 of its release archive for the runner:
+#: `cargo-deny-<version>-x86_64-unknown-linux-musl.tar.gz`. To take another
+#: version, compute the SHA-256 of the new archive and compare it with the
+#: `.sha256` file of that release. Then change the two values here and in the
+#: two workflow files.
+DENY_ENV = {
+    "DENY_VERSION": "0.20.2",
+    "DENY_SHA256": "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f",
+}
+
+#: Where the archive comes from: a release of the cargo-deny repository.
+DENY_URL = (
+    '"https://github.com/EmbarkStudios/cargo-deny/releases/download/$DENY_VERSION/$name.tar.gz"'
+)
+
+#: The lines of the step that decide, each by its start, in the order that
+#: they must have. `set -euo pipefail` stops the step at the first command
+#: that fails.
+DENY_STOPS_ON_A_FAILURE = "set -euo pipefail"
+DENY_ORDER = (
+    'found="$(sha256sum "$archive"',
+    'if [[ "$found" != "$DENY_SHA256" ]]; then',
+    "exit 1",
+    "fi",
+    "tar -xzf ",
+    'echo "$RUNNER_TEMP/cargo-deny" >> "$GITHUB_PATH"',
+)
 
 #: The two files the cargo cache is good for.
 CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
@@ -376,13 +409,41 @@ def test_the_rust_job_runs_the_gate_the_hooks_run(
     """One copy of the cargo commands: `bin/rust-gate.sh`. A cargo line
     written here would drift from the one a commit and a push run."""
     runs = [step for step in jobs["rust"]["steps"] if "run" in step]
-    toolchain, checks = runs
+    toolchain, deny, checks = runs
 
+    assert deny["name"] == DENY_STEP
     assert checks["run"] == RUST_RUN
     assert toolchain["working-directory"] == RUST_DIR
     assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
     for step in jobs["rust"]["steps"]:
         assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
+
+
+def _line_of(lines: list[str], start: str) -> int:
+    """The index of the one line that starts with `start`."""
+    (found,) = [index for index, line in enumerate(lines) if line.startswith(start)]
+
+    return found
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_rust_job_takes_cargo_deny_from_an_archive_that_it_checked(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """No action installs `cargo-deny`, so no commit pin holds the program.
+    The SHA-256 of the archive is the pin. The step must compare it before
+    the unpack, and it must put nothing on PATH after a sum that differs."""
+    (deny,) = [step for step in jobs["rust"]["steps"] if step.get("name") == DENY_STEP]
+    lines = [line.strip() for line in deny["run"].splitlines()]
+    order = [_line_of(lines, start) for start in DENY_ORDER]
+    names = [step.get("name") or step.get("run") for step in jobs["rust"]["steps"]]
+
+    assert deny["env"] == DENY_ENV
+    assert deny["working-directory"] == RUST_DIR
+    assert lines[0] == DENY_STOPS_ON_A_FAILURE
+    assert DENY_URL in lines
+    assert order == sorted(order)
+    assert names.index(DENY_STEP) < names.index(RUST_RUN)
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
