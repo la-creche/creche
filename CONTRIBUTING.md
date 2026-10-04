@@ -27,14 +27,15 @@ under `rust/`, it also runs `cargo fmt` and `cargo clippy`.
 
 | The push changes | The hook runs |
 |---|---|
-| a path under a package, for example `chaperone/app.py` | that package's suite, `--tests-for` |
-| a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite, `--tests` |
+| a path under a package, for example `chaperone/app.py` | that package's suite, `--tests-for`. For a product package, also `vectors/tests` |
+| a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite. The hook passes `--tests-for`, and the gate runs every suite |
 | a path under `rust/`, for example `rust/Cargo.lock` | `cargo fmt`, `cargo clippy` and `cargo test`, and no pytest suite for that path |
 | Markdown only, outside `tests/` and `fixtures/` | the tests marked `docs`, `--docs` |
 | nothing, or a deleted branch | no test |
 
 A package is the directory above a `testpaths` entry in the root
-`pyproject.toml`. A new suite needs no change to the hook.
+`pyproject.toml`. A new suite needs no change to the hook. A product package
+is each package but `bin/` and `vectors/`.
 
 The cargo steps are `bin/rust-gate.sh`. The rule that starts them is
 `bin/lib/rustrule.sh`.

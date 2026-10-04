@@ -7,6 +7,8 @@
 # of nothing but docs runs only the tests marked docs (bin/lib/docsrule.sh).
 # A path under rust/ runs the cargo tests and picks no suite
 # (bin/lib/rustrule.sh, with every other Rust case in test_rust_gate.py).
+# A path in a product package also picks vectors/tests, so a change that
+# moves a vector fails before the push.
 # CI runs the full suite for any other change and is the merge gate: the
 # scope decides whether a regression in the package just changed is caught
 # before the push or only in CI.
@@ -37,6 +39,10 @@ trap 'rm -rf "$WORK"' EXIT
 
 #: What every scoped run adds when bin/tests is not already in it.
 ALWAYS="bin/tests/test_unique_test_basenames.py"
+
+#: What a scoped run for a product package adds: the suite that holds
+#: vectors/data equal to what the Python code does.
+VECTORS="vectors/tests"
 
 # said TEXT: whether the last gate or hook run printed TEXT.
 said() {
@@ -100,27 +106,46 @@ gate
   || fail "no flag: rc=$RC, pytest line '$PYTEST'"
 
 gate --tests-for chaperone/src/chaperone/app.py chaperone/README.md
-[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $ALWAYS" ]] \
-  && pass "one package runs its suite, with the full run's flags" \
+[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] \
+  && pass "one product package runs its suite and the vectors, with the full run's flags" \
   || fail "one package: rc=$RC, pytest line '$PYTEST'"
 said "chaperone/tests, for chaperone/src/chaperone/app.py and 1 more" \
   && pass "the gate says which path picked the suite" \
   || fail "no reason line for chaperone/tests: $(cat "$OUT")"
+said "$VECTORS, for a change in a product package" \
+  && pass "the gate says why the vectors suite runs" \
+  || fail "no reason line for $VECTORS: $(cat "$OUT")"
 [[ -z "$CARGO" ]] \
   && pass "a push with no path under rust/ runs no cargo step" \
   || fail "one package: cargo ran '$CARGO'"
 
 gate --tests-for caregiver/tests/caregiver_mws_registry/registry.yaml
-[[ "$PYTEST" == "$FULL caregiver/tests $ALWAYS" ]] \
+[[ "$PYTEST" == "$FULL caregiver/tests $VECTORS $ALWAYS" ]] \
   && pass "a test fixture directory counts as its package" \
   || fail "a fixture path: pytest line '$PYTEST'"
 
 gate --tests-for chaperone/pyproject.toml caregiver/AGENTS.md bin/lib/docsrule.sh
 SCOPE="${PYTEST#"$FULL"}"
 [[ "$RC" == "0" && "$PYTEST" == "$FULL "* ]] \
-  && [[ "$(words "$SCOPE")" == "$(words "bin/tests caregiver/tests chaperone/tests")" ]] \
-  && pass "three packages run three suites, bin/tests already holding $ALWAYS" \
+  && [[ "$(words "$SCOPE")" == "$(words "bin/tests caregiver/tests chaperone/tests $VECTORS")" ]] \
+  && pass "three packages run three suites and the vectors, bin/tests already holding $ALWAYS" \
   || fail "three packages: rc=$RC, pytest line '$PYTEST'"
+
+# bin/ and vectors/ hold no product code: a change there moves no vector.
+gate --tests-for bin/quality-gate.sh bin/AGENTS.md
+[[ "$RC" == "0" && "$PYTEST" == "$FULL bin/tests" && -z "$CARGO" ]] \
+  && pass "a push of bin/ alone runs no vectors suite and no cargo step" \
+  || fail "bin alone: rc=$RC, pytest line '$PYTEST', cargo ran '$CARGO'"
+
+gate --tests-for vectors/data/index.json vectors/generate.py
+[[ "$RC" == "0" && "$PYTEST" == "$FULL $VECTORS $ALWAYS" ]] \
+  && pass "a path under vectors/ runs its suite one time" \
+  || fail "vectors paths: rc=$RC, pytest line '$PYTEST'"
+
+gate --tests-for chaperone/src/chaperone/app.py vectors/data/index.json
+[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] \
+  && pass "a product package and a moved vector run the vectors suite one time" \
+  || fail "a package and a vector: rc=$RC, pytest line '$PYTEST'"
 
 for stray in uv.lock pyproject.toml docs/host-release.md .github/workflows/gate.yml \
   githooks/pre-push playpen/package.json README.md chaperone-old/src/x.py; do
@@ -136,7 +161,7 @@ gate --tests-for rust/Cargo.lock rust/crates/creche-contracts/src/lib.rs
   || fail "rust paths: rc=$RC, pytest line '$PYTEST', cargo ran '$CARGO'"
 
 gate --tests-for chaperone/src/chaperone/app.py rust/Cargo.lock
-[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $ALWAYS" && "$CARGO" == "$RUST_STEPS" ]] \
+[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" && "$CARGO" == "$RUST_STEPS" ]] \
   && pass "a push of Python and Rust runs the suite and the cargo tests" \
   || fail "python and rust: rc=$RC, pytest line '$PYTEST', cargo ran '$CARGO'"
 

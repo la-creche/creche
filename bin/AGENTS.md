@@ -84,6 +84,11 @@ is the full suite in one process. CI runs the full suite as shards with
 `pytest --shard K/N`. Every scoped run also runs
 `tests/test_unique_test_basenames.py`.
 
+A scoped run for a product package also runs `vectors/tests`. A product
+package is each package but `bin/` and `vectors/`. A change in a product
+package can move a vector. That suite fails when a committed vector differs
+from what the Python code does.
+
 `lib/docsrule.sh` holds the one copy of "does this change touch nothing but
 prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 

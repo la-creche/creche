@@ -9,7 +9,8 @@
 #                          with no flag here for its lint job: gate.yml,
 #                          release.yml)
 #                          --tests-for PATH...: only the suites of the
-#                          packages PATH... touch (pre-push)
+#                          packages PATH... touch (pre-push), and
+#                          vectors/tests for a product package
 #                          --docs: only the tests marked `docs`, for a
 #                          change bin/lib/docsrule.sh calls docs only
 #   bin/rust-gate.sh       only for a change under rust/ (bin/lib/rustrule.sh):
@@ -40,6 +41,17 @@ DOCS_MARKER="docs"
 RUST_GATE="bin/rust-gate.sh"
 RUST_TESTS="--tests"
 
+#: The suite that holds vectors/data equal to what the Python code does
+#: (vectors/README.md). A change in a product package can move a vector, so a
+#: scoped run for such a package carries this suite too. CI would find the
+#: moved vector, but only after the push.
+VECTORS_SUITE="vectors/tests"
+
+#: The suites of the packages that hold no product code: a change there moves
+#: no vector. Every other suite is the suite of a product package, so a new
+#: suite in testpaths counts as one until this list names it.
+NO_PRODUCT=("bin/tests" "$VECTORS_SUITE")
+
 # The suites the full run collects, one per line: pyproject.toml's
 # testpaths, e.g. "chaperone/tests". A suite missing from disk is left out.
 list_suites() {
@@ -67,6 +79,24 @@ in_package() {
   return 1
 }
 
+# product_suite SUITE: whether SUITE is the suite of a product package.
+product_suite() {
+  local other
+
+  for other in "${NO_PRODUCT[@]}"; do
+    if [[ "$1" == "$other" ]]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# has_suite SUITE SUITES: whether SUITES, one per line, holds SUITE.
+has_suite() {
+  [[ $'\n'"$2"$'\n' == *$'\n'"$1"$'\n'* ]]
+}
+
 # tally FIRST COUNT: "FIRST", or "FIRST and N more".
 tally() {
   if [[ "$2" -le 1 ]]; then
@@ -82,8 +112,9 @@ tally() {
 # (uv.lock, pyproject.toml, docs/, .github/, githooks/) can change what any
 # suite sees, so it runs the full suite instead. A path under rust/ is cargo's
 # to test, not pytest's: it picks no suite and is not a path in no package.
+# A path in a product package also picks vectors/tests.
 tests_for() {
-  local suites suite path first count stray="" strays=0 others=0
+  local suites suite path first count stray="" strays=0 others=0 product=0
   local -a picked=()
 
   if [[ $# -eq 0 ]]; then
@@ -142,7 +173,17 @@ tests_for() {
 
     picked+=("$suite")
     echo "quality-gate: $suite, for $(tally "$first" "$count")"
+
+    if product_suite "$suite"; then
+      product=1
+    fi
   done <<< "$suites"
+
+  if [[ "$product" -eq 1 && " ${picked[*]} " != *" $VECTORS_SUITE "* ]] &&
+    has_suite "$VECTORS_SUITE" "$suites"; then
+    picked+=("$VECTORS_SUITE")
+    echo "quality-gate: $VECTORS_SUITE, for a change in a product package"
+  fi
 
   if [[ -f "$ALWAYS" && " ${picked[*]} " != *" ${ALWAYS%/*} "* ]]; then
     picked+=("$ALWAYS")
