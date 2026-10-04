@@ -1,0 +1,27 @@
+{
+ "context": {"grammar":"gate_id"},
+ "contract": "contract 04 \u00a78.4",
+ "entry": "chaperone.gates.GATE_ID_RE.match",
+ "format": 1,
+ "notes": ["The entry point is a pattern. The package's own code calls `match` on it."],
+ "surface": "id.gate_id.chaperone",
+ "vectors": [
+  {"id":"probe-sample","input":{"text":"0123456789abcde2"},"result":"accepted"},
+  {"id":"probe-empty","input":{"text":""},"result":"refused"},
+  {"id":"probe-trailing-newline","input":{"text":"0123456789abcde2\n"},"result":"refused"},
+  {"id":"probe-trailing-cr","input":{"text":"0123456789abcde2\r"},"result":"refused"},
+  {"id":"probe-leading-space","input":{"text":" 0123456789abcde2"},"result":"refused"},
+  {"id":"probe-trailing-space","input":{"text":"0123456789abcde2 "},"result":"refused"},
+  {"id":"probe-nul-at-end","input":{"text":"0123456789abcde2\u0000"},"result":"refused"},
+  {"id":"probe-nul-inside","input":{"text":"0\u0000123456789abcde2"},"result":"refused"},
+  {"id":"probe-arabic-digit","input":{"text":"0123456789abcde\u0661"},"result":"refused"},
+  {"id":"probe-fullwidth-digit","input":{"text":"0123456789abcde\uff11"},"result":"refused"},
+  {"id":"probe-overlong","input":{"text":"0123456789abcde200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"},"result":"refused"},
+  {"id":"all-zero","input":{"text":"0000000000000000"},"result":"accepted"},
+  {"id":"upper","input":{"text":"0123456789ABCDEF"},"result":"refused"},
+  {"id":"short-15-chars","input":{"text":"0123456789abcde"},"result":"refused"},
+  {"id":"long-17-chars","input":{"text":"0123456789abcdef0"},"result":"refused"},
+  {"id":"letter-g","input":{"text":"g123456789abcdef"},"result":"refused"},
+  {"id":"crlf","input":{"text":"0123456789abcdef\r\n"},"result":"refused"}
+ ]
+}
