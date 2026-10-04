@@ -108,8 +108,13 @@ error. The program does not stop on such a file.
      This crate reads as Python 3.13 reads. No vector holds such a value.
   4. `yaml/construct.rs`, `MERGE_DEPTH_MAX` and `MERGED_ENTRIES_MAX`.
      Contract 01 gives no limit for merge keys. This crate follows a chain
-     of 400 merge keys and makes 100,000 entries from merge keys. It
-     refuses a text past a limit. No test holds a text at a limit.
+     of 400 merge keys and makes 100,000 entries from merge keys. A merged
+     value with no entry counts as one entry. This crate refuses a text
+     past a limit. The Python validator has the same two limits.
+
+     Ten vectors hold a text at a limit or one past it: six of
+     `family_file` and four of `server_file`. Their names start with
+     `yaml-merge-chain`, `yaml-merge-entries` and `yaml-merge-empty`.
   5. `yaml/text.rs`, `NOT_PRINTED`. No contract gives the text of a YAML
      error. Python escapes a code point that its Unicode version does not
      assign. This crate does not, so a message that quotes such a code
@@ -140,7 +145,10 @@ error. The program does not stop on such a file.
   Python also reads the body, and refuses a file with a wrong body.
 - `registry::load_registry` reads a file name that is not UTF-8 with a
   replacement character. A directory with such a name gets a report under
-  that changed name.
+  that changed name. `registry::revision_of` reads the name in the same
+  way. The Python function uses the bytes of the name, so the two
+  revisions differ for a registry with such a name. No vector holds such a
+  name.
 - The program writes the usage text and the help text of Python 3.13. The
   text of another Python version can differ. No vector holds that text.
 - The program reads a command line as `argparse` of Python 3.13 reads it.
