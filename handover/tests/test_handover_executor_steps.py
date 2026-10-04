@@ -448,6 +448,59 @@ def test_a_refused_release_leaves_no_tree_behind(bench: Bench) -> None:
     assert not (bench.components / "chaperone.new").exists()
 
 
+# -- the fetched trees ----------------------------------------------------
+
+
+def _work(bench: Bench) -> Path:
+    """Where this request fetched its trees: `<work root>/<request id>`."""
+    return bench.tmp_path / "work" / REQUEST_ID
+
+
+def test_a_release_removes_the_trees_it_fetched(bench: Bench) -> None:
+    """Contract 06 §8.2: an installed tree holds its own code, so nothing
+    reads a fetched tree after the last step. A directory that stayed grew
+    the disk with each release, by the build directory of each component."""
+    seen: list[bool] = []
+    bench.run.hooks["chaperone-verify"] = lambda _: seen.append(_work(bench).is_dir())
+    _run_one(bench)
+
+    entry = bench.ledger()
+    assert entry["status"] == "succeeded"
+    assert seen == [True]
+    assert not _work(bench).exists()
+    assert (bench.tmp_path / "work").is_dir()
+    log = entry["log_tail"]
+    assert isinstance(log, list)
+    assert f"removed {_work(bench)}" in log
+
+
+def test_a_refused_release_removes_the_trees_it_fetched(bench: Bench) -> None:
+    """Step 2 fetches a tree to read its manifest. A release that the tap
+    denies has fetched one."""
+    bench.wiring = _with_transport(bench, lambda gate: Decision(Verdict.DENIED, gate, None))
+    _run_one(bench)
+
+    assert bench.ledger()["refused_check"] == "approval"
+    assert bench.run.ran("clone")
+    assert not _work(bench).exists()
+
+
+def test_a_restored_release_removes_the_trees_it_fetched(bench: Bench) -> None:
+    calls = {"n": 0}
+    bench.run.fails["chaperone-verify"] = 1
+
+    def pass_after_the_first_call(_: object) -> None:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            bench.run.fails.pop("chaperone-verify", None)
+
+    bench.run.hooks["chaperone-verify"] = pass_after_the_first_call
+    _run_one(bench)
+
+    assert bench.ledger()["status"] == "restored"
+    assert not _work(bench).exists()
+
+
 def test_the_manifests_env_file_reaches_the_hooks_own_argv(bench: Bench) -> None:
     """End to end: steps.py must not drop or mangle a
     manifest's `--env-file` words on their way to the child. The fake

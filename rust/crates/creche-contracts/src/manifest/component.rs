@@ -1206,7 +1206,8 @@ pub enum YamlFault {
     /// The text breaks a rule of YAML on this line, from 1.
     Line(usize),
     /// A collection nests deeper than 128 levels, or a chain of merge keys
-    /// is longer than 128 levels. The Python reader has no such refusal.
+    /// is longer than 128 levels. The Python reader has this refusal for a
+    /// chain of merge keys, and not for a collection.
     Deep,
     /// The merge keys of the document copy more than 65,536 pairs.
     Merge,

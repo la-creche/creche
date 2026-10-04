@@ -170,12 +170,24 @@ def _verdict_of(reply: dict[str, object], gate: str) -> Decision | None:
     if decision == PENDING or decision is None:
         return None
 
-    at = reply.get("at")
-    when = float(at) if isinstance(at, int | float) else None
+    when = _time_of(reply.get("at"))
     if decision == APPROVE:
         return Decision(Verdict.GRANTED, gate, when)
 
     return Decision(Verdict.DENIED, gate, when)
+
+
+def _time_of(value: object) -> float | None:
+    """When the tap came, or None: for a value that is no number, and for a
+    whole number that no float holds. `check_decision` refuses a grant that
+    carries no time."""
+    if not isinstance(value, int | float):
+        return None
+
+    try:
+        return float(value)
+    except OverflowError:
+        return None
 
 
 def make_transport(

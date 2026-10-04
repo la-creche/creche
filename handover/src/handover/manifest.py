@@ -1,9 +1,10 @@
 """`component.yaml`, parsed as hostile input (contract 06 §8, §10).
 
 A manifest can come from a branch an agent wrote (stage7-releases.md §3.2), so
-this module trusts nothing: a byte cap before the parse, `yaml.safe_load` only,
-a closed key set, a strict pattern per scalar, and a refusal that names the
-field rather than echoing its value.
+this module trusts nothing: a byte cap before the parse, the safe loader of
+PyYAML only, with a bound on merge keys (`boundedyaml.load`), a closed key
+set, a strict pattern per scalar, and a refusal that names the field rather
+than echoing its value.
 
 Two rules are load-bearing and easy to lose in a refactor.
 
@@ -22,8 +23,7 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Any, TypeVar, cast
 
-import yaml
-
+from .boundedyaml import MergeLimits, MergeTooDeep, MergeTooLarge, load
 from .catalog import (
     MANIFEST_CONTRACT_MAJOR,
     MANIFEST_CONTRACT_MINOR,
@@ -48,6 +48,15 @@ MAX_ARGV_ITEMS = 32
 MAX_STRING_CHARS = 512
 MAX_PATH_CHARS = 256
 MAX_CONTRACT_NUMBER = 999
+
+#: What the merge keys of one manifest can copy (`boundedyaml.py`).
+#:
+#: CONTRACT-QUESTION: contract 06 §8 and §10 give no limit for a merge key.
+#: The reading taken is the two limits of the Rust reader of this file, so
+#: that the two readers refuse the same text. No manifest of this
+#: repository has a merge key. Another number costs one line here and one
+#: line in the Rust reader.
+MERGE_LIMITS = MergeLimits(depth=128, pairs=65_536)
 
 TIMEOUT_MIN_S = 1
 TIMEOUT_MAX_S = 300
@@ -496,7 +505,7 @@ def parse_manifest(text: str, subject: str) -> ComponentManifest:
     # nests too deep raises `RecursionError`. The list is not closed, so
     # each error of the reader is the one refusal.
     try:
-        loaded: Any = yaml.safe_load(text)
+        loaded: Any = load(text, MERGE_LIMITS)
     except Exception as error:
         detail = f"does not parse: {_yaml_where(error)}"
         raise Refusal(RefusalCode.MANIFEST, subject, detail) from None
@@ -537,7 +546,16 @@ def parse_manifest(text: str, subject: str) -> ComponentManifest:
 
 
 def _yaml_where(error: Exception) -> str:
-    """The line number, never the offending text: the text is hostile input."""
+    """The line number, never the offending text: the text is hostile input.
+
+    The two merge limits have no line. Each one has the words of the Rust
+    reader, which gives a chain of merge keys the words of a deep nesting."""
+    if isinstance(error, MergeTooDeep):
+        return f"nests deeper than {MERGE_LIMITS.depth} levels"
+
+    if isinstance(error, MergeTooLarge):
+        return f"the merge keys copy more than {MERGE_LIMITS.pairs} pairs"
+
     mark = getattr(error, "problem_mark", None)
     if mark is None:
         return "unreadable YAML"

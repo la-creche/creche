@@ -184,6 +184,9 @@ directory is not a workspace package, so a change here does not change
   chaperone holds on the merge keys and on the aliases of that text. No Rust
   type reads the text of a roster.
 - No vector covers the roster writer, `handover.executor.roster`.
+- No vector covers `handover.mcpserver.parse_server` or the reader of the
+  sops file in `handover.intake.store`. Each one has merge limits of its
+  own. Only the tests of `handover` hold those limits.
 - No vector covers the roster reader of the caregiver,
   `caregiver.mcp_release.served_servers`. It gives one answer for a roster
   that it refuses and for a roster with no row, so a vector cannot hold a
