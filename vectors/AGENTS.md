@@ -185,6 +185,9 @@ directory is not a workspace package, so a change here does not change
   vector covers what PyYAML does with the text of a file: a comment, an
   alias, a tab or a plain `yes`.
 - No vector covers the roster writer, `handover.executor.roster`.
+- No vector covers `handover.mcpserver.parse_server` or the reader of the
+  sops file in `handover.intake.store`. Each one has merge limits of its
+  own. Only the tests of `handover` hold those limits.
 - Four configs have no entry point that takes a map of variables, so no
   vector covers them: `chaperone.__main__`, `caregiver.cli`,
   `agent_door_owui.config` and `agent_door_trigger.config`. The two doors

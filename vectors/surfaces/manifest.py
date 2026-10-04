@@ -509,11 +509,6 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
         "size-at-cap",
         parts=((_REQUEST_TEXT, 1), (" ", MAX_REQUEST_BYTES - len(_REQUEST_TEXT))),
     ),
-    RequestFile(
-        "id-not-a-ulid",
-        json.dumps(_body(id=NOT_A_ULID)).encode("utf-8"),
-        NOT_A_ULID,
-    ),
     _req("version-arabic-indic", components={"chaperone": ARABIC_INDIC_VERSION}),
     # --- the bytes and the JSON ------------------------------------------
     RequestFile(
@@ -566,6 +561,11 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
     _req("id-null", id=None),
     _req("id-list", id=[ULID]),
     _req("id-final-newline", id=ULID + "\n"),
+    RequestFile(
+        "id-not-a-ulid",
+        json.dumps(_body(id=NOT_A_ULID)).encode("utf-8"),
+        NOT_A_ULID,
+    ),
     # --- kind ---------------------------------------------------------------
     _req("kind-other", kind="deploy"),
     _req("kind-upper", kind="Release"),
