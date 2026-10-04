@@ -102,7 +102,8 @@ misspelled name would start the default command.
 
 ## What runs
 
-Two topologies exist. `attendance` and the two stand-ins are in both.
+Three topologies exist. `attendance` and the two stand-ins are in each.
+The first two are in the picture. The table after it gives the others.
 
 ```
 a test (plays Open WebUI)                a test (plays the bridge in a sandbox)
@@ -123,6 +124,10 @@ node playpen/dist/playpen.js             the real bundle
 the pi stand-in                          found through AGENT_PI_BIN
 ```
 
+| Topology | A test plays | The service |
+|---|---|---|
+| `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
+
 | File | Topology | What the scenarios check |
 |---|---|---|
 | `test_proc_owui_turns.py` | door and `attendance` | the thirteen stage 1 scenarios, with the numbers of the old suite |
@@ -131,9 +136,13 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
 | `test_proc_delegate.py` | chaperone and `attendance` | the delegate path of contract 04 §7, the manifest and the audit |
 | `test_proc_override.py` | door and `attendance` | each service starts through its variable |
+| `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
+| `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, the one commit, a refused save |
+| `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
 | `test_proc_terminal.py` | none | the pseudo-terminal of the harness: the keys, the signals, what it showed |
+| `test_proc_html.py`, `test_proc_ids.py` | none | the HTML reader, and the ids a test mints |
 
 ## Rules
 
@@ -146,10 +155,12 @@ the pi stand-in                          found through AGENT_PI_BIN
    - an exit code
    - a file under the root: a journal, the audit file, a file in a mount
    - the record of a stand-in
+   - the git repository of the registry, through `git`
 4. Nothing under test may be faked. The two stand-ins are not under test.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
-   makes it from a contract, never from a module of a service.
+   or in `proc_registry.py` makes it from a contract, never from a module of
+   a service.
 7. A service gets its whole environment from the test. No variable of the
    shell that runs the suite reaches a service, except `PATH`, `LANG` and
    `TMPDIR`.
@@ -181,6 +192,10 @@ the pi stand-in                          found through AGENT_PI_BIN
     has keeps the name of the old one.
 16. Run the suite five times before you add a test to it. Remove or fix a
     test that fails once.
+17. Read an HTML page through `proc_html.py`. Assert on an element: a row, a
+    link, a field. Do not compare a whole page with a text.
+18. Run `git` only through `proc_registry.py`. It gives `git` a whole
+    environment, so no config file of a person reaches a test.
 
 ## Add a stand-in program
 
@@ -210,6 +225,7 @@ Do not grow `fake-pi.mjs` here. It belongs to `playpen/`.
 2. Give the class a function that returns the environment of each new
    service. Use the variables of the unit file and no others.
 3. Write each new file of the root in `proc_tree.py`, from its contract.
+   Write a file of the registry in `proc_registry.py`.
 4. Start a service that listens on a port with `start_on_port`.
 5. Add a fixture to `conftest.py`. Make it depend on `supervisor`, which ends
    every process.
@@ -271,8 +287,15 @@ failure. Work down this list.
   requests that the bridge sends. The playpen bundle fixes `PEP_URL` at build
   time: the LAN address of the site, port 8300. A pi process under the real
   playpen cannot dial a chaperone on another port.
-- **No scenario for `door-trigger`, `door-tui` and `noticeboard`.** Each has
-  a row in the service table and no topology.
+- **No scenario for `door-trigger` and `door-tui`.** Each has a row in the
+  service table and no topology.
+- **CONTRACT-QUESTION, the exit code of a refused start of the noticeboard.**
+  `docs/rework/spec.md` §8.3 rule 2 names exit code 2 for a LAN bind with no
+  key. No section names a code for a wildcard bind or for a key file that
+  cannot be read. The suite accepts each code that is not 0 there. A change
+  costs one assertion per scenario in `test_proc_board_start.py`.
+- **A save of the noticeboard ends at the commit.** No `caregiver` runs, so
+  no scenario proves that a saved family file converges.
 - **The state of an ended process.** The harness reads it from `/proc` on
   Linux and from `ps` on macOS. On another system, a process that ended
   counts as a process that runs until its parent reaps it. On Linux, the
@@ -287,9 +310,12 @@ failure. Work down this list.
 | `proc_harness.py` | a child in its own process group, the wait for an address, the teardown, the check at session end |
 | `proc_terminal.py`, `proc_login.py` | the test side of a pseudo-terminal, and the program that gives a command its controlling terminal |
 | `proc_tree.py` | the root, and one writer for each file a service reads |
+| `proc_registry.py` | the registry of the root: each family file, the git repository, and what `git` reports |
+| `proc_ids.py` | the ids that a door mints |
+| `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the `sbx` and `pi` wrappers, and the record each one leaves |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
-| `proc_owui.py`, `proc_delegate.py` | the two topologies |
+| `proc_owui.py`, `proc_delegate.py`, `proc_board.py` | one topology each |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |

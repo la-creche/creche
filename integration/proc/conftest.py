@@ -25,6 +25,7 @@ from typing import NoReturn, cast
 
 import httpx
 import pytest
+from proc_board import BoardStack
 from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
 from proc_owui import OwuiStack
@@ -195,6 +196,31 @@ async def sandbox(delegate: DelegateStack) -> AsyncIterator[httpx.AsyncClient]:
     """A client that plays the sandbox of the caller family at the chaperone."""
     async with delegate.sandbox_client() as client:
         yield client
+
+
+@pytest.fixture
+def board_prepared(tree: Tree, supervisor: Supervisor) -> BoardStack:
+    """The fourth topology on disk, with no service started."""
+    stack = BoardStack(tree, supervisor)
+    stack.prepare()
+
+    return stack
+
+
+@pytest.fixture
+def board(board_prepared: BoardStack, bundle: Path) -> BoardStack:
+    """The fourth topology, serving. The `supervisor` fixture ends it."""
+    board_prepared.start()
+
+    return board_prepared
+
+
+@pytest.fixture
+def board_alone(board_prepared: BoardStack) -> BoardStack:
+    """The noticeboard with no `attendance` beside it. It needs no bundle."""
+    board_prepared.start_board()
+
+    return board_prepared
 
 
 def _skip(reason: str) -> NoReturn:
