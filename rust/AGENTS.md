@@ -429,8 +429,9 @@ Rules for the test:
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of
   the other side. `HostMessage::parse` is stricter than the TypeScript
-  playpen in seven places:
-  1. A number with a fraction or an exponent is not an integer: `600.0`.
+  playpen in ten places:
+  1. A required number with a fraction or an exponent is a fault: `600.0`.
+     The same applies to `grace_ms`. The playpen reads `600.0` as 600.
   2. A session id has 128 bytes at most. The playpen permits 200.
   3. A sandbox number has 9 digits at most.
   4. A text with a lone surrogate is not a text.
@@ -438,8 +439,21 @@ Rules for the test:
      `.`.
   6. A workspace kind is `code-sandbox`. The playpen reads each text.
   7. A cap counts bytes. The playpen counts UTF-16 code units.
-- `HostMessage::parse` reads an empty `model` as no model. The playpen keeps
-  the empty text.
+  8. A `model` has 200 bytes at most. The playpen keeps each text.
+  9. An `env_epoch` is less than 2^64. The playpen reads a larger one as a
+     float.
+  10. A line with an integer of more than 4300 digits is not JSON, in each
+      field. The playpen reads that integer as a float.
+- `HostMessage::parse` and the playpen accept two lines with different
+  values:
+  1. An empty `model` is no model. The playpen keeps the empty text.
+  2. An optional number of `hello` is absent when it has a fraction or an
+     exponent, and when it is 2^64 or more. The playpen keeps `900.0` as 900
+     and keeps the large number as a float.
+- Only `HostMessage::parse` holds the range of `deadline_s`, the range of
+  `grace_ms` and the count of attachment names. `Seconds`, `Millis` and the
+  list of names have no bound, as the Python builders have none. A host can
+  write a line that the playpen refuses for one of the three.
 - `channel::claim::Event::from_json` refuses an event over a limit. The
   playpen truncates such an event (contract 03 §8). No Rust code does that.
 - `Event::from_json` and `playpen::EventMessage::new` refuse an event with a

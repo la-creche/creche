@@ -6,8 +6,11 @@
 //! Python host writes. The playpen makes a value with [`HostMessage::parse`].
 //!
 //! The Python builders take each text and each object as it comes. The types
-//! here hold only what the contract names, so a host cannot write a line
-//! that the playpen refuses for its form.
+//! here hold only what the contract names. Only [`HostMessage::parse`] holds
+//! three rules, because the Python builders write each number and each
+//! list: the range of `deadline_s`, the range of `grace_ms` and the count of
+//! attachment names. A host can thus write a line that the playpen refuses
+//! for one of the three.
 
 use std::error::Error;
 use std::fmt;
@@ -2140,13 +2143,17 @@ impl Record<'_> {
         epoch.ok_or_else(|| self.refuse("env_epoch"))
     }
 
-    /// An optional grace time. A value that is no integer counts as absent.
+    /// An optional grace time. A value that is no number counts as absent.
+    /// A number with a fraction or an exponent is a fault, also `5000.0`:
+    /// to read it as absent accepts `600001.0` with the default.
     fn grace(&self) -> Read<Option<Millis>> {
-        let Some(grace) = self.fields.get("grace_ms").and_then(Json::as_integer) else {
-            return Ok(None);
+        let grace = match self.fields.get("grace_ms") {
+            Some(Json::Int(grace)) => grace.to_u64(),
+            Some(Json::Float(_)) => None,
+            _ => return Ok(None),
         };
 
-        match grace.to_u64() {
+        match grace {
             Some(grace) if grace <= MAX_GRACE_MS => Ok(Some(Millis::new(grace))),
             _ => Err(self.refuse("grace_ms")),
         }
@@ -2238,8 +2245,24 @@ impl Record<'_> {
         names.ok_or_else(|| self.refuse("attachments"))
     }
 
-    /// The binding of `session`. A model that is no text, or an empty one,
-    /// counts as absent.
+    /// An optional model. A model that is no text, or an empty one, counts
+    /// as absent. Each other text that is no model is a fault: to read it as
+    /// absent starts pi with another model than the host names.
+    fn model(&self) -> Read<Option<Model>> {
+        let Some(text) = self.fields.get("model").and_then(Json::as_text) else {
+            return Ok(None);
+        };
+
+        if text.is_empty() {
+            return Ok(None);
+        }
+
+        let model = text.as_str().and_then(|text| text.parse().ok());
+
+        model.map(Some).ok_or_else(|| self.refuse("model"))
+    }
+
+    /// The binding of `session`.
     fn binding(&self, session: SessionId, env_epoch: EnvEpoch) -> Read<Binding> {
         Ok(Binding {
             session,
@@ -2248,7 +2271,7 @@ impl Record<'_> {
             env_epoch,
             config_rev: self.required("config_rev")?,
             workspace: self.workspace()?,
-            model: self.text("model").and_then(|text| text.parse().ok()),
+            model: self.model()?,
         })
     }
 
@@ -2920,6 +2943,11 @@ mod tests {
 
         let deep = format!("{{\"type\":\"ping\",\"x\":{}", "[".repeat(400_000));
         assert_eq!(fault(&deep), (HostLineFault::NotJson, false));
+
+        // The reader keeps an integer of 4300 digits at most, in each field.
+        let long = format!("{{\"type\":\"ping\",\"later\":{}}}", "9".repeat(4301));
+        assert_eq!(fault(&long), (HostLineFault::NotJson, false));
+        assert!(HostMessage::parse(&long.replacen('9', "", 1)).is_ok());
     }
 
     #[test]
@@ -2973,6 +3001,12 @@ mod tests {
                 field("config_rev"),
                 true,
             ),
+            (
+                start_turn(&format!(",\"model\":\"{long}\"")),
+                field("model"),
+                true,
+            ),
+            (start_turn(",\"model\":\"a\\ud800\""), field("model"), true),
             (start_turn(",\"workspace\":[]"), field("workspace"), true),
             (
                 start_turn(",\"workspace\":{\"kind\":\"code-sandbox\"}"),
@@ -3086,7 +3120,17 @@ mod tests {
             ),
             (format!("{open}}}"), field("env_epoch"), false),
             (format!("{open},\"env_epoch\":7,\"cwd\":7}}"), field("cwd"), false),
+            (
+                format!("{open},\"env_epoch\":7,\"model\":\"{long}\"}}"),
+                field("model"),
+                false,
+            ),
             (format!("{read}}}"), field("request"), false),
+            (
+                format!("{read},\"request\":\"{TURN}\",\"model\":\"{long}\"}}"),
+                field("model"),
+                false,
+            ),
             (format!("{read},\"request\":\"{TURN}\",\"since\":\"\"}}"), field("since"), false),
             (
                 format!("{read},\"request\":\"{TURN}\",\"since\":\"{long}\"}}"),
@@ -3109,6 +3153,24 @@ mod tests {
                 false,
             ),
             ("{\"type\":\"shutdown\",\"grace_ms\":600001}".to_owned(), field("grace_ms"), false),
+            (
+                "{\"type\":\"shutdown\",\"grace_ms\":600001.0}".to_owned(),
+                field("grace_ms"),
+                false,
+            ),
+            ("{\"type\":\"shutdown\",\"grace_ms\":1e300}".to_owned(), field("grace_ms"), false),
+            ("{\"type\":\"shutdown\",\"grace_ms\":5000.0}".to_owned(), field("grace_ms"), false),
+            ("{\"type\":\"shutdown\",\"grace_ms\":1.5}".to_owned(), field("grace_ms"), false),
+            (
+                "{\"type\":\"shutdown\",\"grace_ms\":18446744073709551616}".to_owned(),
+                field("grace_ms"),
+                false,
+            ),
+            (
+                format!("{{\"type\":\"stop_process\",\"session\":\"{SESSION}\",\"grace_ms\":0.5}}"),
+                field("grace_ms"),
+                false,
+            ),
             (format!("{{\"type\":\"ping\",\"nonce\":\"{long}\"}}"), field("nonce"), false),
         ];
 
@@ -3122,7 +3184,8 @@ mod tests {
         let hello = HostMessage::parse(
             "{\"type\":\"hello\",\"protocol\":\"1.7\",\"family\":\"chat\",\"sandbox\":\"chat-s3\",\
              \"env_epoch\":7,\"max_line_bytes\":\"large\",\"coalesce_ms\":-5,\
-             \"pi_idle_ttl_s\":1.5,\"host\":7,\"future\":{\"a\":[1,2]}}",
+             \"pi_idle_ttl_s\":1.5,\"host_deadline_s\":18446744073709551616,\
+             \"channel_idle_ttl_s\":900.0,\"host\":7,\"future\":{\"a\":[1,2]}}",
         );
         let Ok(HostMessage::Hello(hello)) = hello else {
             panic!("{hello:?}");
@@ -3176,11 +3239,19 @@ mod tests {
         let no_caller = start_turn(&format!(
             ",\"delegation\":{{\"id\":\"{TURN}\"}},\"model\":\"\""
         ));
+        let number = start_turn(",\"model\":7");
+        let named = start_turn(&format!(",\"model\":\"{}\"", "a".repeat(MAX_NAME_BYTES)));
         let Ok(HostMessage::StartTurn(plain)) = HostMessage::parse(&null) else {
             panic!("{null}");
         };
         let Ok(HostMessage::StartTurn(chained)) = HostMessage::parse(&no_caller) else {
             panic!("{no_caller}");
+        };
+        let Ok(HostMessage::StartTurn(number)) = HostMessage::parse(&number) else {
+            panic!("{number}");
+        };
+        let Ok(HostMessage::StartTurn(named)) = HostMessage::parse(&named) else {
+            panic!("{named}");
         };
 
         assert_eq!(plain.address(), address());
@@ -3199,6 +3270,11 @@ mod tests {
         assert_eq!(plain.binding().model(), None);
         assert_eq!(plain.binding().workspace(), None);
         assert_eq!(chained.binding().model(), None);
+        assert_eq!(number.binding().model(), None);
+        assert_eq!(
+            named.binding().model().map(|model| model.as_str().len()),
+            Some(MAX_NAME_BYTES)
+        );
         assert_eq!(chained.request().delegation().unwrap().id().as_str(), TURN);
         assert_eq!(
             chained.request().delegation().unwrap().caller_session(),
