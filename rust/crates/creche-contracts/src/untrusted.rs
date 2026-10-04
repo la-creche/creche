@@ -50,8 +50,8 @@
 //!    raw type `T`. An object or a member that `T` refuses is then empty or
 //!    dropped, and the answer stays.
 //!
-//! Three rules of the tree hold for each raw type `T` below a function of
-//! this module:
+//! A raw type `T` below a function of this module reads from the tree. It
+//! reads there as it reads from `serde_json` itself, with these differences:
 //!
 //! - A key that an object holds two times has the value of its last
 //!   occurrence, as a Python `dict` has. A derived `serde` type alone refuses
@@ -61,6 +61,10 @@
 //!   reader does that.
 //! - A value nests 128 levels of lists and objects at most. `serde_json`
 //!   stops one level before, so [`parse_object`] reads 127 levels.
+//! - The tree owns each text. A `T` that borrows a `&str` from the input
+//!   refuses each value. Give `T` a `String`.
+//! - The tree keeps no JSON text. A `T` that holds a
+//!   `serde_json::value::RawValue` refuses each value.
 //!
 //! # What is JSON here
 //!
@@ -90,7 +94,7 @@ use serde::de::value::{MapAccessDeserializer, MapDeserializer, SeqDeserializer};
 use serde::de::{
     self, DeserializeOwned, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor,
 };
-use serde::{Deserialize, Deserializer, forward_to_deserialize_any};
+use serde::{Deserialize, Deserializer};
 
 /// A text. A value that is not a JSON string reads as the empty text.
 ///
@@ -610,6 +614,65 @@ impl IntoDeserializer<'_, Mismatch> for Json {
     }
 }
 
+/// The kinds of value that one request of a raw type takes.
+#[derive(Debug, Clone, Copy)]
+enum Takes {
+    Null,
+    Bool,
+    Number,
+    Text,
+    List,
+    Object,
+    /// A request for bytes. `serde_json` gives it a text or a list.
+    TextOrList,
+}
+
+impl Json {
+    fn is(&self, takes: Takes) -> bool {
+        matches!(
+            (takes, self),
+            (Takes::Null, Self::Null)
+                | (Takes::Bool, Self::Bool(_))
+                | (
+                    Takes::Number,
+                    Self::Int(_) | Self::Large(_) | Self::Float(_)
+                )
+                | (Takes::Text | Takes::TextOrList, Self::Text(_))
+                | (Takes::List | Takes::TextOrList, Self::List(_))
+                | (Takes::Object, Self::Object(_))
+        )
+    }
+
+    /// Gives the value to a visitor when the value is of a kind that the
+    /// request takes. Each other kind is a [`Mismatch`].
+    ///
+    /// `serde_json` checks the kind of a request in the same way. Without
+    /// the check, a visitor that takes more than its request gets the other
+    /// kind: the visitor of `serde_json::Map` reads `null` as an empty
+    /// object.
+    fn only<'de, V: Visitor<'de>>(self, takes: Takes, visitor: V) -> Result<V::Value, Mismatch> {
+        if !self.is(takes) {
+            return Err(Mismatch);
+        }
+
+        self.deserialize_any(visitor)
+    }
+}
+
+/// The requests of a raw type that take one group of kinds and have no other
+/// argument.
+macro_rules! only {
+    ($takes:expr => $($request:ident)*) => {
+        $(
+            fn $request<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Mismatch> {
+                self.only($takes, visitor)
+            }
+        )*
+    };
+}
+
+/// A raw type reads from the tree as it reads from `serde_json`, with one
+/// difference: a struct with named fields reads from an object only.
 impl<'de> Deserializer<'de> for Json {
     type Error = Mismatch;
 
@@ -638,6 +701,59 @@ impl<'de> Deserializer<'de> for Json {
         }
     }
 
+    only!(Takes::Null => deserialize_unit);
+    only!(Takes::Bool => deserialize_bool);
+    only!(Takes::Number =>
+        deserialize_i8 deserialize_i16 deserialize_i32 deserialize_i64 deserialize_i128
+        deserialize_u8 deserialize_u16 deserialize_u32 deserialize_u64 deserialize_u128
+        deserialize_f32 deserialize_f64
+    );
+    only!(Takes::Text =>
+        deserialize_char deserialize_str deserialize_string deserialize_identifier
+    );
+    only!(Takes::TextOrList => deserialize_bytes deserialize_byte_buf);
+    only!(Takes::List => deserialize_seq);
+    only!(Takes::Object => deserialize_map);
+
+    fn deserialize_unit_struct<V: Visitor<'de>>(
+        self,
+        _: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Mismatch> {
+        self.only(Takes::Null, visitor)
+    }
+
+    fn deserialize_tuple<V: Visitor<'de>>(
+        self,
+        _: usize,
+        visitor: V,
+    ) -> Result<V::Value, Mismatch> {
+        self.only(Takes::List, visitor)
+    }
+
+    fn deserialize_tuple_struct<V: Visitor<'de>>(
+        self,
+        _: &'static str,
+        _: usize,
+        visitor: V,
+    ) -> Result<V::Value, Mismatch> {
+        self.only(Takes::List, visitor)
+    }
+
+    /// A struct with named fields reads from an object only.
+    ///
+    /// `serde_json` also gives a list to the visitor, and a derived visitor
+    /// then fills the fields by position. No Python reader does that: each
+    /// one takes a member only when it is a `dict`.
+    fn deserialize_struct<V: Visitor<'de>>(
+        self,
+        _: &'static str,
+        _: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Mismatch> {
+        self.only(Takes::Object, visitor)
+    }
+
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Mismatch> {
         match self {
             Self::Null => visitor.visit_none(),
@@ -651,29 +767,6 @@ impl<'de> Deserializer<'de> for Json {
         visitor: V,
     ) -> Result<V::Value, Mismatch> {
         visitor.visit_newtype_struct(self)
-    }
-
-    /// A struct with named fields reads from an object only.
-    ///
-    /// A derived visitor also takes a list and fills the fields by position.
-    /// No Python reader does that: each one takes a member only when it is a
-    /// `dict`.
-    fn deserialize_struct<V: Visitor<'de>>(
-        self,
-        _: &'static str,
-        _: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Mismatch> {
-        match self {
-            Self::Object(_) => self.deserialize_any(visitor),
-            Self::Null
-            | Self::Bool(_)
-            | Self::Int(_)
-            | Self::Large(_)
-            | Self::Float(_)
-            | Self::Text(_)
-            | Self::List(_) => Err(Mismatch),
-        }
     }
 
     /// An enum reads as `serde_json` reads it: a text is a variant with no
@@ -704,17 +797,13 @@ impl<'de> Deserializer<'de> for Json {
     fn deserialize_ignored_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Mismatch> {
         visitor.visit_unit()
     }
-
-    forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf unit unit_struct seq tuple tuple_struct map identifier
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
+    use serde::forward_to_deserialize_any;
     use serde_json::de::StrRead;
 
     use super::*;
@@ -1015,6 +1104,23 @@ mod tests {
         }
     }
 
+    /// The kind of the value comes first. A raw type that takes another kind
+    /// gets no value of that kind.
+    #[test]
+    fn an_object_reader_gives_no_other_kind_to_a_raw_type_that_takes_it() {
+        let text: Option<String> = direct(r#""a""#, |reader| block(reader)).unwrap();
+        let members: Option<Vec<String>> = direct(r#"["a"]"#, |reader| block(reader)).unwrap();
+        let unset: Option<Option<Part>> = direct("null", |reader| block(reader)).unwrap();
+        let read_text: String = direct(r#""a""#, |reader| object(reader)).unwrap();
+        let read_members: Vec<String> = direct(r#"["a"]"#, |reader| object(reader)).unwrap();
+
+        assert_eq!(text, None);
+        assert_eq!(members, None);
+        assert_eq!(unset, None);
+        assert_eq!(read_text, "");
+        assert!(read_members.is_empty());
+    }
+
     #[test]
     fn an_empty_block_differs_from_no_block() {
         let empty: Option<Part> = direct("{}", |reader| block(reader)).unwrap();
@@ -1205,6 +1311,25 @@ mod tests {
             assert_eq!(read, None, "{input}");
             assert!(serde_json::from_str::<Plain>(input).is_err(), "{input}");
         }
+    }
+
+    /// A raw type that borrows its text from the input.
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct Borrowed<'a> {
+        name: &'a str,
+    }
+
+    /// The tree owns each text, so it has no text to lend.
+    #[test]
+    fn a_raw_type_that_borrows_from_the_input_refuses_each_object() {
+        let input = r#"{"name":"a"}"#;
+        let held: Option<Borrowed<'_>> = direct(input, |reader| block(reader)).unwrap();
+
+        assert_eq!(held, None);
+        assert_eq!(
+            serde_json::from_str::<Borrowed<'_>>(input).unwrap(),
+            Borrowed { name: "a" }
+        );
     }
 
     #[derive(Debug, Default, PartialEq, Deserialize)]
@@ -1527,6 +1652,118 @@ mod tests {
 
     fn tree(input: &str) -> Json {
         direct(input, |reader| read(reader)).unwrap()
+    }
+
+    /// One JSON text of each kind, and the edges of a kind.
+    const EACH_KIND: [&str; 22] = [
+        "null",
+        "true",
+        "false",
+        "0",
+        "7",
+        "-3",
+        "255",
+        "256",
+        "9223372036854775807",
+        "18446744073709551615",
+        "18446744073709551616",
+        "1.5",
+        "-0.0",
+        r#""""#,
+        r#""a""#,
+        r#""plain""#,
+        "[]",
+        "[7]",
+        r#"["a",7]"#,
+        "{}",
+        r#"{"a":7}"#,
+        r#"{"named":"a"}"#,
+    ];
+
+    /// Makes sure that a raw type reads the same value from the tree and from
+    /// `serde_json` itself, and that the two refuse the same texts.
+    fn reads_as_serde_json_reads<T>(input: &str)
+    where
+        T: DeserializeOwned + PartialEq + fmt::Debug,
+    {
+        let from_tree = T::deserialize(tree(input)).ok();
+        let from_text = serde_json::from_str::<T>(input).ok();
+
+        assert_eq!(
+            from_tree,
+            from_text,
+            "{input} as {}",
+            std::any::type_name::<T>()
+        );
+    }
+
+    /// The tree checks the kind of each request, as `serde_json` does. A raw
+    /// type below a function of this module thus reads what it reads alone.
+    #[test]
+    fn a_raw_type_reads_from_the_tree_as_it_reads_from_serde_json() {
+        type FreeForm = serde_json::Map<String, serde_json::Value>;
+
+        for input in EACH_KIND {
+            reads_as_serde_json_reads::<()>(input);
+            reads_as_serde_json_reads::<bool>(input);
+            reads_as_serde_json_reads::<u8>(input);
+            reads_as_serde_json_reads::<i64>(input);
+            reads_as_serde_json_reads::<u64>(input);
+            reads_as_serde_json_reads::<f64>(input);
+            reads_as_serde_json_reads::<char>(input);
+            reads_as_serde_json_reads::<String>(input);
+            reads_as_serde_json_reads::<Option<i64>>(input);
+            reads_as_serde_json_reads::<Vec<i64>>(input);
+            reads_as_serde_json_reads::<(String, i64)>(input);
+            reads_as_serde_json_reads::<BTreeMap<String, i64>>(input);
+            reads_as_serde_json_reads::<FreeForm>(input);
+            reads_as_serde_json_reads::<serde_json::Value>(input);
+            reads_as_serde_json_reads::<Wrapped>(input);
+            reads_as_serde_json_reads::<Shape>(input);
+        }
+    }
+
+    /// The visitor of `serde_json::Map` reads `null` as an empty object. The
+    /// request of the type is for an object, so the tree gives it no `null`.
+    #[test]
+    fn an_object_of_free_form_is_no_null() {
+        type FreeForm = serde_json::Map<String, serde_json::Value>;
+
+        let read: Vec<FreeForm> = direct(r#"[null,{},{"a":1}]"#, |reader| list(reader)).unwrap();
+
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[0].len(), 0);
+        assert_eq!(read[1]["a"], 1);
+        assert!(FreeForm::deserialize(Json::Null).is_err());
+    }
+
+    /// The one difference from `serde_json`: a struct with named fields
+    /// reads from an object only.
+    #[test]
+    fn a_struct_with_named_fields_reads_from_no_list() {
+        assert_eq!(Strict::deserialize(tree("[7]")), Err(Mismatch));
+        assert_eq!(
+            Strict::deserialize(tree(r#"{"id":7}"#)),
+            Ok(Strict { id: 7 })
+        );
+        assert_eq!(
+            serde_json::from_str::<Strict>("[7]").unwrap(),
+            Strict { id: 7 }
+        );
+    }
+
+    /// The tree keeps no JSON text. A raw type that holds the text of a
+    /// member thus refuses each value below a function of this module.
+    #[test]
+    fn a_raw_type_that_keeps_the_text_of_a_member_refuses_each_value() {
+        type Kept = Box<serde_json::value::RawValue>;
+
+        assert_eq!(
+            serde_json::from_str::<Kept>("[1, 2]").unwrap().get(),
+            "[1, 2]"
+        );
+        assert!(Kept::deserialize(tree("[1, 2]")).is_err());
+        assert!(Kept::deserialize(tree(r#""a""#)).is_err());
     }
 
     #[test]
