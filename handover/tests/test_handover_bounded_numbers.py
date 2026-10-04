@@ -69,7 +69,8 @@ TS_REFUSAL = "field 'ts' is malformed"
 ERROR_TEXT = "the-text-of-the-error"
 
 #: Deeper than each supported Python reads, and under the cap of each file.
-JSON_DEPTH = 30000
+#: Python 3.14 reads a text of 100,000 levels.
+JSON_DEPTH = 250_000
 
 SERVER = "weather"
 SECRET = "weather_token"
