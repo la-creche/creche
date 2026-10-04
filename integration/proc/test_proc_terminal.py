@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import signal
+import sys
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,10 @@ SHORT_DEADLINE_S = 0.2
 #: A loop that a signal ends between two short sleeps.
 SPIN = "while :; do sleep 0.05; done"
 
+#: A program that opens `/dev/tty`, and that takes no terminal by itself.
+#: `/bin/sh` on macOS is bash, and bash takes the terminal of its stdin.
+OPENS_TTY = "import os; os.close(os.open('/dev/tty', os.O_RDWR)); print('it-controls')"
+
 
 def test_a_command_on_a_terminal_has_it_on_each_stream(tree: Tree, supervisor: Supervisor) -> None:
     script = "test -t 0 && test -t 1 && test -t 2 && echo each-stream"
@@ -37,9 +42,9 @@ def test_a_command_on_a_terminal_has_it_on_each_stream(tree: Tree, supervisor: S
 
 def test_the_terminal_is_the_controlling_terminal(tree: Tree, supervisor: Supervisor) -> None:
     """`/dev/tty` opens only for a process that has a controlling terminal."""
-    script = ": > /dev/tty && echo it-controls"
+    words = [sys.executable, "-c", OPENS_TTY]
 
-    child, terminal = supervisor.spawn_on_terminal("tty", [SH, "-c", script], BASE_ENV, tree.root)
+    child, terminal = supervisor.spawn_on_terminal("tty", words, BASE_ENV, tree.root)
 
     assert child.wait(EXIT_DEADLINE_S) == 0, child.output()
     terminal.wait_for("it-controls")
