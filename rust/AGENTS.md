@@ -110,6 +110,32 @@ Each rule has its reason. Do not break a rule without a change to this file.
     under `rust/` is under no component, so a change here mints no tag and
     starts no release.
 
+## When two Python copies of a grammar disagree
+
+The Python code holds more than one copy of most id grammars.
+`vectors/data/ids/disagreements.json` lists each input on which two copies of
+one grammar give different results.
+
+1. The Rust type takes the strictest copy. It refuses each input that one
+   copy refuses.
+2. Mark the type with a `CONTRACT-QUESTION` comment. The comment names each
+   copy and what the copy does.
+3. List the question under "Known gaps".
+4. In the test table of the type, give each surface one stance. `equal` means
+   that the type and the copy agree on each vector. `stricter` means that the
+   copy accepts an input of `disagreements.json` and the type refuses it.
+
+Reason: a value passes more than one copy before the platform uses it. The
+strictest copy is thus the grammar that holds on the host. A type that takes
+a laxer copy accepts a value that a Python component refuses later.
+
+When each Python copy accepts an input, the Rust type accepts it too. This
+rule also applies when a stricter reading of the contract is possible. Name
+such a case in the pull request. The owner decides it.
+
+The exception is a digit that is not ASCII. Rule 9 refuses it. Each such
+difference is a row of the `DEVIATIONS` table in the test.
+
 ## Code style
 
 The code style rules of the root `AGENTS.md` apply. In Rust they read:
@@ -211,6 +237,7 @@ Rules for the test:
   the test fail for a row that names no difference.
 - Do not compare against a count of vectors that the test holds. A change to
   a product package can add a vector with no change under `rust/`.
+- `ids::tests::python` is the pattern.
 
 ## Dependencies
 
@@ -224,11 +251,30 @@ Rules for the test:
 
 ## Known gaps
 
-- `FamilyName` has no differential test against the Python implementation.
-  Rule 10 needs the shared vector files, and they do not exist.
 - CI does not run `cargo deny`. No check reads the advisories or the
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- No `CONTRACT-QUESTION` is open in this directory. The two Python copies of
-  the family name grammar agree.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/ids.rs`:
+  1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
+     newline. The type refuses it.
+  2. `ToolName`, contract 01 §3.4 and contract 01b §5. The contracts give no
+     cap. The three Python copies have no cap, a cap of 128 and a cap of 64.
+     The type has the cap of 64.
+  3. `EnvName`, contract 01b §4.1. The contract gives no grammar. One Python
+     copy has no cap, and one has a cap of 64. The type has the cap of 64.
+  4. `PackageVersion`, contract 01b §3.1. The contract gives no grammar. One
+     Python copy permits `+` and `-` and has no cap. The type takes the other
+     copy: no `+`, no `-` and a cap of 64.
+  5. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. Each
+     Python copy accepts a decimal digit that is not ASCII. The types refuse
+     it. This is the one place where a type refuses what each Python copy
+     accepts.
+  6. `OwuiChatId::session_id`, contract 02 §2. The Python door makes a
+     session id of 133 bytes from a chat id of 128 bytes. The function
+     refuses to make that session id.
+- The id types accept what each Python copy accepts, also where a stricter
+  reading of a contract is possible. Three examples: a version number of any
+  length, a version number with a zero at its start, and a sandbox number
+  with a zero at its start. The owner decides each case.
