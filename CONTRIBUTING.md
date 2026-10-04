@@ -87,7 +87,9 @@ component's own newest tag.
 - A component's paths include every workspace package its build installs. A
   change under `family/` moves `attendance`, `caregiver` and `noticeboard`.
   A change to `uv.lock` moves every venv component.
-- A change under `rust/` moves no component. No release uses Rust code.
+- A change under `rust/` moves no component today, because no component is a
+  binary component. A change to `rust/Cargo.lock`, `rust/Cargo.toml` or
+  `rust/rust-toolchain.toml` moves every binary component and no other kind.
 - Only CI mints a Release. The release executor refuses a Release that
   `github-actions[bot]` did not author. Do not push a tag by hand.
 - A re-run on the same commit is a no-op. A tag is never moved or deleted.

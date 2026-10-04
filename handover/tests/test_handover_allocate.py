@@ -11,6 +11,7 @@ from handover.allocate import (
     BumpLevel,
     TagOutcome,
     TagPlan,
+    cut_path,
     next_version,
     plan_tags,
     read_level,
@@ -550,26 +551,23 @@ def test_tagged_here_reads_no_old_scheme_tag() -> None:
     assert tagged_here(OLD_TAGS, Repo.AGENT_CONTROL) == ()
 
 
-# ---- the guard the script's reduction needs --------------------------------
+# ---- the cut the script's reduction needs -----------------------------------
 
 
-def test_every_component_path_is_one_top_level_name() -> None:
-    """`handover/bin/allocate-tags.sh` reduces every changed path in a range
-    to its FIRST segment before it hands the line in, so one range costs a
-    handful of lines and not one per changed file. That reduction can only
-    reach a component whose path is a top-level entry, or the whole repo.
+def test_the_cut_loses_no_directory_of_the_catalog() -> None:
+    """`handover/bin/allocate-tags.sh` hands in a cut of every changed path
+    in a range, so one range costs a handful of lines and not one per
+    changed file. The planner makes the cut (`cut_path`), and it must lose
+    no component: a file under each directory a row names is cut to a line
+    that still reaches that row.
 
-    A nested path added to the catalog would be tagged by nothing, and
-    nothing would say so.
-    Deepen the reduction in the script before you add such a row.
+    The script made the cut itself before, to the first segment, and two
+    guards here held every `path` and every bundle to one top-level name.
+    The cut now reads the catalog, so a nested directory is reached and the
+    guards are this one property (`test_handover_bin_path_cut.py`).
     """
     for row in CATALOG:
-        assert row.path == REPO_ROOT_PATH or "/" not in row.path, row.name
+        for top in (row.path, *row.bundles):
+            changed = "any/file.py" if top == REPO_ROOT_PATH else f"{top}/src/file.py"
 
-
-def test_every_installed_directory_is_one_top_level_name() -> None:
-    """The same reduction, for `CatalogRow.bundles`: a nested directory
-    there would be reached by no line, and its changes would tag nothing."""
-    for row in CATALOG:
-        for top in row.bundles:
-            assert top != REPO_ROOT_PATH and "/" not in top, row.name
+            assert row.name in touched((cut_path(changed, row.repo),), row.repo), row.name

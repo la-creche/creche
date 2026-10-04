@@ -185,6 +185,7 @@ def _run(
     tree: Path | None = None,
     gh_reads: bool = True,
     tag_repo: str | None = None,
+    cli: str = RELEASE_CLI,
 ) -> subprocess.CompletedProcess[str]:
     """The script in `repo`, tagging `tree` (itself, unless one is given).
 
@@ -197,7 +198,7 @@ def _run(
 
     env = dict(os.environ)
     env["PATH"] = f"{shims}{os.pathsep}{env['PATH']}"
-    env["RELEASE_CLI"] = RELEASE_CLI
+    env["RELEASE_CLI"] = cli
     env["GH_LOG"] = str(tmp_path / "gh.log")
     env["FAKE_PR"] = pr
     env["FAKE_BUMPS"] = " ".join(f"{sha}={label}" for sha, label in asked.items())
@@ -824,3 +825,121 @@ def test_a_failed_pull_request_read_is_no_pull_request(
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
     assert "Bad credentials" not in log
     assert "touch chaperone/src/one.py" in log
+
+
+# ---- a directory deeper than the top level, and the Cargo workspace --------
+
+#: A crate directory that a binary component's build installs.
+NESTED_BUNDLE = "rust/crates/creche-contracts"
+
+#: The planner, with `noticeboard` as a binary component that bundles one
+#: crate directory. The catalog holds no binary component and no nested
+#: directory, so the test gives the script a planner that holds both. The
+#: script asks the planner for every decision, so this is the whole change.
+BINARY_PLANNER = f"""
+import sys
+from dataclasses import replace
+
+from handover import allocate
+from handover.catalog import CATALOG, Kind
+from handover.cli import main
+
+allocate.CATALOG = tuple(
+    replace(row, kind=Kind.BINARY, bundles=("{NESTED_BUNDLE}",))
+    if row.name == "noticeboard"
+    else row
+    for row in CATALOG
+)
+sys.exit(main())
+"""
+
+
+@pytest.fixture
+def binary_cli(tmp_path: Path) -> str:
+    """`RELEASE_CLI` for a run whose catalog holds one binary component."""
+    planner = tmp_path / "binary_planner.py"
+    planner.write_text(BINARY_PLANNER, encoding="utf-8")
+
+    return f"{sys.executable} {planner}"
+
+
+@pytest.mark.slow
+def test_a_change_under_a_nested_bundle_tags_its_component(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str
+) -> None:
+    """The script cut every changed path to its first segment, so a change
+    under `rust/crates/<crate>/` reached the planner as `rust` and tagged
+    nothing. The planner makes the cut now, and it keeps a nested bundle."""
+    _seed_first_tags(repo)
+    _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
+
+
+@pytest.mark.slow
+def test_a_change_beside_a_nested_bundle_tags_nothing(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str
+) -> None:
+    """A crate that no build installs is no component's path."""
+    _seed_first_tags(repo)
+    _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
+    assert _run(repo, shims, tmp_path, cli=binary_cli).returncode == 0
+    _commit(repo, "rust/crates/other/src/lib.rs", "rust/README.md")
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli)
+
+    assert done.returncode == 0, done.stderr
+    assert "allocate-tags: 0 created" in done.stdout
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
+
+
+@pytest.mark.slow
+def test_the_cargo_lock_file_tags_the_binary_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str
+) -> None:
+    """`rust/Cargo.lock` is a file two segments deep. Cut to `rust`, it
+    moved nothing. It moves the binary component, and no venv component."""
+    _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs", "chaperone/src/one.py")
+    _seed_first_tags(repo)
+    _commit(repo, "rust/Cargo.lock")
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
+
+
+@pytest.mark.slow
+def test_a_label_counts_through_a_nested_bundle(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str
+) -> None:
+    """The level lines carry the same cut, so a labelled merge that changed
+    only a nested bundle raises its component."""
+    _seed_first_tags(repo)
+    _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
+
+    done = _run(repo, shims, tmp_path, labels="bump:minor", cli=binary_cli)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.2.0"])
+
+
+@pytest.mark.slow
+def test_the_cargo_workspace_tags_no_component_of_todays_catalog(
+    repo: Path, shims: Path, tmp_path: Path
+) -> None:
+    """The real planner, whose catalog holds no binary component: a merge
+    that changes the Cargo workspace and a crate moves no tag at all."""
+    _commit(repo, "chaperone/src/one.py", "noticeboard/src/one.py")
+    _seed_first_tags(repo)
+    _commit(repo, "rust/Cargo.lock", "rust/Cargo.toml", "rust/rust-toolchain.toml")
+    _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
+
+    done = _run(repo, shims, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert "allocate-tags: 0 created" in done.stdout
+    assert _tags(repo) == FIRST_TAGS

@@ -228,10 +228,9 @@ if ! "${CLI[@]}" allocate-tags --repo "$REPO" \
 fi
 
 # Probe 2, each component's current version. A paths file naming every
-# directory in the tree reaches every component, because contract 06 §1's
-# `path` column is a top-level entry or the whole repo — the test
-# `test_every_component_path_is_one_top_level_name` holds the catalog to
-# that. `--at-sha` is left out ON PURPOSE: a re-run must still learn each
+# directory in the tree, at every depth, reaches every component: contract
+# 06 §1's `path` column is a directory of the tree or the whole repo.
+# `--at-sha` is left out ON PURPOSE: a re-run must still learn each
 # component's version, and a `noop` row carries the tag rather than the
 # range's base.
 { git -C "$REPO_ROOT" ls-tree -r -d --name-only "$SHA"; printf '.\n'; } > "$WORK/tree"
@@ -240,10 +239,26 @@ fi
 
 # ---- one range per component ----------------------------------------------
 #
-# Each changed path is cut down to its first segment before it is handed in.
-# One range then costs a handful of lines instead of one per changed file,
-# and a range that spans a year stays inside the planner's input caps. The
-# first segment is enough because every component path is a top-level entry.
+# Each changed path is cut down before it is handed in. One range then costs
+# a handful of lines instead of one per changed file, and a range that spans
+# a year stays inside the planner's input caps.
+#
+# The planner makes the cut, because the cut depends on the catalog and this
+# script holds no copy of it (`allocate.cut_path`). A path is cut to its
+# first segment, which reaches every component whose directories are
+# top-level entries. A build can also install a directory deeper in the
+# tree, such as a crate under `rust/crates/`, and a binary component moves
+# with `rust/Cargo.lock`. A path that such a nested path holds is cut to
+# that path, so its line still reaches its component.
+#
+# cut_paths FILE: the cut of every changed path in FILE, each line once.
+# Its stdin is closed: the loops below read their own input on stdin, and a
+# child that read it would take their next lines.
+cut_paths() {
+  "${CLI[@]}" allocate-tags --repo "$REPO" --cut "$1" < /dev/null \
+    || die "the planner refused the changed paths"
+}
+
 : > "$WORK/paths"
 : > "$WORK/levels"
 : > "$WORK/seen"
@@ -277,8 +292,8 @@ while read -r outcome tag from _detail; do
   count=$(git -C "$REPO_ROOT" rev-list --count "$previous..$SHA")
   say "range:   $component: $count commit(s) since $previous"
 
-  git -C "$REPO_ROOT" diff --name-only "$previous" "$SHA" \
-    | awk -F/ 'NF { print $1 }' | sort -u > "$WORK/segments"
+  git -C "$REPO_ROOT" diff --name-only "$previous" "$SHA" > "$WORK/changed"
+  cut_paths "$WORK/changed" > "$WORK/segments"
   while IFS= read -r segment; do
     [[ -n "$segment" ]] || continue
     printf '%s\t%s\n' "$component" "$segment" >> "$WORK/paths"
@@ -287,13 +302,13 @@ while read -r outcome tag from _detail; do
   # The levels this range asks for. A labelled pull request counts when its
   # merge commit is on this range's first-parent line, and the planner then
   # keeps the label only if that merge changed one of the component's own
-  # paths. So each line carries the first segments THAT merge changed.
+  # paths. So each line carries the cut paths THAT merge changed.
   git -C "$REPO_ROOT" rev-list --first-parent "$previous..$SHA" > "$WORK/merges"
   while read -r merged label; do
     grep -qxF "$merged" "$WORK/merges" || continue
-    git -C "$REPO_ROOT" diff --name-only "$merged^1" "$merged" 2>/dev/null \
-      | awk -F/ 'NF { print $1 }' | sort -u > "$WORK/merged-segments" \
-      || : > "$WORK/merged-segments"
+    git -C "$REPO_ROOT" diff --name-only "$merged^1" "$merged" \
+      > "$WORK/merged-changed" 2>/dev/null || : > "$WORK/merged-changed"
+    cut_paths "$WORK/merged-changed" > "$WORK/merged-segments"
     while IFS= read -r segment; do
       [[ -n "$segment" ]] || continue
       printf '%s\t%s\t%s\n' "$component" "$label" "$segment" >> "$WORK/levels"

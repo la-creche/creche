@@ -32,9 +32,9 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from handover.catalog import CATALOG, CATALOG_BY_NAME, Kind
+from handover.catalog import CATALOG, CATALOG_BY_NAME
 from handover.executor.drain import Counter, handle
-from handover.executor.install import Installer, exec_start_programs
+from handover.executor.install import PROGRAM_KINDS, Installer, exec_start_programs
 from handover.executor.live_state import installed_version
 from handover.executor.spool import DONE_DIR, Spool
 from handover.executor.steps import Wiring
@@ -448,13 +448,14 @@ def _shipped_unit(unit: str) -> Path | None:
 def test_the_repositorys_own_units_start_the_trees_their_manifests_install() -> None:
     """The live case, held in the repository rather than found on the host.
 
-    Only `kind: venv`: a compose project's unit starts docker, and what
-    binds it to its tree is `WorkingDirectory` rather than `ExecStart`.
+    Only the kinds whose tree holds its programs (`PROGRAM_KINDS`): a
+    compose project's unit starts docker, and what binds it to its tree is
+    `WorkingDirectory` rather than `ExecStart`.
     """
     found: set[str] = set()
     for path in sorted(REPO_ROOT.glob("*/component.yaml")):
         manifest = parse_manifest(path.read_text(encoding="utf-8"), str(path))
-        if manifest.unit is None or manifest.kind is not Kind.VENV:
+        if manifest.unit is None or manifest.kind not in PROGRAM_KINDS:
             continue
 
         unit = _shipped_unit(manifest.unit)
@@ -520,7 +521,7 @@ def test_every_unit_that_starts_a_tree_travels_with_its_component(tmp_path: Path
     staged_for: dict[str, set[str]] = {}
     for path in sorted(REPO_ROOT.glob("*/component.yaml")):
         manifest = parse_manifest(path.read_text(encoding="utf-8"), str(path))
-        if manifest.unit is None or manifest.kind is not Kind.VENV:
+        if manifest.unit is None or manifest.kind not in PROGRAM_KINDS:
             continue
 
         # A user unit's tree is under the operator's home, a system unit's
