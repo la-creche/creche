@@ -139,6 +139,8 @@ fn listen(kind: SignalKind) -> Result<Signal, SignalError> {
 
 /// The text of `error` with no ` (os error N)` at its end: the text of
 /// `strerror`.
+///
+/// `readfile::os_text` replaces this copy when its body exists.
 fn os_text(error: &io::Error) -> String {
     let text = error.to_string();
     let Some(code) = error.raw_os_error() else {

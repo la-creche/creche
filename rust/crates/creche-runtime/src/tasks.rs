@@ -72,6 +72,10 @@ const LOG_TARGET: &str = "tasks";
 ///
 /// `service::run` calls this one time for each process.
 ///
+/// The Python origin is `SignalControl.__init__` of
+/// `caregiver/src/caregiver/loop.py:1213-1215`, which makes the stop event
+/// of a process.
+///
 /// ```
 /// use creche_runtime::tasks::shutdown_pair;
 ///
@@ -148,6 +152,11 @@ impl Shutdown {
 /// `service::run` holds one and triggers it after `main` returns. No task of
 /// a service gets one.
 ///
+/// The Python origins are `stop` of
+/// `attendance/src/attendance/__main__.py:201-203` and `_on_stop` of
+/// `caregiver/src/caregiver/loop.py:1237-1240`. Each one is the handler of
+/// SIGTERM and of SIGINT, and it sets the stop flag of its service.
+///
 /// ```
 /// use creche_runtime::tasks::{ShutdownTrigger, shutdown_pair};
 ///
@@ -173,6 +182,9 @@ pub struct ShutdownTrigger {
 
 impl ShutdownTrigger {
     /// Triggers the stop signal. A second call has no effect.
+    ///
+    /// The Python origin is `_on_stop` of
+    /// `caregiver/src/caregiver/loop.py:1237-1240`.
     pub fn trigger(&self) {
         self.token.cancel();
     }
@@ -221,6 +233,10 @@ pub struct Tasks {
 
 impl Tasks {
     /// An empty set of tasks that stops at `shutdown`.
+    ///
+    /// The Python origin is each field in which a service keeps its tasks,
+    /// for example the three of
+    /// `attendance/src/attendance/service.py:210-212`.
     #[must_use]
     pub fn new(shutdown: Shutdown) -> Self {
         Self {
@@ -253,6 +269,10 @@ impl Tasks {
     /// The Python origin is the done-callback of
     /// `attendance/src/attendance/tasks.py:17-31`. It writes one line for a
     /// task that ended with an error.
+    ///
+    /// This function writes a line only for a panic. A task whose value is
+    /// an `Err` writes its own line: a caller that dropped the
+    /// [`Completion`] does not read that value.
     pub fn spawn_must_complete<F>(&self, name: &'static str, work: F) -> Completion<F::Output>
     where
         F: Future + Send + 'static,
@@ -646,8 +666,11 @@ impl<T> Future for Completion<T> {
 pub enum TaskLost {
     /// The task panicked. The log holds one `ERROR` line with its name.
     Panicked,
-    /// The runtime stopped before the task ended, or no runtime ran on the
-    /// thread that started the task.
+    /// The task gave no value, for one of three causes:
+    ///
+    /// 1. The runtime stopped before the task ended.
+    /// 2. No runtime ran on the thread that started the task.
+    /// 3. The caller polled the [`Completion`] again after its output.
     Cancelled,
 }
 
@@ -735,11 +758,16 @@ mod tests {
 
     /// Each difference from a Python copy, on purpose. No vector covers this
     /// module, so a row names the Python file and the line.
-    const DEVIATIONS: [(&str, &str); 5] = [
+    const DEVIATIONS: [(&str, &str); 6] = [
         (
             "attendance/src/attendance/tasks.py:31",
             "Python writes the error of the task and its trace. The line here holds only the \
              name of the task: the message of a panic can hold a part of a request.",
+        ),
+        (
+            "attendance/src/attendance/tasks.py:26-31",
+            "Python writes a line for each task that ended with an error. `Tasks` writes a \
+             line only for a panic. A task whose value is an `Err` writes its own line.",
         ),
         (
             "attendance/src/attendance/service.py:319",
