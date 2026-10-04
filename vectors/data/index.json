@@ -172,7 +172,7 @@
   {"accepted":20,"entry":"chaperone.delegate.read_door_token","path":"runtime/token.delegate.json","raised":0,"refused":27,"surface":"runtime.token.delegate","vectors":47},
   {"accepted":22,"entry":"agent_door_trigger.tokens.read_webhook_token","path":"runtime/token.webhook.json","raised":0,"refused":28,"surface":"runtime.token.webhook","vectors":50},
   {"accepted":41,"entry":"caregiver.switch.read_token","path":"runtime/token.caregiver.json","raised":0,"refused":9,"surface":"runtime.token.caregiver","vectors":50},
-  {"accepted":9,"entry":"attendance.api.build_app, the caller of attendance.auth.TokenBook.identify","path":"runtime/bearer.attendance.json","raised":0,"refused":16,"surface":"runtime.bearer.attendance","vectors":25},
+  {"accepted":9,"entry":"attendance.auth.TokenBook.identify, through the route GET /v1/sessions of attendance.api.build_app","path":"runtime/bearer.attendance.json","raised":0,"refused":16,"surface":"runtime.bearer.attendance","vectors":25},
   {"accepted":2,"entry":"agent_door_owui.app.create_app, the route GET /v1/models","path":"runtime/bearer.door_owui.json","raised":0,"refused":23,"surface":"runtime.bearer.door_owui","vectors":25},
   {"accepted":9,"entry":"agent_door_trigger.webhooks.create_app, the route POST /triggers/chat/hook","path":"runtime/bearer.door_trigger.json","raised":0,"refused":16,"surface":"runtime.bearer.door_trigger","vectors":25},
   {"accepted":11,"entry":"chaperone.app.create_app, the route POST /approval/0123456789abcdef","path":"runtime/bearer.chaperone.json","raised":0,"refused":14,"surface":"runtime.bearer.chaperone","vectors":25},

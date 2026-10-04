@@ -1262,16 +1262,23 @@ class Copy:
     notes: tuple[str, ...]
 
 
+_NOTE_LATIN: Final = "The web framework decodes the bytes of a header as Latin-1."
+_NOTE_SCHEME: Final = (
+    "The copy takes a text that starts with Bearer and one space, in that case of letters."
+)
 _NOTE_STRIP: Final = (
-    "The web framework decodes the bytes of a header as Latin-1. The copy removes the "
-    "whitespace of Python str.strip from the two ends of the text after the scheme. Then it "
-    "encodes the text as UTF-8 and compares the bytes with the token."
+    f"{_NOTE_LATIN} {_NOTE_SCHEME} It removes the whitespace of Python str.strip from the "
+    "two ends of the rest. Then it encodes the rest as UTF-8 and compares the bytes with "
+    "the token."
 )
 
 COPIES: Final[tuple[Copy, ...]] = (
     Copy(
         name="attendance",
-        entry="attendance.api.build_app, the caller of attendance.auth.TokenBook.identify",
+        entry=(
+            "attendance.auth.TokenBook.identify, through the route GET /v1/sessions of "
+            "attendance.api.build_app"
+        ),
         contract="contract 02 §3 rules 4 and 6, §3.1",
         ask=_AttendanceGate.ASK,
         build=_AttendanceGate,
@@ -1292,9 +1299,8 @@ COPIES: Final[tuple[Copy, ...]] = (
         notes=(
             "context.token is the key of the door. An accepted vector gets HTTP 200. A "
             "refused vector gets HTTP 401.",
-            "The web framework decodes the bytes of a header as Latin-1. The copy removes "
-            "nothing from the text after the scheme. It encodes the text as UTF-8 and "
-            "compares the bytes with the key.",
+            f"{_NOTE_LATIN} {_NOTE_SCHEME} It removes nothing from the rest. It encodes "
+            "the rest as UTF-8 and compares the bytes with the key.",
         ),
     ),
     Copy(
@@ -1321,10 +1327,10 @@ COPIES: Final[tuple[Copy, ...]] = (
             '{"decision":"approve"}. A refused vector gets HTTP 403 with the reason '
             "unknown_token. An accepted vector gets another answer: the chaperone of the "
             "generator has no phone rail, so it answers HTTP 501.",
-            "The copy splits the header at the first space. It compares the scheme with no "
-            "regard to case. Then it removes the whitespace of Python str.strip from the two "
-            "ends of the rest, encodes the text as UTF-8 and compares the bytes with the "
-            "token. The web framework decodes the bytes of a header as Latin-1.",
+            f"{_NOTE_LATIN} The copy splits the text at the first space. It takes the "
+            "scheme bearer in each case of letters. Then it removes the whitespace of Python "
+            "str.strip from the two ends of the rest, encodes the rest as UTF-8 and compares "
+            "the bytes with the token.",
         ),
     ),
 )
