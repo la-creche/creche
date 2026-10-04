@@ -342,6 +342,43 @@ describe("turns", () => {
     await until(() => harness.of("turn_failed").length === 1, "the refusal");
     expect(harness.of("turn_failed")[0]?.reason).toBe("session_busy_in_sandbox");
   });
+
+  it("refuses a second turn that waited for the same pi process", async () => {
+    // §6 rule 2. The three lines arrive in one chunk, so both turns wait for
+    // the process that `open_session` starts.
+    const harness = open();
+    harness.start();
+    harness.hello();
+
+    const process = {
+      session: "owui-pair",
+      cwd: harness.cwd("owui-pair"),
+      session_dir: harness.sessionDir("owui-pair"),
+      env_epoch: 1,
+      config_rev: "reg-test",
+    };
+    const start = { ...process, type: "start_turn", prompt: "hello", deadline_s: 30 };
+    harness.sendRaw(
+      [
+        JSON.stringify({ ...process, type: "open_session" }),
+        JSON.stringify({ ...start, turn: turnId(1) }),
+        JSON.stringify({ ...start, turn: turnId(2) }),
+      ].join("\n"),
+    );
+
+    await until(() => harness.of("turn_settled").length === 1, "the first turn");
+    await until(() => harness.of("turn_failed").length === 1, "the refusal");
+
+    const failed = harness.of("turn_failed")[0];
+    const seqs = eventsOf(harness, turnId(1)).map((event) => event.turn_seq);
+
+    expect(harness.of("turn_settled")[0]?.turn).toBe(turnId(1));
+    expect(seqs).toEqual(seqs.map((_, at) => at + 1));
+    expect(failed?.turn).toBe(turnId(2));
+    expect(failed?.reason).toBe("session_busy_in_sandbox");
+    expect(failed?.turn_seq).toBe(1);
+    expect(eventsOf(harness, turnId(2))).toHaveLength(0);
+  });
 });
 
 describe("steer and abort", () => {

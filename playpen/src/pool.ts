@@ -233,6 +233,11 @@ export class SessionPool {
       return;
     }
 
+    // §6 rule 2 again. Another turn can take the process while this one waits.
+    if (this.busyWith(message)) {
+      return;
+    }
+
     await this.runTurn(opened.session, message);
   }
 
