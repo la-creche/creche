@@ -25,6 +25,8 @@ use super::{LoadError, PYTHON_INT_DIGITS};
 const MERGE_DEPTH_MAX: usize = 400;
 
 /// The largest count of entries that the merge keys of one text can make.
+/// A merged value with no entry counts as one entry, as in the Python
+/// reader.
 ///
 /// CONTRACT-QUESTION: contract 01 gives no limit for the entries that merge
 /// keys make. The reading here is a limit, so that a short text cannot make
@@ -540,7 +542,9 @@ impl Constructor {
     }
 
     fn count_merged(&mut self, added: usize) -> Result<(), LoadError> {
-        self.merged_entries = self.merged_entries.saturating_add(added);
+        // A value with no entry counts as one entry, so that the limit
+        // also holds the count of values that a text merges.
+        self.merged_entries = self.merged_entries.saturating_add(added.max(1));
         if self.merged_entries > MERGED_ENTRIES_MAX {
             return Err(no_value("the merge keys make too many entries"));
         }
