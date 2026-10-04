@@ -53,6 +53,10 @@ def read_object(path: Path, limit: int = MAX_DOC_BYTES) -> tuple[Json | None, st
         # A permission error belongs here too: the noticeboard's user may not be in
         # the writer's group yet (README gotcha 4).
         return None, f"cannot read {path.name}: {error.strerror or error}"
+    except ValueError:
+        # A name with a NUL is no path, and `open` raises this type for it.
+        # A status document names its report by path, so the name is input.
+        return None, f"cannot read {path.name!r}: the system takes no such path"
 
     if len(raw) > limit:
         return None, f"{path.name} is over {limit} bytes; refusing to parse it"
