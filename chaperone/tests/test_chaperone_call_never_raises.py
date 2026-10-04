@@ -23,6 +23,7 @@ from typing import Final
 import httpx
 import pytest
 from chaperone.app import PepConfig, create_app
+from chaperone.dispatch import DispatchDoor, DispatchReply, DispatchRequest, JobQuery, JobsReply
 from chaperone.family_app import FamilyGate
 from chaperone.family_audit import (
     AUDIT_ARG_STRING_MAX_CHARS,
@@ -101,6 +102,7 @@ def build(
     pool: FakePool | None = None,
     gatekeeper: Gatekeeper | None = None,
     requests: list[httpx.Request] | None = None,
+    dispatch_door: DispatchDoor | None = None,
 ) -> TestClient:
     def handle(request: httpx.Request) -> httpx.Response:
         if requests is not None:
@@ -120,6 +122,7 @@ def build(
         pool=pool or FakePool(),
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
         gatekeeper=gatekeeper,
+        dispatch_door=dispatch_door,
     )
     client = TestClient(app, raise_server_exceptions=False)
     client.__enter__()  # run lifespan
@@ -331,6 +334,50 @@ def test_a_result_that_no_reply_can_carry_is_an_upstream_failure(tmp_path: Path)
 
     assert reply.status_code == 502
     assert reply.json()["reason"] == "upstream_failed"
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("allow", "upstream_failed")
+
+
+class NotANumber:
+    """A dispatch door whose list of jobs holds a number that strict JSON
+    cannot write."""
+
+    async def enqueue(self, request: DispatchRequest) -> DispatchReply:
+        raise AssertionError("this door takes no job")
+
+    async def jobs(self, query: JobQuery) -> JobsReply:
+        return JobsReply(jobs=[{"session": "auto-1", "cost": float("nan")}])
+
+
+def test_a_result_with_a_number_that_is_not_finite_is_an_upstream_failure(
+    tmp_path: Path,
+) -> None:
+    """The reply of this PEP is strict JSON, which has no word for such a
+    number. The line says `upstream_failed` before the answer goes out."""
+    write_grants(grants_dir(tmp_path), make_grants(verbs={"job_status": {}}))
+    client = build(tmp_path, dispatch_door=NotANumber())
+
+    reply = call(client, body_of("job_status", "{}"))
+
+    assert reply.status_code == 502
+    assert reply.json()["reason"] == "upstream_failed"
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("allow", "upstream_failed")
+
+
+def test_a_failure_text_that_is_not_text_still_reaches_the_caller(tmp_path: Path) -> None:
+    """The text of an upstream failure is text of another process. The
+    reply carries it, with an escape for what has no UTF-8 form."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    pool = FakePool()
+    pool.fail_with = "the server said \ud800"
+    client = build(tmp_path, pool=pool)
+
+    reply = call(client, body_of(SEARCH, '{"query":"x"}'))
+
+    assert reply.status_code == 502
+    assert reply.json()["reason"] == "upstream_failed"
+    assert reply.json()["detail"] == "the server said \\ud800"
     [record] = family_lines(tmp_path)
     assert (record["decision"], record["reason"]) == ("allow", "upstream_failed")
 
