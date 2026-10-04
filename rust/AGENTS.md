@@ -33,7 +33,7 @@ defect that a test finds late.
 | `grants` | The grant file, the call body, the approval body and the audit record: contract 04. |
 | `status` | The status document: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
-| `config` | The config of each process. |
+| `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
 ## Where a new type goes
@@ -306,9 +306,9 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- Eight modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session`, `channel`, `grants`, `status`, `manifest`
-  and `config`.
+- Seven modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session`, `channel`, `grants`, `status` and
+  `manifest`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
@@ -340,3 +340,51 @@ Rules for the test:
   1. A version number of 4300 digits. The number does not fit `u64`.
   2. A version number with a zero at its start.
   3. A sandbox number with a zero at its start.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/config/`:
+  1. `LanAddress`. No contract gives the LAN address of the site file a
+     grammar. One Python copy of six takes labels with dots, and five take
+     each text. The type takes the strictest copy. It also refuses `0.0.0.0`
+     and a text that ends in a number and is not one IPv4 address.
+  2. `BindHost`, contract 02 §3 rule 2. The contract gives no grammar. The
+     type takes an IP address or a host name, and refuses each spelling of
+     each interface.
+  3. `SocketPath`, `DirPath`, `TokenFilePath` and `FilePath`. No contract
+     gives a config path a grammar. The types refuse a relative path and a
+     NUL byte. `SocketPath` has the cap of 107 bytes.
+  4. `Seconds`, contract 03 §11.4 rule 4. The contract does not say which
+     numbers are permitted. The type refuses a value that is not finite and
+     a value of less than 1 nanosecond.
+  5. `HttpUrl`. No contract gives a config URL a grammar. The type demands
+     `http://` or `https://` and a host, and refuses a user part.
+  6. `attendance::ChannelCommand`, contract 03 §1. The contract gives one
+     command and no grammar for another one. The type refuses a text that
+     does not split into words.
+  7. `caregiver::ImageRef`, contract 01 §3.9. The contract gives an image
+     reference no grammar. The type demands a reference with a digest.
+  8. `mounts::ModelAlias`, contract 01 §3.2. The contract gives no cap. The
+     type has the cap of 128 bytes.
+  9. `roster`, `stage7-releases.md` §4.4. The contract names no YAML
+     version. The module holds no YAML reader.
+- No type reads the text of a roster file, and no type writes it. PyYAML
+  reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
+  the crate selects one. `roster::RawRoster` then takes its tree.
+- `config::mounts` defines `ModelAlias`, `SandboxTool` and `SystemPrompt`.
+  The family file uses the same three. The owner of the crate moves them
+  when the `family` module has its types.
+- The config types follow the Python readers where a reader is lax against
+  a contract. The owner decides each case. Three examples:
+  1. `creds.json` with an `epoch` that is `true`, `7.9` or `"7"`.
+  2. A roster row with an empty `command`, or with a name that is no server
+     name.
+  3. A `VIEW_COOKIE_SECURE` of `off`, which leaves the switch on.
+- No vector covers five configs: the chaperone without its `site` readers,
+  the caregiver, the two doors and the intake. No Python entry point takes
+  their variables as a map. The tests of those types use a copy of the
+  variables of each unit file. No test holds a copy equal to its unit file,
+  except for the names of the variables.
+- No vector covers a reader of the playpen. `mounts::RuntimeView` follows
+  `playpen/src/runtime-config.ts`, and its tests are a copy of that file.
+- No unit file holds `RestartPreventExitStatus=78`, and no service exits
+  with 78 for each config error. The failure action of each config type
+  states what the port of its service must do.
