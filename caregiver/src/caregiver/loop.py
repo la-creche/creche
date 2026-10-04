@@ -5,6 +5,8 @@
          -> per family: behind or its document going stale?
                         -> start ITS pass, in its own thread
                         -> already in flight? restamp its document instead
+                        -> no slot, and its document is another process's?
+                           look at it once, beyond the bound (`_look_at`)
          -> wait out the poll interval
 
 ## Why the families do not take turns
@@ -51,6 +53,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from pathlib import Path
 from types import FrameType
 from typing import Any, Final, Protocol
@@ -67,7 +70,7 @@ from .mcp_wire import McpReport, mcp_pass
 from .reconcile import Actors, SpendRead, reconcile_family
 from .released import ReleasedImages
 from .rotate import settle
-from .status import restamp_status
+from .status import published_here, restamp_status
 from .timers import remove_timers
 
 log = logging.getLogger("caregiver.loop")
@@ -217,6 +220,13 @@ class Said:
             return one.count
 
 
+class Slot(StrEnum):
+    """Whether a thread counts against the bound of `Passes`."""
+
+    BOUNDED = "bounded"
+    BEYOND = "beyond"
+
+
 class Passes:
     """The families that have a pass in flight, and the bound on how many.
 
@@ -248,15 +258,21 @@ class Passes:
             ", ".join(sorted(self.running())) or "-",
         )
 
-    def start(self, name: str, work: Callable[[], None]) -> bool:
+    def start(self, name: str, work: Callable[[], None], *, slot: Slot = Slot.BOUNDED) -> bool:
         """Run `work` for `name` in its own thread. Answers False when a
         pass of `name` is already in flight, or the bound is full.
+
+        `Slot.BEYOND` skips the bound and nothing else. It is for a look
+        (`_look_at`), which runs no slow step: the bound exists because a
+        create holds its thread for minutes, and a look ends in the time
+        its cheap steps take.
 
         The thread is a daemon: a step that outruns the stop grace is one
         `serve` has already decided to abandon, and what it leaves behind
         is what the next start recovers from (contract 05 §4.2)."""
         with self._done:
-            if name in self._running or len(self._running) >= self._bound:
+            full = slot is Slot.BOUNDED and len(self._running) >= self._bound
+            if name in self._running or full:
                 return False
 
             self._running.add(name)
@@ -755,6 +771,8 @@ def _dispatch_one(
 
             return True
 
+        _look_at(config, actors, registry, name, state, passes, spend)
+
     if _keep_fresh(config, name):
         # The document is fresh, so this family is not due on the heartbeat
         # half until the next one comes round. Without this the loop would
@@ -763,6 +781,50 @@ def _dispatch_one(
         state.note(name, published_at=time.monotonic())
 
     return False
+
+
+def _look_at(
+    config: LoopConfig,
+    actors: Actors,
+    registry: Registry,
+    name: str,
+    state: LoopState,
+    passes: Passes,
+    spend: SpendRead,
+) -> None:
+    """Give a family that waits for a slot this process's own document.
+
+    Contract 05 §2 rule 8 forbids a restamp of a document another process
+    wrote: it is a verdict about another commit, another image, or both. So
+    a family that waits behind four creates after a restart kept the OLD
+    document for minutes, a reader called it `unknown` past 90 seconds, and
+    the verify hook failed on `heartbeat` (2026-10-04, a release that
+    restarted the manager while the fleet moved onto a new image).
+
+    Rule 8 ends "until this process has looked", and this is that look: the
+    family's own pass, with a stop that is already set. Every cheap step
+    runs. The pass halts in front of the first slow one, which is every
+    place `reconcile._halt_if` stands, and publishes what it found. A
+    family with nothing slow to do is converged by it, and says `in_sync`.
+    A family with a create to run says `reconciling`, never `in_sync`
+    (`reconcile._publish`), and stays behind, so it takes the next slot.
+
+    Once per family per process. The look publishes, so from then on the
+    document is this process's and `_keep_fresh` restamps it. A family with
+    no document at all is not looked at: nothing stale is being read, and
+    its first pass is the one that should say what it is."""
+    path = paths.status_path(config.state_root, name)
+    if name in passes.running() or published_here(path) or not path.is_file():
+        return
+
+    work = _pass(config, actors, registry, name, state, spend, _already_stopped)
+    if passes.start(name, work, slot=Slot.BEYOND) and spend is SpendRead.READ:
+        state.note(name, spend_at=time.monotonic())
+
+
+def _already_stopped() -> bool:
+    """The stop of a look: set before the pass begins."""
+    return True
 
 
 def _due(config: LoopConfig, slot: FamilyLoop, revision: str) -> bool:
@@ -907,6 +969,14 @@ def _pass(
         # One line per family per pass, the family name first, so two
         # interleaved families are still followable.
         log.info("%s", result.log_line())
+        if result.halted:
+            # No `revision`: a pass that stopped in front of a slow step
+            # converged to nothing, so the family is still behind and the
+            # next free slot is its own. This is how a look hands over to
+            # the pass (`_look_at`).
+            state.note(name, published_at=time.monotonic())
+            return
+
         failed = any(one.code == SANDBOX_START_FAILED for one in result.status.faults)
         state.note(
             name,

@@ -362,6 +362,42 @@ def test_a_docs_only_merge_produces_no_tag(repo: Path, shims: Path, tmp_path: Pa
 
 
 @pytest.mark.slow
+def test_a_prose_only_merge_under_a_component_produces_no_tag(
+    repo: Path, shims: Path, tmp_path: Path
+) -> None:
+    """The follower files a release request for each new tag. A tag for an
+    edit to `noticeboard/AGENTS.md` would ask the operator to release
+    nothing."""
+    _seed_first_tags(repo)
+    _commit(repo, "noticeboard/AGENTS.md")
+
+    done = _run(repo, shims, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert "no component touched" in done.stdout
+    assert _tags(repo) == FIRST_TAGS
+
+
+@pytest.mark.slow
+def test_a_code_merge_after_a_prose_merge_gets_one_tag(
+    repo: Path, shims: Path, tmp_path: Path
+) -> None:
+    """The window is the component's own: it opens at its newest tag. The
+    prose merge left it open, so the tag of the code merge covers both."""
+    _seed_first_tags(repo)
+    _commit(repo, "noticeboard/AGENTS.md")
+    assert _run(repo, shims, tmp_path).returncode == 0
+
+    code = _commit(repo, "noticeboard/src/page.py")
+    done = _run(repo, shims, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
+    assert _git(repo, "rev-list", "-n1", "noticeboard-v0.1.1") == code
+    assert "2 commit(s) since noticeboard-v0.1.0" in done.stdout
+
+
+@pytest.mark.slow
 def test_a_bump_label_raises_the_level(repo: Path, shims: Path, tmp_path: Path) -> None:
     _seed_first_tags(repo)
     _commit(repo, "chaperone/src/one.py")
