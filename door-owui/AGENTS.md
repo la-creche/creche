@@ -44,6 +44,7 @@ The door holds no session state. `attendance` owns the transcript.
 | a chat id of more than 123 characters | `400 bad_id`, before the door calls `attendance` |
 | a second door holds the writer lease | `409 session_busy`, also for a streamed request |
 | `attendance` does not answer | `502 attendance_unreachable`, also for a streamed request |
+| a failure that no handler names, before the first frame | `500 internal` in the OpenAI error shape. The log holds the traceback. |
 | the family is reconciling, degraded, or invalid with a last good definition | still served |
 | a turn ends any way other than `settled` | a visible OpenAI-shaped error chunk |
 | the client disconnects mid-stream | streaming stops, the turn keeps running |

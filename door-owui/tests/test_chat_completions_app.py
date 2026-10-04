@@ -444,3 +444,30 @@ def test_a_body_that_nests_too_deep_is_a_400_in_the_error_shape(tmp_path: Path) 
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "bad_body"
+
+
+# --- a failure that no handler names ---
+
+
+class _BrokenAttendance(FakeAttendance):
+    """Raises an error that the door has no handler for."""
+
+    async def ensure_session(self, family: str, session: str) -> None:
+        raise RuntimeError("a defect of the door")
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_an_unexpected_failure_is_a_500_in_the_error_shape(tmp_path: Path, stream: bool) -> None:
+    config = _config(tmp_path)
+    app = create_app(config, _BrokenAttendance(), StatusFiles(config.families_dir))
+    # The server raises the error again after the answer, so that its log
+    # holds the traceback. The test reads the answer.
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post("/v1/chat/completions", headers=_headers(), json=_body(stream=stream))
+
+    assert response.status_code == 500
+    error = response.json()["error"]
+    assert error["code"] == "internal"
+    assert error["type"] == "server_error"
+    assert "a defect of the door" not in error["message"]

@@ -23,9 +23,11 @@ from .attendance import AttendanceClient, AttendanceError, StreamBroken, TurnReq
 from .config import DoorConfig
 from .errors import (
     HTTP_BAD_REQUEST,
+    HTTP_INTERNAL,
     HTTP_UNAUTHORIZED,
     DoorError,
     ErrorType,
+    error_body,
     from_attendance,
     turn_failure,
 )
@@ -74,6 +76,12 @@ _BACKGROUND_TASK_MESSAGE = (
     "the external task model to a plain model."
 )
 
+# What the door answers for a failure that no handler names. The text holds
+# no detail of the failure: the text of an exception can hold what a client
+# must not read. The log of the server holds the traceback.
+_UNEXPECTED_CODE = "internal"
+_UNEXPECTED_MESSAGE = "the door failed on this request. The log of the door has the cause."
+
 
 def create_app(
     config: DoorConfig, attendance: AttendanceClient, families: FamilyDirectory
@@ -95,6 +103,17 @@ def create_app(
     ) -> JSONResponse:
         mapped = from_attendance(exc.code, exc.message)
         return JSONResponse(status_code=mapped.status, content=mapped.body())
+
+    @app.exception_handler(Exception)
+    async def _on_unexpected(  # pyright: ignore[reportUnusedFunction]
+        _request: Request, _exc: Exception
+    ) -> JSONResponse:
+        # The last handler. Open WebUI shows `error.message` of the OpenAI
+        # shape and nothing else, so a failure with no handler of its own
+        # still answers in that shape. The server raises the error again
+        # after the answer, and its log then holds the traceback.
+        body = error_body(_UNEXPECTED_MESSAGE, code=_UNEXPECTED_CODE, error_type=ErrorType.SERVER)
+        return JSONResponse(status_code=HTTP_INTERNAL, content=body)
 
     @app.get("/v1/models")
     async def list_models(request: Request) -> dict[str, object]:  # pyright: ignore[reportUnusedFunction]
