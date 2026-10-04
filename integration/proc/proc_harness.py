@@ -35,11 +35,12 @@ READY_DEADLINE_S: Final = 30.0
 #: How long a command that runs to its end may take.
 RUN_DEADLINE_S: Final = 30.0
 
-#: How long a group has after SIGTERM before SIGKILL.
-STOP_GRACE_S: Final = 10.0
+#: How long a group has after SIGTERM before SIGKILL. An idle service stops
+#: in well under a second. The shortest `TimeoutStopSec` of a unit is 20.
+STOP_GRACE_S: Final = 20.0
 
 #: How long a killed group has to leave the process table.
-REAP_DEADLINE_S: Final = 5.0
+REAP_DEADLINE_S: Final = 10.0
 
 _POLL_S: Final = 0.02
 _PROBE_TIMEOUT_S: Final = 1.0

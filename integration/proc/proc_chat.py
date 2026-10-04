@@ -26,7 +26,7 @@ TURN_SETTLED: Final = "turn_settled"
 TURN_FAILED: Final = "turn_failed"
 
 SETTLE_DEADLINE_S: Final = 30.0
-_DEFAULT_DEADLINE_S: Final = 10.0
+_DEFAULT_DEADLINE_S: Final = 30.0
 _POLL_S: Final = 0.01
 
 

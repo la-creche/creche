@@ -55,7 +55,7 @@ _IMAGE_SEAMS: Final = ("AGENT_PI_BIN", "AGENT_LOCK_BEAT_MS")
 
 #: How long a stand-in process has to end after its service ended. The
 #: playpen exits when its stdin closes, and pi exits when the playpen does.
-_EXIT_DEADLINE_S: Final = 5.0
+_EXIT_DEADLINE_S: Final = 10.0
 
 _ORDER_FILE: Final = "order"
 _ARGV_SUFFIX: Final = ".argv"
