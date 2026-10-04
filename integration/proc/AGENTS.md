@@ -71,15 +71,17 @@ CRECHE_PROC_ATTENDANCE=/path/to/the/binary uv run pytest integration/proc -m slo
 
 The value replaces every word of the default command. The suite splits the
 value as a shell does, so the value can hold arguments. The test adds the
-arguments that the unit adds, for example `--check`.
+arguments that the unit adds, for example `--check`. The suite makes a
+relative path absolute, because a service starts in the root of its test.
 
 The binary must read the same environment variables as the service it
 replaces, and it must accept the same arguments. The suite gives it nothing
 else.
 
-A variable that is set and empty is an error. A variable that names no
-program is an error. The suite never returns to the default command. A run
-that judged the default would look like a run that judged the binary.
+A variable that is set and empty is an error. A value with an open quote is
+an error. A variable that names no program is an error. The suite never
+returns to the default command. A run that judged the default would look
+like a run that judged the binary.
 
 Every variable of the suite starts with `CRECHE_PROC_`. A variable with that
 start that the suite does not read stops the run before the first test. A

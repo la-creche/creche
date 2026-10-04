@@ -88,6 +88,26 @@ def test_an_override_that_names_no_program_is_an_error(tmp_path: Path) -> None:
         command_of(Service.NOTICEBOARD, {"CRECHE_PROC_NOTICEBOARD": str(missing)})
 
 
+def test_an_override_with_an_open_quote_is_an_error() -> None:
+    """The error names the variable, as each other error of an override does."""
+    with pytest.raises(CommandError, match="CRECHE_PROC_ATTENDANCE is not a command line"):
+        command_of(Service.ATTENDANCE, {"CRECHE_PROC_ATTENDANCE": "/bin/sh 'open"})
+
+
+def test_a_relative_override_becomes_an_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A service starts in the root of its test, where a relative path names nothing."""
+    program = _program(tmp_path / "other-attendance")
+    monkeypatch.chdir(tmp_path)
+
+    command = command_of(Service.ATTENDANCE, {"CRECHE_PROC_ATTENDANCE": "./other-attendance -x"})
+
+    assert Path(command.words[0]).is_absolute()
+    assert Path(command.words[0]).samefile(program)
+    assert command.words[1:] == ("-x",)
+
+
 def test_a_misspelled_variable_is_found() -> None:
     """Fail closed. A name that no row has would leave the default in place."""
     environ = {

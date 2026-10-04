@@ -150,10 +150,10 @@ def venv_bin() -> Path:
 def command_of(service: Service, environ: Mapping[str, str] | None = None) -> StartCommand:
     """The words that start `service`. The override wins when it is set.
 
-    Fail closed. An override that is set and empty, or that names no
-    program, is an error and never a fallback to the default: a run that
-    believes it judged another binary and judged the default is worse than
-    a run that stops.
+    Fail closed. An override that is set and empty, that is no command
+    line, or that names no program, is an error and never a fallback to the
+    default: a run that believes it judged another binary and judged the
+    default is worse than a run that stops.
     """
     source = os.environ if environ is None else environ
     entry = SERVICES[service]
@@ -162,15 +162,21 @@ def command_of(service: Service, environ: Mapping[str, str] | None = None) -> St
     if raw is None:
         return _default_command(service, entry)
 
-    words = shlex.split(raw)
+    try:
+        words = shlex.split(raw)
+    except ValueError as error:
+        raise CommandError(f"{entry.override} is not a command line: {error}") from error
 
     if not words:
         raise CommandError(f"{entry.override} is set and empty. Unset it or name a program.")
 
-    if shutil.which(words[0], path=source.get("PATH")) is None:
+    program = shutil.which(words[0], path=source.get("PATH"))
+
+    if program is None:
         raise CommandError(f"{entry.override} names {words[0]}, which is not a program.")
 
-    return StartCommand(words=tuple(words), origin=Origin.OVERRIDE)
+    # A service starts in the root of its test. A relative path names another file there.
+    return StartCommand(words=(os.path.abspath(program), *words[1:]), origin=Origin.OVERRIDE)
 
 
 def env_of(command: StartCommand) -> dict[str, str]:
