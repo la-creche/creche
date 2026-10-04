@@ -1237,25 +1237,25 @@ fn event(record: &mut JsonObject) -> Result<EventLine, Refusal> {
     })
 }
 
-fn usage(value: Option<&Json>) -> Result<Usage, Refusal> {
+fn usage(value: Option<&Json>) -> Usage {
     let empty = JsonObject::default();
     let record = value.and_then(Json::as_object).unwrap_or(&empty);
     let cost = match record.get("cost_usd") {
         Some(Json::Float(float)) => Cost::of(*float),
         Some(Json::Int(integer)) if integer.is_negative() => Cost::ZERO,
-        // Python raises `OverflowError` for an integer past the range of a
-        // float.
-        Some(Json::Int(integer)) => Cost::of(integer.to_f64().ok_or(Refusal::Malformed)?),
+        // An integer past the range of a float is no cost, as in the Python
+        // host.
+        Some(Json::Int(integer)) => integer.to_f64().map_or(Cost::ZERO, Cost::of),
         _ => Cost::ZERO,
     };
 
-    Ok(Usage {
+    Usage {
         input: count_or(record, "input", 0),
         output: count_or(record, "output", 0),
         cache_read: count_or(record, "cache_read", 0),
         cache_write: count_or(record, "cache_write", 0),
         cost_usd: cost,
-    })
+    }
 }
 
 fn settled(record: &JsonObject) -> Result<SettledLine, Refusal> {
@@ -1266,7 +1266,7 @@ fn settled(record: &JsonObject) -> Result<SettledLine, Refusal> {
         turn,
         turn_seq,
         resident: flag(record, "resident"),
-        usage: usage(record.get("usage"))?,
+        usage: usage(record.get("usage")),
         user_entry_id: text_of(record, "user_entry_id"),
         leaf_id: text_of(record, "leaf_id"),
         entry_count: count_of(record, "entry_count"),
@@ -1765,12 +1765,9 @@ pub(super) mod tests {
         assert!(parse(&pong(&format!("{digits}.5"))).is_ok());
         assert!(parse(&pong("1e99999")).is_ok());
 
-        // An integer past the range of a float is `OverflowError` in Python.
+        // An integer past the range of a float is no cost.
         assert_eq!(cost(&format!("1{}", "0".repeat(308))), Ok(1e308));
-        assert_eq!(
-            cost(&format!("1{}", "0".repeat(309))),
-            Err(Refusal::Malformed)
-        );
+        assert_eq!(cost(&format!("1{}", "0".repeat(309))), Ok(0.0));
         assert_eq!(cost(&format!("-1{}", "0".repeat(309))), Ok(0.0));
         assert_eq!(cost("9007199254740993"), Ok(9_007_199_254_740_992.0));
         assert_eq!(cost("-0.0").map(f64::to_bits), Ok((-0.0_f64).to_bits()));

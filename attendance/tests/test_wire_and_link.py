@@ -381,6 +381,19 @@ def test_a_cost_that_is_not_finite_reads_as_no_cost(cost: str) -> None:
     assert json.dumps(settled.usage.to_api(), allow_nan=False)
 
 
+def test_an_integer_cost_past_a_float_reads_as_no_cost() -> None:
+    """Such an integer has no float. The line is still a settle, so the turn
+    does not wait for its deadline."""
+    settled = parse(
+        f'{{"type":"turn_settled","session":"{SESSION}","turn":"{TURN}","turn_seq":1,'
+        f'"usage":{{"input":7,"cost_usd":1{"0" * 309}}}}}'
+    )
+
+    assert isinstance(settled, SettledLine)
+    assert settled.usage.input == 7
+    assert settled.usage.cost_usd == 0.0
+
+
 def test_every_playpen_reason_maps_to_a_turn_reason() -> None:
     """Contract 03 §5.3. The host never forwards a reason verbatim."""
     mapped = {reason: host_reason(reason) for reason in PlaypenReason}

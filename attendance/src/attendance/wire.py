@@ -966,12 +966,16 @@ def _money(value: object) -> float:
     """A cost from the sandbox, or 0.0 for a value that is no cost.
 
     NaN is not below zero, so the range check alone lets it pass. A cost
-    that is not finite has no JSON text, and an answer cannot hold it.
+    that is not finite has no JSON text, and an answer cannot hold it. An
+    integer past the range of a float has no float, and it is no cost too.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return 0.0
 
-    cost = float(value)
+    try:
+        cost = float(value)
+    except OverflowError:
+        return 0.0
 
     return cost if math.isfinite(cost) else 0.0
 
