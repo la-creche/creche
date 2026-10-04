@@ -126,6 +126,13 @@ def test_the_fixture_is_not_a_declaration() -> None:
 
 #: The flag that makes cargo build what the lock file pins, and refuse when
 #: the lock file is not up to date.
+#: CONTRACT-QUESTION: contract 06 §8 names no flag of a `build` argv. The
+#: reading taken holds the manifests of this repository to the flag in this
+#: file, and the executor runs a binary build argv as it is, as it runs a
+#: venv build argv. The stricter reading refuses, before the first argv
+#: runs, a binary build that does not carry the flag. It costs a rule about
+#: one build tool in the executor, and it refuses a build step that is not
+#: cargo.
 LOCKED = "--locked"
 
 

@@ -274,17 +274,19 @@ that wants a refusal changes one field.
   move a binary component: `rust/Cargo.lock`, `rust/Cargo.toml` and
   `rust/rust-toolchain.toml`. A `rust/.cargo/config.toml` moves none
   (`catalog.py`).
-- A component's kind is written in its catalog row and in its manifest. The
+- The catalog row and the manifest each state the kind of a component. The
   allocator reads the row and the executor reads the manifest. Only a test
   holds the two equal (`tests/test_handover_bin_lock_files.py`).
+- Only a test of this repository holds a binary build to `--locked`. The
+  executor does not check the flag (`tests/test_handover_bin_manifest.py`).
 - Contract 06 §8.2 names the code `editable` for a venv tree. A binary tree
   that is not self-contained gets the same code
   (`executor/selfcontained.py`).
-- A binary tree is refused when a file holds the path of the fetched work
-  tree. The walk cannot tell a path that a program opens from a path that
-  it only prints. Code that a build script generates can carry its own path
-  into a panic message. Such a build must remap the path. That path holds
-  the request id, so a fixed cargo configuration cannot name it
+- The executor refuses a binary tree when a file holds the path of the
+  fetched work tree. The walk cannot tell a path that a program opens from
+  a path that it only prints. Code that a build script generates can carry
+  its own path into a panic message. Such a build must remap the path. That
+  path holds the request id, so a fixed cargo configuration cannot name it
   (`executor/selfcontained.py`).
 - A binary build runs in the root of the fetched tree. A `rustup` proxy
   reads a toolchain file from the working directory and its parents, so it
