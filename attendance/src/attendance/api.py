@@ -35,6 +35,10 @@ HTTP_ACCEPTED = 202
 
 _LF = "\n"
 
+# Contract 02 §14's `message` for `internal`. It holds no text of the
+# exception: that text can name a path or a value of the host.
+_INTERNAL_MESSAGE = "an error in attendance stopped this request"
+
 
 def build_app(service: SessionService, tokens: TokenBook) -> FastAPI:
     """One app over one service. The caller owns both lifetimes."""
@@ -44,6 +48,16 @@ def build_app(service: SessionService, tokens: TokenBook) -> FastAPI:
     async def _refused(_: Request, error: ApiError) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         """Contract 02 §14's one body shape, for every failure."""
         return JSONResponse(status_code=error.status, content=error.body())
+
+    @app.exception_handler(Exception)
+    async def _failed(_: Request, __: Exception) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        """Contract 02 §14's `internal`, for an exception that no route expects.
+
+        A door reads the same body for each failure. The framework raises the
+        exception again after this answer, so the server still logs it.
+        """
+        refusal = ApiError(ErrorCode.INTERNAL, _INTERNAL_MESSAGE)
+        return JSONResponse(status_code=refusal.status, content=refusal.body())
 
     @app.post("/v1/sessions")
     async def _create(request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
