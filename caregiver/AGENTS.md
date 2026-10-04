@@ -257,6 +257,10 @@ Nothing here touches a real sandbox or LiteLLM.
 - `CONTRACT-QUESTION` in `mcp_release.py`. `stage7-releases.md` §4.4 gives
   no limit for a merge key in the roster. The roster reader uses the two
   limits of the Rust reader of a component manifest.
+- The two merge limits bound the memory of a roster read. They do not
+  bound its time. `MAX_ROSTER_BYTES` is the one bound on the time. A
+  roster at that cap took 2 to 18 seconds in the measured reads, and 221 MB
+  at most. The MCP pass runs on the loop thread (`mcp_release.py`).
 - A pass takes a `creds.json` that is present and does not read as an
   absent file. It mints a new key and a new token, writes epoch 1 and
   writes one error line. Contract 03 §12 rule 3 says that the epoch
