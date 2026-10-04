@@ -143,6 +143,9 @@ prefixed `test_noticeboard_`.
   (`pages.py`).
 - `spec.md` §8.1 names no answer for a route parameter that is not an id.
   The route answers the 404 of a path that has no route (`app.py`).
+- A save still rewrites two shapes that it did not edit (`yamlkeep.py`). The
+  first is a flow mapping inside a flow mapping. The second is a flow mapping
+  on a line past column 100.
 - A user unit started before its user joined the `agents` group cannot read
   the chaperone's 0640 audit files until the host reboots. The audit page
   shows a banner and renders the rest.
