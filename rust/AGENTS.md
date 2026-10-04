@@ -71,7 +71,8 @@ Each rule has its reason. Do not break a rule without a change to this file.
 5. **Do not use `unwrap`, `expect`, `panic!` or a `[]` index outside a test.**
    The lint gate refuses them. Write an exception as
    `#[expect(clippy::<lint>, reason = "...")]` on one item. Never write
-   `#[allow]`.
+   `#[allow]`. The lint gate refuses it. It also refuses an `#[expect]` that
+   gives no reason.
    Reason: each one stops the process on a value that the code did not
    expect. `#[expect]` fails the build when the exception is not necessary,
    and `#[allow]` stays.
@@ -131,6 +132,11 @@ the lints of rule 5 and these: `todo`, `unimplemented`, `unreachable`,
 `await_holding_lock`, `dbg_macro`, `exit` and `mem_forget`. It warns about a
 public type with no `Debug`. clippy runs with `-D warnings`, so a warning
 also fails the gate.
+
+Two more lints hold the exception rule of rule 5. `allow_attributes` denies
+each `#[allow]`. `allow_attributes_without_reason` denies an `#[expect]` that
+gives no reason. Without them, one attribute lifts the lint gate for an item
+or for a crate.
 
 `bin/tests/test_rust_workspace.py` pins each entry of the lint gate and of
 `clippy.toml`. To change an entry, change the pin in the same commit. Give

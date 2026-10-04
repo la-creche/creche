@@ -48,3 +48,8 @@ await_holding_lock = "deny"
 dbg_macro = "deny"
 exit = "deny"
 mem_forget = "deny"
+# The exception rule itself. An `#[allow]`, or an `#[expect]` with no reason,
+# lifts any lint above for one item or for a whole crate, and no build says
+# so.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"

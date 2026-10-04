@@ -59,6 +59,11 @@ CLIPPY_DENIED = (
     "dbg_macro",
     "exit",
     "mem_forget",
+    # The two that hold the exception rule itself: an `#[allow]`, or an
+    # `#[expect]` with no reason, would lift any lint above for one item or
+    # for a whole crate.
+    "allow_attributes",
+    "allow_attributes_without_reason",
 )
 
 #: The whole of `clippy.toml`: the four lints a test may break.
