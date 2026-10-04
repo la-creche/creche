@@ -20,11 +20,11 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final
 
 from agent_family import FamilyFile, FamilyState, Report
 
-from .atomic import atomic_write
+from .atomic import atomic_write, read_json
 from .chaperone_watch import PepReport, unwatched
 from .clock import now_rfc3339 as now_rfc3339
 from .faults import FaultEntry
@@ -352,15 +352,7 @@ def _age_s(path: Path) -> float:
 def _read_json(path: Path) -> dict[str, Any] | None:
     """The document as it stands. A document this process cannot read is
     one it must not rewrite: the next pass publishes a whole new one."""
-    try:
-        body = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    if not isinstance(body, dict):
-        return None
-
-    return cast("dict[str, Any]", body)
+    return read_json(path)
 
 
 def write_validation_report(path: Path, report: Report) -> None:

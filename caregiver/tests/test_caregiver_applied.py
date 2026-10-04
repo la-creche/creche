@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
-from caregiver.applied import forget_applied, read_applied, write_applied
-from caregiver_helpers import FAMILY_YAML
+from caregiver.applied import forget_applied, read_applied, read_applied_text, write_applied
+from caregiver_helpers import FAMILY_YAML, UNREADABLE_JSON
 
 from caregiver import paths
 
@@ -67,6 +68,20 @@ def test_an_unparseable_snapshot_reads_none(tmp_path: Path) -> None:
     write_chat(tmp_path)
     paths.applied_family_path(tmp_path, "chat").write_text("name: [broken\n", encoding="utf-8")
     assert read_applied(tmp_path, "chat") is None
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_a_meta_file_that_does_not_read_is_none(tmp_path: Path, raw: bytes) -> None:
+    write_chat(tmp_path)
+    paths.applied_meta_path(tmp_path, "chat").write_bytes(raw)
+    assert read_applied(tmp_path, "chat") is None
+
+
+def test_a_snapshot_that_is_not_utf8_reads_none(tmp_path: Path) -> None:
+    write_chat(tmp_path)
+    paths.applied_family_path(tmp_path, "chat").write_bytes(b"name: chat\xff\n")
+    assert read_applied(tmp_path, "chat") is None
+    assert read_applied_text(tmp_path, "chat") == ""
 
 
 def test_a_missing_meta_file_reads_none(tmp_path: Path) -> None:

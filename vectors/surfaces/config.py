@@ -36,6 +36,7 @@ from vectors.core import (
     accepted,
     attempt,
     bytes_input,
+    expand,
     normalize,
     quiet_logs,
     raised,
@@ -49,6 +50,9 @@ from vectors.core import (
 #: The largest count of digits in a text that `int` reads. A zero at the start
 #: is a digit of that count.
 INT_DIGITS_MAX: Final = 4300
+
+#: More levels than the JSON parser of each supported Python version reads.
+VERY_DEEP: Final = 400_000
 
 #: No design contract holds the site file. `handover.site` holds its rules.
 SITE_CONTRACT: Final = "no contract: the module text of handover.site"
@@ -568,6 +572,11 @@ class CredsDocument:
 
     id: str
     raw: bytes
+    #: The input form when the bytes are a long text. Empty means `raw`.
+    parts: tuple[tuple[str, int], ...] = ()
+
+    def data(self) -> bytes:
+        return expand(self.parts).encode("ascii") if self.parts else self.raw
 
 
 def _creds(doc_id: str, **replaced: str) -> CredsDocument:
@@ -591,11 +600,24 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     CredsDocument("trailing-text", _creds_text().encode() + b" x"),
     CredsDocument("space-around", b" \n\t" + _creds_text().encode() + b"\r\n"),
     CredsDocument("byte-order-mark", b"\xef\xbb\xbf" + _creds_text().encode()),
+    CredsDocument("not-utf8", _creds_text().encode().replace(b"sk-test-key", b"sk-test-\xff")),
+    CredsDocument("utf-16", _creds_text().encode("utf-16")),
     CredsDocument(
         "duplicate-epoch", _creds_text().replace('"epoch": 7', '"epoch": 1, "epoch": 7').encode()
     ),
     _creds("nan-in-unknown-key", extra="NaN"),
     _creds("unknown-key-130-levels", extra="[" * 130 + "]" * 130),
+    CredsDocument(
+        "unknown-key-very-deep",
+        b"",
+        parts=(
+            (_creds_text()[:-1] + ', "extra": ', 1),
+            ("[", VERY_DEEP),
+            ("]", VERY_DEEP),
+            ("}", 1),
+        ),
+    ),
+    _creds("unknown-key-4301-digits", extra="9" * (INT_DIGITS_MAX + 1)),
     # --- the epoch ---
     _creds("epoch-zero", epoch="0"),
     _creds("epoch-negative", epoch="-3"),
@@ -617,6 +639,10 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     _creds("epoch-float-2-to-63", epoch="9223372036854775807.0"),
     _creds("epoch-float-minus-2-to-63", epoch="-9223372036854775808.0"),
     _creds("epoch-nan", epoch="NaN"),
+    _creds("epoch-infinity", epoch="Infinity"),
+    _creds("epoch-negative-infinity", epoch="-Infinity"),
+    _creds("epoch-float-past-range", epoch="1e999"),
+    _creds("epoch-4301-digits", epoch="9" * (INT_DIGITS_MAX + 1)),
     _creds("epoch-text", epoch='"7"'),
     _creds("epoch-text-space", epoch='" 7 "'),
     _creds("epoch-text-sign", epoch='"+7"'),
@@ -672,9 +698,9 @@ def _creds_read_vector(document: CredsDocument, scratch: Path) -> Vector:
             target, credentials.Credentials(7, _KEY, _TOKEN, _WRITTEN, _OLD_TOKEN, _LATER)
         )
     else:
-        target.write_bytes(document.raw)
+        target.write_bytes(document.data())
 
-    given = bytes_input(target.read_bytes())
+    given = repeat_input(document.parts) if document.parts else bytes_input(target.read_bytes())
     outcome = attempt(lambda: credentials.read_creds(target))
     if isinstance(outcome, Raised):
         return raised(document.id, given, outcome.exc)

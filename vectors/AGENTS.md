@@ -192,6 +192,9 @@ directory is not a workspace package, so a change here does not change
   readers of `chaperone.site`.
 - No vector covers `handover.intake.run`. It reads the site file and the
   environment of the process.
+- `config.playpen_env.read` takes a text. No vector covers an env file
+  that is not UTF-8. `caregiver.playpen_env.read_playpen_env` reads such a
+  file as a file with no variable.
 - No vector covers a reader of the playpen: `runtime-config.ts`, `creds.ts`
   and `mounts.ts` are TypeScript and have no Python entry point.
 - `config.site_file` has no vector for a file that another account owns. The

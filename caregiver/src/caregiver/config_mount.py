@@ -111,7 +111,7 @@ def config_mount_matches(
 def _read(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
 
 

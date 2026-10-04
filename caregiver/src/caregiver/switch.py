@@ -85,7 +85,7 @@ def read_token(path: Path) -> str:
     send `Bearer ` is the same mistake from the other side."""
     try:
         token = path.read_text(encoding="utf-8").strip()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise SwitchError(f"cannot read the caregiver token at {path}") from exc
 
     if not token:
@@ -161,7 +161,7 @@ def _result_of(response: httpx.Response, request: SwitchRequest) -> SwitchResult
 def _object(response: httpx.Response) -> dict[str, Any]:
     try:
         body = response.json()
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise SwitchError("attendance answered a body that is not JSON") from exc
 
     if not isinstance(body, dict):

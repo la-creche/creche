@@ -5,8 +5,13 @@ half-built VM is destroyed and never retried under the same name."""
 
 from __future__ import annotations
 
+import json
+import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
+import caregiver.sandboxes as sandboxes_module
 import pytest
 from agent_family import FamilyFile, parse_family
 from caregiver.driver import DriverError, FakeDriver, SandboxSpec
@@ -14,7 +19,9 @@ from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
 from caregiver.sandboxes import (
     create_sandbox,
     destroy_sandbox,
+    fail_planned,
     live_record,
+    mark_ready,
     read_ledger,
     sandbox_spec,
     set_allow,
@@ -22,11 +29,15 @@ from caregiver.sandboxes import (
     write_ledger,
 )
 from caregiver.status import SandboxLifecycle
-from caregiver_helpers import chat_family
+from caregiver_helpers import DEEPER_THAN_STR, UNREADABLE_JSON, NoText, chat_family
 
 from caregiver import paths
 
 IMAGE = "sha256:deadbeef"
+
+#: More levels than `json.dumps` writes with an indent under Python 3.12,
+#: and fewer than `json.loads` reads under each supported version.
+DEEPER_THAN_AN_ENCODER = 5_000
 
 
 @pytest.fixture
@@ -157,6 +168,85 @@ def test_a_failed_sandbox_is_not_the_live_one(state_root: Path, family: FamilyFi
     assert live_record(state_root, "chat") is None
 
 
+# --- a destroy that fails where the destroy is best effort ---------------------
+
+DESTROY_FAILED = "chat: destroy of chat-s1 failed: simulated sbx outage at the destroy"
+
+
+class FailingDestroy(FakeDriver):
+    def destroy(self, name: str, allow: tuple[str, ...]) -> None:
+        super().destroy(name, allow)
+        raise DriverError("simulated sbx outage at the destroy")
+
+
+class FailingCreateAndDestroy(FailingCreate, FailingDestroy):
+    """Each of the two calls reports a failure."""
+
+
+def test_a_destroy_that_fails_after_a_failed_create_is_said(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The destroy after a failed create is best effort. One that fails
+    leaves the virtual machine, and the row reads `failed`, so no later
+    pass destroys it. The log must say it."""
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        outcome = create(state_root, family, FailingCreateAndDestroy())
+
+    assert outcome.fault is not None
+    assert outcome.fault.detail["message"] == "simulated sbx outage"
+    assert [(one.levelno, one.getMessage()) for one in caplog.records] == [
+        (logging.ERROR, DESTROY_FAILED)
+    ]
+
+
+def test_a_destroy_that_works_after_a_failed_create_says_nothing(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        create(state_root, family, FailingCreate())
+
+    assert caplog.records == []
+
+
+def leave_a_planned_row(state_root: Path, family: FamilyFile) -> None:
+    """The ledger as a kill inside a create leaves it."""
+    create(state_root, family, FakeDriver())
+    record = live_record(state_root, "chat")
+    assert record is not None
+    write_ledger(state_root, "chat", (record.with_state(SandboxLifecycle.PLANNED),))
+
+
+def test_a_destroy_that_fails_for_a_planned_row_is_said(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The row still becomes `failed`: a `planned` row that stays is one
+    that a pass adopts. The log says that the destroy did not run."""
+    leave_a_planned_row(state_root, family)
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        retired = fail_planned(state_root, "chat", FailingDestroy())
+
+    assert retired == ("chat-s1",)
+    assert [one.state for one in read_ledger(state_root, "chat")] == [SandboxLifecycle.FAILED]
+    assert [(one.levelno, one.getMessage()) for one in caplog.records] == [
+        (logging.ERROR, DESTROY_FAILED)
+    ]
+
+
+def test_a_destroy_that_works_for_a_planned_row_says_nothing(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    leave_a_planned_row(state_root, family)
+    driver = FakeDriver()
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        retired = fail_planned(state_root, "chat", driver)
+
+    assert retired == ("chat-s1",)
+    assert driver.ops() == ("destroy",)
+    assert caplog.records == []
+
+
 # --- the control directory ---------------------------------------------------
 
 
@@ -280,6 +370,248 @@ def test_an_unreadable_ledger_reads_empty(state_root: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
     assert read_ledger(state_root, "chat") == ()
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_a_ledger_that_does_not_read_is_empty(state_root: Path, raw: bytes) -> None:
+    path = paths.sandboxes_path(state_root, "chat")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+    assert read_ledger(state_root, "chat") == ()
+
+
+#: Content of a ledger file that gives no list of rows.
+NO_ROW_LIST: dict[str, bytes] = {
+    **UNREADABLE_JSON,
+    "empty": b"",
+    "not-json": b"{not json",
+    "no-object": b'["chat-s1"]',
+    "rows-are-text": b'{"sandboxes": "chat-s1"}',
+}
+
+REPLACES_A_FILE = "chat: the ledger replaces a file that does not read"
+
+
+@pytest.mark.parametrize("raw", NO_ROW_LIST.values(), ids=NO_ROW_LIST.keys())
+def test_a_rewrite_over_a_ledger_that_does_not_read_says_so(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture, raw: bytes
+) -> None:
+    """A ledger file that gives no rows reads as an absent file, and the
+    next rewrite replaces it. The rows that the file held are gone then,
+    so the rewrite says it, one time."""
+    path = paths.sandboxes_path(state_root, "chat")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        outcome = create(state_root, family, FakeDriver())
+
+    assert read_ledger(state_root, "chat") == (outcome.record,)
+    assert [(one.levelno, one.getMessage()) for one in caplog.records] == [
+        (logging.ERROR, REPLACES_A_FILE)
+    ]
+
+
+def test_a_rewrite_over_a_ledger_that_reads_says_nothing(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The first write finds no file. The second finds one that reads."""
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        create(state_root, family, FakeDriver())
+        create(state_root, family, FakeDriver())
+
+    assert caplog.records == []
+
+
+def test_a_rewrite_over_a_ledger_with_no_rows_says_nothing(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An empty list of rows is a ledger that reads."""
+    write_ledger(state_root, "chat", ())
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        create(state_root, family, FakeDriver())
+
+    assert caplog.records == []
+
+
+# --- a row that does not read ---------------------------------------------------
+
+
+def ledger_rows(state_root: Path) -> list[Any]:
+    """The rows of the ledger file as they are on disk."""
+    text = paths.sandboxes_path(state_root, "chat").read_text(encoding="utf-8")
+    return json.loads(text)["sandboxes"]
+
+
+def spoil(state_root: Path, sandbox_id: str, **fields: object) -> dict[str, Any]:
+    """Change one row of the ledger file by hand. Answers the row."""
+    path = paths.sandboxes_path(state_root, "chat")
+    body = json.loads(path.read_text(encoding="utf-8"))
+    row = next(one for one in body["sandboxes"] if one["id"] == sandbox_id)
+    row.update(fields)
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return row
+
+
+@pytest.mark.parametrize(
+    "allow",
+    ["docs.python.org:443", {"docs.python.org:443": True}, 443, None],
+    ids=["text", "object", "number", "null"],
+)
+def test_a_row_whose_allow_is_no_list_does_not_read(
+    state_root: Path, family: FamilyFile, allow: object
+) -> None:
+    """`allow` is the rows that a destroy removes. A value that is not a
+    list gives no rows to remove, so the reader refuses the row."""
+    create(state_root, family, FakeDriver())
+    spoil(state_root, "chat-s1", allow=allow)
+    assert read_ledger(state_root, "chat") == ()
+
+
+def test_a_row_with_no_allow_reads_as_no_rows(state_root: Path, family: FamilyFile) -> None:
+    create(state_root, family, FakeDriver())
+    path = paths.sandboxes_path(state_root, "chat")
+    body = json.loads(path.read_text(encoding="utf-8"))
+    del body["sandboxes"][0]["allow"]
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+    assert [one.allow for one in read_ledger(state_root, "chat")] == [()]
+
+
+def test_a_row_whose_cpus_has_no_integer_does_not_read(
+    state_root: Path, family: FamilyFile
+) -> None:
+    create(state_root, family, FakeDriver())
+    create(state_root, family, FakeDriver())
+    path = paths.sandboxes_path(state_root, "chat")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace('"cpus": 2', '"cpus": Infinity', 1), encoding="utf-8")
+
+    assert [one.id for one in read_ledger(state_root, "chat")] == ["chat-s2"]
+
+
+def test_a_row_with_a_field_that_nests_deep_does_not_read(
+    state_root: Path, family: FamilyFile
+) -> None:
+    """One Python version reads a value that nests deeper than `str`
+    converts. Such a row must not make the reader raise."""
+    create(state_root, family, FakeDriver())
+    create(state_root, family, FakeDriver())
+    path = paths.sandboxes_path(state_root, "chat")
+    text = path.read_text(encoding="utf-8")
+    deep = "[" * DEEPER_THAN_STR + "]" * DEEPER_THAN_STR
+    path.write_text(text.replace(f'"image": "{IMAGE}"', f'"image": {deep}', 1), encoding="utf-8")
+
+    assert "chat-s1" not in [one.id for one in read_ledger(state_root, "chat")]
+
+
+def test_a_row_with_a_field_with_no_text_does_not_read(
+    state_root: Path, family: FamilyFile, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same refusal under each Python version. The parser of the test
+    gives the value that `str` cannot convert."""
+    create(state_root, family, FakeDriver())
+    create(state_root, family, FakeDriver())
+    rows = ledger_rows(state_root)
+    rows[0]["image"] = NoText()
+    monkeypatch.setattr(sandboxes_module, "read_json", lambda path: {"sandboxes": rows})
+
+    assert [one.id for one in read_ledger(state_root, "chat")] == ["chat-s2"]
+
+
+def put_a_row(state_root: Path, family: FamilyFile) -> None:
+    create(state_root, family, FakeDriver())
+
+
+def drop_a_row(state_root: Path, family: FamilyFile) -> None:
+    del family
+    record = live_record(state_root, "chat")
+    assert record is not None
+    destroy_sandbox(state_root, "chat", record, FakeDriver())
+
+
+def move_the_allow(state_root: Path, family: FamilyFile) -> None:
+    del family
+    set_allow(state_root, "chat", ("docs.python.org:443",))
+
+
+def promote_a_row(state_root: Path, family: FamilyFile) -> None:
+    del family
+    assert mark_ready(state_root, "chat", "chat-s2") is not None
+
+
+def write_the_rows(state_root: Path, family: FamilyFile) -> None:
+    del family
+    write_ledger(state_root, "chat", read_ledger(state_root, "chat"))
+
+
+@pytest.mark.parametrize(
+    "rewrite", [put_a_row, drop_a_row, move_the_allow, promote_a_row, write_the_rows]
+)
+def test_a_rewrite_keeps_a_row_that_does_not_read(
+    state_root: Path, family: FamilyFile, rewrite: Callable[[Path, FamilyFile], None]
+) -> None:
+    """A row that the reader refuses still names a sandbox. A rewrite that
+    left it out would make the ledger forget that sandbox."""
+    create(state_root, family, FakeDriver())
+    create(state_root, family, FakeDriver())
+    spoiled = spoil(state_root, "chat-s1", allow="docs.python.org:443")
+
+    rewrite(state_root, family)
+
+    assert spoiled in ledger_rows(state_root)
+    assert "chat-s1" not in [one.id for one in read_ledger(state_root, "chat")]
+
+
+def test_a_rewrite_keeps_the_place_of_a_row_that_does_not_read(
+    state_root: Path, family: FamilyFile
+) -> None:
+    for _ in range(3):
+        create(state_root, family, FakeDriver())
+
+    spoil(state_root, "chat-s2", state="sleeping")
+    set_allow(state_root, "chat", ("docs.python.org:443",))
+
+    assert [one["id"] for one in ledger_rows(state_root)] == ["chat-s1", "chat-s2", "chat-s3"]
+
+
+def test_a_row_that_is_no_object_stays_too(state_root: Path, family: FamilyFile) -> None:
+    create(state_root, family, FakeDriver())
+    path = paths.sandboxes_path(state_root, "chat")
+    body = json.loads(path.read_text(encoding="utf-8"))
+    body["sandboxes"].insert(0, "chat-s0")
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+    create(state_root, family, FakeDriver())
+
+    assert ledger_rows(state_root)[0] == "chat-s0"
+    assert [one.id for one in read_ledger(state_root, "chat")] == ["chat-s1", "chat-s2"]
+
+
+def test_a_row_that_cannot_be_written_again_does_not_stop_a_rewrite(
+    state_root: Path, family: FamilyFile, caplog: pytest.LogCaptureFixture
+) -> None:
+    """One Python version reads a deeper value than it writes. Such a row
+    must not make every later rewrite raise. The rows that read stay, and
+    the log says what the rewrite did with the row."""
+    create(state_root, family, FakeDriver())
+    create(state_root, family, FakeDriver())
+    path = paths.sandboxes_path(state_root, "chat")
+    text = path.read_text(encoding="utf-8")
+    deep = "[" * DEEPER_THAN_AN_ENCODER + "]" * DEEPER_THAN_AN_ENCODER
+    path.write_text(text.replace('"cpus": 2', f'"cpus": {deep}', 1), encoding="utf-8")
+    spoiled = spoil(state_root, "chat-s2", allow="docs.python.org:443")
+    assert read_ledger(state_root, "chat") == ()
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.sandboxes"):
+        outcome = create(state_root, family, FakeDriver())
+
+    assert outcome.record is not None
+    assert read_ledger(state_root, "chat") == (outcome.record,)
+    # The row that the encoder can write stays, whatever the other one did.
+    assert spoiled in ledger_rows(state_root)
+    assert caplog.records
 
 
 # --- a live egress edit moves the rows a destroy must remove --------------------

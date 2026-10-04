@@ -14,6 +14,7 @@ from typing import Final
 
 import pytest
 from caregiver.mcp_release import MAX_REQUEST_AGE_S, McpPaths, request_servers
+from caregiver_helpers import UNREADABLE_JSON
 
 NOW: Final = 1_758_153_590.0
 SERVER: Final = "weather"
@@ -85,3 +86,35 @@ def test_an_untaken_request_is_not_asked_for_again(paths: McpPaths) -> None:
 
     assert late.servers == ()
     assert "has waited 1 h in the spool untaken" in late.queued
+
+
+#: An id of the form the request writer makes.
+REQUEST_ID: Final = "AAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_a_marker_that_does_not_read_does_not_stop_the_pass(paths: McpPaths, raw: bytes) -> None:
+    """A marker that does not read holds nothing back. The reader must
+    answer that, and must not raise into the look."""
+    paths.marker.write_bytes(raw)
+
+    assert request_servers(paths, (SERVER,), NOW).servers == (SERVER,)
+
+
+def test_a_marker_time_past_the_range_of_a_float_is_no_time(paths: McpPaths) -> None:
+    _write_marker(paths, {"id": REQUEST_ID, "at": 10**400})
+
+    assert request_servers(paths, (SERVER,), NOW).servers == (SERVER,)
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_an_answer_that_does_not_read_does_not_stop_the_pass(paths: McpPaths, raw: bytes) -> None:
+    """The ledger entry is there and this pass cannot read it. That holds
+    the next request, and the status is `unknown`."""
+    _write_marker(paths, {"id": REQUEST_ID, "servers": [SERVER], "revision": "", "at": NOW - 5.0})
+    (paths.done / f"{REQUEST_ID}.json").write_bytes(raw)
+
+    held = request_servers(paths, (SERVER,), NOW).held
+
+    assert held is not None
+    assert held.request_id == REQUEST_ID

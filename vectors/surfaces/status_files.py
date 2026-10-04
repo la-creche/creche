@@ -64,12 +64,14 @@ from vectors.core import (
     accepted,
     attempt,
     bytes_input,
+    expand,
     normalize,
     quiet_logs,
     raised,
     refused,
+    repeat_input,
 )
-from vectors.surfaces.status import CONTRACT, FAMILY, FRESH, NOW, OLD
+from vectors.surfaces.status import CONTRACT, FAMILY, FRESH, HUGE_DIGITS, NOW, OLD
 
 STATE_ROOT: Final = "/srv/agents/state/rework"
 _FAMILY_DIR: Final = f"{STATE_ROOT}/families/{FAMILY}"
@@ -77,6 +79,9 @@ _IMAGE: Final = "registry.example/playpen@sha256:" + "0123456789abcdef" * 4
 _REV: Final = "reg-9f21c4"
 _OLD_REV: Final = "reg-8c01aa"
 _PEP_URL: Final = "http://192.0.2.10:8300"
+
+#: More levels than the JSON parser of each supported Python version reads.
+VERY_DEEP: Final = 400_000
 
 SOURCE_SESSIOND: Final = "sessiond"
 SOURCE_PEP: Final = "pep"
@@ -763,6 +768,14 @@ class FaultDocument:
     id: str
     raw: bytes
     source: str = SOURCE_SESSIOND
+    #: The input form when the bytes are a long text. Empty means `raw`.
+    parts: tuple[tuple[str, int], ...] = ()
+
+    def data(self) -> bytes:
+        return expand(self.parts).encode("ascii") if self.parts else self.raw
+
+    def given(self) -> dict[str, Json]:
+        return repeat_input(self.parts) if self.parts else bytes_input(self.raw)
 
 
 def _entry(code: object = "orphan_processes", **fields: object) -> dict[str, object]:
@@ -874,6 +887,8 @@ FAULT_DOCUMENTS: Final[tuple[FaultDocument, ...]] = (
     _fault_doc("grants-stale-old", SOURCE_PEP, written_at=OLD, faults=[_entry("grants_stale")]),
     # --- the bytes and the JSON ---
     FaultDocument("bytes-empty", b""),
+    FaultDocument("bytes-not-utf8", b'{"family": "\xff"}'),
+    FaultDocument("bytes-utf16", _FAULT_TEXT.encode("utf-16")),
     FaultDocument("bytes-bom", b"\xef\xbb\xbf" + _FAULT_TEXT.encode("utf-8")),
     FaultDocument("json-text", b"not json"),
     FaultDocument("json-truncated", _FAULT_TEXT.encode("utf-8")[:-1]),
@@ -891,18 +906,27 @@ FAULT_DOCUMENTS: Final[tuple[FaultDocument, ...]] = (
         _FAULT_TEXT.replace('"blocks_turns": false', '"ratio": NaN, "limit": -Infinity').encode(),
     ),
     FaultDocument(
+        "json-huge-integer",
+        _FAULT_TEXT.replace('"blocks_turns": false', '"attempts": ' + "9" * HUGE_DIGITS).encode(),
+    ),
+    FaultDocument(
         "json-deep-unknown-field",
         _FAULT_TEXT[:-1].encode() + b', "x": ' + b"[" * 200 + b"]" * 200 + b"}",
+    ),
+    FaultDocument(
+        "json-very-deep",
+        b"",
+        parts=((_FAULT_TEXT[:-1] + ', "x": ', 1), ("[", VERY_DEEP), ("]", VERY_DEEP), ("}", 1)),
     ),
 )
 
 
 def _fault_vector(document: FaultDocument, scratch: Path) -> Vector:
-    given = bytes_input(document.raw)
+    given = document.given()
     params = {"source": document.source}
     target = scratch / "read" / document.id / f"{FAMILY}.json"
     target.parent.mkdir(parents=True)
-    target.write_bytes(document.raw)
+    target.write_bytes(document.data())
     outcome = attempt(lambda: read_fault_file(target, document.source, now=NOW))
     if isinstance(outcome, Raised):
         return raised(document.id, given, outcome.exc, params=params)

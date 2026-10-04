@@ -42,6 +42,34 @@ LONG_AGO: str = "2020-01-01T00:00:00Z"
 #: The token of the epoch before a rotation, as `expire_overlap` leaves it.
 OLD_TOKEN: str = "OLDTOKEN"
 
+#: More levels than the JSON parser of each supported Python version reads.
+VERY_DEEP: int = 400_000
+
+#: More digits than the interpreter converts to an integer.
+HUGE_DIGITS: int = 5_000
+
+#: A value of this many levels reads under Python 3.14 on a 16 MiB stack,
+#: and `str` of it raises RecursionError there. The parser of Python 3.12
+#: and of Python 3.13 refuses it.
+DEEPER_THAN_STR: int = 90_000
+
+#: Content that no JSON reader of this package can use. Each one made a
+#: reader raise before `atomic.read_json` was the one reader.
+UNREADABLE_JSON: dict[str, bytes] = {
+    "not-utf8": b'{"family": "\xff"}',
+    "utf16": '{"family": "chat"}'.encode("utf-16"),
+    "huge-integer": b'{"n": ' + b"9" * HUGE_DIGITS + b"}",
+    "very-deep": b'{"x": ' + b"[" * VERY_DEEP + b"]" * VERY_DEEP + b"}",
+}
+
+
+class NoText:
+    """A value that `str` cannot convert, under each Python version. A list
+    of `DEEPER_THAN_STR` levels is such a value under Python 3.14 alone."""
+
+    def __str__(self) -> str:
+        raise RecursionError("maximum recursion depth exceeded")
+
 
 def family_yaml(**overrides: object) -> str:
     """The default `chat` family as YAML text, with any field replaced."""

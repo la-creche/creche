@@ -14,9 +14,9 @@ import json
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final
 
-from .atomic import atomic_write
+from .atomic import atomic_write, read_json
 
 #: Contract 04 section 2.2 rule 1: "at least 256 bits from the system
 #: random source, base32, no padding."
@@ -93,20 +93,16 @@ def read_creds(path: Path) -> Credentials | None:
     """`None` when no credentials exist yet (a new family) or the file is
     unreadable. Never raises: a corrupt `creds.json` is a fault for the
     caller to report, not a crash (invariant 19's spirit applied here)."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
+    fields = read_json(path)
+    if fields is None:
         return None
 
-    try:
-        body = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(body, dict):
-        return None
-
-    fields = cast("dict[str, Any]", body)
+    # CONTRACT-QUESTION: contract 03 section 12 gives `epoch` as an integer
+    # and the other three fields as text. It has no rule for a file that
+    # holds another type. This reader keeps the lax reading it had: `int`
+    # and `str` convert the value, so `true` reads as 1 and a number reads
+    # as its text. A strict reader refuses such a file. The next pass then
+    # mints a new key and a new token, and the epoch starts again at 1.
     try:
         return Credentials(
             epoch=int(fields["epoch"]),
@@ -116,7 +112,9 @@ def read_creds(path: Path) -> Credentials | None:
             previous_pep_token=_optional(fields.get("previous_pep_token")),
             previous_expires_at=_optional(fields.get("previous_expires_at")),
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
+        # OverflowError is `int` of a float that is not finite.
+        # RecursionError is `str` of a value that nests too deep.
         return None
 
 

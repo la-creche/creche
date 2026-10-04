@@ -161,7 +161,7 @@ def _read(path: Path) -> dict[str, object] | None:
             return None
 
         loaded: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
         return None
 
     if not isinstance(loaded, dict):

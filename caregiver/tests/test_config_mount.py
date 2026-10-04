@@ -6,7 +6,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from caregiver.config_mount import RuntimeConfig, write_config_mount
+import pytest
+from caregiver.config_mount import RuntimeConfig, config_mount_matches, write_config_mount
 
 
 def test_writes_instructions_and_runtime(tmp_path: Path) -> None:
@@ -104,3 +105,23 @@ def test_leaves_no_staging_directory_behind(tmp_path: Path) -> None:
     )
     remaining = {p.name for p in tmp_path.iterdir()}
     assert remaining == {"config"}
+
+
+@pytest.mark.parametrize("name", ["instructions.md", "runtime.json", "skills/notes/SKILL.md"])
+def test_a_mount_file_that_is_not_utf8_does_not_match(tmp_path: Path, name: str) -> None:
+    """The pass asks whether the mount holds the revision before it writes
+    the mount. A file that is not UTF-8 holds no revision, so the answer is
+    no and the pass writes the mount again. A raise here would make each
+    pass fail before that write."""
+    target = tmp_path / "config"
+    revision = {
+        "instructions": "You are chat.",
+        "skills": {"notes": "Take notes."},
+        "runtime": RuntimeConfig(shell=False, sandbox_tools=(), model_alias="agent-router"),
+    }
+    write_config_mount(target, **revision)
+    assert config_mount_matches(target, **revision) is True
+
+    (target / name).write_bytes(b"You are \xff chat.")
+
+    assert config_mount_matches(target, **revision) is False

@@ -11,7 +11,7 @@ from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE, main
 from caregiver.credentials import read_creds
 from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
-from caregiver_helpers import write_registry
+from caregiver_helpers import UNREADABLE_JSON, write_registry
 
 from caregiver import paths
 
@@ -239,6 +239,20 @@ def test_status_of_a_never_applied_registry_says_so(
 def test_status_of_an_unknown_family_is_a_usage_error(state_root: Path) -> None:
     code = main(["status", "chat", "--state-root", str(state_root)])
     assert code == EXIT_USAGE
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_status_of_a_document_that_does_not_read_is_a_usage_error(
+    state_root: Path, capsys: pytest.CaptureFixture[str], raw: bytes
+) -> None:
+    path = paths.status_path(state_root, "chat")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(raw)
+
+    code = main(["status", "chat", "--state-root", str(state_root)])
+
+    assert code == EXIT_USAGE
+    assert "no status document for 'chat'" in capsys.readouterr().err
 
 
 def test_status_after_apply_prints_the_family_and_state(

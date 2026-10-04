@@ -7,6 +7,8 @@ import hashlib
 import stat
 from pathlib import Path
 
+import caregiver.credentials as credentials_module
+import pytest
 from caregiver.credentials import (
     TOKEN_BYTES,
     Credentials,
@@ -15,6 +17,10 @@ from caregiver.credentials import (
     token_sha256,
     write_creds,
 )
+from caregiver_helpers import DEEPER_THAN_STR, UNREADABLE_JSON, NoText
+
+#: The fields that `read_creds` converts with `str`.
+TEXT_FIELDS = ("litellm_key", "pep_token", "written_at")
 
 
 def test_mint_token_is_base32_with_no_padding() -> None:
@@ -96,6 +102,51 @@ def test_read_creds_of_corrupt_json_is_none(tmp_path: Path) -> None:
     path = tmp_path / "creds.json"
     path.write_text("{not json", encoding="utf-8")
     assert read_creds(path) is None
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_read_creds_of_content_that_does_not_read_is_none(tmp_path: Path, raw: bytes) -> None:
+    path = tmp_path / "creds.json"
+    path.write_bytes(raw)
+    assert read_creds(path) is None
+
+
+@pytest.mark.parametrize("epoch", ["Infinity", "-Infinity", "1e999"])
+def test_read_creds_of_an_epoch_with_no_integer_is_none(tmp_path: Path, epoch: str) -> None:
+    """The reader says that it never raises. An epoch that is a float with
+    no integer value is a refusal, as an epoch that is not a number is."""
+    path = tmp_path / "creds.json"
+    path.write_text(
+        f'{{"epoch": {epoch}, "litellm_key": "sk-x", "pep_token": "tok", "written_at": "w"}}',
+        encoding="utf-8",
+    )
+    assert read_creds(path) is None
+
+
+@pytest.mark.parametrize("field", TEXT_FIELDS)
+def test_read_creds_of_a_field_that_nests_deep_is_none(tmp_path: Path, field: str) -> None:
+    """One Python version reads a value that nests deeper than `str`
+    converts. The reader says that it never raises."""
+    deep = "[" * DEEPER_THAN_STR + "]" * DEEPER_THAN_STR
+    fields = {"epoch": "1", "litellm_key": '"sk-x"', "pep_token": '"tok"', "written_at": '"w"'}
+    fields[field] = deep
+    body = ", ".join(f'"{name}": {value}' for name, value in fields.items())
+    path = tmp_path / "creds.json"
+    path.write_text(f"{{{body}}}", encoding="utf-8")
+
+    assert read_creds(path) is None
+
+
+@pytest.mark.parametrize("field", TEXT_FIELDS)
+def test_read_creds_of_a_field_with_no_text_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    """The same refusal under each Python version. The parser of the test
+    gives the value that `str` cannot convert."""
+    fields = {"epoch": 1, "litellm_key": "sk-x", "pep_token": "tok", "written_at": "w"}
+    monkeypatch.setattr(credentials_module, "read_json", lambda path: {**fields, field: NoText()})
+
+    assert read_creds(tmp_path / "creds.json") is None
 
 
 def test_read_creds_of_a_json_list_is_none(tmp_path: Path) -> None:

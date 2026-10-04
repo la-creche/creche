@@ -10,6 +10,8 @@ which is what lets an interrupted pass simply repeat."""
 
 from __future__ import annotations
 
+import logging
+import os
 import uuid
 from dataclasses import dataclass
 from enum import StrEnum
@@ -41,6 +43,8 @@ from .status import CredentialsBlock, LimitsBlock, RotationState, now_rfc3339
 #: published for a caller to reuse.
 DEFAULT_JOB_TIMEOUT_S: Final = 120
 DEFAULT_MAX_RUNNING_TURNS: Final = 1
+
+log = logging.getLogger("caregiver.steps")
 
 #: Contract 05 §3.3.1: the two services that write a fault file.
 FAULT_SOURCES: Final = ("sessiond", "pep")
@@ -94,6 +98,13 @@ def ensure_credentials(
     LiteLLM failure is `key_mint_failed`, the one code §3.3 gives this
     exact step."""
     creds_path = paths.creds_path(state_root, family.name)
+    # CONTRACT-QUESTION: contract 03 §12 rule 3 says that the epoch
+    # increases on every write. It has no rule for a `creds.json` that is
+    # present and does not read. This step takes it as an absent file, as
+    # it did for text that is not JSON. It mints a key and a token, writes
+    # epoch 1 and says so in the log, so the published epoch can go down.
+    # To keep the rule, the step must refuse the write, and the family then
+    # has no credentials until the operator repairs the file.
     existing = read_creds(creds_path)
     if existing is not None and refresh is KeyRefresh.KEEP:
         return existing, credentials_block(family.name, existing), ()
@@ -114,6 +125,13 @@ def ensure_credentials(
 
     written_at = now_rfc3339()
     creds = Credentials(epoch, litellm_key, pep_token, written_at)
+    if existing is None and os.path.exists(creds_path):
+        log.error(
+            "%s: creds.json does not read. The pass replaces it with a new key, "
+            "a new token and epoch 1",
+            family.name,
+        )
+
     write_creds(creds_path, creds)
     return creds, credentials_block(family.name, creds), ()
 

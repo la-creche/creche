@@ -5,6 +5,7 @@ failure."""
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -19,7 +20,7 @@ from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
 from caregiver.playpen_env import read_playpen_env
 from caregiver.status import now_rfc3339
 from caregiver.switch import FakeSwitchClient, SwitchClient
-from caregiver_helpers import write_registry
+from caregiver_helpers import UNREADABLE_JSON, write_registry
 
 from caregiver import paths
 
@@ -270,6 +271,68 @@ def test_a_second_apply_still_reaches_in_sync(registry_root: Path, state_root: P
     assert result.status.state is FamilyState.IN_SYNC
 
 
+# --- a creds.json that does not read ---------------------------------------
+
+#: Content of `creds.json` that `read_creds` refuses.
+NO_CREDS: dict[str, bytes] = {
+    **UNREADABLE_JSON,
+    "empty": b"",
+    "not-json": b"{not json",
+    "no-epoch": b'{"litellm_key": "sk-x", "pep_token": "tok", "written_at": "w"}',
+}
+
+REPLACES_CREDS = (
+    "chat: creds.json does not read. The pass replaces it with a new key, a new token and epoch 1"
+)
+
+
+@pytest.mark.parametrize("raw", NO_CREDS.values(), ids=NO_CREDS.keys())
+def test_an_apply_over_creds_that_do_not_read_says_so(
+    registry_root: Path, state_root: Path, caplog: pytest.LogCaptureFixture, raw: bytes
+) -> None:
+    """A `creds.json` that does not read is taken as an absent file. The
+    pass mints again and the epoch starts again at 1, so the pass says it,
+    one time."""
+    litellm = FakeLiteLLMKeys()
+    apply_chat(registry_root, state_root, litellm=litellm)
+    paths.creds_path(state_root, "chat").write_bytes(raw)
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.steps"):
+        apply_chat(registry_root, state_root, litellm=litellm)
+        apply_chat(registry_root, state_root, litellm=litellm)
+
+    assert litellm.minted == 2
+    assert [(one.levelno, one.getMessage()) for one in caplog.records] == [
+        (logging.ERROR, REPLACES_CREDS)
+    ]
+
+
+def test_an_apply_over_creds_that_read_says_nothing(
+    registry_root: Path, state_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The first apply finds no file. The second finds one that reads."""
+    with caplog.at_level(logging.WARNING, logger="caregiver.steps"):
+        apply_chat(registry_root, state_root)
+        apply_chat(registry_root, state_root)
+
+    assert caplog.records == []
+
+
+def test_a_failed_mint_over_creds_that_do_not_read_keeps_the_file(
+    registry_root: Path, state_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No write, so nothing to say: the file is as it was."""
+    apply_chat(registry_root, state_root)
+    creds_path = paths.creds_path(state_root, "chat")
+    creds_path.write_bytes(NO_CREDS["not-json"])
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.steps"):
+        apply_chat(registry_root, state_root, litellm=FailingLiteLLM())
+
+    assert creds_path.read_bytes() == NO_CREDS["not-json"]
+    assert caplog.records == []
+
+
 # --- family not in the registry ----------------------------------------
 
 
@@ -329,6 +392,23 @@ def test_an_invalid_revision_keeps_the_last_good_applied_rev(
     assert bad.status.state is FamilyState.INVALID
     assert bad.status.applied_rev == good.status.applied_rev
     assert bad.status.validation.never_valid is False
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_an_invalid_revision_over_a_document_that_does_not_read(
+    registry_root: Path, state_root: Path, raw: bytes
+) -> None:
+    """The apply reads the last document for the revision it keeps. A
+    document that does not read gives no revision, and the apply still
+    publishes its report."""
+    apply_chat(registry_root, state_root)
+    paths.status_path(state_root, "chat").write_bytes(raw)
+
+    write_registry(registry_root, kind="not-a-real-kind")
+    bad = apply_chat(registry_root, state_root)
+
+    assert bad.status.state is FamilyState.INVALID
+    assert bad.status.applied_rev == ""
 
 
 def test_an_invalid_revision_still_publishes_the_epoch(

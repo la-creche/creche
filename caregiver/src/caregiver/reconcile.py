@@ -92,6 +92,14 @@ DESTROY_STEP: Final = "destroy_sandbox"
 #: `triggers:` lands in the timer set, which is
 #: why contract 01 §6's table gives the field `Step.NONE`: no step of
 #: contract 05 §3.4 touches it.
+#:
+#: CONTRACT-QUESTION: contract 05 §3.4 lists eight step names, and this
+#: name is not one of them. A pass that wrote the timer set last publishes
+#: it in `reconcile.step`. The name stays as it is: no name of §3.4 says
+#: what this step does, and each reader takes the name today. To follow
+#: §3.4, the pass must publish one of the eight names for this step, or
+#: §3.4 must list this name. A reader with the eight names alone refuses
+#: the document that holds it.
 TIMERS_STEP: Final = "write_timers"
 
 #: Contract 05 §3.3. A generated timer systemd does not report as enabled.

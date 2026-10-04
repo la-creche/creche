@@ -8,12 +8,13 @@ document."""
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, cast
+
+from .atomic import read_json
 
 log = logging.getLogger("caregiver.faults")
 
@@ -112,12 +113,7 @@ def read_fault_file(path: Path, source: str, *, now: datetime | None = None) -> 
     entry is dropped, never the whole file: this is input from another
     process, validated the way contract 03 section 13 validates a
     playpen line, not trusted the way this service's own state is."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-
-    body = _parse_object(text)
+    body = read_json(path)
     if body is None:
         return None
 
@@ -230,15 +226,6 @@ def _downgraded(entry: FaultEntry, live_sandboxes: tuple[str, ...]) -> FaultEntr
         return entry
 
     return replace(entry, blocks_turns=False)
-
-
-def _parse_object(text: str) -> dict[str, Any] | None:
-    try:
-        body = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-    return cast("dict[str, Any]", body) if isinstance(body, dict) else None
 
 
 def _one_fault(raw: Any, source: str, allowed: frozenset[str], *, stale: bool) -> FaultEntry | None:

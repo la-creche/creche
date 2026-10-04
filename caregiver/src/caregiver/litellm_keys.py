@@ -195,7 +195,7 @@ def _json_object(what: str, resp: httpx.Response) -> dict[str, Any]:
     and on a mint the body may hold the key."""
     try:
         body: object = resp.json()
-    except ValueError:
+    except (ValueError, RecursionError):
         raise LiteLLMError(f"{what} answered a body that is not JSON") from None
 
     if not isinstance(body, dict):
@@ -210,7 +210,11 @@ def _number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
 
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError:
+        # An integer past the range of a float.
+        return None
 
 
 class FakeLiteLLMKeys:

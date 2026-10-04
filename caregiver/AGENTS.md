@@ -18,7 +18,7 @@ host where something has gone wrong.
 
 | Module | Owns |
 |---|---|
-| `paths.py`, `clock.py`, `atomic.py` | every host path, the one timestamp, the atomic write |
+| `paths.py`, `clock.py`, `atomic.py` | every host path, the one timestamp, the atomic write and the JSON read |
 | `lan.py`, `images.py`, `released.py` | the LAN address from the site file, the image a flavor maps to, and the images a `playpen` release installed |
 | `driver.py` | `SandboxDriver`: `SbxDriver` (real) and `FakeDriver` |
 | `litellm_keys.py`, `credentials.py`, `grants.py`, `config_mount.py` | the key, the token, the grant file, the config mount |
@@ -41,6 +41,19 @@ host where something has gone wrong.
 - Every external dependency sits behind a Protocol with a fake. Add a third
   the same way.
 - `atomic.py` is the only place that writes a file another process reads.
+- `atomic.read_json` reads a JSON file. It answers `None` for content that
+  it cannot read. It does not raise on content.
+- `grants.py`, `mcp_release.py`, `live_manifest.py` and `verify.py` keep a
+  read of their own. Each one refuses an integer past the digit limit and
+  nesting past the limit of the parser.
+- The grant file reader takes each encoding that `json.loads` finds in
+  bytes: UTF-8, UTF-16 and UTF-32. The other three refuse bytes that are
+  not UTF-8.
+- A client maps each failure of its transport and of its answer to its own
+  error: `DriverError`, `LiteLLMError`, `SwitchError`. A step names that
+  error in its handler, with two exceptions.
+- The destroy step of a replacement and `delete_family` have no handler.
+  In `serve`, their error ends in a handler of the loop.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
   the grant file, then `creds.json`, then the sandboxes. `test_delete.py`
   checks the order from inside the fake driver.
@@ -84,6 +97,8 @@ host where something has gone wrong.
 - A stop is checked between steps, never inside one.
 - A `planned` sandbox row is a create a kill cut short. `fail_planned`
   retires it at the top of every pass.
+- A sandbox row that does not read stays in the ledger file. A rewrite
+  removes it only when the JSON encoder cannot write it again.
 - An empty registry deletes no family.
 - `rotate` deletes the old key before it mints the new one. The token
   overlaps. The key does not.
@@ -127,6 +142,14 @@ host where something has gone wrong.
 | create backoff | 5 s, doubling to 300 s | a failed create burns an id |
 
 `SIGHUP` means "look now". `SIGTERM` stops the loop after the look in flight.
+
+Each step of a look ends in a handler of the loop: a dispatch, a pass, a
+delete, the MCP pass. The handler writes the first error with its
+traceback. It counts each repeat. The loop continues, and each other
+family gets its pass.
+
+A delete that fails gets the backoff of a failed create. The loop starts
+the delete again when the backoff ends or the registry changes.
 
 ## `mcp_release.py`
 
@@ -179,3 +202,30 @@ Nothing here touches a real sandbox or LiteLLM.
 - A restart during a fleet replacement still ends each create in flight.
   The next process retires the `planned` row and burns one id
   (`sandboxes.py`).
+- A pass publishes the step name `write_timers`. Contract 05 §3.4 lists
+  eight step names, and that name is not one of them (`reconcile.py`).
+- A pass that raises publishes no fault. Contract 05 §3.3 has no code for
+  it. The log holds the error, and the status document keeps its last
+  content (`loop.py`).
+- `read_creds` converts a field with `int` and `str`. It reads `true` as
+  epoch 1. Contract 03 §12 gives no rule for a field of another type
+  (`credentials.py`).
+- The ledger reader converts a field with `int` and `str`. No contract
+  defines the ledger file (`sandboxes.py`).
+- No contract gives the encoding of the grant file. The reader takes each
+  encoding that `json.loads` finds in bytes (`grants.py`).
+- No pass manages a sandbox whose ledger row does not read. The row stays
+  in the file, and the log names the family at each rewrite
+  (`sandboxes.py`).
+- The ledger reader takes a file that is present and gives no list of rows
+  as an absent file. The next rewrite replaces the file and writes one error
+  line. No pass then destroys a sandbox that the old file named
+  (`sandboxes.py`).
+- A destroy that fails after a failed create, or for a `planned` row,
+  leaves the virtual machine. The row reads `failed`, and the log holds one
+  error line. No later pass destroys that virtual machine. Contract 05 §4.2
+  rule 5 has no rule for a destroy that fails (`sandboxes.py`).
+- A pass takes a `creds.json` that is present and does not read as an
+  absent file. It mints a new key and a new token, writes epoch 1 and
+  writes one error line. Contract 03 §12 rule 3 says that the epoch
+  increases on every write (`steps.py`).

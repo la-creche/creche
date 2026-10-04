@@ -26,25 +26,30 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
 import pytest
 import yaml
+from agent_family import FamilyState, revision_of
 from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
-from caregiver.loop import LoopConfig, LoopState, look
+from caregiver.loop import BACKOFF_FIRST_S, Backoff, LoopConfig, LoopState, look
 from caregiver.mcp_release import MARKER_NAME, McpPaths
 from caregiver.mcp_wire import mcp_pass
 from caregiver.reconcile import Actors
 from caregiver.status import forget_published
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import published, write_registry
 
 from caregiver import loop as loop_module
+from caregiver import paths
 
 IMAGE: Final = "sha256:deadbeef"
 NOW: Final = 1_758_153_600.0
@@ -132,9 +137,9 @@ class Bench:
             FakeDriver(), FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits()
         )
 
-    def look(self) -> tuple[str, ...]:
+    def look(self, **overrides: float) -> tuple[str, ...]:
         """One real pass of the loop, registry read and all."""
-        return look(self.config(), self.actors(), self.state)
+        return look(replace(self.config(), **overrides), self.actors(), self.state)
 
     def published(self) -> tuple[str, ...]:
         """Every family that now has a status document."""
@@ -437,3 +442,212 @@ def test_a_family_pass_has_a_guard_of_its_own(
     assert started == FAMILIES
     assert bench.published() == (FAMILIES[1],)
     assert bench.state.of(FAMILIES[0]).backoff is not None
+
+
+# --- each step of a look ends in a handler of the loop ------------------------
+
+#: An error that no step names in a handler of its own.
+UNNAMED: Final = ValueError("a step raised an error that it does not name")
+
+
+def refuse(*args: object, **kwargs: object) -> object:
+    """A stand-in for a step. It raises an error that is not an `OSError`."""
+    del args, kwargs
+    raise UNNAMED
+
+
+def test_a_dispatch_that_raises_costs_no_other_family(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard of a dispatch is per family. A guard that names `OSError`
+    alone lets another error end the sweep, and then no later family
+    passes and the tail of the look does not run."""
+    bench.look()
+    first, second = FAMILIES
+    # `first` waits out a backoff, so its dispatch restamps and starts no
+    # pass.
+    bench.state.note(first, backoff=Backoff(next_at=time.monotonic() + 3600.0, delay_s=5.0))
+    monkeypatch.setattr(loop_module, "restamp_status", refuse)
+
+    started = bench.look(heartbeat_s=0.0)
+
+    assert started == (second,)
+    assert bench.state.revision == revision_of(bench.registry_root)
+
+
+def test_a_dispatch_that_raises_is_said_once(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    bench.look()
+    first = FAMILIES[0]
+    bench.state.note(first, backoff=Backoff(next_at=time.monotonic() + 3600.0, delay_s=5.0))
+    monkeypatch.setattr(loop_module, "restamp_status", refuse)
+
+    with caplog.at_level(logging.ERROR, logger="caregiver.loop"):
+        for _ in range(3):
+            bench.look(heartbeat_s=0.0)
+
+    traced = [one for one in caplog.records if one.exc_info is not None]
+    assert [one.getMessage().split(":")[0] for one in traced] == [first]
+
+
+def test_an_mcp_pass_that_raises_does_not_end_the_look(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The MCP pass runs after the families. An error that leaves it must
+    not leave the look, and the look must still record the revision. A look
+    with no revision reads every later tick as an edit, and an edit clears
+    each create backoff."""
+    monkeypatch.setattr(loop_module, "mcp_pass", refuse)
+
+    assert bench.look() == FAMILIES
+    assert bench.state.revision == revision_of(bench.registry_root)
+    assert bench.look() == ()
+
+
+def test_a_listing_that_raises_does_not_stop_the_mcp_pass(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two steps follow the families. One that raises must not stop the
+    other."""
+    monkeypatch.setattr(loop_module, "_families_with_state", refuse)
+
+    assert bench.look() == FAMILIES
+    assert bench.requests() != []
+    assert bench.state.revision == revision_of(bench.registry_root)
+
+
+@pytest.mark.parametrize("step", ["delete_family", "remove_timers", "read_applied"])
+def test_a_delete_that_raises_ends_in_the_handler_of_the_loop(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, step: str
+) -> None:
+    """A family file that is gone starts a delete. Each step of the delete
+    ends in one handler: one traceback for the error, the state of the
+    family kept, and the other family in sync."""
+    bench.look()
+    gone, kept = FAMILIES
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    monkeypatch.setattr(loop_module, step, refuse)
+
+    with caplog.at_level(logging.ERROR, logger="caregiver.loop"):
+        for _ in range(3):
+            bench.look(heartbeat_s=0.0)
+
+    traced = [one for one in caplog.records if one.exc_info is not None]
+    assert [one.getMessage().split(";")[0] for one in traced] == [
+        f"{gone}: delete: ValueError: {UNNAMED}"
+    ]
+    assert paths.family_dir(bench.state_root, gone).is_dir()
+    assert published(bench.state_root, kept)["state"] == FamilyState.IN_SYNC
+
+
+class FailingDelete:
+    """A stand-in for the delete of one family. It records each try."""
+
+    def __init__(self) -> None:
+        self.tries: list[str] = []
+
+    def __call__(self, config: LoopConfig, actors: Actors, name: str) -> None:
+        del config, actors
+        self.tries.append(name)
+        raise UNNAMED
+
+
+def test_a_delete_that_raises_waits_before_the_next_try(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delete that fails gets the wait of a pass that raised. A delete at
+    each look calls each client every two seconds, and an error text that
+    moves at each try fills the complaint ledger."""
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    delete = FailingDelete()
+    monkeypatch.setattr(loop_module, "_delete_one", delete)
+
+    for _ in range(3):
+        bench.look(heartbeat_s=0.0)
+
+    assert delete.tries == [gone]
+    backoff = bench.state.of(gone).backoff
+    assert backoff is not None
+    assert backoff.delay_s == BACKOFF_FIRST_S
+
+
+def test_a_delete_starts_again_when_its_wait_ends(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second failure doubles the wait, as a second failed create does."""
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    delete = FailingDelete()
+    monkeypatch.setattr(loop_module, "_delete_one", delete)
+    bench.look(heartbeat_s=0.0)
+
+    bench.state.note(gone, backoff=Backoff(next_at=time.monotonic(), delay_s=BACKOFF_FIRST_S))
+    bench.look(heartbeat_s=0.0)
+
+    assert delete.tries == [gone, gone]
+    backoff = bench.state.of(gone).backoff
+    assert backoff is not None
+    assert backoff.delay_s == BACKOFF_FIRST_S * 2
+
+
+def test_a_registry_edit_starts_a_waiting_delete_again(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An edit clears each backoff, because the edit can be the repair."""
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    delete = FailingDelete()
+    monkeypatch.setattr(loop_module, "_delete_one", delete)
+    bench.look(heartbeat_s=0.0)
+
+    write_registry(bench.registry_root, name="notes")
+    bench.look(heartbeat_s=0.0)
+
+    assert delete.tries == [gone, gone]
+
+
+def test_a_waiting_delete_does_not_open_the_gate_of_the_loop(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A family with no file has no document to keep fresh. While its
+    delete waits, a look within one heartbeat reads no registry."""
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    monkeypatch.setattr(loop_module, "_delete_one", FailingDelete())
+    bench.look()
+    loads: list[Path] = []
+    real_load = loop_module.load_registry
+
+    def counted(root: Path, host: object) -> object:
+        loads.append(root)
+        return real_load(root, host)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(loop_module, "load_registry", counted)
+
+    for _ in range(3):
+        bench.look()
+
+    assert loads == []
+
+
+def test_a_delete_that_works_after_a_wait_forgets_the_family(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bench.look()
+    gone = FAMILIES[0]
+    shutil.rmtree(bench.registry_root / "families" / gone)
+    with monkeypatch.context() as patched:
+        patched.setattr(loop_module, "_delete_one", FailingDelete())
+        bench.look(heartbeat_s=0.0)
+
+    bench.state.note(gone, backoff=Backoff(next_at=time.monotonic(), delay_s=BACKOFF_FIRST_S))
+    bench.look(heartbeat_s=0.0)
+
+    assert not paths.family_dir(bench.state_root, gone).exists()
+    assert bench.state.of(gone).backoff is None

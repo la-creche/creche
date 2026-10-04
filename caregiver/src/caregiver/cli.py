@@ -24,6 +24,7 @@ from agent_family import Index, Registry, Report, load_registry
 
 from . import paths
 from .apply import apply_once
+from .atomic import read_json
 from .chaperone_watch import (
     PEP_PROBE_INTERVAL_S,
     PEP_UNREACHABLE_AFTER_S,
@@ -607,15 +608,7 @@ def _every_family(state_root: Path) -> list[str]:
 
 
 def _read_status_json(state_root: Path, family: str) -> dict[str, Any] | None:
-    try:
-        body = json.loads(paths.status_path(state_root, family).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    if not isinstance(body, dict):
-        return None
-
-    return cast("dict[str, Any]", body)
+    return read_json(paths.status_path(state_root, family))
 
 
 def _print_status_text(doc: dict[str, Any]) -> None:

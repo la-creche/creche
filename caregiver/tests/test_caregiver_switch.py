@@ -20,6 +20,7 @@ from caregiver.switch import (
     SwitchRequest,
     read_token,
 )
+from caregiver_helpers import UNREADABLE_JSON
 
 TOKEN = "a" * 43
 
@@ -151,6 +152,15 @@ def test_an_answer_that_did_not_switch_raises() -> None:
         client.switch(a_request())
 
 
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_an_answer_that_does_not_read_raises_switch_error(raw: bytes) -> None:
+    """The pass names `SwitchError` in its handler and keeps both
+    sandboxes. An error of another class would leave the pass."""
+    client = client_answering(lambda _: httpx.Response(200, content=raw))
+    with pytest.raises(SwitchError):
+        client.switch(a_request())
+
+
 # --- the token file -------------------------------------------------------------
 
 
@@ -170,6 +180,13 @@ def test_an_empty_token_file_raises(tmp_path: Path) -> None:
     caller that would send `Bearer ` fails before it sends anything."""
     path = tmp_path / "managerd.token"
     path.write_text("\n", encoding="utf-8")
+    with pytest.raises(SwitchError):
+        read_token(path)
+
+
+def test_a_token_file_that_is_not_utf8_raises(tmp_path: Path) -> None:
+    path = tmp_path / "managerd.token"
+    path.write_bytes(b"\xff\xfe\n")
     with pytest.raises(SwitchError):
         read_token(path)
 

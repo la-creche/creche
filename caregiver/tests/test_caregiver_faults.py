@@ -8,7 +8,9 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from caregiver.faults import FaultEntry, drop_superseded, read_fault_file, rescope_by_fleet
+from caregiver_helpers import UNREADABLE_JSON
 
 NOW = datetime(2026, 9, 19, 12, 0, 0, tzinfo=UTC)
 
@@ -24,6 +26,15 @@ def test_missing_file_is_none(tmp_path: Path) -> None:
 def test_corrupt_json_is_none(tmp_path: Path) -> None:
     path = tmp_path / "chat.json"
     path.write_text("{not json", encoding="utf-8")
+    assert read_fault_file(path, "pep") is None
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_a_file_that_does_not_read_is_none(tmp_path: Path, raw: bytes) -> None:
+    """Rule 6: a fault file is input from another process. Content that
+    does not read is refused. It does not raise into the pass."""
+    path = tmp_path / "chat.json"
+    path.write_bytes(raw)
     assert read_fault_file(path, "pep") is None
 
 
