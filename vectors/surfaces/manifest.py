@@ -83,6 +83,9 @@ REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 MANIFEST_SUBJECT: Final = "attendance/component.yaml"
 STATE_SUBJECT: Final = "live-state.json"
 
+#: The mode of the temporary site file: only its owner writes it.
+SITE_FILE_MODE: Final = 0o644
+
 #: What stands for the path of the temporary site file in a refusal.
 SITE_MARK: Final = "<site>"
 
@@ -136,13 +139,16 @@ def _refusal(refusal: Refusal, hide: str = "") -> dict[str, str]:
 
 
 @contextmanager
-def _site(lines: tuple[str, ...] | None) -> Generator[str]:
+def site_file(lines: tuple[str, ...] | None) -> Generator[str]:
     """A site file of these lines for the calls inside, or no site file."""
     previous = os.environ.get(site.SITE_FILE_ENV)
     with tempfile.TemporaryDirectory() as root:
         path = Path(root) / "site.env"
         if lines is not None:
             path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
+            # The reader refuses a site file that its group can write. The mask
+            # of the caller must not decide that.
+            path.chmod(SITE_FILE_MODE)
 
         os.environ[site.SITE_FILE_ENV] = str(path)
         site.forget()
@@ -181,7 +187,7 @@ def _component_vector(case: Case) -> Vector:
     given = repeat_input(case.parts) if case.parts else text_input(case.text)
     text = expand(case.parts) if case.parts else case.text
     params = {"site": case.site}
-    with _site(_SITES[case.site]) as path:
+    with site_file(_SITES[case.site]) as path:
         outcome = _run(lambda: parse_manifest(text, MANIFEST_SUBJECT))
 
     if isinstance(outcome, Raised):
@@ -262,7 +268,7 @@ OPERATORS: Final[tuple[tuple[str, str, str], ...]] = (
 
 def _operator_vector(vector_id: str, user: str, home: str) -> Vector:
     given: dict[str, Json] = {"args": {"user": user, "home": home}}
-    with _site(_site_lines(user, home)) as path:
+    with site_file(_site_lines(user, home)) as path:
         outcome = _run(lambda: {"user": site.operator_user(), "home": site.operator_home()})
 
     if isinstance(outcome, Raised):
