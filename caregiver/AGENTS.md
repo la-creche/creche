@@ -160,6 +160,9 @@ the delete again when the backoff ends or the registry changes.
 5. A secret two servers name opens a gap for neither, unless both files
    declare the sharing under `shared_secrets`.
 6. What is served is root's roster, not the install trees.
+7. The roster reader has two limits for merge keys: a chain of 128 keys,
+   and 65,536 copied pairs for one file. A roster past a limit reads as a
+   roster with no row.
 
 ## Use
 
@@ -225,6 +228,9 @@ Nothing here touches a real sandbox or LiteLLM.
   leaves the virtual machine. The row reads `failed`, and the log holds one
   error line. No later pass destroys that virtual machine. Contract 05 §4.2
   rule 5 has no rule for a destroy that fails (`sandboxes.py`).
+- `CONTRACT-QUESTION` in `mcp_release.py`. `stage7-releases.md` §4.4 gives
+  no limit for a merge key in the roster. The roster reader uses the two
+  limits of the Rust reader of a component manifest.
 - A pass takes a `creds.json` that is present and does not read as an
   absent file. It mints a new key and a new token, writes epoch 1 and
   writes one error line. Contract 03 §12 rule 3 says that the epoch
