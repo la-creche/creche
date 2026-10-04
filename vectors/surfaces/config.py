@@ -193,7 +193,7 @@ SITE_DOCUMENTS: Final[tuple[SiteDocument, ...]] = (
     _with("lan-digit-not-ascii", "AGENT_LAN_ADDRESS", "\uff11\uff19\uff12.0.2.10"),
     _with("lan-each-interface", "AGENT_LAN_ADDRESS", "0.0.0.0"),
     _with("lan-one-number", "AGENT_LAN_ADDRESS", "0"),
-    _with("lan-three-numbers", "AGENT_LAN_ADDRESS", "10.0.0"),
+    _with("lan-three-numbers", "AGENT_LAN_ADDRESS", "192.0.2"),
     _with("lan-number-over-255", "AGENT_LAN_ADDRESS", "192.0.2.256"),
     _with("lan-leading-zero", "AGENT_LAN_ADDRESS", "192.0.2.010"),
     _with("lan-hex-number", "AGENT_LAN_ADDRESS", "0x7f.0.0.1"),

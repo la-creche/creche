@@ -1038,7 +1038,7 @@ mod tests {
             ("0.0.0.0", LanAddressError::EachInterface),
             ("0", LanAddressError::NotIpv4),
             ("0.0", LanAddressError::NotIpv4),
-            ("10.0.0", LanAddressError::NotIpv4),
+            ("192.0.2", LanAddressError::NotIpv4),
             ("192.0.2.256", LanAddressError::NotIpv4),
             ("192.0.2.010", LanAddressError::NotIpv4),
             ("192.0.2.10.5", LanAddressError::NotIpv4),
