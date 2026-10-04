@@ -36,6 +36,7 @@ release replaces that surface.
 | `data/status/` | the status document, one file per reader. The writer of the status document, the fault files and the outcome record |
 | `data/config/` | the configs: the site file, the roster, `runtime.json`, `creds.json`, the env file of the playpen and three env readers |
 | `data/manifest/` | the component manifest, the release request, the live-state document and the resolved manifest |
+| `data/session/` | the session API: the request bodies, the queries, the error body, the journal and the event stream |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 
 ## Regenerate
@@ -96,7 +97,7 @@ It ends with one newline. Each vector is on one line.
 | `value` | when the Python code parsed the input into a value | the normalized value |
 | `refusal` | when the Python code gives a reason | the refusal code, or an object that holds the reason |
 | `issues`, `status` | on `family_file` | the validation report |
-| `http_status` | on the two body surfaces and on `chaperone.reason` | the HTTP status of the answer. On a refused vector of a body surface it is inside `refusal`. |
+| `http_status` | on the two body surfaces, on `chaperone.reason` and on a surface of `data/session/` that writes an answer | the HTTP status of the answer. On a refused vector of a body surface or of `data/session/` it is inside `refusal`. |
 | `output` | on a surface that writes bytes | the exact bytes that the Python code writes, as an input form |
 | `file` | on the two log surfaces of `data/chaperone/` | the name of the file that takes the line |
 | `ts_bits` | on the two request surfaces of `data/manifest/` | the `ts` of the value as the 16 hexadecimal digits of its IEEE 754 bits |
@@ -140,7 +141,7 @@ an object with exactly one key:
 | `{"$float": "NaN"}`, `"Infinity"`, `"-Infinity"` | a float that is not finite |
 | `{"$utf16": [<code units>]}` | a string that holds a lone surrogate |
 | `{"$base64": "<bytes>"}` | bytes |
-| `{"$entries": [[key, value], ...]}` | a mapping with a key that is not a plain string |
+| `{"$entries": [[key, value], ...]}` | a mapping with a key that is not a plain string. On `session.error_body`, also a mapping whose keys are not in sorted order. The pairs are in the order of the mapping. |
 | `{"$json": "<text>"}` | a field that nests deeper than 96 levels. The text is the JSON of the field. |
 
 The generator writes the `$json` marker for a whole field of a vector, for

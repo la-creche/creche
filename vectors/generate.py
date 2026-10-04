@@ -26,6 +26,7 @@ from vectors.surfaces import (
     grants,
     ids,
     manifest,
+    session,
     status,
     status_files,
 )
@@ -64,6 +65,7 @@ GROUPS: Final[dict[str, Callable[[], tuple[Surface, ...]]]] = {
     "status_files": status_files.surfaces,
     "config": config.surfaces,
     "manifest": manifest.surfaces,
+    "session": session.surfaces,
 }
 
 
