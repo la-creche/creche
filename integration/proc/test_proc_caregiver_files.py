@@ -486,7 +486,7 @@ def test_a_removed_family_file_ends_the_family(caregiver_prepared: CaregiverStac
     assert not tree.grant_file(OTHER).exists()
     assert list(sbx_sandboxes(tree)) == [SANDBOX]
     assert _reach(tree, first_sandbox(OTHER)) == []
-    assert stack.state() == IN_SYNC
+    wait_until(lambda: stack.state() == IN_SYNC, f"{FAMILY} to be {IN_SYNC}")
     assert tree.grant_file().is_file()
 
 
@@ -501,9 +501,13 @@ def test_a_directory_with_no_family_file_is_ignored(caregiver_alone: CaregiverSt
     first_rev = _status(stack)["registry_rev"]
 
     write_family_prose(stack.tree, GHOST, "A directory with prose and no family file.\n")
-    wait_until(lambda: _status(stack)["registry_rev"] != first_rev, "a look at the new registry")
+    # `caregiver` publishes the new revision at the start of the pass, with
+    # the state `reconciling`. So one wait holds the revision and the state.
+    wait_until(
+        lambda: _status(stack)["registry_rev"] != first_rev and stack.state() == IN_SYNC,
+        f"{FAMILY} to be {IN_SYNC} at the new registry",
+    )
 
-    assert stack.state() == IN_SYNC
     assert stack.tree.status(GHOST) is None
     assert list(litellm_keys(stack.tree)) == [f"family-{FAMILY}"]
     assert list(sbx_sandboxes(stack.tree)) == [SANDBOX]
