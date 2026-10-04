@@ -46,6 +46,25 @@ ANY_INDEX: Final = "*"
 _NESTS_TOO_DEEP: Final = "YAML will not parse: the text nests too deep"
 _NO_VALUE: Final = "YAML will not parse: the text holds a value that cannot be read"
 
+#: The two limits on merge keys: the longest chain of merge keys that the
+#: reader follows, and the most entries that the merge keys of one text
+#: make. A merged value with no entry counts as one entry. The reader
+#: refuses a text past a limit, so that a short text cannot use much time
+#: and memory.
+#:
+#: CONTRACT-QUESTION: contract 01 §1 and contract 01b §1 give no limit for
+#: merge keys, and PyYAML has none. The reading here is two limits. The
+#: numbers are those of the Rust reader of the same files
+#: (`rust/crates/agent-family/src/yaml/construct.rs`), so the two readers
+#: refuse the same texts. Another number costs one line here and one line
+#: there.
+_MERGE_DEPTH_MAX: Final = 400
+_MERGED_ENTRIES_MAX: Final = 100_000
+
+#: The two refusals for a text past a limit on merge keys.
+_MERGE_TOO_DEEP: Final = "YAML will not parse: the merge keys nest too deep"
+_MERGE_TOO_MANY: Final = "YAML will not parse: the merge keys make too many entries"
+
 _FAMILY_CONTAINERS: Final[dict[tuple[str, ...], tuple[str, ...]]] = {
     (): FAMILY_FIELDS,
     ("model",): tuple(ModelBlock.model_fields),
@@ -152,10 +171,55 @@ def _ints_print(documents: list[Any]) -> bool:
     return True
 
 
+class _MergeRefusal(Exception):
+    """A text past a limit on merge keys. The argument is the refusal."""
+
+
+class _BoundedLoader(yaml.SafeLoader):
+    """The safe loader of PyYAML, with the two limits on merge keys.
+
+    PyYAML puts the entries of each merge key into its mapping in
+    `flatten_mapping`, and that function calls itself for the value of a
+    merge key. This class counts the levels of those calls and the entries
+    of each value, while PyYAML does the work. The count of entries is for
+    the text: a second document does not start it again."""
+
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self._merge_depth = 0
+        self._merged_entries = 0
+
+    def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        if self._merge_depth > _MERGE_DEPTH_MAX:
+            raise _MergeRefusal(_MERGE_TOO_DEEP)
+
+        self._merge_depth += 1
+        try:
+            super().flatten_mapping(node)
+        finally:
+            self._merge_depth -= 1
+
+        if self._merge_depth == 0:
+            return
+
+        # The caller is the merge key of another mapping. It takes these
+        # entries next. A value with no entry counts as one entry, so that
+        # the limit also holds the count of values that a text merges.
+        self._merged_entries += max(1, len(node.value))
+        if self._merged_entries > _MERGED_ENTRIES_MAX:
+            raise _MergeRefusal(_MERGE_TOO_MANY)
+
+
 def _read_documents(text: str, issues: list[Issue]) -> list[Any] | None:
     """Each document of the text, or None and the reason in `issues`."""
     try:
-        documents = list(yaml.safe_load_all(text))
+        # `load_all` makes the loader at the first document. The loader
+        # reads each character when it starts, so that refusal is inside
+        # this `try` too.
+        documents = list(yaml.load_all(text, Loader=_BoundedLoader))
+    except _MergeRefusal as exc:
+        issues.append(Issue(Severity.ERROR, "<document>", str(exc)))
+        return None
     except yaml.YAMLError as exc:
         issues.append(Issue(Severity.ERROR, "<document>", f"YAML will not parse: {exc}"))
         return None

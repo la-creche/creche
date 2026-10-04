@@ -111,3 +111,15 @@ uv run pytest family/tests
      - The grammar of a variable name, of a value and of a secret key.
      - A fence with an empty list of tools.
      - Each cap on a length and on a count.
+  4. `parse.py`, `_MERGE_DEPTH_MAX` and `_MERGED_ENTRIES_MAX`, contract 01
+     §1 and contract 01b §1. The contracts give no limit for merge keys. The
+     reader follows a chain of 400 merge keys at most. It makes 100,000
+     entries from merge keys at most. A merged value with no entry counts
+     as one entry. The reader refuses a text past a limit. The Rust reader
+     of a family file and of a server file has the same two limits.
+
+     The reader uses two calls for each merge key of a chain. With the
+     default recursion limit of Python, the chain limit holds for a caller
+     that is less than 180 calls deep. With a deeper caller, the reader can
+     refuse a shorter chain. It then gives the report for a text that nests
+     too deep. The Rust reader reads that chain.
