@@ -289,7 +289,7 @@ class HttpDispatchDoor:
 
         try:
             parsed: object = reply.json()
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:
             raise DispatchRefused("upstream_failed", "the dispatch door sent no JSON") from exc
 
         if not isinstance(parsed, dict):
@@ -319,7 +319,7 @@ def _error_of(reply: httpx.Response) -> tuple[str, str]:
     """The `code` and `message` of §14's one body shape, or empty strings."""
     try:
         parsed: object = reply.json()
-    except ValueError:
+    except (ValueError, RecursionError):
         return "", ""
 
     if not isinstance(parsed, dict):

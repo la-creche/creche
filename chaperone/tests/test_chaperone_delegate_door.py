@@ -34,6 +34,10 @@ DELEGATION = "01K5J9QWB2M4N6Q8S0V2W4Y6A8"
 SESSION = "job-01K5J9QWB4XN2A7C6E0F3G5H8J"
 ANSWER = "The boiler was serviced on 2026-03-11."
 
+#: More levels than the JSON reader of a supported interpreter reads.
+TOO_DEEP = 100_000
+TOO_DEEP_JSON = b"[" * TOO_DEEP + b"]" * TOO_DEEP
+
 
 def make_request(message: str = "where is the boiler note") -> DelegateRequest:
     return DelegateRequest(
@@ -137,6 +141,18 @@ async def test_a_non_json_body_fails_closed() -> None:
         return httpx.Response(200, text="<html>nope</html>")
 
     assert (await door(handler).call(make_request())).status is DelegateStatus.FAILED
+
+
+async def test_a_body_nested_too_deep_fails_closed() -> None:
+    """The JSON reader raises RecursionError on this body, not ValueError."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=TOO_DEEP_JSON)
+
+    reply = await door(handler).call(make_request())
+
+    assert reply.status is DelegateStatus.FAILED
+    assert reply.error == "the delegate door sent no JSON"
 
 
 async def test_a_refusal_from_the_door_is_a_failure() -> None:

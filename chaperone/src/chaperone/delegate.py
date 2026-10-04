@@ -349,5 +349,5 @@ class HttpDelegateDoor:
 
         try:
             return _read_reply(reply.json())
-        except ValueError:
+        except (ValueError, RecursionError):
             return DelegateReply(DelegateStatus.FAILED, error="the delegate door sent no JSON")

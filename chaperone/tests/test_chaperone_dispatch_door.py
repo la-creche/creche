@@ -29,6 +29,10 @@ SESSION = "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
 CHAIN = ("chat", "scrum-lead", "issue-worker")
 MESSAGE = "Take ticket 412."
 
+#: More levels than the JSON reader of a supported interpreter reads.
+TOO_DEEP = 100_000
+TOO_DEEP_JSON = b"[" * TOO_DEEP + b"]" * TOO_DEEP
+
 
 def make_request(**changed: object) -> DispatchRequest:
     fields: dict[str, object] = {
@@ -190,6 +194,30 @@ async def test_a_dead_socket_is_an_upstream_failure() -> None:
 async def test_a_body_that_is_not_json_is_an_upstream_failure() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"not json")
+
+    with pytest.raises(DispatchRefused) as raised:
+        await door(handler).enqueue(make_request())
+
+    assert raised.value.reason == "upstream_failed"
+
+
+async def test_a_body_nested_too_deep_is_an_upstream_failure() -> None:
+    """The JSON reader raises RecursionError on this body, not ValueError."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=TOO_DEEP_JSON)
+
+    with pytest.raises(DispatchRefused) as raised:
+        await door(handler).enqueue(make_request())
+
+    assert raised.value.reason == "upstream_failed"
+
+
+async def test_a_refusal_nested_too_deep_is_an_upstream_failure() -> None:
+    """The body of a refusal goes through the same reader."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, content=TOO_DEEP_JSON)
 
     with pytest.raises(DispatchRefused) as raised:
         await door(handler).enqueue(make_request())
