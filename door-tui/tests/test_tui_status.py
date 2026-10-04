@@ -12,14 +12,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from agent_door_tui import status
 from agent_door_tui.errors import DoorError, Exit
 from agent_door_tui.status import StatusFiles
+from tui_json_limit import ParserAtItsLimit
 
 FAMILY = "chat"
 ENV_PATH = "/srv/agents/state/rework/families/chat/supervisor.env"
-
-# More levels than the JSON parser of each supported Python reads.
-TOO_DEEP = 100_000
 
 
 def write_status(root: Path, **overrides: Any) -> Path:
@@ -196,11 +195,11 @@ def test_a_document_that_is_not_utf8_refuses(tmp_path: Path) -> None:
     assert StatusFiles(tmp_path).attended() == []
 
 
-def test_a_document_that_nests_too_deep_refuses(tmp_path: Path) -> None:
-    """The file is under the size cap, so the reader parses it."""
-    path = write_status(tmp_path)
-    text = '{"kind":"attended","x":' + "[" * TOO_DEEP + "]" * TOO_DEEP + "}"
-    path.write_text(text, encoding="utf-8")
+def test_a_document_that_nests_too_deep_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_status(tmp_path)
+    monkeypatch.setattr(status, "json", ParserAtItsLimit)
 
     with pytest.raises(DoorError) as caught:
         read(tmp_path)
