@@ -274,6 +274,22 @@ def test_no_module_of_this_package_calls_a_loader_with_no_bound() -> None:
     assert calls == []
 
 
+#: The limits of the Rust reader of a manifest and of a server file
+#: (`rust/crates/creche-contracts/src/manifest/yaml.rs` and
+#: `rust/crates/agent-family/src/yaml/construct.rs`).
+MANIFEST_LIMITS = MergeLimits(depth=128, pairs=65_536)
+SERVER_LIMITS = MergeLimits(depth=400, pairs=100_000)
+
+
+def test_each_reader_has_the_limits_of_its_rust_reader() -> None:
+    """The numbers themselves. Each other test takes a limit from the module
+    that it tests, so a changed number there moves that test with it. The
+    sops file has no Rust reader and takes the limits of a manifest."""
+    assert manifest.MERGE_LIMITS == MANIFEST_LIMITS
+    assert mcpserver.MERGE_LIMITS == SERVER_LIMITS
+    assert store.MERGE_LIMITS == MANIFEST_LIMITS
+
+
 # -- component.yaml ------------------------------------------------------------
 
 
