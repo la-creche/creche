@@ -1028,6 +1028,14 @@ STATE_FILES: Final[tuple[StateFile, ...]] = (
     _state("provided-list", provided={"pep-grant": [2, 0]}),
     _state("provided-final-newline", provided={"pep-grant": "2.0\n"}),
     _state("provided-text", provided="pep-grant"),
+    StateFile(
+        "provided-major-5000-digits",
+        parts=(('{"provided": {"pep-grant": "', 1), ("1", 5000), ('.0"}}', 1)),
+    ),
+    StateFile(
+        "provided-minor-5000-digits",
+        parts=(('{"provided": {"pep-grant": "0.', 1), ("1", 5000), ('"}}', 1)),
+    ),
     # --- facts ------------------------------------------------------------
     _facts("facts-unknown-name", {"sha": SHA}, "nobody"),
     _facts("facts-unknown-field", {"sha": SHA, "tag": "chaperone-v1.0.0"}),

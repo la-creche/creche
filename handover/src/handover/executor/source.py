@@ -269,7 +269,7 @@ OBJECT_ID_RE: Final = re.compile(r"[0-9a-f]{40}")
 
 #: One page of `git tag --list` output is the whole answer, so the only
 #: pattern needed here is the tag grammar itself, which `allocate.py` owns.
-_TAG_RE: Final = re.compile(r"([a-z][a-z0-9-]{1,30})-v(\d+)\.(\d+)\.(\d+)")
+_TAG_RE: Final = re.compile(r"([a-z][a-z0-9-]{1,30})-v([0-9]+)\.([0-9]+)\.([0-9]+)")
 
 
 def newest_tagged_version(names: Sequence[str], component: str) -> str | None:

@@ -651,8 +651,8 @@ class Installer:
         if staged is None:
             raise StepFailed(f"{manifest.name}: the verify hook is outside install.to")
 
-        real = staged.resolve()
-        if not real.is_file() or paths.new.resolve() not in real.parents:
+        real = _resolved(staged)
+        if real is None or not real.is_file() or paths.new.resolve() not in real.parents:
             raise StepFailed(f"{manifest.name}: the staged verify hook is missing or escapes")
 
     def stage_unit(self, manifest: ComponentManifest, source: Path, new: Path) -> None:
@@ -1297,11 +1297,25 @@ def _carried_unit(manifest: ComponentManifest, source: Path) -> Path | None:
         return None
 
     carried = source / UNIT_DIR_IN_REPO / manifest.unit
-    real = carried.resolve()
-    if not real.is_file() or source.resolve() not in real.parents:
+    real = _resolved(carried)
+    if real is None or not real.is_file() or source.resolve() not in real.parents:
         return None
 
     return carried
+
+
+def _resolved(path: Path) -> Path | None:
+    """`path` with each link followed, or None for a link in a loop.
+
+    Python 3.12 raises `RuntimeError` for a loop, and it is no `OSError`.
+    Python 3.13 raises nothing and gives back the link at which it stopped.
+    That path is no file, so each caller gives one answer under each
+    version.
+    """
+    try:
+        return path.resolve()
+    except RuntimeError:
+        return None
 
 
 def _unit_text(manifest: ComponentManifest, path: Path) -> str:

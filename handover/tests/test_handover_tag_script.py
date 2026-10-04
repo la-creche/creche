@@ -287,6 +287,114 @@ def test_after_the_bootstrap_only_the_changed_component_moves(
     assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
 
 
+#: A path with a character that is not ASCII, and one with a double quote.
+#: With its default `core.quotePath`, git writes the first one inside double
+#: quotes, and it writes the second one so under each setting.
+NOT_ASCII_PATH = "chaperone/src/caf\u00e9.py"
+QUOTE_PATH = 'chaperone/src/a"b.py'
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("path", [NOT_ASCII_PATH, QUOTE_PATH])
+def test_a_changed_path_that_git_would_quote_moves_its_component(
+    repo: Path, shims: Path, tmp_path: Path, path: str
+) -> None:
+    """The script reads each changed path as git holds it. A quoted line
+    starts with a double quote, so its first segment named no component and
+    the merge made no tag."""
+    _git(repo, "config", "core.quotePath", "true")
+    _commit(repo, "chaperone/src/one.py")
+    assert _run(repo, shims, tmp_path).returncode == 0
+
+    _commit(repo, path)
+    done = _run(repo, shims, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+
+
+@pytest.mark.slow
+def test_a_label_counts_for_a_changed_path_that_git_would_quote(
+    repo: Path, shims: Path, tmp_path: Path
+) -> None:
+    """The label of a pull request counts for the components that its merge
+    changed. The script reads those paths with a second `git diff`."""
+    _git(repo, "config", "core.quotePath", "true")
+    _commit(repo, "chaperone/src/one.py")
+    assert _run(repo, shims, tmp_path).returncode == 0
+
+    _commit(repo, NOT_ASCII_PATH)
+    done = _run(repo, shims, tmp_path, labels="bump:minor")
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.2.0"])
+
+
+@pytest.mark.slow
+def test_a_directory_that_git_would_quote_does_not_stop_the_run(
+    repo: Path, shims: Path, tmp_path: Path
+) -> None:
+    """The script lists each directory of the tree for the planner. A
+    quoted name is four characters for each byte, and the planner refuses
+    a line of more than 512 characters."""
+    _git(repo, "config", "core.quotePath", "true")
+    _commit(repo, "chaperone/src/one.py")
+    assert _run(repo, shims, tmp_path).returncode == 0
+
+    _commit(repo, f"chaperone/{'\u00e9' * 100}/two.py")
+    done = _run(repo, shims, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+
+
+#: Two names that hold a line feed. git ends each name of a `-z` list with
+#: NUL, so each one is one path: the first under `docs/`, the second under
+#: `chaperone/`.
+LINE_FEED_IN_DOCS = "docs/one\nattendance/two.py"
+LINE_FEED_IN_CHAPERONE = "chaperone/src/one\ntwo.py"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("path", "moved"),
+    [(LINE_FEED_IN_DOCS, []), (LINE_FEED_IN_CHAPERONE, ["chaperone-v0.1.1"])],
+)
+def test_a_name_with_a_line_feed_stays_one_path(
+    repo: Path, shims: Path, tmp_path: Path, path: str, moved: list[str]
+) -> None:
+    """The script gives the planner one line for each changed path. A name
+    with a line feed is one line, and it moves the component of its own
+    first segment and no other."""
+    _commit(repo, "chaperone/src/one.py")
+    assert _run(repo, shims, tmp_path).returncode == 0
+
+    _commit(repo, path)
+    done = _run(repo, shims, tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, *moved])
+
+
+@pytest.mark.slow
+def test_a_file_that_leaves_a_component_moves_that_component(
+    repo: Path, shims: Path, tmp_path: Path
+) -> None:
+    """git names a renamed file by its new path only, unless
+    `--no-renames` says otherwise. The component that lost the file then
+    had no changed path, and the merge made no tag for it."""
+    _git(repo, "config", "diff.renames", "true")
+    _commit(repo, "chaperone/src/one.py", "docs/guide.md")
+    assert _run(repo, shims, tmp_path).returncode == 0
+
+    _git(repo, "mv", "chaperone/src/one.py", "docs/one.py")
+    _git(repo, "commit", "-q", "-m", "move one file out")
+    done = _run(repo, shims, tmp_path, labels="bump:minor")
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.2.0"])
+
+
 @pytest.mark.slow
 def test_a_dry_run_shows_every_first_tag_and_writes_none(
     repo: Path, shims: Path, tmp_path: Path
