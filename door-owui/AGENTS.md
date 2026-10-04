@@ -42,6 +42,7 @@ The door holds no session state. `attendance` owns the transcript.
 |---|---|
 | chat id header absent or empty | `400 missing_chat_id` |
 | a second door holds the writer lease | `409 session_busy`, also for a streamed request |
+| `attendance` does not answer | `502 attendance_unreachable`, also for a streamed request |
 | the family is reconciling, degraded, or invalid with a last good definition | still served |
 | a turn ends any way other than `settled` | a visible OpenAI-shaped error chunk |
 | the client disconnects mid-stream | streaming stops, the turn keeps running |

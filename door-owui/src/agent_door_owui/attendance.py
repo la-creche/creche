@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -28,6 +28,7 @@ from typing import Protocol
 import httpx
 
 from .config import DoorConfig
+from .errors import CODE_UNREACHABLE
 from .journal import MAX_LINE_BYTES, BadLine, JournalLine, parse_line
 from .untrusted import as_object, field_text, is_object
 
@@ -158,11 +159,10 @@ class HttpAttendance:
         await self._client.aclose()
 
     async def ensure_session(self, family: str, session: str) -> None:
-        response = await self._client.post(
+        response = await self._post(
             "/v1/sessions",
-            json={"family": family, "session": session, "labels": {"door": DOOR_NAME}},
-            headers=self._auth,
-            timeout=httpx.Timeout(CONNECT_TIMEOUT_S, read=CONNECT_TIMEOUT_S * 2),
+            {"family": family, "session": session, "labels": {"door": DOOR_NAME}},
+            httpx.Timeout(CONNECT_TIMEOUT_S, read=CONNECT_TIMEOUT_S * 2),
         )
         if response.status_code in (_OK, _CREATED):
             return
@@ -170,11 +170,10 @@ class HttpAttendance:
         raise _error_of(response.status_code, response.text)
 
     async def settled_turn(self, request: TurnRequest, *, with_parent: bool = True) -> SettledTurn:
-        response = await self._client.post(
+        response = await self._post(
             _turns_path(request),
-            json=request.body(WaitMode.SETTLED, with_parent=with_parent),
-            headers=self._auth,
-            timeout=httpx.Timeout(CONNECT_TIMEOUT_S, read=SETTLED_READ_TIMEOUT_S),
+            request.body(WaitMode.SETTLED, with_parent=with_parent),
+            httpx.Timeout(CONNECT_TIMEOUT_S, read=SETTLED_READ_TIMEOUT_S),
         )
         if response.status_code != _OK:
             raise _error_of(response.status_code, response.text)
@@ -193,13 +192,30 @@ class HttpAttendance:
             headers=self._auth,
             timeout=httpx.Timeout(CONNECT_TIMEOUT_S, read=None, write=WRITE_TIMEOUT_S),
         )
-        async with stream as response:
-            if response.status_code != _OK:
+        async with AsyncExitStack() as stack:
+            # Only the open and the read of a refusal are inside the handler.
+            # A failure after the first line is `_iter_lines`'s to report.
+            try:
+                response = await stack.enter_async_context(stream)
+                refusal = None if response.status_code == _OK else await response.aread()
+            except httpx.HTTPError as exc:
+                raise _unreachable(exc) from exc
+
+            if refusal is not None:
                 # The refusal arrives before any frame is written, so the
                 # caller can still answer with a status of its own.
-                raise _error_of(response.status_code, (await response.aread()).decode("utf-8"))
+                raise _error_of(response.status_code, refusal.decode("utf-8", errors="replace"))
 
             yield _iter_lines(response)
+
+    async def _post(
+        self, path: str, body: dict[str, object], timeout: httpx.Timeout
+    ) -> httpx.Response:
+        """One request with a whole answer. A call with no answer is `AttendanceError`."""
+        try:
+            return await self._client.post(path, json=body, headers=self._auth, timeout=timeout)
+        except httpx.HTTPError as exc:
+            raise _unreachable(exc) from exc
 
 
 def _build_client(config: DoorConfig) -> httpx.AsyncClient:
@@ -210,6 +226,18 @@ def _build_client(config: DoorConfig) -> httpx.AsyncClient:
     )
 
     return httpx.AsyncClient(base_url=config.attendance_url, transport=transport)
+
+
+def _unreachable(exc: httpx.HTTPError) -> AttendanceError:
+    """A call that got no answer, as an error the door maps to a refusal.
+
+    The caller (app.py) is written against `AttendanceClient` and never
+    imports `httpx`, so a transport failure leaves this module as the door's
+    own code and never as a raw `httpx` exception.
+    """
+    _LOG.warning("attendance did not answer: %s: %s", type(exc).__name__, exc)
+
+    return AttendanceError(CODE_UNREACHABLE, "attendance did not answer", 0)
 
 
 def _turns_path(request: TurnRequest) -> str:
