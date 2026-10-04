@@ -1003,12 +1003,15 @@ class Reply:
     body: bytes
 
 
-async def _asgi(app: ASGIApp, ask: Ask) -> Reply:
+async def _asgi(app: ASGIApp, ask: Ask) -> Reply | Raised:
     """One request to an app, with no server and no client between the two.
 
     A test client decodes a header value and encodes it again as UTF-8. A
     header value that is not UTF-8 then reaches the app as other bytes. This
     call gives the app the bytes as they are, as a server does.
+
+    Only the call of the app can give a `Raised`. A fault of a step of the
+    generator stops the generator.
     """
     sent: list[Message] = []
     waiting: list[Message] = [{"type": "http.request", "body": ask.body, "more_body": False}]
@@ -1033,7 +1036,11 @@ async def _asgi(app: ASGIApp, ask: Ask) -> Reply:
         "client": CLIENT,
         "server": SERVER,
     }
-    await app(scope, receive, send)
+    try:
+        await app(scope, receive, send)
+    except Exception as exc:
+        return Raised(exc)
+
     starts = [message for message in sent if message["type"] == "http.response.start"]
     if len(starts) != 1:
         raise ValueError(f"{ask.method} {ask.path}: the app started {len(starts)} answers")
@@ -1047,7 +1054,7 @@ async def _asgi(app: ASGIApp, ask: Ask) -> Reply:
     return Reply(cast("int", starts[0]["status"]), body)
 
 
-def _send(app: ASGIApp, ask: Ask, header: bytes | None) -> Reply:
+def _send(app: ASGIApp, ask: Ask, header: bytes | None) -> Reply | Raised:
     """One request with this `Authorization` header, or with none."""
     if header is not None:
         ask = Ask(ask.method, ask.path, (*ask.headers, (b"authorization", header)), ask.body)
@@ -1073,8 +1080,8 @@ class Verdict:
 class Gate(Protocol):
     """One service that holds one token."""
 
-    def ask(self, header: bytes | None) -> Reply:
-        """Sends one request. This is the call of the entry point."""
+    def ask(self, header: bytes | None) -> Reply | Raised:
+        """Sends one request. Returns the answer, or the exception that the app raised."""
         ...
 
     def verdict(self, reply: Reply) -> Verdict:
@@ -1097,7 +1104,7 @@ class _AttendanceGate:
         self._service = StandIn()
         self._app = build_attendance_app(cast("SessionService", self._service), book)
 
-    def ask(self, header: bytes | None) -> Reply:
+    def ask(self, header: bytes | None) -> Reply | Raised:
         self._service.reset()
 
         return _send(self._app, self.ASK, header)
@@ -1138,7 +1145,7 @@ class _OwuiGate:
         # The route of the request makes no call to `attendance`.
         self._app = create_owui_app(config, cast("OwuiAttendance", object()), _NoFamilies())
 
-    def ask(self, header: bytes | None) -> Reply:
+    def ask(self, header: bytes | None) -> Reply | Raised:
         return _send(self._app, self.ASK, header)
 
     def verdict(self, reply: Reply) -> Verdict:
@@ -1212,7 +1219,7 @@ class _TriggerGate:
         self._attendance = _CountingAttendance()
         self._app = create_trigger_app(config, self._attendance, _OneRoute(token))
 
-    def ask(self, header: bytes | None) -> Reply:
+    def ask(self, header: bytes | None) -> Reply | Raised:
         self._attendance.calls = 0
 
         return _send(self._app, self.ASK, header)
@@ -1245,7 +1252,7 @@ class _ChaperoneGate:
         )
         self._app = create_chaperone_app(config)
 
-    def ask(self, header: bytes | None) -> Reply:
+    def ask(self, header: bytes | None) -> Reply | Raised:
         return _send(self._app, self.ASK, header)
 
     def verdict(self, reply: Reply) -> Verdict:
@@ -1348,7 +1355,7 @@ COPIES: Final[tuple[Copy, ...]] = (
 def _bearer_vector(header: Header, gate: Gate) -> Vector:
     given = header.given()
     with quiet_logs():
-        outcome = attempt(lambda: gate.ask(header.raw))
+        outcome = gate.ask(header.raw)
 
     if isinstance(outcome, Raised):
         return raised(header.id, given, outcome.exc, **header.extra())
