@@ -3,7 +3,7 @@
  "contract": "contract 02 \u00a73 rules 5 and 7",
  "entry": "attendance.auth.TokenBook.load, the token file of door-delegate",
  "format": 1,
- "notes": ["The input is the bytes of one token file. The generator writes them to a file with the mode that params.mode gives, in octal. The account of the generator owns the file and can read each mode of a vector.","A vector 31-bytes-in-u<code point> is 31 ASCII bytes with that character at each of the two ends, as UTF-8. A reader that needs 32 bytes takes the file only when it keeps the character.","The entry point reads the token file of each principal. The generator gives each other principal a file of 42 bytes with mode 0600. A refusal thus names the input.","The entry point returns nothing, so an accepted vector has no value. The reader keeps the bytes of the file with no decode, less the six bytes of ASCII whitespace at the two ends: space, tab, LF, CR, VT and FF.","refusal is the kind of the refusal: unreadable, empty, short or mode. The reader checks the count of bytes before the mode. The chaperone reads this file, so the group can have the read bit. mode means that the group or another account has another permission bit."],
+ "notes": ["The input is the bytes of one token file. The generator writes them to a file with the mode that params.mode gives, in octal. The account of the generator owns the file and can read each mode of a vector.","The vector absent is a path with no file. Its input is args.file with the value null, and it has no params. The directory of the path exists.","A vector 31-bytes-in-u<code point> is 31 ASCII bytes with that character at each of the two ends, as UTF-8. A reader that needs 32 bytes takes the file only when it keeps the character.","The entry point reads the token file of each principal. The generator gives each other principal a file of 42 bytes with mode 0600. A refusal thus names the input.","The entry point returns nothing, so an accepted vector has no value. The reader keeps the bytes of the file with no decode, less the six bytes of ASCII whitespace at the two ends: space, tab, LF, CR, VT and FF.","refusal is the kind of the refusal: unreadable, empty, short or mode. The reader checks the count of bytes before the mode. The chaperone reads this file, so the group can have the read bit. mode means that the group or another account has another permission bit."],
  "surface": "runtime.token.attendance_pep_read",
  "vectors": [
   {"id":"32-bytes","input":{"text":"0123456789abcdefghijklmnopqrstuv"},"params":{"mode":"0600"},"result":"accepted"},
@@ -55,6 +55,7 @@
   {"id":"empty-mode-0644","input":{"text":""},"params":{"mode":"0644"},"refusal":"empty","result":"refused"},
   {"id":"not-utf8","input":{"base64":"/zAxMjM0NTY3ODlhYmNkZWZnaGlqa2xtbm9wcXJzdHV2"},"params":{"mode":"0600"},"result":"accepted"},
   {"id":"not-utf8-short","input":{"base64":"/3Nob3J0"},"params":{"mode":"0600"},"refusal":"short","result":"refused"},
-  {"id":"31-bytes-in-byte-a0","input":{"base64":"oDAxMjM0NTY3ODlhYmNkZWZnaGlqa2xtbm9wcXJzdHWg"},"params":{"mode":"0600"},"result":"accepted"}
+  {"id":"31-bytes-in-byte-a0","input":{"base64":"oDAxMjM0NTY3ODlhYmNkZWZnaGlqa2xtbm9wcXJzdHWg"},"params":{"mode":"0600"},"result":"accepted"},
+  {"id":"absent","input":{"args":{"file":null}},"refusal":"unreadable","result":"refused"}
  ]
 }

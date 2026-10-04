@@ -232,9 +232,10 @@ directory is not a workspace package, so a change here does not change
 - `runtime.token.attendance` and `runtime.token.attendance_pep_read` hold no
   token. `TokenBook.load` returns nothing, and the tokens that it keeps are
   private.
-- A `runtime.token` surface holds only a file that the generator can read.
-  No vector covers a file that is absent, a directory at the path or a file
-  of more than 1 MiB.
+- A `runtime.token` surface holds one path with no file, the vector
+  `absent`. Each other vector is a file that the generator can read. No
+  vector covers a directory at the path, a file that the generator cannot
+  read or a file of more than 1 MiB.
 - Each bearer reader is a private function: `_bearer_value` of
   `attendance.auth` and of `agent_door_trigger.webhooks`, `_authenticate` of
   `agent_door_owui.app`, `_bearer` and `_bearer_matches` of `chaperone.app`.

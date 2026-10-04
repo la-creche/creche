@@ -564,8 +564,16 @@ class TokenFile:
     """One token file: an id, its bytes and its mode."""
 
     id: str
-    raw: bytes
+    #: The bytes of the file. None stands for a path with no file.
+    raw: bytes | None
     mode: int = MODE_OWNER
+
+    def given(self) -> dict[str, Json]:
+        return {"args": {"file": None}} if self.raw is None else bytes_input(self.raw)
+
+    def extra(self) -> dict[str, object]:
+        """The params of the vector: the mode, when the path holds a file."""
+        return {} if self.raw is None else {"params": {"mode": f"{self.mode:04o}"}}
 
 
 def _edged(char: str) -> TokenFile:
@@ -618,6 +626,9 @@ OTHER_FILES: Final[tuple[TokenFile, ...]] = (
     TokenFile("31-bytes-in-byte-a0", b"\xa0" + SHORT + b"\xa0"),
 )
 
+#: A path with no file. Each reader gets it after its files.
+ABSENT: Final = TokenFile("absent", None)
+
 
 class Returns(enum.Enum):
     """What the entry point of a token reader returns."""
@@ -658,14 +669,24 @@ def _write(path: Path, raw: bytes, mode: int) -> None:
     path.chmod(mode)
 
 
+def _place(path: Path, file: TokenFile) -> None:
+    """One input at a path: its file, or only the directory for a path with no file."""
+    if file.raw is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return
+
+    _write(path, file.raw, file.mode)
+
+
 def _book(principal: Principal) -> Callable[[Path, TokenFile], Callable[[], object]]:
     """The token file of one principal, among the files of each other one."""
 
     def prepare(directory: Path, file: TokenFile) -> Callable[[], object]:
         for other in Principal:
-            _write(token_file(directory, other.value), FILLER, MODE_OWNER)
+            if other is not principal:
+                _write(token_file(directory, other.value), FILLER, MODE_OWNER)
 
-        _write(token_file(directory, principal.value), file.raw, file.mode)
+        _place(token_file(directory, principal.value), file)
 
         return TokenBook(directory).load
 
@@ -675,7 +696,7 @@ def _book(principal: Principal) -> Callable[[Path, TokenFile], Callable[[], obje
 def _door_key(directory: Path, file: TokenFile) -> Callable[[], object]:
     key = directory / "door.key"
     token = directory / "attendance.token"
-    _write(key, file.raw, file.mode)
+    _place(key, file)
     _write(token, FILLER, MODE_OWNER)
     variables = {owui_config.ENV_KEY_FILE: str(key), owui_config.ENV_TOKEN_FILE: str(token)}
 
@@ -689,7 +710,7 @@ def _one_file(
 
     def prepare(directory: Path, file: TokenFile) -> Callable[[], object]:
         path = directory / "token"
-        _write(path, file.raw, file.mode)
+        _place(path, file)
 
         return lambda: read(path)
 
@@ -807,8 +828,8 @@ TOKEN_READERS: Final[tuple[TokenReader, ...]] = (
             "permission bit. Then it removes the six bytes of ASCII whitespace from the two "
             "ends, counts the bytes and decodes them as UTF-8. value.token is the text that "
             "the reader returns.",
-            "A refused vector is a file for which the reader returns None. The reader gives "
-            "no reason, so a refused vector has no refusal.",
+            "A refused vector is an input for which the reader returns None. The reader "
+            "gives no reason, so a refused vector has no refusal.",
         ),
     ),
     TokenReader(
@@ -848,8 +869,8 @@ def _kind(reader: TokenReader, error: Exception, home: Path) -> str:
 
 
 def _token_vector(reader: TokenReader, file: TokenFile, scratch: Path) -> Vector:
-    given = bytes_input(file.raw)
-    params = {"mode": f"{file.mode:04o}"}
+    given = file.given()
+    extra = file.extra()
     home = scratch / reader.name / file.id
     call = reader.prepare(home, file)
     with quiet_logs():
@@ -857,18 +878,18 @@ def _token_vector(reader: TokenReader, file: TokenFile, scratch: Path) -> Vector
 
     if isinstance(outcome, Raised):
         if reader.refusal is not None and isinstance(outcome.exc, reader.refusal):
-            return refused(file.id, given, _kind(reader, outcome.exc, home), params=params)
+            return refused(file.id, given, _kind(reader, outcome.exc, home), **extra)
 
-        return raised(file.id, given, outcome.exc, params=params)
+        return raised(file.id, given, outcome.exc, **extra)
 
     if reader.returns is Returns.NOTHING:
-        return accepted(file.id, given, params=params)
+        return accepted(file.id, given, **extra)
 
     if isinstance(outcome, str):
-        return accepted(file.id, given, {"token": outcome}, params=params)
+        return accepted(file.id, given, {"token": outcome}, **extra)
 
     if outcome is None and reader.returns is Returns.TOKEN_OR_NONE:
-        return refused(file.id, given, params=params)
+        return refused(file.id, given, **extra)
 
     raise ValueError(f"{reader.name}: the reader returned {type(outcome).__name__}")
 
@@ -877,6 +898,10 @@ _NOTE_FILE: Final = (
     "The input is the bytes of one token file. The generator writes them to a file with the "
     "mode that params.mode gives, in octal. The account of the generator owns the file and "
     "can read each mode of a vector."
+)
+_NOTE_ABSENT: Final = (
+    f"The vector {ABSENT.id} is a path with no file. Its input is args.file with the value "
+    "null, and it has no params. The directory of the path exists."
 )
 _NOTE_ENDS: Final = (
     "A vector 31-bytes-in-u<code point> is 31 ASCII bytes with that character at each of "
@@ -893,8 +918,8 @@ def _token_surface(reader: TokenReader, scratch: Path) -> Surface:
         path=f"{GROUP}/{tail}.json",
         entry=reader.entry,
         contract=reader.contract,
-        notes=(_NOTE_FILE, _NOTE_ENDS, *reader.notes),
-        vectors=tuple(_token_vector(reader, file, scratch) for file in reader.files),
+        notes=(_NOTE_FILE, _NOTE_ABSENT, _NOTE_ENDS, *reader.notes),
+        vectors=tuple(_token_vector(reader, file, scratch) for file in (*reader.files, ABSENT)),
     )
 
 

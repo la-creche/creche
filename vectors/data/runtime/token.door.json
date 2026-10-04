@@ -3,7 +3,7 @@
  "contract": "contract 02 \u00a73 rule 7",
  "entry": "agent_door_owui.config.from_env, the file of DOOR_OWUI_KEY_FILE",
  "format": 1,
- "notes": ["The input is the bytes of one token file. The generator writes them to a file with the mode that params.mode gives, in octal. The account of the generator owns the file and can read each mode of a vector.","A vector 31-bytes-in-u<code point> is 31 ASCII bytes with that character at each of the two ends, as UTF-8. A reader that needs 32 bytes takes the file only when it keeps the character.","The generator gives the entry point two variables: DOOR_OWUI_KEY_FILE names the input, and DOOR_OWUI_SESSIOND_TOKEN_FILE names a file of 42 bytes.","The reader reads the file as UTF-8 text, in the text mode of Python. That mode gives LF for each CR and for each CR LF. Then the reader removes the whitespace of Python str.strip from the two ends. value.token is the text that the reader returns.","refusal is the kind of the refusal: unreadable, not_utf8 or short. The reader counts the UTF-8 bytes of the text. An empty file is short. The reader checks no mode."],
+ "notes": ["The input is the bytes of one token file. The generator writes them to a file with the mode that params.mode gives, in octal. The account of the generator owns the file and can read each mode of a vector.","The vector absent is a path with no file. Its input is args.file with the value null, and it has no params. The directory of the path exists.","A vector 31-bytes-in-u<code point> is 31 ASCII bytes with that character at each of the two ends, as UTF-8. A reader that needs 32 bytes takes the file only when it keeps the character.","The generator gives the entry point two variables: DOOR_OWUI_KEY_FILE names the input, and DOOR_OWUI_SESSIOND_TOKEN_FILE names a file of 42 bytes.","The reader reads the file as UTF-8 text, in the text mode of Python. That mode gives LF for each CR and for each CR LF. Then the reader removes the whitespace of Python str.strip from the two ends. value.token is the text that the reader returns.","refusal is the kind of the refusal: unreadable, not_utf8 or short. The reader counts the UTF-8 bytes of the text. An empty file is short. The reader checks no mode."],
  "surface": "runtime.token.door",
  "vectors": [
   {"id":"32-bytes","input":{"text":"0123456789abcdefghijklmnopqrstuv"},"params":{"mode":"0600"},"result":"accepted","value":{"token":"0123456789abcdefghijklmnopqrstuv"}},
@@ -55,6 +55,7 @@
   {"id":"empty-mode-0644","input":{"text":""},"params":{"mode":"0644"},"refusal":"short","result":"refused"},
   {"id":"not-utf8","input":{"base64":"/zAxMjM0NTY3ODlhYmNkZWZnaGlqa2xtbm9wcXJzdHV2"},"params":{"mode":"0600"},"refusal":"not_utf8","result":"refused"},
   {"id":"not-utf8-short","input":{"base64":"/3Nob3J0"},"params":{"mode":"0600"},"refusal":"not_utf8","result":"refused"},
-  {"id":"31-bytes-in-byte-a0","input":{"base64":"oDAxMjM0NTY3ODlhYmNkZWZnaGlqa2xtbm9wcXJzdHWg"},"params":{"mode":"0600"},"refusal":"not_utf8","result":"refused"}
+  {"id":"31-bytes-in-byte-a0","input":{"base64":"oDAxMjM0NTY3ODlhYmNkZWZnaGlqa2xtbm9wcXJzdHWg"},"params":{"mode":"0600"},"refusal":"not_utf8","result":"refused"},
+  {"id":"absent","input":{"args":{"file":null}},"refusal":"unreadable","result":"refused"}
  ]
 }

@@ -3,7 +3,7 @@
  "contract": "contract 04 \u00a77.3, contract 02 \u00a73 rule 7",
  "entry": "chaperone.delegate.read_door_token",
  "format": 1,
- "notes": ["The input is the bytes of one token file. The generator writes them to a file with the mode that params.mode gives, in octal. The account of the generator owns the file and can read each mode of a vector.","A vector 31-bytes-in-u<code point> is 31 ASCII bytes with that character at each of the two ends, as UTF-8. A reader that needs 32 bytes takes the file only when it keeps the character.","The reader reads the file as UTF-8 text, in the text mode of Python. That mode gives LF for each CR and for each CR LF. Then the reader removes the whitespace of Python str.strip from the two ends. value.token is the text that the reader returns.","refusal is the kind of the refusal: unreadable or short. The reader counts the UTF-8 bytes of the text. An empty file is short. The reader checks no mode."],
+ "notes": ["The input is the bytes of one token file. The generator writes them to a file with the mode that params.mode gives, in octal. The account of the generator owns the file and can read each mode of a vector.","The vector absent is a path with no file. Its input is args.file with the value null, and it has no params. The directory of the path exists.","A vector 31-bytes-in-u<code point> is 31 ASCII bytes with that character at each of the two ends, as UTF-8. A reader that needs 32 bytes takes the file only when it keeps the character.","The reader reads the file as UTF-8 text, in the text mode of Python. That mode gives LF for each CR and for each CR LF. Then the reader removes the whitespace of Python str.strip from the two ends. value.token is the text that the reader returns.","refusal is the kind of the refusal: unreadable or short. The reader counts the UTF-8 bytes of the text. An empty file is short. The reader checks no mode."],
  "surface": "runtime.token.delegate",
  "vectors": [
   {"id":"32-bytes","input":{"text":"0123456789abcdefghijklmnopqrstuv"},"params":{"mode":"0600"},"result":"accepted","value":{"token":"0123456789abcdefghijklmnopqrstuv"}},
@@ -52,6 +52,7 @@
   {"id":"mode-0620","input":{"text":"0123456789abcdefghijklmnopqrstuv"},"params":{"mode":"0620"},"result":"accepted","value":{"token":"0123456789abcdefghijklmnopqrstuv"}},
   {"id":"mode-0610","input":{"text":"0123456789abcdefghijklmnopqrstuv"},"params":{"mode":"0610"},"result":"accepted","value":{"token":"0123456789abcdefghijklmnopqrstuv"}},
   {"id":"31-bytes-mode-0644","input":{"text":"0123456789abcdefghijklmnopqrstu"},"params":{"mode":"0644"},"refusal":"short","result":"refused"},
-  {"id":"empty-mode-0644","input":{"text":""},"params":{"mode":"0644"},"refusal":"short","result":"refused"}
+  {"id":"empty-mode-0644","input":{"text":""},"params":{"mode":"0644"},"refusal":"short","result":"refused"},
+  {"id":"absent","input":{"args":{"file":null}},"refusal":"unreadable","result":"refused"}
  ]
 }

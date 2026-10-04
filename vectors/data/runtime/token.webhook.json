@@ -3,7 +3,7 @@
  "contract": "contract 05 \u00a76.4",
  "entry": "agent_door_trigger.tokens.read_webhook_token",
  "format": 1,
- "notes": ["The input is the bytes of one token file. The generator writes them to a file with the mode that params.mode gives, in octal. The account of the generator owns the file and can read each mode of a vector.","A vector 31-bytes-in-u<code point> is 31 ASCII bytes with that character at each of the two ends, as UTF-8. A reader that needs 32 bytes takes the file only when it keeps the character.","The reader checks the mode first: the group and each other account have no permission bit. Then it removes the six bytes of ASCII whitespace from the two ends, counts the bytes and decodes them as UTF-8. value.token is the text that the reader returns.","A refused vector is a file for which the reader returns None. The reader gives no reason, so a refused vector has no refusal."],
+ "notes": ["The input is the bytes of one token file. The generator writes them to a file with the mode that params.mode gives, in octal. The account of the generator owns the file and can read each mode of a vector.","The vector absent is a path with no file. Its input is args.file with the value null, and it has no params. The directory of the path exists.","A vector 31-bytes-in-u<code point> is 31 ASCII bytes with that character at each of the two ends, as UTF-8. A reader that needs 32 bytes takes the file only when it keeps the character.","The reader checks the mode first: the group and each other account have no permission bit. Then it removes the six bytes of ASCII whitespace from the two ends, counts the bytes and decodes them as UTF-8. value.token is the text that the reader returns.","A refused vector is an input for which the reader returns None. The reader gives no reason, so a refused vector has no refusal."],
  "surface": "runtime.token.webhook",
  "vectors": [
   {"id":"32-bytes","input":{"text":"0123456789abcdefghijklmnopqrstuv"},"params":{"mode":"0600"},"result":"accepted","value":{"token":"0123456789abcdefghijklmnopqrstuv"}},
@@ -55,6 +55,7 @@
   {"id":"empty-mode-0644","input":{"text":""},"params":{"mode":"0644"},"result":"refused"},
   {"id":"not-utf8","input":{"base64":"/zAxMjM0NTY3ODlhYmNkZWZnaGlqa2xtbm9wcXJzdHV2"},"params":{"mode":"0600"},"result":"refused"},
   {"id":"not-utf8-short","input":{"base64":"/3Nob3J0"},"params":{"mode":"0600"},"result":"refused"},
-  {"id":"31-bytes-in-byte-a0","input":{"base64":"oDAxMjM0NTY3ODlhYmNkZWZnaGlqa2xtbm9wcXJzdHWg"},"params":{"mode":"0600"},"result":"refused"}
+  {"id":"31-bytes-in-byte-a0","input":{"base64":"oDAxMjM0NTY3ODlhYmNkZWZnaGlqa2xtbm9wcXJzdHWg"},"params":{"mode":"0600"},"result":"refused"},
+  {"id":"absent","input":{"args":{"file":null}},"result":"refused"}
  ]
 }
