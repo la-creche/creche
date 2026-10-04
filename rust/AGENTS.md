@@ -16,6 +16,7 @@ defect that a test finds late.
 | `rust-toolchain.toml` | The one toolchain version. rustup reads it for each cargo command under `rust/`. |
 | `rustfmt.toml` | The line width: 100, the same as ruff. |
 | `clippy.toml` | The lints that a test can break. |
+| `deny.toml` | The policy for the locked crates: the licenses, the sources, the bans and the advisories. `cargo deny` reads it. |
 | `crates/<name>/` | One crate. Each directory there is a workspace member. |
 
 | Crate | What it holds |
@@ -102,7 +103,17 @@ You need rustup. It installs the toolchain at the first cargo command under
 2. The include check. No Rust source file includes a Markdown file.
 3. `cargo fmt --all --check`.
 4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
-5. `cargo test --workspace --locked`, with `--tests` only.
+5. `cargo deny --locked check`, where `cargo-deny` is on `PATH`.
+6. `cargo test --workspace --locked`, with `--tests` only.
+
+Step 5 needs the program `cargo-deny`. rustup does not install it.
+
+- Without `cargo-deny` on `PATH`, the script prints one line and runs each
+  other step. CI runs step 5 for the same change.
+- In CI, the script fails without `cargo-deny`. The `rust` job installs it
+  before the script runs. `.github/workflows/gate.yml` names the version.
+- To run step 5 on your machine, install that version of `cargo-deny`.
+- Step 5 reads the advisory database from the network.
 
 `bin/quality-gate.sh` starts `bin/rust-gate.sh` only for a change that
 touches `rust/`. `bin/AGENTS.md` has the table. Every path under `rust/`
@@ -630,10 +641,50 @@ Rules for the test:
   16 digits or more can differ from the Python value in its last bit. Do not
   remove the feature.
 
+### The check of the locked crates
+
+`deny.toml` is the policy for the crates of `Cargo.lock`.
+`cargo deny --locked check` makes four checks against it:
+
+| Check | What fails |
+|---|---|
+| `licenses` | A crate that needs a license outside this list: `MIT`, `Apache-2.0`, `BSD-3-Clause`, `Unicode-3.0`. |
+| `sources` | A crate from a registry that is not crates.io. A crate from a git repository. |
+| `bans` | Two versions of one crate. A dependency with the version `*`. |
+| `advisories` | A crate with a vulnerability advisory or with an `unmaintained` advisory. A direct dependency with an `unsound` advisory. A version that its author removed from the registry. |
+
+- `bin/tests/test_rust_workspace.py` pins each table of `deny.toml`, entry
+  for entry.
+- To add a license or a source, change that pin in the same commit. Give
+  the reason in the commit message.
+- The same rule applies to each other entry, for example an advisory that
+  the check ignores.
+- The checks read each crate that a build for one of four targets can use:
+  Linux with glibc and macOS, each on x86-64 and on arm64. `deny.toml` lists
+  the targets.
+- A crate that only a test uses is in the `licenses` check and in the count
+  of versions. Two keys of `deny.toml` do this: `include-dev` and
+  `multiple-versions-include-dev`. Without its key, each of the two checks
+  skips such a crate.
+- A crate of this workspace names another one by its path, with no version.
+  `deny.toml` permits that only for a crate with `publish = false`.
+- The check does not read the code of a crate. A crate that passes is not a
+  crate that a person here reviewed.
+
 ## Known gaps
 
-- CI does not run `cargo deny`. No check reads the advisories or the
-  licenses of the locked crates.
+- The owner did not decide if the advisory check blocks a merge. Today it
+  does: step 5 of `bin/rust-gate.sh` makes the four checks. A change with no
+  new dependency can thus fail on a new advisory. The other choice is an
+  advisory check on a schedule.
+- `release.yml` runs the same step after a merge that touches `rust/` or
+  `vectors/`. A new advisory there fails the `rust` job, and that push gets
+  no tag. The next push that passes gets the tags of both.
+- The check of the locked crates reads four targets. A crate that only a
+  build for another target uses gets no check, for example a build for Linux
+  with musl or for Windows. `Cargo.lock` holds such crates.
+- `bin/rust-gate.sh` does not check the version of the `cargo-deny` on
+  `PATH`. Another version can read `deny.toml` in another way.
 - No release uses Rust code.
 - Most bodies of `creche-runtime`, of `creche-testkit` and of the module
   `untrusted` are stubs. A stub panics when code calls it.
