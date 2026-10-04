@@ -25,3 +25,6 @@ tokio-util = { workspace = true }
 # than the testkit does. AGENTS.md, rule 3, says where such a test goes.
 [dev-dependencies]
 creche-testkit = { path = "../creche-testkit" }
+# A differential test compares a result with a value of a vector file. That
+# value is a `serde_json::Value`, and a test helper names the type.
+serde_json = { workspace = true }

@@ -95,6 +95,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustix",
+ "serde_json",
  "tokio",
  "tokio-util",
 ]
