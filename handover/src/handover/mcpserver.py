@@ -456,9 +456,10 @@ def _one_share(name: str, value: Any, secrets: tuple[str, ...]) -> SharedSecret:
 
 
 def _mapping(directory: str, raw: bytes) -> dict[str, Any]:
+    # Each error of the reader, as `manifest.parse_manifest` takes it.
     try:
         loaded: Any = yaml.safe_load(raw.decode("utf-8"))
-    except (UnicodeDecodeError, yaml.YAMLError, RecursionError):
+    except Exception:
         raise _refuse(directory, "server.yaml is not readable YAML") from None
 
     if not isinstance(loaded, dict):

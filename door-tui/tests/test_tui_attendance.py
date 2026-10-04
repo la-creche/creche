@@ -259,6 +259,31 @@ def test_an_answer_with_no_error_body_still_fails(served: tuple[HttpAttendance, 
     assert caught.value.code == "internal"
 
 
+@pytest.mark.parametrize("status", [200, 500])
+def test_an_answer_that_nests_too_deep_reads_as_no_body(tmp_path: Path, status: int) -> None:
+    # More levels than the JSON parser of each supported Python reads. The
+    # client has no size cap, so the text reaches the parser.
+    levels = 400_000
+    deep = ("[" * levels + "]" * levels).encode()
+
+    def answer(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, content=deep)
+
+    client = HttpAttendance(
+        _config(tmp_path),
+        httpx.Client(base_url="http://sessiond", transport=httpx.MockTransport(answer)),
+    )
+
+    if status == 200:
+        assert client.sessions("chat") == []
+        return
+
+    with pytest.raises(AttendanceError) as caught:
+        client.sessions("chat")
+
+    assert caught.value.code == "internal"
+
+
 def test_a_transport_failure_reads_as_unreachable(tmp_path: Path) -> None:
     def broken(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no such socket", request=request)

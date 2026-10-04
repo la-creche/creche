@@ -86,7 +86,7 @@ def binary_manifest_text(
     cargo build and the given unit. `kind` lets a test read the same
     manifest as a venv, to show what the kind alone changes."""
     text = manifest_text(BINARY_NAME).replace("/opt/components", str(components))
-    text = text.replace(f"kind: {Kind.VENV}", f"kind: {kind}")
+    text = text.replace(f"kind: {CATALOG_BY_NAME[BINARY_NAME].kind}", f"kind: {kind}")
     text = text.replace("install:", BUILD_LINE, 1)
     if unit is not None:
         text = text.replace("unit: null", f"unit: {unit}")

@@ -65,6 +65,14 @@ uid can. No port, no bearer, no listener, and nothing a sandbox can reach.
    point, and the next signal tries again. `health` is what `/healthz`
    shows of it. The start also runs §4.4 step 2's declared-tool check, so
    a restart never serves a row the next reload would refuse.
+9. **The read runs off the loop thread.** `sops -d` runs once for the
+   monolith and once for each pasted value, and each run can take seconds.
+   The loop holds every call and every held approval, so a read on its
+   thread stops them all for that time. `reload_once` takes the credentials
+   in memory first, and the thread gets that copy and the paths. It reads
+   no state of the loop. A read that fails in a way `UNREADABLE` does not
+   name is assumption 2 too: one log line with the type of the failure,
+   and the set serving before it keeps serving.
 """
 
 from __future__ import annotations
@@ -303,12 +311,24 @@ class ReloadTrigger:
     ) -> ReloadReport | None:
         """Read the roster and apply it. Never raises (assumption 2)."""
         try:
-            roster = self.source.read(self.pool.secrets, credentials)
+            # Assumption 9: the read blocks, so it is not on this thread.
+            roster = await asyncio.to_thread(self.source.read, self.pool.secrets, credentials)
         except UNREADABLE as exc:
             self._mark(RosterState.UNREADABLE)
             _log.error(
                 "reload: the roster is unreadable (%s); the set serving now keeps serving: %s",
                 exc,
+                sorted(self.pool.live_specs),
+            )
+
+            return None
+        except Exception as exc:
+            # The type and never the text: this read also decrypts, and the
+            # text of a failure there can quote a credential (invariant 13).
+            self._mark(RosterState.UNREADABLE)
+            _log.error(
+                "reload: the read failed (%s); the set serving now keeps serving: %s",
+                type(exc).__name__,
                 sorted(self.pool.live_specs),
             )
 

@@ -34,7 +34,9 @@ released.
 
 from __future__ import annotations
 
+import errno
 import os
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -151,6 +153,48 @@ def _no_signal() -> float | None:
 MANUAL_RESTORE: Final = "restore mode is manual"
 NO_PLAN: Final = "the switch ran with no resolved plan"
 NOTHING_SWAPPED: Final = "the switch failed before it swapped anything"
+
+#: A step raises `Refusal` or `StepFailed` for each end it knows. This is
+#: every other error. §2.6: a `reason` is never built from input, and the
+#: text of an error can hold a path or the bytes of a file. So the ledger
+#: gets the type of the error, and never its text.
+#:
+#: CONTRACT-QUESTION: `stage7-releases.md` §2.6 says a `reason` is a fixed
+#: string of a closed list. The reading taken adds the type of the error
+#: and the symbol of its number to this string. Both come from code, never
+#: from input. One fixed string with no type costs the reader of the ledger
+#: the type, which is then in the log alone.
+UNNAMED_ERROR: Final = "an error this step does not name"
+
+#: The directory of this package. A frame under it is this tool's own code.
+_PACKAGE_DIR: Final = f"{Path(__file__).parent.parent}{os.sep}"
+NO_OWN_FRAME: Final = "no code of this package"
+
+
+def _unnamed(error: Exception) -> str:
+    """§2.6's `detail` for an error no step names: its type, and the symbol
+    of its number for an `OSError` that carries one.
+
+    The number of an `OSError` that is built from two texts is the first
+    text. Only a whole number goes on, so no text of an error does."""
+    kind = type(error).__name__
+    number: object = error.errno if isinstance(error, OSError) else None
+    if not isinstance(number, int):
+        return f"{UNNAMED_ERROR}: {kind}"
+
+    return f"{UNNAMED_ERROR}: {kind} ({errno.errorcode.get(number, number)})"
+
+
+def _raised_at(error: Exception) -> str:
+    """The deepest frame of this package the error passed: file name, line
+    and function. Read off the code objects, so it holds no input."""
+    found = NO_OWN_FRAME
+    for frame, line in traceback.walk_tb(error.__traceback__):
+        code = frame.f_code
+        if code.co_filename.startswith(_PACKAGE_DIR):
+            found = f"{Path(code.co_filename).name}:{line} in {code.co_name}"
+
+    return found
 
 
 def remove_staged(path: Path, name: str, entry: Entry) -> None:
@@ -346,6 +390,10 @@ class Release:
         #: `handover`'s switch, noted at step 9 and performed by the
         #: drain after the entry and the lock (contract 06 §1.1 rule 2).
         self.self_note: SelfNote | None = None
+        #: The component whose moves raised an error no step names: the
+        #: swap of step 9, or the moves back of step 10. `_swap` has the
+        #: reason.
+        self.interrupted: str | None = None
         self._lock: list[int] = []
 
     # -- the sequence ---------------------------------------------------
@@ -482,6 +530,15 @@ class Release:
         except StepFailed as failure:
             status, detail = StepStatus.FAILED, failure.detail
             self.entry.reason = f"{name}: {failure.detail}"
+        except Exception as error:
+            if self.interrupted is not None:
+                raise
+
+            # Every outcome is a ledger entry (§2.4). An error that left
+            # here wrote none, kept every staged tree and ended the pass.
+            status, detail = StepStatus.FAILED, _unnamed(error)
+            self.entry.reason = f"{name}: {detail}"
+            self.entry.say(f"step {name}: {type(error).__name__} raised at {_raised_at(error)}")
 
         seconds = round(self.wiring.host.clock() - started, 1)
         self.entry.add(Step(str(name), str(status), seconds, detail))
@@ -1007,9 +1064,7 @@ class Release:
             tuple(str(one) for one in siblings),
         )
         self.spool.note_switch(self.request.id, note)
-        self._swap_servers(name)
-        self.installer.swap_in(paths)
-        self.deployed.append(name)
+        self._swap(name, paths)
 
         # From the LIVE tree, never the clone: the unit's owner installs it
         # (`install.py` rule 7).
@@ -1035,6 +1090,37 @@ class Release:
         self._record_verify(outcome)
         if not outcome.ok:
             raise StepFailed(f"{name} verify failed")
+
+    def _swap(self, name: str, paths: Paths) -> None:
+        """The moves that the switch note is written for.
+
+        An error that no step names leaves the run from here, as it did
+        before `_step` caught every other one. The run cannot say which
+        tree is live, so it ends as a crash does: it writes no entry, the
+        note stays, and the next run repairs (§2.4 row 10).
+        `self_switch.switch_in` has the same rule for `handover`'s own swap.
+
+        CONTRACT-QUESTION: `stage7-releases.md` §2.4 rows 9 and 10 name no
+        end for an error between the switch note and the end of the swap.
+        The reading taken changes nothing here. The other reading restores
+        in this run and writes the entry. That costs a restore that can
+        tell a tree that moved from a tree that did not: `swap_in` removes
+        `.prev` first, and a restore from a `.prev` that is half removed
+        replaces the live tree with it.
+
+        The same rows name no end for an error inside the moves of the
+        restore. `_move_back` takes the same reading there.
+        """
+        try:
+            self._swap_servers(name)
+            self.installer.swap_in(paths)
+        except (Refusal, StepFailed):
+            raise
+        except Exception:
+            self.interrupted = name
+            raise
+
+        self.deployed.append(name)
 
     def _keep_unit(self, name: str, manifest: ComponentManifest, staged: Path) -> Path | None:
         """`install.py` rule 6, before the note: the unit file this switch
@@ -1211,8 +1297,7 @@ class Release:
         # The component's tree is one thing to put back;
         # what the PEP SERVES is another, and the second must not depend
         # on the first succeeding.
-        self._restore_servers(name)
-        self.installer.swap_back(paths)
+        self._move_back(name, paths)
         # `swap_back` moves the tree that failed verify to `.new`, and it
         # does not stay: `run` removes every tree this release staged,
         # because a kept tree stops the next cutover (`_remove_staged`).
@@ -1228,6 +1313,26 @@ class Release:
         self._record_verify(outcome)
         if not outcome.ok:
             raise StepFailed(f"{name} did not verify after the restore")
+
+    def _move_back(self, name: str, paths: Paths) -> None:
+        """The moves of the restore, with the rule of `_swap`.
+
+        An error that no step names leaves the run from here. A move back
+        that stops half-way leaves no tree in service, and the tree that
+        failed its hook is at `.new`. A ledger entry would end the run by
+        the normal way: it removes each staged tree and spends the note.
+        Nothing would then put the previous tree back. So the run writes no
+        entry, the note stays, and the next run repairs. The
+        CONTRACT-QUESTION of `_swap` covers this place too.
+        """
+        try:
+            self._restore_servers(name)
+            self.installer.swap_back(paths)
+        except (Refusal, StepFailed):
+            raise
+        except Exception:
+            self.interrupted = name
+            raise
 
     def _restore_units(self, name: str) -> tuple[Path, ...]:
         """The unit and the siblings this release replaced, back BEFORE
@@ -1387,6 +1492,14 @@ def repair(spool: Spool, wiring: Wiring, request_id: str, note: SwitchNote) -> E
         detail, status, outcome = failure.detail, StepStatus.FAILED, Outcome.FAILED
         not_back = isinstance(failure, UnitNotBack)
         entry.reason = CRASH_UNIT_NOT_BACK if not_back else CRASH_VERIFY_FAILED
+    except Exception as error:
+        # Every outcome is a ledger entry (§2.4), as in `Release._step`. An
+        # error that left here spent the note with no entry and no push,
+        # and nothing said that the component needs a person.
+        detail, status, outcome = _unnamed(error), StepStatus.FAILED, Outcome.FAILED
+        entry.reason = f"{StepName.RESTORE}: {detail}"
+        entry.manual.append(f"restore: the repair of {note.component} did not finish")
+        entry.say(f"step {StepName.RESTORE}: {type(error).__name__} raised at {_raised_at(error)}")
 
     entry.status = outcome
     entry.add(

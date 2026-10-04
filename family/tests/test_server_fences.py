@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from family_helpers import check_server_rules, errors, messages
+from agent_family.parse import parse_server
+from family_helpers import check_server_rules, errors, messages, server_text
 
 # --- name and identity (contract 01b §1, §6) ---------------------------------
 
@@ -249,6 +250,9 @@ def test_fence_tools_list_must_be_declared() -> None:
 FENCE_ARG_CASES = (
     {"tools": "all", "arg": "a/b/c", "values": ["x"]},
     {"tools": "all", "arg": "1bad", "values": ["x"]},
+    # §7.2: an argument name has 64 characters at most.
+    {"tools": "all", "arg": "a" * 65, "values": ["x"]},
+    {"tools": "all", "arg": "owner/" + "b" * 65, "values": ["x"]},
 )
 
 
@@ -265,9 +269,45 @@ def test_fence_needs_at_least_one_value() -> None:
     assert "a fence entry needs at least one value" in messages(report)
 
 
+def test_a_fence_arg_name_of_64_characters_is_allowed() -> None:
+    entry = {"tools": "all", "arg": "a" * 64 + "/" + "b" * 64, "values": ["x"]}
+    assert not errors(check_server_rules("kagi", arg_allows=[entry]))
+
+
+@pytest.mark.parametrize("field", ["arg_allows", "arg_denies"])
+def test_a_fence_over_all_needs_a_declared_tool(field: str) -> None:
+    """§7.1: `all` on a file with no tool covers nothing."""
+    entry = {"tools": "all", "arg": "branch", "values": ["main"]}
+    report = check_server_rules("kagi", tools=[], **{field: [entry]})
+    assert f"{field}[0].tools: 'all' needs at least one tool" in messages(report)
+
+
+def test_a_fence_over_all_is_allowed_with_a_declared_tool() -> None:
+    entry = {"tools": "all", "arg": "branch", "values": ["main"]}
+    assert not errors(check_server_rules("kagi", arg_denies=[entry]))
+
+
 def test_a_composite_fence_arg_is_allowed() -> None:
     """§7.2: `owner/repo` is the documented composite form, not a mistake."""
     report = check_server_rules(
         "github-code", arg_allows=[{"tools": "all", "arg": "owner/repo", "values": ["a/b"]}]
     )
     assert not errors(report)
+
+
+# --- a text with no value (contract 01 §7, invariant 19) ---------------------
+
+NO_VALUE_TEXTS = {
+    "decimal-integer": "tools: " + "9" * 5000 + "\n",
+    "base-16-integer": "tools: 0x" + "f" * 4000 + "\n",
+    "date": "tools: 2001-02-30\n",
+    "deep-nesting": "tools: " + "[" * 10_000 + "]" * 10_000 + "\n",
+}
+
+
+@pytest.mark.parametrize("case", NO_VALUE_TEXTS)
+def test_a_server_text_with_no_value_is_refused(case: str) -> None:
+    server, issues = parse_server(server_text("kagi") + NO_VALUE_TEXTS[case])
+    assert server is None
+    assert [issue.loc for issue in issues] == ["<document>"]
+    assert "YAML will not parse" in issues[0].msg

@@ -64,11 +64,15 @@ The console script is `handover`. The verify hook and the operator's
 1. Every input is hostile. A `component.yaml` can come from a branch an agent
    wrote. A byte cap before the parse, `yaml.safe_load` only, a closed key
    set, a strict pattern per scalar, and a refusal that names the field.
-2. Every pattern is `re.fullmatch`.
+2. Every pattern is `re.fullmatch`. A pattern writes a digit as `[0-9]`.
+   On text, `\d` also matches a digit that is not ASCII.
 3. `errors.safe_token` is the one door untrusted text goes through. Anything
    else prints as `<unprintable>`.
 4. A refusal code comes from the closed list in `RefusalCode`.
 5. A command is a list of argv lists, never a string.
+6. A parser answers a refusal for each error of its reader library. PyYAML
+   raises more than `YAMLError`: a scalar that it cannot build raises
+   `ValueError`, and a text that nests too deep raises `RecursionError`.
 
 ## Rules the design depends on
 
@@ -98,6 +102,8 @@ The console script is `handover`. The verify hook and the operator's
 7. `runuser` is `/usr/sbin/runuser`, by absolute path.
 8. The path unit and the root wrapper are outside every release. The thing
    that deploys code is not deployed by code.
+9. A step that raises an error it does not name is a failed step. The
+   ledger gets the type of the error, and never its text.
 
 ## Rules `follow/` adds
 
@@ -181,9 +187,22 @@ The console script is `handover`. The verify hook and the operator's
    kind. The input digest of a binary component covers those files and not
    `uv.lock`.
 8. Change a component's kind in its catalog row and in its manifest in one
-   commit.
+   commit. Discovery refuses a manifest whose kind is not the kind of its
+   row, with the code `catalog`.
 9. Release `handover` before the first manifest says `kind: binary`. An
    older executor or requester refuses that manifest.
+10. Release `handover` alone before each release of a component that
+    changes its kind. Root compares a manifest with the catalog of the
+    installed code. Until the installed catalog holds the new row:
+    - Root refuses the release of that component, with the code `catalog`.
+    - Root refuses a set that holds that component and `handover`. Root
+      reads each manifest of a set before it swaps a tree. The follower
+      then holds that set (`follow/` rule 4).
+    - The installed `handover request` refuses each request. It reads each
+      manifest of its roots.
+11. File the request for that release from a checkout that holds the new
+    catalog, with `uv run handover request handover`. The `release` verb
+    of the chaperone reads no manifest, so it can file the request too.
 
 ## The chaperone's upstream roster (`executor/roster.py`)
 
@@ -264,7 +283,21 @@ that wants a refusal changes one field.
 - A switch keeps the unit it replaces as `<unit>.prev` (`executor/install.py`).
 - A crash between a server swap and the verify is not repaired
   (`executor/spool.py`, `executor/steps.py`).
+- `stage7-releases.md` §2.4 names no end for an error between the switch
+  note and the end of the swap. It names none for an error inside the
+  moves of the restore. In each case the run ends as a crash does: it
+  writes no entry and it removes no staged tree. The next run repairs the
+  component (`executor/steps.py`).
+- `stage7-releases.md` §2.6 says a `reason` is a fixed string of a closed
+  list. For an error that no step names, the reason also holds the type of
+  the error and the symbol of its number. Both come from code
+  (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`executor/roster.py`).
+- PyYAML reads a digit that is not ASCII in a number with the tag `!!int`.
+  A whole number of a manifest can thus hold one. Contract 06 §8 names no
+  YAML form for a number (`manifest.py`).
+- The intake reads `Content-Length` with `int`. That reader takes a sign,
+  an underscore and a digit that is not ASCII (`intake/service.py`).
 - The secret-name pattern is copied into five modules, and the copies agree
   only by hand.
 - The requester refuses once `requests/` holds eight entries of any owner
@@ -279,14 +312,23 @@ that wants a refusal changes one field.
   move a binary component: `rust/Cargo.lock`, `rust/Cargo.toml` and
   `rust/rust-toolchain.toml`. A `rust/.cargo/config.toml` moves none
   (`catalog.py`).
-- The catalog row and the manifest each state the kind of a component. The
-  allocator reads the row and the executor reads the manifest. Only a test
-  holds the two equal (`tests/test_handover_bin_lock_files.py`).
 - Only a test of this repository holds a binary build to `--locked`. The
   executor does not check the flag (`tests/test_handover_bin_manifest.py`).
 - Contract 06 §8.2 names the code `editable` for a venv tree. A binary tree
   that is not self-contained gets the same code
   (`executor/selfcontained.py`).
+- Contract 06 §8.2 names no rule for a `.pth` line that does not resolve.
+  The walk reports such a line as a path outside the tree, under each
+  Python version (`executor/selfcontained.py`).
+- One manifest whose kind is not the kind of its row refuses the whole walk
+  of `discover`. The installed `handover request` then files no request,
+  also for another component, until a `handover` release holds the new row
+  (`discovery.py`, `cli.py`).
+- For a component with a version stamp and no stamped manifest, root reads
+  the manifest at the live tag of that component. After the catalog row of
+  that component changes its kind, that manifest states the old kind. Root
+  then refuses each release that does not deploy that component
+  (`discovery.py`, `executor/steps.py`).
 - The executor refuses a binary tree when a file holds the path of the
   fetched work tree. The walk cannot tell a path that a program opens from
   a path that it only prints. Code that a build script generates can carry

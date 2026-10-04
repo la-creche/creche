@@ -55,8 +55,8 @@ KEEP_MIN = 1
 KEEP_MAX = 10
 
 NAME_RE = re.compile(r"[a-z][a-z0-9-]{1,30}")
-VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
-CONTRACT_VERSION_RE = re.compile(r"(\d+)\.(\d+)")
+VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+CONTRACT_VERSION_RE = re.compile(r"([0-9]+)\.([0-9]+)")
 UNIT_RE = re.compile(r"[A-Za-z0-9@_.-]{1,64}")
 SECRET_RE = re.compile(r"[a-z][a-z0-9_]{1,62}")
 PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -483,12 +483,21 @@ def _read_restore(reader: _Reader) -> Restore:
 
 def parse_manifest(text: str, subject: str) -> ComponentManifest:
     """Parse one `component.yaml`. `subject` is the label a refusal names."""
-    if len(text.encode("utf-8")) > MAX_MANIFEST_BYTES:
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise Refusal(RefusalCode.MANIFEST, subject, "is not UTF-8") from None
+
+    if size > MAX_MANIFEST_BYTES:
         raise Refusal(RefusalCode.MANIFEST, subject, f"larger than {MAX_MANIFEST_BYTES} bytes")
 
+    # PyYAML raises more than `YAMLError`. A scalar that it cannot build
+    # raises `ValueError`, `KeyError` or `AttributeError`, and a text that
+    # nests too deep raises `RecursionError`. The list is not closed, so
+    # each error of the reader is the one refusal.
     try:
         loaded: Any = yaml.safe_load(text)
-    except yaml.YAMLError as error:
+    except Exception as error:
         detail = f"does not parse: {_yaml_where(error)}"
         raise Refusal(RefusalCode.MANIFEST, subject, detail) from None
 
@@ -527,7 +536,7 @@ def parse_manifest(text: str, subject: str) -> ComponentManifest:
     )
 
 
-def _yaml_where(error: yaml.YAMLError) -> str:
+def _yaml_where(error: Exception) -> str:
     """The line number, never the offending text: the text is hostile input."""
     mark = getattr(error, "problem_mark", None)
     if mark is None:

@@ -23,6 +23,18 @@ HTTP_BAD_GATEWAY = 502
 HTTP_UNAVAILABLE = 503
 
 
+# Not a contract 02 §14 code. `attendance` never sends it: the door's own
+# client reports a call that got no answer with it (attendance.py).
+#
+# CONTRACT-QUESTION: contract 02 §14 gives the codes of `attendance` and no
+# status or code for a failure of a door itself. This door answers 502 with
+# this code when `attendance` does not answer. It answers 500 `internal`
+# for a failure that no handler names (app.py). A code that a contract
+# fixes later costs a change to the map below and to the text that Open
+# WebUI shows.
+CODE_UNREACHABLE = "attendance_unreachable"
+
+
 class ErrorType(StrEnum):
     """The `error.type` values an OpenAI client expects."""
 
@@ -82,6 +94,7 @@ _ATTENDANCE_CODES: dict[str, tuple[int, ErrorType]] = {
     "family_degraded": (HTTP_UNAVAILABLE, ErrorType.SERVER),
     "sandbox_unavailable": (HTTP_UNAVAILABLE, ErrorType.SERVER),
     "internal": (HTTP_BAD_GATEWAY, ErrorType.SERVER),
+    CODE_UNREACHABLE: (HTTP_BAD_GATEWAY, ErrorType.SERVER),
 }
 
 # Sentences that beat the raw code in a chat window. A code with no entry
@@ -96,6 +109,9 @@ _ATTENDANCE_TEXT: dict[str, str] = {
     "family_invalid": "this family has never had a valid definition, so nothing can serve it.",
     "family_degraded": "this family is degraded and a fault is blocking turns.",
     "sandbox_unavailable": "this family has no sandbox to run the turn on. Try again shortly.",
+    CODE_UNREACHABLE: (
+        "the door cannot reach attendance. Check that attendance runs, then send again."
+    ),
 }
 
 

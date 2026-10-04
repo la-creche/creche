@@ -40,7 +40,7 @@ ULID_RE: Final = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 
 #: Contract 06 §8's `name`, the grammar a family and a server name share.
 COMPONENT_RE: Final = re.compile(r"[a-z][a-z0-9-]{1,30}")
-VERSION_RE: Final = re.compile(r"\d+\.\d+\.\d+")
+VERSION_RE: Final = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 SESSION_ID_RE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 #: §2.3: a family name, `human`, or `ci`.

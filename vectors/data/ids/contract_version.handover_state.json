@@ -14,8 +14,8 @@
   {"id":"probe-trailing-space","input":{"text":"0.6 "},"result":"refused"},
   {"id":"probe-nul-at-end","input":{"text":"0.6\u0000"},"result":"refused"},
   {"id":"probe-nul-inside","input":{"text":"0\u0000.6"},"result":"refused"},
-  {"id":"probe-arabic-digit","input":{"text":"0.\u0661"},"result":"accepted"},
-  {"id":"probe-fullwidth-digit","input":{"text":"0.\uff11"},"result":"accepted"},
+  {"id":"probe-arabic-digit","input":{"text":"0.\u0661"},"result":"refused"},
+  {"id":"probe-fullwidth-digit","input":{"text":"0.\uff11"},"result":"refused"},
   {"id":"probe-overlong","input":{"text":"0.6111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"},"result":"accepted"},
   {"id":"one-zero","input":{"text":"1.0"},"result":"accepted"},
   {"id":"leading-zero","input":{"text":"0.06"},"result":"accepted"},
@@ -26,6 +26,6 @@
   {"id":"trailing-dot","input":{"text":"1."},"result":"refused"},
   {"id":"space-inside","input":{"text":"1 .0"},"result":"refused"},
   {"id":"past-64-bits","input":{"text":"99999999999999999999.0"},"result":"accepted"},
-  {"id":"all-arabic-digits","input":{"text":"\u0661.\u0662"},"result":"accepted"}
+  {"id":"all-arabic-digits","input":{"text":"\u0661.\u0662"},"result":"refused"}
  ]
 }

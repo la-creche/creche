@@ -37,6 +37,7 @@ HTTP_UNAUTHORIZED = 401
 HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
 HTTP_TOO_LARGE = 413
+HTTP_INTERNAL = 500
 
 
 @dataclass(slots=True)
@@ -143,6 +144,39 @@ async def test_an_unknown_session_is_not_found(rig: Rig) -> None:
 
     assert answer.status_code == HTTP_NOT_FOUND
     assert answer.json()["error"]["code"] == "not_found"
+
+
+async def test_an_exception_no_route_expects_is_internal(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Contract 02 §14. `internal` has the body of each other failure, and the
+    body holds no text of the exception."""
+
+    def failing(*_: object) -> None:
+        raise RuntimeError("the listing failed")
+
+    monkeypatch.setattr(rig.service, "list_sessions", failing)
+    book = TokenBook(rig.config.state_root)
+    book.load()
+    # The rig's own transport raises an exception of the app into the test.
+    # This one answers as a server does.
+    transport = httpx.ASGITransport(app=build_app(rig.service, book), raise_app_exceptions=False)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://sessiond") as client:
+        answer = await client.get(SESSIONS, headers=rig.head(Principal.VIEW_RO))
+
+    assert answer.status_code == HTTP_INTERNAL
+    assert answer.json() == {
+        "error": {
+            "code": "internal",
+            "message": "an error in attendance stopped this request",
+            "family": None,
+            "session": None,
+            "turn": None,
+            "detail": {},
+        },
+        "retry_after_s": 5,
+    }
 
 
 async def test_an_oversized_prompt_is_refused(rig: Rig) -> None:

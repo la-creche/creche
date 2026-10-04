@@ -41,7 +41,10 @@ The door holds no session state. `attendance` owns the transcript.
 | Situation | Result |
 |---|---|
 | chat id header absent or empty | `400 missing_chat_id` |
+| a chat id of more than 123 characters | `400 bad_id`, before the door calls `attendance` |
 | a second door holds the writer lease | `409 session_busy`, also for a streamed request |
+| `attendance` does not answer | `502 attendance_unreachable`, also for a streamed request |
+| a failure that no handler names, before the first frame | `500 internal` in the OpenAI error shape. The log holds the traceback. |
 | the family is reconciling, degraded, or invalid with a last good definition | still served |
 | a turn ends any way other than `settled` | a visible OpenAI-shaped error chunk |
 | the client disconnects mid-stream | streaming stops, the turn keeps running |
@@ -87,3 +90,14 @@ basename must be unique across the whole workspace.
 
 `bin/quality-gate.sh` runs pyright over `door-owui/src` only. Keep the tests
 typed anyway.
+
+## Known gaps
+
+- Contract 02 §2 caps a session id at 128 characters and gives no cap for a
+  chat id. The session id of a chat is `owui-<chat id>`, so the door caps a
+  chat id at 123 characters (`headers.py`).
+- Contract 02 §14 gives the codes of `attendance`. No contract gives the
+  status or the code that a door answers for a failure of its own. The door
+  answers `502 attendance_unreachable` when `attendance` does not answer. It
+  answers `500 internal` for a failure that no handler names (`errors.py`,
+  `app.py`).

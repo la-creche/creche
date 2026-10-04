@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from agent_door_trigger import payload
 from agent_door_trigger.errors import WEBHOOK_STATUS, webhook_status
 from agent_door_trigger.payload import (
     MAX_PAYLOAD_BYTES,
@@ -14,6 +15,7 @@ from agent_door_trigger.payload import (
     read_payload,
 )
 from agent_door_trigger.ulid import ULID_LENGTH, ULID_PATTERN, new_ulid
+from trigger_json_limit import ParserAtItsLimit
 
 
 def test_a_ulid_matches_contract_02s_own_pattern() -> None:
@@ -22,6 +24,11 @@ def test_a_ulid_matches_contract_02s_own_pattern() -> None:
     assert len(value) == ULID_LENGTH
     assert ULID_PATTERN.match(value)
     assert value == value.upper()
+
+
+def test_the_pattern_refuses_a_ulid_with_a_final_newline() -> None:
+    # `$` also matches before a final newline. `\Z` matches at the end only.
+    assert ULID_PATTERN.match(new_ulid() + "\n") is None
 
 
 def test_no_ulid_carries_i_l_o_or_u() -> None:
@@ -91,6 +98,15 @@ def test_invalid_json_is_refused_as_invalid() -> None:
 def test_non_utf8_bytes_are_refused_as_invalid() -> None:
     with pytest.raises(PayloadInvalid, match="not UTF-8"):
         read_payload(b"\xff\xfe\x00\x01")
+
+
+def test_a_payload_that_nests_too_deep_is_refused_as_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(payload, "json", ParserAtItsLimit)
+
+    with pytest.raises(PayloadInvalid, match="nests too deep"):
+        read_payload(b"[[1]]")
 
 
 def test_a_json_array_or_scalar_payload_is_valid_too() -> None:

@@ -167,12 +167,26 @@ class Journal:
             self._sync(handle)
 
     def flush_due(self) -> None:
-        """Sync every handle older than the interval (contract 02 §8.3)."""
+        """Sync every handle older than the interval (contract 02 §8.3).
+
+        A handle that cannot sync does not stop the handles after it. Each
+        due handle has its attempt, then the first failure is raised. The
+        handle stays dirty, so the next call tries it again.
+        """
         deadline = time.monotonic() - self._fsync_interval_s
+        failure: OSError | None = None
 
         for handle in list(self._handles.values()):
-            if handle.dirty and handle.last_fsync <= deadline:
+            if not handle.dirty or handle.last_fsync > deadline:
+                continue
+
+            try:
                 self._sync(handle)
+            except OSError as error:
+                failure = failure if failure is not None else error
+
+        if failure is not None:
+            raise failure
 
     def close(self, family: str, session: str) -> None:
         """Release one session's handle. Called before a delete."""

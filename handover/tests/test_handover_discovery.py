@@ -5,10 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from handover.catalog import CATALOG_BY_NAME, RETIRING
+from handover.catalog import CATALOG, CATALOG_BY_NAME, RETIRING
 from handover.discovery import (
     MAX_MANIFEST_FILES,
     discover,
+    read_one,
     releasable,
     require_complete,
 )
@@ -163,6 +164,39 @@ def test_a_data_component_cannot_declare_itself_releasable(tmp_path: Path) -> No
 
     assert refusal.code is RefusalCode.CATALOG
     assert "releases: no" in refusal.detail
+
+
+def test_a_declared_kind_must_match_the_catalog(tmp_path: Path) -> None:
+    """The allocator reads the kind from the catalog row, and the executor
+    builds the kind that the manifest states. The two must not differ."""
+    text = manifest_text("chaperone").replace("kind: venv", "kind: binary")
+    write_manifest(tmp_path, "chaperone", text)
+
+    refusal = _refusal([tmp_path])
+
+    assert refusal.code is RefusalCode.CATALOG
+    assert refusal.subject == "chaperone/component.yaml"
+    assert refusal.detail == "chaperone is kind venv, not binary"
+
+
+def test_the_executors_reader_refuses_another_kind_too(tmp_path: Path) -> None:
+    """`read_one` reads the manifest of one fetched tree, and it applies
+    the same catalog rules as the walk."""
+    text = manifest_text("playpen").replace("kind: oci-image", "kind: venv")
+    write_manifest(tmp_path, "playpen", text)
+
+    with pytest.raises(Refusal) as caught:
+        read_one(tmp_path, "playpen")
+
+    assert caught.value.code is RefusalCode.CATALOG
+    assert caught.value.detail == "playpen is kind oci-image, not venv"
+
+
+@pytest.mark.parametrize("name", [row.name for row in CATALOG])
+def test_the_fixture_manifest_states_the_kind_of_its_row(tmp_path: Path, name: str) -> None:
+    write_manifest(tmp_path, name, manifest_text(name))
+
+    assert read_one(tmp_path, name).manifest.kind is CATALOG_BY_NAME[name].kind
 
 
 def test_two_roots_cannot_declare_one_component_twice(tmp_path: Path) -> None:

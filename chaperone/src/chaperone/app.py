@@ -31,6 +31,8 @@ from typing import Literal, cast
 
 import httpx
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import Response
@@ -181,6 +183,9 @@ class ApprovalBody(BaseModel):
 NOT_FOUND_STATUS = 404
 NOT_IMPLEMENTED_STATUS = 501
 
+#: A body the reader refused. FastAPI's own status for it (RFC 9110 §15.5.21).
+BODY_REFUSED_STATUS = 422
+
 
 #: A window this many minutes idle is dropped instead of kept forever — a
 #: long-running PEP otherwise grows one entry per family generation for as
@@ -237,8 +242,17 @@ class _TokenBucket:
 
 def _args_digest(args: dict[str, object]) -> tuple[int, str]:
     """Size and digest of the args an unidentified request supplied — never
-    the content itself."""
-    raw = json.dumps(args, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    the content itself.
+
+    `surrogatepass`: the body reader takes a string that is not Unicode
+    text, and such a string has no strict UTF-8 form. It counts as the
+    bytes it has "as it is", so the request still gets its line.
+
+    CONTRACT-QUESTION: contract 04 §6 describes the log of a family only,
+    so it has no rule for the bytes of such a string in this log. The
+    reading here: the `surrogatepass` bytes. A change costs a reader that
+    compares the digests of two requests."""
+    raw = json.dumps(args, ensure_ascii=False, sort_keys=True).encode("utf-8", "surrogatepass")
     return len(raw), hashlib.sha256(raw).hexdigest()
 
 
@@ -327,7 +341,9 @@ async def _retention_sweep_loop(sweeps: list[Callable[[], None]], interval_s: fl
         for sweep in sweeps:
             try:
                 sweep()
-            except OSError:
+            except Exception:
+                # Every failure, as in `fault_sweep_loop`: one that left
+                # this task would end the retention of both logs for good.
                 log.exception("audit retention sweep failed")
 
 
@@ -725,5 +741,38 @@ def create_app(
             status_code=500,
             content={"ok": False, "reason": "internal_error", "detail": "audit unavailable"},
         )
+
+    @app.exception_handler(RequestValidationError)
+    async def refused_body(  # pyright: ignore[reportUnusedFunction]
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """A body the reader refused. FastAPI's own answer echoes what it
+        refused, and an echo that is no JSON text raises while the answer is
+        built. The answer then keeps the status and each error, without the
+        echo: the caller's key is in `loc` and its value in `input`.
+
+        CONTRACT-QUESTION: contract 04 §5 has no row for a body that the
+        reader refuses. The reading here: the status that each other
+        refused body gets, and no text of the caller. A change costs a
+        caller that reads `loc`."""
+        try:
+            return await request_validation_exception_handler(request, exc)
+        except (ValueError, RecursionError):
+            errors = [
+                {"type": error["type"], "msg": error["msg"]}
+                for error in cast("list[dict[str, object]]", exc.errors())
+            ]
+            return JSONResponse(status_code=BODY_REFUSED_STATUS, content={"detail": errors})
+
+    @app.exception_handler(Exception)
+    async def unexpected(_request: Request, exc: Exception) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        """Contract 04 §5 row 12 gives `internal_error` for a failure that
+        no layer below handled. Without this handler, such a failure
+        answers 500 with no `reason`. The log line holds the type and not
+        the text: the text can quote the request. Starlette raises the
+        failure again after this answer, so the server logs its
+        traceback."""
+        log.error("a route raised %s; answering internal_error", type(exc).__name__)
+        return _deny_response("internal_error")
 
     return app

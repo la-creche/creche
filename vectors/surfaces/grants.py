@@ -188,6 +188,10 @@ GRANT_DOCUMENTS: Final[tuple[Document, ...]] = (
         _MINIMAL_TEXT.replace('"version": 2', '"version": ' + "9" * HUGE_DIGITS).encode(),
     ),
     Document(
+        "json-very-deep",
+        parts=(('{"version":2,"x":', 1), ("[", VERY_DEEP), ("]", VERY_DEEP), ("}", 1)),
+    ),
+    Document(
         "json-deep-unknown-field",
         _MINIMAL_TEXT[:-1].encode() + b', "x": ' + b"[" * 200 + b"]" * 200 + b"}",
     ),

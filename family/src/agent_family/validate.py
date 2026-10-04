@@ -20,6 +20,7 @@ from .grammar import (
     BUDGET_USD_MAX,
     CPUS_MAX,
     CPUS_MIN,
+    CRON_FIELD,
     CRON_FIELDS,
     CRON_SHORTHANDS,
     DEFAULT_MAX_INFLIGHT_DELEGATIONS,
@@ -795,11 +796,26 @@ def _check_cron(expression: str, loc: str, issues: Issues) -> None:
     if expression in CRON_SHORTHANDS:
         return
 
-    if len(expression.split()) != CRON_FIELDS:
+    # CONTRACT-QUESTION: contract 01 §3.13 says "a five-field cron expression"
+    # and gives no grammar for a field. This check takes the characters that
+    # `caregiver.timers` converts, so it refuses a month name, a day name and
+    # a digit that is not ASCII. To take a name costs a table here and in
+    # `caregiver.timers`. A line that passes can still have no `OnCalendar`
+    # spelling (`caregiver/AGENTS.md`, "Known gaps").
+    fields = expression.split()
+    if len(fields) != CRON_FIELDS:
         issues.error(
             f"{loc}.cron",
             f"'{expression}' is not a five-field cron expression or one of "
             f"{', '.join(CRON_SHORTHANDS)}",
+        )
+        return
+
+    if any(CRON_FIELD.fullmatch(one) is None for one in fields):
+        issues.error(
+            f"{loc}.cron",
+            f"'{expression}' has a cron field with a character other than "
+            "0-9, '*', ',', '-' or '/'",
         )
 
 

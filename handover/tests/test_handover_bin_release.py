@@ -11,8 +11,8 @@ switch, verify and the ledger. It holds four ends.
    `unit`, and the build never runs.
 4. Both refusals leave the live tree in service and no staged tree behind.
 
-The catalog is not changed: the executor reads the kind from the manifest
-that the fetched tree carries.
+The catalog row of the component says `binary` for each test here. The
+executor refuses a manifest whose kind is not the kind of its row.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from handover_bin_fixtures import (
     binary_manifest_text,
     staged_binary_tree,
     unit_text,
+    use_binary_catalog,
     write_program,
 )
 from handover_executor_fixtures import (
@@ -68,6 +69,13 @@ OLD_PROGRAM = b"the previous program\n"
 
 #: A program in no tree that a release installs.
 ELSEWHERE = "/opt/creche/.venv/bin/noticeboard"
+
+
+@pytest.fixture(autouse=True)
+def _binary_row(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+    """The catalog row and the manifest change kind together
+    (`handover/AGENTS.md`, "Binary builds", rule 8)."""
+    use_binary_catalog(monkeypatch)
 
 
 @dataclass

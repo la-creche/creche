@@ -57,6 +57,10 @@ directory is not a workspace package, so a change here does not change
 
 - An input that makes the Python code raise has no vector until its fix
   merges. Rule 5 states why.
+- No vector covers a scalar of `component.yaml` that PyYAML cannot build,
+  such as a word with the tag `!!int`. The Python code refuses it and names
+  no line. The Rust reader refuses it and names a line. Such a vector first
+  needs a row in the Rust table of details.
 - `status.write` builds the `reconcile` block and the `spend` block by hand.
   `caregiver` builds them in two private functions of `caregiver.reconcile`.
   The generator copies the key order of those functions.
@@ -100,6 +104,10 @@ directory is not a workspace package, so a change here does not change
   before it calls the entry point. `chaperone.unidentified_line` holds two
   vectors of a body over the cap. No vector covers the size cap of a status
   reader, of the fault file reader or of the outcome reader.
+- No vector covers a status document that is UTF-16. The Python noticeboard
+  reads such a document. The Rust view of the noticeboard refuses it.
+- No vector covers a `written_at` with no UTC offset. `attendance` and the
+  noticeboard read such a time as UTC. The Rust views read it as no time.
 - Five patterns have no public entry point: `_ENV_NAME_RE` in the four
   `verify.py` modules, `_LOCK_PATH` and `_ARG_NAME` in
   `agent_family.serverrules`, `_REPO_NAME` in `handover.site` and
@@ -130,6 +138,9 @@ directory is not a workspace package, so a change here does not change
   Python version: 9,997 levels on 3.12 and 9,998 on 3.13. Python refuses that
   input when the caller is about 900 C calls deep. Python 3.14 refuses it on
   a small stack.
+- The vector `yaml-deep-flow` of `family_file` has a 10,000-deep nesting. It
+  assumes the default recursion limit of Python. With a larger limit, the
+  YAML reader can read that input.
 - The session surfaces go through the routes of `attendance.api`. The
   service behind the routes is a stand-in. No vector covers a refusal that
   the real service makes after the parse: a token, a family kind, a lease.

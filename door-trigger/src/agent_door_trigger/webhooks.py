@@ -20,13 +20,14 @@ import signal
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from .attendance import AttendanceClient
 from .config import ServeConfig
-from .errors import AttendanceError, webhook_status
+from .errors import CODE_UNREACHABLE, AttendanceError, webhook_status
 from .fire import Firing, TriggerKind, fire_trigger
 from .payload import MAX_PAYLOAD_BYTES, PayloadInvalid, PayloadTooLarge, read_payload
 from .routes import Route, RouteLookup
@@ -71,6 +72,19 @@ def create_app(config: ServeConfig, attendance: AttendanceClient, routes: RouteL
 
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None, lifespan=_lifespan)
 
+    @app.exception_handler(Exception)
+    async def _on_unexpected(  # pyright: ignore[reportUnusedFunction]
+        _request: Request, _exc: Exception
+    ) -> JSONResponse:
+        # The last handler. A failure with no handler of its own still
+        # answers in the error shape of this listener, with no detail of
+        # the failure. The server raises the error again after the answer,
+        # and its log then holds the traceback.
+        return JSONResponse(
+            status_code=500,
+            content=_error("internal", "the trigger door failed on this request"),
+        )
+
     @app.post("/triggers/{family}/{name}")
     async def fire_webhook(  # pyright: ignore[reportUnusedFunction]
         family: str, name: str, request: Request
@@ -114,6 +128,17 @@ def _fire_webhook(
         )
         return JSONResponse(
             status_code=webhook_status(exc.code), content=_error(exc.code, exc.message)
+        )
+    except (OSError, httpx.HTTPError) as exc:
+        # A dead socket, a refused connection, a timeout: attendance did not
+        # refuse the job, it did not answer. The CLI maps the same failure
+        # (`cli.py`).
+        _LOG.warning(
+            "trigger %s/%s: cannot reach attendance: %s: %s", family, name, type(exc).__name__, exc
+        )
+        return JSONResponse(
+            status_code=webhook_status(CODE_UNREACHABLE),
+            content=_error(CODE_UNREACHABLE, "attendance did not answer"),
         )
 
     _LOG.info(
@@ -166,8 +191,15 @@ async def _refresh_periodically(routes: RouteLookup, interval_s: float) -> None:
         try:
             count = await run_in_threadpool(routes.refresh)
             _LOG.info("trigger routes refreshed: %d live", count)
-        except OSError as exc:
-            _LOG.warning("trigger routes: refresh failed, keeping the last table (%s)", exc)
+        except Exception as exc:
+            # One handler for each failure. A registry file that the loader
+            # cannot read must not stop this task: it is the one mechanism
+            # that always refreshes the routes.
+            _LOG.warning(
+                "trigger routes: refresh failed, keeping the last table (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
 
 
 def _install_sighup(routes: RouteLookup) -> None:
@@ -190,8 +222,12 @@ def _install_sighup(routes: RouteLookup) -> None:
         try:
             count = routes.refresh()
             _LOG.info("trigger routes reloaded: %d live", count)
-        except OSError as exc:
-            _LOG.error("trigger routes: reload refused, keeping the last table (%s)", exc)
+        except Exception as exc:
+            _LOG.error(
+                "trigger routes: reload refused, keeping the last table (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
 
     try:
         loop.add_signal_handler(signal.SIGHUP, reload_routes)

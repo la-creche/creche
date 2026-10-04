@@ -535,11 +535,10 @@ run_id! {
 /// The count of bytes in a ULID.
 const ULID_BYTES: usize = 26;
 
-// CONTRACT-QUESTION: contract 02 §2 writes the ULID pattern with `$`. One of
-// the seven Python copies, `agent_door_trigger.ulid.ULID_PATTERN`, calls
-// `match` on that pattern, so it accepts a ULID with a final newline. The six
-// other copies refuse it. This type takes the strictest copy and refuses it.
-// A change to accept the newline costs every reader a strip of its own.
+// CONTRACT-QUESTION: contract 02 §2 writes the ULID pattern with `$`. In a
+// Python pattern, `$` also matches before a final newline. Each of the seven
+// Python copies refuses a ULID with a final newline, and this type refuses
+// it. A change to accept the newline costs every reader a strip of its own.
 const ULID: Run = Run {
     noun: "a ULID",
     min: ULID_BYTES,
@@ -636,17 +635,26 @@ run_error! {
 
 // --- the Open WebUI door ---
 
-const OWUI_CHAT_ID: Run = Run {
-    noun: "an Open WebUI chat id",
-    min: 1,
-    max: SESSION_ID_MAX,
-    first: LETTER_OR_DIGIT,
-    tail: SEGMENT,
-};
-
 /// What the Open WebUI door puts before a chat id to make a session id
 /// (contract 02 §2).
 const OWUI_SESSION_PREFIX: &str = "owui-";
+
+/// The largest count of bytes in a chat id: what the prefix leaves of a
+/// session id.
+const OWUI_CHAT_ID_MAX: usize = SESSION_ID_MAX - OWUI_SESSION_PREFIX.len();
+
+// CONTRACT-QUESTION: contract 02 §2 caps a session id at 128 bytes and gives
+// no cap for a chat id. The Python door refuses a chat id of more than 123
+// bytes, because the session id `owui-<chat id>` then has more than 128
+// bytes. This type takes the same cap. A larger cap costs a session id that
+// `attendance` refuses.
+const OWUI_CHAT_ID: Run = Run {
+    noun: "an Open WebUI chat id",
+    min: 1,
+    max: OWUI_CHAT_ID_MAX,
+    first: LETTER_OR_DIGIT,
+    tail: SEGMENT,
+};
 
 /// Whether `character` is white space that the Python door strips from a
 /// header value.
@@ -672,7 +680,7 @@ const fn is_header_space(character: char) -> bool {
 }
 
 run_id! {
-    /// The id of one chat of Open WebUI: the form of a session id, 1 to 128
+    /// The id of one chat of Open WebUI: the form of a session id, 1 to 123
     /// bytes (contract 02 §2, §10).
     ///
     /// The Open WebUI door reads the id from a request header and makes the
@@ -722,15 +730,9 @@ impl OwuiChatId {
     ///
     /// # Errors
     ///
-    /// A chat id of more than 123 bytes makes a text that is too long for a
-    /// session id. The error is then [`SessionIdError::TooLong`].
-    // CONTRACT-QUESTION: contract 02 §2 caps a session id at 128 bytes and
-    // gives no cap for a chat id. The Python door accepts a chat id of 128
-    // bytes and makes a session id of 133 bytes from it. `attendance` refuses
-    // that session id. This type accepts the same chat ids as the Python door,
-    // and this function refuses to make a session id that the contract does
-    // not permit. A cap of 123 bytes on the chat id would make this function
-    // infallible. It would also refuse a header that the Python door accepts.
+    /// The function checks the text as a session id. A chat id has 123 bytes
+    /// or less and the form of a session id, so no value of this type gives
+    /// an error.
     pub fn session_id(&self) -> Result<SessionId, SessionIdError> {
         SessionId::try_from(format!("{OWUI_SESSION_PREFIX}{}", self.0))
     }
@@ -1436,14 +1438,6 @@ const CONTRACT_VERSION: Dotted = Dotted {
     numbers: 2,
 };
 
-// CONTRACT-QUESTION: contract 06 §2 writes the version as `\d+\.\d+\.\d+` and
-// does not say which digits `\d` means. In Python, `\d` also matches a decimal
-// digit that is not ASCII, so each Python copy accepts a version of three
-// ARABIC-INDIC digits. This type reads `\d` as `0` to `9` (rust/AGENTS.md,
-// rule 9) and refuses that text. The test table `DEVIATIONS` holds each
-// vector on which the type differs from the Python copies. A change to accept
-// those digits needs a table of each decimal digit of Unicode, and the table
-// changes with each Unicode version.
 dotted_id! {
     /// The version of one component: `MAJOR.MINOR.PATCH`, three numbers of
     /// ASCII digits (contract 06 §2).
@@ -1497,10 +1491,6 @@ impl Version {
     }
 }
 
-// CONTRACT-QUESTION: contract 06 §3 calls the two numbers integers and gives
-// no pattern. Each Python copy uses `(\d+)\.(\d+)`, which also matches a
-// decimal digit that is not ASCII. This type refuses such a digit, as
-// `Version` does. `DEVIATIONS` holds each vector.
 dotted_id! {
     /// The version of one contract: `MAJOR.MINOR`, two numbers of ASCII digits
     /// (contract 06 §3, §8).
@@ -1949,8 +1939,8 @@ mod tests {
 
         #[test]
         fn an_owui_chat_id_has_the_form_of_a_session_id() {
-            let longest = "a".repeat(SESSION_ID_MAX);
-            let too_long = "a".repeat(SESSION_ID_MAX + 1);
+            let longest = "a".repeat(OWUI_CHAT_ID_MAX);
+            let too_long = "a".repeat(OWUI_CHAT_ID_MAX + 1);
 
             tables_hold::<OwuiChatId>(SESSION_FORMS, &faults(NOT_SESSION_FORMS));
             tables_hold::<OwuiChatId>(
@@ -1999,24 +1989,14 @@ mod tests {
         }
 
         #[test]
-        fn a_chat_id_makes_a_session_id_when_the_result_is_short_enough() {
-            let fits = "a".repeat(SESSION_ID_MAX - OWUI_SESSION_PREFIX.len());
-            let too_long = format!("{fits}a");
+        fn the_longest_chat_id_makes_the_longest_session_id() {
+            let longest = "a".repeat(OWUI_CHAT_ID_MAX);
             let chat: OwuiChatId = "3f2b1c9e".parse().unwrap();
+            let session = longest.parse::<OwuiChatId>().unwrap().session_id();
 
             assert_eq!(chat.session_id().unwrap().as_str(), "owui-3f2b1c9e");
-            assert_eq!(
-                fits.parse::<OwuiChatId>()
-                    .unwrap()
-                    .session_id()
-                    .unwrap()
-                    .as_str(),
-                format!("owui-{fits}")
-            );
-            assert_eq!(
-                too_long.parse::<OwuiChatId>().unwrap().session_id(),
-                Err(SessionIdError::TooLong)
-            );
+            assert_eq!(session.unwrap().as_str(), format!("owui-{longest}"));
+            assert_eq!(OWUI_SESSION_PREFIX.len() + longest.len(), SESSION_ID_MAX);
         }
 
         #[test]
@@ -2728,7 +2708,7 @@ mod tests {
             equal("id.ulid.attendance", takes::<Ulid>),
             equal("id.ulid.caregiver", takes::<Ulid>),
             equal("id.ulid.chaperone", takes::<Ulid>),
-            stricter("id.ulid.door_trigger", takes::<Ulid>),
+            equal("id.ulid.door_trigger", takes::<Ulid>),
             equal("id.ulid.door_tui", takes::<Ulid>),
             equal("id.ulid.handover_executor", takes::<Ulid>),
             equal("id.ulid.handover_requester", takes::<Ulid>),
@@ -2839,10 +2819,11 @@ mod tests {
         #[derive(Debug, Clone, Copy)]
         enum Differs {
             /// The Python code accepts the input. The Rust code refuses it.
+            #[expect(
+                dead_code,
+                reason = "DEVIATIONS holds no row today, so no code builds this variant"
+            )]
             Refuses,
-            /// Both accept the input. The Rust value holds null in this field,
-            /// and the two values are equal in each other field.
-            NullField(&'static str),
         }
 
         /// One decision to differ from the Python code. It holds for each vector
@@ -2857,62 +2838,10 @@ mod tests {
             decision: &'static str,
         }
 
-        /// The three vectors of a grammar with numbers that hold a decimal digit
-        /// outside ASCII: ARABIC-INDIC DIGIT ONE and FULLWIDTH DIGIT ONE.
-        const DIGITS_OUTSIDE_ASCII: &[&str] = &[
-            "probe-arabic-digit",
-            "probe-fullwidth-digit",
-            "all-arabic-digits",
-        ];
-
-        /// Why the Rust code refuses a digit that the Python code accepts.
-        const ASCII_DIGITS_ONLY: &str = "The contract writes a number as `\\d+` and does not say \
-            which digits `\\d` means. Python reads it as each decimal digit of Unicode. The Rust \
-            code reads it as 0 to 9 (rust/AGENTS.md, rule 9).";
-
         /// Each vector on which the Rust code differs from the Python code on
         /// purpose. A vector outside this table and outside
         /// `ids/disagreements.json` must be equal.
-        const DEVIATIONS: &[Deviation] = &[
-            Deviation {
-                surfaces: &[
-                    "id.version.handover_executor",
-                    "id.version.handover_manifest",
-                    "id.version.handover_provenance",
-                    "id.version.handover_state",
-                ],
-                vectors: DIGITS_OUTSIDE_ASCII,
-                differs: Differs::Refuses,
-                contract: "contract 06 §2",
-                decision: ASCII_DIGITS_ONLY,
-            },
-            Deviation {
-                surfaces: &[
-                    "id.contract_version.handover_manifest",
-                    "id.contract_version.handover_state",
-                ],
-                vectors: DIGITS_OUTSIDE_ASCII,
-                differs: Differs::Refuses,
-                contract: "contract 06 §3",
-                decision: ASCII_DIGITS_ONLY,
-            },
-            Deviation {
-                surfaces: &["id.tag.handover_allocate", "id.tag.handover_source"],
-                vectors: DIGITS_OUTSIDE_ASCII,
-                differs: Differs::Refuses,
-                contract: "contract 06 §2",
-                decision: ASCII_DIGITS_ONLY,
-            },
-            Deviation {
-                surfaces: &["id.owui_chat_id.door_owui"],
-                vectors: &["max-128-chars"],
-                differs: Differs::NullField("session"),
-                contract: "contract 02 §2",
-                decision: "A session id has 128 bytes or less. The Python door makes a session \
-                    id of 133 bytes from a chat id of 128 bytes. The Rust code accepts the chat \
-                    id and makes no session id from it.",
-            },
-        ];
+        const DEVIATIONS: &[Deviation] = &[];
 
         /// The decision that covers one vector of one surface.
         fn deviation_of(surface: &str, vector: &str) -> Option<&'static Deviation> {
@@ -2954,13 +2883,6 @@ mod tests {
             assert_eq!(vector.result, Outcome::Accepted, "{at}: the Python code");
             match differs {
                 Differs::Refuses => assert!(rust.is_err(), "{at}: the Rust code accepts"),
-                Differs::NullField(field) => {
-                    let mut expected = vector.value().cloned().unwrap();
-
-                    assert_ne!(expected[field], Value::Null, "{at}: the Python field");
-                    expected[field] = Value::Null;
-                    assert_eq!(rust, &Ok(Some(expected)), "{at}");
-                }
             }
         }
 
@@ -3129,7 +3051,7 @@ mod tests {
         }
 
         #[test]
-        fn a_ulid_is_what_the_strictest_python_copy_takes() {
+        fn a_ulid_is_what_each_python_copy_takes() {
             walk("Ulid");
         }
 
@@ -3154,17 +3076,17 @@ mod tests {
         }
 
         #[test]
-        fn a_version_is_what_each_python_copy_takes_in_ascii() {
+        fn a_version_is_what_each_python_copy_takes() {
             walk("Version");
         }
 
         #[test]
-        fn a_contract_version_is_what_each_python_copy_takes_in_ascii() {
+        fn a_contract_version_is_what_each_python_copy_takes() {
             walk("ContractVersion");
         }
 
         #[test]
-        fn a_tag_is_what_each_python_copy_takes_in_ascii() {
+        fn a_tag_is_what_each_python_copy_takes() {
             walk("Tag");
         }
 

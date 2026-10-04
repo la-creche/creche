@@ -35,7 +35,9 @@ allowing a call it would fail to run.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -47,7 +49,7 @@ from .audit import AuditError
 from .delegate import DelegateDoor, DelegateRequest, DelegateStatus, wrap_untrusted
 from .delegations import DelegationTable
 from .dispatch import DispatchDoor, DispatchRefused, DispatchRequest, JobQuery
-from .family_audit import AuditEntry, FamilyAudit, Outcome, resolve_sandbox
+from .family_audit import AuditEntry, FamilyAudit, Outcome, can_hold, resolve_sandbox
 from .family_decisions import (
     FAMILY_DENY_STATUS,
     REASON_GRANTED,
@@ -109,6 +111,16 @@ REASON_ABANDONED: Final[FamilyReason] = "approval_abandoned"
 #: takes the word the retired instance path wrote.
 REASON_PENDING: Final = "approval_required"
 REASON_APPROVED: Final = "approved"
+
+#: The detail of a call that is refused because no audit line can hold its
+#: arguments. A fixed text: it does not quote them.
+ARGS_NOT_HELD: Final = (
+    "the audit cannot hold these arguments: they nest too deep, "
+    "or they hold a string that is not Unicode text"
+)
+
+#: The detail of a result that no reply can carry. It does not quote it.
+RESULT_NOT_JSON: Final = "the result is not JSON text that a reply can carry"
 
 #: The PEP's own audit names for the two endpoints that are not tool calls.
 #: A `$` cannot start a tool name, so neither can collide with one.
@@ -271,9 +283,29 @@ class FamilyGate:
     ) -> Reply:
         """Contract 04 §5, then execution, then one audit line either way."""
         claimed = read_claimed(headers)
+        try:
+            return await self._answer(grants, tool, args, claimed)
+        except AuditError:
+            raise
+        except Exception:
+            # §5 row 12, for a failure that neither `_decide` nor `_run`
+            # names. The call still gets its line and the contract's body.
+            log.exception("the call raised; failing closed")
+            return self._refuse(grants, tool, args, deny("internal_error"), claimed)
+
+    async def _answer(
+        self, grants: FamilyGrants, tool: str, args: dict[str, object], claimed: Claimed
+    ) -> Reply:
         decision = self._decide(grants, tool, args, claimed)
         if not decision.allow:
             return self._refuse(grants, tool, args, decision, claimed)
+
+        # The rule of `_run`'s probe, for the arguments: no effect where the
+        # audit cannot record it. A denial above keeps its own reason, and
+        # its line holds a marker for such arguments (`family_audit`).
+        if not can_hold(args):
+            unheld = deny("internal_error", ARGS_NOT_HELD)
+            return self._refuse(grants, tool, args, unheld, claimed)
 
         if decision.approval:
             return await self._gated(grants, tool, args, decision, claimed)
@@ -302,6 +334,8 @@ class FamilyGate:
         started = time.monotonic()
         try:
             payload = await self._execute(grants, decision, claimed)
+            if not _carries(payload):
+                raise ExecutionFailed(RESULT_NOT_JSON)
         except DispatchRefused as exc:
             # Contract 02 §13.4.1 rule 5: a refused dispatch created nothing.
             # So this is a policy denial and not §5 row 11's allowed call that
@@ -376,6 +410,14 @@ class FamilyGate:
             # audit records why the gate ended rather than leaving a hole.
             self._write(grants, tool, args, Outcome.DENY, REASON_ABANDONED, claimed, gate=gate)
             raise
+        except Exception:
+            # §6.4's second record, for a wait that failed. Nothing executes.
+            log.exception("the hold of gate %s raised; failing closed", gate)
+            broken: FamilyReason = "internal_error"
+            self._write(grants, tool, args, Outcome.DENY, broken, claimed, gate=gate)
+            return Reply(
+                FAMILY_DENY_STATUS[broken], {"ok": False, "reason": broken, "detail": None}
+            )
 
         if held.outcome is GateOutcome.APPROVED:
             return await self._run(
@@ -654,8 +696,14 @@ class FamilyGate:
         if reply.status_code != HTTP_OK:
             raise ExecutionFailed(f"embed failed: HTTP {reply.status_code}")
 
-        vectors = reply.json()
-        return {"embedding": vectors[0], "model": served, "dims": len(vectors[0])}
+        try:
+            vectors = reply.json()
+        except (ValueError, RecursionError):
+            # The reader's own text can quote the reply, so it stays out.
+            raise ExecutionFailed("embed failed: the reply is not JSON") from None
+
+        embedding = _first_vector(vectors)
+        return {"embedding": embedding, "model": served, "dims": len(embedding)}
 
     async def _embedding_model(self, client: httpx.AsyncClient) -> str:
         """The one model id the local service serves, read once per process."""
@@ -663,9 +711,12 @@ class FamilyGate:
             return self._tei_model
         try:
             info = await client.get(f"{self._deps.tei_url}/info", timeout=TEI_INFO_TIMEOUT_S)
-            self._tei_model = str(info.json().get("model_id", UNKNOWN_MODEL))
+            self._tei_model = _model_id(info.json())
         except (httpx.HTTPError, ValueError):
             self._tei_model = UNKNOWN_MODEL
+        except RecursionError:
+            # Not kept, as before this handler: the next call reads again.
+            raise ExecutionFailed("embed failed: the /info reply nests too deep") from None
         return self._tei_model
 
     async def _ha_call(self, args: dict[str, object]) -> dict[str, object]:
@@ -764,7 +815,7 @@ class FamilyGate:
         self._write(grants, tool, args, Outcome.DENY, reason, claimed)
         return Reply(
             FAMILY_DENY_STATUS[reason],
-            {"ok": False, "reason": reason, "detail": decision.detail},
+            {"ok": False, "reason": reason, "detail": _plain(decision.detail)},
         )
 
     def _failed_after_allow(
@@ -794,7 +845,7 @@ class FamilyGate:
         )
         return Reply(
             FAMILY_DENY_STATUS[reason],
-            {"ok": False, "reason": reason, "detail": str(exc)},
+            {"ok": False, "reason": reason, "detail": _plain(str(exc))},
         )
 
     def _write(
@@ -860,6 +911,85 @@ def _holds_current_rev(headers: Mapping[str, str], rev: str) -> bool:
         tag = tag[1:-1]
 
     return tag == rev
+
+
+def _carries(payload: dict[str, object]) -> bool:
+    """Whether a JSON reply can carry this result: strict JSON, as text in
+    UTF-8. A result is bytes of another process (invariant 12), and `app.py`
+    writes the reply after the audit line says how the call ended."""
+    try:
+        json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (ValueError, RecursionError):
+        return False
+
+    return True
+
+
+def _plain(detail: str | None) -> str | None:
+    """A detail as text that a JSON reply carries. A detail can quote the
+    caller or another process, and a lone surrogate there has no UTF-8
+    form. It is written as its escape."""
+    if detail is None:
+        return None
+
+    return detail.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+def _first_vector(reply: object) -> list[object]:
+    """The one vector of an `/embed` reply (contract 04 §4.1), or
+    `ExecutionFailed`.
+
+    The call sends one input, so the reply is a list that holds one list of
+    numbers. A value that is not a finite JSON number is refused: the reply
+    of this PEP is strict JSON, which has no word for one.
+
+    CONTRACT-QUESTION: §4.1 gives the vector as a list whose items are
+    numbers, with no minimum length. An empty vector is taken, as it was
+    before this check. A change costs each caller that reads `dims`.
+    """
+    if not isinstance(reply, list) or not reply:
+        raise ExecutionFailed("embed failed: the reply holds no vector")
+
+    first = cast("list[object]", reply)[0]
+    if not isinstance(first, list):
+        raise ExecutionFailed("embed failed: the vector is not a list")
+
+    vector = cast("list[object]", first)
+    if not all(_is_finite_number(value) for value in vector):
+        raise ExecutionFailed("embed failed: the vector holds a value that is not a finite number")
+
+    return vector
+
+
+def _is_finite_number(value: object) -> bool:
+    """A number that strict JSON can write. An integer is finite at any
+    length.
+
+    CONTRACT-QUESTION: §4.1 gives the items of the vector as numbers and is
+    silent on `true` and `false`. Python reads each one as an integer, and
+    the reply carried it to the caller before this check. That reading
+    stays. A change to a refusal costs a caller of a service that sends
+    one.
+    """
+    if isinstance(value, int):
+        return True
+
+    return isinstance(value, float) and math.isfinite(value)
+
+
+def _model_id(info: object) -> str:
+    """The `model_id` of an `/info` reply, or `ExecutionFailed` for a reply
+    that is no object. A reply with no id reads as `UNKNOWN_MODEL`.
+
+    CONTRACT-QUESTION: §4.1 gives the model id as a string and is silent on
+    a service that reports an id of another type. Such an id reads as its
+    `str()`, as it did before this check. A change costs a caller that
+    compares the id with the id of its index.
+    """
+    if not isinstance(info, dict):
+        raise ExecutionFailed("embed failed: the /info reply is not an object")
+
+    return str(cast("dict[str, object]", info).get("model_id", UNKNOWN_MODEL))
 
 
 def _text_or_none(value: object) -> str | None:

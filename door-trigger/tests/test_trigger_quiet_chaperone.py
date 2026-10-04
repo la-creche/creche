@@ -13,6 +13,11 @@ from agent_door_trigger.quiet.chaperone import JOB_LIMIT, HttpFamilyReads, famil
 from agent_door_trigger.quiet.decide import Jobs
 
 TOKEN = "family-token-value"
+#: More levels than the JSON parser of each supported Python reads. No reader
+#: of this module has a size cap, so the text reaches the parser.
+TOO_DEEP = 400_000
+DEEP_JSON = "[" * TOO_DEEP + "]" * TOO_DEEP
+
 SURVEY: dict[str, Any] = {
     "project": "House",
     "columns": {"TODO": [{"id": 12, "points": 3, "refined": True, "epic": "finance"}]},
@@ -94,6 +99,22 @@ def test_a_board_answer_that_is_not_a_survey_reads_nothing() -> None:
     assert _reads(handler).board("board-lead") is None
 
 
+def test_a_board_answer_that_nests_too_deep_reads_nothing() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _ok(DEEP_JSON)
+
+    assert _reads(handler).board("board-lead") is None
+
+
+def test_a_pep_answer_that_nests_too_deep_reads_nothing() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=DEEP_JSON.encode())
+
+    reads = _reads(handler)
+    assert reads.board("board-lead") is None
+    assert reads.jobs() is None
+
+
 def test_a_job_row_with_no_status_reads_nothing() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _ok({"jobs": [{"session": "auto-A"}]})
@@ -110,4 +131,12 @@ def test_the_token_comes_from_creds_json(tmp_path: Path) -> None:
 
 
 def test_no_creds_is_no_token(tmp_path: Path) -> None:
+    assert family_token(tmp_path, "scrum-lead") is None
+
+
+def test_a_creds_file_that_nests_too_deep_is_no_token(tmp_path: Path) -> None:
+    creds = tmp_path / "scrum-lead" / "creds" / "creds.json"
+    creds.parent.mkdir(parents=True)
+    creds.write_text(DEEP_JSON, encoding="utf-8")
+
     assert family_token(tmp_path, "scrum-lead") is None

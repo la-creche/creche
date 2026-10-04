@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -76,6 +77,16 @@ DAY_MIN: Final = 1
 DAY_MAX: Final = 31
 MONTH_MIN: Final = 1
 MONTH_MAX: Final = 12
+
+#: One number of a cron field: ASCII digits, and two at most after the zeros
+#: at the start, because no range here goes past 59. `str.isdigit` also takes
+#: a digit that is not ASCII, and `int` raises on some of those and on a run
+#: past the digit limit of the interpreter.
+_NUMBER: Final = re.compile(r"^0*([0-9]{1,2})\Z")
+
+#: The step of a minute or hour atom. It goes into the unit text as it is, so
+#: it holds ASCII digits only.
+_STEP: Final = re.compile(r"^[0-9]+\Z")
 
 
 class CronShapeError(ValueError):
@@ -272,17 +283,24 @@ def _mine(family_name: str, installed: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _number(value: str, low: int, high: int, name: str) -> int:
-    if not value.isdigit() or not low <= int(value) <= high:
+    match = _NUMBER.fullmatch(value)
+    if match is None or not low <= int(match.group(1)) <= high:
         raise CronShapeError(f"{name} {value!r} is not a number in {low} to {high}")
 
-    return int(value)
+    return int(match.group(1))
 
 
 def _atom(atom: str, low: int, high: int, name: str) -> str:
     """One element of a minute or hour list. systemd refuses a step on `*`
     and means the same thing by a step on the first value."""
+    # CONTRACT-QUESTION: contract 01 §3.13 gives no grammar for a field. This
+    # step reads a range with no end as its start, and a step sign with no
+    # number as no step. It does not check the size of a step: systemd
+    # refuses a unit with a step that it cannot use, and the pass reports
+    # that unit as not enabled. A strict reading refuses each of these here.
+    # It costs the timer of a line that has one today.
     base, _, step = atom.partition("/")
-    if step and not step.isdigit():
+    if step and _STEP.fullmatch(step) is None:
         raise CronShapeError(f"{name} step {step!r} is not a number")
 
     if base == "*":

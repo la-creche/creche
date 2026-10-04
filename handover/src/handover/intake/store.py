@@ -135,7 +135,7 @@ def recipients_of(
 
     try:
         loaded: Any = yaml.safe_load(raw.decode("utf-8", "replace"))
-    except yaml.YAMLError:
+    except Exception:
         # This file is root's, so a malformed one is a foot-gun and not an
         # attack — and a raise here would escape `build_wiring`, so `main`
         # would die before the loop starts and `Restart=always` would turn

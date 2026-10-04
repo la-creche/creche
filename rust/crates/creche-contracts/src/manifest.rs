@@ -862,13 +862,7 @@ mod tests {
 
     /// Each vector that the Python code accepts and the Rust code refuses, on
     /// purpose: the surface, the vector, the contract section and the reason.
-    const DEVIATIONS: [(&str, &str, &str, &str); 19] = [
-        (
-            "manifest.component",
-            "version-arabic-indic",
-            "contract 06 §3",
-            "a contract version has ASCII digits (rust/AGENTS.md, rule 9)",
-        ),
+    const DEVIATIONS: [(&str, &str, &str, &str); 15] = [
         (
             "manifest.component",
             "yaml-merge-chain-200",
@@ -919,12 +913,6 @@ mod tests {
             "the id of a request is a ULID, and the parser takes the id as that type",
         ),
         (
-            "manifest.request.parse",
-            "version-arabic-indic",
-            "contract 06 §2",
-            "a version has ASCII digits (rust/AGENTS.md, rule 9)",
-        ),
-        (
             "manifest.request.plan",
             "id-not-a-ulid",
             "contract 06 §9",
@@ -942,18 +930,6 @@ mod tests {
             "contract 06 §9",
             "a ULID holds 48 bits of milliseconds (contract 02 §2), and the mint refuses a later \
              time",
-        ),
-        (
-            "manifest.state",
-            "live-arabic-indic",
-            "contract 06 §2",
-            "a version has ASCII digits (rust/AGENTS.md, rule 9)",
-        ),
-        (
-            "manifest.state",
-            "provided-arabic-indic",
-            "contract 06 §3",
-            "a contract version has ASCII digits (rust/AGENTS.md, rule 9)",
         ),
         (
             "manifest.resolved",

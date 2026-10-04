@@ -7,7 +7,9 @@ the host, `sbx` or a live `attendance`.
 
 from __future__ import annotations
 
+import errno
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -527,6 +529,102 @@ async def test_a_queued_turn_with_no_sandbox_ends_the_job(tmp_path: Path) -> Non
     await harness.stop()
 
 
+async def test_a_queued_turn_waits_while_the_kind_is_gone(tmp_path: Path) -> None:
+    """Contract 02 §13 rule 2. The limit belongs to an autonomous family.
+
+    The document states no kind when the slot frees, so nothing proves which
+    limit holds. The turn stays `queued`. A reader that takes such a document
+    as `attended` starts it with no limit at all.
+    """
+    harness = await build(tmp_path, max_running_turns=1)
+    harness.create()
+    harness.create(session=SECOND_SESSION)
+    first = await harness.run(None)
+    queued = await harness.queue(SECOND_SESSION)
+    write_status(
+        harness.config.state_root,
+        family=AUTO_FAMILY,
+        kind="",
+        sandboxes=((AUTO_SANDBOX, "ready"),),
+    )
+
+    await harness.settle(first)
+
+    assert queued.record.state is TurnState.QUEUED
+    assert harness.service.queue_depth(AUTO_FAMILY) == 1
+    started = [start["turn"] for start in harness.fleet.playpen(AUTO_SANDBOX).started]
+    assert queued.record.turn not in started
+    await harness.stop()
+
+
+async def test_a_queued_turn_whose_start_raises_ends_the_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Contract 02 §4.3. The error is of a type that the start does not name.
+
+    Nothing awaits the start of a queued turn. A turn left `queued` out of
+    the FIFO never ends, and its job leaves no outcome record. The contract
+    has no `queued -> failed`, so the turn ends `aborted`.
+    """
+    harness = await build(tmp_path, max_running_turns=1)
+    harness.create()
+    harness.create(session=SECOND_SESSION)
+    first = await harness.run(None)
+    queued = await harness.queue(SECOND_SESSION)
+    write_status(
+        harness.config.state_root,
+        family=AUTO_FAMILY,
+        kind="autonomous",
+        sandboxes=((AUTO_SANDBOX, "ready"),),
+        max_running_turns=1,
+        playpen_env="",
+    )
+
+    def failing(*_: object) -> None:
+        raise OSError(errno.ENOSPC, "no space left")
+
+    monkeypatch.setattr(harness.service.faults, "raise_fault", failing)
+
+    await harness.settle(first)
+    await settle_now(queued.done)
+
+    assert queued.record.state is TurnState.ABORTED
+    assert queued.record.reason is TurnReason.INTERNAL
+    await harness.stop()
+
+
+async def test_a_turn_that_cannot_be_queued_is_not_left_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The caller gets the error. The turn must not hold the session."""
+    harness = await build(tmp_path, max_running_turns=1)
+    harness.create()
+    harness.create(session=SECOND_SESSION)
+    await harness.run(None)
+    failed: list[str] = []
+    save_turn = harness.service.store.save_turn
+
+    def failing_once(record: Turn) -> None:
+        if not failed:
+            failed.append(record.turn)
+            raise OSError(errno.ENOSPC, "no space left")
+
+        save_turn(record)
+
+    monkeypatch.setattr(harness.service.store, "save_turn", failing_once)
+
+    with pytest.raises(OSError, match="no space left"):
+        await harness.queue(SECOND_SESSION)
+
+    live = harness.service.live_turn(AUTO_FAMILY, SECOND_SESSION, failed[0])
+
+    assert live is not None
+    assert live.record.state is TurnState.ABORTED
+    assert live.record.reason is TurnReason.INTERNAL
+    assert harness.service.queue_depth(AUTO_FAMILY) == 0
+    await harness.stop()
+
+
 # --------------------------------------------------------- the outcome record
 
 
@@ -567,6 +665,28 @@ async def test_the_record_names_a_failure(tmp_path: Path) -> None:
 
     assert record["status"] == "failed"
     assert record["error"] == "the model refused"
+    await harness.stop()
+
+
+async def test_a_follow_up_that_raises_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Nothing awaits the removal of a finished job. Its fault reaches the log."""
+    harness = await build(tmp_path)
+    harness.create()
+    live = await harness.run(None)
+
+    def failing(family: str, session: str) -> None:
+        raise OSError(errno.EACCES, "the directory stays")
+
+    monkeypatch.setattr(harness.service.store, "delete", failing)
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        await harness.settle(live)
+        await wait_until(lambda: "the directory stays" in caplog.text)
+
+    assert "task follow-up ended with an error" in caplog.text
+    monkeypatch.undo()
     await harness.stop()
 
 

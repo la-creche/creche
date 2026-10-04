@@ -84,6 +84,16 @@ usage() { printf 'usage: allocate-tags.sh [--dry-run]\n' >&2; }
 say() { printf '%s\n' "$*"; }
 die() { printf '::error::%s\n' "$*" >&2; exit 1; }
 
+# lines: the names on stdin, which `git ... -z` ends with NUL, one per line.
+# Every list of paths below asks git for `-z`. Without it git writes some
+# names inside double quotes: with its default `core.quotePath`, each name
+# that is not ASCII. The first segment of a quoted line names no component,
+# so a merge that changed only such a path made no tag.
+#
+# A name can hold a line feed. That byte becomes `?` here, so each name
+# stays one line and the planner reads one path for one name.
+lines() { tr '\n\0' '?\n'; }
+
 # Two roots, and in agent-control they are one directory. SELF_ROOT is where
 # this script and the `handover` project live, and it is used for nothing else.
 # REPO_ROOT is the checkout this run reads and tags, which agent-mcp's
@@ -233,7 +243,7 @@ fi
 # `--at-sha` is left out ON PURPOSE: a re-run must still learn each
 # component's version, and a `noop` row carries the tag rather than the
 # range's base.
-{ git -C "$REPO_ROOT" ls-tree -r -d --name-only "$SHA"; printf '.\n'; } > "$WORK/tree"
+{ git -C "$REPO_ROOT" ls-tree -r -d --name-only -z "$SHA" | lines; printf '.\n'; } > "$WORK/tree"
 "${CLI[@]}" allocate-tags --repo "$REPO" --paths "$WORK/tree" --tags "$WORK/tags" > "$WORK/probe" \
   || die "the planner refused the probe"
 
@@ -292,7 +302,11 @@ while read -r outcome tag from _detail; do
   count=$(git -C "$REPO_ROOT" rev-list --count "$previous..$SHA")
   say "range:   $component: $count commit(s) since $previous"
 
-  git -C "$REPO_ROOT" diff --name-only "$previous" "$SHA" > "$WORK/changed"
+  # `--no-renames`: a file that moved is a path that went and a path that
+  # came. With rename detection git names the new path only, and the
+  # component that lost the file would have no changed path.
+  git -C "$REPO_ROOT" diff --name-only --no-renames -z "$previous" "$SHA" | lines \
+    > "$WORK/changed"
   cut_paths "$WORK/changed" > "$WORK/segments"
   while IFS= read -r segment; do
     [[ -n "$segment" ]] || continue
@@ -306,8 +320,8 @@ while read -r outcome tag from _detail; do
   git -C "$REPO_ROOT" rev-list --first-parent "$previous..$SHA" > "$WORK/merges"
   while read -r merged label; do
     grep -qxF "$merged" "$WORK/merges" || continue
-    git -C "$REPO_ROOT" diff --name-only "$merged^1" "$merged" \
-      > "$WORK/merged-changed" 2>/dev/null || : > "$WORK/merged-changed"
+    git -C "$REPO_ROOT" diff --name-only --no-renames -z "$merged^1" "$merged" 2>/dev/null \
+      | lines > "$WORK/merged-changed" || : > "$WORK/merged-changed"
     cut_paths "$WORK/merged-changed" > "$WORK/merged-segments"
     while IFS= read -r segment; do
       [[ -n "$segment" ]] || continue

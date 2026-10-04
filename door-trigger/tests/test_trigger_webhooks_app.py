@@ -7,19 +7,28 @@ a route from present to absent without touching a real registry
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 from pathlib import Path
 
-from agent_door_trigger.attendance import AcceptedTurn
+import httpx
+import pytest
+from agent_door_trigger import payload
+from agent_door_trigger.attendance import AcceptedTurn, AttendanceClient, HttpAttendance
 from agent_door_trigger.config import AttendanceTarget, ServeConfig
 from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.routes import Route
 from agent_door_trigger.tokens import MIN_WEBHOOK_TOKEN_BYTES, tokens_match
 from agent_door_trigger.webhooks import (  # pyright: ignore[reportPrivateUsage]
     _authorized,
+    _install_sighup,
+    _refresh_periodically,
     create_app,
 )
 from starlette.testclient import TestClient
 from trigger_fake_attendance import FakeAttendance
+from trigger_json_limit import ParserAtItsLimit
 
 TOKEN = "w" * MIN_WEBHOOK_TOKEN_BYTES
 ROUTE = Route(family="scrum-lead", name="deploy-notify", token=TOKEN)
@@ -31,12 +40,18 @@ class FakeRouteTable:
     def __init__(self, routes: dict[tuple[str, str], Route] | None = None) -> None:
         self._routes = dict(routes or {})
         self.refresh_calls = 0
+        #: Raised by the next `refresh`, then cleared.
+        self.refresh_error: Exception | None = None
 
     def get(self, family: str, name: str) -> Route | None:
         return self._routes.get((family, name))
 
     def refresh(self) -> int:
         self.refresh_calls += 1
+        if self.refresh_error is not None:
+            error, self.refresh_error = self.refresh_error, None
+            raise error
+
         return len(self._routes)
 
     def remove(self, family: str, name: str) -> None:
@@ -55,7 +70,7 @@ def _config(tmp_path: Path) -> ServeConfig:
     )
 
 
-def _client(tmp_path: Path, fake: FakeAttendance, routes: FakeRouteTable) -> TestClient:
+def _client(tmp_path: Path, fake: AttendanceClient, routes: FakeRouteTable) -> TestClient:
     app = create_app(_config(tmp_path), fake, routes)
     return TestClient(app)
 
@@ -172,6 +187,18 @@ def test_invalid_json_body_is_400(tmp_path: Path) -> None:
     assert response.status_code == 400
 
 
+def test_a_body_that_nests_too_deep_is_400(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(payload, "json", ParserAtItsLimit)
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    with _client(tmp_path, FakeAttendance(), routes) as client:
+        response = client.post(
+            "/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN), json=[[1]]
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "bad_request"
+
+
 def test_an_oversized_body_is_413(tmp_path: Path) -> None:
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
     with _client(tmp_path, FakeAttendance(), routes) as client:
@@ -204,6 +231,102 @@ def test_a_non_autonomous_family_answers_403(tmp_path: Path) -> None:
         response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
 
     assert response.status_code == 403
+
+
+# --- attendance does not answer ---
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ConnectError("no answer"), ConnectionRefusedError("no answer")],
+    ids=["httpx-error", "os-error"],
+)
+def test_no_answer_from_attendance_answers_502(tmp_path: Path, failure: Exception) -> None:
+    def no_answer(request: httpx.Request) -> httpx.Response:
+        raise failure
+
+    target = AttendanceTarget(url="http://sessiond", socket=None, token="t" * 32)
+    upstream = httpx.Client(base_url=target.url, transport=httpx.MockTransport(no_answer))
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    with _client(tmp_path, HttpAttendance(target, upstream), routes) as client:
+        response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "error": {"code": "attendance_unreachable", "message": "attendance did not answer"}
+    }
+
+
+# --- a failure that no handler names ---
+
+
+class _BrokenAttendance(FakeAttendance):
+    """Raises an error that the route has no handler for."""
+
+    def ensure_session(self, family: str, session: str) -> None:
+        raise RuntimeError("a defect of the door")
+
+
+def test_an_unexpected_failure_answers_500_in_the_error_shape(tmp_path: Path) -> None:
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    app = create_app(_config(tmp_path), _BrokenAttendance(), routes)
+    # The server raises the error again after the answer, so that its log
+    # holds the traceback. The test reads the answer.
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
+
+    assert response.status_code == 500
+    error = response.json()["error"]
+    assert error["code"] == "internal"
+    assert "a defect of the door" not in error["message"]
+
+
+# --- a refresh that fails keeps the last table ---
+
+
+async def test_the_refresh_loop_outlives_a_refresh_that_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    routes.refresh_error = ValueError("a file the registry loader cannot read")
+    task = asyncio.create_task(_refresh_periodically(routes, 0))
+
+    try:
+        async with asyncio.timeout(5):
+            while routes.refresh_calls < 2 and not task.done():
+                await asyncio.sleep(0.01)
+
+        assert not task.done()
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, ValueError):
+            await task
+
+    assert routes.get("scrum-lead", "deploy-notify") == ROUTE
+    assert "keeping the last table" in caplog.text
+
+
+async def test_a_reload_that_fails_keeps_the_last_table(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The loop of a test takes no signal. The test takes the handler that
+    # the door installs and calls it as the loop does on SIGHUP.
+    installed: list[object] = []
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(
+        loop, "add_signal_handler", lambda _signal, handler: installed.append(handler)
+    )
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    routes.refresh_error = ValueError("a file the registry loader cannot read")
+    _install_sighup(routes)
+    [reload] = installed
+    assert callable(reload)
+
+    with caplog.at_level(logging.ERROR):
+        reload()
+
+    assert routes.get("scrum-lead", "deploy-notify") == ROUTE
+    assert "keeping the last table" in caplog.text
 
 
 # --- _authorized: constant-time even for an unknown route ---
