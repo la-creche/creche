@@ -42,8 +42,7 @@ WALL_LIMIT_S = 20
 CPU_LIMIT_S = 10
 MEMORY_LIMIT_BYTES = 1 << 30
 
-#: Each level merges the level before two times. With no bound, the last
-#: mapping holds two to the power of this number of pairs.
+#: The levels of the small text that each reader refuses at its copy limit.
 DOUBLING_LEVELS = 40
 
 #: What the child does before it reads: it takes the two limits. One

@@ -192,8 +192,8 @@ def _merge_copies(keys: int, merges: int) -> str:
 
 
 def _merge_doubles(levels: int) -> str:
-    """A `unit` whose first value is a list of mappings. Each mapping merges the one
-    before it two times, so each one copies two times the pairs of the one before.
+    """A `unit` whose first value is a list of `levels` mappings with merge keys. The
+    text is small, and the reader refuses it at its copy limit.
 
     A second `unit` line replaces the value.
     """
