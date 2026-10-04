@@ -29,21 +29,26 @@
 //! A [`Secret`](creche_contracts::secret::Secret) has no `Display`, so the
 //! macros do not take one as `{}`. Its `Debug` prints no byte.
 //!
-//! The Python services call `logging.basicConfig` with five formats:
-//! `attendance/src/attendance/__main__.py:50`,
-//! `noticeboard/src/noticeboard/__main__.py:35`,
-//! `door-owui/src/agent_door_owui/__main__.py:24`,
-//! `caregiver/src/caregiver/cli.py:82` and
-//! `library/src/library/__main__.py:68`. The chaperone, the terminal door and
-//! the trigger door use the format of `door-owui`. Each format stamps the
-//! local time. This module replaces the five with one.
+//! The Python services write a line in five forms. Four are formats of
+//! `logging.basicConfig`:
+//!
+//! | The format | Where |
+//! |---|---|
+//! | The time, the level, the message. | `attendance/src/attendance/__main__.py:50`, `noticeboard/src/noticeboard/__main__.py:35` |
+//! | The time, the name of the logger, the message. | `door-owui/src/agent_door_owui/__main__.py:24`, `chaperone/src/chaperone/__main__.py:104`, `door-tui/src/agent_door_tui/__main__.py:32`, `door-trigger/src/agent_door_trigger/cli.py:49` |
+//! | The time, the level, the name, the message. | `caregiver/src/caregiver/cli.py:82` |
+//! | The level, the name, the message. No time. | `library/src/library/__main__.py:68` |
+//!
+//! The fifth form is the line of `uvicorn`: the level and the message, with
+//! no time. Each time of a Python line is the local time of the host. This
+//! module replaces the five forms with one.
 
 // CONTRACT-QUESTION: no contract gives the form of a log line, and no program
-// reads one. The five Python formats differ, and each one stamps the local
-// time of the host. The reading here is one form for each Rust service, with
-// the time in UTC. A change of the form costs one function, `format_line`.
-// An operator who compares a Python line with a Rust line reads two
-// different hours until each service is a Rust service.
+// reads one. The five Python forms differ. Three of them stamp the local
+// time of the host, and two have no time. The reading here is one form for
+// each Rust service, with the time in UTC. A change of the form costs one
+// function, `format_line`. An operator who compares a Python line with a
+// Rust line reads two different hours until each service is a Rust service.
 
 use std::fmt;
 use std::io::{self, Write};

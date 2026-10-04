@@ -142,9 +142,10 @@ One more attribute waits for a body. The field `start` of
 ## Known gaps
 
 - This `CONTRACT-QUESTION` comment is open in `src/log.rs`: no contract gives
-  the form of a log line, and no program reads one. The five Python formats
-  differ, and each one stamps the local time. This crate writes one form with
-  the time in UTC. A change of the form costs one function, `format_line`.
+  the form of a log line, and no program reads one. The Python services
+  write five forms. Three stamp the local time, and two have no time. This
+  crate writes one form with the time in UTC. A change of the form costs one
+  function, `format_line`.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same

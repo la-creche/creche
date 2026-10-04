@@ -639,8 +639,8 @@ Rules for the test:
   list each stub and the packet that writes its body.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/log.rs`: no contract gives the form of a log
-  line. The five Python formats differ, and each one stamps the local time.
-  The runtime writes one form, with the time in UTC.
+  line. The Python services write five forms. Three stamp the local time,
+  and two have no time. The runtime writes one form, with the time in UTC.
 - No check holds the rules of "The rules for a service", except a part of
   rule 13. A service crate that breaks a rule builds and passes the lint
   gate.
