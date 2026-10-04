@@ -204,8 +204,9 @@ code for this suite.
 ## Reading a failure
 
 A failed test carries a section named `processes at call`. It holds the root
-path, the stdout and the stderr of each process, and each playpen log. Work
-down this list.
+path, the stdout and the stderr of each process, and each playpen log. A
+test that fails in its teardown carries the same output in the text of the
+failure. Work down this list.
 
 1. Every topology test skips: the bundle is missing. Build it.
 2. `exited N before it was ready`: the service refused to start. Read its
@@ -261,4 +262,5 @@ down this list.
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
 | `proc_owui.py`, `proc_delegate.py` | the two topologies |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
-| `conftest.py` | the fixtures, the `slow` mark, the failure report |
+| `proc_report.py` | what a failed test carries, and the end of the processes of one test |
+| `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |

@@ -8,7 +8,8 @@ Four rules are enforced here and not left to a test:
 1. Every process of a test ends with the test. A teardown that had to kill
    one fails the test.
 2. A failed test carries the stdout and the stderr of every process it
-   started, and every playpen log.
+   started, and every playpen log. A failed teardown carries them in its
+   own text, because the root is gone when pytest makes that report.
 3. The session ends with no process left. `no_process_left` is that check.
 4. A run says which command it judged. A variable with the suite's prefix
    that the suite does not read stops the run, and each run prints the
@@ -27,8 +28,8 @@ import pytest
 from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
 from proc_owui import OwuiStack
+from proc_report import describe, end_processes
 from proc_services import KEEP_ROOTS_ENV, describe_table, unknown_variables
-from proc_standins import end_standins
 from proc_tree import Tree, make_root, playpen_bundle, remove_root, socket_path_fits
 
 _HERE = Path(__file__).resolve().parent
@@ -36,6 +37,9 @@ _BUILD_HINT = "run `pnpm install && pnpm run build` in playpen/ first"
 
 #: What a failed test adds to its report. One callable per test.
 _REPORT = pytest.StashKey[Callable[[], str]]()
+
+#: The phase of a test in which pytest ends its fixtures.
+_TEARDOWN = "teardown"
 
 
 def pytest_configure() -> None:
@@ -75,12 +79,16 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
 ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
-    """Put the output of every process into the report of a failed test."""
-    report = yield
-    describe = item.stash.get(_REPORT, None)
+    """Put the output of every process into the report of a failed test.
 
-    if report.failed and describe is not None:
-        report.sections.append((f"processes at {call.when}", describe()))
+    Not at the teardown: the root is gone then. The `supervisor` fixture
+    puts the output into the text of a failed teardown itself.
+    """
+    report = yield
+    output = item.stash.get(_REPORT, None)
+
+    if report.failed and output is not None and call.when != _TEARDOWN:
+        report.sections.append((f"processes at {call.when}", output()))
 
     return report
 
@@ -131,14 +139,14 @@ def supervisor(tree: Tree, request: pytest.FixtureRequest) -> Iterator[Superviso
     """Every process of one test, ended as a whole when the test ends."""
     built = Supervisor(tree.proc_logs)
     item = cast("pytest.Item", request.node)  # pyright: ignore[reportUnknownMemberType]
-    item.stash[_REPORT] = lambda: _describe(tree, built)
+    item.stash[_REPORT] = lambda: describe(tree, built)
 
     yield built
 
-    problems = built.stop_all() + end_standins(tree, built.sessions())
+    failure = end_processes(tree, built)
 
-    if problems:
-        pytest.fail("the teardown had to end a process:\n" + "\n".join(problems))
+    if failure is not None:
+        pytest.fail(failure)
 
 
 @pytest.fixture
@@ -187,15 +195,3 @@ async def sandbox(delegate: DelegateStack) -> AsyncIterator[httpx.AsyncClient]:
     """A client that plays the sandbox of the caller family at the chaperone."""
     async with delegate.sandbox_client() as client:
         yield client
-
-
-def _describe(tree: Tree, supervisor: Supervisor) -> str:
-    """The root, what each process wrote, and what each playpen wrote."""
-    parts = [f"root: {tree.root} (set {KEEP_ROOTS_ENV}=1 to keep it)", supervisor.output()]
-
-    if tree.log_dir.is_dir():
-        for log in sorted(tree.log_dir.iterdir()):
-            text = log.read_text(encoding="utf-8", errors="replace")
-            parts.append(f"--- {log.name} ---\n{text}")
-
-    return "\n".join(parts)

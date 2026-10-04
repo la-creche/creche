@@ -24,6 +24,7 @@ from proc_harness import (
     pids_gone_by,
     port_is_free,
 )
+from proc_report import end_processes
 from proc_tree import Tree
 
 SH = "/bin/sh"
@@ -91,6 +92,29 @@ def test_a_child_that_ignores_sigterm_is_killed_and_reported(tree: Tree) -> None
 
     assert problems == [f"stubborn ignored SIGTERM for {SHORT_GRACE_S} s and was killed"]
     assert child.exit_code() == -signal.SIGKILL
+
+
+def test_a_teardown_failure_carries_the_output(tree: Tree) -> None:
+    """What the child wrote is the evidence, and the root is gone after the teardown."""
+    mark = tree.root / "trap-is-set"
+    loop = "while :; do sleep 0.05; done"
+    script = f'trap "" TERM; echo the-evidence >&2; echo set > "{mark}"; {loop}'
+    stubborn = Supervisor(tree.proc_logs)
+    stubborn.spawn("stubborn", [SH, "-c", script], BASE_ENV, tree.root)
+    _read_when_written(mark)
+
+    failure = end_processes(tree, stubborn, SHORT_GRACE_S)
+
+    assert failure is not None
+    assert f"stubborn ignored SIGTERM for {SHORT_GRACE_S} s and was killed" in failure
+    assert "--- stubborn stderr ---\nthe-evidence" in failure
+
+
+def test_a_clean_teardown_is_no_failure(tree: Tree) -> None:
+    calm = Supervisor(tree.proc_logs)
+    calm.spawn("idle", [SH, "-c", IDLE], BASE_ENV, tree.root)
+
+    assert end_processes(tree, calm) is None
 
 
 def test_a_member_that_outlives_sigterm_is_killed_and_reported(tree: Tree) -> None:
