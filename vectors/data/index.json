@@ -86,7 +86,7 @@
   {"accepted":46,"entry":"handover.executor.request.parse_request","path":"manifest/request_parse.json","raised":0,"refused":132,"surface":"manifest.request.parse","vectors":178},
   {"accepted":15,"entry":"handover.requester.file.plan_request","path":"manifest/request_plan.json","raised":0,"refused":20,"surface":"manifest.request.plan","vectors":35},
   {"accepted":12,"entry":"handover.requester.file.new_ulid","path":"manifest/request_ulid.json","raised":0,"refused":0,"surface":"manifest.request.ulid","vectors":12},
-  {"accepted":22,"entry":"handover.state.parse_state","path":"manifest/state.json","raised":0,"refused":75,"surface":"manifest.state","vectors":97},
+  {"accepted":22,"entry":"handover.state.parse_state","path":"manifest/state.json","raised":0,"refused":77,"surface":"manifest.state","vectors":99},
   {"accepted":37,"entry":"handover.resolve.build_document","path":"manifest/resolved.json","raised":0,"refused":9,"surface":"manifest.resolved","vectors":46},
   {"accepted":5,"entry":"handover.executor.approval.gate_id","path":"manifest/gate.json","raised":0,"refused":0,"surface":"manifest.gate","vectors":5},
   {"accepted":10,"entry":"handover.executor.approval.Summary.as_dict","path":"manifest/summary.json","raised":0,"refused":0,"surface":"manifest.summary","vectors":10}

@@ -995,6 +995,8 @@ STATE_FILES: Final[tuple[StateFile, ...]] = (
     _state("live-null-map", live=None),
     _state("live-text", live="chaperone"),
     StateFile("live-nan", '{"live": NaN}'),
+    StateFile("live-4300-digits", parts=(('{"live": ', 1), ("9", 4300), ("}", 1))),
+    StateFile("live-4301-digits", parts=(('{"live": ', 1), ("9", 4301), ("}", 1))),
     _state("live-unknown-name", live={"nobody": "1.0.0"}),
     _state("live-first-bad-in-file-order", live={"nobody": "1.0.0", "chaperone": 5}),
     _state("live-first-bad-in-file-order-reversed", live={"chaperone": 5, "nobody": "1.0.0"}),

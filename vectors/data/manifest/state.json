@@ -52,6 +52,8 @@
   {"id":"live-null-map","input":{"text":"{\"live\": null}"},"refusal":{"check":"state","detail":"'live' must be an object","subject":"live-state.json"},"result":"refused"},
   {"id":"live-text","input":{"text":"{\"live\": \"chaperone\"}"},"refusal":{"check":"state","detail":"'live' must be an object","subject":"live-state.json"},"result":"refused"},
   {"id":"live-nan","input":{"text":"{\"live\": NaN}"},"refusal":{"check":"state","detail":"'live' must be an object","subject":"live-state.json"},"result":"refused"},
+  {"id":"live-4300-digits","input":{"repeat":[["{\"live\": ",1],["9",4300],["}",1]]},"refusal":{"check":"state","detail":"'live' must be an object","subject":"live-state.json"},"result":"refused"},
+  {"id":"live-4301-digits","input":{"repeat":[["{\"live\": ",1],["9",4301],["}",1]]},"refusal":{"check":"state","detail":"does not parse as JSON","subject":"live-state.json"},"result":"refused"},
   {"id":"live-unknown-name","input":{"text":"{\"live\": {\"nobody\": \"1.0.0\"}}"},"refusal":{"check":"state","detail":"'live' names nobody, which contract 06 \u00a71 omits","subject":"live-state.json"},"result":"refused"},
   {"id":"live-first-bad-in-file-order","input":{"text":"{\"live\": {\"nobody\": \"1.0.0\", \"chaperone\": 5}}"},"refusal":{"check":"state","detail":"'live' names nobody, which contract 06 \u00a71 omits","subject":"live-state.json"},"result":"refused"},
   {"id":"live-first-bad-in-file-order-reversed","input":{"text":"{\"live\": {\"chaperone\": 5, \"nobody\": \"1.0.0\"}}"},"refusal":{"check":"state","detail":"'live.chaperone' must be MAJOR.MINOR.PATCH","subject":"live-state.json"},"result":"refused"},

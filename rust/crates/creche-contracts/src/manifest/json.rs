@@ -697,7 +697,7 @@ mod tests {
 
     #[test]
     fn an_integer_has_4300_digits_at_most() {
-        let at_limit = "1".repeat(INT_DIGITS_MAX);
+        let at_limit = "1".repeat(4300);
 
         assert!(parse(&at_limit).is_ok());
         assert!(parse(&format!("-{at_limit}")).is_ok());

@@ -3790,7 +3790,7 @@ mod tests {
             assert_eq!(int_value(text), value, "{text:?}");
         }
 
-        let long = "9".repeat(INT_DIGITS_MAX);
+        let long = "9".repeat(4300);
         assert_eq!(int_value(&long), Some(None));
         assert_eq!(int_value(&format!("{long}9")), None);
     }
