@@ -325,6 +325,19 @@ class CaregiverStack(Stack):
         ]
 
 
+def text_of(path: Path) -> str | None:
+    """The text of one file of a mount, or None while the file is not there.
+
+    `caregiver` puts a new config mount in place with two renames. Between
+    the two, the path of the mount does not exist. So a test that reads a
+    file of the mount in a wait must accept that no file is there.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+
+
 def wait_until(
     check: Callable[[], bool], what: str, deadline_s: float = CONVERGE_DEADLINE_S
 ) -> None:

@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import signal
 import stat
-from pathlib import Path
 
 import httpx
 import pytest
@@ -25,7 +24,7 @@ from proc_harness import LOOPBACK, TcpAddress, is_listening
 from proc_owui import OwuiStack, door_env
 from proc_services import Service
 from proc_stack import attendance_env
-from proc_tree import DOOR_KEY, FAMILY, PRINCIPALS, SECRET_MODE, token_of
+from proc_tree import DOOR_KEY, FAMILY, PRINCIPALS, replace_secret, token_of
 
 #: One byte under the floor of contract 02 §3 rule 7. Its text is one a test
 #: can find in an output, to prove that no output holds it.
@@ -46,7 +45,7 @@ EVERY_INTERFACE = "0.0.0.0"
 def test_attendance_refuses_a_bad_token_file(owui_prepared: OwuiStack, content: str | None) -> None:
     """Contract 02 §3 rule 7. Fail closed: no socket, and a failed start."""
     tree = owui_prepared.tree
-    _replace(tree.token_file("door-tui"), content)
+    replace_secret(tree.token_file("door-tui"), content)
 
     child = owui_prepared.spawn(Service.ATTENDANCE, attendance_env(tree))
 
@@ -92,7 +91,7 @@ def test_attendance_check_validates_and_binds_nothing(owui_prepared: OwuiStack) 
 def test_attendance_check_refuses_a_bad_token_file(owui_prepared: OwuiStack) -> None:
     """A unit whose `ExecStartPre` fails never reaches `ExecStart`."""
     tree = owui_prepared.tree
-    _replace(tree.token_file("view-ro"), None)
+    replace_secret(tree.token_file("view-ro"), None)
 
     child = owui_prepared.spawn(Service.ATTENDANCE, attendance_env(tree), CHECK_FLAG)
 
@@ -141,7 +140,7 @@ async def test_sighup_reloads_the_token_files(
     created = await attendance_api.post(SESSIONS_PATH, json={"family": FAMILY, "session": session})
     assert created.status_code == httpx.codes.CREATED
 
-    _replace(owui.tree.token_file("door-owui"), ROTATED_TOKEN)
+    replace_secret(owui.tree.token_file("door-owui"), ROTATED_TOKEN)
     owui.attendance.send(signal.SIGHUP)
     await _answers_ok(attendance_api, session_path, {"Authorization": f"Bearer {ROTATED_TOKEN}"})
 
@@ -155,7 +154,7 @@ def test_the_door_refuses_a_short_key(owui_prepared: OwuiStack) -> None:
     """Contract 02 §3 rule 7, as the door applies it to its own key."""
     tree = owui_prepared.tree
     port = owui_prepared.supervisor.free_port()
-    _replace(tree.door_key_file, SHORT_SECRET)
+    replace_secret(tree.door_key_file, SHORT_SECRET)
 
     child = owui_prepared.spawn(Service.DOOR_OWUI, door_env(tree, f"{LOOPBACK}:{port}"))
 
@@ -204,15 +203,3 @@ async def _answers_ok(client: httpx.AsyncClient, path: str, headers: dict[str, s
             raise AssertionError(f"{path} still answers {response.status_code}")
 
         await asyncio.sleep(RELOAD_POLL_S)
-
-
-def _replace(path: Path, content: str | None) -> None:
-    """Remove a secret file, or put another in its place by rename."""
-    if content is None:
-        path.unlink()
-        return
-
-    temp = path.with_name(f".{path.name}.tmp")
-    temp.write_text(content, encoding="utf-8")
-    temp.chmod(SECRET_MODE)
-    temp.replace(path)
