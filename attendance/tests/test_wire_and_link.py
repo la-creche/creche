@@ -926,6 +926,24 @@ async def test_close_ends_after_a_stderr_read_failed() -> None:
     assert process.returncode is not None
 
 
+@pytest.mark.slow
+async def test_a_stderr_reader_that_fails_says_so(caplog: pytest.LogCaptureFixture) -> None:
+    """The reader goes on after a long line and after nothing else. An error
+    of another type ends the task, and the log must name the task."""
+    channel = ExecChannel(dial=dial(), command="cat")
+    await channel.start()
+    process = channel._process
+    assert process is not None
+    assert process.stderr is not None
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        process.stderr.set_exception(OSError("the read failed"))
+        await asyncio.wait_for(_until(lambda: "the read failed" in caplog.text), 2.0)
+
+    assert f"task stderr {SANDBOX} ended with an error" in caplog.text
+    await channel.close()
+
+
 #: A child that says its pid and then waits on stdin, as the playpen does.
 PID_THEN_WAIT = "sh -c 'echo $$; exec cat'"
 

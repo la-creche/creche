@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -249,6 +250,24 @@ def test_a_failed_write_is_retried_next_turn() -> None:
     # Both turns arrive, oldest first, so the transcript keeps its order.
     contents = [one["content"] for one in chats.created[0]["history"]["messages"].values()]
     assert contents[0].endswith("(1)")
+
+
+async def test_a_writer_that_ends_with_an_error_says_so(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The writer loop guards each write. An error outside that guard ends
+    the task, and the log must name the task."""
+    copy = ChatCopy(FakeChats())
+    copy.start()
+    queue = copy._queue
+    assert queue is not None
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        # Not the pair that `submit` adds, so the read of the queue raises.
+        queue.put_nowait(None)  # pyright: ignore[reportArgumentType]
+        await wait_until(lambda: "ended with an error" in caplog.text)
+
+    assert "task owui writer ended with an error" in caplog.text
 
 
 def test_a_deleted_session_is_forgotten() -> None:

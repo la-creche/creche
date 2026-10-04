@@ -30,6 +30,7 @@ import shlex
 from pathlib import Path
 
 from .channel import ChannelClosed, SandboxDial
+from .tasks import report_failure
 from .wire import MAX_LINE_BYTES, LineSplitter, RawLine
 
 READ_CHUNK_BYTES = 65_536
@@ -114,7 +115,10 @@ class ExecChannel:
             raise ChannelClosed(f"cannot start channel: {error}") from error
 
         self._eof = False
-        self._stderr_task = asyncio.create_task(self._drain_stderr())
+        self._stderr_task = asyncio.create_task(
+            self._drain_stderr(), name=f"stderr {self._sandbox}"
+        )
+        self._stderr_task.add_done_callback(report_failure)
 
     async def send(self, line: str) -> None:
         process = self._process

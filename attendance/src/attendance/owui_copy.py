@@ -61,6 +61,7 @@ import httpx
 from .atomic import as_object
 from .clock import now
 from .models import Session
+from .tasks import report_failure
 
 _LOG = logging.getLogger("attendance.owui")
 
@@ -223,7 +224,8 @@ class ChatCopy:
             return
 
         self._queue = asyncio.Queue()
-        self._writer = asyncio.create_task(self._write_loop())
+        self._writer = asyncio.create_task(self._write_loop(), name="owui writer")
+        self._writer.add_done_callback(report_failure)
 
     async def close(self) -> None:
         """End the writer, dropping whatever it had not written.
