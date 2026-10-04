@@ -99,7 +99,11 @@ def family_of(model: str) -> str:
 
     family = model[len(MODEL_PREFIX) :]
     if _FAMILY_PATTERN.match(family) is None:
-        raise DoorError(HTTP_BAD_REQUEST, f"{model} is not a family.", code="bad_model")
+        # The refusal names the model, and its body is UTF-8. A model text
+        # with one half of a surrogate pair has no UTF-8 form, so the
+        # message holds that half as an escape.
+        shown = model.encode("utf-8", errors="backslashreplace").decode("utf-8")
+        raise DoorError(HTTP_BAD_REQUEST, f"{shown} is not a family.", code="bad_model")
 
     return family
 

@@ -446,6 +446,23 @@ def test_a_body_that_nests_too_deep_is_a_400_in_the_error_shape(tmp_path: Path) 
     assert response.json()["error"]["code"] == "bad_body"
 
 
+# --- a model with no UTF-8 form ---
+
+
+def test_a_model_with_no_utf8_form_is_a_400_in_the_error_shape(tmp_path: Path) -> None:
+    # A JSON escape names one half of a surrogate pair.
+    body = '{"model": "agent:\\ud800", "messages": [{"role": "user", "content": "go"}]}'
+    client = _client(tmp_path, FakeAttendance())
+    headers = {**_headers(), "content-type": "application/json"}
+
+    response = client.post("/v1/chat/completions", headers=headers, content=body)
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "bad_model"
+    assert error["type"] == "invalid_request_error"
+
+
 # --- a failure that no handler names ---
 
 

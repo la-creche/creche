@@ -272,6 +272,17 @@ def test_a_family_with_a_trailing_newline_is_refused() -> None:
     assert caught.value.code == "bad_model"
 
 
+def test_a_model_with_no_utf8_form_is_a_refusal_with_one() -> None:
+    # The refusal names the model. A body is UTF-8, so the message must have
+    # a UTF-8 form when the model has none.
+    with pytest.raises(DoorError) as caught:
+        family_of(f"agent:{_HALF_PAIR}")
+
+    assert caught.value.status == 400
+    assert caught.value.code == "bad_model"
+    assert caught.value.message.encode("utf-8")
+
+
 def test_the_models_body_is_openai_shaped() -> None:
     body = models_body(["chat", "code"])
 
