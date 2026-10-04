@@ -77,6 +77,18 @@ def dial(sandbox: str = SANDBOX) -> SandboxDial:
 # splits on them, which would tear one record into two (contract 03 §2 rule 4).
 UNICODE_SEPARATORS = f"line{chr(0x2028)}sep{chr(0x2029)}arator"
 
+# Three lines under the line cap that are not a `JSONDecodeError`. Each one
+# raised a different exception type at a different place in `parse`: the JSON
+# reader's recursion limit, the interpreter's integer digit limit, and the
+# UTF-8 encode of a lone surrogate in `cap_event`.
+RAISING_LINES = {
+    "deep_nesting": "[" * 200_000,
+    "long_integer": "1" * 5_000,
+    "lone_surrogate": (
+        '{"type":"event","session":"s","turn":"t","turn_seq":1,"event":{"text":"\\ud800"}}'
+    ),
+}
+
 
 def test_the_splitter_uses_lf_and_nothing_else() -> None:
     splitter = LineSplitter()
@@ -142,6 +154,13 @@ def test_parse_refuses_what_contract_13_rule_1_names() -> None:
     assert parse("{}") is Refusal.UNKNOWN_TYPE
     assert parse('{"type":"event","session":"s"}') is Refusal.MALFORMED
     assert parse('{"type":"event","session":"s","turn":"t","turn_seq":0}') is Refusal.MALFORMED
+
+
+@pytest.mark.parametrize("line", list(RAISING_LINES.values()), ids=list(RAISING_LINES))
+def test_parse_refuses_a_line_that_made_it_raise(line: str) -> None:
+    """Trust rule 1: `parse` returns a refusal, never raises."""
+    assert len(line) < MAX_LINE_BYTES
+    assert parse(line) is Refusal.MALFORMED
 
 
 def test_parse_reads_each_playpen_line() -> None:
@@ -550,6 +569,30 @@ async def test_session_opened_never_spends_the_refusal_budget(tmp_path: Path) ->
     assert link.is_open is True
     assert events.lost == []
     assert events.opened[0].resident is True
+    await link.close()
+
+
+@pytest.mark.parametrize("line", list(RAISING_LINES.values()), ids=list(RAISING_LINES))
+async def test_a_line_that_made_parse_raise_is_one_refusal(tmp_path: Path, line: str) -> None:
+    """Contract 03 §13 rule 2. The line spends one refusal and the reader reads on."""
+    events = Recorder()
+    link, playpens = make_link(tmp_path, events)
+    await link.ensure_open(dial(), 7)
+    await playpens[SANDBOX].send_raw(line)
+
+    for _ in range(REFUSAL_BUDGET - 2):
+        await playpens[SANDBOX].send_malformed()
+
+    await playpens[SANDBOX].open_session(SESSION)
+    await asyncio.wait_for(_until(lambda: bool(events.opened)), 2.0)
+
+    assert link.is_open is True
+    assert events.lost == []
+
+    await playpens[SANDBOX].send_malformed()
+    await asyncio.wait_for(_until(lambda: bool(events.lost)), 2.0)
+
+    assert link.is_open is False
     await link.close()
 
 
