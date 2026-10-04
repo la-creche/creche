@@ -368,6 +368,29 @@ def test_a_family_whose_file_went_away_keeps_its_state(
     assert _errors(caplog) == []
 
 
+def test_a_family_whose_file_went_away_is_named_one_time(
+    bench: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No pass keeps the status document of that family fresh, so the loop
+    says it. One warning names the family, and the next look adds none. A
+    directory that never had state gets no line."""
+    write_registry(bench.registry_root, name="ops")
+    bench.look()
+    (bench.registry_root / "families" / "ops" / "family.yaml").unlink()
+    write_no_file_dir(bench.registry_root)
+
+    with caplog.at_level(logging.WARNING, logger="caregiver.loop"):
+        bench.look()
+        bench.state.force_pass()
+        assert bench.look() == ("chat",)
+
+    warnings = [one.getMessage() for one in caplog.records if one.levelno == logging.WARNING]
+    named = [line for line in warnings if line.startswith("ops: ")]
+    assert len(named) == 1
+    assert "family.yaml" in named[0]
+    assert not [line for line in warnings if line.startswith("stray: ")]
+
+
 def test_an_ignored_directory_does_not_keep_the_loop_due(bench: Bench) -> None:
     """A family that the loop ignores is behind no revision. Without that,
     each poll reads the whole registry for as long as the directory stays."""

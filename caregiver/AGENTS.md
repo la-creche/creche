@@ -247,7 +247,10 @@ Nothing here touches a real sandbox or LiteLLM.
   rule 3 says that `caregiver` ignores a directory with no `family.yaml`.
   It has no rule for a family with state whose directory loses the file.
   The loop keeps the state of that family, and its status document goes
-  stale. The other reading deletes its key and its sandboxes.
+  stale. The loop writes one warning that names the family. A stale
+  document fails the `heartbeat` check of `caregiver-verify`, so a release
+  of `caregiver` fails while the directory stays as it is. The other
+  reading deletes its key and its sandboxes.
 - `CONTRACT-QUESTION` in `mcp_release.py`. `stage7-releases.md` §4.4 gives
   no limit for a merge key in the roster. The roster reader uses the two
   limits of the Rust reader of a component manifest.

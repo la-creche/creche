@@ -199,6 +199,19 @@ class Said:
 
         log.error("%s; %d times now, the loop goes on", key, count)
 
+    def warn(self, line: str) -> None:
+        """Write this warning out, or count it and stay quiet. For a state
+        of the host that lasts and that is no error of the loop."""
+        count = self._note(line)
+        if count == 0:
+            return
+
+        if count == 1:
+            log.warning("%s", line)
+            return
+
+        log.warning("%s; %d times now", line, count)
+
     def _note(self, key: str) -> int:
         """Count this sighting. Answers the count to write out, or 0 to
         stay quiet this time."""
@@ -1098,10 +1111,18 @@ def _forget_deleted(
         # ignores a family directory with no `family.yaml`. It does not say
         # what a family with state is when its directory loses the file.
         # Such a name has a report, so the reading here keeps the state: no
-        # pass and no delete, and the status document goes stale. To read
-        # the directory as absent, this line must ask for the file, and the
-        # loop then deletes the key and each sandbox of that family.
+        # pass and no delete, and the status document goes stale. A stale
+        # document fails the `heartbeat` check of `caregiver-verify`, so a
+        # release of `caregiver` fails while the directory stays as it is.
+        # To read the directory as absent, this line must ask for the file,
+        # and the loop then deletes the key and each sandbox of that family.
         if name in registry.reports:
+            if not has_family_file(registry, name):
+                state.said.warn(
+                    f"{name}: its registry directory holds no family.yaml, so no pass "
+                    "runs and its status document goes stale"
+                )
+
             continue
 
         if not _may_run(state.of(name)):
