@@ -13,7 +13,7 @@ from attendance.config import Config
 from attendance.errors import ApiError, ErrorCode, TurnReason
 from attendance.faults import FaultCode
 from attendance.models import Holder, JournalLine, LineKind, OwuiRefs
-from attendance.paths import fault_file
+from attendance.paths import fault_file, journal_file
 from attendance.persona import BODY_BUDGET_BYTES
 from attendance.requests import (
     CreateRequest,
@@ -25,16 +25,18 @@ from attendance.service import SessionService
 from attendance.states import SessionState, TurnState
 from attendance.streams import Follow, StreamEnd
 from attendance.turns import LiveTurn
-from attendance.wire import MAX_LINE_BYTES, MAX_PERSONA_BYTES
+from attendance.wire import MAX_EVENT_DEPTH, MAX_LINE_BYTES, MAX_PERSONA_BYTES
 from attendance_harness import (
     CHAT_SESSION,
     CONFIG_REV,
+    DEEP_BODY,
     EPOCH,
     FAMILY,
     PLAYPEN_ENV,
     SANDBOX,
     FakeFleet,
     PlaypenPlan,
+    journal_line,
     make_config,
     settle_now,
     wait_until,
@@ -674,6 +676,45 @@ async def test_a_restart_keeps_the_journal_gapless(tmp_path: Path) -> None:
 
     assert after[: len(before)] == before
     assert after == list(range(1, len(after) + 1))
+
+
+async def test_a_restart_reads_past_an_unreadable_journal_line(tmp_path: Path) -> None:
+    """The journal of one session never stops the service from starting."""
+    harness = await build(tmp_path)
+    harness.create()
+    await harness.full_turn()
+    await harness.stop()
+
+    with journal_file(harness.service.store.root, FAMILY, CHAT_SESSION).open("ab") as handle:
+        handle.write(journal_line(99, DEEP_BODY))
+
+    revived = await build(tmp_path)
+    live = await revived.full_turn()
+
+    assert live.record.state is TurnState.SETTLED
+    assert revived.kinds().count(LineKind.TURN_SETTLED) == 2
+    await revived.stop()
+
+
+async def test_an_event_nested_too_deep_reaches_the_journal_capped(tmp_path: Path) -> None:
+    """The journal never holds a line that its own reader cannot follow."""
+    harness = await build(tmp_path)
+    harness.create()
+    live = await harness.start_turn()
+    playpen = harness.fleet.playpen()
+    await playpen.emit_nested(CHAT_SESSION, live.record.turn, MAX_EVENT_DEPTH + 1)
+    await playpen.settle(CHAT_SESSION, live.record.turn)
+    await settle_now(live.done)
+
+    events = [
+        line.body
+        for line in harness.service.store.journal.replay(FAMILY, CHAT_SESSION)
+        if line.kind is LineKind.PI_EVENT
+    ]
+
+    assert live.record.state is TurnState.SETTLED
+    assert [sorted(event) for event in events] == [["original_bytes", "truncated", "type"]]
+    await harness.stop()
 
 
 async def test_steer_reaches_the_playpen(tmp_path: Path) -> None:

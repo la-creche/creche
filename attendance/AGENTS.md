@@ -173,3 +173,5 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - `X-Session-Id` is caller-set, so a model can aim a `code-sandbox` job at
   another chat's directory of the same family. The grammar stops any escape
   from the work root (`service.py`).
+- Contract 03 §13 rule 6 names no nesting limit for an event. `cap_event`
+  reads an event of more than 64 levels as oversized (`wire.py`).

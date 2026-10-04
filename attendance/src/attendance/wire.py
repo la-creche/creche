@@ -32,6 +32,12 @@ MAX_PROMPT_BYTES = 262_144
 MAX_PERSONA_BYTES = 16_384
 MAX_LOG_BYTES = 4_096
 
+# How many objects and arrays an event may nest, itself included. The host
+# puts an event inside a journal line and inside a stream line, and a JSON
+# reader stops at a nesting limit of its own. This cap is far under that
+# limit, so a line the host wrote is a line every reader can follow.
+MAX_EVENT_DEPTH = 64
+
 # Contract 03 §8. The playpen caps an entry's text at 64 KiB and an answer
 # at 64 entries. The host re-checks both, in characters for the text, because
 # a cap that only one side enforces is not a cap (invariant 12).
@@ -629,10 +635,17 @@ def _parse_turn_line(
 
 
 def cap_event(event: dict[str, Any]) -> dict[str, Any]:
-    """Contract 03 §13 rule 6: an oversized event keeps its type only."""
+    """Contract 03 §13 rule 6: an oversized event keeps its type only.
+
+    CONTRACT-QUESTION: §13 rule 6 caps the bytes of an event and names no
+    nesting limit. An event nested past `MAX_EVENT_DEPTH` is read as
+    oversized here and keeps its type only: the stricter reading. To refuse
+    the line would cost the turn, because a refused line leaves a gap in
+    `turn_seq` and rule 4 fails a turn on a gap.
+    """
     size = len(json.dumps(event, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
-    if size <= MAX_EVENT_BYTES:
+    if size <= MAX_EVENT_BYTES and not _nests_past(event, MAX_EVENT_DEPTH):
         return event
 
     return {
@@ -640,6 +653,31 @@ def cap_event(event: dict[str, Any]) -> dict[str, Any]:
         "truncated": True,
         "original_bytes": size,
     }
+
+
+def _nests_past(event: dict[str, Any], limit: int) -> bool:
+    """True when the event nests more than `limit` objects and arrays.
+
+    One level at a time and never by recursion, so the depth of the input
+    cannot exhaust the stack of this function either.
+    """
+    level: list[object] = [event]
+
+    for _ in range(limit):
+        level = [child for holder in level for child in _containers(holder)]
+
+        if not level:
+            return False
+
+    return True
+
+
+def _containers(holder: object) -> list[object]:
+    """The objects and arrays directly inside one object or array."""
+    record = as_object(holder)
+    values: list[Any] = list(record.values()) if record is not None else as_array(holder) or []
+
+    return [value for value in values if isinstance(value, (dict, list))]
 
 
 def read_usage(value: object) -> Usage:

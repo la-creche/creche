@@ -49,6 +49,29 @@ PI_TURN_EVENTS = (
     "agent_end",
 )
 
+# A journal body that is valid JSON and that the JSON reader cannot follow.
+# It nests far past the reader's limit, so the reader raises RecursionError,
+# which is not a JSONDecodeError.
+DEEP_BODY = '{"a":' + "[" * 200_000 + "]" * 200_000 + "}"
+
+
+def journal_line(seq: int, body: str) -> bytes:
+    """One whole journal line. `body` goes in as text and is not re-encoded."""
+    return (
+        f'{{"journal_seq":{seq},"ts":"2026-09-18T19:22:05.000Z",'
+        f'"kind":"pi_event","turn":null,"body":{body}}}\n'
+    ).encode()
+
+
+def nested_event(depth: int) -> dict[str, Any]:
+    """An event `depth` containers deep. The event itself is the first."""
+    inner: Any = 1
+
+    for level in range(depth - 1):
+        inner = {"a": inner} if level % 2 else [inner]
+
+    return {"type": "message_update", "a": inner}
+
 
 def write_tokens(state_root: Path, skip: Principal | None = None) -> dict[Principal, str]:
     """One distinct token per principal, at the mode contract 02 §3 names."""
@@ -202,6 +225,10 @@ class FakePlaypen:
                 },
             },
         )
+
+    async def emit_nested(self, session: str, turn: str, depth: int) -> None:
+        """One event that nests `depth` containers."""
+        await self._event(session, turn, nested_event(depth))
 
     async def play_turn(self, session: str, turn: str, text: str) -> None:
         """pi's observed event order, with one text delta in the middle."""

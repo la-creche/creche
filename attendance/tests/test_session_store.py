@@ -6,16 +6,26 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from attendance.journal import Journal
 from attendance.models import LineKind, OwuiRefs, Session, Turn, Usage
 from attendance.paths import journal_file, session_file
 from attendance.states import SessionKind, SessionState, TurnState
 from attendance.store import SessionStore
+from attendance_harness import DEEP_BODY, journal_line
 
 _FAMILY = "chat"
 _SESSION = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 _MOMENT = datetime(2026, 9, 18, 19, 22, 5, tzinfo=UTC)
 _LINE_COUNT = 40
+
+# Two bodies that are valid JSON and that are not a `JSONDecodeError` to the
+# reader. Deep nesting raises RecursionError. An integer past the digit limit
+# of the interpreter raises a plain ValueError.
+_UNREADABLE_BODIES = {
+    "deep_nesting": DEEP_BODY,
+    "long_integer": '{"a":' + "1" * 5_000 + "}",
+}
 
 
 def _store(tmp_path: Path) -> SessionStore:
@@ -162,6 +172,37 @@ def test_a_torn_tail_does_not_stop_a_replay(tmp_path: Path) -> None:
     replayed = list(store.journal.replay(_FAMILY, _SESSION, from_seq=0))
 
     assert [line.journal_seq for line in replayed] == [1]
+
+
+@pytest.mark.parametrize("body", list(_UNREADABLE_BODIES.values()), ids=list(_UNREADABLE_BODIES))
+def test_an_unreadable_line_does_not_stop_a_replay(tmp_path: Path, body: str) -> None:
+    store = _store(tmp_path)
+    store.create(_session())
+    store.journal.append(_FAMILY, _SESSION, LineKind.NOTE, None, {"n": 1})
+    store.journal.flush(_FAMILY, _SESSION)
+
+    with journal_file(store.root, _FAMILY, _SESSION).open("ab") as handle:
+        handle.write(journal_line(2, body))
+
+    store.journal.register(_FAMILY, _SESSION, 2)
+    store.journal.append(_FAMILY, _SESSION, LineKind.NOTE, None, {"n": 3})
+
+    replayed = list(store.journal.replay(_FAMILY, _SESSION, from_seq=0))
+
+    assert [line.journal_seq for line in replayed] == [1, 3]
+
+
+@pytest.mark.parametrize("body", list(_UNREADABLE_BODIES.values()), ids=list(_UNREADABLE_BODIES))
+def test_tail_seq_reads_past_an_unreadable_line(tmp_path: Path, body: str) -> None:
+    store = _store(tmp_path)
+    store.create(_session())
+    store.journal.append(_FAMILY, _SESSION, LineKind.NOTE, None, {"n": 1})
+    store.journal.flush(_FAMILY, _SESSION)
+
+    with journal_file(store.root, _FAMILY, _SESSION).open("ab") as handle:
+        handle.write(journal_line(2, body))
+
+    assert store.journal.tail_seq(_FAMILY, _SESSION) == 1
 
 
 def test_counter_resumes_after_a_restart(tmp_path: Path) -> None:

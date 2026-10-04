@@ -203,6 +203,21 @@ def test_a_create_still_reads_a_nested_id() -> None:
     assert api.create_chat({"title": "Kitchen debug"}) == nested
 
 
+def test_an_answer_nested_too_deep_reads_as_an_empty_answer() -> None:
+    """§10.4 rule 3. The JSON reader raises RecursionError on this body."""
+    api = HttpChatApi(
+        "http://192.0.2.10:8181",
+        "FIXTURE-OWUI-KEY",
+        httpx.Client(
+            base_url="http://192.0.2.10:8181",
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b"[" * 200_000)),
+        ),
+    )
+
+    assert api.create_chat({"title": "Kitchen debug"}) is None
+    assert api.append_chat(CHAT_ID, {"messages": {}}) is True
+
+
 def test_a_missing_key_file_leaves_it_off(tmp_path: Path) -> None:
     assert read_api("http://192.0.2.10:8080", tmp_path / "absent.key") is None
     assert read_api("", tmp_path / "absent.key") is None

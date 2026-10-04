@@ -31,6 +31,7 @@ from attendance.states import SessionKind
 from attendance.wire import (
     CHANNEL_IDLE_TTL_OTHER_S,
     MAX_EVENT_BYTES,
+    MAX_EVENT_DEPTH,
     MAX_LINE_BYTES,
     REFUSAL_BUDGET,
     EventLine,
@@ -55,6 +56,7 @@ from attendance_harness import (
     SANDBOX,
     FakePlaypen,
     PlaypenPlan,
+    nested_event,
 )
 
 SESSION = "owui-3f2a9c41"
@@ -239,6 +241,22 @@ def test_an_oversized_event_keeps_only_its_type() -> None:
     assert big["truncated"] is True
     assert big["original_bytes"] > MAX_EVENT_BYTES
     assert "blob" not in big
+
+
+def test_an_event_nested_past_the_cap_keeps_only_its_type() -> None:
+    """The host adds levels of its own, and a reader has a nesting limit."""
+    deep = cap_event(nested_event(MAX_EVENT_DEPTH + 1))
+
+    assert deep["type"] == "message_update"
+    assert deep["truncated"] is True
+    assert deep["original_bytes"] < MAX_EVENT_BYTES
+    assert "a" not in deep
+
+
+def test_an_event_nested_to_the_cap_is_kept_whole() -> None:
+    event = nested_event(MAX_EVENT_DEPTH)
+
+    assert cap_event(event) is event
 
 
 def test_usage_from_the_playpen_is_read_defensively() -> None:
