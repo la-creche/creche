@@ -29,6 +29,8 @@ use std::fmt;
 use std::str::FromStr;
 
 mod pytext;
+#[cfg(test)]
+mod python;
 mod shape;
 mod values;
 
