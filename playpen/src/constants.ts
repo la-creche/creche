@@ -184,6 +184,13 @@ export const PI_SESSION_DIR = "pi";
 export const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const TURN_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 export const FAMILY_RE = /^[a-z][a-z0-9-]{1,30}$/;
+
+/**
+ * CONTRACT-QUESTION: contract 03 §3 gives `<family>-s<N>` and no count of
+ * digits for the number. The playpen takes each count. The host takes 1 to
+ * 9 digits, so the host sends no id that this pattern refuses. A count
+ * changes this one pattern.
+ */
 export const SANDBOX_ID_RE = /^[a-z][a-z0-9-]{1,30}-s[0-9]+$/;
 
 /** Contract 02 §5.4.1. One inbox file name. */

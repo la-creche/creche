@@ -571,6 +571,13 @@ function readGetEntries(raw: Record<string, unknown>): GetEntriesMessage | Refus
   };
 }
 
+/**
+ * CONTRACT-QUESTION: contract 03 §4.6 shows a `ping` with a nonce and does
+ * not say that a `ping` needs one. The playpen takes a `ping` with no
+ * nonce, and answers it with a null nonce. The host refuses that `pong`,
+ * and the host always sends a nonce. A required nonce makes such a `ping`
+ * a refused line with no session and no turn.
+ */
 function readPing(raw: Record<string, unknown>): PingMessage | Refusal {
   const nonce = str(raw, "nonce");
   if (nonce !== null && nonce.length > MAX_OPAQUE_LENGTH) {
