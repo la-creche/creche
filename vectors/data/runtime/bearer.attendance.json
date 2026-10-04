@@ -29,7 +29,9 @@
   {"id":"wrong-token","input":{"args":{"authorization":"Bearer vectors-bearer-token-0123456789abcdefghiX"}},"result":"refused"},
   {"id":"one-more-character","input":{"args":{"authorization":"Bearer vectors-bearer-token-0123456789abcdefghijX"}},"result":"refused"},
   {"id":"one-character-short","input":{"args":{"authorization":"Bearer vectors-bearer-token-0123456789abcdefghi"}},"result":"refused"},
+  {"id":"token-and-a-second-word","input":{"args":{"authorization":"Bearer vectors-bearer-token-0123456789abcdefghij extra"}},"result":"refused"},
   {"id":"outside-ascii-as-utf8","input":{"args":{"authorization":"Bearer vectors-bearer-token-\u00e9-0123456789abcdefgh"}},"params":{"token":"vectors-bearer-token-\u00e9-0123456789abcdefgh"},"result":"refused"},
-  {"id":"outside-ascii-as-latin1","input":{"args":{"authorization":{"$base64":"QmVhcmVyIHZlY3RvcnMtYmVhcmVyLXRva2VuLektMDEyMzQ1Njc4OWFiY2RlZmdo"}}},"params":{"token":"vectors-bearer-token-\u00e9-0123456789abcdefgh"},"result":"accepted","value":{"principal":"door-owui"}}
+  {"id":"outside-ascii-as-latin1","input":{"args":{"authorization":{"$base64":"QmVhcmVyIHZlY3RvcnMtYmVhcmVyLXRva2VuLektMDEyMzQ1Njc4OWFiY2RlZmdo"}}},"params":{"token":"vectors-bearer-token-\u00e9-0123456789abcdefgh"},"result":"accepted","value":{"principal":"door-owui"}},
+  {"id":"space-inside-the-token","input":{"args":{"authorization":"Bearer vectors-bearer-token 0123456789abcdefghij"}},"params":{"token":"vectors-bearer-token 0123456789abcdefghij"},"result":"accepted","value":{"principal":"door-owui"}}
  ]
 }

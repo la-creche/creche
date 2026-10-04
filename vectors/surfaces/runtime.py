@@ -931,6 +931,9 @@ TOKEN: Final = "vectors-bearer-token-0123456789abcdefghij"
 #: A token with one character outside ASCII. Latin-1 has that character.
 OUTSIDE: Final = "vectors-bearer-token-\u00e9-0123456789abcdefgh"
 
+#: A token with one space inside. A reader of a token file keeps that space.
+INNER: Final = "vectors-bearer-token 0123456789abcdefghij"
+
 _SCHEME: Final = b"Bearer "
 _T: Final = TOKEN.encode("utf-8")
 _B: Final = _SCHEME + _T
@@ -1004,9 +1007,12 @@ HEADERS: Final[tuple[Header, ...]] = (
     Header("wrong-token", _SCHEME + _T[:-1] + b"X"),
     Header("one-more-character", _B + b"X"),
     Header("one-character-short", _B[:-1]),
+    Header("token-and-a-second-word", _B + b" extra"),
     # --- a token with a character outside ASCII ---
     Header("outside-ascii-as-utf8", _SCHEME + OUTSIDE.encode("utf-8"), OUTSIDE),
     Header("outside-ascii-as-latin1", _SCHEME + OUTSIDE.encode("latin-1"), OUTSIDE),
+    # --- a token with a space inside ---
+    Header("space-inside-the-token", _SCHEME + INNER.encode("utf-8"), INNER),
 )
 
 
@@ -1411,7 +1417,7 @@ _NOTE_NO_SERVER: Final = (
 def _bearer_surface(copy: Copy, scratch: Path) -> Surface:
     tail = f"bearer.{copy.name}"
     gates: dict[str, Gate] = {}
-    for number, token in enumerate((TOKEN, OUTSIDE)):
+    for number, token in enumerate((TOKEN, OUTSIDE, INNER)):
         home = scratch / copy.name / str(number)
         home.mkdir(parents=True)
         gates[token] = copy.build(home, token)
