@@ -477,7 +477,13 @@ impl FromStr for BindAddress {
 }
 
 impl fmt::Display for BindAddress {
+    /// Writes `host:port`. An IPv6 host gets brackets, so the last colon is
+    /// the one before the port.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.host.as_str().contains(PORT_SEPARATOR) {
+            return write!(f, "[{}]{PORT_SEPARATOR}{}", self.host, self.port);
+        }
+
         write!(f, "{}{PORT_SEPARATOR}{}", self.host, self.port)
     }
 }
@@ -1181,6 +1187,12 @@ mod tests {
         let bind = BindAddress::on("192.0.2.10".parse().unwrap(), Port::fixed(8300).unwrap());
 
         assert_eq!(bind.to_string(), "192.0.2.10:8300");
+        for text in ["[::1]:8340", "::1:8340"] {
+            let bind: BindAddress = text.parse().unwrap();
+
+            assert_eq!(bind.to_string(), "[::1]:8340");
+            assert_eq!(bind.to_string().parse(), Ok(bind));
+        }
     }
 
     #[test]
