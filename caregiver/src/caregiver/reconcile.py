@@ -1039,9 +1039,16 @@ def _family_text(registry: Registry, family_name: str) -> str:
 def _text(path: Path) -> str:
     """An unreadable registry file reads empty rather than raising. The
     validation report is where a missing file is reported (invariant 19)."""
+    # CONTRACT-QUESTION: contract 01 §6.1 has no rule for an instructions
+    # file or a skill file that is not UTF-8 text, and the validator does
+    # not refuse one. The reading here is that of a file that this pass
+    # cannot open, and of the registry revision: an empty file. The pass
+    # then writes an empty file into the config mount and reports nothing.
+    # To keep the last good text, the validator must refuse the file, so
+    # that the family reads `invalid`.
     try:
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 

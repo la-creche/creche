@@ -547,6 +547,31 @@ def test_an_instructions_edit_rewrites_the_config_mount(fleet: Fleet) -> None:
     assert result.status.state is FamilyState.IN_SYNC
 
 
+@pytest.mark.parametrize("name", ["instructions.md", "SKILL.md"])
+def test_a_registry_file_that_is_not_text_reads_as_an_empty_file(fleet: Fleet, name: str) -> None:
+    """A pass must not raise on the content of a file. Bytes that are not
+    UTF-8 read as a file that the pass cannot open: empty."""
+    skill = fleet.registry_root / "skills" / "notes"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("Take notes.\n", encoding="utf-8")
+    fleet.write(skills=["notes"])
+    fleet.run()
+    source = {
+        "instructions.md": fleet.registry_root / "families" / FAMILY / "instructions.md",
+        "SKILL.md": skill / "SKILL.md",
+    }
+    written = {
+        "instructions.md": paths.config_dir(fleet.state_root, FAMILY) / "instructions.md",
+        "SKILL.md": paths.config_dir(fleet.state_root, FAMILY) / "skills" / "notes" / "SKILL.md",
+    }
+    source[name].write_bytes(b"Be brief. \xff\n")
+
+    result = fleet.run()
+
+    assert written[name].read_bytes() == b""
+    assert result.status.state is FamilyState.IN_SYNC
+
+
 def test_a_directory_with_no_family_file_has_no_pass(fleet: Fleet) -> None:
     """Contract 01 §5.6 rule 3: `caregiver` ignores the directory. The
     caller gets the answer for a name that the registry does not hold, and

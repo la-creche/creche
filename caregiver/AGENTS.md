@@ -233,6 +233,11 @@ Nothing here touches a real sandbox or LiteLLM.
   leaves the virtual machine. The row reads `failed`, and the log holds one
   error line. No later pass destroys that virtual machine. Contract 05 §4.2
   rule 5 has no rule for a destroy that fails (`sandboxes.py`).
+- `CONTRACT-QUESTION` in `reconcile.py`, `_text`. Contract 01 §6.1 has no
+  rule for an instructions file or a skill file that is not UTF-8. A pass
+  reads it as an empty file and writes an empty file into the config
+  mount. The family validator does not refuse such a file, so no report
+  names it.
 - `CONTRACT-QUESTION` in `loop.py`, `_forget_deleted`. Contract 01 §5.6
   rule 3 says that `caregiver` ignores a directory with no `family.yaml`.
   It has no rule for a family with state whose directory loses the file.
