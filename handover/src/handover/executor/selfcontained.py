@@ -160,6 +160,11 @@ def _is_path_line(line: str) -> bool:
 def _inside(root: Path, site: Path, line: str) -> bool:
     """`site.addpackage` joins the line onto the site directory, so this
     does too, and then asks whether the result is still under the tree."""
+    # CONTRACT-QUESTION: contract 06 §8.2 names no rule for a `.pth` line
+    # that does not resolve. The reading taken fails closed: the line is a
+    # path outside the tree, under each Python version. Python 3.13 passed
+    # a line that names a link loop before. To pass it again costs a tree
+    # with a path entry that nobody can state.
     try:
         candidate = (site / line.rstrip()).resolve()
     except (OSError, ValueError, RuntimeError):

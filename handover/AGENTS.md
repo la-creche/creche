@@ -276,6 +276,10 @@ that wants a refusal changes one field.
   moves of the restore. In each case the run ends as a crash does: it
   writes no entry and it removes no staged tree. The next run repairs the
   component (`executor/steps.py`).
+- `stage7-releases.md` §2.6 says a `reason` is a fixed string of a closed
+  list. For an error that no step names, the reason also holds the type of
+  the error and the symbol of its number. Both come from code
+  (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`executor/roster.py`).
 - PyYAML reads a digit that is not ASCII in a number with the tag `!!int`.
   A whole number of a manifest can thus hold one. Contract 06 §8 names no
@@ -301,6 +305,9 @@ that wants a refusal changes one field.
 - Contract 06 §8.2 names the code `editable` for a venv tree. A binary tree
   that is not self-contained gets the same code
   (`executor/selfcontained.py`).
+- Contract 06 §8.2 names no rule for a `.pth` line that does not resolve.
+  The walk reports such a line as a path outside the tree, under each
+  Python version (`executor/selfcontained.py`).
 - The executor refuses a binary tree when a file holds the path of the
   fetched work tree. The walk cannot tell a path that a program opens from
   a path that it only prints. Code that a build script generates can carry

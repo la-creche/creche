@@ -158,6 +158,12 @@ NOTHING_SWAPPED: Final = "the switch failed before it swapped anything"
 #: every other error. §2.6: a `reason` is never built from input, and the
 #: text of an error can hold a path or the bytes of a file. So the ledger
 #: gets the type of the error, and never its text.
+#:
+#: CONTRACT-QUESTION: `stage7-releases.md` §2.6 says a `reason` is a fixed
+#: string of a closed list. The reading taken adds the type of the error
+#: and the symbol of its number to this string. Both come from code, never
+#: from input. One fixed string with no type costs the reader of the ledger
+#: the type, which is then in the log alone.
 UNNAMED_ERROR: Final = "an error this step does not name"
 
 #: The directory of this package. A frame under it is this tool's own code.
