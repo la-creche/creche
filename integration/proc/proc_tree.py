@@ -22,6 +22,9 @@ topology with one writes only the registry and the token files, and
       state/grants/<family>.json         contract 04 §1, the grant file
       state/faults/<writer>/<family>.json          contract 05 §3.3.1
       state/audit/<day>.jsonl            contract 04 §6, written by the chaperone
+      state/outcomes/<family>/<id>.json  contract 02 §13.1, written by `attendance`
+      state/triggers/webhooks/<family>/<name>.token   contract 05 §6.4
+      state/view.key                     the key of the noticeboard
       sock/                              contract 02 §3 rule 1
       release/                           the root of the release executor, empty
       home/.config/systemd/user/         the unit directory of a user manager
@@ -48,9 +51,10 @@ FAMILY: Final = "chat"
 SANDBOX: Final = "chat-s1"
 MODEL: Final = f"agent:{FAMILY}"
 
-#: The two family kinds of contract 02 §2 that a fixture publishes.
+#: The three family kinds of contract 02 §2 that a fixture publishes.
 ATTENDED: Final = "attended"
 THIN: Final = "thin"
+AUTONOMOUS: Final = "autonomous"
 
 #: What `caregiver` puts in `instructions.md` of a fixture family.
 INSTRUCTIONS: Final = "Be helpful.\n"
@@ -88,8 +92,23 @@ DOOR_KEY: Final = "fixture-door-key-" + "d" * 32
 FIXTURE_LITELLM_KEY: Final = "FIXTURE-LITELLM-KEY"
 _TOKEN_FILL: Final = "x" * 32
 
+#: The key that the reverse proxy puts in `X-View-Key`. An obvious fixture,
+#: long enough to pass the 32-byte floor of the noticeboard.
+VIEW_KEY: Final = "fixture-view-key-" + "v" * 32
+
 #: Contract 01 §3.12: the default limit of one thin job, in seconds.
 JOB_TIMEOUT_S: Final = 120
+
+#: Contract 01 §3.14: the default turn limit of an autonomous family.
+MAX_RUNNING_TURNS: Final = 1
+
+#: Contract 02 §13 rule 4: the queue limit of `attendance`. `caregiver`
+#: copies it into the status document of an autonomous family
+#: (contract 05 §2.1).
+MAX_QUEUED_TURNS: Final = 100
+
+#: Contract 04 §6: the mode of one audit file.
+AUDIT_MODE: Final = 0o640
 
 #: Contract 04 §1.2: the two defaults `caregiver` writes, and the default of
 #: the family file for `max_inflight_delegations`.
@@ -226,6 +245,41 @@ class Tree:
     def attendance_socket(self) -> Path:
         return self.root / "sock" / _SOCKET_NAME
 
+    @property
+    def audit_dir(self) -> Path:
+        return self.state_root / "audit"
+
+    @property
+    def webhooks_dir(self) -> Path:
+        return self.state_root / "triggers" / "webhooks"
+
+    @property
+    def view_key_file(self) -> Path:
+        return self.state_root / "view.key"
+
+    def webhook_token_file(self, family: str, name: str) -> Path:
+        return self.webhooks_dir / family / f"{name}.token"
+
+    def outcomes(self, family: str) -> list[dict[str, Any]]:
+        """Every outcome record one family has on disk now (contract 02 §13.1)."""
+        directory = self.state_root / "outcomes" / family
+
+        if not directory.is_dir():
+            return []
+
+        return [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(directory.glob("*.json"))
+        ]
+
+    def outcome_of(self, family: str, session: str) -> dict[str, Any] | None:
+        """The record that one job left, found by the session it names."""
+        for record in self.outcomes(family):
+            if record.get("session") == session:
+                return record
+
+        return None
+
     def token_file(self, principal: str) -> Path:
         return self.tokens_dir / f"{principal}.token"
 
@@ -296,7 +350,7 @@ class Tree:
         """Every audit record the chaperone wrote, in file order (contract 04 §6)."""
         lines: list[dict[str, Any]] = []
 
-        for path in sorted((self.state_root / "audit").glob("*.jsonl")):
+        for path in sorted(self.audit_dir.glob("*.jsonl")):
             complete = path.read_bytes().split(b"\n")[:-1]
             lines.extend(json.loads(line) for line in complete if line.strip())
 
@@ -433,10 +487,12 @@ def write_registry_file(tree: Tree, path: Path, text: str) -> None:
     temp.replace(path)
 
 
-def add_family(tree: Tree, family: str, kind: str) -> None:
+def add_family(tree: Tree, family: str, kind: str, *, webhooks: tuple[str, ...] = ()) -> None:
     """Publish one family with one ready sandbox, as `caregiver` does.
 
-    A thin family gets the default job limit of contract 01 §3.12.
+    A thin family gets the default job limit of contract 01 §3.12. An
+    autonomous family gets the default turn limit of §3.14, and one bearer
+    for each name in `webhooks` (contract 05 §6.4).
     """
     mounts = tree.mounts(family)
 
@@ -447,7 +503,18 @@ def add_family(tree: Tree, family: str, kind: str) -> None:
     write_creds(tree, family)
     write_runtime(tree, family)
     write_instructions(tree, family)
-    write_status(tree, family, kind, job_timeout_s=JOB_TIMEOUT_S if kind == THIN else None)
+
+    for name in webhooks:
+        write_webhook_token(tree, family, name)
+
+    write_status(
+        tree,
+        family,
+        kind,
+        job_timeout_s=JOB_TIMEOUT_S if kind == THIN else None,
+        max_running_turns=MAX_RUNNING_TURNS if kind == AUTONOMOUS else None,
+        webhooks=webhooks,
+    )
 
 
 def write_status(
@@ -459,6 +526,9 @@ def write_status(
     sandboxes: tuple[tuple[str, str], ...] | None = None,
     config_rev: str = CONFIG_REV,
     validity: Validity = Validity.VALID,
+    max_running_turns: int | None = None,
+    webhooks: tuple[str, ...] = (),
+    written_at: str | None = None,
 ) -> None:
     """One whole status document (contract 05 §2.1, §4.1, §9).
 
@@ -473,6 +543,12 @@ def write_status(
     the one ready sandbox of the family. `config_rev` moves when the config
     mount changes (contract 01 §6.1). `validity` sets `state` and the
     validation block together (§3.1, §3.2).
+
+    `max_running_turns` is the turn limit of an autonomous family. The
+    queue limit goes with it, because only that kind has a queue (§2.1).
+    `webhooks` is each declared webhook: the document holds the path of the
+    bearer file and no bearer (§6.4 rule 5). `written_at` is for a scenario
+    that plays a `caregiver` that stopped (§2 rule 5).
     """
     now = _rfc3339()
     rows = sandboxes if sandboxes is not None else ((first_sandbox(family), "ready"),)
@@ -481,7 +557,7 @@ def write_status(
         "family": family,
         "kind": kind,
         "state": "in_sync" if valid else "invalid",
-        "written_at": now,
+        "written_at": written_at if written_at is not None else now,
         "registry_rev": CONFIG_REV,
         "applied_rev": CONFIG_REV,
         "config_rev": config_rev,
@@ -514,11 +590,17 @@ def write_status(
             "source": "litellm",
         },
         "limits": {
-            "max_running_turns": None,
-            "max_queued_turns": None,
+            "max_running_turns": max_running_turns,
+            "max_queued_turns": MAX_QUEUED_TURNS if max_running_turns is not None else None,
             "job_timeout_s": job_timeout_s,
         },
-        "triggers": {"webhooks": [], "enqueue": False},
+        "triggers": {
+            "webhooks": [
+                {"name": name, "token_path": str(tree.webhook_token_file(family, name))}
+                for name in webhooks
+            ],
+            "enqueue": False,
+        },
         "pep": {"watch": "off", "url": "", "checked_at": None, "unreachable_since": None},
     }
 
@@ -600,6 +682,90 @@ def write_grants(tree: Tree, family: str, *, rev: str, delegates: tuple[str, ...
     _atomic_write(tree.grant_file(family), json.dumps(document) + "\n", GRANT_MODE)
 
 
+def webhook_token_of(family: str, name: str) -> str:
+    """The fixture bearer of one declared webhook. Never a credential."""
+    return f"FIXTURE-WEBHOOK-{family}-{name}-{_TOKEN_FILL}"
+
+
+def write_webhook_token(tree: Tree, family: str, name: str, token: str | None = None) -> None:
+    """The bearer of one declared webhook (contract 05 §6.4): one file, mode 0600."""
+    value = token if token is not None else webhook_token_of(family, name)
+
+    _atomic_write(tree.webhook_token_file(family, name), value + "\n", SECRET_MODE)
+
+
+def write_view_key(tree: Tree) -> None:
+    """The key file that the unit of the noticeboard names. Mode 0600."""
+    _atomic_write(tree.view_key_file, VIEW_KEY + "\n", SECRET_MODE)
+
+
+def write_validation_report(tree: Tree, family: str, issues: list[dict[str, Any]]) -> None:
+    """The report of one family that did not validate (contract 01 §7).
+
+    `issues` holds each issue with its `severity`, `loc` and `msg`. The
+    status document names this file in `validation.report_path`
+    (contract 05 §3.2).
+    """
+    errors = sum(1 for issue in issues if issue.get("severity") == "error")
+    document: dict[str, Any] = {
+        "family": family,
+        "file": f"families/{family}/family.yaml",
+        "status": "invalid",
+        "applied": False,
+        "issues": [{"downgraded": False} | issue for issue in issues],
+        "errors": errors,
+        "warnings": len(issues) - errors,
+    }
+
+    _atomic_write(tree.validation_file(family), json.dumps(document) + "\n", STATUS_MODE)
+
+
+def audit_record(
+    family: str,
+    tool: str,
+    *,
+    args: dict[str, Any] | None = None,
+    decision: str = "allow",
+    reason: str = "granted",
+) -> dict[str, Any]:
+    """One audit record as the chaperone writes it now (contract 04 §6.1 to §6.3).
+
+    Every trusted field is present. The three claimed keys are present and
+    null, as for a call with no header (§6.2). The chain holds one entry:
+    no delegation reached this call (§6.3).
+    """
+    return {
+        "ts": _rfc3339_ms(),
+        "family": family,
+        "sandbox_id": first_sandbox(family),
+        "sandbox_id_trusted": True,
+        "grants_rev": CONFIG_REV,
+        "tool": tool,
+        "args": args if args is not None else {},
+        "decision": decision,
+        "reason": reason,
+        "latency_ms": 3,
+        "waited_ms": 0,
+        "gate": None,
+        "claimed": {"session_id": None, "turn_id": None, "delegation_id": None},
+        "chain": [family],
+    }
+
+
+def append_audit(tree: Tree, records: list[dict[str, Any]]) -> None:
+    """Append records to the audit file of this UTC day (contract 04 §6).
+
+    One record per line, LF as the delimiter, mode 0640.
+    """
+    path = tree.audit_dir / f"{datetime.now(UTC).strftime('%Y-%m-%d')}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.writelines(json.dumps(record) + "\n" for record in records)
+
+    path.chmod(AUDIT_MODE)
+
+
 def write_tokens(tree: Tree) -> None:
     """One token file per principal, at the mode contract 02 §3 rule 5 names."""
     tree.tokens_dir.mkdir(parents=True, exist_ok=True)
@@ -616,6 +782,15 @@ def token_of(principal: str) -> str:
 
 def write_door_key(tree: Tree) -> None:
     _atomic_write(tree.door_key_file, DOOR_KEY + "\n", SECRET_MODE)
+
+
+def replace_secret(path: Path, content: str | None) -> None:
+    """Remove a secret file, or put another in its place by rename."""
+    if content is None:
+        path.unlink()
+        return
+
+    _atomic_write(path, content, SECRET_MODE)
 
 
 def _sandbox_row(tree: Tree, family: str, sandbox: str, state: str, now: str) -> dict[str, Any]:
@@ -645,3 +820,10 @@ def _atomic_write(path: Path, text: str, mode: int) -> None:
 
 def _rfc3339() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rfc3339_ms() -> str:
+    """RFC 3339 in UTC with milliseconds, as contract 04 §6.1 gives `ts`."""
+    now = datetime.now(UTC)
+
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
