@@ -36,6 +36,21 @@ defect that a test finds late.
 | `config` | The config of each process. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
+`src/manifest.rs` holds the closed sets, the catalog and the differential
+test of `manifest`. Its other files are in `src/manifest/`. Three of them are
+private readers and writers. Each one gives what a Python library of the
+release tool gives:
+
+| File of `manifest` | What it holds |
+|---|---|
+| `component.rs` | `component.yaml`: `ComponentManifest` and the operator account. |
+| `request.rs` | The release request: one writer, one parser and the mint of an id. |
+| `state.rs` | The live-state document. |
+| `resolved.rs` | The resolved manifest, its hash, the gate id and the approval summary. |
+| `yaml.rs` | Private. A port of `yaml.safe_load` of PyYAML: YAML 1.1, with each tag and each anchor. |
+| `json.rs` | Private. A reader that takes what Python `json.loads` takes, and writers for the text of `json.dumps`. |
+| `sha256.rs` | Private. SHA-256, because the crate has no dependency that gives a hash. |
+
 ## Where a new type goes
 
 1. Put the types of one contract in the module of that contract. The table
@@ -306,9 +321,8 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- Eight modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session`, `channel`, `grants`, `status`, `manifest`
-  and `config`.
+- Seven modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session`, `channel`, `grants`, `status` and `config`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
@@ -330,6 +344,43 @@ Rules for the test:
   7. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. The
      contract gives no cap on the digits of a number. Python reads a text of
      4300 digits at most as an integer. The types have that cap.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/manifest.rs` and in the files of
+  `crates/creche-contracts/src/manifest/`:
+  1. `Kind`, contract 06 §8. The contract lists four kinds. The Python code
+     has `binary` as the fifth, and the type has the five kinds.
+  2. The YAML reader, contract 06 §8 and §10. The contract gives no limit
+     for the nesting. The reader refuses a text past 128 levels. The limit
+     of PyYAML is the stack of its interpreter.
+  3. The YAML reader, `!!binary`. Two supported Python versions differ on
+     base64 data after a pad. The reader takes the rule of Python 3.13. No
+     field of a manifest takes bytes, so only the detail of a refusal
+     changes.
+  4. `Argv` and `Install`, contract 06 §4 and §8. The Python reader accepts
+     a word and an install path with a lone surrogate. The Rust reader
+     refuses them.
+  5. `Request`, `stage7-releases.md` §2.3 and contract 06 §9. The first
+     calls the id a lower-case ULID and the second calls it upper case. The
+     Python code takes upper case, and the type is `ids::Ulid`.
+  6. `Requester`, `stage7-releases.md` §2.3 and contract 06 §9. The two
+     texts list different words. The Python code checks only the grammar of
+     a name, and the type does the same.
+  7. `ResolvedAt`, contract 06 §9. The Python builder takes each float. The
+     type refuses NaN and an infinity, which JSON cannot hold.
+  8. The JSON reader, `stage7-releases.md` §3.2 and contract 06 §11. Python
+     keeps a lone surrogate escape as one code point. The reader writes
+     U+FFFD. The detail of a refusal can then differ from the Python
+     detail. The result is a refusal in both.
+- The types of `manifest` accept what the Python code accepts, also where
+  a stricter reading of a contract is possible. The owner decides each
+  case. The pull request of the module lists them.
+- `manifest::Operator` holds two values of the site file. It moves to
+  `config` when that module holds the site file.
+- The private `yaml` and `json` readers of `manifest` are not shared. The
+  `family` module needs the same YAML reader. The owner of the crate moves
+  the reader when a second module uses it.
+- `manifest` has its own SHA-256. A crate for the hash replaces it when
+  the workspace takes one.
 - `Secret` does not erase its bytes when the value drops. A sure erase needs
   `unsafe` code, and the lint gate forbids `unsafe` code.
 - `Secret::matches` has no branch on a byte of the secret. The compiler gives
