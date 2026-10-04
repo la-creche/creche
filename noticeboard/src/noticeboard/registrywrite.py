@@ -171,7 +171,9 @@ def _lock(registry_dir: Path) -> tuple[int | None, str]:
     releases it when the process ends, so a killed save leaves no lock.
     """
     try:
-        handle = os.open(registry_dir, os.O_RDONLY)
+        # `O_DIRECTORY`: a path that is no directory fails here. Without it,
+        # the open of a named pipe waits with no limit.
+        handle = os.open(registry_dir, os.O_RDONLY | os.O_DIRECTORY)
     except OSError as error:
         return None, f"cannot lock the registry: {error.strerror or error}"
 

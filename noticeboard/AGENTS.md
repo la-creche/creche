@@ -175,6 +175,8 @@ prefixed `test_noticeboard_`.
 - The lock of a save holds only the saves of this service. Another program
   that writes the checkout does not take it (`registrywrite.py`). When the
   commit of a save then fails, the save restores the bytes that it found.
+- The lock needs a file system on which `flock` locks a directory. On
+  another file system, the service refuses each save (`registrywrite.py`).
 - The form holds no revision of the file that it shows. A save from a form
   that is older than the newest commit puts each field back to the value
   that the form holds (`app.py`). The preview shows each such field.

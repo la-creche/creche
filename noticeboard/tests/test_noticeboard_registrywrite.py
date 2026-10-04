@@ -418,6 +418,17 @@ def test_a_registry_that_is_not_there_refuses_the_save(tmp_path: Path) -> None:
     assert not root.exists()
 
 
+def test_a_registry_that_is_no_directory_refuses_the_save(tmp_path: Path) -> None:
+    root = tmp_path / "registry"
+    root.write_text("not a checkout\n", encoding="utf-8")
+
+    result = save_family(root, "chat", GOOD, "widen the description")
+
+    assert not result.ok
+    assert "cannot lock the registry" in result.problem
+    assert root.read_text(encoding="utf-8") == "not a checkout\n"
+
+
 def test_a_concurrent_git_lock_rolls_the_save_back(tmp_path: Path) -> None:
     """The turn of a save does not hold another program that writes the
     checkout. Git's index.lock does: the commit fails, and the save restores."""
