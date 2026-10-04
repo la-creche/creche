@@ -245,14 +245,14 @@ pub fn ha_url(env: &Env) -> Result<Option<HttpUrl>, ConfigErrors> {
 /// The two roster files. `None` when `PEP_UPSTREAMS` is not set: the
 /// chaperone then reads no roster, and the generated file is not read.
 fn roster(env: &Env) -> Parsed<Option<RosterFiles>> {
-    let Some(base) = env.parse(UPSTREAMS)? else {
+    let base = env.parse::<FilePath>(UPSTREAMS);
+    if matches!(base, Ok(None)) {
         return Ok(None);
-    };
+    }
 
-    Ok(Some(RosterFiles {
-        base,
-        generated: env.parse(UPSTREAMS_GENERATED)?,
-    }))
+    let (base, generated) = all2(base, env.parse(UPSTREAMS_GENERATED))?;
+
+    Ok(base.map(|base| RosterFiles { base, generated }))
 }
 
 fn doors(env: &Env) -> Parsed<Doors> {
@@ -289,7 +289,8 @@ fn sweep(env: &Env) -> Parsed<(Seconds, Option<ConfigError>)> {
 }
 
 impl ChaperoneConfig {
-    /// Parses the variables of the unit. The function collects each error.
+    /// Parses the variables of the unit. The function collects each error,
+    /// and an error that two parts report is in the list one time.
     ///
     /// # Errors
     ///
@@ -309,7 +310,9 @@ impl ChaperoneConfig {
             env.parse(APPROVAL_URL),
             sweep(env),
         );
-        let (listen, stores, verbs) = all3(listen, stores, verbs)?;
+        // The bind and the URL of TEI read the same LAN address.
+        let parsed = all3(listen, stores, verbs);
+        let (listen, stores, verbs) = parsed.map_err(ConfigErrors::each_once)?;
         let (rework_dir, audit_dir, bind, (tei_url, ha_url)) = listen;
         let (roster, secrets_file, secrets_dir) = stores;
         let (doors, release_requests_dir, approval_url, (sweep_interval, sweep_fault)) = verbs;
@@ -709,6 +712,43 @@ mod tests {
             .collect();
 
         assert_eq!(variables, [REWORK_DIR, BIND, SECRETS, APPROVAL_URL]);
+    }
+
+    #[test]
+    fn a_lan_address_that_is_not_valid_is_one_error() {
+        // The bind and the URL of TEI read the same variable.
+        let errors = with(&[(LAN_ADDRESS, "0.0.0.0")]).unwrap_err();
+
+        assert_eq!(errors.as_slice().len(), 1, "{errors}");
+        assert_eq!(errors.as_slice()[0].variable(), LAN_ADDRESS);
+    }
+
+    #[test]
+    fn the_parse_collects_the_error_of_each_roster_file() {
+        let errors = with(&[
+            (UPSTREAMS, "upstreams.yaml"),
+            (UPSTREAMS_GENERATED, "generated.yaml"),
+        ])
+        .unwrap_err();
+        let variables: Vec<&str> = errors
+            .as_slice()
+            .iter()
+            .map(ConfigError::variable)
+            .collect();
+
+        assert_eq!(variables, [UPSTREAMS, UPSTREAMS_GENERATED]);
+    }
+
+    #[test]
+    fn a_generated_roster_with_no_base_roster_is_not_parsed() {
+        // The Python service does not read the variable then.
+        let env = unit_env()
+            .into_iter()
+            .filter(|(name, _)| *name != UPSTREAMS);
+        let env = env.chain([(UPSTREAMS_GENERATED, "generated.yaml")]);
+        let config = ChaperoneConfig::from_env(&Env::from_pairs(env)).unwrap();
+
+        assert_eq!(config.roster(), None);
     }
 
     #[test]

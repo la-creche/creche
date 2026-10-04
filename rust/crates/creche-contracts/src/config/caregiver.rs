@@ -331,21 +331,33 @@ fn seconds(flag_name: &'static str, text: Option<&String>, default: f64) -> Pars
     }
 }
 
+/// The LAN address of the site file as the parse gives it: the address,
+/// `None` for a site that gives none, or the error of a value that is not
+/// valid.
+type Lan = Parsed<Option<LanAddress>>;
+
 /// The URL of one plane on the LAN address. The address has no default.
-fn on_lan(lan: Option<&LanAddress>, port: u16) -> Parsed<HttpUrl> {
+///
+/// Each plane that needs the address reports the same error. The caller
+/// keeps that error one time.
+fn on_lan(lan: &Lan, port: u16) -> Parsed<HttpUrl> {
     let unset = ConfigError::Unset {
         variable: LAN_ADDRESS,
     };
     let port = Port::fixed(port).ok_or(unset)?;
 
-    Ok(HttpUrl::on_lan(lan.ok_or(unset)?, port))
+    match lan {
+        Ok(Some(address)) => Ok(HttpUrl::on_lan(address, port)),
+        Ok(None) => Err(unset.into()),
+        Err(errors) => Err(errors.clone()),
+    }
 }
 
 /// The URL of a flag, or the URL of the plane on the LAN address.
 fn url_or_lan(
     flag_name: &'static str,
     text: Option<&String>,
-    lan: Option<&LanAddress>,
+    lan: &Lan,
     port: u16,
 ) -> Parsed<HttpUrl> {
     match flag(text) {
@@ -389,7 +401,7 @@ fn images(raw: &RawServe, state_root: &Parsed<DirPath>) -> Parsed<Images> {
     })
 }
 
-fn attendance(raw: &RawServe, lan: Option<&LanAddress>) -> Parsed<AttendanceTarget> {
+fn attendance(raw: &RawServe, lan: &Lan) -> Parsed<AttendanceTarget> {
     if let Some(socket) = flag(raw.sessiond_socket.as_ref()) {
         return parse("--sessiond-socket", socket).map(AttendanceTarget::Socket);
     }
@@ -403,7 +415,7 @@ fn attendance(raw: &RawServe, lan: Option<&LanAddress>) -> Parsed<AttendanceTarg
     .map(AttendanceTarget::Url)
 }
 
-fn pep_watch(raw: &RawServe, lan: Option<&LanAddress>) -> Parsed<PepWatch> {
+fn pep_watch(raw: &RawServe, lan: &Lan) -> Parsed<PepWatch> {
     let off = raw
         .pep_url
         .as_ref()
@@ -477,8 +489,8 @@ fn release_root(raw: &RawServe, state_root: &Parsed<DirPath>) -> Parsed<DirPath>
 
 impl CaregiverConfig {
     /// Parses the flags and the two variables. The function collects each
-    /// error. An error names the flag, for example `--image`, or the
-    /// variable.
+    /// error, and an error that two parts report is in the list one time.
+    /// An error names the flag, for example `--image`, or the variable.
     ///
     /// # Errors
     ///
@@ -500,18 +512,20 @@ impl CaregiverConfig {
             release_root(raw, &state_root),
             images(raw, &state_root),
         );
-        let lan = lan?;
         let planes = all4(
             url_or_lan(
                 "--litellm-base-url",
                 raw.litellm_base_url.as_ref(),
-                lan.as_ref(),
+                &lan,
                 LITELLM_PORT,
             ),
             master_key,
-            attendance(raw, lan.as_ref()),
-            pep_watch(raw, lan.as_ref()),
+            attendance(raw, &lan),
+            pep_watch(raw, &lan),
         );
+        // An address that is set and not valid is an error, also when each
+        // plane has a flag.
+        let site = lan.map(|_| ());
         let pace = all3(
             seconds(
                 "--poll-interval-s",
@@ -525,7 +539,8 @@ impl CaregiverConfig {
                 DEFAULT_STOP_GRACE_S,
             ),
         );
-        let ((state_root, roots), planes, pace) = all3(all2(state_root, roots), planes, pace)?;
+        let parsed = all4(all2(state_root, roots), site, planes, pace);
+        let ((state_root, roots), (), planes, pace) = parsed.map_err(ConfigErrors::each_once)?;
         let (registry, release_root, images) = roots;
         let (litellm_url, master_key, attendance, pep_watch) = planes;
         let (poll_interval, max_passes, stop_grace) = pace;
@@ -943,6 +958,74 @@ mod tests {
                 "--poll-interval-s"
             ]
         );
+    }
+
+    fn names(errors: &ConfigErrors) -> Vec<&'static str> {
+        errors
+            .as_slice()
+            .iter()
+            .map(ConfigError::variable)
+            .collect()
+    }
+
+    #[test]
+    fn a_lan_address_that_is_not_valid_does_not_hide_the_other_errors() {
+        let raw = RawServe {
+            registry: String::from("registry"),
+            image: String::from("playpen"),
+            poll_interval_s: Some(String::from("0")),
+            pep_url: None,
+            sessiond_socket: None,
+            ..unit_args()
+        };
+        let env = Env::from_pairs([(LAN_ADDRESS, "0.0.0.0")]);
+        let errors = CaregiverConfig::from_parts(&raw, &env).unwrap_err();
+
+        assert_eq!(
+            names(&errors),
+            [
+                "--registry",
+                "--image",
+                LAN_ADDRESS,
+                MASTER_KEY,
+                "--poll-interval-s"
+            ]
+        );
+        assert!(matches!(errors.as_slice()[2], ConfigError::Address { .. }));
+    }
+
+    #[test]
+    fn a_lan_address_that_three_planes_need_is_one_error() {
+        let raw = RawServe {
+            pep_url: None,
+            sessiond_socket: None,
+            ..unit_args()
+        };
+        let env = Env::from_pairs([(MASTER_KEY, "sk-master-test")]);
+
+        assert_eq!(
+            one_error(&raw, &env),
+            ConfigError::Unset {
+                variable: LAN_ADDRESS
+            }
+        );
+    }
+
+    #[test]
+    fn a_lan_address_that_is_not_valid_is_an_error_with_a_flag_for_each_plane() {
+        let raw = RawServe {
+            litellm_base_url: Some(String::from("http://127.0.0.1:14000")),
+            ..unit_args()
+        };
+        let env = Env::from_pairs([(LAN_ADDRESS, "0.0.0.0"), (MASTER_KEY, "sk-master-test")]);
+
+        assert!(matches!(
+            one_error(&raw, &env),
+            ConfigError::Address {
+                variable: LAN_ADDRESS,
+                ..
+            }
+        ));
     }
 
     #[test]

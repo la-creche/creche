@@ -603,6 +603,20 @@ impl ConfigErrors {
 
         self
     }
+
+    /// The errors with each one in the list one time, at its first place.
+    /// Two parts of a config can read the same variable, and each part then
+    /// reports the same error.
+    fn each_once(self) -> Self {
+        let mut once: Vec<ConfigError> = Vec::with_capacity(self.0.len());
+        for error in self.0 {
+            if !once.contains(&error) {
+                once.push(error);
+            }
+        }
+
+        Self(once)
+    }
 }
 
 impl From<ConfigError> for ConfigErrors {
@@ -947,6 +961,25 @@ mod tests {
         );
 
         assert!(ports.is_ok());
+    }
+
+    #[test]
+    fn an_error_that_two_parts_report_is_in_the_list_one_time() {
+        let env = Env::from_pairs([("A", "0"), ("B", "x")]);
+        let parsed = all4(
+            env.require::<Port>("A"),
+            env.require::<Port>("B"),
+            env.require::<Port>("A"),
+            env.require::<Port>("C"),
+        );
+        let errors = parsed.unwrap_err().each_once();
+        let variables: Vec<&str> = errors
+            .as_slice()
+            .iter()
+            .map(ConfigError::variable)
+            .collect();
+
+        assert_eq!(variables, ["A", "B", "C"]);
     }
 
     #[test]
