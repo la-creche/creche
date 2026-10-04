@@ -13,6 +13,7 @@
 //! that `json.dumps(value, separators=(",", ":"), ensure_ascii=False)` makes.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::mem;
 
 use super::number::{Integer, IntegerError};
@@ -39,7 +40,11 @@ const INDEX_FROM: usize = 8;
 /// an event is opaque. This type holds it. It holds what Python holds: an
 /// integer of any size, a float that is not finite and a text with a lone
 /// surrogate.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// `Clone`, `PartialEq`, `Debug` and `Drop` use no recursion. The reader
+/// builds a value that nests [`MAX_LINE_DEPTH`] levels, and an impl that the
+/// compiler derives uses one stack frame for each level. A stack that
+/// overflows stops the process.
 pub enum Json {
     /// `null`.
     Null,
@@ -131,6 +136,95 @@ impl Drop for Json {
         while let Some(mut value) = pending.pop() {
             pending.append(&mut value.take_children());
         }
+    }
+}
+
+/// Copies a value with no recursion.
+impl Clone for Json {
+    fn clone(&self) -> Self {
+        let mut copy = Self::Null;
+        let mut pending = vec![(self, &mut copy)];
+        while let Some((source, target)) = pending.pop() {
+            // A container gets a place for each value inside it first.
+            *target = match source {
+                Self::Null => Self::Null,
+                Self::Bool(flag) => Self::Bool(*flag),
+                Self::Int(integer) => Self::Int(integer.clone()),
+                Self::Float(float) => Self::Float(*float),
+                Self::Text(text) => Self::Text(text.clone()),
+                Self::Array(array) => {
+                    Self::Array(JsonArray(array.0.iter().map(|_| Self::Null).collect()))
+                }
+                Self::Object(object) => {
+                    let places = object.0.iter().map(|(key, _)| (key.clone(), Self::Null));
+
+                    Self::Object(JsonObject(places.collect()))
+                }
+            };
+
+            match (source, target) {
+                (Self::Array(from), Self::Array(to)) => {
+                    pending.extend(from.0.iter().zip(to.0.iter_mut()));
+                }
+                (Self::Object(from), Self::Object(to)) => {
+                    let pairs = from.0.iter().zip(to.0.iter_mut());
+
+                    pending.extend(pairs.map(|((_, from), (_, to))| (from, to)));
+                }
+                _ => {}
+            }
+        }
+
+        copy
+    }
+}
+
+/// Compares two values with no recursion. Two floats are equal as two `f64`
+/// are, so `NaN` is not equal to `NaN`. The fields of two equal objects have
+/// the same order.
+impl PartialEq for Json {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some(pair) = pending.pop() {
+            let same = match pair {
+                (Self::Null, Self::Null) => true,
+                (Self::Bool(left), Self::Bool(right)) => left == right,
+                (Self::Int(left), Self::Int(right)) => left == right,
+                (Self::Float(left), Self::Float(right)) => left == right,
+                (Self::Text(left), Self::Text(right)) => left == right,
+                (Self::Array(left), Self::Array(right)) => {
+                    pending.extend(left.0.iter().zip(&right.0));
+
+                    left.0.len() == right.0.len()
+                }
+                (Self::Object(left), Self::Object(right)) => {
+                    let pairs = || left.0.iter().zip(&right.0);
+                    pending.extend(pairs().map(|((_, left), (_, right))| (left, right)));
+
+                    left.0.len() == right.0.len()
+                        && pairs().all(|((left, _), (right, _))| left == right)
+                }
+                _ => false,
+            };
+
+            if !same {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+/// Prints a value with no recursion, in the compact form of the writer. A
+/// text has the form of [`Text`], so a lone surrogate prints too.
+impl fmt::Debug for Json {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        walk(vec![Visit::Value(self)], |piece| match piece {
+            Piece::Raw(raw) => f.write_str(raw),
+            Piece::Key(text) | Piece::Scalar(Json::Text(text)) => write!(f, "{text:?}"),
+            Piece::Scalar(scalar) => f.write_str(&scalar_text(scalar)),
+        })
     }
 }
 
@@ -1347,6 +1441,120 @@ mod tests {
         assert!(!nests_past(&value, MAX_LINE_DEPTH));
         assert_eq!(compact_size(&value), Ok(2 * MAX_LINE_DEPTH + 1));
         drop(value);
+    }
+
+    #[test]
+    fn a_deep_value_copies_with_no_recursion() {
+        let value = python(&nested(MAX_LINE_DEPTH)).unwrap();
+        let copy = value.clone();
+
+        assert!(nests_past(&copy, MAX_LINE_DEPTH - 1));
+        assert_eq!(compact_size(&copy), Ok(2 * MAX_LINE_DEPTH + 1));
+    }
+
+    #[test]
+    fn two_deep_values_compare_with_no_recursion() {
+        let value = python(&nested(MAX_LINE_DEPTH)).unwrap();
+        let same = python(&nested(MAX_LINE_DEPTH)).unwrap();
+        let other = python(&nested(MAX_LINE_DEPTH).replace('1', "2")).unwrap();
+
+        assert!(value == same);
+        assert!(value != other);
+    }
+
+    #[test]
+    fn a_deep_value_prints_with_no_recursion() {
+        let value = python(&nested(MAX_LINE_DEPTH)).unwrap();
+
+        assert_eq!(format!("{value:?}"), nested(MAX_LINE_DEPTH));
+    }
+
+    #[test]
+    fn a_copy_is_equal_and_holds_its_own_values() {
+        let text = r#"{"a":[1,-2.5,true,false,null,"x",{"b":[]}],"c":{},"d":"\ud800"}"#;
+        let value = python(text).unwrap();
+        let mut copy = value.clone().into_object().unwrap();
+
+        assert_eq!(Json::Object(copy.clone()), value);
+        assert_eq!(
+            copy.take("a").map(|taken| taken.as_array().is_some()),
+            Some(true)
+        );
+        assert_ne!(Json::Object(copy), value);
+        assert!(
+            value
+                .as_object()
+                .unwrap()
+                .get("a")
+                .unwrap()
+                .as_array()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn two_values_are_equal_only_with_the_same_content() {
+        let equal = [
+            "null",
+            "true",
+            "7",
+            "-0.0",
+            "\"x\"",
+            "\"\\ud800\"",
+            "[]",
+            "{}",
+            r#"[1,[2,{"a":null}]]"#,
+            r#"{"a":1,"b":[true]}"#,
+        ];
+        let differ = [
+            ("null", "false"),
+            ("true", "false"),
+            ("1", "2"),
+            ("1", "1.0"),
+            ("1.5", "2.5"),
+            ("\"x\"", "\"y\""),
+            ("[]", "{}"),
+            ("[1]", "[1,1]"),
+            ("[1,2]", "[1,3]"),
+            ("[[1]]", "[[2]]"),
+            (r#"{"a":1}"#, r#"{"b":1}"#),
+            (r#"{"a":1}"#, r#"{"a":2}"#),
+            (r#"{"a":1}"#, r#"{"a":1,"b":2}"#),
+            (r#"{"a":1,"b":2}"#, r#"{"b":2,"a":1}"#),
+            // A float that is not a number is equal to no float.
+            ("NaN", "NaN"),
+            ("[NaN]", "[NaN]"),
+        ];
+
+        for text in equal {
+            assert!(python(text).unwrap() == python(text).unwrap(), "{text}");
+        }
+
+        for (left, right) in differ {
+            assert!(
+                python(left).unwrap() != python(right).unwrap(),
+                "{left} {right}"
+            );
+            assert!(
+                python(right).unwrap() != python(left).unwrap(),
+                "{left} {right}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_prints_in_the_compact_form() {
+        let text = r#"{"a":[1,-2.5,true,false,null,"x\n",{"b":[]}],"c":{},"d":NaN}"#;
+
+        assert_eq!(format!("{:?}", python(text).unwrap()), text);
+        assert_eq!(
+            format!("{:?}", python("[1e999, 2]").unwrap()),
+            "[Infinity,2]"
+        );
+        assert_eq!(
+            format!("{:?}", python(r#"{"\ud800":"a\ud800"}"#).unwrap()),
+            "{utf16[55296]:utf16[97, 55296]}"
+        );
     }
 
     #[test]

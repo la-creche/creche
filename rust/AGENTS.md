@@ -223,7 +223,7 @@ The reader has these properties:
 - The `parse` of `claim` gives `malformed` for a deeper line and for an
   integer of more than 4300 digits. Python raises `RecursionError` and
   `ValueError` there, and the Python host gives `malformed`.
-- `Json` drops with no recursion.
+- `Json` drops, copies, compares and prints with no recursion.
 
 Rule 7 holds. One field holds a `Json`: the `event` of a line. Contract 03
 §5.1 makes that value opaque.
