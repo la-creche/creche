@@ -1,0 +1,27 @@
+[package]
+name = "creche-runtime"
+description = "The runtime that each Rust service of creche shares"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+creche-contracts = { path = "../creche-contracts" }
+axum = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+rustix = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+# The testkit depends on this crate, so a test inside src/ sees other types
+# than the testkit does. AGENTS.md, rule 3, says where such a test goes.
+[dev-dependencies]
+creche-testkit = { path = "../creche-testkit" }
