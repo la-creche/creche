@@ -133,6 +133,7 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_override.py` | door and `attendance` | each service starts through its variable |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
+| `test_proc_terminal.py` | none | the pseudo-terminal of the harness: the keys, the signals, what it showed |
 
 ## Rules
 
@@ -284,6 +285,7 @@ failure. Work down this list.
 |---|---|
 | `proc_services.py` | the service table, and the rule for the override variable |
 | `proc_harness.py` | a child in its own process group, the wait for an address, the teardown, the check at session end |
+| `proc_terminal.py`, `proc_login.py` | the test side of a pseudo-terminal, and the program that gives a command its controlling terminal |
 | `proc_tree.py` | the root, and one writer for each file a service reads |
 | `proc_standins.py` | the `sbx` and `pi` wrappers, and the record each one leaves |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
