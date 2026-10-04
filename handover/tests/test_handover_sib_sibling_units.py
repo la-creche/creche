@@ -303,8 +303,9 @@ def _release(bench: Bench) -> str:
         spool.close()
 
 
-class _Crash(Exception):
-    """The executor dying between the switch and the record."""
+class _Crash(BaseException):
+    """The executor dying between the switch and the record. A death is no
+    `Exception`: a step records an `Exception` in the ledger."""
 
 
 def _crash_at_the_restart(bench: Bench) -> None:

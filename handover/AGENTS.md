@@ -93,6 +93,8 @@ The console script is `handover`. The verify hook and the operator's
 7. `runuser` is `/usr/sbin/runuser`, by absolute path.
 8. The path unit and the root wrapper are outside every release. The thing
    that deploys code is not deployed by code.
+9. A step that raises an error it does not name is a failed step. The
+   ledger gets the type of the error, and never its text.
 
 ## Rules `follow/` adds
 
@@ -259,6 +261,10 @@ that wants a refusal changes one field.
 - A switch keeps the unit it replaces as `<unit>.prev` (`executor/install.py`).
 - A crash between a server swap and the verify is not repaired
   (`executor/spool.py`, `executor/steps.py`).
+- `stage7-releases.md` §2.4 names no end for an error between the switch
+  note and the end of the swap. The run then ends as a crash does: it
+  writes no entry and it removes no staged tree. The next run repairs the
+  component (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`executor/roster.py`).
 - The secret-name pattern is copied into five modules, and the copies agree
   only by hand.
