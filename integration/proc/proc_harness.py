@@ -16,6 +16,9 @@ command and an environment, and gives back a `Child`:
 6. A process that ended is no process of a group, and its pid is not alive.
    The system keeps such a process until its parent reaps it, and a signal
    still finds it. `/proc` on Linux and `ps` on macOS give its state.
+7. `spawn_on_terminal` starts a command that a person types. The command
+   gets a pseudo-terminal as its controlling terminal, and the test holds
+   the other side (`proc_terminal.py`).
 
 The registry at the bottom is the suite's check at session end: a group that
 no teardown confirmed gone is a leak.
@@ -36,6 +39,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
+
+from proc_terminal import LOGIN_PROGRAM, Terminal, open_terminal
 
 #: How long a start may take. A cold Python import of a service is about one
 #: second on a laptop, and a loaded CI machine is several times slower.
@@ -192,7 +197,13 @@ class Child:
         self.popen.send_signal(signum)
 
     def output(self) -> str:
-        """Both streams, each under a title, for a report or an error."""
+        """Both streams, each under a title, for a report or an error.
+
+        A command on a terminal has one stream: what the terminal showed.
+        """
+        if self.stdout_path == self.stderr_path:
+            return f"--- {self.name} terminal ---\n{_tail(self.stdout_path)}"
+
         return (
             f"--- {self.name} stdout ---\n{_tail(self.stdout_path)}\n"
             f"--- {self.name} stderr ---\n{_tail(self.stderr_path)}"
@@ -206,6 +217,7 @@ class Supervisor:
     log_dir: Path
     children: list[Child] = field(default_factory=list[Child])
     _held_ports: dict[int, int] = field(default_factory=dict[int, int])
+    _terminals: list[Terminal] = field(default_factory=list[Terminal])
 
     def free_port(self) -> int:
         """A loopback port nothing holds now, held for this test until `stop_all`.
@@ -260,6 +272,48 @@ class Supervisor:
         _note_group(child)
 
         return child
+
+    def spawn_on_terminal(
+        self, name: str, words: Sequence[str], env: Mapping[str, str], cwd: Path
+    ) -> tuple[Child, Terminal]:
+        """Start one command on a new pseudo-terminal, in its own process group.
+
+        The command leads a new session, and the terminal is the controlling
+        terminal of that session. The terminal is stdin, stdout and stderr
+        of the command, so the one file of the child holds what the terminal
+        showed. `stop_all` closes the terminal after the group ended.
+        """
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        serial = len(self.children)
+        shown = self.log_dir / f"{serial:02d}-{name}.terminal"
+        shown.touch()
+        terminal, slave = open_terminal(shown)
+        command = [sys.executable, str(LOGIN_PROGRAM), *words]
+
+        try:
+            popen = subprocess.Popen(
+                command,
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                env=dict(env),
+                cwd=cwd,
+                start_new_session=True,
+            )
+        except OSError as error:
+            terminal.close()
+
+            raise ProcError(f"cannot start {name}: {error}") from error
+        finally:
+            os.close(slave)
+
+        terminal.start()
+        self._terminals.append(terminal)
+        child = Child(name, tuple(words), popen, shown, shown)
+        self.children.append(child)
+        _note_group(child)
+
+        return child, terminal
 
     def run(
         self,
@@ -327,6 +381,11 @@ class Supervisor:
             os.close(lock)
 
         self._held_ports.clear()
+
+        for terminal in self._terminals:
+            terminal.close()
+
+        self._terminals.clear()
 
         return problems
 
