@@ -59,7 +59,9 @@ did.
 | a family that never validated | no route, cron or webhook |
 | `attendance` refuses the job | `fire`: one stderr line, exit 1. `serve`: the matching HTTP status. Never retried here. |
 | an oversized or invalid payload | `fire`: exit 2. `serve`: `413` or `400`. |
-| `attendance` cannot be reached | `fire`: exit 2, a different message than a refusal |
+| `attendance` cannot be reached | `fire`: exit 2, a different message than a refusal. `serve`: `502 attendance_unreachable`. |
+| a route refresh fails | the listener logs the failure and keeps the last route table |
+| a failure of `serve` that no handler names | `500 internal` in the error shape of the listener. The log holds the traceback. |
 | a `quiet:` family's cron firing finds nothing changed | exit 0, no session |
 
 ## Configuration
@@ -110,3 +112,11 @@ is `door-owui`'s. Basenames are unique across the workspace. Run
   not checked at all (`quiet/gate.py`).
 - The quiet check is a second reader of the chaperone's audit. A user unit
   that cannot read the audit treats the daily call as owed (`quiet/records.py`).
+- Contract 01 §3.13 gives no cap on the nesting of a payload. The door
+  refuses a payload that its JSON parser cannot read. The depth that the
+  parser refuses differs between Python versions (`payload.py`).
+- Contract 02 §14 gives the codes of `attendance`. No contract gives the
+  status or the code that a door answers for a failure of its own. The
+  listener answers `502 attendance_unreachable` when `attendance` does not
+  answer. It answers `500 internal` for a failure that no handler names
+  (`errors.py`, `webhooks.py`).

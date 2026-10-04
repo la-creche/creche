@@ -14,6 +14,7 @@ from attendance.family_status import (
     SandboxState,
     StatusReader,
     check_may_serve,
+    served_kind,
 )
 from attendance.paths import status_file
 from attendance.states import SessionKind
@@ -231,11 +232,74 @@ def test_junk_fields_take_their_defaults(tmp_path: Path) -> None:
     ).read(_FAMILY)
 
     assert status is not None
-    assert status.kind is SessionKind.ATTENDED
-    assert status.state is FamilyState.IN_SYNC
+    # No default for these two. A default kind opens the family to the
+    # attended doors, and a default state reports a health nobody published.
+    assert status.kind is None
+    assert status.state is None
     assert status.epoch == 1
     assert status.sandboxes == []
     assert status.blocking_fault is None
+
+
+def test_a_stated_kind_is_the_served_kind(tmp_path: Path) -> None:
+    status = _publish(tmp_path, kind="thin").read(_FAMILY)
+
+    assert status is not None
+    assert served_kind(status) is SessionKind.THIN
+
+
+@pytest.mark.parametrize("kind", ["", "robot", "Attended", 5, None], ids=repr)
+def test_a_kind_this_service_cannot_read_reaches_no_door(tmp_path: Path, kind: object) -> None:
+    """Contract 02 §3.1. A door reaches one kind, and this document proves none."""
+    status = _publish(tmp_path, kind=kind).read(_FAMILY)
+    assert status is not None
+    assert status.kind is None
+
+    with pytest.raises(ApiError) as caught:
+        served_kind(status)
+
+    assert caught.value.code is ErrorCode.FORBIDDEN
+    assert caught.value.family == _FAMILY
+
+
+def test_a_document_with_no_kind_reaches_no_door(tmp_path: Path) -> None:
+    document = _document()
+    del document["kind"]
+    write_json(status_file(tmp_path, _FAMILY), document)
+    status = StatusReader(tmp_path).read(_FAMILY)
+    assert status is not None
+
+    with pytest.raises(ApiError) as caught:
+        served_kind(status)
+
+    assert caught.value.code is ErrorCode.FORBIDDEN
+
+
+def test_a_family_that_never_validated_states_no_kind(tmp_path: Path) -> None:
+    """Contract 05 §3.1. `caregiver` knows no kind for such a family and writes
+    an empty one. The answer is `family_invalid` for each door (contract 02
+    §14)."""
+    validation = {"ok": False, "never_valid": True}
+    status = _publish(tmp_path, kind="", state="invalid", validation=validation).read(_FAMILY)
+    assert status is not None
+
+    with pytest.raises(ApiError) as caught:
+        served_kind(status)
+
+    assert caught.value.code is ErrorCode.FAMILY_INVALID
+
+
+def test_a_state_this_service_cannot_read_is_not_in_sync(tmp_path: Path) -> None:
+    """The state feeds one thing: the detail of a refusal. It then holds null."""
+    faults = [{"code": "sandbox_start_failed", "blocks_turns": True}]
+    status = _publish(tmp_path, state="in sync", faults=faults).read(_FAMILY)
+    assert status is not None
+    assert status.state is None
+
+    with pytest.raises(ApiError) as caught:
+        check_may_serve(status)
+
+    assert caught.value.detail == {"family_state": None, "fault": "sandbox_start_failed"}
 
 
 def test_families_lists_the_directory(tmp_path: Path) -> None:

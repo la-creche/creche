@@ -298,6 +298,13 @@ HEADER_SPACE_CASES: Final = (
     ("byte-order-mark", "\ufeffa"),
 )
 
+#: The cap of a chat id. The Open WebUI door puts `owui-` before the id, and
+#: the session id that results has 128 characters or less.
+OWUI_CHAT_CASES: Final = (
+    ("max-123-chars", "a" * 123),
+    ("over-124-chars", "a" * 124),
+)
+
 _ULID: Final = "01J9ZQ5V7Y8X4W3T2S1R0QPNMK"
 
 ULID_CASES: Final = (
@@ -719,7 +726,7 @@ GRAMMARS: Final = (
         "owui_chat_id",
         "3f2b1c9e-8a55-4c1e-9f0a-2b6d7e8f9a12",
         "a",
-        SESSION_CASES + HEADER_SPACE_CASES,
+        SESSION_CASES + HEADER_SPACE_CASES + OWUI_CHAT_CASES,
         (
             Concept(
                 "owui_chat_id",
@@ -734,6 +741,8 @@ GRAMMARS: Final = (
                             "from both ends before it validates.",
                             "The value holds the chat id and the session id that the door makes "
                             "from it. The session id is 5 characters longer than the chat id.",
+                            "The door refuses a chat id of more than 123 characters. The session "
+                            "id of such a chat id has more than 128 characters.",
                         ),
                     ),
                 ),

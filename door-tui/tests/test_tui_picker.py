@@ -71,6 +71,17 @@ def test_a_bad_number_asks_again() -> None:
     assert len(screen.asked) == 3
 
 
+@pytest.mark.parametrize("answer", ["\u00b2", "9" * 5000], ids=["superscript", "5000-digits"])
+def test_digits_that_are_no_number_ask_again(answer: str) -> None:
+    """`str.isdigit` takes a superscript digit and a text of 5000 digits. `int` takes neither."""
+    screen = terminal(answer, "2")
+
+    choice = pick_session(ROWS, screen)
+
+    assert choice == Choice(ROWS[1].session)
+    assert len(screen.asked) == 2
+
+
 def test_an_empty_answer_chooses_nothing() -> None:
     with pytest.raises(DoorError) as caught:
         pick_session(ROWS, terminal(""))

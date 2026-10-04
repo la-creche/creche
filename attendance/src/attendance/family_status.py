@@ -90,8 +90,11 @@ class FamilyStatus:
     """What this service takes from one status document."""
 
     family: str
-    kind: SessionKind
-    state: FamilyState
+    #: None when the document states no kind that this service knows. No
+    #: default exists: `served_kind` says why.
+    kind: SessionKind | None
+    #: None when the document states no state that this service knows.
+    state: FamilyState | None
     written_at: datetime | None
     config_rev: str = ""
     epoch: int = FIRST_EPOCH
@@ -109,6 +112,18 @@ class FamilyStatus:
     #: document without it reads `False`, and no family may be dispatched to:
     #: absence is denial (invariant 11).
     accepts_dispatch: bool = False
+
+    @property
+    def state_text(self) -> str | None:
+        """The state as the detail of a refusal carries it.
+
+        CONTRACT-QUESTION: contract 05 §3 names four states and does not say
+        what a reader does with another value. This reader keeps no state for
+        such a document, and the detail then holds null. The old reading,
+        `in_sync`, reported a health that nobody published. No decision reads
+        the state, so another reading changes one word of a detail.
+        """
+        return self.state.value if self.state is not None else None
 
     def has_fault(self, code: str) -> bool:
         """True when the document carries this fault, blocking or not."""
@@ -237,20 +252,58 @@ def check_may_serve(status: FamilyStatus) -> None:
     serve.
     """
     if status.never_valid:
-        raise ApiError(
-            ErrorCode.FAMILY_INVALID,
-            f"no revision of family {status.family} ever validated",
-            family=status.family,
-            detail={"family_state": status.state.value},
-        )
+        raise _never_valid(status)
 
     if status.blocking_fault is not None:
         raise ApiError(
             ErrorCode.FAMILY_DEGRADED,
             f"family {status.family} has a fault that blocks turns",
             family=status.family,
-            detail={"family_state": status.state.value, "fault": status.blocking_fault},
+            detail={"family_state": status.state_text, "fault": status.blocking_fault},
         )
+
+
+def served_kind(status: FamilyStatus) -> SessionKind:
+    """The kind that the document states. Raises when it states none.
+
+    The kind decides which door reaches the family (contract 02 §3.1) and
+    whether the family has a turn limit (contract 02 §13). A document that
+    states no kind this service knows proves neither, so this fails closed.
+
+    `caregiver` writes an empty kind on purpose for a family that never
+    validated (contract 05 §3.1). No door can be the wrong door for that
+    family, and contract 02 §14 gives it `family_invalid`.
+
+    CONTRACT-QUESTION: contract 05 §2.1 names three kinds and does not say
+    what a reader does with another value. For each other document with no
+    known kind, this reader refuses each door with `forbidden`: a door
+    reaches one kind, and no kind is proven. The three doors refuse the same
+    field. The old reading, `attended`, gave an attended door a family of
+    another kind and took an autonomous family out of its turn limit. A
+    reading that serves such a document must name the kind that it serves.
+    """
+    if status.kind is not None:
+        return status.kind
+
+    if status.never_valid:
+        raise _never_valid(status)
+
+    raise ApiError(
+        ErrorCode.FORBIDDEN,
+        f"the status document of family {status.family} states no kind, so no door reaches it",
+        family=status.family,
+        detail={"kind": None},
+    )
+
+
+def _never_valid(status: FamilyStatus) -> ApiError:
+    """Contract 02 §14's `family_invalid` (contract 05 §3.1)."""
+    return ApiError(
+        ErrorCode.FAMILY_INVALID,
+        f"no revision of family {status.family} ever validated",
+        family=status.family,
+        detail={"family_state": status.state_text},
+    )
 
 
 def _is_family_dir(entry: Path) -> bool:
@@ -258,7 +311,11 @@ def _is_family_dir(entry: Path) -> bool:
 
 
 def _status_from_file(raw: dict[str, Any], family: str) -> FamilyStatus:
-    """Read the document defensively. An unreadable field takes its default."""
+    """Read the document defensively. An unreadable field takes its default.
+
+    Two fields have no default: the kind and the state. Each one reads as
+    None, and `served_kind` and `state_text` say what follows.
+    """
     validation = as_object(raw.get("validation")) or {}
     credentials = as_object(raw.get("credentials")) or {}
     limits = as_object(raw.get("limits")) or {}
@@ -266,8 +323,8 @@ def _status_from_file(raw: dict[str, Any], family: str) -> FamilyStatus:
 
     return FamilyStatus(
         family=family,
-        kind=_enum(raw.get("kind"), SessionKind, SessionKind.ATTENDED),
-        state=_enum(raw.get("state"), FamilyState, FamilyState.IN_SYNC),
+        kind=_enum(raw.get("kind"), SessionKind),
+        state=_enum(raw.get("state"), FamilyState),
         written_at=_time(raw.get("written_at")),
         config_rev=_text(raw.get("config_rev")) or "",
         epoch=_positive_int(credentials.get("epoch"), FIRST_EPOCH),
@@ -385,11 +442,11 @@ def _optional_int(value: object) -> int | None:
     return value
 
 
-def _enum[EnumT: StrEnum](value: object, kind: type[EnumT], fallback: EnumT) -> EnumT:
+def _enum[EnumT: StrEnum](value: object, kind: type[EnumT]) -> EnumT | None:
     if not isinstance(value, str):
-        return fallback
+        return None
 
     try:
         return kind(value)
     except ValueError:
-        return fallback
+        return None

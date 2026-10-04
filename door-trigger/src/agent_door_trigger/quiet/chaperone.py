@@ -64,7 +64,7 @@ def family_token(families_dir: Path, family: str) -> str | None:
     path = families_dir / CREDS_PATH.format(family=family)
     try:
         body: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         _LOG.warning("quiet: %s: no readable creds.json (%s)", family, type(exc).__name__)
         return None
 
@@ -86,7 +86,7 @@ class HttpFamilyReads:
         # An MCP tool answers text: the survey's own JSON.
         try:
             survey: object = json.loads(answer)
-        except ValueError:
+        except (ValueError, RecursionError):
             return None
 
         return fingerprint(survey)
@@ -138,7 +138,8 @@ class HttpFamilyReads:
 def _json_object(raw: str) -> dict[str, object]:
     try:
         parsed: object = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
+        # RecursionError: an answer that nests too deep is not a ValueError.
         return {}
 
     return as_object(parsed)

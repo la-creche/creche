@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from agent_door_tui import status
 from agent_door_tui.errors import DoorError, Exit
 from agent_door_tui.status import StatusFiles
+from tui_json_limit import ParserAtItsLimit
 
 FAMILY = "chat"
 ENV_PATH = "/srv/agents/state/rework/families/chat/supervisor.env"
@@ -181,6 +183,32 @@ def test_a_document_that_is_not_json_refuses(tmp_path: Path) -> None:
     assert caught.value.code is Exit.NO_SANDBOX
 
 
+def test_a_document_that_is_not_utf8_refuses(tmp_path: Path) -> None:
+    path = write_status(tmp_path)
+    path.write_bytes(b'{"kind":"attended\xff"}')
+
+    with pytest.raises(DoorError) as caught:
+        read(tmp_path)
+
+    assert caught.value.code is Exit.NO_SANDBOX
+    assert "no readable status document" in caught.value.message
+    assert StatusFiles(tmp_path).attended() == []
+
+
+def test_a_document_that_nests_too_deep_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_status(tmp_path)
+    monkeypatch.setattr(status, "json", ParserAtItsLimit)
+
+    with pytest.raises(DoorError) as caught:
+        read(tmp_path)
+
+    assert caught.value.code is Exit.NO_SANDBOX
+    assert "no readable status document" in caught.value.message
+    assert StatusFiles(tmp_path).attended() == []
+
+
 def test_a_huge_document_is_refused_unread(tmp_path: Path) -> None:
     """Untrusted input is bounded before it is parsed (invariant 14)."""
     path = write_status(tmp_path)
@@ -197,6 +225,17 @@ def test_a_stale_document_warns_and_still_serves(tmp_path: Path) -> None:
     write_status(tmp_path, written_at="2020-01-01T00:00:00Z")
 
     assert "stale" in read(tmp_path).warning
+
+
+@pytest.mark.parametrize("written_at", ["2999-01-01T00:00:00", "2999-01-01"])
+def test_a_time_with_no_offset_reads_as_stale(tmp_path: Path, written_at: str) -> None:
+    """Contract 05 §2.1 gives `written_at` as RFC 3339, and that form has an offset."""
+    write_status(tmp_path, written_at=written_at)
+
+    serving = read(tmp_path)
+
+    assert serving.sandbox == "chat-s1"
+    assert "stale" in serving.warning
 
 
 def test_the_family_name_is_checked_before_a_path_is_built(tmp_path: Path) -> None:

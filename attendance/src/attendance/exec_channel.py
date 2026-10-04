@@ -30,6 +30,7 @@ import shlex
 from pathlib import Path
 
 from .channel import ChannelClosed, SandboxDial
+from .tasks import report_failure
 from .wire import MAX_LINE_BYTES, LineSplitter, RawLine
 
 READ_CHUNK_BYTES = 65_536
@@ -40,6 +41,9 @@ DEFAULT_COMMAND = (
     "node /opt/agent-supervisor/agent-supervisor.js --sandbox {sandbox}"
 )
 _STDERR_LIMIT_BYTES = 4_096
+
+#: What the log holds in place of a stderr line that the reader dropped.
+_STDERR_DROPPED = b"(a line over the limit of the reader was dropped)"
 
 #: How long a terminated child has to exit before it is killed, and a killed
 #: one before `close` gives up on it. A healthy `sbx exec` exits at once.
@@ -111,7 +115,10 @@ class ExecChannel:
             raise ChannelClosed(f"cannot start channel: {error}") from error
 
         self._eof = False
-        self._stderr_task = asyncio.create_task(self._drain_stderr())
+        self._stderr_task = asyncio.create_task(
+            self._drain_stderr(), name=f"stderr {self._sandbox}"
+        )
+        self._stderr_task.add_done_callback(report_failure)
 
     async def send(self, line: str) -> None:
         process = self._process
@@ -193,7 +200,15 @@ class ExecChannel:
             return
 
         while True:
-            chunk = await process.stderr.readline()
+            try:
+                chunk = await process.stderr.readline()
+            except ValueError:
+                # A line over the limit of the stream reader. The reader
+                # dropped what it held, so the next read starts after it.
+                # Without this guard the task ends, the text after it reaches
+                # no log, and the far side blocks on a full pipe.
+                self._write_log(_STDERR_DROPPED)
+                continue
 
             if not chunk:
                 return
@@ -219,7 +234,9 @@ async def _drained(reader: asyncio.StreamReader | None) -> None:
         return
 
     # RuntimeError: another coroutine is still reading, and sees the end itself.
-    with contextlib.suppress(RuntimeError, ConnectionResetError):
+    # OSError: a pipe whose read failed keeps the error and gives it to each
+    # later read. The pipe is at its end, and `close` must still reap the child.
+    with contextlib.suppress(RuntimeError, OSError):
         while await reader.read(READ_CHUNK_BYTES):
             continue
 

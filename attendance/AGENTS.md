@@ -50,6 +50,8 @@ playpen runs inside the sandbox image, which carries Node.
 4. A fault clears only on evidence: a completed handshake or a service start.
 5. Persona text carries no authority.
 6. A door's request body is untrusted input. `requests.py` parses it.
+7. The status document is a claim. A document with no known `kind` opens no
+   door and starts no queued turn. Read the kind with `served_kind`.
 
 ## Security rules
 
@@ -70,6 +72,14 @@ playpen runs inside the sandbox image, which carries Node.
    `channel` and `wire` to primitives. A route never touches the journal.
 5. Nothing here needs Node.
 6. Build paths with `paths.py`.
+7. Give each task a name and the done-callback `tasks.report_failure`. A
+   task that ends with an error must reach the log.
+8. Give each step of a loop that lives as long as the service a handler.
+   The handler logs the failure, and the loop goes on. `_flush_loop` and the
+   writer loop of `owui_copy.py` are the pattern. A channel loop is the
+   exception: a dead reader ends in a lost channel (contract 03 §10 rule 4).
+9. When the start of a turn raises, end the turn with `_fail_start`. A turn
+   must not stay in flight with no deadline watcher.
 
 ## Switch rules
 
@@ -147,6 +157,7 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `playpen_link.py`, `switching.py`, `channel.py`, `exec_channel.py`, `wire.py` | one sandbox's channel, a switch, the protocol |
 | `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch ledger, the per-chat work directory |
 | `family_status.py`, `faults.py` | the status document, the fault file |
+| `tasks.py` | what a task says when it ends with an error |
 | `verify.py` | `attendance-verify` |
 
 ## Tests
@@ -175,3 +186,33 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   from the work root (`service.py`).
 - Contract 03 §13 rule 6 names no nesting limit for an event. `cap_event`
   reads an event of more than 64 levels as oversized (`wire.py`).
+- Contract 05 §2.1 does not say what a reader does with a `kind` that is
+  not one of its three words. `served_kind` refuses each door with
+  `forbidden`. A family that never validated has an empty `kind` and gets
+  `family_invalid` (`family_status.py`).
+- Contract 05 §3 does not say what a reader does with a `state` that is not
+  one of its four words. The reader keeps no state for it. The detail
+  `family_state` of a refusal is then null (`family_status.py`).
+- Contract 02 §4.3 has no move from `queued` to `failed`, and no failure for
+  a turn that did not start. Two functions start a turn only to fail it:
+  `_refuse_toolless_job` and `_start_queued` (`service.py`).
+- `_fail_start` takes the other reading when the start of a queued turn
+  raises. The turn ends `aborted` with the reason `internal`. Contract 02
+  §13.1 then gives the job the status `cancelled`, not `failed`
+  (`service.py`).
+- Contract 02 §14 gives no rule for the fields of `internal`. The handler
+  answers null for `family`, `session` and `turn`, an empty `detail` and a
+  fixed message (`api.py`).
+- Contract 05 §5.3 rule 8 names no refusal for a switch on a status document
+  with no known `kind`. `_check_switch` refuses that switch with
+  `bad_request` (`service.py`).
+- `_pump_queue` runs only when a turn ends. A queued turn does not start
+  while the status document is unreadable or states no kind. Nothing tries
+  again until another turn of the family ends (`service.py`).
+- When the server cancels a start during the dial, the turn stays `running`
+  with no deadline watcher (`service.py`).
+- `_settle` does not raise `IllegalTransition`. For a move that contract 02
+  §4.3 does not allow, it writes one log line and one `note` line. The turn
+  does not move. A `turn_settled` for a turn in `waiting-approval` is such a
+  move. That turn then stays in flight until its deadline (`service.py`,
+  `states.py`).
