@@ -176,6 +176,20 @@ def test_serve_without_write_only_prints_the_plan(
     assert bench.driver.calls == []
 
 
+def test_the_plan_of_serve_names_no_directory_with_no_family_file(
+    bench: Bench, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Contract 01 §5.6 rule 3: `serve` ignores the directory, so the plan
+    does not name it as a family."""
+    write_no_file_dir(bench.registry_root)
+
+    bench.run(
+        "serve", str(bench.registry_root), "--image", IMAGE, "--state-root", str(bench.state_root)
+    )
+
+    assert "families: chat\n" in capsys.readouterr().out
+
+
 def test_serve_names_the_release_root_it_would_use(
     bench: Bench, capsys: pytest.CaptureFixture[str]
 ) -> None:

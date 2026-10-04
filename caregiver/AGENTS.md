@@ -105,7 +105,9 @@ host where something has gone wrong.
   removes it only when the JSON encoder cannot write it again.
 - An empty registry deletes no family.
 - A directory under `families/` with no `family.yaml` gets no pass and no
-  delete. `reconcile.has_family_file` is the one test for it.
+  delete. `reconcile.has_family_file` is the test for it. `apply.apply_once`
+  holds a copy of that test, because `apply.py` does not call
+  `reconcile.py`.
 - `rotate` deletes the old key before it mints the new one. The token
   overlaps. The key does not.
 - `rotate` publishes the new epoch. It writes the credentials block of
