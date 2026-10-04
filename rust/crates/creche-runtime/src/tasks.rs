@@ -442,6 +442,10 @@ impl Tasks {
     /// not wait. It writes one `ERROR` line and gives the count of that
     /// moment.
     ///
+    /// One panic of `tokio` stays. The runtime that made the limit stops, a
+    /// task of a second runtime still runs, and the caller polls the future
+    /// again. A process has one runtime, so no service meets that case.
+    ///
     /// The Python origin is the stop of `caregiver/src/caregiver/loop.py`.
     /// It waits for each pass for a limit (`:312-323`). Then it says how many
     /// passes still run (`:262-274`).
