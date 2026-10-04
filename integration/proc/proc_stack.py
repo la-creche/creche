@@ -28,6 +28,7 @@ import httpx
 from proc_harness import (
     LOOPBACK,
     Child,
+    Finished,
     ProcError,
     Supervisor,
     TcpAddress,
@@ -130,6 +131,13 @@ class Stack:
         whole = base_env(self.tree) | env_of(command) | env
 
         return self.supervisor.spawn(service.value, [*command.words, *args], whole, self.tree.root)
+
+    def run(self, service: Service, env: dict[str, str], *args: str) -> Finished:
+        """Run one command of a service to its end, with the base environment under its own."""
+        command = command_of(service)
+        whole = base_env(self.tree) | env_of(command) | env
+
+        return self.supervisor.run(service.value, [*command.words, *args], whole, self.tree.root)
 
     def spawn_attendance(self) -> Child:
         """Start `attendance`. `await_attendance` waits for it."""

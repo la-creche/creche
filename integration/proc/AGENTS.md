@@ -5,9 +5,9 @@ process, from the command that the service's systemd unit runs. A test talks
 to a service only through sockets, files and child programs. The root
 `AGENTS.md` and `integration/AGENTS.md` apply here too.
 
-Rules 11 and 15 of `integration/AGENTS.md` do not apply here. No `caregiver`
-process runs yet, so this suite writes the status document and the env file
-from the contracts.
+Rules 11 and 15 of `integration/AGENTS.md` apply only to a topology with a
+`caregiver` process. A topology with none writes the status document and the
+env file from the contracts.
 
 The suite is the judge of a port. A service in another language passes or
 fails the same tests, and no test changes. The suites in `integration/tests`
@@ -102,7 +102,8 @@ misspelled name would start the default command.
 
 ## What runs
 
-Two topologies exist. `attendance` and the two stand-ins are in both.
+Three topologies exist. `attendance`, the `sbx` stand-in and the `pi`
+stand-in are in the first two.
 
 ```
 a test (plays Open WebUI)                a test (plays the bridge in a sandbox)
@@ -123,6 +124,22 @@ node playpen/dist/playpen.js             the real bundle
 the pi stand-in                          found through AGENT_PI_BIN
 ```
 
+The third topology starts `caregiver`. It has two forms: `caregiver` alone,
+and the house.
+
+```
+a test (edits one file of the registry)
+  v
+caregiver ---- sbx create, policy, rm ---> the sbx stand-in, with state
+  |       ---- systemctl --user ---------> the systemctl stand-in
+  |       ---- HTTP, loopback port ------> the LiteLLM stand-in
+  | writes the status document, the grant file, the credential file,
+  | the config mount and the env file of each sandbox
+  | POST /internal/switch-sandbox, over the Unix socket
+  v
+attendance, door-owui and the chaperone      only in the house
+```
+
 | File | Topology | What the scenarios check |
 |---|---|---|
 | `test_proc_owui_turns.py` | door and `attendance` | the thirteen stage 1 scenarios, with the numbers of the old suite |
@@ -130,6 +147,7 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_switch.py` | door and `attendance` | the switch call of contract 05 §5, with a test in the place of `caregiver` |
 | `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
 | `test_proc_delegate.py` | chaperone and `attendance` | the delegate path of contract 04 §7, the manifest and the audit |
+| `test_proc_caregiver_start.py` | `caregiver` alone, and the house | a start, a refused start, a signal, a kill, and the verbs that run to an end |
 | `test_proc_override.py` | door and `attendance` | each service starts through its variable |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
@@ -181,6 +199,45 @@ the pi stand-in                          found through AGENT_PI_BIN
     has keeps the name of the old one.
 16. Run the suite five times before you add a test to it. Remove or fix a
     test that fails once.
+
+## The `caregiver` topology
+
+`proc_caregiver.py` holds the topology. The fixtures are `caregiver_alone`
+and `house`. `caregiver_prepared` and `house_prepared` write the root and
+start no service, for a scenario that changes the registry first.
+
+1. A test changes the registry and nothing else. `caregiver` publishes each
+   family from it. Do not write a status document, a grant file, a
+   credential file or an env file in this topology.
+2. An edit to one registry file is the one action of a scenario. Do not send
+   a signal to make `caregiver` look, unless the signal is the scenario.
+3. Write a registry file with `write_family_file`, `write_family_prose` or
+   `write_registry_file`. Each one replaces the file by rename.
+4. Wait for a file that `caregiver` writes: the status document or the grant
+   file. Use `wait_until` in a fixture and in a test with no request in
+   flight. Use `until` of `proc_chat.py` when a request is in flight.
+5. Assert on a boundary of `caregiver`: the status document, the grant file,
+   the credential file, the config mount, an env file, a fault file, the
+   record of a stand-in, the state of a stand-in, an HTTP answer or an exit
+   code. Do not read `sandboxes.json` or the `applied` directory. Each one
+   is the private state of `caregiver`.
+6. Start `attendance` before `caregiver`. `caregiver` asks for the first
+   handshake in its first pass. When no `attendance` answers, the next
+   attempt comes 20 seconds later.
+
+The start command is the `ExecStart` of `creche-caregiver.service`.
+`test_proc_table.py` holds each flag against the unit. The suite adds three
+flags that the unit does not have:
+
+| Flag | Why |
+|---|---|
+| `--litellm-base-url` | The unit dials LiteLLM on the LAN address of the site file. No test binds that address. |
+| `--release-root` | `caregiver` refuses a state root of a test with the release root of the host. |
+| `--poll-interval-s` | The default look is one in 2 seconds. The suite looks one time in 0.2 seconds, so an edit lands sooner. |
+
+`caregiver` looks again at a family when the registry changes, or 20
+seconds after its last pass. No flag changes the 20 seconds. So a scenario
+that needs a second pass with no edit takes 20 seconds or more.
 
 ## Add a stand-in program
 
@@ -286,12 +343,38 @@ failure. Work down this list.
   `family_invalid` by `attendance`. No contract says what the door lists.
   The door hides the family, and `test_proc_status.py` checks that. A change
   costs one assertion in that file.
-- **No `caregiver` process.** The suite writes the status document, the env
-  file, the credential file and the grant file from the contracts. No
-  scenario proves that `caregiver` writes them, or that it makes the switch
-  call. A `caregiver` process needs three stand-ins that do not exist: `sbx`
-  with the verbs `caregiver` runs, for example `create` and `policy`, the
-  LiteLLM key API, and `systemctl --user`.
+- **CONTRACT-QUESTION, the exit codes of `caregiver`.** No contract names
+  one. `caregiver/AGENTS.md` gives three codes: 0, 1 and 2. The suite holds
+  those three where `caregiver` selects one. It accepts each code that is
+  not 0 where `caregiver` ends with no code of its own: a start with no
+  `LITELLM_MASTER_KEY`, and a `delete` that fails. A change costs one
+  assertion in each scenario of `test_proc_caregiver_start.py`.
+- **No flag for the session store in `caregiver`.** `SESSIONS_ROOT` in
+  `caregiver/src/caregiver/paths.py` is a constant. The first mount of each
+  `sbx create` is `/srv/agents/sessions/<family>`, and `attendance` of a
+  test reads another directory. No scenario proves that the two services
+  name one session store.
+- **No flag for three times of the loop.** `HEARTBEAT_S`, `SPEND_INTERVAL_S`
+  and `BACKOFF_FIRST_S` in `caregiver/src/caregiver/loop.py` are constants:
+  20, 60 and 5 seconds. A scenario that waits for one of them takes that
+  long.
+- **No flag for the model cache time.** `MODEL_CACHE_S` in
+  `caregiver/src/caregiver/reconcile.py` is 10 seconds. No scenario changes
+  the model of a family.
+- **No flag for the install root of the MCP servers.** `installed_root` in
+  `caregiver/src/caregiver/mcp_release.py` is `/opt/mcp`. A registry that
+  declares an MCP server makes `caregiver` read that directory of the test
+  machine. No scenario declares one.
+- **The stand-ins copy facts that no test of this suite can check.** The
+  `sbx` stand-in follows the facts that `caregiver/src/caregiver/driver.py`
+  records about the real program. The LiteLLM stand-in refuses a second key
+  for one alias. No probe of the real service proves that.
+- **No scenario for `rotate` and for `apply-once`.** Each is a verb of
+  `caregiver` with no scenario here.
+- **The two seams of `integration/tests_manager` with a bridge are not
+  here.** `test_bridge_to_chaperone.py` and `test_cp_approval_to_chaperone.py`
+  need stand-ins that do not exist: the embedding service, Home Assistant
+  and the approval hook.
 - **No bridge on the path.** In `test_proc_delegate.py` a test sends the
   requests that the bridge sends. The playpen bundle fixes `PEP_URL` at build
   time: the LAN address of the site, port 8300. A pi process under the real
@@ -314,7 +397,7 @@ failure. Work down this list.
 | `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |
 | `standin_sbx.py`, `standin_systemctl.py`, `standin_litellm.py` | the three stand-in programs of this directory |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
-| `proc_owui.py`, `proc_delegate.py` | the two topologies |
+| `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py` | the three topologies |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |
