@@ -216,7 +216,10 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 02 §3 rule 3 says that a body is JSON. It does not say what a
   reader does with the escape of one half of a surrogate pair. Such a text
   has no UTF-8 form. A parser refuses the body with `bad_request` for each
-  text that it reads. A member that no parser reads can hold the escape
+  text that an answer or a line of the channel can hold. Four texts reach a
+  file only: the reason of a stop, the reason of a switch, the name of a
+  trigger and the key of a dispatch. A parser takes the escape in each of
+  the four. A member that no parser reads can hold the escape too
   (`requests.py`).
 - Contract 02 §3 rule 2 says never `0.0.0.0` and gives the LAN address no
   grammar. `from_env` refuses each spelling of the address of each interface.

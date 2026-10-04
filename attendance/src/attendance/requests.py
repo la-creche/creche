@@ -331,7 +331,7 @@ def _since(raw: dict[str, Any], family: str) -> datetime | None:
 
 def _dispatch_key(raw: dict[str, Any], family: str) -> str | None:
     """§13.4.4's key, at contract 04 §4.1's own 128 character cap."""
-    key = _optional_text(raw, "idempotency_key")
+    key = _stored_text(raw, "idempotency_key")
 
     if key is None:
         return None
@@ -383,7 +383,7 @@ def read_steer(raw: dict[str, Any], family: str, session: str) -> str:
 
 
 def read_stop_reason(raw: dict[str, Any], family: str, session: str) -> str:
-    reason = _optional_text(raw, "reason") or "user_stopped"
+    reason = _stored_text(raw, "reason") or "user_stopped"
 
     if len(reason) > REASON_MAX:
         raise _bad("reason is over its limit", family=family, session=session)
@@ -438,7 +438,7 @@ def read_switch(raw: dict[str, Any]) -> SwitchRequest:
         family=family,
         to=to_sandbox,
         mode=mode,
-        reason=_optional_text(raw, "reason") or "",
+        reason=_stored_text(raw, "reason") or "",
         outgoing=_optional_text(raw, "from"),
         deadline_s=_bounded(_optional_int(raw, "deadline_s"), 300, 1, 3600, "deadline_s"),
     )
@@ -467,6 +467,19 @@ def _optional_text(raw: dict[str, Any], name: str) -> str | None:
     return _utf8_text(value) if isinstance(value, str) and value else None
 
 
+def _stored_text(raw: dict[str, Any], name: str) -> str | None:
+    """A text that reaches a file and the event stream only.
+
+    Four texts are read here: the reason of a stop, the reason of a switch,
+    the name of a trigger and the key of a dispatch. Each file and each line
+    of the stream holds the JSON escape of one half of a surrogate pair, so
+    nothing raises on such a text. The service took it before `_utf8_text`
+    came, and it still does. A refusal here is a decision of the owner.
+    """
+    value = raw.get(name)
+    return value if isinstance(value, str) and value else None
+
+
 def _utf8_text(text: str) -> str:
     """The text, or `bad_request` for a text that has no UTF-8 form.
 
@@ -477,9 +490,11 @@ def _utf8_text(text: str) -> str:
 
     CONTRACT-QUESTION: contract 02 §3 rule 3 says that a body is JSON and
     does not say what a reader does with such an escape. This reading
-    refuses the body for each text that a parser reads, and takes such an
-    escape in a member that no parser reads. The other reading replaces the
-    character, which changes a text that a door sent.
+    refuses the body for each text that an answer, a line of the channel or
+    a byte count can hold. It takes such an escape in the four texts of
+    `_stored_text`, and in a member that no parser reads. The other reading
+    replaces the character, which changes a text that a door sent. A
+    refusal of the four texts too costs four call sites.
     """
     try:
         text.encode("utf-8")
@@ -652,7 +667,7 @@ def _trigger(
 
     return Trigger(
         kind=kind,
-        name=_optional_text(typed, "name"),
+        name=_stored_text(typed, "name"),
         fired_at=_fired_at(_optional_text(typed, "fired_at"), family, session),
         chain=_chain(typed.get("chain"), kind, family, session),
     )

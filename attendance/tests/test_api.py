@@ -456,6 +456,10 @@ NOT_JSON_ERROR = {
     "turn": None,
     "detail": {},
 }
+OTHER_SANDBOX = "chat-s2"
+JOB_FAMILY = "issue-worker"
+JOB_SANDBOX = "issue-worker-s1"
+JOB_SESSION = "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
 DELEGATION = {
     "caller_family": FAMILY,
     "target_family": FAMILY,
@@ -488,7 +492,6 @@ TURN_TEXTS: dict[str, dict[str, object]] = {
     "owui_message_id": {"owui": {"chat_id": "c", "message_id": "@"}},
     "owui_user_message_id": {"owui": {"chat_id": "c", "message_id": "m", "user_message_id": "@"}},
     "owui_parent_id": {"owui": {"chat_id": "c", "message_id": "m", "parent_id": "@"}},
-    "trigger_name": {"trigger": {"kind": "timer", "name": "@"}},
     "wait": {"wait": "accepted@"},
 }
 
@@ -507,11 +510,6 @@ OTHER_TEXTS: dict[str, tuple[str, Principal, dict[str, object]]] = {
         Principal.DOOR_DISPATCH,
         {**DELEGATION, "target_family": "chat@"},
     ),
-    "dispatch_key": (
-        "/dispatch",
-        Principal.DOOR_DISPATCH,
-        {**DELEGATION, "idempotency_key": "@"},
-    ),
     "jobs_caller": ("/dispatch/jobs", Principal.DOOR_DISPATCH, {"caller_family": "chat@"}),
     "jobs_session": (
         "/dispatch/jobs",
@@ -522,11 +520,6 @@ OTHER_TEXTS: dict[str, tuple[str, Principal, dict[str, object]]] = {
         "/internal/switch-sandbox",
         Principal.CAREGIVER,
         {"family": "chat@", "to": SANDBOX, "mode": "drain"},
-    ),
-    "switch_reason": (
-        "/internal/switch-sandbox",
-        Principal.CAREGIVER,
-        {"family": FAMILY, "to": SANDBOX, "mode": "drain", "reason": "@"},
     ),
 }
 
@@ -576,8 +569,8 @@ async def test_a_text_with_no_utf8_form_is_refused_on_each_route(
     assert answer.json()["error"] == NOT_JSON_ERROR
 
 
-async def test_a_steer_and_a_stop_text_with_no_utf8_form_are_refused(rig: Rig) -> None:
-    """The turn runs on. A stop with a reason that is a text then ends it."""
+async def test_a_steer_text_with_no_utf8_form_is_refused(rig: Rig) -> None:
+    """The turn runs on."""
     await rig.create()
     head = rig.head(Principal.DOOR_OWUI)
     started = await rig.client.post(
@@ -585,17 +578,105 @@ async def test_a_steer_and_a_stop_text_with_no_utf8_form_are_refused(rig: Rig) -
     )
     turn = f"{rig.path()}/turns/{started.json()['turn']}"
     steered = await rig.client.post(f"{turn}/steer", content=_body(message="@"), headers=head)
-    stopped = await rig.client.post(f"{turn}/stop", content=_body(reason="@"), headers=head)
     session = await rig.client.get(rig.path(), headers=head)
-    ended = await rig.client.post(f"{turn}/stop", json={"reason": "enough"}, headers=head)
 
     assert steered.status_code == HTTP_BAD_REQUEST
     assert steered.json()["error"] == NOT_JSON_ERROR
-    assert stopped.status_code == HTTP_BAD_REQUEST
-    assert stopped.json()["error"] == NOT_JSON_ERROR
     assert session.json()["state"] == "running"
-    assert ended.status_code == HTTP_OK
-    assert ended.json()["state"] == "aborted"
+
+
+# Four texts reach a file and the event stream only, and each of those holds
+# the escape. The service took such a text before, and it still does.
+
+
+async def test_a_stop_reason_with_no_utf8_form_is_read(rig: Rig) -> None:
+    """The stop ends the turn, and each later read of the session answers."""
+    await rig.create()
+    head = rig.head(Principal.DOOR_OWUI)
+    started = await rig.client.post(
+        f"{rig.path()}/turns", json={"prompt": PROMPT, "wait": "accepted"}, headers=head
+    )
+    turn = f"{rig.path()}/turns/{started.json()['turn']}"
+    stopped = await rig.client.post(f"{turn}/stop", content=_body(reason="enough@"), headers=head)
+    session = await rig.client.get(rig.path(), headers=head)
+    events = await rig.client.get(f"{rig.path()}/events?follow=false", headers=head)
+
+    assert stopped.status_code == HTTP_OK
+    assert stopped.json()["state"] == "aborted"
+    assert session.status_code == HTTP_OK
+    assert events.status_code == HTTP_OK
+    assert f'"message":"enough{HALF_PAIR}"' in events.text
+
+
+async def test_a_switch_reason_with_no_utf8_form_is_read(rig: Rig) -> None:
+    """The switch ends the turn of the old sandbox with that reason."""
+    await rig.create()
+    head = rig.head(Principal.DOOR_OWUI)
+    await rig.client.post(
+        f"{rig.path()}/turns", json={"prompt": PROMPT, "wait": "accepted"}, headers=head
+    )
+    await (await _await_playpen(rig)).next_start()
+    write_status(rig.config.state_root, sandboxes=((SANDBOX, "ready"), (OTHER_SANDBOX, "ready")))
+    body = _body(family=FAMILY, to=OTHER_SANDBOX, mode="interrupt", reason="removed@")
+    body = body.replace(b'{"family"', b'{"from":"' + SANDBOX.encode() + b'","family"')
+    switched = await rig.client.post(
+        "/internal/switch-sandbox", content=body, headers=rig.head(Principal.CAREGIVER)
+    )
+    session = await rig.client.get(rig.path(), headers=head)
+    events = await rig.client.get(f"{rig.path()}/events?follow=false", headers=head)
+
+    assert switched.status_code == HTTP_OK
+    assert switched.json()["turns_aborted"] == 1
+    assert session.status_code == HTTP_OK
+    assert events.status_code == HTTP_OK
+    assert f'"message":"removed{HALF_PAIR}"' in events.text
+
+
+async def test_a_trigger_name_with_no_utf8_form_is_read(rig: Rig) -> None:
+    """The turn starts, and the session and the list still answer."""
+    write_status(
+        rig.config.state_root,
+        family=JOB_FAMILY,
+        kind="autonomous",
+        sandboxes=((JOB_SANDBOX, "ready"),),
+    )
+    head = rig.head(Principal.DOOR_TRIGGER)
+    path = f"{SESSIONS}/{JOB_FAMILY}/{JOB_SESSION}"
+    await rig.client.post(
+        SESSIONS, json={"family": JOB_FAMILY, "session": JOB_SESSION}, headers=head
+    )
+    body = _body(prompt=PROMPT, wait="accepted", trigger={"kind": "timer", "name": "nightly@"})
+    started = await rig.client.post(f"{path}/turns", content=body, headers=head)
+    session = await rig.client.get(path, headers=head)
+    listed = await rig.client.get(SESSIONS, headers=rig.head(Principal.VIEW_RO))
+
+    assert started.status_code == HTTP_ACCEPTED
+    assert session.status_code == HTTP_OK
+    assert session.json()["turns_total"] == 1
+    assert listed.status_code == HTTP_OK
+
+
+async def test_a_dispatch_key_with_no_utf8_form_is_read(rig: Rig) -> None:
+    """A repeat with the same key finds the job, and the job list answers."""
+    write_status(
+        rig.config.state_root,
+        family=JOB_FAMILY,
+        kind="autonomous",
+        sandboxes=((JOB_SANDBOX, "ready"),),
+        accepts_dispatch=True,
+    )
+    head = rig.head(Principal.DOOR_DISPATCH)
+    body = _body(**{**DELEGATION, "target_family": JOB_FAMILY, "idempotency_key": "morning-@"})
+    first = await rig.client.post("/dispatch", content=body, headers=head)
+    second = await rig.client.post("/dispatch", content=body, headers=head)
+    jobs = await rig.client.post("/dispatch/jobs", json={"caller_family": FAMILY}, headers=head)
+
+    assert first.status_code == HTTP_OK
+    assert first.json()["created"] is True
+    assert second.status_code == HTTP_OK
+    assert second.json() == {**first.json(), "created": False}
+    assert jobs.status_code == HTTP_OK
+    assert [job["session"] for job in jobs.json()["jobs"]] == [first.json()["session_id"]]
 
 
 async def test_a_text_with_a_whole_surrogate_pair_is_read(rig: Rig) -> None:

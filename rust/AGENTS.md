@@ -734,8 +734,10 @@ Rules for the test:
      no `Infinity`. It holds no lone surrogate in a key or in a text that a
      parser reads, and no bytes of a surrogate. The Python parsers refuse a
      lone surrogate in a text that a parser reads, and in the key of a label.
-     The Python reader accepts one in each other key, and it accepts the
-     bytes of a surrogate in a member that no parser reads.
+     They take one in four texts that reach a file only: the reason of a
+     stop, the reason of a switch, the name of a trigger and the key of a
+     dispatch. The Python reader accepts one in each other key, and it
+     accepts the bytes of a surrogate in a member that no parser reads.
   2. A JSON text nests 128 levels at most.
   3. A number of a query has the digits 0 to 9 only.
   4. A sequence number fits 64 bits. The body of a `pi_event` holds an
