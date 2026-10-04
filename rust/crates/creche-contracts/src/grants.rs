@@ -5,6 +5,10 @@
 //! |---|---|
 //! | [`GrantFile`] | The grant file of one family, version 2: read by the chaperone, written by the caregiver. |
 //! | [`CallBody`], [`ApprovalBody`] | The two request bodies of the chaperone, with their HTTP statuses. |
+//! | [`AuditRecord`], [`UnidentifiedRecord`] | One line of each of the two logs of the chaperone. |
+//! | [`Claimed`] | The three advisory headers of a request. |
+//! | [`Decision`], [`Reason`], [`AuditOutcome`] | The words of a decision. |
+//! | [`Allowed`] | The proof that a decision allowed a call. A sketch for the port of the chaperone. |
 //!
 //! Each reader here does what the Python code does with the same bytes, and
 //! each writer writes the same bytes. `vectors/data/chaperone` records the
@@ -107,13 +111,23 @@ macro_rules! bounded_text {
     };
 }
 
+mod audit;
 mod body;
+mod decision;
 mod file;
 mod issue;
 mod json;
 
+pub use audit::{
+    AUDIT_TEXT_MAX_CHARS, ArgsDigest, AuditAction, AuditRecord, AuditTime, AuditTimeError, Claimed,
+    ClaimedHeader, DELEGATION_ID_HEADER, DroppedHeader, RawClaimed, SESSION_ID_HEADER,
+    SandboxEvidence, TURN_ID_HEADER, Unidentified, UnidentifiedRecord, UnidentifiedRequest,
+};
 pub use body::{
     ApprovalBody, Arguments, BODY_MAX_BYTES, BodyError, CallBody, CallTool, CallToolError, Verdict,
+};
+pub use decision::{
+    AfterAllow, Allowed, AuditOutcome, Decision, Executor, Gate, Reason, UnknownReason,
 };
 pub use file::{
     ActionName, ActionNameError, DEFAULT_MAX_INFLIGHT_DELEGATIONS, DEFAULT_MAX_OPEN_GATES,
