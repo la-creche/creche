@@ -107,7 +107,11 @@ def _renderer(config: Config) -> Callable[[Request, str, dict[str, object]], HTM
             "verb_save": VERB_SAVE,
         }
 
-        return HTMLResponse(template.render(**shared, **body))
+        text = template.render(**shared, **body)
+
+        # JSON can escape one half of a surrogate pair, and a reader keeps
+        # it. UTF-8 has no form for it, so the page shows the escape.
+        return HTMLResponse(text.encode("utf-8", "backslashreplace"))
 
     return render
 

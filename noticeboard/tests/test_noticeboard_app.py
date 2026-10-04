@@ -39,6 +39,9 @@ CHAT = "chat"
 OWUI = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 HOST = "noticeboard.example.test"
 
+#: A text that holds one half of a surrogate pair. JSON writes it as an escape.
+HALF_PAIR = "a\ud800b"
+
 
 class Harness:
     def __init__(self, client: TestClient, config: Config, fake: FakeAttendance) -> None:
@@ -183,6 +186,23 @@ def test_a_malformed_state_file_renders_a_report_not_a_stack_trace(board: Harnes
     assert answer.status_code == 200
     assert "not JSON" in answer.text
     assert "Traceback" not in answer.text
+
+
+def test_a_text_with_half_a_surrogate_pair_renders_as_its_escape(board: Harness) -> None:
+    """JSON can escape one half of a surrogate pair, and UTF-8 has no form
+    for it. The page shows the escape."""
+    from noticeboard_helpers import audit_line, status_doc, write_audit_day, write_json
+
+    write_json(board.config.families_dir / "chat" / "status.json", status_doc(kind=HALF_PAIR))
+    write_audit_day(board.config.audit_dir, "2026-09-19", [audit_line(args={"query": HALF_PAIR})])
+
+    home = board.get("/")
+    audit = board.get("/audit")
+
+    assert home.status_code == 200
+    assert "a\\ud800b" in home.text
+    assert audit.status_code == 200
+    assert "a\\ud800b" in audit.text
 
 
 def test_a_missing_state_file_renders_a_report(board: Harness) -> None:
