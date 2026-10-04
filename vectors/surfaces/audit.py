@@ -1,11 +1,13 @@
-"""The two logs of the chaperone (contract 04 §6): one line per record.
+"""The two logs of the chaperone (contract 04 §6), and its reasons (§5).
 
-Two surfaces:
+Three surfaces:
 
 - `chaperone.audit_line`: the fields of one audit record v2 to the exact
   line that `FamilyAudit.write` appends.
 - `chaperone.unidentified_line`: one request that names no family to the
   exact line that the chaperone appends to its other log.
+- `chaperone.reason`: one text to the HTTP status of an answer with that
+  reason, or to a refusal when the text is not a reason.
 
 Each record holds the time of the write. The generator gives the two
 modules that read the clock a clock of its own, so a vector holds no time
@@ -27,6 +29,7 @@ import chaperone.audit as audit_module
 import chaperone.family_audit as family_audit_module
 from chaperone.app import MAX_REQUEST_BODY_BYTES, CallBody, PepConfig, create_app
 from chaperone.family_audit import AuditEntry, FamilyAudit, Outcome, Sandbox
+from chaperone.family_decisions import FAMILY_DENY_STATUS
 from chaperone.headers import Claimed
 from starlette.testclient import TestClient
 
@@ -39,6 +42,7 @@ from vectors.core import (
     attempt,
     normalize,
     raised,
+    refused,
     text_input,
 )
 from vectors.surfaces.grants import BodyReader, call_reader
@@ -261,6 +265,13 @@ RECORDS: Final[tuple[Record, ...]] = (
         ),
     ),
     Record(
+        "args-floats-between-two-decimals",
+        call=_body(
+            "embed",
+            '{"a":1160972656570364.25,"b":1160972656570364.75,"c":2000000000000000.25,"d":2.5}',
+        ),
+    ),
+    Record(
         "args-floats-not-finite",
         call=_body("embed", '{"a":NaN,"b":Infinity,"c":-Infinity,"d":1e400,"e":-1e400}'),
     ),
@@ -428,6 +439,42 @@ def _request_vector(request: Request, scratch: Path) -> Vector:
     return accepted(request.id, given, file=name, output=text_input(raw.decode("utf-8")))
 
 
+# --- the reasons ---------------------------------------------------------------------
+
+#: Texts that are not a reason of an answer, each with the id of its vector.
+#: The first three are the reason of an audit record that is not a denial.
+NOT_REASONS: Final = (
+    ("granted", "granted"),
+    ("approved", "approved"),
+    ("approval-required", "approval_required"),
+    ("body-too-large", "body_too_large"),
+    ("unknown-gate", "unknown_gate"),
+    ("empty", ""),
+    ("upper-case", "Unknown_Token"),
+    ("hyphen", "unknown-token"),
+    ("space-first", " unknown_token"),
+    ("newline-last", "unknown_token\n"),
+    ("decision-allow", "allow"),
+    ("decision-deny", "deny"),
+)
+
+
+def _reason_vectors() -> tuple[Vector, ...]:
+    statuses = {str(reason): status for reason, status in FAMILY_DENY_STATUS.items()}
+    reasons = tuple(
+        accepted(reason.replace("_", "-"), text_input(reason), http_status=status)
+        for reason, status in statuses.items()
+    )
+    others = tuple(
+        accepted(f"not-a-reason-{name}", text_input(text), http_status=statuses[text])
+        if text in statuses
+        else refused(f"not-a-reason-{name}", text_input(text))
+        for name, text in NOT_REASONS
+    )
+
+    return (*reasons, *others)
+
+
 _NOTE_TIME: Final = (
     "args.at_us is the time of the write: microseconds after 1970-01-01T00:00:00Z. The "
     "generator gives the entry point a clock that answers this time."
@@ -493,5 +540,18 @@ def surfaces() -> tuple[Surface, ...]:
                 "those bytes.",
             ),
             vectors=requests,
+        ),
+        Surface(
+            name="chaperone.reason",
+            path="chaperone/reason.json",
+            entry="chaperone.family_decisions.FAMILY_DENY_STATUS",
+            contract=f"{CONTRACT} §5, §6.1",
+            notes=(
+                "The input is one text. An accepted vector is a reason of an answer that "
+                "is not HTTP 200, and http_status is the status of that answer.",
+                "A refused vector is a text that is not such a reason.",
+                "The surface holds each reason that the entry point holds.",
+            ),
+            vectors=_reason_vectors(),
         ),
     )
