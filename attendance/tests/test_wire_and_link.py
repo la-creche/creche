@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import json
+import logging
 import os
 import sys
 import warnings
@@ -654,6 +655,23 @@ async def test_close_drops_the_channel_after_a_loop_died(tmp_path: Path) -> None
     await link.close()
 
     assert link.is_open is False
+
+
+async def test_a_loop_that_dies_says_so_at_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The log names the fault when the loop ends, not at the next `close`."""
+    events = FailingRecorder()
+    link, playpens = make_link(tmp_path, events)
+    await link.ensure_open(dial(), 7)
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        await playpens[SANDBOX].send_raw(LOG_LINE)
+        await asyncio.wait_for(_until(lambda: "the log callback failed" in caplog.text), 2.0)
+
+    assert link.is_open is True
+    assert f"task reader {FAMILY} ended with an error" in caplog.text
+    await link.close()
 
 
 async def test_a_dead_reader_still_ends_in_channel_lost(tmp_path: Path) -> None:

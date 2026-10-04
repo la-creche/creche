@@ -2,10 +2,14 @@
 
 One write that fails must not end the task. A task that ended would stop the
 sync and the gate poll until the process restarts, and nothing would say so.
+
+The last tests here are about each other task the service starts. A task
+that ends with an error says so in the log.
 """
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import json
 import logging
@@ -15,6 +19,7 @@ from typing import Any
 
 import pytest
 from attendance.auth import Principal
+from attendance.channel import Channel, SandboxDial
 from attendance.clock import now, rfc3339
 from attendance.faults import FaultCode
 from attendance.journal import Journal
@@ -23,6 +28,7 @@ from attendance.paths import audit_file, fault_file
 from attendance.requests import CreateRequest, RunTurnRequest
 from attendance.service import SessionService
 from attendance.states import SessionState
+from attendance.tasks import report_failure
 from attendance_harness import (
     CHAT_SESSION,
     FAMILY,
@@ -243,3 +249,55 @@ def test_one_journal_that_cannot_sync_does_not_stop_the_next(
     assert len(synced) == 2
     monkeypatch.undo()
     journal.close_all()
+
+
+async def _fails() -> None:
+    raise RuntimeError("the work failed")
+
+
+async def test_a_task_that_fails_says_so(caplog: pytest.LogCaptureFixture) -> None:
+    """The event loop keeps the error of a task that nothing awaits."""
+    task = asyncio.create_task(_fails(), name="the work")
+    task.add_done_callback(report_failure)
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+
+    assert "task the work ended with an error" in caplog.text
+    assert "the work failed" in caplog.text
+
+
+async def test_a_cancelled_task_is_not_a_failure(caplog: pytest.LogCaptureFixture) -> None:
+    """`close()` cancels each task that the service owns."""
+    task = asyncio.create_task(asyncio.sleep(60), name="the work")
+    task.add_done_callback(report_failure)
+    task.cancel()
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+
+    assert caplog.text == ""
+
+
+async def test_a_pre_start_that_raises_says_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Contract 03 §4.7 rule 11. A pre-start costs the caller nothing, and its
+    fault still reaches the log."""
+    config = make_config(tmp_path)
+    write_status(config.state_root)
+
+    def broken(dial: SandboxDial) -> Channel:
+        raise RuntimeError("the factory failed")
+
+    service = SessionService(config, factory=broken, cold_start_wait_s=1.0)
+    service.start()
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=CHAT_SESSION))
+        await wait_until(lambda: "the factory failed" in caplog.text)
+
+    assert f"task pre-start {FAMILY}/{CHAT_SESSION} ended with an error" in caplog.text
+    await service.close()

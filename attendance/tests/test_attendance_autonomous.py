@@ -7,7 +7,9 @@ the host, `sbx` or a live `attendance`.
 
 from __future__ import annotations
 
+import errno
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -567,6 +569,28 @@ async def test_the_record_names_a_failure(tmp_path: Path) -> None:
 
     assert record["status"] == "failed"
     assert record["error"] == "the model refused"
+    await harness.stop()
+
+
+async def test_a_follow_up_that_raises_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Nothing awaits the removal of a finished job. Its fault reaches the log."""
+    harness = await build(tmp_path)
+    harness.create()
+    live = await harness.run(None)
+
+    def failing(family: str, session: str) -> None:
+        raise OSError(errno.EACCES, "the directory stays")
+
+    monkeypatch.setattr(harness.service.store, "delete", failing)
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        await harness.settle(live)
+        await wait_until(lambda: "the directory stays" in caplog.text)
+
+    assert "task follow-up ended with an error" in caplog.text
+    monkeypatch.undo()
     await harness.stop()
 
 

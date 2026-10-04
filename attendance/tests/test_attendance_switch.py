@@ -478,6 +478,32 @@ async def test_a_refused_switch_is_retried_not_replayed(tmp_path: Path) -> None:
     await harness.stop()
 
 
+async def test_a_refused_switch_with_no_caller_is_retried(tmp_path: Path) -> None:
+    """A refused run is forgotten, with a caller or with none.
+
+    The caller leaves before the run ends, and the run is then refused. No
+    caller is there to forget the run. The retry must start a run of its own.
+    """
+    harness = SwitchHarness(tmp_path)
+    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan(fatal="control_mount_unwritable"))
+    harness.create(FIRST)
+    call = harness.switch()
+    await asyncio.sleep(0)
+    call.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await call
+
+    await wait_until(lambda: NEXT_SANDBOX in harness.fleet.dials)
+    await asyncio.sleep(NOT_YET_S)
+
+    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan())
+    body = await asyncio.wait_for(harness.switch(), 2.0)
+
+    assert body["switched"] is True
+    await harness.stop()
+
+
 async def test_a_new_sandbox_alone_moves_no_turn(tmp_path: Path) -> None:
     """Contract 05 §4.2 rule 1a. The §5 call is what moves new turns.
 

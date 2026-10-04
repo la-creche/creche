@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import functools
 import logging
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
@@ -86,7 +87,8 @@ from .requests import (
 from .states import SessionKind, TurnState, can_move, is_terminal
 from .store import SessionStore
 from .streams import Follow, StreamEnd, StreamHub
-from .switching import SwitchBook, SwitchOutcome, SwitchTally, switch_key
+from .switching import SwitchBook, SwitchKey, SwitchOutcome, SwitchRun, SwitchTally, switch_key
+from .tasks import report_failure
 from .terminal import Exchange, pair
 from .turns import LiveTurn, TurnBook, text_delta
 from .wire import (
@@ -276,7 +278,8 @@ class SessionService:
         self._owui.start()
 
         if self._upkeep is None:
-            self._upkeep = asyncio.create_task(self._flush_loop())
+            self._upkeep = asyncio.create_task(self._flush_loop(), name="upkeep")
+            self._upkeep.add_done_callback(report_failure)
 
     async def _flush_loop(self) -> None:
         """Contract 02 §8.3: fsync at least every 2 seconds.
@@ -997,19 +1000,37 @@ class SessionService:
         if found is not None:
             return await asyncio.shield(found)
 
-        run = asyncio.create_task(self._run_switch(request))
+        run = asyncio.create_task(self._run_switch(request), name=f"switch {request.family}")
+        run.add_done_callback(functools.partial(self._switch_ended, key))
         self._switches.remember(key, run)
 
-        try:
-            # A caller that disconnects changes nothing (invariant 4): the
-            # switch is the platform's, not the HTTP request's.
-            return await asyncio.shield(run)
-        except Exception:
-            # A refusal is not an outcome to repeat. `CancelledError` is not
-            # caught here: it means this caller went away, not that the run
-            # inside the shield failed.
+        # A caller that disconnects changes nothing (invariant 4): the
+        # switch is the platform's, not the HTTP request's.
+        return await asyncio.shield(run)
+
+    def _switch_ended(self, key: SwitchKey, run: SwitchRun) -> None:
+        """Forget a run that did not switch. A refusal is not an outcome to
+        repeat.
+
+        This is a done-callback of the run, not a handler in the caller. The
+        caller can leave before the run ends, and a failed run that no caller
+        forgot would answer each repeat with the first refusal.
+        """
+        if run.cancelled():
+            return
+
+        error = run.exception()
+
+        if error is None:
+            return
+
+        if self._switches.find(key) is run:
             self._switches.forget(key)
-            raise
+
+        # A refusal reaches the caller as its answer. Any other error has no
+        # reader when the caller left, so it reaches the log.
+        if not isinstance(error, ApiError):
+            report_failure(run)
 
     def _check_switch(self, request: SwitchRequest) -> None:
         """Contract 05 §5.3 rule 8, plus the family the document must know.
@@ -1423,13 +1444,14 @@ class SessionService:
         the caller decides what an undone follow-up costs it.
         """
         try:
-            task = asyncio.create_task(work)
+            task = asyncio.create_task(work, name="follow-up")
         except RuntimeError:
             work.close()
             return False
 
         self._followups.add(task)
         task.add_done_callback(self._followups.discard)
+        task.add_done_callback(report_failure)
         return True
 
     async def _start_waiting(self, waiting: Waiting, status: FamilyStatus) -> None:
@@ -1477,7 +1499,9 @@ class SessionService:
         work runs behind this call.
         """
         try:
-            task = asyncio.create_task(self._open_session(family, session, status))
+            task = asyncio.create_task(
+                self._open_session(family, session, status), name=f"pre-start {family}/{session}"
+            )
         except RuntimeError:
             # No event loop, so no channel either. §4.7 rule 11: a pre-start
             # that cannot happen costs the next turn pi's cold start and
@@ -1489,6 +1513,7 @@ class SessionService:
         # the reference, and `close()` is where it ends.
         self._pre_starts.add(task)
         task.add_done_callback(self._pre_starts.discard)
+        task.add_done_callback(report_failure)
 
     async def _open_session(self, family: str, session: str, status: FamilyStatus) -> None:
         """Contract 03 §4.7 rules 10 and 11. Every failure here is survivable.
@@ -1584,7 +1609,10 @@ class SessionService:
             self._settle(live, TurnState.FAILED, TurnReason.CHANNEL_LOST, str(error))
             return
 
-        live.deadline_task = asyncio.create_task(self._watch_deadline(live))
+        live.deadline_task = asyncio.create_task(
+            self._watch_deadline(live), name=f"deadline {family}/{session}"
+        )
+        live.deadline_task.add_done_callback(report_failure)
 
     async def _watch_deadline(self, live: LiveTurn) -> None:
         """Contract 02 §12 rule 4. The playpen runs its own deadline too."""
@@ -1952,13 +1980,16 @@ class SessionService:
             return
 
         try:
-            task = asyncio.create_task(self._send_entry_read(family, session))
+            task = asyncio.create_task(
+                self._send_entry_read(family, session), name=f"terminal read {family}/{session}"
+            )
         except RuntimeError:
             _LOG.info("no terminal read for %s/%s: no running loop", family, session)
             return
 
         self._entry_tasks.add(task)
         task.add_done_callback(self._entry_tasks.discard)
+        task.add_done_callback(report_failure)
 
     async def _send_entry_read(self, family: str, session: str) -> None:
         """Contract 03 §4.8. One read, and every failure is survivable."""
