@@ -33,6 +33,7 @@ const OWNER_ONLY: u32 = 0o700;
 /// mode `0700`, and returns its path.
 ///
 /// A test of a command runner starts the script in place of a real program.
+/// The function has no Python origin.
 ///
 /// The file holds the line `#!/bin/sh` and then `script`. The function adds
 /// that line to each script, so `script` holds only the commands.

@@ -25,6 +25,8 @@ use tokio::time::Instant;
 /// [`FixedClock::advance`]. [`FixedClock::set`] moves only the wall time, as
 /// an operator does who sets the clock of the host.
 ///
+/// The type has no Python origin.
+///
 /// ```
 /// use std::sync::Mutex;
 /// use std::time::{Duration, SystemTime};
@@ -116,6 +118,8 @@ impl Clock for FixedClock {
 ///
 /// In a runtime whose time is not paused, the clock runs with the clock of
 /// the host, from the wall time that the test gave.
+///
+/// The type has no Python origin.
 ///
 /// ```
 /// use std::time::{Duration, SystemTime};

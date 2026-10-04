@@ -808,6 +808,9 @@ enum RawChunk {
 
 /// Each row of `vectors/data/index.json`, in the order of the file.
 ///
+/// The function has no Python origin. `vectors/generate.py` writes the
+/// index.
+///
 /// # Errors
 ///
 /// [`VectorsError`] for an index that the reader cannot read, and for a
@@ -817,6 +820,9 @@ pub fn index() -> Result<Vec<IndexRow>, VectorsError> {
 }
 
 /// The vector file of the surface `name`. The index gives the path.
+///
+/// The function has no Python origin. `render` of `vectors/core.py` writes
+/// the file.
 ///
 /// # Errors
 ///

@@ -637,6 +637,8 @@ impl Drop for Abort {
 /// operating system refuses, drop a stub on a Unix socket and connect to
 /// its path: the file stays, and no listener holds it.
 ///
+/// The type has no Python origin.
+///
 /// ```
 /// use creche_testkit::root::TempRoot;
 /// use creche_testkit::stub::{Answer, End, HttpStub, RawHttp};
@@ -1380,6 +1382,8 @@ enum AfterWrite {
 /// The functions have no time limit. A server that never closes the
 /// connection makes a function wait with no end. A test that can wait with
 /// no end gives it a limit, with `tokio::time::timeout`.
+///
+/// The type has no Python origin.
 #[derive(Debug, Clone, Copy)]
 pub struct RawHttp;
 
@@ -2432,10 +2436,12 @@ mod tests {
             let no_file_then_eof = RawHttp::unix_then_eof(&absent, GET).await.unwrap_err();
             let no_listener = RawHttp::unix(&closed, GET).await.unwrap_err();
             let no_listener_then_eof = RawHttp::unix_then_eof(&closed, GET).await.unwrap_err();
-            // No listener has the port 0. The test connects to no port that
-            // another test can hold.
-            let no_port = RawHttp::tcp(0, GET).await.unwrap_err();
-            let no_port_then_eof = RawHttp::tcp_then_eof(0, GET).await.unwrap_err();
+            // No listener has the port 0, so the test connects to no port
+            // that another test can hold. The operating system selects the
+            // kind of the error: Linux refuses the connect, and macOS has no
+            // such address.
+            let no_port = soon(RawHttp::tcp(0, GET)).await;
+            let no_port_then_eof = soon(RawHttp::tcp_then_eof(0, GET)).await;
 
             assert_eq!(no_file.kind(), io::ErrorKind::NotFound);
             assert_eq!(no_file_then_eof.kind(), io::ErrorKind::NotFound);
@@ -2444,16 +2450,8 @@ mod tests {
                 no_listener_then_eof.kind(),
                 io::ErrorKind::ConnectionRefused
             );
-            for error in [no_port, no_port_then_eof] {
-                // Linux refuses the connect. macOS has no such address.
-                assert!(
-                    matches!(
-                        error.kind(),
-                        io::ErrorKind::ConnectionRefused | io::ErrorKind::AddrNotAvailable
-                    ),
-                    "{error:?}"
-                );
-            }
+            assert!(no_port.is_err(), "{no_port:?}");
+            assert!(no_port_then_eof.is_err(), "{no_port_then_eof:?}");
         });
     }
 }

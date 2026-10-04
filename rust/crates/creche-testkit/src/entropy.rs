@@ -19,6 +19,8 @@ use creche_runtime::entropy::{Entropy, EntropyError};
 /// continues from one call of `fill` to the next call, so two mints never
 /// get the same bytes.
 ///
+/// The type has no Python origin.
+///
 /// ```
 /// use std::sync::Mutex;
 ///

@@ -15,7 +15,8 @@ use tower::ServiceExt;
 
 /// Gives `request` to `router` and returns its answer.
 ///
-/// A test of a handler needs no listener and no client for that.
+/// A test of a handler needs no listener and no client for that. The
+/// function has no Python origin.
 ///
 /// The function adds no layer. A handler that panics thus makes the test
 /// panic, unless the test gives a router with the edge layer of
