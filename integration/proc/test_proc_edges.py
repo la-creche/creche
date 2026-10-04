@@ -71,7 +71,8 @@ from proc_standins import set_pi_env
 from proc_tree import FAMILY
 from proc_trigger import TriggerStack, hook_path
 
-#: The five services that listen, in the order of the service table.
+#: The five services that listen. The other two rows of the service table,
+#: the terminal door and `caregiver`, do not listen.
 LISTENERS = (
     Service.ATTENDANCE,
     Service.DOOR_OWUI,

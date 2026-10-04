@@ -171,7 +171,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
-| `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
+| `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a JSON body with no `Content-Type` header, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
 | `test_proc_standin_programs.py` | none | each rule of a stand-in program that a scenario relies on |
