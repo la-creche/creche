@@ -61,6 +61,7 @@ did.
 | an oversized or invalid payload | `fire`: exit 2. `serve`: `413` or `400`. |
 | `attendance` cannot be reached | `fire`: exit 2, a different message than a refusal. `serve`: `502 attendance_unreachable`. |
 | a route refresh fails | the listener logs the failure and keeps the last route table |
+| the first route refresh fails | the listener logs the failure and starts with no route. Each call answers `404` until a refresh passes. |
 | a failure of `serve` that no handler names | `500 internal` in the error shape of the listener. The log holds the traceback. |
 | a `quiet:` family's cron firing finds nothing changed | exit 0, no session |
 
@@ -120,3 +121,6 @@ is `door-owui`'s. Basenames are unique across the workspace. Run
   listener answers `502 attendance_unreachable` when `attendance` does not
   answer. It answers `500 internal` for a failure that no handler names
   (`errors.py`, `webhooks.py`).
+- `spec.md` §3.6 and contract 05 §6.4 rule 6 give no rule for a first route
+  refresh that fails. The listener starts with no route and logs the
+  failure. The periodic refresh then fills the table (`webhooks.py`).
