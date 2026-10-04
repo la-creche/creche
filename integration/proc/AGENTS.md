@@ -369,8 +369,15 @@ failure. Work down this list.
   machine. No scenario declares one.
 - **The stand-ins copy facts that no test of this suite can check.** The
   `sbx` stand-in follows the facts that `caregiver/src/caregiver/driver.py`
-  records about the real program. The LiteLLM stand-in refuses a second key
-  for one alias. No probe of the real service proves that.
+  records about the real program.
+- **CONTRACT-QUESTION, `sbx create` with a name that exists.** Contract 05
+  §10 row 7 leaves it open. The `sbx` stand-in fails that create. A change
+  costs one check in `standin_sbx.py` and its test.
+- **CONTRACT-QUESTION, a second key for one alias.** Contract 05 §6.3 has
+  two keys for one alias during a rotation. Contract 05 §10 row 5 says that
+  no probe of LiteLLM shows that it takes the second one. The LiteLLM
+  stand-in refuses it. A change costs one check in `standin_litellm.py` and
+  its test.
 - **No scenario for `rotate` and for `apply-once`.** Each is a verb of
   `caregiver` with no scenario here.
 - **The two seams of `integration/tests_manager` with a bridge are not

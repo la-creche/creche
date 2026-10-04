@@ -16,7 +16,8 @@ Two forms exist:
 
 alone
     `caregiver` and its three stand-ins. No `attendance` answers the switch
-    call, so each sandbox stays `creating` (contract 05 §4.2 rule 4).
+    call, so each sandbox stays `creating` (contract 05 §4.2 rule 4). A
+    scenario that reads a grant through the chaperone adds the chaperone.
 the house
     `caregiver`, `attendance`, the Open WebUI door and the chaperone. A test
     plays Open WebUI at the door, and it plays a sandbox at the chaperone.

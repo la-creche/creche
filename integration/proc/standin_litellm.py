@@ -133,6 +133,11 @@ class KeyStore:
     def _generate(self, body: dict[str, Any], keys: dict[str, dict[str, Any]]) -> Answer:
         alias = str(body.get("key_alias", ""))
 
+        # CONTRACT-QUESTION: contract 05 §6.3 has a second key for one alias
+        # during a rotation, and §10 row 5 says that no probe of the real
+        # service shows that it takes one. Reading taken: it refuses. A
+        # `caregiver` that deletes the old key first passes with each
+        # reading. A change costs this one check and its test.
         if not alias or alias in keys:
             return HTTP_BAD_REQUEST, {"error": "the alias is empty or holds a key"}
 

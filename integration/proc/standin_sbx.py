@@ -140,6 +140,11 @@ def _create(state: Path, rest: list[str]) -> int:
     _hold(state, f"create-{name}")
     vm = _vm_file(state, name)
 
+    # CONTRACT-QUESTION: contract 05 §10 row 7 leaves open what `sbx create`
+    # does with a name that exists. Reading taken: it fails. Contract 05
+    # §4.1 never uses an id again, so a `caregiver` that follows the
+    # contract never meets this branch. A change costs this one check and
+    # its test.
     if vm.exists():
         raise Refused(f"sandbox {name} already exists")
 
