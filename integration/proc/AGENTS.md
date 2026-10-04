@@ -237,7 +237,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
     Read the lease and the exit code. Do not assert on a sentence that the
     program shows, unless a contract gives the sentence.
 20. A scenario that needs pi on a terminal starts on a session that ran a
-    turn and that no terminal held before. The first two Known gaps of the
+    turn and that no terminal held before. The first four Known gaps of the
     terminal door say why.
 
 ## The `caregiver` topology
@@ -507,24 +507,27 @@ the text of the failure. Work down this list.
   does not wait (contract 03 §4.7 rules 8 and 9). The terminal door creates
   the session, takes the lease and asks `attendance` to release that process
   (contract 02 §5.11). The start is not complete then, so `attendance`
-  answers `released: false` and sends nothing. The order of the next two
-  events changes from run to run. When the launcher looks first, two pi
-  processes hold one session store. When the playpen starts its process
-  first, the launcher exits 8. The cause is in the product, and this suite
-  changes no product code. `test_ct_a_new_session_exists_before_pi_runs`
-  asserts only what holds in each order.
+  answers `released: false` and sends nothing. The cause is in the product,
+  and this suite changes no product code.
+- **The result of a terminal on a new session changes from run to run.**
+  The launcher and the playpen act in an order that no rule fixes. When the
+  launcher looks first, two pi processes hold one session store. When the
+  playpen starts its process first, the launcher exits 8.
+  `test_ct_a_new_session_exists_before_pi_runs` asserts only what holds in
+  each order.
 - **The answer to a release comes before the end of the pi process.**
   `attendance` answers `released: true` when it sent `stop_process`
   (contract 02 §5.11). The pi process ends later. A launcher that looks
   immediately can find the process and exit 8. On the host `sbx exec -it`
   takes longer than the end of pi. Here the launcher starts in about
-  100 ms. A pi process that runs and waits ends in less time, so a scenario
-  on a session that ran a turn is safe. A pi process that just started
-  needs more time. The playpen starts one when a `tui` lease ends
-  (contract 02 §10.5). So the result of a second terminal directly after a
-  first one also changes from run to run.
-  `test_force_takes_an_idle_lease_from_another_terminal` stops at the lease
-  for that reason.
+  100 ms.
+- **A second terminal directly after a first one can exit 8.** A pi process
+  that runs and waits ends before the launcher looks, so a scenario on a
+  session that ran a turn is safe. A pi process that just started needs
+  more time. The playpen starts one when a `tui` lease ends
+  (contract 02 §10.5). So the result of the second terminal changes from run
+  to run. `test_force_takes_an_idle_lease_from_another_terminal` stops at
+  the lease for that reason.
 - **CONTRACT-QUESTION, the exit code of a refusal of the terminal door.** No
   contract names one. Contract 03 §7.6 names the codes of the launcher, and
   the suite asserts that the door passes code 10 through. For a refusal of
@@ -535,10 +538,10 @@ the text of the failure. Work down this list.
   The suite holds the rule of `door-tui/AGENTS.md`: a signal releases the
   lease and never ends pi. A change costs three assertions in one scenario
   of `test_proc_tui_terminal.py`.
-- **No scenario for a lease that is renewed or that expires.** The terminal
-  door renews every 20 seconds, and the lease of `attendance` lives 60
-  seconds (contract 02 §7.1, §7.4). Neither number has a variable, so each
-  scenario would wait that long.
+- **No scenario for a renewal or an expiry of a lease.** The terminal door
+  renews every 20 seconds, and the lease of `attendance` lives 60 seconds
+  (contract 02 §7.1, §7.4). Neither number has a variable, so each scenario
+  would wait that long.
 - **The pi stand-in is not the interactive pi.** On a terminal it reads one
   command per line, and it ends at the end of the input. No scenario says
   what the real pi does with a key.
@@ -553,16 +556,28 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the answers of the webhook listener.**
   `docs/rework/spec.md` §7.3 and §11.5 give the 202 and the one 404. No
   contract gives the body of the 202, or the status of another refusal. The
-  suite holds what the old stage 5 suite holds. The 202 names the session
-  and the state. A body over the limit gets 413. A body that is not JSON
-  gets 400. A refusal of `attendance` keeps the status of contract 02 §14. A
-  change costs one assertion per scenario in `test_proc_trigger_webhooks.py`.
+  suite holds what the old stage 5 suite holds. A change costs one assertion
+  per scenario in `test_proc_trigger_webhooks.py`.
+- **What the suite holds for the webhook listener.** The 202 names the
+  session and the state. A body over the limit gets 413. A body that is not
+  JSON gets 400. A refusal of `attendance` keeps the status of
+  contract 02 §14.
 - **No chaperone beside the trigger door.** Three things have no scenario
   for that reason. The quiet check reads the board and the jobs of a family
   through the chaperone (contract 01 §3.15, wake reasons 2 and 4). A gated
   call of a job waits for a phone (contract 04 §8). The old stage 5 suite
   holds the gate scenarios inside one test process. Here they need a
   stand-in for the approval transport, and the bridge on the path.
+- **No scenario for the `enqueue` verb.** A family calls `enqueue` at the
+  chaperone (contract 04 §4.1), and the chaperone calls `POST /dispatch` of
+  `attendance` (contract 02 §13.4). `integration/tests/test_eq_enqueue.py`
+  holds those scenarios in one test process. A scenario here needs a grant
+  file with the verb, and a status document with `triggers.enqueue: true`.
+  `write_grants` and `write_status` of `proc_tree.py` write neither.
+- **No scenario for a copy into Open WebUI.** Contract 02 §10.4 writes a
+  session that a terminal made into Open WebUI. The old stage 4 suite holds
+  those scenarios with an object in the test process in the place of Open
+  WebUI. Here they need a stand-in program for Open WebUI, and none exists.
 - **The floor of the quiet check has no scenario.** `floor_hours` is 1 hour
   at least, and the door has no variable for its clock. A scenario would
   wait one hour.
@@ -576,15 +591,17 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the markup of a page of the noticeboard.**
   `docs/rework/spec.md` §8.1 says what each page shows. No contract gives
   the markup. The suite reads the markup of the templates as the interface.
-  It finds a table by its class, and a cell by the text of its column head.
-  It finds a report by the classes `problem`, `problems` and `issues`. A
-  change of the markup costs the names in `test_proc_board_pages.py` and
+  A change of the markup costs the names in `test_proc_board_pages.py` and
   `test_proc_board_edit.py`.
+- **The names that the suite reads in the markup.** The suite finds a table
+  by its class, and a cell by the text of its column head. It finds a report
+  by the classes `problem`, `problems` and `issues`.
 - **CONTRACT-QUESTION, the answer to a save of the noticeboard.**
   `docs/rework/spec.md` §8.2 says what a save writes. No section gives the
   answer to the browser. The suite holds the answer of the noticeboard as it
-  is: a 303 to the page of the family, with the start of the commit id in
-  `saved`. A change costs three assertions in `test_proc_board_edit.py`.
+  is. That answer is a 303 to the page of the family, with the start of the
+  commit id in `saved`. A change costs three assertions in
+  `test_proc_board_edit.py`.
 - **A save of the noticeboard ends at the commit.** No `caregiver` runs, so
   no scenario proves that a saved family file converges.
 - **The state of an ended process.** The harness reads it from `/proc` on
