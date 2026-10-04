@@ -88,6 +88,49 @@ def test_nothing_gains_a_write_bit(tmp_path: Path) -> None:
     assert _mode(script) & 0o022 == 0
 
 
+def _file_with_mode(tree: Path, name: str, mode: int) -> Path:
+    path = tree / name
+    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    path.chmod(mode)
+
+    return path
+
+
+def test_no_file_keeps_a_bit_that_changes_who_runs_it(tmp_path: Path) -> None:
+    """A build can leave a set-user-ID bit on a file. The pass kept it and
+    gave everyone read and execute, in a tree that root installs. No file
+    keeps that bit, the set-group-ID bit or the sticky bit."""
+    tree = tmp_path / "chaperone.new"
+    tree.mkdir()
+    program = _file_with_mode(tree, "program", 0o755 | stat.S_ISUID)
+    others = [
+        _file_with_mode(tree, "group", 0o755 | stat.S_ISGID),
+        _file_with_mode(tree, "sticky", 0o644 | stat.S_ISVTX),
+    ]
+    # The system can refuse the other two bits to this account. The first
+    # one it gives to the owner of a file.
+    assert _mode(program) & stat.S_ISUID
+
+    _installer().normalize_modes(tree)
+
+    assert _mode(program) == 0o755
+    assert [_mode(one) for one in others] == [0o755, 0o644]
+
+
+def test_no_file_keeps_a_write_bit_for_group_or_other(tmp_path: Path) -> None:
+    """Rule 5 of `install.py`: root alone writes a staged tree. A build can
+    leave a file that its group or everyone can write."""
+    tree = tmp_path / "chaperone.new"
+    tree.mkdir()
+    data = _file_with_mode(tree, "data", 0o666)
+    program = _file_with_mode(tree, "program", 0o777)
+
+    _installer().normalize_modes(tree)
+
+    assert _mode(data) == 0o644
+    assert _mode(program) == 0o755
+
+
 def test_a_symlink_inside_the_tree_is_never_followed(tmp_path: Path) -> None:
     """`chmod` follows a symlink to its target, and a relocatable venv's
     tree can hold one that points outside the tree being staged — a system

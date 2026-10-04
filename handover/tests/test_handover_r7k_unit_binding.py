@@ -34,7 +34,12 @@ from typing import cast
 import pytest
 from handover.catalog import CATALOG, CATALOG_BY_NAME
 from handover.executor.drain import Counter, handle
-from handover.executor.install import PROGRAM_KINDS, Installer, exec_start_programs
+from handover.executor.install import (
+    MAX_UNIT_BYTES,
+    PROGRAM_KINDS,
+    Installer,
+    exec_start_programs,
+)
 from handover.executor.live_state import installed_version
 from handover.executor.spool import DONE_DIR, Spool
 from handover.executor.steps import Wiring
@@ -375,6 +380,65 @@ def test_a_unit_with_no_exec_start_is_refused(bench: Bench) -> None:
 
     assert "refused" in result
     assert bench.ledger()["refused_check"] == UNIT_CODE
+
+
+# -- a unit file longer than the cap -------------------------------------------
+
+FILLER = "# filler\n"
+
+
+def _over_the_cap(bench: Bench) -> str:
+    """A unit file longer than the cap. Its first program is in the tree.
+    Its last `ExecStart=` line is after the cap and starts one that is
+    not."""
+    filler = FILLER * (MAX_UNIT_BYTES // len(FILLER) + 1)
+    first = _unit_text(f"{bench.tree()}/bin/chaperone")
+
+    return f"{first}{filler}ExecStart=/opt/creche/.venv/bin/chaperone\n"
+
+
+def _stage_detail(bench: Bench) -> str:
+    rows = cast("list[dict[str, object]]", bench.ledger()["steps"])
+
+    return next(str(row["detail"]) for row in rows if row["name"] == "stage")
+
+
+def test_an_installed_unit_over_the_cap_stops_the_stage(bench: Bench) -> None:
+    """The unit rule read the first 64 KiB of the file and judged that. A
+    line after the cap started a program that the rule never saw."""
+    _install_unit(bench, _over_the_cap(bench))
+    _serve(bench)
+
+    result = _release(bench)
+
+    assert "failed" in result
+    assert "is longer than" in _stage_detail(bench)
+    assert installed_version(bench.tree()) == LIVE_VERSION
+    assert not bench.run.ran("restart")
+
+
+def test_a_staged_unit_over_the_cap_stops_the_stage(bench: Bench) -> None:
+    """The same file, where the release carries it and step 9 would put it
+    in force."""
+    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/chaperone"))
+    _serve(bench, staged_unit=_over_the_cap(bench))
+
+    result = _release(bench)
+
+    assert "failed" in result
+    assert "is longer than" in _stage_detail(bench)
+    assert installed_version(bench.tree()) == LIVE_VERSION
+
+
+def test_a_unit_at_the_cap_is_read_whole(bench: Bench) -> None:
+    """The cap stops a file that is longer, and no file that fits."""
+    text = _unit_text(f"{bench.tree()}/bin/chaperone")
+    text += "#" * (MAX_UNIT_BYTES - len(text) - 1) + "\n"
+    assert len(text.encode("utf-8")) == MAX_UNIT_BYTES
+    _install_unit(bench, text)
+    _serve(bench)
+
+    assert "succeeded" in _release(bench), bench.reason()
 
 
 # -- reading `ExecStart=` ------------------------------------------------------

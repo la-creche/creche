@@ -252,7 +252,7 @@ def _object_of(raw: bytes | None) -> dict[str, object] | None:
 
     try:
         body = json.loads(raw)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return None
 
     if not isinstance(body, dict):
@@ -296,7 +296,13 @@ def read_marker(path: Path) -> Marker:
     if isinstance(at, bool) or not isinstance(at, int | float):
         return Marker()
 
-    return Marker(seen=seen, asked=asked, request_id=request_id, asks=asks, asked_at=float(at))
+    # A whole number past the largest float has no float.
+    try:
+        asked_at = float(at)
+    except OverflowError:
+        return Marker()
+
+    return Marker(seen=seen, asked=asked, request_id=request_id, asks=asks, asked_at=asked_at)
 
 
 def write_marker(path: Path, marker: Marker) -> None:

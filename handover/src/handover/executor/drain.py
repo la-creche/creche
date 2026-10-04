@@ -86,6 +86,7 @@ KEPT_ENV: Final = frozenset({"PATH", "HOME", "LANG", "LC_ALL", "TZ"})
 RATE_REASON: Final = f"more than {MAX_PENDING_PER_REQUESTER} requests from one requester"
 REPLAY_REASON: Final = "the id was already spent"
 UNREADABLE_REASON: Final = "not a plain file root will read"
+UNNAMED_READ_REASON: Final = "the reader raised an error that it does not name"
 
 LOG_PREFIX: Final = "handover"
 
@@ -164,6 +165,13 @@ def handle(spool: Spool, name: str, wiring: Wiring, counter: Counter) -> str:
         return f"rejected ({UNREADABLE_REASON}) -> rejected/{spool.quarantine(name, stamp)}"
     except Refusal as refusal:
         return _refuse_unparsed(spool, name, request_id, refusal.detail)
+    except Exception as exc:
+        # §2.4 row 1: a file that is no parseable request goes to
+        # `rejected/` whole. An error that left here kept the file in
+        # `requests/`, and the path unit then started the pass again.
+        said = f"{UNNAMED_READ_REASON}: {type(exc).__name__}"
+
+        return f"rejected ({said}) -> rejected/{spool.quarantine(name, stamp)}"
 
     if counter.over_limit(request.requested_by):
         spool.drop_request(name)

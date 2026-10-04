@@ -98,6 +98,32 @@ def test_the_id_sorts_by_time() -> None:
     assert new_ulid(NOW) < new_ulid(NOW + 1.0)
 
 
+@pytest.mark.parametrize(
+    "given",
+    [
+        pytest.param("not-a-ulid", id="words"),
+        pytest.param("01k5j8m2q7v3x9r4t6n0b8c2de", id="lower-case"),
+        pytest.param("01K5J8M2Q7V3X9R4T6N0B8C2D", id="25-characters"),
+        pytest.param("01K5J8M2Q7V3X9R4T6N0B8C2DE\n", id="a-final-line-feed"),
+    ],
+)
+def test_a_given_id_that_is_no_ulid_is_refused(given: str) -> None:
+    """The id is the name of the file that `file_request` writes, so it has
+    the grammar of a ULID, as an id that the requester mints has."""
+    with pytest.raises(Refusal) as raised:
+        plan_request({"chaperone": "2.1.0"}, requested_by="human", now=NOW, request_id=given)
+
+    assert raised.value.code is RefusalCode.REQUEST
+    assert raised.value.detail == "field 'id' is malformed"
+
+
+def test_a_given_ulid_is_the_id_of_the_request() -> None:
+    given = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
+    request = plan_request({"chaperone": "2.1.0"}, requested_by="human", now=NOW, request_id=given)
+
+    assert request.id == given
+
+
 # -- what the requester refuses before the tap -----------------------------
 
 

@@ -20,8 +20,9 @@ A reviewer should find each of these either enforced below or refused.
 
 1. The file is at most `MAX_SERVER_BYTES`. The cap is applied to the BYTES,
    before the parse, never after.
-2. It is a YAML mapping, loaded with `safe_load`. No tag, no anchor cycle and
-   no Python object can come out of that.
+2. It is a YAML mapping, loaded with the safe loader of PyYAML. No tag, no
+   anchor cycle and no Python object can come out of that. The loader has
+   a bound on merge keys (`boundedyaml.load`).
 3. Its top-level keys are exactly `REQUIRED_KEYS`, plus any of
    `OPTIONAL_KEYS`, and nothing else. An unknown key is a refusal, not a
    value that is quietly dropped: contract 01b's field set is closed, and a
@@ -88,13 +89,20 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, cast
 
-import yaml
-
+from .boundedyaml import MergeLimits, load
 from .errors import Refusal, RefusalCode, safe_token
 
 #: Contract 01b §8.2's real file is about 4 KiB. 64 KiB leaves room for a
 #: long `tools` list and refuses anything that is not a declaration.
 MAX_SERVER_BYTES: Final = 64 * 1024
+
+#: What the merge keys of one server file can copy (`boundedyaml.py`).
+#:
+#: CONTRACT-QUESTION: contract 01b gives no limit for a merge key. The
+#: reading taken is the two limits of the Rust reader of this file, so that
+#: the two readers refuse the same text. No server file needs a merge key.
+#: Another number costs one line here and one line in the Rust reader.
+MERGE_LIMITS: Final = MergeLimits(depth=400, pairs=100_000)
 
 SERVER_FILE_NAME: Final = "server.yaml"
 
@@ -458,7 +466,7 @@ def _one_share(name: str, value: Any, secrets: tuple[str, ...]) -> SharedSecret:
 def _mapping(directory: str, raw: bytes) -> dict[str, Any]:
     # Each error of the reader, as `manifest.parse_manifest` takes it.
     try:
-        loaded: Any = yaml.safe_load(raw.decode("utf-8"))
+        loaded: Any = load(raw.decode("utf-8"), MERGE_LIMITS)
     except Exception:
         raise _refuse(directory, "server.yaml is not readable YAML") from None
 
