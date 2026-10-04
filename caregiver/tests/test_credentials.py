@@ -107,6 +107,18 @@ def test_read_creds_of_content_that_does_not_read_is_none(tmp_path: Path, raw: b
     assert read_creds(path) is None
 
 
+@pytest.mark.parametrize("epoch", ["Infinity", "-Infinity", "1e999"])
+def test_read_creds_of_an_epoch_with_no_integer_is_none(tmp_path: Path, epoch: str) -> None:
+    """The reader says that it never raises. An epoch that is a float with
+    no integer value is a refusal, as an epoch that is not a number is."""
+    path = tmp_path / "creds.json"
+    path.write_text(
+        f'{{"epoch": {epoch}, "litellm_key": "sk-x", "pep_token": "tok", "written_at": "w"}}',
+        encoding="utf-8",
+    )
+    assert read_creds(path) is None
+
+
 def test_read_creds_of_a_json_list_is_none(tmp_path: Path) -> None:
     path = tmp_path / "creds.json"
     path.write_text("[1, 2, 3]", encoding="utf-8")

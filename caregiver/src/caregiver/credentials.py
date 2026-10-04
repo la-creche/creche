@@ -97,6 +97,12 @@ def read_creds(path: Path) -> Credentials | None:
     if fields is None:
         return None
 
+    # CONTRACT-QUESTION: contract 03 section 12 gives `epoch` as an integer
+    # and the other three fields as text. It has no rule for a file that
+    # holds another type. This reader keeps the lax reading it had: `int`
+    # and `str` convert the value, so `true` reads as 1 and a number reads
+    # as its text. A strict reader refuses such a file. The next pass then
+    # mints a new key and a new token, and the epoch starts again at 1.
     try:
         return Credentials(
             epoch=int(fields["epoch"]),
@@ -106,7 +112,8 @@ def read_creds(path: Path) -> Credentials | None:
             previous_pep_token=_optional(fields.get("previous_pep_token")),
             previous_expires_at=_optional(fields.get("previous_expires_at")),
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
+        # OverflowError is `int` of a float that is not finite.
         return None
 
 

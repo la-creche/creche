@@ -164,3 +164,6 @@ Nothing here touches a real sandbox or LiteLLM.
 - `apply-once` publishes no chaperone fault (`apply.py`).
 - `settle` and `rotate_serving` write token digests while a family file is
   invalid. Contract 05 §3.1 and §6.3 do not agree on this (`loop.py`).
+- `read_creds` converts a field with `int` and `str`. It reads `true` as
+  epoch 1. Contract 03 §12 gives no rule for a field of another type
+  (`credentials.py`).
