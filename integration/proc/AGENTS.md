@@ -634,7 +634,7 @@ the text of the failure. Work down this list.
   same applies when `/proc` lists a process and does not give the state of
   that process.
 - **The suite declares no dependency of its own.** The suite imports PyYAML
-  and `httpx`. The `dev` group of the root `pyproject.toml` names neither
+  and `httpx`, and the `dev` group of the root `pyproject.toml` names neither
   one. The product packages bring both into the venv. When the last package
   that needs one of the two leaves the workspace, the suite stops at its
   imports. Add the name to the `dev` group in the pull request that removes

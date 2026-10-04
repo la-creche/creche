@@ -92,8 +92,9 @@ from what the Python code does.
 
 A scoped run for a path under `integration/proc/` runs the process-level
 suite in a pytest process of its own, on four workers. Such a path does not
-start the full suite, because the full suite holds no test of that directory.
-A push with no other path runs no other suite.
+start the full suite, because the full suite holds no test in that directory.
+A push with no other path runs no other suite. One test of `bin/tests` reads
+`integration/proc/proc_services.py`. CI runs it.
 
 - The gate sets `CRECHE_PROC_NO_SKIP=1` for that run, as the `proc` job does.
   A test that needs the playpen bundle then fails when the bundle is missing.
