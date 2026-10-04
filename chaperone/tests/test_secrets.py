@@ -50,3 +50,48 @@ def test_sops_failure_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setattr(subprocess, "run", _fake_sops("", returncode=1))
     with pytest.raises(SecretsError):
         load_sops_secrets(tmp_path / "s.enc.yaml")
+
+
+#: A value that the decrypted file holds. It must reach no error text.
+LEAK = "LEAK-5d1e77a0"
+
+#: The pairs of the mapping that `_merged` merges, and the count of merges
+#: that copies as many pairs as the reader takes.
+PAIRS = 256
+MERGES_AT_THE_LIMIT = 256
+
+
+def _merged(merges: int, *, at_root: bool) -> str:
+    """A monolith that merges one mapping of `PAIRS` names `merges` times:
+    into the file itself, or into the value of one name."""
+    names = ", ".join(f"k{n}: {LEAK}" for n in range(PAIRS))
+    aliases = ", ".join(["*a"] * merges)
+    merge = f"<<: [{aliases}]"
+
+    return f"base: &a {{{names}}}\n" + (f"{merge}\n" if at_root else f"other: {{{merge}}}\n")
+
+
+def test_merge_keys_at_the_limit_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(subprocess, "run", _fake_sops(_merged(MERGES_AT_THE_LIMIT, at_root=True)))
+
+    found = load_sops_secrets(tmp_path / "s.enc.yaml")
+
+    assert found == {f"k{n}": LEAK for n in range(PAIRS)}
+
+
+@pytest.mark.parametrize("at_root", [True, False], ids=["in-the-file", "in-a-value"])
+def test_merge_keys_past_the_limit_are_a_file_that_will_not_parse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, at_root: bool
+) -> None:
+    """The error names a line and nothing of the content, as each other
+    error of this reader does."""
+    text = _merged(MERGES_AT_THE_LIMIT + 1, at_root=at_root)
+    monkeypatch.setattr(subprocess, "run", _fake_sops(text))
+
+    with pytest.raises(SecretsFormatError) as caught:
+        load_sops_secrets(tmp_path / "s.enc.yaml")
+
+    assert "merge keys past a limit at line 1, column 7" in str(caught.value)
+    assert LEAK not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__

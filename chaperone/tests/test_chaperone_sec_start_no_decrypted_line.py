@@ -78,6 +78,14 @@ def _start(tmp_path: Path, **pep_env: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+#: A monolith whose merge keys copy one mapping of 256 names 257 times: 256
+#: more pairs than the reader takes (`bounded_yaml`). It is the one case of
+#: `NOT_YAML` that no hand edit makes.
+PAST_THE_MERGE_LIMIT: Final = (
+    f"base: &a {{{', '.join(f'k{n}: {LEAK}' for n in range(256))}}}\n"
+    f"<<: [{', '.join(['*a'] * 257)}]\n"
+)
+
 #: A decrypted monolith that will not parse, and where it breaks. Each one
 #: is a real way a hand edit goes wrong.
 NOT_YAML: Final = (
@@ -120,6 +128,11 @@ NOT_YAML: Final = (
         f"kagi_api_key: {'[' * 5000}{LEAK}\n",
         "nested deeper than YAML can parse",
         id="deep-nesting",
+    ),
+    pytest.param(
+        PAST_THE_MERGE_LIMIT,
+        "merge keys past a limit at line 1, column 7",
+        id="merge-keys-past-a-limit",
     ),
 )
 

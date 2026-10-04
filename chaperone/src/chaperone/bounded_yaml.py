@@ -31,10 +31,11 @@ import yaml
 #: its own, and so on.
 #:
 #: CONTRACT-QUESTION: `stage7-releases.md` §4.4 gives the roster no limit
-#: for a merge key, and no Rust type reads the text of a roster. The reading
-#: here is the smaller pair of limits of the two Rust YAML readers, which is
-#: the pair of the manifest reader. Root writes the roster with no merge
-#: key. Another number costs one line here and its tests.
+#: for a merge key, and §4.3 gives the secrets file none. No Rust type reads
+#: the text of one of the two. The reading here is the smaller pair of
+#: limits of the two Rust YAML readers, which is the pair of the manifest
+#: reader. Root writes the roster with no merge key. Another number costs
+#: one line here and its tests.
 MERGE_DEPTH_MAX: Final = 128
 
 #: The largest count of pairs that the merge keys of one document copy.

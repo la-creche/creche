@@ -62,7 +62,7 @@ client that can pick its identity kind has picked its own permissions.
 | `audit.py` | append-only daily JSONL, shared by both logs |
 | `fences.py` | upstream argument fences |
 | `mcp_client.py` | the stdio upstream pool, one credential per server |
-| `bounded_yaml.py` | the YAML read of the roster, with two limits on merge keys |
+| `bounded_yaml.py` | the YAML read of the roster and of the secrets file, with two limits on merge keys |
 | `run_as.py` | `chaperone-as`: one child switched to its `mcp-<name>` user before exec |
 | `reload_pool.py`, `reload_wiring.py` | a pool whose roster moves at `SIGHUP` |
 | `secrets.py` | both secret layouts: the monolith and one file per secret |
@@ -230,6 +230,7 @@ Each line is an open contract question and the module it lives in.
   the message of each error only (`app.py`).
 - The log of a request of no family counts a string that is not Unicode
   text as its `surrogatepass` bytes (`app.py`).
-- No contract gives a limit for the merge keys of a roster. The reader
-  takes the two limits of the Rust reader of a manifest: a chain of 128
-  merge keys, and 65,536 copied pairs (`bounded_yaml.py`).
+- No contract gives a limit for the merge keys of a roster or of the
+  secrets file. The two readers take the limits of the Rust reader of a
+  manifest: a chain of 128 merge keys, and 65,536 copied pairs
+  (`bounded_yaml.py`).
