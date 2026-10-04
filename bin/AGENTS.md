@@ -111,6 +111,11 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
   gate names that cause in its line.
 - In `--tests-for` mode a path under `rust/` picks no pytest suite. It is not
   a path in no package, so it does not start the full Python suite.
+- CI takes a wider answer than the hooks. There, a change to a file of the
+  Rust checks also runs `rust-gate.sh`: the script, `lib/rustrule.sh`,
+  `gate.yml`, `release.yml` and the scope action. The tests here use a fake
+  `cargo`, so only that run proves such a change. A commit or a push of those
+  files needs no `cargo`.
 - The `[lints]` check refuses a crate that has no `[lints]` table with the
   line `workspace = true`. Such a crate builds with no lint of the workspace.
   The check also fails when it finds no crate.

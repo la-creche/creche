@@ -203,7 +203,8 @@ jobs:
   # run. The job runs on every code change, and on a change that touches
   # nothing under rust/ every step but the checkout is skipped
   # (bin/lib/rustrule.sh). The job is then a success: a job skipped as a
-  # whole on a code change reads as red in the verdict.
+  # whole on a code change reads as red in the verdict. A change to the Rust
+  # checks themselves, this file included, counts as a change under rust/.
   #
   # The runner has rustup, so no action installs the toolchain.
   # `rustup toolchain install` with no name installs what

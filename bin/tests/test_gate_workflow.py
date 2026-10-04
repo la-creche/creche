@@ -28,9 +28,10 @@ judge the same results differently. Its tag step runs only after that
 verdict, one allocation at a time, and only its last job may write.
 
 The `rust` job runs `bin/rust-gate.sh --tests` for a change that touches
-`rust/` (`bin/lib/rustrule.sh`). On any other code change it skips every
-step but the checkout and is still a success, so `gate` reads green. The
-toolchain is the one `rust/rust-toolchain.toml` names.
+`rust/`, or a file of the Rust checks themselves (`bin/lib/rustrule.sh`). On
+any other code change it skips every step but the checkout and is still a
+success, so `gate` reads green. The toolchain is the one
+`rust/rust-toolchain.toml` names.
 """
 
 from __future__ import annotations
@@ -482,6 +483,16 @@ SCOPES = [
     (["docs/later.md"], ("docs", "false")),
     # The `rust` job is left out of a docs PR, whatever this answer is.
     (["rust/AGENTS.md"], ("docs", "true")),
+    # A file of the Rust checks themselves. The tests of the gate use a fake
+    # cargo, so only this run proves the change with the real one.
+    (["bin/rust-gate.sh"], ("code", "true")),
+    (["bin/lib/rustrule.sh"], ("code", "true")),
+    ([".github/workflows/gate.yml"], ("code", "true")),
+    ([".github/workflows/release.yml"], ("code", "true")),
+    ([".github/actions/scope/action.yml"], ("code", "true")),
+    # The Python half of the gate starts no cargo step of its own in CI.
+    (["bin/quality-gate.sh"], ("code", "false")),
+    ([".github/actions/verdict/action.yml"], ("code", "false")),
 ]
 
 
@@ -550,7 +561,9 @@ def test_the_scope_says_whether_a_change_touches_rust(
     base = _git(checkout, "rev-parse", "HEAD")
     for name in paths:
         (checkout / name).parent.mkdir(parents=True, exist_ok=True)
-        (checkout / name).write_text("changed\n", encoding="utf-8")
+        # One more line, not a new body: the scope sources the two rules.
+        with (checkout / name).open("a", encoding="utf-8") as file:
+            file.write("# changed\n")
     _git(checkout, "add", "-A")
     _git(checkout, "commit", "-q", "-m", "the change")
 

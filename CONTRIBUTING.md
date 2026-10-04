@@ -62,7 +62,9 @@ group. It has five kinds of job:
 3. `playpen`: `pnpm test`, `pnpm run typecheck` and `pnpm run build`.
 4. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
    `rust/rust-toolchain.toml` names. When the pull request changes no path
-   under `rust/`, the job skips those steps and passes.
+   under `rust/`, the job skips those steps and passes. A change to the Rust
+   checks themselves also runs the steps. `rust_gate_path` in
+   `bin/lib/rustrule.sh` lists those files.
 5. `gate`: red unless every other job passed. This is the one check the
    merge queue and the release executor read.
 

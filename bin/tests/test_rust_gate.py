@@ -755,6 +755,55 @@ def test_a_change_under_rust_is_a_rust_change(tree: Tree) -> None:
     assert tree.rule(f"rust_touched {rust} {deleted}") == 0
 
 
+#: A file of the Rust checks that the throwaway repository holds.
+GATE_FILE = RUST_GATE
+
+
+def test_a_change_to_the_rust_checks_runs_them_in_ci(tree: Tree) -> None:
+    """These tests use a fake cargo. A wrong cargo flag in the script would
+    merge with no proof, and the next change under `rust/` would be red for
+    it. So CI counts the script as a Rust change."""
+    base = tree.git("rev-parse", "HEAD")
+    changed = tree.commit(GATE_FILE, "#!/usr/bin/env bash\n")
+
+    assert tree.rule(f"rust_touched {base} {changed}") == 0
+
+
+def test_a_change_to_the_rust_checks_needs_no_cargo_here(tree: Tree) -> None:
+    """Only CI takes the wider answer. A commit or a push of the script
+    passes with no `cargo` on PATH, as every change outside `rust/` does."""
+    with (tree.root / GATE_FILE).open("a", encoding="utf-8") as file:
+        file.write("# staged\n")
+    tree.git("add", "-A")
+
+    commit = tree.run(GATE, cargo=False)
+    push = tree.run(GATE, "--tests-for", GATE_FILE, RULE, cargo=False)
+
+    assert _passed(commit), commit.out + commit.err
+    assert _passed(push), push.out + push.err
+    assert _pytest_calls(push) == [PYTEST]
+
+
+@pytest.mark.parametrize(
+    ("path", "of_checks"),
+    [
+        ("bin/rust-gate.sh", True),
+        ("bin/lib/rustrule.sh", True),
+        (".github/workflows/gate.yml", True),
+        (".github/workflows/release.yml", True),
+        (".github/actions/scope/action.yml", True),
+        ("bin/quality-gate.sh", False),
+        ("bin/lib/docsrule.sh", False),
+        (".github/workflows/retest.yml", False),
+        (".github/actions/verdict/action.yml", False),
+        ("rust/Cargo.toml", False),
+        ("docs/bin/rust-gate.sh", False),
+    ],
+)
+def test_only_these_files_are_the_rust_checks(tree: Tree, path: str, of_checks: bool) -> None:
+    assert (tree.rule(f"rust_gate_path '{path}'") == 0) == of_checks
+
+
 def test_a_change_git_cannot_read_is_a_rust_change(tree: Tree) -> None:
     """A revision this clone lacks, or no base at all: the cargo checks are
     the safe answer."""

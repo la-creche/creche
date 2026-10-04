@@ -1,7 +1,7 @@
 # Sourced only (bin/AGENTS.md, Library): the one copy of "does this change
 # touch the Rust workspace?", shared by bin/quality-gate.sh (per commit and
 # per push), .github/actions/scope (per PR) and release.yml (per merge), so
-# the four cannot drift.
+# the three cannot drift.
 #
 # A change that touches nothing under rust/ runs no cargo step and needs no
 # cargo on PATH: some sessions commit from a sandbox with no Rust toolchain.
@@ -9,6 +9,10 @@
 #
 # Every path under rust/ counts, a .md too. What this cannot read counts as a
 # Rust change: the cargo checks are the safe answer.
+#
+# CI takes a wider answer than the hooks: rust_touched also counts a file of
+# the Rust checks themselves (rust_gate_path). A runner always has cargo, so
+# the wider answer costs no session its commit.
 #
 # Bash 3.2-clean: macOS runs the hook too.
 
@@ -28,7 +32,25 @@ rust_path() {
   return 1
 }
 
-# rust_touched FROM TO: whether a path FROM..TO changes is under rust/.
+# rust_gate_path PATH: whether PATH is a file of the Rust checks themselves:
+# the script, this rule, and the CI files that hold the `rust` job and ask
+# this rule. bin/tests/test_rust_gate.py runs the script with a fake cargo,
+# so a wrong cargo flag passes every test. Only a run with the real cargo
+# proves a change to one of these files.
+rust_gate_path() {
+  case "$1" in
+    bin/rust-gate.sh | bin/lib/rustrule.sh | \
+      .github/workflows/gate.yml | .github/workflows/release.yml | \
+      .github/actions/scope/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+# rust_touched FROM TO: whether CI runs the Rust checks for FROM..TO: a path
+# it changes is under rust/, or is a file of the Rust checks.
 rust_touched() {
   local paths path
 
@@ -38,7 +60,7 @@ rust_touched() {
   fi
 
   while IFS= read -r path; do
-    if rust_path "$path"; then
+    if rust_path "$path" || rust_gate_path "$path"; then
       return 0
     fi
   done <<< "$paths"
