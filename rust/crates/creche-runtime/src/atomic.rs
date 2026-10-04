@@ -1906,6 +1906,11 @@ mod tests {
     const REMOVED_AND_CREATED: &str = "The create refuses a name that exists. The write removes \
         the leftover file and creates its own file.";
 
+    const NO_DIRECTORY_SYNC: &str = "The copy does not sync the directory after the rename.";
+
+    const SYNC_HAS_A_NAME: &str = "DirSync names the choice. A port takes DirSync::Sync, and the \
+        write then syncs the directory.";
+
     /// Each difference on purpose between this module and a Python copy. No
     /// vector covers a write, so a row names the Python lines.
     const DEVIATIONS: &[Deviation] = &[
@@ -1952,10 +1957,21 @@ mod tests {
             holds: a_leftover_is_removed_and_not_written,
         },
         Deviation {
+            python: "handover/src/handover/executor/roster.py:137",
+            copy: WRITTEN_OVER,
+            here: REMOVED_AND_CREATED,
+            holds: a_leftover_is_removed_and_not_written,
+        },
+        Deviation {
             python: "attendance/src/attendance/atomic.py:42-61",
-            copy: "The copy does not sync the directory after the rename.",
-            here: "DirSync names the choice. A port takes DirSync::Sync, and the write then \
-                   syncs the directory.",
+            copy: NO_DIRECTORY_SYNC,
+            here: SYNC_HAS_A_NAME,
+            holds: the_caller_names_the_directory_sync,
+        },
+        Deviation {
+            python: "handover/src/handover/follow/__init__.py:316-325",
+            copy: NO_DIRECTORY_SYNC,
+            here: SYNC_HAS_A_NAME,
             holds: the_caller_names_the_directory_sync,
         },
         Deviation {
@@ -1983,6 +1999,12 @@ mod tests {
             holds: a_failed_write_leaves_no_file,
         },
         Deviation {
+            python: "handover/src/handover/executor/roster.py:137-142",
+            copy: "A write that fails leaves its temporary file.",
+            here: "A write that fails before the rename removes its temporary file.",
+            holds: a_failed_write_leaves_no_file,
+        },
+        Deviation {
             python: "attendance/src/attendance/atomic.py:57",
             copy: MODE_ON_THE_PATH,
             here: MODE_ON_THE_FILE,
@@ -1996,6 +2018,12 @@ mod tests {
         },
         Deviation {
             python: "chaperone/src/chaperone/faults.py:80",
+            copy: MODE_ON_THE_PATH,
+            here: MODE_ON_THE_FILE,
+            holds: the_mode_goes_onto_the_open_file,
+        },
+        Deviation {
+            python: "handover/src/handover/executor/roster.py:138",
             copy: MODE_ON_THE_PATH,
             here: MODE_ON_THE_FILE,
             holds: the_mode_goes_onto_the_open_file,
@@ -2104,16 +2132,15 @@ mod tests {
         assert!(names_in(root.path()).is_empty());
     }
 
-    /// Puts a symlink to the file `private.key` at the path `temp`, as a
-    /// second writer of the directory can.
+    /// Puts a symlink to the file `other.txt` at the path `temp`.
     fn swap_for_a_symlink(temp: &Path) {
         fs::remove_file(temp).unwrap();
-        symlink(temp.with_file_name("private.key"), temp).unwrap();
+        symlink(temp.with_file_name("other.txt"), temp).unwrap();
     }
 
     fn the_mode_goes_onto_the_open_file() {
         let root = TempRoot::new().unwrap();
-        let other = root.path().join("private.key");
+        let other = root.path().join("other.txt");
         fs::write(&other, b"the file of another writer").unwrap();
         fs::set_permissions(&other, Permissions::from_mode(0o600)).unwrap();
         let probe = Probe {

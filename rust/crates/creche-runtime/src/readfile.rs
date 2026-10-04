@@ -1028,6 +1028,28 @@ mod tests {
             holds: a_fifo_is_refused_at_once,
         },
         Deviation {
+            python: "noticeboard/src/noticeboard/jsonfiles.py:49-58",
+            copy: "The open of a directory fails, and the copy gives the text of the system \
+                   error: Is a directory.",
+            here: "The open of a directory succeeds. The read refuses it with NotAFile, which \
+                   holds no text of the system.",
+            holds: a_directory_has_no_system_text,
+        },
+        Deviation {
+            python: "noticeboard/src/noticeboard/jsonfiles.py:49-52",
+            copy: "The copy reads a device as a file. The device /dev/null reads as a file \
+                   with no byte.",
+            here: "A device is not a regular file, and the read refuses it with NotAFile.",
+            holds: a_device_is_refused_and_not_read,
+        },
+        Deviation {
+            python: "handover/src/handover/executor/spool.py:311-351",
+            copy: "The copy also checks the owner of the open file, and it opens the name \
+                   relative to a directory descriptor.",
+            here: "read_capped takes a path, and FileFacts holds no owner.",
+            holds: the_facts_hold_no_owner,
+        },
+        Deviation {
             python: "caregiver/src/caregiver/atomic.py:79-82",
             copy: "The copy has no cap. caregiver/src/caregiver/faults.py:116 reads a fault \
                    file of each size with it.",
@@ -1084,6 +1106,39 @@ mod tests {
         assert_eq!(bytes, b"first");
         assert_eq!(read_facts, first);
         assert_ne!(Some(read_facts), facts(&path));
+    }
+
+    fn a_directory_has_no_system_text() {
+        let root = TempRoot::new().unwrap();
+
+        // `NotAFile` has no field, so the refusal holds no text of the
+        // system.
+        assert_eq!(
+            read_capped(root.path(), cap(8), Follow::Follow),
+            FileRead::Refused(ReadRefusal::NotAFile)
+        );
+    }
+
+    fn a_device_is_refused_and_not_read() {
+        assert_eq!(
+            read_capped(Path::new("/dev/null"), cap(8), Follow::Follow),
+            FileRead::Refused(ReadRefusal::NotAFile)
+        );
+    }
+
+    fn the_facts_hold_no_owner() {
+        let (_root, path) = file_with(b"{}");
+        let (_bytes, read_facts) = taken(read_capped(&path, cap(8), Follow::Refuse));
+
+        // The pattern names each field of the facts. A new field, for
+        // example an owner, does not build here, and the row then changes.
+        let FileFacts {
+            dev: _,
+            ino: _,
+            len: _,
+            modified_ns: _,
+            mode: _,
+        } = read_facts;
     }
 
     fn a_read_stops_one_byte_past_the_cap() {
