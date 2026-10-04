@@ -1,7 +1,7 @@
 """When the quality gate runs cargo, and what it runs.
 
 `bin/quality-gate.sh` runs the Rust checks only for a change that touches
-`rust/` (`bin/lib/rustrule.sh`). Seven things could go wrong without one red
+`rust/` (`bin/lib/rustrule.sh`). Eight things could go wrong without one red
 line, and each gets a check here:
 
 1. **A Python change that needs cargo.** Some sessions commit from a sandbox
@@ -27,11 +27,16 @@ line, and each gets a check here:
    vectors and must still push.
 7. **A product change that moves a vector, found first in CI.** A scoped run
    for a product package carries `vectors/tests` too.
+8. **A locked crate that no check read.** `cargo deny` reads the advisories,
+   the licenses and the sources of the locked crates (`rust/deny.toml`). It
+   needs `cargo-deny`, which rustup does not install. A developer machine
+   without it passes with one line. In CI the same gate fails, so a `rust`
+   job that lost its install step is red.
 
 Everything runs the real gate in a throwaway repository. `uv` and `cargo`
 are fakes that write their argv to a file. PATH holds only those fakes and
 links to the few tools the gate calls, so a `cargo` anywhere on the machine
-cannot reach a run that must not have one.
+cannot reach a run that must not have one. The same holds for `cargo-deny`.
 """
 
 from __future__ import annotations
@@ -63,6 +68,21 @@ CLIPPY = "clippy --workspace --all-targets --locked -- -D warnings"
 TEST = "test --workspace --locked"
 LINT_STEPS = [FMT, CLIPPY]
 TEST_STEPS = [FMT, CLIPPY, TEST]
+
+#: The supply-chain check. It runs after clippy, on a machine that has
+#: `cargo-deny` on PATH.
+DENY = "deny --locked check"
+DENY_LINT_STEPS = [FMT, CLIPPY, DENY]
+DENY_TEST_STEPS = [FMT, CLIPPY, DENY, TEST]
+
+#: The one line of a developer machine with no `cargo-deny`, on stdout.
+NO_DENY = "rust-gate: cargo-deny not on PATH: no `cargo deny` check. CI runs the check"
+
+#: The one line of CI with no `cargo-deny`, on stderr.
+NO_DENY_IN_CI = "rust-gate: cargo-deny not on PATH: CI must run the `cargo deny` check"
+
+#: What a runner sets `CI` to.
+IN_CI = "true"
 
 #: The Python checks of every mode, as the fake `uv` sees them.
 PYTHON_LINT = ["run ruff check .", "run ruff format --check .", "run pyright"]
@@ -103,6 +123,12 @@ if [[ "${1:-}" == "${CARGO_FAIL:-}" ]]; then
 fi
 """
 
+#: The gate asks only whether this program is on PATH. cargo starts it, as
+#: `cargo deny`, so a direct call fails the run.
+FAKE_DENY = """#!/usr/bin/env bash
+exit 1
+"""
+
 FIXTURE = {
     "pyproject.toml": (
         f'[tool.pytest.ini_options]\ntestpaths = [\n    "{SUITE}",\n    "{VECTORS_SUITE}",\n]\n'
@@ -132,11 +158,12 @@ class Run:
 
 @dataclass(frozen=True)
 class Tree:
-    """The throwaway repository, and the two PATHs a run can have."""
+    """The throwaway repository, and the three PATHs a run can have."""
 
     root: Path
     with_cargo: str
     without_cargo: str
+    with_deny: str
 
     def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -172,23 +199,34 @@ class Tree:
 
         return self.git("rev-parse", "HEAD")
 
-    def run(self, script: str, *args: str, cargo: bool = True, fail: str = "") -> Run:
+    def run(
+        self,
+        script: str,
+        *args: str,
+        cargo: bool = True,
+        deny: bool = False,
+        fail: str = "",
+        ci: str = "",
+    ) -> Run:
         """Runs one of the copied scripts. `fail` names a cargo subcommand
-        that exits 1."""
+        that exits 1. `deny` puts `cargo-deny` on PATH beside `cargo`. `ci`
+        is the value of `CI`, and the empty text leaves the variable out."""
         logs = self.root.parent / "logs"
         shutil.rmtree(logs, ignore_errors=True)
         logs.mkdir()
+        path = self.with_cargo if cargo else self.without_cargo
         done = subprocess.run(
             [str(self.root / script), *args],
             env={
-                "PATH": self.with_cargo if cargo else self.without_cargo,
+                "PATH": self.with_deny if deny else path,
                 "UV_LOG": str(logs / "uv"),
                 "CARGO_LOG": str(logs / "cargo"),
                 "CARGO_FAIL": fail,
                 # A temporary directory inside a checkout must not lend the
                 # run that checkout's git state.
                 "GIT_CEILING_DIRECTORIES": str(self.root.parent),
-            },
+            }
+            | ({"CI": ci} if ci else {}),
             cwd=self.root.parent,
             capture_output=True,
             text=True,
@@ -254,11 +292,12 @@ def _fake(path: Path, body: str) -> None:
 def tree(tmp_path: Path) -> Tree:
     """A committed repository with one Python package, the vectors and one
     crate, the real gate copied in, and a PATH with and without the fake
-    cargo."""
+    cargo. A third PATH also holds the fake `cargo-deny`."""
     root = tmp_path / "repo"
     tools = tmp_path / "tools"
     rusty = tmp_path / "rusty"
-    for one in (root, tools, rusty):
+    denying = tmp_path / "denying"
+    for one in (root, tools, rusty, denying):
         one.mkdir()
 
     for name in TOOLS:
@@ -268,10 +307,18 @@ def tree(tmp_path: Path) -> Tree:
 
     _fake(tools / "uv", FAKE_UV)
     _fake(rusty / "cargo", FAKE_CARGO)
+    _fake(denying / "cargo-deny", FAKE_DENY)
 
-    made = Tree(root=root, with_cargo=f"{rusty}:{tools}", without_cargo=str(tools))
+    made = Tree(
+        root=root,
+        with_cargo=f"{rusty}:{tools}",
+        without_cargo=str(tools),
+        with_deny=f"{denying}:{rusty}:{tools}",
+    )
     assert shutil.which("cargo", path=made.without_cargo) is None
     assert shutil.which("cargo", path=made.with_cargo) == str(rusty / "cargo")
+    assert shutil.which("cargo-deny", path=made.with_cargo) is None
+    assert shutil.which("cargo-deny", path=made.with_deny) == str(denying / "cargo-deny")
 
     for name in COPIED:
         (root / name).parent.mkdir(parents=True, exist_ok=True)
@@ -744,6 +791,80 @@ def test_the_rust_gate_without_cargo_fails_with_one_line(tree: Tree) -> None:
     assert done.err.splitlines() == [
         "rust-gate: cargo not on PATH: a change under rust/ needs the Rust toolchain"
     ]
+
+
+# --- the supply-chain check: cargo deny, where cargo-deny is on PATH ---------
+
+
+def _deny_lines(done: Run) -> list[str]:
+    """Every line of a run that names cargo-deny."""
+    return [line for line in (done.out + done.err).splitlines() if "cargo-deny" in line]
+
+
+def test_the_rust_gate_runs_cargo_deny_after_clippy_and_before_the_tests(tree: Tree) -> None:
+    without_tests = tree.run(RUST_GATE, deny=True)
+    with_tests = tree.run(RUST_GATE, "--tests", deny=True)
+
+    assert without_tests.code == 0, without_tests.out + without_tests.err
+    assert without_tests.cargo == DENY_LINT_STEPS
+    assert with_tests.code == 0, with_tests.out + with_tests.err
+    assert with_tests.cargo == DENY_TEST_STEPS
+    assert with_tests.cargo_dirs == {str(tree.root / "rust")}
+    assert _deny_lines(with_tests) == []
+
+
+def test_a_commit_and_a_push_run_cargo_deny_where_it_is(tree: Tree) -> None:
+    """The hooks run the same script, so a machine with `cargo-deny` checks
+    the locked crates before CI does."""
+    _stage(tree)
+
+    commit = tree.run(GATE, deny=True)
+    push = tree.run(GATE, "--tests-for", RUST_PATH, deny=True)
+
+    assert _passed(commit), commit.out + commit.err
+    assert commit.cargo == DENY_LINT_STEPS
+    assert _passed(push), push.out + push.err
+    assert push.cargo == DENY_TEST_STEPS
+
+
+def test_a_machine_with_no_cargo_deny_passes_with_one_line(tree: Tree) -> None:
+    """rustup does not install `cargo-deny`. A developer machine without it
+    runs each other step, and CI runs the check for the same change."""
+    done = tree.run(RUST_GATE, "--tests")
+
+    assert done.code == 0, done.out + done.err
+    assert done.cargo == TEST_STEPS
+    assert _deny_lines(done) == [NO_DENY]
+    assert done.err == ""
+    assert "rust-gate: PASS" in done.out
+
+
+def test_ci_with_no_cargo_deny_fails_and_runs_no_later_step(tree: Tree) -> None:
+    """A `rust` job that lost its install step must be red. A green job
+    there would be a job that checked no locked crate."""
+    done = tree.run(RUST_GATE, "--tests", ci=IN_CI)
+
+    assert done.code == 1
+    assert done.cargo == LINT_STEPS
+    assert done.err.splitlines() == [NO_DENY_IN_CI]
+    assert "rust-gate: PASS" not in done.out
+
+
+def test_ci_with_cargo_deny_runs_the_check(tree: Tree) -> None:
+    done = tree.run(RUST_GATE, "--tests", deny=True, ci=IN_CI)
+
+    assert done.code == 0, done.out + done.err
+    assert done.cargo == DENY_TEST_STEPS
+    assert _deny_lines(done) == []
+
+
+def test_a_failed_cargo_deny_fails_the_gate(tree: Tree) -> None:
+    done = tree.run(GATE, "--tests-for", PYTHON_PATH, RUST_PATH, deny=True, fail="deny")
+
+    assert done.code != 0
+    assert "quality-gate: PASS" not in done.out
+    assert done.cargo == DENY_LINT_STEPS
+    assert _pytest_calls(done) == []
 
 
 #: Crate files that do not take the lint gate.
