@@ -109,6 +109,7 @@ class FatalReason(StrEnum):
     """Why the playpen cannot serve at all (contract 03 §5.7)."""
 
     CONTROL_MOUNT_UNWRITABLE = "control_mount_unwritable"
+    MOUNT_DIR_UNSET = "mount_dir_unset"
     # §3 version rule 2: neither side may make an unknown field fatal, so a
     # reason a newer image invents still lands as a fault the operator sees.
     UNKNOWN = "unknown"

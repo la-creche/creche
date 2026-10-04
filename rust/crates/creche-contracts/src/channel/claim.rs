@@ -161,13 +161,12 @@ impl TurnAddress {
 /// A reader accepts an unknown value as [`FatalClaim::Unknown`]. §3 version
 /// rule 2 forbids a fatal unknown field, so a reason that a newer image sends
 /// is still a fault that the operator sees.
-///
-/// The Python host knows one reason. It reads `mount_dir_unset` of §5.7 as
-/// unknown, and this reader does the same.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FatalClaim {
     /// The control mount is not writable.
     ControlMountUnwritable,
+    /// The environment does not name one of the three directories.
+    MountDirUnset,
     /// Each other value, and no value.
     Unknown,
 }
@@ -178,7 +177,17 @@ impl FatalClaim {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ControlMountUnwritable => "control_mount_unwritable",
+            Self::MountDirUnset => "mount_dir_unset",
             Self::Unknown => "unknown",
+        }
+    }
+
+    /// The reason that a name of the playpen stands for.
+    fn of(name: &str) -> Self {
+        match name {
+            "control_mount_unwritable" => Self::ControlMountUnwritable,
+            "mount_dir_unset" => Self::MountDirUnset,
+            _ => Self::Unknown,
         }
     }
 }
@@ -1335,11 +1344,13 @@ fn entries(record: &JsonObject) -> Result<EntriesLine, Refusal> {
 }
 
 fn fatal(record: &JsonObject) -> FatalLine {
-    let known = FatalClaim::ControlMountUnwritable;
-    let reason = text_of(record, "reason").filter(|reason| reason == known.as_str());
+    let reason = record
+        .get("reason")
+        .and_then(Json::as_text)
+        .and_then(Text::as_str);
 
     FatalLine {
-        reason: reason.map_or(FatalClaim::Unknown, |_| known),
+        reason: reason.map_or(FatalClaim::Unknown, FatalClaim::of),
         message: message_of(record),
     }
 }
@@ -1877,11 +1888,15 @@ pub(super) mod tests {
         else {
             panic!("no fatal line");
         };
+        let PlaypenLine::Fatal(other) = line(r#"{"type":"fatal","reason":"out_of_cheese"}"#) else {
+            panic!("no fatal line");
+        };
 
         assert_eq!(log.level().known(), None);
         assert_eq!(log.level().to_text(), "LOUD");
         assert_eq!(exit.reason().known(), Some(ExitReason::Crashed));
         assert_eq!(exit.reason().to_text(), "crashed");
-        assert_eq!(fatal.reason(), FatalClaim::Unknown);
+        assert_eq!(fatal.reason(), FatalClaim::MountDirUnset);
+        assert_eq!(other.reason(), FatalClaim::Unknown);
     }
 }

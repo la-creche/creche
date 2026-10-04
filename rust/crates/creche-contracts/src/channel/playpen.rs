@@ -1427,8 +1427,7 @@ mod tests {
         assert_eq!(parse(&record(&no_turn)), Err(Refusal::Malformed));
         assert_eq!(parse(&record(&no_nonce)), Err(Refusal::Malformed));
 
-        // The Python host knows no `mount_dir_unset`. It reads it as unknown.
-        assert_eq!(read(&unset)["message"]["reason"], "unknown");
+        assert_eq!(read(&unset)["message"]["reason"], "mount_dir_unset");
     }
 
     #[test]

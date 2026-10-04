@@ -37,6 +37,8 @@ from attendance.wire import (
     REFUSAL_BUDGET,
     EventLine,
     FailedLine,
+    FatalLine,
+    FatalReason,
     LineSplitter,
     LogLine,
     OpenedLine,
@@ -663,6 +665,37 @@ async def test_a_fatal_in_place_of_ready_raises_a_fault(tmp_path: Path) -> None:
     assert faults["faults"][0]["code"] == FaultCode.SANDBOX_START_FAILED.value
     assert faults["faults"][0]["blocks_turns"] is True
     assert "control_mount_unwritable" in faults["faults"][0]["message"]
+    await link.close()
+
+
+@pytest.mark.parametrize("reason", list(FatalReason))
+def test_parse_keeps_each_fatal_reason_of_the_contract(reason: FatalReason) -> None:
+    """Contract 03 §5.7 names two reasons. The host reads each by its name."""
+    fatal = parse(json.dumps({"type": "fatal", "reason": reason.value}))
+
+    assert isinstance(fatal, FatalLine)
+    assert fatal.reason is reason
+
+
+def test_the_fatal_reasons_are_the_reasons_of_the_contract() -> None:
+    assert {reason.value for reason in FatalReason} == {
+        "control_mount_unwritable",
+        "mount_dir_unset",
+        "unknown",
+    }
+
+
+async def test_a_fatal_for_an_unset_mount_names_its_cause(tmp_path: Path) -> None:
+    """§5.7 rule 5: the operator learns the cause from the status document."""
+    events = Recorder()
+    link, _ = make_link(tmp_path, events, plan=PlaypenPlan(fatal="mount_dir_unset"))
+
+    with pytest.raises(PlaypenFatal):
+        await link.ensure_open(dial(), 7)
+
+    faults = json.loads((tmp_path / "faults" / "sessiond" / f"{FAMILY}.json").read_text())
+
+    assert "mount_dir_unset" in faults["faults"][0]["message"]
     await link.close()
 
 
