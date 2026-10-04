@@ -45,7 +45,12 @@ def fingerprint(answer: object) -> str | None:
             entries.append(entry)
 
     joined = " ".join(text for _, text in sorted(entries))
-    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+    try:
+        return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+    except UnicodeEncodeError:
+        # A JSON escape can name one half of a surrogate pair. That text has
+        # no UTF-8 form, so the answer is no survey.
+        return None
 
 
 def _entry(column: str, ticket: object) -> tuple[int, str] | None:

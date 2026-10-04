@@ -102,6 +102,31 @@ def test_a_crafted_chat_id_is_refused() -> None:
         assert caught.value.code in ("bad_id", "missing_chat_id")
 
 
+def test_a_chat_id_is_capped_so_that_its_session_id_fits() -> None:
+    # Contract 02 §2 caps a session id at 128 characters, and the session id
+    # is `owui-<chat id>`.
+    longest = "a" * 123
+
+    assert len(read_ids(_headers(**{CHAT_ID_HEADER: longest})).session) == 128
+
+    with pytest.raises(DoorError) as caught:
+        read_ids(_headers(**{CHAT_ID_HEADER: longest + "a"}))
+
+    assert caught.value.code == "bad_id"
+    assert "123" in caught.value.message
+
+
+def test_a_message_id_keeps_the_cap_of_128_characters() -> None:
+    longest = "a" * 128
+
+    assert read_ids(_headers(**{MESSAGE_ID_HEADER: longest})).message_id == longest
+
+    with pytest.raises(DoorError) as caught:
+        read_ids(_headers(**{MESSAGE_ID_HEADER: longest + "a"}))
+
+    assert caught.value.code == "bad_id"
+
+
 def test_an_id_with_a_trailing_newline_is_refused() -> None:
     # A `$` also matches before a final newline. `\Z` does not. `read_ids`
     # strips the value first, so the check is called directly.
@@ -182,6 +207,27 @@ def test_every_system_message_joins_the_persona() -> None:
     assert request.persona == "first\nsecond"
 
 
+# One half of a surrogate pair. A JSON escape can name it. The text then has
+# no UTF-8 form, and the door sends UTF-8 to `attendance`.
+_HALF_PAIR = "\ud800"
+
+
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [{"role": "user", "content": f"a{_HALF_PAIR}b"}],
+        [{"role": "system", "content": f"a{_HALF_PAIR}b"}, {"role": "user", "content": "go"}],
+    ],
+    ids=["prompt", "persona"],
+)
+def test_a_text_with_no_utf8_form_is_refused(messages: list[dict[str, str]]) -> None:
+    with pytest.raises(DoorError) as caught:
+        parse_chat_request(_body(messages=messages))
+
+    assert caught.value.status == 400
+    assert caught.value.code == "bad_body"
+
+
 def test_a_request_with_no_user_message_is_refused() -> None:
     with pytest.raises(DoorError) as caught:
         parse_chat_request(_body(messages=[{"role": "system", "content": "only a persona"}]))
@@ -224,6 +270,17 @@ def test_a_family_with_a_trailing_newline_is_refused() -> None:
         family_of("agent:chat\n")
 
     assert caught.value.code == "bad_model"
+
+
+def test_a_model_with_no_utf8_form_is_a_refusal_with_one() -> None:
+    # The refusal names the model. A body is UTF-8, so the message must have
+    # a UTF-8 form when the model has none.
+    with pytest.raises(DoorError) as caught:
+        family_of(f"agent:{_HALF_PAIR}")
+
+    assert caught.value.status == 400
+    assert caught.value.code == "bad_model"
+    assert caught.value.message.encode("utf-8")
 
 
 def test_the_models_body_is_openai_shaped() -> None:

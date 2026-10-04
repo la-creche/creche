@@ -74,15 +74,18 @@ class StatusFiles:
             if path.stat().st_size > _MAX_STATUS_BYTES:
                 _LOG.warning("families: %s is too large to be a status document", path)
                 return None
-            raw = path.read_text(encoding="utf-8")
+            raw = path.read_bytes()
         except OSError:
             # A family directory with no readable status document is one
             # `caregiver` has not published yet.
             return None
 
         try:
-            parsed: object = json.loads(raw)
-        except ValueError:
+            parsed: object = json.loads(raw.decode("utf-8"))
+        except (ValueError, RecursionError):
+            # ValueError covers bytes that are not UTF-8, text that is not
+            # JSON and a number past the digit limit of the interpreter. A
+            # document that nests too deep raises RecursionError.
             _LOG.warning("families: %s is not JSON", path)
             return None
 

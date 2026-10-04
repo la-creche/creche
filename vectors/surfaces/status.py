@@ -424,6 +424,7 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
     Document("spend-nan", _TEXT[:-1].encode() + _SPEND_NOT_FINITE.encode()),
     # --- the bytes and the JSON ---
     Document("bytes-empty", b""),
+    Document("bytes-not-utf8", b'{"kind":"attended\xff"}'),
     Document("bytes-bom", b"\xef\xbb\xbf" + _TEXT.encode("utf-8")),
     Document("json-text", b"not json"),
     Document("json-truncated", _TEXT.encode("utf-8")[:-1]),

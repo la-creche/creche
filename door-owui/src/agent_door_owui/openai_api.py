@@ -52,19 +52,40 @@ def parse_chat_request(body: object) -> ChatRequest:
         raise DoorError(HTTP_BAD_REQUEST, "messages must be an array.", code="bad_body")
 
     prompt = _last_user_text(messages)
-    if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
+    if len(_utf8(prompt)) > MAX_PROMPT_BYTES:
         raise DoorError(
             HTTP_PAYLOAD_TOO_LARGE,
             f"the message is over {MAX_PROMPT_BYTES} bytes.",
             code="payload_too_large",
         )
 
+    persona = _persona(messages)
+    if persona is not None:
+        _utf8(persona)
+
     return ChatRequest(
         family=family,
         prompt=prompt,
-        persona=_persona(messages),
+        persona=persona,
         stream=body.get("stream") is True,
     )
+
+
+def _utf8(text: str) -> bytes:
+    """The UTF-8 form of a message text. Raises `DoorError` when it has none.
+
+    A JSON escape can name one half of a surrogate pair. Python reads it,
+    and the text then has no UTF-8 form. The door sends UTF-8 to
+    `attendance`, so it refuses the text here.
+    """
+    try:
+        return text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise DoorError(
+            HTTP_BAD_REQUEST,
+            "a message holds text that is not valid Unicode.",
+            code="bad_body",
+        ) from exc
 
 
 def family_of(model: str) -> str:
@@ -78,7 +99,11 @@ def family_of(model: str) -> str:
 
     family = model[len(MODEL_PREFIX) :]
     if _FAMILY_PATTERN.match(family) is None:
-        raise DoorError(HTTP_BAD_REQUEST, f"{model} is not a family.", code="bad_model")
+        # The refusal names the model, and its body is UTF-8. A model text
+        # with one half of a surrogate pair has no UTF-8 form, so the
+        # message holds that half as an escape.
+        shown = model.encode("utf-8", errors="backslashreplace").decode("utf-8")
+        raise DoorError(HTTP_BAD_REQUEST, f"{shown} is not a family.", code="bad_model")
 
     return family
 

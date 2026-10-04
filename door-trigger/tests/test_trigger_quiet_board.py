@@ -103,6 +103,9 @@ BROKEN: tuple[object, ...] = (
     {"columns": {"TODO": [{"id": 12, "points": "3", "refined": True}]}},
     {"columns": {"TODO": [{"id": 12, "refined": "yes"}]}},
     {"columns": {"TODO": [{"id": 12, "refined": True, "epic": 7}]}},
+    # One half of a surrogate pair: a text with no UTF-8 form.
+    {"columns": {"TODO": [{"id": 12, "refined": True, "epic": "\ud800"}]}},
+    {"columns": {"\ud800": [{"id": 12, "refined": True}]}},
 )
 
 
