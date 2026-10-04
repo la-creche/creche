@@ -6,8 +6,9 @@ still wins. There is no default address: a missing one stops the PEP with
 `os.EX_CONFIG` and a line that names the variable and the file.
 
 A bind that the PEP does not take stops it in the same way: a text that is
-not `host:port`, or a port that no listener binds. The process then ends
-with one line and no traceback.
+not `host:port`, a port that no listener binds, no host, or a host that
+stands for each interface of the host. The process then ends with one line
+and no traceback.
 """
 
 from __future__ import annotations
@@ -41,6 +42,28 @@ NOT_A_PORT: Final = (
     pytest.param("127.0.0.1:" + "9" * 5000, id="more-digits-than-a-number-takes"),
 )
 
+#: A host that stands for each interface of the host, in each spelling.
+EACH_INTERFACE: Final = (
+    pytest.param("0.0.0.0", id="ipv4"),
+    pytest.param("0", id="ipv4-one-number"),
+    pytest.param("0.0", id="ipv4-two-numbers"),
+    pytest.param("00.000.0.0", id="ipv4-octal"),
+    pytest.param("0x0.0.0.0", id="ipv4-hexadecimal"),
+    pytest.param("0X00", id="ipv4-one-hexadecimal-number"),
+    pytest.param("::", id="ipv6"),
+    pytest.param("[::]", id="ipv6-in-brackets"),
+    pytest.param("0:0:0:0:0:0:0:0", id="ipv6-in-full"),
+    pytest.param("::0.0.0.0", id="ipv6-with-an-ipv4-end"),
+    pytest.param("::ffff:0.0.0.0", id="ipv4-in-ipv6"),
+    pytest.param("[::FFFF:0:0]", id="ipv4-in-ipv6-in-brackets"),
+    pytest.param("::%1", id="ipv6-with-a-zone"),
+    pytest.param("\uff10.\uff10.\uff10.\uff10", id="ipv4-full-width-digits"),
+    pytest.param("0\u30020\u30020\u30020", id="ipv4-full-width-dots"),
+    pytest.param("\uff1a\uff1a", id="ipv6-full-width-colons"),
+    pytest.param("0.0.0.0 x", id="ipv4-then-white-space"),
+    pytest.param("*", id="the-star"),
+)
+
 #: A `PEP_BIND` that the PEP takes, and the host and the port that it binds.
 TAKEN: Final = (
     pytest.param("127.0.0.1:9999", ("127.0.0.1", 9999), id="loopback"),
@@ -49,6 +72,12 @@ TAKEN: Final = (
     pytest.param("::1:18300", ("::1", 18300), id="ipv6"),
     pytest.param("127.0.0.1:0", ("127.0.0.1", 0), id="a-port-that-the-system-selects"),
     pytest.param("127.0.0.1:65535", ("127.0.0.1", 65535), id="the-largest-port"),
+    pytest.param("0.0.0.1:8300", ("0.0.0.1", 8300), id="not-all-zero"),
+    pytest.param("10.0.0.0:8300", ("10.0.0.0", 8300), id="zero-at-the-end"),
+    pytest.param("zero.example:8300", ("zero.example", 8300), id="a-name"),
+    pytest.param("[::1]:8300", ("[::1]", 8300), id="ipv6-in-brackets"),
+    pytest.param("[ ]:8300", ("[ ]", 8300), id="white-space-in-brackets"),
+    pytest.param("a..b:8300", ("a..b", 8300), id="a-text-with-no-idna-form"),
 )
 
 
@@ -88,6 +117,37 @@ def test_a_bind_with_no_port_that_a_listener_binds_is_refused(text: str) -> None
 
         assert str(caught.value).startswith("PEP_BIND ")
         assert "host:port" in str(caught.value)
+
+
+def test_a_bind_with_no_host_is_refused() -> None:
+    """Not loopback in its place: the PEP has no default address."""
+    for reader in (site.bind, site.listener):
+        with pytest.raises(site.ConfigError) as caught:
+            reader({"AGENT_LAN_ADDRESS": ADDRESS, "PEP_BIND": ":8300"})
+
+        assert str(caught.value).startswith("PEP_BIND ")
+        assert "no host" in str(caught.value)
+
+
+@pytest.mark.parametrize("host", EACH_INTERFACE)
+def test_a_bind_on_each_interface_is_refused(host: str) -> None:
+    for reader in (site.bind, site.listener):
+        with pytest.raises(site.ConfigError) as caught:
+            reader({"AGENT_LAN_ADDRESS": ADDRESS, "PEP_BIND": f"{host}:8300"})
+
+        assert str(caught.value).startswith("PEP_BIND ")
+        assert "each interface" in str(caught.value)
+
+
+@pytest.mark.parametrize("address", ["0.0.0.0", "0", "::"])
+def test_a_lan_address_of_each_interface_is_refused_as_a_bind(address: str) -> None:
+    """The error names the variable that holds the address."""
+    for reader in (site.bind, site.listener):
+        with pytest.raises(site.ConfigError) as caught:
+            reader({"AGENT_LAN_ADDRESS": address})
+
+        assert str(caught.value).startswith("AGENT_LAN_ADDRESS ")
+        assert "each interface" in str(caught.value)
 
 
 def test_tei_answers_on_the_lan_address() -> None:
@@ -164,6 +224,8 @@ def _start(tmp_path: Path, **pep_env: str) -> subprocess.CompletedProcess[str]:
         pytest.param("127.0.0.1", id="no-port"),
         pytest.param("127.0.0.1:http", id="a-word-for-a-port"),
         pytest.param("127.0.0.1:65536", id="past-the-largest-port"),
+        pytest.param(":0", id="no-host"),
+        pytest.param("0.0.0.0:0", id="each-interface"),
     ],
 )
 def test_the_pep_stops_with_ex_config_and_one_line_on_a_bind_it_does_not_take(

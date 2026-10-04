@@ -362,7 +362,6 @@ const DEVIATIONS: &[Deviation] = &[
     Deviation {
         surface: "config.chaperone.site",
         vectors: &[
-            "lan-address-each-interface.bind",
             "lan-address-each-interface.lan_address",
             "lan-address-each-interface.tei_url",
             "lan-address-ipv6.bind",
@@ -378,15 +377,11 @@ const DEVIATIONS: &[Deviation] = &[
     },
     Deviation {
         surface: "config.chaperone.site",
-        vectors: &[
-            "bind-each-interface.bind",
-            "bind-no-host.bind",
-            "bind-port-zero.bind",
-        ],
+        vectors: &["bind-port-zero.bind"],
         differs: Differs::Refuses,
         contract: "contract 02 §3 rule 2",
-        decision: "The Python reader takes each host of PEP_BIND, no host and port 0. The \
-            Rust type takes host:port with a bind host and a port from 1 to 65535.",
+        decision: "The Python reader takes port 0: the system then selects a port. The Rust \
+            type takes a port from 1 to 65535.",
     },
     Deviation {
         surface: "config.chaperone.site",

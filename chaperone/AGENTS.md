@@ -193,6 +193,10 @@ not take:
 
 1. A text that is not `host:port`.
 2. A port that is not a number from 0 to 65535.
+3. A bind with no host. The chaperone has no default address.
+4. A host that stands for each interface of the host, in each spelling:
+   `0.0.0.0`, `0`, `::` and `*` are four of them. The check applies to
+   `PEP_BIND` and to `AGENT_LAN_ADDRESS`.
 
 ## Tests
 

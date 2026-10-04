@@ -127,9 +127,9 @@ impl Doors {
 /// `Restart=always` with no limit: the chaperone must return by itself when
 /// a dependency returns. A config that is not valid is not such a case: no
 /// restart corrects it. The Python service exits with 78 for no LAN
-/// address, for a `PEP_BIND` that is not `host:port` and for secrets that
-/// do not parse. It exits with 2 for a necessary variable that is not set.
-/// systemd starts the unit again after each one, with no limit.
+/// address, for a bind that it does not take and for secrets that do not
+/// parse. It exits with 2 for a necessary variable that is not set. systemd
+/// starts the unit again after each one, with no limit.
 ///
 /// At a reload (`SIGHUP`), the chaperone reads the roster and the secrets
 /// again, and not this config. A roster or a secrets file that does not
@@ -141,9 +141,9 @@ impl Doors {
 /// [`ChaperoneConfig::sweep_fault`] gives the error, so the binary can
 /// write it to its log.
 ///
-/// The type is stricter than the Python reader in these places: the bind
-/// is never each interface, each path is absolute and not empty, and each
-/// URL is an [`HttpUrl`].
+/// The type is stricter than the Python reader in these places: the host
+/// of a bind is an IP address or a host name, the port of a bind is not 0,
+/// each path is absolute and not empty, and each URL is an [`HttpUrl`].
 ///
 /// ```
 /// use creche_contracts::config::chaperone::ChaperoneConfig;

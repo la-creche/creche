@@ -18,6 +18,8 @@ a test. Stdlib only, because `chaperone-verify` imports it.
 
 from __future__ import annotations
 
+import ipaddress
+import re
 from collections.abc import Mapping
 from enum import IntEnum
 from typing import Final
@@ -48,6 +50,18 @@ PORT_MAX: Final = 65535
 #: so an IPv6 host needs no brackets.
 PORT_SEPARATOR: Final = ":"
 
+#: One number that is zero, as the C resolver reads a number of an IPv4
+#: address: decimal, octal or hexadecimal.
+_ZERO: Final = r"(?:0[xX]0*|0+)"
+
+#: An IPv4 text that the C resolver reads as `0.0.0.0`: one to four numbers,
+#: and each one is zero. `0` and `0x0.0` are such texts.
+_IPV4_EACH_INTERFACE: Final = re.compile(rf"{_ZERO}(?:\.{_ZERO}){{0,3}}")
+
+#: The word for each interface in the config of some services. No resolver
+#: reads it, so a bind on it is a start that fails.
+_EACH_INTERFACE_WORD: Final = "*"
+
 
 class ConfigError(RuntimeError):
     """The environment names no LAN address, or a bind that the PEP does
@@ -76,10 +90,15 @@ def listener(env: Mapping[str, str]) -> tuple[str, int]:
     """The host and the port of `bind(env)`, as the server takes them.
 
     `ConfigError`, naming the variable, for a bind that the PEP does not
-    take: a text that is not `host:port`, or a port that is not a number
-    from 0 to `PORT_MAX`. The server cannot bind it.
+    take:
 
-    The host goes to the resolver as it is.
+    1. A text that is not `host:port`, or a port that is not a number from
+       0 to `PORT_MAX`. The server cannot bind it.
+    2. No host. The PEP has no default address.
+    3. A host that stands for each interface of the host. The PEP binds the
+       LAN address, or loopback in a test.
+
+    Each other host goes to the resolver as it is.
     """
     return _split(*_bind_text(env))
 
@@ -102,6 +121,14 @@ def _split(variable: str, text: str) -> tuple[str, int]:
             f"with a port from 0 to {PORT_MAX}"
         )
 
+    if not host:
+        raise ConfigError(f"{variable} gives the bind {text!r}, which names no host")
+
+    if _is_each_interface(host):
+        raise ConfigError(
+            f"{variable} gives the bind {text!r}, which names each interface of the host"
+        )
+
     return host, port
 
 
@@ -114,6 +141,41 @@ def _port(text: str) -> int | None:
         return None
 
     return port if 0 <= port <= PORT_MAX else None
+
+
+def _resolver_text(host: str) -> str:
+    """The host as the resolver gets it. `socket.getaddrinfo` encodes the
+    text as IDNA first, and that step makes an ASCII digit from a
+    full-width digit. A text with no such encoding stays as it is: the
+    server binds nothing on it."""
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return host
+
+
+def _is_each_interface(host: str) -> bool:
+    """Whether a listener on `host` answers on each interface of the host:
+    the IPv4 address of all zeros, the IPv6 address of all zeros, or that
+    IPv4 address as an IPv6 address, in each spelling.
+
+    Some resolvers stop at white space, so only the text before the first
+    white space counts. Brackets around the text do not count.
+    """
+    text = _resolver_text(host)
+    bare = text[1:-1] if text.startswith("[") and text.endswith("]") else text
+    address_text = bare.split(maxsplit=1)[0] if bare.strip() else bare
+    if address_text == _EACH_INTERFACE_WORD or _IPV4_EACH_INTERFACE.fullmatch(address_text):
+        return True
+
+    try:
+        address = ipaddress.IPv6Address(address_text)
+    except ValueError:
+        return False
+
+    mapped = address.ipv4_mapped
+
+    return int(address) == 0 or (mapped is not None and int(mapped) == 0)
 
 
 def tei_url(env: Mapping[str, str]) -> str:

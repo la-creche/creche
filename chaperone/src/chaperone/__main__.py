@@ -174,7 +174,7 @@ def main() -> int:
             approval_callback_token=secrets.get("approval_callback_token", ""),
         )
     )
-    uvicorn.run(app, host=host or "127.0.0.1", port=port)
+    uvicorn.run(app, host=host, port=port)
     return 0
 
 
@@ -194,7 +194,7 @@ def _no_site(exc: site.ConfigError) -> int:
     """Stop, in one line, as `_unparsable` does. A PEP with no address to
     bind would serve nobody, and guessing one would be somebody's host. A
     bind that the PEP does not take (`site.listener`) stops it here too:
-    the server would raise on it."""
+    the server would raise on it, or answer on each interface."""
     logging.getLogger("chaperone").error("no bind, the PEP stops: %s", exc)
 
     return os.EX_CONFIG
