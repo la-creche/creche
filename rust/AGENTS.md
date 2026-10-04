@@ -556,11 +556,10 @@ Rules for the test:
   is the document. It has no `Deserialize`.
 - The crate has three JSON readers that do what `json.loads` of Python does:
   `channel::json`, `grants::json` and `status::json`. They differ in two
-  decisions. The reader of `channel` stops at 9000 levels. The readers of
+  decisions. The reader of `channel` stops at 9000 levels, and the readers of
   `grants` and of `status` stop at 256 levels. The reader of `channel` keeps
-  a lone surrogate in a text. The readers of `grants` and of `status` refuse
-  the document. The owner of the crate decides if one reader replaces the
-  three.
+  a lone surrogate in a text, and the other two readers refuse the document.
+  The owner of the crate decides if one reader replaces the three.
 - The types of `grants` accept what the Python code accepts, also where a
   stricter reading of contract 04 is possible. The owner decides each case.
   Four examples:
@@ -728,8 +727,8 @@ Rules for the test:
 - A view of `status` does not refuse a document for these three values. It
   reads a time with no UTC offset as no time. It reads a time outside the
   years 1 to 9999 as no time. It reads a number above the range of a float as
-  no number. The document is then stale, or it shows no spend. No vector
-  holds such a value. A unit test covers each one.
+  no number. The document is then stale, or it shows no spend. A unit test
+  covers each value, and no vector holds one.
 - `status::outcome` holds the view of the noticeboard and no valid type.
   Contract 02 §13.1 owns the outcome record and its writer.
 - `status` holds no code for `rescope_by_fleet` and `drop_superseded` of
