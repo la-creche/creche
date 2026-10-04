@@ -662,6 +662,10 @@ pub const CREDS_FILE_MODE: u32 = 0o600;
 /// is a JSON number with a fraction or an exponent must be less than 2^63 in
 /// size: the float -2^63 is refused, and Python reads it.
 ///
+/// The JSON reader is `serde_json`. It refuses a file that Python's `json`
+/// reads in three cases: a `NaN`, a lone surrogate escape, and a value that
+/// nests 128 levels or more, in an unknown key too.
+///
 /// FAILURE ACTION. No reader stops on this file. The caregiver reads a
 /// file that it cannot parse as no credentials, and it reports a fault. The
 /// playpen reads the file again for 250 ms, then answers `turn_failed` with
@@ -1638,6 +1642,27 @@ mod tests {
                 "{json}"
             );
         }
+    }
+
+    #[test]
+    fn a_creds_file_nests_less_than_128_levels() {
+        // The object is one level. serde_json stops at 128.
+        let nested = |levels: usize| {
+            format!(
+                r#"{{"epoch": 7, "litellm_key": "k", "pep_token": "t", "written_at": "w", "x": {}{}}}"#,
+                "[".repeat(levels),
+                "]".repeat(levels)
+            )
+        };
+
+        assert_eq!(
+            Credentials::parse(nested(126).as_bytes()).unwrap().epoch(),
+            7
+        );
+        assert_eq!(
+            Credentials::parse(nested(127).as_bytes()).unwrap_err(),
+            CredentialsError::NotAnObject
+        );
     }
 
     #[test]

@@ -152,8 +152,9 @@ const EPOCH_FLOAT: &str = "The contract gives an integer. Python reads the float
     integer -2^63, which fits 64 bits. serde_json gives each integer below -2^63 as that float, \
     so the Rust code cannot tell the two apart. It refuses each float of the size 2^63 or more.";
 
-const STRICT_JSON: &str = "The contract gives a JSON file. Python's json reads NaN and a lone \
-    surrogate escape. serde_json reads RFC 8259 and Unicode text, and refuses the two.";
+const STRICT_JSON: &str = "The contract gives a JSON file. Python's json reads NaN, a lone \
+    surrogate escape and each depth of nesting that its stack permits. serde_json reads RFC 8259 \
+    and Unicode text, and stops at 128 levels of nesting. It refuses the three.";
 
 const WRITER_TYPES: &str = "The Python writer checks no field: the family file check runs before \
     it. The Rust writer takes typed values, so it cannot write a value that the contract does \
@@ -239,7 +240,11 @@ const DEVIATIONS: &[Deviation] = &[
     },
     Deviation {
         surface: "config.creds_json.read",
-        vectors: &["nan-in-unknown-key", "key-lone-surrogate"],
+        vectors: &[
+            "nan-in-unknown-key",
+            "unknown-key-130-levels",
+            "key-lone-surrogate",
+        ],
         differs: Differs::Refuses,
         contract: "contract 03 §12",
         decision: STRICT_JSON,

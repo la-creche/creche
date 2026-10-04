@@ -595,6 +595,7 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
         "duplicate-epoch", _creds_text().replace('"epoch": 7', '"epoch": 1, "epoch": 7').encode()
     ),
     _creds("nan-in-unknown-key", extra="NaN"),
+    _creds("unknown-key-130-levels", extra="[" * 130 + "]" * 130),
     # --- the epoch ---
     _creds("epoch-zero", epoch="0"),
     _creds("epoch-negative", epoch="-3"),
