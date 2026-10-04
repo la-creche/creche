@@ -637,6 +637,18 @@ def test_a_product_push_alone_starts_no_cargo_step(tree: Tree) -> None:
     assert f"{VECTORS_SUITE}, for a change in a product package" in done.out
 
 
+def test_a_tree_with_no_vectors_suite_runs_the_package_alone(tree: Tree) -> None:
+    """pytest fails on a path that the tree does not hold. When `testpaths`
+    names no `vectors/tests`, a product push runs the suite of its package
+    and nothing else."""
+    tree.write("pyproject.toml", f'[tool.pytest.ini_options]\ntestpaths = [\n    "{SUITE}",\n]\n')
+
+    done = tree.run(GATE, "--tests-for", PYTHON_PATH)
+
+    assert _passed(done), done.out + done.err
+    assert _pytest_calls(done) == [f"{PYTEST} {SUITE}"]
+
+
 def test_a_vectors_commit_runs_no_cargo_step(tree: Tree) -> None:
     """A commit runs no test, in either language. `cargo fmt` and `cargo
     clippy` do not read a vector."""
