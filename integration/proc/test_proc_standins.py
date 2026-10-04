@@ -15,10 +15,19 @@ import signal
 import time
 from pathlib import Path
 
+import pytest
 from proc_harness import Supervisor, pid_is_alive, pids_gone_by
 from proc_stack import Stack
-from proc_standins import PI, SBX, end_standins
-from proc_tree import Tree
+from proc_standins import (
+    PI,
+    SBX,
+    SESSIONS_MOUNT_ENV,
+    TERMINAL_FLAG,
+    calls_of,
+    end_standins,
+    install_sbx,
+)
+from proc_tree import FAMILY, SANDBOX, Tree, build_tree
 
 SH = "/bin/sh"
 BASE_ENV = {"PATH": os.defpath}
@@ -76,6 +85,55 @@ def test_kill_playpens_leaves_another_program_alone(tree: Tree, supervisor: Supe
     assert stack.kill_playpens() == []
     assert pid_is_alive(other.popen.pid)
     assert other.exit_code() is None
+
+
+def test_the_sbx_wrapper_records_the_terminal_flag_and_drops_it(
+    tree: Tree, supervisor: Supervisor
+) -> None:
+    """The record holds the call as the service made it. The stand-in gets no `-it`.
+
+    The stand-in refuses a second word before the command. So an exit code
+    of 0 is the proof that the flag was dropped.
+    """
+    build_tree(tree)
+    install_sbx(tree)
+    words = ["exec", TERMINAL_FLAG, "--env-file", str(tree.playpen_env()), SANDBOX, "--", "env"]
+
+    finished = supervisor.run("sbx", [str(tree.bin_dir / SBX), *words], BASE_ENV, tree.root)
+
+    (call,) = calls_of(tree, SBX)
+    assert finished.exit_code == 0, finished.stderr
+    assert call.argv == tuple(words)
+
+
+def test_the_sbx_wrapper_keeps_the_words_of_the_command(tree: Tree, supervisor: Supervisor) -> None:
+    """A word after the separator belongs to the command, `-it` too."""
+    build_tree(tree)
+    install_sbx(tree)
+    command = [SH, "-c", 'printf "%s\\n" "$@"', "sh", TERMINAL_FLAG, "--", "two words"]
+    words = ["exec", "--env-file", str(tree.playpen_env()), SANDBOX, "--", *command]
+
+    finished = supervisor.run("sbx", [str(tree.bin_dir / SBX), *words], BASE_ENV, tree.root)
+
+    assert finished.exit_code == 0, finished.stderr
+    assert finished.stdout.split("\n")[:-1] == [TERMINAL_FLAG, "--", "two words"]
+
+
+@pytest.mark.parametrize(
+    ("sandbox", "family"), [(SANDBOX, FAMILY), ("code-sandbox-s12", "code-sandbox")]
+)
+def test_the_sbx_wrapper_names_the_sessions_mount_of_the_family(
+    tree: Tree, supervisor: Supervisor, sandbox: str, family: str
+) -> None:
+    """Contract 03 §7.6 rule 4: the family of the sandbox id names the sessions mount."""
+    build_tree(tree)
+    install_sbx(tree)
+    words = ["exec", "--env-file", str(tree.playpen_env()), sandbox, "--", "env"]
+
+    finished = supervisor.run("sbx", [str(tree.bin_dir / SBX), *words], BASE_ENV, tree.root)
+
+    assert finished.exit_code == 0, finished.stderr
+    assert f"{SESSIONS_MOUNT_ENV}={tree.sessions_root / family}" in finished.stdout.split("\n")
 
 
 def _record(tree: Tree, name: str, pid: int) -> None:

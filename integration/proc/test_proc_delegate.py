@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from typing import Any
 
 import httpx
 from proc_chat import chat_id, session_of, until
 from proc_delegate import CALLER, FIRST_REV, TARGET, DelegateStack
+from proc_ids import ULID
 from proc_standins import set_pi_env
 from proc_tree import GRANT_LIMITS, MODEL_ALIAS, THIN, write_status
 
@@ -36,9 +36,6 @@ QUESTION = "dropped-sensor"
 #: A delegate the caller may name, with no family behind it.
 OTHER_TARGET = "code-sandbox"
 NEXT_REV = "01K5J9QW3R7T0ZP4YB2H6N8M2E"
-
-#: Contract 02 §2: a ULID in upper-case Crockford base32.
-ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 
 #: A job turn long enough to read its turn file: 200 deltas, 8 ms apart.
 SLOW_JOB = {"events": 200, "delay_ms": 8}

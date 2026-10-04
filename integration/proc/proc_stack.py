@@ -48,6 +48,7 @@ from proc_standins import (
     install_pi,
     install_sbx,
 )
+from proc_terminal import Terminal
 from proc_tree import LAN_ADDRESS, Tree, build_tree, playpen_bundle, token_of
 
 #: A Unix socket has no host. An HTTP client still needs one for the request
@@ -132,6 +133,16 @@ class Stack:
 
         return self.supervisor.spawn(service.value, [*command.words, *args], whole, self.tree.root)
 
+    def spawn_on_terminal(
+        self, service: Service, env: dict[str, str], *args: str
+    ) -> tuple[Child, Terminal]:
+        """Start one service on a pseudo-terminal, as a person at a keyboard does."""
+        command = command_of(service)
+        whole = base_env(self.tree) | env_of(command) | env
+        words = [*command.words, *args]
+
+        return self.supervisor.spawn_on_terminal(service.value, words, whole, self.tree.root)
+
     def run(self, service: Service, env: dict[str, str], *args: str) -> Finished:
         """Run one command of a service to its end, with the base environment under its own."""
         command = command_of(service)
@@ -152,18 +163,19 @@ class Stack:
         self.supervisor.wait_ready(self.attendance, UnixAddress(self.tree.attendance_socket))
 
     def start_on_port(
-        self, service: Service, env_for: Callable[[str], dict[str, str]]
+        self, service: Service, env_for: Callable[[str], dict[str, str]], *args: str
     ) -> tuple[Child, int]:
         """Start a service on a free loopback port, and wait for it.
 
         `env_for` takes the bind, as `host:port`, and returns the variables
-        of the service. A start that fails because another program took the
-        port first is tried again on another port. Any other failed start is
-        an error.
+        of the service. `args` are the words that the unit puts after the
+        command. A start that fails because another program took the port
+        first is tried again on another port. Any other failed start is an
+        error.
         """
         for _ in range(_BIND_ATTEMPTS):
             port = self.supervisor.free_port()
-            child = self.spawn(service, env_for(f"{LOOPBACK}:{port}"))
+            child = self.spawn(service, env_for(f"{LOOPBACK}:{port}"), *args)
 
             try:
                 self.supervisor.wait_ready(child, TcpAddress(port))
