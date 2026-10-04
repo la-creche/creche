@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 import pytest
-from proc_chat import SESSIONS_PATH, TURN_STARTED, until
+from proc_chat import SESSIONS_PATH, TURN_STARTED, chat_id, message_id, session_of, until
 from proc_ids import AUTO_PREFIX, ULID
 from proc_services import Service
 from proc_standins import set_pi_env
@@ -46,6 +46,9 @@ SHORT_SECRET = "short-trigger-token"
 
 CHECK_FLAG = "--check"
 NO_FAMILY = "no-such-family"
+
+#: What a person asks the attended family while the queue is full.
+ATTENDED_PROMPT = "is the heating on"
 
 #: `creche-attendance.service`: a stop takes less than its `TimeoutStopSec`.
 STOP_DEADLINE_S = 30.0
@@ -113,23 +116,19 @@ async def test_the_record_names_the_trigger_that_fired(timer: TriggerStack) -> N
     assert record["sandbox"] == first_sandbox(REVIEW)
 
 
-@pytest.mark.parametrize("family", [CHAT, ORACLE, NO_FAMILY], ids=["attended", "thin", "unknown"])
-async def test_a_trigger_for_another_kind_of_family_is_refused(
-    timer: TriggerStack, family: str
-) -> None:
-    """Contract 02 §3.1. The `door-trigger` token reaches an autonomous family only.
+async def test_a_trigger_for_an_attended_family_is_refused(timer: TriggerStack) -> None:
+    """Contract 02 §3.1. The `door-trigger` token reaches an autonomous family only."""
+    refused_fire(timer, CHAT)
 
-    The old suite has one scenario for the attended family and one for the
-    thin family. A family with no status document is the third refusal.
-    """
-    tree = timer.tree
 
-    fired = timer.fire(family)
+async def test_a_trigger_for_a_thin_family_is_refused(timer: TriggerStack) -> None:
+    """The same rule from the other side: a thin family runs a job for a delegation only."""
+    refused_fire(timer, ORACLE)
 
-    assert fired.exit_code != 0
-    assert tree.outcomes(family) == []
-    assert not (tree.sessions_root / family).is_dir() or tree.sessions_of(family) == []
-    assert token_of("door-trigger") not in fired.stdout + fired.stderr
+
+async def test_a_trigger_for_an_unknown_family_is_refused(timer: TriggerStack) -> None:
+    """A family with no status document. The old suite has no such scenario."""
+    refused_fire(timer, NO_FAMILY)
 
 
 async def test_three_fires_give_one_running_and_two_queued(timer: TriggerStack) -> None:
@@ -163,6 +162,30 @@ async def test_the_queue_runs_in_fire_order(timer: TriggerStack) -> None:
     assert codes == [0] * FIRES_AT_ONCE
     assert [record["status"] for record in records] == ["ok"] * FIRES_AT_ONCE
     assert ended == sorted(ended)
+
+
+async def test_an_attended_turn_runs_while_the_queue_is_full(timer: TriggerStack) -> None:
+    """Contract 02 §13 rule 5. An attended family has no limit and no queue.
+
+    The autonomous family holds one running turn and two queued turns. A
+    test plays the Open WebUI door, and `attendance` accepts its turn in the
+    attended family as `running` (§5.4).
+    """
+    set_pi_env(timer.tree, **HELD_TURN)
+    codes = [timer.fire(REVIEW).exit_code for _ in range(FIRES_AT_ONCE)]
+    session = session_of(chat_id())
+
+    async with timer.attendance_client() as door:
+        made = await door.post(SESSIONS_PATH, json={"family": CHAT, "session": session})
+        ran = await door.post(
+            f"{SESSIONS_PATH}/{CHAT}/{session}/turns",
+            json={"prompt": ATTENDED_PROMPT, "idempotency_key": message_id(), "wait": "accepted"},
+        )
+
+    assert codes == [0] * FIRES_AT_ONCE
+    assert made.status_code == httpx.codes.CREATED, made.text
+    assert ran.status_code == httpx.codes.ACCEPTED, ran.text
+    assert ran.json()["state"] == "running"
 
 
 async def test_a_restart_ends_every_queued_turn(timer: TriggerStack) -> None:
@@ -248,6 +271,18 @@ def test_a_fire_with_no_family_is_a_usage_error(trigger_prepared: TriggerStack) 
     finished = trigger_prepared.run(Service.DOOR_TRIGGER, fire_env(trigger_prepared.tree), FIRE)
 
     assert finished.exit_code != 0
+
+
+def refused_fire(timer: TriggerStack, family: str) -> None:
+    """Fire for a family that the door must refuse. Nothing starts, and no secret shows."""
+    tree = timer.tree
+
+    fired = timer.fire(family)
+
+    assert fired.exit_code != 0
+    assert tree.outcomes(family) == []
+    assert not (tree.sessions_root / family).is_dir() or tree.sessions_of(family) == []
+    assert token_of("door-trigger") not in fired.stdout + fired.stderr
 
 
 def restart_attendance(stack: TriggerStack) -> None:
