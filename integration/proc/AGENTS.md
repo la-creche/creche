@@ -171,6 +171,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
+| `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
 | `test_proc_standin_programs.py` | none | each rule of a stand-in program that a scenario relies on |
@@ -620,6 +621,79 @@ the text of the failure. Work down this list.
 - **A save of the noticeboard ends at the commit.** No `caregiver` runs
   beside the noticeboard, so no scenario proves that a saved family file
   converges.
+- **CONTRACT-QUESTION, the answers that no handler of a service makes.** No
+  contract names the answer of a listener to four requests. The requests are
+  an unknown path, a wrong method, a path with a final slash, and `HEAD` on
+  a `GET` route. `test_proc_edges.py` holds four things:
+  - An unknown path gets 404.
+  - A known path with a wrong method gets 405.
+  - A known path with a final slash creates no session and starts no turn.
+  - An answer to `HEAD` has no body.
+
+  No scenario there asserts on a body. The last two scenarios assert on no
+  status. The scenario of the final slash leaves out the noticeboard, which
+  creates no session and starts no turn. A change to one fixed answer costs
+  one assertion per scenario in that file.
+
+  The table gives what each service answers today. The table is for a
+  person, and no scenario reads it. Each request carried the credential of
+  its listener.
+
+  | Service | Unknown path | Wrong method | Final slash | `HEAD` on a `GET` route |
+  |---|---|---|---|---|
+  | `attendance` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
+  | `door-owui` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
+  | `chaperone` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
+  | `noticeboard` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
+  | `door-trigger` | 404, `application/json` | 405, `application/json` | 307, no content type | no `GET` route |
+
+  - The body of each 404 is `{"detail":"Not Found"}`.
+  - The body of each 405 is `{"detail":"Method Not Allowed"}`. Each 405 has
+    an `Allow` header.
+  - A 307 has no body. Its `Location` header names the path with no final
+    slash.
+  - An answer to `HEAD` has the `Content-Length` of the 405 body, and no
+    body.
+  - With no key, the noticeboard answers 403 to an unknown path. With no
+    credential, each other listener answers 404.
+- **CONTRACT-QUESTION, a JSON body with no `Content-Type` header.**
+  Contract 02 §3 rule 3 says that a request body is JSON. It names no
+  header. The suite holds that `attendance` reads such a body, as it does
+  today. A change costs one scenario in `test_proc_edges.py`.
+- **CONTRACT-QUESTION, a body that is not JSON.** Contract 02 §14 gives
+  `attendance` the code `bad_request` with status 400. No contract gives the
+  Open WebUI door or the chaperone an answer, and contract 04 §5 has no row
+  for such a body. The suite holds one thing for the three services: a
+  status of the 4xx class, with no session and no turn. Today `attendance`
+  answers 400, the door answers 400 with the code `bad_body`, and the
+  chaperone answers 422. A change costs one assertion in
+  `test_proc_edges.py`.
+- **CONTRACT-QUESTION, a listener at a signal.** No contract says what a
+  listener does at `SIGINT`, at `SIGHUP` with no reload, or at a stop with an
+  open stream. No contract names an exit status after a signal.
+  `test_proc_edges.py` holds three things:
+  - `SIGINT` ends each listener inside the `TimeoutStopSec` of its unit.
+    Nothing answers at its address after that.
+  - `SIGHUP` ends the Open WebUI door and the noticeboard, and the port of
+    each one closes. Neither service has a reload.
+  - A stop of the Open WebUI door with one open stream ends the process
+    inside 30 seconds. The turn settles in the journal.
+
+  No scenario there reads an exit status. The services differ today:
+  - After `SIGTERM`, `attendance` exits with status 0. The signal ends each
+    other listener, so none of them has an exit status.
+  - After `SIGINT`, each listener exits with status 0.
+  - `SIGHUP` ends the door and the noticeboard immediately. Neither has an
+    exit status.
+  - At a stop with an open stream, the door sends the stream to its end.
+    Then the signal ends the door.
+
+  A listener that ignores `SIGHUP` fails one scenario. A fixed exit status
+  costs one assertion in each of the three scenarios.
+- **The unit of the chaperone names no `TimeoutStopSec`.** systemd then
+  applies its default, which is 90 seconds unless the host sets another.
+  `test_proc_edges.py` gives the chaperone 90 seconds to end at `SIGINT`.
+  The teardown of each test gives it 20 seconds at `SIGTERM`.
 - **The state of an ended process.** The harness reads it from `/proc` on
   Linux and from `ps` on macOS. On another system, a process that ended
   counts as a process that runs until its parent reaps it. On Linux, the
