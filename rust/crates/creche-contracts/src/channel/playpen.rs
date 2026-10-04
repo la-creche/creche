@@ -239,9 +239,14 @@ impl TurnUsage {
 /// use creche_contracts::channel::playpen::{Label, PlaypenMessage, Ready, Versions};
 /// use creche_contracts::channel::host::ProcessCap;
 ///
-/// let ready = Ready { pi: Label::cut("0.99.1"), max_resident_processes: ProcessCap::new(8) };
+/// let versions = Versions {
+///     supervisor: Label::cut("agent-supervisor/0.1.0"),
+///     pi: Label::cut("0.99.1"),
+///     node: Label::cut("24.1.0"),
+/// };
+/// let ready = Ready::new("chat-s3".parse().unwrap(), versions, ProcessCap::new(8), 0, Vec::new());
+/// let ready = Ready { pi: Label::cut("0.99.2"), ..ready };
 /// let message: Option<PlaypenMessage> = None;
-/// let versions: Option<Versions> = None;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ready {
@@ -329,7 +334,8 @@ impl Ready {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::playpen::{LogText, PlaypenMessage, SessionOpened};
 ///
-/// let opened = SessionOpened { refused: None, message: LogText::cut("") };
+/// let opened = SessionOpened::resident("tui-1".parse().unwrap(), LogText::cut(""));
+/// let opened = SessionOpened { refused: None, ..opened };
 /// let message: Option<PlaypenMessage> = None;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -462,8 +468,10 @@ pub struct TurnEntries {
 /// let address = TurnAddress::new("tui-1".parse().unwrap(), "01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap());
 /// let seq = NonZeroU64::MIN;
 /// let usage = TurnUsage { input: 7, output: 1, cache_read: 0, cache_write: 0, cost_usd: Usd::ZERO };
-/// let settled = TurnSettled { address, turn_seq: seq, usage, entries: TurnEntries::default() };
-/// let none: Option<(PlaypenMessage, Residence)> = None;
+/// let settled =
+///     TurnSettled::new(address, seq, Residence::Resident, TurnEntries::default(), usage, 1500);
+/// let settled = TurnSettled { settled_ms: 0, ..settled };
+/// let none: Option<PlaypenMessage> = None;
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct TurnSettled {
@@ -624,7 +632,9 @@ pub struct ExitStatus {
 /// use creche_contracts::channel::playpen::{ExitStatus, PlaypenMessage, ProcessExit};
 /// use creche_contracts::channel::vocabulary::ExitReason;
 ///
-/// let exit = ProcessExit { status: ExitStatus::default(), turn: None, reason: ExitReason::Reaped };
+/// let exit =
+///     ProcessExit::new("tui-1".parse().unwrap(), ExitStatus::default(), None, ExitReason::Reaped);
+/// let exit = ProcessExit { turn: None, ..exit };
 /// let none: Option<PlaypenMessage> = None;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -832,7 +842,8 @@ pub enum Fill {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::playpen::{Entries, PlaypenMessage};
 ///
-/// let entries = Entries { request: "01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap(), session: "tui-1".parse().unwrap() };
+/// let refused = Entries::refused("01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap(), "tui-1".parse().unwrap(), None);
+/// let entries = Entries { session: "tui-2".parse().unwrap(), ..refused };
 /// let none: Option<PlaypenMessage> = None;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]

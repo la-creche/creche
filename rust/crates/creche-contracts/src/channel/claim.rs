@@ -204,8 +204,8 @@ impl FatalClaim {
 /// use creche_contracts::channel::claim::{PlaypenLine, Usage, parse};
 /// use creche_contracts::channel::number::Count;
 ///
-/// let read = parse("{}");
-/// let usage = Usage { input: Count::from(7_u64) };
+/// let Ok(PlaypenLine::Settled(line)) = parse("{}") else { return };
+/// let usage = Usage { input: Count::from(7_u64), ..line.usage().clone() };
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Usage {
@@ -399,8 +399,8 @@ impl Error for EventError {}
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PlaypenLine, Ready, parse};
 ///
-/// let read = parse("{}");
-/// let line = Ready { caps: Vec::new() };
+/// let Ok(PlaypenLine::Ready(line)) = parse("{}") else { return };
+/// let line = Ready { caps: Vec::new(), ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ready {
@@ -496,8 +496,8 @@ impl Ready {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PlaypenLine, OpenedLine, parse};
 ///
-/// let read = parse("{}");
-/// let line = OpenedLine { resident: true };
+/// let Ok(PlaypenLine::Opened(line)) = parse("{}") else { return };
+/// let line = OpenedLine { resident: true, ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenedLine {
@@ -550,8 +550,8 @@ impl OpenedLine {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PlaypenLine, EventLine, parse};
 ///
-/// let read = parse("{}");
-/// let line = EventLine { session: "s".into() };
+/// let Ok(PlaypenLine::Event(line)) = parse("{}") else { return };
+/// let line = EventLine { session: "s".into(), ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventLine {
@@ -578,8 +578,8 @@ pub struct EventLine {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PlaypenLine, SettledLine, parse};
 ///
-/// let read = parse("{}");
-/// let line = SettledLine { resident: true };
+/// let Ok(PlaypenLine::Settled(line)) = parse("{}") else { return };
+/// let line = SettledLine { resident: true, ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettledLine {
@@ -611,8 +611,8 @@ pub struct SettledLine {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PlaypenLine, FailedLine, parse};
 ///
-/// let read = parse("{}");
-/// let line = FailedLine { session: "s".into() };
+/// let Ok(PlaypenLine::Failed(line)) = parse("{}") else { return };
+/// let line = FailedLine { session: "s".into(), ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailedLine {
@@ -739,8 +739,8 @@ impl FailedLine {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PlaypenLine, ProcessExitLine, parse};
 ///
-/// let read = parse("{}");
-/// let line = ProcessExitLine { code: None };
+/// let Ok(PlaypenLine::ProcessExit(line)) = parse("{}") else { return };
+/// let line = ProcessExitLine { code: None, ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessExitLine {
@@ -826,8 +826,8 @@ impl PongLine {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PlaypenLine, LogLine, parse};
 ///
-/// let read = parse("{}");
-/// let line = LogLine { session: None };
+/// let Ok(PlaypenLine::Log(line)) = parse("{}") else { return };
+/// let line = LogLine { session: None, ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogLine {
@@ -874,8 +874,9 @@ impl LogLine {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PiEntry, PlaypenLine, parse};
 ///
-/// let read = parse("{}");
-/// let entry = PiEntry { id: "e5".into() };
+/// let Ok(PlaypenLine::Entries(line)) = parse("{}") else { return };
+/// let Some(entry) = line.entries().first().cloned() else { return };
+/// let entry = PiEntry { id: "e5".into(), ..entry };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PiEntry {
@@ -922,8 +923,8 @@ impl PiEntry {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PlaypenLine, EntriesLine, parse};
 ///
-/// let read = parse("{}");
-/// let line = EntriesLine { ok: true };
+/// let Ok(PlaypenLine::Entries(line)) = parse("{}") else { return };
+/// let line = EntriesLine { ok: true, ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntriesLine {
@@ -1005,8 +1006,8 @@ impl EntriesLine {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::claim::{PlaypenLine, FatalLine, parse};
 ///
-/// let read = parse("{}");
-/// let line = FatalLine { message: "".into() };
+/// let Ok(PlaypenLine::Fatal(line)) = parse("{}") else { return };
+/// let line = FatalLine { message: "".into(), ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FatalLine {

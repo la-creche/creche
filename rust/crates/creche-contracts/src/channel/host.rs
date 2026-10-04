@@ -1000,8 +1000,15 @@ impl Binding {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::host::{EnvEpoch, Hello, ProcessCap, Seconds};
 ///
-/// let hello = Hello { env_epoch: EnvEpoch::new(7), pi_idle_ttl_s: Some(Seconds::new(900)) };
-/// let cap = ProcessCap::DEFAULT;
+/// let hello = Hello::new(
+///     "chat".parse().unwrap(),
+///     "chat-s3".parse().unwrap(),
+///     EnvEpoch::new(7),
+///     Seconds::new(900),
+///     ProcessCap::DEFAULT,
+///     Seconds::new(0),
+/// );
+/// let hello = Hello { env_epoch: EnvEpoch::new(8), ..hello };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hello {
@@ -1235,7 +1242,8 @@ impl OpenSession {
 ///     EnvEpoch::new(7),
 ///     "reg-9f21c4".parse().unwrap(),
 /// );
-/// let read = GetEntries { binding, since: None };
+/// let read = GetEntries::new("01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap(), binding);
+/// let read = GetEntries { since: None, ..read };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetEntries {
@@ -1317,7 +1325,12 @@ impl GetEntries {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::host::{Seconds, TurnRequest};
 ///
-/// let request = TurnRequest { deadline_s: Seconds::new(600), attachments: Vec::new() };
+/// let request = TurnRequest::new(
+///     "01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap(),
+///     "Is the door locked?".parse().unwrap(),
+///     Seconds::new(600),
+/// );
+/// let request = TurnRequest { deadline_s: Seconds::new(0), ..request };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnRequest {
@@ -1565,7 +1578,8 @@ impl StartTurn {
 ///     "Is the door locked?".parse().unwrap(),
 ///     Seconds::new(600),
 /// );
-/// let prompt = PromptTurn { request, env_epoch: EnvEpoch::new(7) };
+/// let prompt = PromptTurn::new(request, "tui-1".parse().unwrap(), EnvEpoch::new(7));
+/// let prompt = PromptTurn { env_epoch: EnvEpoch::new(8), ..prompt };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptTurn {
@@ -1649,7 +1663,8 @@ impl PromptTurn {
 /// use creche_contracts::channel::host::Steer;
 ///
 /// let address = TurnAddress::new("tui-1".parse().unwrap(), "01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap());
-/// let steer = Steer { address };
+/// let steer = Steer::new(address.clone(), "Check the garage too.".parse().unwrap());
+/// let steer = Steer { address, ..steer };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Steer {
@@ -1746,7 +1761,8 @@ impl Abort {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::host::{Millis, StopProcess};
 ///
-/// let stop = StopProcess { grace_ms: Some(Millis::STOP_GRACE) };
+/// let stop = StopProcess::new("tui-1".parse().unwrap(), Millis::STOP_GRACE);
+/// let stop = StopProcess { grace_ms: None, ..stop };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StopProcess {

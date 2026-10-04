@@ -85,8 +85,8 @@ impl Error for Refusal {}
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::frame::{LineSplitter, RawLine};
 ///
-/// let splitter = LineSplitter::new();
-/// let line = RawLine { size: 2 };
+/// let Some(line) = LineSplitter::new().feed(b"{}\n").pop() else { return };
+/// let line = RawLine { size: 2, ..line };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawLine {
@@ -135,7 +135,7 @@ impl RawLine {
 /// ```compile_fail,E0451
 /// use creche_contracts::channel::frame::LineSplitter;
 ///
-/// let splitter = LineSplitter { dropping: false };
+/// let splitter = LineSplitter { dropping: false, ..LineSplitter::new() };
 /// ```
 #[derive(Debug)]
 pub struct LineSplitter {

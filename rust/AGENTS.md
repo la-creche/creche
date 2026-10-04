@@ -296,6 +296,12 @@ the reason in the commit message.
 - An error code on a `compile_fail` test, for example `E0423`, is a note for
   the reader. The toolchain of this workspace does not check the code. The
   test passes on each compile error.
+- Make the private field the only compile error of a `compile_fail` test. A
+  struct literal that omits a field fails for the absent field, also when
+  each field is public. Name each field, or take the other fields from a
+  valid value: `Ready { caps: Vec::new(), ..line }`.
+- To prove a `compile_fail` test, make each field of the type public for one
+  local run. The test must then fail.
 - A Rust test reads no file outside `rust/` and `vectors/data`. The gate
   runs cargo only for a change under `rust/` or `vectors/`, so a change to a
   file elsewhere does not run the test. If a later change needs such a file,

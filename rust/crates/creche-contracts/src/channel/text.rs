@@ -22,12 +22,13 @@ use std::fmt;
 /// assert_eq!(text, "exit 137");
 /// ```
 ///
-/// Code outside this module cannot build a value from raw parts:
+/// Code outside this module cannot name the field:
 ///
-/// ```compile_fail,E0423
+/// ```compile_fail,E0616
 /// use creche_contracts::channel::text::Text;
 ///
-/// let text = Text(vec![0xd800]);
+/// let text = Text::from("exit 137");
+/// let form = text.0;
 /// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Text(Repr);
