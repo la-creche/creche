@@ -11,6 +11,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-attendance.service`, `creche-door-owui.service`, `creche-caregiver.service`, `creche-trigger-webhooks.service`, `creche-noticeboard.service` | user | the cutover script, in the private repository |
 | `creche-trigger@.service` | user, templated | the cutover script, only when the host has none |
 | `creche-watchdog.{service,timer}`, `registry-sync.{service,timer}` | user | the cutover script |
+| `creche-follow.{service,timer}` | user | the cutover script |
 | `index@.{service,timer}`, `index-code@.{service,timer}` | user, templated | `bin/provision-library.sh` |
 | `code-corpus-sync.*`, `sbx-drift.*` | user | setup scripts, in the private repository |
 
@@ -27,6 +28,9 @@ installed unit file in place and never runs an installer.
   `PartOf=creche-attendance.service`.
 - **A unit that runs a repository script points into `/opt/creche/bin`**, the
   root-owned deployed checkout. The watchdog and `registry-sync` do this.
+- **`creche-follow.service` runs `handover follow` out of the `handover`
+  tree.** A `handover` release changes what the timer runs. A release does
+  not refresh the unit file, because `handover` names no unit.
 - **Every user unit carries both lines:**
   ```
   Environment=HOME=%h
@@ -72,6 +76,7 @@ installed unit file in place and never runs an installer.
 | `sbx-drift` | daily | the global policy must hold zero network allows |
 | `creche-watchdog` | 1 min | the thresholds set how fast an outage is seen, not the cadence |
 | `registry-sync` | 1 min | an unchanged run is one `git fetch` that transfers nothing |
+| `creche-follow` | 2 min | a tag lands about four minutes after its merge |
 
 A drop-in under the user's unit directory survives a reinstall, so these
 cadences are defaults. `systemctl --user cat <unit>` shows what runs.

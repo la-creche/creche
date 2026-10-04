@@ -81,6 +81,16 @@ class Decision:
     at: float | None = None
 
 
+def not_granted(verdict: Verdict) -> str:
+    """The ledger's `reason` for a gate that did not grant.
+
+    One function, because two sides read the words: `check_decision` writes
+    them and `follow` reads them back out of `done/<ULID>.json`, to tell a
+    tap nobody gave from a tap that said no.
+    """
+    return f"the gate answered {verdict}"
+
+
 def contracts_row(resolution: Resolution) -> str:
     """§2.5's `contracts` field, for root AND for the requester's preview.
 
@@ -202,7 +212,7 @@ def check_decision(decision: Decision, expected_gate: str, now: float | None = N
         raise Refusal(RefusalCode.APPROVAL, "approval", "the decision names another gate")
 
     if decision.verdict is not Verdict.GRANTED:
-        raise Refusal(RefusalCode.APPROVAL, "approval", f"the gate answered {decision.verdict}")
+        raise Refusal(RefusalCode.APPROVAL, "approval", not_granted(decision.verdict))
 
     if decision.at is None:
         raise Refusal(RefusalCode.APPROVAL, "approval", "the decision carries no time")

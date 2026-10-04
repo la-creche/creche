@@ -227,6 +227,29 @@ def _installed(build: tuple[tuple[str, ...], ...], packages: dict[str, Package])
     return {packages[name][0] for name in seen}
 
 
+#: A Dockerfile line that copies out of the build context. A `--from=` copy
+#: reads another stage, not the repository.
+COPY_WORD = "COPY"
+FROM_STAGE = "--from="
+
+
+def _copied(dockerfile: Path) -> set[str]:
+    """Every top directory of the repository an image build copies from.
+
+    The context is the repository root (`playpen/Dockerfile`'s own header),
+    so the first part of a copied path is a directory of this repository.
+    """
+    tops: set[str] = set()
+    for line in dockerfile.read_text(encoding="utf-8").splitlines():
+        words = line.split()
+        if not words or words[0] != COPY_WORD or any(w.startswith(FROM_STAGE) for w in words):
+            continue
+
+        tops.update(source.split("/", 1)[0] for source in words[1:-1])
+
+    return tops
+
+
 def test_each_component_bundles_what_its_build_installs(found: ManifestSet) -> None:
     """Contract 06 §1 rule 9. A change under a directory a build installs
     changes the artifact, so it must move the tag, and `CatalogRow.bundles`
@@ -236,9 +259,33 @@ def test_each_component_bundles_what_its_build_installs(found: ManifestSet) -> N
     packages = _workspace()
     for name, item in found.found.items():
         row = CATALOG_BY_NAME[name]
-        installed = _installed(item.manifest.build, packages) - {row.path}
+        installed = _installed(item.manifest.build, packages)
+        if row.kind is Kind.OCI_IMAGE:
+            installed |= _copied(REPO_ROOT / row.path / "Dockerfile")
 
-        assert set(row.bundles) == installed, name
+        assert set(row.bundles) == installed - {row.path}, name
+
+
+def test_the_image_component_builds_and_stages_its_own_hook(found: ManifestSet) -> None:
+    """Contract 06 §4 rule 6. An image component has no venv to hold a
+    console script, so its build names a script of its own tree, and that
+    script stages the file `verify.command` runs.
+
+    Without a `build` the executor finds no staged tree at step 8 and the
+    release fails before the hook is reached."""
+    manifest = found.manifests()["playpen"]
+    assert manifest.kind is Kind.OCI_IMAGE
+    assert len(manifest.build) == 1
+
+    script = REPO_ROOT / manifest.build[0][-1]
+    assert script.is_file(), script
+    assert script.is_relative_to(REPO_ROOT / "playpen")
+
+    hook = Path(manifest.verify.command[0])
+    assert hook.is_relative_to(manifest.install.to)
+    staged = hook.relative_to(manifest.install.to)
+    assert (REPO_ROOT / "playpen" / staged).is_file()
+    assert f'"$STAGED/{staged}"' in script.read_text(encoding="utf-8")
 
 
 #: systemd's own `TimeoutStopSec` and `TimeoutStartSec` when a unit sets

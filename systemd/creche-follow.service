@@ -1,0 +1,53 @@
+# File the release request a new tag calls for. USER unit, as the operator.
+# ONESHOT: one run per firing of creche-follow.timer.
+#
+# Installed and enabled by the installer in the private repository. A
+# release never installs it and never refreshes it: `handover` names no unit
+# (`handover/component.yaml`), so this file is no sibling of one.
+#
+# WHY IT EXISTS. A merge makes a tag, and until this unit the operator typed
+# `handover request <name> --wait` on the host before the phone asked. This
+# unit is that command on a timer (`handover/src/handover/follow/`). It files
+# a request and it approves nothing. The tap stays the one gate.
+#
+# NO Restart= AND NO START LIMIT, on purpose. This unit is MEANT to exit.
+# The timer is its retry: a restarted run would fetch a second sooner and
+# read the same tags.
+[Unit]
+Description=File one release request for every newer component tag
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Every user unit in this repository carries both (systemd/AGENTS.md). HOME
+# is load-bearing beyond that rule. The fetch is ssh as the operator, so ssh
+# reads the operator's identity out of HOME, and the marker is under HOME.
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+EnvironmentFile=/etc/creche/site.env
+# THE COMPONENT TREE, not the deployed checkout. A `handover` release then
+# changes what this unit runs, and the next firing runs the new tree.
+#
+# The names are every component a release can deploy: six of this
+# repository, and `mcp-servers` of the MCP repository. A component with no
+# release stamp is skipped whatever this line says, so `playpen` is followed
+# only after its first release, which the operator files by hand. One line,
+# with no continuation: a test reads it.
+ExecStart=/opt/components/handover/bin/handover follow chaperone attendance caregiver noticeboard playpen handover mcp-servers
+
+# A user unit on this host cannot use mount-namespace options
+# (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
+# options need no namespace (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+# 0077: the marker and the request are the operator's and root's alone. Both
+# writers set their own mode as well.
+UMask=0077
+# The names are in two repositories, and one fetch is capped at 120 s
+# (`handover/src/handover/corpus/`). The reads after the two fetches take
+# seconds. This is the ceiling above them. A run that is still active when
+# the timer fires again is not started twice.
+TimeoutStartSec=300

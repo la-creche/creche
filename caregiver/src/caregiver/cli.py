@@ -33,11 +33,13 @@ from .chaperone_watch import (
 from .delete import delete_family
 from .driver import SandboxDriver, SbxDriver
 from .egress import EgressConfig
+from .images import SandboxImages
 from .lan import ConfigError, Port, url
 from .litellm_keys import HttpLiteLLMKeys, LiteLLMKeys
 from .loop import LoopConfig, SignalControl, serve
 from .mcp_release import paths_under
 from .reconcile import Actors, SpendRead, reconcile_family
+from .released import RELEASED_IMAGES, ReleasedImages
 from .rotate import (
     Mode,
     Reason,
@@ -176,6 +178,13 @@ def _watch_args(parser: argparse.ArgumentParser) -> None:
         "--image", required=True, help="the approved sandbox image digest for flavor 'base'"
     )
     _python_image_arg(parser)
+    parser.add_argument(
+        "--released-images",
+        type=Path,
+        default=None,
+        help="the file a playpen release installed. Its references win over --image and "
+        f"--image-python. Default {RELEASED_IMAGES}, and none for a --state-root of its own",
+    )
     parser.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     parser.add_argument("--litellm-base-url", default=None)
     _attendance_args(parser)
@@ -370,6 +379,31 @@ def _actors(
     )
 
 
+def _released(args: argparse.Namespace) -> ReleasedImages | None:
+    """The released file this run reads, or None.
+
+    The default belongs to the real plane and to no other: a scratch run
+    names a `--state-root` of its own and is given its images by its caller,
+    so it must not pick up what the host's own `playpen` release installed.
+    The same rule `--release-root` follows. No unit names the flag, so an
+    installer can put a new unit file over an older `caregiver` tree."""
+    if args.released_images is not None:
+        return ReleasedImages(args.released_images)
+
+    if args.state_root != paths.STATE_ROOT:
+        return None
+
+    return ReleasedImages(RELEASED_IMAGES)
+
+
+def _images(args: argparse.Namespace) -> SandboxImages:
+    """One read, for a command that runs one pass."""
+    given = SandboxImages(base=args.image, python=args.image_python)
+    released = _released(args)
+
+    return released.current(given) if released is not None else given
+
+
 def _switch_client(args: argparse.Namespace) -> SwitchClient:
     token = read_token(paths.caregiver_token_path(args.state_root))
     if args.attendance_socket is not None:
@@ -379,11 +413,15 @@ def _switch_client(args: argparse.Namespace) -> SwitchClient:
 
 
 def _watch_plan(args: argparse.Namespace, families: Sequence[str]) -> list[str]:
+    # What a pass will use, not what the flags say: a `playpen` release's
+    # references win over them (`released.py`).
+    images = _images(args)
+
     return [
         f"registry: {args.registry}",
         f"state: {args.state_root}",
-        f"image: {args.image}",
-        f"image (python): {args.image_python or '(none configured)'}",
+        f"image: {images.base}",
+        f"image (python): {images.python or '(none configured)'}",
         f"families: {', '.join(families) if families else '(none)'}",
         f"attendance: {_attendance_address(args)}, "
         f"token {paths.caregiver_token_path(args.state_root)}",
@@ -440,6 +478,7 @@ def _serve_command(
         state_root=args.state_root,
         image=args.image,
         python_image=args.image_python,
+        released=_released(args),
         poll_interval_s=args.poll_interval_s,
         max_concurrent_passes=args.max_concurrent_passes,
         stop_grace_s=args.stop_grace_s,
@@ -485,12 +524,13 @@ def _reconcile_once_command(
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_PROBLEM
 
+    images = _images(args)
     result = reconcile_family(
         registry,
         args.family,
         state_root=args.state_root,
-        image=args.image,
-        python_image=args.image_python,
+        image=images.base,
+        python_image=images.python,
         actors=actors,
         spend=SpendRead.READ,
     )

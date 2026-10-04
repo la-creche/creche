@@ -19,7 +19,7 @@ host where something has gone wrong.
 | Module | Owns |
 |---|---|
 | `paths.py`, `clock.py`, `atomic.py` | every host path, the one timestamp, the atomic write |
-| `lan.py`, `images.py` | the LAN address from the site file, and the image a flavor maps to |
+| `lan.py`, `images.py`, `released.py` | the LAN address from the site file, the image a flavor maps to, and the images a `playpen` release installed |
 | `driver.py` | `SandboxDriver`: `SbxDriver` (real) and `FakeDriver` |
 | `litellm_keys.py`, `credentials.py`, `grants.py`, `config_mount.py` | the key, the token, the grant file, the config mount |
 | `playpen_env.py` | the env file `sbx exec --env-file` carries |
@@ -91,6 +91,14 @@ host where something has gone wrong.
 - A fault's `blocks_turns` comes from `faults.BLOCKS_TURNS_BY_CODE`, never
   from the file.
 - A flavor with no image creates nothing. The fault does not block turns.
+- The images of a `playpen` release win over `--image` and `--image-python`.
+  `released.py` reads `/opt/components/playpen/images.env` once per pass.
+- A released file that is absent or does not read keeps the last good
+  answer. Only a process that never read one uses the flags.
+- A released reference is a digest. A file that holds a tag, an unknown
+  flavor or no `base` line is refused whole.
+- A run with a `--state-root` of its own reads no released file, unless
+  `--released-images` names one.
 - Never name a fixed in-VM path. `sbx create` mounts a host directory at the
   same path inside the VM. `playpen_env.py` writes the three host paths into
   the env file, per sandbox, beside `control/` and never inside it.

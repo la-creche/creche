@@ -212,7 +212,7 @@ async def _json(request: Request) -> dict[str, Any]:
     """The body, or `bad_request`. A door's body is untrusted input."""
     try:
         raw: object = await request.json()
-    except (ValueError, UnicodeDecodeError) as error:
+    except (ValueError, UnicodeDecodeError, RecursionError) as error:
         raise ApiError(ErrorCode.BAD_REQUEST, "body is not JSON") from error
 
     record = as_object(raw)

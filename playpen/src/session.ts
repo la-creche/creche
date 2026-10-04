@@ -26,8 +26,8 @@ import {
 import { readEntry } from "./entry-text.js";
 import { PiCommandError, PiProcess } from "./pi-process.js";
 import type { PiLauncher } from "./pi-process.js";
+import { entryList } from "./pi-record.js";
 import type {
-  PiEntry,
   PiResponse,
   ProcessExitReason,
   SessionEntry,
@@ -240,8 +240,7 @@ export class SandboxSession {
 
   private takeEntries(answer: PiResponse, sinceMatched: boolean): EntryRead {
     const data = answer.data ?? {};
-    const raw = data["entries"];
-    const list: PiEntry[] = Array.isArray(raw) ? (raw as PiEntry[]) : [];
+    const list = entryList(data);
     const leaf = data["leafId"];
     const kept: SessionEntry[] = [];
 
@@ -401,7 +400,10 @@ export class SandboxSession {
     if (state === null) {
       // pi emitted outside a turn. There is no turn to address it to, and
       // §13 rule 3 makes the host drop an unknown pair anyway.
-      this.log(`pi event outside a turn: ${String(event["type"])}`);
+      // `String()` throws on an object with no usable `toString`, and the
+      // type is pi's to choose.
+      const type = event["type"];
+      this.log(`pi event outside a turn: ${typeof type === "string" ? type : "no text type"}`);
       return;
     }
 
@@ -535,8 +537,7 @@ export class SandboxSession {
     incremental: boolean,
   ): { userEntryId: string | null; leafId: string | null; count: number | null } {
     const data = answer.data ?? {};
-    const raw = data["entries"];
-    const entries: PiEntry[] = Array.isArray(raw) ? (raw as PiEntry[]) : [];
+    const entries = entryList(data);
     const leaf = data["leafId"];
     const leafId = typeof leaf === "string" ? leaf : null;
 

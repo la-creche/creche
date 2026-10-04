@@ -3,11 +3,15 @@
 # (§1 rule 5), so a component has one live version and the manifest carries
 # no range (§2.2).
 #
-# `build` is absent, which contract 06 §8 reads as fetch-only. The two
-# commands that build this image carry the version in the image tag
-# (playpen/README.md, "The image"), and §8's `build` is fixed argv with no
-# interpolation, so the version cannot be written here.
-# CONTRACT-QUESTION: contract 06 §8's `build` cannot carry this image's version.
+# `build` runs `bin/playpen-build` out of the fetched source. It builds the
+# two images, pushes them to the host's own registry, and writes the tree a
+# release swaps in: `images.env`, one digest per flavor, and the verify hook.
+# `caregiver` reads `images.env` and creates every sandbox from it.
+#
+# Contract 06 §8's `build` is fixed argv with no interpolation, so it cannot
+# carry the version a merge allocated. It does not need to: the script asks
+# the registry for the digest of what it pushed, and the tree names the
+# images by digest. The version is the stamp beside `images.env`.
 manifest_version: "0.4"
 name: playpen
 repo: agent-control
@@ -15,6 +19,10 @@ path: playpen
 kind: oci-image
 unit: null
 runs_as: sandbox
+# `/usr/bin/env bash`, because §8 wants an absolute first word and the
+# script's own first line names the same interpreter.
+build:
+  - ["/usr/bin/env", "bash", "playpen/bin/playpen-build"]
 install:
   to: /opt/components/playpen
   prev: /opt/components/playpen.prev
@@ -26,6 +34,9 @@ requires:
   - { contract: pep-grant, major: 0, min_minor: 11 }
 depends_on: []
 verify:
+  # The hook ships in the tree `bin/playpen-build` stages (contract 06 §4
+  # rule 6). It asks the registry for each digest `images.env` names. It
+  # runs as the operator and changes nothing.
   command: ["/opt/components/playpen/bin/playpen-verify", "--json"]
   user: operator
   timeout_s: 180

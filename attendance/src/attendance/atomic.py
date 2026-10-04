@@ -83,7 +83,9 @@ def read_json(path: Path, max_bytes: int = MAX_JSON_BYTES) -> dict[str, Any] | N
 
     try:
         parsed: object = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (ValueError, RecursionError):
+        # ValueError covers bad UTF-8, bad JSON and an integer past the
+        # interpreter's digit limit. Deep nesting raises RecursionError.
         return None
 
     return as_object(parsed)
