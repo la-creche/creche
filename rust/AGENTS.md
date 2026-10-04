@@ -28,7 +28,7 @@ defect that a test finds late.
 | `secret` | `Secret`, the type of a token or a key. |
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
-| `session` | The session API: contract 02. |
+| `session` | The session API: contract 02. `session.rs` declares the files under `session/`. |
 | `channel` | The channel protocol: contract 03. "The channel module" below has its parts. |
 | `grants` | The grant file, the call body, the approval body and the audit record: contract 04. |
 | `status` | The status document: contract 05. |
@@ -368,9 +368,8 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- Seven modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session`, `grants`, `status`, `manifest` and
-  `config`.
+- Six modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `grants`, `status`, `manifest` and `config`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
@@ -392,6 +391,82 @@ Rules for the test:
   7. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. The
      contract gives no cap on the digits of a number. Python reads a text of
      4300 digits at most as an integer. The types have that cap.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/session/`:
+  1. The JSON reader, contract 02 §3 rule 3. The contract gives a body no
+     nesting limit. Python reads a text until the recursion limit of the
+     interpreter. The reader stops at 128 levels.
+  2. `Timestamp`, contract 02 §13.2 rule 4 and §13.4.2. The contract says
+     RFC 3339. Python reads more forms. The type reads each form that each
+     supported Python version reads in the same way, but for three. The
+     three are a week date, text between the time and the offset, and
+     digits after `HHMMSS`.
+  3. `SteerMessage`, contract 02 §5.6. The contract gives no cap. The Python
+     parser has a cap of 4096 bytes. The type has that cap.
+  4. `StopReason`, contract 02 §5.7. The contract gives no cap and no
+     grammar. The Python parser has a cap of 200 characters and takes each
+     text. The type does the same.
+  5. `Labels`, contract 02 §4.2. The contract gives a key no cap and no
+     grammar. The Python parser takes each key. The type does the same.
+  6. `Holder`, contract 02 §7.1. The contract lists four holders. The Python
+     code has a fifth, `dispatch`. The type has the five.
+  7. `TurnRef`, contract 02 §5.5 and §8. The contract says that a `turn` is
+     a ULID. The Python reader of a journal line and the events route take
+     each text. The type takes each text and gives a text that is not a ULID
+     no id.
+  8. `ErrorDetail`, contract 02 §14. The contract gives no closed set of
+     forms. The type has the holder block of §7.2 and keeps each other
+     object.
+  9. `OwuiRefs`, contract 02 §5.4 and §10. The contract gives the four ids
+     no grammar and no cap. The type takes each text of one character or
+     more.
+  10. `Trigger`, contract 02 §13.2. The contract gives the name no grammar.
+      The type takes each text.
+  11. `DispatchRequest`, contract 02 §13.4.1. The contract says that `chain`
+      is required. The Python parser takes a body with no chain. The type
+      does the same.
+  12. `SwitchRequest`, contract 05 §5.1. The Python parser checks no grammar
+      for `family`, `to` and `from`. The type keeps each one as text.
+  13. `EventsQuery`, contract 02 §5.5. The contract says that `follow` is a
+      bool. The Python route reads each text but `0`, `false` and `no` as
+      true. The type does the same.
+  14. `TurnView`, contract 02 §4.4. The Python code writes the empty text
+      as the sandbox of a turn that no sandbox served. The type does the
+      same.
+- The `session` module differs from the Python code on purpose in five
+  ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
+  1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN`, no
+     `Infinity` and no lone surrogate in a text that a parser reads.
+  2. A JSON text nests 128 levels at most.
+  3. A time has none of the three forms of question 2.
+  4. A number of a query has the digits 0 to 9 only.
+  5. A sequence number fits 64 bits. The body of a `pi_event` holds an
+     integer past 64 bits as a float.
+
+  Three more rows are vectors of the journal reader on which the two sides
+  accept the same line. The Rust reader keeps `journal_seq: true` as the
+  number 1, and it keeps a body as its JSON text.
+- The writer of the `session` module sorts the keys of an object of free
+  form. The Python code keeps the order that it is given. No vector shows
+  the difference. These objects have free form:
+  1. The labels.
+  2. The body of a `pi_event`.
+  3. A note that `attendance` does not write.
+  4. An error detail that is not the holder block.
+- `session::JournalBody::read` has no Python counterpart. No Python code
+  reads the body of a journal line against its kind. The function refuses a
+  body that lacks a field of its kind.
+- The `session` module has no type for these parts of contract 02, because
+  no vector covers them:
+  1. The bodies of `wait=accepted` and `wait=settled`.
+  2. The answer of a session list.
+  3. The answers of `/dispatch` and `/dispatch/jobs`.
+  4. The header `X-Door-Instance`.
+  5. The state files of `attendance`.
+- A request type of the `session` module has no writer. A door needs one to
+  send a body. The three Python doors write their bodies by hand, and no
+  vector covers them.
+- `session::Turn` has no constructor from a stored turn record.
 - `Secret` does not erase its bytes when the value drops. A sure erase needs
   `unsafe` code, and the lint gate forbids `unsafe` code.
 - `Secret::matches` has no branch on a byte of the secret. The compiler gives
