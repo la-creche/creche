@@ -170,7 +170,6 @@ mod tests {
             (b"[]", ReadError::NotAnObject(JsonKind::Array)),
             (b"\"\xff\"", ReadError::NotJson(JsonError::NotUtf8)),
         ];
-        let large = format!(r#"{{"x": "{}"}}"#, "a".repeat(OUTCOME_CAP_BYTES));
 
         for (bytes, problem) in problems {
             let row = noticeboard(bytes, STEM);
@@ -178,12 +177,22 @@ mod tests {
             assert_eq!(row.problem, Some(problem));
             assert_eq!(row.id, STEM);
         }
+    }
 
+    #[test]
+    fn a_file_of_exactly_the_cap_is_read() {
+        // The test writes the cap a second time, as a number. A constant
+        // that moves then fails the test.
+        let cap = 1 << 20;
+        let padding = cap - r#"{"x": ""}"#.len();
+        let at_cap = format!(r#"{{"x": "{}"}}"#, "a".repeat(padding));
+        let over_cap = format!(r#"{{"x": "{}"}}"#, "a".repeat(padding + 1));
+
+        assert_eq!(at_cap.len(), cap);
+        assert_eq!(noticeboard(at_cap.as_bytes(), STEM).problem, None);
         assert_eq!(
-            noticeboard(large.as_bytes(), STEM).problem,
-            Some(ReadError::TooLarge {
-                cap: OUTCOME_CAP_BYTES
-            })
+            noticeboard(over_cap.as_bytes(), STEM).problem,
+            Some(ReadError::TooLarge { cap })
         );
     }
 }

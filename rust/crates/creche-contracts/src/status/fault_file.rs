@@ -464,18 +464,24 @@ mod tests {
     }
 
     #[test]
-    fn a_file_over_the_cap_is_refused() {
-        let bytes = format!(
-            r#"{{"family": "chat", "written_at": "", "faults": [], "x": "{}"}}"#,
-            "a".repeat(FAULT_FILE_CAP_BYTES)
-        );
+    fn a_file_of_exactly_the_cap_is_read() {
+        // The test writes the cap a second time, as a number. A constant
+        // that moves then fails the test.
+        let cap = 1 << 20;
+        let file = |padding: usize| {
+            format!(
+                r#"{{"family": "chat", "written_at": "", "faults": [], "x": "{}"}}"#,
+                "a".repeat(padding)
+            )
+        };
+        let padding = cap - file(0).len();
         let now = time("2031-04-18T06:43:33Z");
 
+        assert_eq!(file(padding).len(), cap);
+        assert!(caregiver(file(padding).as_bytes(), FaultSource::Pep, now).is_ok());
         assert_eq!(
-            caregiver(bytes.as_bytes(), FaultSource::Pep, now),
-            Err(FaultFileRefusal::Unreadable(ReadError::TooLarge {
-                cap: FAULT_FILE_CAP_BYTES
-            }))
+            caregiver(file(padding + 1).as_bytes(), FaultSource::Pep, now),
+            Err(FaultFileRefusal::Unreadable(ReadError::TooLarge { cap }))
         );
         assert_eq!(
             caregiver(b"{}", FaultSource::Pep, now),

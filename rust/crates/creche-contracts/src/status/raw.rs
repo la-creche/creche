@@ -634,18 +634,32 @@ mod tests {
 
     #[test]
     fn a_file_of_exactly_the_cap_is_read() {
-        let padding = LARGE_CAP_BYTES - r#"{"x": ""}"#.len();
-        let at_cap = format!(r#"{{"x": "{}"}}"#, "a".repeat(padding));
-        let over_cap = format!(r#"{{"x": "{}"}}"#, "a".repeat(padding + 1));
+        // The test writes each cap a second time, as a number. A constant of
+        // the module that moves then fails the test.
+        let caps = [
+            (Reader::Attendance, 1 << 20),
+            (Reader::Noticeboard, 1 << 20),
+            (Reader::DoorTui, 256 << 10),
+            (Reader::DoorTrigger, 256 << 10),
+            (Reader::DoorOwui, 256 << 10),
+        ];
 
-        assert_eq!(at_cap.len(), LARGE_CAP_BYTES);
-        assert!(RawStatus::read(at_cap.as_bytes(), Reader::Attendance).is_ok());
-        assert_eq!(
-            RawStatus::read(over_cap.as_bytes(), Reader::Attendance),
-            Err(ReadError::TooLarge {
-                cap: LARGE_CAP_BYTES
-            })
-        );
+        for (reader, cap) in caps {
+            let padding = cap - r#"{"x": ""}"#.len();
+            let at_cap = format!(r#"{{"x": "{}"}}"#, "a".repeat(padding));
+            let over_cap = format!(r#"{{"x": "{}"}}"#, "a".repeat(padding + 1));
+
+            assert_eq!(at_cap.len(), cap);
+            assert!(
+                RawStatus::read(at_cap.as_bytes(), reader).is_ok(),
+                "{reader:?}"
+            );
+            assert_eq!(
+                RawStatus::read(over_cap.as_bytes(), reader),
+                Err(ReadError::TooLarge { cap }),
+                "{reader:?}"
+            );
+        }
     }
 
     #[test]

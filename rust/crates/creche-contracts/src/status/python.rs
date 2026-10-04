@@ -172,6 +172,20 @@ fn with_problem_class(row: &Value, keys: &[&str]) -> Value {
     row
 }
 
+/// A value with the array at each of `keys` in one order. The generator
+/// writes a set as an array in the order of the compact JSON texts of its
+/// items. That order is not the byte order for a text outside ASCII, so the
+/// test puts both sides in one order and compares the set.
+fn with_sorted_sets(value: &Value, keys: &[&str]) -> Value {
+    let mut value = value.clone();
+    for key in keys {
+        let items = value[key].as_array_mut().unwrap();
+        items.sort_by_key(Value::to_string);
+    }
+
+    value
+}
+
 // --- the five readers of the status document ---
 
 /// What the code did with one vector, as a vector file writes it: the `value`
@@ -522,6 +536,9 @@ struct Reads {
     /// The keys of a refused row that hold the text of a Python exception.
     /// The test compares the class of the problem in their place.
     problem_keys: &'static [&'static str],
+    /// The keys of an accepted value that hold a set. The test compares each
+    /// one as a set.
+    set_keys: &'static [&'static str],
 }
 
 const fn reads(surface: &'static str, replay: fn(&Surface, &Vector) -> Replay) -> Reads {
@@ -529,15 +546,22 @@ const fn reads(surface: &'static str, replay: fn(&Surface, &Vector) -> Replay) -
         surface,
         replay,
         problem_keys: &[],
+        set_keys: &[],
     }
 }
 
 const READERS: &[Reads] = &[
-    reads("status.attendance", replay_attendance),
+    Reads {
+        surface: "status.attendance",
+        replay: replay_attendance,
+        problem_keys: &[],
+        set_keys: &["fault_codes"],
+    },
     Reads {
         surface: "status.noticeboard",
         replay: replay_noticeboard,
         problem_keys: &["problem", "reason"],
+        set_keys: &[],
     },
     reads("status.door_tui", replay_door_tui),
     reads("status.door_trigger", replay_door_trigger),
@@ -547,6 +571,7 @@ const READERS: &[Reads] = &[
         surface: "status.outcome.noticeboard",
         replay: replay_outcome,
         problem_keys: &["problem"],
+        set_keys: &[],
     },
 ];
 
@@ -559,7 +584,9 @@ fn each_reader_does_what_its_python_reader_does() {
             let replayed = (reader.replay)(&surface, vector);
             match (vector.result, replayed) {
                 (Outcome::Accepted, Ok(value)) => {
-                    assert_eq!(value.as_ref(), vector.value(), "{at}");
+                    let sets = |value: &Value| with_sorted_sets(value, reader.set_keys);
+
+                    assert_eq!(value.as_ref().map(sets), vector.value().map(sets), "{at}");
                 }
                 (Outcome::Refused, Err(refusal)) => {
                     let wanted = vector

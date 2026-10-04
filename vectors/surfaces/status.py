@@ -240,6 +240,12 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
     _doc("never-valid-text", state="invalid", validation=_validation(never_valid="true")),
     _doc("never-valid-one", state="invalid", validation=_validation(never_valid=1)),
     _doc(
+        "never-valid-needs-switch",
+        state="invalid",
+        validation=_validation(ok=False, never_valid=True),
+        reconcile={"step": "validate", "attempts": 1, "needs_switch": True},
+    ),
+    _doc(
         "invalid-with-last-good",
         state="invalid",
         validation=_validation(ok=False, error_count=1, first_error="kind: 'bogus' is not a kind"),
@@ -305,6 +311,10 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
     _doc("sandbox-env-relative", sandboxes=[_sandbox(1, supervisor_env="../supervisor.env")]),
     _doc("sandbox-not-objects", sandboxes=["chat-s1", None, 5, [_sandbox(1)]]),
     _doc("sandbox-21", sandboxes=[_sandbox(number, "gone") for number in range(1, 22)]),
+    _doc(
+        "sandbox-22-first-not-object",
+        sandboxes=["chat-s0", *(_sandbox(number, "gone") for number in range(1, 22))],
+    ),
     _doc("sandbox-wrong-types", sandboxes=[_sandbox(1, cpus="2", memory=2, image=None, power=7)]),
     # --- faults ---
     _doc("fault-blocking", state="degraded", faults=[_fault("grants_stale", blocks=True)]),
@@ -327,6 +337,11 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
         "faults-21",
         state="degraded",
         faults=[_fault(f"fault_{number}", blocks=False) for number in range(21)],
+    ),
+    _doc(
+        "faults-22-first-not-object",
+        state="degraded",
+        faults=[None, *(_fault(f"fault_{number}", blocks=False) for number in range(21))],
     ),
     # --- credentials, limits, triggers ---
     _doc("epoch-zero", credentials=_credentials(epoch=0)),
@@ -368,6 +383,21 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
         state="reconciling",
         reconcile={"step": "write_grants", "attempts": 1, "needs_switch": False},
     ),
+    _doc(
+        "reconcile-create-step",
+        state="reconciling",
+        reconcile={"step": "create_sandbox", "attempts": 1, "needs_switch": False},
+    ),
+    _doc(
+        "reconcile-destroy-step",
+        state="reconciling",
+        reconcile={"step": "destroy_sandbox", "attempts": 1, "needs_switch": False},
+    ),
+    _doc(
+        "reconcile-timers-step",
+        state="reconciling",
+        reconcile={"step": "write_timers", "attempts": 1, "needs_switch": False},
+    ),
     _doc("reconcile-wrong-types", reconcile={"step": 5, "attempts": "1", "needs_switch": "yes"}),
     _doc("reconcile-list", reconcile=["switch_sandbox"]),
     _doc(
@@ -382,6 +412,11 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
     ),
     _doc(
         "spend-old",
+        spend={"spend_usd": 1.25, "budget_usd": 10.0, "window": "day", "as_of": OLD},
+    ),
+    _doc(
+        "spend-as-old-as-document",
+        written_at=OLD,
         spend={"spend_usd": 1.25, "budget_usd": 10.0, "window": "day", "as_of": OLD},
     ),
     _doc("spend-wrong-types", spend={"spend_usd": "1.25", "budget_usd": True, "as_of": 5}),
