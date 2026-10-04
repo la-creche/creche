@@ -1989,7 +1989,7 @@ impl Parser {
                 self.parse_block_sequence_entry()
             }
             State::BlockSequenceEntry => self.parse_block_sequence_entry(),
-            State::IndentlessSequenceEntry => self.parse_indentless_sequence_entry(),
+            State::IndentlessSequenceEntry => self.parse_indentless_entry(),
             State::BlockMappingFirstKey => {
                 self.scanner.get_token()?;
                 self.parse_block_mapping_key()
@@ -2001,8 +2001,8 @@ impl Parser {
                 self.parse_flow_sequence_entry(Place::First)
             }
             State::FlowSequenceEntry => self.parse_flow_sequence_entry(Place::Later),
-            State::FlowSequenceEntryMappingKey => self.parse_flow_sequence_entry_mapping_key(),
-            State::FlowSequenceEntryMappingValue => self.parse_flow_sequence_entry_mapping_value(),
+            State::FlowSequenceEntryMappingKey => self.parse_flow_seq_map_key(),
+            State::FlowSequenceEntryMappingValue => self.parse_flow_seq_map_value(),
             State::FlowSequenceEntryMappingEnd => {
                 self.state = Some(State::FlowSequenceEntry);
                 let (_, start, _) = self.scanner.peek_token()?;
@@ -2333,7 +2333,8 @@ impl Parser {
         self.parse_node(Context::Block)
     }
 
-    fn parse_indentless_sequence_entry(&mut self) -> Result<Marked, Fault> {
+    /// `parse_indentless_sequence_entry` of PyYAML. The name here is under 30 characters.
+    fn parse_indentless_entry(&mut self) -> Result<Marked, Fault> {
         if !self.check(&[Kind::BlockEntry])? {
             let (_, start, _) = self.scanner.peek_token()?;
             self.pop_state();
@@ -2440,7 +2441,8 @@ impl Parser {
         self.parse_node(Context::Flow)
     }
 
-    fn parse_flow_sequence_entry_mapping_key(&mut self) -> Result<Marked, Fault> {
+    /// `parse_flow_sequence_entry_mapping_key` of PyYAML. The name here is under 30 characters.
+    fn parse_flow_seq_map_key(&mut self) -> Result<Marked, Fault> {
         let token = self.scanner.get_token()?;
         if self.check(&[Kind::Value, Kind::FlowEntry, Kind::FlowSequenceEnd])? {
             self.state = Some(State::FlowSequenceEntryMappingValue);
@@ -2451,7 +2453,8 @@ impl Parser {
         self.parse_node(Context::Flow)
     }
 
-    fn parse_flow_sequence_entry_mapping_value(&mut self) -> Result<Marked, Fault> {
+    /// `parse_flow_sequence_entry_mapping_value` of PyYAML. The name here is under 30 characters.
+    fn parse_flow_seq_map_value(&mut self) -> Result<Marked, Fault> {
         if !self.check(&[Kind::Value])? {
             self.state = Some(State::FlowSequenceEntryMappingEnd);
             let (_, start, _) = self.scanner.peek_token()?;
