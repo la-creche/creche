@@ -18,8 +18,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import functools
 import logging
-from collections.abc import AsyncGenerator, Coroutine
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
 from . import dispatch, jobs, outcomes, owui_copy, wire
@@ -46,6 +47,7 @@ from .family_status import (
     SandboxInfo,
     StatusReader,
     check_may_serve,
+    served_kind,
 )
 from .faults import FaultCode, FaultReporter
 from .ids import SessionPrefix, is_family, is_sandbox, is_session, new_ulid, sha256_hex
@@ -83,10 +85,11 @@ from .requests import (
     Wait,
     WriterRequest,
 )
-from .states import SessionKind, TurnState, can_move, is_terminal
+from .states import IllegalTransition, SessionKind, TurnState, can_move, is_terminal
 from .store import SessionStore
 from .streams import Follow, StreamEnd, StreamHub
-from .switching import SwitchBook, SwitchOutcome, SwitchTally, switch_key
+from .switching import SwitchBook, SwitchKey, SwitchOutcome, SwitchRun, SwitchTally, switch_key
+from .tasks import report_failure
 from .terminal import Exchange, pair
 from .turns import LiveTurn, TurnBook, text_delta
 from .wire import (
@@ -115,6 +118,9 @@ FLUSH_INTERVAL_S = 1.0
 # Contract 05 §5.3 rule 6's line, named once so a reader can switch on it.
 SWITCH_NOTE = "sandbox_switched"
 
+# The `note` line for a turn move that contract 02 §4.3 does not allow.
+ILLEGAL_MOVE_NOTE = "illegal_transition"
+
 # Contract 02 §10.5. Entry reads waiting for an answer, across every family.
 # One read per lease release, and a dropped channel never answers, so the
 # oldest is discarded rather than kept for ever.
@@ -139,6 +145,11 @@ _PEP_AWAY_MESSAGE = (
     "This job did not run: the policy service was not answering, "
     "so no tool call would have worked. The next firing runs as usual."
 )
+
+# Contract 02 §14's `message` for a turn that this service did not start
+# because of an error that it did not expect. It holds no text of that
+# error. The log holds the error.
+_START_ERROR = "attendance could not start this turn"
 
 # Contract 02 §10.2 rules 1 and 2: run the prompt, branch nothing. Every
 # caller that has no Open WebUI parent id wants exactly this.
@@ -276,7 +287,8 @@ class SessionService:
         self._owui.start()
 
         if self._upkeep is None:
-            self._upkeep = asyncio.create_task(self._flush_loop())
+            self._upkeep = asyncio.create_task(self._flush_loop(), name="upkeep")
+            self._upkeep.add_done_callback(report_failure)
 
     async def _flush_loop(self) -> None:
         """Contract 02 §8.3: fsync at least every 2 seconds.
@@ -286,8 +298,20 @@ class SessionService:
         """
         while True:
             await asyncio.sleep(FLUSH_INTERVAL_S)
-            self._journal.flush_due()
-            self.read_gates()
+            self._upkeep_step("the journal sync", self._journal.flush_due)
+            self._upkeep_step("the gate poll", self.read_gates)
+
+    def _upkeep_step(self, name: str, step: Callable[[], None]) -> None:
+        """Run one step of the upkeep loop. A failure never ends the loop.
+
+        A loop that died would stop the sync and the gate poll until the
+        process restarts, and nothing would say so. Each step has its own
+        guard, so a sync that fails on each tick does not stop the gate poll.
+        """
+        try:
+            step()
+        except Exception:
+            _LOG.exception("upkeep: %s failed", name)
 
     def read_gates(self) -> None:
         """Contract 04 §8.6. Show a turn that waits for a phone tap.
@@ -297,7 +321,12 @@ class SessionService:
         `FLUSH_INTERVAL_S` of the PEP writing its `pending` record.
         """
         for gate in self._gates.poll():
-            self._apply_gate(gate)
+            try:
+                self._apply_gate(gate)
+            except Exception:
+                # The tail does not read a record again. Without this guard
+                # one record that fails drops each record after it.
+                _LOG.exception("gate %s of family %s was not applied", gate.gate, gate.family)
 
         self._report_audit(self._gates.unreadable())
 
@@ -311,14 +340,16 @@ class SessionService:
         if message == self._audit_fault:
             return
 
-        self._audit_fault = message
-
         for family in self._status.families():
             if message is None:
                 self._faults.clear(family, FaultCode.AUDIT_UNREADABLE)
                 continue
 
             self._faults.raise_fault(family, FaultCode.AUDIT_UNREADABLE, message)
+
+        # After the writes. A write that failed leaves the change not
+        # published, so the next poll writes it again.
+        self._audit_fault = message
 
     async def owui_drained(self) -> None:
         """Wait until the Open WebUI copy is level with every settled turn.
@@ -388,7 +419,7 @@ class SessionService:
         """Contract 02 §5.1. One call serves both (invariant 3)."""
         check_access(principal, Access.WRITE)
         status = self._status.require(request.family)
-        check_family_kind(principal, request.family, status.kind)
+        check_family_kind(principal, request.family, served_kind(status))
         check_session_prefix(principal, request.family, request.session)
         check_may_serve(status)
 
@@ -534,10 +565,11 @@ class SessionService:
         """Contract 02 §5.4. Returns the turn; the caller picks the wait mode."""
         check_access(principal, Access.WRITE)
         status = self._status.require(family)
-        check_family_kind(principal, family, status.kind)
+        kind = served_kind(status)
+        check_family_kind(principal, family, kind)
         check_may_serve(status)
         record = self._require_session(family, session)
-        self._set_trigger(record, status.kind, request)
+        self._set_trigger(record, kind, request)
 
         if request.idempotency_key is not None:
             repeat = self._repeat_of(family, session, request)
@@ -679,7 +711,7 @@ class SessionService:
         status = self._status.require(family)
         # The delegate door's grant is `thin`, so a family of any other kind
         # is refused here before a session exists (contract 02 §3.1).
-        check_family_kind(principal, family, status.kind)
+        check_family_kind(principal, family, served_kind(status))
         check_may_serve(status)
 
         owner = request.claimed_session_id
@@ -765,7 +797,7 @@ class SessionService:
         status = self._status.require(target)
         # The dispatch door's grant is `autonomous`, so a thin or attended
         # target is refused before a session exists (contract 02 §3.1).
-        check_family_kind(principal, target, status.kind)
+        check_family_kind(principal, target, served_kind(status))
         check_may_serve(status)
         self._check_dispatchable(status)
 
@@ -978,19 +1010,37 @@ class SessionService:
         if found is not None:
             return await asyncio.shield(found)
 
-        run = asyncio.create_task(self._run_switch(request))
+        run = asyncio.create_task(self._run_switch(request), name=f"switch {request.family}")
+        run.add_done_callback(functools.partial(self._switch_ended, key))
         self._switches.remember(key, run)
 
-        try:
-            # A caller that disconnects changes nothing (invariant 4): the
-            # switch is the platform's, not the HTTP request's.
-            return await asyncio.shield(run)
-        except Exception:
-            # A refusal is not an outcome to repeat. `CancelledError` is not
-            # caught here: it means this caller went away, not that the run
-            # inside the shield failed.
+        # A caller that disconnects changes nothing (invariant 4): the
+        # switch is the platform's, not the HTTP request's.
+        return await asyncio.shield(run)
+
+    def _switch_ended(self, key: SwitchKey, run: SwitchRun) -> None:
+        """Forget a run that did not switch. A refusal is not an outcome to
+        repeat.
+
+        This is a done-callback of the run, not a handler in the caller. The
+        caller can leave before the run ends, and a failed run that no caller
+        forgot would answer each repeat with the first refusal.
+        """
+        if run.cancelled():
+            return
+
+        error = run.exception()
+
+        if error is None:
+            return
+
+        if self._switches.find(key) is run:
             self._switches.forget(key)
-            raise
+
+        # A refusal reaches the caller as its answer. Any other error has no
+        # reader when the caller left, so it reaches the log.
+        if not isinstance(error, ApiError):
+            report_failure(run)
 
     def _check_switch(self, request: SwitchRequest) -> None:
         """Contract 05 §5.3 rule 8, plus the family the document must know.
@@ -1011,6 +1061,16 @@ class SessionService:
 
         if status.startable_by_id(request.to) is None:
             raise _switch_refused(family, "to is not a sandbox this service would dial")
+
+        # CONTRACT-QUESTION: contract 05 §5.3 rule 8 names two refusals of a
+        # switch, and neither one is for a status document that states no
+        # known kind. A channel needs the kind (`served_kind`), so this reads
+        # `to` as a sandbox that this service would not dial: `bad_request`.
+        # Without this check the dial answers `forbidden`, the refusal of a
+        # door. Another reading changes the code of this one refusal.
+        # `caregiver` reads each refusal of a switch in the same way.
+        if status.kind is None:
+            raise _switch_refused(family, "the status document states no kind")
 
     async def _run_switch(self, request: SwitchRequest) -> dict[str, Any]:
         """The switch itself. Every session survives it (§5.3 rule 4)."""
@@ -1158,7 +1218,7 @@ class SessionService:
         record = Session(
             family=request.family,
             session=request.session,
-            kind=status.kind,
+            kind=served_kind(status),
             created_at=moment,
             updated_at=moment,
             title=request.title,
@@ -1182,8 +1242,37 @@ class SessionService:
     ) -> LiveTurn:
         """Mint the turn and journal it BEFORE the channel hears about it."""
         live = self._mint_turn(record, request, persona, TurnState.RUNNING)
-        self._begin_turn(live, record, request, persona, status, sandbox)
+
+        try:
+            self._begin_turn(live, record, request, persona, status, sandbox)
+        except Exception:
+            self._fail_start(live)
+            raise
+
         return live
+
+    def _fail_start(self, live: LiveTurn) -> None:
+        """End a turn whose start raised, so that it does not stay in flight.
+
+        The turn is in the book before its first write. Left `running` with
+        no deadline watcher, or `queued` out of the FIFO, it holds its
+        session and a slot of its family until the process restarts.
+        Contract 02 §4.3 has no `queued -> failed`, so a queued turn ends
+        `aborted`.
+
+        CONTRACT-QUESTION: contract 02 §4.3 gives a queued turn one end,
+        `aborted`. §14 names `pep_unreachable` as the one reason of a turn
+        that did not start, and §13.1 reads `aborted` as the job status
+        `cancelled`. This reading keeps the one legal move and gives the
+        reason `internal`. Its cost: the outcome record of a job that a
+        defect of this service ended says `cancelled`, not `failed`.
+        `_start_queued` takes the other reading for a family with nothing to
+        dial: it starts the turn, then fails it. One rule for both needs a
+        new move or a new reason in the contract.
+        """
+        queued = live.record.state is TurnState.QUEUED
+        ending = TurnState.ABORTED if queued else TurnState.FAILED
+        self._settle(live, ending, TurnReason.INTERNAL, _START_ERROR)
 
     def _mint_turn(
         self,
@@ -1338,7 +1427,14 @@ class SessionService:
         return True
 
     def _slot_for(self, status: FamilyStatus) -> Slot:
-        """Contract 02 §13 rule 2. The limit counts the whole family."""
+        """Contract 02 §13 rule 2. The limit counts the whole family.
+
+        A document that states no kind proves no limit, so nothing starts
+        on it: a queued turn stays in the queue (`served_kind`).
+        """
+        if status.kind is None:
+            return Slot.QUEUE
+
         running = len(self._turns.active_in_family(status.family))
         return slot_for(status.kind, status.max_running_turns, running)
 
@@ -1358,20 +1454,26 @@ class SessionService:
         self._queue.check_room(family)
 
         live = self._mint_turn(record, request, persona, TurnState.QUEUED)
-        line = self._append(
-            family,
-            record.session,
-            LineKind.TURN_QUEUED,
-            live.record.turn,
-            {
-                "prompt": request.prompt,
-                "idempotency_key": request.idempotency_key,
-                "queue_depth": self._queue.depth(family) + 1,
-            },
-        )
-        live.first_seq = line.journal_seq if line.journal_seq is not None else 0
-        self._store.save_turn(live.record)
-        self._store.save(record)
+
+        try:
+            line = self._append(
+                family,
+                record.session,
+                LineKind.TURN_QUEUED,
+                live.record.turn,
+                {
+                    "prompt": request.prompt,
+                    "idempotency_key": request.idempotency_key,
+                    "queue_depth": self._queue.depth(family) + 1,
+                },
+            )
+            live.first_seq = line.journal_seq if line.journal_seq is not None else 0
+            self._store.save_turn(live.record)
+            self._store.save(record)
+        except Exception:
+            self._fail_start(live)
+            raise
+
         self._queue.add(family, Waiting(live=live, request=request, persona=persona, branch=branch))
         return live
 
@@ -1404,13 +1506,14 @@ class SessionService:
         the caller decides what an undone follow-up costs it.
         """
         try:
-            task = asyncio.create_task(work)
+            task = asyncio.create_task(work, name="follow-up")
         except RuntimeError:
             work.close()
             return False
 
         self._followups.add(task)
         task.add_done_callback(self._followups.discard)
+        task.add_done_callback(report_failure)
         return True
 
     async def _start_waiting(self, waiting: Waiting, status: FamilyStatus) -> None:
@@ -1428,12 +1531,28 @@ class SessionService:
         if record is None:
             return
 
+        try:
+            await self._start_queued(waiting, status, record)
+        except Exception:
+            # Nothing awaits this task. Without this handler the turn stays
+            # `queued` out of the FIFO, or `running` with no deadline watcher.
+            _LOG.exception(
+                "queued turn %s of %s/%s did not start", live.record.turn, family, session
+            )
+            self._fail_start(live)
+
+    async def _start_queued(self, waiting: Waiting, status: FamilyStatus, record: Session) -> None:
+        """The start itself. `_start_waiting` ends the turn when this raises."""
+        live = waiting.live
+        family = live.record.family
+
         # A family with nothing to dial, or a sandbox with no env file
         # (contract 05 §4.1). Contract 02 §4.3 has no `queued -> failed`, so
         # the turn starts, on `sandbox` "" when none was found, then fails at
         # once. Left `queued`, it would sit outside the FIFO and its job would
-        # never end. `_dial_for` is checked here because `_send_start` lets its
-        # refusal escape this task.
+        # never end. `_dial_for` is checked here so that its refusal fails the
+        # turn with `sandbox_lost` and its message. Inside `_send_start` the
+        # same refusal ends the turn with `internal`.
         sandbox = ""
 
         try:
@@ -1458,7 +1577,9 @@ class SessionService:
         work runs behind this call.
         """
         try:
-            task = asyncio.create_task(self._open_session(family, session, status))
+            task = asyncio.create_task(
+                self._open_session(family, session, status), name=f"pre-start {family}/{session}"
+            )
         except RuntimeError:
             # No event loop, so no channel either. §4.7 rule 11: a pre-start
             # that cannot happen costs the next turn pi's cold start and
@@ -1470,6 +1591,7 @@ class SessionService:
         # the reference, and `close()` is where it ends.
         self._pre_starts.add(task)
         task.add_done_callback(self._pre_starts.discard)
+        task.add_done_callback(report_failure)
 
     async def _open_session(self, family: str, session: str, status: FamilyStatus) -> None:
         """Contract 03 §4.7 rules 10 and 11. Every failure here is survivable.
@@ -1510,23 +1632,23 @@ class SessionService:
         family = live.record.family
         session = live.record.session
 
-        if branch.branch is Branch.FALLBACK:
-            # Contract 02 §10.2 rule 4. The turn runs; the divergence is
-            # visible rather than silent.
-            self._append(
-                family,
-                session,
-                LineKind.BRANCH_FALLBACK,
-                live.record.turn,
-                {"wanted_entry": None, "reason": branch.reason},
-            )
-
-        if branch.branch is Branch.FORK:
-            # Contract 03 §4.1: pi may refuse a target that is not on the
-            # active branch, and the host owns the fallback.
-            self._forks[live.key] = Fork(request, persona, status, sandbox)
-
         try:
+            if branch.branch is Branch.FALLBACK:
+                # Contract 02 §10.2 rule 4. The turn runs; the divergence is
+                # visible rather than silent.
+                self._append(
+                    family,
+                    session,
+                    LineKind.BRANCH_FALLBACK,
+                    live.record.turn,
+                    {"wanted_entry": None, "reason": branch.reason},
+                )
+
+            if branch.branch is Branch.FORK:
+                # Contract 03 §4.1: pi may refuse a target that is not on the
+                # active branch, and the host owns the fallback.
+                self._forks[live.key] = Fork(request, persona, status, sandbox)
+
             link = await self._link_for(family, status, sandbox)
 
             # The dial may outlast the turn: an `accepted` one can be stopped,
@@ -1564,8 +1686,18 @@ class SessionService:
         except (ChannelClosed, HandshakeError, ValueError) as error:
             self._settle(live, TurnState.FAILED, TurnReason.CHANNEL_LOST, str(error))
             return
+        except Exception:
+            # An error of any other type. The deadline watcher starts after
+            # this block, so without this handler the turn stays `running`
+            # with nothing to end it.
+            _LOG.exception("turn %s of %s/%s did not start", live.record.turn, family, session)
+            self._fail_start(live)
+            return
 
-        live.deadline_task = asyncio.create_task(self._watch_deadline(live))
+        live.deadline_task = asyncio.create_task(
+            self._watch_deadline(live), name=f"deadline {family}/{session}"
+        )
+        live.deadline_task.add_done_callback(report_failure)
 
     async def _watch_deadline(self, live: LiveTurn) -> None:
         """Contract 02 §12 rule 4. The playpen runs its own deadline too."""
@@ -1602,7 +1734,7 @@ class SessionService:
                     ErrorCode.SANDBOX_UNAVAILABLE,
                     f"family {family} has no ready sandbox",
                     family=family,
-                    detail={"family_state": current.state.value},
+                    detail={"family_state": current.state_text},
                 )
 
             await asyncio.sleep(COLD_START_POLL_S)
@@ -1707,7 +1839,7 @@ class SessionService:
         if link is None:
             link = PlaypenLink(
                 family=family,
-                kind=status.kind,
+                kind=served_kind(status),
                 events=_SandboxEvents(self, family, sandbox),
                 factory=self._factory,
                 faults=self._faults,
@@ -1933,13 +2065,16 @@ class SessionService:
             return
 
         try:
-            task = asyncio.create_task(self._send_entry_read(family, session))
+            task = asyncio.create_task(
+                self._send_entry_read(family, session), name=f"terminal read {family}/{session}"
+            )
         except RuntimeError:
             _LOG.info("no terminal read for %s/%s: no running loop", family, session)
             return
 
         self._entry_tasks.add(task)
         task.add_done_callback(self._entry_tasks.discard)
+        task.add_done_callback(report_failure)
 
     async def _send_entry_read(self, family: str, session: str) -> None:
         """Contract 03 §4.8. One read, and every failure is survivable."""
@@ -2092,8 +2227,17 @@ class SessionService:
         message: str,
         body: dict[str, Any] | None = None,
     ) -> None:
-        """Move a turn to a terminal state, journal it, and wake its waiters."""
+        """Move a turn to a terminal state, journal it, and wake its waiters.
+
+        Two enders can race: a stop, a deadline or a lost channel, and the
+        settle that arrived first. The second ender of a turn that already
+        ended changes nothing and is no defect, so it returns here.
+        """
+        if is_terminal(live.record.state):
+            return
+
         if not can_move(live.record.state, state):
+            self._note_illegal_move(live, state)
             return
 
         live.record.state = state
@@ -2115,6 +2259,25 @@ class SessionService:
         self._save_session(family, session)
         self._release(live)
         self._end_job(live, message)
+
+    def _note_illegal_move(self, live: LiveTurn, wanted: TurnState) -> None:
+        """Make a move that contract 02 §4.3 does not allow visible.
+
+        The turn does not move: `states.py` refuses an illegal move and does
+        not correct it. The refusal is not raised, because `_settle` runs in
+        the channel reader and in a request, and the defect is somewhere
+        else. A refusal in silence would hide that defect, so the log and the
+        journal each get one line.
+        """
+        refused = IllegalTransition(live.record.turn, live.record.state, wanted)
+        _LOG.error("%s/%s %s", live.record.family, live.record.session, refused)
+        self._append(
+            live.record.family,
+            live.record.session,
+            LineKind.NOTE,
+            live.record.turn,
+            {"note": ILLEGAL_MOVE_NOTE, "from": refused.current.value, "to": wanted.value},
+        )
 
     def _apply_gate(self, gate: Gate) -> None:
         """One audit record, applied to the turn it names (contract 04 §8.6).

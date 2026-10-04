@@ -183,6 +183,27 @@ async def test_a_non_thin_family_is_refused(tmp_path: Path) -> None:
     await harness.stop()
 
 
+async def test_a_family_of_no_known_kind_takes_no_delegate_call(tmp_path: Path) -> None:
+    """Contract 02 §3.1. A status document that states no known kind proves no
+    thin family. The refusal comes before the work directory exists."""
+    harness = DelegateHarness(tmp_path)
+    write_status(
+        harness.config.state_root,
+        family=CODE_SANDBOX_FAMILY,
+        kind="robot",
+        sandboxes=((CODE_SANDBOX, "ready"),),
+    )
+
+    with pytest.raises(ApiError) as refused:
+        await harness.service.run_delegate(DELEGATE, harness.call(target=CODE_SANDBOX_FAMILY), DOOR)
+
+    assert refused.value.code is ErrorCode.FORBIDDEN
+    assert refused.value.detail == {"kind": None}
+    assert harness.sessions_of(CODE_SANDBOX_FAMILY) == []
+    assert not owner_dir(harness.config.work_root, CHAT_SESSION).exists()
+    await harness.stop()
+
+
 async def test_only_the_delegate_door_may_call_it(tmp_path: Path) -> None:
     """Contract 02 §3.1. The PEP is the one client of this path."""
     harness = DelegateHarness(tmp_path)
