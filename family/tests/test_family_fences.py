@@ -503,7 +503,9 @@ def test_empty_egress_is_the_normal_case() -> None:
     assert not errors(check("chat"))
 
 
-@pytest.mark.parametrize("entry", ["github.com", "github.com:1", "github.com:65535", "a.b:00443"])
+@pytest.mark.parametrize(
+    "entry", ["github.com", "github.com:1", "github.com:65535", "a.b:00443", "a.b:000443"]
+)
 def test_a_hostname_with_a_port_in_range_is_allowed(entry: str) -> None:
     assert not errors(check("code", egress=[entry]))
 

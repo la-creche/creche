@@ -4042,6 +4042,7 @@ mod tests {
                 "1.2.3",
                 "a-b.example",
                 "example.com:00443",
+                "example.com:000443",
             ],
             &["", "example.com\n", "example.com:443\n"],
         );

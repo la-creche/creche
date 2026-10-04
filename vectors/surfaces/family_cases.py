@@ -623,8 +623,8 @@ verbs:
     _case(
         "rule-egress-port-digits",
         HEAD
-        + "egress: ['example.com:00443', 'example.com:0000000000', 'example.com:065536', "
-        + "'example.com:100000', 'example.com:"
+        + "egress: ['example.com:00443', 'example.com:000443', 'example.com:0000000000', "
+        + "'example.com:065536', 'example.com:100000', 'example.com:"
         + "9" * _HUGE_DIGITS
         + "']\n",
     ),
