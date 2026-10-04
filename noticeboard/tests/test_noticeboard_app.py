@@ -43,6 +43,10 @@ HOST = "noticeboard.example.test"
 #: A text that holds one half of a surrogate pair. JSON writes it as an escape.
 HALF_PAIR = "a\ud800b"
 
+#: The largest count that the interpreter writes as text, and so the largest
+#: that the JSON reader keeps.
+LONGEST_COUNT = int("9" * 4300)
+
 
 class Harness:
     def __init__(self, client: TestClient, config: Config, fake: FakeAttendance) -> None:
@@ -289,6 +293,20 @@ def test_a_dead_attendance_still_renders_the_session_page(board: Harness) -> Non
 
     assert answer.status_code == 200
     assert "cannot reach attendance" in answer.text
+
+
+def test_a_token_sum_with_no_text_form_shows_as_unknown(board: Harness) -> None:
+    """The page shows `unknown` for a sum that the interpreter cannot write
+    as text."""
+    usage = dict.fromkeys(("input", "output", "cache_read", "cache_write"), LONGEST_COUNT)
+    detail = session_doc()
+    detail["turns"] = [turn_doc(usage=usage)]
+    board.fake.answer(f"/v1/sessions/{CHAT}/{OWUI}", detail)
+
+    answer = board.get(f"/sessions/{CHAT}/{OWUI}")
+
+    assert answer.status_code == 200
+    assert "<td>unknown" in answer.text
 
 
 def test_the_audit_page_says_it_shows_full_arguments(board: Harness) -> None:

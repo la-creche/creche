@@ -27,7 +27,7 @@
   <td>{{ turn.state }}{% if turn.reason %} ({{ turn.reason }}){% endif %}
       {% if turn.persona_truncated %}<span class="flag">persona truncated</span>{% endif %}</td>
   <td>{{ turn.sandbox or "—" }}</td>
-  <td>{{ turn.usage.tokens }}
+  <td>{{ turn.usage.tokens_text }}
       <span class="foot">in {{ turn.usage.input }} / out {{ turn.usage.output }}</span></td>
   <td>{% if turn.usage.cost_usd is not none %}${{ "%.4f"|format(turn.usage.cost_usd) }}
       {% else %}—{% endif %}</td>

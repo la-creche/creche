@@ -69,6 +69,9 @@ DOOR_BY_PREFIX: Final = (
     ("auto-", "trigger"),
 )
 
+#: What a page shows for a count that it cannot write.
+NO_COUNT: Final = "unknown"
+
 
 def is_session(value: str) -> bool:
     """A session id of contract 02 §2.
@@ -127,6 +130,18 @@ class UsageRow:
     @property
     def tokens(self) -> int:
         return self.input + self.output + self.cache_read + self.cache_write
+
+    @property
+    def tokens_text(self) -> str:
+        """The sum, as a page shows it.
+
+        The interpreter writes no text for an integer past its digit limit.
+        The page then shows `unknown`.
+        """
+        try:
+            return str(self.tokens)
+        except ValueError:
+            return NO_COUNT
 
 
 @dataclass(frozen=True)

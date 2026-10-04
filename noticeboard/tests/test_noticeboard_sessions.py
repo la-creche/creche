@@ -10,6 +10,7 @@ from noticeboard.sessions import (
     MAX_STREAM_LINES,
     SESSION_ID_MAX,
     SessionReader,
+    UsageRow,
     is_session,
 )
 from noticeboard_helpers import (
@@ -232,6 +233,14 @@ def test_a_turn_without_usage_reads_zero_not_a_crash(tmp_path: Path) -> None:
 
     assert answer.turns[0].usage.tokens == 0
     assert answer.turns[0].usage.cost_usd is None
+
+
+def test_the_token_sum_has_a_text_for_each_usage() -> None:
+    """A sum past the digit limit of the interpreter reads `unknown`."""
+    longest = int("9" * 4300)
+
+    assert UsageRow(input=4120, output=188).tokens_text == "4308"
+    assert UsageRow(input=longest, output=longest).tokens_text == "unknown"
 
 
 def test_the_event_stream_is_split_on_line_feed_alone(tmp_path: Path) -> None:
