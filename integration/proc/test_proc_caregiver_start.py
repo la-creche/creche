@@ -15,6 +15,7 @@ change costs one assertion in each scenario here.
 from __future__ import annotations
 
 import json
+import os
 import signal
 import time
 from pathlib import Path
@@ -235,9 +236,16 @@ def test_a_kill_inside_a_create_retires_the_sandbox(caregiver_prepared: Caregive
     wait_until(lambda: stack.sbx_commands() != [], "the create to start")
 
     killed.send(signal.SIGKILL)
-    assert killed.wait(EXIT_DEADLINE_S) == -signal.SIGKILL
     untune(stack.tree, SBX, f"hold-create-{SANDBOX}")
     wait_until(lambda: SANDBOX in sbx_sandboxes(stack.tree), f"the create of {SANDBOX} to end")
+    # The test reaps the killed service last, after `sbx create` left the
+    # process table. Its group is then empty at the one look of the harness,
+    # and the teardown sends that group no signal (rule 10 of `AGENTS.md`).
+    wait_until(
+        lambda: all(_left_the_table(call.pid) for call in stack.sbx_calls()),
+        "the create to leave the process table",
+    )
+    assert killed.wait(EXIT_DEADLINE_S) == -signal.SIGKILL
 
     stack.spawn_caregiver()
     wait_until(
@@ -398,6 +406,22 @@ def _creates(stack: CaregiverStack) -> list[tuple[str, ...]]:
 def _plane_rows(stack: CaregiverStack, sandbox: str) -> list[str]:
     """The plane endpoints that one sandbox may reach now, by its allow rows."""
     return [host for host in sbx_rows(stack.tree, sandbox, ALLOW) if host in PLANE_ENDPOINTS]
+
+
+def _left_the_table(pid: int) -> bool:
+    """True when the system holds no entry for the pid.
+
+    A process that ended keeps its entry until its parent reaps it, and the
+    signal still finds it. Its process group is not empty before that.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+
+    return False
 
 
 def _replace(path: Path, content: str | None) -> None:
