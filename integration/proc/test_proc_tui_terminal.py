@@ -308,6 +308,11 @@ async def test_a_signal_gives_the_lease_back_and_leaves_pi(
     The signal goes to the door alone, as `kill` from another shell sends
     it. The session is writable at once (contract 02 §5.10), and the door
     still reports the exit code of pi when pi ends.
+
+    CONTRACT-QUESTION: contract 02 §5.10 gives the release call. No contract
+    says what the door does at a signal. Reading taken: the rule of
+    `door-tui/AGENTS.md`, that a signal releases the lease and never ends
+    pi. A change costs the three assertions after the signal.
     """
     session = await tui.chat_session()
     child, terminal = await attach(tui, session)

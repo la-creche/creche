@@ -96,7 +96,13 @@ async def test_the_form_holds_the_family_file_and_its_token(board_alone: BoardSt
 
 
 async def test_a_save_is_one_commit_of_one_file(board_alone: BoardStack) -> None:
-    """§8.2. The noticeboard writes one validated commit, and nothing else."""
+    """§8.2. The noticeboard writes one validated commit, and nothing else.
+
+    CONTRACT-QUESTION: §8.2 says what a save writes. No section gives the
+    answer to the browser. Reading taken: the answer of the noticeboard as
+    it is, a 303 to the page of the family with the start of the commit id
+    in `saved`. A change costs the first three assertions here.
+    """
     tree = board_alone.tree
 
     async with board_alone.client() as client:

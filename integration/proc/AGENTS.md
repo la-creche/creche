@@ -191,6 +191,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
    - the record of a stand-in
    - the git repository of the registry, through `git`
    - what a program wrote on its terminal
+   - what a command wrote on its stdout or its stderr
 4. Nothing under test may be faked. The four stand-ins are not under test.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
@@ -529,6 +530,11 @@ the text of the failure. Work down this list.
   the suite asserts that the door passes code 10 through. For a refusal of
   the door itself the suite accepts each code that is not 0. A change costs
   one assertion per scenario in `test_proc_tui_start.py`.
+- **CONTRACT-QUESTION, the terminal door at a signal.** Contract 02 §5.10
+  gives the release call. No contract says what the door does at a signal.
+  The suite holds the rule of `door-tui/AGENTS.md`: a signal releases the
+  lease and never ends pi. A change costs three assertions in one scenario
+  of `test_proc_tui_terminal.py`.
 - **No scenario for a lease that is renewed or that expires.** The terminal
   door renews every 20 seconds, and the lease of `attendance` lives 60
   seconds (contract 02 §7.1, §7.4). Neither number has a variable, so each
@@ -574,6 +580,11 @@ the text of the failure. Work down this list.
   It finds a report by the classes `problem`, `problems` and `issues`. A
   change of the markup costs the names in `test_proc_board_pages.py` and
   `test_proc_board_edit.py`.
+- **CONTRACT-QUESTION, the answer to a save of the noticeboard.**
+  `docs/rework/spec.md` §8.2 says what a save writes. No section gives the
+  answer to the browser. The suite holds the answer of the noticeboard as it
+  is: a 303 to the page of the family, with the start of the commit id in
+  `saved`. A change costs three assertions in `test_proc_board_edit.py`.
 - **A save of the noticeboard ends at the commit.** No `caregiver` runs, so
   no scenario proves that a saved family file converges.
 - **The state of an ended process.** The harness reads it from `/proc` on

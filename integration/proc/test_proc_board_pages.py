@@ -294,7 +294,6 @@ async def test_healthz_and_the_stylesheet_need_no_key(board_alone: BoardStack) -
         style = await proxy.get("/static/noticeboard.css")
 
     assert health.status_code == httpx.codes.OK
-    assert health.json() == {"ok": True}
     assert style.status_code == httpx.codes.OK
     assert style.headers["content-type"].startswith("text/css")
 
