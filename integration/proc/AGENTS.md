@@ -49,7 +49,7 @@ the variable.
 |---|---|
 | service | A program of this repository that the suite starts: one row of the service table. |
 | root | The temporary directory of one test. Every file and every Unix socket of the test is in it. |
-| stand-in | A program that takes the place of a program the suite cannot run: `sbx` and `pi`. |
+| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `pi`, `systemctl` and the LiteLLM key API. |
 | topology | The services that one fixture starts together. |
 
 ## The service table
@@ -133,6 +133,7 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_override.py` | door and `attendance` | each service starts through its variable |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
+| `test_proc_standin_programs.py` | none | each rule of a stand-in program that a scenario relies on |
 
 ## Rules
 
@@ -145,7 +146,7 @@ the pi stand-in                          found through AGENT_PI_BIN
    - an exit code
    - a file under the root: a journal, the audit file, a file in a mount
    - the record of a stand-in
-4. Nothing under test may be faked. The two stand-ins are not under test.
+4. Nothing under test may be faked. The four stand-ins are not under test.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
    makes it from a contract, never from a module of a service.
@@ -194,14 +195,39 @@ that the suite cannot run. Add one only when a scenario needs it.
 3. Add an `install_` function to `proc_standins.py`. It writes a wrapper into
    the `bin` directory of the root. The wrapper records the call, then runs
    `exec` on the stand-in. The recorded pid is then the pid of the stand-in.
-4. Add the name of the stand-in to `recorded_pids`, so the teardown checks
-   that each of its processes ended.
+4. Add the name of the stand-in to `_WRAPPED`, so the teardown checks that
+   each of its processes ended.
 5. Read the record back with `calls_of`. Assert on the pid and the arguments.
    Do not read the memory of a process.
 6. Give a stand-in that listens a Unix socket in the root or a loopback port
    from `Supervisor.free_port`.
 
 Do not grow `fake-pi.mjs` here. It belongs to `playpen/`.
+
+### The stand-in programs of this directory
+
+Three programs are in this directory. The docstring of each one lists its
+verbs, its files and its tunings.
+
+| Program | Takes the place of | How a service finds it |
+|---|---|---|
+| `standin_sbx.py` | `sbx`, with each verb that `caregiver` runs | by name, through `PATH` |
+| `standin_systemctl.py` | `systemctl --user` | by name, through `PATH` |
+| `standin_litellm.py` | the key API of LiteLLM | by an address in an argument |
+
+Each program keeps its state in files under `standins/<name>-state` in the
+root. A test reads those files with a function of `proc_standins.py`. It
+does not ask the program.
+
+A tuning is a file under `tune` in the state directory of a stand-in. It
+changes one call: the call waits, the call fails, or the call gives another
+answer. Write one with `tune`. Remove it with `untune`. Tune a stand-in
+only to make a fault that the real program can have.
+
+A stand-in fails closed. It refuses a verb that it does not know, so a
+service that runs a new command fails here and gets no silent success.
+`test_proc_standin_programs.py` has one test for each rule of a stand-in
+that a scenario relies on. Add a test there when you add a rule.
 
 ## Add a topology
 
@@ -285,7 +311,8 @@ failure. Work down this list.
 | `proc_services.py` | the service table, and the rule for the override variable |
 | `proc_harness.py` | a child in its own process group, the wait for an address, the teardown, the check at session end |
 | `proc_tree.py` | the root, and one writer for each file a service reads |
-| `proc_standins.py` | the `sbx` and `pi` wrappers, and the record each one leaves |
+| `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |
+| `standin_sbx.py`, `standin_systemctl.py`, `standin_litellm.py` | the three stand-in programs of this directory |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
 | `proc_owui.py`, `proc_delegate.py` | the two topologies |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |

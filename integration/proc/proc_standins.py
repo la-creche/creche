@@ -1,47 +1,84 @@
 """Stand-ins, as programs on disk. Never an object inside this process.
 
 A service in any language starts a stand-in the way it starts the real
-program: by name through its `PATH`, or by the path that a variable of the
-sandbox image names. So a stand-in here is an executable file under the
-test's root, and the only thing a test reads back is what that program
-recorded on disk.
+program: by name through its `PATH`, by the path that a variable of the
+sandbox image names, or by an address in an argument. So a stand-in here is
+an executable file under the test's root, and the only thing a test reads
+back is what that program left on disk.
 
-Two stand-ins exist, and neither is under test:
+Four stand-ins exist, and none is under test:
 
 `sbx`
-    `integration/tests/fake_sbx.py`, unchanged, behind a wrapper. The wrapper
-    records the call. It also sets the variables that stand for what the
-    sandbox image supplies, so no service holds them in its own environment.
+    Two forms. The first is `integration/tests/fake_sbx.py`, unchanged,
+    behind a wrapper: it knows `exec` and nothing else. The second is
+    `standin_sbx.py`, with each verb that `caregiver` runs. The wrapper of
+    each form records the call. It also sets the variables that stand for
+    what the sandbox image supplies, so no service holds them in its own
+    environment.
 `pi`
     `playpen/test/fake-pi.mjs`, the playpen's own double, behind a wrapper.
     The playpen reaches it through `AGENT_PI_BIN`.
+`systemctl`
+    `standin_systemctl.py`, behind a wrapper. `caregiver` finds it through
+    `PATH`.
+the LiteLLM key API
+    `standin_litellm.py`. It listens on a loopback port, so the supervisor
+    of the test starts it, and no wrapper exists for it.
 
 Each wrapper ends in `exec`. The stand-in stays one process, so stdin, stdout
 and every signal reach it unchanged, and the recorded pid is the pid of the
 program that runs.
 
-One call leaves two things in the recorder's directory:
+One call through a wrapper leaves two things in the recorder's directory:
 
     <pid>.argv   one argument per line, written whole by rename
     order        one pid per line, in call order
+
+A stand-in with state keeps it in `<name>-state` beside that directory. The
+docstring of each program lists its files.
 """
 
 from __future__ import annotations
 
+import json
 import shlex
 import stat
 import sys
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
+from urllib.parse import quote, unquote
 
-from proc_harness import kill_pid, pids_gone_by, session_id_of
+from proc_harness import (
+    Child,
+    ProcError,
+    Supervisor,
+    TcpAddress,
+    kill_pid,
+    pids_gone_by,
+    port_is_free,
+    session_id_of,
+)
 from proc_tree import Tree, repo_root
 
 SBX: Final = "sbx"
 PI: Final = "pi"
+SYSTEMCTL: Final = "systemctl"
+LITELLM: Final = "litellm"
+
+#: Each stand-in that a wrapper starts. The teardown waits for each recorded
+#: process of these.
+_WRAPPED: Final = (SBX, PI, SYSTEMCTL)
+
+#: The two kinds of policy row that the `sbx` stand-in keeps.
+ALLOW: Final = "allow"
+DENY: Final = "deny"
+
+#: An obvious fixture, never a credential. The LiteLLM stand-in takes it as
+#: the master key, and `caregiver` gets it in `LITELLM_MASTER_KEY`.
+MASTER_KEY: Final = "FIXTURE-LITELLM-MASTER-KEY"
 
 #: The lock numbers of contract 03 §11.1 and §11.4, made small so a killed
 #: playpen costs a test under one second. `LOCK_STALE_S` is four beat
@@ -53,6 +90,9 @@ LOCK_POLL_S: Final = 0.05
 #: The variables that stand for what the sandbox image supplies. `fake_sbx.py`
 #: forwards these by name and forwards nothing else of its own environment.
 _IMAGE_SEAMS: Final = ("AGENT_PI_BIN", "AGENT_LOCK_BEAT_MS")
+
+#: How many ports one start of a stand-in may try.
+_BIND_ATTEMPTS: Final = 3
 
 #: How long a stand-in process has to end after its service ended. The
 #: playpen exits when its stdin closes, and pi exits when the playpen does.
@@ -85,17 +125,75 @@ def fake_pi_script() -> Path:
     return repo_root() / "playpen" / "test" / "fake-pi.mjs"
 
 
+def standin_script(name: str) -> Path:
+    """A stand-in program of this directory. Each has its own docstring."""
+    return Path(__file__).resolve().with_name(f"standin_{name}.py")
+
+
 def install_sbx(tree: Tree) -> None:
-    """Put `sbx` in the root's `bin`, the first directory of a service's PATH."""
+    """Put `sbx` in the root's `bin`, the first directory of a service's PATH.
+
+    This form knows `exec` only. It starts a playpen for each sandbox id, so
+    a topology with no `caregiver` needs no `create`.
+    """
+    _install_sbx(tree, [str(fake_sbx_script())])
+
+
+def install_sbx_verbs(tree: Tree) -> None:
+    """Put the `sbx` with each verb of `caregiver` in the root's `bin`.
+
+    `exec` starts a playpen only for a sandbox that `create` made.
+    """
+    state_dir(tree, SBX).mkdir(parents=True, exist_ok=True)
+    _install_sbx(tree, [str(standin_script(SBX)), str(state_dir(tree, SBX))])
+
+
+def _install_sbx(tree: Tree, program: list[str]) -> None:
     seams = {
         "AGENT_PI_BIN": str(_program(tree, PI)),
         "AGENT_LOCK_BEAT_MS": str(LOCK_BEAT_MS),
         "FAKE_SBX_IMAGE_ENV": ",".join(_IMAGE_SEAMS),
     }
     exports = "".join(f"export {name}={shlex.quote(value)}\n" for name, value in seams.items())
-    target = shlex.join([sys.executable, str(fake_sbx_script())])
+    target = shlex.join([sys.executable, *program])
 
     _write_program(tree, SBX, f'{_recorder(tree, SBX)}{exports}exec {target} "$@"\n')
+
+
+def install_systemctl(tree: Tree) -> None:
+    """Put `systemctl` in the root's `bin`. `caregiver` finds it through PATH."""
+    state_dir(tree, SYSTEMCTL).mkdir(parents=True, exist_ok=True)
+    words = [sys.executable, str(standin_script(SYSTEMCTL)), str(state_dir(tree, SYSTEMCTL))]
+
+    _write_program(tree, SYSTEMCTL, f'{_recorder(tree, SYSTEMCTL)}exec {shlex.join(words)} "$@"\n')
+
+
+def start_litellm(tree: Tree, supervisor: Supervisor, env: Mapping[str, str]) -> tuple[Child, int]:
+    """Start the LiteLLM stand-in on a free loopback port, and wait for it.
+
+    A start that fails because another program took the port first is tried
+    again on another port. Any other failed start is an error.
+    """
+    state = state_dir(tree, LITELLM)
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "master.key").write_text(MASTER_KEY + "\n", encoding="utf-8")
+    program = [sys.executable, str(standin_script(LITELLM)), str(state)]
+
+    for _ in range(_BIND_ATTEMPTS):
+        port = supervisor.free_port()
+        child = supervisor.spawn(LITELLM, [*program, str(port)], env, tree.root)
+
+        try:
+            supervisor.wait_ready(child, TcpAddress(port))
+        except ProcError:
+            if child.exit_code() is None or port_is_free(port):
+                raise
+
+            continue
+
+        return child, port
+
+    raise ProcError(f"the LiteLLM stand-in found no free port in {_BIND_ATTEMPTS} attempts")
 
 
 def install_pi(tree: Tree) -> None:
@@ -139,8 +237,86 @@ def calls_of(tree: Tree, name: str) -> list[Call]:
 
 
 def recorded_pids(tree: Tree) -> list[int]:
-    """The pid of every stand-in process this test started."""
-    return [call.pid for name in (SBX, PI) for call in calls_of(tree, name)]
+    """The pid of every stand-in process that a wrapper started in this test."""
+    return [call.pid for name in _WRAPPED for call in calls_of(tree, name)]
+
+
+def state_dir(tree: Tree, name: str) -> Path:
+    """Where one stand-in keeps its state."""
+    return tree.standins / f"{name}-state"
+
+
+def tune(tree: Tree, name: str, what: str, text: str = "") -> None:
+    """Change what one stand-in does at its next call.
+
+    `what` is a path under the `tune` directory of the stand-in. The
+    docstring of each program lists the paths that it reads.
+    """
+    path = state_dir(tree, name) / "tune" / what
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.tmp")
+    temp.write_text(text, encoding="utf-8")
+    temp.replace(path)
+
+
+def untune(tree: Tree, name: str, what: str) -> None:
+    """Take one tuning away. The stand-in does the default thing again."""
+    (state_dir(tree, name) / "tune" / what).unlink(missing_ok=True)
+
+
+def sbx_sandboxes(tree: Tree) -> dict[str, dict[str, Any]]:
+    """Each sandbox that `sbx create` made and no `sbx rm` removed, by id."""
+    found: dict[str, dict[str, Any]] = {}
+
+    for path in sorted((state_dir(tree, SBX) / "vms").glob("*.json")):
+        try:
+            found[unquote(path.stem)] = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+
+    return found
+
+
+def sbx_rows(tree: Tree, sandbox: str, kind: str) -> list[str]:
+    """The hosts with a policy row of one kind for one sandbox, sorted."""
+    directory = state_dir(tree, SBX) / "policy" / quote(sandbox, safe="") / kind
+
+    if not directory.is_dir():
+        return []
+
+    return sorted(unquote(path.name) for path in directory.iterdir())
+
+
+def litellm_calls(tree: Tree) -> list[dict[str, Any]]:
+    """Each request that the LiteLLM stand-in got, in arrival order."""
+    try:
+        raw = (state_dir(tree, LITELLM) / "calls.jsonl").read_bytes()
+    except FileNotFoundError:
+        return []
+
+    return [json.loads(line) for line in raw.split(b"\n")[:-1] if line.strip()]
+
+
+def litellm_keys(tree: Tree) -> dict[str, dict[str, Any]]:
+    """Each alias that holds a key at the LiteLLM stand-in now."""
+    try:
+        keys: dict[str, dict[str, Any]] = json.loads(
+            (state_dir(tree, LITELLM) / "keys.json").read_text(encoding="utf-8")
+        )
+    except FileNotFoundError:
+        return {}
+
+    return keys
+
+
+def enabled_units(tree: Tree) -> list[str]:
+    """Each unit that the `systemctl` stand-in holds as enabled, sorted."""
+    directory = state_dir(tree, SYSTEMCTL) / "enabled"
+
+    if not directory.is_dir():
+        return []
+
+    return sorted(path.name for path in directory.iterdir())
 
 
 def end_standins(

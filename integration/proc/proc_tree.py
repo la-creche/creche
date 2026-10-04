@@ -18,6 +18,7 @@ writer here.
       state/grants/<family>.json         contract 04 §1, the grant file
       state/audit/<day>.jsonl            contract 04 §6, written by the chaperone
       sock/                              contract 02 §3 rule 1
+      home/.config/systemd/user/         the unit directory of a user manager
       work/  log/  home/  bin/  standins/  proc-logs/
 """
 
@@ -179,6 +180,11 @@ class Tree:
         return self.root / "standins"
 
     @property
+    def unit_dir(self) -> Path:
+        """Where a user manager reads a unit from: `$XDG_CONFIG_HOME/systemd/user`."""
+        return self.home / ".config" / "systemd" / "user"
+
+    @property
     def families_dir(self) -> Path:
         return self.state_root / "families"
 
@@ -287,10 +293,15 @@ def pep_token_of(family: str) -> str:
 
 def build_tree(tree: Tree) -> None:
     """Write everything the first topology reads, for one attended family."""
+    build_bare_tree(tree)
+    add_family(tree, FAMILY, ATTENDED)
+
+
+def build_bare_tree(tree: Tree) -> None:
+    """Write what no family owns: the directories, the tokens and the door key."""
     for directory in (tree.work_root, tree.log_dir, tree.home, tree.bin_dir, tree.standins):
         directory.mkdir(parents=True, exist_ok=True)
 
-    add_family(tree, FAMILY, ATTENDED)
     write_tokens(tree)
     write_door_key(tree)
 
