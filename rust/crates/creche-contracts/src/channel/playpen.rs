@@ -139,7 +139,7 @@ cut_text! {
 /// ```
 /// use creche_contracts::channel::playpen::Usd;
 ///
-/// assert_eq!(Usd::new(0.014).map(Usd::get), Ok(0.014));
+/// assert_eq!(Usd::new(0.25).map(Usd::get), Ok(0.25));
 /// assert!(Usd::new(f64::NAN).is_err());
 /// ```
 ///
@@ -447,7 +447,7 @@ pub struct TurnEntries {
 /// let seq = NonZeroU64::MIN;
 /// let usage = TurnUsage { input: 7, output: 1, cache_read: 0, cache_write: 0, cost_usd: Usd::ZERO };
 /// let settled =
-///     TurnSettled::new(address, seq, Residence::Resident, TurnEntries::default(), usage, 3120);
+///     TurnSettled::new(address, seq, Residence::Resident, TurnEntries::default(), usage, 1500);
 /// assert!(PlaypenMessage::TurnSettled(settled).encode().is_ok());
 /// ```
 ///
@@ -675,7 +675,7 @@ impl ProcessExit {
 /// ```
 /// use creche_contracts::channel::playpen::{PlaypenMessage, Pong};
 ///
-/// let pong = Pong::new(Some("9f13".parse().unwrap()), 1_758_223_325_118, 3, Some(412));
+/// let pong = Pong::new(Some("5f3a".parse().unwrap()), 1_800_000_000_000, 2, Some(400));
 /// assert!(PlaypenMessage::Pong(pong).encode().is_ok());
 /// ```
 ///
@@ -1153,7 +1153,7 @@ mod tests {
     fn settled() -> PlaypenMessage {
         PlaypenMessage::TurnSettled(TurnSettled::new(
             address(),
-            seq(214),
+            seq(9),
             Residence::Resident,
             TurnEntries {
                 user_entry_id: entry_id("a1b2c3d4"),
@@ -1161,13 +1161,13 @@ mod tests {
                 entry_count: Some(4),
             },
             TurnUsage {
-                input: 4120,
-                output: 188,
+                input: 1200,
+                output: 80,
                 cache_read: 0,
                 cache_write: 0,
-                cost_usd: Usd::new(0.014).unwrap(),
+                cost_usd: Usd::new(0.25).unwrap(),
             },
-            3120,
+            1500,
         ))
     }
 
@@ -1236,13 +1236,13 @@ mod tests {
             (
                 settled(),
                 json!({"kind": "SettledLine", "message": {
-                    "session": SESSION, "turn": TURN, "turn_seq": 214, "resident": true,
+                    "session": SESSION, "turn": TURN, "turn_seq": 9, "resident": true,
                     "user_entry_id": "a1b2c3d4", "leaf_id": "e5f6a7b8", "entry_count": 4,
                     "usage": {
-                        "input": 4120, "output": 188, "cache_read": 0, "cache_write": 0,
-                        "cost_usd": 0.014,
+                        "input": 1200, "output": 80, "cache_read": 0, "cache_write": 0,
+                        "cost_usd": 0.25,
                     },
-                    "settled_ms": 3120,
+                    "settled_ms": 1500,
                 }}),
             ),
             (
@@ -1250,21 +1250,21 @@ mod tests {
                     address(),
                     seq(3),
                     FailReason::ForkRefused,
-                    LogText::cut("the entry is not on the active branch"),
+                    LogText::cut("pi refused the fork"),
                 )),
                 json!({"kind": "FailedLine", "message": {
                     "session": SESSION, "turn": TURN, "turn_seq": 3, "reason": "fork_refused",
-                    "message": "the entry is not on the active branch",
+                    "message": "pi refused the fork",
                 }}),
             ),
             (
                 PlaypenMessage::ProcessExit(ProcessExit::new(
                     session(),
                     ExitStatus {
-                        pid: Some(41),
+                        pid: Some(7),
                         code: Some(-9),
                         signal: Some(Label::cut("SIGKILL")),
-                        rss_peak_mb: Some(318),
+                        rss_peak_mb: Some(300),
                     },
                     Some(TURN.parse().unwrap()),
                     ExitReason::Crashed,
@@ -1276,9 +1276,9 @@ mod tests {
             (
                 PlaypenMessage::Pong(Pong::new(
                     Some("9f13".parse().unwrap()),
-                    1_758_223_325_118,
+                    1_800_000_000_000,
                     3,
-                    Some(412),
+                    Some(400),
                 )),
                 json!({"kind": "PongLine", "message": {"nonce": "9f13"}}),
             ),
@@ -1352,10 +1352,10 @@ mod tests {
             record(&settled()),
             format!(
                 "{{\"type\":\"turn_settled\",\"session\":\"{SESSION}\",\"turn\":\"{TURN}\",\
-                 \"turn_seq\":214,\"resident\":true,\"user_entry_id\":\"a1b2c3d4\",\
-                 \"leaf_id\":\"e5f6a7b8\",\"entry_count\":4,\"usage\":{{\"input\":4120,\
-                 \"output\":188,\"cache_read\":0,\"cache_write\":0,\"cost_usd\":0.014}},\
-                 \"settled_ms\":3120}}"
+                 \"turn_seq\":9,\"resident\":true,\"user_entry_id\":\"a1b2c3d4\",\
+                 \"leaf_id\":\"e5f6a7b8\",\"entry_count\":4,\"usage\":{{\"input\":1200,\
+                 \"output\":80,\"cache_read\":0,\"cache_write\":0,\"cost_usd\":0.25}},\
+                 \"settled_ms\":1500}}"
             )
         );
         assert_eq!(

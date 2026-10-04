@@ -1638,8 +1638,8 @@ impl PromptTurn {
 /// use creche_contracts::channel::host::Steer;
 ///
 /// let address = TurnAddress::new("tui-1".parse().unwrap(), "01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap());
-/// let steer = Steer::new(address, "Check the logbook first.".parse().unwrap());
-/// assert_eq!(steer.message().as_str(), "Check the logbook first.");
+/// let steer = Steer::new(address, "Check the garage too.".parse().unwrap());
+/// assert_eq!(steer.message().as_str(), "Check the garage too.");
 /// ```
 ///
 /// Code outside this module cannot build a value from raw parts:
@@ -2759,7 +2759,7 @@ mod tests {
             )),
             HostMessage::Steer(Steer::new(
                 address(),
-                "Check the logbook first.".parse().unwrap(),
+                "Check the garage too.".parse().unwrap(),
             )),
             HostMessage::Abort(Abort::new(address())),
             HostMessage::StopProcess(StopProcess::new(
