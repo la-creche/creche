@@ -178,8 +178,15 @@ async def _refresh_periodically(routes: RouteLookup, interval_s: float) -> None:
         try:
             count = await run_in_threadpool(routes.refresh)
             _LOG.info("trigger routes refreshed: %d live", count)
-        except OSError as exc:
-            _LOG.warning("trigger routes: refresh failed, keeping the last table (%s)", exc)
+        except Exception as exc:
+            # One handler for each failure. A registry file that the loader
+            # cannot read must not stop this task: it is the one mechanism
+            # that always refreshes the routes.
+            _LOG.warning(
+                "trigger routes: refresh failed, keeping the last table (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
 
 
 def _install_sighup(routes: RouteLookup) -> None:
@@ -202,8 +209,12 @@ def _install_sighup(routes: RouteLookup) -> None:
         try:
             count = routes.refresh()
             _LOG.info("trigger routes reloaded: %d live", count)
-        except OSError as exc:
-            _LOG.error("trigger routes: reload refused, keeping the last table (%s)", exc)
+        except Exception as exc:
+            _LOG.error(
+                "trigger routes: reload refused, keeping the last table (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
 
     try:
         loop.add_signal_handler(signal.SIGHUP, reload_routes)

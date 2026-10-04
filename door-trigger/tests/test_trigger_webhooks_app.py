@@ -7,9 +7,13 @@ a route from present to absent without touching a real registry
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 from pathlib import Path
 
 import httpx
+import pytest
 from agent_door_trigger.attendance import AcceptedTurn, AttendanceClient, HttpAttendance
 from agent_door_trigger.config import AttendanceTarget, ServeConfig
 from agent_door_trigger.errors import AttendanceError
@@ -17,6 +21,8 @@ from agent_door_trigger.routes import Route
 from agent_door_trigger.tokens import MIN_WEBHOOK_TOKEN_BYTES, tokens_match
 from agent_door_trigger.webhooks import (  # pyright: ignore[reportPrivateUsage]
     _authorized,
+    _install_sighup,
+    _refresh_periodically,
     create_app,
 )
 from starlette.testclient import TestClient
@@ -32,12 +38,18 @@ class FakeRouteTable:
     def __init__(self, routes: dict[tuple[str, str], Route] | None = None) -> None:
         self._routes = dict(routes or {})
         self.refresh_calls = 0
+        #: Raised by the next `refresh`, then cleared.
+        self.refresh_error: Exception | None = None
 
     def get(self, family: str, name: str) -> Route | None:
         return self._routes.get((family, name))
 
     def refresh(self) -> int:
         self.refresh_calls += 1
+        if self.refresh_error is not None:
+            error, self.refresh_error = self.refresh_error, None
+            raise error
+
         return len(self._routes)
 
     def remove(self, family: str, name: str) -> None:
@@ -224,6 +236,54 @@ def test_no_answer_from_attendance_answers_502(tmp_path: Path) -> None:
     assert response.json() == {
         "error": {"code": "attendance_unreachable", "message": "attendance did not answer"}
     }
+
+
+# --- a refresh that fails keeps the last table ---
+
+
+async def test_the_refresh_loop_outlives_a_refresh_that_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    routes.refresh_error = ValueError("a file the registry loader cannot read")
+    task = asyncio.create_task(_refresh_periodically(routes, 0))
+
+    try:
+        async with asyncio.timeout(5):
+            while routes.refresh_calls < 2 and not task.done():
+                await asyncio.sleep(0.01)
+
+        assert not task.done()
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, ValueError):
+            await task
+
+    assert routes.get("scrum-lead", "deploy-notify") == ROUTE
+    assert "keeping the last table" in caplog.text
+
+
+async def test_a_reload_that_fails_keeps_the_last_table(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The loop of a test takes no signal. The test takes the handler that
+    # the door installs and calls it as the loop does on SIGHUP.
+    installed: list[object] = []
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(
+        loop, "add_signal_handler", lambda _signal, handler: installed.append(handler)
+    )
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    routes.refresh_error = ValueError("a file the registry loader cannot read")
+    _install_sighup(routes)
+    [reload] = installed
+    assert callable(reload)
+
+    with caplog.at_level(logging.ERROR):
+        reload()
+
+    assert routes.get("scrum-lead", "deploy-notify") == ROUTE
+    assert "keeping the last table" in caplog.text
 
 
 # --- _authorized: constant-time even for an unknown route ---
