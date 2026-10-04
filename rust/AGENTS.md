@@ -245,6 +245,11 @@ The rule against a crash loop:
   78. No test in this repository runs systemd.
 - `AtReload::KeepLastGood` never exits. A reload that fails keeps the last
   good value.
+- `config::reload` takes only a type that says `AtReload::KeepLastGood`. A
+  call with a type that says `AtReload::NotRead` does not build. `cargo
+  build` and `cargo test` report that error, and `cargo check` does not.
+- `config::start` and `config::reload` take the error type of each parse.
+  The roster and the site file have an error type of their own.
 
 More rules for a config type:
 
@@ -492,6 +497,12 @@ Rules for the test:
   except for the names of the variables.
 - No vector covers a reader of the playpen. `mounts::RuntimeView` follows
   `playpen/src/runtime-config.ts`, and its tests are a copy of that file.
+- The three mount files state their failure action only in a doc comment:
+  `mounts::RuntimeView`, `mounts::Credentials` and `mounts::PlaypenEnv` do
+  not implement `Checked`. `AtStart` and `AtReload` have no variant for their
+  actions: a safe default for each field, a retry and then
+  `stale_credentials`, and the fatal `mount_dir_unset`. The port of the
+  playpen adds the variants.
 - No unit file holds `RestartPreventExitStatus=78`, and no service exits
   with 78 for each config error. The failure action of each config type
   states what the port of its service must do.

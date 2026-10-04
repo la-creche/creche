@@ -93,7 +93,8 @@ pub enum AtStart {
 /// The set is closed. It does not cross a process boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AtReload {
-    /// The process reads the config only at start. It has no reload.
+    /// The process reads the config only at start. It has no reload, and
+    /// a call of [`reload`] with such a type does not build.
     NotRead,
     /// The process keeps the last good value and publishes a fault. It does
     /// not exit.
@@ -147,8 +148,12 @@ pub trait ProcessConfig: Checked {
 }
 
 /// What a daemon does after the parse of its config at start.
+///
+/// `E` is the error type of the parse. It is [`ConfigErrors`] for the
+/// config of a daemon. The roster and the site file have an error type of
+/// their own.
 #[derive(Debug)]
-pub enum Start<C> {
+pub enum Start<C, E = ConfigErrors> {
     /// The config is valid. The daemon runs with it.
     Run(C),
     /// The config is not valid. The daemon writes the errors to its log and
@@ -157,13 +162,13 @@ pub enum Start<C> {
         /// The exit status: [`EX_CONFIG`].
         status: u8,
         /// Each error of the parse.
-        errors: ConfigErrors,
+        errors: E,
     },
     /// The config is not valid. The daemon starts, refuses each call and
     /// publishes the errors as a fault.
     RefuseEachCall {
         /// Each error of the parse.
-        errors: ConfigErrors,
+        errors: E,
     },
 }
 
@@ -182,7 +187,7 @@ pub enum Start<C> {
 ///     Start::Run(_) | Start::RefuseEachCall { .. } => unreachable!(),
 /// }
 /// ```
-pub fn start<C: Checked>(parsed: Result<C, ConfigErrors>) -> Start<C> {
+pub fn start<C: Checked, E>(parsed: Result<C, E>) -> Start<C, E> {
     match (parsed, C::FAILURE.at_start()) {
         (Ok(config), _) => Start::Run(config),
         (Err(errors), AtStart::ExitConfig) => Start::Exit {
@@ -194,8 +199,10 @@ pub fn start<C: Checked>(parsed: Result<C, ConfigErrors>) -> Start<C> {
 }
 
 /// What a daemon holds after a reload of its config.
+///
+/// `E` is the error type of the parse, as for [`Start`].
 #[derive(Debug)]
-pub enum Reload<C> {
+pub enum Reload<C, E = ConfigErrors> {
     /// The new config is valid. The daemon uses it.
     Fresh(C),
     /// The new config is not valid. The daemon keeps the last good value
@@ -204,7 +211,7 @@ pub enum Reload<C> {
         /// The value that the daemon used before the reload.
         last_good: C,
         /// Each error of the parse.
-        fault: ConfigErrors,
+        fault: E,
     },
 }
 
@@ -212,7 +219,52 @@ pub enum Reload<C> {
 ///
 /// The function never returns an exit status. A reload does not stop a
 /// daemon.
-pub fn reload<C: Checked>(last_good: C, parsed: Result<C, ConfigErrors>) -> Reload<C> {
+///
+/// The function takes only a type whose failure action says
+/// [`AtReload::KeepLastGood`]:
+///
+/// ```
+/// use creche_contracts::config::noticeboard::NoticeboardConfig;
+/// use creche_contracts::config::roster::{RawRoster, Roster};
+/// use creche_contracts::config::{Env, Reload, reload};
+///
+/// let good: RawRoster = serde_json::from_str(r#"{"web-search": {"command": "web-search"}}"#)?;
+/// let bad: RawRoster = serde_json::from_str(
+///     r#"{"web-search": {"command": "web-search",
+///         "arg_denies": [{"tools": [], "arg": "site", "values": ["a"]}]}}"#,
+/// )?;
+/// let serving = Roster::try_from(good)?;
+/// let Reload::Kept { last_good, .. } = reload(serving, Roster::try_from(bad)) else {
+///     unreachable!()
+/// };
+/// assert_eq!(last_good.names().collect::<Vec<_>>(), ["web-search"]);
+///
+/// let env = Env::from_pairs([("VIEW_BIND", "127.0.0.1")]);
+/// assert!(NoticeboardConfig::from_env(&env).is_ok());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// A type that says [`AtReload::NotRead`] has no reload. A call with such a
+/// type does not build. The check runs when the compiler builds the call,
+/// so `cargo build` and `cargo test` report it, and `cargo check` does not:
+///
+/// ```compile_fail,E0080
+/// use creche_contracts::config::noticeboard::NoticeboardConfig;
+/// use creche_contracts::config::roster::{RawRoster, Roster};
+/// use creche_contracts::config::{Env, Reload, reload};
+///
+/// let env = Env::from_pairs([("VIEW_BIND", "127.0.0.1")]);
+/// let last_good = NoticeboardConfig::from_env(&env).unwrap();
+/// let kept = reload(last_good, NoticeboardConfig::from_env(&env));
+/// ```
+pub fn reload<C: Checked, E>(last_good: C, parsed: Result<C, E>) -> Reload<C, E> {
+    const {
+        assert!(
+            matches!(C::FAILURE.at_reload(), AtReload::KeepLastGood),
+            "the failure action of this type says AtReload::NotRead: it has no reload"
+        );
+    }
+
     match parsed {
         Ok(config) => Reload::Fresh(config),
         Err(fault) => Reload::Kept { last_good, fault },
@@ -897,6 +949,25 @@ mod tests {
         };
 
         assert_eq!(fresh.0.get(), 8301);
+    }
+
+    #[test]
+    fn start_and_reload_take_the_error_type_of_the_parse() {
+        // The roster and the site file have an error type of their own.
+        let parsed: Result<Refuses, &str> = Err("not valid");
+        let Start::RefuseEachCall { errors } = start(parsed) else {
+            panic!("the parse fails");
+        };
+
+        assert_eq!(errors, "not valid");
+
+        let last_good = Refuses(Port::fixed(8300).unwrap());
+        let Reload::Kept { last_good, fault } = reload(last_good, Err::<Refuses, _>(7_u8)) else {
+            panic!("the reload fails");
+        };
+
+        assert_eq!(last_good.0.get(), 8300);
+        assert_eq!(fault, 7);
     }
 
     #[test]
