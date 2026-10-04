@@ -16,11 +16,15 @@ until the prose is fixed. This is the most important rule in this file.
 1. Run `git config core.hooksPath githooks` once per clone.
 2. Run `uv sync` once.
 3. For `playpen/`, run `pnpm install` in that directory.
+4. For `rust/`, install rustup. It installs the toolchain that
+   `rust/rust-toolchain.toml` names.
 
 ## Every change
 
 - Every commit passes `bin/quality-gate.sh`: ruff, ruff format, pyright.
   The pre-commit hook runs it. Do not use `--no-verify`.
+- A commit that changes a path under `rust/` also passes `cargo fmt` and
+  `cargo clippy`. A change with no path under `rust/` needs no `cargo`.
 - A push runs the tests of the packages it touches. CI runs the full suite
   and is the merge gate. Read the one check named `gate`.
 - Fix a bug in this order: write the test, watch it fail, write the fix,
@@ -87,6 +91,8 @@ rule.
 | `library/` | `library/AGENTS.md` |
 | `integration/` | `integration/AGENTS.md` |
 | `bin/` | `bin/AGENTS.md` |
+| `rust/` | `rust/AGENTS.md` |
+| `vectors/` | `vectors/AGENTS.md` |
 | `systemd/` | `systemd/AGENTS.md` |
 | branches, hooks, CI, tags | `CONTRIBUTING.md` |
 

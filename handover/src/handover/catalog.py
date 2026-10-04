@@ -21,6 +21,19 @@ class Repo(StrEnum):
 
 class Kind(StrEnum):
     VENV = "venv"
+    #: A tree of compiled programs, each at `<install.to>/bin/<name>`, so a
+    #: unit's `ExecStart=` path and a verify command path keep the shape a
+    #: venv gives them. Root builds it on the host from the manifest's own
+    #: `build` argv, as it builds a venv.
+    #: CONTRACT-QUESTION: contract 06 §8 lists four kinds and not this one.
+    #: The reading taken keeps the trust model of a venv: root fetches the
+    #: source at the approved tag and builds it on the host. The other
+    #: reading verifies an artifact that CI built and attested, and the
+    #: operator decides between them. A cargo build script runs arbitrary
+    #: code as the user that runs the build, so that user matters. A change
+    #: costs a new provenance rule and a download path, which root does not
+    #: have today.
+    BINARY = "binary"
     OCI_IMAGE = "oci-image"
     COMPOSE = "compose"
     DATA = "data"
@@ -122,6 +135,24 @@ CATALOG: tuple[CatalogRow, ...] = (
 )
 
 CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
+
+#: The three files of the Cargo workspace that every `kind: binary` build
+#: reads beside its own crates. The lock file pins the third-party crates,
+#: the workspace manifest holds the build profile and the shared
+#: dependencies, and the toolchain file names the compiler. A change to one
+#: changes the programs that a build makes, so it moves the tag of every
+#: binary component and of no other kind. `uv.lock` is the same rule for a
+#: venv (contract 06 §1 rule 10).
+#: CONTRACT-QUESTION: contract 06 §1 rule 10 names `uv.lock` and no file of
+#: a Cargo workspace. The reading taken is these three files, at these
+#: paths. A `rust/.cargo/config.toml` can also change a build and is not in
+#: the list. A wider list costs a release of every binary component for
+#: each change to the added file.
+BINARY_BUILD_FILES: tuple[str, ...] = (
+    "rust/Cargo.lock",
+    "rust/Cargo.toml",
+    "rust/rust-toolchain.toml",
+)
 
 #: Components on their way out of the catalog. A checkout may carry such a
 #: component's manifest or not, and both read. A component leaves in two

@@ -22,10 +22,11 @@ list of `errors.py` needs no entry of its own.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .catalog import ARRIVING, CATALOG, RETIRING, CatalogRow, Kind, Repo
+from .catalog import ARRIVING, BINARY_BUILD_FILES, CATALOG, RETIRING, CatalogRow, Kind, Repo
 from .errors import Refusal, RefusalCode, safe_token
 
 #: Contract 06 §2: one expression reads every component tag, in every repo.
@@ -165,11 +166,67 @@ def _matches(path: str, row: CatalogRow) -> bool:
     if row.kind is Kind.VENV and path == LOCK_FILE:
         return True
 
+    # The Cargo workspace files decide what every binary build makes, and
+    # they move no other kind (`catalog.BINARY_BUILD_FILES`).
+    if row.kind is Kind.BINARY and path in BINARY_BUILD_FILES:
+        return True
+
     # A directory the build installs counts as the component's own (contract
     # 06 §1 rule 9): `door-trigger/x.py` reaches `attendance`.
     tops = (row.path, *row.bundles)
 
     return any(path == top or path.startswith(f"{top}/") for top in tops)
+
+
+def _nested_tops(repo: Repo) -> tuple[str, ...]:
+    """Every path of more than one segment that a row of this repo matches
+    on: its own path, a directory its build installs, a workspace file."""
+    found: set[str] = set()
+    for row in CATALOG:
+        if row.repo is not repo:
+            continue
+
+        build_files = BINARY_BUILD_FILES if row.kind is Kind.BINARY else ()
+        found.update(top for top in (row.path, *row.bundles, *build_files) if "/" in top)
+
+    return tuple(sorted(found))
+
+
+def _cut(path: str, nested: tuple[str, ...]) -> str:
+    holding = [top for top in nested if path == top or path.startswith(f"{top}/")]
+    if holding:
+        return max(holding, key=len)
+
+    return path.split("/", 1)[0]
+
+
+def cut_path(path: str, repo: Repo) -> str:
+    """The prefix of `path` that reaches the components `path` reaches.
+
+    `handover/bin/allocate-tags.sh` hands in one line per changed path of a
+    range, and a range can hold more files than `MAX_INPUT_LINES`. So each
+    path is cut first, and one range costs a few lines.
+
+    The cut is the first segment, which is enough for a row whose
+    directories are top-level entries. A crate under `rust/crates/` is not
+    one, and neither is `rust/Cargo.lock`: cut to `rust`, a change there
+    reaches no row. So a path that a nested path of the catalog holds is cut
+    to that path instead, and to the longest one when two hold it.
+
+    The cut loses nothing `_matches` reads. A row matches on a prefix, and
+    the cut is a prefix at least as long as each path of the catalog that
+    holds `path`.
+    """
+    return _cut(path, _nested_tops(repo))
+
+
+def cut_paths(paths: Iterable[str], repo: Repo) -> tuple[str, ...]:
+    """`cut_path` over the changed paths of one range: sorted, each line
+    once, blank lines dropped. It reads one line at a time and holds only
+    the cut lines, so it has no cap on how many lines come in."""
+    nested = _nested_tops(repo)
+
+    return tuple(sorted({_cut(path, nested) for path in paths if path}))
 
 
 def _check_path(path: str) -> str:

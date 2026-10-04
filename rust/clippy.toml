@@ -1,0 +1,6 @@
+# The lint gate of rust/Cargo.toml holds for all code that is not a test. A
+# test may unwrap, panic and index: a failed test is the report.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true

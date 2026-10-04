@@ -63,6 +63,7 @@ testpaths = [
     "door-trigger/tests",
     "noticeboard/tests",
     "handover/tests",
+    "vectors/tests",
 ]
 addopts = "-q"
 asyncio_mode = "auto"

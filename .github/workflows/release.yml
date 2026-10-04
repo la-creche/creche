@@ -4,7 +4,9 @@
 #   scope ──┬── lint                  ruff, ruff format, pyright, and on a
 #           │                         docs push the tests marked `docs`
 #           ├── tests (1..N)   code   the full suite, one shard per job
-#           └── playpen     code   the TypeScript suite and its build
+#           ├── playpen     code   the TypeScript suite and its build
+#           └── rust        code   cargo fmt, clippy and test, for a push
+#                                  that touches rust/
 #                                 └── release   tags + Releases, only when
 #                                               every job passed
 #
@@ -36,9 +38,14 @@
 # A docs-only push onto a commit whose own run passed runs only the tests
 # marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
 # runs.
-# The `tests` and `playpen` jobs are gate.yml's, and
+# The `tests`, `playpen` and `rust` jobs are gate.yml's, and
 # bin/tests/test_gate_workflow.py holds the two files to the same shard
 # command — diff the two when changing either.
+#
+# A push that touches nothing under rust/, onto a commit whose own run
+# passed, skips the steps of the `rust` job (bin/lib/rustrule.sh). The job is
+# still a success. A change under rust/ reaches no component, so it mints no
+# tag (handover/src/handover/allocate.py).
 #
 # agent-mcp has a SIBLING of the `release` job, in its own
 # rework-component-tags.yml. `mcp-servers` is its component, not
@@ -68,6 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
+      rust: ${{ steps.scope.outputs.rust }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,6 +89,10 @@ jobs:
       # whose code failed, or is still in, its own run. A push the rule
       # cannot read answers `code`: a `before` this clone lacks, a run GitHub
       # does not list, and a dispatch, which has no `before` at all.
+      #
+      # `rust` is `false` only by the same two facts: that run passed, and
+      # this push touches nothing under rust/. So a push never skips the
+      # Rust checks over a tree whose Rust failed, or is still in, its run.
       - name: scope
         id: scope
         shell: bash
@@ -90,7 +102,9 @@ jobs:
         run: |
           set -euo pipefail
           . bin/lib/docsrule.sh
+          . bin/lib/rustrule.sh
           scope=code
+          rust=true
           passed=0
           if [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]]; then
             passed="$(gh run list --workflow release.yml --commit "$BEFORE" \
@@ -99,8 +113,13 @@ jobs:
           if [[ "$passed" == 1 ]] && docs_only "$BEFORE" "$GITHUB_SHA"; then
             scope=docs
           fi
+          if [[ "$passed" == 1 ]] && ! rust_touched "$BEFORE" "$GITHUB_SHA"; then
+            rust=false
+          fi
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
           echo "scope: $scope"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "rust: $rust"
 
   lint:
     needs: scope
@@ -180,11 +199,64 @@ jobs:
       - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck && pnpm run build
         working-directory: playpen
 
-  # `always()`: on a docs push `tests` and `playpen` are skipped, and a
-  # job that needs a skipped job is skipped by default. The verdict step is
+  # The Cargo workspace under rust/: bin/rust-gate.sh, the checks the hooks
+  # run. The job runs on every code change, and on a change that touches
+  # nothing under rust/ every step but the checkout is skipped
+  # (bin/lib/rustrule.sh). The job is then a success: a job skipped as a
+  # whole on a code change reads as red in the verdict. A change to the Rust
+  # checks themselves, this file included, counts as a change under rust/.
+  #
+  # The runner has rustup, so no action installs the toolchain.
+  # `rustup toolchain install` with no name installs what
+  # rust/rust-toolchain.toml names, with rustfmt and clippy. `rustup show`
+  # does that only while rustup's auto-install is on. The three version
+  # lines fail the step when a component is absent.
+  #
+  # The cache key holds the toolchain and the lock file. A change to
+  # either starts from an empty cache.
+  #
+  # Each step asks `!= 'false'`, not `== 'true'`: an answer that is missing
+  # runs the checks.
+  rust:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    env:
+      # A CI build starts from a cache or from nothing, never from the last
+      # build of the same tree, so the incremental state is only weight.
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: toolchain
+        if: needs.scope.outputs.rust != 'false'
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: needs.scope.outputs.rust != 'false'
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust/target
+          key: rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
+
+      - run: bin/rust-gate.sh --tests
+        if: needs.scope.outputs.rust != 'false'
+
+  # `always()`: on a docs push `tests`, `playpen` and `rust` are skipped, and
+  # a job that needs a skipped job is skipped by default. The verdict step is
   # what holds the tags back when a job failed.
   release:
-    needs: [scope, lint, tests, playpen]
+    needs: [scope, lint, tests, playpen, rust]
     if: always()
     runs-on: ubuntu-latest
     permissions:

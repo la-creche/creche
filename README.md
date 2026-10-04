@@ -63,9 +63,10 @@ The other directories:
 
 | Directory | What it holds | Read |
 |---|---|---|
-| `bin/` | Every script that runs on the host, and the two shell libraries. | [bin/AGENTS.md](bin/AGENTS.md) |
+| `bin/` | Every script that runs on the host, and the three shell libraries. | [bin/AGENTS.md](bin/AGENTS.md) |
 | `systemd/` | Every unit file. A unit is installed by a script, never by hand. | [systemd/AGENTS.md](systemd/AGENTS.md) |
 | `integration/` | The cross-package suite. It runs the real doors, `attendance`, the chaperone and the playpen together. | [integration/AGENTS.md](integration/AGENTS.md) |
+| `rust/` | The Cargo workspace: every Rust crate. No release uses it. | [rust/AGENTS.md](rust/AGENTS.md) |
 | `githooks/` | `pre-commit` and `pre-push`. They run `bin/quality-gate.sh`. | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | `.github/` | The pull request gate, the release run and `!retest`. | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | `docs/` | The writing standard. | [docs/writing-standard.md](docs/writing-standard.md) |
@@ -92,11 +93,14 @@ The other directories:
 | Change when a new tag files a request | `handover/src/handover/follow/`, `systemd/creche-follow.service` |
 | Change what a deploy does | `bin/creche-deploy` |
 | Change the quality gate or the docs rule | `bin/quality-gate.sh`, `bin/lib/docsrule.sh` |
+| Change the Rust checks, or the rule that starts them | `bin/rust-gate.sh`, `bin/lib/rustrule.sh` |
+| Add a Rust type for a contract | `rust/crates/creche-contracts/`. Read `rust/AGENTS.md` first. |
 | Change the index schema | `library/src/library/library.py` and `playpen/bridge/index-store.ts`, together |
 
 ## 5. Develop
 
-Prerequisites: Python 3.12, `uv`, and for `playpen/` Node 24 with `pnpm`.
+Prerequisites: Python 3.12, `uv`, for `playpen/` Node 24 with `pnpm`, and
+for `rust/` rustup.
 
 ```bash
 git config core.hooksPath githooks     # once per clone
@@ -105,6 +109,7 @@ bin/quality-gate.sh                    # ruff, ruff format, pyright
 uv run pytest -n auto                  # every Python suite in pyproject.toml
 cd playpen && pnpm install && pnpm test && pnpm run typecheck && pnpm run build
 uv run pytest integration/tests -m slow   # the cross-package gate, after pnpm build
+bin/rust-gate.sh --tests               # the Rust workspace: fmt, clippy, test
 ```
 
 No test needs a host, a sandbox, LiteLLM or a model. Every external thing

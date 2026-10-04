@@ -6,6 +6,12 @@
 #
 # A merge group has no base ref. Its event names the commit the group sits
 # on, and the change is everything from there to the group's head.
+#
+# `rust` is a second answer on the same change: `true` when a path under
+# rust/ changed, and `false` when none did (bin/lib/rustrule.sh, the rule
+# bin/quality-gate.sh reads too). A change the rule cannot read answers
+# `true`. So does a change to a file of the Rust checks themselves, this one
+# included: only a run with the real cargo proves it.
 name: scope
 description: Say whether the pull request changes docs only or code
 
@@ -13,6 +19,9 @@ outputs:
   scope:
     description: docs or code
     value: ${{ steps.scope.outputs.scope }}
+  rust:
+    description: true when the change touches rust/ or the Rust checks, false when it does not
+    value: ${{ steps.scope.outputs.rust }}
 
 runs:
   using: composite
@@ -24,6 +33,7 @@ runs:
       run: |
         set -euo pipefail
         . bin/lib/docsrule.sh
+        . bin/lib/rustrule.sh
         base="$GROUP_BASE"
         if [[ -z "$base" ]]; then
           base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" || base=""
@@ -35,3 +45,10 @@ runs:
         fi
         echo "scope=$scope" >> "$GITHUB_OUTPUT"
         echo "scope: $scope"
+
+        rust=false
+        if rust_touched "$base" HEAD; then
+          rust=true
+        fi
+        echo "rust=$rust" >> "$GITHUB_OUTPUT"
+        echo "rust: $rust"

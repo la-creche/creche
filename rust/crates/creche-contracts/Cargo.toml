@@ -1,0 +1,16 @@
+[package]
+name = "creche-contracts"
+description = "The wire types and the config types of the creche contracts"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

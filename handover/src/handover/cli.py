@@ -13,6 +13,8 @@ Five subcommands, and only the last two write anything.
    state that carries source facts and a release id, it also prints contract
    06 §9's resolved manifest and its hash.
 3. `allocate-tags` says what tag a merge allocates (contract 06 §2.1).
+   `--cut <file>` plans nothing: it prints each changed path of the file,
+   cut to the prefix the planner reads, for `bin/allocate-tags.sh`.
 4. `request <name>[@<version>] …` files ONE release request into the spool
    (`stage7-releases.md` §2.3). It prints §2.5's seven fields first, so the operator
    reads what the phone will show BEFORE the file exists, and it refuses what
@@ -42,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
 
-from .allocate import plan_tags, read_lines
+from .allocate import cut_paths, plan_tags, read_lines
 from .catalog import Repo, releasable_names
 from .contracts import ContractRow
 from .corpus import (
@@ -326,8 +328,27 @@ def _lines_of(path: str | None, label: str) -> tuple[str, ...]:
     return read_lines(file.read_text(encoding="utf-8"), label)
 
 
+def _run_cut(args: argparse.Namespace) -> int:
+    """Each changed path of one range, cut to the prefix that decides its
+    components (`allocate.cut_path`). It plans nothing.
+
+    The file is `git diff --name-only` over a range, which can hold more
+    lines than the planner takes. So it is read one line at a time, with no
+    cap: the cut is what puts a range under the cap. A path that is not
+    UTF-8 still has a first segment, so it is decoded and never refused.
+    """
+    with Path(args.cut).open(encoding="utf-8", errors="replace") as changed:
+        for line in cut_paths((raw.rstrip("\n") for raw in changed), Repo(args.repo)):
+            print(line)
+
+    return EXIT_OK
+
+
 def _run_allocate(args: argparse.Namespace) -> int:
     """What tag this merge allocates. It creates nothing itself."""
+    if args.cut is not None:
+        return _run_cut(args)
+
     plans = plan_tags(
         paths=_lines_of(args.paths, "changed paths"),
         levels=_lines_of(args.levels, "bump levels"),
@@ -870,6 +891,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--levels",
         help="file of `<component><TAB><label><TAB><path>` lines: a merged pull "
         "request in that component's range carried the label and changed the path",
+    )
+    tags.add_argument(
+        "--cut",
+        help="file of changed repo-relative paths, one per line: print each one "
+        "cut to the prefix that decides its components, and plan nothing",
     )
     repos = [str(item) for item in Repo]
     tags.add_argument("--repo", default=str(Repo.AGENT_CONTROL), choices=repos)

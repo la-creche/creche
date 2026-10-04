@@ -5,12 +5,14 @@
 # full suite, and a deleted branch runs nothing. A push that merged main in
 # counts from main's fork point, so main's own changes do not count. A push
 # of nothing but docs runs only the tests marked docs (bin/lib/docsrule.sh).
+# A path under rust/ runs the cargo tests and picks no suite
+# (bin/lib/rustrule.sh, with every other Rust case in test_rust_gate.py).
 # CI runs the full suite for any other change and is the merge gate: the
 # scope decides whether a regression in the package just changed is caught
 # before the push or only in CI.
 #
-# Runs the real gate and the real hook. `uv` is a fake on PATH that writes
-# its argv to a file, and the hook runs in a throwaway repository whose
+# Runs the real gate and the real hook. `uv` and `cargo` are fakes on PATH
+# that write their argv to a file, and the hook runs in a throwaway repository whose
 # bin/quality-gate.sh is a fake that writes its own. Every exit code comes
 # straight from `$?`, never through a pipe.
 #
@@ -58,14 +60,28 @@ fi
 FAKE
 chmod 0755 "$WORK/bin/uv"
 
-# gate ARG...: the real gate, with the fake uv. Sets RC, and PYTEST to the
-# pytest line uv was asked for ("" when pytest never ran).
+cat > "$WORK/bin/cargo" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "${1:-}" >> "$CARGO_LOG"
+FAKE
+chmod 0755 "$WORK/bin/cargo"
+
+#: The cargo subcommands of a run that tests Rust, in order.
+RUST_STEPS="fmt clippy test"
+
+# gate ARG...: the real gate, with the fake uv and the fake cargo. Sets RC,
+# PYTEST to the pytest line uv was asked for ("" when pytest never ran) and
+# CARGO to the subcommands cargo was asked for ("" when cargo never ran).
 gate() {
   OUT="$WORK/gate.out"
   : > "$WORK/uv.log"
-  PATH="$WORK/bin:$PATH" UV_LOG="$WORK/uv.log" "$GATE" "$@" > "$OUT" 2>&1
+  : > "$WORK/cargo.log"
+  PATH="$WORK/bin:$PATH" UV_LOG="$WORK/uv.log" CARGO_LOG="$WORK/cargo.log" \
+    "$GATE" "$@" > "$OUT" 2>&1
   RC=$?
   PYTEST="$(grep '^run pytest' "$WORK/uv.log")"
+  CARGO="$(tr '\n' ' ' < "$WORK/cargo.log")"
+  CARGO="${CARGO% }"
 }
 
 # The full run is the baseline: a scoped run must use the same flags.
@@ -74,6 +90,9 @@ FULL="$PYTEST"
 [[ "$RC" == "0" && -n "$FULL" ]] \
   && pass "--tests runs pytest ($FULL)" \
   || fail "--tests: rc=$RC, pytest line '$FULL'"
+[[ "$CARGO" == "$RUST_STEPS" ]] \
+  && pass "--tests runs the cargo tests too" \
+  || fail "--tests: cargo ran '$CARGO'"
 
 gate
 [[ "$RC" == "0" && -z "$PYTEST" ]] \
@@ -87,6 +106,9 @@ gate --tests-for chaperone/src/chaperone/app.py chaperone/README.md
 said "chaperone/tests, for chaperone/src/chaperone/app.py and 1 more" \
   && pass "the gate says which path picked the suite" \
   || fail "no reason line for chaperone/tests: $(cat "$OUT")"
+[[ -z "$CARGO" ]] \
+  && pass "a push with no path under rust/ runs no cargo step" \
+  || fail "one package: cargo ran '$CARGO'"
 
 gate --tests-for caregiver/tests/caregiver_mws_registry/registry.yaml
 [[ "$PYTEST" == "$FULL caregiver/tests $ALWAYS" ]] \
@@ -108,10 +130,20 @@ for stray in uv.lock pyproject.toml docs/host-release.md .github/workflows/gate.
     || fail "$stray: rc=$RC, pytest line '$PYTEST'"
 done
 
+gate --tests-for rust/Cargo.lock rust/crates/creche-contracts/src/lib.rs
+[[ "$RC" == "0" && -z "$PYTEST" && "$CARGO" == "$RUST_STEPS" ]] \
+  && pass "a path under rust/ runs the cargo tests and no pytest" \
+  || fail "rust paths: rc=$RC, pytest line '$PYTEST', cargo ran '$CARGO'"
+
+gate --tests-for chaperone/src/chaperone/app.py rust/Cargo.lock
+[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $ALWAYS" && "$CARGO" == "$RUST_STEPS" ]] \
+  && pass "a push of Python and Rust runs the suite and the cargo tests" \
+  || fail "python and rust: rc=$RC, pytest line '$PYTEST', cargo ran '$CARGO'"
+
 gate --tests-for
-[[ "$RC" == "0" && -z "$PYTEST" ]] \
+[[ "$RC" == "0" && -z "$PYTEST" && -z "$CARGO" ]] \
   && pass "no path runs no tests" \
-  || fail "no path: rc=$RC, pytest line '$PYTEST'"
+  || fail "no path: rc=$RC, pytest line '$PYTEST', cargo ran '$CARGO'"
 
 gate --docs
 [[ "$RC" == "0" && "$PYTEST" == "$FULL -m docs" ]] \
@@ -326,6 +358,20 @@ push "refs/heads/catchup $OWN refs/heads/catchup $CAUGHT_UP"
 [[ "$ARGV" == "--tests-for caregiver/src/caregiver/own.py" ]] \
   && pass "the push after that merge counts from its old head again" \
   || fail "after the merge: gate got '$ARGV'"
+
+# A path under rust/ reaches the gate like any other path. The gate, not the
+# hook, turns it into cargo steps (bin/lib/rustrule.sh).
+RUSTY="$(commit rust/crates/one/src/lib.rs caregiver/src/caregiver/own.py)"
+push "refs/heads/catchup $RUSTY refs/heads/catchup $OWN"
+[[ "$ARGV" == "--tests-for caregiver/src/caregiver/own.py rust/crates/one/src/lib.rs" ]] \
+  && pass "a path under rust/ reaches the gate with the other paths" \
+  || fail "a rust path: gate got '$ARGV'"
+
+RUST_PROSE="$(commit rust/AGENTS.md)"
+push "refs/heads/catchup $RUST_PROSE refs/heads/catchup $RUSTY"
+[[ "$ARGV" == "--docs" ]] \
+  && pass "a .md under rust/ is prose: only the tests marked docs" \
+  || fail "a .md under rust/: gate got '$ARGV'"
 
 # A worktree cut before the docs rule has no rule to source.
 rm "$REPO/bin/lib/docsrule.sh"

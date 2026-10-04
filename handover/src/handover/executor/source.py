@@ -44,7 +44,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Final
 
-from ..catalog import CATALOG_BY_NAME
+from ..catalog import BINARY_BUILD_FILES, CATALOG_BY_NAME, Kind
 from ..errors import Refusal, RefusalCode
 from ..resolve import TAG_FORMAT
 
@@ -333,9 +333,15 @@ def tag_sha(run: GitRunFn, repo: Path, component: str, version: str) -> str | No
 
 def digest_paths(component: str) -> tuple[str, ...]:
     """Contract 06 §9's digest inputs for one component, in a fixed order."""
-    path = CATALOG_BY_NAME[component].path
+    row = CATALOG_BY_NAME[component]
+    path = row.path
     if path == WHOLE_REPO:
         return (WHOLE_REPO,)
+
+    # A binary build reads the Cargo workspace files and no `uv.lock`, so
+    # those are its lock files (`catalog.BINARY_BUILD_FILES`).
+    if row.kind is Kind.BINARY:
+        return tuple(sorted((path, *BINARY_BUILD_FILES)))
 
     return tuple(sorted((path, LOCK_FILE)))
 

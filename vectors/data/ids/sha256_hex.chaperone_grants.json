@@ -1,0 +1,28 @@
+{
+ "context": {"grammar":"sha256_hex"},
+ "contract": "contract 01b \u00a73.1, contract 04 \u00a72.2",
+ "entry": "chaperone.family_grants.parse_grants, field token_sha256, a list entry",
+ "format": 1,
+ "notes": ["The entry point is the grant file parser. The input is one field of a grant file that is valid in every other field."],
+ "surface": "id.sha256_hex.chaperone_grants",
+ "vectors": [
+  {"id":"probe-sample","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde2"},"result":"accepted"},
+  {"id":"probe-empty","input":{"text":""},"result":"refused"},
+  {"id":"probe-trailing-newline","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde2\n"},"result":"refused"},
+  {"id":"probe-trailing-cr","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde2\r"},"result":"refused"},
+  {"id":"probe-leading-space","input":{"text":" 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde2"},"result":"refused"},
+  {"id":"probe-trailing-space","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde2 "},"result":"refused"},
+  {"id":"probe-nul-at-end","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde2\u0000"},"result":"refused"},
+  {"id":"probe-nul-inside","input":{"text":"0\u0000123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde2"},"result":"refused"},
+  {"id":"probe-arabic-digit","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde\u0661"},"result":"refused"},
+  {"id":"probe-fullwidth-digit","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde\uff11"},"result":"refused"},
+  {"id":"probe-overlong","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"},"result":"refused"},
+  {"id":"all-zero","input":{"text":"0000000000000000000000000000000000000000000000000000000000000000"},"result":"accepted"},
+  {"id":"upper","input":{"text":"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"},"result":"refused"},
+  {"id":"short-63-chars","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"},"result":"refused"},
+  {"id":"long-65-chars","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"},"result":"refused"},
+  {"id":"letter-g","input":{"text":"g123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"result":"refused"},
+  {"id":"prefix","input":{"text":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"result":"refused"},
+  {"id":"crlf","input":{"text":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\r\n"},"result":"refused"}
+ ]
+}

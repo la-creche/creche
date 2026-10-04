@@ -26,13 +26,21 @@ it: the same shard command, a last job that needs every other one, and one
 shared verdict (`.github/actions/verdict`), so a PR and its release cannot
 judge the same results differently. Its tag step runs only after that
 verdict, one allocation at a time, and only its last job may write.
+
+The `rust` job runs `bin/rust-gate.sh --tests` for a change that touches
+`rust/`, or a file of the Rust checks themselves (`bin/lib/rustrule.sh`). On
+any other code change it skips every step but the checkout and is still a
+success, so `gate` reads green. The toolchain is the one
+`rust/rust-toolchain.toml` names.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -86,6 +94,27 @@ SHARD_ENV = {"INDEX": "${{ strategy.job-index }}", "TOTAL": "${{ strategy.job-to
 
 #: A job a docs PR leaves out, as `jobs.<job>.if` spells it.
 ONLY_CODE = "needs.scope.outputs.scope == 'code'"
+
+#: A step of the `rust` job that a change with no path under rust/ skips.
+#: Only the answer `false` skips it. An answer that is missing, or that a
+#: rename lost, runs the checks.
+ONLY_RUST = "needs.scope.outputs.rust != 'false'"
+
+#: How the scope job hands the Rust answer to the `rust` job.
+RUST_OUTPUT = "${{ steps.scope.outputs.rust }}"
+
+#: The whole of the Rust checks: the script the hooks run too.
+RUST_RUN = "bin/rust-gate.sh --tests"
+
+#: The first line of the toolchain step. It names no toolchain, so rustup
+#: installs the one `rust/rust-toolchain.toml` names.
+TOOLCHAIN_RUN = "rustup toolchain install --no-self-update"
+
+#: The directory rustup reads that file from.
+RUST_DIR = "rust"
+
+#: The two files the cargo cache is good for.
+CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
 
 #: What the lint job runs for each scope: lint alone beside the shards, and
 #: lint with the tests marked `docs` where there is no shard. The gate's lint
@@ -209,12 +238,13 @@ def test_a_shard_names_no_path_and_no_number(jobs: dict[str, dict[str, Any]], la
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_docs_scope_runs_no_shard_and_no_playpen(
+def test_the_docs_scope_runs_no_shard_no_playpen_and_no_rust(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
+    only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
 
-    assert {name for name, rule in by_scope.items() if rule == ONLY_CODE} == {"tests", "playpen"}
+    assert only_code == {"tests", "playpen", "rust"}
     assert {name for name, rule in by_scope.items() if rule is None} == {"scope", "lint"}
 
 
@@ -228,10 +258,68 @@ def test_lint_runs_the_docs_tests_on_a_docs_change_and_no_test_beside_the_shards
 
 
 def test_the_release_runs_the_gates_test_jobs() -> None:
-    """A change to one file's shards or playpen steps that misses the
-    other would let a merge pass a release its PR could not, or the reverse."""
-    for name in ("tests", "playpen"):
+    """A change to one file's shards, playpen steps or Rust steps that misses
+    the other would let a merge pass a release its PR could not, or the
+    reverse."""
+    for name in ("tests", "playpen", "rust"):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_a_change_outside_rust_skips_every_rust_step_and_not_the_job(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """A job skipped as a whole on a code change is red in the verdict. So
+    the job runs, and each step after the checkout carries the rule."""
+    checkout, *steps = jobs["rust"]["steps"]
+
+    assert jobs["scope"]["outputs"]["rust"] == RUST_OUTPUT
+    assert jobs["rust"]["needs"] == "scope"
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert "if" not in checkout
+    assert steps, "the rust job has no step but the checkout"
+    for step in steps:
+        assert step.get("if") == ONLY_RUST, f"{step.get('name') or step.get('uses')} always runs"
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_rust_job_runs_the_gate_the_hooks_run(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """One copy of the cargo commands: `bin/rust-gate.sh`. A cargo line
+    written here would drift from the one a commit and a push run."""
+    runs = [step for step in jobs["rust"]["steps"] if "run" in step]
+    toolchain, checks = runs
+
+    assert checks["run"] == RUST_RUN
+    assert toolchain["working-directory"] == RUST_DIR
+    assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
+    for step in jobs["rust"]["steps"]:
+        assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_cargo_cache_is_keyed_by_the_toolchain_and_the_lock(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    (cache,) = [
+        step for step in jobs["rust"]["steps"] if step.get("uses", "").startswith("actions/cache@")
+    ]
+
+    for name in CACHE_FILES:
+        assert f"'{name}'" in cache["with"]["key"]
+        assert (REPO / name).is_file(), f"the cache key names {name}"
+    assert "restore-keys" not in cache["with"]
+
+
+def test_the_release_skips_rust_only_over_a_commit_whose_run_passed() -> None:
+    """As for `docs`: a push never skips the Rust checks over a tree whose
+    Rust failed, or is still in, its own run."""
+    (step,) = [one for one in RELEASE_JOBS["scope"]["steps"] if one.get("id") == "scope"]
+
+    assert "rust=true\n" in step["run"]
+    assert 'if [[ "$passed" == 1 ]] && ! rust_touched "$BEFORE" "$GITHUB_SHA"; then' in step["run"]
+    assert 'echo "rust=$rust" >> "$GITHUB_OUTPUT"' in step["run"]
 
 
 def test_the_tag_step_runs_only_after_the_verdict() -> None:
@@ -333,7 +421,7 @@ def test_a_shard_outside_one_to_n_is_refused(text: str) -> None:
 
 def _needs(scope: str | None, results: dict[str, str]) -> str:
     """`toJSON(needs)` as the last job sees it: every job a success but for
-    the ones `results` names. Both workflows need the same four jobs."""
+    the ones `results` names. Both workflows need the same five jobs."""
     names = sorted(set(JOBS) - {GATE_NAME})
     assert names == sorted(set(RELEASE_JOBS) - {RELEASE_NAME})
     needs = {name: {"result": results.get(name, "success"), "outputs": {}} for name in names}
@@ -344,7 +432,7 @@ def _needs(scope: str | None, results: dict[str, str]) -> str:
 
 
 #: What a docs PR skips. A code PR skips nothing.
-DOCS = {"tests": "skipped", "playpen": "skipped"}
+DOCS = {"tests": "skipped", "playpen": "skipped", "rust": "skipped"}
 
 #: (what the jobs did, whether `gate` is green)
 VERDICTS = [
@@ -353,11 +441,17 @@ VERDICTS = [
     # One red shard makes the matrix job a failure.
     (_needs("code", {"tests": "failure"}), False),
     (_needs("code", {"playpen": "cancelled"}), False),
+    (_needs("code", {"rust": "failure"}), False),
     (_needs("code", {"lint": "failure"}), False),
     (_needs("docs", DOCS | {"lint": "failure"}), False),
     # A suite that did not run on a code PR is red, not skipped.
     (_needs("code", {"tests": "skipped"}), False),
     (_needs("code", {"lint": "skipped"}), False),
+    # The Rust checks run on every code PR. The job skips its own steps when
+    # the PR touches nothing under rust/, and is a success.
+    (_needs("code", {"rust": "skipped"}), False),
+    # A job that ran on a docs PR is not what the scope asks for.
+    (_needs("docs", DOCS | {"rust": "success"}), False),
     # No scope: the scope job failed and everything behind it was skipped.
     (_needs(None, DOCS | {"scope": "failure"}), False),
 ]
@@ -379,6 +473,113 @@ def test_the_verdict_is_green_only_when_every_job_its_scope_asks_for_passed(
     )
 
     assert (done.returncode == 0) == green, done.stdout + done.stderr
+
+
+#: What the scope action answers for a change, as (docs or code, rust).
+SCOPES = [
+    (["chaperone/src/chaperone/app.py"], ("code", "false")),
+    (["rust/crates/one/src/lib.rs"], ("code", "true")),
+    (["chaperone/src/chaperone/app.py", "rust/Cargo.lock"], ("code", "true")),
+    (["docs/later.md"], ("docs", "false")),
+    # The `rust` job is left out of a docs PR, whatever this answer is.
+    (["rust/AGENTS.md"], ("docs", "true")),
+    # A file of the Rust checks themselves. The tests of the gate use a fake
+    # cargo, so only this run proves the change with the real one.
+    (["bin/rust-gate.sh"], ("code", "true")),
+    (["bin/lib/rustrule.sh"], ("code", "true")),
+    ([".github/workflows/gate.yml"], ("code", "true")),
+    ([".github/workflows/release.yml"], ("code", "true")),
+    ([".github/actions/scope/action.yml"], ("code", "true")),
+    # The Python half of the gate starts no cargo step of its own in CI.
+    (["bin/quality-gate.sh"], ("code", "false")),
+    ([".github/actions/verdict/action.yml"], ("code", "false")),
+]
+
+
+def _git(repo: Path, *args: str) -> str:
+    leaked = (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    )
+    env = {name: value for name, value in os.environ.items() if name not in leaked}
+    done = subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        env=env | {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+
+    return done.stdout.strip()
+
+
+def _scope_of(repo: Path, base: str) -> tuple[str, str]:
+    """Runs the scope action's own script in `repo`, as a merge group on
+    `base` would. Returns its two outputs."""
+    (step,) = SCOPE_ACTION["runs"]["steps"]
+    output = repo.parent / "output"
+    output.write_text("", encoding="utf-8")
+    done = subprocess.run(
+        ["bash", "-c", step["run"]],
+        cwd=repo,
+        env={
+            "PATH": os.environ["PATH"],
+            "GROUP_BASE": base,
+            "GITHUB_BASE_REF": "main",
+            "GITHUB_OUTPUT": str(output),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+
+    return outputs["scope"], outputs["rust"]
+
+
+@pytest.fixture
+def checkout(tmp_path: Path) -> Path:
+    """A repository with one commit and the two rules the scope action
+    sources."""
+    repo = tmp_path / "repo"
+    (repo / "bin" / "lib").mkdir(parents=True)
+    for name in ("docsrule.sh", "rustrule.sh"):
+        shutil.copy2(REPO / "bin" / "lib" / name, repo / "bin" / "lib" / name)
+
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "the base")
+
+    return repo
+
+
+@pytest.mark.parametrize(("paths", "scope"), SCOPES, ids=lambda one: " ".join(one))
+def test_the_scope_says_whether_a_change_touches_rust(
+    checkout: Path, paths: list[str], scope: tuple[str, str]
+) -> None:
+    base = _git(checkout, "rev-parse", "HEAD")
+    for name in paths:
+        (checkout / name).parent.mkdir(parents=True, exist_ok=True)
+        # One more line, not a new body: the scope sources the two rules.
+        with (checkout / name).open("a", encoding="utf-8") as file:
+            file.write("# changed\n")
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "the change")
+
+    assert _scope_of(checkout, base) == scope
+
+
+def test_a_change_the_scope_cannot_read_is_code_and_rust(checkout: Path) -> None:
+    """No merge group, and no `origin/main` to take a merge-base with: the
+    full suite and the cargo checks are the safe answer."""
+    assert _scope_of(checkout, "") == ("code", "true")
 
 
 def test_every_checkout_takes_full_history() -> None:

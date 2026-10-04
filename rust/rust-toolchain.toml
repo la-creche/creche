@@ -1,0 +1,6 @@
+# The one toolchain of the workspace. rustup reads this file for every cargo
+# command that runs under rust/, on a developer machine and in CI.
+[toolchain]
+channel = "1.92.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
