@@ -30,6 +30,7 @@ from attendance_harness import (
     SANDBOX,
     FakeFleet,
     make_config,
+    settle_now,
     wait_until,
     write_status,
 )
@@ -350,19 +351,84 @@ async def test_a_record_is_read_once(tmp_path: Path) -> None:
     await rig.stop()
 
 
-async def test_a_move_the_contract_refuses_is_visible(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Contract 02 §4.3 has no `waiting-approval -> settled`.
+async def test_a_turn_that_waits_for_approval_can_settle(tmp_path: Path) -> None:
+    """Contract 03 §13 rule 8 accepts `turn_settled` for such a turn.
 
-    The audit tail lags, so a turn can settle while this service still shows
-    it as `waiting-approval`. The turn does not move. A log line and a `note`
-    line say so, because a move that is refused in silence hides a defect.
+    pi settles after the gated call returned, so the PEP decided the gate.
+    The audit tail lags, so this service can still show `waiting-approval`.
+    Contract 02 §4.3 has no `waiting-approval -> settled`, so the turn goes
+    through `running`. The turn must not wait for its deadline.
     """
     rig = await build(tmp_path)
     turn = await rig.start()
     rig.append(claimed={"turn_id": turn})
     rig.service.read_gates()
+    live = rig.service.live_turn(FAMILY, CHAT_SESSION, turn)
+
+    assert live is not None
+    await rig.fleet.playpen().settle(CHAT_SESSION, turn)
+    await settle_now(live.done)
+
+    assert live.record.state is TurnState.SETTLED
+    assert rig.kinds()[-2:] == [LineKind.APPROVAL_REQUESTED, LineKind.TURN_SETTLED]
+    assert LineKind.NOTE not in rig.kinds()
+    assert rig.state() is SessionState.IDLE
+    await rig.stop()
+
+
+async def test_a_settle_reads_the_decision_of_its_gate_first(tmp_path: Path) -> None:
+    """The decision is in the audit file and the poll did not read it yet.
+    The settle reads it, so the journal and the tally hold the decision."""
+    rig = await build(tmp_path)
+    turn = await rig.start()
+    rig.append(claimed={"turn_id": turn})
+    rig.service.read_gates()
+    rig.append(claimed={"turn_id": turn}, decision="allow", reason="approved", waited_ms=4200)
+    live = rig.service.live_turn(FAMILY, CHAT_SESSION, turn)
+
+    assert live is not None
+    await rig.fleet.playpen().settle(CHAT_SESSION, turn)
+    await settle_now(live.done)
+
+    assert live.record.state is TurnState.SETTLED
+    assert rig.kinds()[-2:] == [LineKind.APPROVAL_RESOLVED, LineKind.TURN_SETTLED]
+    assert live.record.gates.approved == 1
+    await rig.stop()
+
+
+async def test_a_gate_that_ends_the_turn_wins_over_a_late_settle(tmp_path: Path) -> None:
+    """The decision in the audit file ends the turn. The settle changes nothing."""
+    rig = await build(tmp_path)
+    turn = await rig.start()
+    rig.append(claimed={"turn_id": turn})
+    rig.service.read_gates()
+    rig.append(claimed={"turn_id": turn}, decision="deny", reason="approval_abandoned")
+    live = rig.service.live_turn(FAMILY, CHAT_SESSION, turn)
+
+    assert live is not None
+    await rig.fleet.playpen().settle(CHAT_SESSION, turn)
+    await settle_now(live.done)
+
+    assert live.record.state is TurnState.FAILED
+    assert live.record.reason is TurnReason.APPROVAL_DENIED
+    assert rig.kinds()[-1] is LineKind.TURN_FAILED
+    assert live.record.usage.input == 0
+    await rig.stop()
+
+
+async def test_a_move_the_contract_refuses_is_visible(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A move that contract 02 §4.3 does not allow is a defect somewhere.
+
+    The turn does not move. A log line and a `note` line say so, because a
+    move that is refused in silence hides the defect. No known path makes
+    such a move, so this test gives the service a state table that refuses
+    each move.
+    """
+    rig = await build(tmp_path)
+    turn = await rig.start()
+    monkeypatch.setattr("attendance.service.can_move", lambda current, wanted: False)
 
     with caplog.at_level(logging.ERROR, logger="attendance"):
         await rig.fleet.playpen().settle(CHAT_SESSION, turn)
@@ -372,12 +438,12 @@ async def test_a_move_the_contract_refuses_is_visible(
     lines = list(rig.service.store.journal.replay(FAMILY, CHAT_SESSION))
 
     assert live is not None
-    assert live.record.state is TurnState.WAITING_APPROVAL
+    assert live.record.state is TurnState.RUNNING
     assert lines[-1].kind is LineKind.NOTE
     assert lines[-1].turn == turn
     assert lines[-1].body == {
         "note": "illegal_transition",
-        "from": "waiting-approval",
+        "from": "running",
         "to": "settled",
     }
     await rig.stop()

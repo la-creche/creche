@@ -37,6 +37,8 @@ from attendance.wire import (
     REFUSAL_BUDGET,
     EventLine,
     FailedLine,
+    FatalLine,
+    FatalReason,
     LineSplitter,
     LogLine,
     OpenedLine,
@@ -83,19 +85,27 @@ LONE_SURROGATE = "a\ud800b"
 # splits on them, which would tear one record into two (contract 03 §2 rule 4).
 UNICODE_SEPARATORS = f"line{chr(0x2028)}sep{chr(0x2029)}arator"
 
-# Three lines under the line cap that are not a `JSONDecodeError`. Each one
+# Two lines under the line cap that are not a `JSONDecodeError`. Each one
 # raised a different exception type at a different place in `parse`: the JSON
-# reader's recursion limit, the interpreter's integer digit limit, and the
-# UTF-8 encode of a lone surrogate in `cap_event`.
+# reader's recursion limit and the interpreter's integer digit limit.
 RAISING_LINES = {
     "deep_nesting": "[" * 200_000,
     "long_integer": "1" * 5_000,
-    "lone_surrogate": (
-        '{"type":"event","session":"s","turn":"t","turn_seq":1,"event":{"text":"\\ud800"}}'
-    ),
+}
+
+# Events with one half of a surrogate pair: in a text, in a key and inside
+# an array. Each one has no UTF-8 form. The value is the count of its bytes
+# when one half counts as three bytes.
+EVENTS_WITH_A_HALF_PAIR = {
+    '{"type":"message_update","text":"cut \\ud83d"}': 42,
+    '{"type":"x","\\udc00":1}': 20,
+    '{"type":"x","a":[{"b":"\\ud800"}]}': 30,
 }
 
 LOG_LINE = '{"type":"log","message":"pi started"}'
+
+# A cap of a few bytes, so a test passes it with a short record.
+SMALL_CAP = 16
 
 
 def test_the_splitter_uses_lf_and_nothing_else() -> None:
@@ -148,6 +158,68 @@ def test_an_oversized_partial_record_is_refused_before_its_lf() -> None:
     assert splitter.pending_bytes() == 0
 
     splitter.feed(b'rest of the bad line\n{"type":"pong","nonce":"1"}\n')
+
+
+def test_the_splitter_keeps_no_byte_of_a_record_that_it_drops() -> None:
+    """The bytes between the refusal and the next LF are not kept."""
+    splitter = LineSplitter(SMALL_CAP)
+
+    assert splitter.feed(b"x" * (SMALL_CAP + 1))[0].refusal is Refusal.TOO_LARGE
+
+    for _ in range(5):
+        assert splitter.feed(b"y" * 1000) == []
+        assert splitter.pending_bytes() == 0
+
+    lines = splitter.feed(b'the end of the record\n{"a":1}\n')
+
+    assert [line.text for line in lines] == ['{"a":1}']
+    assert splitter.pending_bytes() == 0
+
+
+def test_a_record_at_the_cap_leaves_no_byte_for_the_next() -> None:
+    """The record fills the buffer before its LF comes. The next record
+    starts with an empty buffer."""
+    splitter = LineSplitter(SMALL_CAP)
+
+    assert splitter.feed(b"a" * SMALL_CAP) == []
+    assert splitter.pending_bytes() == SMALL_CAP
+
+    lines = splitter.feed(b"\nok\n")
+
+    assert [line.text for line in lines] == ["a" * SMALL_CAP, "ok"]
+    assert splitter.pending_bytes() == 0
+
+
+@pytest.mark.parametrize("chunk_bytes", [1, 3, SMALL_CAP, SMALL_CAP + 1, 64, 1000])
+def test_the_splitter_holds_the_cap_at_most_in_each_state(chunk_bytes: int) -> None:
+    """The result does not change with the size of a chunk."""
+    stream = (
+        b"a" * 40
+        + b"\nok\n"
+        + b"b" * 100
+        + b"\n"
+        + b"c" * SMALL_CAP
+        + b"\n"
+        + b"d" * (SMALL_CAP + 1)
+        + b"e" * 100
+    )
+    splitter = LineSplitter(SMALL_CAP)
+    texts: list[str] = []
+    refusals: list[Refusal] = []
+
+    for start in range(0, len(stream), chunk_bytes):
+        for line in splitter.feed(stream[start : start + chunk_bytes]):
+            if line.text is not None:
+                texts.append(line.text)
+
+            if line.refusal is not None:
+                refusals.append(line.refusal)
+
+        assert splitter.pending_bytes() <= SMALL_CAP
+
+    assert texts == ["ok", "c" * SMALL_CAP]
+    assert refusals == [Refusal.TOO_LARGE] * 3
+    assert splitter.pending_bytes() == 0
 
 
 def test_encode_refuses_a_lone_surrogate_as_a_value_error() -> None:
@@ -256,6 +328,33 @@ def test_an_oversized_event_keeps_only_its_type() -> None:
     assert "blob" not in big
 
 
+@pytest.mark.parametrize("event", list(EVENTS_WITH_A_HALF_PAIR))
+def test_an_event_with_no_utf8_form_keeps_only_its_type(event: str) -> None:
+    """The host cannot store the event whole. A refusal of the line leaves a
+    gap in `turn_seq`, and a gap fails the turn."""
+    line = parse(f'{{"type":"event","session":"s","turn":"t","turn_seq":1,"event":{event}}}')
+
+    assert isinstance(line, EventLine)
+    assert line.event == {
+        "type": json.loads(event)["type"],
+        "truncated": True,
+        "original_bytes": EVENTS_WITH_A_HALF_PAIR[event],
+    }
+
+
+def test_an_event_type_with_no_utf8_form_reads_as_unknown() -> None:
+    capped = cap_event({"type": "message\ud800", "text": "x"})
+
+    assert capped == {"type": "unknown", "truncated": True, "original_bytes": 32}
+    assert json.dumps(capped, ensure_ascii=False).encode("utf-8")
+
+
+def test_an_event_with_a_whole_surrogate_pair_is_kept_whole() -> None:
+    event = {"type": "message_update", "text": "\U0001f600"}
+
+    assert cap_event(event) is event
+
+
 def test_an_event_nested_past_the_cap_keeps_only_its_type() -> None:
     """The host adds levels of its own, and a reader has a nesting limit."""
     deep = cap_event(nested_event(MAX_EVENT_DEPTH + 1))
@@ -280,6 +379,33 @@ def test_usage_from_the_playpen_is_read_defensively() -> None:
     assert usage.output == 0
     assert usage.cost_usd == 0.0
     assert usage.cache_read == 0
+
+
+@pytest.mark.parametrize("cost", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"])
+def test_a_cost_that_is_not_finite_reads_as_no_cost(cost: str) -> None:
+    """A JSON answer and a strict journal reader hold a finite number only."""
+    settled = parse(
+        f'{{"type":"turn_settled","session":"{SESSION}","turn":"{TURN}","turn_seq":1,'
+        f'"usage":{{"input":7,"cost_usd":{cost}}}}}'
+    )
+
+    assert isinstance(settled, SettledLine)
+    assert settled.usage.input == 7
+    assert settled.usage.cost_usd == 0.0
+    assert json.dumps(settled.usage.to_api(), allow_nan=False)
+
+
+def test_an_integer_cost_past_a_float_reads_as_no_cost() -> None:
+    """Such an integer has no float. The line is still a settle, so the turn
+    does not wait for its deadline."""
+    settled = parse(
+        f'{{"type":"turn_settled","session":"{SESSION}","turn":"{TURN}","turn_seq":1,'
+        f'"usage":{{"input":7,"cost_usd":1{"0" * 309}}}}}'
+    )
+
+    assert isinstance(settled, SettledLine)
+    assert settled.usage.input == 7
+    assert settled.usage.cost_usd == 0.0
 
 
 def test_every_playpen_reason_maps_to_a_turn_reason() -> None:
@@ -598,6 +724,37 @@ async def test_a_fatal_in_place_of_ready_raises_a_fault(tmp_path: Path) -> None:
     assert faults["faults"][0]["code"] == FaultCode.SANDBOX_START_FAILED.value
     assert faults["faults"][0]["blocks_turns"] is True
     assert "control_mount_unwritable" in faults["faults"][0]["message"]
+    await link.close()
+
+
+@pytest.mark.parametrize("reason", list(FatalReason))
+def test_parse_keeps_each_fatal_reason_of_the_contract(reason: FatalReason) -> None:
+    """Contract 03 §5.7 names two reasons. The host reads each by its name."""
+    fatal = parse(json.dumps({"type": "fatal", "reason": reason.value}))
+
+    assert isinstance(fatal, FatalLine)
+    assert fatal.reason is reason
+
+
+def test_the_fatal_reasons_are_the_reasons_of_the_contract() -> None:
+    assert {reason.value for reason in FatalReason} == {
+        "control_mount_unwritable",
+        "mount_dir_unset",
+        "unknown",
+    }
+
+
+async def test_a_fatal_for_an_unset_mount_names_its_cause(tmp_path: Path) -> None:
+    """§5.7 rule 5: the operator learns the cause from the status document."""
+    events = Recorder()
+    link, _ = make_link(tmp_path, events, plan=PlaypenPlan(fatal="mount_dir_unset"))
+
+    with pytest.raises(PlaypenFatal):
+        await link.ensure_open(dial(), 7)
+
+    faults = json.loads((tmp_path / "faults" / "sessiond" / f"{FAMILY}.json").read_text())
+
+    assert "mount_dir_unset" in faults["faults"][0]["message"]
     await link.close()
 
 

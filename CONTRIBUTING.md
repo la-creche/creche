@@ -16,6 +16,16 @@ workflow: branches, hooks, CI, tags and releases.
   imports a test. git also sets them for `git rebase --exec` and for
   `git bisect run`. A test run from there then cannot write into the
   repository of the caller.
+- The root `conftest.py` also sets `GIT_CONFIG_GLOBAL` to an empty file and
+  `GIT_CONFIG_NOSYSTEM` to `1`. A `git` child of a test then reads no config
+  file of the person who runs the suite, and none of the system. A fixture
+  that needs a setting sets it in its own repository or with `git -c`.
+- The same file gives `core.excludesFile` and `core.attributesFile` an empty
+  file, through `GIT_CONFIG_COUNT`. It sets `GIT_ATTR_NOSYSTEM` to `1`. A
+  `git` child then reads no ignore file and no attributes file of that
+  person, and no attributes file of the system. The two settings outrank the
+  config of a repository. A fixture that needs one of the two passes it with
+  `git -c`.
 
 ## Hooks
 
@@ -31,6 +41,7 @@ under `rust/`, it also runs `cargo fmt` and `cargo clippy`.
 | a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite. The hook passes `--tests-for`, and the gate runs every suite |
 | a path under `vectors/`, for example `vectors/data/index.json` | `vectors/tests`, and the cargo steps when `cargo` is on `PATH` |
 | a path under `rust/`, for example `rust/Cargo.lock` | `cargo fmt`, `cargo clippy` and `cargo test`, and no pytest suite for that path |
+| a path under `integration/proc/`, for example `integration/proc/proc_tree.py` | the process-level suite on four workers, and no other suite for that path. A test that skips is a failure, as in the `proc` job of CI. A Markdown file there, outside `tests/` and `fixtures/`, picks no suite |
 | Markdown only, outside `tests/` and `fixtures/` | the tests marked `docs`, `--docs` |
 | nothing, or a deleted branch | no test |
 

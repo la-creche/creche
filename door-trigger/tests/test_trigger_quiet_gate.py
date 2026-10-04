@@ -4,9 +4,12 @@ does: check, fire or not, record, and the clock moves on."""
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+from agent_door_trigger.quiet import gate
 from agent_door_trigger.quiet.decide import Jobs, Reason, Wake
 from agent_door_trigger.quiet.gate import Busy, gated_family
 from agent_door_trigger.quiet.records import Called, Ending
@@ -267,3 +270,23 @@ def test_an_invalid_file_is_not_gated(tmp_path: Path) -> None:
 
 def test_an_unknown_family_is_not_gated(tmp_path: Path) -> None:
     assert gated_family(tmp_path, FAMILY) is None
+
+
+def test_a_registry_that_the_loader_cannot_load_is_not_gated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Rule 1 of the quiet check: a read that fails wakes. The firing goes
+    ahead with no check, for each failure of the loader and not only for an
+    `OSError`."""
+
+    def fails(_root: Path) -> None:
+        raise ValueError("a file the registry loader cannot read")
+
+    _write(tmp_path, QUIET_ONLY)
+    monkeypatch.setattr(gate, "load_registry", fails)
+
+    with caplog.at_level(logging.WARNING):
+        assert gated_family(tmp_path, FAMILY) is None
+
+    assert "cannot read the registry" in caplog.text
+    assert "ValueError" in caplog.text

@@ -22,6 +22,12 @@ export const MAX_EVENT_BYTES = 262144;
  */
 export const MAX_PI_NESTING = 256;
 
+/**
+ * Contract 03 §5.1. `turn_seq` counts from 1 in each turn. A turn that sent
+ * no line fails with this number.
+ */
+export const FIRST_TURN_SEQ = 1;
+
 /** Contract 03 §8. One `log` message, and one forwarded pi stderr line. */
 export const MAX_LOG_BYTES = 4096;
 
@@ -178,13 +184,20 @@ export const PI_SESSION_DIR = "pi";
 export const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const TURN_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 export const FAMILY_RE = /^[a-z][a-z0-9-]{1,30}$/;
+
+/**
+ * CONTRACT-QUESTION: contract 03 §3 gives `<family>-s<N>` and no count of
+ * digits for the number. The playpen takes each count. The host takes 1 to
+ * 9 digits, so the host sends no id that this pattern refuses. A count
+ * changes this one pattern.
+ */
 export const SANDBOX_ID_RE = /^[a-z][a-z0-9-]{1,30}-s[0-9]+$/;
 
 /** Contract 02 §5.4.1. One inbox file name. */
 export const ATTACHMENT_NAME_RE = /^[A-Za-z0-9._-]{1,120}$/;
 
-/** A session id may be long, but not unbounded: it arrives from outside. */
-export const MAX_SESSION_ID_LENGTH = 200;
+/** Contract 02 §2. A session id has 1 to 128 characters. */
+export const MAX_SESSION_ID_LENGTH = 128;
 
 /** Contract 02 §5.4.1 caps the names, not the count. This bounds the list. */
 export const MAX_ATTACHMENTS = 64;

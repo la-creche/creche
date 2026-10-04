@@ -60,7 +60,7 @@ def create_app(config: ServeConfig, attendance: AttendanceClient, routes: RouteL
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncGenerator[None]:
-        await run_in_threadpool(routes.refresh)
+        await _refresh_at_start(routes)
         task = asyncio.create_task(_refresh_periodically(routes, config.refresh_s))
         _install_sighup(routes)
         try:
@@ -183,6 +183,30 @@ def _declared_too_large(content_length: str | None) -> bool:
         return int(content_length) > MAX_PAYLOAD_BYTES
     except ValueError:
         return False  # let the real read fail this instead of guessing
+
+
+async def _refresh_at_start(routes: RouteLookup) -> None:
+    """The first refresh. A failure does not stop the listener.
+
+    The table is then empty. Each call answers the 404 of an unknown route
+    until a later refresh passes. A listener that stopped here started
+    again and failed again for as long as the registry had the bad file.
+
+    CONTRACT-QUESTION: `spec.md` §3.6 and contract 05 §6.4 rule 6 give the
+    refresh and no rule for a first refresh that fails. The door takes the
+    rule of each later refresh: log the failure and keep the table, which is
+    empty at the start. A rule that the listener must not start costs this
+    handler and a clean exit in `cli.py`.
+    """
+    try:
+        await run_in_threadpool(routes.refresh)
+    except Exception as exc:
+        _LOG.error(
+            "trigger routes: the first refresh failed, no route is live until a refresh "
+            "passes (%s: %s)",
+            type(exc).__name__,
+            exc,
+        )
 
 
 async def _refresh_periodically(routes: RouteLookup, interval_s: float) -> None:

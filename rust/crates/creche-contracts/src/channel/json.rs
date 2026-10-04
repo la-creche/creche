@@ -13,6 +13,7 @@
 //! that `json.dumps(value, separators=(",", ":"), ensure_ascii=False)` makes.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::fmt;
 use std::mem;
 
@@ -924,16 +925,38 @@ pub(super) fn array_text<'a>(items: impl Iterator<Item = &'a str>) -> String {
     out
 }
 
-/// The count of bytes that [`write_string`] writes for `text`.
-fn string_size(text: &Text) -> Result<usize, LoneSurrogate> {
-    let text = text.as_str().ok_or(LoneSurrogate)?;
-    let size = |character: char| match escape_of(character) {
+/// The count of bytes of the two quotes of one JSON string.
+const QUOTES_BYTES: usize = 2;
+
+/// The count of bytes of one lone surrogate, as the `surrogatepass` handler
+/// of Python encodes it.
+const LONE_SURROGATE_BYTES: usize = 3;
+
+/// The count of bytes that [`write_string`] writes for `character`.
+fn char_size(character: char) -> usize {
+    match escape_of(character) {
         Some(escape) => escape.len(),
         None if character < ' ' => CONTROL_ESCAPE_BYTES,
         None => character.len_utf8(),
-    };
+    }
+}
 
-    Ok(text.chars().map(size).sum::<usize>() + 2)
+/// The count of bytes that [`write_string`] writes for `text`.
+fn string_size(text: &Text) -> Result<usize, LoneSurrogate> {
+    let text = text.as_str().ok_or(LoneSurrogate)?;
+
+    Ok(text.chars().map(char_size).sum::<usize>() + QUOTES_BYTES)
+}
+
+/// The count of bytes of `text` as one JSON string, with
+/// [`LONE_SURROGATE_BYTES`] for each lone surrogate.
+fn string_size_lossy(text: &Text) -> usize {
+    let units = text.to_utf16();
+    let size = char::decode_utf16(units)
+        .map(|point| point.map_or(LONE_SURROGATE_BYTES, char_size))
+        .sum::<usize>();
+
+    size + QUOTES_BYTES
 }
 
 /// The smallest decimal exponent for which Python writes a float with no
@@ -1147,6 +1170,26 @@ pub(super) fn compact_size(value: &Json) -> Result<usize, LoneSurrogate> {
     })?;
 
     Ok(size)
+}
+
+/// The count of bytes of the compact text of `value`, with three bytes for
+/// each lone surrogate: what
+/// `len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8", "surrogatepass"))`
+/// gives in Python. For a value with no lone surrogate it is the count of
+/// [`compact_size`].
+pub(super) fn lossy_size(value: &Json) -> usize {
+    let mut size = 0_usize;
+    let Ok(()) = walk::<Infallible>(vec![Visit::Value(value)], |piece| {
+        size += match piece {
+            Piece::Raw(raw) => raw.len(),
+            Piece::Key(text) | Piece::Scalar(Json::Text(text)) => string_size_lossy(text),
+            Piece::Scalar(scalar) => scalar_text(scalar).len(),
+        };
+
+        Ok(())
+    });
+
+    size
 }
 
 /// Writes each piece of a compact text.
@@ -1578,6 +1621,7 @@ mod tests {
 
             assert_eq!(compact_text(&value).unwrap(), expected);
             assert_eq!(compact_size(&value), Ok(expected.len()));
+            assert_eq!(lossy_size(&value), expected.len());
         }
 
         let lone = python(r#"{"a":["\ud800"]}"#).unwrap();
@@ -1587,6 +1631,20 @@ mod tests {
             compact_size(&python(r#"{"\ud800":1}"#).unwrap()),
             Err(LoneSurrogate)
         );
+    }
+
+    #[test]
+    fn a_lone_surrogate_counts_as_three_bytes_in_the_lossy_size() {
+        let sizes = [
+            (r#"{"a":["\ud800"]}"#, 13),
+            (r#"{"\udc00":1}"#, 9),
+            (r#"["\ude00\ud83d"]"#, 10),
+            (r#"["caf\u00e9 \n \u0001 \ud83d\ude00 \ud83d"]"#, 28),
+        ];
+
+        for (text, expected) in sizes {
+            assert_eq!(lossy_size(&python(text).unwrap()), expected, "{text}");
+        }
     }
 
     #[test]

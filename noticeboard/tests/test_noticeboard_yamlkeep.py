@@ -158,6 +158,27 @@ def test_text_that_does_not_parse_is_refused() -> None:
     assert edited_text("name: [unclosed\n", {}, {"name": "chat"}) is None
 
 
+#: More levels than the stack of the library takes, under each recursion
+#: limit that a test run has.
+TOO_DEEP = 1000
+
+#: Texts that the library scans and then cannot build. For each one it
+#: raises an exception that is not its own error type.
+NOT_BUILT = {
+    "a-nesting-past-the-stack": "name: chat\nextra: " + "[" * TOO_DEEP + "]" * TOO_DEEP + "\n",
+    "an-integer-tag-on-a-word": "name: chat\nextra: !!int word\n",
+    "a-date-with-no-such-month": "name: chat\nextra: 2001-13-01\n",
+    "a-mapping-merged-into-itself": "name: chat\nextra: &one { <<: *one }\n",
+}
+
+
+@pytest.mark.parametrize("text", NOT_BUILT.values(), ids=NOT_BUILT.keys())
+def test_text_that_the_library_cannot_build_is_refused(text: str) -> None:
+    """The answer is the one for a text that does not parse. The caller then
+    writes the document of the emitter, and the save does not fail."""
+    assert edited_text(text, {"name": "chat"}, {"name": "second"}) is None
+
+
 def test_a_flow_mapping_with_a_comment_after_it_comes_back_as_it_was() -> None:
     """The emitter writes `{a: b}` and keeps the comment at its column. The
     line gets its spaces back, and the comment stays where it was."""

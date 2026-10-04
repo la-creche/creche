@@ -27,7 +27,7 @@ FIX_FIRST = "fix the defect in its package first: vectors/AGENTS.md rule 5"
 INPUT_FORMS = frozenset({"text", "base64", "repeat", "args", "chunks"})
 
 #: The deepest nesting a committed file may have. A reader in another
-#: language stops at a limit of its own: serde_json refuses level 129.
+#: language stops at a limit of its own: serde_json refuses level 128.
 MAX_FILE_DEPTH = 100
 
 

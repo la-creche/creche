@@ -54,6 +54,10 @@ STEER_MESSAGE_MAX = 4_096
 REASON_MAX = 200
 DEADLINE_MIN_S = 1
 
+# The message for a body that is not JSON. A text with no UTF-8 form gets
+# the same message: such a body is not JSON in UTF-8.
+NOT_JSON = "body is not JSON"
+
 LIST_LIMIT_DEFAULT = 50
 LIST_LIMIT_MAX = 200
 TURNS_DEFAULT = 10
@@ -327,7 +331,7 @@ def _since(raw: dict[str, Any], family: str) -> datetime | None:
 
 def _dispatch_key(raw: dict[str, Any], family: str) -> str | None:
     """§13.4.4's key, at contract 04 §4.1's own 128 character cap."""
-    key = _optional_text(raw, "idempotency_key")
+    key = _stored_text(raw, "idempotency_key")
 
     if key is None:
         return None
@@ -379,7 +383,7 @@ def read_steer(raw: dict[str, Any], family: str, session: str) -> str:
 
 
 def read_stop_reason(raw: dict[str, Any], family: str, session: str) -> str:
-    reason = _optional_text(raw, "reason") or "user_stopped"
+    reason = _stored_text(raw, "reason") or "user_stopped"
 
     if len(reason) > REASON_MAX:
         raise _bad("reason is over its limit", family=family, session=session)
@@ -434,7 +438,7 @@ def read_switch(raw: dict[str, Any]) -> SwitchRequest:
         family=family,
         to=to_sandbox,
         mode=mode,
-        reason=_optional_text(raw, "reason") or "",
+        reason=_stored_text(raw, "reason") or "",
         outgoing=_optional_text(raw, "from"),
         deadline_s=_bounded(_optional_int(raw, "deadline_s"), 300, 1, 3600, "deadline_s"),
     )
@@ -455,12 +459,49 @@ def _require_text(
     if not isinstance(value, str) or not value:
         raise _bad(f"{name} is missing or not a string", family=family, session=session)
 
-    return value
+    return _utf8_text(value)
 
 
 def _optional_text(raw: dict[str, Any], name: str) -> str | None:
     value = raw.get(name)
+    return _utf8_text(value) if isinstance(value, str) and value else None
+
+
+def _stored_text(raw: dict[str, Any], name: str) -> str | None:
+    """A text that reaches a file and the event stream only.
+
+    Four texts are read here: the reason of a stop, the reason of a switch,
+    the name of a trigger and the key of a dispatch. Each file and each line
+    of the stream holds the JSON escape of one half of a surrogate pair, so
+    nothing raises on such a text. The service took it before `_utf8_text`
+    came, and it still does. A refusal here is a decision of the owner.
+    """
+    value = raw.get(name)
     return value if isinstance(value, str) and value else None
+
+
+def _utf8_text(text: str) -> str:
+    """The text, or `bad_request` for a text that has no UTF-8 form.
+
+    The JSON reader makes a text with one half of a surrogate pair from an
+    escape such as `\\ud800`. No answer, no line of the channel and no byte
+    count can hold that text, so each of them raises on it. The refusal
+    names no family and no session: either one can be the text.
+
+    CONTRACT-QUESTION: contract 02 §3 rule 3 says that a body is JSON and
+    does not say what a reader does with such an escape. This reading
+    refuses the body for each text that an answer, a line of the channel or
+    a byte count can hold. It takes such an escape in the four texts of
+    `_stored_text`, and in a member that no parser reads. The other reading
+    replaces the character, which changes a text that a door sent. A
+    refusal of the four texts too costs four call sites.
+    """
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ApiError(ErrorCode.BAD_REQUEST, NOT_JSON) from error
+
+    return text
 
 
 def _optional_int(raw: dict[str, Any], name: str) -> int | None:
@@ -506,10 +547,12 @@ def _labels(raw: dict[str, Any], family: str, session: str) -> dict[str, str]:
     found: dict[str, str] = {}
 
     for key, value in typed.items():
+        _utf8_text(key)
+
         if not isinstance(value, str) or len(value) > LABEL_VALUE_MAX:
             raise _bad(f"label {key} is not a short string", family=family, session=session)
 
-        found[key] = value
+        found[key] = _utf8_text(value)
 
     return found
 
@@ -543,6 +586,11 @@ def _persona(raw: dict[str, Any], family: str, session: str) -> str:
 
     A refusal here would make a folder prompt able to break a chat, and a
     folder may only shape behaviour (invariant 7).
+
+    CONTRACT-QUESTION: §11 rule 6 truncates a persona and does not refuse
+    it. A persona text with one half of a surrogate pair has no UTF-8 form,
+    and `_utf8_text` refuses the body. The other reading puts U+FFFD in the
+    place of the half. It needs the same change in the Rust type.
     """
     text = raw.get("persona_text")
 
@@ -552,7 +600,7 @@ def _persona(raw: dict[str, Any], family: str, session: str) -> str:
     if not isinstance(text, str):
         raise _bad("persona_text is not a string", family=family, session=session)
 
-    return text
+    return _utf8_text(text)
 
 
 def _attachments(raw: dict[str, Any], family: str, session: str) -> list[str]:
@@ -624,7 +672,7 @@ def _trigger(
 
     return Trigger(
         kind=kind,
-        name=_optional_text(typed, "name"),
+        name=_stored_text(typed, "name"),
         fired_at=_fired_at(_optional_text(typed, "fired_at"), family, session),
         chain=_chain(typed.get("chain"), kind, family, session),
     )

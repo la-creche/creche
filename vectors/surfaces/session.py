@@ -712,6 +712,14 @@ SESSION_REPLIES: Final[tuple[Reply, ...]] = (
             "updated_at": "2027-01-01T02:30:00+02:00",
         },
     ),
+    Reply(
+        "times-before-the-year-1000",
+        {
+            **_SESSION_ARGS,
+            "created_at": "0001-01-01T00:00:00+00:00",
+            "updated_at": "0999-12-31T23:59:59.999999+00:00",
+        },
+    ),
 )
 
 LEASE_REPLIES: Final[tuple[Reply, ...]] = (
@@ -785,6 +793,14 @@ TURN_REPLIES: Final[tuple[Reply, ...]] = (
     Reply(
         "cost-long-float",
         {**_TURN_ARGS, "usage": {**_USAGE_ARGS, "cost_usd": cases.LONG_FLOAT}},
+    ),
+    Reply(
+        "times-before-the-year-1000",
+        {
+            **_TURN_ARGS,
+            "started_at": "0099-01-02T03:04:05+00:00",
+            "ended_at": "0999-12-31T23:59:59+00:00",
+        },
     ),
 )
 
@@ -1203,6 +1219,15 @@ OUTCOMES: Final[tuple[Outcome, ...]] = (
         },
     ),
     Outcome("no-sandbox", {**_OUTCOME_ARGS, "sandbox": ""}),
+    Outcome(
+        "times-before-the-year-1000",
+        {
+            **_OUTCOME_ARGS,
+            "trigger": {"kind": "timer", "name": None, "fired_at": "0001-01-01T00:00:00+00:00"},
+            "started_at": "0099-01-02T03:04:05+00:00",
+            "ended_at": "0999-12-31T23:59:59+00:00",
+        },
+    ),
 )
 
 

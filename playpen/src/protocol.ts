@@ -11,6 +11,7 @@ export type HostMessageType =
   | "steer"
   | "abort"
   | "stop_process"
+  | "get_entries"
   | "ping"
   | "shutdown";
 

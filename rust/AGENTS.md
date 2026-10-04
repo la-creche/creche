@@ -732,8 +732,12 @@ Rules for the test:
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
      no `Infinity`. It holds no lone surrogate in a key or in a text that a
-     parser reads, and no bytes of a surrogate. The Python reader accepts a
-     lone surrogate in each place.
+     parser reads, and no bytes of a surrogate. The Python parsers refuse a
+     lone surrogate in a text that a parser reads, and in the key of a label.
+     They take one in four texts that reach a file only: the reason of a
+     stop, the reason of a switch, the name of a trigger and the key of a
+     dispatch. The Python reader accepts one in each other key, and it
+     accepts the bytes of a surrogate in a member that no parser reads.
   2. A JSON text nests 128 levels at most.
   3. A number of a query has the digits 0 to 9 only.
   4. A sequence number fits 64 bits. The body of a `pi_event` holds an
@@ -818,34 +822,35 @@ Rules for the test:
      takes 1 to 200 bytes.
   7. `host::ProtocolVersion`, contract 03 §3. The contract gives no grammar
      for a number. The type takes two numbers of 1 to 9 ASCII digits.
+  8. `claim::Event`, contract 03 §13 rule 5. The contract names no event that
+     the host cannot record. The Python host keeps only the type of an event
+     with a lone surrogate. The reader does the same.
 - The host side of `channel` accepts what the Python host accepts, also
   where a stricter reading of contract 03 is possible. The owner decides each
-  case. Five examples:
+  case. Four examples:
   1. A session id and a turn id of a line can be each text.
      `TurnAddress` is the check that follows.
   2. `turn_seq` and each count can be an integer past 64 bits.
-  3. `cost_usd` can be `NaN` or `Infinity`.
-  4. A text outside an event can hold a lone surrogate.
-  5. `turn_failed` with no session, no turn and the `turn_seq` 0 is
+  3. A text outside an event can hold a lone surrogate.
+  4. `turn_failed` with no session, no turn and the `turn_seq` 0 is
      `malformed`. Contract 03 §5.1 permits that line.
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of
   the other side. `HostMessage::parse` is stricter than the TypeScript
-  playpen in ten places:
+  playpen in nine places:
   1. A required number with a fraction or an exponent is a fault: `600.0`.
      The same applies to `grace_ms`. The playpen reads `600.0` as 600.
-  2. A session id has 128 bytes at most. The playpen permits 200.
-  3. A sandbox number has 9 digits at most.
-  4. A text with a lone surrogate is not a text.
-  5. A protocol version is two numbers. The playpen takes each text with a
+  2. A sandbox number has 9 digits at most.
+  3. A text with a lone surrogate is not a text.
+  4. A protocol version is two numbers. The playpen takes each text with a
      `.`.
-  6. A workspace kind is `code-sandbox`. The playpen reads each text.
-  7. A cap counts bytes. The playpen counts UTF-16 code units.
-  8. A `model` has 200 bytes at most. The playpen keeps each text.
-  9. An `env_epoch` is less than 2^64. The playpen reads a larger one as a
+  5. A workspace kind is `code-sandbox`. The playpen reads each text.
+  6. A cap counts bytes. The playpen counts UTF-16 code units.
+  7. A `model` has 200 bytes at most. The playpen keeps each text.
+  8. An `env_epoch` is less than 2^64. The playpen reads a larger one as a
      float.
-  10. A line with an integer of more than 4300 digits is not JSON, in each
-      field. The playpen reads that integer as a float.
+  9. A line with an integer of more than 4300 digits is not JSON, in each
+     field. The playpen reads that integer as a float.
 - `HostMessage::parse` and the playpen accept two lines with different
   values:
   1. An empty `model` is no model. The playpen keeps the empty text.
@@ -958,7 +963,7 @@ Rules for the test:
      version. The module holds no YAML reader.
   9. `caregiver::CaregiverConfig`, `spec.md` §5.4. The spec does not say
      what the caregiver does with no master key of LiteLLM. The type refuses
-     `--write` without the key. The Python service starts.
+     `--write` without the key. The Python service refuses that start too.
   10. `chaperone::ChaperoneConfig`, contract 04 §10 rule 7. A generated
       roster with no base roster fails the verify hook. The contract does not
       say what the service does at start. The type reads no roster then, as

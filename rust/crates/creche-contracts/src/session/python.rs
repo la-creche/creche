@@ -777,6 +777,11 @@ const STRICT_JSON: &str = "The contract says that a body is JSON. Python's reade
     Rust text cannot hold a lone surrogate, so the reader refuses one in each key and in each \
     text that a parser reads.";
 
+const STORED_TEXT: &str = "The contract says that a body is JSON. The Python parser takes the \
+    escape of a lone surrogate in four texts that reach a file only: the reason of a stop, the \
+    reason of a switch, the name of a trigger and the key of a dispatch. A Rust text cannot \
+    hold a lone surrogate, so the reader refuses the body.";
+
 const DEPTH_LIMIT: &str = "The contract gives no nesting limit. Python reads a text until the \
     recursion limit of the interpreter, which differs between two versions. The Rust reader \
     stops at 128 levels, the limit of serde_json for a typed value.";
@@ -814,6 +819,27 @@ const DEVIATIONS: &[Deviation] = &[
         differs: Differs::Refuses,
         contract: "contract 02 §3 rule 3",
         decision: STRICT_JSON,
+    },
+    Deviation {
+        surfaces: &["session.request.run_turn"],
+        vectors: &["half-pair-in-trigger-name"],
+        differs: Differs::Refuses,
+        contract: "contract 02 §3 rule 3",
+        decision: STORED_TEXT,
+    },
+    Deviation {
+        surfaces: &["session.request.stop", "session.request.switch"],
+        vectors: &["half-pair-in-reason"],
+        differs: Differs::Refuses,
+        contract: "contract 02 §3 rule 3",
+        decision: STORED_TEXT,
+    },
+    Deviation {
+        surfaces: &["session.request.dispatch"],
+        vectors: &["half-pair-in-key"],
+        differs: Differs::Refuses,
+        contract: "contract 02 §3 rule 3",
+        decision: STORED_TEXT,
     },
     Deviation {
         surfaces: &["session.request.create"],

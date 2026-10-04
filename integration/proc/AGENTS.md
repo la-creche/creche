@@ -16,7 +16,9 @@ cannot judge a service that Python cannot import.
 
 The suite owns no product code. It is not in the root `testpaths`, so the
 full suite does not run it. CI runs it in the `proc` job of `gate.yml` and of
-`release.yml`.
+`release.yml`. The pre-push hook runs it for a push that changes a path of
+this directory, with `CRECHE_PROC_NO_SKIP=1`. A Markdown document of this
+directory does not start it.
 
 ## Run it
 
@@ -167,7 +169,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
 | `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
-| `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, the one commit, a refused save |
+| `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, a save after a preview, the one commit, saves at one time, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
@@ -416,9 +418,9 @@ the text of the failure. Work down this list.
   costs one assertion in that file.
 - **CONTRACT-QUESTION, the exit codes of `caregiver`.** No contract names
   one. `caregiver/AGENTS.md` gives three codes: 0, 1 and 2. The suite holds
-  those three where `caregiver` selects one. `caregiver` ends with no code
-  of its own in two cases: a start with no `LITELLM_MASTER_KEY`, and a
-  `delete` that fails. There the suite accepts each code that is not 0. A
+  those three where `caregiver` selects one. Two cases are different: a
+  start with no `LITELLM_MASTER_KEY`, and a `delete` that fails. `caregiver`
+  ends with code 1 there, and the suite accepts each code that is not 0. A
   change costs one assertion in each scenario of
   `test_proc_caregiver_start.py`.
 - **No flag for the session store in `caregiver`.** `SESSIONS_ROOT` in
@@ -482,12 +484,11 @@ the text of the failure. Work down this list.
   it means. The suite holds the rule of `caregiver/AGENTS.md`: an empty
   registry deletes no family. A change costs one scenario in
   `test_proc_caregiver_files.py`.
-- **The document between a switch and the end of a destroy.** `caregiver`
-  publishes no document between the answer of the switch call and the end
-  of the destroy. Contract 05 §3.4 publishes the block before each step, and
-  §4.3 step 7 sets `ready` after the handshake. The kill scenario of
-  `test_proc_caregiver_stage2.py` holds the ids of the two sandboxes at that
-  moment, and it holds no state.
+- **The document between a switch and the end of a destroy.** Contract 05
+  §3.4 publishes the block before each step, and §4.3 step 7 sets `ready`
+  after the handshake. `caregiver` publishes that document before the
+  destroy. The kill scenario of `test_proc_caregiver_stage2.py` holds the
+  ids of the two sandboxes at that moment, and it holds no state.
 - **One process table for each sandbox of a test.** A sandbox on the host
   is a microVM with a process table of its own. A test has no microVM, so
   each playpen of the machine is in one table. On Linux the playpen counts
@@ -501,9 +502,8 @@ the text of the failure. Work down this list.
   scenario here.
 - **The epoch after `rotate`.** Contract 05 §6.3 step 3 publishes the new
   epoch in the status document. The `rotate` verb writes the credential
-  file and the grant file. `caregiver serve` publishes the epoch at its
-  next pass, 20 seconds later at most. The scenario of `rotate` does not
-  wait for that pass.
+  file, the grant file and the credentials block of the document. The
+  scenario of `rotate` does not read the document.
 - **The two seams of `integration/tests_manager` with a bridge are not
   here.** `test_bridge_to_chaperone.py` and `test_cp_approval_to_chaperone.py`
   need stand-ins that do not exist: the embedding service, Home Assistant
@@ -617,6 +617,12 @@ the text of the failure. Work down this list.
   is. That answer is a 303 to the page of the family, with the start of the
   commit id in `saved`. A change costs three assertions in
   `test_proc_board_edit.py`.
+- **CONTRACT-QUESTION, the values in the edit form of the noticeboard.**
+  `docs/rework/spec.md` §8.2 says what a save writes. No section says which
+  values the edit form shows on the page that answers a post. The suite
+  holds the reading of the noticeboard: the values that the browser posted.
+  A save after a preview then writes the edit. A change costs one scenario
+  in `test_proc_board_edit.py`.
 - **A save of the noticeboard ends at the commit.** No `caregiver` runs
   beside the noticeboard, so no scenario proves that a saved family file
   converges.
@@ -625,6 +631,13 @@ the text of the failure. Work down this list.
   counts as a process that runs until its parent reaps it. On Linux, the
   same applies when `/proc` lists a process and does not give the state of
   that process.
+- **The suite declares no dependency of its own.** The suite imports PyYAML
+  and `httpx`, and the `dev` group of the root `pyproject.toml` names neither
+  one. The product packages bring both into the venv. When the last package
+  that needs one of the two leaves the workspace, the suite stops at its
+  imports. Add the name to the `dev` group in the pull request that removes
+  that package. The change moves `uv.lock`, and `uv.lock` moves each venv
+  component.
 
 ## Layout
 

@@ -16,10 +16,11 @@ never reached a model still reports an honest zero.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from attendance.models import Session, Trigger, TriggerKind, Turn, Usage
-from attendance.outcomes import SPEND_UNKNOWN_REASON, build
+from attendance.outcomes import SPEND_NOT_FINITE_REASON, SPEND_UNKNOWN_REASON, build
 from attendance.states import SessionKind, TurnState
 
 FAMILY = "scrum-lead"
@@ -144,3 +145,19 @@ def test_a_known_spend_still_serializes_with_no_reason() -> None:
 
     assert body["spend_usd"] == 0.02
     assert body["spend_reason"] is None
+
+
+def test_a_sum_that_is_not_finite_is_unknown() -> None:
+    """Each cost is finite, and the sum of two of them can be infinity. The
+    record is strict JSON, and no JSON number is infinity."""
+    turns = [
+        _turn(Usage(input=100, output=10, cost_usd=1e308)),
+        _turn(Usage(input=200, output=20, cost_usd=1.7e308)),
+    ]
+
+    record = build(_session(), turns)
+    text = json.dumps(record.to_file(), allow_nan=False)
+
+    assert record.spend_usd is None
+    assert record.spend_reason == SPEND_NOT_FINITE_REASON
+    assert '"spend_usd": null' in text

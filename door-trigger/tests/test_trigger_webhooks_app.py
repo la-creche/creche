@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -327,6 +329,55 @@ async def test_a_reload_that_fails_keeps_the_last_table(
 
     assert routes.get("scrum-lead", "deploy-notify") == ROUTE
     assert "keeping the last table" in caplog.text
+
+
+# --- a first refresh that fails does not stop the listener ---
+
+
+class _LoadsOnRefresh(FakeRouteTable):
+    """Holds no route until a refresh passes, as `RouteTable` at its start."""
+
+    def __init__(self, on_disk: dict[tuple[str, str], Route]) -> None:
+        super().__init__()
+        self._on_disk = dict(on_disk)
+
+    def refresh(self) -> int:
+        super().refresh()
+        self._routes = dict(self._on_disk)
+
+        return len(self._routes)
+
+
+def test_the_listener_starts_when_the_first_refresh_fails(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    routes = _LoadsOnRefresh({("scrum-lead", "deploy-notify"): ROUTE})
+    routes.refresh_error = ValueError("a file the registry loader cannot read")
+
+    with caplog.at_level(logging.ERROR), _client(tmp_path, FakeAttendance(), routes) as client:
+        declared = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
+        unknown = client.post("/triggers/ghost/deploy-notify", headers=_auth(TOKEN))
+
+    # No route is live. A declared route answers as an unknown one.
+    assert declared.status_code == 404
+    assert declared.json() == unknown.json()
+    assert routes.refresh_calls == 1
+    assert "the first refresh failed" in caplog.text
+
+
+def test_a_later_refresh_fills_the_table_after_a_start_that_failed(tmp_path: Path) -> None:
+    routes = _LoadsOnRefresh({("scrum-lead", "deploy-notify"): ROUTE})
+    routes.refresh_error = ValueError("a file the registry loader cannot read")
+    config = replace(_config(tmp_path), refresh_s=0.01)
+    deadline = time.monotonic() + 5
+
+    with TestClient(create_app(config, FakeAttendance(), routes)) as client:
+        status = 404
+        while status == 404 and time.monotonic() < deadline:
+            response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
+            status = response.status_code
+
+    assert status == 202
 
 
 # --- _authorized: constant-time even for an unknown route ---

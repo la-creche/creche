@@ -290,14 +290,14 @@ impl Error for ZeroTurnSeq {}
 
 /// The cost in US dollars that the sandbox reported for one turn.
 ///
-/// The value is advisory (contract 03 §13 rule 7). It is never below zero.
-/// It can be not finite: the Python host keeps `NaN` and `Infinity`, so this
-/// type keeps them. [`Cost::finite`] returns `None` for such a value.
+/// The value is advisory (contract 03 §13 rule 7). It is finite and never
+/// below zero. The Python host reads `NaN`, an infinity and a value below
+/// zero as no cost, and this type does the same.
 ///
 /// ```
 /// use creche_contracts::channel::number::Cost;
 ///
-/// assert_eq!(Cost::ZERO.finite(), Some(0.0));
+/// assert_eq!(Cost::ZERO.get(), 0.0);
 /// ```
 ///
 /// Code outside this module cannot build a cost from a raw number:
@@ -315,25 +315,19 @@ impl Cost {
     pub const ZERO: Self = Self(0.0);
 
     /// The cost that the sandbox reported: `value`, or [`Cost::ZERO`] for a
-    /// value below zero.
+    /// value below zero and for a value that is not finite.
     pub(super) fn of(value: f64) -> Self {
-        if value < 0.0 {
+        if value < 0.0 || !value.is_finite() {
             return Self::ZERO;
         }
 
         Self(value)
     }
 
-    /// The cost. It can be `NaN` or positive infinity.
+    /// The cost. It is finite.
     #[must_use]
     pub fn get(self) -> f64 {
         self.0
-    }
-
-    /// The cost. `None` for `NaN` and for infinity.
-    #[must_use]
-    pub fn finite(self) -> Option<f64> {
-        self.0.is_finite().then_some(self.0)
     }
 }
 
@@ -438,13 +432,13 @@ mod tests {
     }
 
     #[test]
-    fn a_cost_is_never_below_zero() {
-        assert_eq!(Cost::of(0.002).finite(), Some(0.002));
+    fn a_cost_is_finite_and_never_below_zero() {
+        assert_eq!(Cost::of(0.002).get().to_bits(), 0.002_f64.to_bits());
         assert_eq!(Cost::of(-0.5), Cost::ZERO);
         assert_eq!(Cost::of(f64::NEG_INFINITY), Cost::ZERO);
-        assert_eq!(Cost::of(f64::INFINITY).finite(), None);
-        assert!(Cost::of(f64::INFINITY).get().is_infinite());
-        assert!(Cost::of(f64::NAN).get().is_nan());
+        assert_eq!(Cost::of(f64::INFINITY), Cost::ZERO);
+        assert_eq!(Cost::of(f64::NAN), Cost::ZERO);
+        assert_eq!(Cost::of(f64::MAX).get().to_bits(), f64::MAX.to_bits());
         assert!(Cost::of(-0.0).get().is_sign_negative());
     }
 }

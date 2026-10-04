@@ -24,6 +24,7 @@ import {
   PI_SETTLED_EVENT,
 } from "./constants.js";
 import { readEntry } from "./entry-text.js";
+import { cutToBytes } from "./framing.js";
 import { PiCommandError, PiProcess } from "./pi-process.js";
 import type { PiLauncher } from "./pi-process.js";
 import { entryList } from "./pi-record.js";
@@ -315,6 +316,23 @@ export class SandboxSession {
     this.pi.closeStdin();
   }
 
+  /**
+   * Contract 03 §5.3. Fails the running turn when its id is `turn`, and
+   * sends pi's `abort`, as a turn past its deadline ends. False when this
+   * session runs another turn or none.
+   */
+  public failRunning(turn: string, reason: TurnFailReason, message: string): boolean {
+    const state = this.turn;
+    if (state === null || state.id !== turn) {
+      return false;
+    }
+
+    this.fail(state, reason, message);
+    void this.abort();
+
+    return true;
+  }
+
   /** §11.1 rule 2. The heartbeat deadline does not wait for a settle. */
   public kill(): void {
     this.stopping = "shutdown";
@@ -474,6 +492,11 @@ export class SandboxSession {
     }
 
     const entries = await this.readEntries();
+    if (state.finished) {
+      // The turn failed while pi listed its entries. `fail` sent its last line.
+      return;
+    }
+
     state.seq += 1;
     const resident = this.hooks.residentAfterTurn();
 
@@ -581,7 +604,7 @@ export class SandboxSession {
       turn: state.id,
       turn_seq: state.seq,
       reason,
-      message: message.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(message, MAX_LOG_BYTES),
     });
 
     this.release(state);
@@ -655,7 +678,7 @@ export class SandboxSession {
       type: "log",
       level: "info",
       session: this.id,
-      message: message.slice(0, MAX_LOG_BYTES),
+      message: cutToBytes(message, MAX_LOG_BYTES),
     });
   }
 }
