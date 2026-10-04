@@ -144,6 +144,9 @@ prefixed `test_noticeboard_`.
   (`pages.py`).
 - `spec.md` §8.1 names no answer for a route parameter that is not an id.
   The route answers the 404 of a path that has no route (`app.py`).
+- `spec.md` §8.3 names no answer for an exception that no reader predicted.
+  The service answers 500 with the refusal body and the word `internal`
+  (`app.py`).
 - A save still rewrites two shapes that it did not edit (`yamlkeep.py`). The
   first is a flow mapping inside a flow mapping. The second is a flow mapping
   on a line past column 100.

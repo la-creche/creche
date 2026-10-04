@@ -58,6 +58,10 @@ STATIC: Final = HERE / "static"
 
 _FORBIDDEN: Final = 403
 _NOT_FOUND: Final = 404
+_SERVER_ERROR: Final = 500
+
+#: The word for an exception that no reader turned into a report.
+_INTERNAL: Final = "internal"
 _SEE_OTHER: Final = 303
 _MAX_BODY_BYTES: Final = 1 << 20
 
@@ -80,6 +84,7 @@ def build_app(
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     _perimeter(app, config)
+    _last_resort(app)
     _routes(app, config, reader, render, clock or _now)
 
     return app
@@ -138,6 +143,27 @@ def _perimeter(app: FastAPI, config: Config) -> None:
         _set_csrf(response, cookie, config)
 
         return response
+
+
+def _last_resort(app: FastAPI) -> None:
+    """One handler for an exception that no code below predicted.
+
+    Each reader answers a problem string, so this handler runs only for a
+    fault of the service itself. The framework raises the exception again
+    after the answer, and the server then logs it.
+    """
+
+    @app.exception_handler(Exception)
+    async def _unexpected(  # pyright: ignore[reportUnusedFunction]
+        request: Request, error: Exception
+    ) -> JSONResponse:
+        # CONTRACT-QUESTION: spec.md §8.3 rule 4 gives the refusal body for
+        # a 403 and names no answer for an exception. The reading taken:
+        # status 500, the same body, the word `internal`, and no text of the
+        # exception. An HTML page in place of the body would cost a template.
+        del request, error
+
+        return JSONResponse({"ok": False, "error": _INTERNAL}, status_code=_SERVER_ERROR)
 
 
 def _set_csrf(response: Response, token: str, config: Config) -> None:

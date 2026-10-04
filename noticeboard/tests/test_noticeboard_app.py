@@ -205,6 +205,25 @@ def test_a_text_with_half_a_surrogate_pair_renders_as_its_escape(board: Harness)
     assert "a\\ud800b" in audit.text
 
 
+def test_an_exception_nobody_predicted_answers_the_refusal_body(
+    board: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The answer holds one word and no text of the exception."""
+    from noticeboard import pages
+
+    def broken(*args: object) -> None:
+        raise RuntimeError("a detail that belongs in the log")
+
+    monkeypatch.setattr(pages, "home", broken)
+
+    with TestClient(board.client.app, raise_server_exceptions=False) as client:
+        answer = client.get("/", headers={ACCESS_HEADER: KEY})
+
+    assert answer.status_code == 500
+    assert answer.json() == {"ok": False, "error": "internal"}
+    assert "detail" not in answer.text
+
+
 def test_a_missing_state_file_renders_a_report(board: Harness) -> None:
     (board.config.families_dir / "chat" / "status.json").unlink()
 
