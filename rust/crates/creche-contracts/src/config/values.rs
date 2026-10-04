@@ -760,10 +760,11 @@ path_type! {
 
 // CONTRACT-QUESTION: contract 03 §11.4 rule 4 and the other sections that
 // give a count of seconds do not say which numbers are permitted. Python's
-// `float` reads `nan`, `inf` and `1e999`, and each Python service accepts
-// them: `nan <= 0` is false. The type refuses a value that is not finite and
-// a value that rounds to no time. `Duration::from_secs_f64` stops the process
-// on the first, and a loop with the second never waits.
+// `float` reads `nan`, `inf` and `1e999`, and each Python service but
+// `attendance` accepts them: `nan <= 0` is false. The type refuses a value
+// that is not finite and a value that rounds to no time.
+// `Duration::from_secs_f64` stops the process on the first, and a loop with
+// the second never waits.
 /// A count of seconds that a config gives: finite and more than zero.
 ///
 /// The value always converts to a [`Duration`] of 1 nanosecond or more.

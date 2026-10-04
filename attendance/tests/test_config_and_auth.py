@@ -140,6 +140,21 @@ def test_a_port_outside_the_range_refuses() -> None:
         from_env(_site(SESSIOND_LAN_PORT="70000"))
 
 
+@pytest.mark.parametrize("name", ["SESSIOND_LOCK_STALE_S", "SESSIOND_LOCK_POLL_S"])
+@pytest.mark.parametrize("count", ["nan", "NaN", "inf", "+Infinity", "1e999"])
+def test_a_count_of_seconds_that_is_not_finite_refuses(name: str, count: str) -> None:
+    """With such a count the lock of a playpen never goes stale."""
+    with pytest.raises(ConfigError, match=rf"\A{name} "):
+        from_env(_site(**{name: count}))
+
+
+def test_a_finite_count_of_seconds_is_read() -> None:
+    config = from_env(_site(SESSIOND_LOCK_STALE_S="1e3", SESSIOND_LOCK_POLL_S=".5"))
+
+    assert config.lock_stale_s == 1000.0
+    assert config.lock_poll_s == 0.5
+
+
 def test_roots_come_from_the_environment(tmp_path: Path) -> None:
     config = from_env(_site(SESSIOND_SESSIONS_ROOT=str(tmp_path / "s")))
 

@@ -126,9 +126,10 @@ const NOT_A_HOST: &str = "A service binds the LAN address or loopback and never 
 const PATH_RULE: &str = "The contract gives an absolute path. The Python reader takes each text. \
     The Rust type refuses a relative path, and a socket path that the kernel cannot bind.";
 
-const SECONDS_RULE: &str = "The contract gives a count of seconds. Python reads nan, inf and \
-    1e999 as a number that is more than zero. The Rust type refuses a count that is not finite \
-    or that is no duration: Duration::from_secs_f64 stops the process on it.";
+const SECONDS_RULE: &str = "The contract gives a count of seconds. Python reads each finite \
+    number that is more than zero. The Rust type refuses a count that is no duration: \
+    Duration::from_secs_f64 stops the process on a count past its range, and a count below one \
+    nanosecond is a duration of zero.";
 
 const ASCII_DIGITS_ONLY: &str = "Python reads each decimal digit of Unicode as a digit. The \
     Rust code reads 0 to 9 (rust/AGENTS.md, rule 9).";
@@ -303,13 +304,7 @@ const DEVIATIONS: &[Deviation] = &[
     },
     Deviation {
         surface: "config.attendance.env",
-        vectors: &[
-            "seconds-nan",
-            "seconds-infinity",
-            "seconds-overflow",
-            "seconds-past-a-duration",
-            "seconds-below-a-nanosecond",
-        ],
+        vectors: &["seconds-past-a-duration", "seconds-below-a-nanosecond"],
         differs: Differs::Refuses,
         contract: "contract 03 §11.4 rule 4",
         decision: SECONDS_RULE,

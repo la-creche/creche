@@ -9,6 +9,7 @@ reads, and the family key and PEP token never reach this process at all
 from __future__ import annotations
 
 import ipaddress
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -142,7 +143,9 @@ def _seconds(source: dict[str, str], name: str, fallback: float) -> float:
     except ValueError as error:
         raise ConfigError(f"{ENV_PREFIX}{name} is {raw!r}, which is not a number") from error
 
-    if value <= 0:
+    # NaN is not below zero, so the range check alone lets it pass. With NaN
+    # or an infinity, the lock of a playpen never goes stale.
+    if not math.isfinite(value) or value <= 0:
         raise ConfigError(f"{ENV_PREFIX}{name} is {value}, which is not a positive number")
 
     return value
