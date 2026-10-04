@@ -41,6 +41,7 @@ release replaces that surface.
 | `data/config/` | the configs: the site file, the roster, `runtime.json`, `creds.json`, the env file of the playpen and three env readers |
 | `data/manifest/` | the component manifest, the release request, the live-state document and the resolved manifest |
 | `data/session/` | the session API: the request bodies, the queries, the error body, the journal and the event stream |
+| `data/runtime/` | the helper code that each service copies: the lenient field readers, the token files, the bearer of a request and the answers of the web framework |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 
 ## Regenerate
