@@ -15,7 +15,8 @@ and `integration/tests_manager` host every service in the test process. They
 cannot judge a service that Python cannot import.
 
 The suite owns no product code. It is not in the root `testpaths`, so the
-full suite does not run it.
+full suite does not run it. CI runs it in the `proc` job of `gate.yml` and of
+`release.yml`.
 
 ## Run it
 
@@ -39,8 +40,8 @@ missing. A silent pass would be worse than a skip. The suite needs `node` on
 Set `CRECHE_PROC_KEEP=1` to keep the root of each test on disk after the run.
 
 Set `CRECHE_PROC_NO_SKIP=1` to make each skip a failure. A run in which
-every test skips is green, and it judged nothing. Set the variable in a CI
-job.
+every test skips is green, and it judged nothing. The `proc` job of CI sets
+the variable.
 
 ## Words
 

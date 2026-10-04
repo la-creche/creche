@@ -133,7 +133,7 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
 | `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the `[lints]` check and the include check. |
 | `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
-| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command and the same `rust` job, and `!retest` restarts one run. |
+| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job and the same `rust` job, and `!retest` restarts one run. |
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |
 | `test_unique_test_basenames.py` | No two test modules share a basename across the workspace. |
 | `test_git_env_dropped.py` | A test run that git starts writes nothing into the repository of the caller. The root `conftest.py` drops the five variables that the hooks unset. |
