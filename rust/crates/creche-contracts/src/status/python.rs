@@ -211,8 +211,8 @@ fn replay_attendance(_: &Surface, vector: &Vector) -> Replay {
 
     Ok(Some(json!({
         "family": status.family.as_str(),
-        "kind": status.kind.as_str(),
-        "state": status.state.as_str(),
+        "kind": status.kind.map(|kind| kind.as_str()),
+        "state": status.state.map(|state| state.as_str()),
         "written_at": status.written_at.map(isoformat),
         "config_rev": status.config_rev,
         "epoch": integer_value(&status.epoch),
@@ -1059,7 +1059,7 @@ const DISAGREEMENTS: &[Disagreement] = &[
         vector: "kind-unknown",
         contract: "§2.1: kind is one of three words. The document has no kind.",
         took: [
-            Field("/kind", r#""attended""#),
+            Field("/kind", "null"),
             Field("/kind", r#""robot""#),
             Refused,
             Refused,
@@ -1070,7 +1070,7 @@ const DISAGREEMENTS: &[Disagreement] = &[
         vector: "kind-missing",
         contract: "§2.1: kind is one of three words. The document has no kind.",
         took: [
-            Field("/kind", r#""attended""#),
+            Field("/kind", "null"),
             Field("/kind", r#""""#),
             Refused,
             Refused,
@@ -1081,7 +1081,7 @@ const DISAGREEMENTS: &[Disagreement] = &[
         vector: "state-unknown-word",
         contract: "§3: state is one of four words. The document has no state.",
         took: [
-            Field("/state", r#""in_sync""#),
+            Field("/state", "null"),
             Field("/health", r#""unreadable""#),
             Accepted,
             Refused,
@@ -1092,7 +1092,7 @@ const DISAGREEMENTS: &[Disagreement] = &[
         vector: "state-missing",
         contract: "§3: state is one of four words. The document has no state.",
         took: [
-            Field("/state", r#""in_sync""#),
+            Field("/state", "null"),
             Field("/health", r#""unreadable""#),
             Accepted,
             Refused,

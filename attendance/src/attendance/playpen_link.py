@@ -16,7 +16,7 @@ import contextlib
 import logging
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -28,6 +28,7 @@ from .channel import Channel, ChannelClosed, SandboxDial
 from .faults import FaultCode, FaultReporter
 from .paths import playpen_lock_file
 from .states import SessionKind
+from .tasks import report_failure
 from .wire import (
     CHANNEL_IDLE_TTL_ATTENDED_S,
     CHANNEL_IDLE_TTL_OTHER_S,
@@ -416,11 +417,21 @@ class PlaypenLink:
         self._refusals.reset()
         self._unanswered = 0
         self._touch()
-        self._reader = asyncio.create_task(self._read_loop())
-        self._pinger = asyncio.create_task(self._ping_loop())
+        self._reader = self._start_loop(self._read_loop(), "reader")
+        self._pinger = self._start_loop(self._ping_loop(), "pinger")
 
         if self._idle_ttl_s > 0:
-            self._idler = asyncio.create_task(self._idle_loop())
+            self._idler = self._start_loop(self._idle_loop(), "idler")
+
+    def _start_loop(self, loop: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
+        """Start one loop of this channel. A loop that dies says so at once.
+
+        `_stop_loops` meets the error of a dead loop only at the next close,
+        and a dead idle loop brings no close.
+        """
+        task = asyncio.create_task(loop, name=f"{name} {self._family}")
+        task.add_done_callback(report_failure)
+        return task
 
     async def _handshake(self, sandbox: str, epoch: int) -> Ready:
         """Contract 03 §3. The host sends nothing before `ready` arrives."""

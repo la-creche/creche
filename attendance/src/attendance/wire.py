@@ -388,7 +388,17 @@ def _decode_record(record: bytes, max_bytes: int) -> RawLine:
 
 
 def encode(message: dict[str, Any], max_line_bytes: int = MAX_LINE_BYTES) -> str:
-    """Serialize one outbound record. Raises when it would pass the cap."""
+    """Serialize one outbound record.
+
+    Raises `ValueError` for a record that the channel cannot carry.
+    `PlaypenLink.send` passes the error on. Each caller of `send` catches
+    that type and takes it as a refusal of the one message. The `hello` of
+    the handshake holds validated ids and numbers only.
+
+    1. A line over the cap raises `ValueError`.
+    2. A text with a lone surrogate has no UTF-8 form. It raises
+       `UnicodeEncodeError`, which is a subtype of `ValueError`.
+    """
     body = json.dumps(message, separators=(",", ":"), ensure_ascii=False)
     size = len(body.encode("utf-8"))
 

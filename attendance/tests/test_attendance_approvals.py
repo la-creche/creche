@@ -9,6 +9,7 @@ session state and the journal.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from attendance_harness import (
     SANDBOX,
     FakeFleet,
     make_config,
+    wait_until,
     write_status,
 )
 
@@ -345,6 +347,39 @@ async def test_a_record_is_read_once(tmp_path: Path) -> None:
     rig.service.read_gates()
 
     assert rig.kinds().count(LineKind.APPROVAL_REQUESTED) == 1
+    await rig.stop()
+
+
+async def test_a_move_the_contract_refuses_is_visible(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Contract 02 §4.3 has no `waiting-approval -> settled`.
+
+    The audit tail lags, so a turn can settle while this service still shows
+    it as `waiting-approval`. The turn does not move. A log line and a `note`
+    line say so, because a move that is refused in silence hides a defect.
+    """
+    rig = await build(tmp_path)
+    turn = await rig.start()
+    rig.append(claimed={"turn_id": turn})
+    rig.service.read_gates()
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        await rig.fleet.playpen().settle(CHAT_SESSION, turn)
+        await wait_until(lambda: "cannot become settled" in caplog.text)
+
+    live = rig.service.live_turn(FAMILY, CHAT_SESSION, turn)
+    lines = list(rig.service.store.journal.replay(FAMILY, CHAT_SESSION))
+
+    assert live is not None
+    assert live.record.state is TurnState.WAITING_APPROVAL
+    assert lines[-1].kind is LineKind.NOTE
+    assert lines[-1].turn == turn
+    assert lines[-1].body == {
+        "note": "illegal_transition",
+        "from": "waiting-approval",
+        "to": "settled",
+    }
     await rig.stop()
 
 

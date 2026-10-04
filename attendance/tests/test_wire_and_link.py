@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import json
+import logging
 import os
 import sys
 import warnings
@@ -75,6 +76,9 @@ def dial(sandbox: str = SANDBOX) -> SandboxDial:
     return SandboxDial(sandbox=sandbox, env_file=ENV_FILE)
 
 
+# One half of a surrogate pair. A text that holds it has no UTF-8 form.
+LONE_SURROGATE = "a\ud800b"
+
 # U+2028 and U+2029 are legal inside a JSON string. A generic line reader
 # splits on them, which would tear one record into two (contract 03 §2 rule 4).
 UNICODE_SEPARATORS = f"line{chr(0x2028)}sep{chr(0x2029)}arator"
@@ -144,6 +148,15 @@ def test_an_oversized_partial_record_is_refused_before_its_lf() -> None:
     assert splitter.pending_bytes() == 0
 
     splitter.feed(b'rest of the bad line\n{"type":"pong","nonce":"1"}\n')
+
+
+def test_encode_refuses_a_lone_surrogate_as_a_value_error() -> None:
+    """Such a text has no UTF-8 form. The error is a subtype of `ValueError`,
+    which is the one type that each caller of `encode` catches."""
+    with pytest.raises(ValueError, match="surrogates not allowed") as caught:
+        encode({"type": "steer", "message": LONE_SURROGATE})
+
+    assert isinstance(caught.value, UnicodeEncodeError)
 
 
 def test_encode_refuses_an_oversized_outbound_line() -> None:
@@ -656,6 +669,23 @@ async def test_close_drops_the_channel_after_a_loop_died(tmp_path: Path) -> None
     assert link.is_open is False
 
 
+async def test_a_loop_that_dies_says_so_at_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The log names the fault when the loop ends, not at the next `close`."""
+    events = FailingRecorder()
+    link, playpens = make_link(tmp_path, events)
+    await link.ensure_open(dial(), 7)
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        await playpens[SANDBOX].send_raw(LOG_LINE)
+        await asyncio.wait_for(_until(lambda: "the log callback failed" in caplog.text), 2.0)
+
+    assert link.is_open is True
+    assert f"task reader {FAMILY} ended with an error" in caplog.text
+    await link.close()
+
+
 async def test_a_dead_reader_still_ends_in_channel_lost(tmp_path: Path) -> None:
     """Contract 03 §10 rule 4. With no reader no pong arrives, so the ping
     loop drops the channel. The dead reader must not stop that."""
@@ -667,6 +697,27 @@ async def test_a_dead_reader_still_ends_in_channel_lost(tmp_path: Path) -> None:
 
     assert events.lost == [SANDBOX]
     assert link.is_open is False
+    await link.close()
+
+
+async def test_a_message_that_cannot_be_encoded_leaves_the_channel_open(
+    tmp_path: Path,
+) -> None:
+    """`send` refuses the one message. The channel carries the next one."""
+    events = Recorder()
+    link, playpens = make_link(tmp_path, events)
+    await link.ensure_open(dial(), 7)
+
+    with pytest.raises(ValueError, match="surrogates not allowed"):
+        await link.send(
+            {"type": "steer", "session": SESSION, "turn": TURN, "message": LONE_SURROGATE}
+        )
+
+    await link.send({"type": "steer", "session": SESSION, "turn": TURN, "message": "go on"})
+    await asyncio.wait_for(_until(lambda: bool(playpens[SANDBOX].steers)), 2.0)
+
+    assert link.is_open is True
+    assert [steer["message"] for steer in playpens[SANDBOX].steers] == ["go on"]
     await link.close()
 
 
@@ -834,6 +885,62 @@ async def test_the_exec_channel_round_trips_through_a_real_process() -> None:
 
     message = parse(line.text)
     assert isinstance(message, PongLine)
+    await channel.close()
+
+
+#: A child that writes one stderr line of 200,000 bytes, then one short line,
+#: then waits on stdin. The stream reader of the host holds 65,536 bytes.
+LONG_STDERR_LINE = (
+    f"{sys.executable} -c \"import sys; sys.stderr.write('x' * 200000 + '\\nafter\\n'); "
+    'sys.stderr.flush(); sys.stdin.read()"'
+)
+
+
+@pytest.mark.slow
+async def test_a_long_stderr_line_does_not_end_the_log(tmp_path: Path) -> None:
+    """stderr is free text from the far side. One long line must not stop the
+    reader, or the text after it reaches no log and the pipe fills."""
+    log = tmp_path / "playpen.log"
+    channel = ExecChannel(dial=dial(), command=LONG_STDERR_LINE, log_path=log)
+    await channel.start()
+
+    try:
+        await asyncio.wait_for(_until(lambda: log.is_file() and b"after" in log.read_bytes()), 5.0)
+    finally:
+        await channel.close()
+
+
+@pytest.mark.slow
+async def test_close_ends_after_a_stderr_read_failed() -> None:
+    """A pipe that failed keeps its error. `close` must still reap the child,
+    or the link keeps a channel that is gone and the next dial fails."""
+    channel = ExecChannel(dial=dial(), command="cat")
+    await channel.start()
+    process = channel._process
+    assert process is not None
+    assert process.stderr is not None
+    process.stderr.set_exception(OSError("the read failed"))
+
+    await channel.close()
+
+    assert process.returncode is not None
+
+
+@pytest.mark.slow
+async def test_a_stderr_reader_that_fails_says_so(caplog: pytest.LogCaptureFixture) -> None:
+    """The reader goes on after a long line and after nothing else. An error
+    of another type ends the task, and the log must name the task."""
+    channel = ExecChannel(dial=dial(), command="cat")
+    await channel.start()
+    process = channel._process
+    assert process is not None
+    assert process.stderr is not None
+
+    with caplog.at_level(logging.ERROR, logger="attendance"):
+        process.stderr.set_exception(OSError("the read failed"))
+        await asyncio.wait_for(_until(lambda: "the read failed" in caplog.text), 2.0)
+
+    assert f"task stderr {SANDBOX} ended with an error" in caplog.text
     await channel.close()
 
 

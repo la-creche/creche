@@ -505,6 +505,8 @@ READERS: Final[tuple[Reader, ...]] = (
             "value is what the reader takes from the document. A refused vector is a document "
             "that the reader does not use: it returns None.",
             "written_at is a time in UTC, or null when the reader cannot read the field.",
+            "kind and state are null when the document has no word that the reader knows. "
+            "The reader has no default for these two fields.",
         ),
     ),
     Reader(
