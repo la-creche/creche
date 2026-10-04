@@ -176,6 +176,8 @@ Nothing here touches a real sandbox or LiteLLM.
 - `apply-once` publishes no chaperone fault (`apply.py`).
 - `settle` and `rotate_serving` write token digests while a family file is
   invalid. Contract 05 §3.1 and §6.3 do not agree on this (`loop.py`).
+- A pass publishes the step name `write_timers`. Contract 05 §3.4 lists
+  eight step names, and that name is not one of them (`reconcile.py`).
 - A pass that raises publishes no fault. Contract 05 §3.3 has no code for
   it. The log holds the error, and the status document keeps its last
   content (`loop.py`).
