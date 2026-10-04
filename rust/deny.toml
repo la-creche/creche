@@ -1,0 +1,61 @@
+# The supply-chain policy of the workspace. `cargo deny --locked check` reads
+# this file from rust/, and bin/rust-gate.sh runs that command after clippy.
+# rust/AGENTS.md, "Dependencies", holds the rules.
+#
+# bin/tests/test_rust_workspace.py pins each table of this file, entry for
+# entry. To change an entry, change the pin in the same commit. Give the
+# reason in the commit message.
+
+# The crates that the four checks read: each crate that a build for one of
+# these targets can use, with each feature on. Cargo.lock also holds crates
+# for other targets, for example `windows-sys`. No check reads those.
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
+all-features = true
+
+# `yanked`: a locked version that its author removed from the registry fails
+# the check.
+#
+# The other levels are the defaults of cargo-deny 0.20.2. The check fails for
+# a crate with a vulnerability advisory and for a crate with an `unmaintained`
+# advisory. It also fails for a direct dependency of this workspace with an
+# `unsound` advisory.
+#
+# The check reads the advisory database from the network at each run. A new
+# advisory can thus fail a change that touches no dependency.
+[advisories]
+yanked = "deny"
+
+# Each license that a locked crate can need. A crate that needs another
+# license fails the check. The crates of this workspace are in the check too:
+# each one takes `license = "MIT"` from rust/Cargo.toml.
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+]
+
+# One version of each crate, and no `*` as the version of a crate.
+#
+# A crate of this workspace names another one by its path, with no version.
+# cargo-deny reads that as `*`. `allow-wildcard-paths` permits it, and only
+# in a crate that no registry can take. Each crate here has `publish = false`.
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+# crates.io is the one source. A crate from another registry fails the check,
+# and so does a crate from a git repository.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
