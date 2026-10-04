@@ -288,6 +288,50 @@ def test_a_concurrent_git_lock_rolls_the_save_back(tmp_path: Path) -> None:
     assert names_in(root / "families" / "chat") == ["family.yaml", "instructions.md"]
 
 
+def test_a_failed_commit_puts_the_old_file_back_with_a_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`caregiver` reads the checkout at any time. The restore swaps the
+    name to a whole file, as the save does, and writes no file in place."""
+    root = make_registry(tmp_path)
+    original = family_file(root).read_bytes()
+    written: list[int] = []
+
+    def failing(registry_dir: Path, name: str, subject: str) -> str:
+        written.append(family_file(root).stat().st_ino)
+        return "git commit failed: a commit that this test refuses"
+
+    monkeypatch.setattr(registrywrite, "_commit", failing)
+
+    result = save_family(root, "chat", GOOD, "widen the description")
+
+    assert not result.ok
+    assert len(written) == 1
+    assert family_file(root).stat().st_ino != written[0]
+    assert family_file(root).read_bytes() == original
+    assert names_in(root / "families" / "chat") == ["family.yaml", "instructions.md"]
+
+
+def test_a_rename_that_fails_leaves_no_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The step that puts a file in place removes its temporary file when
+    the rename fails, and raises the failure again."""
+    root = make_registry(tmp_path)
+    original = family_file(root).read_bytes()
+
+    def refusing(self: Path, target: Path) -> Path:
+        raise OSError("a rename that this test refuses")
+
+    monkeypatch.setattr(Path, "replace", refusing)
+
+    with pytest.raises(OSError, match="a rename that this test refuses"):
+        registrywrite._replace(family_file(root), GOOD.encode("utf-8"))
+
+    assert family_file(root).read_bytes() == original
+    assert names_in(root / "families" / "chat") == ["family.yaml", "instructions.md"]
+
+
 def test_an_unchanged_save_commits_nothing_and_says_so(tmp_path: Path) -> None:
     root = make_registry(tmp_path)
     before = commit_count(root)
