@@ -67,24 +67,30 @@ fn the_table_holds_each_surface_of_this_module_one_time() {
 
 // --- the differences on purpose ---
 
-/// How the Rust code differs from the Python code on one vector.
+/// What the Rust code answers on one vector on which it differs from the
+/// Python code. A row holds the exact refusal. A defect that refuses the same
+/// vector for another reason then fails the test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Differs {
-    /// The Python code accepts the input. The Rust code refuses it.
-    Refuses,
-    /// The two refuse the input. The Rust code gives this kind of refusal of
-    /// a grant file, and the Python code gives another.
-    GrantKind(&'static str),
-    /// The two refuse the input. The Rust code answers with this HTTP status,
-    /// and the Python code with another.
-    Status(u16),
+enum Refusal {
+    /// The document has more bytes than the cap of its reader.
+    TooLarge,
+    /// The reader cannot read the bytes as a document, for this reason.
+    Unreadable(JsonError),
+    /// The document is not valid. The row holds each issue, as [`Issue`]
+    /// shows it.
+    Invalid(&'static [&'static str]),
 }
 
 /// One decision to differ from the Python code on one vector.
+///
+/// The Python code accepts the input of the vector, or it refuses the input
+/// in another way: with another kind for a grant file, with another HTTP
+/// status for a body.
 struct Deviation {
     surface: &'static str,
     vector: &'static str,
-    differs: Differs,
+    /// What the Rust code answers.
+    rust: Refusal,
     /// The contract section that the decision reads.
     contract: &'static str,
     /// The decision, and its reason.
@@ -102,7 +108,7 @@ const DEVIATIONS: &[Deviation] = &[
     Deviation {
         surface: GRANT_READER,
         vector: "tools-tool-128-chars",
-        differs: Differs::Refuses,
+        rust: Refusal::Invalid(&["at \"tools\", \"kagi\", 0: a tool name has 64 bytes or less"]),
         contract: "contract 01 §3.4 and contract 01b §5",
         decision: "A tool name has 64 bytes or less: `ids::ToolName` takes the strictest of \
             the three Python copies of the grammar (rust/AGENTS.md). The grant file reader of \
@@ -111,28 +117,28 @@ const DEVIATIONS: &[Deviation] = &[
     Deviation {
         surface: GRANT_READER,
         vector: "json-lone-surrogate",
-        differs: Differs::GrantKind("not_json"),
+        rust: Refusal::Unreadable(JsonError::LoneSurrogate),
         contract: "contract 04 §1.2, §1.4",
         decision: TEXT_IS_UNICODE,
     },
     Deviation {
         surface: GRANT_READER,
         vector: "json-lone-surrogate-in-components",
-        differs: Differs::Refuses,
+        rust: Refusal::Unreadable(JsonError::LoneSurrogate),
         contract: "contract 04 §1.2, §1.4",
         decision: TEXT_IS_UNICODE,
     },
     Deviation {
         surface: CALL_BODY,
         vector: "args-lone-surrogate",
-        differs: Differs::Refuses,
+        rust: Refusal::Unreadable(JsonError::LoneSurrogate),
         contract: "contract 04 §7.1",
         decision: TEXT_IS_UNICODE,
     },
     Deviation {
         surface: CALL_BODY,
         vector: "json-very-deep",
-        differs: Differs::Status(413),
+        rust: Refusal::TooLarge,
         contract: "contract 04 §6.1",
         decision: "The request body limit is 256 KiB. The chaperone refuses a longer body \
             before a reader sees it. The Rust reader holds the cap itself. The vector records \
@@ -494,6 +500,13 @@ fn grant_refused_as_python(vector: &Vector, error: &GrantFileError, at: &str) {
     }
 }
 
+/// Whether the issues are the ones that a row of [`DEVIATIONS`] holds.
+fn issues_are(issues: &[Issue], wanted: &[&str]) -> bool {
+    let shown: Vec<String> = issues.iter().map(Issue::to_string).collect();
+
+    shown == wanted
+}
+
 /// Makes sure that the Rust code differs on a grant file as the row says, and
 /// in no other way.
 fn grant_differs_as_decided(
@@ -502,18 +515,25 @@ fn grant_differs_as_decided(
     rust: &Result<GrantFile, GrantFileError>,
     at: &str,
 ) {
-    match (deviation.differs, rust) {
-        (Differs::Refuses, Err(_)) => assert_eq!(vector.result, Outcome::Accepted, "{at}"),
-        (Differs::GrantKind(kind), Err(error)) => {
-            assert_eq!(vector.result, Outcome::Refused, "{at}");
-            assert_eq!(grant_kind(error.error()), kind, "{at}");
-            assert_ne!(
-                vector.refusal().unwrap()["kind"],
-                kind,
-                "{at}: no difference"
-            );
-        }
-        _ => panic!("{at}: the Rust code does not differ as the row says: {rust:?}"),
+    let Err(error) = rust else {
+        panic!("{at}: the Rust code accepts the file");
+    };
+    let as_the_row_says = match (error.error(), deviation.rust) {
+        (GrantError::TooLarge { .. }, Refusal::TooLarge) => true,
+        (GrantError::NotJson(found), Refusal::Unreadable(wanted)) => *found == wanted,
+        (GrantError::Invalid(issues), Refusal::Invalid(wanted)) => issues_are(issues, wanted),
+        _ => false,
+    };
+
+    assert!(as_the_row_says, "{at}: another refusal: {error:?}");
+    match vector.result {
+        Outcome::Accepted => {}
+        Outcome::Refused => assert_ne!(
+            vector.refusal().unwrap()["kind"],
+            grant_kind(error.error()),
+            "{at}: no difference"
+        ),
+        Outcome::Raised => panic!("{at}: a raised vector needs no row"),
     }
 }
 
@@ -694,16 +714,26 @@ fn body_refused_as_python(vector: &Vector, error: &BodyError, at: &str) {
 /// Makes sure that the Rust code differs on a body as the row says, and in
 /// no other way.
 fn body_differs_as_decided(deviation: &Deviation, vector: &Vector, error: &BodyError, at: &str) {
-    match deviation.differs {
-        Differs::Refuses => assert_eq!(vector.result, Outcome::Accepted, "{at}"),
-        Differs::Status(status) => {
+    let as_the_row_says = match (error, deviation.rust) {
+        (BodyError::TooLarge { .. }, Refusal::TooLarge) => true,
+        (BodyError::Unreadable(found), Refusal::Unreadable(wanted)) => *found == wanted,
+        (BodyError::Invalid(issues), Refusal::Invalid(wanted)) => issues_are(issues, wanted),
+        _ => false,
+    };
+
+    assert!(as_the_row_says, "{at}: another refusal: {error:?}");
+    match vector.result {
+        Outcome::Accepted => {}
+        Outcome::Refused => {
             let python = vector.refusal().unwrap()["http_status"].as_u64().unwrap();
 
-            assert_eq!(vector.result, Outcome::Refused, "{at}");
-            assert_eq!(error.http_status(), status, "{at}");
-            assert_ne!(python, u64::from(status), "{at}: no difference");
+            assert_ne!(
+                python,
+                u64::from(error.http_status()),
+                "{at}: no difference"
+            );
         }
-        Differs::GrantKind(_) => panic!("{at}: a body has no kind of a grant file"),
+        Outcome::Raised => panic!("{at}: a raised vector needs no row"),
     }
 }
 
