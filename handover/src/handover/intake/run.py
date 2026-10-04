@@ -452,11 +452,15 @@ def _loop(wiring: Wiring, sleep: Callable[[float], None]) -> None:
     An `OSError` here is a directory that came and went, which is a normal
     thing for a directory another process writes. The pass after it reads
     the same gaps again.
+
+    Each other error is caught too. The unit starts a process that ended
+    again, and a file that made one pass raise makes the next process
+    raise. The line holds the type of the error and never its text.
     """
     while True:
         try:
             one_pass(wiring)
-        except OSError as exc:
+        except Exception as exc:
             print(f"{LOG_PREFIX}: a pass failed ({type(exc).__name__})", flush=True)
 
         sleep(POLL_S)

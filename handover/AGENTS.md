@@ -73,6 +73,9 @@ The console script is `handover`. The verify hook and the operator's
 6. A parser answers a refusal for each error of its reader library. PyYAML
    raises more than `YAMLError`: a scalar that it cannot build raises
    `ValueError`, and a text that nests too deep raises `RecursionError`.
+7. A JSON integer has no largest value. A reader that makes a float of a
+   number answers a refusal for a number that no float holds. A reader that
+   keeps a whole number gives the number a range.
 
 ## Rules the design depends on
 
