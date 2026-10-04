@@ -23,7 +23,18 @@ from typing import Final
 from agent_family import Registry, load_registry
 from agent_family.validate import HostFacts
 
-from vectors.core import Json, Surface, Vector, accepted, bytes_input, normalize, refused, run
+from vectors.core import (
+    Json,
+    Raised,
+    Surface,
+    Vector,
+    accepted,
+    attempt,
+    bytes_input,
+    normalize,
+    raised,
+    refused,
+)
 from vectors.surfaces.family_cases import CASES, PLACEHOLDER, Case
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
@@ -156,12 +167,13 @@ def _outcome(case: Case, loaded: Registry, given: dict[str, Json], params: Json)
 def _vector(registry: str, case: Case, scratch: Path, host: HostFacts | None) -> Vector:
     given = bytes_input(case.text_bytes())
     params = _params(registry, case)
+    with _staged(registry, case, scratch) as root:
+        loaded = attempt(lambda: load_registry(root, host))
 
-    def call() -> Vector:
-        with _staged(registry, case, scratch) as root:
-            return _outcome(case, load_registry(root, host), given, params)
+    if isinstance(loaded, Raised):
+        return raised(case.id, given, loaded.exc, params=params)
 
-    return run(case.id, given, call, params=params)
+    return _outcome(case, loaded, given, params)
 
 
 def _fixture_vectors(registry: str, host: HostFacts | None) -> list[Vector]:

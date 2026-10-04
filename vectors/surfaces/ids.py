@@ -42,13 +42,15 @@ from handover import allocate, manifest, mcpserver, resolve, state
 from noticeboard import registrywrite
 from vectors.core import (
     Json,
+    Raised,
     Surface,
     Vector,
     accepted,
+    attempt,
     compact,
     quiet_logs,
+    raised,
     refused,
-    run,
     text_input,
 )
 
@@ -1118,15 +1120,15 @@ def _inputs(grammar: Grammar) -> tuple[tuple[str, str], ...]:
 
 def _vector(vector_id: str, text: str, check: Check) -> Vector:
     given = text_input(text)
+    outcome = attempt(lambda: check(text))
+    if isinstance(outcome, Raised):
+        return raised(vector_id, given, outcome.exc)
 
-    def call() -> Vector:
-        took, detail = check(text)
-        if took:
-            return accepted(vector_id, given, detail)
+    took, detail = outcome
+    if took:
+        return accepted(vector_id, given, detail)
 
-        return refused(vector_id, given, detail)
-
-    return run(vector_id, given, call)
+    return refused(vector_id, given, detail)
 
 
 def _surface_name(concept: Concept, copy: Copy) -> str:

@@ -29,15 +29,17 @@ from starlette.testclient import TestClient
 
 from vectors.core import (
     Json,
+    Raised,
     Surface,
     Vector,
     accepted,
+    attempt,
     bytes_input,
     expand,
     normalize,
+    raised,
     refused,
     repeat_input,
-    run,
 )
 
 CONTRACT: Final = "contract 04"
@@ -349,20 +351,20 @@ def _grant_vector(document: Document) -> Vector:
     given = document.given()
     raw = document.data()
     params = {"family": document.family}
+    outcome = attempt(lambda: parse_grants(raw, document.family))
+    if isinstance(outcome, Raised):
+        return raised(document.id, given, outcome.exc, params=params)
 
-    def call() -> Vector:
-        grants, message = parse_grants(raw, document.family)
-        if grants is not None:
-            return accepted(document.id, given, grants, params=params)
+    grants, message = outcome
+    if grants is not None:
+        return accepted(document.id, given, grants, params=params)
 
-        kind = _reason_kind(message, document.family)
-        refusal: dict[str, object] = {"kind": kind, "message": message}
-        if kind == "invalid":
-            refusal["errors"] = _model_errors(raw)
+    kind = _reason_kind(message, document.family)
+    refusal: dict[str, object] = {"kind": kind, "message": message}
+    if kind == "invalid":
+        refusal["errors"] = _model_errors(raw)
 
-        return refused(document.id, given, refusal, params=params)
-
-    return run(document.id, given, call, params=params)
+    return refused(document.id, given, refusal, params=params)
 
 
 # --- the two request bodies ------------------------------------------------------
@@ -516,15 +518,16 @@ def _detail(detail: object) -> Json:
 
 def _body_vector(document: Document, reader: BodyReader) -> Vector:
     given = document.given()
+    raw = document.data()
+    outcome = attempt(lambda: reader.read(raw))
+    if isinstance(outcome, Raised):
+        return raised(document.id, given, outcome.exc)
 
-    def call() -> Vector:
-        status, body, detail = reader.read(document.data())
-        if body is not None:
-            return accepted(document.id, given, body, status=status)
+    status, body, detail = outcome
+    if body is not None:
+        return accepted(document.id, given, body, status=status)
 
-        return refused(document.id, given, {"status": status, "detail": _detail(detail)})
-
-    return run(document.id, given, call)
+    return refused(document.id, given, {"status": status, "detail": _detail(detail)})
 
 
 _BODY_NOTES: Final = (

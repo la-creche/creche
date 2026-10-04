@@ -20,15 +20,17 @@ from typing import Any, Final
 from attendance import wire
 from vectors.core import (
     Json,
+    Raised,
     Surface,
     Vector,
     accepted,
+    attempt,
     bytes_input,
     expand,
     normalize,
+    raised,
     refused,
     repeat_input,
-    run,
     text_input,
 )
 
@@ -579,15 +581,15 @@ LINES: Final[tuple[Line, ...]] = (
 
 def _parse_vector(line: Line) -> Vector:
     given = line.given()
+    text = line.value()
+    outcome = attempt(lambda: wire.parse(text))
+    if isinstance(outcome, Raised):
+        return raised(line.id, given, outcome.exc)
 
-    def call() -> Vector:
-        outcome = wire.parse(line.value())
-        if isinstance(outcome, wire.Refusal):
-            return refused(line.id, given, outcome)
+    if isinstance(outcome, wire.Refusal):
+        return refused(line.id, given, outcome)
 
-        return accepted(line.id, given, {"kind": type(outcome).__name__, "message": outcome})
-
-    return run(line.id, given, call)
+    return accepted(line.id, given, {"kind": type(outcome).__name__, "message": outcome})
 
 
 # --- framing -----------------------------------------------------------------
@@ -667,14 +669,20 @@ def _frame_vector(stream: Stream) -> Vector:
     given: dict[str, Json] = {"chunks": chunks}
     params = {"max_line_bytes": stream.max_line_bytes}
 
-    def call() -> Vector:
+    def split() -> tuple[list[list[wire.RawLine]], int]:
         splitter = wire.LineSplitter(stream.max_line_bytes)
-        feeds = [[_raw_line(raw) for raw in splitter.feed(chunk)] for chunk in stream.chunks]
-        value = {"feeds": feeds, "pending_bytes": splitter.pending_bytes()}
+        records = [splitter.feed(chunk) for chunk in stream.chunks]
 
-        return accepted(stream.id, given, value, params=params)
+        return records, splitter.pending_bytes()
 
-    return run(stream.id, given, call, params=params)
+    outcome = attempt(split)
+    if isinstance(outcome, Raised):
+        return raised(stream.id, given, outcome.exc, params=params)
+
+    records, pending = outcome
+    feeds = [[_raw_line(raw) for raw in one] for one in records]
+
+    return accepted(stream.id, given, {"feeds": feeds, "pending_bytes": pending}, params=params)
 
 
 # --- the host-side builders ----------------------------------------------------
@@ -804,22 +812,24 @@ _BUILDERS: Final[dict[str, Callable[..., dict[str, Any]]]] = {
 def _build_vector(build: Build) -> Vector:
     given: dict[str, Json] = {"args": normalize(build.args)}
     params = {"builder": build.builder, "max_line_bytes": build.max_line_bytes}
+    message = attempt(lambda: _BUILDERS[build.builder](**build.args))
+    if isinstance(message, Raised):
+        return raised(build.id, given, message.exc, params=params)
 
-    def call() -> Vector:
-        message = _BUILDERS[build.builder](**build.args)
-        try:
-            line = wire.encode(message, build.max_line_bytes)
-        except UnicodeEncodeError as exc:
-            # A ValueError too, so every caller of `encode` takes it as the
-            # refusal. Only the type is kept: the message names an offset.
-            refusal = {"exception": type(exc).__name__}
-            return refused(build.id, given, refusal, params=params)
-        except ValueError as exc:
-            return refused(build.id, given, {"message": str(exc)}, params=params)
-
+    line = attempt(lambda: wire.encode(message, build.max_line_bytes))
+    if not isinstance(line, Raised):
         return accepted(build.id, given, params=params, output=text_input(line))
 
-    return run(build.id, given, call, params=params)
+    if isinstance(line.exc, UnicodeEncodeError):
+        # A ValueError too, so every caller of `encode` takes it as the
+        # refusal. Only the type is kept: the message names an offset.
+        refusal = {"exception": type(line.exc).__name__}
+        return refused(build.id, given, refusal, params=params)
+
+    if isinstance(line.exc, ValueError):
+        return refused(build.id, given, {"message": str(line.exc)}, params=params)
+
+    return raised(build.id, given, line.exc, params=params)
 
 
 def _vectors[T](items: Sequence[T], make: Callable[[T], Vector]) -> tuple[Vector, ...]:

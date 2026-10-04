@@ -25,8 +25,10 @@ from vectors.core import (
     MARKERS,
     UTF16_MARKER,
     Json,
+    Raised,
     Surface,
     accepted,
+    attempt,
     bounded,
     depth,
     normalize,
@@ -172,3 +174,19 @@ def test_an_input_past_the_depth_budget_stops_the_render() -> None:
 def test_an_input_text_with_a_lone_surrogate_is_refused() -> None:
     with pytest.raises(ValueError, match="lone surrogate"):
         text_input(LONE_SURROGATE)
+
+
+def test_attempt_keeps_what_the_call_ends_with() -> None:
+    outcome = attempt(lambda: int("x"))
+
+    assert isinstance(outcome, Raised)
+    assert isinstance(outcome.exc, ValueError)
+    assert attempt(lambda: int("5")) == 5
+
+
+def test_a_fault_of_the_generator_is_no_vector() -> None:
+    """A value with no JSON form stops the build. It is not a fact about the product."""
+    product_value = attempt(object)
+
+    with pytest.raises(TypeError):
+        accepted("a", text_input("x"), product_value)

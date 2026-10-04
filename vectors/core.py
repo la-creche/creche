@@ -276,17 +276,25 @@ def raised(vector_id: str, given: dict[str, Json], exc: BaseException, **extra: 
     return Vector(vector_id, body)
 
 
-def run(
-    vector_id: str,
-    given: dict[str, Json],
-    call: Callable[[], Vector],
-    **extra: object,
-) -> Vector:
-    """`call()`, or a `raised` vector when it raises anything at all."""
+@dataclass(frozen=True)
+class Raised:
+    """The exception that a call of the product code ended with."""
+
+    exc: Exception
+
+
+def attempt[T](call: Callable[[], T]) -> T | Raised:
+    """What a call of the product code returns, or the exception it raises.
+
+    `call` holds the call of the entry point and no step of the generator.
+    The caller makes the vector from the outcome afterwards. A fault of the
+    generator then stops the generator, and it never becomes a `raised`
+    vector, which a reader takes as a fact about the product code.
+    """
     try:
         return call()
     except Exception as exc:
-        return raised(vector_id, given, exc, **extra)
+        return Raised(exc)
 
 
 @dataclass(frozen=True)

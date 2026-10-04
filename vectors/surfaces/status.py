@@ -28,13 +28,15 @@ from attendance.family_status import StatusReader
 from noticeboard import statusdocs
 from vectors.core import (
     Json,
+    Raised,
     Surface,
     Vector,
     accepted,
+    attempt,
     bytes_input,
     quiet_logs,
+    raised,
     refused,
-    run,
 )
 
 CONTRACT: Final = "contract 05"
@@ -508,21 +510,21 @@ READERS: Final[tuple[Reader, ...]] = (
 
 def _vector(reader: Reader, document: Document, scratch: Path) -> Vector:
     given = document.given()
+    root = scratch / reader.owner / document.id
+    target = root / FAMILIES_DIR / FAMILY / STATUS_FILE
+    target.parent.mkdir(parents=True)
+    target.write_bytes(document.raw)
+    with quiet_logs():
+        outcome = attempt(lambda: reader.read(root))
 
-    def call() -> Vector:
-        root = scratch / reader.owner / document.id
-        target = root / FAMILIES_DIR / FAMILY / STATUS_FILE
-        target.parent.mkdir(parents=True)
-        target.write_bytes(document.raw)
-        with quiet_logs():
-            took, detail = reader.read(root)
+    if isinstance(outcome, Raised):
+        return raised(document.id, given, outcome.exc)
 
-        if took:
-            return accepted(document.id, given, detail)
+    took, detail = outcome
+    if took:
+        return accepted(document.id, given, detail)
 
-        return refused(document.id, given, detail)
-
-    return run(document.id, given, call)
+    return refused(document.id, given, detail)
 
 
 def surfaces() -> tuple[Surface, ...]:
