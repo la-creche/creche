@@ -14,3 +14,5 @@
 **/.pytest_cache
 **/.ruff_cache
 **/.mypy_cache
+# cargo's build directory. It grows with every crate.
+rust/target

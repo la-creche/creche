@@ -1,0 +1,55 @@
+# The Cargo workspace of this repository. rust/AGENTS.md holds the rules.
+#
+# Every Cargo file stays under rust/. The tag allocator
+# (handover/src/handover/allocate.py, `touched`) gives a path under no
+# component to no component, so a change here mints no tag and starts no
+# release.
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+# No `version` key: no number lives in a file (CONTRIBUTING.md, Tags and
+# releases). Cargo reads a crate with no version as 0.0.0.
+[workspace.package]
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# The lint gate. A crate inherits it with `[lints] workspace = true`, and
+# bin/rust-gate.sh refuses a crate that does not. An exception is written
+# `#[expect(clippy::<lint>, reason = "...")]` at the one item, never
+# `#[allow]`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+# `warn`: the gate runs clippy with `-D warnings`, so this refuses a merge
+# and does not stop a local `cargo build`.
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+as_conversions = "deny"
+unwrap_in_result = "deny"
+panic_in_result_fn = "deny"
+await_holding_lock = "deny"
+dbg_macro = "deny"
+exit = "deny"
+mem_forget = "deny"
+# The exception rule itself. An `#[allow]`, or an `#[expect]` with no reason,
+# lifts any lint above for one item or for a whole crate, and no build says
+# so.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"

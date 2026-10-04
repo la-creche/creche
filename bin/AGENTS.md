@@ -1,6 +1,6 @@
 # bin
 
-Every script that runs on the host, plus the two shell libraries and the
+Every script that runs on the host, plus the three shell libraries and the
 tests behind them. One house style across every file. The root `AGENTS.md`
 applies here too.
 
@@ -17,8 +17,8 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 | Family | Files | Contract |
 |---|---|---|
 | Setup | `provision-library.sh` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
-| Operations | `creche-deploy`, `creche-handover`, `creche-handover-intake`, `rework-watchdog.sh`, `rework-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh`, `quality-gate.sh` | Run unattended from units and timers. Fail loudly into the journal. |
-| Library | `lib/envfile.sh`, `lib/docsrule.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
+| Operations | `creche-deploy`, `creche-handover`, `creche-handover-intake`, `rework-watchdog.sh`, `rework-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh`, `quality-gate.sh`, `rust-gate.sh` | Run unattended from units and timers. Fail loudly into the journal. |
+| Library | `lib/envfile.sh`, `lib/docsrule.sh`, `lib/rustrule.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
 | Tests | `tests/test_*.py`, `tests/test_*.sh` | pytest collects the `.py` files. The `.sh` files run by hand: `bash bin/tests/<name>.sh`. None needs a host. |
 
 ## Secrets
@@ -69,7 +69,8 @@ through a file or a health endpoint, and give a short in-VM command a
 | `sbx-drift-check.sh` | OPERATOR, daily | Read-only. Alarms when the global sbx policy holds any network allow, or when a per-sandbox rule allows a host that is not the LAN address and not in the seeded allowlist. |
 | `sync-code-corpus.sh` | OPERATOR, hourly | Refreshes the dedicated code clones the library indexes. The repository list lives outside the corpus. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
-| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. |
+| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. |
+| `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, the include check, `cargo fmt` and `cargo clippy` on the workspace under `rust/`. `--tests` adds `cargo test`. |
 
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
 only after `sudo creche-deploy`.
@@ -86,6 +87,42 @@ is the full suite in one process. CI runs the full suite as shards with
 `lib/docsrule.sh` holds the one copy of "does this change touch nothing but
 prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 
+`quality-gate.sh` runs `rust-gate.sh` only for a change that touches `rust/`.
+`lib/rustrule.sh` holds the one copy of that rule. `quality-gate.sh`,
+`gate.yml` and `release.yml` source it.
+
+| Mode | The change touches `rust/` when | `rust-gate.sh` runs |
+|---|---|---|
+| no flag | the index or the work tree differs from `HEAD` under `rust/` | the `[lints]` check, the include check, `cargo fmt`, `cargo clippy` |
+| `--tests-for` | one path or more is under `rust/` | the same, then `cargo test` |
+| `--tests` | always | the same, then `cargo test` |
+| `--docs` | never | nothing |
+
+- A change that touches nothing under `rust/` starts no cargo step. It needs
+  no `cargo` on `PATH`, because some sessions commit from a sandbox that has
+  no Rust toolchain.
+- A change that touches `rust/` with no `cargo` on `PATH` fails before the
+  first check.
+- The commit that concludes a merge is a special case of the no-flag mode.
+  When the index and the work tree hold exactly the `rust/` of the other
+  side, the change touches no `rust/`. A session with no `cargo` can then
+  merge `main`. An own edit under `rust/` in that commit still counts.
+- When git cannot read the state, the no-flag mode runs `rust-gate.sh`. The
+  gate names that cause in its line.
+- In `--tests-for` mode a path under `rust/` picks no pytest suite. It is not
+  a path in no package, so it does not start the full Python suite.
+- CI takes a wider answer than the hooks. There, a change to a file of the
+  Rust checks also runs `rust-gate.sh`: the script, `lib/rustrule.sh`,
+  `gate.yml`, `release.yml` and the scope action. The tests here use a fake
+  `cargo`, so only that run proves such a change. A commit or a push of those
+  files needs no `cargo`.
+- The `[lints]` check refuses a crate that has no `[lints]` table with the
+  line `workspace = true`. Such a crate builds with no lint of the workspace.
+  The check also fails when it finds no crate.
+- The include check refuses a Rust source file that includes a Markdown
+  file. A change of Markdown only runs no cargo step, so such a file can
+  break a doc test with no cargo run.
+
 ## Tests
 
 | Test | Pins |
@@ -94,7 +131,9 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
 | `test_bin_hook_env.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
-| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, and `!retest` restarts one run. |
+| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the `[lints]` check and the include check. |
+| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
+| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command and the same `rust` job, and `!retest` restarts one run. |
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |
 | `test_unique_test_basenames.py` | No two test modules share a basename across the workspace. |
 | `test_creche_deploy.py`, `test_rework_watchdog.py`, `test_rework_registry_sync.py`, `test_sbx_drift_check.py`, `test_sync_code_corpus.py`, `test_provision_library.py`, `test_rework_intake_unit.py` | Each script, against binstubs and a temp root. |
