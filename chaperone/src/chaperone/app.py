@@ -31,6 +31,8 @@ from typing import Literal, cast
 
 import httpx
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import Response
@@ -180,6 +182,9 @@ class ApprovalBody(BaseModel):
 #: the reason, and a PEP with no phone rail at all.
 NOT_FOUND_STATUS = 404
 NOT_IMPLEMENTED_STATUS = 501
+
+#: A body the reader refused. FastAPI's own status for it (RFC 9110 §15.5.21).
+BODY_REFUSED_STATUS = 422
 
 
 #: A window this many minutes idle is dropped instead of kept forever — a
@@ -729,5 +734,37 @@ def create_app(
             status_code=500,
             content={"ok": False, "reason": "internal_error", "detail": "audit unavailable"},
         )
+
+    @app.exception_handler(RequestValidationError)
+    async def refused_body(  # pyright: ignore[reportUnusedFunction]
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """A body the reader refused. FastAPI's own answer echoes what it
+        refused, and an echo that is no JSON text raises while the answer is
+        built. The answer then keeps the status and each error, without the
+        echo: the caller's key is in `loc` and its value in `input`.
+
+        CONTRACT-QUESTION: contract 04 §5 has no row for a body that the
+        reader refuses, and §5.1 gives its answer no body. The reading
+        here: the status that each other refused body gets, and no text of
+        the caller. A change costs a caller that reads `loc`."""
+        try:
+            return await request_validation_exception_handler(request, exc)
+        except (ValueError, RecursionError):
+            errors = [
+                {"type": error["type"], "msg": error["msg"]}
+                for error in cast("list[dict[str, object]]", exc.errors())
+            ]
+            return JSONResponse(status_code=BODY_REFUSED_STATUS, content={"detail": errors})
+
+    @app.exception_handler(Exception)
+    async def unexpected(_request: Request, exc: Exception) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        """Contract 04 §5 row 12, for a failure that no layer below handled.
+        §5.1: an answer that is not 200 holds `reason`, so a route never
+        answers with a bare 500. The type and not the text: the text can
+        quote the request. Starlette raises the failure again after this
+        answer, so the server logs its traceback."""
+        log.error("a route raised %s; answering internal_error", type(exc).__name__)
+        return _deny_response("internal_error")
 
     return app

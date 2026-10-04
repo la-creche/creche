@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
 import httpx
 import pytest
 from chaperone.app import PepConfig, create_app
+from chaperone.family_app import FamilyGate
 from chaperone.family_audit import (
     AUDIT_ARG_STRING_MAX_CHARS,
     AUDIT_TRUNCATION_MARKER,
@@ -322,3 +324,76 @@ def test_a_call_that_raises_anything_writes_one_line_and_denies(
     [record] = family_lines(tmp_path)
     assert (record["decision"], record["reason"]) == ("deny", "internal_error")
     assert record["args"] == {"query": "x"}
+
+
+# ---- a route that raises ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "send",
+    [
+        pytest.param(lambda client: call(client, body_of("embed", '{"input":"x"}')), id="call"),
+        pytest.param(
+            lambda client: client.get(
+                "/manifest", headers={"Authorization": f"Bearer {FAMILY_TOKEN}"}
+            ),
+            id="manifest",
+        ),
+    ],
+)
+def test_a_route_that_raises_answers_the_body_of_the_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    send: Callable[[TestClient], httpx.Response],
+) -> None:
+    """§5.1: an answer that is not 200 holds `reason`. A failure that no
+    layer handled is row 12, and never an answer with no reason."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path)
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("a failure nobody predicted")
+
+    monkeypatch.setattr(FamilyGate, "lookup", explode)
+    reply = send(client)
+
+    assert reply.status_code == 500
+    assert reply.json() == INTERNAL_ERROR
+
+
+# ---- a body that the reader refuses --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(f'{{"tool":"{LONE}"}}', id="a-tool-that-is-not-text"),
+        pytest.param(f'{{"tool":"embed","{LONE}":1}}', id="a-key-that-is-not-text"),
+        pytest.param(f'{{"tool":"embed","args":"{LONE}"}}', id="arguments-that-are-not-text"),
+        pytest.param(f'{{"tool":{DEEP_JSON}}}', id="a-tool-nested-too-deep"),
+    ],
+)
+def test_a_refused_body_is_422_for_any_content(tmp_path: Path, body: str) -> None:
+    """The reader echoes what it refused. When the echo is no JSON text, the
+    answer keeps the status and each error, without the echo."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path)
+
+    reply = call(client, body)
+
+    assert reply.status_code == 422
+    errors = reply.json()["detail"]
+    assert errors
+    assert all(set(error) == {"type", "msg"} for error in errors)
+
+
+def test_a_refused_body_keeps_its_echo_when_the_echo_is_text(tmp_path: Path) -> None:
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path)
+
+    reply = call(client, '{"tool":5}')
+
+    assert reply.status_code == 422
+    [error] = reply.json()["detail"]
+    assert error["loc"] == ["body", "tool"]
+    assert error["input"] == 5

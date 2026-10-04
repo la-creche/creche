@@ -100,6 +100,9 @@ A shared module may not grow a branch that only one caller reaches.
   An allow becomes `internal_error`. A denial keeps its reason.
 - A result that is not strict JSON in UTF-8 is an upstream failure. The
   audit line says so before the answer goes out.
+- A route never answers a bare 500. A failure that no layer handles
+  answers `internal_error` in the body of contract 04 §5.1. A call of a
+  family still gets its audit line.
 
 ## Identity and revocation
 
@@ -217,3 +220,5 @@ Each line is an open contract question and the module it lives in.
 - No audit line holds a string that is not Unicode text, or arguments that
   nest deeper than the interpreter recurses. The record holds a marker in
   their place (`family_audit.py`, `family_app.py`).
+- A refused body whose echo is not JSON text answers 422 with the type and
+  the message of each error only (`app.py`).
