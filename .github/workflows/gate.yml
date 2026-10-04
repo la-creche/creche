@@ -170,6 +170,9 @@ jobs:
   #
   # The cache key holds the toolchain and the lock file. A change to
   # either starts from an empty cache.
+  #
+  # Each step asks `!= 'false'`, not `== 'true'`: an answer that is missing
+  # runs the checks.
   rust:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
@@ -184,7 +187,7 @@ jobs:
           fetch-depth: 0
 
       - name: toolchain
-        if: needs.scope.outputs.rust == 'true'
+        if: needs.scope.outputs.rust != 'false'
         working-directory: rust
         run: |
           rustup toolchain install --no-self-update
@@ -193,7 +196,7 @@ jobs:
           cargo clippy --version
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: needs.scope.outputs.rust == 'true'
+        if: needs.scope.outputs.rust != 'false'
         with:
           path: |
             ~/.cargo/registry/index
@@ -203,7 +206,7 @@ jobs:
           key: rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
 
       - run: bin/rust-gate.sh --tests
-        if: needs.scope.outputs.rust == 'true'
+        if: needs.scope.outputs.rust != 'false'
 
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.

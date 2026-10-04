@@ -95,7 +95,9 @@ SHARD_ENV = {"INDEX": "${{ strategy.job-index }}", "TOTAL": "${{ strategy.job-to
 ONLY_CODE = "needs.scope.outputs.scope == 'code'"
 
 #: A step of the `rust` job that a change with no path under rust/ skips.
-ONLY_RUST = "needs.scope.outputs.rust == 'true'"
+#: Only the answer `false` skips it. An answer that is missing, or that a
+#: rename lost, runs the checks.
+ONLY_RUST = "needs.scope.outputs.rust != 'false'"
 
 #: How the scope job hands the Rust answer to the `rust` job.
 RUST_OUTPUT = "${{ steps.scope.outputs.rust }}"

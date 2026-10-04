@@ -213,6 +213,9 @@ jobs:
   #
   # The cache key holds the toolchain and the lock file. A change to
   # either starts from an empty cache.
+  #
+  # Each step asks `!= 'false'`, not `== 'true'`: an answer that is missing
+  # runs the checks.
   rust:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
@@ -227,7 +230,7 @@ jobs:
           fetch-depth: 0
 
       - name: toolchain
-        if: needs.scope.outputs.rust == 'true'
+        if: needs.scope.outputs.rust != 'false'
         working-directory: rust
         run: |
           rustup toolchain install --no-self-update
@@ -236,7 +239,7 @@ jobs:
           cargo clippy --version
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: needs.scope.outputs.rust == 'true'
+        if: needs.scope.outputs.rust != 'false'
         with:
           path: |
             ~/.cargo/registry/index
@@ -246,7 +249,7 @@ jobs:
           key: rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
 
       - run: bin/rust-gate.sh --tests
-        if: needs.scope.outputs.rust == 'true'
+        if: needs.scope.outputs.rust != 'false'
 
   # `always()`: on a docs push `tests`, `playpen` and `rust` are skipped, and
   # a job that needs a skipped job is skipped by default. The verdict step is
