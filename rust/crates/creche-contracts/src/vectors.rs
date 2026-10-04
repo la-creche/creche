@@ -199,6 +199,83 @@ impl Chunk {
     }
 }
 
+/// The key of each marker object.
+const MARKER_KEYS: [&str; 6] = ["$int", "$float", "$utf16", "$base64", "$entries", "$json"];
+
+/// A value that has no JSON form that every strict reader accepts. The
+/// generator writes it as an object with exactly one key, a marker object.
+///
+/// The set is closed by the file format. A plain value of a vector is never
+/// an object that holds one of the six keys and no other key.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub(crate) enum Marker {
+    /// An integer below -2^63 or above 2^64 - 1, as its decimal text.
+    #[serde(rename = "$int")]
+    Int(String),
+    /// A float that is not finite.
+    #[serde(rename = "$float")]
+    Float(NotFinite),
+    /// A string that holds a lone surrogate, as its UTF-16 code units.
+    #[serde(rename = "$utf16")]
+    Utf16(Vec<u16>),
+    /// Bytes, as base64. [`Marker::bytes`] gives the bytes.
+    #[serde(rename = "$base64")]
+    Base64(String),
+    /// A mapping with a key that is not a plain string, as its pairs in the
+    /// order of the mapping. A key and a value can be a marker object.
+    #[serde(rename = "$entries")]
+    Entries(Vec<(Value, Value)>),
+    /// A field that nests deeper than 96 levels, as its JSON text. The text
+    /// can hold the other markers.
+    #[serde(rename = "$json")]
+    Json(String),
+}
+
+/// A float that is not finite.
+///
+/// The set is closed by the file format. A reader refuses another text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub(crate) enum NotFinite {
+    /// Not a number.
+    #[serde(rename = "NaN")]
+    Nan,
+    /// Positive infinity.
+    Infinity,
+    /// Negative infinity.
+    #[serde(rename = "-Infinity")]
+    NegativeInfinity,
+}
+
+impl Marker {
+    /// The marker that `value` is. `None` for a plain value.
+    ///
+    /// The function stops the test on a marker object whose content has the
+    /// wrong form.
+    pub(crate) fn of(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        let mut keys = object.keys();
+        let key = keys.next()?;
+        if keys.next().is_some() || !MARKER_KEYS.contains(&key.as_str()) {
+            return None;
+        }
+
+        match Self::deserialize(value) {
+            Ok(marker) => Some(marker),
+            Err(error) => panic!("the content of a {key} marker: {error}"),
+        }
+    }
+
+    /// The bytes of a `$base64` marker. `None` for each other marker.
+    pub(crate) fn bytes(&self) -> Option<Vec<u8>> {
+        match self {
+            Self::Base64(encoded) => Some(base64_decode(encoded)),
+            Self::Int(_) | Self::Float(_) | Self::Utf16(_) | Self::Entries(_) | Self::Json(_) => {
+                None
+            }
+        }
+    }
+}
+
 /// One input on which two Python copies of one id grammar differ.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -362,6 +439,8 @@ fn base64_decode(encoded: &str) -> Vec<u8> {
 mod tests {
     use std::collections::HashSet;
 
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -471,6 +550,106 @@ mod tests {
         assert_eq!(vector.value(), None);
         assert_eq!(vector.refusal(), Some(&serde_json::json!({"code": "no"})));
         assert_eq!(vector.field("params"), None);
+    }
+
+    #[test]
+    fn each_marker_object_reads_as_its_marker() {
+        let pairs = vec![
+            (json!(1), json!("one")),
+            (json!({"$int": "-1"}), json!(null)),
+        ];
+        let read = [
+            (
+                json!({"$int": "18446744073709551616"}),
+                Marker::Int("18446744073709551616".to_owned()),
+            ),
+            (json!({"$float": "NaN"}), Marker::Float(NotFinite::Nan)),
+            (
+                json!({"$float": "Infinity"}),
+                Marker::Float(NotFinite::Infinity),
+            ),
+            (
+                json!({"$float": "-Infinity"}),
+                Marker::Float(NotFinite::NegativeInfinity),
+            ),
+            (
+                json!({"$utf16": [97, 55296, 98]}),
+                Marker::Utf16(vec![97, 0xd800, 98]),
+            ),
+            (
+                json!({"$base64": "+/8="}),
+                Marker::Base64("+/8=".to_owned()),
+            ),
+            (
+                json!({"$entries": [[1, "one"], [{"$int": "-1"}, null]]}),
+                Marker::Entries(pairs),
+            ),
+            (json!({"$json": "[[1]]"}), Marker::Json("[[1]]".to_owned())),
+        ];
+        let keys: HashSet<&str> = read
+            .iter()
+            .flat_map(|(value, _)| value.as_object().unwrap().keys())
+            .map(String::as_str)
+            .collect();
+
+        for (value, marker) in &read {
+            assert_eq!(Marker::of(value).as_ref(), Some(marker), "{value}");
+        }
+
+        assert_eq!(keys, HashSet::from(MARKER_KEYS));
+        assert_eq!(
+            Marker::Base64("+/8=".to_owned()).bytes(),
+            Some(vec![0xfb, 0xff])
+        );
+        assert_eq!(Marker::Json("[[1]]".to_owned()).bytes(), None);
+    }
+
+    #[test]
+    fn a_plain_value_is_no_marker() {
+        for value in [
+            json!(null),
+            json!(7),
+            json!("$int"),
+            json!(["$int", "1"]),
+            json!({}),
+            json!({"int": "1"}),
+            json!({"$other": "1"}),
+            json!({"$int": "1", "$float": "NaN"}),
+            json!({"$int": "1", "unit": "ms"}),
+        ] {
+            assert_eq!(Marker::of(&value), None, "{value}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "the content of a $float marker")]
+    fn a_marker_with_a_wrong_content_stops_the_test() {
+        let _ = Marker::of(&json!({"$float": "1.5"}));
+    }
+
+    /// The count of marker objects in `value`, at each level. The walk reads
+    /// each marker, so a marker with a wrong content stops the test.
+    fn markers_in(value: &Value) -> usize {
+        let here = usize::from(Marker::of(value).is_some());
+        let below: usize = match value {
+            Value::Array(items) => items.iter().map(markers_in).sum(),
+            Value::Object(fields) => fields.values().map(markers_in).sum(),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 0,
+        };
+
+        here + below
+    }
+
+    #[test]
+    fn every_marker_of_every_file_reads() {
+        let nested = json!({"value": [{"$int": "-1"}, {"$entries": [[{"$float": "NaN"}, 1]]}]});
+        let found: usize = index()
+            .iter()
+            .map(|row| markers_in(&read::<Value>(&row.path)))
+            .sum();
+
+        assert_eq!(markers_in(&nested), 3);
+        assert!(found > 0, "no file holds a marker object");
     }
 
     #[test]

@@ -267,6 +267,9 @@ the reason in the commit message.
    `Vector::value` and the refusal with `Vector::refusal`, as parsed JSON.
 5. For the result `raised`, make sure that the Rust code refuses the input.
 
+A value, a refusal and an argument of a vector can hold a marker object.
+`vectors::Marker::of` reads one. `vectors/README.md` lists the six markers.
+
 Rules for the test:
 
 - Write one test for each type. The test walks each vector of each surface
