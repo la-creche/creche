@@ -310,6 +310,14 @@ sandbox: { cpus: "two", max_resident_processes: [12] }
         + 'triggers:\n  - cron: "0 9 * * 1-5"\n  - cron: "@weekly"\n  - cron: "@yearly"\n'
         + '  - cron: "0 9 * *"\n  - cron: "0  9\\t* * 0"\n  - cron: ""\n',
     ),
+    # A field holds ASCII digits and `*`, `,`, `-`, `/`. U+0669 and U+00B2 are
+    # digits to `str.isdigit`.
+    _case(
+        "trigger-cron-characters",
+        AUTONOMOUS_HEAD
+        + 'triggers:\n  - cron: "0 \u0669 * * *"\n  - cron: "*/\u00b2 * * * *"\n'
+        + '  - cron: "0 9 * * mon"\n  - cron: "*/15 0-6,22 1 1,7 1-5"\n  - cron: "? ? ? ? ?"\n',
+    ),
     _case("trigger-webhook-ok", AUTONOMOUS_HEAD + "triggers:\n  - webhook: new-ticket\n"),
     _case(
         "trigger-webhook-shared",

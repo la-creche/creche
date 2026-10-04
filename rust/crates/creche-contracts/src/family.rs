@@ -1760,7 +1760,8 @@ impl FromStr for JobTimeout {
 
 checked_text! {
     /// When a cron trigger fires: five fields, or one of `@hourly`, `@daily`
-    /// and `@weekly` (contract 01 §3.13).
+    /// and `@weekly` (contract 01 §3.13). A field holds ASCII digits and
+    /// `*`, `,`, `-`, `/`.
     Cron
 }
 
@@ -1770,11 +1771,25 @@ pub struct CronError;
 
 error_texts!(CronError => "a cron expression has five fields, or is @hourly, @daily or @weekly");
 
+/// Whether a text is one field of a cron expression.
+fn is_cron_field(field: &str) -> bool {
+    // Contract 01 §3.13 gives no grammar for a field. The Python validator
+    // takes ASCII digits and the signs of a list, a range and a step, and
+    // this check does the same. `family/AGENTS.md` holds the question.
+    field
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || matches!(byte, b'*' | b',' | b'/' | b'-'))
+}
+
 impl FromStr for Cron {
     type Err = CronError;
 
     fn from_str(text: &str) -> Result<Self, CronError> {
-        if !CRON_SHORTHANDS.contains(&text) && py_words(text).count() != CRON_FIELDS {
+        if CRON_SHORTHANDS.contains(&text) {
+            return Ok(Self(text.to_owned()));
+        }
+
+        if py_words(text).count() != CRON_FIELDS || !py_words(text).all(is_cron_field) {
             return Err(CronError);
         }
 
@@ -4096,8 +4111,19 @@ mod tests {
                 "@weekly",
                 "0 6 * * 1-5",
                 " 0  6 * *\t1 ",
+                "*/15 0-6,22 1 1,7 1-5",
             ],
-            &["", "@yearly", "0 6 * *", "0 6 * * 1 2", "@hourly "],
+            &[
+                "",
+                "@yearly",
+                "0 6 * *",
+                "0 6 * * 1 2",
+                "@hourly ",
+                "0 6 * * mon",
+                "0 \u{669} * * *",
+                "*/\u{b2} * * * *",
+                "? ? ? ? ?",
+            ],
         );
     }
 

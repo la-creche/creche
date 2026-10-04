@@ -166,6 +166,10 @@ SECRET_PREFIX: Final = "secret:"
 #: Contract 01 §3.13: the three shorthands a cron trigger may use.
 CRON_SHORTHANDS: Final = ("@hourly", "@daily", "@weekly")
 
+#: One field of a five-field cron expression: ASCII digits and the signs of
+#: a list, a range and a step. `caregiver.timers` converts no other character.
+CRON_FIELD: Final = re.compile(r"^[0-9*,/-]+\Z")
+
 #: Contract 01 §3.15: the tool `quiet.board` fingerprints, on the server it
 #: names.
 SURVEY_TOOL: Final = "survey_board"
