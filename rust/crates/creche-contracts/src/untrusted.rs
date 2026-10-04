@@ -4,7 +4,7 @@
 //! A client of a service of this platform reads the answer into a raw `serde`
 //! type. Each field of that type names one function of this module:
 //!
-//! ```no_run
+//! ```
 //! use creche_contracts::untrusted;
 //! use serde::Deserialize;
 //!
@@ -21,6 +21,7 @@
 //! let turn: RawTurn = untrusted::parse_object(br#"{"state": 7, "turn_seq": "x"}"#)?;
 //! assert_eq!(turn.state, "");
 //! assert_eq!(turn.turn_seq, 0);
+//! assert!(turn.notes.is_empty());
 //! # Ok::<(), untrusted::NotAnObject>(())
 //! ```
 //!
@@ -59,8 +60,20 @@
 //!   reader does that.
 //! - A value nests 128 levels of lists and objects at most.
 //!
-//! The body of [`parse_object`] is a stub. `rust/crates/creche-runtime/AGENTS.md`
-//! lists the stubs and the packet that writes them.
+//! # What is JSON here
+//!
+//! [`parse_object`] reads the bytes with `serde_json`. An answer is thus
+//! strict JSON in UTF-8. `json.loads` of Python reads more, and each Python
+//! client reads an answer with it. [`parse_object`] refuses these answers,
+//! and a Python client reads them:
+//!
+//! - An answer with the word `NaN`, `Infinity` or `-Infinity`.
+//! - An answer with a number outside the range of a float: `1e400`, or an
+//!   integer of 400 digits.
+//! - An answer with one half of a surrogate pair, as an escape or as bytes.
+//! - An answer that starts with a byte order mark.
+//! - An answer in UTF-16 or in UTF-32.
+//! - An answer that nests 128 levels or more. `serde_json` reads 127.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -329,17 +342,45 @@ impl Error for NotAnObject {}
 /// function of this module, so a field of a wrong type does not refuse the
 /// answer.
 ///
+/// The function reads the whole body into the private tree first. The rules
+/// of the module documentation thus hold from the first level: the last value
+/// of a key, an object for a struct, and strict JSON in each part of the
+/// body, also in a member that `T` does not read.
+///
+/// The Python origin is `parse_object` of
+/// `noticeboard/src/noticeboard/jsonfiles.py:70-90`. The doors read an
+/// answer in the same two steps, for example `_json_object` of
+/// `door-owui/src/agent_door_owui/attendance.py:315-323`. That reader gives
+/// an empty object for each refusal. A port of it calls `unwrap_or_default`
+/// on the result.
+///
 /// # Errors
 ///
 /// [`NotAnObject::NotJson`] for bytes that are not one JSON text, and
 /// [`NotAnObject::NotObject`] for a JSON value that is not an object.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-untrusted writes this body"
-)]
+///
+/// A raw type with a field that names no function of this module can refuse
+/// an object. The function gives [`NotAnObject::NotObject`] for that object
+/// too: the body is not the object of this answer.
+//
+// CONTRACT-QUESTION: contract 02 §3 rule 3 says that a body is JSON. It does
+// not say if a reader takes what `json.loads` of Python takes past strict
+// JSON: `NaN`, a number outside the range of a float, one half of a surrogate
+// pair, a byte order mark, UTF-16 and UTF-32. Each Python client takes them.
+// This reader refuses them, as the `session` module does for a request. A
+// Python service can write two of them: `json.dumps` writes `NaN` for a float
+// that is not a number, and an escape for one half of a surrogate pair. A
+// Rust client then refuses the whole answer. A reader that takes them costs a
+// JSON reader of this module in place of `serde_json`.
 pub fn parse_object<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, NotAnObject> {
-    todo!()
+    let mut reader = serde_json::Deserializer::from_slice(bytes);
+    let value = read(&mut reader).map_err(|_| NotAnObject::NotJson)?;
+    reader.end().map_err(|_| NotAnObject::NotJson)?;
+    if !matches!(value, Json::Object(_)) {
+        return Err(NotAnObject::NotObject);
+    }
+
+    T::deserialize(value).map_err(|_| NotAnObject::NotObject)
 }
 
 /// The first `max_chars` characters of `text`. The function counts code
@@ -1207,6 +1248,253 @@ mod tests {
         let read: Outer = direct(input, |reader| object(reader)).unwrap();
 
         assert_eq!(read, wanted);
+    }
+
+    // --- parse_object ---
+
+    /// A raw type with each field reader of this module.
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    struct Each {
+        #[serde(default, deserialize_with = "text")]
+        text: String,
+        #[serde(default, deserialize_with = "int")]
+        int: i64,
+        #[serde(default, deserialize_with = "number")]
+        number: Option<f64>,
+        #[serde(default, deserialize_with = "flag")]
+        flag: bool,
+        #[serde(default, deserialize_with = "object")]
+        object: Part,
+        #[serde(default, deserialize_with = "block")]
+        block: Option<Part>,
+        #[serde(default, deserialize_with = "list")]
+        list: Vec<String>,
+        #[serde(default, deserialize_with = "list_first::<2, _, _>")]
+        first: Vec<String>,
+    }
+
+    /// The names of the fields of `Each`.
+    const FIELDS: [&str; 8] = [
+        "text", "int", "number", "flag", "object", "block", "list", "first",
+    ];
+
+    /// A document that gives each field of `Each` the same JSON value.
+    fn each_field_is(value: &str) -> Vec<u8> {
+        let members: Vec<String> = FIELDS
+            .iter()
+            .map(|field| format!(r#""{field}":{value}"#))
+            .collect();
+
+        format!("{{{}}}", members.join(",")).into_bytes()
+    }
+
+    #[test]
+    fn a_document_with_each_field_of_its_type_reads_each_value() {
+        let document = br#"{
+            "text": "family",
+            "int": -3,
+            "number": 1.5,
+            "flag": true,
+            "object": {"name": "o", "count": 1},
+            "block": {"name": "b"},
+            "list": ["a", "b", "c"],
+            "first": ["a", "b", "c"]
+        }"#;
+        let wanted = Each {
+            text: "family".to_owned(),
+            int: -3,
+            number: Some(1.5),
+            flag: true,
+            object: part("o", 1),
+            block: Some(part("b", 0)),
+            list: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
+            first: vec!["a".to_owned(), "b".to_owned()],
+        };
+
+        assert_eq!(parse_object::<Each>(document), Ok(wanted));
+    }
+
+    #[test]
+    fn a_document_with_no_field_reads_as_each_empty_value() {
+        assert_eq!(parse_object::<Each>(b"{}"), Ok(Each::default()));
+        assert_eq!(
+            parse_object::<Each>(br#"{"other": 1, "more": [{}]}"#),
+            Ok(Each::default())
+        );
+    }
+
+    /// Each wrong type in each field. A field is empty for a value of a
+    /// wrong type, and the document stays an answer.
+    #[test]
+    fn a_document_with_each_wrong_type_reads_each_field_as_empty() {
+        let empty = Each::default();
+        let read = |value: &str| parse_object::<Each>(&each_field_is(value)).unwrap();
+
+        assert_eq!(read("null"), empty);
+        assert_eq!(read("false"), empty);
+        assert_eq!(
+            read("true"),
+            Each {
+                flag: true,
+                ..Each::default()
+            }
+        );
+        assert_eq!(
+            read("7"),
+            Each {
+                int: 7,
+                number: Some(7.0),
+                ..Each::default()
+            }
+        );
+        assert_eq!(
+            read("1.5"),
+            Each {
+                number: Some(1.5),
+                ..Each::default()
+            }
+        );
+        assert_eq!(
+            read(r#""true""#),
+            Each {
+                text: "true".to_owned(),
+                ..Each::default()
+            }
+        );
+        assert_eq!(
+            read(r#"["a",7,"b","c"]"#),
+            Each {
+                list: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
+                first: vec!["a".to_owned()],
+                ..Each::default()
+            }
+        );
+        assert_eq!(
+            read(r#"{"name":"n","count":true}"#),
+            Each {
+                object: part("n", 0),
+                block: Some(part("n", 0)),
+                ..Each::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_document_is_one_json_object() {
+        let not_object = ["[1]", "7", "1.5", r#""a""#, "true", "null", " [ ] "];
+        let not_json = [
+            "",
+            "   ",
+            r#"{"a": "#,
+            "nope",
+            r#"{"a": 1}{"b": 2}"#,
+            r#"{"a": 1,}"#,
+            "{'a': 1}",
+            r#"{"a": 1} x"#,
+            r#"{"a": 01}"#,
+            "{\"a\": \"\u{1}\"}",
+        ];
+
+        assert_eq!(parse_object::<Each>(b" \n{}\t\r\n"), Ok(Each::default()));
+        for input in not_object {
+            let read = parse_object::<Each>(input.as_bytes());
+
+            assert_eq!(read, Err(NotAnObject::NotObject), "{input}");
+        }
+        for input in not_json {
+            let read = parse_object::<Each>(input.as_bytes());
+
+            assert_eq!(read, Err(NotAnObject::NotJson), "{input}");
+        }
+    }
+
+    /// What `json.loads` of Python reads and `serde_json` refuses. The rule
+    /// holds in a member that the raw type does not read, too.
+    #[test]
+    fn a_document_is_strict_json_in_each_member() {
+        let deep = format!(r#"{{"other":{}{}}}"#, "[".repeat(127), "]".repeat(127));
+        let past_every_float = format!(r#"{{"other":{}}}"#, "9".repeat(400));
+        let refused: [&[u8]; 12] = [
+            br#"{"text": NaN}"#,
+            br#"{"other": NaN}"#,
+            br#"{"other": [Infinity, -Infinity]}"#,
+            br#"{"other": 1e400}"#,
+            past_every_float.as_bytes(),
+            br#"{"text": "\ud800"}"#,
+            br#"{"other": "\ud800"}"#,
+            br#"{"\udc00": 1}"#,
+            // The bytes of one half of a surrogate pair, which are no UTF-8.
+            b"{\"other\": \"\xed\xa0\x80\"}",
+            b"{\"other\": \"\xff\"}",
+            // A byte order mark.
+            b"\xef\xbb\xbf{}",
+            deep.as_bytes(),
+        ];
+
+        for input in refused {
+            let read = parse_object::<Each>(input);
+
+            assert_eq!(read, Err(NotAnObject::NotJson), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn a_document_nests_127_levels_at_most() {
+        let nested =
+            |levels: usize| format!("{}1{}", r#"{"object":"#.repeat(levels), "}".repeat(levels));
+
+        assert!(parse_object::<Each>(nested(DEPTH_MAX - 1).as_bytes()).is_ok());
+        assert_eq!(
+            parse_object::<Each>(nested(DEPTH_MAX).as_bytes()),
+            Err(NotAnObject::NotJson)
+        );
+    }
+
+    #[test]
+    fn a_document_keeps_the_last_value_of_a_key() {
+        let document = br#"{"text": "first", "int": 1, "text": 7, "int": 2, "text": "last"}"#;
+        let wanted = Each {
+            text: "last".to_owned(),
+            int: 2,
+            ..Each::default()
+        };
+
+        assert_eq!(parse_object::<Each>(document), Ok(wanted));
+        // The derived type alone refuses the document.
+        assert!(serde_json::from_slice::<Each>(document).is_err());
+    }
+
+    #[test]
+    fn a_document_that_is_a_list_is_no_struct() {
+        assert_eq!(parse_object::<Strict>(b"[7]"), Err(NotAnObject::NotObject));
+        // The derived type alone fills each field by its place.
+        assert_eq!(
+            serde_json::from_slice::<Strict>(b"[7]").unwrap(),
+            Strict { id: 7 }
+        );
+    }
+
+    #[test]
+    fn an_object_that_the_raw_type_refuses_is_not_the_object_of_the_answer() {
+        assert_eq!(
+            parse_object::<Strict>(br#"{"id": 7}"#),
+            Ok(Strict { id: 7 })
+        );
+        assert_eq!(
+            parse_object::<Strict>(br#"{"id": "7"}"#),
+            Err(NotAnObject::NotObject)
+        );
+        assert_eq!(parse_object::<Strict>(b"{}"), Err(NotAnObject::NotObject));
+    }
+
+    /// `_json_object` of each door gives an empty object for each refusal.
+    #[test]
+    fn a_port_of_a_door_reads_each_refusal_as_the_empty_raw_type() {
+        for input in ["nope", "[1]", "null", ""] {
+            let read: Each = parse_object(input.as_bytes()).unwrap_or_default();
+
+            assert_eq!(read, Each::default(), "{input}");
+        }
     }
 
     // --- the tree of one value ---
