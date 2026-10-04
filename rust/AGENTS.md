@@ -732,8 +732,12 @@ Rules for the test:
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
      no `Infinity`. It holds no lone surrogate in a key or in a text that a
-     parser reads, and no bytes of a surrogate. The Python reader accepts a
-     lone surrogate in each place.
+     parser reads, and no bytes of a surrogate. The Python parsers refuse a
+     lone surrogate in a text that a parser reads, and in the key of a label.
+     They take one in four texts that reach a file only: the reason of a
+     stop, the reason of a switch, the name of a trigger and the key of a
+     dispatch. The Python reader accepts one in each other key, and it
+     accepts the bytes of a surrogate in a member that no parser reads.
   2. A JSON text nests 128 levels at most.
   3. A number of a query has the digits 0 to 9 only.
   4. A sequence number fits 64 bits. The body of a `pi_event` holds an
@@ -818,15 +822,17 @@ Rules for the test:
      takes 1 to 200 bytes.
   7. `host::ProtocolVersion`, contract 03 §3. The contract gives no grammar
      for a number. The type takes two numbers of 1 to 9 ASCII digits.
+  8. `claim::Event`, contract 03 §13 rule 5. The contract names no event that
+     the host cannot record. The Python host keeps only the type of an event
+     with a lone surrogate. The reader does the same.
 - The host side of `channel` accepts what the Python host accepts, also
   where a stricter reading of contract 03 is possible. The owner decides each
-  case. Five examples:
+  case. Four examples:
   1. A session id and a turn id of a line can be each text.
      `TurnAddress` is the check that follows.
   2. `turn_seq` and each count can be an integer past 64 bits.
-  3. `cost_usd` can be `NaN` or `Infinity`.
-  4. A text outside an event can hold a lone surrogate.
-  5. `turn_failed` with no session, no turn and the `turn_seq` 0 is
+  3. A text outside an event can hold a lone surrogate.
+  4. `turn_failed` with no session, no turn and the `turn_seq` 0 is
      `malformed`. Contract 03 §5.1 permits that line.
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of

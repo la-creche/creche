@@ -175,6 +175,8 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   second (`approvals.py`, `service.py`).
 - An outcome record's `spend_usd` sums advisory costs. A sum of zero with
   tokens records `null` with `spend_reason` (`outcomes.py`).
+- Contract 02 §13.1 names no sum of costs that is not finite. Such a sum
+  records `null` with `spend_reason` (`outcomes.py`).
 - A `tui-` session with a null `leaf_id` can reach its chat twice
   (`service.py`, `terminal.py`).
 - After an idle close, the status document still says `channel: open`
@@ -186,6 +188,13 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   from the work root (`service.py`).
 - Contract 03 §13 rule 6 names no nesting limit for an event. `cap_event`
   reads an event of more than 64 levels as oversized (`wire.py`).
+- Contract 03 §4.6 and §5.5 do not say that a `ping` can have no nonce. The
+  playpen answers such a `ping` with `nonce: null`. `wire.parse` refuses a
+  `pong` whose nonce is not a text. This host sends a nonce in each `ping`
+  (`wire.py`).
+- Contract 03 §13 rule 5 names no event that the host cannot record. An
+  event with one half of a surrogate pair has no UTF-8 form. `cap_event`
+  reads it as oversized (`wire.py`).
 - Contract 05 §2.1 does not say what a reader does with a `kind` that is
   not one of its three words. `served_kind` refuses each door with
   `forbidden`. A family that never validated has an empty `kind` and gets
@@ -206,13 +215,27 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 05 §5.3 rule 8 names no refusal for a switch on a status document
   with no known `kind`. `_check_switch` refuses that switch with
   `bad_request` (`service.py`).
-- `_pump_queue` runs only when a turn ends. A queued turn does not start
-  while the status document is unreadable or states no kind. Nothing tries
-  again until another turn of the family ends (`service.py`).
-- When the server cancels a start during the dial, the turn stays `running`
-  with no deadline watcher (`service.py`).
+- Contract 02 §3 rule 3 says that a body is JSON. It does not say what a
+  reader does with the escape of one half of a surrogate pair. Such a text
+  has no UTF-8 form. A parser refuses the body with `bad_request` for each
+  text that an answer or a line of the channel can hold. Four texts reach a
+  file only: the reason of a stop, the reason of a switch, the name of a
+  trigger and the key of a dispatch. A parser takes the escape in each of
+  the four. A member that no parser reads can hold the escape too
+  (`requests.py`).
+- Contract 02 §11 rule 6 truncates a persona text and does not refuse it. A
+  persona text with one half of a surrogate pair has no UTF-8 form.
+  `_persona` refuses the body with `bad_request` (`requests.py`).
+- Contract 02 §3 rule 2 says never `0.0.0.0` and gives the LAN address no
+  grammar. `from_env` refuses each spelling of the address of each interface.
+  It takes each other text as the address (`config.py`).
 - `_settle` does not raise `IllegalTransition`. For a move that contract 02
   §4.3 does not allow, it writes one log line and one `note` line. The turn
-  does not move. A `turn_settled` for a turn in `waiting-approval` is such a
-  move. That turn then stays in flight until its deadline (`service.py`,
-  `states.py`).
+  does not move. No known path makes such a move (`service.py`, `states.py`).
+- Contract 03 §13 rule 8 accepts `turn_settled` for a turn in
+  `waiting-approval`. Contract 02 §4.3 has no move from `waiting-approval`
+  to `settled`. `_leave_approval` moves that turn through `running`
+  (`service.py`).
+- A turn can settle while the decision of its gate is not in the audit file
+  yet. That turn gets no `approval_resolved` line, and its tally does not
+  count the gate (`service.py`).
