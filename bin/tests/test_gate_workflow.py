@@ -28,10 +28,10 @@ judge the same results differently. Its tag step runs only after that
 verdict, one allocation at a time, and only its last job may write.
 
 The `rust` job runs `bin/rust-gate.sh --tests` for a change that touches
-`rust/`, or a file of the Rust checks themselves (`bin/lib/rustrule.sh`). On
-any other code change it skips every step but the checkout and is still a
-success, so `gate` reads green. The toolchain is the one
-`rust/rust-toolchain.toml` names.
+`rust/`, `vectors/`, or a file of the Rust checks themselves
+(`bin/lib/rustrule.sh`). On any other code change it skips every step but the
+checkout and is still a success, so `gate` reads green. The toolchain is the
+one `rust/rust-toolchain.toml` names.
 
 The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the playpen first,
@@ -582,6 +582,11 @@ SCOPES = [
     ([".github/workflows/gate.yml"], ("code", "true")),
     ([".github/workflows/release.yml"], ("code", "true")),
     ([".github/actions/scope/action.yml"], ("code", "true")),
+    # The Rust tests read vectors/data, so a vector that moves runs them.
+    (["vectors/data/index.json"], ("code", "true")),
+    (["vectors/generate.py"], ("code", "true")),
+    (["chaperone/src/chaperone/app.py", "vectors/data/ids/family.json"], ("code", "true")),
+    (["vectors/README.md"], ("docs", "true")),
     # The Python half of the gate starts no cargo step of its own in CI.
     (["bin/quality-gate.sh"], ("code", "false")),
     ([".github/actions/verdict/action.yml"], ("code", "false")),

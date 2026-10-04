@@ -15,13 +15,15 @@
 #                          change bin/lib/docsrule.sh calls docs only
 #   bin/rust-gate.sh       only for a change under rust/ (bin/lib/rustrule.sh):
 #                          cargo fmt and cargo clippy, and cargo test where
-#                          pytest runs. Any other change runs no cargo step
-#                          and needs no cargo on PATH
+#                          pytest runs. A push that changes vectors/ runs it
+#                          too, but only where cargo is on PATH. Any other
+#                          change runs no cargo step and needs no cargo on PATH
 # Enforced by githooks/ (`git config core.hooksPath githooks`).
 set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
 # rust_path, rust_dirty and RUST_DIR: what counts as a Rust change.
+# vectors_path: what the Rust tests read outside rust/.
 . bin/lib/rustrule.sh
 
 #: One pytest command for the full run, a scoped one and the docs one, so
@@ -235,6 +237,39 @@ rust_for() {
   esac
 }
 
+# vectors_for MODE PATH...: which paths of a scoped run are under vectors/,
+# e.g. "vectors/data/index.json and 2 more". Prints nothing in another mode:
+# a commit runs no test, the full run runs the Rust checks for everything,
+# and a docs run starts no cargo step.
+#
+# The Rust tests read vectors/data, so these paths run the Rust checks too,
+# but only where cargo is on PATH. A Python session with no Rust toolchain
+# regenerates the vectors and must still push. CI runs the Rust checks for
+# the same change (rust_touched in bin/lib/rustrule.sh).
+vectors_for() {
+  local mode="$1" path first="" count=0
+  shift
+
+  if [[ "$mode" != --tests-for ]]; then
+    return 0
+  fi
+
+  for path in "$@"; do
+    if ! vectors_path "$path"; then
+      continue
+    fi
+
+    if [[ -z "$first" ]]; then
+      first="$path"
+    fi
+    count=$((count + 1))
+  done
+
+  if [[ "$count" -gt 0 ]]; then
+    tally "$first" "$count"
+  fi
+}
+
 MODE="${1:-}"
 case "$MODE" in
   "" | --tests | --docs) ;;
@@ -255,6 +290,18 @@ if [[ -n "$RUST_FOR" ]] && ! command -v cargo >/dev/null; then
   exit 1
 fi
 
+# A vector that moves runs the Rust checks where cargo is, and passes with one
+# line where it is not. A path under rust/ in the same run already decided.
+NO_RUST_FOR=""
+if [[ -z "$RUST_FOR" ]]; then
+  VECTORS_FOR="$(vectors_for "$MODE" "$@")"
+  if command -v cargo >/dev/null; then
+    RUST_FOR="$VECTORS_FOR"
+  else
+    NO_RUST_FOR="$VECTORS_FOR"
+  fi
+fi
+
 uv run ruff check .
 uv run ruff format --check .
 uv run pyright
@@ -265,6 +312,10 @@ if [[ -n "$RUST_FOR" ]]; then
     "") "$RUST_GATE" ;;
     *) "$RUST_GATE" "$RUST_TESTS" ;;
   esac
+fi
+
+if [[ -n "$NO_RUST_FOR" ]]; then
+  echo "quality-gate: cargo not on PATH: no Rust test for $NO_RUST_FOR. CI runs the Rust tests"
 fi
 
 case "$MODE" in

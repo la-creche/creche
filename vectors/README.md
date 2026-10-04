@@ -57,6 +57,10 @@ suite.
 The pre-push hook runs this test for a change under a product package and
 for a change under `vectors/`.
 
+The Rust tests read `data/`. CI runs them for each code change under
+`vectors/`. The pre-push hook runs them for such a change when `cargo` is on
+`PATH`. Without `cargo`, the hook prints one line and passes.
+
 When a change to a product package moves behavior:
 
 1. Run `uv run python -m vectors.generate`.

@@ -69,7 +69,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `sbx-drift-check.sh` | OPERATOR, daily | Read-only. Alarms when the global sbx policy holds any network allow, or when a per-sandbox rule allows a host that is not the LAN address and not in the seeded allowlist. |
 | `sync-code-corpus.sh` | OPERATOR, hourly | Refreshes the dedicated code clones the library indexes. The repository list lives outside the corpus. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
-| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. |
+| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. For a push that changes `vectors/`, it runs `rust-gate.sh` when `cargo` is on `PATH`. |
 | `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, the include check, `cargo fmt` and `cargo clippy` on the workspace under `rust/`. `--tests` adds `cargo test`. |
 
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
@@ -92,9 +92,9 @@ from what the Python code does.
 `lib/docsrule.sh` holds the one copy of "does this change touch nothing but
 prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 
-`quality-gate.sh` runs `rust-gate.sh` only for a change that touches `rust/`.
-`lib/rustrule.sh` holds the one copy of that rule. `quality-gate.sh`,
-`gate.yml` and `release.yml` source it.
+`quality-gate.sh` runs `rust-gate.sh` only for a change that touches `rust/`,
+and for a push that changes `vectors/`. `lib/rustrule.sh` holds the one copy
+of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 
 | Mode | The change touches `rust/` when | `rust-gate.sh` runs |
 |---|---|---|
@@ -103,9 +103,9 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 | `--tests` | always | the same, then `cargo test` |
 | `--docs` | never | nothing |
 
-- A change that touches nothing under `rust/` starts no cargo step. It needs
-  no `cargo` on `PATH`, because some sessions commit from a sandbox that has
-  no Rust toolchain.
+- A change that touches nothing under `rust/` needs no `cargo` on `PATH`,
+  because some sessions commit from a sandbox that has no Rust toolchain. It
+  starts no cargo step, with one exception: a push that changes `vectors/`.
 - A change that touches `rust/` with no `cargo` on `PATH` fails before the
   first check.
 - The commit that concludes a merge is a special case of the no-flag mode.
@@ -121,6 +121,11 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
   `gate.yml`, `release.yml` and the scope action. The tests here use a fake
   `cargo`, so only that run proves such a change. A commit or a push of those
   files needs no `cargo`.
+- The Rust tests read `vectors/data`. In CI, a code change under `vectors/`
+  runs `rust-gate.sh`. In `--tests-for` mode, a path under `vectors/` runs
+  `rust-gate.sh --tests` when `cargo` is on `PATH`. Without `cargo`, the gate
+  prints one line and passes. A session with no Rust toolchain can then
+  regenerate the vectors and push. A commit of a vector starts no cargo step.
 - The `[lints]` check refuses a crate that has no `[lints]` table with the
   line `workspace = true`. Such a crate builds with no lint of the workspace.
   The check also fails when it finds no crate.
@@ -136,7 +141,7 @@ prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
 | `test_bin_hook_env.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
-| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the `[lints]` check and the include check. |
+| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. |
 | `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
 | `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job and the same `rust` job, and `!retest` restarts one run. |
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |

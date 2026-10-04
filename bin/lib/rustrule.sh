@@ -14,6 +14,12 @@
 # the Rust checks themselves (rust_gate_path). A runner always has cargo, so
 # the wider answer costs no session its commit.
 #
+# The Rust tests read vectors/data (vectors/README.md), so a vector that moves
+# can break one. rust_touched counts a path under vectors/ too (vectors_path).
+# A push asks vectors_path itself and runs the Rust checks only where cargo
+# is: a Python session with no Rust toolchain regenerates the vectors and
+# must still push.
+#
 # Bash 3.2-clean: macOS runs the hook too.
 
 #: The one directory that holds every Cargo file (rust/AGENTS.md).
@@ -25,6 +31,24 @@ RUST_DIR="rust"
 rust_path() {
   case "$1" in
     "$RUST_DIR"/* | \""$RUST_DIR"/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+#: The directory that holds the vectors, the one input of the Rust tests
+#: outside rust/ (rust/AGENTS.md, Tests).
+VECTORS_DIR="vectors"
+
+# vectors_path PATH: whether PATH is under vectors/, e.g.
+# vectors/data/index.json. The generator and its tests count too: one rule
+# for the whole directory. A path that git wrote in quotes counts, as for
+# rust_path.
+vectors_path() {
+  case "$1" in
+    "$VECTORS_DIR"/* | \""$VECTORS_DIR"/*)
       return 0
       ;;
   esac
@@ -50,7 +74,8 @@ rust_gate_path() {
 }
 
 # rust_touched FROM TO: whether CI runs the Rust checks for FROM..TO: a path
-# it changes is under rust/, or is a file of the Rust checks.
+# it changes is under rust/, is a file of the Rust checks, or is under
+# vectors/.
 rust_touched() {
   local paths path
 
@@ -60,7 +85,7 @@ rust_touched() {
   fi
 
   while IFS= read -r path; do
-    if rust_path "$path" || rust_gate_path "$path"; then
+    if rust_path "$path" || rust_gate_path "$path" || vectors_path "$path"; then
       return 0
     fi
   done <<< "$paths"

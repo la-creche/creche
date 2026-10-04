@@ -8,7 +8,7 @@
 #           ├── proc        code   the process-level suite, each service
 #           │                      as a process, on the built playpen
 #           └── rust        code   cargo fmt, clippy and test, for a push
-#                                  that touches rust/
+#                                  that touches rust/ or vectors/
 #                                 └── release   tags + Releases, only when
 #                                               every job passed
 #
@@ -44,10 +44,11 @@
 # bin/tests/test_gate_workflow.py holds the two files to the same shard
 # command — diff the two when changing either.
 #
-# A push that touches nothing under rust/, onto a commit whose own run
-# passed, skips the steps of the `rust` job (bin/lib/rustrule.sh). The job is
-# still a success. A change under rust/ reaches no component, so it mints no
-# tag (handover/src/handover/allocate.py).
+# A push that touches nothing under rust/ and nothing under vectors/, onto a
+# commit whose own run passed, skips the steps of the `rust` job
+# (bin/lib/rustrule.sh). The job is still a success. A change under rust/
+# reaches no component, so it mints no tag
+# (handover/src/handover/allocate.py).
 #
 # agent-mcp has a SIBLING of the `release` job, in its own
 # rework-component-tags.yml. `mcp-servers` is its component, not
@@ -93,8 +94,9 @@ jobs:
       # does not list, and a dispatch, which has no `before` at all.
       #
       # `rust` is `false` only by the same two facts: that run passed, and
-      # this push touches nothing under rust/. So a push never skips the
-      # Rust checks over a tree whose Rust failed, or is still in, its run.
+      # this push touches nothing under rust/ and nothing under vectors/. So
+      # a push never skips the Rust checks over a tree whose Rust failed, or
+      # is still in, its run.
       - name: scope
         id: scope
         shell: bash
@@ -251,6 +253,7 @@ jobs:
   # (bin/lib/rustrule.sh). The job is then a success: a job skipped as a
   # whole on a code change reads as red in the verdict. A change to the Rust
   # checks themselves, this file included, counts as a change under rust/.
+  # So does a change under vectors/: the Rust tests read vectors/data.
   #
   # The runner has rustup, so no action installs the toolchain.
   # `rustup toolchain install` with no name installs what

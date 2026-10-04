@@ -8,7 +8,8 @@
 # A path under rust/ runs the cargo tests and picks no suite
 # (bin/lib/rustrule.sh, with every other Rust case in test_rust_gate.py).
 # A path in a product package also picks vectors/tests, so a change that
-# moves a vector fails before the push.
+# moves a vector fails before the push. A path under vectors/ also runs the
+# cargo tests, which read vectors/data.
 # CI runs the full suite for any other change and is the merge gate: the
 # scope decides whether a regression in the package just changed is caught
 # before the push or only in CI.
@@ -137,10 +138,12 @@ gate --tests-for bin/quality-gate.sh bin/AGENTS.md
   && pass "a push of bin/ alone runs no vectors suite and no cargo step" \
   || fail "bin alone: rc=$RC, pytest line '$PYTEST', cargo ran '$CARGO'"
 
+# The Rust tests read vectors/data. The fake cargo is on PATH here, and
+# test_rust_gate.py holds the run with no cargo.
 gate --tests-for vectors/data/index.json vectors/generate.py
-[[ "$RC" == "0" && "$PYTEST" == "$FULL $VECTORS $ALWAYS" ]] \
-  && pass "a path under vectors/ runs its suite one time" \
-  || fail "vectors paths: rc=$RC, pytest line '$PYTEST'"
+[[ "$RC" == "0" && "$PYTEST" == "$FULL $VECTORS $ALWAYS" && "$CARGO" == "$RUST_STEPS" ]] \
+  && pass "a path under vectors/ runs its suite one time, and the cargo tests" \
+  || fail "vectors paths: rc=$RC, pytest line '$PYTEST', cargo ran '$CARGO'"
 
 gate --tests-for chaperone/src/chaperone/app.py vectors/data/index.json
 [[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] \
