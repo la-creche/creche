@@ -96,6 +96,15 @@ A shared module may not grow a branch that only one caller reaches.
 - `release_door.py` imports `handover.requester` and never
   `handover.executor`. The `release` verb approves nothing. It files an
   intent.
+- A call has no effect when no audit line can hold its arguments in full.
+  An allow becomes `internal_error`. A denial keeps its reason.
+- Only the line of a denial can hold the marker for such arguments. For
+  each other decision, the writer writes the line and raises `AuditError`.
+- A result that is not strict JSON in UTF-8 is an upstream failure. The
+  audit line says so before the answer goes out.
+- A route never answers 500 with no `reason`. For a failure that no layer
+  handles, the route answers `internal_error`, row 12 of contract 04 §5.
+  A call of a family still gets its audit line.
 
 ## Identity and revocation
 
@@ -154,6 +163,9 @@ authenticated path into the process that holds every credential.
    `SIGHUP` reads again. Never read the roster in `__main__`.
 8. A `sops` failure keeps the credentials already in memory.
 9. One reload task at a time, with a repeat flag.
+10. The read of the roster and of the credentials runs on a worker thread,
+    not on the thread of the event loop. `sops -d` can take seconds, and
+    the loop holds every call.
 
 Both secret layouts are read, and that is permanent. The monolith holds every
 credential that predates the intake. The per-secret store is the only layout
@@ -204,3 +216,16 @@ Each line is an open contract question and the module it lives in.
   outlives its retirement until the unit stops (`mcp_client.py`, `run_as.py`).
 - A call held at a gate across a reload runs under the fences its decision
   read (`family_app.py`).
+- An `embed` reply can hold an empty vector. Contract 04 §4.1 gives no
+  minimum length (`family_app.py`).
+- An `embed` reply can hold `true` or `false` in the vector. Contract 04
+  §4.1 does not say if a boolean is a number (`family_app.py`).
+- A `model_id` of `/info` that is not a string reads as its `str()`.
+  Contract 04 §4.1 gives the id as a string (`family_app.py`).
+- No audit line holds a string that is not Unicode text, or arguments that
+  nest deeper than the interpreter recurses. The record holds a marker in
+  their place (`family_audit.py`, `family_app.py`).
+- A refused body whose echo is not JSON text answers 422 with the type and
+  the message of each error only (`app.py`).
+- The log of a request of no family counts a string that is not Unicode
+  text as its `surrogatepass` bytes (`app.py`).

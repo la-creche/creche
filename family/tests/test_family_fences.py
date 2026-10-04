@@ -6,12 +6,14 @@ a failure reads as "this rule broke", not "some test broke somewhere"."""
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+from agent_family import grammar, serverrules
 from agent_family.grammar import PLATFORM_SERVER, PROBE_FAMILY
 from agent_family.model import FamilyFile
 from agent_family.parse import parse_family
@@ -33,6 +35,48 @@ from family_helpers import (
     messages,
     server_text,
 )
+
+# --- every pattern (the root `AGENTS.md`: `\Z`, never `$`) --------------------
+
+#: Each compiled pattern of the two modules that hold one, by its source. A
+#: pattern with two names, or with an import in the second module, is one row.
+PATTERNS = {
+    value.pattern: value
+    for module in (grammar, serverrules)
+    for value in vars(module).values()
+    if isinstance(value, re.Pattern)
+}
+
+
+@pytest.mark.parametrize("source", PATTERNS)
+def test_a_pattern_ends_at_the_end_of_the_text(source: str) -> None:
+    """`$` also matches before a final newline. The end-of-text sign does not."""
+    assert source.endswith(r"\Z")
+    assert "$" not in source
+
+
+#: A text that each identifier pattern takes, and that `match` must refuse
+#: with a newline after it.
+SAMPLES = {
+    "FAMILY_NAME": "chat",
+    "TOOL_NAME": "search",
+    "MODEL_ALIAS": "agent-router",
+    "MOUNT_PATH": "/srv/agents/vault",
+    "ENV_VAR_NAME": "API_KEY",
+    "HA_IDENTIFIER": "light",
+    "HA_ENTITY_ID": "light.kitchen",
+    "SHA256_HEX": "a" * 64,
+    "GITHUB_REPO": "owner/name",
+    "EXACT_VERSION": "1.0.2",
+}
+
+
+@pytest.mark.parametrize("name", SAMPLES)
+def test_a_pattern_takes_no_final_newline(name: str) -> None:
+    pattern: re.Pattern[str] = getattr(grammar, name)
+    assert pattern.match(SAMPLES[name]) is not None
+    assert pattern.match(SAMPLES[name] + "\n") is None
+
 
 # --- 3.1 name, kind, description -------------------------------------------
 
@@ -438,6 +482,14 @@ EGRESS_CASES = (
     (["*.github.com"], "holds a wildcard, which is ungrantable"),
     (["github.com:99999"], "has a port outside 1 to 65535"),
     (["_bad_host_"], "is not a hostname or hostname:port"),
+    # §3.7 rule 3: a port is ASCII digits. U+00B2 and U+0661 are digits to
+    # `str.isdigit`, and `int` reads only the second one.
+    (["github.com:\u00b2"], "has a port outside 1 to 65535"),
+    (["github.com:\u0661"], "has a port outside 1 to 65535"),
+    # `hostname:port` with no port is neither of the two forms.
+    (["github.com:"], "has a port outside 1 to 65535"),
+    # More digits than the interpreter converts.
+    (["github.com:" + "9" * 5000], "has a port outside 1 to 65535"),
 )
 
 
@@ -449,6 +501,13 @@ def test_egress_fences(egress: list[str], expect: str) -> None:
 
 def test_empty_egress_is_the_normal_case() -> None:
     assert not errors(check("chat"))
+
+
+@pytest.mark.parametrize(
+    "entry", ["github.com", "github.com:1", "github.com:65535", "a.b:00443", "a.b:000443"]
+)
+def test_a_hostname_with_a_port_in_range_is_allowed(entry: str) -> None:
+    assert not errors(check("code", egress=[entry]))
 
 
 # --- 3.8 shell and sandbox_tools ---------------------------------------------
@@ -493,6 +552,9 @@ SANDBOX_CASES = (
     ({"cpus": 2, "memory": "2x"}, "must match [1-9][0-9]*[mg]"),
     ({"cpus": 2, "memory": "64m"}, "is outside 256m to 16g"),
     ({"cpus": 2, "memory": "32g"}, "is outside 256m to 16g"),
+    # A count of more digits than the interpreter converts is past the range.
+    ({"cpus": 2, "memory": "9" * 5000 + "g"}, "is outside 256m to 16g"),
+    ({"cpus": 2, "memory": "9" * 5000 + "m"}, "is outside 256m to 16g"),
     ({"cpus": 2, "memory": "2g", "max_resident_processes": 0}, "is outside 1 to 32"),
     ({"cpus": 2, "memory": "2g", "max_resident_processes": 33}, "is outside 1 to 32"),
 )
@@ -592,6 +654,7 @@ JOB_CASES = (
     ({"timeout": "10x"}, "must match [1-9][0-9]*[smh]"),
     ({"timeout": "0s"}, "must match [1-9][0-9]*[smh]"),  # [1-9] leads, so "0s" is a bad shape
     ({"timeout": "2h"}, "outside 1s to 1h"),
+    ({"timeout": "9" * 5000 + "s"}, "outside 1s to 1h"),
 )
 
 
@@ -625,11 +688,21 @@ def test_autonomous_family_needs_at_least_one_trigger() -> None:
     assert "needs at least one trigger" in messages(report)
 
 
+CRON_CHARACTER = "has a cron field with a character other than 0-9, '*', ',', '-' or '/'"
+
 TRIGGER_CASES: tuple[tuple[list[dict[str, Any]], str], ...] = (
     ([{"cron": "@hourly", "webhook": "x"}], "exactly one of 'cron', 'webhook' or 'enqueue'"),
     ([{}], "exactly one of 'cron', 'webhook' or 'enqueue'"),
     ([{"cron": "@hourly", "enqueue": True}], "exactly one of 'cron', 'webhook' or 'enqueue'"),
     ([{"cron": "not a cron"}], "not a five-field cron expression"),
+    # The count of fields comes first: four fields get the message of the count.
+    ([{"cron": "0 9 * mon"}], "not a five-field cron expression"),
+    # A field holds ASCII digits and `*`, `,`, `-`, `/`. U+0669 and U+00B2
+    # are digits to `str.isdigit`, and the timer step converts neither.
+    # Such a line has five fields, so its message names the character rule.
+    ([{"cron": "0 \u0669 * * *"}], CRON_CHARACTER),
+    ([{"cron": "*/\u00b2 * * * *"}], CRON_CHARACTER),
+    ([{"cron": "0 9 * * mon"}], CRON_CHARACTER),
     ([{"webhook": "Bad_Name"}], "must match [a-z][a-z0-9-]"),
     # §3.13 rule 5: absence is denial, so a false trigger is not a trigger.
     ([{"enqueue": False}], "'enqueue: false' is not a trigger"),
@@ -643,8 +716,14 @@ def test_trigger_fences(triggers: list[dict[str, object]], expect: str) -> None:
     assert expect in messages(report)
 
 
-def test_a_five_field_cron_is_valid() -> None:
-    report = check("scrum-lead", triggers=[{"cron": "0 * * * *"}])
+def test_a_cron_line_gets_one_message() -> None:
+    report = check("scrum-lead", triggers=[{"cron": "0 9 * * mon"}])
+    assert [issue.msg for issue in errors(report)] == [f"'0 9 * * mon' {CRON_CHARACTER}"]
+
+
+@pytest.mark.parametrize("cron", ["0 * * * *", "*/15 0-6,22 1 1,7 1-5", "0  9\t* * 0"])
+def test_a_five_field_cron_is_valid(cron: str) -> None:
+    report = check("scrum-lead", triggers=[{"cron": cron}])
     assert not errors(report)
 
 
@@ -833,3 +912,70 @@ def test_unparsable_yaml_is_refused() -> None:
     family, issues = parse_family("name: [unclosed\n")
     assert family is None
     assert any("YAML will not parse" in issue.msg for issue in issues)
+
+
+# --- a text with no value (contract 01 §7, invariant 19) ---------------------
+
+_HEAD = (
+    "name: chat\nkind: attended\ndescription: x\n"
+    "model: {router: agent-router, budget_usd_per_day: 1}\n"
+)
+
+#: YAML that the reader has no value for. Each one is past the syntax check.
+NO_VALUE_TEXTS = {
+    # A decimal integer of more digits than the interpreter converts.
+    "decimal-integer": "max_inflight_delegations: " + "9" * 5000 + "\n",
+    # The same size in base 16, which the reader converts and nothing prints.
+    "base-16-integer": "max_inflight_delegations: 0x" + "f" * 4000 + "\n",
+    "base-16-nested": "sandbox: { cpus: 0x" + "f" * 4000 + " }\n",
+    "base-16-key": "? 0x" + "f" * 4000 + "\n: 1\n",
+    # The reader gives a tuple for `!!pairs` and a set for `!!set`.
+    "base-16-pairs": "skills: !!pairs [ { a: 0x" + "f" * 4000 + " } ]\n",
+    "base-16-set": "skills: !!set\n  ? 0x" + "f" * 4000 + "\n",
+    # A date that the calendar does not hold.
+    "date": "shell: 2001-02-30\n",
+    # A tag on a text that is no value of the tag.
+    "int-tag-word": "sandbox: { cpus: !!int two }\n",
+    "int-tag-empty": 'sandbox: { cpus: !!int "" }\n',
+    "float-tag-word": "sandbox: { cpus: !!float two }\n",
+    "bool-tag-word": "shell: !!bool maybe\n",
+    "timestamp-tag-word": "shell: !!timestamp soon\n",
+    # A base 60 float past the largest float.
+    "base-60-float": "sandbox: { cpus: 1" + ":0" * 200 + ".5 }\n",
+}
+
+
+@pytest.mark.parametrize("case", NO_VALUE_TEXTS)
+def test_a_text_with_no_value_is_refused(case: str) -> None:
+    family, issues = parse_family(_HEAD + NO_VALUE_TEXTS[case])
+    assert family is None
+    assert [issue.loc for issue in issues] == ["<document>"]
+    assert "YAML will not parse" in issues[0].msg
+
+
+def test_a_text_that_nests_too_deep_is_refused() -> None:
+    family, issues = parse_family(_HEAD + "skills: " + "[" * 10_000 + "]" * 10_000 + "\n")
+    assert family is None
+    assert [issue.msg for issue in issues] == ["YAML will not parse: the text nests too deep"]
+
+
+def test_an_anchor_that_holds_itself_is_read_to_its_end() -> None:
+    family, issues = parse_family(_HEAD + "skills: &again [*again]\n")
+    assert family is None
+    assert [issue.loc for issue in issues] == ["skills[0]"]
+
+
+def test_one_file_with_no_value_does_not_stop_the_registry_read(tmp_path: Path) -> None:
+    """§7 rule 5: the other families keep their reports."""
+    registry_copy = tmp_path / "registry"
+    shutil.copytree(FIXTURES, registry_copy)
+    broken = registry_copy / "families" / "no-value"
+    broken.mkdir()
+    (broken / "family.yaml").write_text(_HEAD + NO_VALUE_TEXTS["decimal-integer"], encoding="utf-8")
+
+    loaded = load_registry(registry_copy, host())
+    assert "YAML will not parse" in messages(loaded.reports["no-value"])
+    assert not loaded.reports["no-value"].ok
+    assert "no-value" not in loaded.families
+    assert loaded.reports["chat"].ok
+    assert "chat" in loaded.families

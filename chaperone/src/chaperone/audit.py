@@ -62,15 +62,22 @@ class AuditLog:
                 path.unlink(missing_ok=True)
 
     def write(self, record: dict[str, object]) -> None:
+        """Append one line. `AuditError` when the file cannot take it.
+
+        A record that is not JSON text in UTF-8 raises `ValueError` or
+        `RecursionError` before the file opens, so it leaves no file and no
+        part of a line. The caller decides what the line holds then.
+        """
         now = datetime.now(UTC)
         record = {"ts": now.isoformat(timespec="milliseconds"), **record}
         line = json.dumps(record, ensure_ascii=False, default=repr)
+        data = (line + "\n").encode("utf-8")
         path = self.path_for(now)
         try:
             # 0640 regardless of umask: full args live here; the `agents`
             # group (the operator) reads, nobody else.
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
-            with os.fdopen(fd, "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+            with os.fdopen(fd, "ab") as fh:
+                fh.write(data)
         except OSError as exc:
             raise AuditError(f"audit write failed: {exc}") from exc

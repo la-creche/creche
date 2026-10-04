@@ -1,0 +1,540 @@
+"""No request makes a route raise: each one gets the body of contract 04
+§5.1, and each `/call` of a family gets its audit line.
+
+`chaperone/AGENTS.md`, "Fail closed". The tests here send what the body
+reader takes and a later step cannot use: a string that is not Unicode
+text, and arguments that nest past the limit of the interpreter. They also
+make a layer raise a failure that no handler names.
+
+The client does not re-raise an error of the server. A test then reads the
+answer that a caller gets.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import Final
+
+import httpx
+import pytest
+from chaperone.app import PepConfig, create_app
+from chaperone.dispatch import DispatchDoor, DispatchReply, DispatchRequest, JobQuery, JobsReply
+from chaperone.family_app import FamilyGate
+from chaperone.family_audit import (
+    AUDIT_ARG_STRING_MAX_CHARS,
+    AUDIT_TRUNCATION_MARKER,
+    UNRECORDABLE_ARGS,
+)
+from chaperone.gatekeeper import (
+    GateHeld,
+    Gatekeeper,
+    GateNotice,
+    GateTicket,
+    ReachCheck,
+    Verdict,
+)
+from chaperone.gates import gate_id
+from chaperone.mcp_client import UpstreamSpec
+from chaperone_family_helpers import FAMILY_TOKEN, make_grants, write_grants
+from chaperone_helpers import FakePool
+from fastapi.testclient import TestClient
+
+from chaperone import app as app_module
+from chaperone import family_app
+
+KAGI: Final = UpstreamSpec(name="kagi", command="x", args=(), env={})
+SEARCH: Final = "kagi__kagi_search_fetch"
+
+#: A JSON escape for half of a surrogate pair. The body reader takes it, and
+#: the string that it gives has no UTF-8 form.
+LONE: Final = "\\ud800"
+
+#: More levels than the audit writer walks, and less than the body reader
+#: reads.
+DEEP: Final = 5000
+DEEP_JSON: Final = "[" * DEEP + "]" * DEEP
+
+#: The depths around the last one that the audit writer walks. That depth
+#: is the recursion limit of the interpreter less the frames of the caller,
+#: so the walk starts under it and ends over it.
+EDGE_DEPTHS: Final = range(sys.getrecursionlimit() - 200, sys.getrecursionlimit() + 1)
+
+#: More calls in a minute than the walk of `EDGE_DEPTHS` makes.
+NO_RATE_LIMIT: Final = {"pep_rpm": 10 * len(EDGE_DEPTHS)}
+
+INTERNAL_ERROR: Final = {"ok": False, "reason": "internal_error", "detail": None}
+
+
+class Notified:
+    """A phone rail that takes each push."""
+
+    def __init__(self) -> None:
+        self.notices: list[GateNotice] = []
+
+    async def notify(self, notice: GateNotice) -> bool:
+        self.notices.append(notice)
+
+        return True
+
+
+class Approves:
+    """A phone rail whose operator approves each gate when the call waits."""
+
+    def __init__(self) -> None:
+        self.keeper: Gatekeeper | None = None
+
+    async def notify(self, notice: GateNotice) -> bool:
+        assert self.keeper is not None
+        tap = self.keeper.resolve
+        asyncio.get_running_loop().call_soon(tap, notice.gate, Verdict.APPROVE)
+
+        return True
+
+
+def build(
+    tmp_path: Path,
+    *,
+    pool: FakePool | None = None,
+    gatekeeper: Gatekeeper | None = None,
+    requests: list[httpx.Request] | None = None,
+    dispatch_door: DispatchDoor | None = None,
+) -> TestClient:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if requests is not None:
+            requests.append(request)
+        if request.url.path.endswith("/info"):
+            return httpx.Response(200, json={"model_id": "m"})
+
+        return httpx.Response(200, json=[[0.1, 0.2]])
+
+    app = create_app(
+        PepConfig(
+            audit_dir=tmp_path / "audit",
+            rework_dir=tmp_path / "rework",
+            upstreams={"kagi": KAGI},
+            tei_url="http://tei.invalid:8085",
+        ),
+        pool=pool or FakePool(),
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        gatekeeper=gatekeeper,
+        dispatch_door=dispatch_door,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    client.__enter__()  # run lifespan
+
+    return client
+
+
+def grants_dir(tmp_path: Path) -> Path:
+    return tmp_path / "rework" / "grants"
+
+
+def _lines(directory: Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for path in sorted(directory.glob("*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            records.append(json.loads(line))
+
+    return records
+
+
+def family_lines(tmp_path: Path) -> list[dict[str, object]]:
+    return _lines(tmp_path / "rework" / "audit")
+
+
+def unidentified_lines(tmp_path: Path) -> list[dict[str, object]]:
+    return _lines(tmp_path / "audit")
+
+
+def call(client: TestClient, body: str, token: str = FAMILY_TOKEN) -> httpx.Response:
+    """One `POST /call` with the exact text of a body."""
+    return client.post(
+        "/call",
+        content=body.encode("ascii"),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+
+
+def body_of(tool: str, args: str) -> str:
+    return f'{{"tool":"{tool}","args":{args}}}'
+
+
+#: What a line holds for a string that the audit cut before the part that
+#: is not text.
+CUT: Final = {"query": "a" * AUDIT_ARG_STRING_MAX_CHARS + AUDIT_TRUNCATION_MARKER}
+
+#: Arguments that the body reader takes and that no audit line can hold in
+#: full, each with what its line holds.
+NOT_FOR_A_LINE: Final = [
+    pytest.param(f'{{"query":"{LONE}"}}', UNRECORDABLE_ARGS, id="a-string-that-is-not-text"),
+    pytest.param(f'{{"{LONE}":1}}', UNRECORDABLE_ARGS, id="a-key-that-is-not-text"),
+    pytest.param(f'{{"query":{DEEP_JSON}}}', UNRECORDABLE_ARGS, id="nested-too-deep"),
+    pytest.param(f'{{"query":"{"a" * 9000}{LONE}"}}', CUT, id="not-text-after-the-audit-cut"),
+]
+
+
+# ---- the audit line of a call of a family -----------------------------------
+
+
+@pytest.mark.parametrize(("args", "held"), NOT_FOR_A_LINE)
+def test_a_denied_call_keeps_its_reason_and_its_line(
+    tmp_path: Path, args: str, held: dict[str, object]
+) -> None:
+    """Row 4 of §5 decides this call. The line says so, and it holds a
+    marker in place of arguments that no line can hold."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path)
+
+    reply = call(client, body_of("kagi__not_granted", args))
+
+    assert reply.status_code == 403
+    assert reply.json()["reason"] == "tool_not_granted"
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("deny", "tool_not_granted")
+    assert record["args"] == held
+
+
+@pytest.mark.parametrize(("args", "held"), NOT_FOR_A_LINE)
+def test_an_allowed_call_that_no_line_can_hold_has_no_effect(
+    tmp_path: Path, args: str, held: dict[str, object]
+) -> None:
+    """The effect must not occur where the audit cannot record it in full.
+    The decision is allow, so the answer is row 12: `internal_error`."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    pool = FakePool()
+    client = build(tmp_path, pool=pool)
+
+    reply = call(client, body_of(SEARCH, args))
+
+    assert reply.status_code == 500
+    assert reply.json()["reason"] == "internal_error"
+    assert pool.calls == []
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("deny", "internal_error")
+    assert record["args"] == held
+
+
+def test_a_verb_with_a_string_that_is_not_text_reaches_no_service(tmp_path: Path) -> None:
+    write_grants(grants_dir(tmp_path), make_grants())
+    requests: list[httpx.Request] = []
+    client = build(tmp_path, requests=requests)
+
+    reply = call(client, body_of("embed", f'{{"input":"{LONE}"}}'))
+
+    assert reply.status_code == 500
+    assert reply.json()["reason"] == "internal_error"
+    assert requests == []
+    [record] = family_lines(tmp_path)
+    assert (record["tool"], record["decision"]) == ("embed", "deny")
+    assert record["args"] == UNRECORDABLE_ARGS
+
+
+def test_a_gated_call_that_no_line_can_hold_opens_no_gate(tmp_path: Path) -> None:
+    write_grants(grants_dir(tmp_path), make_grants(approval=[SEARCH]))
+    rail = Notified()
+    pool = FakePool()
+    client = build(tmp_path, pool=pool, gatekeeper=Gatekeeper(rail))
+
+    reply = call(client, body_of(SEARCH, f'{{"query":"{LONE}"}}'))
+
+    assert reply.status_code == 500
+    assert rail.notices == []
+    assert pool.calls == []
+    assert [record["decision"] for record in family_lines(tmp_path)] == ["deny"]
+
+
+@pytest.mark.parametrize(
+    "approval",
+    [pytest.param([], id="plain"), pytest.param([SEARCH], id="approved-at-a-gate")],
+)
+def test_no_line_of_a_call_with_an_effect_holds_the_marker(
+    tmp_path: Path, approval: list[str]
+) -> None:
+    """`chaperone/AGENTS.md`: a call has no effect when no audit line can
+    hold its arguments in full. The check before the effect and the write
+    after it must agree at each depth, also at the last one that the writer
+    walks. A call is refused before its effect and before its gate, or each
+    of its lines holds its arguments."""
+    write_grants(grants_dir(tmp_path), make_grants(approval=approval, limits=NO_RATE_LIMIT))
+    pool = FakePool()
+    rail = Approves()
+    rail.keeper = Gatekeeper(rail)
+    client = build(tmp_path, pool=pool, gatekeeper=rail.keeper)
+
+    statuses: list[int] = []
+    for depth in EDGE_DEPTHS:
+        nested = "[" * depth + "]" * depth
+        statuses.append(call(client, body_of(SEARCH, f'{{"query":{nested}}}')).status_code)
+
+    records = family_lines(tmp_path)
+    marked = [r["decision"] for r in records if r["args"] == UNRECORDABLE_ARGS]
+    assert set(marked) == {"deny"}
+    assert len(pool.calls) == [r["decision"] for r in records].count("allow")
+    # The walk passes the last depth: the first call runs, the last does not.
+    assert (statuses[0], statuses[-1]) == (200, 500)
+    assert len(pool.calls) == statuses.count(200)
+
+
+def test_a_detail_that_is_not_text_still_reaches_the_caller(tmp_path: Path) -> None:
+    """The schema of a verb names the argument that it refuses. The name is
+    text of the caller, and the reply must carry it."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path)
+
+    reply = call(client, body_of("embed", f'{{"input":"x","{LONE}":1}}'))
+
+    assert reply.status_code == 400
+    assert reply.json()["reason"] == "arg_validation"
+    assert "\\ud800 is not a known argument" in reply.json()["detail"]
+    assert [record["reason"] for record in family_lines(tmp_path)] == ["arg_validation"]
+
+
+# ---- a request that names no family -------------------------------------------
+
+
+def test_a_request_of_no_family_gets_its_line_for_any_arguments(tmp_path: Path) -> None:
+    """The line holds the size and the digest of the arguments. A string
+    that is not text counts as the bytes that it has "as it is"."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path)
+    args = f'{{"query":"{LONE}"}}'
+
+    reply = call(client, body_of(SEARCH, args), token="nobody")
+
+    assert reply.status_code == 403
+    assert reply.json()["reason"] == "unknown_token"
+    assert family_lines(tmp_path) == []
+    raw = '{"query": "\ud800"}'.encode("utf-8", "surrogatepass")
+    [record] = unidentified_lines(tmp_path)
+    assert record["reason"] == "unknown_token"
+    assert record["args_bytes"] == len(raw)
+    assert record["args_sha256"] == hashlib.sha256(raw).hexdigest()
+
+
+# ---- the result of an upstream -----------------------------------------------
+
+
+def test_a_result_that_no_reply_can_carry_is_an_upstream_failure(tmp_path: Path) -> None:
+    """A result is bytes of another process. One that is not JSON text is §5
+    row 11, and the line says so before the answer goes out."""
+
+    class Answers(FakePool):
+        async def call(self, server: str, tool: str, args: dict[str, object]) -> str:
+            return "\ud800"
+
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path, pool=Answers())
+
+    reply = call(client, body_of(SEARCH, '{"query":"x"}'))
+
+    assert reply.status_code == 502
+    assert reply.json()["reason"] == "upstream_failed"
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("allow", "upstream_failed")
+
+
+class NotANumber:
+    """A dispatch door whose list of jobs holds a number that strict JSON
+    cannot write."""
+
+    async def enqueue(self, request: DispatchRequest) -> DispatchReply:
+        raise AssertionError("this door takes no job")
+
+    async def jobs(self, query: JobQuery) -> JobsReply:
+        return JobsReply(jobs=[{"session": "auto-1", "cost": float("nan")}])
+
+
+def test_a_result_with_a_number_that_is_not_finite_is_an_upstream_failure(
+    tmp_path: Path,
+) -> None:
+    """The reply of this PEP is strict JSON, which has no word for such a
+    number. The line says `upstream_failed` before the answer goes out."""
+    write_grants(grants_dir(tmp_path), make_grants(verbs={"job_status": {}}))
+    client = build(tmp_path, dispatch_door=NotANumber())
+
+    reply = call(client, body_of("job_status", "{}"))
+
+    assert reply.status_code == 502
+    assert reply.json()["reason"] == "upstream_failed"
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("allow", "upstream_failed")
+
+
+def test_a_failure_text_that_is_not_text_still_reaches_the_caller(tmp_path: Path) -> None:
+    """The text of an upstream failure is text of another process. The
+    reply carries it, with an escape for what has no UTF-8 form."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    pool = FakePool()
+    pool.fail_with = "the server said \ud800"
+    client = build(tmp_path, pool=pool)
+
+    reply = call(client, body_of(SEARCH, '{"query":"x"}'))
+
+    assert reply.status_code == 502
+    assert reply.json()["reason"] == "upstream_failed"
+    assert reply.json()["detail"] == "the server said \\ud800"
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("allow", "upstream_failed")
+
+
+# ---- a gate that ends by a failure -------------------------------------------
+
+
+class BrokenHold(Gatekeeper):
+    """A gate whose wait raises a failure that no handler names."""
+
+    async def hold(self, ticket: GateTicket, reach: ReachCheck) -> GateHeld:
+        raise RuntimeError("a failure nobody predicted")
+
+
+def test_a_hold_that_raises_writes_the_second_record_and_denies(tmp_path: Path) -> None:
+    """§6.4: a gated call writes two records. The second one says why the
+    gate ended, also when the wait itself failed."""
+    write_grants(grants_dir(tmp_path), make_grants(approval=[SEARCH]))
+    pool = FakePool()
+    client = build(tmp_path, pool=pool, gatekeeper=BrokenHold(Notified()))
+
+    reply = call(client, body_of(SEARCH, '{"query":"x"}'))
+
+    assert reply.status_code == 500
+    assert reply.json() == INTERNAL_ERROR
+    assert pool.calls == []
+    gate = gate_id("chat", SEARCH, {"query": "x"})
+    records = family_lines(tmp_path)
+    assert [(r["decision"], r["reason"], r["gate"]) for r in records] == [
+        ("pending", "approval_required", gate),
+        ("deny", "internal_error", gate),
+    ]
+
+
+# ---- a failure that no layer names --------------------------------------------
+
+
+def test_a_call_that_raises_anything_writes_one_line_and_denies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Row 12 of §5, for a failure outside the decision and the execution."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    pool = FakePool()
+    client = build(tmp_path, pool=pool)
+
+    def explode(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("a failure nobody predicted")
+
+    monkeypatch.setattr(family_app, "can_hold", explode)
+    reply = call(client, body_of(SEARCH, '{"query":"x"}'))
+
+    assert reply.status_code == 500
+    assert reply.json() == INTERNAL_ERROR
+    assert pool.calls == []
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("deny", "internal_error")
+    assert record["args"] == {"query": "x"}
+
+
+# ---- a route that raises ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "send",
+    [
+        pytest.param(lambda client: call(client, body_of("embed", '{"input":"x"}')), id="call"),
+        pytest.param(
+            lambda client: client.get(
+                "/manifest", headers={"Authorization": f"Bearer {FAMILY_TOKEN}"}
+            ),
+            id="manifest",
+        ),
+    ],
+)
+def test_a_route_that_raises_answers_the_body_of_the_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    send: Callable[[TestClient], httpx.Response],
+) -> None:
+    """Row 12 of §5 gives `internal_error` for a failure that no layer
+    handled. The answer holds that reason, and is never a 500 with no
+    reason."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path)
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("a failure nobody predicted")
+
+    monkeypatch.setattr(FamilyGate, "lookup", explode)
+    reply = send(client)
+
+    assert reply.status_code == 500
+    assert reply.json() == INTERNAL_ERROR
+
+
+# ---- a body that the reader refuses --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(f'{{"tool":"{LONE}"}}', id="a-tool-that-is-not-text"),
+        pytest.param(f'{{"tool":"embed","{LONE}":1}}', id="a-key-that-is-not-text"),
+        pytest.param(f'{{"tool":"embed","args":"{LONE}"}}', id="arguments-that-are-not-text"),
+        pytest.param(f'{{"tool":{DEEP_JSON}}}', id="a-tool-nested-too-deep"),
+    ],
+)
+def test_a_refused_body_is_422_for_any_content(tmp_path: Path, body: str) -> None:
+    """The reader echoes what it refused. When the echo is no JSON text, the
+    answer keeps the status and each error, without the echo."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path)
+
+    reply = call(client, body)
+
+    assert reply.status_code == 422
+    errors = reply.json()["detail"]
+    assert errors
+    assert all(set(error) == {"type", "msg"} for error in errors)
+
+
+def test_a_refused_body_keeps_its_echo_when_the_echo_is_text(tmp_path: Path) -> None:
+    write_grants(grants_dir(tmp_path), make_grants())
+    client = build(tmp_path)
+
+    reply = call(client, '{"tool":5}')
+
+    assert reply.status_code == 422
+    [error] = reply.json()["detail"]
+    assert error["loc"] == ["body", "tool"]
+    assert error["input"] == 5
+
+
+# ---- the retention sweep -------------------------------------------------------
+
+
+async def test_a_retention_sweep_that_raises_does_not_stop_the_next_one() -> None:
+    """One handler in the loop body: the failure is one log line, and the
+    loop goes on. The other log still gets its sweep in the same pass."""
+    runs: list[str] = []
+    enough = asyncio.Event()
+
+    def explode() -> None:
+        runs.append("raised")
+        raise RuntimeError("a failure nobody predicted")
+
+    def sweep() -> None:
+        runs.append("swept")
+        if runs.count("swept") >= 2:
+            enough.set()
+
+    loop = asyncio.create_task(app_module._retention_sweep_loop([explode, sweep], 0.01))
+    try:
+        await asyncio.wait_for(enough.wait(), 5.0)
+    finally:
+        loop.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await loop
+
+    assert runs[:4] == ["raised", "swept", "raised", "swept"]

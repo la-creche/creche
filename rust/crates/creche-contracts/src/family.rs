@@ -1588,11 +1588,6 @@ fn is_host_label(label: &str) -> bool {
 }
 
 fn is_port(port: &str) -> bool {
-    // CONTRACT-QUESTION: contract 01 §3.7 says "port 1 to 65535". The Python
-    // validator also reads a decimal digit that is not ASCII. This check
-    // refuses such a digit, as rule 9 of `rust/AGENTS.md` says. To read such
-    // a digit costs a table of the decimal digits of Unicode here, and the
-    // row `rule-egress-edges` of `DEVIATIONS` goes away.
     let digits = port.trim_start_matches('0');
 
     port.bytes().all(|byte| byte.is_ascii_digit())
@@ -1606,7 +1601,8 @@ impl FromStr for EgressHost {
     type Err = EgressHostError;
 
     fn from_str(text: &str) -> Result<Self, EgressHostError> {
-        let (host, port) = text.split_once(':').unwrap_or((text, ""));
+        let parts = text.split_once(':');
+        let (host, port) = parts.unwrap_or((text, ""));
         if text.contains('*') {
             return Err(EgressHostError::Wildcard);
         }
@@ -1615,7 +1611,8 @@ impl FromStr for EgressHost {
             return Err(EgressHostError::IpLiteral);
         }
 
-        if !port.is_empty() && !is_port(port) {
+        // A colon with no port after it is neither of the two forms.
+        if parts.is_some() && !is_port(port) {
             return Err(EgressHostError::BadPort);
         }
 
@@ -1763,22 +1760,49 @@ impl FromStr for JobTimeout {
 
 checked_text! {
     /// When a cron trigger fires: five fields, or one of `@hourly`, `@daily`
-    /// and `@weekly` (contract 01 §3.13).
+    /// and `@weekly` (contract 01 §3.13). A field holds ASCII digits and
+    /// `*`, `,`, `-`, `/`.
     Cron
 }
 
 /// Why a text is not a cron expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CronError;
+pub enum CronError {
+    /// The text does not have five fields and is no short form.
+    Fields,
+    /// A field holds a character that no cron field takes.
+    Character,
+}
 
-error_texts!(CronError => "a cron expression has five fields, or is @hourly, @daily or @weekly");
+error_texts!(CronError {
+    Fields => "a cron expression has five fields, or is @hourly, @daily or @weekly",
+    Character => "a cron field holds ASCII digits and '*', ',', '-', '/'",
+});
+
+/// Whether a text is one field of a cron expression.
+fn is_cron_field(field: &str) -> bool {
+    // Contract 01 §3.13 gives no grammar for a field. The Python validator
+    // takes ASCII digits and the signs of a list, a range and a step, and
+    // this check does the same. `family/AGENTS.md` holds the question.
+    field
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || matches!(byte, b'*' | b',' | b'/' | b'-'))
+}
 
 impl FromStr for Cron {
     type Err = CronError;
 
     fn from_str(text: &str) -> Result<Self, CronError> {
-        if !CRON_SHORTHANDS.contains(&text) && py_words(text).count() != CRON_FIELDS {
-            return Err(CronError);
+        if CRON_SHORTHANDS.contains(&text) {
+            return Ok(Self(text.to_owned()));
+        }
+
+        if py_words(text).count() != CRON_FIELDS {
+            return Err(CronError::Fields);
+        }
+
+        if !py_words(text).all(is_cron_field) {
+            return Err(CronError::Character);
         }
 
         Ok(Self(text.to_owned()))
@@ -3229,19 +3253,20 @@ fn vet_trigger(
     let loc = format!("triggers[{position}]");
     match (&trigger.cron, &trigger.webhook, trigger.enqueue) {
         (Some(expression), None, None) => {
-            let cron = expression.parse::<Cron>().ok();
-            if cron.is_none() {
-                out.error(
-                    at,
-                    format!("{loc}.cron"),
-                    format!(
-                        "'{expression}' is not a five-field cron expression or one of {}",
-                        CRON_SHORTHANDS.join(", ")
-                    ),
-                );
-            }
+            let said = match expression.parse::<Cron>() {
+                Ok(cron) => return Some(Trigger::Cron(cron)),
+                Err(CronError::Fields) => format!(
+                    "is not a five-field cron expression or one of {}",
+                    CRON_SHORTHANDS.join(", ")
+                ),
+                Err(CronError::Character) => {
+                    "has a cron field with a character other than 0-9, '*', ',', '-' or '/'"
+                        .to_owned()
+                }
+            };
+            out.error(at, format!("{loc}.cron"), format!("'{expression}' {said}"));
 
-            cron.map(Trigger::Cron)
+            None
         }
         (None, Some(name), None) => {
             let webhook = name.parse::<WebhookName>().ok();
@@ -3758,12 +3783,12 @@ mod tests {
     use std::str::FromStr;
 
     use super::{
-        Cpus, Cron, DailyBudget, Description, EgressHost, EgressHostError, Family, FloorHours,
-        HaEntityId, HaIdentifier, InflightCap, JobTimeout, JobTimeoutError, Kind, LocalHour,
-        Memory, MemoryError, ModelAlias, ModelAliasError, MountPath, MountPathError, NO_REASON,
-        Placed, RawFamily, RawInt, RawModel, RawToolGrant, RawTrigger, Refused, ResidentProcs,
-        RunningTurns, Section, Severity, Slot, collapse, duration_s, is_under, memory_mb,
-        python_float_text,
+        Cpus, Cron, CronError, DailyBudget, Description, EgressHost, EgressHostError, Family,
+        FloorHours, HaEntityId, HaIdentifier, InflightCap, JobTimeout, JobTimeoutError, Kind,
+        LocalHour, Memory, MemoryError, ModelAlias, ModelAliasError, MountPath, MountPathError,
+        NO_REASON, Placed, RawFamily, RawInt, RawModel, RawToolGrant, RawTrigger, Refused,
+        ResidentProcs, RunningTurns, Section, Severity, Slot, collapse, duration_s, is_under,
+        memory_mb, python_float_text,
     };
     use crate::vectors::{self, Outcome};
 
@@ -4025,12 +4050,12 @@ mod tests {
                 "example.com",
                 "example.com:443",
                 "example.com:65535",
-                "example.com:",
                 "EXAMPLE.com",
                 "localhost",
                 "1.2.3",
                 "a-b.example",
                 "example.com:00443",
+                "example.com:000443",
             ],
             &["", "example.com\n", "example.com:443\n"],
         );
@@ -4040,6 +4065,7 @@ mod tests {
             ("192.0.2.10:443", EgressHostError::IpLiteral),
             ("999.999.999.999", EgressHostError::IpLiteral),
             ("::1", EgressHostError::IpLiteral),
+            ("example.com:", EgressHostError::BadPort),
             ("example.com:0", EgressHostError::BadPort),
             ("example.com:65536", EgressHostError::BadPort),
             ("example.com:+1", EgressHostError::BadPort),
@@ -4099,9 +4125,32 @@ mod tests {
                 "@weekly",
                 "0 6 * * 1-5",
                 " 0  6 * *\t1 ",
+                "*/15 0-6,22 1 1,7 1-5",
             ],
-            &["", "@yearly", "0 6 * *", "0 6 * * 1 2", "@hourly "],
+            &[
+                "",
+                "@yearly",
+                "0 6 * *",
+                "0 6 * * 1 2",
+                "@hourly ",
+                "0 6 * * mon",
+                "0 \u{669} * * *",
+                "*/\u{b2} * * * *",
+                "? ? ? ? ?",
+            ],
         );
+        let refused = [
+            ("", CronError::Fields),
+            ("0 6 * *", CronError::Fields),
+            ("0 6 * mon", CronError::Fields),
+            ("0 6 * * 1 2", CronError::Fields),
+            ("@hourly ", CronError::Fields),
+            ("0 6 * * mon", CronError::Character),
+            ("0 \u{669} * * *", CronError::Character),
+        ];
+        for (text, error) in refused {
+            assert_eq!(text.parse::<Cron>(), Err(error), "{text:?}");
+        }
     }
 
     #[test]

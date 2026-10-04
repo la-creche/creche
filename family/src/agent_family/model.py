@@ -34,6 +34,11 @@ ToolGrant = list[str] | str
 class Strict(BaseModel):
     """Unknown field = refusal, everywhere (contract 01 §7 rule 1)."""
 
+    # CONTRACT-QUESTION: contract 01 §2 and contract 01b give a type for each
+    # field and do not say how strict the read of a type is. These models
+    # read in the lax mode of pydantic: `"2"` is the integer 2, `"yes"` is
+    # true and `true` is the number 1. Root refuses such a value in a server
+    # file. The strict mode refuses a file that passes today.
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
