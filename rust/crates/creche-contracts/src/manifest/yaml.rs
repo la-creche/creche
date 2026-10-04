@@ -3344,8 +3344,15 @@ fn is_python_space(character: char) -> bool {
 /// What Python `int(text, base)` gives for an ASCII text with no underscore.
 ///
 /// `None` is a text that is no integer. `Some(None)` is an integer that does
-/// not fit 64 bits. A text with a digit or a space that is not ASCII gives
-/// `None`: the caller then refuses a text that Python can read.
+/// not fit 64 bits.
+///
+/// CONTRACT-QUESTION: contract 06 §8 names no digit and no space outside
+/// ASCII. Python `int` and `float` also read a decimal digit and a space that
+/// are not ASCII: `!!int "\u0664"` is 4. This function and
+/// [`is_python_float`] give no value for such a text, as rule 9 of
+/// `rust/AGENTS.md` says for an id. The caller then refuses a tagged number
+/// that Python reads. A change costs a table of each decimal digit and each
+/// space of Unicode.
 fn python_int(text: &str, base: u32) -> Option<Option<i64>> {
     let trimmed = text.trim_matches(is_python_space);
     let (negative, body) = match trimmed.strip_prefix('-') {

@@ -439,6 +439,13 @@ Rules for the test:
   10. The YAML reader, contract 06 §8 and §10. The contract gives no limit
       for a chain of merge keys. An alias makes such a chain with no
       nesting. The reader refuses a chain past 128 levels.
+  11. The YAML reader, contract 06 §8. Python reads a decimal digit and a
+      space that are not ASCII in a number with a tag: `!!int "\u0664"` is 4.
+      The reader refuses such a scalar, as rule 9 says for an id.
+  12. `mint_ulid`, contract 02 §2. For a time past 48 bits of milliseconds,
+      the Python requester mints 26 characters that hold more than 48 bits
+      of time. The function refuses that time. `ids::Ulid` accepts the text
+      of the Python requester.
 - The types of `manifest` accept what the Python code accepts, also where
   a stricter reading of a contract is possible. The owner decides each
   case. The pull request of the module lists them.

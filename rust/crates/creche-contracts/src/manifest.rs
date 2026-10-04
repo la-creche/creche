@@ -860,7 +860,7 @@ mod tests {
 
     /// Each vector that the Python code accepts and the Rust code refuses, on
     /// purpose: the surface, the vector, the contract section and the reason.
-    const DEVIATIONS: [(&str, &str, &str, &str); 13] = [
+    const DEVIATIONS: [(&str, &str, &str, &str); 19] = [
         (
             "manifest.component",
             "version-arabic-indic",
@@ -872,6 +872,31 @@ mod tests {
             "yaml-merge-chain-200",
             "contract 06 §10",
             "the YAML reader refuses a chain of merge keys past 128 levels",
+        ),
+        (
+            "manifest.component",
+            "yaml-merge-copies-65792",
+            "contract 06 §10",
+            "the YAML reader refuses merge keys that copy more than 65,536 pairs",
+        ),
+        (
+            "manifest.component",
+            "yaml-nested-200-replaced",
+            "contract 06 §10",
+            "the YAML reader refuses a text past 128 levels, also in a value that a later key \
+             replaces",
+        ),
+        (
+            "manifest.component",
+            "yaml-tag-int-arabic-indic",
+            "contract 06 §8",
+            "a tagged number has ASCII digits (rust/AGENTS.md, rule 9)",
+        ),
+        (
+            "manifest.component",
+            "yaml-tag-int-no-break-space",
+            "contract 06 §8",
+            "a tagged number has ASCII spaces around it (rust/AGENTS.md, rule 9)",
         ),
         (
             "manifest.component",
@@ -902,6 +927,19 @@ mod tests {
             "id-not-a-ulid",
             "contract 06 §9",
             "the id of a request is a ULID, and a draft holds the id as that type",
+        ),
+        (
+            "manifest.request.ulid",
+            "negative-time",
+            "contract 06 §9",
+            "a ULID holds 48 bits of milliseconds (contract 02 §2), and a time below zero has none",
+        ),
+        (
+            "manifest.request.ulid",
+            "past-48-bits",
+            "contract 06 §9",
+            "a ULID holds 48 bits of milliseconds (contract 02 §2), and the mint refuses a later \
+             time",
         ),
         (
             "manifest.state",
@@ -1699,6 +1737,7 @@ mod tests {
     #[test]
     fn a_request_id_is_minted_as_the_python_requester_mints_it() {
         let surface = vectors::surface("manifest.request.ulid");
+        let mut found = Found::default();
         for vector in &surface.vectors {
             let id = &vector.id;
             let args = vector.input.args().unwrap();
@@ -1709,19 +1748,33 @@ mod tests {
                 .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
                 .collect();
             let entropy: [u8; 10] = bytes.try_into().unwrap();
-            let now = Timestamp::new(float_of(text_field(args, "now_bits"))).unwrap();
-            let minted = mint_ulid(now, entropy).unwrap();
+            // A time below zero is no `Timestamp`, so it has no mint in Rust.
+            let minted = Timestamp::new(float_of(text_field(args, "now_bits")))
+                .ok()
+                .and_then(|now| mint_ulid(now, entropy).ok());
 
             assert_eq!(vector.result, Outcome::Accepted, "{id}");
-            assert_eq!(
-                &json!({"ulid": minted.as_str()}),
-                vector.value().unwrap(),
-                "{id}"
-            );
+            match minted {
+                Some(minted) => assert_eq!(
+                    &json!({"ulid": minted.as_str()}),
+                    vector.value().unwrap(),
+                    "{id}"
+                ),
+                None => {
+                    found.deviations.insert(id.clone());
+                }
+            }
         }
 
+        found.check("manifest.request.ulid");
+
+        let largest = Timestamp::new(281_474_976_710.655).unwrap();
         let past_48_bits = Timestamp::new(281_474_976_710.656).unwrap();
 
+        assert_eq!(
+            mint_ulid(largest, [0xff; 10]).unwrap().as_str(),
+            "7ZZZZZZZZZZZZZZZZZZZZZZZZZ"
+        );
         assert_eq!(mint_ulid(past_48_bits, [0; 10]), Err(MintError));
     }
 

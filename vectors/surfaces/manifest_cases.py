@@ -180,6 +180,17 @@ def _merge_chain(levels: int) -> dict[str, str]:
     }
 
 
+def _merge_copies(keys: int, merges: int) -> str:
+    """A `unit` whose first value merges one mapping of `keys` keys `merges` times.
+
+    A second `unit` line replaces the value. PyYAML does the merge first.
+    """
+    pairs = ", ".join(f"k{n}: 1" for n in range(keys))
+    aliases = ", ".join(["*a"] * merges)
+
+    return f"unit:\n  - &a {{{pairs}}}\n  - {{<<: [{aliases}]}}\n" + FIELDS["unit"]
+
+
 _OPTIONAL: Final = ("build", "provides", "requires", "depends_on", "secrets")
 _REQUIRED: Final = tuple(name for name in FIELDS if name not in _OPTIONAL)
 
@@ -665,6 +676,8 @@ CASES: Final[tuple[Case, ...]] = (
     _with("yaml-merge-as-value", unit="unit: <<"),
     _with("yaml-merge-chain-128", **_merge_chain(128)),
     _with("yaml-merge-chain-200", **_merge_chain(200)),
+    _with("yaml-merge-copies-65536", unit=_merge_copies(256, 256)),
+    _with("yaml-merge-copies-65792", unit=_merge_copies(256, 257)),
     _with("yaml-value-key", restore="restore:\n  =: x\n  mode: automatic\n  keep: 1"),
     _with("yaml-value-as-value", unit="unit: ="),
     _with(
@@ -680,6 +693,10 @@ CASES: Final[tuple[Case, ...]] = (
     _with("yaml-tag-int", restore=_restore("automatic", '!!int "3"')),
     _with("yaml-tag-int-padded", restore=_restore("automatic", '!!int " 3 "')),
     _with("yaml-tag-int-new-octal", restore=_restore("automatic", "!!int 0o3")),
+    _with(
+        "yaml-tag-int-arabic-indic", restore=_restore("automatic", f'!!int "{ARABIC_INDIC_FOUR}"')
+    ),
+    _with("yaml-tag-int-no-break-space", restore=_restore("automatic", '!!int "4\u00a0"')),
     _with("yaml-tag-bool", release='release: !!bool "yes"'),
     _with("yaml-tag-bool-mixed-case", release='release: !!bool "oN"'),
     _with("yaml-tag-null", unit="unit: !!null anything"),
@@ -809,6 +826,10 @@ CASES: Final[tuple[Case, ...]] = (
     ),
     Case("yaml-nested-64", manifest(unit="unit: " + "[" * 64 + "]" * 64)),
     Case("yaml-nested-200", manifest(unit="unit: " + "[" * 200 + "]" * 200)),
+    Case(
+        "yaml-nested-200-replaced",
+        manifest(unit="unit: " + "[" * 200 + "]" * 200 + "\n" + FIELDS["unit"]),
+    ),
     Case(
         "yaml-nested-100-block",
         manifest(unit="unit:" + "".join(f"\n{' ' * n}- " for n in range(1, 101)) + "x"),

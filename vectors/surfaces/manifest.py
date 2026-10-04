@@ -867,13 +867,12 @@ ULIDS: Final[tuple[tuple[str, float, bytes], ...]] = (
     ("whole-seconds", 1758153590.0, b"\x01" * ENTROPY_BYTES),
     ("largest-time", ULID_MS_MAX / 1000, b"\xff" * ENTROPY_BYTES),
     ("every-letter", 1469918176.385, bytes.fromhex("0123456789abcdef0f1e")),
+    ("past-48-bits", (ULID_MS_MAX + 1) / 1000, bytes(ENTROPY_BYTES)),
+    ("negative-time", -0.001, bytes(ENTROPY_BYTES)),
 )
 
 
 def _ulid_vector(vector_id: str, now: float, entropy: bytes) -> Vector:
-    if int(now * 1000) > ULID_MS_MAX:
-        raise ValueError(f"{vector_id}: the time does not fit a ULID")
-
     given: dict[str, Json] = {"args": {"now_bits": _bits(now), "entropy": entropy.hex()}}
     outcome = attempt(lambda: new_ulid(now, lambda count: entropy[:count]))
     if isinstance(outcome, Raised):
@@ -894,7 +893,9 @@ def _ulid_surface() -> Surface:
             "20 hexadecimal digits.",
             "value.ulid is the id. Its first ten characters hold the time in milliseconds: "
             "the product of the time and 1000, with the fraction cut.",
-            "Each time fits the 48 bits of a ULID. The entry point does not check that.",
+            "The entry point does not check that the milliseconds fit the 48 bits of a ULID. "
+            "For past-48-bits and negative-time they do not fit. The first ten characters of "
+            "value.ulid are then not a time of 48 bits.",
         ),
         vectors=tuple(_ulid_vector(*row) for row in ULIDS),
     )

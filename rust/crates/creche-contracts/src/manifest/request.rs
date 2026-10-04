@@ -665,6 +665,11 @@ const ENTROPY_BYTES: usize = 10;
 /// The count of random bits of a ULID.
 const ENTROPY_BITS: u32 = 80;
 
+// CONTRACT-QUESTION: contract 02 §2 gives a ULID 48 bits of milliseconds and
+// says nothing about a later time. For such a time the Python requester
+// mints 26 characters that hold more than 48 bits of time, and `ids::Ulid`
+// accepts that text. `mint_ulid` refuses the time. The first such time is in
+// the year 10889, so a change costs nothing today.
 /// The first count of milliseconds that does not fit the 48 bits of a ULID.
 const MILLISECONDS_END: f64 = 281_474_976_710_656.0;
 
