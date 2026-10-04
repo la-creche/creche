@@ -108,6 +108,25 @@ def test_fire_with_no_token_file_refuses_to_start(
     assert "refusing to start" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("command", [["fire", "chat", "--check"], ["serve", "--check"]])
+def test_a_token_file_that_is_not_utf8_prints_one_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: list[str],
+) -> None:
+    binary = tmp_path / "binary.token"
+    binary.write_bytes(b"\xff\xfe" * MIN_TOKEN_BYTES)
+    monkeypatch.setenv(ENV_ATTENDANCE_TOKEN_FILE, str(binary))
+
+    code = main(command)
+
+    assert code == ExitCode.USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("agent-trigger: refusing to start: ")
+    assert err.count("\n") == 1
+
+
 def test_fire_with_a_bad_payload_file_is_a_usage_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

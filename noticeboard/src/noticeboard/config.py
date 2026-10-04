@@ -183,10 +183,16 @@ def _access_key(source: dict[str, str]) -> str:
     if not named:
         return source.get(ENV_PREFIX + "ACCESS_KEY", "").strip()
 
+    unreadable = ConfigError(f"{ENV_PREFIX}ACCESS_KEY_FILE cannot be read: {named}")
+
     try:
         return Path(named).read_text(encoding="utf-8").strip()
     except OSError as error:
-        raise ConfigError(f"{ENV_PREFIX}ACCESS_KEY_FILE cannot be read: {named}") from error
+        raise unreadable from error
+    except ValueError:
+        # A file that is not UTF-8, or a name that no file can have. The
+        # error of the decoder holds bytes of the key, so it is not the cause.
+        raise unreadable from None
 
 
 def _text(source: dict[str, str], name: str, fallback: str) -> str:

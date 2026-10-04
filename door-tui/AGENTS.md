@@ -35,8 +35,8 @@ sandbox. The terminal is the client.
 - The door never reads the env file. It puts the path on the command line.
 - `launch.py` builds the argv and nothing else builds one. The terminal runs
   the playpen's own pi command line minus `--mode rpc`.
-- Fail closed. A token file missing, empty or under 32 bytes refuses to
-  start.
+- Fail closed. A token file missing, empty, under 32 bytes or not UTF-8
+  refuses to start.
 
 ## Run it
 
