@@ -180,8 +180,13 @@ def gated_family(registry_root: Path, name: str) -> tuple[FamilyFile, QuietBlock
     a file `caregiver` would refuse is not one to trust."""
     try:
         registry = load_registry(registry_root)
-    except OSError as exc:
-        _LOG.warning("quiet: cannot read the registry at %s (%s)", registry_root, exc.strerror)
+    except Exception as exc:
+        # One handler for each failure of the loader. Each read of the quiet
+        # check fails open: a registry that the loader cannot load costs a
+        # wake, never the firing.
+        _LOG.warning(
+            "quiet: cannot read the registry at %s (%s: %s)", registry_root, type(exc).__name__, exc
+        )
         return None
 
     family = registry.families.get(name)

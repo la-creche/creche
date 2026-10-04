@@ -27,14 +27,16 @@ The door holds no session state. `attendance` owns the transcript.
   exits it in another.
 - Prime, do not buffer. `app._streamed` pulls one frame before it builds the
   `StreamingResponse`, so a refusal is a real HTTP status, not a `200` stream
-  with an error frame.
+  with an error frame. A refusal after the first frame cannot be a status.
+  `app._after_first` writes it as the frames of a failed turn. A stream
+  that has its `[DONE]` gets no second ending.
 - A client disconnect never stops the turn. `SessiondClient` has no stop
   method. Keep it that way.
 - The NDJSON stream splits on LF and nothing else. `_iter_lines` reads bytes.
 - No secret on argv, in a URL or in a log line. `__main__.py` quiets `httpx`
   and `httpcore` to `WARNING`, because their `INFO` lines carry request URLs.
-- Fail closed. A key file missing, empty or under 32 bytes, or a bind on
-  `0.0.0.0`, refuses to start.
+- Fail closed. A key file missing, empty, under 32 bytes or not UTF-8, or a
+  bind on `0.0.0.0`, refuses to start.
 
 ## Behaviour under failure
 
@@ -44,7 +46,9 @@ The door holds no session state. `attendance` owns the transcript.
 | a chat id of more than 123 characters | `400 bad_id`, before the door calls `attendance` |
 | a second door holds the writer lease | `409 session_busy`, also for a streamed request |
 | `attendance` does not answer | `502 attendance_unreachable`, also for a streamed request |
+| `attendance` refuses a streamed turn after the first keepalive frame | a visible OpenAI-shaped error chunk with the code of the refusal, then `[DONE]` |
 | a failure that no handler names, before the first frame | `500 internal` in the OpenAI error shape. The log holds the traceback. |
+| a failure that no handler names, after the first frame | a visible OpenAI-shaped error chunk with the code `internal`, then `[DONE]`. The log holds the traceback. |
 | the family is reconciling, degraded, or invalid with a last good definition | still served |
 | a turn ends any way other than `settled` | a visible OpenAI-shaped error chunk |
 | the client disconnects mid-stream | streaming stops, the turn keeps running |
@@ -101,3 +105,7 @@ typed anyway.
   answers `502 attendance_unreachable` when `attendance` does not answer. It
   answers `500 internal` for a failure that no handler names (`errors.py`,
   `app.py`).
+- Contract 02 §5.4 and §14 give no form for a refusal of `attendance` that
+  comes after the first frame of a streamed answer. The door writes the
+  frames of a failed turn, with the code and the text of the status answer
+  (`app.py`, `translate.py`).
