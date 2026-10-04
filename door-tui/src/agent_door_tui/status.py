@@ -266,4 +266,13 @@ def _is_stale(written_at: str) -> bool:
     except ValueError:
         return True
 
+    # CONTRACT-QUESTION: contract 05 §2.1 gives `written_at` as RFC 3339 and
+    # does not say what a reader does with a time that has no UTC offset.
+    # This reader takes it as no time, so the document reads as stale and
+    # the door warns. `attendance` and the noticeboard read such a time as
+    # UTC. To read it as UTC here removes the warning for a document that
+    # is not RFC 3339.
+    if moment.tzinfo is None:
+        return True
+
     return (datetime.now(UTC) - moment).total_seconds() > STALE_AFTER_S

@@ -228,6 +228,17 @@ def test_a_stale_document_warns_and_still_serves(tmp_path: Path) -> None:
     assert "stale" in read(tmp_path).warning
 
 
+@pytest.mark.parametrize("written_at", ["2999-01-01T00:00:00", "2999-01-01"])
+def test_a_time_with_no_offset_reads_as_stale(tmp_path: Path, written_at: str) -> None:
+    """Contract 05 §2.1 gives `written_at` as RFC 3339, and that form has an offset."""
+    write_status(tmp_path, written_at=written_at)
+
+    serving = read(tmp_path)
+
+    assert serving.sandbox == "chat-s1"
+    assert "stale" in serving.warning
+
+
 def test_the_family_name_is_checked_before_a_path_is_built(tmp_path: Path) -> None:
     with pytest.raises(DoorError) as caught:
         read(tmp_path, "../../etc")

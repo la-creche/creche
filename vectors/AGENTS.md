@@ -102,6 +102,8 @@ directory is not a workspace package, so a change here does not change
   reader, of the fault file reader or of the outcome reader.
 - No vector covers a status document that is UTF-16. The Python noticeboard
   reads such a document. The Rust view of the noticeboard refuses it.
+- No vector covers a `written_at` with no UTC offset. `attendance` and the
+  noticeboard read such a time as UTC. The Rust views read it as no time.
 - Five patterns have no public entry point: `_ENV_NAME_RE` in the four
   `verify.py` modules, `_LOCK_PATH` and `_ARG_NAME` in
   `agent_family.serverrules`, `_REPO_NAME` in `handover.site` and
