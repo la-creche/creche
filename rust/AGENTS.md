@@ -653,6 +653,12 @@ Rules for the test:
   ULID no rule for two times of the clock. One is a time before 1970. The
   other is a time past 48 bits of milliseconds. Each Python copy mints 26
   characters for such a time. `new_ulid` refuses it.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/atomic.rs`: contract 04 §1.3 step 2 names the
+  temporary file of a grant file `<family>.json.tmp`. The Python writer of
+  the grant file uses another name. The runtime names each temporary file
+  `.<name>.<pid>.<count>.tmp`, as the Python `attendance` does. A change of
+  the name costs one function, `temp_name`.
 - No check holds the rules of "The rules for a service", except a part of
   rule 13. A service crate that breaks a rule builds and passes the lint
   gate.
