@@ -27,9 +27,16 @@ from caregiver_helpers import (
     write_registry,
 )
 
-from caregiver import paths
+from caregiver import cli, paths
 
 IMAGE: str = "sha256:deadbeef"
+
+#: The variable that holds the master key of LiteLLM.
+KEY_VARIABLE: str = "LITELLM_MASTER_KEY"
+
+#: Two addresses of TEST-NET-1. No test dials them.
+LITELLM_URL: str = "http://192.0.2.10:4000"
+ATTENDANCE_URL: str = "http://192.0.2.10:8350"
 
 #: What the default `chat` family asks LiteLLM for. An invalid or refused
 #: file in these tests asks for `OTHER_MODEL`, which must reach no key.
@@ -187,6 +194,64 @@ def test_serve_refuses_a_scratch_state_root_beside_roots_real_spool(bench: Bench
         "--write",
     )
     assert code == EXIT_USAGE
+    assert bench.driver.calls == []
+
+
+# --- a verb with no master key ------------------------------------------------------
+
+
+class NoSignals:
+    """In place of `SignalControl`. The test process keeps its own signal
+    handlers, and a loop that starts stops at once."""
+
+    def install(self) -> None:
+        return
+
+    def stopped(self) -> bool:
+        return True
+
+    def wait(self, seconds: float) -> None:
+        del seconds
+
+
+def _words_with_no_key(bench: Bench, tmp_path: Path, verb: str) -> list[str]:
+    """The words of one verb that acts, with each address given."""
+    state = ["--state-root", str(bench.state_root), "--litellm-base-url", LITELLM_URL, "--write"]
+    watch = [str(bench.registry_root), "--image", IMAGE, "--sessiond-url", ATTENDANCE_URL]
+    words = {
+        "serve": ["serve", *watch, "--release-root", str(tmp_path / "release"), "--pep-url", ""],
+        "reconcile-once": ["reconcile-once", *watch, "chat"],
+        "apply-once": ["apply-once", *watch, "chat"],
+        "rotate": ["rotate", str(bench.registry_root), "chat"],
+        "delete": ["delete", "chat"],
+    }
+
+    return [*words[verb], *state]
+
+
+@pytest.mark.parametrize("verb", ["serve", "reconcile-once", "apply-once", "rotate", "delete"])
+def test_a_verb_that_acts_refuses_to_start_with_no_master_key(
+    bench: Bench,
+    tmp_path: Path,
+    verb: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Fail closed. The refusal is one line that names the variable. It is
+    not an error that leaves `main`: the unit starts `serve` again after
+    each exit."""
+    monkeypatch.delenv(KEY_VARIABLE, raising=False)
+    monkeypatch.setattr(cli, "SignalControl", NoSignals)
+
+    code = main(
+        _words_with_no_key(bench, tmp_path, verb),
+        driver=bench.driver,
+        switch=bench.switch,
+        units=bench.units,
+    )
+
+    assert code == EXIT_PROBLEM
+    assert capsys.readouterr().err.strip().splitlines() == [f"caregiver: {KEY_VARIABLE} is not set"]
     assert bench.driver.calls == []
 
 

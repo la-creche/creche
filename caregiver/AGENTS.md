@@ -59,6 +59,8 @@ host where something has gone wrong.
   checks the order from inside the fake driver.
 - No secret on argv, in a URL or in a log line. The master key comes from
   `LITELLM_MASTER_KEY` in the environment.
+- A verb that acts refuses to start with no master key. It writes one
+  line that names the variable, and its exit code is 1.
 - The chaperone watch probes once per interval for the whole fleet. A probe
   that raises, hangs or answers 503 is a probe that did not answer. A moved
   verdict forces a pass.

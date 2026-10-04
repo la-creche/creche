@@ -36,7 +36,7 @@ from .driver import SandboxDriver, SbxDriver
 from .egress import EgressConfig
 from .images import SandboxImages
 from .lan import ConfigError, Port, url
-from .litellm_keys import HttpLiteLLMKeys, LiteLLMKeys
+from .litellm_keys import HttpLiteLLMKeys, LiteLLMError, LiteLLMKeys
 from .loop import LoopConfig, SignalControl, serve
 from .mcp_release import paths_under
 from .reconcile import Actors, SpendRead, reconcile_family
@@ -730,6 +730,11 @@ def main(
     except ConfigError as exc:
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_USAGE
+    except LiteLLMError as exc:
+        # No master key, or a call that LiteLLM refused. The message holds
+        # no secret: the client puts none into its error.
+        print(f"caregiver: {exc}", file=sys.stderr)
+        return EXIT_PROBLEM
 
 
 def _run(
