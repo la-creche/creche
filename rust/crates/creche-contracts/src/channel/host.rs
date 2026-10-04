@@ -3283,6 +3283,45 @@ mod tests {
     }
 
     #[test]
+    fn the_playpen_reads_a_value_at_each_limit() {
+        let names = vec!["\"a\""; MAX_ATTACHMENTS].join(",");
+        let full = start_turn(&format!(",\"attachments\":[{names}]"));
+        let Ok(HostMessage::StartTurn(full)) = HostMessage::parse(&full) else {
+            panic!("{full}");
+        };
+        let deadline = |seconds: u64| {
+            let record = start_turn(&format!(",\"deadline_s\":{seconds}"));
+            let Ok(HostMessage::StartTurn(start)) = HostMessage::parse(&record) else {
+                panic!("{record}");
+            };
+
+            start.request().deadline_s()
+        };
+        let stop = format!(
+            "{{\"type\":\"stop_process\",\"session\":\"{SESSION}\",\"grace_ms\":{MAX_GRACE_MS}}}"
+        );
+
+        assert_eq!(full.request().attachments().len(), MAX_ATTACHMENTS);
+        assert_eq!(deadline(1), Seconds::new(1));
+        assert_eq!(deadline(MAX_DEADLINE_S), Seconds::new(MAX_DEADLINE_S));
+        assert_eq!(
+            HostMessage::parse(&format!(
+                "{{\"type\":\"shutdown\",\"grace_ms\":{MAX_GRACE_MS}}}"
+            )),
+            Ok(HostMessage::Shutdown(Shutdown::new(Millis::new(
+                MAX_GRACE_MS
+            ))))
+        );
+        assert_eq!(
+            HostMessage::parse(&stop),
+            Ok(HostMessage::StopProcess(StopProcess::new(
+                SESSION.parse().unwrap(),
+                Millis::new(MAX_GRACE_MS)
+            )))
+        );
+    }
+
+    #[test]
     fn each_message_gives_its_fields() {
         let full = StartTurn::new(full_request(), full_binding());
         let prompt = PromptTurn::new(request(), SESSION.parse().unwrap(), EnvEpoch::new(7));

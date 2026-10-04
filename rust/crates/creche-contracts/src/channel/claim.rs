@@ -1768,6 +1768,16 @@ pub(super) mod tests {
         );
         assert_eq!(small.event().fields().len(), 2);
         assert_eq!(untyped.event().kind(), Some(&Text::from("unknown")));
+
+        // An event of exactly the limit is not over the limit. The event
+        // with an empty text has 24 bytes.
+        let most = "a".repeat(MAX_EVENT_BYTES - 24);
+        let at_limit = event_line(&format!(r#"{{"type":"big","text":"{most}"}}"#));
+        let past_limit = event_line(&format!(r#"{{"type":"big","text":"{most}a"}}"#));
+
+        assert!(!at_limit.event().is_truncated());
+        assert_eq!(at_limit.event().to_json().len(), MAX_EVENT_BYTES);
+        assert!(past_limit.event().is_truncated());
     }
 
     #[test]
@@ -1801,7 +1811,14 @@ pub(super) mod tests {
             panic!("no ready line");
         };
 
+        let PlaypenLine::Ready(dotted) =
+            line(r#"{"type":"ready","protocol":"1.2.3","sandbox":"chat-s1"}"#)
+        else {
+            panic!("no ready line");
+        };
+
         assert_eq!(ready.major(), "1");
+        assert_eq!(dotted.major(), "1");
         assert_eq!(ready.sandbox(), &"chat-s1");
         assert!(ready.supports(Cap::GetEntries));
         assert!(!ready.supports(Cap::Steer));

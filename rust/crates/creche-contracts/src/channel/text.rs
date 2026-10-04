@@ -273,6 +273,11 @@ mod tests {
         assert_eq!(Text::from("1.0").before('.'), "1");
         assert_eq!(Text::from("10").before('.'), "10");
         assert_eq!(Text::from(".7").before('.'), "");
+        assert_eq!(Text::from("1.2.3").before('.'), "1");
+        assert_eq!(
+            Text::from_units(vec![0x31, 0x2e, HIGH, 0x2e, 0x32]).before('.'),
+            "1"
+        );
         assert_eq!(Text::from_units(vec![0x31, 0x2e, HIGH]).before('.'), "1");
         assert_eq!(
             Text::from_units(vec![HIGH, 0x31]).before('.').to_utf16(),

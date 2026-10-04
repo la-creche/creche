@@ -1532,6 +1532,17 @@ mod tests {
         assert!(Event::from_json(&deep(63)).is_ok());
         assert_eq!(Event::from_json(&deep(64)), Err(EventError::TooDeep));
         assert_eq!(Event::from_json(&large), Err(EventError::TooLarge));
+
+        // An event of exactly the limit is not over the limit. The event
+        // with an empty text has 11 bytes.
+        let most = "a".repeat(262_144 - 11);
+        let at_limit = Event::from_json(&format!("{{\"text\":\"{most}\"}}")).unwrap();
+
+        assert_eq!(at_limit.to_json().len(), 262_144);
+        assert_eq!(
+            Event::from_json(&format!("{{\"text\":\"{most}a\"}}")),
+            Err(EventError::TooLarge)
+        );
         assert_eq!(Event::from_json("{\"a\":NaN}"), Err(EventError::NotJson));
         assert_eq!(Event::from_json("7"), Err(EventError::NotObject));
         for text in ["{\"n\":1e999}", "{\"n\":-1e999}", "{\"a\":[{\"n\":1e999}]}"] {

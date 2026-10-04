@@ -1634,6 +1634,19 @@ mod tests {
         for (whole, fraction, text) in ties {
             assert_eq!(float_text(whole + fraction), text);
         }
+
+        // A tie has 25 decimal places at most. A power of two is a tie only
+        // when the lower text reads back as the same float.
+        let small = [
+            (1.0, -25, "2.9802322387695312e-08"),
+            (5.0, -23, "5.960464477539062e-07"),
+            (1.0, -24, "5.960464477539063e-08"),
+            (3.0, -25, "8.940696716308594e-08"),
+        ];
+
+        for (odd, power, text) in small {
+            assert_eq!(float_text(odd * 2.0_f64.powi(power)), text);
+        }
     }
 
     #[test]
