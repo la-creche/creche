@@ -25,7 +25,9 @@ from noticeboard_helpers import (
     CHAT_FAMILY_YAML,
     NOW,
     FakeAttendance,
+    browser_values,
     commit_count,
+    git,
     journal_line,
     make_registry,
     make_state_root,
@@ -570,6 +572,133 @@ def test_a_live_only_preview_says_the_sandbox_keeps_running(board: Harness) -> N
     answer = board.post("/families/chat/edit", body)
 
     assert "lands live" in answer.text
+
+
+def family_text(board: Harness) -> str:
+    path = board.config.registry_dir / "families/chat/family.yaml"
+
+    return path.read_text(encoding="utf-8")
+
+
+def test_the_edit_page_posts_what_the_form_holds(board: Harness) -> None:
+    """The reader of a page in this file gives what `posted_form` builds
+    from the model, and the two fields that the page adds."""
+    page = board.get("/families/chat/edit")
+
+    values = browser_values(page.text)
+
+    assert values.pop(CSRF_FIELD) == board.client.cookies.get(CSRF_COOKIE)
+    assert values.pop("subject") == ""
+    assert values == posted_form(board)
+
+
+def test_a_save_after_a_preview_commits_what_the_preview_showed(board: Harness) -> None:
+    """The page of a preview holds the typed values. The browser posts them
+    again with the save, so the save writes the edit and not the old file."""
+    board.get("/families/chat/edit")
+    before = commit_count(board.config.registry_dir)
+    body = posted_form(board)
+    body["description"] = "the house assistant, rewritten"
+    body["subject"] = "widen the description"
+    body["verb"] = "preview"
+    preview = board.post("/families/chat/edit", body)
+
+    answer = board.post("/families/chat/edit", browser_values(preview.text) | {"verb": "save"})
+
+    log = git(board.config.registry_dir, "log", "-1", "--format=%s").stdout
+    assert answer.status_code == 303
+    assert commit_count(board.config.registry_dir) == before + 1
+    assert "the house assistant, rewritten" in family_text(board)
+    assert log.strip() == "widen the description"
+
+
+#: One free control of each kind, and a value that a reader can type there.
+TYPED = {
+    "text": ("description", "the house assistant, rewritten"),
+    "number": ("sandbox.cpus", "6"),
+    "box": ("shell", "on"),
+    "lines": ("egress", "example.test\nsecond.example.test\n"),
+    "block": ("files", "files:\n  - { path: /srv/agents/vault, mode: rw }\n"),
+}
+
+
+@pytest.mark.parametrize(("name", "typed"), TYPED.values(), ids=TYPED.keys())
+def test_the_page_of_a_preview_holds_each_typed_value(
+    board: Harness, name: str, typed: str
+) -> None:
+    board.get("/families/chat/edit")
+    body = posted_form(board)
+    assert body.get(name) != typed
+    body[name] = typed
+    body["verb"] = "preview"
+
+    answer = board.post("/families/chat/edit", body)
+
+    assert answer.status_code == 200
+    assert "what this change would do" in answer.text
+    assert browser_values(answer.text)[name] == typed
+
+
+def test_a_box_that_the_reader_cleared_stays_clear_after_a_preview(board: Harness) -> None:
+    """A box that is not checked posts nothing. The page must not check it
+    again from the registry."""
+    root = board.config.registry_dir
+    path = root / "families/chat/family.yaml"
+    path.write_text(family_text(board).replace("shell: false", "shell: true"), encoding="utf-8")
+    git(root, "commit", "-q", "-a", "-m", "give the family a shell")
+    board.get("/families/chat/edit")
+    body = posted_form(board)
+    assert body.pop("shell") == "on"
+    body["verb"] = "preview"
+
+    answer = board.post("/families/chat/edit", body)
+
+    assert "shell" in answer.text
+    assert "shell" not in browser_values(answer.text)
+
+
+#: An edit that the save refuses, at each of its three steps: the form,
+#: the schema and the rules of the registry.
+REFUSED = {
+    "a-block-with-another-key": ("files", "mounts:\n  - { path: /srv, mode: ro }\n"),
+    "a-word-for-a-number": ("sandbox.cpus", "many"),
+    "a-budget-below-zero": ("model.budget_usd_per_day", "-4"),
+}
+
+
+@pytest.mark.parametrize(("name", "typed"), REFUSED.values(), ids=REFUSED.keys())
+def test_a_refused_save_keeps_what_the_reader_typed(board: Harness, name: str, typed: str) -> None:
+    """The reader corrects the one field. The other edits are not lost."""
+    board.get("/families/chat/edit")
+    original = family_text(board)
+    body = posted_form(board)
+    body["description"] = "the house assistant, rewritten"
+    body[name] = typed
+    body["verb"] = "save"
+
+    answer = board.post("/families/chat/edit", body)
+
+    values = browser_values(answer.text)
+    assert answer.status_code == 200
+    assert values[name] == typed
+    assert values["description"] == "the house assistant, rewritten"
+    assert family_text(board) == original
+
+
+def test_a_locked_control_keeps_the_value_of_the_registry(board: Harness) -> None:
+    """A disabled control posts nothing. A post that names it changes
+    neither the file nor the page."""
+    board.get("/families/chat/edit")
+    body = posted_form(board)
+    body["name"] = "second"
+    body["verb"] = "preview"
+
+    answer = board.post("/families/chat/edit", body)
+
+    assert 'name="name"' in answer.text
+    assert 'value="chat"' in answer.text
+    assert "second" not in answer.text
+    assert "name" not in browser_values(answer.text)
 
 
 #: Path segments that are not a family name (contract 01 §2), as a URL holds them.

@@ -8,7 +8,16 @@ from asking the validator, so a rule that changes changes the page.
 from __future__ import annotations
 
 from agent_family import FamilyFile, Index, Kind, parse_family
-from noticeboard.familyform import Control, Form, document_of, form_of, locks_of, parse_posted
+from noticeboard.familyform import (
+    MAX_FIELD_CHARS,
+    Control,
+    Form,
+    document_of,
+    form_of,
+    locks_of,
+    parse_posted,
+    with_posted,
+)
 from noticeboard_helpers import CHAT_FAMILY_YAML, SCRUM_FAMILY_YAML
 
 
@@ -206,6 +215,60 @@ def test_a_broken_block_becomes_a_report_not_an_exception() -> None:
 
     assert after is None
     assert issues
+
+
+def value_of(form: Form, name: str) -> str:
+    found = form.field(name)
+    assert found is not None, name
+    return found.value
+
+
+def test_the_form_of_an_answer_gives_the_document_of_the_post() -> None:
+    """A browser posts the form of an answer again. The document is then the
+    one that the first post gave."""
+    form = form_of(family(), CHAT_INDEX)
+    posted = posted_from(form)
+    posted["description"] = "  the house assistant, rewritten  "
+    posted["sandbox.cpus"] = "6"
+    posted["shell"] = "on"
+    posted["egress"] = "example.test\n"
+    posted["files"] = "files:\n  - { path: /srv/agents/vault, mode: rw }"
+    del posted["system_prompt"]
+
+    again = posted_from(with_posted(form, posted))
+
+    assert document_of(form, again) == document_of(form, posted)
+    assert again["description"] == "  the house assistant, rewritten  "
+
+
+def test_the_form_of_an_answer_keeps_a_locked_control() -> None:
+    form = form_of(family(), CHAT_INDEX)
+
+    shown = with_posted(form, {"name": "second", "triggers": "triggers: []\n"})
+
+    assert shown.locked == form.locked
+    assert value_of(shown, "name") == "chat"
+
+
+def test_a_control_that_the_post_does_not_name_shows_no_text_of_the_reader() -> None:
+    """A browser names each free text control. For a post that names none,
+    a block shows the block of the registry, as the document takes it. Each
+    other control is empty."""
+    form = form_of(family(), CHAT_INDEX)
+
+    shown = with_posted(form, {})
+
+    assert value_of(shown, "description") == ""
+    assert value_of(shown, "egress") == ""
+    assert value_of(shown, "files") == value_of(form, "files")
+
+
+def test_the_form_of_an_answer_cuts_a_value_at_the_cap_of_a_control() -> None:
+    form = form_of(family(), CHAT_INDEX)
+
+    shown = with_posted(form, {"description": "d" * (MAX_FIELD_CHARS + 1)})
+
+    assert value_of(shown, "description") == "d" * MAX_FIELD_CHARS
 
 
 def test_the_document_keeps_the_schema_field_order() -> None:
