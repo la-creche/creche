@@ -561,6 +561,19 @@ def _linked(links: int) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _alias_chain(levels: int) -> str:
+    """A roster whose last row merges the end of a chain of `levels` merge
+    keys. The value of each merge key is an alias, so the chain adds no
+    nesting to the text. The rows of the chain are in a list, so the
+    reader makes the last row first and follows the full chain.
+
+    The Rust reader of a component manifest has a test of this form at
+    the same limit: `a_merge_chain_past_the_depth_limit_is_refused`."""
+    chain = "".join(f"  - &m{level} {{<<: *m{level - 1}}}\n" for level in range(1, levels))
+
+    return f"chain:\n  - &m0 {{command: x}}\n{chain}weather: {{<<: *m{levels - 1}}}\n"
+
+
 def _copied(pairs: int) -> str:
     """A roster with one row whose merge key copies `pairs` pairs."""
     times, rest = divmod(pairs, MERGED_KEYS)
@@ -624,17 +637,19 @@ def test_a_merge_of_an_empty_value_counts_against_the_bound(bench: Bench) -> Non
     "text",
     [
         _nested(CHAIN_AT_THE_LIMIT),
+        _alias_chain(CHAIN_AT_THE_LIMIT),
         _linked(CHAIN_AT_THE_LIMIT + 1),
         _copied(PAIRS_AT_THE_LIMIT),
         _empty_values(MERGED_KEYS, PAIRS_AT_THE_LIMIT // MERGED_KEYS),
     ],
-    ids=["chain", "rows", "pairs", "empty-values"],
+    ids=["chain", "alias-chain", "rows", "pairs", "empty-values"],
 )
 def test_the_last_roster_inside_a_limit_names_what_is_served(bench: Bench, text: str) -> None:
     """The reader takes a chain of 128 merge keys and 65,536 copied pairs.
-    A chain is a merge key that holds a merge key. Rows that each merge
-    the row before it make no chain, so 129 such merge keys read. A merged
-    value with no pair counts as one pair, so 65,536 such values read."""
+    A chain is a merge key that holds a merge key, in the text or through
+    an alias. Rows that each merge the row before it make no chain, so 129
+    such merge keys read. A merged value with no pair counts as one pair,
+    so 65,536 such values read."""
     from caregiver.mcp_release import served_servers
 
     bench.mcp.roster.write_text(text, encoding="utf-8")
@@ -644,8 +659,12 @@ def test_the_last_roster_inside_a_limit_names_what_is_served(bench: Bench, text:
 
 @pytest.mark.parametrize(
     "text",
-    [_nested(CHAIN_AT_THE_LIMIT + 1), _copied(PAIRS_AT_THE_LIMIT + 1)],
-    ids=["chain", "pairs"],
+    [
+        _nested(CHAIN_AT_THE_LIMIT + 1),
+        _alias_chain(CHAIN_AT_THE_LIMIT + 1),
+        _copied(PAIRS_AT_THE_LIMIT + 1),
+    ],
+    ids=["chain", "alias-chain", "pairs"],
 )
 def test_the_first_roster_past_a_limit_is_nothing_served(bench: Bench, text: str) -> None:
     """One more merge key in the chain, or one more copied pair, and the
