@@ -386,8 +386,9 @@ Rules for the test:
 - These `CONTRACT-QUESTION` comments are open under
   `crates/creche-contracts/src/status/`:
   1. `json::DEPTH_MAX`, contract 05 §2. The contract gives no cap on the
-     nesting of a file. The reader stops at 1000 levels. The Python reader
-     stops at a depth that depends on the interpreter.
+     nesting of a file. The reader stops at 256 levels. The Python reader
+     stops at a depth that depends on the interpreter. A value of 256 levels
+     needs less than 384 KiB of stack.
   2. `Json::parse_bytes`, contract 05 §2. The contract does not name the
      encoding of a file. The reader takes UTF-8. The Python reader of the
      noticeboard also takes UTF-16 and UTF-32.

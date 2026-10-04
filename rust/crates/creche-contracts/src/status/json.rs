@@ -23,11 +23,18 @@ pub const INTEGER_DIGITS_MAX: usize = 4300;
 // CONTRACT-QUESTION: contract 05 §2 gives no cap on the nesting of a file.
 // The Python reader stops at a depth that depends on the interpreter: between
 // 5000 and 10000 levels under Python 3.12 and 3.13, and more under Python
-// 3.14. The reader here stops at 1000 levels. A document of contract 05 nests
-// 4 levels. A larger cap costs stack: `Drop`, `Clone` and `Debug` of a value
-// use one frame for each level.
+// 3.14. The reader here stops at 256 levels. A document of contract 05 nests
+// 4 levels, and the deepest document of `vectors/data/status` nests 201.
+//
+// A larger cap costs stack: `Drop`, `Clone`, `Debug` and the writer use one
+// frame for each level. A stack overflow stops the process, and no code can
+// catch it. Measured on macOS arm64: a value of 256 levels needs between 256
+// and 384 KiB in a build with no optimization, and less than 256 KiB in a
+// release build. A value of 1000 levels needs more than 1 MiB, and a spawned
+// thread has 2 MiB. A test holds a value of the full depth to a stack of
+// 1 MiB.
 /// The deepest nesting of arrays and objects that the reader takes.
-pub const DEPTH_MAX: usize = 1000;
+pub const DEPTH_MAX: usize = 256;
 
 /// An integer of a JSON text.
 ///
@@ -1399,6 +1406,35 @@ mod tests {
             Json::parse(&"[".repeat(400_000)),
             Err(JsonError::TooDeep { .. })
         ));
+    }
+
+    #[test]
+    fn a_value_of_the_full_depth_fits_a_small_stack() {
+        // The stack of the thread that does the work. A spawned thread has
+        // 2 MiB when no code asks for another size.
+        const STACK_BYTES: usize = 1 << 20;
+        let arrays = format!("{}{}", "[".repeat(DEPTH_MAX), "]".repeat(DEPTH_MAX));
+        let objects = format!("{}1{}", r#"{"a":"#.repeat(DEPTH_MAX), "}".repeat(DEPTH_MAX));
+
+        for text in [arrays, objects] {
+            let work = move || {
+                let value = Json::parse(&text).unwrap();
+                let copy = value.clone();
+                let shown = format!("{copy:?}");
+                let written = copy.encode(Layout::Compact, Charset::Ascii);
+
+                assert_eq!(copy, value);
+                assert_eq!(written, text);
+
+                shown.len()
+            };
+            let thread = std::thread::Builder::new()
+                .stack_size(STACK_BYTES)
+                .spawn(work)
+                .unwrap();
+
+            assert!(thread.join().unwrap() > DEPTH_MAX);
+        }
     }
 
     #[test]
