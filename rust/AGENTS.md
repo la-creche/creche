@@ -974,7 +974,10 @@ Rules for the test:
       it, and an empty secret. The Python reader makes text of each value.
 - No type reads the text of a roster file, and no type writes it. PyYAML
   reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
-  the crate selects one. `roster::RawRoster` then takes its tree.
+  the crate selects one. `roster::RawRoster` then takes its tree. The Python
+  reader refuses a text whose merge keys pass the two limits of
+  `manifest/yaml.rs`. A Rust reader of that text must hold the same limits.
+  No vector holds such a text.
 - `config::mounts` defines `ModelAlias`, `SandboxTool` and `SystemPrompt`.
   The family file uses the same three. The owner of the crate moves them
   when the `family` module has its types.
