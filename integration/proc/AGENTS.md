@@ -318,9 +318,9 @@ code for this suite.
 ## Reading a failure
 
 A failed test carries a section named `processes at call`. It holds the root
-path, the stdout and the stderr of each process, and each playpen log. A
-test that fails in its teardown carries the same output in the text of the
-failure. Work down this list.
+path, the stdout and the stderr of each process, each playpen log and each
+status document. A test that fails in its teardown carries the same output
+in the text of the failure. Work down this list.
 
 1. Every topology test skips: the bundle is missing. Build it. With
    `CRECHE_PROC_NO_SKIP=1`, each of these tests fails with the same text.
