@@ -451,10 +451,9 @@ def parse(text: str) -> PlaypenMessage | Refusal:
     except json.JSONDecodeError:
         return Refusal.NOT_JSON
     except Exception:
-        # Every exception, not a list of types. Three lines under the size cap
-        # raised three types in three places: RecursionError on deep nesting,
-        # a plain ValueError on an integer past the interpreter's digit limit,
-        # and UnicodeEncodeError in `cap_event` on a lone surrogate.
+        # Every exception, not a list of types. Two lines under the size cap
+        # raised two types in two places: RecursionError on deep nesting, and
+        # a plain ValueError on an integer past the interpreter's digit limit.
         return Refusal.MALFORMED
 
 

@@ -588,12 +588,13 @@ fn normal_path(text: &str) -> Result<String, PathError> {
 }
 
 // CONTRACT-QUESTION: no contract gives a config path a grammar. Each Python
-// service takes each text, a relative path and a text with a NUL byte too.
-// The path types refuse a relative path, because its meaning depends on the
-// working directory of the unit. They refuse a NUL byte, because each open of
-// such a path raises. `SocketPath` refuses a path of more than 107 bytes,
-// because the kernel refuses the bind. A laxer reading makes the process stop
-// at its first use of the path, after the config parse passed.
+// service takes each text and a relative path. Each one but `attendance`
+// takes a text with a NUL byte too. The path types refuse a relative path,
+// because its meaning depends on the working directory of the unit. They
+// refuse a NUL byte, because each open of such a path raises. `SocketPath`
+// refuses a path of more than 107 bytes, because the kernel refuses the bind.
+// A laxer reading makes the process stop at its first use of the path, after
+// the config parse passed.
 /// Makes one path type. Each type is an absolute path with no NUL byte, in
 /// the normal form of Python's `pathlib`.
 macro_rules! path_type {

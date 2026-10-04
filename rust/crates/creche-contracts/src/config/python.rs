@@ -123,8 +123,9 @@ const NOT_A_HOST: &str = "A service binds the LAN address or loopback and never 
     The Python reader refuses a small set of texts, or none. The Rust type takes an IP address \
     or a host name, and refuses each spelling of each interface.";
 
-const PATH_RULE: &str = "The contract gives an absolute path. The Python reader takes each text. \
-    The Rust type refuses a relative path, and a socket path that the kernel cannot bind.";
+const PATH_RULE: &str = "The contract gives an absolute path. The Python reader takes each text, \
+    and the reader of attendance refuses a NUL byte. The Rust type refuses a relative path, and \
+    a socket path that the kernel cannot bind.";
 
 const SECONDS_RULE: &str = "The contract gives a count of seconds. Python reads each finite \
     number that is more than zero. The Rust type refuses a count that is no duration: \
