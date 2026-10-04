@@ -16,7 +16,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from proc_chat import await_settled, chat_id, run_stream, session_of
 from proc_tree import FAMILY, SANDBOX, SECRET_MODE, THIN, add_family, token_of, write_status
 from proc_tui import ARG_NEW, ARG_SESSION, TuiStack
 
@@ -88,7 +87,7 @@ def test_a_terminal_reaches_an_attended_family_only(tui: TuiStack, family: str) 
 
 async def test_a_family_with_no_ready_sandbox_is_refused(tui: TuiStack) -> None:
     """A terminal runs no handshake, so only a ready sandbox serves one (contract 05 §4.2)."""
-    session = await _owui_session(tui)
+    session = await tui.chat_session()
     write_status(tui.tree, sandboxes=((SANDBOX, "creating"),))
 
     child, _ = tui.open_terminal(FAMILY, ARG_SESSION, session)
@@ -104,20 +103,6 @@ async def test_a_session_id_that_is_no_id_is_refused(tui: TuiStack) -> None:
 
     assert child.wait(EXIT_DEADLINE_S) != 0
     assert tui.terminal_calls() == []
-
-
-async def _owui_session(tui: TuiStack) -> str:
-    """One session of the Open WebUI door with one settled turn."""
-    chat = chat_id()
-
-    async with tui.door_client() as door:
-        frames = await run_stream(door, chat, "hello")
-
-    assert frames.error_chunks == []
-    session = session_of(chat)
-    await await_settled(tui.tree, session)
-
-    return session
 
 
 def _replace(path: Path, content: str | None) -> None:

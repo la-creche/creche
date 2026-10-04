@@ -8,6 +8,14 @@ The scenarios that `integration/tests/test_i5_stage5.py` also has keep the
 names of that file. That suite hosts the listener in the test process and
 lets `caregiver` mint the bearer. No `caregiver` runs here, so the suite
 writes the bearer file as contract 05 §6.4 gives it.
+
+CONTRACT-QUESTION: `docs/rework/spec.md` §7.3 and §11.5 give two answers of
+the listener: 202 for a firing, and one 404 for an unknown family, an unknown
+name and a wrong bearer. No contract gives the body of the 202, or the status
+of another refusal. Reading taken: what the old stage 5 suite holds. The 202
+names the session and the state of the turn. A body over the limit is 413, a
+body that is not JSON is 400, and a refusal of `attendance` keeps the status
+that contract 02 §14 gives it. A change costs one assertion per scenario.
 """
 
 from __future__ import annotations
@@ -189,7 +197,6 @@ async def test_the_hundred_and_first_queued_turn_is_refused(trigger: TriggerStac
     assert [reply.status_code for reply in accepted] == [httpx.codes.ACCEPTED] * len(accepted)
     assert states == ["running"] + ["queued"] * MAX_QUEUED_TURNS
     assert refused.status_code == httpx.codes.TOO_MANY_REQUESTS
-    assert refused.json()["error"]["code"] == "queue_full"
 
 
 async def test_a_family_that_never_validated_has_no_route(

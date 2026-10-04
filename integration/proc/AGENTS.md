@@ -320,9 +320,9 @@ Work down this list.
   answers `released: false` and sends nothing. The order of the next two
   events changes from run to run. When the launcher looks first, two pi
   processes hold one session store. When the playpen starts its process
-  first, the launcher exits 8. This is a defect of the product, not of the
-  suite. `test_ct_a_new_session_exists_before_pi_runs` asserts only what
-  holds in each order.
+  first, the launcher exits 8. The cause is in the product, and this suite
+  changes no product code. `test_ct_a_new_session_exists_before_pi_runs`
+  asserts only what holds in each order.
 - **The answer to a release comes before the end of the pi process.**
   `attendance` answers `released: true` when it sent `stop_process`
   (contract 02 §5.11). The pi process ends later. A launcher that looks
@@ -352,9 +352,16 @@ Work down this list.
   leader alone. The scenario reads the lease and not the end of pi.
 - **CONTRACT-QUESTION, the exit code of `agent-trigger fire`.** No contract
   names one. The suite reads 0 as a firing that `attendance` accepted or
-  that the quiet check skipped, and each other code as a firing that
+  that the quiet check skipped. It reads each other code as a firing that
   started nothing. A change costs one assertion per scenario in
   `test_proc_trigger_fire.py`.
+- **CONTRACT-QUESTION, the answers of the webhook listener.**
+  `docs/rework/spec.md` §7.3 and §11.5 give the 202 and the one 404. No
+  contract gives the body of the 202, or the status of another refusal. The
+  suite holds what the old stage 5 suite holds. The 202 names the session
+  and the state. A body over the limit gets 413. A body that is not JSON
+  gets 400. A refusal of `attendance` keeps the status of contract 02 §14. A
+  change costs one assertion per scenario in `test_proc_trigger_webhooks.py`.
 - **No chaperone beside the trigger door.** Three things have no scenario
   for that reason. The quiet check reads the board and the jobs of a family
   through the chaperone (contract 01 §3.15, wake reasons 2 and 4). A gated
@@ -364,14 +371,20 @@ Work down this list.
 - **The floor of the quiet check has no scenario.** `floor_hours` is 1 hour
   at least, and the door has no variable for its clock. A scenario would
   wait one hour.
-- **A webhook call while `attendance` is down has no scenario.** The
-  listener answers 500 from a Python error that nothing handles. The suite
-  pins no answer that comes from such an error.
+- **A webhook call while `attendance` is down has no scenario.** No contract
+  gives the answer of the listener for that case.
 - **CONTRACT-QUESTION, the exit code of a refused start of the noticeboard.**
   `docs/rework/spec.md` §8.3 rule 2 names exit code 2 for a LAN bind with no
   key. No section names a code for a wildcard bind or for a key file that
   cannot be read. The suite accepts each code that is not 0 there. A change
   costs one assertion per scenario in `test_proc_board_start.py`.
+- **CONTRACT-QUESTION, the markup of a page of the noticeboard.**
+  `docs/rework/spec.md` §8.1 says what each page shows. No contract gives
+  the markup. The suite reads the markup of the templates as the interface.
+  It finds a table by its class, and a cell by the text of its column head.
+  It finds a report by the classes `problem`, `problems` and `issues`. A
+  change of the markup costs the names in `test_proc_board_pages.py` and
+  `test_proc_board_edit.py`.
 - **A save of the noticeboard ends at the commit.** No `caregiver` runs, so
   no scenario proves that a saved family file converges.
 - **The state of an ended process.** The harness reads it from `/proc` on

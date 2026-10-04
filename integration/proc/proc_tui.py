@@ -38,8 +38,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from proc_chat import SESSIONS_PATH
-from proc_harness import Child
+from proc_chat import SESSIONS_PATH, await_settled, chat_id, run_stream, session_of
+from proc_harness import Child, ProcError
 from proc_owui import OwuiStack
 from proc_services import Service
 from proc_standins import PI, SBX, TERMINAL_FLAG, Call, calls_of
@@ -96,6 +96,25 @@ class TuiStack(OwuiStack):
     def open_terminal(self, *args: str) -> tuple[Child, Terminal]:
         """Type `agent-tui` with these words at a new terminal."""
         return self.spawn_on_terminal(Service.DOOR_TUI, tui_env(self.tree), *args)
+
+    async def chat_session(self) -> str:
+        """One session of the Open WebUI door with one settled turn.
+
+        The playpen holds the pi process of the session after the turn
+        (contract 03 §6), so the terminal door has a process to release.
+        """
+        chat = chat_id()
+
+        async with self.door_client() as door:
+            frames = await run_stream(door, chat, "hello")
+
+        if frames.error_chunks:
+            raise ProcError(f"the turn of the chat failed: {frames.error_chunks}")
+
+        session = session_of(chat)
+        await await_settled(self.tree, session)
+
+        return session
 
     def terminal_calls(self) -> list[Call]:
         """Each `sbx exec -it` the door ran. `attendance` runs `sbx` with no terminal."""

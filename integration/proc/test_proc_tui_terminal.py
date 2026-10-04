@@ -16,12 +16,12 @@ The three scenarios that `integration/tests/test_ct_tui_door.py` has keep
 their names, and so does the one of `test_cv_launcher.py`. Those suites run
 the door as an object in the test process, with an `sbx` that exits at once.
 
-A terminal starts on a session that ran a turn and that no terminal held
-before, except in two scenarios. There the playpen holds one pi process that
+Each scenario but two starts a terminal on a session that ran a turn and
+that no terminal held before. The playpen then holds one pi process that
 runs and waits, and the door has it released before the launcher looks.
 
-In the two other cases the playpen starts a pi process at about the time the
-launcher looks: for a new session (contract 03 §4.7 rule 8), and after a
+In the two other scenarios the playpen starts a pi process at about the time
+the launcher looks: for a new session (contract 03 §4.7 rule 8), and after a
 `tui` lease ended (contract 02 §10.5). What the launcher finds then changes
 from run to run. The scenario of a new session and the scenario of
 `--force` assert only what holds in each order (`AGENTS.md`, Known gaps).
@@ -35,7 +35,7 @@ import signal
 import time
 
 import pytest
-from proc_chat import await_settled, chat_id, run_stream, session_of, until
+from proc_chat import until
 from proc_harness import Child, pid_is_alive, pids_gone_by
 from proc_standins import PI, calls_of
 from proc_terminal import ENTER, EOF, INTERRUPT, Terminal
@@ -81,24 +81,6 @@ TERMINAL_EXCHANGE = "terminal_exchange"
 SETTLED_EVENT = "agent_settled"
 
 
-async def owui_session(tui: TuiStack) -> str:
-    """One session of the Open WebUI door with one settled turn.
-
-    The playpen holds the pi process of the session after the turn
-    (contract 03 §6), so the door has a process to release.
-    """
-    chat = chat_id()
-
-    async with tui.door_client() as door:
-        frames = await run_stream(door, chat, "hello")
-
-    assert frames.error_chunks == []
-    session = session_of(chat)
-    await await_settled(tui.tree, session)
-
-    return session
-
-
 async def attach(tui: TuiStack, session: str, *args: str) -> tuple[Child, Terminal]:
     """Type `agent-tui chat --session <id>`, and wait until pi has the terminal."""
     before = len(tui.terminal_pi_starts())
@@ -121,7 +103,7 @@ async def test_ct_tui_attaches_to_an_owui_session(tui: TuiStack) -> None:
     takes it with no `--force` and no wait. Contract 02 §5.11: the door has
     the pi process of the playpen released, or the launcher exits 8.
     """
-    session = await owui_session(tui)
+    session = await tui.chat_session()
 
     child, terminal = await attach(tui, session)
     writer = await tui.writer(session)
@@ -161,7 +143,7 @@ async def test_ct_tui_attaches_to_an_owui_session(tui: TuiStack) -> None:
 
 async def test_cv_launcher_runs_the_pool_line_without_rpc(tui: TuiStack) -> None:
     """Contract 03 §7.6 rule 1: the command of the playpen, minus `--mode rpc`."""
-    session = await owui_session(tui)
+    session = await tui.chat_session()
     (pool,) = calls_of(tui.tree, PI)
 
     child, terminal = await attach(tui, session)
@@ -175,7 +157,7 @@ async def test_cv_launcher_runs_the_pool_line_without_rpc(tui: TuiStack) -> None
 
 async def test_ct_a_second_terminal_is_refused(tui: TuiStack) -> None:
     """Contract 02 §7.2. Contention refuses: no queue, and no lease is taken away."""
-    session = await owui_session(tui)
+    session = await tui.chat_session()
     first, first_terminal = await attach(tui, session)
 
     second, _ = tui.open_terminal(FAMILY, ARG_SESSION, session)
@@ -202,7 +184,7 @@ async def test_force_takes_an_idle_lease_from_another_terminal(tui: TuiStack) ->
     (§10.5), and the second launcher can find that process (`AGENTS.md`,
     Known gaps). So the scenario does not need the second pi to start.
     """
-    session = await owui_session(tui)
+    session = await tui.chat_session()
     first, first_terminal = await attach(tui, session)
     (first_pi,) = tui.terminal_pi_starts()
 
@@ -258,7 +240,7 @@ async def test_ct_a_new_session_exists_before_pi_runs(tui: TuiStack) -> None:
 
 async def test_the_picker_attaches_to_the_chosen_session(tui: TuiStack) -> None:
     """`agent-tui chat` lists the sessions of the family. Number 1 is the first row."""
-    session = await owui_session(tui)
+    session = await tui.chat_session()
 
     child, terminal = tui.open_terminal(FAMILY)
     terminal.type("1" + ENTER)
@@ -277,7 +259,7 @@ async def test_the_picker_attaches_to_the_chosen_session(tui: TuiStack) -> None:
 
 async def test_no_choice_at_the_picker_starts_nothing(tui: TuiStack) -> None:
     """The end of the input at the list is an answer: nothing was chosen."""
-    session = await owui_session(tui)
+    session = await tui.chat_session()
 
     child, terminal = tui.open_terminal(FAMILY)
     terminal.type(EOF)
@@ -297,7 +279,7 @@ async def test_a_signal_gives_the_lease_back_and_leaves_pi(
     it. The session is writable at once (contract 02 §5.10), and the door
     still reports the exit code of pi when pi ends.
     """
-    session = await owui_session(tui)
+    session = await tui.chat_session()
     child, terminal = await attach(tui, session)
     (pi,) = tui.terminal_pi_starts()
 
@@ -316,11 +298,11 @@ async def test_a_signal_gives_the_lease_back_and_leaves_pi(
 async def test_a_closed_terminal_gives_the_lease_back(tui: TuiStack) -> None:
     """A closed window. The system sends SIGHUP to the door, the leader of the session.
 
-    What pi gets is a matter of the system. Linux sends SIGHUP to the
-    foreground group too. macOS sends it to the leader alone. So the
-    scenario reads the lease, and the teardown ends what still runs.
+    What pi gets differs by system. Linux sends SIGHUP to the foreground
+    group too. macOS sends it to the leader alone. So the scenario reads
+    the lease, and the teardown ends what still runs.
     """
-    session = await owui_session(tui)
+    session = await tui.chat_session()
     _, terminal = await attach(tui, session)
 
     terminal.hang_up()
@@ -335,7 +317,7 @@ async def test_the_interrupt_key_gives_the_lease_back(tui: TuiStack) -> None:
     The pi stand-in ends at the signal. The real pi reads the key itself.
     In each case the door gives the lease back and ends after pi.
     """
-    session = await owui_session(tui)
+    session = await tui.chat_session()
     child, terminal = await attach(tui, session)
     (pi,) = tui.terminal_pi_starts()
 
@@ -353,7 +335,7 @@ async def test_the_door_passes_the_exit_code_of_the_launcher(tui: TuiStack) -> N
     The credential file is gone, so the launcher exits 10. The door exits
     with that code, and it gives the lease back.
     """
-    session = await owui_session(tui)
+    session = await tui.chat_session()
     (tui.tree.mounts().creds / "creds.json").unlink()
 
     child, _ = tui.open_terminal(FAMILY, ARG_SESSION, session)
@@ -372,7 +354,7 @@ async def test_a_terminal_exchange_reaches_the_journal(tui: TuiStack) -> None:
     playpen for the new entries and writes one `terminal_exchange` line.
     """
     tree = tui.tree
-    session = await owui_session(tui)
+    session = await tui.chat_session()
     child, terminal = await attach(tui, session)
 
     terminal.type(PROMPT_COMMAND + ENTER)

@@ -8,6 +8,13 @@ The sources are the ones contract 05 §8 names: the status documents, the
 validation report, the outcome records, the audit files and `attendance` as
 `view-ro`. `attendance` writes the sessions and the outcome records here. The
 suite writes the files that `caregiver` and the chaperone write on the host.
+
+CONTRACT-QUESTION: §8.1 says what each page shows. No contract gives the
+markup. Reading taken: the markup of the templates is the interface, because
+the one stylesheet names its classes. So a scenario finds a table by its
+class, a cell by the text of its column head, and a report by the classes
+`problem`, `problems` and `issues`. A change of the markup costs the names
+in this file.
 """
 
 from __future__ import annotations
