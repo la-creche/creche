@@ -84,6 +84,8 @@ const NO_TURN_SEQ = 0;
 const BYTES_PER_MB = 1024 * 1024;
 
 export const EXIT_OK = 0;
+/** A handler threw and the playpen cannot serve. Node ends with this code too. */
+export const EXIT_INTERNAL = 1;
 export const EXIT_LOCK_HELD = 3;
 export const EXIT_PROTOCOL = 4;
 export const EXIT_DEADLINE = 5;
@@ -249,11 +251,21 @@ export class Playpen {
    * The host still gets the answer that it waits for. Contract 03 §5.3 fails
    * the turn that the line named with `internal`, and §4.8 rule 1 answers a
    * `get_entries`. Each other line is reported.
+   *
+   * Two lines are the exception. Half a `hello` leaves no pool, and half a
+   * `shutdown` leaves a process that reads no line and holds the lock.
+   * Neither can serve, so the process ends.
    */
   private dispatchFailed(message: HostMessage, error: unknown): void {
     const cause = error instanceof Error ? error.message : "the handler threw no Error";
     const detail = `${message.type} failed in the playpen: ${cause}`;
     const pool = this.pool;
+
+    if (message.type === "hello" || message.type === "shutdown") {
+      this.log("error", null, detail);
+      this.giveUp();
+      return;
+    }
 
     if (pool !== null && "turn" in message) {
       pool.refuseTurn(message, detail);
@@ -507,6 +519,24 @@ export class Playpen {
     this.pool?.killAll();
     this.options.lock.release();
     this.options.onExit(EXIT_DEADLINE);
+  }
+
+  /**
+   * Ends a playpen that cannot serve, as the deadline does: no grace.
+   * §11.1 rule 5 says that an exit is always correct, because the session
+   * state is on the host.
+   */
+  private giveUp(): void {
+    this.closing = true;
+    if (this.deadline !== null) {
+      clearTimeout(this.deadline);
+      this.deadline = null;
+    }
+
+    this.pool?.killAll();
+    this.options.processes.clear();
+    this.options.lock.release();
+    this.options.onExit(EXIT_INTERNAL);
   }
 
   /** §4.6. `shutdown` runs §4.5 for every session, then the playpen exits. */

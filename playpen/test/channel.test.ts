@@ -2,7 +2,7 @@
 // pi. Each case is a rule from the contract rather than a property of this
 // implementation.
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,10 +10,12 @@ import { join } from "node:path";
 import {
   EXIT_CONTROL_MOUNT,
   EXIT_DEADLINE,
+  EXIT_INTERNAL,
   EXIT_LOCK_HELD,
   EXIT_PROTOCOL,
 } from "../src/playpen.js";
 import { MAX_LINE_BYTES } from "../src/constants.js";
+import { SessionPool } from "../src/pool.js";
 import type { EventMessage } from "../src/protocol.js";
 import { TurnFile } from "../src/turn-file.js";
 import { Harness, until } from "./harness.js";
@@ -38,6 +40,8 @@ function eventsOf(harness: Harness, turn: string): EventMessage[] {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
+
   while (live.length > 0) {
     await live.pop()?.dispose();
   }
@@ -543,6 +547,44 @@ describe("ending the channel", () => {
     await until(() => harness.exitCode !== null, "the exit");
     expect(harness.exitCode).toBe(0);
     await until(() => harness.of("process_exit").length === 1, "the process to go");
+  });
+
+  it("exits when the shutdown handler throws", async () => {
+    // §11.1 rule 5: exiting is always correct. A playpen that reads no line
+    // and holds the lock must not stay.
+    const harness = open();
+    harness.start();
+    harness.hello({ pi_idle_ttl_s: 900 });
+    harness.startTurn("owui-stuck", turnId(1));
+    await until(() => harness.of("turn_settled").length === 1, "the turn");
+
+    vi.spyOn(SessionPool.prototype, "shutdown").mockRejectedValueOnce(new Error("the stop broke"));
+    harness.send({ type: "shutdown", grace_ms: 500 });
+
+    await until(() => harness.exitCode !== null, "the exit");
+    expect(harness.exitCode).toBe(EXIT_INTERNAL);
+    expect(harness.of("log").some((line) => line.message.includes("the stop broke"))).toBe(true);
+    expect(existsSync(join(harness.root, "control", "supervisor.lock"))).toBe(false);
+
+    // No pi process stays behind the playpen.
+    await until(() => harness.of("process_exit").length === 1, "the process to go");
+  });
+
+  it("exits when the hello handler throws", async () => {
+    // Half a handshake leaves a playpen with no pool. It answers no turn,
+    // so it must not stay.
+    const harness = open();
+    harness.start();
+
+    vi.spyOn(SessionPool.prototype, "start").mockImplementationOnce(() => {
+      throw new Error("the pool broke");
+    });
+    harness.hello();
+
+    await until(() => harness.exitCode !== null, "the exit");
+    expect(harness.exitCode).toBe(EXIT_INTERNAL);
+    expect(harness.of("log").some((line) => line.message.includes("the pool broke"))).toBe(true);
+    expect(existsSync(join(harness.root, "control", "supervisor.lock"))).toBe(false);
   });
 });
 

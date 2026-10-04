@@ -181,7 +181,9 @@ it on a development machine.
 54. Cut a text with `cutToBytes` from `src/framing.ts`. A cap of contract 03
     §8 counts bytes. `slice` counts the units of a JS string.
 55. Keep the one handler of the dispatcher in `src/playpen.ts`. A handler
-    that throws must not end the process.
+    that throws must not end the process. A `hello` or a `shutdown` that
+    throws is the exception. The playpen cannot serve after it, so the
+    handler ends the process with a non-zero code.
 56. Send a refused host line that names a turn to `SessionPool.refuseTurn`.
     Only the pool knows the `turn_seq` of that turn. `turn_seq` 0 is only for
     a line with no session and no turn.
