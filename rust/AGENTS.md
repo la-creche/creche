@@ -24,7 +24,7 @@ defect that a test finds late.
 
 | Module of `creche-contracts` | What it holds |
 |---|---|
-| `ids` | Each id grammar that two contracts or more use. One type for each grammar. |
+| `ids` | Each id grammar that `vectors/data/ids` covers. One type for each grammar. |
 | `secret` | `Secret`, the type of a token or a key. |
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
@@ -45,12 +45,15 @@ defect that a test finds late.
    `ids` holds.
 4. If `ids` lacks an id type that your module needs, define the type in your
    module. Say so in the pull request. The owner of the crate moves the type
-   to `ids` when a second contract needs it.
+   to `ids` when a second contract needs it. Give the vectors of that type a
+   surface name that starts with the name of your module, not with `id.`. A
+   test of `ids` fails on an `id.` surface that no table of `ids` names.
 5. Ask the owner of the crate before you change `ids`, `secret` or
    `vectors`. A change there reaches each module.
-6. For an id that is one run of ASCII bytes, write a `Run` constant and call
-   `run_id!`. The macro makes the type and its error type in the form of
-   `FamilyName`.
+6. In `ids`, for an id that is one run of ASCII bytes, write a `Run`
+   constant. Then call `run_id!`. The macro makes the type and its error
+   type in the form of `FamilyName`. `Run` and `run_id!` are private to
+   `ids`. In another module, write the check by hand over ASCII bytes.
 7. For an id with parts, write a struct with a private field for the text
    and for each part. `ids::Tag` is the pattern.
 8. Give each type its own doc comment and its own error type. The doc
