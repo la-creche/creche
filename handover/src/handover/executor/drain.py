@@ -218,9 +218,11 @@ def _tell(wiring: Wiring, entry: Entry, component: str | None = None) -> None:
     """§2.6's push. Never raises: an unreachable phone is a journal line,
     not a release that changes its mind about what it did."""
     notice = notice_of(entry, component)
+    # Every error, not `OSError` alone: the entry is on disk, and an error
+    # that left here ended the pass before the next request.
     try:
         delivered = wiring.notify(notice)
-    except OSError as exc:
+    except Exception as exc:
         print(f"{LOG_PREFIX}: the outcome push failed ({type(exc).__name__})", flush=True)
 
         return
@@ -239,9 +241,12 @@ def repair_unfinished(spool: Spool, wiring: Wiring) -> list[str]:
     """
     lines: list[str] = []
     for found in spool.unfinished():
+        # Every error, not two types of it: the repairs run before
+        # `requests/` is drained, so an error that left here ended each run
+        # at the same note.
         try:
             lines.append(_repair_one(spool, wiring, found))
-        except (SpoolError, OSError) as exc:
+        except Exception as exc:
             spool.clear_switch(found.name)
             lines.append(f"{found.request_id}: repair failed ({type(exc).__name__})")
 

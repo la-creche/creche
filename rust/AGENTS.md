@@ -556,14 +556,11 @@ Rules for the test:
   4. `PackageVersion`, contract 01b §3.1. The contract gives no grammar. One
      Python copy permits `+` and `-` and has no cap. The type takes the other
      copy: no `+`, no `-` and a cap of 64.
-  5. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. Each
-     Python copy accepts a decimal digit that is not ASCII. The types refuse
-     it.
-  6. `OwuiChatId`, contract 02 §2. The contract gives no cap for a chat id.
+  5. `OwuiChatId`, contract 02 §2. The contract gives no cap for a chat id.
      The Python door refuses a chat id of more than 123 bytes, because the
      session id `owui-<chat id>` has 128 bytes or less. The type has that
      cap. `OwuiChatId::session_id` thus gives no error.
-  7. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. The
+  6. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. The
      contract gives no cap on the digits of a number. Python reads a text of
      4300 digits at most as an integer. The types have that cap.
 - These `CONTRACT-QUESTION` comments are open in

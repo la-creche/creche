@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from handover.catalog import CATALOG_BY_NAME, Kind, Releases
+from handover.catalog import CATALOG_BY_NAME
 
 #: The contract version the fixtures declare. Kept equal to the catalog's
 #: ceiling so a fixture never fails on `manifest_version` by accident.
@@ -31,7 +31,7 @@ def manifest_text(
 ) -> str:
     """One valid `component.yaml`, with three lists a caller may fill in."""
     row = CATALOG_BY_NAME[name]
-    kind = Kind.DATA if row.releases is Releases.NO else Kind.VENV
+    kind = row.kind
     declared = release if release is not None else str(row.releases)
 
     return f"""
