@@ -83,5 +83,9 @@ directory is not a workspace package, so a change here does not change
   name that depends on the file system of the host has no vector.
 - The vectors with a 400,000-deep nesting assume the default stack size. A
   larger stack can let Python 3.14 read that input.
+- The vector with a 9,100-deep nesting is under the limit of each supported
+  Python version: 9,997 levels on 3.12 and 9,998 on 3.13. Python refuses that
+  input when the caller is about 900 C calls deep. Python 3.14 refuses it on
+  a small stack.
 - The generator runs on macOS, and CI runs it on Linux. No other system
   has a run.

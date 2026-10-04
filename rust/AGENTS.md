@@ -220,9 +220,16 @@ The reader has these properties:
 
 - It uses no recursion. The depth of a line cannot exhaust the stack.
 - It stops at 9000 levels. Each supported Python version reads that depth.
-- The `parse` of `claim` gives `malformed` for a deeper line and for an
-  integer of more than 4300 digits. Python raises `RecursionError` and
-  `ValueError` there, and the Python host gives `malformed`.
+- The `parse` of `claim` gives `malformed` for a line of 9001 levels or
+  more. The Python host gives `malformed` when `json.loads` raises
+  `RecursionError`. The deepest line that it accepts has 9997 levels on
+  Python 3.12, 9998 on 3.13 and about 116,000 on 3.14. The reader thus
+  refuses a line that each supported Python version accepts, up to the limit
+  of that version. One vector holds such a line, and it is a row of the
+  `DEVIATIONS` table of `claim`.
+- The `parse` of `claim` gives `malformed` for an integer of more than 4300
+  digits. Python raises `ValueError` there, and the Python host gives
+  `malformed`.
 - `Json` drops, copies, compares and prints with no recursion.
 
 Rule 7 holds. One field holds a `Json`: the `event` of a line. Contract 03
@@ -398,8 +405,10 @@ Rules for the test:
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/channel/`:
   1. `json::MAX_LINE_DEPTH`, contract 03 §13 rule 1. The contract gives no
-     nesting limit for a line. The limit of Python changes with its version.
-     The reader stops at 9000 levels.
+     nesting limit for a line. The limit of Python changes with its version:
+     9997 levels on 3.12, 9998 on 3.13 and about 116,000 on 3.14. The reader
+     stops at 9000 levels. It refuses a line of 9001 levels or more, and each
+     supported Python version accepts such a line up to its own limit.
   2. `claim::MAX_EVENT_DEPTH`, contract 03 §13 rule 6. The contract gives no
      nesting limit for an event. The Python host keeps only the type of an
      event that nests more than 64 levels. The reader does the same.

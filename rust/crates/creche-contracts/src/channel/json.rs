@@ -23,11 +23,14 @@ use super::text::{Text, TextBuilder};
 /// line.
 // CONTRACT-QUESTION: contract 03 §13 rule 1 demands valid JSON and names no
 // nesting limit. The Python host refuses a line when `json.loads` raises
-// `RecursionError`. That depth changes with the interpreter: 9997 levels on
-// Python 3.12, 9998 on 3.13 and about 116,000 on 3.14, as measured. The
-// reader stops below the lowest of them, so it refuses each line that one
-// supported interpreter refuses. A lower limit costs a turn: a refused event
-// leaves a gap in `turn_seq`, and rule 4 fails the turn on a gap.
+// `RecursionError`. The deepest line that it accepts changes with the
+// interpreter: 9997 levels on Python 3.12, 9998 on 3.13 and about 116,000 on
+// 3.14, as measured. The reader stops below the lowest of them, so it refuses
+// each line that one supported interpreter refuses. It also refuses a line of
+// 9001 levels or more that each supported interpreter accepts, up to the
+// limit of that interpreter. The vector `deep-unknown-field-9100-levels` holds
+// such a line. The difference can cost a turn: a refused event leaves a gap
+// in `turn_seq`, and rule 4 fails the turn on a gap.
 pub const MAX_LINE_DEPTH: usize = 9000;
 
 /// The count of fields from which an object under construction keeps an

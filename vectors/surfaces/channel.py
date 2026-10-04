@@ -49,6 +49,12 @@ SANDBOX: Final = "chat-s1"
 #: 120,000 on 3.14. The line still fits under `MAX_LINE_BYTES`.
 VERY_DEEP: Final = 400_000
 
+#: Under the nesting limit of each supported interpreter, with a margin for
+#: the depth of the caller: 9,997 levels on Python 3.12, 9,998 on 3.13 and
+#: about 116,000 on 3.14. The Rust reader stops at 9,000 levels, so it
+#: refuses a line of this depth. The line object is one of the levels.
+DEEP_AND_READ: Final = 9_100
+
 #: Past the interpreter's limit of 4,300 digits for one integer.
 HUGE_DIGITS: Final = 5_000
 
@@ -680,6 +686,15 @@ LINES: Final[tuple[Line, ...]] = (
     ),
     Line("very-deep-top", parts=(("[", VERY_DEEP), ("]", VERY_DEEP))),
     Line("very-deep-then-bad-json", parts=(("[", VERY_DEEP),)),
+    Line(
+        "deep-unknown-field-9100-levels",
+        parts=(
+            ('{"type":"pong","nonce":"x","extra":', 1),
+            ("[", DEEP_AND_READ - 1),
+            ("]", DEEP_AND_READ - 1),
+            ("}", 1),
+        ),
+    ),
 )
 
 

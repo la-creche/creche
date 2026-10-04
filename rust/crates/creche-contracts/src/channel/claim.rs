@@ -1106,8 +1106,10 @@ pub enum PlaypenLine {
 pub fn parse(text: &str) -> Result<PlaypenLine, Refusal> {
     let value = json::read(text, Dialect::Python).map_err(|error| match error {
         ReadError::NotJson => Refusal::NotJson,
-        // Python raises `RecursionError` and `ValueError` here, and the Python
-        // host reads each exception as a malformed line.
+        // Python raises `RecursionError` past its own nesting limit and
+        // `ValueError` on a long integer. The Python host reads each exception
+        // as a malformed line. `MAX_LINE_DEPTH` says where the two limits
+        // differ.
         ReadError::TooDeep | ReadError::IntegerTooLong => Refusal::Malformed,
     })?;
     let mut record = value.into_object().ok_or(Refusal::NotObject)?;
@@ -1351,6 +1353,25 @@ pub(super) mod tests {
 
     const SURFACE: &str = "channel.parse";
 
+    /// One vector on which the parser differs from the Python host on
+    /// purpose.
+    struct Deviation {
+        vector: &'static str,
+        /// The section of contract 03 that names no rule for the case.
+        section: &'static str,
+        difference: &'static str,
+    }
+
+    /// The Python host reads a line down to the nesting limit of its
+    /// interpreter, which changes with the version. The reader stops at
+    /// [`json::MAX_LINE_DEPTH`] levels on each machine. It refuses the line
+    /// of this vector as malformed, and the Python host accepts it.
+    const DEVIATIONS: &[Deviation] = &[Deviation {
+        vector: "deep-unknown-field-9100-levels",
+        section: "§13 rule 1",
+        difference: "the line nests past MAX_LINE_DEPTH and under the limit of Python",
+    }];
+
     /// A text as a vector file writes it.
     pub(in super::super) fn text(text: &Text) -> Value {
         match text.as_str() {
@@ -1575,6 +1596,7 @@ pub(super) mod tests {
     fn the_parser_does_with_each_line_what_the_python_host_does() {
         let surface = vectors::surface(SURFACE);
         let mut accepted = 0;
+        let mut differed = Vec::new();
 
         assert_eq!(surface.entry, "attendance.wire.parse");
         for vector in &surface.vectors {
@@ -1586,6 +1608,10 @@ pub(super) mod tests {
             let parsed = parse(&input);
 
             match vector.result {
+                // The one difference on purpose: the reader gives `malformed`.
+                Outcome::Accepted if parsed == Err(Refusal::Malformed) => {
+                    differed.push(id.as_str())
+                }
                 Outcome::Accepted => {
                     let line = parsed.unwrap_or_else(|refusal| panic!("{id}: {refusal}"));
                     let expected = vector.value().unwrap_or_else(|| panic!("{id}: no value"));
@@ -1603,7 +1629,14 @@ pub(super) mod tests {
             }
         }
 
+        let listed: Vec<&str> = DEVIATIONS.iter().map(|row| row.vector).collect();
+
+        assert_eq!(differed, listed, "the vectors that differ and the rows");
         assert!(accepted > 0, "{SURFACE} holds no accepted vector");
+        for row in DEVIATIONS {
+            assert!(row.section.starts_with('§'), "{}", row.vector);
+            assert!(!row.difference.is_empty(), "{}", row.vector);
+        }
     }
 
     fn line(text: &str) -> PlaypenLine {
