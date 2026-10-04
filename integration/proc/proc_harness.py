@@ -11,7 +11,8 @@ command and an environment, and gives back a `Child`:
    exits, or the deadline passes.
 4. `free_port` gives a loopback port and holds it for the test, so two runs
    of this suite on one machine never take the same port.
-5. `stop_all` ends every group and says which one it had to kill.
+5. `stop_all` ends every group and says which one it had to kill. It waits
+   for every process of a group, not only for the leader.
 
 The registry at the bottom is the suite's check at session end: a group that
 no teardown confirmed gone is a leak.
@@ -110,6 +111,11 @@ class Child:
     popen: subprocess.Popen[bytes]
     stdout_path: Path
     stderr_path: Path
+    #: True from the moment the leader was reaped and the group was empty.
+    #: The system can then give the id to another program, so the group gets
+    #: no signal after that.
+    group_gone: bool = False
+    _looked: bool = False
 
     @property
     def pgid(self) -> int:
@@ -118,16 +124,43 @@ class Child:
 
     def exit_code(self) -> int | None:
         """The exit code, or None while the child runs."""
-        return self.popen.poll()
+        code = self.popen.poll()
+
+        if code is not None:
+            self.look_at_group()
+
+        return code
 
     def wait(self, deadline_s: float) -> int:
         """Wait for the child to exit by itself. Raises when it does not."""
         try:
-            return self.popen.wait(timeout=deadline_s)
+            code = self.popen.wait(timeout=deadline_s)
         except subprocess.TimeoutExpired as error:
             raise ProcError(
                 f"{self.name} did not exit in {deadline_s} s\n{self.output()}"
             ) from error
+
+        self.look_at_group()
+
+        return code
+
+    def look_at_group(self) -> None:
+        """Look at the group once, directly after the leader was reaped.
+
+        Only the first look counts. While the leader is not reaped, or a
+        member runs, the system keeps the id. A later look at an empty group
+        could find the group of another program.
+        """
+        if self._looked:
+            return
+
+        self._looked = True
+        self.group_gone = not _group_is_alive(self.pgid)
+
+    def close_group(self) -> None:
+        """Record that the group is empty. No later look opens it again."""
+        self._looked = True
+        self.group_gone = True
 
     def send(self, signum: signal.Signals) -> None:
         """One signal to the child alone, as `systemctl kill --kill-whom=main`."""
@@ -242,30 +275,28 @@ class Supervisor:
         """End every group, newest first. Returns one line per problem.
 
         SIGTERM goes to the whole group, as a unit's stop does with the
-        default `KillMode=control-group`. A group that outlives the grace is
+        default `KillMode=control-group`. Every process of the group has the
+        grace, not only the leader. A group that outlives the grace is
         killed, and that is a problem to report: on the host it would be a
         stop that ran into `TimeoutStopSec`.
+
+        A group that ended before gets no signal: its id can belong to
+        another program now.
         """
         problems: list[str] = []
+        open_now = [child for child in reversed(self.children) if _group_is_open(child)]
 
-        for child in reversed(self.children):
+        for child in open_now:
             _signal_group(child.pgid, signal.SIGTERM)
 
         deadline = time.monotonic() + grace_s
 
-        for child in reversed(self.children):
-            if not _exits_by(child, deadline):
-                problems.append(f"{child.name} ignored SIGTERM for {grace_s} s and was killed")
+        for child in open_now:
+            problems.extend(_end_group(child, deadline, grace_s))
 
-        for child in reversed(self.children):
-            _signal_group(child.pgid, signal.SIGKILL)
-            child.popen.wait()
-
-            if _group_gone_by(child.pgid, time.monotonic() + REAP_DEADLINE_S):
+        for child in self.children:
+            if child.group_gone:
                 _note_gone(child.pgid)
-                continue
-
-            problems.append(f"the process group of {child.name} outlived SIGKILL")
 
         for lock in self._held_ports.values():
             os.close(lock)
@@ -389,6 +420,43 @@ def _exits_by(child: Child, deadline: float) -> bool:
         return False
 
     return True
+
+
+def _group_is_open(child: Child) -> bool:
+    """True while the group of `child` can still hold a process of the test."""
+    if child.popen.returncode is not None:
+        child.look_at_group()
+
+    return not child.group_gone
+
+
+def _end_group(child: Child, deadline: float, grace_s: float) -> list[str]:
+    """Wait for one group that got SIGTERM, and kill what stays of it.
+
+    Returns one line per problem. A group that is empty at the deadline gets
+    no SIGKILL.
+    """
+    leader_ended = _exits_by(child, deadline)
+
+    if leader_ended and _group_gone_by(child.pgid, deadline):
+        child.close_group()
+
+        return []
+
+    if leader_ended:
+        problems = [f"a process of {child.name} outlived SIGTERM for {grace_s} s and was killed"]
+    else:
+        problems = [f"{child.name} ignored SIGTERM for {grace_s} s and was killed"]
+
+    _signal_group(child.pgid, signal.SIGKILL)
+    child.popen.wait()
+
+    if _group_gone_by(child.pgid, time.monotonic() + REAP_DEADLINE_S):
+        child.close_group()
+
+        return problems
+
+    return [*problems, f"the process group of {child.name} outlived SIGKILL"]
 
 
 def _signal_group(pgid: int, signum: signal.Signals) -> None:

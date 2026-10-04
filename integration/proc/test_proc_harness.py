@@ -12,6 +12,7 @@ import signal
 import time
 from pathlib import Path
 
+import proc_harness
 import pytest
 from proc_harness import (
     ProcError,
@@ -92,6 +93,53 @@ def test_a_child_that_ignores_sigterm_is_killed_and_reported(tree: Tree) -> None
     assert child.exit_code() == -signal.SIGKILL
 
 
+def test_a_member_that_outlives_sigterm_is_killed_and_reported(tree: Tree) -> None:
+    """The leader ends at SIGTERM and a process of its group does not.
+
+    On the host the stop of such a unit runs into `TimeoutStopSec`. The
+    member writes its mark after it set the trap, so the signal cannot come
+    first.
+    """
+    mark = tree.root / "member.pid"
+    member_script = 'trap "" TERM; echo "$$" > "$0"; exec sleep 60'
+    script = f"{SH} -c '{member_script}' \"{mark}\" & wait"
+    holder = Supervisor(tree.proc_logs)
+    child = holder.spawn("holder", [SH, "-c", script], BASE_ENV, tree.root)
+    member = int(_read_when_written(mark))
+
+    problems = holder.stop_all(grace_s=SHORT_GRACE_S)
+
+    outlived = f"a process of holder outlived SIGTERM for {SHORT_GRACE_S} s and was killed"
+    assert problems == [outlived]
+    assert child.exit_code() == -signal.SIGTERM
+    assert pids_gone_by([member], time.monotonic() + MARK_DEADLINE_S) == []
+
+
+def test_an_ended_group_gets_no_signal(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The system can give the id of an ended group to another program."""
+    finished = supervisor.run("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    pgid = supervisor.children[0].pgid
+    signalled = _record_group_signals(monkeypatch)
+
+    assert supervisor.stop_all() == []
+    assert finished.exit_code == 0
+    assert pgid not in signalled
+
+
+def test_a_second_stop_all_sends_no_signal(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child = supervisor.spawn("idle", [SH, "-c", IDLE], BASE_ENV, tree.root)
+    assert supervisor.stop_all() == []
+    signalled = _record_group_signals(monkeypatch)
+
+    assert supervisor.stop_all() == []
+    assert child.pgid not in signalled
+    assert end_leaked_groups() == []
+
+
 def test_wait_ready_reports_a_child_that_exited(tree: Tree, supervisor: Supervisor) -> None:
     """The exit code and the stderr of the child are in the error."""
     script = "echo the-reason >&2; exit 3"
@@ -152,6 +200,22 @@ def test_a_port_is_held_until_the_teardown(supervisor: Supervisor) -> None:
 
     assert lock is not None
     os.close(lock)
+
+
+def _record_group_signals(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Every group that gets a real signal from now on. Signal 0 only asks."""
+    signalled: list[int] = []
+    real = os.killpg
+
+    def recording(pgid: int, signum: int) -> None:
+        if signum != 0:
+            signalled.append(pgid)
+
+        real(pgid, signum)
+
+    monkeypatch.setattr(proc_harness.os, "killpg", recording)
+
+    return signalled
 
 
 def _read_when_written(path: Path) -> str:

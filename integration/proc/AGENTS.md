@@ -139,9 +139,12 @@ the pi stand-in                          found through AGENT_PI_BIN
    the test. The lock files of the ports are in `creche-proc-ports-<uid>` in
    the system temporary directory, the one place outside the root.
 10. Each service leads its own process group. The teardown sends `SIGTERM` to
-    each group, waits, then sends `SIGKILL`.
+    each group. Then it waits 20 seconds at most for each group to become
+    empty. It sends `SIGKILL` only to a group that is not empty after that
+    time. A group that ended before the teardown gets no signal.
 11. No test leaves a process behind. A teardown that had to kill a process
-    fails the test. A group that no teardown ended fails the session.
+    fails the test. This applies to each process of a group, not only to the
+    service. A group that no teardown ended fails the session.
 12. A scenario that acts during a turn slows the fake pi first, with
     `set_pi_env`. The tuning reaches the next pi process that starts. A
     session keeps its pi process, so set the tuning before the first turn of
@@ -204,8 +207,8 @@ down this list.
    address. Read its stderr.
 4. The stream ends with an error chunk: read the journal of the session
    under `sessions/` in the root, and the playpen log.
-5. `the teardown had to end a process`: a service ignored `SIGTERM`, or a
-   stand-in outlived its service.
+5. `the teardown had to end a process`: a service ignored `SIGTERM`, a
+   process of its group outlived it, or a stand-in outlived its service.
 6. `a test left a process behind`: a test started a process outside the
    `supervisor` fixture. This is a defect of the test.
 
