@@ -349,6 +349,25 @@ async def test_a_malformed_pair_is_refused(tmp_path: Path, over: dict[str, Any])
     await harness.stop()
 
 
+async def test_a_family_of_no_known_kind_is_not_switched(tmp_path: Path) -> None:
+    """§5.3 rule 8 names the refusals of a switch. A channel needs the kind of
+    its family, so this service would not dial a sandbox of such a document."""
+    harness = SwitchHarness(tmp_path)
+    write_status(
+        harness.config.state_root,
+        kind="robot",
+        sandboxes=((SANDBOX, "ready"), (NEXT_SANDBOX, "ready")),
+    )
+
+    with pytest.raises(ApiError) as refused:
+        await harness.service.switch_sandbox(CAREGIVER, harness.request())
+
+    assert refused.value.code is ErrorCode.BAD_REQUEST
+    assert refused.value.message == "the status document states no kind"
+    assert harness.fleet.dials == []
+    await harness.stop()
+
+
 async def test_an_unknown_family_is_refused(tmp_path: Path) -> None:
     harness = SwitchHarness(tmp_path)
 

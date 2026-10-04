@@ -1062,6 +1062,16 @@ class SessionService:
         if status.startable_by_id(request.to) is None:
             raise _switch_refused(family, "to is not a sandbox this service would dial")
 
+        # CONTRACT-QUESTION: contract 05 §5.3 rule 8 names two refusals of a
+        # switch, and neither one is for a status document that states no
+        # known kind. A channel needs the kind (`served_kind`), so this reads
+        # `to` as a sandbox that this service would not dial: `bad_request`.
+        # Without this check the dial answers `forbidden`, the refusal of a
+        # door. Another reading changes the code of this one refusal.
+        # `caregiver` reads each refusal of a switch in the same way.
+        if status.kind is None:
+            raise _switch_refused(family, "the status document states no kind")
+
     async def _run_switch(self, request: SwitchRequest) -> dict[str, Any]:
         """The switch itself. Every session survives it (§5.3 rule 4)."""
         family = request.family
