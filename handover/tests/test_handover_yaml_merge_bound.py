@@ -7,7 +7,9 @@ the document does not parse, which is the usual refusal of that reader.
 
 The text with merge keys that double runs in a child process. The child has
 a time limit and a memory limit, so a reader with no bound fails the test
-and does not take the machine.
+and does not take the machine. Three more kinds of small text run there too:
+a merge key that the text writes with its tag, a second document that does
+not compose, and a mapping that merges itself.
 """
 
 from __future__ import annotations
@@ -118,12 +120,39 @@ def _in_child(payload: str, text: str, *args: str) -> str:
     return done.stdout.strip()
 
 
-def _doubling(levels: int, indent: str = "  ") -> str:
+#: A merge key that a text writes with its tag, and with no `<<`.
+TAGGED_KEY = "!!merge m"
+
+
+def _doubling(levels: int, indent: str = "  ", key: str = "<<") -> str:
     """A list of mappings. Each one merges the one before two times."""
     lines = [f"{indent}- &m0 {{k: 1}}"]
-    lines += [f"{indent}- &m{n} {{<<: [*m{n - 1}, *m{n - 1}]}}" for n in range(1, levels + 1)]
+    lines += [f"{indent}- &m{n} {{{key}: [*m{n - 1}, *m{n - 1}]}}" for n in range(1, levels + 1)]
 
     return "\n".join(lines) + "\n"
+
+
+def _merges_itself(merges: int) -> str:
+    """A mapping with one pair that merges itself `merges` times."""
+    keys = ", ".join(["<<: *a"] * merges)
+
+    return f"&a {{k: 1, {keys}}}"
+
+
+#: A second document that does not compose: its alias has no anchor.
+LATER_DOCUMENT = "---\n- *none\n"
+
+#: Three more small texts: the lines of a list, and the text after the
+#: document. Each reader refuses each one inside the limits of the child.
+SMALL_TEXTS = {
+    "a-merge-key-by-its-tag": (_doubling(DOUBLING_LEVELS, key=TAGGED_KEY), ""),
+    "a-later-document": (_doubling(DOUBLING_LEVELS), LATER_DOCUMENT),
+    "a-mapping-that-merges-itself": (f"  - {_merges_itself(DOUBLING_LEVELS)}\n", ""),
+}
+
+#: A character that PyYAML does not take. The loader refuses it before it
+#: reads the first token.
+NOT_A_YAML_CHARACTER = "\x07"
 
 
 def _chain(levels: int) -> str:
@@ -208,6 +237,42 @@ def test_the_count_is_for_the_whole_document() -> None:
         load(text, LIMITS)
 
 
+def test_a_merge_key_by_its_tag_counts_as_a_merge_key() -> None:
+    """The count reads the tag of a key, and not its text."""
+    base = "base: &a {k0: 1, k1: 1, k2: 1}\n"
+
+    assert len(load(f"{base}own: {{{TAGGED_KEY}: [*a, *a, *a, *a]}}\n", LIMITS)["own"]) == 3
+    with pytest.raises(MergeTooLarge):
+        load(f"{base}own: {{{TAGGED_KEY}: [*a, *a, *a, *a, *a]}}\n", LIMITS)
+
+
+def test_a_mapping_that_merges_itself_has_the_two_limits() -> None:
+    """Three merges read as PyYAML reads them. Four pass the copy limit, and
+    five pass the limit of a chain."""
+    assert len(load(_merges_itself(3), LIMITS)) == 1
+    assert _result(lambda one: load(one, LIMITS), _merges_itself(3)) == _result(
+        yaml.safe_load, _merges_itself(3)
+    )
+    with pytest.raises(MergeTooLarge):
+        load(_merges_itself(LIMITS.depth), LIMITS)
+    with pytest.raises(MergeTooDeep):
+        load(_merges_itself(LIMITS.depth + 1), LIMITS)
+
+
+def test_a_later_document_is_an_error_before_the_first_one_is_built() -> None:
+    """The first document of this text passes the copy limit. The error is
+    that of the second document, so the reader built no value of the first."""
+    with pytest.raises(yaml.composer.ComposerError):
+        load(_copies(1, LIMITS.pairs + 1) + LATER_DOCUMENT, LIMITS)
+
+
+def test_a_character_that_pyyaml_does_not_take_is_a_yaml_error() -> None:
+    """The loader raises this error when it starts. `load` makes the loader,
+    so the handler of a caller for `load` takes the error too."""
+    with pytest.raises(yaml.reader.ReaderError):
+        load(f"a: 1 # {NOT_A_YAML_CHARACTER}\n", LIMITS)
+
+
 #: Texts with a merge key that PyYAML reads at no cost. Each one is a
 #: different path of the merge step.
 SAME_AS_PYYAML = (
@@ -229,6 +294,8 @@ SAME_AS_PYYAML = (
     "a: &a {k: 1}\nown: {<<: [*a, text]}\n",
     "a: &a [1, 2]\nown: {<<: *a}\n",
     "? {<<: {a: 1}}\n: v\n",
+    "a: &a {k: 1}\nown: {!!merge m: *a, j: 2}\n",
+    "a: &a {k: 1}\nown: {<<: *a}\n---\nb: 2\n",
 )
 
 #: Limits that no text of `SAME_AS_PYYAML` reaches.
@@ -349,6 +416,31 @@ def test_a_small_manifest_with_merge_keys_that_double_does_not_parse() -> None:
     assert _in_child(MANIFEST_CHILD, text) == PAIRS_REFUSAL
 
 
+#: The start of the refusal of a manifest for each text of `SMALL_TEXTS`.
+#: The second document has a line, and the two other texts have none.
+SMALL_TEXT_DETAILS = {
+    "a-merge-key-by-its-tag": PAIRS_REFUSAL,
+    "a-later-document": "does not parse: line ",
+    "a-mapping-that-merges-itself": PAIRS_REFUSAL,
+}
+
+
+@pytest.mark.parametrize("name", SMALL_TEXTS)
+def test_a_small_manifest_of_each_other_kind_does_not_parse(name: str) -> None:
+    body, tail = SMALL_TEXTS[name]
+    text = _manifest_with(body) + tail
+    assert len(text.encode("utf-8")) <= 4096
+
+    assert _in_child(MANIFEST_CHILD, text).startswith(SMALL_TEXT_DETAILS[name])
+
+
+def test_a_manifest_with_a_character_that_is_no_yaml_does_not_parse() -> None:
+    """The usual refusal, and no error of the loader."""
+    text = _manifest_with(f"  - a # {NOT_A_YAML_CHARACTER}\n")
+
+    assert _manifest_refusal(text) == "does not parse: unreadable YAML"
+
+
 # -- server.yaml ---------------------------------------------------------------
 
 
@@ -394,6 +486,21 @@ def test_a_small_server_file_with_merge_keys_that_double_does_not_parse() -> Non
     assert _in_child(SERVER_CHILD, text) == "server.yaml is not readable YAML"
 
 
+@pytest.mark.parametrize("name", SMALL_TEXTS)
+def test_a_small_server_file_of_each_other_kind_does_not_parse(name: str) -> None:
+    body, tail = SMALL_TEXTS[name]
+    text = _server_text("extra:\n" + body) + tail
+    assert len(text.encode("utf-8")) <= 4096
+
+    assert _in_child(SERVER_CHILD, text) == "server.yaml is not readable YAML"
+
+
+def test_a_server_file_with_a_character_that_is_no_yaml_does_not_parse() -> None:
+    text = _server_text(f"# {NOT_A_YAML_CHARACTER}\n")
+
+    assert _server_refusal(text) == "server.yaml is not readable YAML"
+
+
 # -- the sops file -------------------------------------------------------------
 
 
@@ -430,3 +537,18 @@ def test_a_small_sops_file_with_merge_keys_that_double_names_no_recipient(
     assert len(text.encode("utf-8")) <= 4096
 
     assert _in_child(SOPS_CHILD, text, str(tmp_path / ".sops.yaml")) == "()"
+
+
+@pytest.mark.parametrize("name", SMALL_TEXTS)
+def test_a_small_sops_file_of_each_other_kind_names_no_recipient(tmp_path: Path, name: str) -> None:
+    body, tail = SMALL_TEXTS[name]
+    text = _sops_text("extra:\n" + body) + tail
+    assert len(text.encode("utf-8")) <= 4096
+
+    assert _in_child(SOPS_CHILD, text, str(tmp_path / ".sops.yaml")) == "()"
+
+
+def test_a_sops_file_with_a_character_that_is_no_yaml_names_no_recipient(
+    tmp_path: Path,
+) -> None:
+    assert _recipients(tmp_path, _sops_text(f"# {NOT_A_YAML_CHARACTER}\n")) == ()
