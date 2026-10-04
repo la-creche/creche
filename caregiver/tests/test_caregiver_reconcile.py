@@ -27,13 +27,14 @@ from caregiver.reconcile import (
     DESTROY_STEP,
     SWITCH_STEP,
     Actors,
+    FamilyNotFoundError,
     ReconcileResult,
     SpendRead,
     reconcile_family,
 )
 from caregiver.switch import FakeSwitchClient, SwitchRequest
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import write_no_file_dir, write_registry
 
 from caregiver import paths, sandboxes
 
@@ -546,6 +547,50 @@ def test_an_instructions_edit_rewrites_the_config_mount(fleet: Fleet) -> None:
     assert result.status.state is FamilyState.IN_SYNC
 
 
+@pytest.mark.parametrize("name", ["instructions.md", "SKILL.md"])
+def test_a_registry_file_that_is_not_text_reads_as_an_empty_file(fleet: Fleet, name: str) -> None:
+    """A pass must not raise on the content of a file. Bytes that are not
+    UTF-8 read as a file that the pass cannot open: empty."""
+    skill = fleet.registry_root / "skills" / "notes"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("Take notes.\n", encoding="utf-8")
+    fleet.write(skills=["notes"])
+    fleet.run()
+    source = {
+        "instructions.md": fleet.registry_root / "families" / FAMILY / "instructions.md",
+        "SKILL.md": skill / "SKILL.md",
+    }
+    written = {
+        "instructions.md": paths.config_dir(fleet.state_root, FAMILY) / "instructions.md",
+        "SKILL.md": paths.config_dir(fleet.state_root, FAMILY) / "skills" / "notes" / "SKILL.md",
+    }
+    source[name].write_bytes(b"Be brief. \xff\n")
+
+    result = fleet.run()
+
+    assert written[name].read_bytes() == b""
+    assert result.status.state is FamilyState.IN_SYNC
+
+
+def test_a_directory_with_no_family_file_has_no_pass(fleet: Fleet) -> None:
+    """Contract 01 §5.6 rule 3: `caregiver` ignores the directory. The
+    caller gets the answer for a name that the registry does not hold, and
+    the pass writes nothing."""
+    write_no_file_dir(fleet.registry_root)
+    actors = Actors(fleet.driver, fleet.litellm, fleet.switch, EgressConfig(), fleet.units)
+
+    with pytest.raises(FamilyNotFoundError):
+        reconcile_family(
+            load_registry(fleet.registry_root),
+            "stray",
+            state_root=fleet.state_root,
+            image=IMAGE,
+            actors=actors,
+        )
+
+    assert not paths.family_dir(fleet.state_root, "stray").exists()
+
+
 # --- the replace axis ------------------------------------------------------------
 
 
@@ -614,6 +659,80 @@ def _sandbox_ids(state_root: Path) -> list[str]:
     """Every sandbox the published status document names, in file order."""
     body = json.loads(paths.status_path(state_root, FAMILY).read_text(encoding="utf-8"))
     return [str(one["id"]) for one in body["sandboxes"]]
+
+
+def _published(state_root: Path) -> dict[str, object]:
+    """The status document as a reader finds it at this moment."""
+    body: object = json.loads(paths.status_path(state_root, FAMILY).read_text(encoding="utf-8"))
+    assert isinstance(body, dict)
+
+    return {str(key): value for key, value in body.items()}
+
+
+def _step_in_flight(state_root: Path) -> tuple[object, object]:
+    """The step and the switch flag of the published reconcile block."""
+    block = _published(state_root)["reconcile"]
+    assert isinstance(block, dict)
+
+    return block["step"], block["needs_switch"]
+
+
+def test_the_document_names_the_first_handshake_before_the_call(fleet: Fleet) -> None:
+    """Contract 05 §3.4: `step` is the step in flight, and the pass
+    publishes the block before that step runs."""
+    seen: list[tuple[object, object]] = []
+
+    class RecordingSwitch(FakeSwitchClient):
+        def switch(self, request: SwitchRequest) -> object:
+            seen.append(_step_in_flight(fleet.state_root))
+            return super().switch(request)
+
+    fleet.switch = RecordingSwitch()
+    fleet.run()
+
+    assert seen == [(SWITCH_STEP, True)]
+
+
+def test_the_document_names_the_switch_before_the_call(fleet: Fleet) -> None:
+    """Contract 05 §3.4. A drain can take the whole deadline of the call,
+    and a reader of the document must find the switch there, not the
+    create that ended before it."""
+    fleet.run()
+    seen: list[tuple[object, object]] = []
+
+    class RecordingSwitch(FakeSwitchClient):
+        def switch(self, request: SwitchRequest) -> object:
+            seen.append(_step_in_flight(fleet.state_root))
+            return super().switch(request)
+
+    fleet.switch = RecordingSwitch()
+    fleet.write(sandbox={"cpus": 4})
+    fleet.run()
+
+    assert seen == [(SWITCH_STEP, True)]
+
+
+def test_the_document_names_the_destroy_before_it_runs(fleet: Fleet) -> None:
+    """Contract 05 §3.4 and §4.3 step 7. The switch answered, so the
+    replacement is `ready`, and the destroy of the outgoing sandbox is the
+    step in flight. A destroy can take a minute."""
+    fleet.run()
+    seen: list[tuple[object, dict[str, str]]] = []
+
+    class RecordingDriver(FakeDriver):
+        def destroy(self, name: str, allow: tuple[str, ...]) -> None:
+            body = _published(fleet.state_root)
+            rows = body["sandboxes"]
+            assert isinstance(rows, list)
+            states = {str(one["id"]): str(one["state"]) for one in rows}
+            seen.append((_step_in_flight(fleet.state_root)[0], states))
+            super().destroy(name, allow)
+
+    fleet.driver = RecordingDriver()
+    fleet.write(sandbox={"cpus": 4})
+    fleet.run()
+
+    assert seen == [(DESTROY_STEP, {"chat-s1": "ready", "chat-s2": "ready"})]
 
 
 def test_the_replacement_is_ready_once_the_switch_answers(fleet: Fleet) -> None:
