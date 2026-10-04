@@ -209,6 +209,15 @@ FILE_OTHER_RX: Final = 0o005
 #: opens, never a program a shell could run.
 FILE_OTHER_R: Final = 0o004
 OWNER_EXECUTE_BIT: Final = 0o100
+#: What no file of a staged tree keeps: the set-user-ID bit, the
+#: set-group-ID bit, the sticky bit, and write for its group and for
+#: everyone. A build can leave each one, and root installs the tree.
+#:
+#: CONTRACT-QUESTION: `stage7-releases.md` §2.4 row 8 says who reads and who
+#: writes a staged tree. It names no rule for the three special bits. The
+#: reading taken drops them. A component that needs such a bit on a file
+#: cannot have it, and a change costs this constant.
+FILE_DROPPED_BITS: Final = stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX | stat.S_IWGRP | stat.S_IWOTH
 
 #: The setting that says what a unit starts, and the one prefix of it that
 #: does not. `ExecStartPre` is a check that runs and exits; `creche-noticeboard.
@@ -227,6 +236,11 @@ EXEC_PREFIXES: Final = "@-:+!"
 
 #: The most of a unit file that is read. A unit is a few hundred bytes, and
 #: root reads this one off disk as a file some other installer wrote.
+#:
+#: CONTRACT-QUESTION: contract 06 §1 rule 8 names no size for a unit file.
+#: The reading taken stops the stage for a longer file, for a `venv`
+#: component and for a `binary` component: a reader that judges a part of a
+#: file passes each line after that part. A larger cap costs this constant.
 MAX_UNIT_BYTES: Final = 64 * 1024
 
 #: Rule 8: the most siblings one component may have. `attendance` has three.
@@ -510,12 +524,8 @@ class Installer:
 
         carried = _carried_unit(manifest, source)
         chosen = carried if carried is not None and not installed.is_symlink() else installed
-        try:
-            data = chosen.read_bytes()[:MAX_UNIT_BYTES]
-        except OSError:
-            raise StepFailed(f"{manifest.name}: cannot read {manifest.unit}") from None
 
-        return chosen, data.decode("utf-8", errors="replace")
+        return chosen, _unit_text(manifest, chosen)
 
     def build(self, manifest: ComponentManifest, source: Path, paths: Paths) -> None:
         """Run `build` into `<install.to>.new`, then prove the hook is there."""
@@ -613,9 +623,7 @@ class Installer:
         it, or None when no host and no fetched tree holds the file."""
         found = self._effective_unit(manifest, source)
         if found is not None:
-            # Read again, and whole: `_effective_unit` cuts its text at the
-            # cap, and `_unit_text` refuses a file that is longer.
-            return _unit_text(manifest, found[0])
+            return found[1]
 
         carried = _carried_unit(manifest, source)
         if carried is None:
@@ -1324,8 +1332,11 @@ def _unit_text(manifest: ComponentManifest, path: Path) -> str:
     nothing can say the staged tree holds them. A file longer than
     `MAX_UNIT_BYTES` stops it too, as `_read_unit` refuses one: a line
     after the cap can start a program that this reader never saw."""
+    # One byte past the cap says that the file is longer. The rest of a
+    # long file is never read.
     try:
-        data = path.read_bytes()
+        with path.open("rb") as file:
+            data = file.read(MAX_UNIT_BYTES + 1)
     except OSError:
         raise StepFailed(f"{manifest.name}: cannot read {path.name}") from None
 
@@ -1427,12 +1438,18 @@ def normalize_modes(root: Path) -> None:
     build's own output, the version stamp, the manifest stamp), so every
     mode is fixed in one pass and nothing written after is missed.
 
-    Every directory becomes `0755`. Every file keeps its own bits and gains
+    Every directory becomes `0755`. Every file keeps its own bits, less
+    `FILE_DROPPED_BITS`, and gains
     read for OTHER, plus execute for OTHER when it was already executable
     for its owner — that second half is what lets `ExecStart=` and a verify
     hook's `argv[0]` run as the unit's own user; read alone would leave
     every console script unusable. Nothing gains a write bit: root built
     this tree and stays the only writer.
+
+    A file that kept its set-user-ID bit ran as its owner for each account,
+    and this pass gives each account read and execute. So no file keeps
+    that bit, and none keeps a write bit that a build gave its group or
+    everyone.
 
     Symlinks are skipped entirely, never followed. `chmod` follows a
     symlink to its target, and a relocatable venv's tree can hold one that
@@ -1472,7 +1489,7 @@ def _normalize_file(path: Path) -> None:
 
     mode = stat.S_IMODE(path.stat().st_mode)
     grant = FILE_OTHER_RX if mode & OWNER_EXECUTE_BIT else FILE_OTHER_R
-    os.chmod(path, mode | grant)
+    os.chmod(path, (mode & ~FILE_DROPPED_BITS) | grant)
 
 
 def remove_tree(path: Path) -> None:

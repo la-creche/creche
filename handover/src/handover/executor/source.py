@@ -285,7 +285,12 @@ def newest_tagged_version(names: Sequence[str], component: str) -> str | None:
         if matched is None or matched.group(1) != component:
             continue
 
-        found.append((int(matched.group(2)), int(matched.group(3)), int(matched.group(4))))
+        # Python reads no text of more than 4300 digits as an integer. A
+        # name with such a number is ignored too.
+        try:
+            found.append((int(matched.group(2)), int(matched.group(3)), int(matched.group(4))))
+        except ValueError:
+            continue
 
     if not found:
         return None

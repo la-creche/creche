@@ -197,6 +197,10 @@ def _raised_at(error: Exception) -> str:
     return found
 
 
+#: What a `manual` line calls the directory of the trees that a run fetched.
+FETCHED_TREES: Final = "the fetched trees"
+
+
 def remove_staged(path: Path, name: str, entry: Entry) -> None:
     """One `<install.to>.new` a run is finished with, and the ledger line
     that says what happened to it.
@@ -404,6 +408,8 @@ class Release:
         if outcome is not Outcome.SUCCEEDED:
             self._remove_staged()
 
+        self._remove_fetched()
+
         return outcome
 
     def _walk(self) -> Outcome:
@@ -453,6 +459,21 @@ class Release:
 
         for build in self.builds:
             remove_staged(build.paths.new, build.name, self.entry)
+
+    def _remove_fetched(self) -> None:
+        """`<work root>/<request id>` goes, whatever the outcome.
+
+        It holds each tree that this run fetched and each closure that it
+        staged from, and a build leaves its own directory there. Nothing
+        reads it after the last step. An installed tree holds its own code
+        (contract 06 §8.2), step 9 installs a unit from the live tree, and
+        the switch of `handover` reads the staged tree. A directory that
+        stayed grew the disk with each release.
+
+        A run that ends in the way of a crash (`_swap`, `_move_back`) does
+        not come here. Its directory stays, as its note does.
+        """
+        remove_staged(self.wiring.host.work_root / self.request.id, FETCHED_TREES, self.entry)
 
     def _switch_and_settle(self) -> Outcome:
         """Steps 9 and 10. A failed verify is the executor's job, not
@@ -1252,11 +1273,22 @@ class Release:
         """
         plan = self._require_plan()
         put_back: list[str] = []
+        unverified: list[str] = []
         for name in reversed(self.deployed):
-            self._restore_one(plan, name)
-            put_back.append(name)
+            # CONTRACT-QUESTION: contract 06 §5.2 says that the executor
+            # stops when the hook of a restored component fails. §5.1 says
+            # that a release goes back whole. The reading taken: the
+            # restore puts each other component back first, and the step
+            # then fails. A stop at the first such hook leaves a part of
+            # the set on the new version, which is a set that no resolution
+            # made. The other reading costs this list and its check.
+            verified = self._restore_one(plan, name)
+            (put_back if verified else unverified).append(name)
 
         put_back.extend(self._restore_orphaned_servers())
+        if unverified:
+            raise StepFailed(f"{', '.join(unverified)} did not verify after the restore")
+
         # `reason` is NOT overwritten here. `_step` already recorded why the
         # switch failed, and that is the fact a reader needs: `switch: chaperone
         # verify failed` and `switch: no quiet window in 3600s` are two very
@@ -1285,7 +1317,10 @@ class Release:
 
         return [f"{MCP_COMPONENT} servers"]
 
-    def _restore_one(self, plan: Plan, name: str) -> None:
+    def _restore_one(self, plan: Plan, name: str) -> bool:
+        """One component back, and its hook. Answers whether the hook
+        passed: the caller puts each other component back before it says
+        so."""
         manifest = plan.manifest(name)
         paths = self._require_paths(name)
         # BEFORE the component's own tree, and not after it. `swap_back`
@@ -1311,8 +1346,8 @@ class Release:
         self.installer.revive(tuple(one for one in back if one not in running))
         outcome = self.installer.verify(manifest)
         self._record_verify(outcome)
-        if not outcome.ok:
-            raise StepFailed(f"{name} did not verify after the restore")
+
+        return outcome.ok
 
     def _move_back(self, name: str, paths: Paths) -> None:
         """The moves of the restore, with the rule of `_swap`.

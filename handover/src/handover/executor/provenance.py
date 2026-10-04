@@ -366,7 +366,11 @@ def _version_of(value: str) -> tuple[int, int, int] | None:
     if matched is None:
         return None
 
-    return int(matched.group(1)), int(matched.group(2)), int(matched.group(3))
+    # Python reads no text of more than 4300 digits as an integer.
+    try:
+        return int(matched.group(1)), int(matched.group(2)), int(matched.group(3))
+    except ValueError:
+        return None
 
 
 def check_monotonic(component: str, to_version: str, live: str | None) -> None:

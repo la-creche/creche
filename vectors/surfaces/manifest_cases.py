@@ -191,6 +191,17 @@ def _merge_copies(keys: int, merges: int) -> str:
     return f"unit:\n  - &a {{{pairs}}}\n  - {{<<: [{aliases}]}}\n" + FIELDS["unit"]
 
 
+def _merge_doubles(levels: int) -> str:
+    """A `unit` whose first value is a list of `levels` mappings with merge keys. The
+    text is small, and the reader refuses it at its copy limit.
+
+    A second `unit` line replaces the value.
+    """
+    chain = "".join(f"\n  - &m{n} {{<<: [*m{n - 1}, *m{n - 1}]}}" for n in range(1, levels + 1))
+
+    return "unit:\n  - &m0 {k: 1}" + chain + "\n" + FIELDS["unit"]
+
+
 _OPTIONAL: Final = ("build", "provides", "requires", "depends_on", "secrets")
 _REQUIRED: Final = tuple(name for name in FIELDS if name not in _OPTIONAL)
 
@@ -678,6 +689,7 @@ CASES: Final[tuple[Case, ...]] = (
     _with("yaml-merge-chain-200", **_merge_chain(200)),
     _with("yaml-merge-copies-65536", unit=_merge_copies(256, 256)),
     _with("yaml-merge-copies-65792", unit=_merge_copies(256, 257)),
+    _with("yaml-merge-doubles-40", unit=_merge_doubles(40)),
     _with("yaml-value-key", restore="restore:\n  =: x\n  mode: automatic\n  keep: 1"),
     _with("yaml-value-as-value", unit="unit: ="),
     _with(
