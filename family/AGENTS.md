@@ -93,6 +93,21 @@ uv run pytest family/tests
 
 - The schema has no per-job budget and no per-job turn cap (`model.py`).
 - No rule refuses `embed` without an index mount (`validate.py`).
-- `CONTRACT-QUESTION` in `validate.py`, `_check_cron`. Contract 01 §3.13
-  gives no grammar for a cron field. The check takes ASCII digits and `*`,
-  `,`, `-`, `/`. It refuses a month name and a day name.
+- These `CONTRACT-QUESTION` comments are open:
+  1. `validate.py`, `_check_cron`, contract 01 §3.13. The contract gives no
+     grammar for a cron field. The check takes ASCII digits and `*`, `,`,
+     `-`, `/`. It refuses a month name and a day name.
+  2. `model.py`, `Strict`, contract 01 §2 and contract 01b. The contracts do
+     not say how strict the read of a type is. The models read `"2"` as the
+     integer 2, `"yes"` as true and `true` as the number 1.
+  3. `serverrules.py`, seven comments, contract 01b §3 to §7.
+     `handover.mcpserver` reads the same file as root and refuses more
+     files. A file can thus pass here, and root can refuse it at a release.
+     The contract does not decide these differences:
+     - The count of an identity and of a description. This validator counts
+       after the collapse of whitespace. Root counts each character.
+     - The grammar of `package`, `version`, `repo`, `asset`, `python`,
+       `entrypoint` and `state_dir_env`.
+     - The grammar of a variable name, of a value and of a secret key.
+     - A fence with an empty list of tools.
+     - Each cap on a length and on a count.

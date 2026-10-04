@@ -250,6 +250,9 @@ def test_fence_tools_list_must_be_declared() -> None:
 FENCE_ARG_CASES = (
     {"tools": "all", "arg": "a/b/c", "values": ["x"]},
     {"tools": "all", "arg": "1bad", "values": ["x"]},
+    # §7.2: an argument name has 64 characters at most.
+    {"tools": "all", "arg": "a" * 65, "values": ["x"]},
+    {"tools": "all", "arg": "owner/" + "b" * 65, "values": ["x"]},
 )
 
 
@@ -264,6 +267,24 @@ def test_fence_needs_at_least_one_value() -> None:
         "github-code", arg_allows=[{"tools": "all", "arg": "owner/repo", "values": []}]
     )
     assert "a fence entry needs at least one value" in messages(report)
+
+
+def test_a_fence_arg_name_of_64_characters_is_allowed() -> None:
+    entry = {"tools": "all", "arg": "a" * 64 + "/" + "b" * 64, "values": ["x"]}
+    assert not errors(check_server_rules("kagi", arg_allows=[entry]))
+
+
+@pytest.mark.parametrize("field", ["arg_allows", "arg_denies"])
+def test_a_fence_over_all_needs_a_declared_tool(field: str) -> None:
+    """§7.1: `all` on a file with no tool covers nothing."""
+    entry = {"tools": "all", "arg": "branch", "values": ["main"]}
+    report = check_server_rules("kagi", tools=[], **{field: [entry]})
+    assert f"{field}[0].tools: 'all' needs at least one tool" in messages(report)
+
+
+def test_a_fence_over_all_is_allowed_with_a_declared_tool() -> None:
+    entry = {"tools": "all", "arg": "branch", "values": ["main"]}
+    assert not errors(check_server_rules("kagi", arg_denies=[entry]))
 
 
 def test_a_composite_fence_arg_is_allowed() -> None:

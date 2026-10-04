@@ -65,6 +65,10 @@ const LOCK_SHOWN_MAX: usize = 80;
 /// The largest count of names in the `arg` of a fence (contract 01b §7.2).
 const ARG_PARTS_MAX: usize = 2;
 
+/// The largest count of bytes in one name of the `arg` of a fence (contract
+/// 01b §7.2).
+const ARG_NAME_MAX: usize = 64;
+
 const DEFAULT_PYTHON: &str = "3.12";
 
 fn default_python() -> String {
@@ -463,7 +467,8 @@ impl FromStr for Entrypoint {
 
 checked_text! {
     /// The argument that a fence reads: one name, or two names with `/`
-    /// between them (contract 01b §7.2). A name is `[A-Za-z_][A-Za-z0-9_]*`.
+    /// between them (contract 01b §7.2). A name is
+    /// `[A-Za-z_][A-Za-z0-9_]{0,63}`.
     FenceArg
 }
 
@@ -482,6 +487,7 @@ impl FromStr for FenceArg {
             let head = |byte: &u8| byte.is_ascii_alphabetic() || *byte == b'_';
 
             bytes.first().is_some_and(head)
+                && bytes.len() <= ARG_NAME_MAX
                 && bytes.iter().all(|byte| head(byte) || byte.is_ascii_digit())
         };
         if text.split('/').count() > ARG_PARTS_MAX || !text.split('/').all(name) {
@@ -1120,6 +1126,17 @@ fn vet_tools(raw: &RawServer, out: &mut Issues) -> Option<Vec<Tool>> {
 fn vet_fence(raw: &RawServer, entry: &RawFence, loc: &str, out: &mut Issues) -> Option<Fence> {
     let at = Slot::of(Section::ServerFences);
     let tools = match &entry.tools {
+        // Contract 01b §7.1: `all` covers the tools that the file declares,
+        // and a file with no tool gives it nothing to cover.
+        RawToolGrant::Text(scope) if scope == ALL_TOOLS && raw.tool_names().next().is_none() => {
+            out.error(
+                at,
+                format!("{loc}.tools"),
+                format!("'{ALL_TOOLS}' needs at least one tool in this file's 'tools'"),
+            );
+
+            None
+        }
         RawToolGrant::Text(scope) if scope == ALL_TOOLS => Some(FenceScope::All),
         RawToolGrant::Text(scope) => {
             out.error(
@@ -1527,6 +1544,15 @@ mod tests {
             &["owner", "owner/repo", "_a/b_1"],
             &["", "a/", "/a", "a/b/c", "1a", "a-b", "a\n", "a\u{661}"],
         );
+        let longest = "a".repeat(64);
+        let longer = "a".repeat(65);
+        for text in [longest.clone(), format!("{longest}/{longest}")] {
+            assert!(text.parse::<FenceArg>().is_ok(), "{text:?} is refused");
+        }
+
+        for text in [longer.clone(), format!("owner/{longer}")] {
+            assert!(text.parse::<FenceArg>().is_err(), "{text:?} is accepted");
+        }
     }
 
     #[test]
