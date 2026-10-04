@@ -919,6 +919,9 @@ NO_VALUE_TEXTS = {
     "base-16-integer": "max_inflight_delegations: 0x" + "f" * 4000 + "\n",
     "base-16-nested": "sandbox: { cpus: 0x" + "f" * 4000 + " }\n",
     "base-16-key": "? 0x" + "f" * 4000 + "\n: 1\n",
+    # The reader gives a tuple for `!!pairs` and a set for `!!set`.
+    "base-16-pairs": "skills: !!pairs [ { a: 0x" + "f" * 4000 + " } ]\n",
+    "base-16-set": "skills: !!set\n  ? 0x" + "f" * 4000 + "\n",
     # A date that the calendar does not hold.
     "date": "shell: 2001-02-30\n",
     # A tag on a text that is no value of the tag.
