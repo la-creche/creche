@@ -1,0 +1,22 @@
+{
+ "context": {},
+ "contract": "contract 02 \u00a72",
+ "entry": "handover.requester.file.new_ulid",
+ "format": 1,
+ "notes": ["The input is the arguments of one call. now_bits is the time in seconds, as the 16 hexadecimal digits of its IEEE 754 bits. entropy is the ten random bytes, as 20 hexadecimal digits.","value.ulid is the id. Its first ten characters hold the time in milliseconds: the product of the time and 1000, with the fraction cut.","The entry point does not check that the milliseconds fit the 48 bits of a ULID. For past-48-bits and negative-time they do not fit. The first ten characters of value.ulid are then not a time of 48 bits."],
+ "surface": "manifest.request.ulid",
+ "vectors": [
+  {"id":"zero","input":{"args":{"entropy":"00000000000000000000","now_bits":"0000000000000000"}},"result":"accepted","value":{"ulid":"00000000000000000000000000"}},
+  {"id":"zero-time-full-entropy","input":{"args":{"entropy":"ffffffffffffffffffff","now_bits":"0000000000000000"}},"result":"accepted","value":{"ulid":"0000000000ZZZZZZZZZZZZZZZZ"}},
+  {"id":"one-millisecond","input":{"args":{"entropy":"00000000000000000000","now_bits":"3f50624dd2f1a9fc"}},"result":"accepted","value":{"ulid":"00000000010000000000000000"}},
+  {"id":"below-one-millisecond","input":{"args":{"entropy":"00000000000000000000","now_bits":"3f5061e273273f09"}},"result":"accepted","value":{"ulid":"00000000000000000000000000"}},
+  {"id":"a-clock","input":{"args":{"entropy":"00010203040506070809","now_bits":"41da32d2dd87e6b4"}},"result":"accepted","value":{"ulid":"01K5D1XHBB000G40R40M30E209"}},
+  {"id":"a-clock-other-entropy","input":{"args":{"entropy":"0a090807060504030201","now_bits":"41da32d2dd87e6b4"}},"result":"accepted","value":{"ulid":"01K5D1XHBB184GG1R60M2060G1"}},
+  {"id":"product-rounds","input":{"args":{"entropy":"80000000000000000000","now_bits":"3ff0020c49ba5e35"}},"result":"accepted","value":{"ulid":"00000000Z8G000000000000000"}},
+  {"id":"whole-seconds","input":{"args":{"entropy":"01010101010101010101","now_bits":"41da32d2dd800000"}},"result":"accepted","value":{"ulid":"01K5D1XH7G040G2081040G2081"}},
+  {"id":"largest-time","input":{"args":{"entropy":"ffffffffffffffffffff","now_bits":"4250624dd2f1a9ec"}},"result":"accepted","value":{"ulid":"7ZZZZZZZZZZZZZZZZZZZZZZZZZ"}},
+  {"id":"every-letter","input":{"args":{"entropy":"0123456789abcdef0f1e","now_bits":"41d5e74af818a3d7"}},"result":"accepted","value":{"ulid":"01ARYZ6S4104HMASW9NF6YY3RY"}},
+  {"id":"past-48-bits","input":{"args":{"entropy":"00000000000000000000","now_bits":"4250624dd2f1a9fc"}},"result":"accepted","value":{"ulid":"80000000000000000000000000"}},
+  {"id":"negative-time","input":{"args":{"entropy":"00000000000000000000","now_bits":"bf50624dd2f1a9fc"}},"result":"accepted","value":{"ulid":"ZZZZZZZZZZ0000000000000000"}}
+ ]
+}

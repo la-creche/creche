@@ -44,6 +44,8 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
 | `surfaces/status_files.py` | the writer of `status.json`, the fault files and the outcome record: `status.write`, `status.fault_file.<package>`, `status.outcome.noticeboard` |
 | `surfaces/config.py` | the site file, the roster, the mount files and three env readers: `config.<name>` |
+| `surfaces/manifest_cases.py` | the written `component.yaml` inputs |
+| `surfaces/manifest.py` | the eleven `manifest.<name>` surfaces of contract 06 |
 
 ## Known gaps
 
@@ -58,8 +60,15 @@ directory is not a workspace package, so a change here does not change
   `status.outcome.noticeboard` reads records that this writer made.
 - No vector covers `rescope_by_fleet` and `drop_superseded` of
   `caregiver.faults`. They change a fault after `read_fault_file` reads it.
-- No vector covers contract 06, the component manifest and the release
-  request file.
+- No vector covers the resolver, the deploy order or rules C1 to C4 of
+  contract 06 §3.2. `manifest.resolved` starts from a resolution.
+- No vector covers the ledger entry or the spool. `manifest.operator`
+  covers two values of the site file, and `config.site_file` covers its form.
+- `manifest.component` reads the site file in two states: with both values
+  of the operator, and with no file. A site file with one of the two
+  values has no vector.
+- `manifest.resolved` gives `resolved_at` as a float only. With an integer,
+  Python writes no `.0`.
 - No vector covers `server.yaml`, contract 01b.
 - `grants.write` calls `write_grant_file`. No vector covers
   `build_grant_file`, which expands `all` and `<server>__*`.

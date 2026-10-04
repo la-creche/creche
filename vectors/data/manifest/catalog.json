@@ -1,0 +1,27 @@
+{
+ "context": {},
+ "contract": "contract 06 \u00a71, \u00a73",
+ "entry": "handover.catalog",
+ "format": 1,
+ "notes": ["Each vector is one public constant of the module. The id names the constant. The input has no argument.","value is the constant. A vector with an id that starts with `set-` holds each value of one closed set, in the order of the Python enum.","`retiring` and `arriving` are sets. value is the sorted list."],
+ "surface": "manifest.catalog",
+ "vectors": [
+  {"id":"components","input":{"args":{}},"result":"accepted","value":[{"bundles":["handover"],"kind":"venv","name":"chaperone","path":"chaperone","releases":"yes","repo":"agent-control"},{"bundles":["door-owui","door-tui","door-trigger","family"],"kind":"venv","name":"attendance","path":"attendance","releases":"yes","repo":"agent-control"},{"bundles":["family"],"kind":"venv","name":"caregiver","path":"caregiver","releases":"yes","repo":"agent-control"},{"bundles":["family"],"kind":"venv","name":"noticeboard","path":"noticeboard","releases":"yes","repo":"agent-control"},{"bundles":["toybox"],"kind":"oci-image","name":"playpen","path":"playpen","releases":"yes","repo":"agent-control"},{"bundles":[],"kind":"venv","name":"mcp-servers","path":".","releases":"yes","repo":"agent-mcp"},{"bundles":[],"kind":"compose","name":"infra","path":"infra","releases":"yes","repo":"agent-control"},{"bundles":[],"kind":"venv","name":"handover","path":"handover","releases":"yes","repo":"agent-control"},{"bundles":[],"kind":"data","name":"registry-data","path":".","releases":"no","repo":"agent-registry"}]},
+  {"id":"releasable-names","input":{"args":{}},"result":"accepted","value":["chaperone","attendance","caregiver","noticeboard","playpen","mcp-servers","infra","handover"]},
+  {"id":"contract-owners","input":{"args":{}},"result":"accepted","value":{"channel":"playpen","component-manifest":"handover","family-file":"caregiver","manager-status":"caregiver","pep-grant":"chaperone","session-api":"attendance"}},
+  {"id":"retiring","input":{"args":{}},"result":"accepted","value":["infra"]},
+  {"id":"arriving","input":{"args":{}},"result":"accepted","value":[]},
+  {"id":"binary-build-files","input":{"args":{}},"result":"accepted","value":["rust/Cargo.lock","rust/Cargo.toml","rust/rust-toolchain.toml"]},
+  {"id":"manifest-contract-version","input":{"args":{}},"result":"accepted","value":{"major":0,"minor":6}},
+  {"id":"last-in-order","input":{"args":{}},"result":"accepted","value":"handover"},
+  {"id":"max-request-components","input":{"args":{}},"result":"accepted","value":8},
+  {"id":"set-repo","input":{"args":{}},"result":"accepted","value":["agent-control","agent-mcp","agent-registry"]},
+  {"id":"set-kind","input":{"args":{}},"result":"accepted","value":["venv","binary","oci-image","compose","data"]},
+  {"id":"set-runs-as","input":{"args":{}},"result":"accepted","value":["root","operator","sandbox","mcp","none"]},
+  {"id":"set-verify-user","input":{"args":{}},"result":"accepted","value":["root","operator"]},
+  {"id":"set-restore-mode","input":{"args":{}},"result":"accepted","value":["automatic","manual"]},
+  {"id":"set-action","input":{"args":{}},"result":"accepted","value":["deploy","unchanged","restore"]},
+  {"id":"set-contract-id","input":{"args":{}},"result":"accepted","value":["family-file","session-api","channel","pep-grant","manager-status","component-manifest"]},
+  {"id":"set-releases","input":{"args":{}},"result":"accepted","value":["yes","no"]}
+ ]
+}
