@@ -198,11 +198,11 @@ const LOOPBACK_TEXTS: [&str; 3] = ["127.0.0.1", "::1", "localhost"];
 
 // CONTRACT-QUESTION: contract 02 §3 rule 2 says that a service binds the LAN
 // address and never `0.0.0.0`. It gives a bind host no grammar. Three Python
-// services refuse a small set of wildcard texts. `attendance` refuses each
-// spelling of each interface, and the chaperone refuses no text. The type
-// refuses each address of each interface in each spelling, and each text
-// that is not an IP address or a host name. A laxer reading lets `0` or
-// `::0` publish a service.
+// services refuse a small set of wildcard texts. `attendance` and the
+// chaperone refuse each spelling of each interface. The type refuses each
+// address of each interface in each spelling, and each text that is not an
+// IP address or a host name. A laxer reading lets `0` or `::0` publish a
+// service.
 /// The host that a service binds: an IPv4 address, an IPv6 address or a host
 /// name.
 ///

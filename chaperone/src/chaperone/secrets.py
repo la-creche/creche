@@ -28,6 +28,8 @@ from typing import Final, cast
 import yaml
 from yaml.reader import ReaderError
 
+from .bounded_yaml import AliasLimitError, BoundedLoader, MergeLimitError
+
 log = logging.getLogger("chaperone.secrets")
 
 #: `handover/src/handover/intake/store.py` writes `<name>.enc`. The
@@ -109,6 +111,10 @@ def _string_map(path: Path, text: str) -> dict[str, str]:
     """
     try:
         return _parse(path, text)
+    except MergeLimitError as exc:
+        raise _unparsable(path, f"merge keys past a limit at {_where(text, exc)}") from None
+    except AliasLimitError as exc:
+        raise _unparsable(path, f"aliases past a limit at {_where(text, exc)}") from None
     except yaml.YAMLError as exc:
         raise _unparsable(path, f"not valid YAML at {_where(text, exc)}") from None
     except RecursionError:
@@ -117,8 +123,11 @@ def _string_map(path: Path, text: str) -> dict[str, str]:
 
 def _parse(path: Path, text: str) -> dict[str, str]:
     """Node by node rather than `safe_load`: a node carries its line, and
-    the line is all a message here may say about an entry."""
-    loader = yaml.SafeLoader(text)
+    the line is all a message here may say about an entry.
+
+    The loader holds the merge keys and the aliases of the file to its
+    three limits (`bounded_yaml`)."""
+    loader = BoundedLoader(text)
     try:
         root = loader.get_single_node()
         if not isinstance(root, yaml.MappingNode):

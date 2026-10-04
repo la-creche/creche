@@ -62,6 +62,7 @@ client that can pick its identity kind has picked its own permissions.
 | `audit.py` | append-only daily JSONL, shared by both logs |
 | `fences.py` | upstream argument fences |
 | `mcp_client.py` | the stdio upstream pool, one credential per server |
+| `bounded_yaml.py` | the YAML read of the roster and of the secrets file, with two limits on merge keys and one limit on aliases |
 | `run_as.py` | `chaperone-as`: one child switched to its `mcp-<name>` user before exec |
 | `reload_pool.py`, `reload_wiring.py` | a pool whose roster moves at `SIGHUP` |
 | `secrets.py` | both secret layouts: the monolith and one file per secret |
@@ -186,6 +187,18 @@ the host can author. A name in both takes the per-secret value.
 | `PEP_FAULT_SWEEP_INTERVAL_S` | How often a faulted family's grant file is re-read. |
 | `PEP_BIND`, `HA_URL` | Explicit overrides of the site values. |
 
+The bind is `host:port`. The chaperone refuses each bind in this list. It
+writes one line and exits with 78 (`site.py`).
+
+1. A text that is not `host:port`.
+2. A port that is not a number from 0 to 65535.
+3. A bind with no host. The chaperone has no default address.
+4. A host that Python cannot give to the resolver: a host name with an
+   empty label, or with a label of more than 63 characters.
+5. A host that stands for each interface of the host, in each spelling:
+   `0.0.0.0`, `0`, `::` and `*` are four of them. The check applies to
+   `PEP_BIND` and to `AGENT_LAN_ADDRESS`.
+
 ## Tests
 
 ```bash
@@ -229,3 +242,10 @@ Each line is an open contract question and the module it lives in.
   the message of each error only (`app.py`).
 - The log of a request of no family counts a string that is not Unicode
   text as its `surrogatepass` bytes (`app.py`).
+- No contract gives a limit for the merge keys of a roster or of the
+  secrets file. The two readers use the limits of the Rust reader of a
+  manifest: a chain of 128 merge keys, and 65,536 copied pairs
+  (`bounded_yaml.py`).
+- No contract gives a limit for the aliases of a roster or of the secrets
+  file, and no Rust reader has one. The two readers refuse a file whose
+  aliases stand for more than 262,144 nodes (`bounded_yaml.py`).

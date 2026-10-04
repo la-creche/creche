@@ -9,7 +9,8 @@ code's. An explicit `PEP_BIND` or `HA_URL` still wins.
                                         tei_url(env) == "http://192.0.2.10:8085"
 
 There is no default address: a default would be somebody's host, so a
-missing one raises `ConfigError` naming the variable. Every function takes
+missing one raises `ConfigError` naming the variable. So does a bind that
+the PEP does not take (`listener`). Every function takes
 the environment it reads, so `chaperone-verify` can hand it the merged one, and
 nothing is read at import: a module-level read would break every import in
 a test. Stdlib only, because `chaperone-verify` imports it.
@@ -17,6 +18,8 @@ a test. Stdlib only, because `chaperone-verify` imports it.
 
 from __future__ import annotations
 
+import ipaddress
+import re
 from collections.abc import Mapping
 from enum import IntEnum
 from typing import Final
@@ -39,8 +42,54 @@ class Port(IntEnum):
     TEI = 8085
 
 
+#: The largest port that a listener binds. Port 0 lets the system select a
+#: port, and the tests of this package start the PEP on it.
+PORT_MAX: Final = 65535
+
+#: What separates the host from the port. The bind splits at the last one,
+#: so an IPv6 host needs no brackets.
+PORT_SEPARATOR: Final = ":"
+
+#: One number that is zero, as the C resolver reads a number of an IPv4
+#: address: decimal, octal or hexadecimal.
+_ZERO: Final = r"(?:0[xX]0*|0+)"
+
+#: An IPv4 text that the C resolver reads as `0.0.0.0`: one to four numbers,
+#: and each one is zero. `0` and `0x0.0` are such texts.
+_IPV4_EACH_INTERFACE: Final = re.compile(rf"{_ZERO}(?:\.{_ZERO}){{0,3}}")
+
+#: One number as the C resolver reads it: hexadecimal after `0x`, octal
+#: after `0`, decimal in each other case.
+_C_NUMBER: Final = re.compile(r"0[xX][0-9a-fA-F]*|0[0-7]*|[1-9][0-9]*")
+_HEX_PREFIXES: Final = ("0x", "0X")
+_OCTAL_PREFIX: Final = "0"
+
+#: An IPv4 address is 32 bits. Some resolvers keep only those bits of one
+#: number that is larger.
+_IPV4_VALUES: Final = 2**32
+
+#: What starts the zone of an address. Some resolvers read an address with
+#: an empty zone as the address.
+_ZONE_SEPARATOR: Final = "%"
+
+#: What separates the groups of an IPv6 address, and the numbers of an IPv4
+#: address.
+_IPV6_SEPARATOR: Final = ":"
+_IPV4_SEPARATOR: Final = "."
+
+#: What ends a text for the C resolver. It reads no character after the
+#: first one.
+_C_TEXT_END: Final = "\x00"
+
+#: The word for each interface in the config of some services. The GNU C
+#: library reads it as no host name, and a listener with no host name
+#: answers on each interface.
+_EACH_INTERFACE_WORD: Final = "*"
+
+
 class ConfigError(RuntimeError):
-    """The environment names no LAN address."""
+    """The environment names no LAN address, or a bind that the PEP does
+    not take."""
 
 
 def lan_address(env: Mapping[str, str]) -> str:
@@ -53,12 +102,161 @@ def lan_address(env: Mapping[str, str]) -> str:
 
 
 def bind(env: Mapping[str, str]) -> str:
-    """`host:port` the PEP listens on: `PEP_BIND`, else the LAN address."""
+    """`host:port` the PEP listens on: `PEP_BIND`, else the LAN address.
+    `ConfigError` for a bind that `listener` refuses."""
+    variable, text = _bind_text(env)
+    _split(variable, text)
+
+    return text
+
+
+def listener(env: Mapping[str, str]) -> tuple[str, int]:
+    """The host and the port of `bind(env)`, as the server takes them.
+
+    `ConfigError`, naming the variable, for a bind that the PEP does not
+    take:
+
+    1. A text that is not `host:port`, or a port that is not a number from
+       0 to `PORT_MAX`. The server cannot bind it.
+    2. No host. The PEP has no default address.
+    3. A host that Python cannot give to the resolver. The server raises on
+       it.
+    4. A host that stands for each interface of the host. The PEP binds the
+       LAN address, or loopback in a test.
+
+    Each other host goes to the resolver as it is.
+    """
+    return _split(*_bind_text(env))
+
+
+def _bind_text(env: Mapping[str, str]) -> tuple[str, str]:
+    """The variable that gives the bind, and the bind as text."""
     explicit = env.get(BIND_ENV, "").strip()
     if explicit:
-        return explicit
+        return BIND_ENV, explicit
 
-    return f"{lan_address(env)}:{int(Port.PEP)}"
+    return LAN_ADDRESS_ENV, f"{lan_address(env)}{PORT_SEPARATOR}{int(Port.PEP)}"
+
+
+def _split(variable: str, text: str) -> tuple[str, int]:
+    host, separator, port_text = text.rpartition(PORT_SEPARATOR)
+    port = _port(port_text) if separator else None
+    if port is None:
+        raise ConfigError(
+            f"{variable} gives the bind {text!r}, which is not host:port "
+            f"with a port from 0 to {PORT_MAX}"
+        )
+
+    if not host:
+        raise ConfigError(f"{variable} gives the bind {text!r}, which names no host")
+
+    resolver_text = _resolver_text(host)
+    if resolver_text is None:
+        raise ConfigError(f"{variable} gives the bind {text!r}, whose host no resolver takes")
+
+    if _is_each_interface(resolver_text):
+        raise ConfigError(
+            f"{variable} gives the bind {text!r}, which names each interface of the host"
+        )
+
+    return host, port
+
+
+def _port(text: str) -> int | None:
+    """The port that `text` names. None for a text that `int` does not
+    read, and for a number that is not 0 to `PORT_MAX`."""
+    try:
+        port = int(text)
+    except ValueError:
+        return None
+
+    return port if 0 <= port <= PORT_MAX else None
+
+
+def _resolver_text(host: str) -> str | None:
+    """The host as the resolver gets it. `socket.getaddrinfo` encodes the
+    text as IDNA first, and that step makes an ASCII digit from a
+    full-width digit.
+
+    None for a text with no such encoding: a host name with an empty label,
+    or with a label of more than 63 characters. `socket.getaddrinfo` raises
+    on that text."""
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+
+
+def _is_each_interface(text: str) -> bool:
+    """Whether a listener on the host `text` answers on each interface of
+    the host: the IPv4 address of all zeros, the IPv6 address of all zeros,
+    or that IPv4 address as an IPv6 address, in each spelling. `text` is
+    the host as the resolver gets it.
+
+    The C resolver reads the text to its first null character. A listener
+    on a host of no text answers on each interface with some resolvers.
+
+    Some resolvers stop at white space, so only the text before the first
+    white space counts. Brackets around the text do not count, and a zone
+    does not count.
+    """
+    c_text = text.partition(_C_TEXT_END)[0]
+    if not c_text:
+        return True
+
+    bare = c_text[1:-1] if c_text.startswith("[") and c_text.endswith("]") else c_text
+    spaced = bare.split(maxsplit=1)[0] if bare.strip() else bare
+    address_text = spaced.partition(_ZONE_SEPARATOR)[0]
+    if address_text == _EACH_INTERFACE_WORD or _IPV4_EACH_INTERFACE.fullmatch(address_text):
+        return True
+
+    if _is_zero_in_32_bits(address_text):
+        return True
+
+    try:
+        address = ipaddress.IPv6Address(_no_zero_in_front(address_text))
+    except ValueError:
+        return False
+
+    mapped = address.ipv4_mapped
+
+    return int(address) == 0 or (mapped is not None and int(mapped) == 0)
+
+
+def _no_zero_in_front(text: str) -> str:
+    """An IPv6 text with no zero in front of a number: not in a group, and
+    not in a number of an IPv4 end. Some resolvers read `00000::` as `::`
+    and `::ffff:00.0.0.0` as `::ffff:0.0.0.0`. `ipaddress` refuses a group
+    of more than four digits, and a number with a zero in front."""
+    groups = [
+        _IPV4_SEPARATOR.join(
+            number.lstrip("0") or number[:1] for number in group.split(_IPV4_SEPARATOR)
+        )
+        for group in text.split(_IPV6_SEPARATOR)
+    ]
+
+    return _IPV6_SEPARATOR.join(groups)
+
+
+def _is_zero_in_32_bits(text: str) -> bool:
+    """Whether `text` is one number of the C resolver whose low 32 bits are
+    all zero. `4294967296` is such a number. The count keeps only those
+    bits, so a number of each length has an answer."""
+    if not _C_NUMBER.fullmatch(text):
+        return False
+
+    if text.startswith(_HEX_PREFIXES):
+        base, digits = 16, text[2:]
+    elif text.startswith(_OCTAL_PREFIX):
+        base, digits = 8, text[1:]
+    else:
+        base, digits = 10, text
+
+    value = 0
+    for digit in digits:
+        value = (value * base + int(digit, base)) % _IPV4_VALUES
+
+    return value == 0
 
 
 def tei_url(env: Mapping[str, str]) -> str:

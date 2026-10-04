@@ -103,7 +103,8 @@ TRIGGER_SIGNAL = signal.SIGHUP
 #:   OSError         a file that will not open: gone, a directory, no permission
 #:   ValueError      bytes that are not UTF-8, or a scalar YAML cannot build
 #:                   (`2001-02-30` is a date with no day 30 in February)
-#:   YAMLError       YAML that will not parse: the syntax, a tab, an alias
+#:   YAMLError       YAML that will not parse: the syntax, a tab, an alias,
+#:                   merge keys or aliases past a limit (`bounded_yaml`)
 #:   RecursionError  nesting deeper than the parser can recurse
 FILE_FAILURES: Final = (OSError, ValueError, yaml.YAMLError, RecursionError)
 
