@@ -257,6 +257,22 @@ def test_the_family_page_lists_sandboxes_and_sessions(board: Harness) -> None:
     assert "Boiler service date" in answer.text
 
 
+def test_the_outcomes_of_a_family_come_from_its_own_directory(board: Harness) -> None:
+    """A status document also names a family. That text is input from
+    another process, and the page takes the directory from the route."""
+    from noticeboard_helpers import status_doc, write_json
+
+    write_json(
+        board.config.families_dir / "scrum-lead" / "status.json",
+        status_doc(family="chat", kind="autonomous"),
+    )
+
+    answer = board.get("/families/scrum-lead")
+
+    assert answer.status_code == 200
+    assert "01JBQ80M4F7S2YQ1VZK6W3TDEN" in answer.text
+
+
 def test_the_session_page_shows_the_transcript_and_the_turns(board: Harness) -> None:
     answer = board.get(f"/sessions/{CHAT}/{OWUI}")
 

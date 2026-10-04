@@ -126,7 +126,7 @@ def family_page(config: Config, reader: SessionReader, name: str, now: datetime)
         sessions=reader.sessions(family=name, limit=config.page_size),
         issues=issues,
         issues_problem=problem,
-        outcomes=_outcomes(config, row),
+        outcomes=_outcomes(config, name, row),
         audit=auditfiles.read_page(
             config.audit_dir, AuditFilter(family=name), limit=FAMILY_AUDIT_LINES
         ),
@@ -146,11 +146,14 @@ def _report(config: Config, row: FamilyRow) -> tuple[tuple[Json, ...], str]:
     return statusdocs.read_report(Path(named))
 
 
-def _outcomes(config: Config, row: FamilyRow) -> tuple[OutcomeRow, ...]:
+def _outcomes(config: Config, name: str, row: FamilyRow) -> tuple[OutcomeRow, ...]:
     if row.kind != "autonomous":
         return ()
 
-    return statusdocs.read_outcomes(config.outcomes_dir, row.name, FAMILY_OUTCOMES)
+    # The directory is the one of the family that the route names. The status
+    # document names a family too, and that text is input from another
+    # process: it does not choose a path.
+    return statusdocs.read_outcomes(config.outcomes_dir, name, FAMILY_OUTCOMES)
 
 
 def session_page(reader: SessionReader, family: str, session: str) -> SessionPage:
