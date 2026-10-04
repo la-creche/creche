@@ -33,7 +33,7 @@ defect that a test finds late.
 | `grants` | The grant file, the call body, the approval body, the audit record and the words of a decision: contract 04. |
 | `status` | The status document, the fault files and one view for each reader: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
-| `config` | The config of each process. |
+| `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
 ## Where a new type goes
@@ -288,6 +288,89 @@ conversion that can fail makes the valid type. Rule 7 holds too. Only the
 detail of a fault holds a `status::json::Json`, and contract 05 §3.3 makes
 that value opaque.
 
+## The config of a process
+
+`creche_contracts::config` holds one type for the config of each daemon, and
+one type for each config file. A type holds an address, a path or a duration,
+and never a raw text.
+
+| Module of `config` | What it holds |
+|---|---|
+| `site` | The site file: `SiteFile` is the raw form, and `Site` is the valid form. |
+| `attendance`, `caregiver`, `chaperone`, `door_owui`, `door_trigger`, `noticeboard`, `intake` | The config of one daemon. |
+| `roster` | The roster of the chaperone. `RawRoster` takes its tree through `serde`. |
+| `mounts` | `runtime.json`, `creds.json` and the env file of the playpen. |
+
+A binary crate loads its config in this sequence:
+
+1. Build the map of the variables one time, with
+   `Env::from_os(std::env::vars_os())`. Do not call `std::env::vars`. It
+   stops the process on a value that is not UTF-8.
+2. Read each file that the config needs, for example the site file or a key
+   file. Give the text to the constructor. No config type reads the
+   environment or a file.
+3. Call the constructor of the config type, for example
+   `AttendanceConfig::from_env`. It returns each error of the parse, not only
+   the first one.
+4. Give the result to `config::start`. It applies the failure action of the
+   type.
+5. For `Start::Exit`, write each error to the log. Then return the status
+   from `main` as an `ExitCode`. Do not call `std::process::exit`. The lint
+   gate refuses it.
+6. For `Start::RefuseEachCall`, start the listener, refuse each call and
+   publish the errors as a fault.
+7. At a reload, give the last good value and the new result to
+   `config::reload`. For `Reload::Kept`, publish the fault and continue.
+
+The rule against a crash loop:
+
+- A daemon must not start again in a loop on a config that is not valid. No
+  restart corrects such a config.
+- Each config type states its failure action: it implements `Checked`.
+  `config::start` takes only a type that does.
+- `AtStart::ExitConfig` exits with status 78, `EX_CONFIG`. The unit file of
+  that daemon must hold `RestartPreventExitStatus=78`.
+- Today each of the seven daemon units holds `Restart=always` and
+  `StartLimitIntervalSec=0`, and none holds that line. systemd thus starts a
+  daemon again after each exit status, with no limit. The delay is 5 seconds
+  at first and 120 seconds at most.
+- Add the line in the pull request that moves a unit to a Rust binary.
+  `bin/tests/test_rust_config_units.py` pins what the units hold today.
+  Change the pin in the same pull request.
+- systemd reads `RestartPreventExitStatus` only for the exit status of the
+  main process. It does not read the line for a process of `ExecStartPre=`.
+- Three units hold `ExecStartPre=<service> --check` today:
+  `creche-attendance`, `creche-door-owui` and `creche-noticeboard`. With a
+  config that is not valid, the check fails before the main process starts.
+  systemd then starts the unit again, also when the unit file holds the line.
+- In the pull request that moves such a unit to a Rust binary, remove its
+  `ExecStartPre=` line. The main process does the same parse.
+- Then prove on a Linux host that the unit stays stopped after exit status
+  78. No test in this repository runs systemd.
+- `AtReload::KeepLastGood` never exits. A reload that fails keeps the last
+  good value.
+- `config::reload` takes only a type that says `AtReload::KeepLastGood`. A
+  call with a type that says `AtReload::NotRead` does not build.
+  `cargo build` and `cargo test` report that error, and `cargo check` does
+  not.
+- `config::start` and `config::reload` take the error type of each parse.
+  The roster and the site file have an error type of their own.
+
+More rules for a config type:
+
+- An error names the variable and the reason. It never holds the value,
+  because a value can be a secret.
+- Give each default of the code as text to the parser of the type. A default
+  that is not valid is then an error and not a panic.
+- A config holds the path of a key file and never the key. The binary reads
+  the file and calls `config::key_of_file`.
+- Give each variable of a unit a constant in the module of its daemon.
+  `bin/tests/test_rust_config_units.py` fails for a variable of a unit that
+  has no constant.
+- `config/python.rs` holds the differential test of the module. Its table
+  `SURFACES` names each `config.` surface, and its table `DEVIATIONS` names
+  each difference on purpose.
+
 ## Code style
 
 The code style rules of the root `AGENTS.md` apply. In Rust they read:
@@ -409,6 +492,10 @@ Rules for the test:
 - A crate has no `version` key. No number lives in a file. A version is a
   tag that CI allocates.
 - Commit `Cargo.lock` with each change to a dependency.
+- `serde_json` has the feature `float_roundtrip`. It then reads each JSON
+  float as the nearest float, as Python does. Without the feature, a float of
+  16 digits or more can differ from the Python value in its last bit. Do not
+  remove the feature.
 
 ## Known gaps
 
@@ -416,8 +503,8 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- Five modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session`, `manifest` and `config`.
+- Four modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session` and `manifest`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
@@ -649,3 +736,86 @@ Rules for the test:
   `caregiver.faults`. They are rules of the reconciler, not of a file.
 - No vector covers the size cap of a reader of contract 05. A unit test
   covers each cap.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/config/`:
+  1. `LanAddress`. No contract gives the LAN address of the site file a
+     grammar. One Python copy of six takes labels with dots, and five take
+     each text. The type takes the strictest copy. It also refuses `0.0.0.0`
+     and a text that ends in a number and is not one IPv4 address.
+  2. `BindHost`, contract 02 §3 rule 2. The contract gives no grammar. The
+     type takes an IP address or a host name, and refuses each spelling of
+     each interface.
+  3. `SocketPath`, `DirPath`, `TokenFilePath` and `FilePath`. No contract
+     gives a config path a grammar. The types refuse a relative path and a
+     NUL byte. `SocketPath` has the cap of 107 bytes.
+  4. `Seconds`, contract 03 §11.4 rule 4. The contract does not say which
+     numbers are permitted. The type refuses a value that is not finite and
+     a value of less than 1 nanosecond.
+  5. `HttpUrl`. No contract gives a config URL a grammar. The type demands
+     `http://` or `https://` and a host, and refuses a user part.
+  6. `attendance::ChannelCommand`, contract 03 §1. The contract gives one
+     command and no grammar for another one. The type refuses a text that
+     does not split into words.
+  7. `caregiver::ImageRef`, contract 01 §3.9. The contract gives an image
+     reference no grammar. The type demands a reference with a digest.
+  8. `roster`, `stage7-releases.md` §4.4. The contract names no YAML
+     version. The module holds no YAML reader.
+  9. `caregiver::CaregiverConfig`, `spec.md` §5.4. The spec does not say
+     what the caregiver does with no master key of LiteLLM. The type refuses
+     `--write` without the key. The Python service starts.
+  10. `chaperone::ChaperoneConfig`, contract 04 §10 rule 7. A generated
+      roster with no base roster fails the verify hook. The contract does not
+      say what the service does at start. The type reads no roster then, as
+      the Python service does.
+  11. `chaperone::ChaperoneConfig`. No contract gives the action at start for
+      a config that is not valid. The type exits with `EX_CONFIG`. The other
+      choice is `AtStart::RefuseEachCall`.
+  12. `mounts::Credentials`, contract 03 §12 rule 3. The contract gives the
+      epoch no range. The type holds 64 bits with a sign. It takes zero and a
+      negative epoch.
+  13. `mounts::Credentials`, contract 03 §12. The contract does not say what
+      a reader does with a secret that is not a JSON string. The type refuses
+      it, and an empty secret. The Python reader makes text of each value.
+- No type reads the text of a roster file, and no type writes it. PyYAML
+  reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
+  the crate selects one. `roster::RawRoster` then takes its tree.
+- `config::mounts` defines `ModelAlias`, `SandboxTool` and `SystemPrompt`.
+  The family file uses the same three. The owner of the crate moves them
+  when the `family` module has its types.
+- The config types follow the Python readers where a reader is lax against
+  a contract. The owner decides each case. Three examples:
+  1. `creds.json` with an `epoch` that is `true`, `7.9` or `"7"`.
+  2. A roster row with an empty `command`, or with a name that is no server
+     name.
+  3. A `VIEW_COOKIE_SECURE` of `off`, which leaves the switch on.
+- Sixteen types of `config` have a private field and no `compile_fail` doc
+  test. The rule in "Tests" asks for one. The types are in four groups:
+  1. A part of a daemon config: `attendance::OwuiCopy`, `caregiver::Images`,
+     `chaperone::RosterFiles`, `chaperone::Doors` and `intake::PushHook`.
+     Only the parse of that config makes one.
+  2. A raw form, which checks nothing: `roster::RawRoster`,
+     `roster::RawUpstream`, `roster::RawArgDeny` and
+     `mounts::RawRuntimeConfig`.
+  3. An error type: `roster::RosterIssue`, `roster::RosterErrors`,
+     `site::SiteError`, `site::SiteErrors`, `mounts::RuntimeConfigErrors` and
+     `mounts::PlaypenEnvErrors`.
+  4. `FailureAction`. Its constructor is public and takes each pair.
+- No vector covers five configs: the chaperone without its `site` readers,
+  the caregiver, the two doors and the intake. No Python entry point takes
+  their variables as a map. The tests of those types use a copy of the
+  variables of each unit file. No test holds a copy equal to its unit file,
+  except for the names of the variables.
+- No vector covers a reader of the playpen. `mounts::RuntimeView` follows
+  `playpen/src/runtime-config.ts`, and its tests are a copy of that file.
+- The three mount files state their failure action only in a doc comment:
+  `mounts::RuntimeView`, `mounts::Credentials` and `mounts::PlaypenEnv` do
+  not implement `Checked`. `AtStart` and `AtReload` have no variant for their
+  actions: a safe default for each field, a retry and then
+  `stale_credentials`, and the fatal `mount_dir_unset`. The port of the
+  playpen adds the variants.
+- No unit file holds `RestartPreventExitStatus=78`, and no service exits
+  with 78 for each config error. The failure action of each config type
+  states what the port of its service must do.
+- No test runs systemd. The rule about `RestartPreventExitStatus` and
+  `ExecStartPre=` comes from the manual page `systemd.service(5)`. No run on
+  a host proves it.
