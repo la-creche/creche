@@ -21,7 +21,7 @@ MODEL_OWNER = "agent-control"
 MAX_PROMPT_BYTES = 256 * 1024
 
 # The family name charset of contract 02 §2.
-_FAMILY_PATTERN = re.compile(r"^[a-z][a-z0-9\-]{1,30}$")
+_FAMILY_PATTERN = re.compile(r"^[a-z][a-z0-9\-]{1,30}\Z")
 
 _ROLE_USER = "user"
 _ROLE_SYSTEM = "system"

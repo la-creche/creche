@@ -33,7 +33,7 @@ TASK_HEADER = "x-owui-task"
 # The session id charset of contract 02 §2, applied to the chat id before it
 # becomes `owui-<chat id>`. A chat id is a UUID today; the check is what
 # keeps a crafted one out of a path segment.
-_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]*$")
+_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]*\Z")
 
 # An Open WebUI id is a 36-character UUID. The cap is generous and bounded,
 # because an id arrives from outside this system (invariant 14).
