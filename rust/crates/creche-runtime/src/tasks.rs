@@ -370,7 +370,9 @@ impl Tasks {
             Ok(pass) => pass,
             Err(payload) => {
                 report_panic(Role::Pass, name);
-                drop(payload);
+                // The drop of a payload can panic too. That panic must not
+                // end the loop.
+                let _ = panic::catch_unwind(AssertUnwindSafe(move || drop(payload)));
 
                 return;
             }
@@ -814,7 +816,7 @@ mod tests {
         lines: &'static [&'static str],
     }
 
-    const SCENARIOS: [Scenario; 13] = [
+    const SCENARIOS: [Scenario; 15] = [
         Scenario {
             name: "task",
             run: a_task_panics,
@@ -882,6 +884,16 @@ mod tests {
         Scenario {
             name: "late-drop",
             run: the_drop_of_a_ready_work_panics,
+            lines: &[LEDGER_LINE],
+        },
+        Scenario {
+            name: "payload-body",
+            run: the_payload_of_a_body_panics,
+            lines: &[PASS_LINE],
+        },
+        Scenario {
+            name: "payload-task",
+            run: the_payload_of_a_task_panics,
             lines: &[LEDGER_LINE],
         },
     ];
@@ -1884,6 +1896,63 @@ mod tests {
             let written = tasks.spawn_must_complete("ledger-write", Bomb { at_poll: Some(7) });
 
             assert_eq!(written.await, Err(TaskLost::Panicked));
+            assert_eq!(tasks.drain(LIMIT).await, Drained::Clean);
+        });
+    }
+
+    /// The payload of a panic, whose drop panics. The code that caught the
+    /// first panic owns the payload and drops it.
+    struct LoudPayload;
+
+    impl Drop for LoudPayload {
+        fn drop(&mut self) {
+            // The same rule as the drop of `Bomb`.
+            assert!(thread::panicking(), "{PANIC_MESSAGE}");
+        }
+    }
+
+    /// The second call of the body panics with a payload whose drop panics.
+    /// The loop continues with the third pass.
+    fn the_payload_of_a_body_panics() {
+        paused_runtime().block_on(async {
+            let (trigger, tasks) = new_tasks();
+            let passes = Arc::new(AtomicUsize::new(0));
+
+            tasks.spawn_loop("upkeep", PAUSE, {
+                let passes = Arc::clone(&passes);
+
+                move || {
+                    if passes.fetch_add(1, Ordering::SeqCst) == 1 {
+                        panic::panic_any(LoudPayload);
+                    }
+
+                    std::future::ready(())
+                }
+            });
+            tokio::time::sleep(FOUR_PASSES).await;
+
+            assert_eq!(passes.load(Ordering::SeqCst), 4);
+
+            trigger.trigger();
+
+            assert_eq!(tasks.drain(LIMIT).await, Drained::Clean);
+        });
+    }
+
+    /// A task panics with a payload whose drop panics. The second panic ends
+    /// the task of the runtime, and the caller still gets `Panicked`.
+    fn the_payload_of_a_task_panics() {
+        runtime().block_on(async {
+            let (_trigger, tasks) = new_tasks();
+
+            let written = tasks.spawn_must_complete("ledger-write", async {
+                tokio::task::yield_now().await;
+
+                panic::panic_any(LoudPayload)
+            });
+            let lost: Result<(), TaskLost> = written.await;
+
+            assert_eq!(lost, Err(TaskLost::Panicked));
             assert_eq!(tasks.drain(LIMIT).await, Drained::Clean);
         });
     }
