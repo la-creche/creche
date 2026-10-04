@@ -41,6 +41,7 @@ from chaperone import secrets as chaperone_secrets
 from handover import allocate, manifest, mcpserver, resolve, state
 from noticeboard import registrywrite
 from vectors.core import (
+    FORMAT,
     Json,
     Raised,
     Surface,
@@ -1201,4 +1202,4 @@ def render_disagreements(built: tuple[Surface, ...]) -> str:
     rows = ",\n".join(f"  {compact(row)}" for row in disagreements(built))
     body = f"[\n{rows}\n ]" if rows else "[]"
 
-    return '{\n "format": 1,\n "kind": "disagreements",\n "rows": ' + body + "\n}\n"
+    return f'{{\n "format": {FORMAT},\n "kind": "disagreements",\n "rows": {body}\n}}\n'

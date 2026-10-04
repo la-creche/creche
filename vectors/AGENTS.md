@@ -4,8 +4,9 @@ This directory holds the oracle for the Rust port. The oracle is what the
 Python implementation accepts, as data. `README.md` holds the file format
 and the commands. The root `AGENTS.md` applies here too.
 
-This directory is not a component. A change here mints no tag. It is not a
-workspace package, so it does not change `uv.lock`.
+This directory is not a component. A change here mints no tag. This
+directory is not a workspace package, so a change here does not change
+`uv.lock`.
 
 ## Rules
 
@@ -32,8 +33,8 @@ workspace package, so it does not change `uv.lock`.
 
 | Module | Owns |
 |---|---|
-| `core.py` | `normalize`, the input forms, `Vector`, `Surface`, `render` |
-| `generate.py` | the list of groups, the index, `--check`, `--counts` |
+| `core.py` | `normalize`, the markers, the input forms, `attempt`, `Vector`, `Surface`, `render` |
+| `generate.py` | the list of groups, the index, `write`, `--check`, `--counts` |
 | `surfaces/ids.py` | the id grammars and `ids/disagreements.json` |
 | `surfaces/family_cases.py` | the written `family.yaml` inputs |
 | `surfaces/family_file.py` | `family_file` and `family_file.host` |
@@ -54,15 +55,28 @@ workspace package, so it does not change `uv.lock`.
 - `channel.parse` gives no vector for `unknown_address` or `sequence_gap`.
   Those refusals need the state of a channel.
 - No vector covers the size cap of a grant file or the body cap of the
-  chaperone. Each cap is checked before the entry point of its surface.
-- Four patterns have no public entry point: `_ENV_NAME_RE` in the four
+  chaperone. The caller applies each cap before it calls the entry point.
+  No vector covers the size cap of a status reader.
+- Five patterns have no public entry point: `_ENV_NAME_RE` in the four
   `verify.py` modules, `_LOCK_PATH` and `_ARG_NAME` in
-  `agent_family.serverrules`, and `_REPO_NAME` in `handover.site`.
+  `agent_family.serverrules`, `_REPO_NAME` in `handover.site` and
+  `_SAFE_TOKEN_RE` in `handover.errors`.
 - An id surface whose entry point is a pattern records the pattern alone. A
   caller of that pattern can add a length cap.
+- Eight grammars have one copy and no id surface: the model alias, the
+  mount path, the Home Assistant identifiers, the GitHub repo name, the
+  unit name, the path segment, the image reference and the age recipient.
+  `family_file` covers the grammars that `agent_family` applies to a family
+  file.
+- `host_reason` of `attendance.wire` has no vector. `cap_event` and
+  `read_usage` have vectors only through `channel.parse`.
+- `status.door_trigger` lists only an autonomous family, and a refused
+  vector holds no reason. Most status documents are attended, so that
+  reader refuses them on `kind` alone. The surface pins little of how that
+  reader reads another field.
 - `family_file` uses two time zone names that every tz database holds. A
   name that depends on the file system of the host has no vector.
 - The vectors with a 400,000-deep nesting assume the default stack size. A
   larger stack can let Python 3.14 read that input.
-- The generator runs on macOS and on Linux. No run on another system is
-  recorded.
+- The generator runs on macOS, and CI runs it on Linux. No other system
+  has a run.

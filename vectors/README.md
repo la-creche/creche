@@ -29,12 +29,12 @@ release replaces that surface.
 | `surfaces/` | one module per group of surfaces, with the written inputs |
 | `data/index.json` | one row per surface: name, path, entry point, counts |
 | `data/ids/` | the id grammars, one file per copy of a grammar |
-| `data/ids/disagreements.json` | each input that two copies of one grammar end differently on |
+| `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
 | `data/channel/` | the channel protocol: `parse`, `frame`, `build` |
 | `data/chaperone/` | the grant file, the call body, the approval body |
 | `data/status/` | the status document, one file per reader |
-| `tests/` | the test that holds `data/` equal to the generator |
+| `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 
 ## Regenerate
 
@@ -53,6 +53,10 @@ does not write through a symbolic link.
 `vectors/tests/test_vectors_current.py` runs the generator in memory. It fails
 when a committed file differs. The full suite runs it, and CI runs the full
 suite.
+
+The pre-push hook does not run this test for a change under a product
+package. Run `uv run python -m vectors.generate --check` before you push such
+a change.
 
 When a change to a product package moves behavior:
 
@@ -107,7 +111,7 @@ An `input` object has exactly one key.
 |---|---|
 | `text` | this text. For an entry point that takes bytes, the input is the UTF-8 bytes of the text. |
 | `base64` | these bytes. The generator uses this form only for bytes that are not UTF-8. |
-| `repeat` | a long text. Each item is `[text, count]`. Repeat each text `count` times, and join the results in order. |
+| `repeat` | a long text. Each item is `[text, count]`. Repeat each text `count` times. Join the results in order. |
 | `args` | the named arguments of a builder. A value can be a marker object. |
 | `chunks` | the chunks of one byte stream, in order. Each chunk is a `text` or a `base64` object. |
 
