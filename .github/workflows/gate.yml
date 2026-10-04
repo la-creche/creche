@@ -1,8 +1,10 @@
-# PR gate: lint, the full suite and the playpen's vitest suite, as jobs
-# that run at once on separate runners.
+# PR gate: lint, the full suite, the playpen's vitest suite and the Rust
+# checks, as jobs that run at once on separate runners.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
-#           └── playpen     code   the TypeScript suite and its build
+#           ├── playpen     code   the TypeScript suite and its build
+#           └── rust        code   cargo fmt, clippy and test, for a change
+#                                  under rust/. No such change: no cargo step
 #   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
 #                                 │   docs PR the tests marked `docs`
 #                                 └── gate   red unless every job passed
@@ -20,8 +22,8 @@
 # `gh pr checks` for `gate`.
 #
 # A PR of nothing but docs runs `bin/quality-gate.sh --docs` in the lint job,
-# lint and only the tests that read a doc: no shard and no playpen job
-# (bin/lib/docsrule.sh, the rule the hook reads too).
+# lint and only the tests that read a doc: no shard, no playpen job and no
+# rust job (bin/lib/docsrule.sh, the rule the hook reads too).
 #
 # Every shard runs the whole of pyproject.toml's `testpaths` with
 # `--shard K/N` (conftest.py): a test's own id puts it in exactly one shard.
@@ -30,7 +32,8 @@
 #
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
-# release.yml runs the same `tests` and `playpen` jobs after the merge.
+# release.yml runs the same `tests`, `playpen` and `rust` jobs after the
+# merge.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -60,6 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
+      rust: ${{ steps.scope.outputs.rust }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -152,10 +156,59 @@ jobs:
       - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck && pnpm run build
         working-directory: playpen
 
+  # The Cargo workspace under rust/: bin/rust-gate.sh, the checks the hooks
+  # run. The job runs on every code change, and on a change that touches
+  # nothing under rust/ every step but the checkout is skipped
+  # (bin/lib/rustrule.sh). The job is then a success: a job skipped as a
+  # whole on a code change reads as red in the verdict.
+  #
+  # The runner has rustup, so no action installs the toolchain.
+  # `rustup toolchain install` with no name installs what
+  # rust/rust-toolchain.toml names, with rustfmt and clippy. `rustup show`
+  # does that only while rustup's auto-install is on. The three version
+  # lines fail the step when a component is absent.
+  #
+  # The cache key holds the toolchain and the lock file. A change to
+  # either starts from an empty cache.
+  rust:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    env:
+      # A CI build starts from a cache or from nothing, never from the last
+      # build of the same tree, so the incremental state is only weight.
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: toolchain
+        if: needs.scope.outputs.rust == 'true'
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: needs.scope.outputs.rust == 'true'
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust/target
+          key: rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
+
+      - run: bin/rust-gate.sh --tests
+        if: needs.scope.outputs.rust == 'true'
+
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, playpen]
+    needs: [scope, lint, tests, playpen, rust]
     if: always()
     runs-on: ubuntu-latest
     steps:
