@@ -30,7 +30,7 @@ defect that a test finds late.
 | `server` | The MCP server file: contract 01b. |
 | `session` | The session API: contract 02. |
 | `channel` | The channel protocol: contract 03. |
-| `grants` | The grant file, the call body, the approval body and the audit record: contract 04. |
+| `grants` | The grant file, the call body, the approval body, the audit record and the words of a decision: contract 04. |
 | `status` | The status document: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
 | `config` | The config of each process. |
@@ -40,7 +40,9 @@ defect that a test finds late.
 
 1. Put the types of one contract in the module of that contract. The table
    above names each module.
-2. Change only the file of your module. `lib.rs` declares each module.
+2. Change only the file of your module. `lib.rs` declares each module. A
+   module with more than one file keeps the other files in a directory with
+   its name. `grants.rs` and `grants/` are the pattern.
 3. Use the id types of `ids`. Do not write a second check for a grammar that
    `ids` holds.
 4. If `ids` lacks an id type that your module needs, define the type in your
@@ -306,9 +308,9 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- Eight modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session`, `channel`, `grants`, `status`, `manifest`
-  and `config`.
+- Seven modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session`, `channel`, `status`, `manifest` and
+  `config`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
@@ -330,6 +332,40 @@ Rules for the test:
   7. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. The
      contract gives no cap on the digits of a number. Python reads a text of
      4300 digits at most as an integer. The types have that cap.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/grants/`:
+  1. `json.rs`, contract 04. The contract gives no cap on the nesting of a
+     grant file or of a request body. The Python reader stops at a limit of
+     its interpreter. The reader stops at 256 levels.
+  2. `json.rs`, contract 04. The contract does not say which characters a
+     string holds. The Python reader keeps a lone surrogate. The reader
+     refuses the document.
+  3. `BodyError`, contract 04 §5. The contract has no row for a request body
+     that the chaperone cannot read. The type gives the three statuses of the
+     Python chaperone: 413, 400 and 422.
+  4. `AuditOutcome::Pending`, contract 04 §6.4. The contract names no reason
+     for the first record of a gated call. The type writes
+     `approval_required`, as the Python chaperone does.
+  5. `UnidentifiedRecord`, contract 04 §6. The contract does not describe the
+     log of a request that names no family. The type writes what the Python
+     chaperone writes.
+- The module `grants` has its own JSON reader and writer, and `serde_json`
+  does not read a grant file or a request body. The Python code takes JSON
+  that is not strict, and it reports each issue of a document. `grants::Value`
+  is the document. It has no `Deserialize`.
+- The types of `grants` accept what the Python code accepts, also where a
+  stricter reading of contract 04 is possible. The owner decides each case.
+  Four examples:
+  1. A limit of a grant file as `true`, as a float or as a text.
+  2. A fence key that its verb does not read.
+  3. `NaN` and an integer past 64 bits in the arguments of a call.
+  4. A request body in UTF-16 or in UTF-32.
+- `grants::Allowed` is a sketch. No code builds a value. The port of the
+  chaperone adds the decision function, which is the one constructor.
+- The crate has no SHA-256. The chaperone gives `grants::ArgsDigest` the
+  digest of `Arguments::digest_input`. The test has a SHA-256 of its own.
+- No vector covers a request body with a content type that is not JSON. The
+  HTTP layer of the port holds that rule.
 - `Secret` does not erase its bytes when the value drops. A sure erase needs
   `unsafe` code, and the lint gate forbids `unsafe` code.
 - `Secret::matches` has no branch on a byte of the secret. The compiler gives
