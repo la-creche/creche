@@ -336,7 +336,9 @@ Rules for the test:
   `crates/creche-contracts/src/grants/`:
   1. `json.rs`, contract 04. The contract gives no cap on the nesting of a
      grant file or of a request body. The Python reader stops at a limit of
-     its interpreter. The Rust reader stops at 256 levels.
+     its interpreter. The Rust reader stops at 256 levels. The Python
+     chaperone accepts a call whose arguments nest deeper, and the Rust
+     reader refuses it. Four rows of `DEVIATIONS` hold the vectors.
   2. `json.rs`, contract 04. The contract does not say which characters a
      string holds. The Python reader keeps a lone surrogate. The Rust
      reader refuses the document.

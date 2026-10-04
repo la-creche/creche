@@ -25,10 +25,11 @@ use std::fmt;
 // CONTRACT-QUESTION: contract 04 gives no cap on the nesting of a grant file or
 // of a request body. The Python reader stops at the recursion limit of its
 // interpreter, which differs between two Python versions: about 10 000 levels
-// under Python 3.13. This reader stops at 256 levels. The deepest vector that
-// the Python code accepts has 202 levels. A change to a larger cap costs the
-// one number here, and each function that walks a value by recursion then
-// needs more stack.
+// under Python 3.13. This reader stops at 256 levels. It thus refuses a
+// document that the Python code accepts: the vector `args-deep-300` is a call
+// whose arguments have 302 levels. `DEVIATIONS` in `python.rs` holds each
+// such vector. A change to a larger cap costs the one number here, and each
+// function that walks a value by recursion then needs more stack.
 /// The largest count of lists and maps that nest in one document.
 pub(super) const MAX_DEPTH: usize = 256;
 

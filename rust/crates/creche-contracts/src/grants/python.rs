@@ -102,6 +102,11 @@ const TEXT_IS_UNICODE: &str = "A string of this crate is Unicode text. A lone su
     a character, and it has no UTF-8 form. The Python reader keeps a lone surrogate in a string. \
     The Rust reader refuses the document.";
 
+/// Why the Rust code refuses a document that nests deeper than 256 levels.
+const NESTING_HAS_A_CAP: &str = "The contract gives no cap on the nesting of a document. The \
+    Python reader stops at a limit of its interpreter, which is not one number. The Rust reader \
+    stops at 256 levels, before it checks a field.";
+
 /// Each vector on which the Rust code differs from the Python code on
 /// purpose. Each other vector must be equal.
 const DEVIATIONS: &[Deviation] = &[
@@ -129,6 +134,13 @@ const DEVIATIONS: &[Deviation] = &[
         decision: TEXT_IS_UNICODE,
     },
     Deviation {
+        surface: GRANT_READER,
+        vector: "json-deep-300-unknown-field",
+        rust: Refusal::Unreadable(JsonError::TooDeep),
+        contract: "contract 04 §1.2, §1.4",
+        decision: NESTING_HAS_A_CAP,
+    },
+    Deviation {
         surface: CALL_BODY,
         vector: "args-lone-surrogate",
         rust: Refusal::Unreadable(JsonError::LoneSurrogate),
@@ -143,6 +155,27 @@ const DEVIATIONS: &[Deviation] = &[
         decision: "The request body limit is 256 KiB. The chaperone refuses a longer body \
             before a reader sees it. The Rust reader holds the cap itself. The vector records \
             the reader of the Python code with no cap before it.",
+    },
+    Deviation {
+        surface: CALL_BODY,
+        vector: "args-deep-300",
+        rust: Refusal::Unreadable(JsonError::TooDeep),
+        contract: "contract 04 §7.1",
+        decision: NESTING_HAS_A_CAP,
+    },
+    Deviation {
+        surface: CALL_BODY,
+        vector: "unknown-field-deep-300",
+        rust: Refusal::Unreadable(JsonError::TooDeep),
+        contract: "contract 04 §7.1",
+        decision: NESTING_HAS_A_CAP,
+    },
+    Deviation {
+        surface: APPROVAL_BODY,
+        vector: "unknown-field-deep-300",
+        rust: Refusal::Unreadable(JsonError::TooDeep),
+        contract: "contract 04 §8.4",
+        decision: NESTING_HAS_A_CAP,
     },
 ];
 

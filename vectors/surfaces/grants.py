@@ -56,6 +56,9 @@ OTHER_DIGEST: Final = "fedcba9876543210" * 4
 
 #: Deeper than a JSON reader of any supported interpreter goes.
 VERY_DEEP: Final = 400_000
+#: A nesting that each supported interpreter reads. The reader of the Rust
+#: port stops at 256 levels.
+DEEP: Final = 300
 HUGE_DIGITS: Final = 5_000
 
 HTTP_OK: Final = 200
@@ -446,6 +449,11 @@ GRANT_DOCUMENTS: Final[tuple[Document, ...]] = (
     _doc("limits-text-zero-then-minus-underscore", limits={"pep_rpm": "0_-_8_0"}),
     _doc("limits-text-plus-4301-digits", limits={"pep_rpm": "+" + "9" * 4301}),
     _doc("limits-text-zero-then-4301-digits", limits={"pep_rpm": "0" + "9" * 4301}),
+    # --- a nesting of 300 levels ---------------------------------------------
+    Document(
+        "json-deep-300-unknown-field",
+        _MINIMAL_TEXT[:-1].encode() + b', "x": ' + b"[" * DEEP + b"]" * DEEP + b"}",
+    ),
 )
 
 #: The fixed start of each reason `parse_grants` gives, after the file name.
@@ -593,6 +601,8 @@ CALL_BODIES: Final[tuple[Document, ...]] = (
     Document("bytes-three-nul-last", b"{}\x00"),
     Document("bytes-bom-twice", b'\xef\xbb\xbf\xef\xbb\xbf{"tool":"embed"}'),
     Document("bytes-bom-then-spaces", b'\xef\xbb\xbf  {"tool":"embed"}'),
+    Document("args-deep-300", b'{"tool":"embed","args":{"a":' + b"[" * DEEP + b"]" * DEEP + b"}}"),
+    Document("unknown-field-deep-300", b'{"tool":"embed","x":' + b"[" * DEEP + b"]" * DEEP + b"}"),
 )
 
 APPROVAL_BODIES: Final[tuple[Document, ...]] = (
@@ -619,6 +629,9 @@ APPROVAL_BODIES: Final[tuple[Document, ...]] = (
     Document("errors-every-field", b'{"decision":1,"x":1}'),
     Document("top-null", b"null"),
     Document("bytes-utf16-le-no-bom", '{"decision":"deny"}'.encode("utf-16-le")),
+    Document(
+        "unknown-field-deep-300", b'{"decision":"approve","x":' + b"[" * DEEP + b"]" * DEEP + b"}"
+    ),
 )
 
 
