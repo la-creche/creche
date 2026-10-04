@@ -43,8 +43,8 @@ ANY_INDEX: Final = "*"
 #: The two refusals for a text that is past the syntax check and still has no
 #: value. Each one is fixed text: the message of the interpreter changes with
 #: its version, and a report is the same on each of them.
-NESTS_TOO_DEEP: Final = "YAML will not parse: the text nests too deep"
-NO_VALUE: Final = "YAML will not parse: the text holds a value that cannot be read"
+_NESTS_TOO_DEEP: Final = "YAML will not parse: the text nests too deep"
+_NO_VALUE: Final = "YAML will not parse: the text holds a value that cannot be read"
 
 _FAMILY_CONTAINERS: Final[dict[tuple[str, ...], tuple[str, ...]]] = {
     (): FAMILY_FIELDS,
@@ -119,7 +119,7 @@ def _issues_from(
     return issues
 
 
-def _prints(documents: list[Any]) -> bool:
+def _ints_print(documents: list[Any]) -> bool:
     """Whether each integer of the documents has a decimal text.
 
     The interpreter refuses to print an integer past its digit limit. The
@@ -160,18 +160,18 @@ def _read_documents(text: str, issues: list[Issue]) -> list[Any] | None:
         issues.append(Issue(Severity.ERROR, "<document>", f"YAML will not parse: {exc}"))
         return None
     except RecursionError:
-        issues.append(Issue(Severity.ERROR, "<document>", NESTS_TOO_DEEP))
+        issues.append(Issue(Severity.ERROR, "<document>", _NESTS_TOO_DEEP))
         return None
     except Exception:
         # Every exception, not a list of types. The reader builds a value
         # with `int`, `float`, a date and a table of words, and each one
         # raises its own type for a scalar that has no value: ValueError,
         # OverflowError, IndexError, KeyError and AttributeError.
-        issues.append(Issue(Severity.ERROR, "<document>", NO_VALUE))
+        issues.append(Issue(Severity.ERROR, "<document>", _NO_VALUE))
         return None
 
-    if not _prints(documents):
-        issues.append(Issue(Severity.ERROR, "<document>", NO_VALUE))
+    if not _ints_print(documents):
+        issues.append(Issue(Severity.ERROR, "<document>", _NO_VALUE))
         return None
 
     return documents
