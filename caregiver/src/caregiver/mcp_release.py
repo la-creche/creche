@@ -412,7 +412,11 @@ class _RosterLoader(yaml.SafeLoader):
     of that value. This class counts the levels of those calls and the
     pairs before each copy, so the loader stops before the copy that
     passes a bound. An alias with no merge key copies nothing: each node
-    has one value."""
+    has one value.
+
+    A `<<` value with no pair counts as one pair. It copies nothing, and
+    the loader still does work for it, so a count of zero leaves the time
+    of a read with no bound. The Rust reader counts zero there."""
 
     def __init__(self, stream: str) -> None:
         super().__init__(stream)
@@ -434,7 +438,7 @@ class _RosterLoader(yaml.SafeLoader):
 
         # The caller is the `<<` key of another mapping. It copies these
         # pairs next.
-        self._merged_pairs += len(node.value)
+        self._merged_pairs += max(1, len(node.value))
         if self._merged_pairs > MERGE_PAIRS_MAX:
             raise _merge_refusal("the merge keys copy too many pairs", node)
 

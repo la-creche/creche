@@ -507,6 +507,15 @@ def _nested(levels: int) -> str:
     return "weather: " + "{<<: " * levels + "{command: x}" + "}" * levels + "\n"
 
 
+def _empty_values(values: int, times: int) -> str:
+    """A roster with one row that merges a list of `values` empty mappings
+    `times` times."""
+    listed = ", ".join(["{}"] * values)
+    merges = ", ".join(["<<: *list"] * times)
+
+    return f"list: &list [{listed}]\nweather: {{{merges}}}\n"
+
+
 def _chain(levels: int) -> str:
     """A roster where each row merges the row before it two times."""
     rows = ["row0: &row0 {command: x}"]
@@ -552,6 +561,18 @@ def test_a_roster_past_a_merge_bound_is_nothing_served(bench: Bench, text: str) 
     from caregiver.mcp_release import served_servers
 
     bench.mcp.roster.write_text(text, encoding="utf-8")
+
+    assert served_servers(bench.mcp) == ()
+
+
+def test_a_merge_of_an_empty_value_counts_against_the_bound(bench: Bench) -> None:
+    """An empty value copies no pair, and the reader still does work for
+    it. Each one counts as one pair, so the time of a read has a bound."""
+    from caregiver.mcp_release import served_servers
+
+    side = 300
+    assert side * side > MERGE_PAIRS_MAX
+    bench.mcp.roster.write_text(_empty_values(side, side), encoding="utf-8")
 
     assert served_servers(bench.mcp) == ()
 

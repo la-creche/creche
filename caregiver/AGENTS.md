@@ -171,8 +171,8 @@ the delete again when the backoff ends or the registry changes.
    declare the sharing under `shared_secrets`.
 6. What is served is root's roster, not the install trees.
 7. The roster reader has two limits for merge keys: a chain of 128 keys,
-   and 65,536 copied pairs for one file. A roster past a limit reads as a
-   roster with no row.
+   and 65,536 copied pairs for one file. A merged value with no pair counts
+   as one pair. A roster past a limit reads as a roster with no row.
 
 ## Use
 
