@@ -16,12 +16,15 @@ The three scenarios that `integration/tests/test_ct_tui_door.py` has keep
 their names, and so does the one of `test_cv_launcher.py`. Those suites run
 the door as an object in the test process, with an `sbx` that exits at once.
 
-A terminal starts on a session that already ran a turn, except in one
-scenario. `attendance` starts a pi process for a new session without a wait
-(contract 03 §4.7 rules 8 and 9), and the door asks to release that process
-before the start is done. What the launcher then finds is a matter of
-timing. The one scenario of a new session asserts only what holds in each
-order (`AGENTS.md`, Known gaps).
+A terminal starts on a session that ran a turn and that no terminal held
+before, except in two scenarios. There the playpen holds one pi process that
+runs and waits, and the door has it released before the launcher looks.
+
+In the two other cases the playpen starts a pi process at about the time the
+launcher looks: for a new session (contract 03 §4.7 rule 8), and after a
+`tui` lease ended (contract 02 §10.5). What the launcher finds is then a
+matter of timing. The scenario of a new session and the scenario of
+`--force` assert only what holds in each order (`AGENTS.md`, Known gaps).
 """
 
 from __future__ import annotations
@@ -191,31 +194,36 @@ async def test_force_takes_an_idle_lease_from_another_terminal(tui: TuiStack) ->
     """Contract 02 §7.3 rule 6. `--force` is a word that the operator types.
 
     It takes an idle lease from another instance of the same door, and it
-    is the one thing that does. The first terminal then holds no lease, so
-    its exit gives none back.
+    is the one thing that does: the scenario before this one is the same
+    command with no `--force`. The takeover ends no pi process.
+
+    The scenario stops at the lease. A `tui` lease that ends makes
+    `attendance` read the session through a new pi process of the playpen
+    (§10.5), and the second launcher can find that process (`AGENTS.md`,
+    Known gaps). So the scenario does not need the second pi to start.
     """
     session = await owui_session(tui)
     first, first_terminal = await attach(tui, session)
+    (first_pi,) = tui.terminal_pi_starts()
 
-    second, second_terminal = await attach(tui, session, FORCE_FLAG)
-    writer = await tui.writer(session)
+    second, second_terminal = tui.open_terminal(FAMILY, ARG_SESSION, session, FORCE_FLAG)
+    await until(
+        lambda: tui.lease_changes(session).count((HOLDER, TAKEN_OVER)) == 2,
+        "the second terminal to take the lease",
+    )
+    first_pi_runs = pid_is_alive(first_pi.pid)
+    _type_if_open(second_terminal, EOF)
+    second.wait(EXIT_DEADLINE_S)
     first_terminal.type(EOF)
-    first_code = first.wait(EXIT_DEADLINE_S)
-    still = await tui.writer(session)
-    second_terminal.type(EOF)
 
-    assert writer is not None
-    assert writer["door_instance"] == instance_of(second)
-    assert first_code == 0, first.output()
-    assert still is not None, "the exit of the first terminal took the lease of the second"
-    assert still["door_instance"] == instance_of(second)
-    assert second.wait(EXIT_DEADLINE_S) == 0, second.output()
-    assert tui.lease_changes(session) == [
+    assert first_pi_runs, "the takeover ended the pi process of the first terminal"
+    assert first.wait(EXIT_DEADLINE_S) == 0, first.output()
+    assert tui.lease_changes(session)[:3] == [
         ("owui", GRANTED),
         (HOLDER, TAKEN_OVER),
         (HOLDER, TAKEN_OVER),
-        (HOLDER, RELEASED),
     ]
+    assert await tui.writer(session) is None
 
 
 async def test_ct_a_new_session_exists_before_pi_runs(tui: TuiStack) -> None:

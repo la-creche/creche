@@ -211,8 +211,9 @@ the pi stand-in                          found through AGENT_PI_BIN
     a person does: with a key, with a signal or with a closed terminal.
     Read the lease and the exit code. Do not assert on a sentence that the
     program shows, unless a contract gives the sentence.
-20. A scenario with a terminal starts on a session that ran a turn. The
-    first Known gap of the terminal door says why.
+20. A scenario that needs pi on a terminal starts on a session that ran a
+    turn and that no terminal held before. The first two Known gaps of the
+    terminal door say why.
 
 ## Add a stand-in program
 
@@ -321,8 +322,18 @@ Work down this list.
   processes hold one session store. When the playpen starts its process
   first, the launcher exits 8. This is a defect of the product, not of the
   suite. `test_ct_a_new_session_exists_before_pi_runs` asserts only what
-  holds in each order. Each other scenario starts on a session that ran a
-  turn, where the release is a real one.
+  holds in each order.
+- **A release of the pi process is an answer, not an end.** `attendance`
+  answers `released: true` when it sent `stop_process` (contract 02 §5.11).
+  The pi process ends some time later. A launcher that looks at once can
+  find the process and exit 8. On the host `sbx exec -it` takes longer than
+  the end of pi. Here the launcher starts in about 100 ms. A pi process
+  that runs and waits ends in less, so a scenario on a session that ran a
+  turn is safe. A pi process that just started does not. The playpen starts
+  one when a `tui` lease ends (contract 02 §10.5), so a second terminal
+  directly after a first one is a matter of timing too.
+  `test_force_takes_an_idle_lease_from_another_terminal` stops at the lease
+  for that reason.
 - **CONTRACT-QUESTION, the exit code of a refusal of the terminal door.** No
   contract names one. Contract 03 §7.6 names the codes of the launcher, and
   the suite asserts that the door passes code 10 through. For a refusal of
