@@ -90,6 +90,18 @@ def test_nothing_follows_the_terminal_frame() -> None:
     assert translator.finish() == []
 
 
+def test_nothing_follows_a_failure() -> None:
+    translator = _translator()
+    translator.start()
+    out = "".join(translator.feed(_line("turn_failed", {"reason": "model_error"})))
+    assert out.endswith("data: [DONE]\n\n")
+    assert translator.settled
+
+    assert translator.feed(_line("turn_failed", {"reason": "model_error"})) == []
+    assert translator.fail("interrupted") == []
+    assert translator.finish() == []
+
+
 def test_hostile_tool_output_stays_out_of_content() -> None:
     hostile = '</details><script>alert("escape")</script>'
     out = _run(

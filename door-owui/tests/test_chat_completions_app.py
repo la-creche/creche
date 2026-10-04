@@ -287,6 +287,9 @@ def test_a_failed_streamed_turn_is_a_visible_error(tmp_path: Path) -> None:
 
     assert "budget_exceeded" in out
     assert '"status":"failed"' in out
+    # One ending. The door reads no line after the line that failed the turn.
+    assert out.count("data: [DONE]") == 1
+    assert out.endswith("data: [DONE]\n\n")
 
 
 def test_a_connection_dropped_mid_stream_is_a_visible_error(tmp_path: Path) -> None:
