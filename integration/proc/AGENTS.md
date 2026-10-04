@@ -635,12 +635,12 @@ the text of the failure. Work down this list.
   - A known path with a final slash creates no session and starts no turn.
   - An answer to `HEAD` has no body.
 
-  No scenario there asserts on a body. The last two scenarios assert on no
-  status. The scenario of the final slash leaves out the noticeboard, which
-  creates no session and starts no turn. The save route of the noticeboard
-  also answers 307 to a final slash, and no scenario holds that the route
-  then writes no commit. A change to one fixed answer costs one assertion
-  per scenario in that file.
+  No scenario there asserts on the content of a body. The last two
+  scenarios assert on no status. The scenario of the final slash leaves out
+  the noticeboard, which creates no session and starts no turn. The save
+  route of the noticeboard also answers 307 to a final slash, and no
+  scenario holds that the route then writes no commit. A change to one
+  fixed answer costs one assertion per scenario in that file.
 
   The table gives what each service answers today. The table is for a
   person, and no scenario reads it. Each request carried the credential of
