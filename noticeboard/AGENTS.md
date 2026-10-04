@@ -66,6 +66,11 @@ any use. A value that fails answers 404.
 16. A field a rule forbids renders disabled with the rule as its label, never
     hidden.
 
+The page that answers a post shows the posted value in each free control.
+The browser posts those values again, so a save after a preview writes the
+edit that the preview showed. A locked control shows the value of the
+registry.
+
 ## Writing the registry
 
 17. Snapshot the family's whole directory, not two known paths.
