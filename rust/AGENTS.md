@@ -22,6 +22,40 @@ defect that a test finds late.
 |---|---|
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 
+| Module of `creche-contracts` | What it holds |
+|---|---|
+| `ids` | Each id grammar that two contracts or more use. One type for each grammar. |
+| `secret` | `Secret`, the type of a token or a key. |
+| `family` | The family file: contract 01. |
+| `server` | The MCP server file: contract 01b. |
+| `session` | The session API: contract 02. |
+| `channel` | The channel protocol: contract 03. |
+| `grants` | The grant file, the call body, the approval body and the audit record: contract 04. |
+| `status` | The status document: contract 05. |
+| `manifest` | The component manifest and the release request: contract 06. |
+| `config` | The config of each process. |
+| `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
+
+## Where a new type goes
+
+1. Put the types of one contract in the module of that contract. The table
+   above names each module.
+2. Change only the file of your module. `lib.rs` declares each module.
+3. Use the id types of `ids`. Do not write a second check for a grammar that
+   `ids` holds.
+4. If `ids` lacks an id type that your module needs, define the type in your
+   module. Say so in the pull request. The owner of the crate moves the type
+   to `ids` when a second contract needs it.
+5. Ask the owner of the crate before you change `ids`, `secret` or
+   `vectors`. A change there reaches each module.
+6. For an id that is one run of ASCII bytes, write a `Run` constant and call
+   `run_id!`. The macro makes the type and its error type in the form of
+   `FamilyName`.
+7. For an id with parts, write a struct with a private field for the text
+   and for each part. `ids::Tag` is the pattern.
+8. Give each type its own doc comment and its own error type. The doc
+   comment names the contract section.
+
 ## Checks
 
 You need rustup. It installs the toolchain at the first cargo command under
@@ -258,6 +292,9 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
+- Eight modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session`, `channel`, `grants`, `status`, `manifest`
+  and `config`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
