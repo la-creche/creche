@@ -56,6 +56,28 @@ def test_attendance_refuses_a_bad_token_file(owui_prepared: OwuiStack, content: 
     assert SHORT_SECRET not in child.output()
 
 
+@pytest.mark.parametrize(
+    ("principal", "mode"),
+    [("door-owui", 0o640), ("door-delegate", 0o644), ("door-delegate", 0o660)],
+    ids=["a-door-token-with-group-read", "world-read", "group-write"],
+)
+def test_attendance_refuses_a_token_file_that_is_too_open(
+    owui_prepared: OwuiStack, principal: str, mode: int
+) -> None:
+    """Contract 02 §3 rule 5. Mode 0600, and 0640 for the two files the chaperone reads.
+
+    The other side of the rule is in every scenario that starts `attendance`:
+    the fixture writes those two files at 0640, and the service starts.
+    """
+    tree = owui_prepared.tree
+    tree.token_file(principal).chmod(mode)
+
+    child = owui_prepared.spawn(Service.ATTENDANCE, attendance_env(tree))
+
+    assert child.wait(EXIT_DEADLINE_S) != 0
+    assert not tree.attendance_socket.exists()
+
+
 def test_attendance_check_validates_and_binds_nothing(owui_prepared: OwuiStack) -> None:
     """`ExecStartPre` of the unit: `--check` reads the config and exits 0."""
     tree = owui_prepared.tree
