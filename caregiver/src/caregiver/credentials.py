@@ -112,8 +112,9 @@ def read_creds(path: Path) -> Credentials | None:
             previous_pep_token=_optional(fields.get("previous_pep_token")),
             previous_expires_at=_optional(fields.get("previous_expires_at")),
         )
-    except (KeyError, TypeError, ValueError, OverflowError):
+    except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
         # OverflowError is `int` of a float that is not finite.
+        # RecursionError is `str` of a value that nests too deep.
         return None
 
 

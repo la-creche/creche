@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import caregiver.sandboxes as sandboxes_module
 import pytest
 from agent_family import FamilyFile, parse_family
 from caregiver.driver import DriverError, FakeDriver, SandboxSpec
@@ -27,7 +28,7 @@ from caregiver.sandboxes import (
     write_ledger,
 )
 from caregiver.status import SandboxLifecycle
-from caregiver_helpers import UNREADABLE_JSON, chat_family
+from caregiver_helpers import DEEPER_THAN_STR, UNREADABLE_JSON, NoText, chat_family
 
 from caregiver import paths
 
@@ -351,6 +352,35 @@ def test_a_row_whose_cpus_has_no_integer_does_not_read(
     path = paths.sandboxes_path(state_root, "chat")
     text = path.read_text(encoding="utf-8")
     path.write_text(text.replace('"cpus": 2', '"cpus": Infinity', 1), encoding="utf-8")
+
+    assert [one.id for one in read_ledger(state_root, "chat")] == ["chat-s2"]
+
+
+def test_a_row_with_a_field_that_nests_deep_does_not_read(
+    state_root: Path, family: FamilyFile
+) -> None:
+    """One Python version reads a value that nests deeper than `str`
+    converts. Such a row must not make the reader raise."""
+    create(state_root, family, FakeDriver())
+    create(state_root, family, FakeDriver())
+    path = paths.sandboxes_path(state_root, "chat")
+    text = path.read_text(encoding="utf-8")
+    deep = "[" * DEEPER_THAN_STR + "]" * DEEPER_THAN_STR
+    path.write_text(text.replace(f'"image": "{IMAGE}"', f'"image": {deep}', 1), encoding="utf-8")
+
+    assert "chat-s1" not in [one.id for one in read_ledger(state_root, "chat")]
+
+
+def test_a_row_with_a_field_with_no_text_does_not_read(
+    state_root: Path, family: FamilyFile, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same refusal under each Python version. The parser of the test
+    gives the value that `str` cannot convert."""
+    create(state_root, family, FakeDriver())
+    create(state_root, family, FakeDriver())
+    rows = ledger_rows(state_root)
+    rows[0]["image"] = NoText()
+    monkeypatch.setattr(sandboxes_module, "read_json", lambda path: {"sandboxes": rows})
 
     assert [one.id for one in read_ledger(state_root, "chat")] == ["chat-s2"]
 
