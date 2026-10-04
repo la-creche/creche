@@ -73,11 +73,16 @@ os._exit(0)
 
 #: One line of `/proc/<pid>/stat` on Linux, as proc(5) gives it. The name of
 #: the program holds a space and a bracket on purpose. The fields are the
-#: pid, the state, the group and the thread count.
+#: pid, the state, the group, the session and the thread count.
 STAT_LINE = (
-    "{pid} (a (odd) name) {state} 1 {pgid} {pgid} 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 {threads} 0 "
-    "5309 0 0 18446744073709551615 0 0 0 0 0 0 0 0 0 0 0 0 0 17 1 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+    "{pid} (a (odd) name) {state} 1 {pgid} {session} 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 "
+    "{threads} 0 5309 0 0 18446744073709551615 0 0 0 0 0 0 0 0 0 0 0 0 0 17 1 0 0 0 0 0 0 0 0 0 "
+    "0 0 0 0\n"
 )
+
+#: The session follows the group in that line. A written line gives the two
+#: different numbers, so a harness that reads the wrong field finds no group.
+SESSION_OFFSET = 7
 
 #: The states of proc(5): a process that runs, one that sleeps, a zombie.
 RUNS = "R"
@@ -418,7 +423,9 @@ def _fake_proc(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _write_stat(proc: Path, pid: int, state: str, *, pgid: int, threads: int = 1) -> None:
     """The `stat` file of one process, as Linux writes it."""
     (proc / str(pid)).mkdir()
-    line = STAT_LINE.format(pid=pid, state=state, pgid=pgid, threads=threads)
+    line = STAT_LINE.format(
+        pid=pid, state=state, pgid=pgid, session=pgid + SESSION_OFFSET, threads=threads
+    )
     (proc / str(pid) / "stat").write_text(line, encoding="utf-8")
 
 
