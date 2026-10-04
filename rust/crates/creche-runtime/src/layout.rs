@@ -469,7 +469,9 @@ mod tests {
         let root = root_at(ROOT);
 
         for (name, path, text, python) in table(&root) {
-            assert_eq!(path, Path::new(text), "{name}");
+            // The compare is on the text. A compare of two paths takes a
+            // doubled slash, a `.` part and a final slash as equal.
+            assert_eq!(path.to_str(), Some(text), "{name}");
             assert!(!python.is_empty(), "{name}");
 
             for origin in python {
@@ -508,13 +510,13 @@ mod tests {
         // `DirPath` drops a final slash, as `pathlib` of Python does.
         assert_eq!(root_at("/srv/agents/state/rework/"), root_at(ROOT));
         assert_eq!(
-            root_at("/srv/agents/state/rework/").tokens_dir(),
-            Path::new("/srv/agents/state/rework/tokens")
+            root_at("/srv/agents/state/rework/").tokens_dir().to_str(),
+            Some("/srv/agents/state/rework/tokens")
         );
-        assert_eq!(root_at("/").families_dir(), Path::new("/families"));
+        assert_eq!(root_at("/").families_dir().to_str(), Some("/families"));
         assert_eq!(
-            root_at("/").status_file(&family("chat")),
-            Path::new("/families/chat/status.json")
+            root_at("/").status_file(&family("chat")).to_str(),
+            Some("/families/chat/status.json")
         );
     }
 
@@ -572,7 +574,8 @@ mod tests {
         holds: fn(),
     }
 
-    const TWO_TEXTS: &str = "The copy takes the family and the sandbox as two texts. A caller         can give the sandbox of another family.";
+    const TWO_TEXTS: &str = "The copy takes the family and the sandbox as two texts. A caller \
+        can give the sandbox of another family.";
 
     /// Each difference on purpose between [`StateRoot`] and a Python copy.
     /// No vector covers a path, so a row names the Python lines.
@@ -591,8 +594,10 @@ mod tests {
         },
         Deviation {
             python: "caregiver/src/caregiver/paths.py:189-193",
-            copy: "The copy takes each text as the source of a fault file, also the name of                    caregiver, which writes no fault file.",
-            here: "fault_dir and fault_file take a FaultWriter, which has the two writers                    only.",
+            copy: "The copy takes each text as the source of a fault file, also the name of \
+                   caregiver, which writes no fault file.",
+            here: "fault_dir and fault_file take a FaultWriter, which has the two writers \
+                   only.",
             holds: only_two_sources_have_a_fault_dir,
         },
     ];
