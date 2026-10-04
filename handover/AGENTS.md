@@ -272,7 +272,8 @@ that wants a refusal changes one field.
 - A crash between a server swap and the verify is not repaired
   (`executor/spool.py`, `executor/steps.py`).
 - `stage7-releases.md` §2.4 names no end for an error between the switch
-  note and the end of the swap. The run then ends as a crash does: it
+  note and the end of the swap. It names none for an error inside the
+  moves of the restore. In each case the run ends as a crash does: it
   writes no entry and it removes no staged tree. The next run repairs the
   component (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`executor/roster.py`).

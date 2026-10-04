@@ -5,9 +5,10 @@ that did not succeed removes every tree it staged. A step raised `Refusal`
 or `StepFailed` for the ends it knew. Any other error left the run: no
 entry, a staged tree left behind and the rest of the pass not drained.
 
-One place keeps that end on purpose. Between the switch note and the end of
-the swap, the run cannot say which tree is live. The error leaves the run
-as a crash does, the note stays, and the next run repairs (§2.4 row 10).
+Two places keep that end on purpose: the moves of the swap, and the moves
+of the restore. Inside them the run cannot say which tree is live. The
+error leaves the run as a crash does, the note stays, and the next run
+repairs (§2.4 row 10).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from handover.executor.install import Installer, Paths
 from handover.executor.live_state import STAMP_FILE, installed_version
 from handover.executor.spool import DONE_DIR, REQUESTS_DIR, Spool, SpoolError, SwitchNote
 from handover.executor.steps import NOTHING_SWAPPED, UNNAMED_ERROR, Wiring
+from handover.manifest import ComponentManifest
 from handover_executor_fixtures import (
     REQUEST_ID,
     SHA_OF,
@@ -339,14 +341,20 @@ def test_an_error_in_the_restore_is_a_failed_restore(
     bench: Bench, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """§2.4 row 10: a restore that fails is `failed, step: restore`, and
-    the executor stops."""
+    the executor stops. The error comes after the moves of the restore, so
+    the run can say which tree is live: the previous one."""
     _fail_the_new_hook_once(bench)
+    restart = Installer.restart
+    calls = {"n": 0}
 
-    def raise_one(self: Installer, paths: Paths) -> None:
-        del self, paths
-        raise OSError(errno.EIO, ERROR_TEXT)
+    def raise_in_the_restore(self: Installer, manifest: ComponentManifest) -> None:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise OSError(errno.EIO, ERROR_TEXT)
 
-    monkeypatch.setattr(Installer, "swap_back", raise_one)
+        restart(self, manifest)
+
+    monkeypatch.setattr(Installer, "restart", raise_in_the_restore)
 
     _handle(bench)
 
@@ -357,7 +365,8 @@ def test_an_error_in_the_restore_is_a_failed_restore(
     assert restore is not None
     assert restore["status"] == "failed"
     assert restore["detail"] == f"{UNNAMED_ERROR}: OSError (EIO)"
-    assert installed_version(bench.live) == NEW_VERSION
+    assert installed_version(bench.live) == LIVE_VERSION
+    assert not bench.staged.exists()
     assert ERROR_TEXT not in bench.whole_record()
 
 
@@ -388,6 +397,48 @@ def test_an_error_inside_the_swap_leaves_the_note_for_the_next_run(
     assert not bench.live.exists()
     assert bench.lock_is_free()
 
+    spool = Spool(str(bench.spool_root), this_uid())
+    try:
+        assert [one.note.component for one in spool.unfinished()] == [COMPONENT]
+        lines = repair_unfinished(spool, bench.wiring)
+        assert not spool.unfinished()
+    finally:
+        spool.close()
+
+    assert "repaired (restored)" in lines[0]
+    assert installed_version(bench.live) == LIVE_VERSION
+    assert not bench.staged.exists()
+    assert bench.entry(f"{REQUEST_ID}-{COMPONENT}")["status"] == "restored"
+
+
+def _half_a_swap_back(self: Installer, paths: Paths) -> None:
+    """The first rename of `swap_back`, then the error of the second one."""
+    del self
+    os.rename(paths.to, paths.new)
+
+    raise OSError(errno.EIO, ERROR_TEXT)
+
+
+def test_an_error_inside_the_restore_moves_leaves_the_note_too(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Step 10 moves the trees as step 9 does, in reverse. The tree that
+    failed its hook moved away and the previous one did not move in. The
+    run ends as a crash does and keeps each tree. The next run puts the
+    previous tree in service and writes the entry of the repair."""
+    _fail_the_new_hook_once(bench)
+    swap_back = Installer.swap_back
+    monkeypatch.setattr(Installer, "swap_back", _half_a_swap_back)
+
+    with pytest.raises(OSError, match=ERROR_TEXT):
+        _handle(bench)
+
+    assert not bench.has_entry()
+    assert not bench.live.exists()
+    assert bench.staged.exists()
+    assert bench.lock_is_free()
+
+    monkeypatch.setattr(Installer, "swap_back", swap_back)
     spool = Spool(str(bench.spool_root), this_uid())
     try:
         assert [one.note.component for one in spool.unfinished()] == [COMPONENT]

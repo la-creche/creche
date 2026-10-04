@@ -381,8 +381,9 @@ class Release:
         #: `handover`'s switch, noted at step 9 and performed by the
         #: drain after the entry and the lock (contract 06 §1.1 rule 2).
         self.self_note: SelfNote | None = None
-        #: The component whose swap raised an error no step names, between
-        #: its switch note and the end of the move. `_swap` has the reason.
+        #: The component whose moves raised an error no step names: the
+        #: swap of step 9, or the moves back of step 10. `_swap` has the
+        #: reason.
         self.interrupted: str | None = None
         self._lock: list[int] = []
 
@@ -1097,6 +1098,9 @@ class Release:
         tell a tree that moved from a tree that did not: `swap_in` removes
         `.prev` first, and a restore from a `.prev` that is half removed
         replaces the live tree with it.
+
+        The same rows name no end for an error inside the moves of the
+        restore. `_move_back` takes the same reading there.
         """
         try:
             self._swap_servers(name)
@@ -1284,8 +1288,7 @@ class Release:
         # The component's tree is one thing to put back;
         # what the PEP SERVES is another, and the second must not depend
         # on the first succeeding.
-        self._restore_servers(name)
-        self.installer.swap_back(paths)
+        self._move_back(name, paths)
         # `swap_back` moves the tree that failed verify to `.new`, and it
         # does not stay: `run` removes every tree this release staged,
         # because a kept tree stops the next cutover (`_remove_staged`).
@@ -1301,6 +1304,26 @@ class Release:
         self._record_verify(outcome)
         if not outcome.ok:
             raise StepFailed(f"{name} did not verify after the restore")
+
+    def _move_back(self, name: str, paths: Paths) -> None:
+        """The moves of the restore, with the rule of `_swap`.
+
+        An error that no step names leaves the run from here. A move back
+        that stops half-way leaves no tree in service, and the tree that
+        failed its hook is at `.new`. A ledger entry would end the run by
+        the normal way: it removes each staged tree and spends the note.
+        Nothing would then put the previous tree back. So the run writes no
+        entry, the note stays, and the next run repairs. The
+        CONTRACT-QUESTION of `_swap` covers this place too.
+        """
+        try:
+            self._restore_servers(name)
+            self.installer.swap_back(paths)
+        except (Refusal, StepFailed):
+            raise
+        except Exception:
+            self.interrupted = name
+            raise
 
     def _restore_units(self, name: str) -> tuple[Path, ...]:
         """The unit and the siblings this release replaced, back BEFORE
