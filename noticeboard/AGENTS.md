@@ -74,8 +74,11 @@ any use. A value that fails answers 404.
 19. Pin the commit identity with `-c user.name`.
 20. Scope the commit to one pathspec.
 21. Build git's environment from an allowlist, not by filtering.
-22. Take no lock. Git's own `index.lock` makes a concurrent writer fail, and a
-    failed commit restores.
+22. Hold the lock of the registry for the whole save. The lock is an
+    exclusive `flock` on the registry directory, and one save runs at a time.
+    The service refuses a save that waits more than 10 seconds for the lock.
+    Git's own `index.lock` makes a commit fail while another program writes
+    the index, and a failed commit restores.
 23. Validate the whole registry with the new text before you write. The
     validator reads a copy of `families`, `mcp` and `skills`. `caregiver`
     then never reads a text that the validator refuses. Write the family
@@ -161,6 +164,15 @@ prefixed `test_noticeboard_`.
   `skills` does not resolve there. When the validator needs its target, the
   save is refused, and the error can name a file that the checkout holds.
   A `families` directory that is a link refuses each save.
+- `spec.md` §8.2 names no rule for two saves at one time. One save runs at
+  a time for each registry, and a save that waits more than 10 seconds for
+  its turn writes nothing (`registrywrite.py`).
+- The lock of a save holds only the saves of this service. Another program
+  that writes the checkout does not take it (`registrywrite.py`). When the
+  commit of a save then fails, the save restores the bytes that it found.
+- The form holds no revision of the file that it shows. A save from a form
+  that is older than the newest commit puts each field back to the value
+  that the form holds (`app.py`). The preview shows each such field.
 - A user unit started before its user joined the `agents` group cannot read
   the chaperone's 0640 audit files until the host reboots. The audit page
   shows a banner and renders the rest.

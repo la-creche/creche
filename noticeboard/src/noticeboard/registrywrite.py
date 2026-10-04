@@ -11,6 +11,7 @@ is no `agentctl`, no systemd call and no daemon verb in this module.
 The order is fixed, and every step after the write can undo it.
 
 1. Refuse a name, a path or a link that does not belong to this family.
+   Then take the turn of this save: one save runs at a time.
 2. Validate the WHOLE registry with the new text, not just this file. A
    family's delegates, skills and MCP servers are other files, so a change
    here can break a neighbour (contract 01 §7). The validator reads a copy
@@ -26,13 +27,21 @@ The order is fixed, and every step after the write can undo it.
    times out or a git that is not installed cannot leave a half-save on
    disk.
 
-What this module does NOT do, on purpose: it takes no lock. Git's own
-`index.lock` makes a concurrent writer fail, and a failed commit restores.
-"Fail and roll back" is the behaviour under a race, never "corrupt".
+One save runs at a time. A save holds an exclusive `flock` on the registry
+directory from step 2 to the end of step 6. Without it, a second save can
+take its snapshot between the write and the commit of the first. One of the
+two then restores bytes that the other one wrote, and the checkout holds an
+edit that no commit holds. `caregiver` converges on the checkout.
+
+The lock holds the saves of this service and no other program. Git's own
+`index.lock` makes the commit fail while another program writes the index,
+and a failed commit restores. "Fail and roll back" is the behaviour under a
+race, never "corrupt".
 """
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import secrets
@@ -40,6 +49,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -68,6 +78,21 @@ MAX_SUBJECT: Final = 200
 MAX_TEXT_BYTES: Final = 256 * 1024
 
 GIT_TIMEOUT_S: Final = 30
+
+# CONTRACT-QUESTION: spec.md §8.2 gives the three steps of a save and names
+# no rule for two saves at one time. The reading taken: one save at a time
+# for each registry, and a save that waits past `LOCK_WAIT_S` is refused
+# and writes nothing. A rule that refuses the second save at once, or that
+# lets it wait with no limit, would cost this one constant.
+#: How long a save waits for its turn, in seconds. A save is one copy of the
+#: registry and three git calls.
+LOCK_WAIT_S: Final = 10.0
+
+#: How long a save that waits sleeps before it asks again, in seconds.
+LOCK_POLL_S: Final = 0.05
+
+#: What a save answers when its wait ends before its turn comes.
+BUSY: Final = "another save holds the registry, and nothing was written: save again"
 
 #: The directories of a registry that the validator reads. The copy that it
 #: reads holds these and no other path of the checkout.
@@ -124,6 +149,54 @@ def save_family(registry_dir: Path, name: str, text: str, subject: str) -> SaveR
     if refusal:
         return SaveResult(ok=False, problem=refusal)
 
+    lock, problem = _lock(registry_dir)
+
+    if lock is None:
+        return SaveResult(ok=False, problem=problem)
+
+    try:
+        return _save_in_turn(registry_dir, name, text, subject)
+    finally:
+        # The system releases the lock with the descriptor.
+        os.close(lock)
+
+
+def _lock(registry_dir: Path) -> tuple[int | None, str]:
+    """The turn of one save: an exclusive lock on the registry directory.
+
+    The answer is the descriptor that holds the lock, or None and the reason.
+    The lock is on the directory itself, so it needs no file and git does
+    not see it. Each save opens the directory again, so the lock holds a
+    second thread of this process as it holds a second process. The system
+    releases it when the process ends, so a killed save leaves no lock.
+    """
+    try:
+        handle = os.open(registry_dir, os.O_RDONLY)
+    except OSError as error:
+        return None, f"cannot lock the registry: {error.strerror or error}"
+
+    deadline = time.monotonic() + LOCK_WAIT_S
+
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        except OSError as error:
+            os.close(handle)
+            return None, f"cannot lock the registry: {error.strerror or error}"
+        else:
+            return handle, ""
+
+        if time.monotonic() >= deadline:
+            os.close(handle)
+            return None, BUSY
+
+        time.sleep(LOCK_POLL_S)
+
+
+def _save_in_turn(registry_dir: Path, name: str, text: str, subject: str) -> SaveResult:
+    """The save itself. The caller holds the lock."""
     base = registry_dir / FAMILIES_DIR / name
     target = base / FAMILY_FILE
 

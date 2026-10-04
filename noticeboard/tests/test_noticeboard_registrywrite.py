@@ -8,12 +8,19 @@ from __future__ import annotations
 
 import os
 import stat
+import threading
 from pathlib import Path
 
 import pytest
 from agent_family import Registry
 from agent_family.registry import FAMILIES_DIR, MCP_DIR, SKILLS_DIR
-from noticeboard.registrywrite import COMMIT_TRAILER, TEMP_SUFFIX, head_sha, save_family
+from noticeboard.registrywrite import (
+    COMMIT_TRAILER,
+    TEMP_SUFFIX,
+    SaveResult,
+    head_sha,
+    save_family,
+)
 from noticeboard.yamlout import to_yaml
 from noticeboard_helpers import CHAT_FAMILY_YAML, commit_count, git, make_registry
 
@@ -21,8 +28,18 @@ from noticeboard import registrywrite
 
 GOOD = CHAT_FAMILY_YAML.replace("the house assistant", "the house assistant, rewritten")
 
+#: A second edit of the same file, for a save that runs beside the first.
+OTHER = CHAT_FAMILY_YAML.replace("the house assistant", "the house assistant, a second edit")
+
 #: `kind` is not one of contract 01's three, so the whole registry fails.
 BAD = CHAT_FAMILY_YAML.replace("kind: attended", "kind: wizard")
+
+#: How long the first save holds its turn while the second one waits. A save
+#: with no lock ends in less time than this.
+HELD_S = 0.5
+
+#: How long a test waits for a thread that must end.
+JOIN_S = 60
 
 
 def family_file(root: Path, name: str = "chat") -> Path:
@@ -272,8 +289,138 @@ def test_a_failed_save_leaves_the_whole_directory_as_it_was(tmp_path: Path) -> N
     assert "instructions.md" in after
 
 
+def committed(root: Path, name: str = "chat") -> str:
+    """The family file as the newest commit holds it."""
+    return git(root, "show", f"HEAD:families/{name}/family.yaml").stdout
+
+
+def test_a_save_that_cannot_take_its_turn_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two saves at one time. The second one starts between the write and
+    the commit of the first, and its wait ends before the first save does.
+    It is refused, and the first save is one commit of its own text."""
+    root = make_registry(tmp_path)
+    before = commit_count(root)
+    real = registrywrite._commit
+    second: list[SaveResult] = []
+
+    def commit_after_a_second_save(registry_dir: Path, name: str, subject: str) -> str:
+        monkeypatch.setattr(registrywrite, "_commit", real)
+        monkeypatch.setattr(registrywrite, "LOCK_WAIT_S", 0.0)
+        second.append(save_family(root, "chat", OTHER, "the second edit"))
+
+        return real(registry_dir, name, subject)
+
+    monkeypatch.setattr(registrywrite, "_commit", commit_after_a_second_save)
+
+    first = save_family(root, "chat", GOOD, "the first edit")
+
+    assert first.ok, first.problem
+    assert not second[0].ok
+    assert second[0].problem == registrywrite.BUSY
+    assert commit_count(root) == before + 1
+    assert family_file(root).read_text(encoding="utf-8") == GOOD
+    assert committed(root) == GOOD
+    assert git(root, "status", "--porcelain").stdout == ""
+
+
+def test_a_save_waits_for_the_save_before_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second save starts while the first one holds its turn. It waits,
+    and then it is the second commit."""
+    root = make_registry(tmp_path)
+    before = commit_count(root)
+    real = registrywrite._commit
+    second: list[SaveResult] = []
+    worker = threading.Thread(
+        target=lambda: second.append(save_family(root, "chat", OTHER, "the second edit"))
+    )
+
+    def commit_while_a_second_save_waits(registry_dir: Path, name: str, subject: str) -> str:
+        monkeypatch.setattr(registrywrite, "_commit", real)
+        worker.start()
+        worker.join(HELD_S)
+
+        return real(registry_dir, name, subject)
+
+    monkeypatch.setattr(registrywrite, "_commit", commit_while_a_second_save_waits)
+
+    first = save_family(root, "chat", GOOD, "the first edit")
+    worker.join(JOIN_S)
+
+    subjects = git(root, "log", "-2", "--format=%s").stdout.splitlines()
+    assert first.ok, first.problem
+    assert second[0].ok, second[0].problem
+    assert commit_count(root) == before + 2
+    assert subjects == ["the second edit", "the first edit"]
+    assert family_file(root).read_text(encoding="utf-8") == OTHER
+    assert committed(root) == OTHER
+    assert git(root, "status", "--porcelain").stdout == ""
+
+
+def test_saves_at_one_time_leave_no_edit_without_a_commit(tmp_path: Path) -> None:
+    """`caregiver` converges on the file of the checkout. After each save
+    ended, that file is the file of the newest commit."""
+    root = make_registry(tmp_path)
+    before = commit_count(root)
+    texts = [
+        CHAT_FAMILY_YAML.replace("the house assistant", f"the house assistant, edit {number}")
+        for number in range(4)
+    ]
+    start = threading.Barrier(len(texts))
+    results: dict[int, SaveResult] = {}
+
+    def one(number: int) -> None:
+        start.wait(JOIN_S)
+        results[number] = save_family(root, "chat", texts[number], f"edit {number}")
+
+    workers = [threading.Thread(target=one, args=(number,)) for number in range(len(texts))]
+
+    for worker in workers:
+        worker.start()
+
+    for worker in workers:
+        worker.join(JOIN_S)
+
+    assert [results[number].problem for number in range(len(texts))] == [""] * len(texts)
+    assert commit_count(root) == before + len(texts)
+    assert family_file(root).read_text(encoding="utf-8") in texts
+    assert committed(root) == family_file(root).read_text(encoding="utf-8")
+    assert git(root, "status", "--porcelain").stdout == ""
+
+
+@pytest.mark.parametrize("text", [BAD, GOOD], ids=["a-refused-save", "a-save"])
+def test_a_save_that_ended_gives_its_turn_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    """The next save does not wait."""
+    root = make_registry(tmp_path)
+    monkeypatch.setattr(registrywrite, "LOCK_WAIT_S", 0.0)
+    save_family(root, "chat", text, "the first edit")
+
+    result = save_family(root, "chat", OTHER, "the second edit")
+
+    assert result.ok, result.problem
+    assert committed(root) == OTHER
+
+
+def test_a_registry_that_is_not_there_refuses_the_save(tmp_path: Path) -> None:
+    """The save cannot take its turn on a directory that is not there. It
+    makes no directory."""
+    root = tmp_path / "no-registry"
+
+    result = save_family(root, "chat", GOOD, "widen the description")
+
+    assert not result.ok
+    assert "cannot lock the registry" in result.problem
+    assert not root.exists()
+
+
 def test_a_concurrent_git_lock_rolls_the_save_back(tmp_path: Path) -> None:
-    """Git's index.lock is the only lock here. A blocked commit restores."""
+    """The turn of a save does not hold another program that writes the
+    checkout. Git's index.lock does: the commit fails, and the save restores."""
     root = make_registry(tmp_path)
     (root / ".git" / "index.lock").write_text("", encoding="utf-8")
     original = family_file(root).read_bytes()
