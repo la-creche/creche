@@ -575,6 +575,8 @@ def surfaces() -> tuple[Surface, ...]:
                 "it into the fault file.",
                 "refusal.kind is not a value of the Python code. The generator derives it from "
                 "the fixed start of the message, so that a reader need not match the text.",
+                "For the kind not_json, the message ends with the text of Python's JSON "
+                "reader. Compare the kind there, and not the message.",
                 "refusal.errors is present when kind is invalid. The entry point gives the "
                 "count of the errors only. The generator gets each error from "
                 "FamilyGrants.model_validate on the same document.",

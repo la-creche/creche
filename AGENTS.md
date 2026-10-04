@@ -92,6 +92,7 @@ rule.
 | `integration/` | `integration/AGENTS.md` |
 | `bin/` | `bin/AGENTS.md` |
 | `rust/` | `rust/AGENTS.md` |
+| `vectors/` | `vectors/AGENTS.md` |
 | `systemd/` | `systemd/AGENTS.md` |
 | branches, hooks, CI, tags | `CONTRIBUTING.md` |
 
