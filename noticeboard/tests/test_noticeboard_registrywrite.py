@@ -6,11 +6,13 @@ on disk and the git history are exactly what they were before.
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 
 import pytest
 from agent_family import Registry
+from agent_family.registry import FAMILIES_DIR, MCP_DIR, SKILLS_DIR
 from noticeboard.registrywrite import COMMIT_TRAILER, TEMP_SUFFIX, head_sha, save_family
 from noticeboard.yamlout import to_yaml
 from noticeboard_helpers import CHAT_FAMILY_YAML, commit_count, git, make_registry
@@ -139,6 +141,42 @@ def test_a_valid_edit_reaches_the_family_file_after_it_validates(
 
     assert result.ok
     assert seen == [original]
+    assert family_file(root).read_text(encoding="utf-8") == GOOD
+
+
+def test_the_validator_gets_only_the_directories_it_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy holds the three directories of a registry and no other path
+    of the checkout."""
+    root = make_registry(tmp_path)
+    (root / "notes").mkdir()
+    (root / "notes" / "plan.txt").write_text("not a registry file\n", encoding="utf-8")
+    (root / "README").write_text("not a registry file\n", encoding="utf-8")
+    seen: list[list[str]] = []
+    real = registrywrite.load_registry
+
+    def watching(copy: Path) -> Registry:
+        seen.append(names_in(copy))
+        return real(copy)
+
+    monkeypatch.setattr(registrywrite, "load_registry", watching)
+
+    result = save_family(root, "chat", GOOD, "widen the description")
+
+    assert result.ok, result.problem
+    assert seen == [["families", "mcp", "skills"]]
+    assert set(registrywrite.VALIDATED_DIRS) == {FAMILIES_DIR, MCP_DIR, SKILLS_DIR}
+
+
+def test_a_file_that_no_copy_can_take_does_not_refuse_the_save(tmp_path: Path) -> None:
+    """A path that the validator does not read is not a reason to refuse."""
+    root = make_registry(tmp_path)
+    os.mkfifo(root / "pipe")
+
+    result = save_family(root, "chat", GOOD, "widen the description")
+
+    assert result.ok, result.problem
     assert family_file(root).read_text(encoding="utf-8") == GOOD
 
 

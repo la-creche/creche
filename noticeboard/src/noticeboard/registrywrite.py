@@ -14,7 +14,8 @@ The order is fixed, and every step after the write can undo it.
 2. Validate the WHOLE registry with the new text, not just this file. A
    family's delegates, skills and MCP servers are other files, so a change
    here can break a neighbour (contract 01 §7). The validator reads a copy
-   of the checkout, so the checkout never holds a text that it refuses.
+   of the directories that hold those files, so the checkout never holds a
+   text that it refuses.
 3. Snapshot every file in the family's directory.
 4. Write the new text to a temporary file in the same directory and rename
    it into place. `caregiver` reads the checkout at any time, and a rename
@@ -68,9 +69,9 @@ MAX_TEXT_BYTES: Final = 256 * 1024
 
 GIT_TIMEOUT_S: Final = 30
 
-#: git's own directory. The validator reads none of it, so the copy that it
-#: reads leaves it out.
-GIT_METADATA: Final = ".git"
+#: The directories of a registry that the validator reads. The copy that it
+#: reads holds these and no other path of the checkout.
+VALIDATED_DIRS: Final = (FAMILIES_DIR, "mcp", "skills")
 
 #: The random part of a temporary file name, in bytes. Two saves at one time
 #: then never share a name.
@@ -190,10 +191,11 @@ def _with_new_text(registry_dir: Path, name: str, text: str) -> Registry:
     """
     with tempfile.TemporaryDirectory(prefix="noticeboard-save-") as scratch:
         copy = Path(scratch) / "registry"
-        # A link is copied as a link. Nothing outside the checkout is read.
-        shutil.copytree(
-            registry_dir, copy, symlinks=True, ignore=shutil.ignore_patterns(GIT_METADATA)
-        )
+        copy.mkdir()
+
+        for part in VALIDATED_DIRS:
+            _copy_part(registry_dir / part, copy / part)
+
         base = copy / FAMILIES_DIR / name
 
         # A copied link can still point into the checkout. The new text must
@@ -205,6 +207,20 @@ def _with_new_text(registry_dir: Path, name: str, text: str) -> Registry:
         (base / FAMILY_FILE).write_text(text, encoding="utf-8")
 
         return load_registry(copy)
+
+
+def _copy_part(source: Path, target: Path) -> None:
+    """Copy one directory of the registry for the validator.
+
+    A link is copied as a link, at each level. The copy step then reads
+    nothing outside the directory.
+    """
+    if source.is_symlink():
+        target.symlink_to(source.readlink())
+        return
+
+    if source.is_dir():
+        shutil.copytree(source, target, symlinks=True)
 
 
 def _replace(path: Path, body: bytes) -> None:

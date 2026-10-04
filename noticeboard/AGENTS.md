@@ -77,9 +77,9 @@ any use. A value that fails answers 404.
 22. Take no lock. Git's own `index.lock` makes a concurrent writer fail, and a
     failed commit restores.
 23. Validate the whole registry with the new text before you write. The
-    validator reads a copy of the checkout. `caregiver` then never reads a
-    text that the validator refuses. Write the family file to a temporary
-    file in its own directory. Rename it into place.
+    validator reads a copy of `families`, `mcp` and `skills`. `caregiver`
+    then never reads a text that the validator refuses. Write the family
+    file to a temporary file in its own directory. Rename it into place.
 24. The noticeboard never parses YAML itself. `agent_family` owns the reader.
     `yamlkeep.py` is the one module that touches a YAML library, and it reads
     no meaning. `app.py` gives the patched text back to `agent_family`. When
@@ -156,6 +156,11 @@ prefixed `test_noticeboard_`.
   on a line past column 100.
 - A save that removes the last key of a block also removes the comment lines
   and the blank lines after that key (`yamlkeep.py`).
+- The copy that a save validates keeps each link as a link
+  (`registrywrite.py`). A relative link that leaves `families`, `mcp` and
+  `skills` does not resolve there. When the validator needs its target, the
+  save is refused, and the error can name a file that the checkout holds.
+  A `families` directory that is a link refuses each save.
 - A user unit started before its user joined the `agents` group cannot read
   the chaperone's 0640 audit files until the host reboots. The audit page
   shows a banner and renders the rest.
