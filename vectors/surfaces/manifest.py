@@ -503,15 +503,11 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
     _req_ts("ts-largest", "1.7976931348623157e308"),
     _req_ts("ts-integer-past-64-bits", "36893488147419103232"),
     _req_ts("ts-integer-40-digits", "1" + "0" * 39),
+    _req_ts("ts-integer-309-digits", "1" + "0" * 308),
     _req_ts("ts-rounds-half-even", "9007199254740993"),
     RequestFile(
         "size-at-cap",
         parts=((_REQUEST_TEXT, 1), (" ", MAX_REQUEST_BYTES - len(_REQUEST_TEXT))),
-    ),
-    RequestFile(
-        "id-not-a-ulid",
-        json.dumps(_body(id=NOT_A_ULID)).encode("utf-8"),
-        NOT_A_ULID,
     ),
     _req("version-arabic-indic", components={"chaperone": ARABIC_INDIC_VERSION}),
     # --- the bytes and the JSON ------------------------------------------
@@ -565,6 +561,11 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
     _req("id-null", id=None),
     _req("id-list", id=[ULID]),
     _req("id-final-newline", id=ULID + "\n"),
+    RequestFile(
+        "id-not-a-ulid",
+        json.dumps(_body(id=NOT_A_ULID)).encode("utf-8"),
+        NOT_A_ULID,
+    ),
     # --- kind ---------------------------------------------------------------
     _req("kind-other", kind="deploy"),
     _req("kind-upper", kind="Release"),
@@ -643,6 +644,7 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
     _req_ts("ts-infinity", "Infinity"),
     _req_ts("ts-negative-infinity", "-Infinity"),
     _req_ts("ts-overflows-to-infinity", "1e999"),
+    _req_ts("ts-integer-310-digits", "1" + "0" * 309),
     _req_ts("ts-nested-64", "[" * 64 + "]" * 64),
     # --- the order of the checks -----------------------------------------
     _req("order-keys-before-id", id=OTHER_ULID, extra=1),
@@ -718,8 +720,8 @@ def _parse_surface() -> Surface:
             "The input is the bytes of one request file. params.request_id is the id of the "
             "file name, which the entry point takes as its second argument.",
             *_REQUEST_NOTES,
-            "The entry point does not check params.request_id against the grammar of a ULID. "
-            "Its caller reads the id from a file name that it checked.",
+            "The entry point checks params.request_id against the grammar of a ULID, after it "
+            "compares the id of the body with it.",
         ),
         vectors=vectors,
     )
@@ -844,7 +846,7 @@ def _plan_surface() -> Surface:
             "The order of the keys of `components` in this file is not the order of the call. "
             "The entry point gives the same result for each order.",
             *_REQUEST_NOTES,
-            "The entry point does not check request_id against the grammar of a ULID.",
+            "The entry point checks request_id against the grammar of a ULID.",
         ),
         vectors=vectors,
     )

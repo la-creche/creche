@@ -1457,14 +1457,30 @@ def test_the_mcp_root_and_the_work_root_stay_traversable_under_the_umask(
 
     `stage7-releases.md` §4.2 still says the third one is not opened. It
     is: `install.fetch` calls `normalize_dir(into.parent)`.
+
+    The third mode is read while a build child of a server runs, which is
+    when it decides. The release removes that directory at its end.
     """
+    work = bench.wiring.host.work_root / CAREGIVER_ID
+    answer = bench.run.dynamic
+    assert answer is not None
+    seen: set[int] = set()
+
+    def watching(command: Command) -> RunResult | None:
+        if command.identity is As.MCP:
+            seen.add(_mode(work))
+
+        return answer(command)
+
+    bench.run.dynamic = watching
     with _umask(UNIT_UMASK):
         result = _release(bench)
 
     assert "succeeded" in result, bench.ledger()["reason"]
     assert _mode(bench.mcp_root) == OPEN_DIR_MODE
     assert _mode(bench.mcp_root / "kagi") == OPEN_DIR_MODE
-    assert _mode(bench.wiring.host.work_root / CAREGIVER_ID) == OPEN_DIR_MODE
+    assert seen == {OPEN_DIR_MODE}
+    assert not work.exists()
 
 
 def test_normalize_dir_is_the_pass_that_opens_one_directory(tmp_path: Path) -> None:

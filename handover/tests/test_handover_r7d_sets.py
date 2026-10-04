@@ -300,6 +300,36 @@ def test_a_set_of_two_restores_in_reverse(two: SetBench) -> None:
     assert verified == ["chaperone", "attendance", "attendance", "chaperone"]
 
 
+def test_a_restore_puts_each_component_back_when_one_does_not_verify(two: SetBench) -> None:
+    """Contract 06 §5.1: a release goes back whole. The hook of `attendance`
+    fails in the new tree and in the tree that the restore puts back. The
+    restore stopped there, and `chaperone` stayed on the new version: a set
+    that no resolution made. Each component goes back, each hook runs, and
+    the step then fails as §5.2 says."""
+    two.run.fails["attendance-verify"] = 1
+
+    _run(two, {"chaperone": PEP_NEW, "attendance": ATTENDANCE_NEW})
+
+    entry = two.ledger()
+    assert entry["status"] == "failed"
+    assert installed_version(two.components / "attendance") == ATTENDANCE_LIVE
+    assert installed_version(two.components / "chaperone") == PEP_LIVE
+    restore = two.step(entry, "restore")
+    assert restore is not None
+    assert restore["status"] == "failed"
+    assert restore["detail"] == "attendance did not verify after the restore"
+    rows = cast("list[dict[str, object]]", entry["verify"])
+    said = [(str(row["component"]), str(row["status"])) for row in rows]
+    assert said == [
+        ("chaperone", "ok"),
+        ("attendance", "failed"),
+        ("attendance", "failed"),
+        ("chaperone", "ok"),
+    ]
+    assert not (two.components / "chaperone.new").exists()
+    assert not (two.components / "attendance.new").exists()
+
+
 def test_one_manual_component_stops_the_whole_restore(two: SetBench) -> None:
     """Contract 06 §5.2: ANY deployed component with `mode: manual` stops
     the restore, not only the failing one. Restoring a subset lands the

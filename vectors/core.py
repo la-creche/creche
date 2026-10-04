@@ -46,7 +46,7 @@ MARKERS: Final = frozenset(
 )
 
 #: The deepest nesting one field of a vector keeps as plain JSON. A reader
-#: in another language has a limit of its own: serde_json refuses level 129.
+#: in another language has a limit of its own: serde_json refuses level 128.
 #: A field sits three levels inside its file, so a file nests 99 levels at
 #: most. A field that nests deeper is written as its JSON text in a marker.
 DEPTH_MAX: Final = 96

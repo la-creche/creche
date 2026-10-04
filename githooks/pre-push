@@ -133,7 +133,7 @@ if [[ "$scope" == docs ]] && grep -q -e "$DOCS" "$GATE"; then
   exec "$GATE" "$DOCS"
 fi
 
-# core.hooksPath is absolute, so this hook also runs for a worktree cut
+# Where core.hooksPath is absolute, this hook also runs for a worktree cut
 # before the gate learned the scoped mode. That gate reads the flag as "lint
 # only" and passes without running a test.
 if ! grep -q -e "$SCOPED" "$GATE"; then

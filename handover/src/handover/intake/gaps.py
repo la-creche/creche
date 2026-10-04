@@ -278,6 +278,16 @@ def _parse_gap(raw: bytes, secret: str) -> OpenGap | None:
     if named != secret:
         return None
 
-    at = fields.get("at")
+    return OpenGap(server, secret, _time_of(fields.get("at")))
 
-    return OpenGap(server, secret, float(at) if isinstance(at, int | float) else 0.0)
+
+def _time_of(value: object) -> float:
+    """Rule 6. The time that the writer gave, or zero: for a value that is
+    no number, and for a whole number that no float holds."""
+    if not isinstance(value, int | float):
+        return 0.0
+
+    try:
+        return float(value)
+    except OverflowError:
+        return 0.0

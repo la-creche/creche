@@ -91,7 +91,18 @@ def escapes(tree: Path) -> tuple[str, ...]:
     An empty tuple means the tree is self-contained. Nothing here raises:
     a caller that wants a refusal calls `check_tree`, and the cutover script
     wants the lines.
+
+    The staged tree is a directory of its own, as `binary_escapes` holds a
+    binary tree to. Step 9 renames it, and a rename moves a link and not
+    the directory behind the link.
     """
+    # CONTRACT-QUESTION: contract 06 §8.2 names no rule for a staged tree
+    # that is a link. The reading taken is a fault with the code `editable`,
+    # as for a binary tree. The other reading lets step 9 put a link in
+    # service, and a new code costs a row in the closed list.
+    if not _is_own_directory(tree):
+        return (f"{safe_token(tree.name)} {NOT_A_TREE}",)
+
     root = tree.resolve()
     sites = sorted(root.glob(SITE_GLOB))
     if not sites:
