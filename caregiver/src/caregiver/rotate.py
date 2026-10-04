@@ -259,9 +259,19 @@ def _rotate(
     # Contract 05 §6.3 step 3, after the grant file accepts the new token.
     # `attendance` puts this epoch on the channel, and a process that
     # starts under it reads the new credentials.
-    publish_credentials(
-        paths.status_path(state_root, family.name), steps.credentials_block(family.name, fresh)
-    )
+    try:
+        publish_credentials(
+            paths.status_path(state_root, family.name), steps.credentials_block(family.name, fresh)
+        )
+    except OSError as exc:
+        # The credential file and the grant file hold the new epoch. The
+        # rotation continues, so that each webhook bearer moves too.
+        log.error(
+            "%s: the status document did not take epoch %d, the next pass publishes it: %s",
+            family.name,
+            fresh.epoch,
+            exc,
+        )
 
     # Contract 05 §6.4: a webhook bearer is a token, so `scope: token` and
     # `scope: both` move it. It has no overlap of its own — one file holds

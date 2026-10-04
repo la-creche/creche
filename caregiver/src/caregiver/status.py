@@ -343,7 +343,14 @@ def publish_credentials(path: Path, credentials: CredentialsBlock) -> bool:
     A document that is absent or does not read gets no write. The next pass
     publishes a whole document from `creds.json`. A pass of `serve` that is
     in flight can write the block it read before the rotation. Its next
-    pass corrects that."""
+    pass corrects that.
+
+    The lock holds inside one process only. The verb can read the document,
+    a pass of `serve` can then publish a newer one, and the verb then
+    writes the older fields back with the new block. The next pass
+    corrects that too, one heartbeat later at most.
+
+    Raises `OSError` when the write fails."""
     with _lock_for(path):
         body = _read_json(path)
         if body is None:
