@@ -126,6 +126,10 @@ def parse_grants(raw: bytes, family: str) -> tuple[FamilyGrants | None, str]:
     """
     try:
         data = json.loads(raw.decode("utf-8"))
+    except RecursionError:
+        # The reader raises this on deep nesting, and not a ValueError. Its
+        # own text differs between interpreters, so the reason is fixed.
+        return None, f"grants/{family}.json: not JSON (nested too deep)"
     except (UnicodeDecodeError, ValueError) as exc:
         return None, f"grants/{family}.json: not JSON ({exc})"
 
@@ -243,6 +247,12 @@ class FamilyStore:
                 grants, raw_ok = parse_grants(path.read_bytes(), family)
             except OSError as exc:
                 grants, raw_ok = None, f"grants/{family}.json: unreadable ({exc})"
+            except Exception as exc:
+                # `lookup` reads every file on every call, so a failure
+                # nobody named must stay with this family. The fault holds
+                # the type and not the text: the text can quote the file.
+                log.exception("grants/%s.json could not be read; that family fails closed", family)
+                grants, raw_ok = None, f"grants/{family}.json: unreadable ({type(exc).__name__})"
 
         last_rev = grants.rev if grants is not None else (cached.last_rev if cached else None)
         self._store(
