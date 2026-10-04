@@ -314,6 +314,18 @@ impl OwuiCopy {
 /// assert_eq!(config.lan_port().get(), 8350);
 /// # Ok::<(), creche_contracts::config::ConfigErrors>(())
 /// ```
+///
+/// Code outside this module cannot build a config from raw parts, and cannot
+/// change a field of a valid config:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::attendance::{AttendanceConfig, Bind};
+/// use creche_contracts::config::Env;
+///
+/// let env = Env::from_pairs([("AGENT_LAN_ADDRESS", "192.0.2.10")]);
+/// let config = AttendanceConfig::from_env(&env).unwrap();
+/// let other = AttendanceConfig { bind: Bind::SocketAndLan, ..config };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttendanceConfig {
     sessions_root: DirPath,

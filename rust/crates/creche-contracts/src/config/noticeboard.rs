@@ -106,6 +106,18 @@ pub enum AccessKey {
 /// let errors = NoticeboardConfig::from_env(&env).unwrap_err();
 /// assert_eq!(errors.as_slice(), [ConfigError::OpenOnLan { variable: "VIEW_BIND" }]);
 /// ```
+///
+/// Code outside this module cannot build a config from raw parts, and cannot
+/// change a field of a valid config:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::noticeboard::NoticeboardConfig;
+/// use creche_contracts::config::{ConfigError, Env};
+///
+/// let env = Env::from_pairs([("VIEW_BIND", "127.0.0.1")]);
+/// let config = NoticeboardConfig::from_env(&env).unwrap();
+/// let other = NoticeboardConfig { page_size: 0, ..config };
+/// ```
 #[derive(Debug)]
 pub struct NoticeboardConfig {
     bind: BindHost,

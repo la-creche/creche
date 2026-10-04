@@ -75,6 +75,18 @@ const DEFAULT_REFRESH_S: &str = "30.0";
 /// assert_eq!(config.bind().to_string(), "192.0.2.10:8360");
 /// # Ok::<(), creche_contracts::config::ConfigErrors>(())
 /// ```
+///
+/// Code outside this module cannot build a config from raw parts, and cannot
+/// change a field of a valid config:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::door_trigger::DoorTriggerConfig;
+/// use creche_contracts::config::Env;
+///
+/// let env = Env::from_pairs([("AGENT_LAN_ADDRESS", "192.0.2.10")]);
+/// let config = DoorTriggerConfig::from_env(&env).unwrap();
+/// let other = DoorTriggerConfig { bind: config.bind().clone(), ..config };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct DoorTriggerConfig {
     bind: BindAddress,

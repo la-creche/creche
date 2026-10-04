@@ -242,6 +242,15 @@ enum EnvValue {
 /// let env = Env::from_pairs([("AGENT_LAN_ADDRESS", "192.0.2.10")]);
 /// assert_eq!(format!("{env:?}"), r#"Env {"AGENT_LAN_ADDRESS"}"#);
 /// ```
+///
+/// Code outside this module cannot build the map from a raw value, and
+/// cannot read a value of it:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::config::Env;
+///
+/// let env = Env(std::collections::BTreeMap::new());
+/// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct Env(BTreeMap<String, EnvValue>);
 
@@ -587,6 +596,22 @@ impl Error for ConfigError {
 ///
 /// The parse of a config does not stop at the first variable that it cannot
 /// use. The operator then corrects each variable in one step.
+///
+/// ```
+/// use creche_contracts::config::{ConfigError, ConfigErrors};
+///
+/// let errors = ConfigErrors::from(ConfigError::Unset { variable: "PEP_AUDIT_DIR" });
+/// assert_eq!(errors.as_slice().len(), 1);
+/// assert_eq!(errors.to_string(), "PEP_AUDIT_DIR: the variable is not set");
+/// ```
+///
+/// Code outside this module cannot build a list with no error:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::config::{ConfigError, ConfigErrors};
+///
+/// let errors = ConfigErrors(Vec::new());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigErrors(Vec<ConfigError>);
 

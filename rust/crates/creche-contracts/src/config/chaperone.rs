@@ -159,6 +159,22 @@ impl Doors {
 /// assert_eq!(config.tei_url().unwrap().as_str(), "http://192.0.2.10:8085");
 /// # Ok::<(), creche_contracts::config::ConfigErrors>(())
 /// ```
+///
+/// Code outside this module cannot build a config from raw parts, and cannot
+/// change a field of a valid config:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::chaperone::ChaperoneConfig;
+/// use creche_contracts::config::Env;
+///
+/// let env = Env::from_pairs([
+///     ("AGENT_LAN_ADDRESS", "192.0.2.10"),
+///     ("PEP_REWORK_DIR", "/srv/agents/state/rework"),
+///     ("PEP_AUDIT_DIR", "/srv/agents/state/pep/audit"),
+/// ]);
+/// let config = ChaperoneConfig::from_env(&env).unwrap();
+/// let other = ChaperoneConfig { bind: config.bind().clone(), ..config };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChaperoneConfig {
     rework_dir: DirPath,

@@ -81,6 +81,21 @@ impl PushHook {
 /// assert!(config.push().is_none());
 /// # Ok::<(), creche_contracts::config::ConfigErrors>(())
 /// ```
+///
+/// Code outside this module cannot build a config from raw parts, and cannot
+/// change a field of a valid config:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::intake::IntakeConfig;
+/// use creche_contracts::config::site::SiteFile;
+/// use creche_contracts::config::Env;
+///
+/// let site = SiteFile::parse(b"AGENT_OPERATOR_USER=operator\nAGENT_LAN_ADDRESS=192.0.2.10\n")
+///     .unwrap();
+/// let config = IntakeConfig::from_parts(&site, &Env::from_pairs([("PATH", "/usr/bin")]))
+///     .unwrap();
+/// let other = IntakeConfig { push: None, ..config };
+/// ```
 #[derive(Debug)]
 pub struct IntakeConfig {
     lan_address: LanAddress,

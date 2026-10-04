@@ -68,6 +68,19 @@ const DEFAULT_FAMILIES_DIR: &str = "/srv/agents/state/rework/families";
 /// assert_eq!(config.bind().to_string(), "127.0.0.1:8340");
 /// # Ok::<(), creche_contracts::config::ConfigErrors>(())
 /// ```
+///
+/// Code outside this module cannot build a config from raw parts, and cannot
+/// change a field of a valid config:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::door_owui::DoorOwuiConfig;
+/// use creche_contracts::config::Env;
+///
+/// let key_file = "/srv/agents/state/rework/tokens/door-owui.key";
+/// let env = Env::from_pairs([("DOOR_OWUI_KEY_FILE", key_file)]);
+/// let config = DoorOwuiConfig::from_env(&env).unwrap();
+/// let other = DoorOwuiConfig { bind: config.bind().clone(), ..config };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DoorOwuiConfig {
     bind: BindAddress,

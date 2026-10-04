@@ -102,6 +102,34 @@ impl EnvValue {
 /// of `tools` whose argument `arg` is one of `values`.
 ///
 /// Each of the two sets holds one member or more, and `arg` is not empty.
+///
+/// ```
+/// use creche_contracts::config::roster::{ArgDeny, RawRoster, Roster};
+///
+/// let raw: RawRoster = serde_json::from_str(
+///     r#"{"web-search": {"command": "/opt/mcp/web-search/bin/web-search",
+///         "arg_denies": [{"tools": ["search"], "arg": "site", "values": ["a"]}]}}"#,
+/// )?;
+/// let roster = Roster::try_from(raw)?;
+/// let (_, upstream) = roster.iter().next().ok_or("the roster holds one row")?;
+/// let deny: &ArgDeny = upstream.arg_denies().first().ok_or("the row holds one fence")?;
+/// assert_eq!(deny.arg(), "site");
+/// assert!(deny.tools().contains("search"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build a fence from raw parts. A fence
+/// with an empty set denies nothing:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::roster::{ArgDeny, RawRoster, Roster};
+///
+/// let deny = ArgDeny {
+///     tools: std::collections::BTreeSet::new(),
+///     arg: String::new(),
+///     values: std::collections::BTreeSet::new(),
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArgDeny {
     tools: BTreeSet<String>,
@@ -141,6 +169,35 @@ impl ArgDeny {
 ///    the grammar of `ids::EnvName`.
 /// 4. The name of a tool can be each text. Contract 01b §5 gives it the
 ///    grammar of `ids::ToolName`.
+///
+/// ```
+/// use creche_contracts::config::roster::{RawRoster, Roster, Upstream};
+///
+/// let raw: RawRoster = serde_json::from_str(
+///     r#"{"web-search": {"command": "/opt/mcp/web-search/bin/web-search",
+///         "args": ["--stdio"]}}"#,
+/// )?;
+/// let roster = Roster::try_from(raw)?;
+/// let (name, upstream): (&str, &Upstream) =
+///     roster.iter().next().ok_or("the roster holds one row")?;
+/// assert_eq!(name, "web-search");
+/// assert_eq!(upstream.args(), ["--stdio"]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build a row from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::roster::{RawRoster, Roster, Upstream};
+///
+/// let upstream = Upstream {
+///     command: String::new(),
+///     args: Vec::new(),
+///     env: std::collections::BTreeMap::new(),
+///     arg_denies: Vec::new(),
+///     tools: Vec::new(),
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Upstream {
     command: String,

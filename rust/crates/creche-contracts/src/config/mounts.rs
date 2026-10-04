@@ -534,6 +534,15 @@ impl Error for RuntimeConfigErrors {}
 /// assert_eq!(view.sandbox_tools(), [SandboxTool::Read]);
 /// assert_eq!(RuntimeView::read(None).shell(), Shell::Off);
 /// ```
+///
+/// Code outside this module cannot build a view from raw parts, and cannot
+/// change a field of a view:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::mounts::{RuntimeView, SandboxTool, Shell};
+///
+/// let view = RuntimeView { shell: Shell::On, ..RuntimeView::read(None) };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeView {
     shell: Shell,
@@ -1017,6 +1026,22 @@ const CONTROL_DIR: &str = "control";
 /// The parse follows `caregiver.playpen_env.read_playpen_env`. A line with
 /// no `=` is ignored. The name is the text before the first `=`. Nothing is
 /// removed from the name or the value. The last line of a name wins.
+///
+/// ```
+/// use creche_contracts::config::mounts::RawPlaypenEnv;
+///
+/// let raw = RawPlaypenEnv::parse("AGENT_SANDBOX=chat-s3\nnot an assignment\n");
+/// assert_eq!(raw.get("AGENT_SANDBOX"), Some("chat-s3"));
+/// assert_eq!(raw.get("AGENT_CRED_DIR"), None);
+/// ```
+///
+/// Code outside this module cannot build a value from a raw map:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::config::mounts::RawPlaypenEnv;
+///
+/// let raw = RawPlaypenEnv(std::collections::BTreeMap::new());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawPlaypenEnv(BTreeMap<String, String>);
 

@@ -288,6 +288,24 @@ impl Images {
 /// assert_eq!(config.litellm_url().as_str(), "http://192.0.2.10:4000");
 /// # Ok::<(), creche_contracts::config::ConfigErrors>(())
 /// ```
+///
+/// Code outside this module cannot build a config from raw parts, and cannot
+/// change a field of a valid config:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::caregiver::{CaregiverConfig, PepWatch, RawServe};
+/// use creche_contracts::config::Env;
+///
+/// let raw = RawServe {
+///     registry: String::from("/srv/agents/registry"),
+///     image: format!("registry.example/playpen@sha256:{}", "0123456789abcdef".repeat(4)),
+///     pep_url: Some(String::new()),
+///     ..RawServe::default()
+/// };
+/// let env = Env::from_pairs([("AGENT_LAN_ADDRESS", "192.0.2.10")]);
+/// let config = CaregiverConfig::from_parts(&raw, &env).unwrap();
+/// let other = CaregiverConfig { max_passes: 0, ..config };
+/// ```
 #[derive(Debug)]
 pub struct CaregiverConfig {
     registry: DirPath,
