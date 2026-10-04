@@ -111,3 +111,8 @@ uv run pytest family/tests
      - The grammar of a variable name, of a value and of a secret key.
      - A fence with an empty list of tools.
      - Each cap on a length and on a count.
+  4. `parse.py`, `_MERGE_DEPTH_MAX` and `_MERGED_ENTRIES_MAX`, contract 01
+     §1 and contract 01b §1. The contracts give no limit for merge keys. The
+     reader follows a chain of 400 merge keys at most. It makes 100,000
+     entries from merge keys at most. It refuses a text past a limit. The
+     Rust reader of the two files has the same two limits.

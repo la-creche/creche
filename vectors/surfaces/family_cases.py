@@ -68,6 +68,84 @@ def _head(**lines: str) -> str:
     return "\n".join(out) + "\n"
 
 
+@dataclass(frozen=True)
+class Repeated:
+    """A file that writes one key more than one time. The last value stays.
+
+    Each mapping that a case about merge keys adds is a value of that key,
+    so the file stays valid when the reader reads it."""
+
+    head: str
+    key: str
+    last: str
+
+    def text(self, values: list[str], end: str = "") -> str:
+        lines = [f"{self.key}: {value}" for value in values]
+
+        return self.head + "\n".join(lines) + f"\n{self.key}: {self.last}\n" + end
+
+
+#: The two limits of the reader on merge keys: the longest chain of merge
+#: keys, and the most entries that the merge keys of one text make. The
+#: numbers stand here and are no import, so a changed limit of the reader
+#: moves a vector.
+MERGE_CHAIN_MAX: Final = 400
+MERGED_ENTRIES_MAX: Final = 100_000
+
+#: The count of entries in the mapping that `merged_entries` merges.
+_MERGED_BLOCK: Final = 100
+
+
+def merge_chain(file: Repeated, keys: int) -> str:
+    """A file with a chain of `keys` merge keys."""
+    values = ["&c0 {}"]
+    values.extend(f"&c{link} {{ <<: *c{link - 1} }}" for link in range(1, keys))
+
+    return file.text(values, f"<<: *c{keys - 1}\n")
+
+
+def merge_list(file: Repeated, keys: int) -> str:
+    """A file with `keys` mappings, where each one merges the one before it
+    and no mapping merges the last one."""
+    values = ["&c0 {}"]
+    values.extend(f"&c{link} {{ <<: *c{link - 1} }}" for link in range(1, keys + 1))
+
+    return file.text(values)
+
+
+def _mapping(entries: int) -> str:
+    return "{ " + ", ".join(f"k{number}: 0" for number in range(entries)) + " }"
+
+
+def merged_entries(file: Repeated, count: int) -> str:
+    """A file whose merge keys make `count` entries."""
+    blocks, rest = divmod(count, _MERGED_BLOCK)
+    values = [f"&b {_mapping(_MERGED_BLOCK)}", "{ <<: [" + ", ".join(["*b"] * blocks) + "] }"]
+    if rest:
+        values.extend([f"&r {_mapping(rest)}", "{ <<: *r }"])
+
+    return file.text(values)
+
+
+def merge_levels(file: Repeated, levels: int, key: str = "<<") -> str:
+    """A file whose merge keys make more entries than the limit when `levels`
+    is 16 or more."""
+    values = ["&a0 { k: 0 }"]
+    values.extend(
+        f"&a{level} {{ {key}: [*a{level - 1}, *a{level - 1}] }}" for level in range(1, levels + 1)
+    )
+
+    return file.text(values)
+
+
+def merge_self(file: Repeated, keys: int) -> str:
+    """A file with one mapping that merges itself. Its merge keys make more
+    entries than the limit when `keys` is 11 or more."""
+    merges = ", ".join(["<<: [*a, *a]"] * keys)
+
+    return file.text([f"&a {{ k: 0, {merges} }}"])
+
+
 #: A platform server file that declares the tool no family is granted
 #: (contract 01 §5.5 rule 7). The fixture's own file leaves it out.
 PLATFORM_SERVER_WITH_MERGE: Final = """\
@@ -143,6 +221,12 @@ _HUGE_HEX_DIGITS: Final = 4_000
 
 #: A count of base 60 parts whose number is past the largest float.
 _HUGE_PARTS: Final = 200
+
+#: A thin family with the key that the cases about merge keys repeat.
+_REPEATED: Final = Repeated(HEAD, "shell", "false")
+
+#: A text whose merge keys make more than half of the entries of the limit.
+_HALF_OF_LIMIT: Final = merged_entries(_REPEATED, MERGED_ENTRIES_MAX // 2 + _MERGED_BLOCK)
 
 CASES: Final[tuple[Case, ...]] = (
     # --- the control: nothing wrong ---------------------------------------
@@ -778,6 +862,20 @@ approval:
     _case("yaml-alias-undefined", HEAD + "delegates: *nowhere\n"),
     _case("yaml-anchor-twice", HEAD + "egress: [&a x.example, &a y.example]\n"),
     _case("yaml-value-key", HEAD + "shell: =\n"),
+    # --- the two limits on merge keys ---
+    _case("yaml-merge-chain-at-limit", merge_chain(_REPEATED, MERGE_CHAIN_MAX)),
+    _case("yaml-merge-chain-past-limit", merge_chain(_REPEATED, MERGE_CHAIN_MAX + 1)),
+    _case("yaml-merge-list-no-chain", merge_list(_REPEATED, MERGE_CHAIN_MAX + 1)),
+    _case("yaml-merge-entries-at-limit", merged_entries(_REPEATED, MERGED_ENTRIES_MAX)),
+    _case("yaml-merge-entries-past-limit", merged_entries(_REPEATED, MERGED_ENTRIES_MAX + 1)),
+    _case("yaml-merge-two-documents", _HALF_OF_LIMIT + "---\n" + _HALF_OF_LIMIT),
+    _case("yaml-merge-levels-read", merge_levels(_REPEATED, 15)),
+    _case("yaml-merge-levels-refused", merge_levels(_REPEATED, 16)),
+    _case("yaml-merge-tag-refused", merge_levels(_REPEATED, 16, "!!merge k")),
+    _case("yaml-merge-later-document", merge_levels(_REPEATED, 16) + "---\nshell: *nowhere\n"),
+    _case("yaml-merge-self-read", merge_self(_REPEATED, 10)),
+    _case("yaml-merge-self-refused", merge_self(_REPEATED, 11)),
+    _case("yaml-merge-comment-nul", HEAD + "# <<\x00\n"),
     _case(
         "yaml-sexagesimal-float", _head(model="model: { router: fast, budget_usd_per_day: 1:30.5 }")
     ),
