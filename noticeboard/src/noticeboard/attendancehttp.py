@@ -31,6 +31,10 @@ STREAM_TIMEOUT_S: Final = 30.0
 #: Contract 02 §5.5 answers NDJSON; every other read answers JSON.
 _STREAM_PATH: Final = "/events"
 
+#: What a page says when the client refuses a request. It names no part of
+#: the request.
+_NOT_SENT: Final = "cannot call attendance: the client refused the request"
+
 
 @dataclass
 class HttpTransport:
@@ -48,9 +52,16 @@ class HttpTransport:
                 headers={"Authorization": f"Bearer {bearer}"},
                 timeout=_timeout(path),
             )
+        except (httpx.LocalProtocolError, httpx.InvalidURL, UnicodeEncodeError):
+            # The client itself refused a header or a path that HTTP cannot
+            # carry. The text of such an error quotes what it refused, and a
+            # header holds the token (invariant 13). The page gets a fixed
+            # sentence.
+            return Reply(problem=_NOT_SENT)
         except httpx.HTTPError as error:
-            # `str(error)` on httpx never carries a request header, so the
-            # token cannot reach a page through this line.
+            # Every other error is about the connection or the answer. Its
+            # text carries no request header, so the token cannot reach a
+            # page through this line.
             return Reply(problem=f"cannot reach attendance: {type(error).__name__}: {error}")
 
         return Reply(status=response.status_code, body=response.content)
