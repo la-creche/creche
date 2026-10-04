@@ -313,9 +313,8 @@ def _args(body: Json) -> tuple[str, bool]:
     size = 0
 
     try:
-        # The indent of a level grows with its depth, so the whole text of
-        # a value that nests deep grows with the square of that depth. The
-        # loop stops one chunk past the cap and never builds the rest.
+        # The loop stops one chunk past the cap and never builds the rest of
+        # the text.
         for chunk in _ARGS_ENCODER.iterencode(value):
             chunks.append(chunk)
             size += len(chunk)
@@ -323,6 +322,8 @@ def _args(body: Json) -> tuple[str, bool]:
             if size > MAX_ARGS_CHARS:
                 break
     except (TypeError, ValueError, RecursionError):
+        # RecursionError is a guard only. The cap stops the loop before the
+        # encoder goes that deep, so no test reaches that type.
         return "<arguments this noticeboard could not render>", False
 
     rendered = "".join(chunks)

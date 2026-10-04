@@ -176,8 +176,7 @@ def test_enormous_arguments_are_capped_and_say_so(tmp_path: Path) -> None:
 
 
 def test_arguments_that_nest_deep_render_in_bounded_memory(tmp_path: Path) -> None:
-    """The indent of a level grows with its depth, so the whole text of
-    these arguments is far larger than the record."""
+    """The reader stops at the display cap."""
     args = "[" * DEEP_ARGS_LEVELS + "]" * DEEP_ARGS_LEVELS
     line = json.dumps(audit_line(args="@")).replace('"@"', args)
     (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
