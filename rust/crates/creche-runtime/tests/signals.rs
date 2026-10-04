@@ -50,6 +50,11 @@ mod tests {
     /// finds more defects, and no time makes a correct child fail.
     const SETTLE: Duration = Duration::from_millis(300);
 
+    /// How many times a child calls `Hangups::next` after the stop signal. A
+    /// call that selects its branch by chance gives a wrong item in one of
+    /// two calls.
+    const LATE_CALLS: usize = 50;
+
     /// How long the probe of [`sighup_ends_a_plain_program`] waits.
     const PROBE_LIMIT: Duration = Duration::from_secs(10);
 
@@ -92,14 +97,18 @@ mod tests {
         /// The child counts its reloads. The first reload runs until the
         /// test ends it.
         Reload,
+        /// The child takes the stop signal and then a SIGHUP. It calls
+        /// `Hangups::next` only after the two.
+        LateHangup,
     }
 
     impl Scenario {
-        const ALL: [Self; 4] = [
+        const ALL: [Self; 5] = [
             Self::StopDefault,
             Self::StopReload,
             Self::StopAgain,
             Self::Reload,
+            Self::LateHangup,
         ];
 
         /// The value of [`CHILD_VARIABLE`].
@@ -109,6 +118,7 @@ mod tests {
                 Self::StopReload => "stop-reload",
                 Self::StopAgain => "stop-again",
                 Self::Reload => "reload",
+                Self::LateHangup => "late-hangup",
             }
         }
 
@@ -131,6 +141,7 @@ mod tests {
                 Self::StopReload => stop_reload(dir).await,
                 Self::StopAgain => stop_again(dir).await,
                 Self::Reload => reload(dir).await,
+                Self::LateHangup => late_hangup(dir).await,
             }
         }
     }
@@ -266,6 +277,26 @@ mod tests {
         assert!(shutdown.is_cancelled());
 
         fs::write(dir.join(DONE), reloads.to_string()).unwrap();
+    }
+
+    async fn late_hangup(dir: &Path) {
+        let (trigger, shutdown) = shutdown_pair();
+        let mut hangups = install(trigger, OnHangup::Reload).unwrap().unwrap();
+        count_signals(SignalKind::hangup(), dir, "hup");
+
+        mark(dir, READY);
+        shutdown.cancelled().await;
+        mark(dir, STOPPED);
+
+        // The test sends SIGHUP now and makes the file when the runtime took
+        // the signal. The signal then waits in the listener of `hangups`.
+        until_exists(&dir.join(RELEASE)).await;
+
+        for _ in 0..LATE_CALLS {
+            assert_eq!(hangups.next().await, None);
+        }
+
+        mark(dir, DONE);
     }
 
     /// The child of each test of this file. Without the variable it does
@@ -529,6 +560,25 @@ mod tests {
         assert!(status.success(), "{status}. {}", running.output());
         assert_eq!(fs::read_to_string(running.file(DONE)).unwrap(), "2");
         assert!(!running.file("reload-3").exists());
+    }
+
+    #[test]
+    fn a_sighup_after_the_stop_signal_gives_no_reload() {
+        let mut running = Running::start(Scenario::LateHangup);
+
+        running.send("TERM");
+        running.wait_for(STOPPED);
+
+        // The stop signal is triggered. The child took the SIGHUP when its
+        // file is there, and the child did not call `next` yet.
+        running.send("HUP");
+        running.wait_for("hup-1");
+        mark(running.root.path(), RELEASE);
+
+        let status = running.wait();
+
+        assert!(status.success(), "{status}. {}", running.output());
+        assert!(running.file(DONE).exists(), "{}", running.output());
     }
 
     #[test]
