@@ -75,8 +75,8 @@ The console script is `handover`. The verify hook and the operator's
    raises more than `YAMLError`: a scalar that it cannot build raises
    `ValueError`, and a text that nests too deep raises `RecursionError`.
 7. A JSON integer has no largest value. A reader that makes a float of a
-   number answers a refusal for a number that no float holds. A reader that
-   keeps a whole number gives the number a range.
+   number answers a refusal for a number that no float holds. A whole
+   number that becomes a time limit has a range.
 8. Each YAML reader calls `boundedyaml.load`, and never `yaml.safe_load`.
    PyYAML gives a merge key no limit, so a short text can make it use time
    and memory with no bound. No `except` clause stops that. `boundedyaml`

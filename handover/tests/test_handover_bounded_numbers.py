@@ -19,7 +19,9 @@ from typing import cast
 import pytest
 from handover.errors import Refusal, RefusalCode
 from handover.executor import spool as spool_module
+from handover.executor.approval import Decision, Summary, Verdict, action_id_of, check_decision
 from handover.executor.drain import drain
+from handover.executor.phone import PUSH_KIND, make_transport
 from handover.executor.request import Request, parse_request
 from handover.executor.spool import (
     DONE_DIR,
@@ -379,3 +381,40 @@ def test_a_note_that_nests_too_deep_is_no_note(tmp_path: Path) -> None:
     path.write_text('{"component": ' + "[" * JSON_DEPTH + "]" * JSON_DEPTH + "}", encoding="utf-8")
 
     assert [one.request_id for one in _unfinished(spool_root)] == [REQUEST_ID]
+
+
+# -- the answer of the approval hook -------------------------------------------
+
+GATE = "4f2a8c31b09d6e57"
+
+
+def _summary() -> Summary:
+    return Summary(
+        review="safe: 1 component(s), service",
+        components="chaperone 2.0.3 -> 2.1.0",
+        contracts="6 contracts satisfied",
+        restarts="creche-chaperone.service",
+        restore="automatic",
+        requested_by="agent-control",
+        manifest="6b84c0e5aa10",
+    )
+
+
+def test_a_verdict_with_a_time_that_no_float_holds_carries_no_time() -> None:
+    """`check_decision` refuses a grant that carries no time. The release
+    then ends at step 5 with the refusal of the gate."""
+
+    def post(body: dict[str, object]) -> dict[str, object] | None:
+        if body.get("kind") == PUSH_KIND:
+            return {}
+
+        return {"gate": GATE, "decision": "approve", "at": PAST_A_FLOAT}
+
+    transport = make_transport("https://hook.invalid/x", "t", lambda _: None, lambda: 0.0, post)
+    decision = transport(action_id_of(REQUEST_ID), GATE, _summary(), 900.0)
+
+    assert decision == Decision(Verdict.GRANTED, GATE, None)
+    with pytest.raises(Refusal) as caught:
+        check_decision(decision, GATE, 0.0)
+
+    assert caught.value.code is RefusalCode.APPROVAL
