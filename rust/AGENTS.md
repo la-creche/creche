@@ -654,6 +654,10 @@ Rules for the test:
   Three more rows are vectors of the journal reader on which the two sides
   accept the same line. The Rust reader keeps `journal_seq: true` as the
   number 1, and it keeps a body as its JSON text.
+- The `session` module reads a JSON text with `serde_json`. The readers of
+  `channel`, `grants` and `status` do what `json.loads` of Python does, and
+  the reader of `session` is strict JSON. Deviation 1 and deviation 2 are
+  the result. The owner of the crate decides if one reader replaces them.
 - The writer of the `session` module sorts the keys of an object of free
   form. The Python code keeps the order of its input. No vector shows the
   difference. These objects have free form:
