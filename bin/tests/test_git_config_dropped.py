@@ -102,6 +102,15 @@ def _home_with_config(tmp_path: Path) -> Path:
     return home
 
 
+def _xdg_with_config(tmp_path: Path) -> Path:
+    """A config directory whose `git/config` holds the marker."""
+    directory = tmp_path / "xdg"
+    (directory / "git").mkdir(parents=True)
+    (directory / "git" / "config").write_text(MARKER_CONFIG, encoding="utf-8")
+
+    return directory
+
+
 def test_a_fixture_that_runs_git_starts_no_program_of_a_person(tmp_path: Path) -> None:
     """The config file of a person names a program for `core.fsmonitor`. `git`
     runs that program when a command reads the index. A fixture of the
@@ -121,17 +130,19 @@ def test_a_fixture_that_runs_git_starts_no_program_of_a_person(tmp_path: Path) -
     assert not started.exists(), "a fixture ran git with the config file of a person"
 
 
-@pytest.mark.parametrize("source", ["global", "home", "system"])
+@pytest.mark.parametrize("source", ["global", "home", "xdg", "system"])
 def test_pytest_drops_each_config_file_before_it_imports_a_test(
     tmp_path: Path, source: str
 ) -> None:
     """A config file of a person in a variable, one in the home directory,
-    and a config file of the system. The probe holds what the two variables
-    were at the import of its module: a module that runs git as it is
-    imported, and a fixture of any scope, come after that."""
+    one in the config directory, and a config file of the system. The probe
+    holds what the two variables were at the import of its module: a module
+    that runs git as it is imported, and a fixture of any scope, come after
+    that."""
     env = {
         "global": lambda: {"GIT_CONFIG_GLOBAL": str(_person_file(tmp_path))},
         "home": lambda: {"HOME": str(_home_with_config(tmp_path))},
+        "xdg": lambda: {"XDG_CONFIG_HOME": str(_xdg_with_config(tmp_path))},
         "system": lambda: {SYSTEM_FILE_ENV: str(_person_file(tmp_path))},
     }[source]()
 
