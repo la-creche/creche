@@ -39,6 +39,10 @@ POLICY_TIMEOUT_S: Final = 30
 DESTROY_TIMEOUT_S: Final = 60
 LIST_TIMEOUT_S: Final = 30
 
+#: How much of the error text a command that did not run puts in its
+#: `DriverError`. The other messages of this module cap `stderr` the same way.
+DID_NOT_RUN_CHARS: Final = 200
+
 
 @dataclass(frozen=True)
 class Mount:
@@ -88,6 +92,12 @@ def _run(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
             f"{' '.join(args[:3])}… timed out after {timeout}s — if this repeats, "
             "run 'sbx daemon restart'"
         ) from exc
+    except (OSError, ValueError) as exc:
+        # The program is absent or does not start, the system refuses an
+        # argument, or the output is not text. Each caller names
+        # `DriverError` in its handler and turns it into a fault.
+        said = f"{type(exc).__name__}: {exc}"[:DID_NOT_RUN_CHARS]
+        raise DriverError(f"{' '.join(args[:3])}… did not run: {said}") from exc
 
 
 class SbxDriver:

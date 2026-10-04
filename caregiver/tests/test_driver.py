@@ -204,6 +204,33 @@ def test_a_wedged_daemon_names_the_recovery_command(monkeypatch: pytest.MonkeyPa
 # --- FakeDriver ---------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        FileNotFoundError(2, "No such file or directory", "sbx"),
+        PermissionError(13, "Permission denied", "sbx"),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+        ValueError("embedded null byte"),
+    ],
+    ids=["no-program", "no-permission", "output-not-utf8", "bad-argument"],
+)
+def test_a_command_that_does_not_run_is_a_driver_error(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """Each caller names `DriverError` in its handler and turns it into a
+    fault. An error of another class would leave the step and the pass
+    with no fault published."""
+
+    def refuse(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise error
+
+    monkeypatch.setattr(subprocess, "run", refuse)
+    with pytest.raises(DriverError, match="sbx create shell"):
+        SbxDriver().create(SPEC)
+
+    assert SbxDriver().list_names() == set()
+
+
 def test_fake_driver_records_calls_in_order() -> None:
     fake = FakeDriver()
     fake.create(SPEC)
