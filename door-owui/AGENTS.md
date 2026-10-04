@@ -96,3 +96,8 @@ typed anyway.
 - Contract 02 §2 caps a session id at 128 characters and gives no cap for a
   chat id. The session id of a chat is `owui-<chat id>`, so the door caps a
   chat id at 123 characters (`headers.py`).
+- Contract 02 §14 gives the codes of `attendance`. No contract gives the
+  status or the code that a door answers for a failure of its own. The door
+  answers `502 attendance_unreachable` when `attendance` does not answer. It
+  answers `500 internal` for a failure that no handler names (`errors.py`,
+  `app.py`).

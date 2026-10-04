@@ -25,6 +25,13 @@ HTTP_UNAVAILABLE = 503
 
 # Not a contract 02 §14 code. `attendance` never sends it: the door's own
 # client reports a call that got no answer with it (attendance.py).
+#
+# CONTRACT-QUESTION: contract 02 §14 gives the codes of `attendance` and no
+# status or code for a failure of a door itself. This door answers 502 with
+# this code when `attendance` does not answer. It answers 500 `internal`
+# for a failure that no handler names (app.py). A code that a contract
+# fixes later costs a change to the map below and to the text that Open
+# WebUI shows.
 CODE_UNREACHABLE = "attendance_unreachable"
 
 

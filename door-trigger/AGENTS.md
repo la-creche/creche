@@ -113,5 +113,10 @@ is `door-owui`'s. Basenames are unique across the workspace. Run
 - The quiet check is a second reader of the chaperone's audit. A user unit
   that cannot read the audit treats the daily call as owed (`quiet/records.py`).
 - Contract 01 §3.13 gives no cap on the nesting of a payload. The door
-  refuses a payload that its JSON parser cannot read. That depth differs
-  between Python versions (`payload.py`).
+  refuses a payload that its JSON parser cannot read. The depth that the
+  parser refuses differs between Python versions (`payload.py`).
+- Contract 02 §14 gives the codes of `attendance`. No contract gives the
+  status or the code that a door answers for a failure of its own. The
+  listener answers `502 attendance_unreachable` when `attendance` does not
+  answer. It answers `500 internal` for a failure that no handler names
+  (`errors.py`, `webhooks.py`).

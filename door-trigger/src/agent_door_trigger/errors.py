@@ -21,6 +21,13 @@ _FALLBACK_STATUS = 502
 
 #: Not a contract 02 §14 code. `attendance` never sends it: the webhook
 #: listener answers with it when a call to `attendance` gets no answer.
+#:
+#: CONTRACT-QUESTION: contract 02 §14 gives the codes of `attendance` and no
+#: status or code for a failure of a door itself. The listener answers 502
+#: with this code when `attendance` does not answer. It answers 500
+#: `internal` for a failure that no handler names (webhooks.py). A code that
+#: a contract fixes later costs a change to `WEBHOOK_STATUS` and to each
+#: caller that reads the code.
 CODE_UNREACHABLE = "attendance_unreachable"
 
 
