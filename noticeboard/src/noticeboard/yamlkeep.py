@@ -74,7 +74,7 @@ def edited_text(original: str, before: Mapping[str, Any], after: Mapping[str, An
 #: Every value in contract 01's file is a path, a slug or a number, so the
 #: closing brace is the last one before the comment. A mapping that holds a
 #: `#` does not match, and stays as ruamel wrote it.
-_FLOW_LINE: Final = re.compile(r"^(\s*(?:- )?(?:[a-z_]+: )?)\{(\S(?:[^#]*\S)?)\}(\s*|\s+#.*)$")
+_FLOW_LINE: Final = re.compile(r"^(\s*(?:- )?(?:[a-z_]+: )?)\{(\S(?:[^#]*\S)?)\}(\s*|\s+#.*)\Z")
 
 _SPACED_FLOW: Final = re.compile(r"\{ \S")
 
