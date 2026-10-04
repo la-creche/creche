@@ -171,6 +171,18 @@ def test_a_name_that_is_not_a_family_name_is_refused(tmp_path: Path) -> None:
     assert "not a family name" in result.problem
 
 
+def test_a_family_name_with_a_trailing_newline_is_refused(tmp_path: Path) -> None:
+    """A `$` also matches before a final newline. `\\Z` does not."""
+    root = make_registry(tmp_path)
+    before = commit_count(root)
+
+    result = save_family(root, "chat\n", GOOD, "newline")
+
+    assert not result.ok
+    assert "not a family name" in result.problem
+    assert commit_count(root) == before
+
+
 def test_a_family_directory_pointing_out_of_the_registry_is_refused(tmp_path: Path) -> None:
     root = make_registry(tmp_path)
     elsewhere = tmp_path / "elsewhere"

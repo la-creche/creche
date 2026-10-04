@@ -34,10 +34,10 @@ TITLE_MAX = 200
 #: Contract 02 §2's prefix for a session this door makes.
 TUI_PREFIX = "tui-"
 
-_FAMILY_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
-_SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
-_SANDBOX_RE = re.compile(r"^([a-z][a-z0-9-]{1,30})-s([0-9]{1,9})$")
+_FAMILY_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}\Z")
+_SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}\Z")
+_SANDBOX_RE = re.compile(r"^([a-z][a-z0-9-]{1,30})-s([0-9]{1,9})\Z")
 _DOT_NAMES = frozenset({".", ".."})
 
 #: Contract 02 §2's four prefixes, without the trailing dash.

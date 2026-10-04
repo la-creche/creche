@@ -43,7 +43,7 @@ FAMILY_FILE: Final = "family.yaml"
 FAMILIES_DIR: Final = "families"
 
 #: A family name, contract 01 §2.
-NAME_RE: Final = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+NAME_RE: Final = re.compile(r"^[a-z][a-z0-9-]{1,30}\Z")
 
 #: Who the commit is by. Pinned, so authorship never depends on the
 #: checkout's own `user.name` (which may be unset, or the operator's).

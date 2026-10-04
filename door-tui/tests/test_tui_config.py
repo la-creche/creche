@@ -7,6 +7,7 @@ URL or in a message.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,7 @@ from agent_door_tui.ids import (
     is_session,
     is_ulid,
     new_session_id,
+    sandbox_number,
 )
 
 TOKEN = "door-tui-token-" + "t" * 32
@@ -157,6 +159,27 @@ def test_family_names(value: str, expected: bool) -> None:
 )
 def test_sandbox_ids(value: str, expected: bool) -> None:
     assert is_sandbox(value) is expected
+
+
+@pytest.mark.parametrize(
+    ("check", "value"),
+    [
+        (is_family, "chat"),
+        (is_session, "tui-01JB"),
+        (is_ulid, "01JBQ7WZ0X4T9V6K2H8M3N5PQR"),
+        (is_sandbox, "chat-s1"),
+    ],
+)
+def test_a_trailing_newline_is_refused(check: Callable[[str], bool], value: str) -> None:
+    """A `$` also matches before a final newline. `\\Z` does not."""
+    assert check(value)
+    assert not check(value + "\n")
+
+
+def test_a_sandbox_number_needs_a_whole_id() -> None:
+    assert sandbox_number("chat-s12") == 12
+    assert sandbox_number("chat") == -1
+    assert sandbox_number("chat-s12\n") == -1
 
 
 @pytest.mark.parametrize(
