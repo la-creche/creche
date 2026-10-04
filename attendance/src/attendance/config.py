@@ -50,6 +50,8 @@ ENV_PREFIX = "SESSIOND_"
 _TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
 _FALSE_WORDS = frozenset({"0", "false", "no", "off"})
 
+_NUL = "\x00"
+
 # Two texts that a listener or a URL writer reads as each interface, and
 # that are not an IP address.
 _EACH_INTERFACE_WORDS = frozenset({"*", "[::]"})
@@ -157,7 +159,14 @@ def _text(source: dict[str, str], name: str, fallback: str) -> str:
 
 
 def _path(source: dict[str, str], name: str, fallback: str) -> Path:
-    return Path(_text(source, name, fallback))
+    text = _text(source, name, fallback)
+
+    # No path holds a NUL byte. The first use of such a path raises an
+    # error that no caller expects.
+    if _NUL in text:
+        raise ConfigError(f"{ENV_PREFIX}{name} holds a NUL byte, which no path holds")
+
+    return Path(text)
 
 
 def _lan_address(source: dict[str, str]) -> str:

@@ -155,6 +155,15 @@ def test_a_finite_count_of_seconds_is_read() -> None:
     assert config.lock_poll_s == 0.5
 
 
+@pytest.mark.parametrize(
+    "name", ["SESSIONS_ROOT", "STATE_ROOT", "WORK_ROOT", "SOCKET", "LOG_DIR", "OWUI_KEY_FILE"]
+)
+def test_a_path_with_a_nul_byte_refuses(name: str) -> None:
+    """No path holds that byte. The config refuses it before a first use."""
+    with pytest.raises(ConfigError, match=rf"\ASESSIOND_{name} "):
+        from_env(_site(**{f"SESSIOND_{name}": "/tmp/root\x00/state"}))
+
+
 def test_roots_come_from_the_environment(tmp_path: Path) -> None:
     config = from_env(_site(SESSIOND_SESSIONS_ROOT=str(tmp_path / "s")))
 

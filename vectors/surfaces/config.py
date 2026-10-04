@@ -975,6 +975,8 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("path-double-root", STATE_ROOT="//tmp/root"),
     _attendance("path-dot-segments", STATE_ROOT="/tmp/./root/../state"),
     _attendance("path-relative", STATE_ROOT="state"),
+    _attendance("path-nul-byte", STATE_ROOT="/tmp/root\x00/state"),
+    _attendance("socket-nul-byte", SOCKET="/tmp/root/sessiond.sock\x00"),
     _attendance("socket-107-bytes", SOCKET="/" + "a" * 106),
     _attendance("socket-108-bytes", SOCKET="/" + "a" * 107),
     # --- the bind ---
