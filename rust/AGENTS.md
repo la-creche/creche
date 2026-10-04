@@ -559,9 +559,10 @@ Rules for the test:
   5. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. Each
      Python copy accepts a decimal digit that is not ASCII. The types refuse
      it.
-  6. `OwuiChatId::session_id`, contract 02 §2. The Python door makes a
-     session id of 133 bytes from a chat id of 128 bytes. The function
-     refuses to make that session id.
+  6. `OwuiChatId`, contract 02 §2. The contract gives no cap for a chat id.
+     The Python door refuses a chat id of more than 123 bytes, because the
+     session id `owui-<chat id>` has 128 bytes or less. The type has that
+     cap. `OwuiChatId::session_id` thus gives no error.
   7. `Version`, `ContractVersion` and `Tag`, contract 06 §2 and §3. The
      contract gives no cap on the digits of a number. Python reads a text of
      4300 digits at most as an integer. The types have that cap.

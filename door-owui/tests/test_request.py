@@ -102,6 +102,31 @@ def test_a_crafted_chat_id_is_refused() -> None:
         assert caught.value.code in ("bad_id", "missing_chat_id")
 
 
+def test_a_chat_id_is_capped_so_that_its_session_id_fits() -> None:
+    # Contract 02 §2 caps a session id at 128 characters, and the session id
+    # is `owui-<chat id>`.
+    longest = "a" * 123
+
+    assert len(read_ids(_headers(**{CHAT_ID_HEADER: longest})).session) == 128
+
+    with pytest.raises(DoorError) as caught:
+        read_ids(_headers(**{CHAT_ID_HEADER: longest + "a"}))
+
+    assert caught.value.code == "bad_id"
+    assert "123" in caught.value.message
+
+
+def test_a_message_id_keeps_the_cap_of_128_characters() -> None:
+    longest = "a" * 128
+
+    assert read_ids(_headers(**{MESSAGE_ID_HEADER: longest})).message_id == longest
+
+    with pytest.raises(DoorError) as caught:
+        read_ids(_headers(**{MESSAGE_ID_HEADER: longest + "a"}))
+
+    assert caught.value.code == "bad_id"
+
+
 def test_an_id_with_a_trailing_newline_is_refused() -> None:
     # A `$` also matches before a final newline. `\Z` does not. `read_ids`
     # strips the value first, so the check is called directly.

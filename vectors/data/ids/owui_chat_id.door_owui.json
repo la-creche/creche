@@ -3,7 +3,7 @@
  "contract": "contract 02 \u00a72",
  "entry": "agent_door_owui.headers.read_ids, header x-owui-chat-id",
  "format": 1,
- "notes": ["The input is the header value. The entry point strips white space from both ends before it validates.","The value holds the chat id and the session id that the door makes from it. The session id is 5 characters longer than the chat id."],
+ "notes": ["The input is the header value. The entry point strips white space from both ends before it validates.","The value holds the chat id and the session id that the door makes from it. The session id is 5 characters longer than the chat id.","The door refuses a chat id of more than 123 characters. The session id of such a chat id has more than 128 characters."],
  "surface": "id.owui_chat_id.door_owui",
  "vectors": [
   {"id":"probe-sample","input":{"text":"3f2b1c9e-8a55-4c1e-9f0a-2b6d7e8f9a12"},"result":"accepted","value":{"chat_id":"3f2b1c9e-8a55-4c1e-9f0a-2b6d7e8f9a12","session":"owui-3f2b1c9e-8a55-4c1e-9f0a-2b6d7e8f9a12"}},
@@ -39,7 +39,7 @@
   {"id":"tab-inside","input":{"text":"a\tb"},"refusal":{"code":"bad_id"},"result":"refused"},
   {"id":"latin-letter","input":{"text":"\u00e4"},"refusal":{"code":"bad_id"},"result":"refused"},
   {"id":"line-separator","input":{"text":"a\u2028b"},"refusal":{"code":"bad_id"},"result":"refused"},
-  {"id":"max-128-chars","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"result":"accepted","value":{"chat_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","session":"owui-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+  {"id":"max-128-chars","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"refusal":{"code":"bad_id"},"result":"refused"},
   {"id":"over-129-chars","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"refusal":{"code":"bad_id"},"result":"refused"},
   {"id":"owui-prefix-133-chars","input":{"text":"owui-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"refusal":{"code":"bad_id"},"result":"refused"},
   {"id":"leading-newline","input":{"text":"\na"},"result":"accepted","value":{"chat_id":"a","session":"owui-a"}},
@@ -49,6 +49,8 @@
   {"id":"trailing-no-break-space","input":{"text":"a\u00a0"},"result":"accepted","value":{"chat_id":"a","session":"owui-a"}},
   {"id":"zero-width-space","input":{"text":"a\u200b"},"refusal":{"code":"bad_id"},"result":"refused"},
   {"id":"mongolian-vowel-separator","input":{"text":"a\u180e"},"refusal":{"code":"bad_id"},"result":"refused"},
-  {"id":"byte-order-mark","input":{"text":"\ufeffa"},"refusal":{"code":"bad_id"},"result":"refused"}
+  {"id":"byte-order-mark","input":{"text":"\ufeffa"},"refusal":{"code":"bad_id"},"result":"refused"},
+  {"id":"max-123-chars","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"result":"accepted","value":{"chat_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","session":"owui-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+  {"id":"over-124-chars","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"refusal":{"code":"bad_id"},"result":"refused"}
  ]
 }
