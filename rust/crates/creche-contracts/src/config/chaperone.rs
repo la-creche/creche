@@ -126,10 +126,10 @@ impl Doors {
 /// `RestartPreventExitStatus=78`. The unit comment gives the reason for
 /// `Restart=always` with no limit: the chaperone must return by itself when
 /// a dependency returns. A config that is not valid is not such a case: no
-/// restart corrects it. The Python service exits with 78 for no LAN address
-/// and for secrets that do not parse, with 2 for a necessary variable that
-/// is not set, and with 1 for a `PEP_BIND` that it cannot use. systemd
-/// starts the unit again after each of the three, with no limit.
+/// restart corrects it. The Python service exits with 78 for no LAN
+/// address, for a `PEP_BIND` that is not `host:port` and for secrets that
+/// do not parse. It exits with 2 for a necessary variable that is not set.
+/// systemd starts the unit again after each one, with no limit.
 ///
 /// At a reload (`SIGHUP`), the chaperone reads the roster and the secrets
 /// again, and not this config. A roster or a secrets file that does not

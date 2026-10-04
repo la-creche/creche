@@ -190,8 +190,10 @@ directory is not a workspace package, so a change here does not change
 - Four configs have no entry point that takes a map of variables, so no
   vector covers them: `chaperone.__main__`, `caregiver.cli`,
   `agent_door_owui.config` and `agent_door_trigger.config`. The two doors
-  read a key file while they parse. `config.chaperone.site` covers the four
-  readers of `chaperone.site`.
+  read a key file while they parse. `config.chaperone.site` covers four
+  readers of `chaperone.site`. No vector covers the fifth reader,
+  `listener`. It gives the host and the port of the bind that `bind` gives
+  as text.
 - No vector covers `handover.intake.run`. It reads the site file and the
   environment of the process.
 - `config.playpen_env.read` takes a text. No vector covers an env file

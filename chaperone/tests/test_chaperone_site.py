@@ -4,12 +4,18 @@ The unit's `EnvironmentFile=/etc/creche/site.env` sets
 `AGENT_LAN_ADDRESS` and `AGENT_HA_URL`. An explicit `PEP_BIND` or `HA_URL`
 still wins. There is no default address: a missing one stops the PEP with
 `os.EX_CONFIG` and a line that names the variable and the file.
+
+A bind that the PEP does not take stops it in the same way: a text that is
+not `host:port`, or a port that no listener binds. The process then ends
+with one line and no traceback.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Final
 
@@ -20,6 +26,30 @@ from chaperone import site
 
 ADDRESS: Final = "192.0.2.10"
 HA: Final = "http://192.0.2.20:8123"
+
+#: A start that is still running after this has not stopped.
+START_TIMEOUT_S: Final = 30
+
+#: A `PEP_BIND` whose port part is not a port that a listener binds.
+NOT_A_PORT: Final = (
+    pytest.param("127.0.0.1", id="no-port"),
+    pytest.param("127.0.0.1:", id="empty-port"),
+    pytest.param("127.0.0.1:http", id="a-word"),
+    pytest.param("127.0.0.1:8300/tcp", id="a-number-and-a-word"),
+    pytest.param("127.0.0.1:-1", id="below-zero"),
+    pytest.param("127.0.0.1:65536", id="past-the-largest-port"),
+    pytest.param("127.0.0.1:" + "9" * 5000, id="more-digits-than-a-number-takes"),
+)
+
+#: A `PEP_BIND` that the PEP takes, and the host and the port that it binds.
+TAKEN: Final = (
+    pytest.param("127.0.0.1:9999", ("127.0.0.1", 9999), id="loopback"),
+    pytest.param("192.0.2.10:8300", ("192.0.2.10", 8300), id="lan-address"),
+    pytest.param("localhost:18300", ("localhost", 18300), id="host-name"),
+    pytest.param("::1:18300", ("::1", 18300), id="ipv6"),
+    pytest.param("127.0.0.1:0", ("127.0.0.1", 0), id="a-port-that-the-system-selects"),
+    pytest.param("127.0.0.1:65535", ("127.0.0.1", 65535), id="the-largest-port"),
+)
 
 
 def test_the_bind_is_the_lan_address_on_the_pep_port() -> None:
@@ -38,6 +68,26 @@ def test_no_lan_address_and_no_bind_names_the_variable() -> None:
 
     assert "AGENT_LAN_ADDRESS" in str(caught.value)
     assert "/etc/creche/site.env" in str(caught.value)
+
+
+@pytest.mark.parametrize(("text", "listener"), TAKEN)
+def test_a_bind_that_the_pep_takes(text: str, listener: tuple[str, int]) -> None:
+    assert site.bind({"PEP_BIND": text}) == text
+    assert site.listener({"PEP_BIND": text}) == listener
+
+
+def test_the_listener_of_the_site_is_the_lan_address_on_the_pep_port() -> None:
+    assert site.listener({"AGENT_LAN_ADDRESS": ADDRESS}) == (ADDRESS, 8300)
+
+
+@pytest.mark.parametrize("text", NOT_A_PORT)
+def test_a_bind_with_no_port_that_a_listener_binds_is_refused(text: str) -> None:
+    for reader in (site.bind, site.listener):
+        with pytest.raises(site.ConfigError) as caught:
+            reader({"AGENT_LAN_ADDRESS": ADDRESS, "PEP_BIND": text})
+
+        assert str(caught.value).startswith("PEP_BIND ")
+        assert "host:port" in str(caught.value)
 
 
 def test_tei_answers_on_the_lan_address() -> None:
@@ -81,3 +131,51 @@ def test_the_pep_stops_with_ex_config_when_the_site_names_no_address(
     assert len(lines) == 1, lines
     assert "AGENT_LAN_ADDRESS" in lines[0]
     assert "/etc/creche/site.env" in lines[0]
+
+
+def _start(tmp_path: Path, **pep_env: str) -> subprocess.CompletedProcess[str]:
+    """`python -m chaperone` as the unit starts it, with only `pep_env` set
+    of the variables of the PEP and of the site."""
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith(("PEP_", "AGENT_")) and name != "HA_URL"
+    }
+    env |= {
+        "PEP_REWORK_DIR": str(tmp_path / "rework"),
+        "PEP_AUDIT_DIR": str(tmp_path / "audit"),
+        **pep_env,
+    }
+
+    return subprocess.run(
+        [sys.executable, "-m", "chaperone"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=START_TIMEOUT_S,
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "bind",
+    [
+        pytest.param("127.0.0.1", id="no-port"),
+        pytest.param("127.0.0.1:http", id="a-word-for-a-port"),
+        pytest.param("127.0.0.1:65536", id="past-the-largest-port"),
+    ],
+)
+def test_the_pep_stops_with_ex_config_and_one_line_on_a_bind_it_does_not_take(
+    tmp_path: Path, bind: str
+) -> None:
+    """The real entry point in a child, because the journal gets the whole
+    stderr of the process: the line, and a traceback if one is written."""
+    done = _start(tmp_path, AGENT_LAN_ADDRESS=ADDRESS, PEP_BIND=bind)
+
+    assert done.returncode == os.EX_CONFIG, done.stderr
+    assert "Traceback" not in done.stderr
+    lines = done.stderr.splitlines()
+    assert len(lines) == 1, lines
+    assert "PEP_BIND" in lines[0]
+    assert "the PEP stops" in lines[0]

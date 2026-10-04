@@ -1191,6 +1191,10 @@ CHAPERONE_ENVS: Final[tuple[Environment, ...]] = (
     _pep("bind-no-host", PEP_BIND=":8300"),
     _pep("bind-port-word", PEP_BIND="127.0.0.1:http"),
     _pep("bind-port-zero", PEP_BIND="127.0.0.1:0"),
+    _pep("bind-port-empty", PEP_BIND="127.0.0.1:"),
+    _pep("bind-port-minus", PEP_BIND="127.0.0.1:-1"),
+    _pep("bind-port-65535", PEP_BIND="127.0.0.1:65535"),
+    _pep("bind-port-65536", PEP_BIND="127.0.0.1:65536"),
     _pep(
         "home-assistant-of-the-site", AGENT_LAN_ADDRESS=LAN, AGENT_HA_URL="http://192.0.2.20:8123"
     ),

@@ -113,7 +113,7 @@ def main() -> int:
         return 2
 
     try:
-        bind = site.bind(os.environ)
+        host, port = site.listener(os.environ)
     except site.ConfigError as exc:
         return _no_site(exc)
 
@@ -148,7 +148,6 @@ def main() -> int:
         except SecretsFormatError as exc:
             return _unparsable(exc)
 
-    host, _, port = bind.rpartition(":")
     attendance_socket = os.environ.get("PEP_SESSIOND_SOCKET")
     # `stage7-releases.md` §2.3. Unset leaves `release` a named seam.
     release_requests_dir = os.environ.get("PEP_RELEASE_REQUESTS_DIR")
@@ -175,7 +174,7 @@ def main() -> int:
             approval_callback_token=secrets.get("approval_callback_token", ""),
         )
     )
-    uvicorn.run(app, host=host or "127.0.0.1", port=int(port))
+    uvicorn.run(app, host=host or "127.0.0.1", port=port)
     return 0
 
 
@@ -193,8 +192,10 @@ def _unparsable(exc: SecretsFormatError) -> int:
 
 def _no_site(exc: site.ConfigError) -> int:
     """Stop, in one line, as `_unparsable` does. A PEP with no address to
-    bind would serve nobody, and guessing one would be somebody's host."""
-    logging.getLogger("chaperone").error("no LAN address, the PEP stops: %s", exc)
+    bind would serve nobody, and guessing one would be somebody's host. A
+    bind that the PEP does not take (`site.listener`) stops it here too:
+    the server would raise on it."""
+    logging.getLogger("chaperone").error("no bind, the PEP stops: %s", exc)
 
     return os.EX_CONFIG
 

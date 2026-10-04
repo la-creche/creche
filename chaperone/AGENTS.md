@@ -187,6 +187,13 @@ the host can author. A name in both takes the per-secret value.
 | `PEP_FAULT_SWEEP_INTERVAL_S` | How often a faulted family's grant file is re-read. |
 | `PEP_BIND`, `HA_URL` | Explicit overrides of the site values. |
 
+The bind is `host:port`. The chaperone does not start on a bind that it
+does not take. It writes one line and exits with 78 (`site.py`). It does
+not take:
+
+1. A text that is not `host:port`.
+2. A port that is not a number from 0 to 65535.
+
 ## Tests
 
 ```bash
