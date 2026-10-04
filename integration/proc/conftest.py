@@ -32,6 +32,7 @@ from proc_owui import OwuiStack
 from proc_report import describe, end_processes
 from proc_services import KEEP_ROOTS_ENV, NO_SKIP_ENV, describe_table, unknown_variables
 from proc_tree import Tree, make_root, playpen_bundle, remove_root, socket_path_fits
+from proc_trigger import TriggerStack
 
 _HERE = Path(__file__).resolve().parent
 _BUILD_HINT = "run `pnpm install && pnpm run build` in playpen/ first"
@@ -221,6 +222,32 @@ def board_alone(board_prepared: BoardStack) -> BoardStack:
     board_prepared.start_board()
 
     return board_prepared
+
+
+@pytest.fixture
+def trigger_prepared(tree: Tree, supervisor: Supervisor) -> TriggerStack:
+    """The third topology on disk, with no service started."""
+    stack = TriggerStack(tree, supervisor)
+    stack.prepare()
+
+    return stack
+
+
+@pytest.fixture
+def timer(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
+    """`attendance` alone. A test runs the timer command of the trigger door."""
+    trigger_prepared.spawn_attendance()
+    trigger_prepared.await_attendance()
+
+    return trigger_prepared
+
+
+@pytest.fixture
+def trigger(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
+    """The third topology, serving: `attendance` and the webhook listener."""
+    trigger_prepared.start()
+
+    return trigger_prepared
 
 
 def _skip(reason: str) -> NoReturn:

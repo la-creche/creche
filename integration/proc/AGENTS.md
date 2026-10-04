@@ -102,7 +102,7 @@ misspelled name would start the default command.
 
 ## What runs
 
-Three topologies exist. `attendance` and the two stand-ins are in each.
+Four topologies exist. `attendance` and the two stand-ins are in each.
 The first two are in the picture. The table after it gives the others.
 
 ```
@@ -126,6 +126,7 @@ the pi stand-in                          found through AGENT_PI_BIN
 
 | Topology | A test plays | The service |
 |---|---|---|
+| `proc_trigger.py`: the trigger door and `attendance` | an automation on the LAN, over HTTP on a loopback port, and a systemd timer, which runs `agent-trigger fire` to its end | reads the registry, the status documents, the webhook bearer files and the outcome records. Dials `attendance` as `door-trigger`. |
 | `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
 
 | File | Topology | What the scenarios check |
@@ -136,6 +137,9 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
 | `test_proc_delegate.py` | chaperone and `attendance` | the delegate path of contract 04 §7, the manifest and the audit |
 | `test_proc_override.py` | door and `attendance` | each service starts through its variable |
+| `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: one job and its outcome record, a refused family, the queue, a refused start |
+| `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
+| `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
 | `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, the one commit, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
@@ -287,8 +291,25 @@ failure. Work down this list.
   requests that the bridge sends. The playpen bundle fixes `PEP_URL` at build
   time: the LAN address of the site, port 8300. A pi process under the real
   playpen cannot dial a chaperone on another port.
-- **No scenario for `door-trigger` and `door-tui`.** Each has a row in the
-  service table and no topology.
+- **No scenario for `door-tui`.** It has a row in the service table and no
+  topology.
+- **CONTRACT-QUESTION, the exit code of `agent-trigger fire`.** No contract
+  names one. The suite reads 0 as a firing that `attendance` accepted or
+  that the quiet check skipped, and each other code as a firing that
+  started nothing. A change costs one assertion per scenario in
+  `test_proc_trigger_fire.py`.
+- **No chaperone beside the trigger door.** Three things have no scenario
+  for that reason. The quiet check reads the board and the jobs of a family
+  through the chaperone (contract 01 §3.15, wake reasons 2 and 4). A gated
+  call of a job waits for a phone (contract 04 §8). The old stage 5 suite
+  holds the gate scenarios inside one test process. Here they need a
+  stand-in for the approval transport, and the bridge on the path.
+- **The floor of the quiet check has no scenario.** `floor_hours` is 1 hour
+  at least, and the door has no variable for its clock. A scenario would
+  wait one hour.
+- **A webhook call while `attendance` is down has no scenario.** The
+  listener answers 500 from a Python error that nothing handles. The suite
+  pins no answer that comes from such an error.
 - **CONTRACT-QUESTION, the exit code of a refused start of the noticeboard.**
   `docs/rework/spec.md` §8.3 rule 2 names exit code 2 for a LAN bind with no
   key. No section names a code for a wildcard bind or for a key file that
@@ -315,7 +336,7 @@ failure. Work down this list.
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the `sbx` and `pi` wrappers, and the record each one leaves |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
-| `proc_owui.py`, `proc_delegate.py`, `proc_board.py` | one topology each |
+| `proc_owui.py`, `proc_delegate.py`, `proc_trigger.py`, `proc_board.py` | one topology each |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |
