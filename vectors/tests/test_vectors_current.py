@@ -19,6 +19,7 @@ from vectors import generate
 from vectors.core import ACCEPTED, FORMAT, RAISED, REFUSED, Json, depth, has_surrogate
 
 REGENERATE = "run `uv run python -m vectors.generate` and read the diff"
+FIX_FIRST = "fix the defect in its package first: vectors/AGENTS.md rule 5"
 
 #: The forms an input takes: text, bytes that are not UTF-8, a long text
 #: written as repeated parts, the named arguments of a builder, or the chunks
@@ -119,6 +120,14 @@ def test_every_vector_has_an_id_an_input_and_a_result() -> None:
             assert vector["result"] in {ACCEPTED, REFUSED, RAISED}, path
             assert len(vector["input"]) == 1, path
             assert set(vector["input"]) <= INPUT_FORMS, path
+
+
+def test_no_committed_vector_is_raised() -> None:
+    """This repository is public. A `raised` vector names an input that makes a service raise."""
+    for path, vectors in _vector_files().items():
+        found = [vector["id"] for vector in vectors if vector["result"] == RAISED]
+
+        assert not found, f"{path}: {found}: {FIX_FIRST}"
 
 
 def test_the_index_names_every_vector_file() -> None:

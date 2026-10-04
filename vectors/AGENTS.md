@@ -15,8 +15,11 @@ workspace package, so it does not change `uv.lock`.
 3. Do not change a vector to make a test pass. A vector that moves is a
    change in what the platform accepts. Say why in the commit body.
 4. Keep a vector id when its input stays the same. A Rust test names the id.
-5. A `raised` vector is a defect of the Python code. Fix the defect in its
-   own package, test-first. The vector then moves to `refused`.
+5. Commit no `raised` vector. A `raised` vector is a defect of the Python
+   code. This repository is public, and such a vector publishes an input
+   that makes a service raise. Report the defect as `SECURITY.md` says. Fix
+   the defect in its own package, test-first. Then add the input. Its
+   vector is `refused`. A test fails on a committed `raised` vector.
 6. Every input is public. Use only files that this repository already
    holds, or text that you write. Name no deployment.
 7. The output is the same on every machine and under each supported Python
@@ -40,6 +43,8 @@ workspace package, so it does not change `uv.lock`.
 
 ## Known gaps
 
+- An input that makes the Python code raise has no vector until its fix
+  merges. Rule 5 states why.
 - No vector covers the writer of the status document, or a fault file, or
   an outcome file of contract 05. The five readers of `status.json` have
   vectors.

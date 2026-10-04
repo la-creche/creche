@@ -15,7 +15,8 @@ release replaces that surface.
 1. A vector records what the Python code does. It does not record what a
    contract says.
 2. A vector with the result `raised` records a defect of the Python code.
-   The Rust code must not raise there. Refuse the input.
+   The Rust code must not raise there. Refuse the input. No committed file
+   holds such a vector. Rule 5 of `vectors/AGENTS.md` states why.
 3. When a Rust release replaces a surface, the Rust code becomes the
    authority. Change the generator in the same pull request.
 
