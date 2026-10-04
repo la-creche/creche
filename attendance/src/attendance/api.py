@@ -55,6 +55,13 @@ def build_app(service: SessionService, tokens: TokenBook) -> FastAPI:
 
         A door reads the same body for each failure. The framework raises the
         exception again after this answer, so the server still logs it.
+
+        CONTRACT-QUESTION: contract 02 §14 gives the code and the status of
+        `internal`, and no rule for the other fields. This reading answers
+        null for `family`, `session` and `turn`, an empty `detail` and a
+        fixed message. The handler holds no validated id, and the text of
+        the exception can name a path or a value of the host. A reading that
+        names the family or the session must validate each one first.
         """
         refusal = ApiError(ErrorCode.INTERNAL, _INTERNAL_MESSAGE)
         return JSONResponse(status_code=refusal.status, content=refusal.body())

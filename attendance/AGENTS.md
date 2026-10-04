@@ -74,12 +74,12 @@ playpen runs inside the sandbox image, which carries Node.
 6. Build paths with `paths.py`.
 7. Give each task a name and the done-callback `tasks.report_failure`. A
    task that ends with an error must reach the log.
-8. Give the body of a loop that lives as long as the service one handler.
+8. Give each step of a loop that lives as long as the service a handler.
    The handler logs the failure, and the loop goes on. `_flush_loop` and the
    writer loop of `owui_copy.py` are the pattern. A channel loop is the
    exception: a dead reader ends in a lost channel (contract 03 §10 rule 4).
-9. End a turn whose start raises with `_fail_start`. A turn must not stay
-   in flight with no deadline watcher.
+9. When the start of a turn raises, end the turn with `_fail_start`. A turn
+   must not stay in flight with no deadline watcher.
 
 ## Switch rules
 
@@ -196,6 +196,21 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 02 §4.3 has no move from `queued` to `failed`, and no failure for
   a turn that did not start. Two functions start a turn only to fail it:
   `_refuse_toolless_job` and `_start_queued` (`service.py`).
+- `_fail_start` takes the other reading when the start of a queued turn
+  raises. The turn ends `aborted` with the reason `internal`. Contract 02
+  §13.1 then gives the job the status `cancelled`, not `failed`
+  (`service.py`).
+- Contract 02 §14 gives no rule for the fields of `internal`. The handler
+  answers null for `family`, `session` and `turn`, an empty `detail` and a
+  fixed message (`api.py`).
+- Contract 05 §5.3 rule 8 names no refusal for a switch on a status document
+  with no known `kind`. `_check_switch` refuses that switch with
+  `bad_request` (`service.py`).
+- `_pump_queue` runs only when a turn ends. A queued turn does not start
+  while the status document is unreadable or states no kind. Nothing tries
+  again until another turn of the family ends (`service.py`).
+- When the server cancels a start during the dial, the turn stays `running`
+  with no deadline watcher (`service.py`).
 - `_settle` does not raise `IllegalTransition`. For a move that contract 02
   §4.3 does not allow, it writes one log line and one `note` line. The turn
   does not move. A `turn_settled` for a turn in `waiting-approval` is such a

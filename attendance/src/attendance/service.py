@@ -1259,6 +1259,16 @@ class SessionService:
         session and a slot of its family until the process restarts.
         Contract 02 §4.3 has no `queued -> failed`, so a queued turn ends
         `aborted`.
+
+        CONTRACT-QUESTION: contract 02 §4.3 gives a queued turn one end,
+        `aborted`. §14 names `pep_unreachable` as the one reason of a turn
+        that did not start, and §13.1 reads `aborted` as the job status
+        `cancelled`. This reading keeps the one legal move and gives the
+        reason `internal`. Its cost: the outcome record of a job that a
+        defect of this service ended says `cancelled`, not `failed`.
+        `_start_queued` takes the other reading for a family with nothing to
+        dial: it starts the turn, then fails it. One rule for both needs a
+        new move or a new reason in the contract.
         """
         queued = live.record.state is TurnState.QUEUED
         ending = TurnState.ABORTED if queued else TurnState.FAILED
@@ -1540,8 +1550,9 @@ class SessionService:
         # (contract 05 §4.1). Contract 02 §4.3 has no `queued -> failed`, so
         # the turn starts, on `sandbox` "" when none was found, then fails at
         # once. Left `queued`, it would sit outside the FIFO and its job would
-        # never end. `_dial_for` is checked here because `_send_start` lets its
-        # refusal escape this task.
+        # never end. `_dial_for` is checked here so that its refusal fails the
+        # turn with `sandbox_lost` and its message. Inside `_send_start` the
+        # same refusal ends the turn with `internal`.
         sandbox = ""
 
         try:
