@@ -154,6 +154,32 @@ The console script is `handover`. The verify hook and the operator's
 8. The intake reads the gap directory the way `spool.py` reads `requests/`.
    One refused entry never refuses the directory.
 
+## Binary builds
+
+1. A `kind: binary` component is a tree of compiled programs. Each program
+   is at `<install.to>/bin/<name>`, the layout of a venv.
+2. Root builds it on the host from the manifest's own `build` argv, as it
+   builds a venv. The user, the environment and the time limit are the
+   same. Every `build` argv carries `--locked`, and `cargo install` carries
+   `--no-track`.
+3. The executor sets `CARGO_INSTALL_ROOT` to the staged tree. No venv step
+   runs: no `uv venv --relocatable` and no walk of `site-packages`.
+4. The unit rules of a venv apply. The unit must start a program inside
+   `install.to`, and a sibling unit travels with the component's own unit.
+5. Every program that a unit or the verify command starts is a regular,
+   executable file of the staged tree.
+6. The staged tree is a directory. A link in its place is a fault. No link
+   in the staged tree has an absolute target, leaves the tree or is in a
+   loop. No file holds the path of the fetched work tree or has a second
+   name.
+7. `catalog.BINARY_BUILD_FILES` move every binary component and no other
+   kind. The input digest of a binary component covers those files and not
+   `uv.lock`.
+8. Change a component's kind in its catalog row and in its manifest in one
+   commit.
+9. Release `handover` before the first manifest says `kind: binary`. An
+   older executor or requester refuses that manifest.
+
 ## The chaperone's upstream roster (`executor/roster.py`)
 
 1. Root writes it. `caregiver` must never write it.
@@ -204,7 +230,8 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 uv run pytest handover/tests
 ```
 
-No test needs a host. A real `git`, `uv` or `sops` runs against `tmp_path`.
+No test needs a host. A real `git`, `uv`, `cargo` or `sops` runs against
+`tmp_path`. The `cargo` test skips on a machine that has no `cargo`.
 TLS runs on loopback. Every test file's basename starts with
 `test_handover_`. `handover_fixtures.py` builds valid manifests only. A test
 that wants a refusal changes one field.
@@ -214,8 +241,10 @@ that wants a refusal changes one field.
 - The checker runs C2, C3, C4, then C1 (`contracts.py`).
 - A component named at its live version is `unchanged`, and step 9 restarts
   nothing (`resolve.py`).
-- Every build uses `UV_PROJECT_ENVIRONMENT` and every unit file is
-  `systemd/<unit>` (`manifest.py`, `executor/install.py`).
+- Every build uses `UV_PROJECT_ENVIRONMENT`, or `CARGO_INSTALL_ROOT` for a
+  binary component. Every unit file is `systemd/<unit>`. No manifest can
+  name another variable or another place (`manifest.py`,
+  `executor/install.py`).
 - Every component with no tag gets `0.1.0` (`allocate.py`).
 - The per-requester cap counts one drain pass and keys on `requested_by`,
   which the requester writes (`executor/drain.py`).
@@ -237,3 +266,35 @@ that wants a refusal changes one field.
   (`requester/file.py`).
 - The `chaperone` venv carries `handover`'s console scripts
   (`chaperone/pyproject.toml`).
+- Contract 06 §8 does not list `kind: binary`. Build on the host or verify
+  an artifact that CI built and attested: the operator decides. Root builds
+  on the host today, as it builds a venv. A cargo build script runs
+  arbitrary code, so the user that runs the build matters (`catalog.py`).
+- Contract 06 §1 rule 10 names no file of a Cargo workspace. Three files
+  move a binary component: `rust/Cargo.lock`, `rust/Cargo.toml` and
+  `rust/rust-toolchain.toml`. A `rust/.cargo/config.toml` moves none
+  (`catalog.py`).
+- The catalog row and the manifest each state the kind of a component. The
+  allocator reads the row and the executor reads the manifest. Only a test
+  holds the two equal (`tests/test_handover_bin_lock_files.py`).
+- Only a test of this repository holds a binary build to `--locked`. The
+  executor does not check the flag (`tests/test_handover_bin_manifest.py`).
+- Contract 06 §8.2 names the code `editable` for a venv tree. A binary tree
+  that is not self-contained gets the same code
+  (`executor/selfcontained.py`).
+- The executor refuses a binary tree when a file holds the path of the
+  fetched work tree. The walk cannot tell a path that a program opens from
+  a path that it only prints. Code that a build script generates can carry
+  its own path into a panic message. Such a build must remap the path. That
+  path holds the request id, so a fixed cargo configuration cannot name it
+  (`executor/selfcontained.py`).
+- A binary build runs in the root of the fetched tree. A `rustup` proxy
+  reads a toolchain file from the working directory and its parents, so it
+  does not read `rust/rust-toolchain.toml`. It also downloads a toolchain
+  that the host does not have. The operator decides how the host gets its
+  toolchain (`executor/install.py`).
+- The executor does not remove `work/<id>`. A binary build leaves its
+  `target` directory there (`executor/steps.py`).
+- The unit rule reads the first 64 KiB of a unit file. A line after that
+  can start a program outside the tree. The binary walk refuses a longer
+  file, and the unit rule does not (`executor/install.py`).

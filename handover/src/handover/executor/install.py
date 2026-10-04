@@ -9,7 +9,7 @@
                           <install.to>.prev   <------'  put back, verify again
 ```
 
-Seven rules this module exists to keep.
+Nine rules this module exists to keep.
 
 1. **Nothing is swapped until everything is built.** A failed `stage`
    removes the `.new` tree and nothing on the host has changed (§2.4 row 8).
@@ -54,8 +54,8 @@ Seven rules this module exists to keep.
    unit file that runs out of the same tree: `attendance`'s three door units.
    A file is one when ALL of these hold.
 
-   1. The component is `kind: venv`, names a unit, and that unit is
-      installed.
+   1. The component is `kind: venv` or `kind: binary`, names a unit, and
+      that unit is installed.
    2. The file is a regular `*.service`, not a symlink, in the SAME unit
       directory, and is not the component's own unit.
    3. The INSTALLED file starts the tree, by `check_unit_binds`' test.
@@ -75,6 +75,13 @@ Seven rules this module exists to keep.
      clone.
    - The sibling set is recomputed from the tree and the host at each step.
      What goes BACK is only what the switch note or this run kept.
+9. **A tree of compiled programs holds what its units start.** After the
+   build of a `kind: binary` component, every program that the verify
+   command or a unit in force starts must be a regular, executable file of
+   the staged tree, and the tree must reach nothing outside itself
+   (`selfcontained.check_binary_tree`). The verify hook cannot prove this:
+   it runs while the fetched work tree is still on disk. A venv gets
+   `selfcontained.check_tree` at the same point.
 """
 
 from __future__ import annotations
@@ -94,7 +101,7 @@ from ..manifest import ComponentManifest
 from ..site import operator_home, operator_user
 from .host import As, Command, Host, Result
 from .quiet import WATCHED_SERVICES
-from .selfcontained import check_tree
+from .selfcontained import check_binary_tree, check_tree
 from .source import GIT, REFRESH_COMMAND, git_env, git_ground, require_trusted
 from .spool import VerifyHook
 
@@ -121,8 +128,32 @@ UNIT_DIR_IN_TREE: Final = "systemd"
 #: `uv` puts the project environment where this names, which is how a
 #: `build` entry with no interpolation still lands in `<install.to>.new`.
 #: CONTRACT-QUESTION: contract 06 §8's `output` defaults to this, and
-#: `manifest.py` refuses the key, so every build gets this variable.
+#: `manifest.py` refuses the key, so every build gets this variable or
+#: `BINARY_ENV_NAME`, by its kind. Reading the key would let a manifest name
+#: a variable in the environment of a child that runs as root.
 VENV_ENV_NAME: Final = "UV_PROJECT_ENVIRONMENT"
+
+#: The same, for a `kind: binary` build. `cargo install` with no `--root`
+#: writes each program at `<this>/bin/<name>`, so the staged tree has the
+#: layout a venv has and every `ExecStart=` path keeps its shape.
+#: Measured against cargo 1.92.0 on 2026-10-03, and again by
+#: `handover/tests/test_handover_bin_cargo_guard.py`.
+#:
+#: The build runs in the root of the fetched tree, as a venv build does.
+#: CONTRACT-QUESTION: contract 06 §8 says where a build writes and not
+#: where it runs. Measured against rustup 1.29.0: a `rustup` proxy reads a
+#: toolchain file from the working directory and its parents, so from the
+#: root of the tree it does not read `rust/rust-toolchain.toml`, and it
+#: downloads a toolchain that the host does not have. How the host gets
+#: its toolchain is the operator's decision. A build that runs in `rust/`
+#: costs a working directory rule per kind.
+BINARY_ENV_NAME: Final = "CARGO_INSTALL_ROOT"
+
+#: The kinds whose tree holds the programs that its units start: the
+#: console scripts of a venv and the compiled programs of a binary tree,
+#: both under `bin/`. A compose project's unit starts docker, and an image
+#: has no unit.
+PROGRAM_KINDS: Final = frozenset({Kind.VENV, Kind.BINARY})
 
 SYSTEMCTL: Final = "/usr/bin/systemctl"
 INSTALL: Final = "/usr/bin/install"
@@ -416,10 +447,11 @@ class Installer:
 
         1. **`unit: null` is not checked.** Nothing restarts, so there is no
            unit to disagree with the tree (`handover`, `playpen`).
-        2. **Only `kind: venv`.** "The tree holds the program the unit
-           starts" is a venv's property. A compose project's unit starts
-           docker and is bound to its tree by `WorkingDirectory`; an image
-           has no unit at all.
+        2. **Only `kind: venv` and `kind: binary`** (`PROGRAM_KINDS`).
+           "The tree holds the program the unit starts" is the property of
+           a venv and of a tree of compiled programs. A compose project's
+           unit starts docker and is bound to its tree by
+           `WorkingDirectory`; an image has no unit at all.
         3. **A unit nothing installed is not checked.** Step 9 already
            lists one under `manual` and never restarts it, and refusing
            here would refuse the first release of a component whose unit
@@ -435,7 +467,7 @@ class Installer:
         (contract 06 §1.1 rule 5), so no component with a unit goes through
         one today.
         """
-        if manifest.unit is None or manifest.kind is not Kind.VENV:
+        if manifest.unit is None or manifest.kind not in PROGRAM_KINDS:
             return
 
         found = self._effective_unit(manifest, source)
@@ -497,27 +529,99 @@ class Installer:
                 BUILD_TIMEOUT_S,
                 f"{manifest.name}: build failed",
                 cwd=source,
-                env={VENV_ENV_NAME: str(paths.new)},
+                env={_output_env(manifest.kind): str(paths.new)},
             )
 
         self._check_staged_hook(manifest, paths)
-        self._check_self_contained(manifest, paths)
+        self._check_self_contained(manifest, source, paths)
 
-    def _check_self_contained(self, manifest: ComponentManifest, paths: Paths) -> None:
+    def _check_self_contained(
+        self, manifest: ComponentManifest, source: Path, paths: Paths
+    ) -> None:
         """Contract 06 §8.2, applied after the build and before the swap.
 
-        Only `kind: venv`: a compose project and an image tree have no
-        site-packages, and the walk would refuse both for the one reason
-        that cannot apply to them.
+        Only `kind: venv` and `kind: binary`, each with its own walk: a
+        compose project and an image tree have no site-packages and no
+        program a unit starts, and either walk would refuse both for a
+        reason that cannot apply to them.
 
         A `Refusal` and not a `StepFailed`, because nothing on the host has
         moved: the old tree is still in service and the ledger carries a
         code that says which fault this was.
         """
-        if manifest.kind is not Kind.VENV:
-            return
+        if manifest.kind is Kind.VENV:
+            check_tree(manifest.name, paths.new)
 
-        check_tree(manifest.name, paths.new)
+        if manifest.kind is Kind.BINARY:
+            programs = self._staged_programs(manifest, source, paths)
+            check_binary_tree(manifest.name, paths.new, programs, source)
+
+    def _staged_programs(
+        self, manifest: ComponentManifest, source: Path, paths: Paths
+    ) -> tuple[Path, ...]:
+        """Where, in the staged tree, each program sits that this release
+        starts: the verify command's, and those of every unit step 9
+        leaves in force. Each one once, in the order it was named.
+
+        A program outside `install.to` is in no staged tree. Rule 8 of
+        contract 06 §1 already refused an INSTALLED unit that names one,
+        before the build. This refuses the unit a first release carries,
+        which no host has installed yet, with the same code.
+        """
+        staged: list[Path] = []
+        for program in (manifest.verify.command[0], *self._unit_programs(manifest, source)):
+            relocated = _relocate(program, paths.to, paths.new)
+            if relocated is None:
+                detail = (
+                    f"{manifest.unit} starts {safe_token(program)}, which is not inside"
+                    f" {manifest.install.to}: the staged tree cannot hold it"
+                )
+
+                raise Refusal(RefusalCode.UNIT, manifest.name, detail)
+
+            if relocated not in staged:
+                staged.append(relocated)
+
+        return tuple(staged)
+
+    def _unit_programs(self, manifest: ComponentManifest, source: Path) -> tuple[str, ...]:
+        """Every `ExecStart=` program of the units this release leaves in
+        force: the component's own unit and each sibling, `%h/` resolved
+        for a user unit.
+
+        The component's own unit is `check_unit_binds`' choice where one
+        is installed. Where none is, it is the file the fetched tree
+        carries: that file travels in the artifact (rule 7), and it is
+        what the unit's owner installs.
+        """
+        if manifest.unit is None:
+            return ()
+
+        own = self._own_unit_text(manifest, source)
+        texts = [] if own is None else [own]
+        siblings = self._siblings(manifest, source / UNIT_DIR_IN_REPO)
+        texts.extend(_unit_text(manifest, one.carried) for one in siblings)
+
+        programs = tuple(one for text in texts for one in exec_start_programs(text))
+        if self._is_system_unit(manifest):
+            return programs
+
+        return tuple(_at_home(one) for one in programs)
+
+    def _own_unit_text(self, manifest: ComponentManifest, source: Path) -> str | None:
+        """The text of the component's own unit, as this release leaves
+        it, or None when no host and no fetched tree holds the file."""
+        found = self._effective_unit(manifest, source)
+        if found is not None:
+            # Read again, and whole: `_effective_unit` cuts its text at the
+            # cap, and `_unit_text` refuses a file that is longer.
+            return _unit_text(manifest, found[0])
+
+        carried = _carried_unit(manifest, source)
+        if carried is None:
+            return None
+
+        return _unit_text(manifest, carried)
 
     def _make_relocatable(self, manifest: ComponentManifest, source: Path, paths: Paths) -> None:
         """`RELOCATABLE_ARGV`'s reason, applied to one component.
@@ -982,7 +1086,7 @@ class Installer:
         operator's, and a listing would walk whatever they put there. Root
         opens only `<unit directory>/<a name the release carries>`.
         """
-        if manifest.kind is not Kind.VENV:
+        if manifest.kind not in PROGRAM_KINDS:
             return ()
 
         installed = self._installed_unit(manifest)
@@ -1076,6 +1180,12 @@ def _stderr_suffix(stderr: str) -> str:
         return ""
 
     return f": {' | '.join(tail)}"
+
+
+def _output_env(kind: Kind) -> str:
+    """The variable through which a build of this kind learns where
+    `<install.to>.new` is. Every kind but `binary` keeps the one it had."""
+    return BINARY_ENV_NAME if kind is Kind.BINARY else VENV_ENV_NAME
 
 
 def restorable(manifest: ComponentManifest) -> bool:
@@ -1192,6 +1302,25 @@ def _carried_unit(manifest: ComponentManifest, source: Path) -> Path | None:
         return None
 
     return carried
+
+
+def _unit_text(manifest: ComponentManifest, path: Path) -> str:
+    """The text of one unit file that this release leaves in force. A file
+    that cannot be read stops the stage: its programs are unknown, so
+    nothing can say the staged tree holds them. A file longer than
+    `MAX_UNIT_BYTES` stops it too, as `_read_unit` refuses one: a line
+    after the cap can start a program that this reader never saw."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        raise StepFailed(f"{manifest.name}: cannot read {path.name}") from None
+
+    if len(data) > MAX_UNIT_BYTES:
+        name = safe_token(path.name)
+
+        raise StepFailed(f"{manifest.name}: {name} is longer than {MAX_UNIT_BYTES} bytes")
+
+    return data.decode("utf-8", errors="replace")
 
 
 def _stage_file(component: str, carried: Path, target: Path) -> None:

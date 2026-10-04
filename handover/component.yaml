@@ -35,7 +35,7 @@ install:
   prev: /opt/components/handover.prev
 provides:
   # Contract 06: the manifest shape, the resolver and the allocator.
-  - { contract: component-manifest, major: 0, minor: 17 }
+  - { contract: component-manifest, major: 0, minor: 18 }
 requires: []
 depends_on: []
 verify:
