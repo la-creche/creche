@@ -197,6 +197,10 @@ def _raised_at(error: Exception) -> str:
     return found
 
 
+#: What a `manual` line calls the directory of the trees that a run fetched.
+FETCHED_TREES: Final = "the fetched trees"
+
+
 def remove_staged(path: Path, name: str, entry: Entry) -> None:
     """One `<install.to>.new` a run is finished with, and the ledger line
     that says what happened to it.
@@ -404,6 +408,8 @@ class Release:
         if outcome is not Outcome.SUCCEEDED:
             self._remove_staged()
 
+        self._remove_fetched()
+
         return outcome
 
     def _walk(self) -> Outcome:
@@ -453,6 +459,21 @@ class Release:
 
         for build in self.builds:
             remove_staged(build.paths.new, build.name, self.entry)
+
+    def _remove_fetched(self) -> None:
+        """`<work root>/<request id>` goes, whatever the outcome.
+
+        It holds each tree that this run fetched and each closure that it
+        staged from, and a build leaves its own directory there. Nothing
+        reads it after the last step. An installed tree holds its own code
+        (contract 06 §8.2), step 9 installs a unit from the live tree, and
+        the switch of `handover` reads the staged tree. A directory that
+        stayed grew the disk with each release.
+
+        A run that ends as a crash does (`_swap`, `_move_back`) does not
+        come here. Its directory stays, as its note does.
+        """
+        remove_staged(self.wiring.host.work_root / self.request.id, FETCHED_TREES, self.entry)
 
     def _switch_and_settle(self) -> Outcome:
         """Steps 9 and 10. A failed verify is the executor's job, not
