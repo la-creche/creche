@@ -290,8 +290,8 @@ def test_after_the_bootstrap_only_the_changed_component_moves(
 #: A path with a character that is not ASCII, and one with a double quote.
 #: With its default `core.quotePath`, git writes the first one inside double
 #: quotes, and it writes the second one so under each setting.
-NOT_ASCII_PATH = "chaperone/docs/caf\u00e9.md"
-QUOTE_PATH = 'chaperone/docs/a"b.md'
+NOT_ASCII_PATH = "chaperone/src/caf\u00e9.py"
+QUOTE_PATH = 'chaperone/src/a"b.py'
 
 
 @pytest.mark.slow
