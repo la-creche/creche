@@ -176,6 +176,16 @@ impl ShutdownTrigger {
     pub fn trigger(&self) {
         self.token.cancel();
     }
+
+    /// The stop signal that this value triggers.
+    ///
+    /// `signals::install` gets only the trigger. It makes the value that
+    /// ends the SIGHUP items from it.
+    pub(crate) fn shutdown(&self) -> Shutdown {
+        Shutdown {
+            token: self.token.clone(),
+        }
+    }
 }
 
 /// The tasks that must end before the process exits.
@@ -948,11 +958,13 @@ mod tests {
 
         assert!(!shutdown.is_cancelled());
         assert!(!copy.is_cancelled());
+        assert!(!trigger.shutdown().is_cancelled());
 
         trigger.clone().trigger();
 
         assert!(shutdown.is_cancelled());
         assert!(copy.is_cancelled());
+        assert!(trigger.shutdown().is_cancelled());
         assert!(Tasks::new(shutdown).shutdown().is_cancelled());
     }
 
