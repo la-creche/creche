@@ -491,6 +491,10 @@ MERGED_KEYS: Final = 256
 #: The text of the roster is smaller than 1 KiB.
 CHAIN_LEVELS: Final = 26
 
+#: A row that merges itself this many times copies more pairs than the
+#: limit permits.
+OWN_MERGES: Final = 30
+
 #: The two limits of the roster reader as numbers, not as the names of
 #: `mcp_release`. They are the numbers of the Rust reader of a component
 #: manifest. A number that changes in `mcp_release` fails a test that uses
@@ -523,15 +527,23 @@ def _empty_values(values: int, times: int) -> str:
     return f"list: &list [{listed}]\nweather: {{{merges}}}\n"
 
 
-def _chain(levels: int) -> str:
-    """A roster where each row merges the row before it two times."""
+def _chain(levels: int, key: str = "<<") -> str:
+    """A roster where each row merges the row before it two times. `key`
+    is the text of each merge key."""
     rows = ["row0: &row0 {command: x}"]
     rows.extend(
-        f"row{level}: &row{level} {{<<: [*row{level - 1}, *row{level - 1}]}}"
+        f"row{level}: &row{level} {{{key}: [*row{level - 1}, *row{level - 1}]}}"
         for level in range(1, levels + 1)
     )
 
     return "\n".join(rows) + "\n"
+
+
+def _own_merges(times: int) -> str:
+    """A roster with one row that merges itself `times` times."""
+    merges = ", ".join(["<<: [*row, *row]"] * times)
+
+    return f"weather: &row {{{merges}, command: x}}\n"
 
 
 def _linked(links: int) -> str:
@@ -635,12 +647,29 @@ def test_the_first_roster_past_a_limit_is_nothing_served(bench: Bench, text: str
     assert served_servers(bench.mcp) == ()
 
 
-def test_a_small_roster_cannot_take_the_memory_of_the_reader(bench: Bench) -> None:
+@pytest.mark.parametrize(
+    "text",
+    [
+        _chain(CHAIN_LEVELS),
+        _chain(CHAIN_LEVELS, "!!merge m"),
+        _chain(CHAIN_LEVELS) + "---\n*none\n",
+        _own_merges(OWN_MERGES),
+        _chain(CHAIN_LEVELS) + "# \x00\n",
+    ],
+    ids=["merge-key", "merge-tag", "second-document", "own-merge", "refused-character"],
+)
+def test_a_small_roster_cannot_take_the_memory_of_the_reader(bench: Bench, text: str) -> None:
     """The reader refuses the file before its merge keys copy more pairs
     than the bound. A child process reads the file inside a time limit and
     a memory limit, so a reader with no bound fails here and takes no more
-    than the limit."""
-    bench.mcp.roster.write_text(_chain(CHAIN_LEVELS), encoding="utf-8")
+    than the limit.
+
+    The cases: a merge key, the merge tag on a key that is not `<<`, a
+    second document that does not read, a row that merges itself, and a
+    character that the YAML library does not accept. The answer is that
+    of each roster that does not read. A reader that raises fails here
+    too."""
+    bench.mcp.roster.write_text(text, encoding="utf-8")
 
     done = subprocess.run(
         [sys.executable, "-c", ROSTER_CHILD, str(bench.mcp.roster), str(CHILD_BYTES)],
