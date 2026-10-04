@@ -50,6 +50,20 @@ def test_check_refuses_a_missing_token_file(
     assert "refusing to start" in capsys.readouterr().err
 
 
+def test_check_refuses_a_token_file_that_is_not_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "binary.token"
+    path.write_bytes(b"\xff\xfe" * 32)
+    monkeypatch.setenv(ENV_TOKEN_FILE, str(path))
+
+    assert main(["--check"]) == int(Exit.BAD_USAGE)
+
+    err = capsys.readouterr().err
+    assert err.startswith("agent-tui: refusing to start: ")
+    assert err.count("\n") == 1
+
+
 def test_no_family_and_no_check_says_what_to_do(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

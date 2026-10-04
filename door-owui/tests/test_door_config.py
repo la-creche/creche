@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from agent_door_owui.__main__ import main
 from agent_door_owui.config import (
     ENV_BIND,
     ENV_FAMILIES_DIR,
@@ -94,6 +95,45 @@ def test_a_missing_key_file_refuses_to_start(tmp_path: Path) -> None:
         from_env(_env(tmp_path, **{ENV_KEY_FILE: str(tmp_path / "absent.key")}))
 
     assert "cannot read" in str(caught.value)
+
+
+@pytest.mark.parametrize("variable", [ENV_KEY_FILE, ENV_TOKEN_FILE])
+def test_a_key_file_that_is_not_utf8_refuses_to_start(tmp_path: Path, variable: str) -> None:
+    binary = tmp_path / "binary.key"
+    binary.write_bytes(b"\xff\xfe" * MIN_KEY_BYTES)
+
+    with pytest.raises(ConfigError) as caught:
+        from_env(_env(tmp_path, **{variable: str(binary)}))
+
+    assert variable in str(caught.value)
+    assert "not UTF-8" in str(caught.value)
+    # The decode error holds bytes of the key. The refusal does not carry it.
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize("variable", [ENV_KEY_FILE, ENV_TOKEN_FILE])
+def test_a_key_path_that_the_system_refuses_refuses_to_start(tmp_path: Path, variable: str) -> None:
+    with pytest.raises(ConfigError) as caught:
+        from_env(_env(tmp_path, **{variable: str(tmp_path / "a\x00b")}))
+
+    assert variable in str(caught.value)
+    assert "cannot read" in str(caught.value)
+    assert "\x00" not in str(caught.value)
+
+
+def test_check_prints_one_line_for_a_key_file_that_is_not_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    binary = tmp_path / "binary.key"
+    binary.write_bytes(b"\xff\xfe" * MIN_KEY_BYTES)
+    for name, value in _env(tmp_path, **{ENV_KEY_FILE: str(binary)}).items():
+        monkeypatch.setenv(name, value)
+
+    assert main(["--check"]) == 1
+
+    err = capsys.readouterr().err
+    assert err.startswith("agent-door-owui: refusing to start: ")
+    assert err.count("\n") == 1
 
 
 def test_no_key_setting_refuses_to_start(tmp_path: Path) -> None:

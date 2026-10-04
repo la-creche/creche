@@ -102,6 +102,29 @@ def test_a_missing_token_file_refuses_to_start(tmp_path: Path) -> None:
     assert "cannot read" in str(caught.value)
 
 
+def test_a_token_file_that_is_not_utf8_refuses_to_start(tmp_path: Path) -> None:
+    binary = tmp_path / "binary.token"
+    binary.write_bytes(b"\xff\xfe" * MIN_TOKEN_BYTES)
+    env = _env(tmp_path, **{ENV_ATTENDANCE_TOKEN_FILE: str(binary)})
+
+    for from_env in (fire_config_from_env, serve_config_from_env):
+        with pytest.raises(ConfigError, match="not UTF-8") as caught:
+            from_env(env)
+
+        assert ENV_ATTENDANCE_TOKEN_FILE in str(caught.value)
+        # The decode error holds bytes of the token. The refusal does not carry it.
+        assert caught.value.__cause__ is None
+
+
+def test_a_token_path_that_the_system_refuses_refuses_to_start(tmp_path: Path) -> None:
+    env = _env(tmp_path, **{ENV_ATTENDANCE_TOKEN_FILE: str(tmp_path / "a\x00b")})
+
+    with pytest.raises(ConfigError, match="cannot read") as caught:
+        fire_config_from_env(env)
+
+    assert "\x00" not in str(caught.value)
+
+
 def test_the_fire_summary_carries_no_secret(tmp_path: Path) -> None:
     summary = fire_config_from_env(_env(tmp_path)).describe()
 

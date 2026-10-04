@@ -28,9 +28,10 @@ Two processes, one shared core:
   `refresh()` share one lock.
 - No secret on argv, in a URL or in a log line. `cli.py` quiets `httpx` and
   `httpcore` to `WARNING`.
-- Fail closed. A missing or short `attendance` token, or a `serve` bind on
-  `0.0.0.0`, refuses to start. A webhook token that fails the same floor never
-  becomes a route, and does not crash the service.
+- Fail closed. A missing or short `attendance` token, a token file that is
+  not UTF-8, or a `serve` bind on `0.0.0.0`, refuses to start. A webhook
+  token that fails the same floor never becomes a route, and does not crash
+  the service.
 - The `SIGHUP` route reload is best-effort. The periodic refresh is the
   mechanism that always works.
 - ULIDs are minted here, in `ulid.py`. This package imports nothing from

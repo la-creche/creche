@@ -124,6 +124,12 @@ def _read_token(env: dict[str, str]) -> str:
     except OSError as exc:
         # The path is not a secret. The content is, and it is not in the text.
         raise ConfigError(f"{ENV_TOKEN_FILE}: cannot read {path} ({exc.strerror}).") from exc
+    except UnicodeDecodeError:
+        # The decode error holds bytes of the token, so it is not the cause.
+        raise ConfigError(f"{ENV_TOKEN_FILE}: the token in {path} is not UTF-8 text.") from None
+    except ValueError as exc:
+        # A path that the system refuses before the read: a NUL byte.
+        raise ConfigError(f"{ENV_TOKEN_FILE}: cannot read {path!r} ({exc}).") from exc
 
     if len(value.encode("utf-8")) < MIN_TOKEN_BYTES:
         raise ConfigError(

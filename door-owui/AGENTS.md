@@ -35,8 +35,8 @@ The door holds no session state. `attendance` owns the transcript.
 - The NDJSON stream splits on LF and nothing else. `_iter_lines` reads bytes.
 - No secret on argv, in a URL or in a log line. `__main__.py` quiets `httpx`
   and `httpcore` to `WARNING`, because their `INFO` lines carry request URLs.
-- Fail closed. A key file missing, empty or under 32 bytes, or a bind on
-  `0.0.0.0`, refuses to start.
+- Fail closed. A key file missing, empty, under 32 bytes or not UTF-8, or a
+  bind on `0.0.0.0`, refuses to start.
 
 ## Behaviour under failure
 
