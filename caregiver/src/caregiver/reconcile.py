@@ -154,9 +154,23 @@ class SpendRead(StrEnum):
 
 
 class FamilyNotFoundError(RuntimeError):
-    """No `families/<name>/` directory in the registry at all — not the
-    same as an invalid `family.yaml`, which does have a directory and gets
-    a report."""
+    """The registry holds no `family.yaml` for the name: no
+    `families/<name>/` directory, or a directory with no file. That is not
+    the same as an invalid `family.yaml`, which gets a report."""
+
+
+def has_family_file(registry: Registry, name: str) -> bool:
+    """Whether the registry holds a `family.yaml` for `name`.
+
+    Contract 01 §5.6 rule 3: a family directory with no `family.yaml` is a
+    warning, and `caregiver` ignores it. The registry gives that directory
+    a report with no error and no parsed file. A file that does not parse
+    has an error, and a file that parses is in `registry.families`."""
+    report = registry.reports.get(name)
+    if report is None:
+        return False
+
+    return name in registry.families or not report.ok
 
 
 @dataclass(frozen=True)
@@ -232,7 +246,7 @@ def reconcile_family(
     install belongs to all of them. A caller that passes none raises the
     fault on nobody: `apply-once` files no MCP request."""
     report = registry.reports.get(family_name)
-    if report is None:
+    if report is None or not has_family_file(registry, family_name):
         raise FamilyNotFoundError(family_name)
 
     watch = chaperone if chaperone is not None else unwatched()
@@ -593,7 +607,7 @@ def _promote(
         return serving, (), tuple(ran)
 
     _halt_if(stop, ran)
-    publish(tuple(ran))
+    publish((*ran, SWITCH_STEP))
     promoted, step = sandboxes.promote_sandbox(state_root, family.name, serving, actors.switch)
 
     return promoted, (), (*ran, step) if step else tuple(ran)
@@ -654,9 +668,10 @@ def _replace(
     )
     # Contract 05 §4.3 step 5b. `attendance` knows this family only through
     # the status document (§1), so a sandbox the document does not name is
-    # one it will not dial, and §5.3 rule 8 refuses the call.
+    # one it will not dial, and §5.3 rule 8 refuses the call. §3.4: the
+    # block names the call as the step in flight.
     _halt_if(stop, ran)
-    publish(tuple(ran))
+    publish((*ran, SWITCH_STEP))
 
     try:
         actors.switch.switch(request)
@@ -675,6 +690,9 @@ def _replace(
     # applied snapshot still naming its spec, repeats the switch §5.3 rule
     # 7 makes idempotent, and destroys it then.
     _halt_if(stop, ran)
+    # §3.4 again, for the destroy. The document also names the incoming
+    # sandbox as `ready` from here: a destroy can take a minute.
+    publish((*ran, DESTROY_STEP))
     sandboxes.destroy_sandbox(state_root, family.name, serving, actors.driver)
     ran.append(DESTROY_STEP)
     return promoted or incoming, (), tuple(ran)
@@ -1025,9 +1043,16 @@ def _family_text(registry: Registry, family_name: str) -> str:
 def _text(path: Path) -> str:
     """An unreadable registry file reads empty rather than raising. The
     validation report is where a missing file is reported (invariant 19)."""
+    # CONTRACT-QUESTION: contract 01 §6.1 has no rule for an instructions
+    # file or a skill file that is not UTF-8 text, and the validator does
+    # not refuse one. The reading here is that of a file that this pass
+    # cannot open, and of the registry revision: an empty file. The pass
+    # then writes an empty file into the config mount and reports nothing.
+    # To keep the last good text, the validator must refuse the file, so
+    # that the family reads `invalid`.
     try:
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 

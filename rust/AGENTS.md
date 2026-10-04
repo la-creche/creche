@@ -963,7 +963,7 @@ Rules for the test:
      version. The module holds no YAML reader.
   9. `caregiver::CaregiverConfig`, `spec.md` §5.4. The spec does not say
      what the caregiver does with no master key of LiteLLM. The type refuses
-     `--write` without the key. The Python service starts.
+     `--write` without the key. The Python service refuses that start too.
   10. `chaperone::ChaperoneConfig`, contract 04 §10 rule 7. A generated
       roster with no base roster fails the verify hook. The contract does not
       say what the service does at start. The type reads no roster then, as

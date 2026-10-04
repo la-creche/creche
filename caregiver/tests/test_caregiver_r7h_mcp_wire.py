@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Final
 
@@ -20,7 +22,13 @@ from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.loop import LoopConfig, LoopState, look
-from caregiver.mcp_release import MARKER_NAME, MAX_REQUEST_AGE_S, McpPaths
+from caregiver.mcp_release import (
+    MARKER_NAME,
+    MAX_REQUEST_AGE_S,
+    MERGE_DEPTH_MAX,
+    MERGE_PAIRS_MAX,
+    McpPaths,
+)
 from caregiver.mcp_wire import SECRET_TWICE, McpReport
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
@@ -419,6 +427,172 @@ def test_a_roster_names_what_is_served(bench: Bench) -> None:
     bench.mcp.roster.write_text("weather: {command: /opt/mcp/weather/bin/x}\n", encoding="utf-8")
 
     assert served_servers(bench.mcp) == (SERVER,)
+
+
+def test_a_roster_name_with_no_text_is_nothing_served(bench: Bench) -> None:
+    """The name of a row can be an integer that the interpreter does not
+    convert to text. The reader refuses that roster, as each roster that
+    does not read."""
+    from caregiver.mcp_release import served_servers
+
+    number = "0x" + "f" * MORE_DIGITS_THAN_AN_INTEGER
+    bench.mcp.roster.write_text(f"weather: &name {number}\n*name : {{}}\n", encoding="utf-8")
+
+    assert served_servers(bench.mcp) == ()
+
+
+#: The limits of the child process that reads one roster. A reader that
+#: refuses the file ends in milliseconds and uses little memory.
+CHILD_SECONDS: Final = 30.0
+CHILD_BYTES: Final = 256 * 1024 * 1024
+
+#: Reads the roster that the first argument names, and prints the answer.
+#: The second argument is the memory limit of the process, in bytes. The
+#: process ends with status 3 when it passes the limit.
+ROSTER_CHILD: Final = """
+import os
+import resource
+import sys
+import threading
+import time
+from pathlib import Path
+
+LIMIT = int(sys.argv[2])
+
+
+def peak_bytes():
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak if sys.platform == "darwin" else peak * 1024
+
+
+def watch():
+    while peak_bytes() <= LIMIT:
+        time.sleep(0.01)
+
+    os._exit(3)
+
+
+try:
+    resource.setrlimit(resource.RLIMIT_AS, (4 * LIMIT, 4 * LIMIT))
+except (OSError, ValueError):
+    pass
+
+threading.Thread(target=watch, daemon=True).start()
+
+from caregiver.mcp_release import McpPaths, served_servers
+
+print(served_servers(McpPaths(roster=Path(sys.argv[1]))))
+"""
+
+#: The count of keys in the mapping that `_merged` copies.
+MERGED_KEYS: Final = 256
+
+#: A chain of this many levels copies more pairs than the bound permits.
+#: The text of the roster is smaller than 1 KiB.
+CHAIN_LEVELS: Final = 26
+
+
+def _merged(times: int) -> str:
+    """A roster with one row whose merge key copies `MERGED_KEYS` pairs
+    `times` times."""
+    keys = ", ".join(f"k{number}: 0" for number in range(MERGED_KEYS))
+    aliases = ", ".join(["*base"] * times)
+
+    return f"base: &base {{{keys}}}\nweather: {{<<: [{aliases}]}}\n"
+
+
+def _nested(levels: int) -> str:
+    """A roster with one row whose merge key holds a merge key, `levels`
+    levels deep."""
+    return "weather: " + "{<<: " * levels + "{command: x}" + "}" * levels + "\n"
+
+
+def _empty_values(values: int, times: int) -> str:
+    """A roster with one row that merges a list of `values` empty mappings
+    `times` times."""
+    listed = ", ".join(["{}"] * values)
+    merges = ", ".join(["<<: *list"] * times)
+
+    return f"list: &list [{listed}]\nweather: {{{merges}}}\n"
+
+
+def _chain(levels: int) -> str:
+    """A roster where each row merges the row before it two times."""
+    rows = ["row0: &row0 {command: x}"]
+    rows.extend(
+        f"row{level}: &row{level} {{<<: [*row{level - 1}, *row{level - 1}]}}"
+        for level in range(1, levels + 1)
+    )
+
+    return "\n".join(rows) + "\n"
+
+
+def test_a_roster_with_a_merge_key_names_what_is_served(bench: Bench) -> None:
+    """A merge key inside the bounds reads as before."""
+    from caregiver.mcp_release import served_servers
+
+    bench.mcp.roster.write_text(
+        "base: &base {command: /opt/mcp/weather/bin/x}\nweather: {<<: *base}\n", encoding="utf-8"
+    )
+
+    assert served_servers(bench.mcp) == ("base", SERVER)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [_merged(MERGE_PAIRS_MAX // MERGED_KEYS), _nested(MERGE_DEPTH_MAX)],
+    ids=["pairs", "depth"],
+)
+def test_a_roster_at_a_merge_bound_names_what_is_served(bench: Bench, text: str) -> None:
+    from caregiver.mcp_release import served_servers
+
+    bench.mcp.roster.write_text(text, encoding="utf-8")
+
+    assert SERVER in served_servers(bench.mcp)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [_merged(MERGE_PAIRS_MAX // MERGED_KEYS + 1), _nested(MERGE_DEPTH_MAX + 1)],
+    ids=["pairs", "depth"],
+)
+def test_a_roster_past_a_merge_bound_is_nothing_served(bench: Bench, text: str) -> None:
+    """The refusal is the answer for each roster that does not read."""
+    from caregiver.mcp_release import served_servers
+
+    bench.mcp.roster.write_text(text, encoding="utf-8")
+
+    assert served_servers(bench.mcp) == ()
+
+
+def test_a_merge_of_an_empty_value_counts_against_the_bound(bench: Bench) -> None:
+    """An empty value copies no pair, and the reader still does work for
+    it. Each one counts as one pair, so the time of a read has a bound."""
+    from caregiver.mcp_release import served_servers
+
+    side = 300
+    assert side * side > MERGE_PAIRS_MAX
+    bench.mcp.roster.write_text(_empty_values(side, side), encoding="utf-8")
+
+    assert served_servers(bench.mcp) == ()
+
+
+def test_a_small_roster_cannot_take_the_memory_of_the_reader(bench: Bench) -> None:
+    """The reader refuses the file before its merge keys copy more pairs
+    than the bound. A child process reads the file inside a time limit and
+    a memory limit, so a reader with no bound fails here and takes no more
+    than the limit."""
+    bench.mcp.roster.write_text(_chain(CHAIN_LEVELS), encoding="utf-8")
+
+    done = subprocess.run(
+        [sys.executable, "-c", ROSTER_CHILD, str(bench.mcp.roster), str(CHILD_BYTES)],
+        capture_output=True,
+        text=True,
+        timeout=CHILD_SECONDS,
+        check=False,
+    )
+
+    assert (done.returncode, done.stdout.strip()) == (0, "()"), done.stderr
 
 
 def test_a_served_server_the_registry_dropped_asks_for_a_release(bench: Bench) -> None:
