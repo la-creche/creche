@@ -51,6 +51,13 @@ release tool gives:
 | `json.rs` | Private. A reader that takes what Python `json.loads` takes, and writers for the text of `json.dumps`. |
 | `sha256.rs` | Private. SHA-256, because the crate has no dependency that gives a hash. |
 
+No type of `manifest` implements a `serde` trait. The module is the second
+exception to the raw `serde` type of rule 1. "The channel module" below has
+the first exception. The raw type of `manifest` is the private value tree of
+its `yaml` reader or of its `json` reader. `Draft` is the raw type of a
+request that a requester plans. The reason is the reason of `channel`: no
+`serde` reader reads what `yaml.safe_load` and `json.loads` read.
+
 ## Where a new type goes
 
 1. Put the types of one contract in the module of that contract. The table
@@ -217,10 +224,11 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
-Rule 1 names a raw `serde` type. The `channel` module is the one exception.
-Its raw type is `channel::json::Json`, from a reader of its own. The Python
-host reads a line with `json.loads`, and `serde_json` does not read what
-`json.loads` reads:
+Rule 1 names a raw `serde` type. The `channel` module is one of two
+exceptions. `manifest` is the other, and "Layout" above states it. The raw
+type of `channel` is `channel::json::Json`, from a reader of its own. The
+Python host reads a line with `json.loads`, and `serde_json` does not read
+what `json.loads` reads:
 
 1. `json.loads` reads `NaN`, `Infinity` and `-Infinity`. `serde_json`
    refuses them.
@@ -381,8 +389,7 @@ Rules for the test:
 
 - CI does not run `cargo deny`. No check reads the advisories or the
   licenses of the locked crates.
-- No release uses Rust code. The component manifest has no kind for a
-  compiled binary.
+- No release uses Rust code.
 - Six modules of `creche-contracts` hold a doc comment and no type:
   `family`, `server`, `session`, `grants`, `status` and `config`.
 - These `CONTRACT-QUESTION` comments are open in
@@ -412,8 +419,8 @@ Rules for the test:
   1. `Kind`, contract 06 §8. The contract lists four kinds. The Python code
      has `binary` as the fifth, and the type has the five kinds.
   2. The YAML reader, contract 06 §8 and §10. The contract gives no limit
-     for the nesting. The reader refuses a text past 128 levels. The limit
-     of PyYAML is the stack of its interpreter.
+     for the nesting. The reader refuses a text past 128 levels. PyYAML
+     has no such limit.
   3. The YAML reader, `!!binary`. Two supported Python versions differ on
      base64 data after a pad. The reader takes the rule of Python 3.13. No
      field of a manifest takes bytes, so only the detail of a refusal
@@ -446,14 +453,22 @@ Rules for the test:
       the Python requester mints 26 characters that hold more than 48 bits
       of time. The function refuses that time. `ids::Ulid` accepts the text
       of the Python requester.
+  13. `ComponentManifest::parse`, contract 06 §4 and §8. The Python reader
+      reads the account name and the home of the operator apart, each when
+      a manifest needs it. `Operator` holds both values or none. With a
+      site file that gives one value, the Rust reader refuses a manifest
+      that needs only that value. The Python reader accepts it. No vector
+      holds that case.
 - The types of `manifest` accept what the Python code accepts, also where
   a stricter reading of a contract is possible. The owner decides each
   case. The pull request of the module lists them.
 - `manifest::Operator` holds two values of the site file. It moves to
   `config` when that module holds the site file.
-- The private `yaml` and `json` readers of `manifest` are not shared. The
-  `family` module needs the same YAML reader. The owner of the crate moves
-  the reader when a second module uses it.
+- No other module uses the private `yaml` and `json` readers of `manifest`.
+  The `family` module needs the same YAML reader. The owner of the crate
+  moves that reader when a second module uses it.
+- `channel` and `manifest` each have a private reader for the text that
+  `json.loads` reads. One reader for both modules is a later change.
 - `manifest` has its own SHA-256. A crate for the hash replaces it when
   the workspace takes one.
 - `Secret` does not erase its bytes when the value drops. A sure erase needs

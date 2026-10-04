@@ -247,8 +247,13 @@ pub struct Draft {
 /// One valid release request.
 ///
 /// A value exists only through [`Request::parse`] and [`Request::plan`]. Each
-/// value has 1 to 8 components, and its bytes fit [`MAX_REQUEST_BYTES`], so
-/// the parser reads each value that the writer writes.
+/// value has 1 to 8 components. The bytes of a value from [`Request::plan`]
+/// fit [`MAX_REQUEST_BYTES`], so the parser reads them.
+///
+/// The parser does not read the bytes of each value from [`Request::parse`].
+/// The writer puts a space after each `,` and each `:`. For a file near the
+/// largest size with no such spaces, the bytes of its value are past the
+/// largest size. The Python writer and parser do the same.
 ///
 /// ```
 /// use creche_contracts::manifest::{Request, RequestKind};

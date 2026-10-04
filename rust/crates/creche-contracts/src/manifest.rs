@@ -1737,6 +1737,25 @@ mod tests {
     }
 
     #[test]
+    fn a_file_at_the_largest_size_can_give_bytes_past_it() {
+        let id: Ulid = "01K5J8M2Q7V3X9R4T6N0B8C2DE".parse().unwrap();
+        // A file with no space after `,` and `:`. The version fills the file.
+        let file = |digits: usize| {
+            format!(
+                r#"{{"id":"{id}","kind":"release","components":{{"chaperone":"1.2.{}"}},"rollback_of":null,"requested_by":"human","requester_session":null,"ts":1.0}}"#,
+                "3".repeat(digits)
+            )
+        };
+        let largest = file(4096 - file(0).len());
+        let request = Request::parse(largest.as_bytes(), &id).unwrap();
+        let written = request.to_bytes();
+
+        assert_eq!(largest.len(), MAX_REQUEST_BYTES);
+        assert_eq!(written.len(), 4110, "the writer adds 14 spaces");
+        assert_eq!(Request::parse(&written, &id), Err(RequestError::TooLarge));
+    }
+
+    #[test]
     fn a_request_id_is_minted_as_the_python_requester_mints_it() {
         let surface = vectors::surface("manifest.request.ulid");
         let mut found = Found::default();

@@ -24,10 +24,10 @@ use std::collections::{BTreeMap, VecDeque};
 
 /// The deepest nesting of collections that the reader takes.
 ///
-/// CONTRACT-QUESTION: contract 06 §8 and §10 give no limit. The limit of
-/// PyYAML is the stack of its interpreter, which is not one number. This
-/// reader refuses a text past 128 levels. No valid manifest nests deeper than
-/// 3 levels. A larger limit costs stack for each level.
+/// CONTRACT-QUESTION: contract 06 §8 and §10 give no limit, and PyYAML has
+/// no such limit. This reader refuses a text past 128 levels. No valid
+/// manifest nests deeper than 3 levels. A larger limit costs stack for each
+/// level.
 pub(super) const DEPTH_MAX: usize = 128;
 
 /// The largest count of digits that Python reads as a decimal integer.

@@ -1084,6 +1084,13 @@ impl ComponentManifest {
         self.release
     }
 
+    // CONTRACT-QUESTION: contract 06 §4 and §8 name the operator account and
+    // say nothing about a site file that gives only one of its two values.
+    // The Python reader reads the account name and the home apart, each when
+    // a manifest needs it. `Operator` holds both values or none. With one
+    // value, this reader refuses a manifest that needs only that value, and
+    // the Python reader accepts it. No vector holds that case. Two optional
+    // arguments here cost one type for each value.
     /// Parses the text of one `component.yaml`.
     ///
     /// `operator` is the operator account of the site file. Give `None` on a
