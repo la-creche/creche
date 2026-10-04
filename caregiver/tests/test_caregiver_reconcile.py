@@ -661,6 +661,80 @@ def _sandbox_ids(state_root: Path) -> list[str]:
     return [str(one["id"]) for one in body["sandboxes"]]
 
 
+def _published(state_root: Path) -> dict[str, object]:
+    """The status document as a reader finds it at this moment."""
+    body: object = json.loads(paths.status_path(state_root, FAMILY).read_text(encoding="utf-8"))
+    assert isinstance(body, dict)
+
+    return {str(key): value for key, value in body.items()}
+
+
+def _step_in_flight(state_root: Path) -> tuple[object, object]:
+    """The step and the switch flag of the published reconcile block."""
+    block = _published(state_root)["reconcile"]
+    assert isinstance(block, dict)
+
+    return block["step"], block["needs_switch"]
+
+
+def test_the_document_names_the_first_handshake_before_the_call(fleet: Fleet) -> None:
+    """Contract 05 §3.4: `step` is the step in flight, and the pass
+    publishes the block before that step runs."""
+    seen: list[tuple[object, object]] = []
+
+    class RecordingSwitch(FakeSwitchClient):
+        def switch(self, request: SwitchRequest) -> object:
+            seen.append(_step_in_flight(fleet.state_root))
+            return super().switch(request)
+
+    fleet.switch = RecordingSwitch()
+    fleet.run()
+
+    assert seen == [(SWITCH_STEP, True)]
+
+
+def test_the_document_names_the_switch_before_the_call(fleet: Fleet) -> None:
+    """Contract 05 §3.4. A drain can take the whole deadline of the call,
+    and a reader of the document must find the switch there, not the
+    create that ended before it."""
+    fleet.run()
+    seen: list[tuple[object, object]] = []
+
+    class RecordingSwitch(FakeSwitchClient):
+        def switch(self, request: SwitchRequest) -> object:
+            seen.append(_step_in_flight(fleet.state_root))
+            return super().switch(request)
+
+    fleet.switch = RecordingSwitch()
+    fleet.write(sandbox={"cpus": 4})
+    fleet.run()
+
+    assert seen == [(SWITCH_STEP, True)]
+
+
+def test_the_document_names_the_destroy_before_it_runs(fleet: Fleet) -> None:
+    """Contract 05 §3.4 and §4.3 step 7. The switch answered, so the
+    replacement is `ready`, and the destroy of the outgoing sandbox is the
+    step in flight. A destroy can take a minute."""
+    fleet.run()
+    seen: list[tuple[object, dict[str, str]]] = []
+
+    class RecordingDriver(FakeDriver):
+        def destroy(self, name: str, allow: tuple[str, ...]) -> None:
+            body = _published(fleet.state_root)
+            rows = body["sandboxes"]
+            assert isinstance(rows, list)
+            states = {str(one["id"]): str(one["state"]) for one in rows}
+            seen.append((_step_in_flight(fleet.state_root)[0], states))
+            super().destroy(name, allow)
+
+    fleet.driver = RecordingDriver()
+    fleet.write(sandbox={"cpus": 4})
+    fleet.run()
+
+    assert seen == [(DESTROY_STEP, {"chat-s1": "ready", "chat-s2": "ready"})]
+
+
 def test_the_replacement_is_ready_once_the_switch_answers(fleet: Fleet) -> None:
     """Contract 05 §5.3 rule 8 runs the incoming handshake BEFORE anything
     moves, so an answer that switched is the same evidence §4.3 step 7 asks

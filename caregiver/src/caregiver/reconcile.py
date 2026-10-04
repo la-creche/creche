@@ -607,7 +607,7 @@ def _promote(
         return serving, (), tuple(ran)
 
     _halt_if(stop, ran)
-    publish(tuple(ran))
+    publish((*ran, SWITCH_STEP))
     promoted, step = sandboxes.promote_sandbox(state_root, family.name, serving, actors.switch)
 
     return promoted, (), (*ran, step) if step else tuple(ran)
@@ -668,9 +668,10 @@ def _replace(
     )
     # Contract 05 §4.3 step 5b. `attendance` knows this family only through
     # the status document (§1), so a sandbox the document does not name is
-    # one it will not dial, and §5.3 rule 8 refuses the call.
+    # one it will not dial, and §5.3 rule 8 refuses the call. §3.4: the
+    # block names the call as the step in flight.
     _halt_if(stop, ran)
-    publish(tuple(ran))
+    publish((*ran, SWITCH_STEP))
 
     try:
         actors.switch.switch(request)
@@ -689,6 +690,9 @@ def _replace(
     # applied snapshot still naming its spec, repeats the switch §5.3 rule
     # 7 makes idempotent, and destroys it then.
     _halt_if(stop, ran)
+    # §3.4 again, for the destroy. The document also names the incoming
+    # sandbox as `ready` from here: a destroy can take a minute.
+    publish((*ran, DESTROY_STEP))
     sandboxes.destroy_sandbox(state_root, family.name, serving, actors.driver)
     ran.append(DESTROY_STEP)
     return promoted or incoming, (), tuple(ran)

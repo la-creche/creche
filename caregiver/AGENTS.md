@@ -85,9 +85,10 @@ host where something has gone wrong.
 - `Actors` has no defaults.
 - A failed create burns an id and earns a backoff, 5 s doubling to 300 s. A
   registry edit clears the backoff.
-- A slow step still publishes. A pass writes `reconciling` before
-  `sbx create`. `loop._keep_fresh` restamps a document nothing is about to
-  publish for.
+- A slow step still publishes. A pass writes `reconciling` and the step
+  in flight before each slow step: `sbx create`, the switch call and the
+  destroy of a replacement. `loop._keep_fresh` restamps a document nothing
+  is about to publish for.
 - `restamp_status` rewrites only a document that this process published. A
   document from before a restart is the verdict of another process.
 - A family that waits for a slot after a restart gets one look.
