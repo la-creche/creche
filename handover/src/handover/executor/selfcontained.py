@@ -204,6 +204,10 @@ def _says_editable(body: object) -> bool:
 
 # -- a tree of compiled programs ----------------------------------------------
 
+#: The staged tree is a link, is no directory or is not there. Step 9
+#: renames `<install.to>.new`, and a rename moves a link and not the
+#: directory behind it.
+NOT_A_TREE: Final = "is not a directory of its own"
 NOT_STAGED: Final = "is not in the staged tree"
 NOT_A_PROGRAM: Final = "is not a regular file"
 NOT_EXECUTABLE: Final = "is not executable"
@@ -242,8 +246,11 @@ def binary_escapes(tree: Path, programs: Sequence[Path], source: Path) -> tuple[
     """Every way a staged `kind: binary` tree is not self-contained.
 
     `programs` are the files under `tree` that a unit or the verify command
-    starts, and `source` is the fetched work tree the build ran in. Three
-    properties are proved, and an empty tuple means all three hold.
+    starts, and `source` is the fetched work tree the build ran in. The
+    tree itself is a directory first: a link in its place is the one fault
+    reported, because every entry the walk would list is the link target's
+    and not the tree's. Then three properties are proved, and an empty
+    tuple means all three hold.
 
     1. Each program is in the tree, is a regular file and is executable. A
        link is refused whatever it names: the program must be the tree's
@@ -262,6 +269,9 @@ def binary_escapes(tree: Path, programs: Sequence[Path], source: Path) -> tuple[
     Nothing here raises. A file root cannot read is a fault, because a
     file root cannot read is a file root cannot say is clean.
     """
+    if not _is_own_directory(tree):
+        return (f"{safe_token(tree.name)} {NOT_A_TREE}",)
+
     root = tree.resolve()
     found = [fault for program in programs if (fault := _program_fault(tree, root, program))]
     found.extend(_walk_faults(tree, root, _needles(source)))
@@ -285,6 +295,15 @@ def check_binary_tree(component: str, tree: Path, programs: Sequence[Path], sour
         return
 
     _refuse(component, found)
+
+
+def _is_own_directory(tree: Path) -> bool:
+    """Whether `tree` is a directory by `lstat`, so a link to one is not.
+    `Path.is_dir` and `os.walk` both follow a link at this place."""
+    try:
+        return stat.S_ISDIR(os.lstat(tree).st_mode)
+    except OSError:
+        return False
 
 
 def _name(tree: Path, path: Path) -> str:

@@ -168,8 +168,9 @@ The console script is `handover`. The verify hook and the operator's
    `install.to`, and a sibling unit travels with the component's own unit.
 5. Every program that a unit or the verify command starts is a regular,
    executable file of the staged tree.
-6. No link in the staged tree has an absolute target or leaves the tree. No
-   file holds the path of the fetched work tree or has a second name.
+6. The staged tree is a directory. A link in its place is a fault. No link
+   in the staged tree has an absolute target or leaves the tree. No file
+   holds the path of the fetched work tree or has a second name.
 7. `catalog.BINARY_BUILD_FILES` move every binary component and no other
    kind. The input digest of a binary component covers those files and not
    `uv.lock`.

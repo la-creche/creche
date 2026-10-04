@@ -9,6 +9,7 @@ outside itself in other ways. Each one is built here by hand and refused:
    regular file or is not executable.
 2. A link has an absolute target, or resolves outside the tree.
 3. A file holds the path of the fetched work tree, or has a second name.
+4. The staged tree itself is a link, or is not there.
 
 The first half drives the walk. The second half drives the executor's own
 `build`, which decides WHICH programs the walk must find: the verify
@@ -31,6 +32,7 @@ from handover.executor.selfcontained import (
     NAMES_WORK_TREE,
     NOT_A_FILE,
     NOT_A_PROGRAM,
+    NOT_A_TREE,
     NOT_EXECUTABLE,
     NOT_STAGED,
     PROGRAM_OUTSIDE,
@@ -72,6 +74,58 @@ def _programs(tree: Path, *names: str) -> tuple[Path, ...]:
 
 def _faults(tree: Path, source: Path, *names: str) -> tuple[str, ...]:
     return binary_escapes(tree, _programs(tree, *names), source)
+
+
+def _built_in_the_work_tree(tree: Path, source: Path) -> Path:
+    """Move the staged tree into the fetched work tree, where a build that
+    ignores the output variable leaves its programs."""
+    built = source / "rust" / "target" / "install"
+    tree.rename(built)
+
+    return built
+
+
+# ---- the walk: the tree itself -----------------------------------------------
+
+
+def test_a_tree_that_is_a_relative_link_is_found(tmp_path: Path) -> None:
+    """The build left a link at `<install.to>.new`, and it names a
+    directory of the work tree. Every program resolves, and every file
+    that the walk lists is a clean one. Step 9 would rename the link, and
+    the live tree would be the work tree."""
+    tree, source = _tree(tmp_path)
+    built = _built_in_the_work_tree(tree, source)
+    tree.symlink_to(os.path.relpath(built, tree.parent))
+
+    assert _faults(tree, source) == (f"{tree.name} {NOT_A_TREE}",)
+
+
+def test_a_tree_that_is_an_absolute_link_is_found(tmp_path: Path) -> None:
+    tree, source = _tree(tmp_path)
+    tree.symlink_to(_built_in_the_work_tree(tree, source))
+
+    assert _faults(tree, source) == (f"{tree.name} {NOT_A_TREE}",)
+
+
+def test_a_tree_that_is_a_link_to_a_clean_directory_is_found(tmp_path: Path) -> None:
+    """The rule has one reading: the staged tree is a directory. Where the
+    link goes does not matter, because a rename moves the link and not the
+    directory behind it."""
+    tree, source = _tree(tmp_path)
+    beside = tree.with_name("elsewhere")
+    tree.rename(beside)
+    tree.symlink_to(beside.name)
+
+    assert _faults(tree, source) == (f"{tree.name} {NOT_A_TREE}",)
+
+
+def test_a_tree_that_is_not_there_is_a_fault(tmp_path: Path) -> None:
+    """With no program to find and nothing to walk, an absent tree had no
+    fault. Nothing can call an absent tree self-contained."""
+    _, source = _tree(tmp_path)
+    absent = tmp_path / "components" / "absent.new"
+
+    assert binary_escapes(absent, (), source) == (f"absent.new {NOT_A_TREE}",)
 
 
 # ---- the walk: the programs --------------------------------------------------
@@ -379,6 +433,35 @@ def test_the_executor_names_the_work_tree_it_fetched(tmp_path: Path) -> None:
     staging = make_staging(tmp_path, made)
 
     assert f".crates.toml {NAMES_WORK_TREE}" in _refusal(staging).detail
+
+
+def test_the_executor_refuses_a_staged_tree_that_is_a_link(tmp_path: Path) -> None:
+    """The build argv wrote its programs into the work tree and left a
+    link at `<install.to>.new`. The hook check passes, because the hook
+    resolves inside the link's own target. The swap would rename the link
+    into place."""
+
+    def made(new: Path) -> None:
+        new.symlink_to(staged_binary_tree(staging.source / "rust" / "target" / "install"))
+
+    staging = make_staging(tmp_path, made)
+    refusal = _refusal(staging)
+
+    assert refusal.code is RefusalCode.EDITABLE
+    assert f"{staging.paths.new.name} {NOT_A_TREE}" in refusal.detail
+    assert not staging.paths.to.exists()
+
+
+def test_the_executor_refuses_a_staged_tree_that_is_a_relative_link(tmp_path: Path) -> None:
+    def made(new: Path) -> None:
+        built = staged_binary_tree(staging.source / "rust" / "target" / "install")
+        new.symlink_to(os.path.relpath(built, new.parent))
+
+    staging = make_staging(tmp_path, made)
+    refusal = _refusal(staging)
+
+    assert refusal.code is RefusalCode.EDITABLE
+    assert f"{staging.paths.new.name} {NOT_A_TREE}" in refusal.detail
 
 
 def test_a_verify_hook_that_is_a_link_inside_the_tree_is_refused(tmp_path: Path) -> None:
