@@ -22,6 +22,7 @@ import {
   STOP_SIGTERM_DELAY_MS,
 } from "./constants.js";
 import { LineReader } from "./framing.js";
+import { boundRecord, readResponse } from "./pi-record.js";
 import type { PiCommand, PiResponse } from "./protocol.js";
 
 /** A control command that never answers must not stall a turn forever. */
@@ -218,15 +219,15 @@ export class PiProcess {
 
     this.spoken = true;
 
-    const record = parsed as Record<string, unknown>;
+    const record = boundRecord(parsed as Record<string, unknown>, line);
     if (record["type"] !== PI_RESPONSE_TYPE) {
       this.handlers.onEvent(record);
       return;
     }
 
-    const response = record as unknown as PiResponse;
+    const response = readResponse(record);
     const id = response.id;
-    if (typeof id !== "string") {
+    if (id === undefined) {
       return;
     }
 

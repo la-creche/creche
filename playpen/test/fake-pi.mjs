@@ -25,6 +25,12 @@
 //   FAKE_PI_NO_ENTRIES  refuse every get_entries                default off
 //   FAKE_PI_FORK_LOG  append one JSON line per fork call        default off
 //   FAKE_PI_HANDLED   answer every prompt as handled, run nothing  default off
+//
+// Four more make this process misbehave, as an untrusted pi may (invariant 12):
+//   FAKE_PI_RAW_BOOT    write this text as one record at start-up    default off
+//   FAKE_PI_RAW_LINE    write this text as one record in each turn   default off
+//   FAKE_PI_NULL_ENTRY  put a null first in every get_entries list   default off
+//   FAKE_PI_ODD_ERROR   refuse every prompt with an error that is not text  default off
 
 const DELTAS = Number(process.env.FAKE_PI_EVENTS || 6);
 const DELAY_MS = Number(process.env.FAKE_PI_DELAY_MS || 8);
@@ -33,6 +39,10 @@ const DIE_AT = Number(process.env.FAKE_PI_DIE_AT || 0);
 const NO_ENTRIES = process.env.FAKE_PI_NO_ENTRIES === "1";
 const FORK_LOG = process.env.FAKE_PI_FORK_LOG || "";
 const HANDLED = process.env.FAKE_PI_HANDLED === "1";
+const RAW_BOOT = process.env.FAKE_PI_RAW_BOOT || "";
+const RAW_LINE = process.env.FAKE_PI_RAW_LINE || "";
+const NULL_ENTRY = process.env.FAKE_PI_NULL_ENTRY === "1";
+const ODD_ERROR = process.env.FAKE_PI_ODD_ERROR === "1";
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -90,6 +100,12 @@ function send(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
 
+// The text goes out as it is. `send` would refuse what a test needs here: a
+// record that `JSON.stringify` cannot write.
+function sendRaw(text) {
+  process.stdout.write(text + "\n");
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -114,6 +130,9 @@ async function runTurn(text, prompt) {
 
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  if (RAW_LINE) {
+    sendRaw(RAW_LINE);
+  }
   send({ type: "message_start", message: { role: "assistant", session: sessionId } });
 
   for (let i = 0; i < DELTAS; i += 1) {
@@ -172,7 +191,10 @@ function onGetEntries(command) {
     id: command.id,
     command: "get_entries",
     success: true,
-    data: { entries: slice, leafId: entries[entries.length - 1]?.id ?? null },
+    data: {
+      entries: NULL_ENTRY ? [null, ...slice] : slice,
+      leafId: entries[entries.length - 1]?.id ?? null,
+    },
   });
 }
 
@@ -221,6 +243,10 @@ function onCommand(command) {
     }
     // pi 0.99.1 `docs/rpc-commands.md`: `handled` means an extension consumed
     // the prompt and no run started, so no `agent_settled` follows.
+    if (ODD_ERROR) {
+      send({ type: "response", id: command.id, command: "prompt", success: false, error: { code: 1 } });
+      return;
+    }
     if (HANDLED) {
       send({ type: "response", id: command.id, command: "prompt", success: true, data: { disposition: "handled" } });
       return;
@@ -279,6 +305,10 @@ function feed(chunk) {
 
 async function main() {
   await sleep(BOOT_MS);
+
+  if (RAW_BOOT) {
+    sendRaw(RAW_BOOT);
+  }
 
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", feed);
