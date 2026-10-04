@@ -51,6 +51,21 @@ Each later stage adds one real piece:
 | `stage5.py` | the trigger door and the approval gate |
 | `tests_manager/` | the real `caregiver` writers against the real readers |
 
+## The process-level suite
+
+`proc/` holds a third suite. It starts each service as a process and talks
+to it only through sockets, files and child programs. It can judge a service
+in another language, and the two suites above cannot. Read `proc/AGENTS.md`
+before you edit it.
+
+```bash
+uv run pytest integration/proc -m slow
+```
+
+Run each suite in its own pytest command. One command for `proc/` and one of
+the suites above fails at collection, because the tests in `tests/` import
+`conftest` by name.
+
 ## Rules
 
 1. Nothing under test may be faked. Four stand-ins exist, none under test:
@@ -119,3 +134,4 @@ Work down this list. The first line that does not hold names the hop.
 | `tests/test_*.py`, other | one packet each: the switch, the launcher, the terminal door, delegations, enqueue, grant refresh, the noticeboard's reads |
 | `fixtures/*-registry/` | the families each stage publishes. Read-only inputs. |
 | `tests_manager/` | the `caregiver` writers against the real readers, with the Node drivers under `node/` |
+| `proc/` | the process-level suite: each service is a process. `proc/AGENTS.md` has its rules. |
