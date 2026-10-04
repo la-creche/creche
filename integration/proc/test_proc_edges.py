@@ -107,7 +107,8 @@ GET_ROUTE = {
 }
 
 #: The listeners whose request creates a session or starts a turn. The
-#: noticeboard does neither.
+#: noticeboard does neither. Its save route writes a commit, and no scenario
+#: sends that route a final slash.
 DO_WORK = (Service.ATTENDANCE, Service.DOOR_OWUI, Service.CHAPERONE, Service.DOOR_TRIGGER)
 
 #: The listeners that read a JSON body, with no scenario for such a body in
