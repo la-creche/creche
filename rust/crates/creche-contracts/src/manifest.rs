@@ -1171,43 +1171,112 @@ mod tests {
         found.check("manifest.component");
     }
 
-    #[test]
-    fn a_scalar_that_gives_no_value_is_refused() {
-        // Each text is a valid manifest but for the line of the table.
+    /// A valid manifest with the line of one field replaced.
+    fn manifest_with(field: &str, line: &str) -> String {
         let lines = [
-            "manifest_version: \"0.6\"",
-            "name: chaperone",
-            "repo: agent-control",
-            "path: chaperone",
-            "kind: venv",
-            "runs_as: root",
-            "install: {to: /opt/x, prev: /opt/x.prev}",
-            "verify: {command: [/bin/true], user: root, timeout_s: 5}",
-            "restore: {mode: automatic, keep: 1}",
-            "release: yes",
-        ];
-        let with = |unit: &str| format!("{}\n{unit}\n", lines.join("\n"));
-        let deep = format!("unit: {}{}", "[".repeat(2000), "]".repeat(2000));
-        let long_number = format!("unit: {}", "9".repeat(5000));
-        let table = [
-            ("a nesting past the limit", deep.as_str()),
-            ("an integer past 64 bits", long_number.as_str()),
-            ("an integer tag on a word", "unit: !!int abc"),
-            ("a boolean tag on a word", "unit: !!bool maybe"),
-            ("a float tag on a word", "unit: !!float abc"),
+            ("manifest_version", "manifest_version: \"0.6\""),
+            ("name", "name: chaperone"),
+            ("repo", "repo: agent-control"),
+            ("path", "path: chaperone"),
+            ("kind", "kind: venv"),
+            ("unit", "unit: null"),
+            ("runs_as", "runs_as: root"),
+            ("install", "install: {to: /opt/x, prev: /opt/x.prev}"),
             (
-                "an escape past the last code point",
-                "unit: \"\\UFFFFFFFF\"",
+                "verify",
+                "verify: {command: [/bin/true], user: root, timeout_s: 5}",
             ),
+            ("restore", "restore: {mode: automatic, keep: 1}"),
+            ("release", "release: yes"),
         ];
 
-        assert!(ComponentManifest::parse(&with("unit: null"), None).is_ok());
-        for (kind, line) in table {
+        assert!(lines.iter().any(|(name, _)| *name == field), "{field}");
+
+        lines
+            .iter()
+            .map(|(name, own)| if *name == field { line } else { own })
+            .fold(String::new(), |text, line| text + line + "\n")
+    }
+
+    #[test]
+    fn a_scalar_that_gives_no_value_is_refused() {
+        let keep = |scalar: &str| format!("restore: {{mode: automatic, keep: {scalar}}}");
+        let timeout = |scalar: &str| {
+            format!("verify: {{command: [/bin/true], user: root, timeout_s: {scalar}}}")
+        };
+        // Each scalar is in a field that takes its value, so a reader that
+        // gives a value accepts the manifest.
+        let taken = [
+            ("restore", keep("!!int \"1\"")),
+            ("restore", keep("!!int \" 1\\t\"")),
+            ("verify", timeout("!!int 0x5")),
+            ("release", "release: !!bool yes".to_owned()),
+        ];
+        let no_value = [
+            ("an integer tag on a word", "restore", keep("!!int abc")),
+            ("an integer tag on no text", "restore", keep("!!int \"\"")),
+            (
+                "an integer with a control character after it",
+                "restore",
+                keep("!!int \"1\\x1c\""),
+            ),
+            (
+                "an integer with a control character before it",
+                "restore",
+                keep("!!int \"\\x1f1\""),
+            ),
+            (
+                "an integer of 4301 digits",
+                "restore",
+                keep(&"9".repeat(4301)),
+            ),
+            ("a float tag on a word", "verify", timeout("!!float abc")),
+            (
+                "a boolean tag on a word",
+                "release",
+                "release: !!bool maybe".to_owned(),
+            ),
+            (
+                "an escape past the last code point",
+                "unit",
+                "unit: \"\\UFFFFFFFF\"".to_owned(),
+            ),
+        ];
+        let fault_of = |field: &str, line: &str| {
+            ComponentManifest::parse(&manifest_with(field, line), None).map_err(|error| error.fault)
+        };
+
+        for (field, line) in &taken {
+            assert!(fault_of(field, line).is_ok(), "{line}");
+        }
+
+        for (kind, field, line) in &no_value {
             assert!(
-                ComponentManifest::parse(&with(line), None).is_err(),
+                matches!(
+                    fault_of(field, line),
+                    Err(ManifestFault::Yaml(YamlFault::Line(_)))
+                ),
                 "{kind}"
             );
         }
+
+        // The reader gives a value for an integer of 4300 digits. The range of
+        // the field then refuses it.
+        assert!(
+            matches!(
+                fault_of("restore", &keep(&"9".repeat(4300))),
+                Err(ManifestFault::OutOfRange { field: "keep", .. })
+            ),
+            "an integer of 4300 digits"
+        );
+        assert_eq!(
+            fault_of(
+                "unit",
+                &format!("unit: {}{}", "[".repeat(2000), "]".repeat(2000))
+            ),
+            Err(ManifestFault::Yaml(YamlFault::Deep)),
+            "a nesting past the limit"
+        );
     }
 
     #[test]

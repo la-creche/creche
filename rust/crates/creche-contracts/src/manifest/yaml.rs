@@ -3327,9 +3327,10 @@ fn bool_value(text: &str) -> Option<bool> {
     }
 }
 
-/// A space of Python `str.strip` that is ASCII.
+/// A space that Python `int` and `float` take around an ASCII number: the
+/// space and U+0009 to U+000D. U+001C to U+001F are not such spaces.
 fn is_python_space(character: char) -> bool {
-    matches!(character, ' ' | '\t'..='\r' | '\u{1c}'..='\u{1f}')
+    matches!(character, ' ' | '\t'..='\r')
 }
 
 /// What Python `int(text, base)` gives for an ASCII text with no underscore.
@@ -3764,6 +3765,11 @@ mod tests {
             ("abc", None),
             ("09", None),
             ("1 2", None),
+            ("\t12\r", Some(Some(12))),
+            ("1\u{1c}", None),
+            ("\u{1f}1", None),
+            ("0x1\u{1c}", None),
+            ("1:0\u{1f}", None),
         ];
         for (text, value) in table {
             assert_eq!(int_value(text), value, "{text:?}");
@@ -3808,7 +3814,18 @@ mod tests {
         }
 
         for text in [
-            "", "_", "abc", ".", "1e", "1.5.5", "0x1p3", "1 5", "+-+1", "1:a",
+            "",
+            "_",
+            "abc",
+            ".",
+            "1e",
+            "1.5.5",
+            "0x1p3",
+            "1 5",
+            "+-+1",
+            "1:a",
+            "1.5\u{1c}",
+            "\u{1f}1.5",
         ] {
             assert!(!is_float_value(text), "{text:?}");
         }
