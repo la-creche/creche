@@ -88,6 +88,13 @@ interface TurnAddress {
   readonly turn: string;
 }
 
+/** The `code` of a Node error. It names the failure and holds no value. */
+function errorCode(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+
+  return typeof code === "string" ? code : "no error code";
+}
+
 /** One key for one turn. A session id holds no `/` (contract 02 §2). */
 function turnKey(at: TurnAddress): string {
   return `${at.session}/${at.turn}`;
@@ -675,11 +682,13 @@ export class SessionPool {
       );
     } catch (error) {
       // The launcher throws when the operating system refuses the start
-      // itself, for example an argument that no process can take.
+      // itself. The text of that error holds the value that was refused,
+      // and the environment of pi holds the credentials. Only the code of
+      // the error goes on the channel.
       return {
         ok: false,
         reason: "pi_start_failed",
-        detail: `cannot start the pi process: ${String(error)}`,
+        detail: `cannot start the pi process: ${errorCode(error)}`,
       };
     }
 

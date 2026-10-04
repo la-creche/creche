@@ -15,10 +15,11 @@ import {
   EXIT_PROTOCOL,
 } from "../src/playpen.js";
 import { MAX_LINE_BYTES } from "../src/constants.js";
+import type { PiSpawnSpec } from "../src/pi-process.js";
 import { SessionPool } from "../src/pool.js";
 import type { EventMessage } from "../src/protocol.js";
 import { TurnFile } from "../src/turn-file.js";
-import { Harness, until } from "./harness.js";
+import { FIXTURE_LITELLM_KEY, Harness, until } from "./harness.js";
 
 /** A ULID is 26 characters of Crockford base 32. These are fixtures, not ids. */
 function turnId(n: number): string {
@@ -212,6 +213,18 @@ class BrokenTurnFile extends TurnFile {
   public override pathFor(): string | null {
     throw new Error("the turn file broke");
   }
+}
+
+/**
+ * A start that the operating system refuses. Node throws an error with a
+ * code, and the text of that error holds the value that it refused.
+ */
+function refuseStart(spec: PiSpawnSpec): never {
+  const refused = spec.env["LITELLM_VIRTUAL_KEY"] ?? "";
+  const error: NodeJS.ErrnoException = new Error(`the start was refused. Received '${refused}'`);
+  error.code = "ERR_INVALID_ARG_VALUE";
+
+  throw error;
 }
 
 /** A control path whose parent is a file. Every write under it is ENOTDIR. */
@@ -733,12 +746,16 @@ describe("untrusted input", () => {
   });
 
   it("fails the turn and keeps serving when the pi process cannot start", async () => {
-    // The operating system takes no argument with a NUL byte, so the start
-    // of this process throws before a process exists.
-    const harness = open();
+    // The launcher throws when the operating system refuses the start, so
+    // no process exists. The failure names the code of that error. Its text
+    // stays off the channel, because it can hold a value of the environment.
+    const harness = open({
+      launcher: (real) => (spec) =>
+        spec.env["AGENT_SESSION"] === "owui-nostart" ? refuseStart(spec) : real(spec),
+    });
     harness.start();
     harness.hello();
-    harness.startTurn("owui-nostart", turnId(1), { model: "a\u0000b" });
+    harness.startTurn("owui-nostart", turnId(1));
 
     await until(() => harness.of("turn_failed").length === 1, "the failure");
     const failed = harness.of("turn_failed")[0];
@@ -746,6 +763,8 @@ describe("untrusted input", () => {
     expect(failed?.turn).toBe(turnId(1));
     expect(failed?.reason).toBe("pi_start_failed");
     expect(failed?.turn_seq).toBe(1);
+    expect(failed?.message).toContain("ERR_INVALID_ARG_VALUE");
+    expect(JSON.stringify(harness.lines)).not.toContain(FIXTURE_LITELLM_KEY);
     expect(harness.exitCode).toBeNull();
 
     harness.startTurn("owui-after-nostart", turnId(2));

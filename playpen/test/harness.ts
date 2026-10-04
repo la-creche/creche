@@ -54,6 +54,8 @@ export interface HarnessOptions {
   readonly controlDir?: string;
   /** A turn file of the test's own, for a handler that throws. */
   readonly turnFile?: (controlDir: string) => TurnFile;
+  /** A launcher of the test's own, around the real one, for a start that throws. */
+  readonly launcher?: (real: PiLauncher) => PiLauncher;
 }
 
 /**
@@ -122,12 +124,13 @@ export class Harness {
     });
 
     const control = options.controlDir ?? join(this.root, "control");
+    const launcher = fakeLauncher(options.piEnv ?? {}, this.spawns);
 
     this.playpen = new Playpen({
       sandbox: this.sandboxId,
       input: this.stdin,
       channel: new Channel(out),
-      launcher: fakeLauncher(options.piEnv ?? {}, this.spawns),
+      launcher: options.launcher?.(launcher) ?? launcher,
       lock: new PlaypenLock(control, options.lockBeatMs ?? LOCK_BEAT_MS),
       creds: new CredReader(join(this.root, "creds")),
       configDir: join(this.root, "config"),
