@@ -761,7 +761,7 @@ def _read_entry(path: Path) -> dict[str, object] | None:
             return None
 
         loaded: Any = json.loads(path.read_text("utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
         return None
 
     if not isinstance(loaded, dict):
@@ -772,11 +772,13 @@ def _read_entry(path: Path) -> dict[str, object] | None:
 
 def _is_past(value: object, now: float) -> bool:
     """A time that is a number and is not in the future. NaN fails both
-    comparisons, which is the answer this wants."""
+    comparisons, which is the answer this wants. So does an integer past
+    the range of a float: the comparison takes it as it is, where `float`
+    of it raises."""
     if not isinstance(value, int | float) or isinstance(value, bool):
         return False
 
-    return 0.0 <= float(value) <= now
+    return 0.0 <= value <= now
 
 
 def _server_list(value: object) -> tuple[str, ...]:
@@ -811,7 +813,7 @@ def _word(value: object, cap: int) -> str:
 def _read(path: Path) -> dict[str, object] | None:
     try:
         loaded: Any = json.loads(path.read_text("utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
 
     if not isinstance(loaded, dict):

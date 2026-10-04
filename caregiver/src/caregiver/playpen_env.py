@@ -70,7 +70,7 @@ def read_playpen_env(path: Path) -> dict[str, str]:
     file on the way into the VM."""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return {}
 
     found: dict[str, str] = {}

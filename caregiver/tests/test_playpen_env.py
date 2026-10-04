@@ -107,3 +107,9 @@ def test_a_replacement_leaves_the_first_file_alone(tmp_path: Path) -> None:
 
 def test_reading_a_missing_file_yields_nothing(tmp_path: Path) -> None:
     assert read_playpen_env(tmp_path / "absent.env") == {}
+
+
+def test_reading_a_file_that_is_not_utf8_yields_nothing(tmp_path: Path) -> None:
+    path = tmp_path / "supervisor.env"
+    path.write_bytes(b"AGENT_SANDBOX=chat-s1\xff\n")
+    assert read_playpen_env(path) == {}

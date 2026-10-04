@@ -10,6 +10,7 @@ import pytest
 from caregiver.clock import rfc3339
 from caregiver.status import STALE_AFTER_S
 from caregiver.verify import EXIT_FAILED, EXIT_OK, main
+from caregiver_helpers import UNREADABLE_JSON
 
 from caregiver import paths
 
@@ -145,6 +146,23 @@ def test_an_unreadable_stamp_counts_as_stale(
     path = paths.status_path(root, "chat")
     path.parent.mkdir(parents=True)
     path.write_text("{not json", encoding="utf-8")
+
+    assert run(monkeypatch, root) == EXIT_FAILED
+    assert failed(capsys) == ["heartbeat"]
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_a_document_that_does_not_read_counts_as_stale(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    raw: bytes,
+) -> None:
+    """The hook answers a failed check. It does not end in a traceback."""
+    root = state_root(tmp_path)
+    path = paths.status_path(root, "chat")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(raw)
 
     assert run(monkeypatch, root) == EXIT_FAILED
     assert failed(capsys) == ["heartbeat"]

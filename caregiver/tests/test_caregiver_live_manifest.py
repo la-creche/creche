@@ -12,12 +12,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from caregiver.live_manifest import (
     LIVE_MANIFEST_FILE,
     LiveManifest,
     newest_live,
     publish,
 )
+from caregiver_helpers import UNREADABLE_JSON
 
 OLDER_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DA"
 NEWER_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
@@ -106,6 +108,15 @@ def test_a_half_written_entry_does_not_raise(tmp_path: Path) -> None:
     _entry(ledger, OLDER_ID, caregiver="1.1.0")
     ledger.mkdir(parents=True, exist_ok=True)
     (ledger / f"{NEWER_ID}.json").write_text('{"id": "half', encoding="utf-8")
+
+    assert newest_live(ledger) == LiveManifest("1.1.0", "1.0", 1758153600.0, OLDER_ID)
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_an_entry_that_does_not_read_is_skipped(tmp_path: Path, raw: bytes) -> None:
+    ledger = tmp_path / "done"
+    _entry(ledger, OLDER_ID, caregiver="1.1.0")
+    (ledger / f"{NEWER_ID}.json").write_bytes(raw)
 
     assert newest_live(ledger) == LiveManifest("1.1.0", "1.0", 1758153600.0, OLDER_ID)
 

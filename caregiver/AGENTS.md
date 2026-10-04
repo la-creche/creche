@@ -43,6 +43,11 @@ host where something has gone wrong.
 - `atomic.py` is the only place that writes a file another process reads.
 - `atomic.read_json` reads a JSON file. It answers `None` for content that
   it cannot read. It does not raise on content.
+- A reader with a size cap of its own keeps its own read. It refuses the
+  same content: bytes that are not UTF-8, an integer past the digit limit
+  and nesting past the limit of the parser.
+- A client maps each failure of its transport and of its answer to its own
+  error. Each step names that error and turns it into a fault.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
   the grant file, then `creds.json`, then the sandboxes. `test_delete.py`
   checks the order from inside the fake driver.
@@ -174,6 +179,8 @@ Nothing here touches a real sandbox or LiteLLM.
 - A pass that raises publishes no fault. Contract 05 §3.3 has no code for
   it. The log holds the error, and the status document keeps its last
   content (`loop.py`).
+- A registry file that is not UTF-8 makes the pass raise. The validator of
+  the family file does not refuse such a file (`reconcile.py`).
 - `read_creds` converts a field with `int` and `str`. It reads `true` as
   epoch 1. Contract 03 §12 gives no rule for a field of another type
   (`credentials.py`).

@@ -164,7 +164,7 @@ def _written_at(status_path: Path) -> str | None:
             return None
 
         body: Any = json.loads(status_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
 
     if not isinstance(body, dict):

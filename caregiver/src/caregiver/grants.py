@@ -184,7 +184,7 @@ def _write_body(path: Path, body: dict[str, Any]) -> None:
 def _read_body(path: Path) -> dict[str, Any] | None:
     try:
         on_disk = json.loads(path.read_bytes())
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
 
     return cast(dict[str, Any], on_disk) if isinstance(on_disk, dict) else None

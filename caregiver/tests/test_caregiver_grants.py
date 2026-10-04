@@ -8,6 +8,7 @@ import stat
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
 from agent_family import FamilyFile, Index
 from agent_family.grammar import DEFAULT_MAX_INFLIGHT_DELEGATIONS
 from agent_family.server import McpServerFile
@@ -19,9 +20,11 @@ from caregiver.grants import (
     GrantFile,
     build_grant_file,
     delete_grant_file,
+    holds_grants,
     rewrite_digests,
     write_grant_file,
 )
+from caregiver_helpers import UNREADABLE_JSON
 
 KAGI = McpServerFile.model_validate(
     {
@@ -239,6 +242,19 @@ def test_rewrite_digests_refuses_a_file_that_is_not_a_grant_file(tmp_path: Path)
         path.write_text(text, encoding="utf-8")
         assert rewrite_digests(path, "chat", rev="new", token_sha256=("ccc",)) is False
         assert path.read_text(encoding="utf-8") == text
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_JSON.values(), ids=UNREADABLE_JSON.keys())
+def test_a_grant_file_that_does_not_read_is_no_grant_file(tmp_path: Path, raw: bytes) -> None:
+    """The pass reads the grant file to see whether it must write it
+    again. A file that does not read is one to write again, and the read
+    must not raise into the pass."""
+    path = tmp_path / "chat.json"
+    path.write_bytes(raw)
+
+    assert holds_grants(path, "chat") is False
+    assert rewrite_digests(path, "chat", rev="new", token_sha256=("ccc",)) is False
+    assert path.read_bytes() == raw
 
 
 def test_rewrite_digests_refuses_another_version(tmp_path: Path) -> None:

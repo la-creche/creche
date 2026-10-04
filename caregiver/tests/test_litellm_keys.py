@@ -16,6 +16,7 @@ from caregiver.litellm_keys import (
     LiteLLMError,
     key_alias,
 )
+from caregiver_helpers import UNREADABLE_JSON
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -314,3 +315,43 @@ def test_a_body_that_is_no_json_object_is_a_litellm_error(
 
     assert "sk-" not in str(caught.value), verb
     assert "html" not in str(caught.value), verb
+
+
+#: The JSON reader of an HTTP answer takes UTF-16, so that content reads.
+UNREADABLE_BODIES = {name: raw for name, raw in UNREADABLE_JSON.items() if name != "utf16"}
+
+
+@pytest.mark.parametrize("raw", UNREADABLE_BODIES.values(), ids=UNREADABLE_BODIES.keys())
+@pytest.mark.parametrize(
+    ("verb", "call"), VERBS_THAT_READ_A_BODY, ids=[verb for verb, _ in VERBS_THAT_READ_A_BODY]
+)
+def test_a_body_that_does_not_read_is_a_litellm_error(
+    verb: str, call: KeysCall, raw: bytes
+) -> None:
+    """Each caller names `LiteLLMError` in its handler and turns it into a
+    fault. A body that the JSON parser cannot read must not leave the
+    client as an error of another class."""
+    keys = HttpLiteLLMKeys(
+        "http://litellm.test:4000",
+        "sk-master",
+        client=client_with(lambda _: httpx.Response(200, content=raw)),
+    )
+
+    with pytest.raises(LiteLLMError):
+        call(keys)
+
+
+def test_a_spend_past_the_range_of_a_float_is_unknown() -> None:
+    """A field that is not a number that this client can hold answers
+    None, as an absent field does. It does not raise into the pass."""
+    body = b'{"info": {"spend": 1' + b"0" * 400 + b', "max_budget": 1' + b"0" * 400 + b"}}"
+    keys = HttpLiteLLMKeys(
+        "http://litellm.test:4000",
+        "sk-master",
+        client=client_with(lambda _: httpx.Response(200, content=body)),
+    )
+
+    spend = keys.read_spend("sk-family-chat")
+
+    assert spend.spend_usd == 0.0
+    assert spend.budget_usd is None
