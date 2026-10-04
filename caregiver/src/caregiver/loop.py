@@ -61,9 +61,11 @@ from . import paths
 from .applied import read_applied
 from .chaperone_watch import PepReport, PepWatch, unwatched
 from .delete import delete_family
+from .images import SandboxImages
 from .mcp_release import McpPaths
 from .mcp_wire import McpReport, mcp_pass
 from .reconcile import Actors, SpendRead, reconcile_family
+from .released import ReleasedImages
 from .rotate import settle
 from .status import restamp_status
 from .timers import remove_timers
@@ -311,6 +313,10 @@ class LoopConfig:
     #: host was given none, and a family that asks for it is faulted
     #: rather than built from `base`.
     python_image: str = ""
+    #: What a `playpen` release installed (`released.py`). When it has read
+    #: one, its references win over the two above. None means this manager
+    #: reads no released file, which is what a scratch run wants.
+    released: ReleasedImages | None = None
     poll_interval_s: float = POLL_INTERVAL_S
     heartbeat_s: float = HEARTBEAT_S
     spend_interval_s: float = SPEND_INTERVAL_S
@@ -470,6 +476,17 @@ class LoopState:
             oldest = min(one.published_at for one in self._families.values())
 
         return time.monotonic() - oldest >= heartbeat_s
+
+
+def images_now(config: LoopConfig) -> SandboxImages:
+    """The references this pass creates a sandbox from: a `playpen` release's
+    when the manager has read one, the flags' when it has not. Read once per
+    pass, so a release reaches every family within one heartbeat."""
+    given = SandboxImages(base=config.image, python=config.python_image)
+    if config.released is None:
+        return given
+
+    return config.released.current(given)
 
 
 def serve(config: LoopConfig, actors: Actors, control: Control) -> LoopState:
@@ -859,12 +876,13 @@ def _pass(
     def run() -> None:
         try:
             _settle_rotation(config, registry, name)
+            images = images_now(config)
             result = reconcile_family(
                 registry,
                 name,
                 state_root=config.state_root,
-                image=config.image,
-                python_image=config.python_image,
+                image=images.base,
+                python_image=images.python,
                 actors=actors,
                 spend=spend,
                 stop=stop,

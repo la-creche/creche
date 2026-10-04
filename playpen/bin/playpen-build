@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# ROOT — the release executor runs it at step 8, from the fetched source, as
+# `build` in playpen/component.yaml names it:
+#   /usr/bin/env bash playpen/bin/playpen-build
+# Prerequisites: UV_PROJECT_ENVIRONMENT names the staged tree (the executor
+# sets it), AGENT_LAN_ADDRESS is in the site file, and docker and curl are on
+# root's PATH.
+#
+# It builds the two sandbox images out of THIS source, pushes them to the
+# host's own registry, and writes the tree a release swaps in:
+#
+#   <staged>/images.env            base=<name>@sha256:…  and  python=…
+#   <staged>/bin/playpen-verify    the verify hook (contract 06 §4 rule 6)
+#   <staged>/bin/lib/registry.sh   what the hook sources
+#
+# The caregiver reads images.env and creates every sandbox from it
+# (caregiver/src/caregiver/released.py). So a `playpen` release is what moves
+# the fleet onto a new image, and nothing else names one.
+#
+# WHY A DIGEST AND NO VERSION. `build` is fixed argv with no interpolation,
+# so this script cannot know the version a merge allocated. It does not need
+# to: the registry answers with the digest of what was pushed, and a digest
+# names exact bytes. The tag is only the name the push needs.
+#
+# WHY THE DEFAULT BUILDER. Root keeps no buildx builder of its own, and the
+# docker daemon trusts a loopback registry without one. Every third-party
+# step of the build (apt, npm, pip) runs inside the build's own containers,
+# never as a process of this host.
+set -euo pipefail
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'playpen-build: %s\n' "$*" >&2; exit 1; }
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=playpen/bin/lib/registry.sh
+. "$ROOT/playpen/bin/lib/registry.sh"
+
+# The host's own registry, on loopback. `bin/provision-library.sh` pushes to
+# the same one.
+REGISTRY="${PLAYPEN_REGISTRY:-127.0.0.1:5000}"
+# The site file, and the one seam the product has for it
+# (handover/src/handover/site.py).
+SITE_FILE="${AGENT_SITE_FILE:-/etc/creche/site.env}"
+# The host is amd64 and so is every microVM on it.
+PLATFORM=linux/amd64
+
+# One line per flavor of contract 01 §3.9: the flavor, then the Dockerfile
+# target that builds it. `base` first: the second target builds on the first.
+FLAVORS="base:agent-sandbox python:agent-sandbox-python"
+
+# A host name or an address. It becomes one argv word of `docker build`.
+LAN_RE='^[A-Za-z0-9]([A-Za-z0-9.-]{0,253}[A-Za-z0-9])?$'
+
+STAGED="${UV_PROJECT_ENVIRONMENT:-}"
+[[ -n "$STAGED" ]] || die "UV_PROJECT_ENVIRONMENT is not set: the executor names the staged tree with it"
+[[ "$STAGED" == /* ]] || die "the staged tree is not an absolute path"
+
+# One value of the site file: the last `KEY=value` line wins, as it does for
+# a unit that reads the file. Read here and not sourced: this script uses
+# nothing outside playpen/, so a change to another directory cannot change
+# what a `playpen` tag builds.
+site_value() {  # site_value <key>
+  [[ -r "$SITE_FILE" ]] || return 0
+  # `|| true`: a key that is absent is an empty answer, and the caller says
+  # what that costs. Without it `pipefail` ends the script with no message.
+  grep -E "^$1=" "$SITE_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d '"'"'" || true
+}
+
+lan="$(site_value AGENT_LAN_ADDRESS)"
+[[ "$lan" =~ $LAN_RE ]] || die "no usable AGENT_LAN_ADDRESS in $SITE_FILE: the bundle fixes the address a sandbox dials"
+
+# The name the push needs. A second is fine-grained enough: one release
+# builds at a time, under the executor's lock.
+tag="r$(date -u +%Y%m%dT%H%M%SZ)"
+
+lines=""
+for pair in $FLAVORS; do
+  flavor="${pair%%:*}"
+  target="${pair#*:}"
+  pushed="$REGISTRY/$target:$tag"
+
+  say "building $target for flavor $flavor"
+  docker build --platform "$PLATFORM" -f "$ROOT/playpen/Dockerfile" --target "$target" \
+    --build-arg "AGENT_LAN_ADDRESS=$lan" -t "$pushed" "$ROOT" \
+    || die "the $target build failed. Nothing was staged."
+  docker push "$pushed" || die "the push of $pushed failed. Nothing was staged."
+
+  digest="$(registry_digest "$REGISTRY" "$target" "$tag")" \
+    || die "the registry holds no digest for $pushed. Nothing was staged."
+  say "  $REGISTRY/$target@$digest"
+  lines="$lines$flavor=$REGISTRY/$target@$digest"$'\n'
+done
+
+# Only now, with both images in the registry: the tree is whole or absent.
+install -d -m 0755 "$STAGED" "$STAGED/bin" "$STAGED/bin/lib"
+install -m 0755 "$ROOT/playpen/bin/playpen-verify" "$STAGED/bin/playpen-verify"
+install -m 0644 "$ROOT/playpen/bin/lib/registry.sh" "$STAGED/bin/lib/registry.sh"
+( umask 022 && printf '%s' "$lines" > "$STAGED/images.env" )
+
+say "staged $STAGED"

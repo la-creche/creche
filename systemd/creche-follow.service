@@ -29,13 +29,12 @@ EnvironmentFile=/etc/creche/site.env
 # THE COMPONENT TREE, not the deployed checkout. A `handover` release then
 # changes what this unit runs, and the next firing runs the new tree.
 #
-# The names are every component that verifies a release today: five of this
-# repository, and `mcp-servers` of the MCP repository. `playpen` is absent:
-# its verify hook is implemented nowhere (`handover/AGENTS.md`, known gaps),
-# so a followed `playpen` would ask for a tap that cannot succeed. A
-# component with no release stamp is skipped whatever this line says. One
-# line, with no continuation: a test reads it.
-ExecStart=/opt/components/handover/bin/handover follow chaperone attendance caregiver noticeboard handover mcp-servers
+# The names are every component a release can deploy: six of this
+# repository, and `mcp-servers` of the MCP repository. A component with no
+# release stamp is skipped whatever this line says, so `playpen` is followed
+# only after its first release, which the operator files by hand. One line,
+# with no continuation: a test reads it.
+ExecStart=/opt/components/handover/bin/handover follow chaperone attendance caregiver noticeboard playpen handover mcp-servers
 
 # A user unit on this host cannot use mount-namespace options
 # (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit

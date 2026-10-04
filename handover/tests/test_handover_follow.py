@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from handover.catalog import CATALOG_BY_NAME, Repo
+from handover.catalog import CATALOG_BY_NAME, RETIRING, Repo, releasable_names
 from handover.corpus import CorpusReport
 from handover.executor.approval import Verdict, not_granted
 from handover.executor.ledger import Entry, Outcome
@@ -504,15 +504,14 @@ def test_the_service_runs_follow_out_of_the_handover_tree() -> None:
     assert cli.build_parser().parse_args(argv[1:]).command == "follow"
 
 
-def test_the_service_follows_nothing_that_cannot_verify_a_release() -> None:
-    """`playpen-verify` is implemented nowhere (`handover/AGENTS.md`, known
-    gaps). A followed `playpen` would ask for a tap that cannot succeed."""
+def test_the_service_follows_every_component_a_release_can_deploy() -> None:
+    """Every releasable component of the catalog, less the one on its way
+    out. A name that is absent here waits for a typed command for ever."""
     argv = _unit_value("creche-follow.service", "ExecStart").split()
     followed = cli.build_parser().parse_args(argv[1:]).components
 
-    assert "playpen" not in followed
-    assert "infra" not in followed
-    assert SERVERS in followed
+    assert set(followed) == set(releasable_names()) - RETIRING
+    assert len(followed) == len(set(followed))
 
 
 def test_the_timer_starts_the_service() -> None:

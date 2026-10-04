@@ -228,9 +228,6 @@ that wants a refusal changes one field.
 - The requester's wake-up is not built. Root writes the ledger entry and
   pushes the phone only (`executor/notice.py`).
 - A switch keeps the unit it replaces as `<unit>.prev` (`executor/install.py`).
-- A `playpen` release swaps a tree and builds no image
-  (`playpen/component.yaml`).
-- `playpen-verify` is declared and implemented nowhere.
 - A crash between a server swap and the verify is not repaired
   (`executor/spool.py`, `executor/steps.py`).
 - `arg_allows` is applied by nothing (`executor/roster.py`).

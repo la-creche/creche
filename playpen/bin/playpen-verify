@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# OPERATOR — the release executor runs it after a switch, and anybody may run
+# it at any time (contract 06 §4 rule 5):
+#   /opt/components/playpen/bin/playpen-verify --json
+#
+# The question it answers: can this host create a sandbox from the images
+# this release names? It reads images.env beside it and asks the host's own
+# registry for each digest. A release that pushed nothing, a registry that
+# lost its data, and a tree with no base image all fail here, and the
+# executor then puts the previous tree back.
+#
+# It does not start an image. The build already did: playpen/Dockerfile
+# runs each bundle once and stops the build on a bundle that does not load.
+#
+# It changes nothing (contract 06 §4 rule 1) and it reaches nothing outside
+# the host (rule 2). Exit 0 is a pass, 1 a failure, 2 a usage mistake.
+#
+# set -uo, not -e: a failed check must count, not end the run (bin/AGENTS.md).
+set -uo pipefail
+
+TREE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=playpen/bin/lib/registry.sh
+. "$TREE/bin/lib/registry.sh"
+
+IMAGES="$TREE/images.env"
+# One line of images.env: a flavor of contract 01 §3.9, the registry, the
+# image name and the digest. The caregiver reads the same shape
+# (caregiver/src/caregiver/released.py).
+LINE_RE='^(base|python)=([a-z0-9.:-]+)/([a-z0-9][a-z0-9._/-]*)@(sha256:[0-9a-f]{64})$'
+
+JSON=0
+case "${1:-}" in
+  "") ;;
+  --json) JSON=1 ;;
+  *) printf 'usage: playpen-verify [--json]\n' >&2; exit 2 ;;
+esac
+[[ $# -le 1 ]] || { printf 'usage: playpen-verify [--json]\n' >&2; exit 2; }
+
+FAILS=0
+ROWS=""
+SEEN_BASE=0
+
+row() {  # row <flavor> <reference> <true|false> <detail>
+  [[ -z "$ROWS" ]] || ROWS="$ROWS,"
+  ROWS="$ROWS{\"flavor\":\"$1\",\"reference\":\"$2\",\"ok\":$3,\"detail\":\"$4\"}"
+  [[ "$JSON" == 1 ]] || printf '%s  %s  %s\n' "$([[ "$3" == true ]] && echo PASS || echo FAIL)" "$1" "$4"
+  [[ "$3" == true ]] || FAILS=$((FAILS + 1))
+}
+
+check_line() {  # check_line <line>
+  local flavor registry name digest found
+  if [[ ! "$1" =~ $LINE_RE ]]; then
+    row "unknown" "" false "a line of images.env is not flavor=registry/name@sha256:digest"
+    return
+  fi
+
+  flavor="${BASH_REMATCH[1]}"
+  registry="${BASH_REMATCH[2]}"
+  name="${BASH_REMATCH[3]}"
+  digest="${BASH_REMATCH[4]}"
+  [[ "$flavor" == base ]] && SEEN_BASE=1
+
+  found="$(registry_digest "$registry" "$name" "$digest")" || found=""
+  if [[ "$found" == "$digest" ]]; then
+    row "$flavor" "$registry/$name@$digest" true "the registry holds it"
+  else
+    row "$flavor" "$registry/$name@$digest" false "the registry does not hold it"
+  fi
+}
+
+if [[ ! -f "$IMAGES" || -L "$IMAGES" ]]; then
+  row "base" "" false "no images.env in this tree"
+else
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && continue
+    check_line "$line"
+  done < "$IMAGES"
+
+  [[ "$SEEN_BASE" == 1 ]] || row "base" "" false "images.env names no base image"
+fi
+
+OK=true
+[[ "$FAILS" -eq 0 ]] || OK=false
+[[ "$JSON" == 1 ]] && printf '{"ok":%s,"checks":[%s]}\n' "$OK" "$ROWS"
+[[ "$JSON" == 1 ]] || printf 'playpen-verify: %s\n' "$([[ "$OK" == true ]] && echo PASS || echo "FAIL ($FAILS)")"
+
+[[ "$FAILS" -eq 0 ]]

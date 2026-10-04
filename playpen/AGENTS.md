@@ -155,6 +155,25 @@ it on a development machine.
 46. A script gets data. The model gets a frame. `codemode.ts` puts the frame
     back around the script's whole output.
 
+## The release
+
+47. `bin/playpen-build` runs as root at release step 8, out of the fetched
+    source. It builds the two images and pushes them to the registry of the
+    host. It writes the staged tree: `images.env` and the verify hook.
+48. `images.env` names each image by digest, never by tag. A tag can move.
+    The phone tap approves exact bytes.
+49. The build stages the tree only after both images are in the registry.
+    A failed build stages nothing, and the host stays as it was.
+50. The build script reads nothing outside `playpen/`. The image build also
+    copies the pi pin out of `toybox/`, and the catalog bundles `toybox` for
+    that reason.
+51. `bin/playpen-verify` changes nothing and reaches nothing outside the
+    host. It asks the registry for each digest in `images.env`.
+52. Keep three lists equal: the targets of `Dockerfile`, the flavors in
+    `bin/playpen-build`, and `SandboxFlavor` in `family/`.
+53. `bin/tests/test_playpen_release.py` runs both scripts against a stub
+    `docker` and a stub registry. No test builds an image.
+
 ## Environment the playpen expects
 
 | Variable | Meaning | Absent |
@@ -181,6 +200,7 @@ delivers them. Three test seams exist and nothing in the image sets them:
 | `bridge/index.ts`, `bridge/pep.ts`, `bridge/tools.ts`, `bridge/tool-set.ts` | the factory, `GET /manifest` and `POST /call`, one pi tool per entry |
 | `bridge/codemode.ts`, `bridge/untrusted.ts`, `bridge/turn-context.ts`, `bridge/pi-api.ts` | the frame, the marker, the three headers, the declared pi slice |
 | `bridge/search.ts`, `bridge/index-store.ts`, `bridge/query-embed.ts`, `bridge/tool-state.ts`, `bridge/constants.ts` | `index_search`, one store, `embed`, the tool state (write), every fixed name |
+| `bin/playpen-build`, `bin/playpen-verify`, `bin/lib/registry.sh` | the release build, the verify hook, the one registry question |
 
 ## Known gaps
 
@@ -191,5 +211,8 @@ delivers them. Three test seams exist and nothing in the image sets them:
   of (`src/pi-launch.ts`).
 - The playpen reads three shapes for an entry's text and answers `""` for any
   other (`src/entry-text.ts`).
-- A `playpen` release builds no image: the manifest's `build` cannot carry a
-  version allocated at merge (`component.yaml`).
+- The verify hook does not start an image. The image build runs each bundle
+  once and stops on a bundle that does not load (`bin/playpen-verify`).
+- No host has run `bin/playpen-build`. The tests use a stub `docker`
+  (`bin/tests/test_playpen_release.py`).
+- A release never removes an image from the registry (`bin/playpen-build`).
