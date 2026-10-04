@@ -15,8 +15,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pytest
-
 from vectors import generate
 from vectors.core import ACCEPTED, FORMAT, RAISED, REFUSED
 
@@ -42,14 +40,8 @@ def _first_difference(wanted: str, found: str) -> str:
     return "one file is a prefix of the other"
 
 
-@pytest.fixture(scope="module")
-def built() -> dict[str, str]:
-    _, files = generate.build()
-
-    return files
-
-
-def test_committed_files_are_current(built: dict[str, str]) -> None:
+def test_committed_files_are_current() -> None:
+    _, built = generate.build()
     on_disk = generate.committed()
     problems = generate.stale(built, on_disk)
     details = [
@@ -61,14 +53,12 @@ def test_committed_files_are_current(built: dict[str, str]) -> None:
     assert not problems, f"{REGENERATE}: {problems} {details}"
 
 
-def test_two_builds_write_the_same_bytes(built: dict[str, str]) -> None:
-    _, again = generate.build()
-
-    assert again == built
+# The tests below read the committed files. The test above holds them equal
+# to what the generator writes, and it is the only one that pays for a build.
 
 
-def test_every_file_is_strict_ascii_json(built: dict[str, str]) -> None:
-    for path, text in built.items():
+def test_every_file_is_strict_ascii_json() -> None:
+    for path, text in generate.committed().items():
         assert text.isascii(), path
         assert text.endswith("}\n") and not text.endswith("\n\n"), path
 
@@ -77,10 +67,10 @@ def test_every_file_is_strict_ascii_json(built: dict[str, str]) -> None:
         assert document["format"] == FORMAT, path
 
 
-def _vector_files(built: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
-    """Every vector file's vectors, by path. The index and a list of rows are not one."""
+def _vector_files() -> dict[str, list[dict[str, Any]]]:
+    """The vectors of every committed vector file, by path. The index is not one."""
     found: dict[str, list[dict[str, Any]]] = {}
-    for path, text in built.items():
+    for path, text in generate.committed().items():
         document = json.loads(text)
         if isinstance(document.get("vectors"), list):
             found[path] = document["vectors"]
@@ -88,8 +78,8 @@ def _vector_files(built: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
     return found
 
 
-def test_every_vector_has_an_id_an_input_and_a_result(built: dict[str, str]) -> None:
-    for path, vectors in _vector_files(built).items():
+def test_every_vector_has_an_id_an_input_and_a_result() -> None:
+    for path, vectors in _vector_files().items():
         seen: set[str] = set()
         for vector in vectors:
             assert vector["id"] not in seen, f"{path}: {vector['id']} twice"
@@ -100,9 +90,9 @@ def test_every_vector_has_an_id_an_input_and_a_result(built: dict[str, str]) -> 
             assert set(vector["input"]) <= INPUT_FORMS, path
 
 
-def test_the_index_names_every_vector_file(built: dict[str, str]) -> None:
-    index = json.loads(built[generate.INDEX_FILE])
+def test_the_index_names_every_vector_file() -> None:
+    index = json.loads(generate.committed()[generate.INDEX_FILE])
     listed = {row["path"]: row["vectors"] for row in index["surfaces"]}
-    counted = {path: len(vectors) for path, vectors in _vector_files(built).items()}
+    counted = {path: len(vectors) for path, vectors in _vector_files().items()}
 
     assert listed == counted

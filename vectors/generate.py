@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Final
 
 from vectors.core import FORMAT, Json, Surface, compact, render
-from vectors.surfaces import ids
+from vectors.surfaces import family_file, ids
 
 DATA_DIR: Final = Path(__file__).resolve().parent / "data"
 
@@ -28,9 +28,6 @@ DISAGREEMENTS_FILE: Final = "ids/disagreements.json"
 
 EXIT_OK: Final = 0
 EXIT_STALE: Final = 1
-
-#: One group of surfaces: a name, and the function that builds its files.
-type Group = Callable[[], dict[str, str]]
 
 
 def _files_of(surfaces: tuple[Surface, ...]) -> dict[str, str]:
@@ -44,13 +41,10 @@ def _files_of(surfaces: tuple[Surface, ...]) -> dict[str, str]:
     return files
 
 
-def _ids_group() -> tuple[Surface, ...]:
-    return ids.surfaces()
-
-
-#: Every group, in the order of the index. A test asks for one group by name.
+#: Every group, in the order of the index.
 GROUPS: Final[dict[str, Callable[[], tuple[Surface, ...]]]] = {
-    "ids": _ids_group,
+    "ids": ids.surfaces,
+    "family_file": family_file.surfaces,
 }
 
 
