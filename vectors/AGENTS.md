@@ -86,6 +86,11 @@ directory is not a workspace package, so a change here does not change
   file.
 - `host_reason` of `attendance.wire` has no vector. `cap_event` and
   `read_usage` have vectors only through `channel.parse`.
+- No vector covers the playpen side of contract 03: what the playpen accepts
+  from the host, and what it writes. The playpen is TypeScript, and the
+  generator calls Python.
+- `channel.build` has no vector for `prompt`. `attendance.wire` has no
+  builder for that message.
 - `status.door_trigger` lists only an autonomous family, and a refused
   vector holds no reason. Most status documents are attended, so that
   reader refuses them on `kind` alone. The surface pins little of how that
@@ -94,5 +99,9 @@ directory is not a workspace package, so a change here does not change
   name that depends on the file system of the host has no vector.
 - The vectors with a 400,000-deep nesting assume the default stack size. A
   larger stack can let Python 3.14 read that input.
+- The vector with a 9,100-deep nesting is under the limit of each supported
+  Python version: 9,997 levels on 3.12 and 9,998 on 3.13. Python refuses that
+  input when the caller is about 900 C calls deep. Python 3.14 refuses it on
+  a small stack.
 - The generator runs on macOS, and CI runs it on Linux. No other system
   has a run.
