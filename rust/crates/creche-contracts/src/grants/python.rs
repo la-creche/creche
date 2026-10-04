@@ -145,6 +145,15 @@ const DEVIATIONS: &[Deviation] = &[
         decision: NESTING_HAS_A_CAP,
     },
     Deviation {
+        surface: GRANT_READER,
+        vector: "json-very-deep",
+        rust: Refusal::TooLarge,
+        contract: "contract 04 §1.2, §1.4",
+        decision: "A grant file has 256 KiB or less. The chaperone refuses a longer file \
+            before a reader sees it. The Rust reader holds the cap itself. The vector records \
+            the reader of the Python code with no cap before it.",
+    },
+    Deviation {
         surface: CALL_BODY,
         vector: "args-lone-surrogate",
         rust: Refusal::Unreadable(JsonError::LoneSurrogate),

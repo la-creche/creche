@@ -17,6 +17,12 @@ from chaperone.faults import FaultWriter
 from chaperone_family_helpers import FAMILY_TOKEN, OTHER_FAMILY_TOKEN, make_grants, write_grants
 from chaperone_family_helpers import write_grants_raw as write_raw
 
+from chaperone import family_grants
+
+#: More levels than the JSON reader of a supported interpreter reads. The
+#: file stays under `MAX_GRANT_FILE_BYTES`, so the store parses it.
+TOO_DEEP = 100_000
+
 
 def _store(tmp_path: Path) -> tuple[FamilyStore, Path, FaultWriter]:
     grants_dir = tmp_path / "grants"
@@ -253,6 +259,62 @@ def test_parse_rejects_shapes_that_are_not_objects() -> None:
     assert parse_grants(b'{"version": true}', "chat")[0] is None
     assert parse_grants(b'{"version": "2"}', "chat")[0] is None
     assert parse_grants(b'{"version": 2}', "chat")[0] is None
+
+
+def _too_deep() -> str:
+    return '{"version":2,"x":' + "[" * TOO_DEEP + "]" * TOO_DEEP + "}"
+
+
+def test_parse_refuses_a_file_nested_too_deep() -> None:
+    """The JSON reader raises RecursionError here, not ValueError. The reason
+    is a fixed text: the reader's own text differs between interpreters."""
+    grants, message = parse_grants(_too_deep().encode("ascii"), "chat")
+
+    assert grants is None
+    assert message == "grants/chat.json: not JSON (nested too deep)"
+
+
+def test_a_file_nested_too_deep_faults_one_family_only(tmp_path: Path) -> None:
+    """Contract 04 §1.4 row 4. `lookup` reads every file, so the refusal of
+    one file must not reach the family of another file."""
+    store, grants_dir, _ = _store(tmp_path)
+    write_grants(grants_dir, make_grants())
+    write_raw(grants_dir, "vault", _too_deep())
+
+    assert store.lookup(FAMILY_TOKEN) is not None
+    assert store.current("vault") is None
+    assert not (tmp_path / "faults" / "pep" / "chat.json").exists()
+    entry = _faults_of(tmp_path, "vault")[0]
+    assert entry["code"] == "grants_stale"
+    assert entry["message"] == "grants/vault.json: not JSON (nested too deep)"
+
+
+def test_a_read_that_raises_faults_one_family_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure that `parse_grants` does not name. The store has one handler
+    for it: that family fails closed with a fault, and the scan goes on. The
+    fault names the type of the failure and never its text."""
+    store, grants_dir, _ = _store(tmp_path)
+    write_grants(grants_dir, make_grants())
+    write_grants(
+        grants_dir,
+        make_grants(family="vault", token_sha256=[token_digest(OTHER_FAMILY_TOKEN)]),
+    )
+    parse = family_grants.parse_grants
+
+    def explode(raw: bytes, family: str) -> tuple[family_grants.FamilyGrants | None, str]:
+        if family == "vault":
+            raise RuntimeError("a failure nobody predicted")
+
+        return parse(raw, family)
+
+    monkeypatch.setattr(family_grants, "parse_grants", explode)
+
+    assert store.lookup(FAMILY_TOKEN) is not None
+    assert store.lookup(OTHER_FAMILY_TOKEN) is None
+    message = _faults_of(tmp_path, "vault")[0]["message"]
+    assert message == "grants/vault.json: unreadable (RuntimeError)"
 
 
 def test_a_grant_file_without_limits_caps_delegations_at_two(tmp_path: Path) -> None:
