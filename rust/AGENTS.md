@@ -306,9 +306,9 @@ Rules for the test:
   licenses of the locked crates.
 - No release uses Rust code. The component manifest has no kind for a
   compiled binary.
-- Eight modules of `creche-contracts` hold a doc comment and no type:
-  `family`, `server`, `session`, `channel`, `grants`, `status`, `manifest`
-  and `config`.
+- Seven modules of `creche-contracts` hold a doc comment and no type:
+  `family`, `server`, `session`, `grants`, `status`, `manifest` and
+  `config`.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. One Python copy of seven accepts a final
