@@ -81,8 +81,9 @@ _IPV4_SEPARATOR: Final = "."
 #: first one.
 _C_TEXT_END: Final = "\x00"
 
-#: The word for each interface in the config of some services. No resolver
-#: reads it, so a bind on it is a start that fails.
+#: The word for each interface in the config of some services. The GNU C
+#: library reads it as no host name, and a listener with no host name
+#: answers on each interface.
 _EACH_INTERFACE_WORD: Final = "*"
 
 

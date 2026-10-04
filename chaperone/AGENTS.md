@@ -187,9 +187,8 @@ the host can author. A name in both takes the per-secret value.
 | `PEP_FAULT_SWEEP_INTERVAL_S` | How often a faulted family's grant file is re-read. |
 | `PEP_BIND`, `HA_URL` | Explicit overrides of the site values. |
 
-The bind is `host:port`. The chaperone does not start on a bind that it
-does not take. It writes one line and exits with 78 (`site.py`). It does
-not take:
+The bind is `host:port`. The chaperone refuses each bind in this list. It
+writes one line and exits with 78 (`site.py`).
 
 1. A text that is not `host:port`.
 2. A port that is not a number from 0 to 65535.
@@ -244,7 +243,7 @@ Each line is an open contract question and the module it lives in.
 - The log of a request of no family counts a string that is not Unicode
   text as its `surrogatepass` bytes (`app.py`).
 - No contract gives a limit for the merge keys of a roster or of the
-  secrets file. The two readers take the limits of the Rust reader of a
+  secrets file. The two readers use the limits of the Rust reader of a
   manifest: a chain of 128 merge keys, and 65,536 copied pairs
   (`bounded_yaml.py`).
 - No contract gives a limit for the aliases of a roster or of the secrets
