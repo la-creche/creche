@@ -320,12 +320,18 @@ impl Error for ReadRefusal {}
 /// ```
 #[must_use]
 pub fn read_capped(path: &Path, cap: ByteCap, follow: Follow) -> FileRead {
-    let file = match open_path(path, open_flags(follow)) {
-        Ok(descriptor) => File::from(descriptor),
-        Err(errno) if errno == Errno::NOENT => return FileRead::Absent,
-        Err(errno) => return FileRead::Refused(open_refusal(path, follow, errno)),
-    };
+    match open_path(path, open_flags(follow)) {
+        Ok(descriptor) => read_open(File::from(descriptor), cap),
+        Err(errno) if errno == Errno::NOENT => FileRead::Absent,
+        Err(errno) => FileRead::Refused(open_refusal(path, follow, errno)),
+    }
+}
 
+/// Steps 2 to 5 of [`read_capped`], on the file that step 1 opened.
+///
+/// The function takes no path. Each fact and each byte thus comes from the
+/// open file, and a rename onto the path after the open changes neither.
+fn read_open(file: File, cap: ByteCap) -> FileRead {
     let facts = match file.metadata() {
         Ok(metadata) if metadata.is_file() => FileFacts::from(&metadata),
         Ok(_) => return FileRead::Refused(ReadRefusal::NotAFile),
@@ -1005,7 +1011,7 @@ mod tests {
             copy: "The copy reads the size with a stat of the path. Then it opens the path for \
                    the read.",
             here: "One open. The facts and the bytes come from that open file.",
-            holds: the_facts_and_the_bytes_are_of_one_file,
+            holds: the_facts_are_of_the_open_file_and_not_of_the_path,
         },
         Deviation {
             python: "attendance/src/attendance/atomic.py:76-80",
@@ -1063,13 +1069,21 @@ mod tests {
         },
     ];
 
-    fn the_facts_and_the_bytes_are_of_one_file() {
-        let (_root, path) = file_with(b"0123456789");
-        let (bytes, read_facts) = taken(read_capped(&path, cap(64), Follow::Refuse));
-        let metadata = fs::metadata(&path).unwrap();
+    fn the_facts_are_of_the_open_file_and_not_of_the_path() {
+        let (root, path) = file_with(b"first");
+        let first = facts(&path).unwrap();
+        let file = File::open(&path).unwrap();
 
-        assert_eq!(read_facts.ino(), metadata.ino());
-        assert_eq!(u64::try_from(bytes.len()), Ok(read_facts.len()));
+        // Another writer renames a new file onto the path after the open.
+        let next = root.path().join("next");
+        fs::write(&next, b"second, and longer").unwrap();
+        fs::rename(&next, &path).unwrap();
+
+        let (bytes, read_facts) = taken(read_open(file, cap(64)));
+
+        assert_eq!(bytes, b"first");
+        assert_eq!(read_facts, first);
+        assert_ne!(Some(read_facts), facts(&path));
     }
 
     fn a_read_stops_one_byte_past_the_cap() {
