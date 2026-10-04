@@ -59,11 +59,15 @@ The console script is `handover`. The verify hook and the operator's
 1. Every input is hostile. A `component.yaml` can come from a branch an agent
    wrote. A byte cap before the parse, `yaml.safe_load` only, a closed key
    set, a strict pattern per scalar, and a refusal that names the field.
-2. Every pattern is `re.fullmatch`.
+2. Every pattern is `re.fullmatch`. A pattern writes a digit as `[0-9]`.
+   On text, `\d` also matches a digit that is not ASCII.
 3. `errors.safe_token` is the one door untrusted text goes through. Anything
    else prints as `<unprintable>`.
 4. A refusal code comes from the closed list in `RefusalCode`.
 5. A command is a list of argv lists, never a string.
+6. A parser answers a refusal for each error of its reader library. PyYAML
+   raises more than `YAMLError`: a scalar that it cannot build raises
+   `ValueError`, and a text that nests too deep raises `RecursionError`.
 
 ## Rules the design depends on
 
@@ -267,6 +271,11 @@ that wants a refusal changes one field.
   writes no entry and it removes no staged tree. The next run repairs the
   component (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`executor/roster.py`).
+- PyYAML reads a digit that is not ASCII in a number with the tag `!!int`.
+  A whole number of a manifest can thus hold one. Contract 06 §8 names no
+  YAML form for a number (`manifest.py`).
+- The intake reads `Content-Length` with `int`. That reader takes a sign,
+  an underscore and a digit that is not ASCII (`intake/service.py`).
 - The secret-name pattern is copied into five modules, and the copies agree
   only by hand.
 - The requester refuses once `requests/` holds eight entries of any owner

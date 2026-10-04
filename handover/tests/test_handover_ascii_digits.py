@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import pytest
 from handover.allocate import TagOutcome, plan_tags
@@ -67,6 +68,18 @@ def test_the_tag_pattern_takes_ascii_digits_only(digit: str) -> None:
     assert allocate.TAG_RE.fullmatch("chaperone-v1.2.1")
     for version in (f"{digit}.2.1", f"1.{digit}.1", f"1.2.{digit}"):
         assert allocate.TAG_RE.fullmatch(f"chaperone-v{version}") is None
+
+
+def test_no_module_of_the_package_writes_the_unicode_digit_class() -> None:
+    """`handover/AGENTS.md`, trust rule 2: a pattern writes `[0-9]`."""
+    source = Path(allocate.__file__).parent
+    found = [
+        path.relative_to(source).as_posix()
+        for path in sorted(source.rglob("*.py"))
+        if "\\d" in path.read_text(encoding="utf-8")
+    ]
+
+    assert found == []
 
 
 # -- a tag ---------------------------------------------------------------------
