@@ -66,7 +66,7 @@ impl JobStatus {
         match last {
             Turn::Settled(_) => Some(Self::Ok),
             Turn::Aborted(_) => Some(Self::Cancelled),
-            Turn::Failed(end) => Some(end.reason().map_or(Self::Failed, Self::of_failure)),
+            Turn::Failed(failed) => Some(Self::of_failure(failed.reason())),
             Turn::Queued | Turn::Running(_) | Turn::WaitingApproval(_) => None,
         }
     }

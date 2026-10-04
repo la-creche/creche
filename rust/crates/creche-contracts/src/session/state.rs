@@ -173,18 +173,122 @@ impl Run {
     }
 }
 
-/// What a turn that ended has: its run when it had one, when it ended, and the
-/// reason when it did not settle.
+/// What a settled turn has: its run, and when it ended. Only [`Turn::apply`]
+/// makes one.
+///
+/// ```
+/// use creche_contracts::session::{SettledTurn, Timestamp};
+///
+/// fn ended_at(settled: &SettledTurn) -> Timestamp {
+///     settled.ended_at()
+/// }
+/// ```
+///
+/// Code outside this module cannot change the fields of a settled turn:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{SettledTurn, Timestamp};
+///
+/// fn ended_at(settled: SettledTurn, ended_at: Timestamp) -> SettledTurn {
+///     SettledTurn { ended_at, ..settled }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct End {
-    run: Option<Run>,
+pub struct SettledTurn {
+    run: Run,
     ended_at: Timestamp,
-    reason: Option<TurnReason>,
 }
 
-impl End {
-    /// The run of the turn. A turn that a caller stopped in the queue has no
-    /// run.
+impl SettledTurn {
+    /// The run of the turn.
+    #[must_use]
+    pub fn run(&self) -> &Run {
+        &self.run
+    }
+
+    /// When the turn ended.
+    #[must_use]
+    pub fn ended_at(&self) -> Timestamp {
+        self.ended_at
+    }
+}
+
+/// What a turn that failed has: its run, when it ended, and the reason. Only
+/// [`Turn::apply`] makes one.
+///
+/// ```
+/// use creche_contracts::session::{FailedTurn, TurnReason};
+///
+/// fn reason(failed: &FailedTurn) -> TurnReason {
+///     failed.reason()
+/// }
+/// ```
+///
+/// Code outside this module cannot change the fields of a turn that failed:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{FailedTurn, TurnReason};
+///
+/// fn reason(failed: FailedTurn, reason: TurnReason) -> FailedTurn {
+///     FailedTurn { reason, ..failed }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailedTurn {
+    run: Run,
+    ended_at: Timestamp,
+    reason: TurnReason,
+}
+
+impl FailedTurn {
+    /// The run of the turn.
+    #[must_use]
+    pub fn run(&self) -> &Run {
+        &self.run
+    }
+
+    /// When the turn ended.
+    #[must_use]
+    pub fn ended_at(&self) -> Timestamp {
+        self.ended_at
+    }
+
+    /// Why the turn failed.
+    #[must_use]
+    pub fn reason(&self) -> TurnReason {
+        self.reason
+    }
+}
+
+/// What a turn that stopped has: its run when it had one, when it ended, and
+/// the reason. Only [`Turn::apply`] makes one.
+///
+/// ```
+/// use creche_contracts::session::{AbortedTurn, TurnReason};
+///
+/// fn reason(aborted: &AbortedTurn) -> TurnReason {
+///     aborted.reason()
+/// }
+/// ```
+///
+/// Code outside this module cannot change the fields of a turn that stopped:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{AbortedTurn, TurnReason};
+///
+/// fn reason(aborted: AbortedTurn, reason: TurnReason) -> AbortedTurn {
+///     AbortedTurn { reason, ..aborted }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbortedTurn {
+    run: Option<Run>,
+    ended_at: Timestamp,
+    reason: TurnReason,
+}
+
+impl AbortedTurn {
+    /// The run of the turn. A turn that stopped in the queue has no run.
     #[must_use]
     pub fn run(&self) -> Option<&Run> {
         self.run.as_ref()
@@ -196,9 +300,9 @@ impl End {
         self.ended_at
     }
 
-    /// Why the turn failed or stopped. A settled turn has no reason.
+    /// Why the turn stopped.
     #[must_use]
-    pub fn reason(&self) -> Option<TurnReason> {
+    pub fn reason(&self) -> TurnReason {
         self.reason
     }
 }
@@ -224,13 +328,32 @@ impl End {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// A turn that ended has no public constructor:
+/// Each state that ends a turn holds its own type. The data of one state does
+/// not fit another state, so a `match` cannot make a move that `apply`
+/// refuses. This compiles:
 ///
-/// ```compile_fail,E0451
-/// use creche_contracts::session::{End, Turn};
+/// ```
+/// use creche_contracts::session::Turn;
 ///
-/// fn settled(end: End) -> Turn {
-///     Turn::Settled(End { reason: None, ..end })
+/// fn keep(turn: Turn) -> Turn {
+///     match turn {
+///         Turn::Failed(failed) => Turn::Failed(failed),
+///         other => other,
+///     }
+/// }
+/// # assert_eq!(keep(Turn::Queued), Turn::Queued);
+/// ```
+///
+/// This does not, because a turn that failed cannot become a settled turn:
+///
+/// ```compile_fail,E0308
+/// use creche_contracts::session::Turn;
+///
+/// fn forge(turn: Turn) -> Turn {
+///     match turn {
+///         Turn::Failed(failed) => Turn::Settled(failed),
+///         other => other,
+///     }
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,14 +366,33 @@ pub enum Turn {
     /// The chaperone holds a tool call of the turn until a person decides.
     WaitingApproval(Gated),
     /// pi settled.
-    Settled(End),
+    Settled(SettledTurn),
     /// The turn ended and did not settle.
-    Failed(End),
+    Failed(FailedTurn),
     /// A caller or the platform stopped the turn.
-    Aborted(End),
+    Aborted(AbortedTurn),
 }
 
-/// A run with a tool call that the chaperone holds.
+/// A run with a tool call that the chaperone holds. Only [`Turn::apply`] makes
+/// one.
+///
+/// ```
+/// use creche_contracts::session::{Gated, Run};
+///
+/// fn run(gated: &Gated) -> &Run {
+///     gated.run()
+/// }
+/// ```
+///
+/// Code outside this module cannot build one from a run:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{Gated, Run};
+///
+/// fn gate(run: Run) -> Gated {
+///     Gated { run }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Gated {
     run: Run,
@@ -333,30 +475,28 @@ impl Turn {
             (Self::Queued, Step::Start(run)) => Ok(Self::Running(run)),
             (Self::Running(run), Step::OpenGate) => Ok(Self::WaitingApproval(Gated { run })),
             (Self::WaitingApproval(gated), Step::CloseGate) => Ok(Self::Running(gated.run)),
-            (Self::Running(run), Step::Settle { at }) => Ok(Self::Settled(End {
-                run: Some(run),
-                ended_at: at,
-                reason: None,
-            })),
+            (Self::Running(run), Step::Settle { at }) => {
+                Ok(Self::Settled(SettledTurn { run, ended_at: at }))
+            }
             (Self::Running(run), Step::Fail { at, reason })
             | (Self::WaitingApproval(Gated { run }), Step::Fail { at, reason }) => {
-                Ok(Self::Failed(End {
-                    run: Some(run),
+                Ok(Self::Failed(FailedTurn {
+                    run,
                     ended_at: at,
-                    reason: Some(reason),
+                    reason,
                 }))
             }
-            (Self::Queued, Step::Abort { at, reason }) => Ok(Self::Aborted(End {
+            (Self::Queued, Step::Abort { at, reason }) => Ok(Self::Aborted(AbortedTurn {
                 run: None,
                 ended_at: at,
-                reason: Some(reason),
+                reason,
             })),
             (Self::Running(run), Step::Abort { at, reason })
             | (Self::WaitingApproval(Gated { run }), Step::Abort { at, reason }) => {
-                Ok(Self::Aborted(End {
+                Ok(Self::Aborted(AbortedTurn {
                     run: Some(run),
                     ended_at: at,
-                    reason: Some(reason),
+                    reason,
                 }))
             }
             (turn, step) => Err(Box::new(IllegalMove {
@@ -431,13 +571,12 @@ mod tests {
                 })
             })
             .unwrap();
-        let Turn::Settled(end) = &turn else {
+        let Turn::Settled(settled) = &turn else {
             panic!("the turn settled");
         };
 
-        assert_eq!(end.run(), Some(&run()));
-        assert_eq!(end.ended_at(), at("2026-10-05T19:22:31Z"));
-        assert_eq!(end.reason(), None);
+        assert_eq!(settled.run(), &run());
+        assert_eq!(settled.ended_at(), at("2026-10-05T19:22:31Z"));
         assert!(turn.state().is_terminal());
     }
 
@@ -447,12 +586,13 @@ mod tests {
             at: at("2026-10-05T19:22:31Z"),
             reason: TurnReason::QueueLost,
         };
-        let Turn::Aborted(end) = Turn::Queued.apply(step).unwrap() else {
+        let Turn::Aborted(aborted) = Turn::Queued.apply(step).unwrap() else {
             panic!("the turn stopped");
         };
 
-        assert_eq!(end.run(), None);
-        assert_eq!(end.reason(), Some(TurnReason::QueueLost));
+        assert_eq!(aborted.run(), None);
+        assert_eq!(aborted.ended_at(), at("2026-10-05T19:22:31Z"));
+        assert_eq!(aborted.reason(), TurnReason::QueueLost);
     }
 
     #[test]
@@ -467,7 +607,14 @@ mod tests {
         };
 
         assert_eq!(gated.run(), &run());
-        assert_eq!(waiting.apply(step).unwrap().state(), TurnState::Failed);
+
+        let Turn::Failed(failed) = waiting.apply(step).unwrap() else {
+            panic!("the turn failed");
+        };
+
+        assert_eq!(failed.run(), &run());
+        assert_eq!(failed.ended_at(), at("2026-10-05T19:22:31Z"));
+        assert_eq!(failed.reason(), TurnReason::ApprovalDenied);
     }
 
     #[test]

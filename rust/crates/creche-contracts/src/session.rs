@@ -68,8 +68,9 @@ pub use request::{
     SteerRequest, StopRequest, SwitchRequest, WriterRequest,
 };
 pub use state::{
-    End, Gated, IllegalMove, LastEnded, Run, SessionKind, SessionKindError, SessionState,
-    SessionStateError, Step, Turn, TurnState, TurnStateError, session_state,
+    AbortedTurn, FailedTurn, Gated, IllegalMove, LastEnded, Run, SessionKind, SessionKindError,
+    SessionState, SessionStateError, SettledTurn, Step, Turn, TurnState, TurnStateError,
+    session_state,
 };
 pub use time::{Timestamp, TimestampError};
 pub use view::{
