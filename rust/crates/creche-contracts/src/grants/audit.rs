@@ -480,14 +480,7 @@ fn truncated(value: &Value) -> Value {
             Value::Text(kept)
         }
         Value::List(items) => Value::List(items.iter().map(truncated).collect()),
-        Value::Map(entries) => {
-            let mut cut = Map::new();
-            for (key, item) in entries.iter() {
-                cut.insert(key, truncated(item));
-            }
-
-            Value::Map(cut)
-        }
+        Value::Map(entries) => Value::Map(entries.map_values(truncated)),
         _ => value.clone(),
     }
 }
@@ -530,7 +523,7 @@ impl AuditRecord {
             optional(self.grants_rev.as_ref(), GrantsRev::as_str),
         );
         record.insert("tool", text(self.action.as_str()));
-        record.insert("args", truncated(&Value::Map(self.args.as_map().clone())));
+        record.insert("args", Value::Map(self.args.as_map().map_values(truncated)));
         record.insert("decision", text(self.outcome.decision().as_str()));
         record.insert("reason", text(self.outcome.reason()));
         record.insert("latency_ms", self.latency_ms.map_or(Value::Null, number));
@@ -881,6 +874,34 @@ mod tests {
         assert!(line.contains(&format!("\"at\": \"{at_cap}\", ")));
         assert!(line.contains(&format!("\"over\": [\"{at_cap}...<truncated>\"]")));
         assert!(line.contains(&format!("\"{key}\": 1")));
+    }
+
+    #[test]
+    fn a_record_with_many_keys_keeps_each_key_in_its_place() {
+        // One body of 256 KiB can hold this count of keys. A writer that
+        // searches the map for each key takes seconds here.
+        const KEYS: usize = 20_000;
+
+        let cut = "a".repeat(AUDIT_TEXT_MAX_CHARS);
+        let long = format!("{cut}b");
+        let entries: Vec<String> = (0..KEYS).rev().map(|key| format!("\"k{key}\":1")).collect();
+        let body = format!(
+            "{{\"tool\":\"embed\",\"args\":{{{},\"last\":\"{long}\"}}}}",
+            entries.join(",")
+        );
+        let args = CallBody::parse(body.as_bytes()).unwrap().into_parts().1;
+        let line = line_of(&AuditRecord { args, ..record() });
+        let written: Vec<String> = (0..KEYS)
+            .rev()
+            .map(|key| format!("\"k{key}\": 1"))
+            .collect();
+
+        assert!(body.len() <= BODY_MAX_BYTES);
+        assert_eq!(line.matches("\": 1").count(), KEYS);
+        assert!(line.contains(&format!(
+            "\"args\": {{{}, \"last\": \"{cut}...<truncated>\"}}, \"decision\"",
+            written.join(", ")
+        )));
     }
 
     #[test]

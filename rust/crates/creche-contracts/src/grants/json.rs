@@ -298,10 +298,29 @@ impl Map {
 
     /// Puts one entry. A key that the map holds keeps its place and takes the
     /// new value, as a Python `dict` does.
+    ///
+    /// The function reads each entry of the map to find the key. Its cost is
+    /// the count of entries, so `n` calls cost `n` times `n`. Call it only
+    /// for a count of keys that the code sets. The reader of a document does
+    /// not call it, and [`Map::map_values`] copies a map with no search.
     pub fn insert(&mut self, key: &str, value: Value) {
         match self.entries.iter_mut().find(|(name, _)| name == key) {
             Some((_, held)) => *held = value,
             None => self.entries.push((key.to_owned(), value)),
+        }
+    }
+
+    /// A map with the same keys in the same places, and `change` of each
+    /// value. The function searches for no key, so its cost is the count of
+    /// entries.
+    pub(super) fn map_values(&self, mut change: impl FnMut(&Value) -> Value) -> Self {
+        let entries = self
+            .entries
+            .iter()
+            .map(|(key, value)| (key.clone(), change(value)));
+
+        Self {
+            entries: entries.collect(),
         }
     }
 
@@ -1488,6 +1507,25 @@ mod tests {
         let entries: Vec<(&str, &Value)> = value.as_map().unwrap().iter().collect();
 
         assert_eq!(entries, [("b", &integer(3)), ("a", &integer(2))]);
+    }
+
+    #[test]
+    fn a_map_with_changed_values_keeps_each_key_in_its_place() {
+        let value = read(r#"{"b": 1, "a": 2, "b": 3, "c": [4]}"#).unwrap();
+        let map = value.as_map().unwrap();
+        let changed = map.map_values(|value| match value {
+            Value::Integer(_) => Value::Null,
+            other => other.clone(),
+        });
+        let entries: Vec<(&str, &Value)> = changed.iter().collect();
+        let list = Value::List(vec![integer(4)]);
+
+        assert_eq!(
+            entries,
+            [("b", &Value::Null), ("a", &Value::Null), ("c", &list)]
+        );
+        assert_eq!(map.len(), 3);
+        assert_eq!(Map::new().map_values(Value::clone), Map::new());
     }
 
     #[test]
