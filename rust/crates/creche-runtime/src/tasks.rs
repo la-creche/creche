@@ -17,7 +17,7 @@
 //! these parts.
 //!
 //! The Python origins are `attendance/src/attendance/tasks.py` and the
-//! upkeep loop of `attendance/src/attendance/service.py:281-314`. This module
+//! upkeep loop of `attendance/src/attendance/service.py:285-319`. This module
 //! is a new design and not a translation of them.
 //!
 //! Each function body here is a stub. `AGENTS.md` of this crate lists the
