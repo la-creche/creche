@@ -49,7 +49,7 @@ def _first_difference(wanted: str, found: str) -> str:
 def test_committed_files_are_current() -> None:
     _, built = generate.build()
     on_disk = generate.committed()
-    problems = generate.stale(built, on_disk)
+    problems = generate.stale(built, on_disk, generate.strays())
     details = [
         f"{path}: {_first_difference(built[path], on_disk[path])}"
         for path in sorted(built.keys() & on_disk.keys())

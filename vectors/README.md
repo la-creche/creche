@@ -46,6 +46,10 @@ uv run python -m vectors.generate --check    # write nothing, exit 1 when a file
 uv run python -m vectors.generate --counts   # print the vectors of each surface
 ```
 
+The generator reads and writes only `*.json` files under `data/`. `--check`
+reports each other file there as `left over`. Remove that file. The generator
+does not write through a symbolic link.
+
 `vectors/tests/test_vectors_current.py` runs the generator in memory. It fails
 when a committed file differs. The full suite runs it, and CI runs the full
 suite.

@@ -24,6 +24,8 @@ DATA_DIR: Final = Path(__file__).resolve().parent / "data"
 
 #: The list of every surface, written beside the vector files.
 INDEX_FILE: Final = "index.json"
+#: The suffix of every file that the generator writes.
+JSON_SUFFIX: Final = ".json"
 DISAGREEMENTS_FILE: Final = "ids/disagreements.json"
 
 EXIT_OK: Final = 0
@@ -109,22 +111,44 @@ def build() -> tuple[tuple[Surface, ...], dict[str, str]]:
 
 
 def committed(root: Path = DATA_DIR) -> dict[str, str]:
-    """Every file under `vectors/data/` as it is on disk, by relative path."""
+    """Every JSON file under `vectors/data/` as it is on disk, by relative path.
+
+    Bytes that are not UTF-8 become U+FFFD. No file of the generator holds
+    that character, so such a file differs and nothing raises.
+    """
     if not root.is_dir():
         return {}
 
     found: dict[str, str] = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_file():
-            found[path.relative_to(root).as_posix()] = path.read_bytes().decode("utf-8")
+    for path in sorted(root.rglob(f"*{JSON_SUFFIX}")):
+        if path.is_file() and not path.is_symlink():
+            text = path.read_bytes().decode("utf-8", errors="replace")
+            found[path.relative_to(root).as_posix()] = text
 
     return found
 
 
-def stale(files: dict[str, str], on_disk: dict[str, str]) -> list[str]:
+def strays(root: Path = DATA_DIR) -> list[str]:
+    """Every path under `vectors/data/` that the generator did not write.
+
+    That is a symbolic link, or a file that is not `*.json`. Neither is
+    read, so a file of a file browser cannot stop the check.
+    """
+    if not root.is_dir():
+        return []
+
+    return [
+        path.relative_to(root).as_posix()
+        for path in sorted(root.rglob("*"))
+        if path.is_symlink() or (path.is_file() and path.suffix != JSON_SUFFIX)
+    ]
+
+
+def stale(files: dict[str, str], on_disk: dict[str, str], stray: Sequence[str] = ()) -> list[str]:
     """One line per file that is missing, different or left over."""
+    left_over = {*(on_disk.keys() - files.keys()), *stray}
     problems = [f"missing: {path}" for path in sorted(files.keys() - on_disk.keys())]
-    problems += [f"left over: {path}" for path in sorted(on_disk.keys() - files.keys())]
+    problems += [f"left over: {path}" for path in sorted(left_over)]
     problems += [
         f"differs: {path}"
         for path in sorted(files.keys() & on_disk.keys())
@@ -134,8 +158,21 @@ def stale(files: dict[str, str], on_disk: dict[str, str]) -> list[str]:
     return problems
 
 
+def _refuse_link(root: Path, target: Path) -> None:
+    """A write through a symbolic link lands outside `vectors/data/`."""
+    for path in (target, *target.parents):
+        if path == root:
+            return
+
+        if path.is_symlink():
+            raise ValueError(f"{path} is a symbolic link; remove it")
+
+
 def write(files: dict[str, str], root: Path = DATA_DIR) -> None:
-    """Make `root` hold exactly `files`."""
+    """Make `root` hold `files` and no other JSON file. `strays` stay."""
+    for path in files:
+        _refuse_link(root, root / path)
+
     for path in sorted(committed(root).keys() - files.keys()):
         (root / path).unlink()
 
@@ -166,7 +203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_OK
 
     if args.check:
-        problems = stale(files, committed())
+        problems = stale(files, committed(), strays())
         for problem in problems:
             print(problem, file=sys.stderr)
 
@@ -174,8 +211,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     write(files)
     print(f"wrote {len(files)} files, {sum(len(one.vectors) for one in surfaces)} vectors")
+    left_over = stale(files, committed(), strays())
+    for problem in left_over:
+        print(problem, file=sys.stderr)
 
-    return EXIT_OK
+    return EXIT_STALE if left_over else EXIT_OK
 
 
 if __name__ == "__main__":
