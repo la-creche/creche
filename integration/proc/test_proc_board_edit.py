@@ -14,6 +14,7 @@ nothing after it.
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -44,6 +45,9 @@ OTHER_ORIGIN = "http://other.example"
 OTHER_TOKEN = "another-token-" + "t" * 32
 
 FIRST_COMMIT = 1
+
+#: How many browsers save one family at one time.
+SAVES_AT_ONE_TIME = 4
 
 
 class Browser:
@@ -148,6 +152,63 @@ async def test_a_preview_writes_nothing(board_alone: BoardStack) -> None:
     assert changed == ["description"]
     assert proc_registry.read_family(tree, FAMILY) == before
     assert proc_registry.commit_count(tree) == FIRST_COMMIT
+    assert proc_registry.uncommitted(tree) == ""
+
+
+async def test_a_save_after_a_preview_is_the_commit_of_the_edit(board_alone: BoardStack) -> None:
+    """A browser posts the form of the preview page with the save button.
+
+    CONTRACT-QUESTION: §8.2 says what a save writes. No section says which
+    values the edit form shows on the page that answers a post. Reading
+    taken: the values that the browser posted, so that a save after a
+    preview writes the edit that the preview showed. A change costs this
+    scenario.
+    """
+    tree = board_alone.tree
+
+    async with board_alone.client() as client:
+        browser = Browser(board_alone, client, FAMILY)
+        await browser.open()
+        browser.values["description"] = NEW_DESCRIPTION
+        browser.values[SUBJECT_FIELD] = SUBJECT
+        preview = await browser.post(VERB_PREVIEW)
+        browser.values = form_values(html_of(preview).one("form"))
+        response = await browser.post(VERB_SAVE)
+
+    commit = proc_registry.head(tree)
+    text = proc_registry.read_family(tree, FAMILY)
+
+    assert response.status_code == httpx.codes.SEE_OTHER
+    assert proc_registry.commit_count(tree) == FIRST_COMMIT + 1
+    assert commit.subject == SUBJECT
+    assert yaml.safe_load(text)["description"] == NEW_DESCRIPTION
+    assert proc_registry.uncommitted(tree) == ""
+
+
+async def test_saves_at_one_time_leave_no_edit_without_a_commit(board_alone: BoardStack) -> None:
+    """§8.2. The one thing that the noticeboard writes is a commit.
+
+    Each browser saves another description. A save can be refused, and a
+    refused save writes nothing. After the last answer, the checkout holds
+    one commit for each save and no change that no commit holds.
+    """
+    tree = board_alone.tree
+
+    async with board_alone.client() as client:
+        browsers = [Browser(board_alone, client, FAMILY) for _ in range(SAVES_AT_ONE_TIME)]
+
+        for number, browser in enumerate(browsers):
+            await browser.open()
+            browser.values["description"] = f"{NEW_DESCRIPTION} Edit {number}."
+
+        responses = await asyncio.gather(*(browser.post(VERB_SAVE) for browser in browsers))
+
+    codes = [response.status_code for response in responses]
+    saved = codes.count(httpx.codes.SEE_OTHER)
+
+    assert set(codes) <= {httpx.codes.SEE_OTHER, httpx.codes.OK}
+    assert saved >= 1
+    assert proc_registry.commit_count(tree) == FIRST_COMMIT + saved
     assert proc_registry.uncommitted(tree) == ""
 
 

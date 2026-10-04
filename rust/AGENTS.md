@@ -835,21 +835,20 @@ Rules for the test:
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of
   the other side. `HostMessage::parse` is stricter than the TypeScript
-  playpen in ten places:
+  playpen in nine places:
   1. A required number with a fraction or an exponent is a fault: `600.0`.
      The same applies to `grace_ms`. The playpen reads `600.0` as 600.
-  2. A session id has 128 bytes at most. The playpen permits 200.
-  3. A sandbox number has 9 digits at most.
-  4. A text with a lone surrogate is not a text.
-  5. A protocol version is two numbers. The playpen takes each text with a
+  2. A sandbox number has 9 digits at most.
+  3. A text with a lone surrogate is not a text.
+  4. A protocol version is two numbers. The playpen takes each text with a
      `.`.
-  6. A workspace kind is `code-sandbox`. The playpen reads each text.
-  7. A cap counts bytes. The playpen counts UTF-16 code units.
-  8. A `model` has 200 bytes at most. The playpen keeps each text.
-  9. An `env_epoch` is less than 2^64. The playpen reads a larger one as a
+  5. A workspace kind is `code-sandbox`. The playpen reads each text.
+  6. A cap counts bytes. The playpen counts UTF-16 code units.
+  7. A `model` has 200 bytes at most. The playpen keeps each text.
+  8. An `env_epoch` is less than 2^64. The playpen reads a larger one as a
      float.
-  10. A line with an integer of more than 4300 digits is not JSON, in each
-      field. The playpen reads that integer as a float.
+  9. A line with an integer of more than 4300 digits is not JSON, in each
+     field. The playpen reads that integer as a float.
 - `HostMessage::parse` and the playpen accept two lines with different
   values:
   1. An empty `model` is no model. The playpen keeps the empty text.

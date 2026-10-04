@@ -45,7 +45,7 @@ from starlette.staticfiles import StaticFiles
 from . import pages, security
 from .auditfiles import ARGS_NOTICE, AuditFilter, known_days
 from .config import Config
-from .familyform import Form, document_of, form_of, parse_posted
+from .familyform import Form, document_of, form_of, parse_posted, with_posted
 from .pages import EditPage
 from .registrywrite import NAME_RE, family_path, save_family
 from .security import CSRF_COOKIE, CSRF_FIELD, Origin, Refusal
@@ -294,14 +294,20 @@ def _apply(config: Config, name: str, posted: dict[str, str]) -> EditPage:
 
     form = form_of(current, pages.index_of(registry))
     wanted, issues = parse_posted(form, posted)
+    # CONTRACT-QUESTION: spec.md §8.2 gives what a save writes and does not
+    # say which values the edit form shows on the page that answers a post.
+    # The reading taken: the values that the reader posted, so the next post
+    # holds them too. A form with the values of the registry would cost this
+    # one call, and a save after a preview would then write no edit.
+    typed = with_posted(form, posted)
 
     if wanted is None:
-        return EditPage(family=name, form=form, issues=tuple(issues), posted=posted)
+        return EditPage(family=name, form=typed, issues=tuple(issues), posted=posted)
 
     diff = pages.preview_of(current, wanted)
 
     if posted.get("verb") != VERB_SAVE:
-        return EditPage(family=name, form=form, diff=diff, posted=posted)
+        return EditPage(family=name, form=typed, diff=diff, posted=posted)
 
     models = (current.model_dump(mode="json"), wanted.model_dump(mode="json"))
 
@@ -318,9 +324,10 @@ def _saved(
 ) -> EditPage:
     """The write. Everything before this point changed nothing on disk."""
     text, problem = document_of(form, posted)
+    typed = with_posted(form, posted)
 
     if problem:
-        return EditPage(family=name, form=form, diff=diff, problem=problem, posted=posted)
+        return EditPage(family=name, form=typed, diff=diff, problem=problem, posted=posted)
 
     text = _kept(config, name, models) or text
     result = save_family(config.registry_dir, name, text, posted.get("subject", ""))
@@ -328,7 +335,7 @@ def _saved(
     if not result.ok:
         return EditPage(
             family=name,
-            form=form,
+            form=typed,
             diff=diff,
             issues=result.issues,
             problem=result.problem,
@@ -358,7 +365,9 @@ def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any
 
     try:
         original = family_path(config.registry_dir, name).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # The registry read this file as UTF-8 a moment ago. This is a second
+        # read, and another writer can change the file between the two.
         return None
 
     kept = edited_text(original, before, after)

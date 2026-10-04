@@ -24,9 +24,9 @@ Three rules make this safe.
 2. **An unchanged save returns the original bytes.** Not a re-dump of them.
    `registrywrite.save_family` compares the new text with the file and makes
    no commit when they match, which is only reachable if this is exact.
-3. **`None` is a real answer.** A document that is not a mapping, or that
-   does not parse, is handed back to the caller rather than guessed at. The
-   caller falls back to `yamlout.to_yaml`.
+3. **`None` is a real answer.** A document that is not a mapping, that
+   does not parse, or that the library cannot build, is handed back to the
+   caller rather than guessed at. The caller falls back to `yamlout.to_yaml`.
 
 This module owns the only YAML library in the noticeboard, and it owns no meaning:
 it moves values between two structures the reader already produced. The
@@ -44,7 +44,6 @@ from typing import Any, Final, Protocol, cast
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
-from ruamel.yaml.error import YAMLError
 
 #: The repo's own line budget. It keeps a flow sequence wrapping where the
 #: hand-written files already wrap it.
@@ -194,7 +193,11 @@ def _yaml() -> _RoundTrip:
 def _load(text: str) -> MutableMapping[str, Any] | None:
     try:
         loaded = _yaml().load(text)
-    except YAMLError:
+    except Exception:
+        # Each exception, not only the error type of the library. The library
+        # builds a value with `int`, `float` and a date, and each one raises
+        # its own type for a scalar that has no value. A nesting past the
+        # stack raises `RecursionError`.
         return None
 
     if not isinstance(loaded, CommentedMap):

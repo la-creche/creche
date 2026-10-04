@@ -77,6 +77,20 @@ def test_unreadable_key_file_refuses_to_start(tmp_path: Path) -> None:
         from_env(_site(VIEW_ACCESS_KEY_FILE=str(tmp_path / "missing")))
 
 
+def test_a_key_file_that_is_not_utf8_refuses_to_start(tmp_path: Path) -> None:
+    path = tmp_path / "noticeboard.key"
+    path.write_bytes(b"\xff" * 40)
+
+    with pytest.raises(ConfigError, match="cannot be read"):
+        from_env(_site(VIEW_ACCESS_KEY_FILE=str(path)))
+
+
+def test_a_key_file_name_that_names_no_file_refuses_to_start() -> None:
+    """No file has a NUL character in its name."""
+    with pytest.raises(ConfigError, match="cannot be read"):
+        from_env(_site(VIEW_ACCESS_KEY_FILE="noticeboard\x00.key"))
+
+
 def test_bad_port_refuses_to_start() -> None:
     with pytest.raises(ConfigError, match="outside 1 to 65535"):
         from_env(_site(VIEW_ACCESS_KEY=LONG_KEY, VIEW_PORT="0"))

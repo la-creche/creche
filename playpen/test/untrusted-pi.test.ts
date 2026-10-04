@@ -6,6 +6,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { MAX_LOG_BYTES } from "../src/constants.js";
 import { Harness, until } from "./harness.js";
 
 function turnId(n: number): string {
@@ -127,6 +128,25 @@ describe("a line from an untrusted pi", () => {
 
     await until(() => harness.of("entries").length === 1, "the answer");
     expect(harness.of("entries")[0]?.entries.map((one) => one.id)).toEqual(["e1", "e2"]);
+  });
+
+  it("is cut to 4 KiB of UTF-8 on a whole character when pi writes it to stderr", async () => {
+    // Contract 03 §8 caps a `log` message in bytes. One character here is 4
+    // bytes of UTF-8 and two units of a JS string.
+    const wide = "\u{1F600}";
+    const harness = open({ piEnv: { "owui-loud": { FAKE_PI_STDERR: `a${wide.repeat(3000)}` } } });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-loud", turnId(1));
+
+    await until(
+      () => harness.of("log").some((one) => one.message.startsWith(`a${wide}`)),
+      "the stderr line",
+    );
+    const message = harness.of("log").find((one) => one.message.startsWith(`a${wide}`))?.message;
+
+    expect(Buffer.byteLength(message ?? "", "utf8")).toBeLessThanOrEqual(MAX_LOG_BYTES);
+    expect(message).toBe(`a${wide.repeat(1023)}`);
   });
 
   it("fails the turn when pi refuses a prompt with an error that is not text", async () => {
