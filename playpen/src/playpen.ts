@@ -237,7 +237,35 @@ export class Playpen {
       return;
     }
 
-    void this.dispatch(parsed.message);
+    const message = parsed.message;
+    this.dispatch(message).catch((error: unknown) => this.dispatchFailed(message, error));
+  }
+
+  /**
+   * The one handler of the dispatcher. A handler that throws is a bug in the
+   * playpen, and one bug must not end the process that serves each session
+   * of the family.
+   *
+   * The host still gets the answer that it waits for. Contract 03 §5.3 fails
+   * the turn that the line named with `internal`, and §4.8 rule 1 answers a
+   * `get_entries`. Each other line is reported.
+   */
+  private dispatchFailed(message: HostMessage, error: unknown): void {
+    const cause = error instanceof Error ? error.message : "the handler threw no Error";
+    const detail = `${message.type} failed in the playpen: ${cause}`;
+    const pool = this.pool;
+
+    if (pool !== null && "turn" in message) {
+      pool.refuseTurn(message, detail);
+      return;
+    }
+
+    if (pool !== null && message.type === "get_entries") {
+      pool.refuseEntries(message, detail);
+      return;
+    }
+
+    this.log("error", null, detail);
   }
 
   /**

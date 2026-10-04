@@ -15,6 +15,7 @@ import {
 } from "../src/playpen.js";
 import { MAX_LINE_BYTES } from "../src/constants.js";
 import type { EventMessage } from "../src/protocol.js";
+import { TurnFile } from "../src/turn-file.js";
 import { Harness, until } from "./harness.js";
 
 /** A ULID is 26 characters of Crockford base 32. These are fixtures, not ids. */
@@ -200,6 +201,13 @@ function readLock(harness: Harness): Record<string, unknown> {
   const path = join(harness.root, "control", "supervisor.lock");
 
   return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+}
+
+/** A turn file with a defect: it throws where the real one answers a path. */
+class BrokenTurnFile extends TurnFile {
+  public override pathFor(): string | null {
+    throw new Error("the turn file broke");
+  }
 }
 
 /** A control path whose parent is a file. Every write under it is ENOTDIR. */
@@ -643,6 +651,74 @@ describe("untrusted input", () => {
     harness.startTurn("owui-waiting", turnId(2));
     await until(() => harness.of("turn_settled").length === 1, "the next turn");
     expect(harness.spawns).toHaveLength(1);
+  });
+
+  it("fails the turn and keeps serving when the pi process cannot start", async () => {
+    // The operating system takes no argument with a NUL byte, so the start
+    // of this process throws before a process exists.
+    const harness = open();
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-nostart", turnId(1), { model: "a\u0000b" });
+
+    await until(() => harness.of("turn_failed").length === 1, "the failure");
+    const failed = harness.of("turn_failed")[0];
+
+    expect(failed?.turn).toBe(turnId(1));
+    expect(failed?.reason).toBe("pi_start_failed");
+    expect(failed?.turn_seq).toBe(1);
+    expect(harness.exitCode).toBeNull();
+
+    harness.startTurn("owui-after-nostart", turnId(2));
+    await until(() => harness.of("turn_settled").length === 1, "a turn after the failure");
+  });
+
+  it("fails the turn and keeps serving when a handler throws", async () => {
+    // A bug in one handler must not end the process that serves each
+    // session of the family. §5.3: the turn that the line named fails.
+    const harness = open({ turnFile: (dir) => new BrokenTurnFile(dir) });
+    harness.start();
+    harness.hello();
+    harness.startTurn("owui-broken", turnId(1));
+
+    await until(() => harness.of("turn_failed").length === 1, "the failure");
+    const failed = harness.of("turn_failed")[0];
+
+    expect(failed?.turn).toBe(turnId(1));
+    expect(failed?.reason).toBe("internal");
+    expect(failed?.turn_seq).toBe(1);
+    expect(failed?.message).toContain("the turn file broke");
+
+    // §4.8 rule 1: a `get_entries` gets its answer, whatever happens.
+    harness.send({
+      type: "get_entries",
+      request: turnId(9),
+      session: "owui-broken",
+      cwd: harness.cwd("owui-broken"),
+      session_dir: harness.sessionDir("owui-broken"),
+      env_epoch: 1,
+      config_rev: "reg-test",
+    });
+    await until(() => harness.of("entries").length === 1, "the answer");
+    expect(harness.of("entries")[0]).toMatchObject({ ok: false, reason: "internal" });
+
+    // A line with no turn and no answer of its own is reported.
+    harness.send({
+      type: "open_session",
+      session: "owui-broken",
+      cwd: harness.cwd("owui-broken"),
+      session_dir: harness.sessionDir("owui-broken"),
+      env_epoch: 1,
+      config_rev: "reg-test",
+    });
+    await until(
+      () => harness.of("log").some((line) => line.message.includes("open_session")),
+      "the report",
+    );
+
+    harness.send({ type: "ping", nonce: "n1" });
+    await until(() => harness.of("pong").length === 1, "the pong");
+    expect(harness.exitCode).toBeNull();
   });
 
   it("keeps no process for a refused turn when the family holds none", async () => {

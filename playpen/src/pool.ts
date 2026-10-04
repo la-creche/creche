@@ -642,28 +642,41 @@ export class SessionPool {
 
     const turnFilePath = this.deps.turnFile.pathFor(spec.session);
     const toolStatePath = this.deps.toolState.pathFor(spec.session);
-    const session = new SandboxSession(
-      sessionSpec,
-      this.deps.launcher,
-      start.args,
-      buildTurnEnv({
-        sessionDir: spec.session_dir,
-        family: this.settings.family,
-        sandbox: this.settings.sandbox,
-        session: spec.session,
-        ...(spec.turn === undefined ? {} : { turn: spec.turn }),
-        ...(turnFilePath === null ? {} : { turnFile: turnFilePath }),
-        ...(toolStatePath === null ? {} : { toolStateFile: toolStatePath }),
-        creds,
-      }),
-      this.settings.coalesceMs,
-      {
-        emit: this.deps.emit,
-        residentAfterTurn: () => this.settings.idleTtlS > 0,
-        onTurnEnd: (ended) => this.afterTurn(ended),
-        onExit: (ended) => this.forget(ended),
-      },
-    );
+    const env = buildTurnEnv({
+      sessionDir: spec.session_dir,
+      family: this.settings.family,
+      sandbox: this.settings.sandbox,
+      session: spec.session,
+      ...(spec.turn === undefined ? {} : { turn: spec.turn }),
+      ...(turnFilePath === null ? {} : { turnFile: turnFilePath }),
+      ...(toolStatePath === null ? {} : { toolStateFile: toolStatePath }),
+      creds,
+    });
+
+    let session: SandboxSession;
+    try {
+      session = new SandboxSession(
+        sessionSpec,
+        this.deps.launcher,
+        start.args,
+        env,
+        this.settings.coalesceMs,
+        {
+          emit: this.deps.emit,
+          residentAfterTurn: () => this.settings.idleTtlS > 0,
+          onTurnEnd: (ended) => this.afterTurn(ended),
+          onExit: (ended) => this.forget(ended),
+        },
+      );
+    } catch (error) {
+      // The launcher throws when the operating system refuses the start
+      // itself, for example an argument that no process can take.
+      return {
+        ok: false,
+        reason: "pi_start_failed",
+        detail: `cannot start the pi process: ${String(error)}`,
+      };
+    }
 
     this.sessions.set(spec.session, session);
 
@@ -866,6 +879,14 @@ export class SessionPool {
       leaf_id: read.leafId,
       entries: read.entries,
     });
+  }
+
+  /**
+   * §4.8 rule 1, for a `get_entries` whose handler threw. The host holds the
+   * correlation id until an answer comes.
+   */
+  public refuseEntries(message: GetEntriesMessage, detail: string): void {
+    this.noEntries(message, "internal", detail);
   }
 
   /** §4.8 rule 1. Every `get_entries` is answered, refusals included. */

@@ -52,6 +52,8 @@ export interface HarnessOptions {
   readonly lockBeatMs?: number;
   /** A control directory of the test's own, for the unwritable-mount case. */
   readonly controlDir?: string;
+  /** A turn file of the test's own, for a handler that throws. */
+  readonly turnFile?: (controlDir: string) => TurnFile;
 }
 
 /**
@@ -129,7 +131,7 @@ export class Harness {
       lock: new PlaypenLock(control, options.lockBeatMs ?? LOCK_BEAT_MS),
       creds: new CredReader(join(this.root, "creds")),
       configDir: join(this.root, "config"),
-      turnFile: new TurnFile(control),
+      turnFile: options.turnFile?.(control) ?? new TurnFile(control),
       toolState: new ToolStateFile(control),
       processes: new ProcessRecords(control, this.sandboxId),
       bridgePath: this.bridgePath,
