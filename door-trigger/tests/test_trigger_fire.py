@@ -28,6 +28,10 @@ from agent_door_trigger.fire import (
 from agent_door_trigger.ulid import ULID_PATTERN
 from trigger_fake_attendance import FakeAttendance
 
+#: More levels than the JSON parser of each supported Python reads. The client
+#: has no size cap, so the text reaches the parser.
+TOO_DEEP = 400_000
+
 # --- fire_trigger, against the protocol-level fake ---
 
 
@@ -231,6 +235,15 @@ def test_error_of_with_no_body_is_still_an_error() -> None:
 
     assert error.code == "internal"
     assert error.status == 500
+
+
+def test_an_answer_that_nests_too_deep_reads_as_no_body() -> None:
+    deep = "[" * TOO_DEEP + "]" * TOO_DEEP
+    error = _error_of(500, deep)
+
+    assert error.code == "internal"
+    with pytest.raises(AttendanceError):
+        _accepted_of(deep)
 
 
 def test_error_of_reads_the_code_and_message() -> None:

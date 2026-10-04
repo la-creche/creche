@@ -41,6 +41,13 @@ MAX_ID_LENGTH = 128
 
 SESSION_PREFIX = "owui-"
 
+# CONTRACT-QUESTION: contract 02 §2 caps a session id at 128 characters and
+# gives no cap for a chat id. The session id of a chat is `owui-<chat id>`,
+# so this door caps the chat id at what the prefix leaves: 123 characters.
+# A larger cap costs a call that `attendance` refuses.
+MAX_SESSION_ID_LENGTH = 128
+MAX_CHAT_ID_LENGTH = MAX_SESSION_ID_LENGTH - len(SESSION_PREFIX)
+
 _SET_HEADERS_HINT = (
     "Set the connection's custom headers to "
     '{"X-OWUI-Chat-Id": "{{CHAT_ID}}", "X-OWUI-Message-Id": "{{MESSAGE_ID}}", '
@@ -107,10 +114,11 @@ def _optional(headers: dict[str, str], name: str, label: str) -> str | None:
 
 
 def _checked(value: str, name: str, label: str) -> str:
-    if len(value) > MAX_ID_LENGTH:
+    limit = MAX_CHAT_ID_LENGTH if name == CHAT_ID_HEADER else MAX_ID_LENGTH
+    if len(value) > limit:
         raise DoorError(
             HTTP_BAD_REQUEST,
-            f"the {label} is longer than {MAX_ID_LENGTH} characters.",
+            f"the {label} is longer than {limit} characters.",
             code="bad_id",
         )
     if _ID_PATTERN.match(value) is None:

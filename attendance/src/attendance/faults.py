@@ -107,8 +107,15 @@ class FaultReporter:
         if family_faults is None or code not in family_faults:
             return
 
-        del family_faults[code]
-        self._publish(family)
+        kept = family_faults.pop(code)
+
+        try:
+            self._publish(family)
+        except BaseException:
+            # The file still holds the fault. Without the fault in memory,
+            # the next clear finds nothing to drop and writes nothing.
+            family_faults[code] = kept
+            raise
 
     def clear_all(self, family: str) -> None:
         """Clear every fault this service raised for the family."""

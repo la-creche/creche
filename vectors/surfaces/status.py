@@ -431,6 +431,7 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
     Document("spend-nan", _TEXT[:-1].encode() + _SPEND_NOT_FINITE.encode()),
     # --- the bytes and the JSON ---
     Document("bytes-empty", b""),
+    Document("bytes-not-utf8", b'{"kind":"attended\xff"}'),
     Document("bytes-bom", b"\xef\xbb\xbf" + _TEXT.encode("utf-8")),
     Document("json-text", b"not json"),
     Document("json-truncated", _TEXT.encode("utf-8")[:-1]),
@@ -516,6 +517,8 @@ READERS: Final[tuple[Reader, ...]] = (
             "value is what the reader takes from the document. A refused vector is a document "
             "that the reader does not use: it returns None.",
             "written_at is a time in UTC, or null when the reader cannot read the field.",
+            "kind and state are null when the document has no word that the reader knows. "
+            "The reader has no default for these two fields.",
         ),
     ),
     Reader(

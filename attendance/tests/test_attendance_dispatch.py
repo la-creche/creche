@@ -408,6 +408,32 @@ async def test_an_attended_target_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_target_of_no_known_kind_is_refused(tmp_path: Path) -> None:
+    """Contract 02 §3.1. A status document that states no known kind proves no
+    autonomous family. The kind is read before each other fact of the target,
+    so the answer is not the one of a target without the trigger."""
+    harness = await build(tmp_path)
+    write_status(
+        harness.config.state_root,
+        family=TARGET,
+        kind="robot",
+        sandboxes=((TARGET_SANDBOX, "ready"),),
+        accepts_dispatch=False,
+    )
+
+    try:
+        with pytest.raises(ApiError) as raised:
+            await harness.enqueue()
+
+        assert raised.value.code is ErrorCode.FORBIDDEN
+        assert raised.value.detail == {"kind": None}
+        assert harness.service.store.session_ids(TARGET) == []
+        assert harness.jobs() == []
+    finally:
+        await harness.stop()
+
+
+@pytest.mark.asyncio
 async def test_a_family_without_the_trigger_is_refused(tmp_path: Path) -> None:
     """§13.4.1 rule 3. Absence is denial (invariant 11)."""
     harness = await build(tmp_path)

@@ -6,8 +6,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+from agent_door_trigger.quiet import state as state_module
 from agent_door_trigger.quiet.decide import Wake
 from agent_door_trigger.quiet.state import GateState, StateFiles
+from trigger_json_limit import ParserAtItsLimit
 
 AT = datetime(2026, 9, 25, 10, 0, tzinfo=UTC)
 FIRED = Wake(session="auto-B", at=AT, board="b" * 64, ended=frozenset({"auto-J"}))
@@ -29,6 +32,15 @@ def test_no_record_is_an_empty_one(tmp_path: Path) -> None:
 
 def test_a_broken_record_is_an_empty_one(tmp_path: Path) -> None:
     (tmp_path / "scrum-lead.json").write_text("{", encoding="utf-8")
+
+    assert StateFiles(tmp_path).read("scrum-lead") == GateState()
+
+
+def test_a_record_that_nests_too_deep_is_an_empty_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    StateFiles(tmp_path).write("scrum-lead", GateState(good=GOOD))
+    monkeypatch.setattr(state_module, "json", ParserAtItsLimit)
 
     assert StateFiles(tmp_path).read("scrum-lead") == GateState()
 
