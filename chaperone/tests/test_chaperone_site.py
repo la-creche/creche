@@ -6,9 +6,9 @@ still wins. There is no default address: a missing one stops the PEP with
 `os.EX_CONFIG` and a line that names the variable and the file.
 
 A bind that the PEP does not take stops it in the same way: a text that is
-not `host:port`, a port that no listener binds, no host, or a host that
-stands for each interface of the host. The process then ends with one line
-and no traceback.
+not `host:port`, a port that no listener binds, no host, a host that Python
+cannot give to the resolver, or a host that stands for each interface of the
+host. The process then ends with one line and no traceback.
 """
 
 from __future__ import annotations
@@ -77,7 +77,15 @@ TAKEN: Final = (
     pytest.param("zero.example:8300", ("zero.example", 8300), id="a-name"),
     pytest.param("[::1]:8300", ("[::1]", 8300), id="ipv6-in-brackets"),
     pytest.param("[ ]:8300", ("[ ]", 8300), id="white-space-in-brackets"),
-    pytest.param("a..b:8300", ("a..b", 8300), id="a-text-with-no-idna-form"),
+    pytest.param("b\u00fccher.example:8300", ("b\u00fccher.example", 8300), id="a-name-not-ascii"),
+)
+
+#: A host that Python cannot give to the resolver: `socket.getaddrinfo`
+#: raises on it before it asks the system.
+NO_RESOLVER_TEXT: Final = (
+    pytest.param("a..b", id="an-empty-label"),
+    pytest.param(".a", id="an-empty-first-label"),
+    pytest.param("x" * 64 + ".example", id="a-label-of-64-characters"),
 )
 
 
@@ -127,6 +135,16 @@ def test_a_bind_with_no_host_is_refused() -> None:
 
         assert str(caught.value).startswith("PEP_BIND ")
         assert "no host" in str(caught.value)
+
+
+@pytest.mark.parametrize("host", NO_RESOLVER_TEXT)
+def test_a_host_that_python_cannot_give_to_the_resolver_is_refused(host: str) -> None:
+    for reader in (site.bind, site.listener):
+        with pytest.raises(site.ConfigError) as caught:
+            reader({"AGENT_LAN_ADDRESS": ADDRESS, "PEP_BIND": f"{host}:8300"})
+
+        assert str(caught.value).startswith("PEP_BIND ")
+        assert "no resolver" in str(caught.value)
 
 
 @pytest.mark.parametrize("host", EACH_INTERFACE)
@@ -226,6 +244,7 @@ def _start(tmp_path: Path, **pep_env: str) -> subprocess.CompletedProcess[str]:
         pytest.param("127.0.0.1:65536", id="past-the-largest-port"),
         pytest.param(":0", id="no-host"),
         pytest.param("0.0.0.0:0", id="each-interface"),
+        pytest.param("a..b:0", id="a-host-with-an-empty-label"),
     ],
 )
 def test_the_pep_stops_with_ex_config_and_one_line_on_a_bind_it_does_not_take(

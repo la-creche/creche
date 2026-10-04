@@ -101,7 +101,7 @@
   {"accepted":13,"entry":"caregiver.playpen_env.read_playpen_env","path":"config/playpen_env.read.json","raised":0,"refused":0,"surface":"config.playpen_env.read","vectors":13},
   {"accepted":56,"entry":"attendance.config.from_env","path":"config/attendance.env.json","raised":0,"refused":18,"surface":"config.attendance.env","vectors":74},
   {"accepted":34,"entry":"noticeboard.config.from_env","path":"config/noticeboard.env.json","raised":0,"refused":18,"surface":"config.noticeboard.env","vectors":52},
-  {"accepted":100,"entry":"chaperone.site.<params.function>","path":"config/chaperone.site.json","raised":0,"refused":52,"surface":"config.chaperone.site","vectors":152},
+  {"accepted":104,"entry":"chaperone.site.<params.function>","path":"config/chaperone.site.json","raised":0,"refused":56,"surface":"config.chaperone.site","vectors":160},
   {"accepted":163,"entry":"handover.manifest.parse_manifest","path":"manifest/component.json","raised":0,"refused":337,"surface":"manifest.component","vectors":500},
   {"accepted":7,"entry":"handover.site.operator_user, handover.site.operator_home","path":"manifest/operator.json","raised":0,"refused":21,"surface":"manifest.operator","vectors":28},
   {"accepted":17,"entry":"handover.catalog","path":"manifest/catalog.json","raised":0,"refused":0,"surface":"manifest.catalog","vectors":17},

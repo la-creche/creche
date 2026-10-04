@@ -95,7 +95,9 @@ def listener(env: Mapping[str, str]) -> tuple[str, int]:
     1. A text that is not `host:port`, or a port that is not a number from
        0 to `PORT_MAX`. The server cannot bind it.
     2. No host. The PEP has no default address.
-    3. A host that stands for each interface of the host. The PEP binds the
+    3. A host that Python cannot give to the resolver. The server raises on
+       it.
+    4. A host that stands for each interface of the host. The PEP binds the
        LAN address, or loopback in a test.
 
     Each other host goes to the resolver as it is.
@@ -124,7 +126,11 @@ def _split(variable: str, text: str) -> tuple[str, int]:
     if not host:
         raise ConfigError(f"{variable} gives the bind {text!r}, which names no host")
 
-    if _is_each_interface(host):
+    resolver_text = _resolver_text(host)
+    if resolver_text is None:
+        raise ConfigError(f"{variable} gives the bind {text!r}, whose host no resolver takes")
+
+    if _is_each_interface(resolver_text):
         raise ConfigError(
             f"{variable} gives the bind {text!r}, which names each interface of the host"
         )
@@ -143,26 +149,29 @@ def _port(text: str) -> int | None:
     return port if 0 <= port <= PORT_MAX else None
 
 
-def _resolver_text(host: str) -> str:
+def _resolver_text(host: str) -> str | None:
     """The host as the resolver gets it. `socket.getaddrinfo` encodes the
     text as IDNA first, and that step makes an ASCII digit from a
-    full-width digit. A text with no such encoding stays as it is: the
-    server binds nothing on it."""
+    full-width digit.
+
+    None for a text with no such encoding: a host name with an empty label,
+    or with a label of more than 63 characters. `socket.getaddrinfo` raises
+    on that text."""
     try:
         return host.encode("idna").decode("ascii")
     except UnicodeError:
-        return host
+        return None
 
 
-def _is_each_interface(host: str) -> bool:
-    """Whether a listener on `host` answers on each interface of the host:
-    the IPv4 address of all zeros, the IPv6 address of all zeros, or that
-    IPv4 address as an IPv6 address, in each spelling.
+def _is_each_interface(text: str) -> bool:
+    """Whether a listener on the host `text` answers on each interface of
+    the host: the IPv4 address of all zeros, the IPv6 address of all zeros,
+    or that IPv4 address as an IPv6 address, in each spelling. `text` is
+    the host as the resolver gets it.
 
     Some resolvers stop at white space, so only the text before the first
     white space counts. Brackets around the text do not count.
     """
-    text = _resolver_text(host)
     bare = text[1:-1] if text.startswith("[") and text.endswith("]") else text
     address_text = bare.split(maxsplit=1)[0] if bare.strip() else bare
     if address_text == _EACH_INTERFACE_WORD or _IPV4_EACH_INTERFACE.fullmatch(address_text):
