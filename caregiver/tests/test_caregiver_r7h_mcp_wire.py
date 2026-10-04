@@ -370,6 +370,12 @@ def _made(path: Path) -> Path:
     return path
 
 
+#: More levels than the YAML reader takes, and more digits than the
+#: interpreter converts to an integer.
+DEEPER_THAN_THE_YAML_READER: Final = 5_000
+MORE_DIGITS_THAN_AN_INTEGER: Final = 5_000
+
+
 def _json(path: Path) -> dict[str, object]:
     loaded: object = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
@@ -384,6 +390,25 @@ def test_an_oversized_roster_is_read_as_nothing_served(bench: Bench) -> None:
     from caregiver.mcp_release import MAX_ROSTER_BYTES, served_servers
 
     bench.mcp.roster.write_text("a: {}\n" + "#" * MAX_ROSTER_BYTES, encoding="utf-8")
+
+    assert served_servers(bench.mcp) == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "weather: " + "[" * DEEPER_THAN_THE_YAML_READER + "]" * DEEPER_THAN_THE_YAML_READER + "\n",
+        "weather: {port: " + "9" * MORE_DIGITS_THAN_AN_INTEGER + "}\n",
+        "weather: {command: \xff}\n",
+    ],
+    ids=["very-deep", "huge-integer", "not-utf8"],
+)
+def test_a_roster_that_does_not_read_is_nothing_served(bench: Bench, text: str) -> None:
+    """A roster that this process cannot read asks for a release, and the
+    release writes the roster again. A raise here would stop that repair."""
+    from caregiver.mcp_release import served_servers
+
+    bench.mcp.roster.write_bytes(text.encode("latin-1"))
 
     assert served_servers(bench.mcp) == ()
 

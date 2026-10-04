@@ -371,7 +371,10 @@ def served_servers(paths: McpPaths) -> tuple[str, ...]:
             return ()
 
         loaded: Any = yaml.safe_load(raw.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+    except (OSError, ValueError, yaml.YAMLError, RecursionError):
+        # ValueError covers bytes that are not UTF-8 and an integer past
+        # the digit limit of the interpreter. Nesting past the limit of
+        # the reader raises RecursionError.
         return ()
 
     if not isinstance(loaded, dict):
