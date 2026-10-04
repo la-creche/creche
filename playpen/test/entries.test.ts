@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MAX_ENTRY_BYTES } from "../src/constants.js";
+import { MAX_ENTRY_BYTES, MAX_LOG_BYTES } from "../src/constants.js";
 import { readEntry } from "../src/entry-text.js";
 import { Harness, until } from "./harness.js";
 
@@ -153,6 +153,22 @@ describe("get_entries", () => {
     expect(answer?.ok).toBe(false);
     expect(answer?.entries).toHaveLength(0);
     expect(answer?.leaf_id).toBeNull();
+  });
+
+  it("cuts the log line of a failed read to 4 KiB", async () => {
+    // §8 caps each `log` message. The error text of the file system holds
+    // the path, and a path can have 4096 characters.
+    const harness = open();
+    harness.start();
+    harness.hello({ pi_idle_ttl_s: 900 });
+    getEntries(harness, "tui-longpath", { session_dir: `/${"a".repeat(4090)}` });
+
+    await until(() => harness.of("entries").length === 1, "the answer");
+    const line = harness.of("log").find((one) => one.message.startsWith("no entries read"));
+
+    expect(harness.of("entries")[0]?.ok).toBe(false);
+    expect(line).toBeDefined();
+    expect(Buffer.byteLength(line?.message ?? "", "utf8")).toBeLessThanOrEqual(MAX_LOG_BYTES);
   });
 
   it("refuses a message with no request id", async () => {

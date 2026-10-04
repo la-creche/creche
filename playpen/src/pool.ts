@@ -931,6 +931,6 @@ export class SessionPool {
   }
 
   private log(level: "warn" | "info", session: string | null, message: string): void {
-    this.deps.emit({ type: "log", level, session, message });
+    this.deps.emit({ type: "log", level, session, message: cutToBytes(message, MAX_LOG_BYTES) });
   }
 }
