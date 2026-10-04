@@ -97,8 +97,9 @@ Each rule has its reason. Do not break a rule without a change to this file.
    Reason: in a Rust pattern, `\d` and `\w` also match characters that are
    not ASCII. A check over bytes has one meaning and needs no crate.
 10. **Give each contract type a differential test against the Python
-    implementation.** A later change adds shared vector files under
-    `vectors/`.
+    implementation.** The vector files under `vectors/data/` hold what the
+    Python code does. "The differential test" below says how a test reads
+    them.
     Reason: the Python code is the behavior that runs on the host. A port
     that passes only its own tests can differ from that behavior.
 11. **Keep Rust code under `rust/` until a release of its component uses
@@ -183,6 +184,33 @@ the reason in the commit message.
 - A push that changes only `rust/` runs no pytest suite. A Python test that
   reads a file under `rust/` then runs first in CI.
   `bin/tests/test_rust_workspace.py` is such a test.
+
+### The differential test
+
+`crates/creche-contracts/src/vectors.rs` reads the vector files under
+`vectors/data/`. It is test code. `vectors/README.md` holds the file format.
+
+1. Call `vectors::surface` with the name of a surface. The function finds
+   the file in `vectors/data/index.json`. It stops the test on a format that
+   is not 1 and on a count that differs from the index.
+2. Read the input of each vector with `Input::text`, `Input::bytes` or
+   `Input::args`.
+3. Call the Rust code with the input.
+4. Compare the result with the `result` of the vector. Compare the value with
+   `Vector::value` and the refusal with `Vector::refusal`, as parsed JSON.
+5. For the result `raised`, make sure that the Rust code refuses the input.
+
+Rules for the test:
+
+- Write one test for each type. The test walks each vector of each surface
+  that the type implements.
+- Put a table in the test that names each surface. Make the test fail when
+  the index holds a surface of your module that no table names.
+- Write each difference on purpose as a row of a `DEVIATIONS` table in the
+  test. The row names the surface, the vector and the contract section. Make
+  the test fail for a row that names no difference.
+- Do not compare against a count of vectors that the test holds. A change to
+  a product package can add a vector with no change under `rust/`.
 
 ## Dependencies
 
