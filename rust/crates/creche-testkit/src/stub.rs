@@ -1383,6 +1383,10 @@ enum AfterWrite {
 /// connection makes a function wait with no end. A test that can wait with
 /// no end gives it a limit, with `tokio::time::timeout`.
 ///
+/// A server of HTTP/1.1 keeps a connection open after its answer, for the
+/// next request. Send the header `Connection: close` in a whole request.
+/// The server then closes the connection after the answer.
+///
 /// The type has no Python origin.
 #[derive(Debug, Clone, Copy)]
 pub struct RawHttp;
@@ -1427,6 +1431,9 @@ impl RawHttp {
     /// a request that stops in the middle: a server that waits for the rest
     /// then sees that no more byte comes.
     ///
+    /// Do not use it for a whole request. A server can take the end of the
+    /// bytes as a client that left, and then it gives no answer.
+    ///
     /// # Errors
     ///
     /// The errors of [`RawHttp::tcp`].
@@ -1439,7 +1446,9 @@ impl RawHttp {
     /// Sends `request` to the Unix socket `socket`, closes its side of the
     /// connection, and returns each byte of the answer.
     ///
-    /// The server reads the end of the bytes after the request.
+    /// The server reads the end of the bytes after the request. Use it for
+    /// a request that stops in the middle, and not for a whole request, as
+    /// [`RawHttp::tcp_then_eof`] says.
     ///
     /// # Errors
     ///
