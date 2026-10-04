@@ -7,6 +7,7 @@ that the harness reports it.
 
 from __future__ import annotations
 
+import enum
 import os
 import signal
 import subprocess
@@ -91,6 +92,23 @@ ZOMBIE = "Z"
 
 #: A pid for a `stat` file that no test starts a process for.
 OTHER_PID = 70_000
+
+
+class Lists(enum.Enum):
+    """Which lists of `/proc` leave one process out."""
+
+    THE_FIRST = "the first"
+    EACH_LATER = "each later"
+
+
+#: What a `stat` file holds when it does not give the state and the group of
+#: its process. None: a directory is in the place of the file.
+UNREADABLE: dict[str, str | None] = {
+    "an empty file": "",
+    "a line with no group": f"{OTHER_PID} (sh) {ZOMBIE} 1\n",
+    "a group that is no number": f"{OTHER_PID} (sh) {ZOMBIE} 1 none 0\n",
+    "a directory": None,
+}
 
 
 def test_a_child_leads_its_own_process_group(tree: Tree, supervisor: Supervisor) -> None:
@@ -352,6 +370,90 @@ def test_an_ended_first_thread_beside_one_that_runs_is_alive(
     child.close_group()
 
 
+def test_a_group_that_grows_between_two_lists_counts_as_alive(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process can start another one and end before the harness reads its
+    state. The first list of `/proc` then holds only the ended one, and the
+    new one runs. A second list shows it."""
+    child = supervisor.spawn("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    proc = _fake_proc(tree, monkeypatch)
+    _write_stat(proc, OTHER_PID, ZOMBIE, pgid=child.pgid)
+    _write_stat(proc, OTHER_PID + 1, SLEEPS, pgid=child.pgid)
+    _hide_from_lists(monkeypatch, proc, OTHER_PID + 1, Lists.THE_FIRST)
+    monkeypatch.setattr(proc_harness.os, "killpg", _group_answers)
+
+    assert child.wait(MARK_DEADLINE_S) == 0
+    assert child.group_gone is False
+    child.close_group()
+
+
+def test_a_new_ended_process_in_the_second_list_counts_as_alive(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The new process ended before the second read, and it can be the one
+    that started a process after the second list."""
+    child = supervisor.spawn("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    proc = _fake_proc(tree, monkeypatch)
+    _write_stat(proc, OTHER_PID, ZOMBIE, pgid=child.pgid)
+    _write_stat(proc, OTHER_PID + 1, ZOMBIE, pgid=child.pgid)
+    _hide_from_lists(monkeypatch, proc, OTHER_PID + 1, Lists.THE_FIRST)
+    monkeypatch.setattr(proc_harness.os, "killpg", _group_answers)
+
+    assert child.wait(MARK_DEADLINE_S) == 0
+    assert child.group_gone is False
+    child.close_group()
+
+
+def test_a_state_that_the_second_list_does_not_give_counts_as_alive(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child = supervisor.spawn("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    proc = _fake_proc(tree, monkeypatch)
+    _write_stat(proc, OTHER_PID, ZOMBIE, pgid=child.pgid)
+    _write_unreadable(proc, OTHER_PID + 1, "")
+    _hide_from_lists(monkeypatch, proc, OTHER_PID + 1, Lists.THE_FIRST)
+    monkeypatch.setattr(proc_harness.os, "killpg", _group_answers)
+
+    assert child.wait(MARK_DEADLINE_S) == 0
+    assert child.group_gone is False
+    child.close_group()
+
+
+def test_an_ended_process_that_left_before_the_second_list_is_gone(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its parent reaped it between the two lists. The second list holds no
+    new process, so the group is empty."""
+    child = supervisor.spawn("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    proc = _fake_proc(tree, monkeypatch)
+    _write_stat(proc, OTHER_PID, ZOMBIE, pgid=child.pgid)
+    _write_stat(proc, OTHER_PID + 1, ZOMBIE, pgid=child.pgid)
+    _hide_from_lists(monkeypatch, proc, OTHER_PID + 1, Lists.EACH_LATER)
+    monkeypatch.setattr(proc_harness.os, "killpg", _group_answers)
+
+    assert child.wait(MARK_DEADLINE_S) == 0
+    assert child.group_gone is True
+
+
+@pytest.mark.parametrize("stat", UNREADABLE.values(), ids=UNREADABLE.keys())
+def test_a_state_that_proc_does_not_give_keeps_the_group_alive(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch, stat: str | None
+) -> None:
+    """`/proc` lists a process and does not give its state or its group.
+    That process can be a process of the group that runs, so the signal is
+    the answer."""
+    child = supervisor.spawn("one-shot", [SH, "-c", "exit 0"], BASE_ENV, tree.root)
+    proc = _fake_proc(tree, monkeypatch)
+    _write_stat(proc, OTHER_PID, ZOMBIE, pgid=child.pgid)
+    _write_unreadable(proc, OTHER_PID + 1, stat)
+    monkeypatch.setattr(proc_harness.os, "killpg", _group_answers)
+
+    assert child.wait(MARK_DEADLINE_S) == 0
+    assert child.group_gone is False
+    child.close_group()
+
+
 @pytest.mark.parametrize(("state", "alive"), [(ZOMBIE, False), (SLEEPS, True), (RUNS, True)])
 def test_the_state_in_proc_says_whether_a_pid_is_alive(
     tree: Tree, monkeypatch: pytest.MonkeyPatch, state: str, alive: bool
@@ -362,6 +464,16 @@ def test_the_state_in_proc_says_whether_a_pid_is_alive(
     _write_stat(proc, os.getpid(), state, pgid=os.getpgrp())
 
     assert pid_is_alive(os.getpid()) is alive
+
+
+@pytest.mark.parametrize("stat", UNREADABLE.values(), ids=UNREADABLE.keys())
+def test_a_pid_is_alive_when_proc_does_not_give_its_state(
+    tree: Tree, monkeypatch: pytest.MonkeyPatch, stat: str | None
+) -> None:
+    proc = _fake_proc(tree, monkeypatch)
+    _write_unreadable(proc, os.getpid(), stat)
+
+    assert pid_is_alive(os.getpid())
 
 
 def test_a_pid_is_alive_where_no_proc_exists(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -427,6 +539,38 @@ def _write_stat(proc: Path, pid: int, state: str, *, pgid: int, threads: int = 1
         pid=pid, state=state, pgid=pgid, session=pgid + SESSION_OFFSET, threads=threads
     )
     (proc / str(pid) / "stat").write_text(line, encoding="utf-8")
+
+
+def _write_unreadable(proc: Path, pid: int, stat: str | None) -> None:
+    """A process that `/proc` lists, with a `stat` file that gives no state."""
+    (proc / str(pid)).mkdir()
+
+    if stat is None:
+        (proc / str(pid) / "stat").mkdir()
+        return
+
+    (proc / str(pid) / "stat").write_text(stat, encoding="utf-8")
+
+
+def _hide_from_lists(monkeypatch: pytest.MonkeyPatch, proc: Path, pid: int, hide: Lists) -> None:
+    """Leaves `pid` out of the lists of `proc` that `hide` names."""
+    real = os.listdir
+    lists: list[list[str]] = []
+
+    def listing(path: Path) -> list[str]:
+        names = real(path)
+
+        if path != proc:
+            return names
+
+        lists.append(names)
+
+        if (len(lists) == 1) != (hide is Lists.THE_FIRST):
+            return names
+
+        return [name for name in names if name != str(pid)]
+
+    monkeypatch.setattr(proc_harness.os, "listdir", listing)
 
 
 def _read_when_written(path: Path) -> str:

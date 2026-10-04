@@ -274,7 +274,9 @@ failure. Work down this list.
   a row in the service table and no topology.
 - **The state of an ended process.** The harness reads it from `/proc` on
   Linux and from `ps` on macOS. On another system, a process that ended
-  counts as a process that runs until its parent reaps it.
+  counts as a process that runs until its parent reaps it. On Linux, the
+  same applies when `/proc` lists a process and does not give the state of
+  that process.
 
 ## Layout
 

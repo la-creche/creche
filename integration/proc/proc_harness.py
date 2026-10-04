@@ -521,8 +521,10 @@ def _group_is_alive(pgid: int) -> bool:
     - macOS answers EPERM for such a group, and for a group of another user.
       `ps` lists the state of each process.
 
-    When the list is empty or cannot be read, the signal is the answer. A
-    group that can run is never called empty.
+    When the list is empty or cannot be read, the signal is the answer. On
+    Linux it is also the answer when one state cannot be read, and when a
+    second list holds a new process of the group. A group that can run is
+    never called empty.
     """
     try:
         os.killpg(pgid, 0)
@@ -544,6 +546,10 @@ class _Stat:
     ended: bool
 
 
+class _StatUnread(Exception):
+    """`/proc` holds the `stat` file of a process and the file gives no state."""
+
+
 def _read_stat(pid: int | str) -> _Stat | None:
     """One process as Linux describes it, or None where no such file exists.
 
@@ -552,11 +558,16 @@ def _read_stat(pid: int | str) -> _Stat | None:
 
     A process whose first thread ended while another thread runs has the
     state `Z` and more than one thread. That process runs.
+
+    Raises `_StatUnread` for a file that is there and that gives no state.
+    The group of that process is not known then, and the process can run.
     """
     try:
         text = (_PROC_DIR / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError, ProcessLookupError):
         return None
+    except OSError as error:
+        raise _StatUnread(f"cannot read the state of {pid}: {error.strerror}") from error
 
     fields = text.rpartition(")")[2].split()
 
@@ -564,22 +575,67 @@ def _read_stat(pid: int | str) -> _Stat | None:
         state = fields[_STAT_STATE]
         pgid = int(fields[_STAT_PGRP])
         threads = int(fields[_STAT_THREADS])
-    except (IndexError, ValueError):
-        return None
+    except (IndexError, ValueError) as error:
+        raise _StatUnread(f"cannot parse the state of {pid}") from error
 
     return _Stat(pgid=pgid, ended=state in _PROC_ENDED and threads <= 1)
 
 
 def _ended_by_proc(pgid: int) -> list[bool]:
-    """For each process of the group that `/proc` lists: whether it ended."""
+    """For each process of the group that `/proc` lists: whether it ended.
+
+    Empty when `/proc` cannot say it for certain. The signal is the answer
+    then.
+
+    A process can start another one and end between the list and the read of
+    its state. The list then holds only the ended one, and the new one runs.
+    So an answer that each process ended needs a second list that holds no
+    new process of the group. A process that ended starts nothing. A process
+    that runs at the second list is in that list, and it is new there or the
+    first read found that it runs.
+    """
+    first = _group_in_proc(pgid)
+
+    if not first:
+        return []
+
+    if not all(first.values()):
+        return list(first.values())
+
+    second = _group_in_proc(pgid)
+
+    if second is None or not second.keys() <= first.keys():
+        return []
+
+    return list(first.values())
+
+
+def _group_in_proc(pgid: int) -> dict[str, bool] | None:
+    """Each process of the group that `/proc` lists now: whether it ended.
+
+    None when the list cannot be read, or the state of one process. That
+    process can be a process of the group.
+    """
     try:
         names = os.listdir(_PROC_DIR)
     except OSError:
-        return []
+        return None
 
-    stats = [_read_stat(name) for name in names if name.isdecimal()]
+    ended: dict[str, bool] = {}
 
-    return [stat.ended for stat in stats if stat is not None and stat.pgid == pgid]
+    for name in names:
+        if not name.isdecimal():
+            continue
+
+        try:
+            stat = _read_stat(name)
+        except _StatUnread:
+            return None
+
+        if stat is not None and stat.pgid == pgid:
+            ended[name] = stat.ended
+
+    return ended
 
 
 def _ended_by_ps(pgid: int) -> list[bool]:
@@ -610,7 +666,10 @@ def _pid_ended(pid: int) -> bool:
     Linux says so in `/proc`. macOS has no `/proc`, and it knows no process
     group for such a pid.
     """
-    stat = _read_stat(pid)
+    try:
+        stat = _read_stat(pid)
+    except _StatUnread:
+        return False
 
     if stat is not None:
         return stat.ended
