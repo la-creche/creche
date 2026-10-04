@@ -176,6 +176,20 @@ def test_the_splitter_keeps_no_byte_of_a_record_that_it_drops() -> None:
     assert splitter.pending_bytes() == 0
 
 
+def test_a_record_at_the_cap_leaves_no_byte_for_the_next() -> None:
+    """The record fills the buffer before its LF comes. The next record
+    starts with an empty buffer."""
+    splitter = LineSplitter(SMALL_CAP)
+
+    assert splitter.feed(b"a" * SMALL_CAP) == []
+    assert splitter.pending_bytes() == SMALL_CAP
+
+    lines = splitter.feed(b"\nok\n")
+
+    assert [line.text for line in lines] == ["a" * SMALL_CAP, "ok"]
+    assert splitter.pending_bytes() == 0
+
+
 @pytest.mark.parametrize("chunk_bytes", [1, 3, SMALL_CAP, SMALL_CAP + 1, 64, 1000])
 def test_the_splitter_holds_the_cap_at_most_in_each_state(chunk_bytes: int) -> None:
     """The result does not change with the size of a chunk."""

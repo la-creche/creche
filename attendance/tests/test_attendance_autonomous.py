@@ -642,6 +642,10 @@ async def test_a_turn_that_starts_holds_its_slot(tmp_path: Path) -> None:
     assert second.record.state is TurnState.RUNNING
     assert third.record.state is TurnState.QUEUED
     assert harness.service.queue_depth(AUTO_FAMILY) == 1
+
+    # The start ended, so the service keeps the turn in its book only. A
+    # turn that stayed in this list would stay for the life of the process.
+    await wait_until(lambda: harness.service._starting[AUTO_FAMILY] == [])
     await harness.stop()
 
 
