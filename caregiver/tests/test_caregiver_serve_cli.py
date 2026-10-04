@@ -22,6 +22,8 @@ from caregiver_helpers import (
     accepted_digests,
     current_digest,
     grants_alone,
+    published,
+    published_epoch,
     write_registry,
 )
 
@@ -262,6 +264,34 @@ def test_rotating_a_refused_kind_move_keeps_its_grants(bench: Bench) -> None:
     assert bench.rotate("--write") == EXIT_OK
     assert grants_alone(bench.state_root) == grants
     assert bench.litellm.budgets[key_alias("chat")] == APPLIED_KEY
+
+
+def test_a_rotation_of_an_invalid_family_publishes_its_epoch(bench: Bench) -> None:
+    """`attendance` reads the epoch from the status document alone, and the
+    playpen recycles a resident pi process only when that epoch rises. An
+    `invalid` document with no epoch leaves that process on the deleted
+    key."""
+    bench.reconcile("--write")
+    write_registry(bench.registry_root, tools=REFUSED_TOOLS)
+
+    assert bench.rotate("--write") == EXIT_OK
+    bench.reconcile("--write")
+
+    assert published(bench.state_root)["state"] == FamilyState.INVALID
+    assert published_epoch(bench.state_root) == 2
+
+
+def test_a_rotation_of_a_refused_kind_move_publishes_its_epoch(bench: Bench) -> None:
+    """The second `invalid` document: the report is ok and the applied
+    snapshot refuses the edit."""
+    bench.reconcile("--write")
+    write_registry(bench.registry_root, **KIND_MOVED)
+
+    assert bench.rotate("--write") == EXIT_OK
+    bench.reconcile("--write")
+
+    assert published(bench.state_root)["state"] == FamilyState.INVALID
+    assert published_epoch(bench.state_root) == 2
 
 
 def test_the_plan_says_when_the_grants_stay(

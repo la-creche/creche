@@ -148,6 +148,19 @@ def credentials_block(family_name: str, creds: Credentials) -> CredentialsBlock:
     )
 
 
+def kept_credentials(family_name: str, state_root: Path) -> CredentialsBlock | None:
+    """Contract 05 §6.1 for an `invalid` document, whose pass mints nothing
+    and refreshes nothing. A rotation raises the epoch in `creds.json`
+    whatever the family file says, and the status document is the only
+    place `attendance` reads it. `None` for a family that never had
+    credentials."""
+    creds = read_creds(paths.creds_path(state_root, family_name))
+    if creds is None:
+        return None
+
+    return credentials_block(family_name, creds)
+
+
 def write_grants(family: FamilyFile, index: Index, state_root: Path, creds: Credentials) -> None:
     """Contract 05 §3.4's `write_grants`. The PEP re-reads the file per
     call, so a rewrite IS the change landing (contract 01 §6).

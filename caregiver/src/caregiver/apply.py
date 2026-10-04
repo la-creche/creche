@@ -161,6 +161,7 @@ def _stopped_on_invalid(
         config_rev=_previous_str(previous, "config_rev", ""),
         validation=validation,
         faults=faults,
+        credentials=steps.kept_credentials(family_name, state_root),
         limits=LimitsBlock(),
     )
     write_status(paths.status_path(state_root, family_name), doc)

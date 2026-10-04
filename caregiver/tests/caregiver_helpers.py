@@ -105,6 +105,18 @@ def grants_alone(state_root: Path, family: str = "chat") -> dict[str, Any]:
     return {key: value for key, value in body.items() if key not in UNCOMPARED}
 
 
+def published(state_root: Path, family: str = "chat") -> dict[str, Any]:
+    """The status document, which is all `attendance` reads of a family."""
+    return json.loads(paths.status_path(state_root, family).read_text(encoding="utf-8"))
+
+
+def published_epoch(state_root: Path, family: str = "chat") -> int | None:
+    """The epoch `attendance` puts on the channel. `None` when the document
+    carries no credentials block, which `attendance` reads as epoch 1."""
+    block = published(state_root, family)["credentials"]
+    return block["epoch"] if block is not None else None
+
+
 def current_digest(state_root: Path, family: str = "chat") -> str:
     creds = read_creds(paths.creds_path(state_root, family))
     if creds is None:
