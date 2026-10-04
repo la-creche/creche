@@ -15,7 +15,13 @@
 //!
 //! One event is one line. [`format_line`] writes each control character of
 //! the target and of the message as an escape, so a text from another process
-//! cannot start a second line.
+//! cannot start a second line. It also writes the line separator U+2028 and
+//! the paragraph separator U+2029 as an escape. The two end a line in
+//! Unicode, and they are not control characters.
+//!
+//! A backslash stays as it is. A reader thus cannot tell the escape `\n`
+//! from the two characters `\n` of a message. The log is for a person, and
+//! no program reads the escapes back.
 //!
 //! The macros [`info!`](crate::info), [`warning!`](crate::warning) and
 //! [`error!`](crate::error) write a line. [`init`] sets the panic hook.
@@ -72,6 +78,12 @@ const DAYS_PER_ERA: i128 = 146_097;
 const DAYS_PER_CENTURY: i128 = 36_524;
 const DAYS_PER_4_YEARS: i128 = 1460;
 const DAYS_PER_YEAR: i128 = 365;
+
+/// The line separator and the paragraph separator of Unicode. Each one ends
+/// a line, for example in `str.splitlines` of Python, and `char::is_control`
+/// is false for the two.
+const LINE_SEPARATOR: char = '\u{2028}';
+const PARAGRAPH_SEPARATOR: char = '\u{2029}';
 
 /// How important one line of the log is.
 ///
@@ -167,7 +179,8 @@ pub fn line(level: Level, target: &str, message: fmt::Arguments<'_>) {
 ///
 /// The function is pure: the caller gives the time. Each control character
 /// of `target` and of `message` becomes an escape, for example `\n` or
-/// `\u{1b}`, so the result is always one line.
+/// `\u{1b}`. The separators U+2028 and U+2029 become an escape too. The
+/// result is thus always one line.
 ///
 /// ```
 /// use std::time::{Duration, UNIX_EPOCH};
@@ -197,10 +210,17 @@ pub fn format_line(at: SystemTime, level: Level, target: &str, message: &str) ->
     text
 }
 
-/// Adds `text` to `line`, with each control character as an escape.
+/// Whether `character` becomes an escape in a line: each control character,
+/// and the two separators of Unicode that end a line and are no control
+/// characters.
+fn is_escaped(character: char) -> bool {
+    character.is_control() || matches!(character, LINE_SEPARATOR | PARAGRAPH_SEPARATOR)
+}
+
+/// Adds `text` to `line`, with each character of [`is_escaped`] as an escape.
 fn escape_into(line: &mut String, text: &str) {
     for character in text.chars() {
-        if character.is_control() {
+        if is_escaped(character) {
             line.extend(character.escape_default());
         } else {
             line.push(character);
@@ -368,6 +388,12 @@ mod tests {
     /// The target of the hook of the child.
     const CHILD_PROGRAM: &str = "hook-test";
 
+    /// Each character that ends a line in Unicode: line feed, vertical tab,
+    /// form feed, carriage return, next line, and the two separators.
+    const LINE_ENDS: [char; 7] = [
+        '\n', '\u{b}', '\u{c}', '\r', '\u{85}', '\u{2028}', '\u{2029}',
+    ];
+
     fn after_epoch(millis: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_millis(millis)
     }
@@ -479,18 +505,24 @@ mod tests {
 
     #[test]
     fn a_control_character_becomes_an_escape_and_the_line_stays_one_line() {
-        let table: [(&str, &str); 9] = [
+        let table: [(&str, &str); 13] = [
             ("first\nsecond", "first\\nsecond"),
             ("first\r\nsecond", "first\\r\\nsecond"),
             ("a\tb", "a\\tb"),
             ("\u{1b}[31mred", "\\u{1b}[31mred"),
             ("nul\0", "nul\\u{0}"),
             ("del\u{7f}", "del\\u{7f}"),
+            ("vertical tab\u{b}", "vertical tab\\u{b}"),
+            ("form feed\u{c}", "form feed\\u{c}"),
             ("next line\u{85}", "next line\\u{85}"),
-            // A character that is not a control character stays as it is.
+            // The two characters that end a line and are no control
+            // characters.
+            ("first\u{2028}second", "first\\u{2028}second"),
+            ("first\u{2029}second", "first\\u{2029}second"),
+            // Each other character stays as it is, a backslash too.
             (
-                "caf\u{e9} \u{2028} \\n \"quoted\"",
-                "caf\u{e9} \u{2028} \\n \"quoted\"",
+                "caf\u{e9} \u{a0} \\n \"quoted\"",
+                "caf\u{e9} \u{a0} \\n \"quoted\"",
             ),
             ("", ""),
         ];
@@ -502,8 +534,27 @@ mod tests {
                 line,
                 format!("1970-01-01T00:00:00.000Z INFO probe {escaped}")
             );
-            assert!(!line.contains(['\n', '\r']));
+            assert!(!line.contains(LINE_ENDS), "{line:?}");
         }
+    }
+
+    #[test]
+    fn no_character_of_a_message_ends_the_line() {
+        // Each character that ends a line for a reader: the mandatory breaks
+        // of Unicode, which are also the breaks of `str.splitlines` of
+        // Python, and the three separators U+001C to U+001E of that function.
+        let mut message = String::from("start");
+
+        for end in LINE_ENDS.iter().chain(&['\u{1c}', '\u{1d}', '\u{1e}']) {
+            message.push(*end);
+            message.push_str("next");
+        }
+
+        let line = format_line(UNIX_EPOCH, Level::Info, "probe", &message);
+
+        assert!(!line.contains(LINE_ENDS), "{line:?}");
+        assert!(!line.chars().any(char::is_control), "{line:?}");
+        assert_eq!(line.matches("next").count(), 10);
     }
 
     #[test]
