@@ -117,3 +117,9 @@ uv run pytest family/tests
      entries from merge keys at most. A merged value with no entry counts
      as one entry. The reader refuses a text past a limit. The Rust reader
      of a family file and of a server file has the same two limits.
+
+     The reader uses two calls for each merge key of a chain. With the
+     default recursion limit of Python, the chain limit holds for a caller
+     that is less than 180 calls deep. With a deeper caller, the reader can
+     refuse a shorter chain. It then gives the report for a text that nests
+     too deep. The Rust reader reads that chain.
