@@ -299,7 +299,11 @@ while read -r outcome tag from _detail; do
   count=$(git -C "$REPO_ROOT" rev-list --count "$previous..$SHA")
   say "range:   $component: $count commit(s) since $previous"
 
-  git -C "$REPO_ROOT" diff --name-only -z "$previous" "$SHA" | lines > "$WORK/changed"
+  # `--no-renames`: a file that moved is a path that went and a path that
+  # came. With rename detection git names the new path only, and the
+  # component that lost the file would have no changed path.
+  git -C "$REPO_ROOT" diff --name-only --no-renames -z "$previous" "$SHA" | lines \
+    > "$WORK/changed"
   cut_paths "$WORK/changed" > "$WORK/segments"
   while IFS= read -r segment; do
     [[ -n "$segment" ]] || continue
@@ -313,8 +317,8 @@ while read -r outcome tag from _detail; do
   git -C "$REPO_ROOT" rev-list --first-parent "$previous..$SHA" > "$WORK/merges"
   while read -r merged label; do
     grep -qxF "$merged" "$WORK/merges" || continue
-    git -C "$REPO_ROOT" diff --name-only -z "$merged^1" "$merged" 2>/dev/null | lines \
-      > "$WORK/merged-changed" || : > "$WORK/merged-changed"
+    git -C "$REPO_ROOT" diff --name-only --no-renames -z "$merged^1" "$merged" 2>/dev/null \
+      | lines > "$WORK/merged-changed" || : > "$WORK/merged-changed"
     cut_paths "$WORK/merged-changed" > "$WORK/merged-segments"
     while IFS= read -r segment; do
       [[ -n "$segment" ]] || continue

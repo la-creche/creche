@@ -349,6 +349,25 @@ def test_a_directory_that_git_would_quote_does_not_stop_the_run(
 
 
 @pytest.mark.slow
+def test_a_file_that_leaves_a_component_moves_that_component(
+    repo: Path, shims: Path, tmp_path: Path
+) -> None:
+    """git names a renamed file by its new path only, unless
+    `--no-renames` says otherwise. The component that lost the file then
+    had no changed path, and the merge made no tag for it."""
+    _git(repo, "config", "diff.renames", "true")
+    _commit(repo, "chaperone/src/one.py", "docs/guide.md")
+    assert _run(repo, shims, tmp_path).returncode == 0
+
+    _git(repo, "mv", "chaperone/src/one.py", "docs/one.py")
+    _git(repo, "commit", "-q", "-m", "move one file out")
+    done = _run(repo, shims, tmp_path, labels="bump:minor")
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.2.0"])
+
+
+@pytest.mark.slow
 def test_a_dry_run_shows_every_first_tag_and_writes_none(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
