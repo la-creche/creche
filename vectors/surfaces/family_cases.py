@@ -68,6 +68,18 @@ def _head(**lines: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def _amplifying_merges(levels: int) -> str:
+    """A chain of merge keys with aliases. Each level merges the level below
+    it twice, so the entry count doubles at each level. A reader with no bound
+    copies those entries and uses time and memory with no bound. The family
+    reader refuses the file: the merge keys would make too many entries."""
+    lines = [HEAD, "a0: &a0 { x: 1 }"]
+    for level in range(1, levels + 1):
+        lines.append(f"a{level}: &a{level} {{ <<: [*a{level - 1}, *a{level - 1}] }}")
+
+    return "\n".join(lines) + "\n"
+
+
 #: A platform server file that declares the tool no family is granted
 #: (contract 01 §5.5 rule 7). The fixture's own file leaves it out.
 PLATFORM_SERVER_WITH_MERGE: Final = """\
@@ -777,6 +789,7 @@ approval:
     _case("yaml-anchor-alias-form", HEAD + "delegates: &list [vault-oracle]\napproval: *list\n"),
     _case("yaml-alias-undefined", HEAD + "delegates: *nowhere\n"),
     _case("yaml-anchor-twice", HEAD + "egress: [&a x.example, &a y.example]\n"),
+    _case("yaml-merge-too-many", _amplifying_merges(20)),
     _case("yaml-value-key", HEAD + "shell: =\n"),
     _case(
         "yaml-sexagesimal-float", _head(model="model: { router: fast, budget_usd_per_day: 1:30.5 }")
