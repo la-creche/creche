@@ -23,6 +23,24 @@ use crate::ids::{FamilyName, SandboxName, SessionId, Sha256Hex, Ulid};
 ///
 /// The error does not hold the value. The value is untrusted, and a caller
 /// writes this error to a log.
+///
+/// ```
+/// use creche_contracts::session::FieldError;
+///
+/// fn name(error: &FieldError) -> &'static str {
+///     error.field()
+/// }
+/// ```
+///
+/// Code outside this module cannot build an error that names another field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::FieldError;
+///
+/// fn rename(error: FieldError) -> FieldError {
+///     FieldError { field: "turn", ..error }
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FieldError {
     object: &'static str,
@@ -307,7 +325,7 @@ const TRIGGER: &str = "a trigger";
 
 /// The largest count of families in a delegation chain (contract 02 §13.2
 /// rule 6).
-const CHAIN_MAX: usize = 8;
+pub(super) const CHAIN_MAX: usize = 8;
 
 /// The firing that started one autonomous job (contract 02 §13.2).
 ///
@@ -982,8 +1000,8 @@ mod tests {
         let family = || "chat".parse::<FamilyName>().unwrap();
         let chain = |count: usize| vec![family(); count];
 
-        assert!(Trigger::new(TriggerKind::Dispatch, None, None, chain(CHAIN_MAX)).is_ok());
-        assert!(Trigger::new(TriggerKind::Dispatch, None, None, chain(CHAIN_MAX + 1)).is_err());
+        assert!(Trigger::new(TriggerKind::Dispatch, None, None, chain(8)).is_ok());
+        assert!(Trigger::new(TriggerKind::Dispatch, None, None, chain(9)).is_err());
         assert!(Trigger::new(TriggerKind::Webhook, None, None, chain(1)).is_err());
         assert_eq!(
             serde_json::to_value(Trigger::new(TriggerKind::Timer, None, None, chain(0)).unwrap())

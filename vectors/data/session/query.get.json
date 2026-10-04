@@ -16,6 +16,7 @@
   {"id":"turns-word","input":{"args":{"turns":"ten"}},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"turns is not a number","session":null,"turn":null}},"http_status":400},"result":"refused"},
   {"id":"turns-spaces-around","input":{"args":{"turns":" 5 "}},"result":"accepted","value":{"turns":5}},
   {"id":"turns-tab-and-newline-around","input":{"args":{"turns":"\t5\n"}},"result":"accepted","value":{"turns":5}},
+  {"id":"turns-vertical-tab-and-form-feed-around","input":{"args":{"turns":"\u000b5\f"}},"result":"accepted","value":{"turns":5}},
   {"id":"turns-no-break-space-around","input":{"args":{"turns":"\u00a05\u00a0"}},"result":"accepted","value":{"turns":5}},
   {"id":"turns-separator-char-around","input":{"args":{"turns":"\u001c5\u001f"}},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"turns is not a number","session":null,"turn":null}},"http_status":400},"result":"refused"},
   {"id":"turns-space-inside","input":{"args":{"turns":"1 0"}},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"turns is not a number","session":null,"turn":null}},"http_status":400},"result":"refused"},

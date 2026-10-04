@@ -19,14 +19,11 @@ use super::fields::{
 };
 use super::json::{self, Fault, Kind, Object};
 use super::time::Timestamp;
-use super::view::{OwuiRefs, Trigger};
+use super::view::{CHAIN_MAX, OwuiRefs, Trigger};
 use crate::ids::{AttachmentName, FamilyName, SessionId, Ulid};
 
 /// The largest count of attachments of one turn (contract 02 §5.4).
 const ATTACHMENTS_MAX: usize = 20;
-
-/// The largest count of families in a chain (contract 02 §13.2 rule 6).
-const CHAIN_MAX: usize = 8;
 
 /// The three labels that the trigger door sends in place of a trigger object
 /// (contract 02 §13.2 rule 2).

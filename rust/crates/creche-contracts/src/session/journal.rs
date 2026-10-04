@@ -564,6 +564,22 @@ impl JournalBody {
 ///
 /// The error does not hold the body. The body is untrusted, and a caller
 /// writes this error to a log.
+///
+/// ```
+/// use creche_contracts::session::{BodyError, LineKind};
+///
+/// fn kind(error: &BodyError) -> LineKind {
+///     error.kind()
+/// }
+/// ```
+///
+/// Code outside this module cannot build an error for a kind of its choice:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{BodyError, LineKind};
+///
+/// let error = BodyError { kind: LineKind::Note };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BodyError {
     kind: LineKind,

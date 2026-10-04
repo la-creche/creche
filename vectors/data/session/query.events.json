@@ -20,6 +20,7 @@
   {"id":"from-seq-word","input":{"args":{"from_seq":"ten"}},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"from_seq is not a number","session":null,"turn":null}},"http_status":400},"result":"refused"},
   {"id":"from-seq-spaces-around","input":{"args":{"from_seq":" 5 "}},"result":"accepted","value":{"follow":"keep_open","from_seq":5,"turn":null}},
   {"id":"from-seq-tab-and-newline-around","input":{"args":{"from_seq":"\t5\n"}},"result":"accepted","value":{"follow":"keep_open","from_seq":5,"turn":null}},
+  {"id":"from-seq-vertical-tab-and-form-feed-around","input":{"args":{"from_seq":"\u000b5\f"}},"result":"accepted","value":{"follow":"keep_open","from_seq":5,"turn":null}},
   {"id":"from-seq-no-break-space-around","input":{"args":{"from_seq":"\u00a05\u00a0"}},"result":"accepted","value":{"follow":"keep_open","from_seq":5,"turn":null}},
   {"id":"from-seq-separator-char-around","input":{"args":{"from_seq":"\u001c5\u001f"}},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"from_seq is not a number","session":null,"turn":null}},"http_status":400},"result":"refused"},
   {"id":"from-seq-space-inside","input":{"args":{"from_seq":"1 0"}},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"from_seq is not a number","session":null,"turn":null}},"http_status":400},"result":"refused"},

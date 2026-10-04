@@ -37,6 +37,7 @@
   {"id":"limit-word","input":{"args":{"limit":"ten"}},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"limit is not a number","session":null,"turn":null}},"http_status":400},"result":"refused"},
   {"id":"limit-spaces-around","input":{"args":{"limit":" 5 "}},"result":"accepted","value":{"cursor":null,"family":null,"kind":null,"limit":5,"state":null}},
   {"id":"limit-tab-and-newline-around","input":{"args":{"limit":"\t5\n"}},"result":"accepted","value":{"cursor":null,"family":null,"kind":null,"limit":5,"state":null}},
+  {"id":"limit-vertical-tab-and-form-feed-around","input":{"args":{"limit":"\u000b5\f"}},"result":"accepted","value":{"cursor":null,"family":null,"kind":null,"limit":5,"state":null}},
   {"id":"limit-no-break-space-around","input":{"args":{"limit":"\u00a05\u00a0"}},"result":"accepted","value":{"cursor":null,"family":null,"kind":null,"limit":5,"state":null}},
   {"id":"limit-separator-char-around","input":{"args":{"limit":"\u001c5\u001f"}},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"limit is not a number","session":null,"turn":null}},"http_status":400},"result":"refused"},
   {"id":"limit-space-inside","input":{"args":{"limit":"1 0"}},"refusal":{"body":{"error":{"code":"bad_request","detail":{},"family":null,"message":"limit is not a number","session":null,"turn":null}},"http_status":400},"result":"refused"},

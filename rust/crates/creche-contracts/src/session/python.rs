@@ -982,11 +982,7 @@ fn differs_as_decided(differs: Differs, vector: &Vector, rust: &Did, python: &Di
 
 /// Walks each vector of one surface. It prints the counts, and a run with
 /// `--nocapture` shows them.
-fn walk(name: &str) {
-    let against = SURFACES
-        .iter()
-        .find(|against| against.surface == name)
-        .unwrap();
+fn walk(against: &Against) {
     let surface = vectors::surface(against.surface);
     let mut equal = 0;
     let mut deviated = 0;
@@ -1018,7 +1014,8 @@ fn walk(name: &str) {
         against.surface
     );
     println!(
-        "{name}: {} vectors: {equal} equal, {deviated} deviations",
+        "{}: {} vectors: {equal} equal, {deviated} deviations",
+        against.surface,
         equal + deviated
     );
 }
@@ -1053,124 +1050,12 @@ fn each_deviation_names_a_surface_of_the_table() {
     }
 }
 
+/// The walk reads the table, so each surface of the table has a walk.
 #[test]
-fn a_create_request_is_what_the_python_parser_reads() {
-    walk("session.request.create");
-}
-
-#[test]
-fn a_run_turn_request_is_what_the_python_parser_reads() {
-    walk("session.request.run_turn");
-}
-
-#[test]
-fn a_writer_request_is_what_the_python_parser_reads() {
-    walk("session.request.writer");
-}
-
-#[test]
-fn a_steer_request_is_what_the_python_parser_reads() {
-    walk("session.request.steer");
-}
-
-#[test]
-fn a_stop_request_is_what_the_python_parser_reads() {
-    walk("session.request.stop");
-}
-
-#[test]
-fn a_dispatch_request_is_what_the_python_parser_reads() {
-    walk("session.request.dispatch");
-}
-
-#[test]
-fn a_jobs_query_is_what_the_python_parser_reads() {
-    walk("session.request.jobs");
-}
-
-#[test]
-fn a_delegate_request_is_what_the_python_parser_reads() {
-    walk("session.request.delegate");
-}
-
-#[test]
-fn a_switch_request_is_what_the_python_parser_reads() {
-    walk("session.request.switch");
-}
-
-#[test]
-fn a_list_query_is_what_the_python_route_reads() {
-    walk("session.query.list");
-}
-
-#[test]
-fn a_count_of_turns_is_what_the_python_route_reads() {
-    walk("session.query.get");
-}
-
-#[test]
-fn an_events_query_is_what_the_python_route_reads() {
-    walk("session.query.events");
-}
-
-#[test]
-fn an_error_body_is_the_bytes_that_the_python_code_writes() {
-    walk("session.error_body");
-}
-
-#[test]
-fn a_session_object_is_the_bytes_that_the_python_code_writes() {
-    walk("session.answer.session");
-}
-
-#[test]
-fn a_turn_object_is_the_bytes_that_the_python_code_writes() {
-    walk("session.answer.turn");
-}
-
-#[test]
-fn a_lease_object_is_the_bytes_that_the_python_code_writes() {
-    walk("session.answer.lease");
-}
-
-#[test]
-fn a_stream_record_is_the_bytes_that_the_python_code_writes() {
-    walk("session.stream.encode");
-}
-
-#[test]
-fn a_stored_line_is_what_the_python_replay_gives() {
-    walk("session.journal.read");
-}
-
-#[test]
-fn a_journal_line_is_the_bytes_that_the_python_code_writes() {
-    walk("session.journal.write");
-}
-
-#[test]
-fn a_record_of_the_stream_has_the_fields_of_the_python_record() {
-    walk("session.stream.live");
-}
-
-#[test]
-fn an_outcome_record_is_the_bytes_that_the_python_code_writes() {
-    walk("session.outcome.write");
-}
-
-#[test]
-fn a_turn_moves_where_the_python_table_permits() {
-    walk("session.turn.move");
-}
-
-#[test]
-fn the_state_of_a_session_is_what_the_python_code_derives() {
-    walk("session.state.derive");
-}
-
-#[test]
-fn the_status_of_a_job_is_what_the_python_code_gives() {
-    walk("session.outcome.status");
+fn each_vector_of_each_surface_is_what_the_python_code_does() {
+    for against in SURFACES {
+        walk(against);
+    }
 }
 
 /// A line that the Python code wrote, read and written again by the Rust code,

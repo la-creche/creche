@@ -507,7 +507,26 @@ impl Turn {
     }
 }
 
-/// A move that contract 02 §4.3 does not permit.
+/// A move that contract 02 §4.3 does not permit. Only [`Turn::apply`] makes
+/// one.
+///
+/// ```
+/// use creche_contracts::session::{IllegalMove, TurnState};
+///
+/// fn wanted(error: &IllegalMove) -> TurnState {
+///     error.wanted()
+/// }
+/// ```
+///
+/// Code outside this module cannot change the turn or the move of an error:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{IllegalMove, TurnState};
+///
+/// fn wanted(error: IllegalMove) -> IllegalMove {
+///     IllegalMove { wanted: TurnState::Settled, ..error }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IllegalMove {
     turn: Turn,

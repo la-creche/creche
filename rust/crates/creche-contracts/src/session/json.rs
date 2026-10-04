@@ -317,6 +317,24 @@ pub(super) enum Charset {
 ///
 /// A type of this module always has a JSON form. The error exists because a
 /// writer of bytes can fail.
+///
+/// ```
+/// use creche_contracts::session::EncodeError;
+///
+/// fn text(error: &EncodeError) -> String {
+///     error.to_string()
+/// }
+/// ```
+///
+/// Code outside this module cannot build one, or read the error inside:
+///
+/// ```compile_fail,E0616
+/// use creche_contracts::session::EncodeError;
+///
+/// fn inner(error: &EncodeError) -> String {
+///     error.0.to_string()
+/// }
+/// ```
 #[derive(Debug)]
 pub struct EncodeError(serde_json::Error);
 

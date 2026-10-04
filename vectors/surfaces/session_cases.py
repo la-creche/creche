@@ -857,6 +857,7 @@ _NUMBER_FORMS: Final[tuple[tuple[str, str], ...]] = (
     ("word", "ten"),
     ("spaces-around", " 5 "),
     ("tab-and-newline-around", "\t5\n"),
+    ("vertical-tab-and-form-feed-around", "\x0b5\x0c"),
     ("no-break-space-around", "\u00a05\u00a0"),
     ("separator-char-around", "\x1c5\x1f"),
     ("space-inside", "1 0"),
