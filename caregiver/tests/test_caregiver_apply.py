@@ -20,7 +20,7 @@ from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
 from caregiver.playpen_env import read_playpen_env
 from caregiver.status import now_rfc3339
 from caregiver.switch import FakeSwitchClient, SwitchClient
-from caregiver_helpers import UNREADABLE_JSON, write_registry
+from caregiver_helpers import UNREADABLE_JSON, write_no_file_dir, write_registry
 
 from caregiver import paths
 
@@ -346,6 +346,24 @@ def test_family_not_in_the_registry_raises(registry_root: Path, state_root: Path
             driver=FakeDriver(),
             litellm=FakeLiteLLMKeys(),
         )
+
+
+def test_a_directory_with_no_family_file_raises(registry_root: Path, state_root: Path) -> None:
+    """Contract 01 §5.6 rule 3: the directory holds no family. The call
+    writes no state for that name."""
+    write_no_file_dir(registry_root)
+
+    with pytest.raises(FamilyNotFoundError):
+        apply_once(
+            registry_root,
+            "stray",
+            state_root=state_root,
+            image="x",
+            driver=FakeDriver(),
+            litellm=FakeLiteLLMKeys(),
+        )
+
+    assert not paths.family_dir(state_root, "stray").exists()
 
 
 # --- an invalid family (invariant 19) ---------------------------------------

@@ -42,9 +42,10 @@ from .webhook_tokens import ensure_webhooks
 
 
 class FamilyNotFoundError(RuntimeError):
-    """No `families/<name>/` directory in the registry at all -- not the
-    same as an invalid `family.yaml` (which does have a directory, and
-    gets a report)."""
+    """The registry holds no `family.yaml` for the name: no
+    `families/<name>/` directory, or a directory with no file (contract 01
+    section 5.6 rule 3). That is not the same as an invalid `family.yaml`,
+    which gets a report."""
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,7 @@ def apply_once(
     keeps serving."""
     registry = load_registry(registry_root, host)
     report = registry.reports.get(family_name)
-    if report is None:
+    if report is None or (report.ok and family_name not in registry.families):
         raise FamilyNotFoundError(family_name)
 
     write_validation_report(paths.validation_path(state_root, family_name), report)
