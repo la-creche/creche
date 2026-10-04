@@ -415,6 +415,11 @@ impl Tasks {
     /// the limit. A loop is one task, and its pass is one more. A task that
     /// starts during the wait is a tracked task too.
     ///
+    /// The limit needs the timer of the runtime. On a thread with no runtime,
+    /// and in a runtime with no timer, the function does not panic and does
+    /// not wait. It writes one `ERROR` line and gives the count of that
+    /// moment.
+    ///
     /// The Python origin is the stop of `caregiver/src/caregiver/loop.py`.
     /// It waits for each pass for a limit (`:312-323`). Then it says how many
     /// passes still run (`:262-274`).
@@ -423,15 +428,29 @@ impl Tasks {
         // takes a new task.
         self.tracker.close();
 
-        if tokio::time::timeout(limit, self.tracker.wait())
-            .await
-            .is_ok()
-        {
+        // `timeout` panics when it has no timer: it reads the timer when the
+        // code makes the future, and not at a poll.
+        let limited = panic::catch_unwind(AssertUnwindSafe(|| {
+            tokio::time::timeout(limit, self.tracker.wait())
+        }));
+        let Ok(wait) = limited else {
+            report_no_wait();
+
+            return self.left();
+        };
+
+        if wait.await.is_ok() {
             return Drained::Clean;
         }
 
+        self.left()
+    }
+
+    /// What a drain gives for the tasks that still run at this moment.
+    fn left(&self) -> Drained {
         match self.tracker.len() {
-            // The last task ended between the limit and this count.
+            // After a limit: the last task ended between the limit and this
+            // count.
             0 => Drained::Clean,
             left => Drained::TimedOut { left },
         }
@@ -479,6 +498,16 @@ fn report_not_started(role: Role, name: &'static str) {
         LOG_TARGET,
         "the {what} {name} did not start: no runtime runs on this thread"
     );
+}
+
+/// Writes the one line of a drain that has no timer for its limit.
+fn report_no_wait() {
+    let why = match Handle::try_current() {
+        Ok(_) => "the runtime of this thread has no timer",
+        Err(_) => "no runtime runs on this thread",
+    };
+
+    crate::error!(LOG_TARGET, "the drain did not wait: {why}");
 }
 
 /// The future of a tracked task: the work, with a guard against its panic.
@@ -771,6 +800,9 @@ mod tests {
     /// The line of a lock that a panic poisoned.
     const LOCK_LINE: &str = "a panic poisoned a lock, and the next caller takes the value as it is";
 
+    /// The line of a drain in a runtime with no timer.
+    const NO_TIMER_LINE: &str = "the drain did not wait: the runtime of this thread has no timer";
+
     /// A scenario that writes to the log. It runs in a child, so its lines do
     /// not go to the output of this test program, and the test can read them.
     struct Scenario {
@@ -782,7 +814,7 @@ mod tests {
         lines: &'static [&'static str],
     }
 
-    const SCENARIOS: [Scenario; 11] = [
+    const SCENARIOS: [Scenario; 13] = [
         Scenario {
             name: "task",
             run: a_task_panics,
@@ -826,6 +858,16 @@ mod tests {
                 "the task index-sync did not start: no runtime runs on this thread",
                 "the loop upkeep did not start: no runtime runs on this thread",
             ],
+        },
+        Scenario {
+            name: "drain-no-timer",
+            run: a_drain_has_no_timer,
+            lines: &[NO_TIMER_LINE, NO_TIMER_LINE],
+        },
+        Scenario {
+            name: "drain-no-runtime",
+            run: a_drain_has_no_runtime,
+            lines: &["the drain did not wait: no runtime runs on this thread"],
         },
         Scenario {
             name: "lock",
@@ -1714,6 +1756,45 @@ mod tests {
         assert_eq!(late.block_on(synced), Err(TaskLost::Cancelled));
         assert_eq!(late.block_on(tasks.drain(LIMIT)), Drained::Clean);
         assert_eq!(passes.load(Ordering::SeqCst), 0);
+    }
+
+    /// A runtime with no timer. A drain cannot wait there. It gives the count
+    /// of that moment and one line, and it does not panic.
+    fn a_drain_has_no_timer() {
+        let no_timer = Builder::new_current_thread().build().unwrap();
+
+        no_timer.block_on(async {
+            let (trigger, tasks) = new_tasks();
+            let (open, gate) = oneshot::channel::<()>();
+            let written = tasks.spawn_must_complete("ledger-write", async move {
+                gate.await.unwrap();
+
+                7_u8
+            });
+            trigger.trigger();
+
+            assert_eq!(tasks.drain(LIMIT).await, Drained::TimedOut { left: 1 });
+
+            open.send(()).unwrap();
+
+            assert_eq!(written.await, Ok(7));
+            assert_eq!(tasks.drain(LIMIT).await, Drained::Clean);
+        });
+    }
+
+    /// No runtime runs on the thread that polls a drain. The drain gives its
+    /// result at the first poll and does not panic.
+    fn a_drain_has_no_runtime() {
+        let (trigger, tasks) = new_tasks();
+        trigger.trigger();
+
+        let mut drain = std::pin::pin!(tasks.drain(LIMIT));
+        let mut context = Context::from_waker(std::task::Waker::noop());
+
+        assert_eq!(
+            drain.as_mut().poll(&mut context),
+            Poll::Ready(Drained::Clean)
+        );
     }
 
     /// A panic poisons a lock two times. Each caller after it gets the
