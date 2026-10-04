@@ -163,8 +163,8 @@ the pi stand-in                          found through AGENT_PI_BIN
     each group. Then it waits 20 seconds at most for each group to become
     empty. It sends `SIGKILL` only to a group that is not empty after that
     time. A group that ended before the teardown gets no signal. A process
-    that ended is not a process of its group, also before its parent reaps
-    it.
+    that ended and that waits for its parent to reap it is not a process of
+    the group.
 11. No test leaves a process behind. A teardown that had to kill a process
     fails the test. This applies to each process of a group, not only to the
     service. A group that no teardown ended fails the session.
@@ -272,6 +272,9 @@ failure. Work down this list.
   playpen cannot dial a chaperone on another port.
 - **No scenario for `door-trigger`, `door-tui` and `noticeboard`.** Each has
   a row in the service table and no topology.
+- **The state of an ended process.** The harness reads it from `/proc` on
+  Linux and from `ps` on macOS. On another system, a process that ended
+  counts as a process that runs until its parent reaps it.
 
 ## Layout
 
