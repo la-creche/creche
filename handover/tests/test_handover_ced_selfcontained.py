@@ -307,7 +307,7 @@ def test_a_self_contained_staged_tree_builds(tmp_path: Path) -> None:
 def test_a_component_that_is_not_a_venv_is_not_walked(tmp_path: Path) -> None:
     """A compose project and an image tree have no site-packages, and the
     walk would refuse both for the one reason that does not apply to them."""
-    manifest = _manifest(tmp_path, "infra", **{f"kind: {Kind.VENV}": f"kind: {Kind.COMPOSE}"})
+    manifest = _manifest(tmp_path, "infra")
     assert manifest.kind is Kind.COMPOSE
 
     paths = paths_of(manifest, (tmp_path / "components",))
