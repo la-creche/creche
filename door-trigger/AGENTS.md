@@ -61,6 +61,7 @@ did.
 | an oversized or invalid payload | `fire`: exit 2. `serve`: `413` or `400`. |
 | `attendance` cannot be reached | `fire`: exit 2, a different message than a refusal. `serve`: `502 attendance_unreachable`. |
 | a route refresh fails | the listener logs the failure and keeps the last route table |
+| a failure of `serve` that no handler names | `500 internal` in the error shape of the listener. The log holds the traceback. |
 | a `quiet:` family's cron firing finds nothing changed | exit 0, no session |
 
 ## Configuration

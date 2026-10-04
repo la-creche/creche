@@ -72,6 +72,19 @@ def create_app(config: ServeConfig, attendance: AttendanceClient, routes: RouteL
 
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None, lifespan=_lifespan)
 
+    @app.exception_handler(Exception)
+    async def _on_unexpected(  # pyright: ignore[reportUnusedFunction]
+        _request: Request, _exc: Exception
+    ) -> JSONResponse:
+        # The last handler. A failure with no handler of its own still
+        # answers in the error shape of this listener, with no detail of
+        # the failure. The server raises the error again after the answer,
+        # and its log then holds the traceback.
+        return JSONResponse(
+            status_code=500,
+            content=_error("internal", "the trigger door failed on this request"),
+        )
+
     @app.post("/triggers/{family}/{name}")
     async def fire_webhook(  # pyright: ignore[reportUnusedFunction]
         family: str, name: str, request: Request

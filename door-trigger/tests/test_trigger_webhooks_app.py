@@ -252,6 +252,30 @@ def test_no_answer_from_attendance_answers_502(tmp_path: Path) -> None:
     }
 
 
+# --- a failure that no handler names ---
+
+
+class _BrokenAttendance(FakeAttendance):
+    """Raises an error that the route has no handler for."""
+
+    def ensure_session(self, family: str, session: str) -> None:
+        raise RuntimeError("a defect of the door")
+
+
+def test_an_unexpected_failure_answers_500_in_the_error_shape(tmp_path: Path) -> None:
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    app = create_app(_config(tmp_path), _BrokenAttendance(), routes)
+    # The server raises the error again after the answer, so that its log
+    # holds the traceback. The test reads the answer.
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
+
+    assert response.status_code == 500
+    error = response.json()["error"]
+    assert error["code"] == "internal"
+    assert "a defect of the door" not in error["message"]
+
+
 # --- a refresh that fails keeps the last table ---
 
 
