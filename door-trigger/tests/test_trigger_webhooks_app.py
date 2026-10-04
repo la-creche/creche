@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_door_trigger.attendance import AcceptedTurn
+import httpx
+from agent_door_trigger.attendance import AcceptedTurn, AttendanceClient, HttpAttendance
 from agent_door_trigger.config import AttendanceTarget, ServeConfig
 from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.routes import Route
@@ -55,7 +56,7 @@ def _config(tmp_path: Path) -> ServeConfig:
     )
 
 
-def _client(tmp_path: Path, fake: FakeAttendance, routes: FakeRouteTable) -> TestClient:
+def _client(tmp_path: Path, fake: AttendanceClient, routes: FakeRouteTable) -> TestClient:
     app = create_app(_config(tmp_path), fake, routes)
     return TestClient(app)
 
@@ -204,6 +205,25 @@ def test_a_non_autonomous_family_answers_403(tmp_path: Path) -> None:
         response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
 
     assert response.status_code == 403
+
+
+# --- attendance does not answer ---
+
+
+def test_no_answer_from_attendance_answers_502(tmp_path: Path) -> None:
+    def no_answer(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no answer", request=request)
+
+    target = AttendanceTarget(url="http://sessiond", socket=None, token="t" * 32)
+    upstream = httpx.Client(base_url=target.url, transport=httpx.MockTransport(no_answer))
+    routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
+    with _client(tmp_path, HttpAttendance(target, upstream), routes) as client:
+        response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "error": {"code": "attendance_unreachable", "message": "attendance did not answer"}
+    }
 
 
 # --- _authorized: constant-time even for an unknown route ---

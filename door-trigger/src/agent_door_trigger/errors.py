@@ -19,6 +19,11 @@ from enum import IntEnum
 _FALLBACK_STATUS = 502
 
 
+#: Not a contract 02 §14 code. `attendance` never sends it: the webhook
+#: listener answers with it when a call to `attendance` gets no answer.
+CODE_UNREACHABLE = "attendance_unreachable"
+
+
 class ExitCode(IntEnum):
     """`agent-trigger fire`'s exit status: 0 when the job was accepted or
     queued, non-zero otherwise."""
@@ -59,6 +64,7 @@ WEBHOOK_STATUS: dict[str, int] = {
     "family_degraded": 503,
     "sandbox_unavailable": 503,
     "internal": 502,
+    CODE_UNREACHABLE: 502,
 }
 
 

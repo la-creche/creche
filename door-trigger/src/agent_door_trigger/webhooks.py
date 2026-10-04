@@ -20,13 +20,14 @@ import signal
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from .attendance import AttendanceClient
 from .config import ServeConfig
-from .errors import AttendanceError, webhook_status
+from .errors import CODE_UNREACHABLE, AttendanceError, webhook_status
 from .fire import Firing, TriggerKind, fire_trigger
 from .payload import MAX_PAYLOAD_BYTES, PayloadInvalid, PayloadTooLarge, read_payload
 from .routes import Route, RouteLookup
@@ -114,6 +115,17 @@ def _fire_webhook(
         )
         return JSONResponse(
             status_code=webhook_status(exc.code), content=_error(exc.code, exc.message)
+        )
+    except (OSError, httpx.HTTPError) as exc:
+        # A dead socket, a refused connection, a timeout: attendance did not
+        # refuse the job, it did not answer. The CLI maps the same failure
+        # (`cli.py`).
+        _LOG.warning(
+            "trigger %s/%s: cannot reach attendance: %s: %s", family, name, type(exc).__name__, exc
+        )
+        return JSONResponse(
+            status_code=webhook_status(CODE_UNREACHABLE),
+            content=_error(CODE_UNREACHABLE, "attendance did not answer"),
         )
 
     _LOG.info(

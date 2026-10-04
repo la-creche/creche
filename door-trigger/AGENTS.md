@@ -59,7 +59,7 @@ did.
 | a family that never validated | no route, cron or webhook |
 | `attendance` refuses the job | `fire`: one stderr line, exit 1. `serve`: the matching HTTP status. Never retried here. |
 | an oversized or invalid payload | `fire`: exit 2. `serve`: `413` or `400`. |
-| `attendance` cannot be reached | `fire`: exit 2, a different message than a refusal |
+| `attendance` cannot be reached | `fire`: exit 2, a different message than a refusal. `serve`: `502 attendance_unreachable`. |
 | a `quiet:` family's cron firing finds nothing changed | exit 0, no session |
 
 ## Configuration
