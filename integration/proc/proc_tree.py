@@ -418,8 +418,8 @@ def write_status(
 
     `max_running_turns` is the turn limit of an autonomous family. The
     queue limit goes with it, because only that kind has a queue (§2.1).
-    `webhooks` is each declared webhook: the document names the path of its
-    bearer and never the value (§6.4 rule 5). `written_at` is for a scenario
+    `webhooks` is each declared webhook: the document holds the path of the
+    bearer file and no bearer (§6.4 rule 5). `written_at` is for a scenario
     that plays a `caregiver` that stopped (§2 rule 5).
     """
     now = _rfc3339()
@@ -559,18 +559,16 @@ def webhook_token_of(family: str, name: str) -> str:
     return f"FIXTURE-WEBHOOK-{family}-{name}-{_TOKEN_FILL}"
 
 
-def write_webhook_token(
-    tree: Tree, family: str, name: str, token: str | None = None, mode: int = SECRET_MODE
-) -> None:
+def write_webhook_token(tree: Tree, family: str, name: str, token: str | None = None) -> None:
     """The bearer of one declared webhook (contract 05 §6.4): one file, mode 0600."""
     value = token if token is not None else webhook_token_of(family, name)
 
-    _atomic_write(tree.webhook_token_file(family, name), value + "\n", mode)
+    _atomic_write(tree.webhook_token_file(family, name), value + "\n", SECRET_MODE)
 
 
-def write_view_key(tree: Tree, key: str = VIEW_KEY) -> None:
+def write_view_key(tree: Tree) -> None:
     """The key file that the unit of the noticeboard names. Mode 0600."""
-    _atomic_write(tree.view_key_file, key + "\n", SECRET_MODE)
+    _atomic_write(tree.view_key_file, VIEW_KEY + "\n", SECRET_MODE)
 
 
 def write_validation_report(tree: Tree, family: str, issues: list[dict[str, Any]]) -> None:
@@ -601,18 +599,15 @@ def audit_record(
     args: dict[str, Any] | None = None,
     decision: str = "allow",
     reason: str = "granted",
-    session: str | None = None,
-    turn: str | None = None,
-    ts: str | None = None,
 ) -> dict[str, Any]:
-    """One audit record as the chaperone writes it (contract 04 §6.1 to §6.3).
+    """One audit record as the chaperone writes it now (contract 04 §6.1 to §6.3).
 
-    Every trusted field is present, and the three claimed keys are always
-    present (§6.2). The chain holds one entry: no delegation reached this
-    call (§6.3).
+    Every trusted field is present. The three claimed keys are present and
+    null, as for a call with no header (§6.2). The chain holds one entry:
+    no delegation reached this call (§6.3).
     """
     return {
-        "ts": ts if ts is not None else _rfc3339_ms(),
+        "ts": _rfc3339_ms(),
         "family": family,
         "sandbox_id": first_sandbox(family),
         "sandbox_id_trusted": True,
@@ -624,26 +619,23 @@ def audit_record(
         "latency_ms": 3,
         "waited_ms": 0,
         "gate": None,
-        "claimed": {"session_id": session, "turn_id": turn, "delegation_id": None},
+        "claimed": {"session_id": None, "turn_id": None, "delegation_id": None},
         "chain": [family],
     }
 
 
-def append_audit(tree: Tree, records: list[dict[str, Any]], day: str | None = None) -> Path:
-    """Append records to the audit file of one UTC day (contract 04 §6).
+def append_audit(tree: Tree, records: list[dict[str, Any]]) -> None:
+    """Append records to the audit file of this UTC day (contract 04 §6).
 
-    One record per line, LF as the delimiter, mode 0640. Returns the file.
+    One record per line, LF as the delimiter, mode 0640.
     """
-    name = day if day is not None else datetime.now(UTC).strftime("%Y-%m-%d")
-    path = tree.audit_dir / f"{name}.jsonl"
+    path = tree.audit_dir / f"{datetime.now(UTC).strftime('%Y-%m-%d')}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
 
     with path.open("a", encoding="utf-8") as handle:
         handle.writelines(json.dumps(record) + "\n" for record in records)
 
     path.chmod(AUDIT_MODE)
-
-    return path
 
 
 def write_tokens(tree: Tree) -> None:

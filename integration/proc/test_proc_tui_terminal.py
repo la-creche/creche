@@ -22,8 +22,8 @@ runs and waits, and the door has it released before the launcher looks.
 
 In the two other cases the playpen starts a pi process at about the time the
 launcher looks: for a new session (contract 03 §4.7 rule 8), and after a
-`tui` lease ended (contract 02 §10.5). What the launcher finds is then a
-matter of timing. The scenario of a new session and the scenario of
+`tui` lease ended (contract 02 §10.5). What the launcher finds then changes
+from run to run. The scenario of a new session and the scenario of
 `--force` assert only what holds in each order (`AGENTS.md`, Known gaps).
 """
 

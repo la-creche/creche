@@ -130,8 +130,8 @@ the pi stand-in                          found through AGENT_PI_BIN
 | Topology | A test plays | The service |
 |---|---|---|
 | `proc_trigger.py`: the trigger door and `attendance` | an automation on the LAN, over HTTP on a loopback port, and a systemd timer, which runs `agent-trigger fire` to its end | reads the registry, the status documents, the webhook bearer files and the outcome records. Dials `attendance` as `door-trigger`. |
-| `proc_tui.py`: the terminal door, the Open WebUI door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Runs `sbx exec -it` with the real launcher bundle, which starts the pi stand-in on the terminal. |
 | `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
+| `proc_tui.py`: the terminal door, the Open WebUI door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Runs `sbx exec -it` with the real launcher bundle, which starts the pi stand-in on the terminal. |
 
 | File | Topology | What the scenarios check |
 |---|---|---|
@@ -144,11 +144,11 @@ the pi stand-in                          found through AGENT_PI_BIN
 | `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: one job and its outcome record, a refused family, the queue, a refused start |
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
 | `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
-| `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, the release at exit and at a signal, a terminal exchange |
-| `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
 | `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, the one commit, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
+| `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, the release at exit and at a signal, a terminal exchange |
+| `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
 | `test_proc_terminal.py` | none | the pseudo-terminal of the harness: the keys, the signals, what it showed |
@@ -316,22 +316,23 @@ Work down this list.
   `attendance` starts a pi process for a session when a door creates it, and
   does not wait (contract 03 §4.7 rules 8 and 9). The terminal door creates
   the session, takes the lease and asks `attendance` to release that process
-  (contract 02 §5.11). The start is still on its way then, so `attendance`
+  (contract 02 §5.11). The start is not complete then, so `attendance`
   answers `released: false` and sends nothing. The order of the next two
-  events is a matter of timing. When the launcher looks first, two pi
+  events changes from run to run. When the launcher looks first, two pi
   processes hold one session store. When the playpen starts its process
   first, the launcher exits 8. This is a defect of the product, not of the
   suite. `test_ct_a_new_session_exists_before_pi_runs` asserts only what
   holds in each order.
-- **A release of the pi process is an answer, not an end.** `attendance`
-  answers `released: true` when it sent `stop_process` (contract 02 §5.11).
-  The pi process ends some time later. A launcher that looks at once can
-  find the process and exit 8. On the host `sbx exec -it` takes longer than
-  the end of pi. Here the launcher starts in about 100 ms. A pi process
-  that runs and waits ends in less, so a scenario on a session that ran a
-  turn is safe. A pi process that just started does not. The playpen starts
-  one when a `tui` lease ends (contract 02 §10.5), so a second terminal
-  directly after a first one is a matter of timing too.
+- **The answer to a release comes before the end of the pi process.**
+  `attendance` answers `released: true` when it sent `stop_process`
+  (contract 02 §5.11). The pi process ends later. A launcher that looks
+  immediately can find the process and exit 8. On the host `sbx exec -it`
+  takes longer than the end of pi. Here the launcher starts in about
+  100 ms. A pi process that runs and waits ends in less time, so a scenario
+  on a session that ran a turn is safe. A pi process that just started
+  needs more time. The playpen starts one when a `tui` lease ends
+  (contract 02 §10.5). So the result of a second terminal directly after a
+  first one also changes from run to run.
   `test_force_takes_an_idle_lease_from_another_terminal` stops at the lease
   for that reason.
 - **CONTRACT-QUESTION, the exit code of a refusal of the terminal door.** No
@@ -343,9 +344,9 @@ Work down this list.
   door renews every 20 seconds, and the lease of `attendance` lives 60
   seconds (contract 02 §7.1, §7.4). Neither number has a variable, so each
   scenario would wait that long.
-- **The pi stand-in is not the screen of pi.** On a terminal it reads one
-  command per line and ends at the end of the input. No scenario says
-  anything about what the real pi does with a key.
+- **The pi stand-in is not the interactive pi.** On a terminal it reads one
+  command per line, and it ends at the end of the input. No scenario says
+  what the real pi does with a key.
 - **A closed terminal differs by system.** Linux sends `SIGHUP` to the
   leader of the session and to the foreground group. macOS sends it to the
   leader alone. The scenario reads the lease and not the end of pi.
@@ -392,7 +393,7 @@ Work down this list.
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the `sbx` and `pi` wrappers, and the record each one leaves |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
-| `proc_owui.py`, `proc_delegate.py`, `proc_trigger.py`, `proc_tui.py`, `proc_board.py` | one topology each |
+| `proc_owui.py`, `proc_delegate.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py` | one topology each |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |

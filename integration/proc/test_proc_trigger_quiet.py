@@ -1,9 +1,9 @@
 """The quiet check of contract 01 §3.15, through the timer command.
 
-A cron firing of a family whose file holds `quiet` checks first. When
-nothing changed since the last good wake, the firing starts nothing: no
-session, no turn, no model call. Each scenario runs `agent-trigger fire` as
-a timer does, then reads what `attendance` got.
+A cron firing of a family whose file holds `quiet` runs a check first. When
+the check finds no change since the last good wake, the firing starts no
+session. Each scenario runs `agent-trigger fire` as a timer does, then reads
+what `attendance` got.
 
 The check keeps its own record at `state/triggers/quiet/<family>.json`
 (`docs/rework/spec.md` §10.2), and it reads the outcome records that
@@ -86,7 +86,7 @@ async def test_the_first_firing_wakes_the_family(quiet: TriggerStack) -> None:
 
 
 async def test_a_firing_with_nothing_changed_starts_nothing(quiet: TriggerStack) -> None:
-    """Every check holds, so the firing is skipped: no session, no turn."""
+    """The check finds no change, so the firing starts no session and no turn."""
     tree = quiet.tree
     await good_wake(quiet)
     await until(lambda: tree.sessions_of(REVIEW) == [], "the session of the first job to go")
@@ -100,7 +100,7 @@ async def test_a_firing_with_nothing_changed_starts_nothing(quiet: TriggerStack)
 
 
 async def test_force_fires_without_the_check(quiet: TriggerStack) -> None:
-    """Rule 5: a firing by hand is always meant."""
+    """Rule 5: `--force` skips the check."""
     await good_wake(quiet)
 
     forced = quiet.fire(REVIEW, FORCE_FLAG)
@@ -110,7 +110,7 @@ async def test_force_fires_without_the_check(quiet: TriggerStack) -> None:
 
 
 async def test_a_webhook_firing_is_never_checked(quiet: TriggerStack) -> None:
-    """A webhook carries a payload, and a payload is work."""
+    """A webhook firing has a payload, so it starts a job each time."""
     await good_wake(quiet)
     quiet.start_listener()
 
@@ -123,7 +123,7 @@ async def test_a_webhook_firing_is_never_checked(quiet: TriggerStack) -> None:
 
 
 async def test_a_firing_while_a_wake_is_live_is_skipped(quiet: TriggerStack) -> None:
-    """Rule 3: a second firing would only wait behind the wake that runs."""
+    """Rule 3: while a wake of the family runs, a second firing starts nothing."""
     tree = quiet.tree
     set_pi_env(tree, **HELD_TURN)
     first = quiet.fire(REVIEW)
@@ -156,7 +156,7 @@ async def test_a_wake_that_failed_is_no_good_wake(quiet: TriggerStack) -> None:
 
 
 async def test_a_record_that_does_not_parse_wakes_the_family(quiet: TriggerStack) -> None:
-    """Rule 1: the check fails open. A file it cannot parse is a reason to wake."""
+    """Rule 1: a record that the check cannot read wakes the family."""
     tree = quiet.tree
     await good_wake(quiet)
     record = tree.state_root / "triggers" / "quiet" / f"{REVIEW}.json"
@@ -189,14 +189,14 @@ async def test_the_daily_call_wakes_the_family_until_the_audit_holds_it(
     assert len(await _jobs(tree, 2)) == 2, "the call was owed, so the firing must wake"
     await until(lambda: tree.sessions_of(REVIEW) == [], "the session of the second job to go")
 
-    clear = _fire_with_the_call_in_the_audit(stack)
+    clear = _fire_after_the_call(stack)
 
     assert clear.exit_code == 0, clear.stderr
     assert QUIET_ANSWER in clear.stdout
     assert len(tree.outcomes(REVIEW)) == 2
 
 
-def _fire_with_the_call_in_the_audit(stack: TriggerStack) -> Finished:
+def _fire_after_the_call(stack: TriggerStack) -> Finished:
     """Write the audit record of the daily call, then fire, both in one UTC day."""
     while True:
         day = _utc_day()

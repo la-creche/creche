@@ -33,15 +33,15 @@ from proc_board import (
 )
 from proc_html import form_values, table_rows
 from proc_registry import FILE_COMMENT, family_path
-from proc_tree import FAMILY, VIEW_KEY
+from proc_tree import FAMILY
 
 NEW_DESCRIPTION = "Answers in metric units."
 SUBJECT = "Change what the chat family says it is"
 SUBJECT_FIELD = "subject"
 OTHER_ORIGIN = "http://other.example"
 
-#: A cookie and a field that agree with each other and not with the form.
-FORGED_TOKEN = "forged-token-" + "f" * 32
+#: A token that the noticeboard did not give to this form.
+OTHER_TOKEN = "another-token-" + "t" * 32
 
 FIRST_COMMIT = 1
 
@@ -62,22 +62,13 @@ class Browser:
         self.values = form_values(html_of(response).one("form"))
         self.cookie = csrf_of(response)
 
-    async def post(
-        self,
-        verb: str,
-        *,
-        cookie: str | None = None,
-        origin: str | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> httpx.Response:
-        """Click one button. A browser sends the cookie and its own origin."""
-        sent = {
-            "Cookie": f"{CSRF_COOKIE}={self.cookie if cookie is None else cookie}",
-            "Origin": self.stack.origin if origin is None else origin,
-        }
+    def sender(self) -> dict[str, str]:
+        """What a browser on the page of the form sends: its cookie and its origin."""
+        return {"Cookie": f"{CSRF_COOKIE}={self.cookie}", "Origin": self.stack.origin}
 
-        if headers is not None:
-            sent = headers
+    async def post(self, verb: str, headers: dict[str, str] | None = None) -> httpx.Response:
+        """Click one button. `headers` takes the place of what a browser sends."""
+        sent = self.sender() if headers is None else headers
 
         return await self.client.post(
             self.path, data=self.values | {VERB_FIELD: verb}, headers=sent
@@ -197,8 +188,7 @@ async def test_a_save_for_a_family_that_is_not_there_writes_nothing(
 
 
 @pytest.mark.parametrize(
-    "case",
-    ["no-cookie", "forged-pair", "another-field", "another-origin", "no-sender"],
+    "case", ["no-cookie", "another-cookie", "another-field", "another-origin", "no-sender"]
 )
 async def test_a_post_that_fails_the_csrf_check_is_refused(
     board_alone: BoardStack, case: str
@@ -209,31 +199,30 @@ async def test_a_post_that_fails_the_csrf_check_is_refused(
     domain can hold a token that leaked.
     """
     tree = board_alone.tree
-    key = {"X-View-Key": VIEW_KEY}
 
     async with board_alone.client() as client:
         browser = Browser(board_alone, client, FAMILY)
         await browser.open()
         token = browser.cookie
         browser.values["description"] = NEW_DESCRIPTION
+        headers = browser.sender()
 
         if case == "no-cookie":
-            response = await browser.post(VERB_SAVE, headers={"Origin": board_alone.origin})
-        elif case == "forged-pair":
-            response = await browser.post(VERB_SAVE, cookie=FORGED_TOKEN)
+            del headers["Cookie"]
+        elif case == "another-cookie":
+            headers["Cookie"] = f"{CSRF_COOKIE}={OTHER_TOKEN}"
         elif case == "another-field":
-            browser.values[CSRF_FIELD] = FORGED_TOKEN
-            response = await browser.post(VERB_SAVE)
+            browser.values[CSRF_FIELD] = OTHER_TOKEN
         elif case == "another-origin":
-            response = await browser.post(VERB_SAVE, origin=OTHER_ORIGIN)
+            headers["Origin"] = OTHER_ORIGIN
         else:
-            response = await browser.post(
-                VERB_SAVE, headers={"Cookie": f"{CSRF_COOKIE}={token}"} | key
-            )
+            del headers["Origin"]
+
+        response = await browser.post(VERB_SAVE, headers)
 
     assert response.status_code == httpx.codes.FORBIDDEN
     assert token not in response.text
-    assert FORGED_TOKEN not in response.text
+    assert OTHER_TOKEN not in response.text
     assert proc_registry.commit_count(tree) == FIRST_COMMIT
     assert proc_registry.uncommitted(tree) == ""
 
@@ -244,13 +233,10 @@ async def test_a_post_with_a_referer_and_no_origin_is_accepted(board_alone: Boar
         browser = Browser(board_alone, client, FAMILY)
         await browser.open()
         browser.values["description"] = NEW_DESCRIPTION
-        response = await browser.post(
-            VERB_SAVE,
-            headers={
-                "Cookie": f"{CSRF_COOKIE}={browser.cookie}",
-                "Referer": f"{board_alone.origin}/families/{FAMILY}/edit",
-            },
-        )
+        headers = browser.sender()
+        del headers["Origin"]
+        headers["Referer"] = f"{board_alone.origin}/families/{FAMILY}/edit"
+        response = await browser.post(VERB_SAVE, headers)
 
     assert response.status_code == httpx.codes.SEE_OTHER
     assert proc_registry.commit_count(board_alone.tree) == FIRST_COMMIT + 1

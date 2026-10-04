@@ -25,7 +25,7 @@ PAGE = """<!DOCTYPE html>
 <tr><td colspan="2">a row that spans the table</td></tr>
 </tbody>
 </table>
-<p class="problem">Tom &amp; Jerry &#39;quoted&#39;</p>
+<p class="problem">salt &amp; pepper &#39;quoted&#39;</p>
 </body></html>
 """
 
@@ -70,7 +70,7 @@ def test_the_text_of_an_element_is_what_a_person_reads() -> None:
     page = parse(PAGE)
 
     assert page.one("span", "badge").text == "in sync"
-    assert page.one("p", "problem").text == "Tom & Jerry 'quoted'"
+    assert page.one("p", "problem").text == "salt & pepper 'quoted'"
 
 
 def test_the_links_are_in_page_order() -> None:
