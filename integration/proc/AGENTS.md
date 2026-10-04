@@ -351,10 +351,20 @@ that a scenario relies on. Add a test there when you add a rule.
 2. Give the class a function that returns the environment of each new
    service. Use the variables of the unit file and no others.
 3. Write each new file of the root in `proc_tree.py`, from its contract.
-   Write a file of the registry in `proc_registry.py`.
 4. Start a service that listens on a port with `start_on_port`.
 5. Add a fixture to `conftest.py`. Make it depend on `supervisor`, which ends
    every process.
+
+A family file has two forms. One function writes each form into the
+registry: `write_registry_file` of `proc_tree.py`, which replaces a file by
+rename. Use the form of the table for a new topology.
+
+| Form | Functions | Topology |
+|---|---|---|
+| a mapping | `family_body` and `write_family_file` of `proc_tree.py` | the third. `caregiver` reads the file, and a scenario changes one field of it. |
+| a text with a comment line | `family_text` and `write_family` of `proc_registry.py` | the fourth and the fifth. A save of the noticeboard must keep the comment. |
+
+The first, the second and the sixth topology have no registry.
 
 A service that cannot start without a code change stops the work. Report the
 file, the constant and the variable that is missing. Do not change product
@@ -618,7 +628,7 @@ the text of the failure. Work down this list.
 | `proc_harness.py` | a child in its own process group, the wait for an address, the teardown, the check at session end |
 | `proc_terminal.py`, `proc_login.py` | the test side of a pseudo-terminal, and the program that gives a command its controlling terminal |
 | `proc_tree.py` | the root, and one writer for each file a service reads |
-| `proc_registry.py` | the registry of the root: each family file, the git repository, and what `git` reports |
+| `proc_registry.py` | the registry of the root: the text of a family file, the git repository, and what `git` reports |
 | `proc_ids.py` | the ids that a door mints |
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |

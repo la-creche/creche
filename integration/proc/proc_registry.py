@@ -23,11 +23,15 @@ import subprocess
 from dataclasses import dataclass
 from typing import Final
 
-from proc_tree import ATTENDED, AUTONOMOUS, INSTRUCTIONS, MODEL_ALIAS, THIN, Tree
-
-FAMILY_FILE: Final = "family.yaml"
-INSTRUCTIONS_FILE: Final = "instructions.md"
-FAMILIES_DIR: Final = "families"
+from proc_tree import (
+    ATTENDED,
+    AUTONOMOUS,
+    MODEL_ALIAS,
+    THIN,
+    Tree,
+    write_family_prose,
+    write_registry_file,
+)
 
 #: A comment in each family file. A save of the noticeboard must keep it
 #: (`docs/rework/spec.md` §8.2 step 1).
@@ -120,11 +124,14 @@ def family_text(
 
 
 def write_family(tree: Tree, name: str, text: str) -> None:
-    """Put one family in the checkout: its file and its instructions."""
-    directory = tree.registry_root / FAMILIES_DIR / name
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / FAMILY_FILE).write_text(text, encoding="utf-8")
-    (directory / INSTRUCTIONS_FILE).write_text(INSTRUCTIONS, encoding="utf-8")
+    """Put one family in the checkout: its instructions, then its file.
+
+    `proc_tree.py` writes each file of the registry, by rename. This module
+    gives the text of a family file. `family_body` of `proc_tree.py` gives a
+    mapping, for a topology in which `caregiver` reads the file.
+    """
+    write_family_prose(tree, name)
+    write_registry_file(tree, tree.family_file(name), text)
 
 
 def write_attended(tree: Tree, name: str, delegates: tuple[str, ...] = ()) -> None:
@@ -153,12 +160,12 @@ def write_autonomous(
 
 
 def family_path(tree: Tree, name: str) -> str:
-    """The path of one family file, relative to the checkout."""
-    return f"{FAMILIES_DIR}/{name}/{FAMILY_FILE}"
+    """The path of one family file, relative to the checkout, as `git` prints it."""
+    return tree.family_file(name).relative_to(tree.registry_root).as_posix()
 
 
 def read_family(tree: Tree, name: str) -> str:
-    return (tree.registry_root / family_path(tree, name)).read_text(encoding="utf-8")
+    return tree.family_file(name).read_text(encoding="utf-8")
 
 
 def commit_all(tree: Tree, subject: str = _FIRST_SUBJECT) -> None:
