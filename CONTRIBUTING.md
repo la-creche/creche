@@ -16,7 +16,8 @@ workflow: branches, hooks, CI, tags and releases.
 ## Hooks
 
 `githooks/pre-commit` runs `bin/quality-gate.sh` with no flag: ruff, ruff
-format and pyright.
+format and pyright. When the index or the work tree differs from `HEAD`
+under `rust/`, it also runs `cargo fmt` and `cargo clippy`.
 
 `githooks/pre-push` runs the same checks, then tests:
 
@@ -24,11 +25,27 @@ format and pyright.
 |---|---|
 | a path under a package, for example `chaperone/app.py` | that package's suite, `--tests-for` |
 | a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite, `--tests` |
+| a path under `rust/`, for example `rust/Cargo.lock` | `cargo fmt`, `cargo clippy` and `cargo test`, and no pytest suite for that path |
 | Markdown only, outside `tests/` and `fixtures/` | the tests marked `docs`, `--docs` |
 | nothing, or a deleted branch | no test |
 
 A package is the directory above a `testpaths` entry in the root
 `pyproject.toml`. A new suite needs no change to the hook.
+
+The cargo steps are `bin/rust-gate.sh`. The rule that starts them is
+`bin/lib/rustrule.sh`.
+
+- A commit or a push with no path under `rust/` starts no cargo step. It
+  needs no `cargo` on `PATH`.
+- A commit or a push with a path under `rust/` needs `cargo`. Without it the
+  gate fails before the first check.
+- The commit that concludes a merge needs no `cargo` when only the other
+  side changed `rust/`. An own change under `rust/` in that commit needs
+  `cargo`.
+- A push that changes Rust and Python runs the cargo steps and the Python
+  suites.
+- When the hook cannot read what a push changes, it runs the full suite and
+  the cargo steps. That push needs `cargo`.
 
 No hook checks a commit message. Check the subject against the seven rules
 in `AGENTS.md` yourself.
@@ -36,14 +53,19 @@ in `AGENTS.md` yourself.
 ## CI
 
 `.github/workflows/gate.yml` runs on every pull request and on every merge
-group. It has four kinds of job:
+group. It has five kinds of job:
 
 1. `lint`: ruff, ruff format, pyright. On a docs-only pull request it also
    runs the tests marked `docs`.
 2. `tests`: the full Python suite, as four shards. A test's own id puts it in
    exactly one shard.
 3. `playpen`: `pnpm test`, `pnpm run typecheck` and `pnpm run build`.
-4. `gate`: red unless every other job passed. This is the one check the
+4. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
+   `rust/rust-toolchain.toml` names. When the pull request changes no path
+   under `rust/`, the job skips those steps and passes. A change to the Rust
+   checks themselves also runs the steps. `rust_gate_path` in
+   `bin/lib/rustrule.sh` lists those files.
+5. `gate`: red unless every other job passed. This is the one check the
    merge queue and the release executor read.
 
 Comment `!retest` on a pull request to restart its CI on the same commit.
@@ -65,6 +87,7 @@ component's own newest tag.
 - A component's paths include every workspace package its build installs. A
   change under `family/` moves `attendance`, `caregiver` and `noticeboard`.
   A change to `uv.lock` moves every venv component.
+- A change under `rust/` moves no component. No release uses Rust code.
 - Only CI mints a Release. The release executor refuses a Release that
   `github-actions[bot]` did not author. Do not push a tag by hand.
 - A re-run on the same commit is a no-op. A tag is never moved or deleted.
