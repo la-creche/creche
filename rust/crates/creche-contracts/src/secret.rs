@@ -242,6 +242,22 @@ mod tests {
     }
 
     #[test]
+    fn an_offer_that_differs_in_one_bit_does_not_match() {
+        let bytes = [0x00, 0xff, b'a', 0x80, 0x7f];
+        let token = Secret::try_from(bytes.to_vec()).unwrap();
+        for at in 0..bytes.len() {
+            for bit in 0..u8::BITS {
+                let mut offered = bytes;
+                offered[at] ^= 1 << bit;
+
+                assert!(!token.matches(&offered), "byte {at}, bit {bit}");
+            }
+        }
+
+        assert!(token.matches(&bytes));
+    }
+
+    #[test]
     fn an_offer_that_repeats_the_secret_does_not_match() {
         assert!(!secret("ab").matches(b"abab"));
         assert!(!secret("a").matches(b"aaaa"));
