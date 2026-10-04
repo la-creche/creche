@@ -1,26 +1,47 @@
-"""`bounded_yaml.load` is `yaml.safe_load` with two limits on merge keys.
+"""`bounded_yaml.load` is `yaml.safe_load` with two limits on merge keys
+and one limit on aliases.
 
 Under the limits the two readers give the same value and the same error.
-Past a limit, `bounded_yaml.load` raises `MergeLimitError`, which is a
-`yaml.YAMLError` with the line of the mapping.
+Past a limit of the merge keys, `bounded_yaml.load` raises `MergeLimitError`,
+which is a `yaml.YAMLError` with the line of the mapping. Past the limit of
+the aliases it raises `AliasLimitError`, which is a `yaml.YAMLError` with
+the line of the anchor.
 
-The limits are those of the Rust reader of a manifest: a chain of 128 merge
-keys, and 65,536 copied pairs in one document.
+The limits of the merge keys are those of the Rust reader of a manifest: a
+chain of 128 merge keys, and 65,536 copied pairs in one document. The
+aliases of one document stand for 262,144 nodes at most.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Final
+from typing import Final, cast
 
 import pytest
 import yaml
-from chaperone.bounded_yaml import MERGE_DEPTH_MAX, MERGE_PAIRS_MAX, MergeLimitError
+from chaperone.bounded_yaml import (
+    ALIAS_NODES_MAX,
+    MERGE_DEPTH_MAX,
+    MERGE_PAIRS_MAX,
+    AliasLimitError,
+    MergeLimitError,
+)
 
 from chaperone import bounded_yaml
 
 #: The pairs of the mapping that `_copies` merges.
 PAIRS: Final = 256
+
+#: The items of the list that `_aliases` shares. One alias of that list
+#: stands for the list and for each item: 512 nodes.
+ITEMS: Final = 511
+ALIAS_NODES: Final = ITEMS + 1
+
+#: A text whose aliases stand for 28 nodes. The list `a` is 4 nodes, so `b`
+#: is 9 nodes and its two aliases stand for 8. The two aliases of `b` stand
+#: for 18, and the two aliases of the text `s` for 2.
+NESTED_ALIASES: Final = "a: &a [1, 1, 1]\nb: &b [*a, *a]\nc: [*b, *b]\ns: &s x\nd: {*s : *s}\n"
+NESTED_ALIAS_NODES: Final = 28
 
 
 def _chain(levels: int) -> str:
@@ -45,6 +66,15 @@ def _copies(merges: int, more: str = "") -> str:
     return f"one: &one {{z: 1}}\nbase: &a {{{pairs}}}\nall: {{<<: [{aliases}{more}]}}\n"
 
 
+def _aliases(count: int, more: str = "") -> str:
+    """A list `all` of `count` aliases of one list of `ITEMS` items, and
+    then the aliases that `more` names."""
+    items = ", ".join(["1"] * ITEMS)
+    aliases = ", ".join(["*a"] * count)
+
+    return f"one: &one 1\nbase: &a [{items}]\nall: [{aliases}{more}]\n"
+
+
 #: Texts under the limits, with each form of a merge key that PyYAML reads
 #: or refuses in a way of its own.
 UNDER_THE_LIMITS: Final = (
@@ -63,6 +93,10 @@ UNDER_THE_LIMITS: Final = (
     pytest.param("{<<: 5}", id="merge-of-a-number"),
     pytest.param("{<<: [5]}", id="merge-of-a-list-of-numbers"),
     pytest.param("!!omap [{<<: {a: 1}}]", id="merge-key-in-an-ordered-map"),
+    pytest.param("a: &a [1, 2]\nb: [*a, *a]\n", id="an-alias"),
+    pytest.param("a: &a [1, 2]\nb: {*a : 1}\n", id="an-alias-of-a-list-as-a-key"),
+    pytest.param("a: *b\n", id="an-alias-of-no-anchor"),
+    pytest.param(NESTED_ALIASES, id="an-alias-in-the-value-of-an-alias"),
     pytest.param("a: 1\n---\nb: 2\n", id="two-documents"),
     pytest.param("a: [1, 2\n", id="list-with-no-end"),
 )
@@ -126,3 +160,104 @@ def test_the_count_is_of_one_document() -> None:
     text = _copies(PAIRS)
 
     assert bounded_yaml.load(text) == bounded_yaml.load(text)
+
+
+def test_alias_nodes_at_the_limit_read() -> None:
+    assert ALIAS_NODES * ALIAS_NODES == ALIAS_NODES_MAX == 262_144
+
+    value = bounded_yaml.load(_aliases(ALIAS_NODES))
+
+    assert isinstance(value, dict)
+    rows = cast("dict[str, list[object]]", value)
+    assert len(rows["all"]) == ALIAS_NODES
+    assert all(item is rows["base"] for item in rows["all"])
+
+
+def test_one_alias_node_past_the_limit_is_refused() -> None:
+    with pytest.raises(AliasLimitError) as caught:
+        bounded_yaml.load(_aliases(ALIAS_NODES, more=", *one"))
+
+    assert f"more than {ALIAS_NODES_MAX} nodes" in str(caught.value)
+
+
+def test_the_alias_refusal_is_a_yaml_error_with_the_line_of_the_anchor() -> None:
+    with pytest.raises(yaml.MarkedYAMLError) as caught:
+        bounded_yaml.load(_aliases(ALIAS_NODES + 1))
+
+    mark = caught.value.problem_mark
+    assert mark is not None
+    assert mark.line == 1
+
+
+def test_an_alias_stands_for_each_node_that_its_anchor_holds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The count of `NESTED_ALIASES` is `NESTED_ALIAS_NODES`: the text reads
+    with that limit, and does not read with one node less."""
+    monkeypatch.setattr(bounded_yaml, "ALIAS_NODES_MAX", NESTED_ALIAS_NODES)
+    assert bounded_yaml.load(NESTED_ALIASES) == yaml.safe_load(NESTED_ALIASES)
+
+    monkeypatch.setattr(bounded_yaml, "ALIAS_NODES_MAX", NESTED_ALIAS_NODES - 1)
+    with pytest.raises(AliasLimitError):
+        bounded_yaml.load(NESTED_ALIASES)
+
+
+def test_a_text_with_no_alias_has_no_node_to_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The limit holds what the aliases add, and not the size of a text."""
+    monkeypatch.setattr(bounded_yaml, "ALIAS_NODES_MAX", 0)
+
+    assert bounded_yaml.load("a: [1, 2, 3]\nb: {c: d}\n") == {"a": [1, 2, 3], "b": {"c": "d"}}
+    with pytest.raises(AliasLimitError):
+        bounded_yaml.load("a: &a 1\nb: *a\n")
+
+
+def test_a_list_alias_inside_its_own_anchor_stands_for_one_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Such an alias has no size that ends. PyYAML reads the text, and the
+    value holds itself."""
+    monkeypatch.setattr(bounded_yaml, "ALIAS_NODES_MAX", 2)
+
+    value = bounded_yaml.load("&a [*a, *a]")
+
+    assert isinstance(value, list)
+    items = cast("list[object]", value)
+    assert items[0] is value
+    assert items[1] is value
+
+    monkeypatch.setattr(bounded_yaml, "ALIAS_NODES_MAX", 1)
+    with pytest.raises(AliasLimitError):
+        bounded_yaml.load("&a [*a, *a]")
+
+
+def test_a_mapping_alias_inside_its_own_anchor_stands_for_one_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bounded_yaml, "ALIAS_NODES_MAX", 1)
+
+    value = bounded_yaml.load("&a {k: *a}")
+
+    assert isinstance(value, dict)
+    assert cast("dict[str, object]", value)["k"] is value
+
+
+def test_a_text_whose_aliases_double_is_refused_before_a_value_is_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each list holds the list before it two times. The limit stops the
+    read at the node graph, where the text is still small."""
+    levels = 64
+    text = "l0: &l0 [1]\n" + "".join(
+        f"l{n}: &l{n} [*l{n - 1}, *l{n - 1}]\n" for n in range(1, levels)
+    )
+    built: list[yaml.Node] = []
+
+    def build(_loader: bounded_yaml.BoundedLoader, node: yaml.Node) -> None:
+        built.append(node)
+
+    monkeypatch.setattr(bounded_yaml.BoundedLoader, "construct_document", build)
+
+    with pytest.raises(AliasLimitError):
+        bounded_yaml.load(text)
+
+    assert built == []

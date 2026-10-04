@@ -183,9 +183,9 @@ directory is not a workspace package, so a change here does not change
   has a run.
 - `config.roster` holds the tree of a roster file and no YAML text. No
   vector covers what PyYAML does with the text of a file: a comment, an
-  alias, a tab or a plain `yes`. No vector covers the two limits that the
-  chaperone holds on the merge keys of that text. No Rust type reads the
-  text of a roster.
+  alias, a tab or a plain `yes`. No vector covers the three limits that the
+  chaperone holds on the merge keys and on the aliases of that text. No Rust
+  type reads the text of a roster.
 - No vector covers the roster writer, `handover.executor.roster`.
 - Four configs have no entry point that takes a map of variables, so no
   vector covers them: `chaperone.__main__`, `caregiver.cli`,

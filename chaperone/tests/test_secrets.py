@@ -100,3 +100,42 @@ def test_merge_keys_past_the_limit_are_a_file_that_will_not_parse(
     assert LEAK not in str(caught.value)
     assert caught.value.__cause__ is None
     assert caught.value.__suppress_context__
+
+
+#: The items of the list that `_shared` shares, and the count of aliases
+#: that stands for as many nodes as the reader takes. One alias stands for
+#: the list and for each item: 512 nodes.
+ITEMS = 511
+ALIASES_AT_THE_LIMIT = 512
+
+
+def _shared(aliases: int) -> str:
+    """A monolith with one name, and with `aliases` aliases of one list of
+    `ITEMS` items in the value of another name."""
+    items = ", ".join([LEAK] * ITEMS)
+
+    return f"base: &a [{items}]\nall: [{', '.join(['*a'] * aliases)}]\nkagi_api_key: {LEAK}\n"
+
+
+def test_aliases_at_the_limit_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(subprocess, "run", _fake_sops(_shared(ALIASES_AT_THE_LIMIT)))
+
+    found = load_sops_secrets(tmp_path / "s.enc.yaml")
+
+    assert found == {"kagi_api_key": LEAK}
+
+
+def test_aliases_past_the_limit_are_a_file_that_will_not_parse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The error names a line and nothing of the content, as each other
+    error of this reader does."""
+    monkeypatch.setattr(subprocess, "run", _fake_sops(_shared(ALIASES_AT_THE_LIMIT + 1)))
+
+    with pytest.raises(SecretsFormatError) as caught:
+        load_sops_secrets(tmp_path / "s.enc.yaml")
+
+    assert "aliases past a limit at line 1, column 7" in str(caught.value)
+    assert LEAK not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__

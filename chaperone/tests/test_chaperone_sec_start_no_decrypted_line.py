@@ -86,6 +86,13 @@ PAST_THE_MERGE_LIMIT: Final = (
     f"<<: [{', '.join(['*a'] * 257)}]\n"
 )
 
+#: A monolith with 513 aliases of one list of 511 items. The aliases stand
+#: for 512 more nodes than the reader takes (`bounded_yaml`). No hand edit
+#: makes this case of `NOT_YAML`.
+PAST_THE_ALIAS_LIMIT: Final = (
+    f"base: &a [{', '.join([LEAK] * 511)}]\nall: [{', '.join(['*a'] * 513)}]\n"
+)
+
 #: A decrypted monolith that will not parse, and where it breaks. Each one
 #: is a real way a hand edit goes wrong.
 NOT_YAML: Final = (
@@ -133,6 +140,11 @@ NOT_YAML: Final = (
         PAST_THE_MERGE_LIMIT,
         "merge keys past a limit at line 1, column 7",
         id="merge-keys-past-a-limit",
+    ),
+    pytest.param(
+        PAST_THE_ALIAS_LIMIT,
+        "aliases past a limit at line 1, column 7",
+        id="aliases-past-a-limit",
     ),
 )
 

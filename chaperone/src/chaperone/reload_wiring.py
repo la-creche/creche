@@ -104,7 +104,7 @@ TRIGGER_SIGNAL = signal.SIGHUP
 #:   ValueError      bytes that are not UTF-8, or a scalar YAML cannot build
 #:                   (`2001-02-30` is a date with no day 30 in February)
 #:   YAMLError       YAML that will not parse: the syntax, a tab, an alias,
-#:                   merge keys past a limit (`bounded_yaml`)
+#:                   merge keys or aliases past a limit (`bounded_yaml`)
 #:   RecursionError  nesting deeper than the parser can recurse
 FILE_FAILURES: Final = (OSError, ValueError, yaml.YAMLError, RecursionError)
 
