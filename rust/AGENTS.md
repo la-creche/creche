@@ -655,8 +655,8 @@ Rules for the test:
 
 - `bin/tests/test_rust_workspace.py` pins each table of `deny.toml`, entry
   for entry.
-- A new license or a new source needs a change to that pin in the same
-  commit. Give the reason in the commit message.
+- To add a license or a source, change that pin in the same commit. Give
+  the reason in the commit message.
 - The same rule applies to each other entry, for example an advisory that
   the check ignores.
 - The checks read each crate that a build for one of four targets can use:
