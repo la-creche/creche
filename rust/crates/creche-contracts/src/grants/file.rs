@@ -7,8 +7,9 @@
 //! - The caregiver fills a [`RawGrantFile`], converts it, and writes
 //!   [`GrantFile::to_bytes`].
 //!
-//! The two paths end in one check, so the caregiver cannot write a file that
-//! the chaperone refuses.
+//! The two paths end in one check of each field. [`GrantFile::to_bytes`]
+//! refuses to write more bytes than the chaperone reads. So the caregiver
+//! cannot write a file that the chaperone refuses.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -1070,8 +1071,17 @@ impl GrantFile {
     /// The servers are in the order of their names. The verbs of the catalog
     /// are in the order of [`Verb::ALL`], and each other verb follows in the
     /// order of its name.
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
+    ///
+    /// A valid value can be longer than [`GRANT_FILE_MAX_BYTES`] as a file,
+    /// and the chaperone refuses such a file (contract 04 §1.2). The list of
+    /// tools of a server has no cap on its count. The writer adds an indent,
+    /// and it writes one character outside ASCII as 6 or 12 bytes. So a file
+    /// that the reader took can be too long when the writer writes it again.
+    ///
+    /// This is a process edge. When the function refuses, the caregiver
+    /// writes no file: it never writes a grant file that it knows to be wrong
+    /// (contract 04 §1.3 rule 1).
+    pub fn to_bytes(&self) -> Result<Vec<u8>, GrantWriteError> {
         let style = Style {
             layout: Layout::Indented,
             charset: Charset::Ascii,
@@ -1080,8 +1090,11 @@ impl GrantFile {
         let mut text = String::new();
         json::write(&self.document(), style, &mut text);
         text.push('\n');
+        if text.len() > GRANT_FILE_MAX_BYTES {
+            return Err(GrantWriteError::TooLarge { bytes: text.len() });
+        }
 
-        text.into_bytes()
+        Ok(text.into_bytes())
     }
 
     fn document(&self) -> Value {
@@ -1219,6 +1232,30 @@ impl fmt::Display for GrantError {
 }
 
 impl Error for GrantError {}
+
+/// Why the caregiver does not write a grant file.
+///
+/// The set is closed. The caregiver makes each value, and no process reads
+/// one from a wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrantWriteError {
+    /// The file has more bytes than [`GRANT_FILE_MAX_BYTES`]. The chaperone
+    /// refuses such a file.
+    TooLarge {
+        /// The count of bytes.
+        bytes: usize,
+    },
+}
+
+impl fmt::Display for GrantWriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge { bytes } => write!(f, "{bytes} bytes exceeds the cap"),
+        }
+    }
+}
+
+impl Error for GrantWriteError {}
 
 /// Why the chaperone does not serve the grant file of one family.
 ///
@@ -2167,7 +2204,7 @@ mod tests {
             ..raw()
         })
         .unwrap();
-        let bytes = grants.to_bytes();
+        let bytes = grants.to_bytes().unwrap();
         let text = String::from_utf8(bytes.clone()).unwrap();
         let place = |verb: &str| text.find(&format!("\"{verb}\"")).unwrap();
 
@@ -2176,6 +2213,83 @@ mod tests {
         assert!(place("embed") < place("release"));
         assert!(place("release") < place("a_new_verb"));
         assert!(place("a_new_verb") < place("teleport"));
+    }
+
+    /// A grant file with `tools` tools of 64 bytes for one server, and a
+    /// model alias of `alias` characters.
+    fn with_tools(tools: usize, alias: usize) -> GrantFile {
+        let tools = (0..tools).map(|tool| format!("tool_{tool:059}")).collect();
+
+        GrantFile::try_from(RawGrantFile {
+            model_alias: "m".repeat(alias),
+            tools: BTreeMap::from([("kagi".to_owned(), tools)]),
+            ..raw()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn the_writer_refuses_a_file_over_the_cap() {
+        // A list of tools has no cap on its count, so the raw form converts.
+        let error = with_tools(4000, 1).to_bytes().unwrap_err();
+        let GrantWriteError::TooLarge { bytes } = error;
+
+        assert!(bytes > GRANT_FILE_MAX_BYTES);
+        assert_eq!(error.to_string(), format!("{bytes} bytes exceeds the cap"));
+
+        let error: &dyn Error = &error;
+
+        assert!(error.source().is_none());
+    }
+
+    #[test]
+    fn the_writer_writes_a_file_of_the_cap_and_no_byte_more() {
+        // One tool is one line of 74 bytes. The alias then fills the file to
+        // the cap: one character of it is one byte.
+        let line =
+            with_tools(2, 1).to_bytes().unwrap().len() - with_tools(1, 1).to_bytes().unwrap().len();
+        let empty = with_tools(1, 1).to_bytes().unwrap().len() - line;
+        let tools = (GRANT_FILE_MAX_BYTES - empty) / line;
+        let alias = 1 + (GRANT_FILE_MAX_BYTES - empty) % line;
+        let at_cap = with_tools(tools, alias);
+        let bytes = at_cap.to_bytes().unwrap();
+
+        assert_eq!(line, 74);
+        assert_eq!(bytes.len(), GRANT_FILE_MAX_BYTES);
+        assert_eq!(GrantFile::parse(&bytes, &family("chat")), Ok(at_cap));
+        assert_eq!(
+            with_tools(tools, alias + 1).to_bytes(),
+            Err(GrantWriteError::TooLarge {
+                bytes: GRANT_FILE_MAX_BYTES + 1
+            })
+        );
+    }
+
+    #[test]
+    fn a_file_that_the_reader_took_can_be_too_long_to_write() {
+        // GRINNING FACE is 4 bytes in the file that the reader takes. The
+        // writer writes it as two `\u` escapes, which are 12 bytes.
+        let entry = "\u{1f600}".repeat(250);
+        let entries = vec![format!("\"{entry}\""); 250].join(",");
+        let text = format!(
+            "{{\"version\":2,\"family\":\"chat\",\"rev\":\"reg-9f21c4\",\
+             \"token_sha256\":[\"{DIGEST}\"],\"model_alias\":\"fast\",\"approval\":[{entries}]}}"
+        );
+        let grants = GrantFile::parse(text.as_bytes(), &family("chat")).unwrap();
+        let rotated = grants.rotated(
+            "reg-000002".parse().unwrap(),
+            TokenDigests::one(OTHER_DIGEST.parse().unwrap()),
+        );
+
+        assert!(text.len() <= GRANT_FILE_MAX_BYTES);
+        assert!(matches!(
+            grants.to_bytes(),
+            Err(GrantWriteError::TooLarge { bytes }) if bytes > 2 * GRANT_FILE_MAX_BYTES
+        ));
+        assert!(matches!(
+            rotated.to_bytes(),
+            Err(GrantWriteError::TooLarge { .. })
+        ));
     }
 
     #[test]
@@ -2223,7 +2337,7 @@ mod tests {
     fn the_error_names_the_file_and_the_rule() {
         let file = family("chat");
         let said = |bytes: &[u8]| GrantFile::parse(bytes, &file).unwrap_err().to_string();
-        let minimal = GrantFile::try_from(raw()).unwrap().to_bytes();
+        let minimal = GrantFile::try_from(raw()).unwrap().to_bytes().unwrap();
 
         assert_eq!(
             said(b"not json"),

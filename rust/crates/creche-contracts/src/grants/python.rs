@@ -540,11 +540,11 @@ fn walk_grant_reader() -> (usize, usize) {
 
                 // What the reader took, the writer writes, and the reader
                 // takes again.
-                assert_eq!(
-                    GrantFile::parse(&grants.to_bytes(), &stem),
-                    Ok(grants),
-                    "{at}"
-                );
+                let written = grants
+                    .to_bytes()
+                    .unwrap_or_else(|error| panic!("{at}: {error}"));
+
+                assert_eq!(GrantFile::parse(&written, &stem), Ok(grants), "{at}");
             }
             (Outcome::Refused, Err(error)) => grant_refused_as_python(vector, &error, &at),
             (Outcome::Raised, Err(_)) => {}
@@ -627,7 +627,7 @@ fn walk_grant_writer() -> usize {
 
         assert_eq!(vector.result, Outcome::Accepted, "{at}");
         assert_eq!(
-            String::from_utf8(grants.to_bytes()).unwrap(),
+            String::from_utf8(grants.to_bytes().unwrap()).unwrap(),
             written,
             "{at}"
         );

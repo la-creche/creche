@@ -135,9 +135,9 @@ pub use decision::{
 pub use file::{
     ActionName, ActionNameError, DEFAULT_MAX_INFLIGHT_DELEGATIONS, DEFAULT_MAX_OPEN_GATES,
     DEFAULT_PEP_RPM, GRANT_FILE_MAX_BYTES, GRANT_FILE_VERSION, GrantError, GrantFile,
-    GrantFileError, GrantsRev, GrantsRevError, HaAllow, HaName, HaNameError, Limit, LimitError,
-    Limits, ModelAlias, ModelAliasError, RawGrantFile, RawHaAllow, RawLimits, RawVerbFence,
-    TokenDigests, Verb, VerbFence, VerbName, VerbNameError,
+    GrantFileError, GrantWriteError, GrantsRev, GrantsRevError, HaAllow, HaName, HaNameError,
+    Limit, LimitError, Limits, ModelAlias, ModelAliasError, RawGrantFile, RawHaAllow, RawLimits,
+    RawVerbFence, TokenDigests, Verb, VerbFence, VerbName, VerbNameError,
 };
 pub use issue::{Issue, IssueKind, NameError, Step};
 pub use json::{Integer, JsonError, Map, Value};
