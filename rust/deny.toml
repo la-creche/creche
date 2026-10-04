@@ -34,6 +34,9 @@ yanked = "deny"
 # Each license that a locked crate can need. A crate that needs another
 # license fails the check. The crates of this workspace are in the check too:
 # each one takes `license = "MIT"` from rust/Cargo.toml.
+#
+# `include-dev`: a crate that only a `[dev-dependencies]` table brings is in
+# the check too. Without the key, cargo-deny does not read its license.
 [licenses]
 allow = [
     "MIT",
@@ -41,6 +44,7 @@ allow = [
     "BSD-3-Clause",
     "Unicode-3.0",
 ]
+include-dev = true
 
 # One version of each crate, and no `*` as the version of a crate.
 #

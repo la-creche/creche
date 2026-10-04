@@ -169,8 +169,9 @@ def test_the_deny_file_holds_these_tables_and_no_other() -> None:
 
 def test_only_these_licenses_are_permitted() -> None:
     """No exception for one crate and no private registry: the table is the
-    list, entry for entry."""
-    assert _toml(DENY_FILE)["licenses"] == {"allow": LICENSES}
+    list, entry for entry. `include-dev` puts a crate that only a test uses
+    in the check. Without it, cargo-deny skips the license of such a crate."""
+    assert _toml(DENY_FILE)["licenses"] == {"allow": LICENSES, "include-dev": True}
 
 
 def test_crates_io_is_the_one_source_of_a_crate() -> None:
