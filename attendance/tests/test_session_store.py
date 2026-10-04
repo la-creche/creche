@@ -27,6 +27,10 @@ _UNREADABLE_BODIES = {
     "long_integer": '{"a":' + "1" * 5_000 + "}",
 }
 
+# What a crash in the middle of a write leaves at a journal's end: the start
+# of a line, with no LF.
+_TORN_TAIL = b'{"journal_seq": 2, "kind": "no'
+
 
 def _store(tmp_path: Path) -> SessionStore:
     return SessionStore(tmp_path / "sessions")
@@ -167,11 +171,53 @@ def test_a_torn_tail_does_not_stop_a_replay(tmp_path: Path) -> None:
     store.journal.flush(_FAMILY, _SESSION)
 
     with journal_file(store.root, _FAMILY, _SESSION).open("ab") as handle:
-        handle.write(b'{"journal_seq": 2, "kind": "no')
+        handle.write(_TORN_TAIL)
 
     replayed = list(store.journal.replay(_FAMILY, _SESSION, from_seq=0))
 
     assert [line.journal_seq for line in replayed] == [1]
+
+
+def test_an_append_after_a_torn_tail_replays(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.create(_session())
+    store.journal.append(_FAMILY, _SESSION, LineKind.NOTE, None, {"n": 1})
+    store.journal.close_all()
+    path = journal_file(store.root, _FAMILY, _SESSION)
+
+    with path.open("ab") as handle:
+        handle.write(_TORN_TAIL)
+
+    restarted = Journal(store.root)
+    restarted.register(_FAMILY, _SESSION, restarted.tail_seq(_FAMILY, _SESSION))
+    following = restarted.append(_FAMILY, _SESSION, LineKind.NOTE, None, {"n": 2})
+
+    replayed = list(restarted.replay(_FAMILY, _SESSION, from_seq=0))
+
+    assert following.journal_seq == 2
+    assert [line.journal_seq for line in replayed] == [1, 2]
+    assert restarted.tail_seq(_FAMILY, _SESSION) == 2
+    assert _TORN_TAIL + b"\n" in path.read_bytes()
+
+
+def test_an_append_keeps_a_whole_line_with_no_lf(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.create(_session())
+    store.journal.append(_FAMILY, _SESSION, LineKind.NOTE, None, {"n": 1})
+    store.journal.close_all()
+
+    with journal_file(store.root, _FAMILY, _SESSION).open("ab") as handle:
+        handle.write(journal_line(2, "{}").removesuffix(b"\n"))
+
+    restarted = Journal(store.root)
+    restarted.register(_FAMILY, _SESSION, restarted.tail_seq(_FAMILY, _SESSION))
+    following = restarted.append(_FAMILY, _SESSION, LineKind.NOTE, None, {"n": 3})
+
+    replayed = list(restarted.replay(_FAMILY, _SESSION, from_seq=0))
+
+    assert following.journal_seq == 3
+    assert [line.journal_seq for line in replayed] == [1, 2, 3]
+    assert restarted.tail_seq(_FAMILY, _SESSION) == 3
 
 
 @pytest.mark.parametrize("body", list(_UNREADABLE_BODIES.values()), ids=list(_UNREADABLE_BODIES))

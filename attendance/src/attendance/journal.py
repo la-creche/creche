@@ -198,7 +198,15 @@ class Journal:
 
         session_dir(self._root, family, session).mkdir(parents=True, exist_ok=True)
         path = journal_file(self._root, family, session)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, MODE_PUBLIC_READ)
+        # Read access is for the torn-tail check only. Every write appends.
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, MODE_PUBLIC_READ)
+
+        try:
+            _end_torn_tail(fd)
+        except OSError:
+            os.close(fd)
+            raise
+
         handle = _Handle(fd)
         self._handles[key] = handle
         self._evict()
@@ -227,6 +235,24 @@ def _write_all(fd: int, payload: bytes) -> None:
 
     while written < len(payload):
         written += os.write(fd, payload[written:])
+
+
+def _end_torn_tail(fd: int) -> None:
+    """End a last line that has no LF, so the next append is a line of its own.
+
+    A crash in the middle of a write leaves such a line. Without the LF the
+    next append joins it, and no reader can parse the joined line. The torn
+    bytes stay on disk as a line that every reader skips. Truncation would
+    delete the record of the crash, and it would delete a whole line that
+    lacks only its LF, which a replay before the append did return.
+    """
+    size = os.fstat(fd).st_size
+
+    if size == 0:
+        return
+
+    if os.pread(fd, 1, size - 1) != _LF:
+        _write_all(fd, _LF)
 
 
 def _parse_line(raw: bytes) -> JournalLine | None:
