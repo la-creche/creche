@@ -30,7 +30,7 @@ from .catalog import ARRIVING, BINARY_BUILD_FILES, CATALOG, RETIRING, CatalogRow
 from .errors import Refusal, RefusalCode, safe_token
 
 #: Contract 06 §2: one expression reads every component tag, in every repo.
-TAG_RE = re.compile(r"([a-z][a-z0-9-]{1,30})-v(\d+)\.(\d+)\.(\d+)")
+TAG_RE = re.compile(r"([a-z][a-z0-9-]{1,30})-v([0-9]+)\.([0-9]+)\.([0-9]+)")
 
 TAG_FORMAT = "{component}-v{version}"
 

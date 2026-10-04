@@ -1436,14 +1436,6 @@ const CONTRACT_VERSION: Dotted = Dotted {
     numbers: 2,
 };
 
-// CONTRACT-QUESTION: contract 06 §2 writes the version as `\d+\.\d+\.\d+` and
-// does not say which digits `\d` means. In Python, `\d` also matches a decimal
-// digit that is not ASCII, so each Python copy accepts a version of three
-// ARABIC-INDIC digits. This type reads `\d` as `0` to `9` (rust/AGENTS.md,
-// rule 9) and refuses that text. The test table `DEVIATIONS` holds each
-// vector on which the type differs from the Python copies. A change to accept
-// those digits needs a table of each decimal digit of Unicode, and the table
-// changes with each Unicode version.
 dotted_id! {
     /// The version of one component: `MAJOR.MINOR.PATCH`, three numbers of
     /// ASCII digits (contract 06 §2).
@@ -1497,10 +1489,6 @@ impl Version {
     }
 }
 
-// CONTRACT-QUESTION: contract 06 §3 calls the two numbers integers and gives
-// no pattern. Each Python copy uses `(\d+)\.(\d+)`, which also matches a
-// decimal digit that is not ASCII. This type refuses such a digit, as
-// `Version` does. `DEVIATIONS` holds each vector.
 dotted_id! {
     /// The version of one contract: `MAJOR.MINOR`, two numbers of ASCII digits
     /// (contract 06 §3, §8).
@@ -2838,8 +2826,6 @@ mod tests {
         /// How the Rust code differs from the Python code on one vector.
         #[derive(Debug, Clone, Copy)]
         enum Differs {
-            /// The Python code accepts the input. The Rust code refuses it.
-            Refuses,
             /// Both accept the input. The Rust value holds null in this field,
             /// and the two values are equal in each other field.
             NullField(&'static str),
@@ -2857,62 +2843,18 @@ mod tests {
             decision: &'static str,
         }
 
-        /// The three vectors of a grammar with numbers that hold a decimal digit
-        /// outside ASCII: ARABIC-INDIC DIGIT ONE and FULLWIDTH DIGIT ONE.
-        const DIGITS_OUTSIDE_ASCII: &[&str] = &[
-            "probe-arabic-digit",
-            "probe-fullwidth-digit",
-            "all-arabic-digits",
-        ];
-
-        /// Why the Rust code refuses a digit that the Python code accepts.
-        const ASCII_DIGITS_ONLY: &str = "The contract writes a number as `\\d+` and does not say \
-            which digits `\\d` means. Python reads it as each decimal digit of Unicode. The Rust \
-            code reads it as 0 to 9 (rust/AGENTS.md, rule 9).";
-
         /// Each vector on which the Rust code differs from the Python code on
         /// purpose. A vector outside this table and outside
         /// `ids/disagreements.json` must be equal.
-        const DEVIATIONS: &[Deviation] = &[
-            Deviation {
-                surfaces: &[
-                    "id.version.handover_executor",
-                    "id.version.handover_manifest",
-                    "id.version.handover_provenance",
-                    "id.version.handover_state",
-                ],
-                vectors: DIGITS_OUTSIDE_ASCII,
-                differs: Differs::Refuses,
-                contract: "contract 06 §2",
-                decision: ASCII_DIGITS_ONLY,
-            },
-            Deviation {
-                surfaces: &[
-                    "id.contract_version.handover_manifest",
-                    "id.contract_version.handover_state",
-                ],
-                vectors: DIGITS_OUTSIDE_ASCII,
-                differs: Differs::Refuses,
-                contract: "contract 06 §3",
-                decision: ASCII_DIGITS_ONLY,
-            },
-            Deviation {
-                surfaces: &["id.tag.handover_allocate", "id.tag.handover_source"],
-                vectors: DIGITS_OUTSIDE_ASCII,
-                differs: Differs::Refuses,
-                contract: "contract 06 §2",
-                decision: ASCII_DIGITS_ONLY,
-            },
-            Deviation {
-                surfaces: &["id.owui_chat_id.door_owui"],
-                vectors: &["max-128-chars"],
-                differs: Differs::NullField("session"),
-                contract: "contract 02 §2",
-                decision: "A session id has 128 bytes or less. The Python door makes a session \
+        const DEVIATIONS: &[Deviation] = &[Deviation {
+            surfaces: &["id.owui_chat_id.door_owui"],
+            vectors: &["max-128-chars"],
+            differs: Differs::NullField("session"),
+            contract: "contract 02 §2",
+            decision: "A session id has 128 bytes or less. The Python door makes a session \
                     id of 133 bytes from a chat id of 128 bytes. The Rust code accepts the chat \
                     id and makes no session id from it.",
-            },
-        ];
+        }];
 
         /// The decision that covers one vector of one surface.
         fn deviation_of(surface: &str, vector: &str) -> Option<&'static Deviation> {
@@ -2953,7 +2895,6 @@ mod tests {
         fn differs_as_decided(differs: Differs, vector: &Vector, rust: &Replay, at: &str) {
             assert_eq!(vector.result, Outcome::Accepted, "{at}: the Python code");
             match differs {
-                Differs::Refuses => assert!(rust.is_err(), "{at}: the Rust code accepts"),
                 Differs::NullField(field) => {
                     let mut expected = vector.value().cloned().unwrap();
 
@@ -3154,17 +3095,17 @@ mod tests {
         }
 
         #[test]
-        fn a_version_is_what_each_python_copy_takes_in_ascii() {
+        fn a_version_is_what_each_python_copy_takes() {
             walk("Version");
         }
 
         #[test]
-        fn a_contract_version_is_what_each_python_copy_takes_in_ascii() {
+        fn a_contract_version_is_what_each_python_copy_takes() {
             walk("ContractVersion");
         }
 
         #[test]
-        fn a_tag_is_what_each_python_copy_takes_in_ascii() {
+        fn a_tag_is_what_each_python_copy_takes() {
             walk("Tag");
         }
 

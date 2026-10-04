@@ -55,8 +55,8 @@ KEEP_MIN = 1
 KEEP_MAX = 10
 
 NAME_RE = re.compile(r"[a-z][a-z0-9-]{1,30}")
-VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
-CONTRACT_VERSION_RE = re.compile(r"(\d+)\.(\d+)")
+VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+CONTRACT_VERSION_RE = re.compile(r"([0-9]+)\.([0-9]+)")
 UNIT_RE = re.compile(r"[A-Za-z0-9@_.-]{1,64}")
 SECRET_RE = re.compile(r"[a-z][a-z0-9_]{1,62}")
 PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")

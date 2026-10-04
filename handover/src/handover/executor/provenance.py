@@ -75,7 +75,7 @@ HTTP_OK: Final = 200
 HTTP_NOT_FOUND: Final = 404
 
 SHA_RE: Final = re.compile(r"[0-9a-f]{40}")
-VERSION_RE: Final = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+VERSION_RE: Final = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
 
 
 class Accept(StrEnum):

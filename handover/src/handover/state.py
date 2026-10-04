@@ -33,8 +33,8 @@ from .errors import Refusal, RefusalCode, safe_token
 #: this can be and small enough that a refusal costs one read.
 MAX_STATE_BYTES = 64 * 1024
 
-VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
-CONTRACT_VERSION_RE = re.compile(r"(\d+)\.(\d+)")
+VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+CONTRACT_VERSION_RE = re.compile(r"([0-9]+)\.([0-9]+)")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 

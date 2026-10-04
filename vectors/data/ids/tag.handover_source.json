@@ -14,8 +14,8 @@
   {"id":"probe-trailing-space","input":{"text":"chaperone-v1.2.3 "},"result":"refused"},
   {"id":"probe-nul-at-end","input":{"text":"chaperone-v1.2.3\u0000"},"result":"refused"},
   {"id":"probe-nul-inside","input":{"text":"c\u0000haperone-v1.2.3"},"result":"refused"},
-  {"id":"probe-arabic-digit","input":{"text":"chaperone-v1.2.\u0661"},"result":"accepted","value":"1.2.1"},
-  {"id":"probe-fullwidth-digit","input":{"text":"chaperone-v1.2.\uff11"},"result":"accepted","value":"1.2.1"},
+  {"id":"probe-arabic-digit","input":{"text":"chaperone-v1.2.\u0661"},"result":"refused"},
+  {"id":"probe-fullwidth-digit","input":{"text":"chaperone-v1.2.\uff11"},"result":"refused"},
   {"id":"probe-overlong","input":{"text":"chaperone-v1.2.311111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"},"result":"accepted","value":"1.2.311111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"},
   {"id":"hyphen-name","input":{"text":"mcp-servers-v0.0.1"},"result":"accepted","value":"0.0.1"},
   {"id":"short-name","input":{"text":"ab-v0.0.0"},"result":"accepted","value":"0.0.0"},
@@ -33,7 +33,7 @@
   {"id":"max-name","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-v1.0.0"},"result":"accepted","value":"1.0.0"},
   {"id":"over-name","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-v1.0.0"},"result":"refused"},
   {"id":"past-64-bits","input":{"text":"chaperone-v99999999999999999999.0.0"},"result":"accepted","value":"99999999999999999999.0.0"},
-  {"id":"all-arabic-digits","input":{"text":"chaperone-v\u0661.\u0662.\u0663"},"result":"accepted","value":"1.2.3"},
+  {"id":"all-arabic-digits","input":{"text":"chaperone-v\u0661.\u0662.\u0663"},"result":"refused"},
   {"id":"crlf","input":{"text":"chaperone-v1.2.3\r\n"},"result":"refused"}
  ]
 }
