@@ -293,6 +293,24 @@ def test_an_error_without_a_number_names_its_type_alone(
     assert ERROR_TEXT not in bench.whole_record()
 
 
+def test_an_error_with_a_text_for_its_number_names_its_type_alone(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An `OSError` that is built from two texts holds the first one as its
+    number. The ledger takes a number from the table of the system only."""
+
+    def raise_one(tree: Path, version: str) -> None:
+        del tree, version
+        raise OSError(ERROR_TEXT, "a second text")
+
+    monkeypatch.setattr(steps, "write_stamp", raise_one)
+
+    _handle(bench)
+
+    assert bench.entry()["reason"] == f"stage: {UNNAMED_ERROR}: OSError"
+    assert ERROR_TEXT not in bench.whole_record()
+
+
 def test_the_pass_goes_on_after_a_step_that_raised(bench: Bench) -> None:
     """`requests/` is drained on every run (§2.2). The error of one request
     ended the pass, and the request after it stayed in `requests/`."""

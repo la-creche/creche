@@ -167,10 +167,13 @@ NO_OWN_FRAME: Final = "no code of this package"
 
 def _unnamed(error: Exception) -> str:
     """§2.6's `detail` for an error no step names: its type, and the symbol
-    of its number for an `OSError` that carries one."""
+    of its number for an `OSError` that carries one.
+
+    The number of an `OSError` that is built from two texts is the first
+    text. Only a whole number goes on, so no text of an error does."""
     kind = type(error).__name__
-    number = error.errno if isinstance(error, OSError) else None
-    if number is None:
+    number: object = error.errno if isinstance(error, OSError) else None
+    if not isinstance(number, int):
         return f"{UNNAMED_ERROR}: {kind}"
 
     return f"{UNNAMED_ERROR}: {kind} ({errno.errorcode.get(number, number)})"
