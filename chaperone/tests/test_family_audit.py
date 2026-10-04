@@ -14,9 +14,11 @@ from chaperone.family_audit import (
     AUDIT_ARG_STRING_MAX_CHARS,
     AUDIT_DIR_MODE,
     AUDIT_TRUNCATION_MARKER,
+    UNRECORDABLE_ARGS,
     AuditEntry,
     FamilyAudit,
     Outcome,
+    can_hold,
     resolve_sandbox,
     truncate_strings,
 )
@@ -206,3 +208,69 @@ def test_truncation_keeps_structure_and_keys() -> None:
         "b": {"c": "y" * AUDIT_ARG_STRING_MAX_CHARS + AUDIT_TRUNCATION_MARKER},
         "d": None,
     }
+
+
+#: More levels than the writer walks.
+DEEP = 3000
+
+
+def _nested(levels: int) -> object:
+    value: object = "x"
+    for _ in range(levels):
+        value = [value]
+
+    return value
+
+
+#: Arguments that no line can hold: no UTF-8 form, or too many levels.
+NOT_FOR_A_LINE = [
+    pytest.param({"input": "\ud800"}, id="a-string-that-is-not-text"),
+    pytest.param({"\ud800": 1}, id="a-key-that-is-not-text"),
+    pytest.param({"input": _nested(DEEP)}, id="nested-too-deep"),
+]
+
+
+@pytest.mark.parametrize("args", NOT_FOR_A_LINE)
+def test_arguments_that_no_line_can_hold_do_not_cost_the_record(
+    tmp_path: Path, args: dict[str, object]
+) -> None:
+    """Invariant 15: every decision is recorded. The line holds a marker in
+    place of such arguments, and each other field as usual."""
+    audit = FamilyAudit(tmp_path)
+
+    audit.write(allowed(args=args, outcome=Outcome.DENY, reason="tool_not_granted"))
+
+    (record,) = lines(tmp_path)
+    assert record["args"] == UNRECORDABLE_ARGS
+    assert (record["tool"], record["decision"], record["reason"]) == (
+        "embed",
+        "deny",
+        "tool_not_granted",
+    )
+
+
+@pytest.mark.parametrize("args", NOT_FOR_A_LINE)
+def test_such_arguments_are_not_held(args: dict[str, object]) -> None:
+    assert can_hold(args) is False
+
+
+def test_a_string_that_is_not_text_after_the_cut_is_not_held() -> None:
+    """The line would hold what the cap leaves. The check reads the whole
+    arguments, because an effect gets the whole arguments."""
+    args: dict[str, object] = {"input": "a" * AUDIT_ARG_STRING_MAX_CHARS + "\ud800"}
+
+    assert can_hold(args) is False
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        pytest.param({}, id="none"),
+        pytest.param({"input": "caf\u00e9 \U0001f600"}, id="text-outside-ascii"),
+        pytest.param({"input": "a" * (AUDIT_ARG_STRING_MAX_CHARS + 1)}, id="over-the-cap"),
+        pytest.param({"a": float("nan"), "b": 10**400}, id="numbers-of-any-form"),
+        pytest.param({"input": _nested(200)}, id="nested-200-levels"),
+    ],
+)
+def test_arguments_that_a_line_holds_are_held(args: dict[str, object]) -> None:
+    assert can_hold(args) is True

@@ -237,8 +237,12 @@ class _TokenBucket:
 
 def _args_digest(args: dict[str, object]) -> tuple[int, str]:
     """Size and digest of the args an unidentified request supplied — never
-    the content itself."""
-    raw = json.dumps(args, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    the content itself.
+
+    `surrogatepass`: the body reader takes a string that is not Unicode
+    text, and such a string has no strict UTF-8 form. It counts as the
+    bytes it has "as it is", so the request still gets its line."""
+    raw = json.dumps(args, ensure_ascii=False, sort_keys=True).encode("utf-8", "surrogatepass")
     return len(raw), hashlib.sha256(raw).hexdigest()
 
 

@@ -96,6 +96,8 @@ A shared module may not grow a branch that only one caller reaches.
 - `release_door.py` imports `handover.requester` and never
   `handover.executor`. The `release` verb approves nothing. It files an
   intent.
+- A call has no effect when no audit line can hold its arguments in full.
+  An allow becomes `internal_error`. A denial keeps its reason.
 
 ## Identity and revocation
 
@@ -210,3 +212,6 @@ Each line is an open contract question and the module it lives in.
   minimum length (`family_app.py`).
 - An `/info` reply that holds no string id reads as `unknown`, and the
   `embed` call continues (`family_app.py`).
+- No audit line holds a string that is not Unicode text, or arguments that
+  nest deeper than the interpreter recurses. The record holds a marker in
+  their place (`family_audit.py`, `family_app.py`).

@@ -48,7 +48,7 @@ from .audit import AuditError
 from .delegate import DelegateDoor, DelegateRequest, DelegateStatus, wrap_untrusted
 from .delegations import DelegationTable
 from .dispatch import DispatchDoor, DispatchRefused, DispatchRequest, JobQuery
-from .family_audit import AuditEntry, FamilyAudit, Outcome, resolve_sandbox
+from .family_audit import AuditEntry, FamilyAudit, Outcome, can_hold, resolve_sandbox
 from .family_decisions import (
     FAMILY_DENY_STATUS,
     REASON_GRANTED,
@@ -110,6 +110,13 @@ REASON_ABANDONED: Final[FamilyReason] = "approval_abandoned"
 #: takes the word the retired instance path wrote.
 REASON_PENDING: Final = "approval_required"
 REASON_APPROVED: Final = "approved"
+
+#: The detail of a call that is refused because no audit line can hold its
+#: arguments. A fixed text: it does not quote them.
+ARGS_NOT_HELD: Final = (
+    "the audit cannot hold these arguments: they nest too deep, "
+    "or they hold a string that is not Unicode text"
+)
 
 #: The PEP's own audit names for the two endpoints that are not tool calls.
 #: A `$` cannot start a tool name, so neither can collide with one.
@@ -275,6 +282,13 @@ class FamilyGate:
         decision = self._decide(grants, tool, args, claimed)
         if not decision.allow:
             return self._refuse(grants, tool, args, decision, claimed)
+
+        # The rule of `_run`'s probe, for the arguments: no effect where the
+        # audit cannot record it. A denial above keeps its own reason, and
+        # its line holds a marker for such arguments (`family_audit`).
+        if not can_hold(args):
+            unheld = deny("internal_error", ARGS_NOT_HELD)
+            return self._refuse(grants, tool, args, unheld, claimed)
 
         if decision.approval:
             return await self._gated(grants, tool, args, decision, claimed)
@@ -771,7 +785,7 @@ class FamilyGate:
         self._write(grants, tool, args, Outcome.DENY, reason, claimed)
         return Reply(
             FAMILY_DENY_STATUS[reason],
-            {"ok": False, "reason": reason, "detail": decision.detail},
+            {"ok": False, "reason": reason, "detail": _plain(decision.detail)},
         )
 
     def _failed_after_allow(
@@ -801,7 +815,7 @@ class FamilyGate:
         )
         return Reply(
             FAMILY_DENY_STATUS[reason],
-            {"ok": False, "reason": reason, "detail": str(exc)},
+            {"ok": False, "reason": reason, "detail": _plain(str(exc))},
         )
 
     def _write(
@@ -867,6 +881,16 @@ def _holds_current_rev(headers: Mapping[str, str], rev: str) -> bool:
         tag = tag[1:-1]
 
     return tag == rev
+
+
+def _plain(detail: str | None) -> str | None:
+    """A detail as text that a JSON reply carries. A detail can quote the
+    caller or another process, and a lone surrogate there has no UTF-8
+    form. It is written as its escape."""
+    if detail is None:
+        return None
+
+    return detail.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def _first_vector(reply: object) -> list[object]:

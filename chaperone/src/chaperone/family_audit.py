@@ -21,6 +21,7 @@ accident (§3.1 rule 3).
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -42,6 +43,17 @@ AUDIT_DIR_MODE: Final = 0o750
 #: minute of 256 KiB bodies is 15 MB of audit a minute, kept 180 days.
 AUDIT_ARG_STRING_MAX_CHARS: Final = 8 * 1024
 AUDIT_TRUNCATION_MARKER: Final = "...<truncated>"
+
+#: What a record holds in place of arguments that no line can hold. A
+#: string that is not Unicode text has no UTF-8 form, and this writer walks
+#: only as deep as the interpreter recurses. The record itself stays: each
+#: other field is a value of the PEP.
+#:
+#: CONTRACT-QUESTION: §6.1 says that `args` holds the full arguments, and
+#: it is silent on arguments that no JSON line in UTF-8 can hold. The
+#: reading here: the record holds this marker, and `family_app` refuses the
+#: call before any effect. A change costs each reader of the audit.
+UNRECORDABLE_ARGS: Final[dict[str, object]] = {"$unrecordable": True}
 
 
 class Outcome(Enum):
@@ -93,6 +105,22 @@ def truncate_strings(value: object) -> object:
     return value
 
 
+def can_hold(args: dict[str, object]) -> bool:
+    """Whether a line can hold these arguments in full, apart from the cap
+    on a string: they are JSON text in UTF-8, at a depth this writer walks.
+
+    The whole arguments are checked, not what the cap leaves of them. An
+    effect gets the whole arguments.
+    """
+    try:
+        truncate_strings(args)
+        json.dumps(args, ensure_ascii=False).encode("utf-8")
+    except (RecursionError, ValueError):
+        return False
+
+    return True
+
+
 @dataclass(frozen=True)
 class AuditEntry:
     """One decision, ready to write. Everything above `claimed` is trusted."""
@@ -131,7 +159,16 @@ class FamilyAudit:
     def write(self, entry: AuditEntry) -> None:
         """Append one line. Raises `AuditError` when it cannot be written, and
         the app layer turns that into a 500 even for an allowed call whose
-        effect already happened — unrecorded effects are worse."""
+        effect already happened — unrecorded effects are worse.
+
+        Arguments that no line can hold do not cost the record: the line
+        then holds `UNRECORDABLE_ARGS` in their place."""
+        try:
+            self._append(entry, truncate_strings(entry.args))
+        except (RecursionError, ValueError):
+            self._append(entry, UNRECORDABLE_ARGS)
+
+    def _append(self, entry: AuditEntry, args: object) -> None:
         chain = entry.chain or (entry.family,)
         record: dict[str, object] = {
             # `AuditLog.write` merges its own `ts` first and lets the record's
@@ -143,7 +180,7 @@ class FamilyAudit:
             "sandbox_id_trusted": entry.sandbox.trusted,
             "grants_rev": entry.grants_rev,
             "tool": entry.tool,
-            "args": truncate_strings(entry.args),
+            "args": args,
             "decision": entry.outcome.value,
             "reason": entry.reason,
             "latency_ms": entry.latency_ms,
