@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+import pytest
 from attendance.ids import (
     SESSION_ID_MAX,
     SessionPrefix,
@@ -52,6 +55,22 @@ def test_sandbox_and_attachment_forms() -> None:
     assert not is_attachment("..")
     assert not is_attachment("a/b")
     assert not is_attachment("x" * 121)
+
+
+@pytest.mark.parametrize(
+    ("check", "value"),
+    [
+        (is_family, "chat"),
+        (is_session, "tui-abc"),
+        (is_ulid, "01JBQ7WZ0X4T9V6K2H8M3N5PQR"),
+        (is_sandbox, "chat-s1"),
+        (is_attachment, "data.csv"),
+    ],
+)
+def test_trailing_newline_is_refused(check: Callable[[str], bool], value: str) -> None:
+    """A `$` anchor also matches before a final newline. `\\Z` does not."""
+    assert check(value)
+    assert not check(value + "\n")
 
 
 def test_ulid_is_sortable_and_unique() -> None:
