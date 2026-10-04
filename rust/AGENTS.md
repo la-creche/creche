@@ -435,7 +435,7 @@ to 5 give a Rust service the Python behavior on purpose.
    `CommandRunner`.** A service crate does not use
    `tokio::process::Command` directly.
    Reason: the two set `kill_on_drop` in one place. Without it, a child
-   runs on after its owner stopped.
+   continues to run after its owner stopped.
 5. **Do not write cleanup code after an `await` when a caller can drop the
    future.** Write the cleanup in the owner task.
    Reason: the code after such an `await` does not run when the caller goes
@@ -616,6 +616,8 @@ Rules for the test:
 - Turn the default features of a third-party crate off in
   `[workspace.dependencies]`. Name each feature that the code needs. A
   feature that no code needs adds crates to the lock file.
+- `serde` and `serde_json` keep their default features. The default of each
+  one is the feature `std` only, and it adds no crate.
 - A service crate that needs one more feature names it in its own
   `Cargo.toml`, for example `json` of `axum`.
 - The workspace has no TLS crate. The client of `creche-runtime` refuses an
