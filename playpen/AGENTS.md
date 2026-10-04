@@ -72,7 +72,9 @@ it on a development machine.
 
 ## Untrusted input
 
-13. Nothing is acted on before `validate.ts` has passed it.
+13. Nothing is acted on before `validate.ts` has passed it. A pi line is
+    untrusted too. `pi-record.ts` limits its depth and checks every response
+    field before any code reads it.
 14. A refusal never deviates in silence. Record a contract gap as a
     `CONTRACT-QUESTION:` comment and under "Known gaps" below.
 
@@ -193,7 +195,7 @@ delivers them. Three test seams exist and nothing in the image sets them:
 |---|---|
 | `src/index.ts`, `src/launch-main.ts` | the two composition roots |
 | `src/pi-launch.ts`, `src/pi-args.ts`, `src/process-record.ts` | the terminal plan, the one argv builder, the per-session record |
-| `src/playpen.ts`, `src/pool.ts`, `src/session.ts`, `src/pi-process.ts` | the handshake and dispatch, the hold and reap rules, one session, one pi child |
+| `src/playpen.ts`, `src/pool.ts`, `src/session.ts`, `src/pi-process.ts`, `src/pi-record.ts` | the handshake and dispatch, the hold and reap rules, one session, one pi child, every line that child writes |
 | `src/channel.ts`, `src/framing.ts`, `src/validate.ts`, `src/protocol.ts`, `src/constants.ts` | the one stdout, LF records, every inbound line, the wire types, every fixed number |
 | `src/mounts.ts`, `src/creds.ts`, `src/runtime-config.ts`, `src/models-json.ts`, `src/pi-settings.ts`, `src/env.ts` | the three directories, `creds.json`, the config mount, the two files pi reads, the per-turn environment |
 | `src/lock.ts`, `src/turn-file.ts`, `src/tool-state.ts`, `src/workspace.ts`, `src/sandbox-facts.ts`, `src/launcher.ts` | the lock, the turn file, the tool state (read), the `code-sandbox` link, `ready`, the one spawn |
@@ -211,6 +213,9 @@ delivers them. Three test seams exist and nothing in the image sets them:
   of (`src/pi-launch.ts`).
 - The playpen reads three shapes for an entry's text and answers `""` for any
   other (`src/entry-text.ts`).
+- Contract 03 §8 cuts an event by size and names no depth. The playpen cuts a
+  pi line that nests deeper than 256 levels to its scalar fields
+  (`src/pi-record.ts`).
 - The verify hook does not start an image. The image build runs each bundle
   once and stops on a bundle that does not load (`bin/playpen-verify`).
 - No host has run `bin/playpen-build`. The tests use a stub `docker`

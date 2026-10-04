@@ -14,6 +14,14 @@ export const MAX_LINE_BYTES = 1048576;
 /** Contract 03 §8. A wrapped pi event over this is truncated, never dropped. */
 export const MAX_EVENT_BYTES = 262144;
 
+/**
+ * Not in contract 03: see the CONTRACT-QUESTION in `pi-record.ts`. A pi line
+ * nested deeper than this is cut to its scalar fields. `JSON.stringify`
+ * overflows the stack at about 6000 levels on Node 22 and Node 24, and no pi
+ * event comes near this number, so the margin is wide on both sides.
+ */
+export const MAX_PI_NESTING = 256;
+
 /** Contract 03 §8. One `log` message, and one forwarded pi stderr line. */
 export const MAX_LOG_BYTES = 4096;
 
