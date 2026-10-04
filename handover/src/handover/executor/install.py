@@ -54,8 +54,8 @@ Seven rules this module exists to keep.
    unit file that runs out of the same tree: `attendance`'s three door units.
    A file is one when ALL of these hold.
 
-   1. The component is `kind: venv`, names a unit, and that unit is
-      installed.
+   1. The component is `kind: venv` or `kind: binary`, names a unit, and
+      that unit is installed.
    2. The file is a regular `*.service`, not a symlink, in the SAME unit
       directory, and is not the component's own unit.
    3. The INSTALLED file starts the tree, by `check_unit_binds`' test.
@@ -132,6 +132,12 @@ VENV_ENV_NAME: Final = "UV_PROJECT_ENVIRONMENT"
 #: Measured against cargo 1.92.0 on 2026-10-03, and again by
 #: `handover/tests/test_handover_bin_cargo_guard.py`.
 BINARY_ENV_NAME: Final = "CARGO_INSTALL_ROOT"
+
+#: The kinds whose tree holds the programs that its units start: the
+#: console scripts of a venv and the compiled programs of a binary tree,
+#: both under `bin/`. A compose project's unit starts docker, and an image
+#: has no unit.
+PROGRAM_KINDS: Final = frozenset({Kind.VENV, Kind.BINARY})
 
 SYSTEMCTL: Final = "/usr/bin/systemctl"
 INSTALL: Final = "/usr/bin/install"
@@ -425,10 +431,11 @@ class Installer:
 
         1. **`unit: null` is not checked.** Nothing restarts, so there is no
            unit to disagree with the tree (`handover`, `playpen`).
-        2. **Only `kind: venv`.** "The tree holds the program the unit
-           starts" is a venv's property. A compose project's unit starts
-           docker and is bound to its tree by `WorkingDirectory`; an image
-           has no unit at all.
+        2. **Only `kind: venv` and `kind: binary`** (`PROGRAM_KINDS`).
+           "The tree holds the program the unit starts" is the property of
+           a venv and of a tree of compiled programs. A compose project's
+           unit starts docker and is bound to its tree by
+           `WorkingDirectory`; an image has no unit at all.
         3. **A unit nothing installed is not checked.** Step 9 already
            lists one under `manual` and never restarts it, and refusing
            here would refuse the first release of a component whose unit
@@ -444,7 +451,7 @@ class Installer:
         (contract 06 §1.1 rule 5), so no component with a unit goes through
         one today.
         """
-        if manifest.unit is None or manifest.kind is not Kind.VENV:
+        if manifest.unit is None or manifest.kind not in PROGRAM_KINDS:
             return
 
         found = self._effective_unit(manifest, source)
@@ -991,7 +998,7 @@ class Installer:
         operator's, and a listing would walk whatever they put there. Root
         opens only `<unit directory>/<a name the release carries>`.
         """
-        if manifest.kind is not Kind.VENV:
+        if manifest.kind not in PROGRAM_KINDS:
             return ()
 
         installed = self._installed_unit(manifest)
