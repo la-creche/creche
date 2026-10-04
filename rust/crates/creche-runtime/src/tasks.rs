@@ -816,7 +816,7 @@ mod tests {
         lines: &'static [&'static str],
     }
 
-    const SCENARIOS: [Scenario; 15] = [
+    const SCENARIOS: [Scenario; 16] = [
         Scenario {
             name: "task",
             run: a_task_panics,
@@ -860,6 +860,11 @@ mod tests {
                 "the task index-sync did not start: no runtime runs on this thread",
                 "the loop upkeep did not start: no runtime runs on this thread",
             ],
+        },
+        Scenario {
+            name: "cancelled",
+            run: the_runtime_stops_first,
+            lines: &[],
         },
         Scenario {
             name: "drain-no-timer",
@@ -1768,6 +1773,38 @@ mod tests {
         assert_eq!(late.block_on(synced), Err(TaskLost::Cancelled));
         assert_eq!(late.block_on(tasks.drain(LIMIT)), Drained::Clean);
         assert_eq!(passes.load(Ordering::SeqCst), 0);
+    }
+
+    /// The runtime stops before a task and a pass of a loop end. A cancelled
+    /// task is not a failure, so no line says that it stopped.
+    fn the_runtime_stops_first() {
+        let (_trigger, tasks) = new_tasks();
+        let first = runtime();
+        let written = {
+            let _inside = first.enter();
+            tasks.spawn_loop("upkeep", PAUSE, std::future::pending::<()>);
+
+            tasks.spawn_must_complete("ledger-write", std::future::pending::<()>())
+        };
+
+        // The loop starts its pass, and the pass does not end.
+        first.block_on(async {
+            for _ in 0..YIELDS {
+                tokio::task::yield_now().await;
+            }
+        });
+
+        // The task, the loop and the pass of the loop.
+        assert_eq!(tasks.tracker.len(), 3);
+
+        drop(first);
+
+        assert!(tasks.tracker.is_empty());
+
+        let late = runtime();
+
+        assert_eq!(late.block_on(written), Err(TaskLost::Cancelled));
+        assert_eq!(late.block_on(tasks.drain(LIMIT)), Drained::Clean);
     }
 
     /// A runtime with no timer. A drain cannot wait there. It gives the count
