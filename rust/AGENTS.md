@@ -116,7 +116,8 @@ The code style rules of the root `AGENTS.md` apply. In Rust they read:
 - Extract a repeated or meaningful value into a named `const`. Keep a one-off
   value inline.
 - Return early. Use `?` and `let ... else`. Avoid deep nesting.
-- Keep function names under 30 characters.
+- Keep function names under 30 characters. The name of a test is a
+  sentence and can be longer.
 - Use an enum, not a `bool`, for a function parameter.
 - Put a blank line between logical blocks.
 - Keep an item private unless the design needs it public. Use `pub(crate)`
@@ -168,6 +169,9 @@ the reason in the commit message.
   that code outside the module cannot build the type from a raw value. Put a
   doc test that compiles beside it, with the same `use` line. A wrong path
   then cannot make the `compile_fail` test pass.
+- An error code on a `compile_fail` test, for example `E0423`, is a note for
+  the reader. The toolchain of this workspace does not check the code. The
+  test passes on each compile error.
 - A Rust test reads no file outside `rust/`. The gate runs cargo only for a
   change under `rust/`, so a change to a file elsewhere does not run the
   test. If a later change needs such a file, add its directory to
