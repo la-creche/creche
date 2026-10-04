@@ -283,6 +283,19 @@ class FamilyGate:
     ) -> Reply:
         """Contract 04 §5, then execution, then one audit line either way."""
         claimed = read_claimed(headers)
+        try:
+            return await self._answer(grants, tool, args, claimed)
+        except AuditError:
+            raise
+        except Exception:
+            # §5 row 12, for a failure that neither `_decide` nor `_run`
+            # names. The call still gets its line and the contract's body.
+            log.exception("the call raised; failing closed")
+            return self._refuse(grants, tool, args, deny("internal_error"), claimed)
+
+    async def _answer(
+        self, grants: FamilyGrants, tool: str, args: dict[str, object], claimed: Claimed
+    ) -> Reply:
         decision = self._decide(grants, tool, args, claimed)
         if not decision.allow:
             return self._refuse(grants, tool, args, decision, claimed)
@@ -397,6 +410,14 @@ class FamilyGate:
             # audit records why the gate ended rather than leaving a hole.
             self._write(grants, tool, args, Outcome.DENY, REASON_ABANDONED, claimed, gate=gate)
             raise
+        except Exception:
+            # §6.4's second record, for a wait that failed. Nothing executes.
+            log.exception("the hold of gate %s raised; failing closed", gate)
+            broken: FamilyReason = "internal_error"
+            self._write(grants, tool, args, Outcome.DENY, broken, claimed, gate=gate)
+            return Reply(
+                FAMILY_DENY_STATUS[broken], {"ok": False, "reason": broken, "detail": None}
+            )
 
         if held.outcome is GateOutcome.APPROVED:
             return await self._run(

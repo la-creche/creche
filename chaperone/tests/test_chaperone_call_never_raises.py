@@ -3,7 +3,8 @@
 
 `chaperone/AGENTS.md`, "Fail closed". The tests here send what the body
 reader takes and a later step cannot use: a string that is not Unicode
-text, and arguments that nest past the limit of the interpreter.
+text, and arguments that nest past the limit of the interpreter. They also
+make a layer raise a failure that no handler names.
 
 The client does not re-raise an error of the server. A test then reads the
 answer that a caller gets.
@@ -24,11 +25,14 @@ from chaperone.family_audit import (
     AUDIT_TRUNCATION_MARKER,
     UNRECORDABLE_ARGS,
 )
-from chaperone.gatekeeper import Gatekeeper, GateNotice
+from chaperone.gatekeeper import GateHeld, Gatekeeper, GateNotice, GateTicket, ReachCheck
+from chaperone.gates import gate_id
 from chaperone.mcp_client import UpstreamSpec
 from chaperone_family_helpers import FAMILY_TOKEN, make_grants, write_grants
 from chaperone_helpers import FakePool
 from fastapi.testclient import TestClient
+
+from chaperone import family_app
 
 KAGI: Final = UpstreamSpec(name="kagi", command="x", args=(), env={})
 SEARCH: Final = "kagi__kagi_search_fetch"
@@ -41,6 +45,8 @@ LONE: Final = "\\ud800"
 #: reads.
 DEEP: Final = 5000
 DEEP_JSON: Final = "[" * DEEP + "]" * DEEP
+
+INTERNAL_ERROR: Final = {"ok": False, "reason": "internal_error", "detail": None}
 
 
 class Notified:
@@ -261,3 +267,58 @@ def test_a_result_that_no_reply_can_carry_is_an_upstream_failure(tmp_path: Path)
     assert reply.json()["reason"] == "upstream_failed"
     [record] = family_lines(tmp_path)
     assert (record["decision"], record["reason"]) == ("allow", "upstream_failed")
+
+
+# ---- a gate that ends by a failure -------------------------------------------
+
+
+class BrokenHold(Gatekeeper):
+    """A gate whose wait raises a failure that no handler names."""
+
+    async def hold(self, ticket: GateTicket, reach: ReachCheck) -> GateHeld:
+        raise RuntimeError("a failure nobody predicted")
+
+
+def test_a_hold_that_raises_writes_the_second_record_and_denies(tmp_path: Path) -> None:
+    """§6.4: a gated call writes two records. The second one says why the
+    gate ended, also when the wait itself failed."""
+    write_grants(grants_dir(tmp_path), make_grants(approval=[SEARCH]))
+    pool = FakePool()
+    client = build(tmp_path, pool=pool, gatekeeper=BrokenHold(Notified()))
+
+    reply = call(client, body_of(SEARCH, '{"query":"x"}'))
+
+    assert reply.status_code == 500
+    assert reply.json() == INTERNAL_ERROR
+    assert pool.calls == []
+    gate = gate_id("chat", SEARCH, {"query": "x"})
+    records = family_lines(tmp_path)
+    assert [(r["decision"], r["reason"], r["gate"]) for r in records] == [
+        ("pending", "approval_required", gate),
+        ("deny", "internal_error", gate),
+    ]
+
+
+# ---- a failure that no layer names --------------------------------------------
+
+
+def test_a_call_that_raises_anything_writes_one_line_and_denies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Row 12 of §5, for a failure outside the decision and the execution."""
+    write_grants(grants_dir(tmp_path), make_grants())
+    pool = FakePool()
+    client = build(tmp_path, pool=pool)
+
+    def explode(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("a failure nobody predicted")
+
+    monkeypatch.setattr(family_app, "can_hold", explode)
+    reply = call(client, body_of(SEARCH, '{"query":"x"}'))
+
+    assert reply.status_code == 500
+    assert reply.json() == INTERNAL_ERROR
+    assert pool.calls == []
+    [record] = family_lines(tmp_path)
+    assert (record["decision"], record["reason"]) == ("deny", "internal_error")
+    assert record["args"] == {"query": "x"}

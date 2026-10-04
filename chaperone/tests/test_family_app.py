@@ -551,6 +551,9 @@ def test_a_decision_that_raises_is_internal_error(
     reply = client.post("/call", json=EMBED_CALL, headers=family_auth())
     assert reply.status_code == 500
     assert reply.json()["reason"] == "internal_error"
+    record = last_call(tmp_path)
+    assert (record["decision"], record["reason"]) == ("deny", "internal_error")
+    assert len(v2_lines(tmp_path)) == 1
 
 
 def test_an_allow_this_stage_cannot_execute(
