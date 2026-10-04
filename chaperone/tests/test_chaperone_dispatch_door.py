@@ -29,8 +29,10 @@ SESSION = "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
 CHAIN = ("chat", "scrum-lead", "issue-worker")
 MESSAGE = "Take ticket 412."
 
-#: More levels than the JSON reader of a supported interpreter reads.
-TOO_DEEP = 100_000
+#: More levels than the JSON reader of each supported interpreter reads on
+#: a stack of the default size. Python 3.14 reads more than 100,000 levels.
+#: The vectors use the same number.
+TOO_DEEP = 400_000
 TOO_DEEP_JSON = b"[" * TOO_DEEP + b"]" * TOO_DEEP
 
 

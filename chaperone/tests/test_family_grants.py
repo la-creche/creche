@@ -19,9 +19,10 @@ from chaperone_family_helpers import write_grants_raw as write_raw
 
 from chaperone import family_grants
 
-#: More levels than the JSON reader of a supported interpreter reads. The
-#: file stays under `MAX_GRANT_FILE_BYTES`, so the store parses it.
-TOO_DEEP = 100_000
+#: More levels than the JSON reader of each supported interpreter reads on
+#: a stack of the default size. Python 3.14 reads more than 100,000 levels.
+#: The vectors use the same number.
+TOO_DEEP = 400_000
 
 
 def _store(tmp_path: Path) -> tuple[FamilyStore, Path, FaultWriter]:
@@ -274,11 +275,18 @@ def test_parse_refuses_a_file_nested_too_deep() -> None:
     assert message == "grants/chat.json: not JSON (nested too deep)"
 
 
-def test_a_file_nested_too_deep_faults_one_family_only(tmp_path: Path) -> None:
+def test_a_file_nested_too_deep_faults_one_family_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Contract 04 §1.4 row 4. `lookup` reads every file, so the refusal of
-    one file must not reach the family of another file."""
+    one file must not reach the family of another file.
+
+    The test lifts the size cap of a file. A file under the cap has less
+    than 131,072 levels, and that is too few for a refusal by the reader of
+    each supported interpreter."""
     store, grants_dir, _ = _store(tmp_path)
     write_grants(grants_dir, make_grants())
+    monkeypatch.setattr(family_grants, "MAX_GRANT_FILE_BYTES", len(_too_deep()))
     write_raw(grants_dir, "vault", _too_deep())
 
     assert store.lookup(FAMILY_TOKEN) is not None

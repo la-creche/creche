@@ -34,8 +34,10 @@ DELEGATION = "01K5J9QWB2M4N6Q8S0V2W4Y6A8"
 SESSION = "job-01K5J9QWB4XN2A7C6E0F3G5H8J"
 ANSWER = "The boiler was serviced on 2026-03-11."
 
-#: More levels than the JSON reader of a supported interpreter reads.
-TOO_DEEP = 100_000
+#: More levels than the JSON reader of each supported interpreter reads on
+#: a stack of the default size. Python 3.14 reads more than 100,000 levels.
+#: The vectors use the same number.
+TOO_DEEP = 400_000
 TOO_DEEP_JSON = b"[" * TOO_DEEP + b"]" * TOO_DEEP
 
 
