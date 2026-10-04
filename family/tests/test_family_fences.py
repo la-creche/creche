@@ -6,12 +6,14 @@ a failure reads as "this rule broke", not "some test broke somewhere"."""
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+from agent_family import grammar, serverrules
 from agent_family.grammar import PLATFORM_SERVER, PROBE_FAMILY
 from agent_family.model import FamilyFile
 from agent_family.parse import parse_family
@@ -33,6 +35,48 @@ from family_helpers import (
     messages,
     server_text,
 )
+
+# --- every pattern (the root `AGENTS.md`: `\Z`, never `$`) --------------------
+
+#: Each compiled pattern of the two modules that hold one, by its source. A
+#: pattern with two names, or with an import in the second module, is one row.
+PATTERNS = {
+    value.pattern: value
+    for module in (grammar, serverrules)
+    for value in vars(module).values()
+    if isinstance(value, re.Pattern)
+}
+
+
+@pytest.mark.parametrize("source", PATTERNS)
+def test_a_pattern_ends_at_the_end_of_the_text(source: str) -> None:
+    """`$` also matches before a final newline. The end-of-text sign does not."""
+    assert source.endswith(r"\Z")
+    assert "$" not in source
+
+
+#: A text that each identifier pattern takes, and that `match` must refuse
+#: with a newline after it.
+SAMPLES = {
+    "FAMILY_NAME": "chat",
+    "TOOL_NAME": "search",
+    "MODEL_ALIAS": "agent-router",
+    "MOUNT_PATH": "/srv/agents/vault",
+    "ENV_VAR_NAME": "API_KEY",
+    "HA_IDENTIFIER": "light",
+    "HA_ENTITY_ID": "light.kitchen",
+    "SHA256_HEX": "a" * 64,
+    "GITHUB_REPO": "owner/name",
+    "EXACT_VERSION": "1.0.2",
+}
+
+
+@pytest.mark.parametrize("name", SAMPLES)
+def test_a_pattern_takes_no_final_newline(name: str) -> None:
+    pattern: re.Pattern[str] = getattr(grammar, name)
+    assert pattern.match(SAMPLES[name]) is not None
+    assert pattern.match(SAMPLES[name] + "\n") is None
+
 
 # --- 3.1 name, kind, description -------------------------------------------
 

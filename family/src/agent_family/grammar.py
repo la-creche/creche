@@ -14,7 +14,7 @@ from typing import Final
 #: `[a-z][a-z0-9-]{1,30}`: 2 to 31 characters, hyphens, never an underscore.
 #: The PEP's call name is `<server>__<tool>` and it splits on the double
 #: underscore (contract 01 §3.4 rule 6), so neither half may carry one.
-FAMILY_NAME: Final = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+FAMILY_NAME: Final = re.compile(r"^[a-z][a-z0-9-]{1,30}\Z")
 SERVER_NAME: Final = FAMILY_NAME
 WEBHOOK_NAME: Final = FAMILY_NAME
 
@@ -25,18 +25,18 @@ WEBHOOK_NAME: Final = FAMILY_NAME
 #: then revokes them, and the PEP raises a turn-blocking `grants_stale` on it.
 #: The grammar accepts it, so only a refusal here keeps the name free.
 PROBE_FAMILY: Final = "gate-probe"
-TOOL_NAME: Final = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+TOOL_NAME: Final = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*\Z")
 SKILL_NAME: Final = FAMILY_NAME
-MODEL_ALIAS: Final = re.compile(r"^[a-z0-9][a-z0-9._/-]*$")
-MOUNT_PATH: Final = re.compile(r"^[A-Za-z0-9._/-]+$")
-ENV_VAR_NAME: Final = re.compile(r"^[A-Z][A-Z0-9_]*$")
-HA_IDENTIFIER: Final = re.compile(r"^[a-z][a-z0-9_]*$")
-HA_ENTITY_ID: Final = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+$")
-SHA256_HEX: Final = re.compile(r"^[0-9a-f]{64}$")
-GITHUB_REPO: Final = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+MODEL_ALIAS: Final = re.compile(r"^[a-z0-9][a-z0-9._/-]*\Z")
+MOUNT_PATH: Final = re.compile(r"^[A-Za-z0-9._/-]+\Z")
+ENV_VAR_NAME: Final = re.compile(r"^[A-Z][A-Z0-9_]*\Z")
+HA_IDENTIFIER: Final = re.compile(r"^[a-z][a-z0-9_]*\Z")
+HA_ENTITY_ID: Final = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+\Z")
+SHA256_HEX: Final = re.compile(r"^[0-9a-f]{64}\Z")
+GITHUB_REPO: Final = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\Z")
 #: An exact version, never a range: a range makes a hash meaningless
 #: (contract 01b §3.1).
-EXACT_VERSION: Final = re.compile(r"^[0-9][0-9A-Za-z.+-]*$")
+EXACT_VERSION: Final = re.compile(r"^[0-9][0-9A-Za-z.+-]*\Z")
 VERSION_RANGE_CHARS: Final = ("*", "^", "~", ">", "<", "=", ",", " ")
 
 # --- ranges (contract 01 §3) ---
@@ -274,12 +274,12 @@ def duration_s(value: str) -> int | None:
     return _count(match.group(1)) * _DURATION_SECONDS[match.group(2)]
 
 
-_IPV4: Final = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
-_HOSTNAME: Final = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$")
+_IPV4: Final = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}\Z")
+_HOSTNAME: Final = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\Z")
 #: ASCII digits, and five at most after the zeros at the start. `str.isdigit`
 #: also takes a digit that is not ASCII, and `int` raises on some of those
 #: and on a run past the digit limit of the interpreter.
-_PORT: Final = re.compile(r"0*([0-9]{1,5})")
+_PORT: Final = re.compile(r"^0*([0-9]{1,5})\Z")
 
 
 class EgressProblem(StrEnum):

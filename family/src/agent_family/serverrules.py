@@ -43,10 +43,10 @@ _PINNING_FIELDS: Final = ("package", "version", "lock", "repo", "asset", "sha256
 #: `handover.mcpserver` refuses the same four shapes before it reads
 #: the file. Saying it HERE is what makes §4.1 step 2 true — CI refuses a
 #: traversing lock path before the byte reaches the host.
-_LOCK_PATH: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
+_LOCK_PATH: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}\Z")
 
 #: One argument name, or two joined by `/` (contract 01b §7.2).
-_ARG_NAME: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ARG_NAME: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 _ARG_PARTS_MAX: Final = 2
 
 
