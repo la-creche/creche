@@ -13,12 +13,14 @@ from agent_door_owui.headers import (
     PARENT_ID_HEADER,
     TASK_HEADER,
     USER_MESSAGE_ID_HEADER,
+    _checked,  # pyright: ignore[reportPrivateUsage]
     read_ids,
 )
 from agent_door_owui.openai_api import (
     MAX_PROMPT_BYTES,
     ChatRequest,
     family_of,
+    is_family_name,
     models_body,
     parse_chat_request,
 )
@@ -98,6 +100,17 @@ def test_a_crafted_chat_id_is_refused() -> None:
             read_ids(_headers(**{CHAT_ID_HEADER: bad}))
 
         assert caught.value.code in ("bad_id", "missing_chat_id")
+
+
+def test_an_id_with_a_trailing_newline_is_refused() -> None:
+    # A `$` also matches before a final newline. `\Z` does not. `read_ids`
+    # strips the value first, so the check is called directly.
+    assert _checked(CHAT, CHAT_ID_HEADER, "chat id") == CHAT
+
+    with pytest.raises(DoorError) as caught:
+        _checked(CHAT + "\n", CHAT_ID_HEADER, "chat id")
+
+    assert caught.value.code == "bad_id"
 
 
 def test_an_empty_message_id_is_refused() -> None:
@@ -200,6 +213,17 @@ def test_only_an_agent_model_is_served() -> None:
             family_of(bad)
 
         assert caught.value.code == "bad_model"
+
+
+def test_a_family_with_a_trailing_newline_is_refused() -> None:
+    # A `$` also matches before a final newline. `\Z` does not.
+    assert is_family_name("chat")
+    assert not is_family_name("chat\n")
+
+    with pytest.raises(DoorError) as caught:
+        family_of("agent:chat\n")
+
+    assert caught.value.code == "bad_model"
 
 
 def test_the_models_body_is_openai_shaped() -> None:
