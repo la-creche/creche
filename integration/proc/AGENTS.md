@@ -16,7 +16,9 @@ cannot judge a service that Python cannot import.
 
 The suite owns no product code. It is not in the root `testpaths`, so the
 full suite does not run it. CI runs it in the `proc` job of `gate.yml` and of
-`release.yml`.
+`release.yml`. The pre-push hook runs it for a push that changes a path of
+this directory, with `CRECHE_PROC_NO_SKIP=1`. A Markdown document of this
+directory does not start it.
 
 ## Run it
 
@@ -629,6 +631,13 @@ the text of the failure. Work down this list.
   counts as a process that runs until its parent reaps it. On Linux, the
   same applies when `/proc` lists a process and does not give the state of
   that process.
+- **The suite declares no dependency of its own.** The suite imports PyYAML
+  and `httpx`, and the `dev` group of the root `pyproject.toml` names neither
+  one. The product packages bring both into the venv. When the last package
+  that needs one of the two leaves the workspace, the suite stops at its
+  imports. Add the name to the `dev` group in the pull request that removes
+  that package. The change moves `uv.lock`, and `uv.lock` moves each venv
+  component.
 
 ## Layout
 

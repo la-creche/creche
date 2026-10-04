@@ -51,7 +51,8 @@ BIN = Path(__file__).resolve().parents[1]
 GATE = "bin/quality-gate.sh"
 RUST_GATE = "bin/rust-gate.sh"
 RULE = "bin/lib/rustrule.sh"
-COPIED = (GATE, RUST_GATE, RULE)
+DOCS_RULE = "bin/lib/docsrule.sh"
+COPIED = (GATE, RUST_GATE, RULE, DOCS_RULE)
 
 #: Every program the two scripts and the rule call, but `uv` and `cargo`.
 TOOLS = ("bash", "git", "awk", "grep", "tr", "dirname", "find", "sort")
