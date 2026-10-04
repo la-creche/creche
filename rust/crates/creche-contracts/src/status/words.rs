@@ -106,8 +106,9 @@ words! {
 words! {
     /// The lifecycle state of a sandbox (contract 05 §4.2).
     ///
-    /// A reader that gets another word refuses the sandbox row, and keeps the
-    /// document. `attendance` then does not dial that sandbox.
+    /// The valid type refuses a document with another word. The view of
+    /// `attendance` drops a row with another word and keeps the document, so
+    /// `attendance` does not dial that sandbox.
     SandboxLifecycle, SandboxLifecycleError, "a sandbox state" {
         /// The ledger of `caregiver` holds the row. No VM exists for it.
         Planned => "planned",
@@ -171,7 +172,8 @@ words! {
 words! {
     /// The service that detected a fault (contract 05 §3.3).
     ///
-    /// A reader that gets another word refuses the fault.
+    /// The valid type refuses a document with another word. Each view of the
+    /// status document keeps the text.
     FaultSource, FaultSourceError, "a fault source" {
         /// `caregiver`.
         Managerd => "managerd",
@@ -185,8 +187,9 @@ words! {
 words! {
     /// The code of a fault (contract 05 §3.3).
     ///
-    /// A reader that gets another word refuses the fault. `caregiver` drops
-    /// such an entry of a fault file and keeps the file (§3.3.1 rule 6).
+    /// The valid type refuses a document with another word. Each view of the
+    /// status document keeps the text. The reader of a fault file drops an
+    /// entry with another word and keeps the file (§3.3.1 rule 6).
     FaultCode, FaultCodeError, "a fault code" {
         /// The playpen and `attendance` do not share a major version of the
         /// channel protocol.

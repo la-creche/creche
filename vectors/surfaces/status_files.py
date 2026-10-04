@@ -490,6 +490,11 @@ WRITTEN: Final[tuple[Written, ...]] = (
         _document(state=FamilyState.RECONCILING, reconcile=_reconcile("wait")),
     ),
     Written("lax-sandbox-of-other-family", _document(sandboxes=(_sandbox(1, id="code-s1"),))),
+    Written(
+        "lax-sandbox-twice",
+        _document(sandboxes=(_sandbox(1), _sandbox(1, SandboxLifecycle.DRAINING))),
+    ),
+    Written("lax-never-valid-in-sync", _document(validation=_validation(never_valid=True))),
     Written("lax-fault-code-unknown", _degraded(_fault("sandbox_lost", blocks=True))),
     Written("lax-fault-blocks-against-table", _degraded(_fault("key_mint_failed", blocks=False))),
     Written(

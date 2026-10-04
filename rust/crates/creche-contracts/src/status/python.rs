@@ -730,6 +730,16 @@ const DEVIATIONS: &[Deviation] = &[
         StatusError::SandboxOfOtherFamily { item: 0 },
     ),
     deviation(
+        "lax-sandbox-twice",
+        "§4.1",
+        StatusError::SandboxTwice { item: 1 },
+    ),
+    deviation(
+        "lax-never-valid-in-sync",
+        "§3.1",
+        field("validation.never_valid", FieldFault::NotPermitted),
+    ),
+    deviation(
         "lax-fault-code-unknown",
         "§3.3",
         item("faults[].code", FieldFault::UnknownWord),

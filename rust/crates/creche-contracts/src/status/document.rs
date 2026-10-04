@@ -278,12 +278,15 @@ pub struct Sandbox {
     /// The state of the channel.
     pub channel: ChannelState,
     // CONTRACT-QUESTION: contract 05 §4.1.1 rule 4 calls a row with no path
-    // a fault. The Python writer writes the empty text for a sandbox in the
-    // state `planned`, which has no file yet. The type takes that form as
-    // `None`. To refuse it, `caregiver` must write no row for a planned
-    // sandbox.
+    // a fault. `caregiver.sandboxes` reads a row of its ledger with no
+    // `supervisor_env` key as the empty text, and the Python writer writes
+    // that text for a sandbox in each lifecycle state. The type takes that
+    // form as `None`, in each lifecycle state too. To refuse it for a sandbox
+    // that serves, `caregiver` must first write a path into each row of its
+    // ledger.
     /// The path of the `supervisor.env` of the sandbox (§4.1.1). `None` is
-    /// the empty text in the file: `caregiver` did not write the file yet.
+    /// the empty text in the file: the ledger of `caregiver` holds no path
+    /// for the sandbox.
     pub supervisor_env: Option<HostPath>,
 }
 
@@ -592,7 +595,9 @@ pub struct DocumentParts {
     // revision, because it knows no kind then. The type takes that form as
     // `None`. To refuse it, `caregiver` must publish no document for such a
     // family, and a reader then cannot tell it from a family that does not
-    // exist.
+    // exist. The type does not tie `None` to `never_valid` or to an empty
+    // `sandboxes`: `caregiver.apply` takes the kind from the last document
+    // and `never_valid` from the applied state, so the two can differ.
     /// The kind of the family. `None` is the empty text in the file: no
     /// revision of the family was valid, so `caregiver` knows no kind.
     pub kind: Option<Kind>,
@@ -612,7 +617,8 @@ pub struct DocumentParts {
     // each state but `degraded`. `caregiver` writes the open faults of a
     // family in the state `invalid` too. The type takes a fault in each state.
     // To refuse it, a reader of an invalid family does not see a fault that
-    // stops its turns.
+    // stops its turns. `caregiver` writes no fault in the states `in_sync`
+    // and `reconciling`, and the type does not refuse one there.
     /// The open faults.
     pub faults: Vec<Fault>,
     /// The reconcile block. `Some` only in the state `reconciling`.
@@ -673,9 +679,12 @@ impl StatusDocument {
     ///
     /// # Errors
     ///
-    /// [`StatusError`] when two parts break a rule of contract 05: a sandbox
-    /// of another family (§4.1), or a reconcile block outside the state
-    /// `reconciling` (§2.1).
+    /// [`StatusError`] when two parts break a rule of contract 05:
+    ///
+    /// - a sandbox of another family (§4.1),
+    /// - two sandboxes with one number (§4.1),
+    /// - a reconcile block outside the state `reconciling` (§2.1),
+    /// - `never_valid` outside the state `invalid` (§3.1).
     pub fn new(parts: DocumentParts) -> Result<Self, StatusError> {
         let other_family = parts
             .sandboxes
@@ -685,8 +694,28 @@ impl StatusDocument {
             return Err(StatusError::SandboxOfOtherFamily { item });
         }
 
+        // Each sandbox is a sandbox of one family here, so the number alone
+        // names it. `chat-s01` and `chat-s1` are two texts with one number.
+        let numbers = || parts.sandboxes.iter().map(|sandbox| sandbox.id.number());
+        let twice = numbers()
+            .enumerate()
+            .position(|(place, number)| numbers().take(place).any(|earlier| earlier == number));
+        if let Some(item) = twice {
+            return Err(StatusError::SandboxTwice { item });
+        }
+
         if parts.reconcile.is_some() && parts.state != FamilyState::Reconciling {
             return Err(StatusError::field("reconcile", FieldFault::NotPermitted));
+        }
+
+        // A family with no valid revision has an invalid family file now.
+        // Each place of `caregiver` that writes `never_valid: true` also
+        // writes the state `invalid`.
+        if parts.validation.never_valid && parts.state != FamilyState::Invalid {
+            return Err(StatusError::field(
+                "validation.never_valid",
+                FieldFault::NotPermitted,
+            ));
         }
 
         Ok(Self { parts })
@@ -974,6 +1003,12 @@ pub enum StatusError {
         /// The place of the sandbox in `sandboxes`, from 0.
         item: usize,
     },
+    /// An earlier row of `sandboxes` has the number of this sandbox. A number
+    /// names one sandbox of a family (§4.1).
+    SandboxTwice {
+        /// The place of the second row in `sandboxes`, from 0.
+        item: usize,
+    },
 }
 
 /// What is wrong with one field of a document.
@@ -1050,6 +1085,10 @@ impl fmt::Display for StatusError {
             Self::SandboxOfOtherFamily { item } => write!(
                 f,
                 "sandboxes[].id, item {item}: the sandbox is not a sandbox of the family"
+            ),
+            Self::SandboxTwice { item } => write!(
+                f,
+                "sandboxes[].id, item {item}: an earlier row has the number of the sandbox"
             ),
         }
     }
@@ -1866,6 +1905,47 @@ mod tests {
     }
 
     #[test]
+    fn two_rows_with_one_sandbox_number_are_refused() {
+        assert_eq!(
+            with(&["sandboxes", "1", "id"], r#""chat-s1""#),
+            Err(StatusError::SandboxTwice { item: 1 })
+        );
+        // `chat-s01` and `chat-s1` are two names with the number 1.
+        assert_eq!(
+            with(&["sandboxes", "1", "id"], r#""chat-s01""#),
+            Err(StatusError::SandboxTwice { item: 1 })
+        );
+    }
+
+    #[test]
+    fn never_valid_is_refused_outside_the_state_invalid() {
+        let never = &["validation", "never_valid"];
+        let invalid = changed(&full(), &["state"], Some(&json(r#""invalid""#)));
+        let invalid = changed(&invalid, &["reconcile"], Some(&Json::Null));
+        let never_valid = changed(&invalid, never, Some(&Json::Bool(true)));
+        let document = StatusDocument::try_from(&RawStatus::from_object(&never_valid)).unwrap();
+
+        assert!(document.parts().validation.never_valid);
+        assert_eq!(document.parts().state, FamilyState::Invalid);
+        for state in ["in_sync", "reconciling", "degraded"] {
+            let state = json(&format!(r#""{state}""#));
+            let reconcile = if state == json(r#""reconciling""#) {
+                full().get("reconcile").unwrap().clone()
+            } else {
+                Json::Null
+            };
+            let other = changed(&never_valid, &["state"], Some(&state));
+            let other = changed(&other, &["reconcile"], Some(&reconcile));
+
+            assert_eq!(
+                StatusDocument::try_from(&RawStatus::from_object(&other)),
+                Err(field("validation.never_valid", FieldFault::NotPermitted)),
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_pep_block_holds_only_what_its_state_permits() {
         let off = r#"{"watch": "off", "url": "", "checked_at": null, "unreachable_since": null}"#;
         let off_checked = r#"{"watch": "off", "url": "", "checked_at": "2031-04-18T10:20:28Z",
@@ -2069,6 +2149,10 @@ mod tests {
             (
                 StatusError::SandboxOfOtherFamily { item: 0 },
                 "sandboxes[].id, item 0: the sandbox is not a sandbox of the family",
+            ),
+            (
+                StatusError::SandboxTwice { item: 1 },
+                "sandboxes[].id, item 1: an earlier row has the number of the sandbox",
             ),
             (
                 field("written_at", FieldFault::NotATime(TimestampError::NoOffset)),

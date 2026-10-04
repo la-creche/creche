@@ -401,7 +401,8 @@ Rules for the test:
      gives no grammar for a host path. The type takes an absolute path with
      no control character.
   6. `Sandbox::supervisor_env`, contract 05 §4.1.1. `caregiver` writes an
-     empty path for a sandbox in the state `planned`. The type takes it.
+     empty path for a row of its ledger that holds no path, in each
+     lifecycle state. The type takes it in each lifecycle state.
   7. `Credentials::epoch`, contract 05 §6.1. The contract gives no range.
      The type refuses 0. The Python reader of `attendance` takes 0.
   8. `Fault::new`, contract 05 §3.3. `caregiver` writes `blocks_turns: false`
@@ -419,6 +420,14 @@ Rules for the test:
   13. `ReconcileStep::WriteTimers`, contract 05 §3.4. The contract names
       eight steps. `caregiver` also writes the step `write_timers`. The type
       takes it.
+- The valid status document takes these forms. Contract 05 excludes each
+  one. The owner decides each case:
+  1. An empty `supervisor_env` for a sandbox in the state `ready` (§4.1.1
+     rule 4).
+  2. An empty kind with `never_valid: false`, or with a sandbox in
+     `sandboxes` (§2.1 and §3.1).
+  3. A fault in the state `in_sync` or `reconciling` (§2.1).
+  4. The state `degraded` with no fault (§3).
 - Contract 05 gives no grammar for these texts of the status document. Each
   one is a `String`: `registry_rev`, `applied_rev`, `config_rev`,
   `validation.rev`, `key_id`, `token_id`, `image`, `spec_hash`, `memory` and
