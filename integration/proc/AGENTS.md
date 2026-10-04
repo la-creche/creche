@@ -209,6 +209,9 @@ down this list.
    under `sessions/` in the root, and the playpen log.
 5. `the teardown had to end a process`: a service ignored `SIGTERM`, a
    process of its group outlived it, or a stand-in outlived its service.
+   The line `names a process outside this test` has one of two causes. A
+   stand-in ended and another program got its pid, or a stand-in started
+   its own session. The teardown sends no signal to that pid.
 6. `a test left a process behind`: a test started a process outside the
    `supervisor` fixture. This is a defect of the test.
 

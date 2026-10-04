@@ -34,6 +34,7 @@ from proc_harness import (
     UnixAddress,
     kill_pid,
     port_is_free,
+    session_id_of,
 )
 from proc_services import Service, command_of, env_of
 from proc_standins import (
@@ -193,9 +194,16 @@ class Stack:
         """SIGKILL every playpen that runs now. Returns the pids.
 
         `sbx exec` becomes the playpen, so the pid the stand-in recorded is
-        the pid of the playpen.
+        the pid of the playpen. A playpen keeps the session of `attendance`.
+        A recorded pid in another session names another program now, because
+        the playpen ended earlier. It gets no signal.
         """
-        pids = [call.pid for call in self.sbx_calls() if call.pid not in self._killed]
+        if self.attendance is None:
+            return []
+
+        session = self.attendance.pgid
+        recorded = [call.pid for call in self.sbx_calls() if call.pid not in self._killed]
+        pids = [pid for pid in recorded if session_id_of(pid) == session]
 
         for pid in pids:
             kill_pid(pid)

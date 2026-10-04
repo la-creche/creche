@@ -114,7 +114,7 @@ def supervisor(tree: Tree, request: pytest.FixtureRequest) -> Iterator[Superviso
 
     yield built
 
-    problems = built.stop_all() + end_standins(tree)
+    problems = built.stop_all() + end_standins(tree, built.sessions())
 
     if problems:
         pytest.fail("the teardown had to end a process:\n" + "\n".join(problems))

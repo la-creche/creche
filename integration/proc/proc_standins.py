@@ -32,11 +32,12 @@ import shlex
 import stat
 import sys
 import time
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from proc_harness import kill_pid, pids_gone_by
+from proc_harness import kill_pid, pids_gone_by, session_id_of
 from proc_tree import Tree, repo_root
 
 SBX: Final = "sbx"
@@ -142,20 +143,34 @@ def recorded_pids(tree: Tree) -> list[int]:
     return [call.pid for name in (SBX, PI) for call in calls_of(tree, name)]
 
 
-def end_standins(tree: Tree) -> list[str]:
+def end_standins(
+    tree: Tree, sessions: Collection[int], deadline_s: float = _EXIT_DEADLINE_S
+) -> list[str]:
     """Wait for every stand-in process to end. Returns one line per problem.
 
-    Called after the services of the test ended, and at once, so a recorded
-    pid still names the process that recorded it. A stand-in that outlives
-    its service is killed, and that is a problem to report: on the host it
-    would be a process no unit owns.
+    Called after the services of the test ended. `sessions` holds the session
+    of each service. A stand-in that outlives its service is killed, and that
+    is a problem to report: on the host it would be a process no unit owns.
+
+    A pid is not a name. A stand-in that ended earlier in the test gave its
+    pid back, and another program can hold it now. So only a pid in one of
+    `sessions` is killed. A pid that runs in another session is reported and
+    gets no signal.
     """
-    left = pids_gone_by(recorded_pids(tree), time.monotonic() + _EXIT_DEADLINE_S)
+    left = pids_gone_by(recorded_pids(tree), time.monotonic() + deadline_s)
+    problems: list[str] = []
 
     for pid in left:
-        kill_pid(pid)
+        if session_id_of(pid) not in sessions:
+            problems.append(
+                f"the recorded pid {pid} names a process outside this test: no signal sent"
+            )
+            continue
 
-    return [f"stand-in process {pid} outlived its service and was killed" for pid in left]
+        kill_pid(pid)
+        problems.append(f"stand-in process {pid} outlived its service and was killed")
+
+    return problems
 
 
 def _recorder(tree: Tree, name: str) -> str:

@@ -305,6 +305,10 @@ class Supervisor:
 
         return problems
 
+    def sessions(self) -> frozenset[int]:
+        """The session of each child. A child leads its session, so it is the pid."""
+        return frozenset(child.popen.pid for child in self.children)
+
     def output(self) -> str:
         """What every child wrote, for a failure report."""
         return "\n".join(child.output() for child in self.children)
@@ -373,6 +377,19 @@ def pid_is_alive(pid: int) -> bool:
         return True
 
     return True
+
+
+def session_id_of(pid: int) -> int | None:
+    """The session of a process that runs, or None when the pid names none.
+
+    A process keeps the session of the child that started it, and the system
+    gives the id of a session to no other program while a process is in it.
+    So the session says whose a pid is, and the pid alone does not.
+    """
+    try:
+        return os.getsid(pid)
+    except (ProcessLookupError, PermissionError):
+        return None
 
 
 def pids_gone_by(pids: Sequence[int], deadline: float) -> list[int]:
