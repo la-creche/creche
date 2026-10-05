@@ -16,10 +16,12 @@
 #                          --docs: only the tests marked `docs`, for a
 #                          change bin/lib/docsrule.sh calls docs only
 #   bin/rust-gate.sh       only for a change under rust/ (bin/lib/rustrule.sh):
-#                          cargo fmt and cargo clippy, and cargo test where
-#                          pytest runs. A push that changes vectors/ runs it
-#                          too, but only where cargo is on PATH. Any other
-#                          change runs no cargo step and needs no cargo on PATH
+#                          cargo fmt, cargo clippy and cargo deny, and cargo
+#                          test where pytest runs. cargo deny runs only where
+#                          cargo-deny is on PATH. A push that changes vectors/
+#                          runs it too, but only where cargo is on PATH. Any
+#                          other change runs no cargo step and needs no cargo
+#                          on PATH
 # Enforced by githooks/ (`git config core.hooksPath githooks`).
 set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/.."

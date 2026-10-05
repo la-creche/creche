@@ -3,10 +3,12 @@
 # rust/. bin/quality-gate.sh runs it for a change that touches rust/
 # (bin/lib/rustrule.sh). The `rust` job of gate.yml and release.yml runs it.
 #   bin/rust-gate.sh           the [lints] check, the include check, cargo
-#                              fmt and cargo clippy
+#                              fmt, cargo clippy and cargo deny
 #   bin/rust-gate.sh --tests   the same, then cargo test
 # Needs cargo on PATH. rustup takes the toolchain from
 # rust/rust-toolchain.toml, so every cargo step runs inside rust/.
+# `cargo deny` needs cargo-deny on PATH. CI installs it. A developer machine
+# without it prints one line and runs the other steps.
 set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/../rust"
 
@@ -23,6 +25,10 @@ BUILD_DIR="./target"
 #: A line of Rust that includes a Markdown file, e.g.
 #: `#![doc = include_str!("../README.md")]`.
 MD_INCLUDE='include(_str|_bytes)?!.*\.md"'
+
+#: The program behind `cargo deny`. cargo finds a subcommand on PATH by this
+#: name.
+DENY_PROGRAM="cargo-deny"
 
 # inherits_lints MANIFEST: whether the crate takes the lint gate of
 # rust/Cargo.toml. Only one spelling passes: a `[lints]` table that holds the
@@ -81,6 +87,29 @@ no_md_included() {
   [[ "$found" -eq 0 ]]
 }
 
+# deny_checked: the supply-chain check of the locked crates, against
+# rust/deny.toml: the advisories, the bans, the licenses and the sources.
+# `--locked` refuses a Cargo.lock that the manifests no longer match. The
+# advisory check reads its database from the network.
+#
+# The check needs cargo-deny, which rustup does not install. Without it on
+# PATH, a developer machine prints one line and passes: CI runs the check for
+# the same change. In CI a missing cargo-deny fails. A runner sets CI, and a
+# `rust` job that lost its install step must not pass with no check.
+deny_checked() {
+  if command -v "$DENY_PROGRAM" >/dev/null; then
+    cargo deny --locked check
+    return
+  fi
+
+  if [[ -n "${CI:-}" ]]; then
+    echo "rust-gate: $DENY_PROGRAM not on PATH: CI must run the \`cargo deny\` check" >&2
+    return 1
+  fi
+
+  echo "rust-gate: $DENY_PROGRAM not on PATH: no \`cargo deny\` check. CI runs the check"
+}
+
 MODE="${1:-}"
 case "$MODE" in
   "" | "$WITH_TESTS") ;;
@@ -99,6 +128,7 @@ lints_inherited
 no_md_included
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+deny_checked
 
 if [[ "$MODE" == "$WITH_TESTS" ]]; then
   cargo test --workspace --locked
