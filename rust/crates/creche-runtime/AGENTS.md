@@ -232,9 +232,14 @@ reason. The packet that writes the three bodies obeys these rules:
 - `token::bearer_of` gives the bearer of a request as a `Vec<u8>`. Those
   bytes can be a token, and the `Debug` of a `Vec<u8>` prints each byte.
   Rule 16 of "Rules for a change here" asks for a `Debug` that prints no
-  byte. The skeleton fixed the signature of the function. A service gives
-  the bytes to `Secret::matches`. It writes them to no log line. The owner
-  of the crate decides if the result gets a type of its own.
+  byte. A service gives the bytes to `Secret::matches`. It writes them to no
+  log line. The owner of the crate decides if the result gets a type of its
+  own.
+- `token::universal_newlines` holds the text mode rule of Python: one LF for
+  each CR LF and for each other CR. `command::python_text` is a stub for the
+  same rule. When that stub has its body, make `token` call it. Then delete
+  `universal_newlines`. `agent-family` holds one more copy of the rule in
+  `registry.rs`, and no packet has that copy yet.
 - No test gives `faults::publish` a fault file whose source is `caregiver`.
   `FaultFile::new` refuses that source, so no code can build such a file. A
   test gives the private function `publish_as` no writer in its place.
