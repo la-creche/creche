@@ -1094,6 +1094,7 @@ def test_a_change_to_the_rust_checks_needs_no_cargo_here(tree: Tree) -> None:
     ("path", "of_checks"),
     [
         ("bin/rust-gate.sh", True),
+        ("bin/rust-coverage.sh", True),
         ("bin/lib/rustrule.sh", True),
         (".github/workflows/gate.yml", True),
         (".github/workflows/release.yml", True),

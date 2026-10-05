@@ -223,6 +223,13 @@ PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
 #: Each key of the job, and each key of its three steps after the checkout.
 #: One more key can make a red step green, for example `continue-on-error`.
 COVERAGE_JOB_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
+
+#: The runner of the job: the system of the release archive above.
+COVERAGE_RUNNER = "ubuntu-latest"
+
+#: Each variable of the job. One more can change what the run compiles, for
+#: example `RUSTFLAGS`, and then what the report holds.
+COVERAGE_JOB_ENV = {"CARGO_INCREMENTAL": 0}
 COVERAGE_STEP_KEYS = [
     {"name", "if", "working-directory", "run"},
     {"name", "if", "working-directory", "env", "run"},
@@ -568,6 +575,8 @@ def test_a_change_outside_rust_skips_every_coverage_step_and_not_the_job(
     assert set(job) == COVERAGE_JOB_KEYS
     assert job["needs"] == "scope"
     assert job["if"] == ONLY_CODE
+    assert job["runs-on"] == COVERAGE_RUNNER
+    assert job["env"] == COVERAGE_JOB_ENV
     assert checkout["uses"].startswith("actions/checkout@")
     assert "if" not in checkout
     assert [set(step) for step in steps] == COVERAGE_STEP_KEYS
@@ -804,6 +813,7 @@ SCOPES = [
     # A file of the Rust checks themselves. The tests of the gate use a fake
     # cargo, so only this run proves the change with the real one.
     (["bin/rust-gate.sh"], ("code", "true")),
+    (["bin/rust-coverage.sh"], ("code", "true")),
     (["bin/lib/rustrule.sh"], ("code", "true")),
     ([".github/workflows/gate.yml"], ("code", "true")),
     ([".github/workflows/release.yml"], ("code", "true")),
