@@ -503,10 +503,18 @@ to 5 give a Rust service the Python behavior on purpose.
     Reason: `subprocess.run` of Python runs to its end at a stop of the
     service. A child that a stop kills in the middle of a step can leave
     state that the next start cannot use.
+16. **Call `log::init` first in `main`.**
+    Reason: the standard panic hook of Rust writes the message of a panic
+    to stderr. That message can hold a part of a request or of a file. The
+    hook of `log::init` writes only the place of the panic. `service::run`,
+    `service::load` and `service::refuse_start` set the same hook. Without
+    the call in `main`, the code before the first of the three runs with
+    the standard hook.
 
 The lint gate checks rule 13 in part: `await_holding_lock` refuses a guard
-that the code holds across an `await`. No check holds the other rules. The
-reviewer checks them.
+that the code holds across an `await`. `service::run` holds rule 16 in part:
+it sets the hook before the runtime starts. No check holds the other rules.
+The reviewer checks them.
 
 ## Code style
 
