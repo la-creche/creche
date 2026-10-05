@@ -22,6 +22,7 @@ import os
 import runpy
 import subprocess
 import sys
+import tomllib
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -465,6 +466,22 @@ def test_the_user_root_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert printed.err.startswith("journal-scan: ") and printed.err.count("\n") == 1
 
 
+def test_an_old_python_is_refused(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal comes at the load of the program, before a line that an old Python cannot run."""
+    major, minor = runpy.run_path(str(SCRIPT), run_name="journal_scan")["MIN_PYTHON"]
+
+    with monkeypatch.context() as patch, pytest.raises(SystemExit) as refused:
+        patch.setattr(sys, "version_info", (major, minor - 1, 99, "final", 0))
+        runpy.run_path(str(SCRIPT), run_name="journal_scan")
+
+    printed = capsys.readouterr()
+    assert refused.value.code == EXIT_REFUSED
+    assert printed.out == ""
+    assert printed.err.startswith("journal-scan: ") and printed.err.count("\n") == 1
+
+
 def test_a_journal_that_does_not_open_counts_as_not_read(tmp_path: Path) -> None:
     journal = _journal(tmp_path, FAMILY, SESSION, PLAIN)
     journal.chmod(0o000)
@@ -621,6 +638,22 @@ def test_the_header_names_the_operator_and_the_command() -> None:
     assert shebang == "#!/usr/bin/env python3"
     assert who.startswith("# OPERATOR")
     assert program["USAGE"] == "usage: " + command.removeprefix("#").strip()
+
+
+def test_the_oldest_python_has_one_source() -> None:
+    """The root `pyproject.toml` names the oldest Python version of a test run.
+
+    The program has a copy of that version, and its header and its refusal
+    name the same version.
+    """
+    program: dict[str, Any] = runpy.run_path(str(SCRIPT), run_name="journal_scan")
+    project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    needs = SCRIPT.read_text(encoding="utf-8").splitlines()[3]
+    major, minor = program["MIN_PYTHON"]
+
+    assert project["project"]["requires-python"] == f">={major}.{minor}"
+    assert needs.startswith(f"# Needs Python {major}.{minor} or later")
+    assert program["OLD_PYTHON"] == f"needs Python {major}.{minor} or later"
 
 
 def test_each_constant_equals_its_source_in_attendance() -> None:

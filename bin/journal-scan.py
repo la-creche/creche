@@ -49,9 +49,10 @@ matches KIND_WORD.
 EXIT STATUS.
   0  The program read each journal whole.
   1  `files_not_read` is not 0. Each other number can then be too low.
-  2  The program refused the run and printed no number. The causes: the user
-     is root, the command does not have exactly one argument, or the
-     sessions root does not open as a directory.
+  2  The program refused the run and printed no number. The causes: the
+     Python version is below MIN_PYTHON, the user is root, the command does
+     not have exactly one argument, or the sessions root does not open as a
+     directory.
 Only `files_not_read` changes the exit status. Each other number is a report.
 """
 
@@ -84,6 +85,10 @@ JOURNAL_DEPTH = 2
 KIND_WORD = re.compile(r"[a-z_]{1,32}")
 OTHER_KIND = "other"
 
+#: The oldest Python version of a test run. Under an older version,
+#: `json.loads` can judge a line in another way, so the program refuses it.
+MIN_PYTHON = (3, 12)
+
 ROOT_UID = 0
 
 EXIT_READ_ALL = 0
@@ -91,6 +96,7 @@ EXIT_LOWER_LIMIT = 1
 EXIT_REFUSED = 2
 
 USAGE = "usage: bin/journal-scan.py <sessions root>"
+OLD_PYTHON = "needs Python {}.{} or later".format(*MIN_PYTHON)
 NOT_ROOT = "do not run this program as root"
 NO_ROOT_DIR = "cannot open the sessions root as a directory"
 LOWER_LIMIT = "files_not_read is not 0: each other number can be too low"
@@ -104,6 +110,12 @@ _ROOT_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK
 #: For each name below the sessions root: never through a symbolic link.
 _DIR_FLAGS = _ROOT_FLAGS | os.O_NOFOLLOW
 _FILE_FLAGS = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+
+if sys.version_info < MIN_PYTHON:
+    # This check is here and not in `main`, because an old Python cannot
+    # load the class below.
+    sys.stderr.write(f"journal-scan: {OLD_PYTHON}\n")
+    sys.exit(EXIT_REFUSED)
 
 
 @dataclass(slots=True)

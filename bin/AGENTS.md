@@ -11,7 +11,8 @@ machine stays bash 3.2-clean: no associative arrays, no `mapfile`, no
 One script is an exception: `journal-scan.py` is Python, with the first line
 `#!/usr/bin/env python3`. Reason: it reads JSON, and the standard library of
 Python has a JSON reader. It needs only the standard library, so the Python
-of the host starts it without the venv. The gate checks it with ruff and not
+of the host starts it without the venv. It refuses a Python version that is
+older than the version in its header. The gate checks it with ruff and not
 with pyright: `pyrightconfig.json` names no path under `bin/`.
 
 ## Every script's header says who runs it
@@ -184,7 +185,7 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 | `test_git_config_dropped.py` | No `git` child of a test run reads the config file of a person or of the system. The same holds for the ignore file and the attributes file of a person. The root `conftest.py` sets the variables that do this. |
 | `test_git_background_dropped.py` | No `git` command that inherits the environment of a test run starts the maintenance that `git` does not wait for. That holds for a commit, a merge, a fetch and a repository that receives a push. The root `conftest.py` sets the two settings that do this. A fixture that asks for the maintenance gets it in the foreground. |
 | `test_ignored_signal_kept.py` | A test run that starts with SIGINT, SIGTERM or SIGHUP ignored passes the same tests, and the signal stays ignored. The fixture of the root `conftest.py` still fails a handler that a test leaves. |
-| `test_journal_scan.py` | Each count of `journal-scan.py` equals a known answer. A run changes no file and no directory. The output holds no family name, no session name and no marker text of a line. The three copied constants, the place of a journal and the keys of a cut event equal their source in `attendance`. |
+| `test_journal_scan.py` | Each count of `journal-scan.py` equals a known answer. A run changes no file and no directory. The output holds no family name, no session name and no marker text of a line. The three copied constants, the place of a journal and the keys of a cut event equal their source in `attendance`. The oldest Python version of the program equals the one in the root `pyproject.toml`. |
 | `test_creche_deploy.py`, `test_rework_watchdog.py`, `test_rework_registry_sync.py`, `test_sbx_drift_check.py`, `test_sync_code_corpus.py`, `test_provision_library.py`, `test_rework_intake_unit.py` | Each script, against binstubs and a temp root. |
 
 ## Adding a script
