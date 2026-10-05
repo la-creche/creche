@@ -985,7 +985,8 @@ test.
      takes the scheme `Bearer` in another case of letters. Three Python
      copies take only `Bearer`. The chaperone takes each case.
      `token::bearer_of` takes only `Bearer`, so `BearerTrim` has no value
-     for the rule of the chaperone.
+     for the rule of the chaperone. The test of `token` thus walks no vector
+     of `runtime.bearer.chaperone`.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/entropy.rs`: contract 02 §2 gives a mint of a
   ULID no rule for two times of the clock. One is a time before 1970. The

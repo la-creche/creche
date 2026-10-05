@@ -191,6 +191,18 @@ reason. The packet that writes the three bodies obeys these rules:
      takes each case. `bearer_of` takes only `Bearer`. `BearerTrim` thus has
      no value for the rule of the chaperone. The port of the chaperone needs
      the answer first.
+- The test of `token` walks no vector of `runtime.bearer.chaperone`. Two
+  vectors of that surface hold the scheme in another case of letters:
+  `scheme-lower-case` and `scheme-upper-case`. The Python chaperone accepts
+  the two requests, and `bearer_of` gives no bearer for them. The test names
+  the surface in the constant `NO_PORT_HERE`. Remove the constant when each
+  Python copy has one rule for the scheme. Then name the surface in the
+  table `COPIES`.
+- The vector `byte-1c-at-the-end` of the `runtime.bearer` surfaces holds a
+  header that ends with the byte `0x1c`. A `HeaderValue` holds no such byte,
+  so the test gives the bytes to the private function `bearer_in`. Three
+  Python services accept that request. No test of this crate shows what a
+  Rust service answers. The HTTP server is a stub.
 - `token::CachedToken` reads the file again only when a fact of the file
   moved. It does not see a new token that has each fact of the old one: the
   device, the inode, the size, the time of the last change and the mode. The
