@@ -17,6 +17,7 @@ defect that a test finds late.
 | `rustfmt.toml` | The line width: 100, the same as ruff. |
 | `clippy.toml` | The lints that a test can break. |
 | `deny.toml` | The policy for the locked crates: the licenses, the sources, the bans and the advisories. `cargo deny` reads it. |
+| `coverage-files.txt` | The list of the files that the coverage rule binds. `bin/rust-coverage.sh` reads it. |
 | `crates/<name>/` | One crate. Each directory there is a workspace member. |
 
 | Crate | What it holds |
@@ -123,6 +124,10 @@ That push runs the tests marked `docs` and no cargo step.
 A push that changes a path under `vectors/` is the one other case. It starts
 `bin/rust-gate.sh` when `cargo` is on `PATH`. In CI, a code change under
 `vectors/` runs the `rust` job.
+
+CI runs one more script for the same change: `bin/rust-coverage.sh`, in the
+`rust-coverage` job. No hook runs that script. "The coverage rule" below has
+its checks.
 
 ## The rules
 
@@ -798,6 +803,86 @@ Some differences from the Python origin are in no vector. Describe such a
 difference in the doc comment of the Rust function. Pin it with one plain
 test.
 
+## The coverage rule
+
+Some Rust files port a decision module of the chaperone. The tests must run
+each region and each line of such a file. `coverage-files.txt` is the list of
+those files. `bin/rust-coverage.sh` holds the rule. The `rust-coverage` job of
+CI runs the script, and the check `gate` needs that job. The rule thus blocks
+a merge.
+
+The script runs `cargo llvm-cov` on the workspace, with the toolchain of
+`rust-toolchain.toml`. The tool writes a report with the counts of each file.
+A region is one span of code with one count, for example one arm of a
+`match`. The script then makes four checks. It fails when:
+
+1. A region or a line of a listed file ran in no test.
+2. A listed file is not in the report.
+3. A listed file holds the text `coverage(off)`.
+4. `crates/chaperone-policy/src` holds a `.rs` file that is not in the list.
+   Before that directory exists, this check does nothing.
+
+More facts about the checks:
+
+- The script compares the two counts of a file: the items, and the items
+  that ran. It reads no percent. A percent of a large file can round to 100.
+- The script prints one line with the counts of each crate. The counts of a
+  file outside the list have no threshold.
+- A run reports each failure of the four checks, not only the first one.
+- The rule has no exception. Do not remove a file from the list to make the
+  job pass. Do not add `#[coverage(off)]` to a listed file.
+- The steps of the job run for a change under `rust/` or `vectors/`, as the
+  steps of the `rust` job do.
+
+Rules for the list:
+
+- A line is a comment or one path. A comment starts with `#`. The list has no
+  empty line.
+- A path starts at the root of the repository and names one file, for example
+  `rust/crates/<crate>/src/<file>.rs`. The list holds a path one time only.
+- The list starts with no path. Add a file in the pull request that ports its
+  module. The file must pass the four checks in that pull request.
+- Each `.rs` file under `crates/chaperone-policy/src` goes into the list in
+  the pull request that adds the file.
+
+These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
+1.92.0. Measure again after a change of either version.
+
+- The report holds a file only when the test build compiles a function of
+  that file. A file with `mod` lines only, or with types only, is in no
+  report. Such a file in the list fails check 2 ("Known gaps").
+- The report holds no region for the code of a standard derive, for example
+  `#[derive(Debug, Clone, PartialEq)]`.
+- The report counts the test code of a listed file too. The message of an
+  assertion is a region that runs only when the assertion fails. An example
+  is `assert!(ok, "text")`. An assertion with no message has no such region.
+- The report holds no file of the `tests/` directory of a crate. Put a test
+  that needs a message there.
+- A `const fn` that only the compiler evaluates counts as code that no test
+  ran.
+- The run starts no doc test.
+- The run sets neither `cfg(coverage)` nor `cfg(coverage_nightly)`. It thus
+  compiles the code that `cargo test` compiles.
+
+To run the script on your machine:
+
+1. Install the version of `cargo-llvm-cov` that `.github/workflows/gate.yml`
+   names.
+2. Run `rustup component add llvm-tools-preview` in `rust/`.
+3. Run `bin/rust-coverage.sh`.
+
+The script has two flags:
+
+- `--report <file>` checks a report of an earlier run and starts no cargo.
+  `bin/tests/test_rust_coverage.py` gives the script its reports with this
+  flag.
+- `--branch` adds a fifth check: a test took each side of each branch of a
+  listed file. Only a nightly toolchain takes the flag, and no job uses it
+  today. Packet `decisions-ci-coverage` adds a job that does.
+
+The coverage rule of the Python package stays as it is (`chaperone/AGENTS.md`,
+rule 4).
+
 ## Dependencies
 
 - Write each dependency version one time, in `[workspace.dependencies]`. A
@@ -910,13 +995,22 @@ test.
   - Vector reader. `vectors/data` needs a single reader. The owner still
     has to confirm this. Three readers exist today. Packet
     `decisions-vectors-crate` reduces them to one.
-  - Coverage. A Rust file that ports a decision module of the chaperone
-    needs a coverage rule (`chaperone/AGENTS.md`, rule 4). Nothing measures
-    Rust coverage today. Packet `decisions-ci-coverage-gate` adds the rule
-    and the job.
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
+- This `CONTRACT-QUESTION` comment is open in `bin/rust-coverage.sh`: check
+  2 of "The coverage rule" does not say what a listed file with no function
+  is. No report holds such a file, so the script fails for it. With check 4,
+  each `.rs` file of `chaperone-policy` thus needs a function that a test
+  runs. A change costs one check of the script.
+- Check 3 of "The coverage rule" reads the text of a listed file only. A
+  macro of another file can put the attribute on an item of a listed file.
+- A change of `bin/rust-coverage.sh` alone does not start the steps of the
+  `rust-coverage` job. `rust_gate_path` in `bin/lib/rustrule.sh` does not
+  name the script. The tests of the script use no `cargo`, so only a run of
+  the job proves the cargo step.
+- No job runs the branch check of "The coverage rule". The flag `--branch`
+  needs a nightly toolchain. Packet `decisions-ci-coverage` adds the job.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. If the owner says no, change those two lines.

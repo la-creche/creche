@@ -97,7 +97,7 @@ in `AGENTS.md` yourself.
 ## CI
 
 `.github/workflows/gate.yml` runs on every pull request and on every merge
-group. It has six kinds of job:
+group. It has seven kinds of job:
 
 1. `lint`: ruff, ruff format, pyright. On a docs-only pull request it also
    runs the tests marked `docs`.
@@ -112,7 +112,11 @@ group. It has six kinds of job:
    no path under `vectors/`, the job skips those steps and passes. A change
    to the Rust checks themselves also runs the steps.
    `rust_gate_path` in `bin/lib/rustrule.sh` lists those files.
-6. `gate`: red unless every other job passed. This is the one check the
+6. `rust-coverage`: `bin/rust-coverage.sh`, the coverage rule of the Rust
+   workspace. The job installs `cargo-llvm-cov` before the script runs. It
+   skips its steps for the same changes as the `rust` job. `rust/AGENTS.md`
+   has the rule.
+7. `gate`: red unless every other job passed. This is the one check the
    merge queue and the release executor read.
 
 Comment `!retest` on a pull request to restart its CI on the same commit.
