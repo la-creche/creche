@@ -417,12 +417,15 @@ def _covered(text: str) -> bytes:
 
 
 def _not_yaml(fault: yaml.YAMLError) -> Refusal:
-    """The refusal for a fault of PyYAML, with its line and its problem."""
+    """The refusal for a fault of PyYAML, with its line.
+
+    The refusal does not hold the words of PyYAML. Some of them quote a sign
+    or a word of the file.
+    """
     mark = getattr(fault, "problem_mark", None)
     line = mark.line + 1 if isinstance(mark, yaml.Mark) else None
-    problem = getattr(fault, "problem", None)
 
-    return Refusal(Reason.NOT_YAML, line, problem if isinstance(problem, str) else "")
+    return Refusal(Reason.NOT_YAML, line)
 
 
 def _trivia_of(text: str, covered: bytes, rows: Rows) -> tuple[Trivia, ...]:

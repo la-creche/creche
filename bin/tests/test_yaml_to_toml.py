@@ -910,6 +910,22 @@ def test_a_refusal_names_its_line_and_no_value() -> None:
     assert "hunter2" not in str(raised.value)
 
 
+@pytest.mark.parametrize(
+    ("text", "line"),
+    [
+        ('a: "\\q"\n', 1),
+        ("%TAG !hunter2! tag:one\n%TAG !hunter2! tag:two\n---\na: 1\n", 2),
+    ],
+)
+def test_a_fault_of_pyyaml_names_its_line_and_no_text_of_the_file(text: str, line: int) -> None:
+    """PyYAML puts a sign or a word of the file into the text of some faults."""
+    with pytest.raises(y2t.Refusal) as raised:
+        y2t.convert(text, FAMILY)
+
+    assert raised.value.reason is y2t.Reason.NOT_YAML
+    assert str(raised.value) == f"line {line}: PyYAML does not read the file"
+
+
 def test_the_script_does_not_print_a_text_that_fails_its_own_check(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
