@@ -1,4 +1,7 @@
-"""The three stand-in programs of the `caregiver` topology, each run by itself.
+"""The stand-in programs of this directory, each run by itself.
+
+Three of them belong to the `caregiver` topology. The fourth one is the TEI
+stand-in of the index builder.
 
 A stand-in is not under test. A stand-in that is too kind makes a wrong
 service look right, so each rule that a scenario relies on has one test here.
@@ -10,12 +13,15 @@ The last test holds one rule of the pi wrapper, which each topology uses.
 
 from __future__ import annotations
 
+import socket
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 import pytest
+import standin_tei
 from proc_caregiver import wait_until
 from proc_harness import LOOPBACK, Finished, ProcError, Supervisor
 from proc_stack import base_env
@@ -27,6 +33,13 @@ from proc_standins import (
     PI,
     SBX,
     SYSTEMCTL,
+    TEI,
+    TEI_DIMS,
+    TEI_FAIL_EMBED,
+    TEI_FAIL_INFO,
+    TEI_HOLD_EMBED,
+    TEI_MODEL,
+    TEI_NO_MODEL_ID,
     calls_of,
     enabled_units,
     install_pi,
@@ -37,6 +50,8 @@ from proc_standins import (
     sbx_rows,
     sbx_sandboxes,
     start_litellm,
+    start_tei,
+    tei_calls,
     tune,
     untune,
 )
@@ -65,7 +80,26 @@ HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
 HTTP_UNAUTHORIZED = 401
 HTTP_NOT_FOUND = 404
+HTTP_LENGTH_REQUIRED = 411
+HTTP_TOO_LARGE = 413
+HTTP_UNPROCESSABLE = 422
 HTTP_FAILED = 500
+HTTP_UNAVAILABLE = 503
+
+INFO_ROUTE = "/info"
+EMBED_ROUTE = "/embed"
+
+#: A word that one text of a tuned embed call holds.
+MARK = "quince"
+
+#: A request with a body in chunks: it has no `Content-Length` header.
+NO_LENGTH_REQUEST = (
+    b"POST /embed HTTP/1.1\r\nHost: tei\r\nContent-Type: application/json\r\n"
+    b"Transfer-Encoding: chunked\r\n\r\n"
+)
+
+TEI_TIMEOUT_S = 30.0
+ANSWER_BYTES = 65_536
 
 
 @pytest.fixture
@@ -93,6 +127,22 @@ def litellm(tree: Tree, supervisor: Supervisor) -> Litellm:
     _, port = start_litellm(tree, supervisor, base_env(tree))
 
     return Litellm(tree, port)
+
+
+@dataclass(frozen=True, slots=True)
+class Tei:
+    """The TEI stand-in of one test: its root and its port."""
+
+    tree: Tree
+    port: int
+
+
+@pytest.fixture
+def tei(tree: Tree, supervisor: Supervisor) -> Tei:
+    """A root with the TEI stand-in, listening. The `supervisor` fixture ends it."""
+    _, port = start_tei(tree, supervisor, base_env(tree))
+
+    return Tei(tree, port)
 
 
 # ------------------------------------------------------------------------ sbx
@@ -506,6 +556,179 @@ def test_litellm_fails_a_request_when_a_test_says_so(litellm: Litellm) -> None:
     assert litellm_keys(litellm.tree) == {}
 
 
+# ------------------------------------------------------------------------ tei
+
+
+def test_tei_names_its_model(tei: Tei) -> None:
+    with _tei_client(tei) as client:
+        first = client.get(INFO_ROUTE)
+        tune(tei.tree, TEI, TEI_MODEL, "another/model")
+        second = client.get(INFO_ROUTE)
+
+    assert (first.status_code, first.json()) == (HTTP_OK, {"model_id": standin_tei.DEFAULT_MODEL})
+    assert (second.status_code, second.json()) == (HTTP_OK, {"model_id": "another/model"})
+
+
+def test_tei_names_no_model_when_a_test_says_so(tei: Tei) -> None:
+    tune(tei.tree, TEI, TEI_NO_MODEL_ID)
+
+    with _tei_client(tei) as client:
+        info = client.get(INFO_ROUTE)
+
+    assert (info.status_code, info.json()) == (HTTP_OK, {})
+
+
+def test_tei_fails_info_when_a_test_says_so(tei: Tei) -> None:
+    tune(tei.tree, TEI, TEI_FAIL_INFO)
+
+    with _tei_client(tei) as client:
+        info = client.get(INFO_ROUTE)
+        embedded = client.post(EMBED_ROUTE, json={"inputs": ["a"]})
+
+    assert info.status_code == HTTP_UNAVAILABLE
+    assert embedded.status_code == HTTP_OK
+
+
+def test_tei_answers_one_vector_for_each_text(tei: Tei) -> None:
+    """A vector depends on its text alone, so a test can compute the vector of a chunk.
+
+    The sum of the code points of `ab` is 195. Value 0 is then 195 / 1000 - 0.5,
+    and value 5 is ((195 * 6) % 1000) / 1000 - 0.5.
+    """
+    texts = ["ab", "ab", "a longer text, with an \u00e9"]
+
+    with _tei_client(tei) as client:
+        answered = client.post(EMBED_ROUTE, json={"inputs": texts})
+
+    vectors = answered.json()
+
+    assert answered.status_code == HTTP_OK
+    assert vectors == [standin_tei.vector_of(text) for text in texts]
+    assert [len(vector) for vector in vectors] == [standin_tei.DEFAULT_DIMS] * len(texts)
+    assert vectors[0][0] == 195 / 1000 - 0.5
+    assert vectors[0][5] == 170 / 1000 - 0.5
+    assert vectors[0] != vectors[2]
+
+
+def test_tei_answers_another_count_of_values_when_a_test_says_so(tei: Tei) -> None:
+    tune(tei.tree, TEI, TEI_DIMS, "4")
+
+    with _tei_client(tei) as client:
+        answered = client.post(EMBED_ROUTE, json={"inputs": ["ab"]})
+
+    assert answered.json() == [standin_tei.vector_of("ab", 4)]
+    assert len(answered.json()[0]) == 4
+
+
+def test_tei_fails_a_call_that_holds_a_text(tei: Tei) -> None:
+    """The tuning names a part of a text. A call with no such text gets its vectors."""
+    tune(tei.tree, TEI, TEI_FAIL_EMBED, MARK)
+
+    with _tei_client(tei) as client:
+        failed = client.post(EMBED_ROUTE, json={"inputs": ["a pear", f"a ripe {MARK} here"]})
+        answered = client.post(EMBED_ROUTE, json={"inputs": ["a pear"]})
+
+    assert failed.status_code == HTTP_FAILED
+    assert answered.status_code == HTTP_OK
+
+
+def test_tei_holds_a_call_that_holds_a_text(tei: Tei) -> None:
+    """The line of the held call is in the record while the call waits.
+
+    A scenario waits for that line. Then it knows that the program waits for
+    this answer.
+    """
+    tune(tei.tree, TEI, TEI_HOLD_EMBED, MARK)
+    held_body = {"inputs": [f"a ripe {MARK} here"]}
+
+    with ThreadPoolExecutor(max_workers=1) as pool, _tei_client(tei) as client:
+        held = pool.submit(_post_embed, tei, held_body)
+        wait_until(lambda: _embed_bodies(tei) == [held_body], "the held call", EXIT_DEADLINE_S)
+        free = client.post(EMBED_ROUTE, json={"inputs": ["a pear"]})
+        still_held = not held.done()
+        untune(tei.tree, TEI, TEI_HOLD_EMBED)
+        status = held.result(timeout=TEI_TIMEOUT_S)
+
+    assert free.status_code == HTTP_OK
+    assert still_held
+    assert status == HTTP_OK
+
+
+def test_tei_stays_up_when_a_held_caller_is_gone(tei: Tei, supervisor: Supervisor) -> None:
+    """A scenario kills the program inside a held call. The stand-in must serve the next run."""
+    tune(tei.tree, TEI, TEI_HOLD_EMBED, MARK)
+
+    with pytest.raises(httpx.ReadTimeout), _tei_client(tei) as client:
+        client.post(EMBED_ROUTE, json={"inputs": [MARK]}, timeout=HOLD_CHECK_S)
+
+    untune(tei.tree, TEI, TEI_HOLD_EMBED)
+
+    with _tei_client(tei) as client:
+        answered = client.post(EMBED_ROUTE, json={"inputs": [MARK]})
+
+    [child] = supervisor.children
+
+    assert answered.status_code == HTTP_OK
+    assert child.exit_code() is None
+    assert child.stderr_path.read_bytes() == b""
+
+
+def test_tei_records_each_request(tei: Tei) -> None:
+    """One line for each request, in arrival order. The probe of the harness leaves none."""
+    body = {"inputs": ["a pear", "an \u00e9clair"]}
+
+    with _tei_client(tei) as client:
+        client.get("/")
+        client.get(INFO_ROUTE)
+        client.post(EMBED_ROUTE, json=body)
+
+    assert tei_calls(tei.tree) == [
+        {"method": "GET", "path": INFO_ROUTE, "body": None},
+        {"method": "POST", "path": EMBED_ROUTE, "body": body},
+    ]
+
+
+def test_tei_answers_not_found_on_a_route_it_does_not_know(tei: Tei) -> None:
+    """Fail closed. A program that asks another route gets no silent success."""
+    with _tei_client(tei) as client:
+        posted = client.post("/embed_all", json={"inputs": ["a"]})
+        asked = client.get("/health")
+
+    assert (posted.status_code, asked.status_code) == (HTTP_NOT_FOUND, HTTP_NOT_FOUND)
+
+
+def test_tei_refuses_a_body_of_another_shape(tei: Tei) -> None:
+    """Fail closed. Only an object with a list of one text or more in `inputs` gets vectors."""
+    bodies = [b"not json", b"[]", b'{"inputs": "a"}', b'{"inputs": []}', b'{"inputs": ["a", 1]}']
+
+    with _tei_client(tei) as client:
+        statuses = [client.post(EMBED_ROUTE, content=body).status_code for body in bodies]
+
+    assert statuses == [HTTP_UNPROCESSABLE] * len(bodies)
+
+
+def test_tei_refuses_a_call_with_more_texts_than_one_call_may_hold(tei: Tei) -> None:
+    """The real service has a limit for one call. A program that ignores it fails here."""
+    full = [f"text {index}" for index in range(standin_tei.MAX_BATCH)]
+
+    with _tei_client(tei) as client:
+        answered = client.post(EMBED_ROUTE, json={"inputs": full})
+        refused = client.post(EMBED_ROUTE, json={"inputs": [*full, "one more"]})
+
+    assert answered.status_code == HTTP_OK
+    assert refused.status_code == HTTP_TOO_LARGE
+
+
+def test_tei_refuses_a_body_with_no_length(tei: Tei) -> None:
+    """Fail closed. This program reads a body only by its `Content-Length`."""
+    with socket.create_connection((LOOPBACK, tei.port), timeout=TEI_TIMEOUT_S) as conn:
+        conn.sendall(NO_LENGTH_REQUEST)
+        answer = conn.recv(ANSWER_BYTES)
+
+    assert answer.startswith(f"HTTP/1.1 {HTTP_LENGTH_REQUIRED} ".encode("ascii"))
+    assert tei_calls(tei.tree) == [{"method": "POST", "path": EMBED_ROUTE, "body": None}]
+
+
 # ------------------------------------------------------------------------- pi
 
 
@@ -609,6 +832,20 @@ def _client(litellm: Litellm, bearer: str = MASTER_KEY) -> httpx.Client:
         headers={"Authorization": f"Bearer {bearer}"},
         timeout=5.0,
     )
+
+
+def _tei_client(tei: Tei) -> httpx.Client:
+    return httpx.Client(base_url=f"http://{LOOPBACK}:{tei.port}", timeout=TEI_TIMEOUT_S)
+
+
+def _post_embed(tei: Tei, body: dict[str, list[str]]) -> int:
+    """One embed call on a connection of its own. Returns the status."""
+    with _tei_client(tei) as client:
+        return client.post(EMBED_ROUTE, json=body).status_code
+
+
+def _embed_bodies(tei: Tei) -> list[object]:
+    return [call["body"] for call in tei_calls(tei.tree) if call["path"] == EMBED_ROUTE]
 
 
 def _generate_body() -> dict[str, object]:
