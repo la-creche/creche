@@ -50,6 +50,8 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use rustix::io::Errno;
+
 use crate::readfile::os_text;
 
 /// The end of the name of a temporary file.
@@ -362,8 +364,12 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 /// is an error at step 2, and no entry moves. A `target` that is a file, or
 /// a symlink to an entry, goes to `<target>.old` in step 2 and stays there.
 /// The function moves the symlink itself, and not the tree that the symlink
-/// names. The Python copy leaves the same entries and refuses the same
-/// calls.
+/// names.
+///
+/// The function looks at `target` and at `<target>.old` through a symlink.
+/// The system can refuse that look, for example in a directory that the
+/// process cannot enter. The call is then an error at step 2, and no entry
+/// moves.
 ///
 /// The Python origin is `caregiver/src/caregiver/atomic.py:47-69`.
 ///
@@ -678,6 +684,34 @@ fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
 }
 
+/// Whether an entry is at `path`. The look follows a symlink.
+///
+/// Three answers of the system say that no entry is there: no such entry, a
+/// part of the path that is no directory, and a chain of symlinks with no
+/// end. Each other error is the error, for example the error for a
+/// directory that the process cannot enter.
+///
+/// `Path.exists` of Python 3.12 and of Python 3.13 reads those three answers
+/// as absent and raises for each other error. `Path.exists` of Python 3.14
+/// reads each error as absent. The function takes the stricter reading.
+fn entry_at(path: &Path) -> io::Result<bool> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if says_no_entry(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether `error` is one of the three answers that [`entry_at`] reads as no
+/// entry. The standard library has no stable name for the third kind, so
+/// the check reads the number of the error.
+fn says_no_entry(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    ) || Errno::from_io_error(error) == Some(Errno::LOOP)
+}
+
 /// The error for an old name that holds a file or a symlink to an entry.
 /// [`replace_dir`] removes only a directory there. Python raises for such an
 /// entry (`shutil.rmtree`), so the swap refuses it.
@@ -704,14 +738,18 @@ fn replace_dir_with(steps: &impl Steps, staging: &Path, target: &Path) -> Result
         .make_dirs(dir)
         .map_err(|error| failed(WriteStep::MakeParents, dir, &error))?;
 
-    // `exists` follows a symlink, as `Path.exists` of Python does.
-    if target.exists() {
+    // Each look follows a symlink, as `Path.exists` of Python does. A look
+    // that the system refuses stops the swap before the first rename.
+    let looked =
+        |path: &Path| entry_at(path).map_err(|error| failed(WriteStep::Rename, path, &error));
+
+    if looked(target)? {
         if is_real_dir(&displaced) {
             // A call that stopped after its first rename left this tree.
             steps
                 .remove_tree(&displaced)
                 .map_err(|error| failed(WriteStep::RemoveOld, &displaced, &error))?;
-        } else if displaced.exists() {
+        } else if looked(&displaced)? {
             // The old name holds a file, or a symlink to an entry. Only a
             // directory is removed. The rename of a directory refuses such
             // an entry. The rename of a file or of a symlink replaces it, so
@@ -2006,6 +2044,105 @@ mod tests {
         assert_eq!(fs::read(&old).unwrap(), b"stale");
     }
 
+    /// Runs a swap of `config.tmp` onto `config` in the directory `root`,
+    /// with a symlink at `link` whose aim the system refuses to look at.
+    /// The aim is in a directory that the process cannot enter. The result
+    /// is the result of the swap, the count of its renames, and the entries
+    /// before and after it.
+    fn swap_past_a_closed_aim(
+        root: &Path,
+        link: &Path,
+    ) -> (Result<(), WriteError>, usize, [Entries; 2]) {
+        let closed = root.join("closed");
+        tree_with(&closed, "other");
+        symlink(closed.join("instructions.md"), link).unwrap();
+        let staging = root.join("config.tmp");
+        tree_with(&staging, "newest");
+        let before = entries_in(root);
+        let probe = Probe::new();
+
+        fs::set_permissions(&closed, Permissions::from_mode(0o000)).unwrap();
+        let result = replace_dir_with(&probe, &staging, &root.join("config"));
+        fs::set_permissions(&closed, Permissions::from_mode(0o700)).unwrap();
+
+        (
+            result,
+            probe.count_of(WriteStep::Rename),
+            [before, entries_in(root)],
+        )
+    }
+
+    /// The error of a swap for a look at `path` that the system refused.
+    fn no_permission(path: &Path) -> WriteError {
+        WriteError {
+            step: WriteStep::Rename,
+            path: path.to_owned(),
+            kind: io::ErrorKind::PermissionDenied,
+            os_text: String::from("Permission denied"),
+        }
+    }
+
+    #[test]
+    fn an_old_name_that_the_system_refuses_to_look_at_stops_the_swap() {
+        // The superuser enters each directory, so the mode refuses nothing
+        // there.
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+
+        // The target is a file. The system renames a file onto a symlink,
+        // so a swap that reads the refusal as "no entry" replaces the
+        // symlink at the old name.
+        let root = TempRoot::new().unwrap();
+        fs::write(root.path().join("config"), b"current").unwrap();
+        let old = root.path().join("config.old");
+
+        let (result, renames, [before, after]) = swap_past_a_closed_aim(root.path(), &old);
+
+        assert_eq!(result, Err(no_permission(&old)));
+        assert_eq!(renames, 0);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn a_target_that_the_system_refuses_to_look_at_stops_the_swap() {
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+
+        let (result, renames, [before, after]) = swap_past_a_closed_aim(root.path(), &target);
+
+        assert_eq!(result, Err(no_permission(&target)));
+        assert_eq!(renames, 0);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn three_answers_of_the_system_say_that_no_entry_is_at_a_path() {
+        let root = TempRoot::new().unwrap();
+        let file = root.path().join("file");
+        fs::write(&file, b"").unwrap();
+        let link = root.path().join("link");
+        symlink(&file, &link).unwrap();
+        let one = root.path().join("one");
+        let two = root.path().join("two");
+        symlink(&one, &two).unwrap();
+        symlink(&two, &one).unwrap();
+
+        for path in [root.path(), file.as_path(), link.as_path()] {
+            assert!(entry_at(path).unwrap(), "{}", path.display());
+        }
+
+        // No such entry, a part of the path that is no directory, and a
+        // chain of symlinks with no end.
+        for path in [root.path().join("no-such"), file.join("below"), one] {
+            assert!(!entry_at(&path).unwrap(), "{}", path.display());
+        }
+    }
+
     // --- replace_dir: each kind of entry at the target and at the old name ---
 
     /// What a test puts at the target or at the old name before a swap.
@@ -2459,6 +2596,15 @@ mod tests {
             here: "write_new writes a temporary file and links it to the name. The name gets a \
                    file that is whole.",
             holds: a_new_file_is_whole_before_it_has_its_name,
+        },
+        Deviation {
+            python: "caregiver/src/caregiver/atomic.py:61-62",
+            copy: "On Python 3.14, the copy reads each error of a look at the target or at the \
+                   old name as no entry. On Python 3.12 and on Python 3.13, the copy raises \
+                   for an error such as a directory that the process cannot enter.",
+            here: "replace_dir is an error for such a look, as the copy is on Python 3.12 and \
+                   on Python 3.13.",
+            holds: an_old_name_that_the_system_refuses_to_look_at_stops_the_swap,
         },
     ];
 
