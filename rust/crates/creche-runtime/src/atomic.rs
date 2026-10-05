@@ -1313,6 +1313,25 @@ mod tests {
     }
 
     #[test]
+    fn only_a_name_that_exists_gets_a_remove_and_a_second_create() {
+        // The create fails for a full disk, and no file has the temporary
+        // name. The write stops there: it removes no file and does not
+        // create one more time.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("status.json");
+        let probe = Probe::failing(WriteStep::CreateTemp);
+
+        let error = write_with(&probe, &target, b"{}", STRICT).unwrap_err();
+
+        assert_eq!(error, no_space(WriteStep::CreateTemp, &probe_temp(&target)));
+        assert_eq!(
+            probe.steps(),
+            [WriteStep::MakeParents, WriteStep::CreateTemp]
+        );
+        assert!(names_in(root.path()).is_empty());
+    }
+
+    #[test]
     fn the_second_mode_call_gives_the_mode_that_the_umask_took() {
         let root = TempRoot::new().unwrap();
 
