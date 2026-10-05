@@ -207,8 +207,9 @@ verify`, one file in each call. It skips a Markdown file.
 `FROM` to `TO` holds no file of the proof. The scope of `gate.yml` and the
 scope of `release.yml` ask it.
 
-- The files of the proof are each path under `systemd/`, the script,
-  `gate.yml`, `release.yml` and the scope action.
+- The files of the proof are each path under `systemd/` and the script.
+- A CI file is no file of the proof. `tests/test_gate_workflow.py` holds
+  each key of the job and the two scope questions.
 - A change that the script cannot read is not unchanged.
 - A script that fails gives no answer. The scope then runs the proof.
 - The tests in `tests/test_systemd_proof.py` use a fake systemd. Only a run

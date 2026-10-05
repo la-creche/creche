@@ -40,7 +40,7 @@ and a test that skips is a failure there. A run in which every test skips
 because the bundle is missing would be green and would judge nothing.
 
 The `systemd-proof` job runs `bin/systemd-proof.sh` for a change that touches
-a file of the proof: `systemd/`, the script, or a CI file that holds the job.
+a file of the proof: `systemd/` or the script.
 On any other code change it skips its one step after the checkout and is
 still a success. The job runs on the runner itself, with no container: only
 there is systemd process 1. The script answers which change needs the proof,
@@ -784,11 +784,11 @@ SCOPES = [
     # cargo, so only this run proves the change with the real one.
     (["bin/rust-gate.sh"], ("code", "true", "false")),
     (["bin/lib/rustrule.sh"], ("code", "true", "false")),
-    # The three CI files hold the `rust` job and the `systemd-proof` job, so
-    # a change to one of them runs both.
-    ([".github/workflows/gate.yml"], ("code", "true", "true")),
-    ([".github/workflows/release.yml"], ("code", "true", "true")),
-    ([".github/actions/scope/action.yml"], ("code", "true", "true")),
+    # The three CI files are files of the Rust checks. They are no files of
+    # the systemd proof: the tests of this file hold the `systemd-proof` job.
+    ([".github/workflows/gate.yml"], ("code", "true", "false")),
+    ([".github/workflows/release.yml"], ("code", "true", "false")),
+    ([".github/actions/scope/action.yml"], ("code", "true", "false")),
     # The Rust tests read vectors/data, so a vector that moves runs them.
     (["vectors/data/index.json"], ("code", "true", "false")),
     (["vectors/generate.py"], ("code", "true", "false")),

@@ -95,15 +95,13 @@ usage() {
 }
 
 # proof_path PATH: whether PATH is a file of the proof: a path under
-# systemd/, this script, and the CI files that hold the job and ask this
-# rule. A change to one of them is proven only by a run on a runner. git
-# writes a path with an unusual byte inside double quotes, and that one
-# counts too.
+# systemd/, or this script. Only a run on a runner proves a change to one
+# of them. A CI file is no file of the proof: bin/tests/test_gate_workflow.py
+# holds each key of the job and both scope questions. git writes a path with
+# an unusual byte inside double quotes, and that one counts too.
 proof_path() {
   case "$1" in
-    "$UNIT_DIR"/* | \""$UNIT_DIR"/* | "$SELF" | \
-      .github/workflows/gate.yml | .github/workflows/release.yml | \
-      .github/actions/scope/*)
+    "$UNIT_DIR"/* | \""$UNIT_DIR"/* | "$SELF")
       return 0
       ;;
   esac

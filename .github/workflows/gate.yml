@@ -308,8 +308,7 @@ jobs:
   # The job has the form of the `rust` job. It runs on every code change, and
   # on a change that touches no file of the proof its one step after the
   # checkout is skipped (`--unchanged` of the script). The job is then a
-  # success. The files of the proof are systemd/, the script, and the CI
-  # files that hold this job and ask that rule.
+  # success. The files of the proof are systemd/ and the script.
   #
   # No `container:` key: a container has no systemd as process 1. On a
   # machine without one of the two the script fails. It does not skip.
