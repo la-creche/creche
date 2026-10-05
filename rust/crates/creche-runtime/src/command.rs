@@ -22,10 +22,10 @@
 //! `caregiver/src/caregiver/driver.py`. This module is a new design and not
 //! a translation of that call.
 //!
-//! The builders and the readers of [`Command`] and of [`PipedCommand`] are
-//! complete. Each other function body is a stub. `AGENTS.md` of this crate
+//! Some function bodies of this module are stubs. `AGENTS.md` of this crate
 //! lists the stubs and the packet that writes them.
 
+use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -350,13 +350,23 @@ pub enum Ended {
 impl Ended {
     /// The number that `returncode` of Python holds for this end: the exit
     /// status, or the negative number of the signal.
-    #[expect(
-        clippy::todo,
-        reason = "skeleton: packet foundation-command writes this body"
-    )]
+    ///
+    /// The Python origin is each read of `returncode`, for example
+    /// `caregiver/src/caregiver/timers.py:373`. CPython makes the number in
+    /// `_handle_exitstatus` (`subprocess.py:1997-2004`, version 3.13).
+    ///
+    /// ```
+    /// use creche_runtime::command::Ended;
+    ///
+    /// assert_eq!(Ended::Code(3).python_returncode(), 3);
+    /// assert_eq!(Ended::Signal(15).python_returncode(), -15);
+    /// ```
     #[must_use]
     pub fn python_returncode(self) -> i32 {
-        todo!()
+        match self {
+            Self::Code(status) => i32::from(status),
+            Self::Signal(number) => number.saturating_neg(),
+        }
     }
 }
 
@@ -597,16 +607,39 @@ pub enum Decode {
 /// The output of a child as text, as `subprocess.run` of Python gives it
 /// with `text=True`: UTF-8, and each CR LF and each CR as one LF.
 ///
+/// The function reads UTF-8 in each locale. `text=True` of Python reads the
+/// encoding of the locale (`subprocess.py:367-384`, version 3.13).
+///
+/// The Python origin is `_translate_newlines` of CPython
+/// (`subprocess.py:1098-1100`, version 3.13). `text=True` at
+/// `caregiver/src/caregiver/driver.py:88` is the strict form, and
+/// `errors="replace"` at `handover/src/handover/executor/host.py:404` is the
+/// other form.
+///
+/// ```
+/// use creche_runtime::command::{Decode, python_text};
+///
+/// assert_eq!(
+///     python_text(b"one\r\ntwo\rthree\n", Decode::Strict).as_deref(),
+///     Ok("one\ntwo\nthree\n")
+/// );
+/// assert!(python_text(b"caf\xe9", Decode::Strict).is_err());
+/// assert_eq!(
+///     python_text(b"caf\xe9", Decode::Replace).as_deref(),
+///     Ok("caf\u{fffd}")
+/// );
+/// ```
+///
 /// # Errors
 ///
 /// [`Utf8Error`] for bytes that are not UTF-8, under [`Decode::Strict`].
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-command writes this body"
-)]
 pub fn python_text(bytes: &[u8], decode: Decode) -> Result<String, Utf8Error> {
-    todo!()
+    let text = match decode {
+        Decode::Strict => Cow::Borrowed(std::str::from_utf8(bytes)?),
+        Decode::Replace => String::from_utf8_lossy(bytes),
+    };
+
+    Ok(text.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
 /// A child program that lives long and talks on its three pipes, as data.
@@ -872,6 +905,12 @@ mod tests {
     /// The value of a variable of the tests. No output of `Debug` holds it.
     const SECRET_VALUE: &str = "correct horse battery staple";
 
+    /// The number of SIGKILL.
+    const KILLED: i32 = 9;
+
+    /// The number of SIGTERM.
+    const TERMINATED: i32 = 15;
+
     fn limit() -> TimeLimit {
         TimeLimit::After(Duration::from_secs(30))
     }
@@ -1131,5 +1170,121 @@ mod tests {
         for (error, text) in table {
             assert_eq!(error.to_string(), text);
         }
+    }
+
+    #[test]
+    fn the_python_return_code_is_the_status_or_the_negative_signal() {
+        let table = [
+            (Ended::Code(0), 0),
+            (Ended::Code(1), 1),
+            (Ended::Code(255), 255),
+            (Ended::Signal(KILLED), -9),
+            (Ended::Signal(TERMINATED), -15),
+            (Ended::Signal(i32::MAX), -i32::MAX),
+            (Ended::Signal(i32::MIN), i32::MAX),
+        ];
+
+        for (ended, code) in table {
+            assert_eq!(ended.python_returncode(), code, "{ended:?}");
+        }
+    }
+
+    /// Each row: the bytes, the text under `Strict`, the text under
+    /// `Replace`. `None` for bytes that `Strict` refuses. CPython 3.13 gave
+    /// each text, with `decode("utf-8", errors)` and then the two `replace`
+    /// calls of `subprocess.py:1098-1100`.
+    const TEXTS: [(&[u8], Option<&str>, &str); 28] = [
+        (b"", Some(""), ""),
+        (b"plain\n", Some("plain\n"), "plain\n"),
+        (b"one\r\ntwo", Some("one\ntwo"), "one\ntwo"),
+        (b"one\rtwo", Some("one\ntwo"), "one\ntwo"),
+        (b"\r", Some("\n"), "\n"),
+        (b"\r\n", Some("\n"), "\n"),
+        (b"\n\r", Some("\n\n"), "\n\n"),
+        (b"\r\r\n", Some("\n\n"), "\n\n"),
+        (b"\r\n\r\n", Some("\n\n"), "\n\n"),
+        (b"\r\n\n\r", Some("\n\n\n"), "\n\n\n"),
+        (b"a\rb\r\nc\nd\r", Some("a\nb\nc\nd\n"), "a\nb\nc\nd\n"),
+        (b"\0", Some("\0"), "\0"),
+        // No other line break changes.
+        (
+            b"\x0b\x0c\x1c",
+            Some("\u{b}\u{c}\u{1c}"),
+            "\u{b}\u{c}\u{1c}",
+        ),
+        (b"\xc2\x85", Some("\u{85}"), "\u{85}"),
+        (
+            b"\xe2\x80\xa8\xe2\x80\xa9",
+            Some("\u{2028}\u{2029}"),
+            "\u{2028}\u{2029}",
+        ),
+        (
+            b"caf\xc3\xa9 \xe2\x82\xac \xf0\x9f\x98\x80\r\n",
+            Some("caf\u{e9} \u{20ac} \u{1f600}\n"),
+            "caf\u{e9} \u{20ac} \u{1f600}\n",
+        ),
+        // A byte order mark stays.
+        (b"\xef\xbb\xbfbom", Some("\u{feff}bom"), "\u{feff}bom"),
+        (b"caf\xe9", None, "caf\u{fffd}"),
+        (b"\xff\r\n", None, "\u{fffd}\n"),
+        (b"\x80\x80", None, "\u{fffd}\u{fffd}"),
+        // The start of a character with no end is one U+FFFD.
+        (b"\xf0\x9f\x98", None, "\u{fffd}"),
+        (b"a\xe2\x82b", None, "a\u{fffd}b"),
+        (b"\xe2\x28\xa1", None, "\u{fffd}(\u{fffd}"),
+        // A surrogate, a long form and a number past U+10FFFF: one U+FFFD
+        // for each byte.
+        (b"\xed\xa0\x80", None, "\u{fffd}\u{fffd}\u{fffd}"),
+        (b"\xc0\xaf", None, "\u{fffd}\u{fffd}"),
+        (b"\xe0\x80\xaf", None, "\u{fffd}\u{fffd}\u{fffd}"),
+        (
+            b"\xf4\x90\x80\x80",
+            None,
+            "\u{fffd}\u{fffd}\u{fffd}\u{fffd}",
+        ),
+        (
+            b"\xf8\x88\x80\x80\x80\r",
+            None,
+            "\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\n",
+        ),
+    ];
+
+    #[test]
+    fn the_text_of_an_output_is_the_text_that_python_gives() {
+        for (bytes, strict, replaced) in TEXTS {
+            assert_eq!(
+                python_text(bytes, Decode::Strict).ok().as_deref(),
+                strict,
+                "{bytes:?}"
+            );
+            assert_eq!(
+                python_text(bytes, Decode::Replace).as_deref(),
+                Ok(replaced),
+                "{bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_strict_decode_says_where_the_bytes_are_not_text() {
+        let error = python_text(b"abc\xff", Decode::Strict).unwrap_err();
+
+        assert_eq!(error.valid_up_to(), 3);
+    }
+
+    /// `text=True` of Python reads the encoding of the locale
+    /// (`subprocess.py:367-384`, version 3.13). `python_text` reads UTF-8,
+    /// and no variable of the locale is an input of the function.
+    #[test]
+    fn the_text_of_an_output_is_utf_8_in_each_locale() {
+        // The two bytes of U+00E9 in UTF-8. A Python process in a Latin-1
+        // locale reads them as two characters.
+        assert_eq!(
+            python_text(b"caf\xc3\xa9", Decode::Strict).as_deref(),
+            Ok("caf\u{e9}")
+        );
+        // The one byte of U+00E9 in Latin-1. A Python process in a Latin-1
+        // locale reads it, and this function refuses it.
+        assert!(python_text(b"caf\xe9", Decode::Strict).is_err());
     }
 }
