@@ -629,7 +629,8 @@ pub enum BearerTrim {
 /// header. `None` for a request with no such header and for an empty value.
 ///
 /// The result is the bytes that the Python service compares. Give them to
-/// `Secret::matches`.
+/// `Secret::matches`. The bytes can be a token, and the `Debug` of a
+/// `Vec<u8>` prints each byte: write the result to no log line.
 ///
 /// 1. Take the first `Authorization` header of the request.
 /// 2. Take the value only when it starts with `Bearer` and one space, in

@@ -201,6 +201,12 @@ reason. The packet that writes the three bodies obeys these rules:
   "The rules for a service" in `rust/AGENTS.md` has no exception for that
   `stat`. The owner of the crate decides: an exception, or one more reader
   of the type. The port of the chaperone needs the answer.
+- `token::bearer_of` gives the bearer of a request as a `Vec<u8>`. Those
+  bytes can be a token, and the `Debug` of a `Vec<u8>` prints each byte.
+  Rule 16 of "Rules for a change here" asks for a `Debug` that prints no
+  byte. The skeleton fixed the signature of the function. A service gives
+  the bytes to `Secret::matches`. It writes them to no log line. The owner
+  of the crate decides if the result gets a type of its own.
 - No test gives `faults::publish` a fault file whose source is `caregiver`.
   `FaultFile::new` refuses that source, so no code can build such a file. A
   test gives the private function `publish_as` no writer in its place.
