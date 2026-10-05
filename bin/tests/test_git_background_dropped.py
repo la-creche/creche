@@ -42,6 +42,12 @@ REPO = Path(__file__).resolve().parents[2]
 GLOBAL_ENV = "GIT_CONFIG_GLOBAL"
 SETTINGS = "[maintenance]\n\tauto = false\n[gc]\n\tautoDetach = false\n"
 
+#: The start of the name of the directory that the root `conftest.py` makes
+#: for that file. A test here writes into no other directory, and removes no
+#: other one. Without the variable of the root `conftest.py`, the path is the
+#: config file of a person.
+SETTINGS_PREFIX = "git-settings-"
+
 #: Each variable that the root `conftest.py` sets for a `git` child.
 SET = (
     GLOBAL_ENV,
@@ -97,13 +103,25 @@ print(os.path.exists(path))
 
 #: Imports the root `conftest.py`, then removes the directory of the global
 #: config file, as a program that empties the temporary directory does.
-GONE_PROGRAM = """
+#:
+#: The program removes only a directory that the root `conftest.py` made for
+#: it: one with the name of `SETTINGS_PREFIX`, in the temporary directory that
+#: the test names. For each other path it ends with an error and removes
+#: nothing.
+GONE_PROGRAM = f"""
 import os
 import shutil
+import sys
 
 import conftest
 
 directory = os.path.dirname(os.environ["GIT_CONFIG_GLOBAL"])
+if os.path.dirname(directory) != os.environ["TMPDIR"]:
+    sys.exit("not in the temporary directory of the test: " + directory)
+
+if not os.path.basename(directory).startswith({SETTINGS_PREFIX!r}):
+    sys.exit("not a directory of the root conftest.py: " + directory)
+
 os.chmod(directory, 0o700)
 shutil.rmtree(directory)
 """
@@ -277,7 +295,12 @@ def test_a_fixture_that_commits_and_pushes_starts_no_maintenance(tmp_path: Path)
 def test_a_test_cannot_write_the_global_config_file() -> None:
     """A setting that one test wrote there would reach each later test of
     the process. The directory of the file takes no new file, so `git` cannot
-    replace the file."""
+    replace the file.
+
+    The command runs only against a file of the root `conftest.py`."""
+    directory = Path(os.environ[GLOBAL_ENV]).parent
+    assert directory.name.startswith(SETTINGS_PREFIX), directory
+
     done = subprocess.run(
         ["git", "config", "--global", "creche.written", "yes"],
         capture_output=True,
