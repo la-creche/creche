@@ -17,6 +17,7 @@ use std::error::Error;
 use std::fmt;
 
 use super::json::{ByteOrderMark, Integer, Json, JsonError, JsonKind, Object};
+use crate::slot::{Found, Slot};
 
 /// The largest file that `attendance` and the noticeboard read: 1 MiB.
 const LARGE_CAP_BYTES: usize = 1 << 20;
@@ -107,41 +108,29 @@ pub(crate) fn read_object(
     }
 }
 
-/// What a document holds at one key.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Slot<T> {
-    /// The document has no such key.
-    Missing,
-    /// The value is `null`.
-    Null,
-    /// The value has a JSON type that the field does not take.
-    Other(JsonKind),
-    /// The value has the JSON type of the field.
-    Value(T),
-}
-
-impl<T> Slot<T> {
-    /// The value, when the document holds one of the JSON type of the field.
-    pub(crate) fn value(&self) -> Option<&T> {
-        match self {
-            Self::Value(value) => Some(value),
-            Self::Missing | Self::Null | Self::Other(_) => None,
-        }
+/// The kind of a value of the tree, for a [`Slot`] that does not take it.
+fn found(value: &Json) -> Found {
+    match value {
+        Json::Null => Found::Null,
+        Json::Bool(_) => Found::Boolean,
+        Json::Integer(_) => Found::Integer,
+        Json::Float(_) => Found::Float,
+        Json::String(_) => Found::Text,
+        Json::Array(_) => Found::List,
+        Json::Object(_) => Found::Table,
     }
 }
 
-impl Slot<String> {
-    /// The text, or the empty text.
-    pub(crate) fn text(&self) -> &str {
-        self.value().map_or("", String::as_str)
-    }
-}
-
-impl Slot<bool> {
-    /// Whether the document holds `true` here. Each Python reader takes no
-    /// other value as true.
-    pub(crate) fn is_true(&self) -> bool {
-        self.value() == Some(&true)
+/// The JSON type that an error of `status` names for the kind of a value.
+pub(crate) fn json_kind(found: Found) -> JsonKind {
+    match found {
+        Found::Null => JsonKind::Null,
+        Found::Boolean => JsonKind::Bool,
+        Found::Integer => JsonKind::Integer,
+        Found::Float => JsonKind::Float,
+        Found::Text => JsonKind::String,
+        Found::List => JsonKind::Array,
+        Found::Table => JsonKind::Object,
     }
 }
 
@@ -167,7 +156,7 @@ fn slot<T>(object: &Object, key: &str, pick: impl Fn(&Json) -> Option<T>) -> Slo
     match object.get(key) {
         None => Slot::Missing,
         Some(Json::Null) => Slot::Null,
-        Some(value) => pick(value).map_or(Slot::Other(value.kind()), Slot::Value),
+        Some(value) => pick(value).map_or(Slot::Other(found(value)), Slot::Value),
     }
 }
 
@@ -548,10 +537,30 @@ mod tests {
         assert_eq!(read.family, Slot::Missing);
         assert_eq!(read.kind, Slot::Value("thin".to_owned()));
         assert_eq!(read.state, Slot::Null);
-        assert_eq!(read.written_at, Slot::Other(JsonKind::Integer));
-        assert_eq!(read.faults, Slot::Other(JsonKind::Object));
+        assert_eq!(read.written_at, Slot::Other(Found::Integer));
+        assert_eq!(read.faults, Slot::Other(Found::Table));
         assert_eq!(read.kind.text(), "thin");
         assert_eq!(read.state.text(), "");
+    }
+
+    #[test]
+    fn the_kind_of_a_value_names_its_json_type() {
+        let values = [
+            ("null", Found::Null),
+            ("true", Found::Boolean),
+            ("5", Found::Integer),
+            ("2.5", Found::Float),
+            (r#""in_sync""#, Found::Text),
+            ("[]", Found::List),
+            ("{}", Found::Table),
+        ];
+
+        for (text, kind) in values {
+            let value = Json::parse(text).unwrap();
+
+            assert_eq!(found(&value), kind, "{text}");
+            assert_eq!(json_kind(kind), value.kind(), "{text}");
+        }
     }
 
     #[test]
@@ -565,7 +574,7 @@ mod tests {
         assert!(triggers.enqueue.is_true());
         assert!(!validation.ok.is_true());
         assert!(!validation.never_valid.is_true());
-        assert_eq!(validation.ok, Slot::Other(JsonKind::Integer));
+        assert_eq!(validation.ok, Slot::Other(Found::Integer));
     }
 
     #[test]
@@ -600,7 +609,7 @@ mod tests {
 
         assert_eq!(spend.spend_usd.value().unwrap().to_f64(), Some(2.0));
         assert_eq!(spend.budget_usd.value().unwrap().to_f64(), Some(2.5));
-        assert_eq!(spend.window, Slot::Other(JsonKind::Bool));
+        assert_eq!(spend.window, Slot::Other(Found::Boolean));
     }
 
     #[test]
