@@ -285,6 +285,11 @@ mod tests {
     /// signal.
     const SIGKILL: i32 = 9;
 
+    /// A number that no program can take as a signal. The C library of Linux
+    /// keeps it for its own use and refuses a handler for it. macOS has no
+    /// signal with that number.
+    const NO_SIGNAL: i32 = 32;
+
     #[test]
     fn an_error_names_the_answer_of_the_system() {
         let error = SignalError {
@@ -330,7 +335,7 @@ mod tests {
     }
 
     // A test of this file must not install a handler: the handler stays in
-    // the test program and takes the signal from each other test. The three
+    // the test program and takes the signal from each other test. The four
     // tests below get an error before the first handler. `tests/signals.rs`
     // holds each test that installs one, in a child.
 
@@ -391,6 +396,24 @@ mod tests {
             SignalError {
                 kind: io::ErrorKind::Other,
                 os_text: String::from("Refusing to register signal 9"),
+            }
+        );
+    }
+
+    #[test]
+    fn a_handler_that_the_system_refuses_gives_the_text_of_strerror() {
+        // `tokio` has no rule for this number, so it asks the operating
+        // system. The system refuses, and the call installs nothing.
+        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+        let error = runtime
+            .block_on(async { listen(SignalKind::from_raw(NO_SIGNAL)) })
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            SignalError {
+                kind: io::ErrorKind::InvalidInput,
+                os_text: String::from("Invalid argument"),
             }
         );
     }
