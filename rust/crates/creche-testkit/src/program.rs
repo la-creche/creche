@@ -171,17 +171,39 @@ mod tests {
     #[test]
     fn a_name_that_is_not_one_file_name_is_refused() {
         let root = TempRoot::new().unwrap();
+        // A name that only this process uses. Each test process shares the
+        // directory above the root, so a fixed name there can be the file of
+        // another run.
+        let escape = format!("ct-escape-{}", std::process::id());
+        let outside = root.path().parent().unwrap().join(&escape);
+        let above = format!("../{escape}");
+        let absolute = outside.to_str().unwrap().to_owned();
+        let names = [
+            "",
+            ".",
+            "..",
+            above.as_str(),
+            "bin/sbx",
+            absolute.as_str(),
+            "sbx/",
+            "s\0bx",
+        ];
 
-        for name in [
-            "", ".", "..", "../sbx", "bin/sbx", "/bin/sbx", "sbx/", "s\0bx",
-        ] {
-            let error = write_program(&root, name, "exit 0\n").unwrap_err();
+        let results = names.map(|name| write_program(&root, name, "exit 0\n"));
+        // A function that takes a name with a `/` writes this file. The test
+        // removes it before the first assertion, so a failure leaves no file
+        // after the run.
+        let escaped = outside.symlink_metadata().is_ok();
+        let _ = fs::remove_file(&outside);
+
+        for (name, result) in names.iter().zip(results) {
+            let error = result.unwrap_err();
 
             assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{name:?}");
         }
 
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
-        assert!(!root.path().parent().unwrap().join("sbx").exists());
+        assert!(!escaped, "{}", outside.display());
     }
 
     #[test]
