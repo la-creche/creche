@@ -19,6 +19,13 @@
 //! the paragraph separator U+2029 as an escape. The two end a line in
 //! Unicode, and they are not control characters.
 //!
+//! [`format_line`] also writes the 12 controls of the bidirectional algorithm
+//! of Unicode as an escape, for example the right-to-left override U+202E. A
+//! terminal shows the characters after such a control in another order. A
+//! text from another process thus cannot change the order of the parts of a
+//! line. Each other format character stays as it is, for example a zero
+//! width joiner.
+//!
 //! A backslash stays as it is. A reader thus cannot tell the escape `\n`
 //! from the two characters `\n` of a message. The log is for a person, and
 //! no program reads the escapes back.
@@ -55,6 +62,11 @@
 // each Rust service, with the time in UTC. A change of the form costs one
 // function, `format_line`. An operator who compares a Python line with a
 // Rust line reads two different hours until each service is a Rust service.
+//
+// No contract says which characters a line holds, and the Python log writes
+// each character as it is. The reading here writes an escape for each
+// character that ends a line and for each control of the bidirectional
+// algorithm. A change of that set costs one function, `is_escaped`.
 
 use std::fmt;
 use std::io::{self, Write};
@@ -84,6 +96,24 @@ const DAYS_PER_YEAR: i128 = 365;
 /// is false for the two.
 const LINE_SEPARATOR: char = '\u{2028}';
 const PARAGRAPH_SEPARATOR: char = '\u{2029}';
+
+/// The 12 controls of the bidirectional algorithm of Unicode. A terminal
+/// shows the characters after such a control in another order, and
+/// `char::is_control` is false for each one.
+///
+/// The three marks: the Arabic letter mark, the left-to-right mark and the
+/// right-to-left mark.
+const ARABIC_LETTER_MARK: char = '\u{61c}';
+const LEFT_TO_RIGHT_MARK: char = '\u{200e}';
+const RIGHT_TO_LEFT_MARK: char = '\u{200f}';
+
+/// The two embeddings, their end and the two overrides: U+202A to U+202E.
+const FIRST_EMBEDDING: char = '\u{202a}';
+const LAST_OVERRIDE: char = '\u{202e}';
+
+/// The three isolates and their end: U+2066 to U+2069.
+const FIRST_ISOLATE: char = '\u{2066}';
+const LAST_ISOLATE: char = '\u{2069}';
 
 /// How important one line of the log is.
 ///
@@ -180,7 +210,8 @@ pub fn line(level: Level, target: &str, message: fmt::Arguments<'_>) {
 /// The function is pure: the caller gives the time. Each control character
 /// of `target` and of `message` becomes an escape, for example `\n` or
 /// `\u{1b}`. The separators U+2028 and U+2029 become an escape too. The
-/// result is thus always one line.
+/// result is thus always one line. Each control of the bidirectional
+/// algorithm becomes an escape, so the parts of the line keep their order.
 ///
 /// ```
 /// use std::time::{Duration, UNIX_EPOCH};
@@ -211,10 +242,25 @@ pub fn format_line(at: SystemTime, level: Level, target: &str, message: &str) ->
 }
 
 /// Whether `character` becomes an escape in a line: each control character,
-/// and the two separators of Unicode that end a line and are no control
-/// characters.
+/// the two separators of Unicode that end a line and are no control
+/// characters, and each control of the bidirectional algorithm.
 fn is_escaped(character: char) -> bool {
-    character.is_control() || matches!(character, LINE_SEPARATOR | PARAGRAPH_SEPARATOR)
+    character.is_control()
+        || matches!(character, LINE_SEPARATOR | PARAGRAPH_SEPARATOR)
+        || is_bidi_control(character)
+}
+
+/// Whether `character` is one of the 12 controls of the bidirectional
+/// algorithm of Unicode.
+const fn is_bidi_control(character: char) -> bool {
+    matches!(
+        character,
+        ARABIC_LETTER_MARK
+            | LEFT_TO_RIGHT_MARK
+            | RIGHT_TO_LEFT_MARK
+            | FIRST_EMBEDDING..=LAST_OVERRIDE
+            | FIRST_ISOLATE..=LAST_ISOLATE
+    )
 }
 
 /// Adds `text` to `line`, with each character of [`is_escaped`] as an escape.
@@ -388,10 +434,38 @@ mod tests {
     /// The target of the hook of the child.
     const CHILD_PROGRAM: &str = "hook-test";
 
+    /// The variable that makes [`the_child_writes_each_kind_of_line`] act.
+    const WRITER_VARIABLE: &str = "CRECHE_RUNTIME_LOG_TEST_WRITER";
+
+    /// The name of that child test, as the test program takes it.
+    const WRITER_TEST: &str = "log::tests::the_child_writes_each_kind_of_line";
+
+    /// The target of each log line of that child.
+    const WRITER_PROGRAM: &str = "writer-test";
+
+    /// The level and the message of the line of each macro of that child.
+    const MACRO_LINES: [(&str, &str); 3] = [
+        ("INFO", "from-info 1"),
+        ("WARNING", "from-warning 2"),
+        ("ERROR", "from-error 3"),
+    ];
+
+    /// The line that the child gives to [`out_line`] and to [`err_line`].
+    const TO_STDOUT: &str = "to-stdout";
+    const TO_STDERR: &str = "to-stderr";
+
     /// Each character that ends a line in Unicode: line feed, vertical tab,
     /// form feed, carriage return, next line, and the two separators.
     const LINE_ENDS: [char; 7] = [
         '\n', '\u{b}', '\u{c}', '\r', '\u{85}', '\u{2028}', '\u{2029}',
+    ];
+
+    /// Each control of the bidirectional algorithm of Unicode: the three
+    /// marks, then the two embeddings and the two overrides with their end,
+    /// then the three isolates with their end.
+    const BIDI_CONTROLS: [char; 12] = [
+        '\u{61c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
+        '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
     ];
 
     fn after_epoch(millis: u64) -> SystemTime {
@@ -475,7 +549,7 @@ mod tests {
 
     #[test]
     fn a_time_before_1970_has_its_date_and_cuts_toward_the_earlier_millisecond() {
-        let table: [(Duration, &str); 4] = [
+        let table: [(Duration, &str); 5] = [
             (Duration::from_millis(1), "1969-12-31T23:59:59.999Z"),
             (Duration::from_nanos(1), "1969-12-31T23:59:59.999Z"),
             (Duration::from_secs(86_400), "1969-12-31T00:00:00.000Z"),
@@ -483,6 +557,11 @@ mod tests {
             (
                 Duration::from_secs(2_203_891_200 + 1),
                 "1900-02-28T23:59:59.000Z",
+            ),
+            // A year below 1000 keeps its four digits.
+            (
+                Duration::from_secs(35_615_857_891),
+                "0841-05-18T10:08:29.000Z",
             ),
         ];
 
@@ -505,7 +584,7 @@ mod tests {
 
     #[test]
     fn a_control_character_becomes_an_escape_and_the_line_stays_one_line() {
-        let table: [(&str, &str); 13] = [
+        let table: [(&str, &str); 15] = [
             ("first\nsecond", "first\\nsecond"),
             ("first\r\nsecond", "first\\r\\nsecond"),
             ("a\tb", "a\\tb"),
@@ -519,6 +598,10 @@ mod tests {
             // characters.
             ("first\u{2028}second", "first\\u{2028}second"),
             ("first\u{2029}second", "first\\u{2029}second"),
+            // Two controls of the bidirectional algorithm: an override, and
+            // an isolate with its end.
+            ("report\u{202e}txt.exe", "report\\u{202e}txt.exe"),
+            ("a\u{2066}b\u{2069}c", "a\\u{2066}b\\u{2069}c"),
             // Each other character stays as it is, a backslash too.
             (
                 "caf\u{e9} \u{a0} \\n \"quoted\"",
@@ -555,6 +638,34 @@ mod tests {
         assert!(!line.contains(LINE_ENDS), "{line:?}");
         assert!(!line.chars().any(char::is_control), "{line:?}");
         assert_eq!(line.matches("next").count(), 10);
+    }
+
+    #[test]
+    fn no_character_of_a_message_changes_the_order_of_the_line() {
+        let mut message = String::from("start");
+
+        for control in BIDI_CONTROLS {
+            message.push(control);
+            message.push_str("next");
+        }
+
+        let line = format_line(UNIX_EPOCH, Level::Info, "probe", &message);
+
+        assert!(!line.contains(BIDI_CONTROLS), "{line:?}");
+        assert_eq!(line.matches("\\u{").count(), BIDI_CONTROLS.len());
+        assert_eq!(line.matches("next").count(), BIDI_CONTROLS.len());
+    }
+
+    #[test]
+    fn a_format_character_with_no_direction_stays_as_it_is() {
+        // A zero width space, a zero width joiner, a soft hyphen and a byte
+        // order mark. None ends a line and none changes the order of a line.
+        let message = "a\u{200b}b\u{200d}c\u{ad}d\u{feff}e";
+
+        assert_eq!(
+            format_line(UNIX_EPOCH, Level::Info, "probe", message),
+            format!("1970-01-01T00:00:00.000Z INFO probe {message}")
+        );
     }
 
     #[test]
@@ -668,5 +779,79 @@ mod tests {
         assert!(line.contains(file!()), "{line}");
         assert!(!stderr.contains(PANIC_MESSAGE), "{stderr}");
         assert!(!stdout.contains(PANIC_MESSAGE), "{stdout}");
+    }
+
+    /// The child of the test below. Without the variable it does nothing.
+    /// With the variable it writes one line with each macro and one line
+    /// with each plain writer.
+    #[test]
+    fn the_child_writes_each_kind_of_line() {
+        if std::env::var_os(WRITER_VARIABLE).is_none() {
+            return;
+        }
+
+        crate::info!(WRITER_PROGRAM, "from-info {}", 1);
+        crate::warning!(WRITER_PROGRAM, "from-warning {}", 2);
+        crate::error!(WRITER_PROGRAM, "from-error {}", 3);
+        out_line(TO_STDOUT);
+        err_line(TO_STDERR);
+    }
+
+    #[test]
+    fn each_macro_and_each_writer_writes_one_line_to_its_own_stream() {
+        // The streams are the streams of the process, so the writes run in a
+        // child: this test program again, with only the child test.
+        let before = stamp(SystemTime::now());
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([WRITER_TEST, "--exact", "--nocapture", "--test-threads=1"])
+            .env(WRITER_VARIABLE, "1")
+            .output()
+            .unwrap();
+        let after = stamp(SystemTime::now());
+        let stderr = String::from_utf8(child.stderr).unwrap();
+        let stdout = String::from_utf8(child.stdout).unwrap();
+
+        assert!(child.status.success(), "{stdout}\n{stderr}");
+        assert!(stdout.contains("1 passed"), "{stdout}");
+
+        for (level, message) in MACRO_LINES {
+            // The line of a macro is on stderr, one time, with the level of
+            // that macro and with the time of the call.
+            let end = format!(" {level} {WRITER_PROGRAM} {message}");
+            let lines: Vec<&str> = stderr
+                .lines()
+                .filter(|line| line.contains(message))
+                .collect();
+            let [line] = lines.as_slice() else {
+                panic!("one line holds {message}: {stderr}");
+            };
+            let (at, rest) = line.split_once(' ').unwrap();
+
+            assert_eq!(format!(" {rest}"), end);
+            // Two stamps have the same form, so the order of two texts is
+            // the order of their times.
+            assert!(before.as_str() <= at, "{at} is before {before}");
+            assert!(at <= after.as_str(), "{at} is after {after}");
+            assert!(!stdout.contains(message), "{stdout}");
+        }
+
+        // The test program writes the name of the child test before the
+        // line of `out_line`, with no newline between the two.
+        let on_stdout: Vec<&str> = stdout
+            .lines()
+            .filter(|line| line.contains(TO_STDOUT))
+            .collect();
+        let [line] = on_stdout.as_slice() else {
+            panic!("one line holds {TO_STDOUT}: {stdout}");
+        };
+
+        assert!(line.ends_with(TO_STDOUT), "{line}");
+        assert!(!stderr.contains(TO_STDOUT), "{stderr}");
+        assert_eq!(
+            stderr.lines().filter(|line| *line == TO_STDERR).count(),
+            1,
+            "{stderr}"
+        );
+        assert!(!stdout.contains(TO_STDERR), "{stdout}");
     }
 }

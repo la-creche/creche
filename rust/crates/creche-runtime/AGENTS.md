@@ -147,8 +147,28 @@ One more attribute waits for a body. The field `start` of
 `clock::SystemClock` has `#[expect(dead_code)]`. Packet
 `foundation-clock-entropy` removes it when `monotonic` reads the field.
 
+Three stubs of `src/service.rs` hold one statement before `todo!()`: `run`,
+`load` and `refuse_start`. Each one calls `log::init` with the name of the
+program. Rule 16 of "The rules for a service" in `rust/AGENTS.md` gives the
+reason. The packet that writes the three bodies obeys these rules:
+
+1. Keep that call as the first statement of the body.
+2. Keep the test `service::tests::each_entry_sets_the_panic_hook`. It runs
+   each of the three in a child process.
+3. Do not call one of the three from a test in the test process. Such a call
+   replaces the panic hook of the test program. A later test that fails then
+   prints no message.
+4. Put the rest of each body in a private function that sets no hook. Give
+   a test that function.
+
 ## Known gaps
 
+- This `CONTRACT-QUESTION` comment is open in `src/log.rs`: no contract says
+  which characters a log line holds. The Python log writes each character as
+  it is. This crate writes a control character, a line separator and a
+  bidirectional control as an escape. Each other format character of Unicode
+  stays as it is, for example U+200B. A change of the set costs one
+  function, `is_escaped`.
 - This `CONTRACT-QUESTION` comment is open in `src/log.rs`: no contract gives
   the form of a log line, and no program reads one. The Python services
   write five forms. Three stamp the local time, and two have no time. This

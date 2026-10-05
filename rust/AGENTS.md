@@ -503,10 +503,18 @@ to 5 give a Rust service the Python behavior on purpose.
     Reason: `subprocess.run` of Python runs to its end at a stop of the
     service. A child that a stop kills in the middle of a step can leave
     state that the next start cannot use.
+16. **Call `log::init` first in `main`.**
+    Reason: the standard panic hook of Rust writes the message of a panic
+    to stderr. That message can hold a part of a request or of a file. The
+    hook of `log::init` writes only the place of the panic. `service::run`,
+    `service::load` and `service::refuse_start` set the same hook. Without
+    the call in `main`, the code before the first of the three runs with
+    the standard hook.
 
 The lint gate checks rule 13 in part: `await_holding_lock` refuses a guard
-that the code holds across an `await`. No check holds the other rules. The
-reviewer checks them.
+that the code holds across an `await`. `service::run` holds rule 16 in part:
+it sets the hook before the runtime starts. No check holds the other rules.
+The reviewer checks them.
 
 ## Code style
 
@@ -697,6 +705,11 @@ Rules for the test:
   `crates/creche-testkit/AGENTS.md` list each stub and the packet that
   writes its body. The list of the first file still names the module
   `untrusted`. The bodies of that module are complete.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/log.rs`: no contract says which characters a
+  log line holds. The Python log writes each character as it is. The
+  runtime writes a control character, a line separator and a bidirectional
+  control as an escape.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/log.rs`: no contract gives the form of a log
   line. The Python services write five forms. Three stamp the local time,
