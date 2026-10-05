@@ -206,6 +206,27 @@ reason. The packet that writes the three bodies obeys these rules:
   The Python chaperone has the same rule. The Python `attendance` and the
   Python trigger door run one reload for each SIGHUP that their loop takes.
   A change costs one function, `Hangups::next`.
+- This `CONTRACT-QUESTION` comment is open in `src/http/layers.rs`: no
+  contract and no Python framework gives an answer for three failures of the
+  edge. The failures are a handler that the runtime stopped, a body past a
+  cap and a body that stops early. `StarletteBodies` answers the first as
+  the framework answers an exception. It answers the two others with the
+  status only: 413 and 400. A change costs one arm of `answer`.
+- No vector holds the answer of `StarletteBodies` for a panic. Each Python
+  service has a handler of its own for an exception, so no surface
+  `runtime.edge.*` holds the answer of the framework. The constant is the
+  text of `starlette/middleware/errors.py:259`. A plain test holds it.
+- A client can send a whole request and close its side in the same moment.
+  The server then drops the request before a handler starts. A Python
+  service runs that handler to its end. Contract 02 §5.4 lets a turn
+  continue after its caller disconnects. `hyper` has a switch for a client
+  that closes its side, and `axum::serve` does not set it. A test of
+  `src/http/layers.rs` holds what the code does today.
+- `http::server` and `http::layers` differ from the server and from the
+  framework of the Python services in more ways. The doc comments of `bind`,
+  `serve`, `edge` and `read_body` name each one, and a plain test holds each
+  one. Two examples: a listener sets no time limit on a connection, and a
+  router matches the path as the client sent it.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same
