@@ -701,11 +701,19 @@ Rules for the test:
   `crates/creche-runtime/src/log.rs`: no contract gives the form of a log
   line. The Python services write five forms. Three stamp the local time,
   and two have no time. The runtime writes one form, with the time in UTC.
-- This `CONTRACT-QUESTION` comment is open in
-  `crates/creche-runtime/src/token.rs`: two rules of a token file check no
-  mode, `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`. Contract 02 §3 rule 5
-  gives each token file a mode. The Python readers behind the two rules
-  check none, and the rules do the same.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-runtime/src/token.rs`:
+  1. `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`, contract 02 §3 rule 5.
+     The contract gives each token file a mode. The Python readers behind
+     the two rules check none, and the rules do the same.
+  2. `FILE_CAP`, contract 02 §3 rule 7. The contract gives a token a least
+     count of bytes and no largest count. Each Python reader reads a token
+     file of each size. `token::read` refuses a file of more than 1 MiB.
+  3. `BEARER`, contract 02 §3 rule 4. The contract does not say if a service
+     takes the scheme `Bearer` in another case of letters. Three Python
+     copies take only `Bearer`. The chaperone takes each case.
+     `token::bearer_of` takes only `Bearer`, so `BearerTrim` has no value
+     for the rule of the chaperone.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/entropy.rs`: contract 02 §2 gives a mint of a
   ULID no rule for two times of the clock. One is a time before 1970. The

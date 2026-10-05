@@ -154,12 +154,30 @@ One more attribute waits for a body. The field `start` of
   write five forms. Three stamp the local time, and two have no time. This
   crate writes one form with the time in UTC. A change of the form costs one
   function, `format_line`.
-- This `CONTRACT-QUESTION` comment is open in `src/token.rs`:
-  `TokenRule::DOOR` and `TokenRule::NOT_EMPTY` check no mode. Contract 02 §3
-  rule 5 gives each token file a mode, and `attendance` checks it. The Python
-  readers of a door, of the chaperone and of `caregiver` check none. The two
-  rules keep the reading of those readers. The owner decides if a rule gets
-  a mode check.
+- These `CONTRACT-QUESTION` comments are open in `src/token.rs`:
+  1. `TokenRule::DOOR` and `TokenRule::NOT_EMPTY` check no mode. Contract 02
+     §3 rule 5 gives each token file a mode, and `attendance` checks it. The
+     Python readers of a door, of the chaperone and of `caregiver` check
+     none. The two rules keep the reading of those readers. The owner
+     decides if a rule gets a mode check.
+  2. `FILE_CAP`: contract 02 §3 rule 7 gives a token a least count of bytes
+     and no largest count. Each Python reader reads a token file of each
+     size. `read` refuses a file of more than 1 MiB. A larger cap costs one
+     constant.
+  3. `BEARER`: contract 02 §3 rule 4 does not say if a service takes the
+     scheme `Bearer` in another case of letters. `attendance`, the Open
+     WebUI door and the trigger listener take only `Bearer`. The chaperone
+     takes each case. `bearer_of` takes only `Bearer`. `BearerTrim` thus has
+     no value for the rule of the chaperone. The port of the chaperone needs
+     the answer first.
+- `token::CachedToken` reads the file again only when a fact of the file
+  moved. It does not see a new token that has each fact of the old one: the
+  device, the inode, the size, the time of the last change and the mode. The
+  Python cache has the same limit. A writer that replaces the file with a
+  rename gives it a new inode.
+- No test gives `faults::publish` a fault file whose source is `caregiver`.
+  `FaultFile::new` refuses that source, so no code can build such a file. A
+  test gives the private function `publish_as` no writer in its place.
 - This `CONTRACT-QUESTION` comment is open in `src/entropy.rs`: contract 02
   §2 gives the length and the alphabet of a ULID and no layout of its bits.
   It gives a mint no rule for two times of the clock. One is a time before
