@@ -20,7 +20,7 @@ Both suites skip themselves when `playpen/dist/playpen.js` is missing. A
 silent pass would be worse than a skip. Every test is marked `slow` in
 `conftest.py`. The suite needs `node` on `PATH`.
 
-## The gate
+## CI
 
 The `suites` job of `.github/workflows/gate.yml` runs both suites for each
 code change. No hook runs them. Run the two commands before you push a
@@ -35,8 +35,8 @@ change to this directory.
   failure too.
 - The variable `PYTEST_ADDOPTS` gives each run the path of its report. The
   command stays as it is.
-- The last step prints three numbers for each suite: the tests that ran, the
-  tests that skipped and the seconds.
+- The last step prints one line for each suite: the tests that ran, the
+  total, the tests that skipped and the seconds.
 - The job has a time limit of 20 minutes.
 - `.github/workflows/release.yml` does not run the job yet. That file gets
   the job after the job passed 20 runs of the merge queue in a row.
