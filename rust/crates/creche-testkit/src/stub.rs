@@ -23,6 +23,9 @@
 //! [`RawHttp`] is the client. It sends the bytes of the test and returns each
 //! byte of the answer.
 //!
+//! [`refused_socket`] gives the path of a Unix socket that refuses each
+//! connect, for a test of a client with no server.
+//!
 //! Each pause of an answer is a timer of `tokio`. A test that pauses the time
 //! of `tokio` moves it by hand. The sockets are real. The runtime moves a
 //! paused time forward when no task has work, also while bytes are on their
@@ -47,7 +50,7 @@ use std::time::Duration;
 
 use http::StatusCode;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
+use tokio::net::{TcpListener, TcpStream, UnixListener, UnixSocket, UnixStream};
 use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tokio::task::{AbortHandle, JoinSet};
@@ -1556,6 +1559,70 @@ where
     Ok(answer)
 }
 
+/// Makes a socket file under `root` that refuses each connect, and returns
+/// its path.
+///
+/// A test of a client uses the path for a connect that the operating system
+/// refuses. The error of that connect has the kind `ConnectionRefused`.
+///
+/// The function gives the path to a socket that never listens, and then
+/// closes that socket. The file stays. The operating system refuses a
+/// connect to a socket that does not listen, and to the file of a closed
+/// socket.
+///
+/// Do not use the path of a listener that the test dropped. A test process
+/// starts child programs from more than one thread. A child that starts
+/// while the listener is open holds each open socket of the process until
+/// its own start completes. After the drop, that child still holds the
+/// listener, and the operating system completes a connect to it. The test
+/// then fails now and then.
+///
+/// A child can hold a socket that never listens in the same way. The
+/// operating system still refuses each connect to it.
+///
+/// Two calls under one root give two paths. The function needs no runtime.
+/// It has no Python origin.
+///
+/// ```
+/// use std::io::ErrorKind;
+/// use std::os::unix::net::UnixStream;
+///
+/// use creche_testkit::root::TempRoot;
+/// use creche_testkit::stub::refused_socket;
+///
+/// let root = TempRoot::new()?;
+/// let socket = refused_socket(&root)?;
+/// let connect = UnixStream::connect(&socket).map(drop);
+///
+/// assert_eq!(socket.parent(), Some(root.path()));
+/// assert_eq!(
+///     connect.map_err(|error| error.kind()),
+///     Err(ErrorKind::ConnectionRefused)
+/// );
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// The error of the operating system when it gives no socket or refuses the
+/// path, for example under a root that is gone.
+pub fn refused_socket(root: &TempRoot) -> io::Result<PathBuf> {
+    let count = SOCKETS.fetch_add(1, Ordering::Relaxed);
+    let path = root.path().join(format!("refused-{count}.sock"));
+    // The drop closes the socket. The file stays.
+    drop(never_listens(&path)?);
+
+    Ok(path)
+}
+
+/// A stream socket with the name `path` that does not listen.
+fn never_listens(path: &Path) -> io::Result<UnixSocket> {
+    let socket = UnixSocket::new_stream()?;
+    socket.bind(path)?;
+
+    Ok(socket)
+}
+
 #[cfg(test)]
 mod tests {
     use std::future::Future;
@@ -2602,5 +2669,108 @@ mod tests {
             assert!(no_port.is_err(), "{no_port:?}");
             assert!(no_port_then_eof.is_err(), "{no_port_then_eof:?}");
         });
+    }
+
+    /// The kind of the error of a connect to `path`, with a socket of the
+    /// standard library. `None` for a connect that the operating system
+    /// completes.
+    fn connect_error(path: &Path) -> Option<io::ErrorKind> {
+        std::os::unix::net::UnixStream::connect(path)
+            .err()
+            .map(|error| error.kind())
+    }
+
+    #[test]
+    fn a_refused_socket_is_a_socket_file_that_refuses_each_connect() {
+        use std::os::unix::fs::FileTypeExt;
+
+        // The function needs no runtime.
+        let root = TempRoot::new().unwrap();
+        let socket = refused_socket(&root).unwrap();
+        let file_type = std::fs::symlink_metadata(&socket).unwrap().file_type();
+
+        assert_eq!(socket.parent().unwrap(), root.path());
+        assert!(file_type.is_socket(), "{file_type:?}");
+        assert_eq!(
+            connect_error(&socket),
+            Some(io::ErrorKind::ConnectionRefused)
+        );
+        assert_eq!(
+            connect_error(&socket),
+            Some(io::ErrorKind::ConnectionRefused)
+        );
+    }
+
+    #[test]
+    fn two_refused_sockets_under_one_root_have_two_paths_that_fit_a_socket_path() {
+        // The longest path of a Unix socket on macOS, in bytes.
+        const SOCKET_PATH_MAX: usize = 104;
+
+        let root = TempRoot::new().unwrap();
+        let first = refused_socket(&root).unwrap();
+        let second = refused_socket(&root).unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(
+            connect_error(&first),
+            Some(io::ErrorKind::ConnectionRefused)
+        );
+        assert_eq!(
+            connect_error(&second),
+            Some(io::ErrorKind::ConnectionRefused)
+        );
+        assert!(first.as_os_str().len() < SOCKET_PATH_MAX);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn a_root_that_is_gone_gives_no_refused_socket() {
+        let root = TempRoot::new().unwrap();
+        std::fs::remove_dir(root.path()).unwrap();
+        let error = refused_socket(&root).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(!root.path().exists());
+    }
+
+    /// A child program that starts while a socket is open holds that socket
+    /// until its own start completes. A second descriptor stands for that
+    /// child here.
+    #[test]
+    fn a_refused_socket_refuses_a_connect_while_a_second_holder_keeps_it_open() {
+        use std::os::fd::AsFd;
+
+        let root = TempRoot::new().unwrap();
+        let path = root.path().join("held.sock");
+        let socket = never_listens(&path).unwrap();
+        let second_holder = socket.as_fd().try_clone_to_owned().unwrap();
+        drop(socket);
+
+        let while_held = connect_error(&path);
+        drop(second_holder);
+        let after = connect_error(&path);
+
+        assert_eq!(while_held, Some(io::ErrorKind::ConnectionRefused));
+        assert_eq!(after, Some(io::ErrorKind::ConnectionRefused));
+    }
+
+    /// Why `refused_socket` makes no listener: the operating system
+    /// completes a connect to a dropped listener that a second holder keeps
+    /// open.
+    ///
+    /// The test does not connect after the drop of the second holder. A
+    /// child program of another test can be a third holder then.
+    #[test]
+    fn a_dropped_listener_takes_a_connect_while_a_second_holder_keeps_it_open() {
+        let root = TempRoot::new().unwrap();
+        let path = root.path().join("listened.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let second_holder = listener.try_clone().unwrap();
+        drop(listener);
+
+        let while_held = connect_error(&path);
+        drop(second_holder);
+
+        assert_eq!(while_held, None);
     }
 }
