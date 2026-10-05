@@ -10,24 +10,27 @@ test calls the entry function in this process, because only that call can
 say that the user is root.
 
 The program cannot import `attendance`, so it has its own copy of some values
-of that package. The last test compares each copy with the value in
-`attendance`.
+of that package. The last tests compare each copy with the value in
+`attendance`. One of them takes the path of a journal and the keys of a cut
+event from that package.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import runpy
 import subprocess
 import sys
 from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Self
 
 import pytest
-from attendance.models import LineKind
-from attendance.paths import JOURNAL_FILE
-from attendance.wire import MAX_EVENT_BYTES
+from attendance.models import JournalLine, LineKind
+from attendance.paths import JOURNAL_FILE, journal_file
+from attendance.wire import MAX_EVENT_BYTES, cap_event
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "bin" / "journal-scan.py"
@@ -579,3 +582,24 @@ def test_each_constant_equals_its_source_in_attendance() -> None:
     assert program["PI_EVENT"] == LineKind.PI_EVENT.value
     assert program["MAX_EVENT_BYTES"] == MAX_EVENT_BYTES
     assert MAX_EVENT_BYTES == EDGE
+
+
+def test_a_cut_event_of_attendance_counts_at_its_own_path(tmp_path: Path) -> None:
+    """Here `attendance` gives the path of the journal and each key of the line.
+
+    Each other test writes its paths and its keys by hand. This test fails
+    when `attendance` moves the journal, or gives a key of a line or of a cut
+    event another name. The event has a lone surrogate, so `cap_event` cuts
+    it, and the cut form has none.
+    """
+    event = cap_event({"type": "message_update", "text": "a\ud83d"})
+    moment = datetime(2026, 1, 1, tzinfo=UTC)
+    line = JournalLine(journal_seq=1, ts=moment, kind=LineKind.PI_EVENT, turn=None, body=event)
+    journal = journal_file(tmp_path, FAMILY, SESSION)
+    journal.parent.mkdir(parents=True)
+    journal.write_bytes(json.dumps(line.to_api(), separators=(",", ":")).encode() + b"\n")
+
+    done = _scan(tmp_path)
+
+    assert done.returncode == EXIT_READ_ALL, done.stderr
+    assert done.stdout == _report({FILES: 1, LINES: 1, CUT: 1})
