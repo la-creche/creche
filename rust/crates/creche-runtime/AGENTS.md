@@ -163,17 +163,17 @@ reason. The packet that writes the three bodies obeys these rules:
 
 ## Known gaps
 
+- This `CONTRACT-QUESTION` comment is open in `src/log.rs`: no contract says
+  which characters a log line holds. The Python log writes each character as
+  it is. This crate writes a control character, a line separator and a
+  bidirectional control as an escape. Each other format character of Unicode
+  stays as it is, for example U+200B. A change of the set costs one
+  function, `is_escaped`.
 - This `CONTRACT-QUESTION` comment is open in `src/log.rs`: no contract gives
   the form of a log line, and no program reads one. The Python services
   write five forms. Three stamp the local time, and two have no time. This
   crate writes one form with the time in UTC. A change of the form costs one
   function, `format_line`.
-- The same comment covers the characters of a line. No contract says which
-  characters a line holds, and the Python log writes each one as it is. This
-  crate writes a control character, a line separator and a bidirectional
-  control as an escape. Each other format character of Unicode stays as it
-  is, for example U+200B. A change of the set costs one function,
-  `is_escaped`.
 - This `CONTRACT-QUESTION` comment is open in `src/token.rs`:
   `TokenRule::DOOR` and `TokenRule::NOT_EMPTY` check no mode. Contract 02 §3
   rule 5 gives each token file a mode, and `attendance` checks it. The Python
