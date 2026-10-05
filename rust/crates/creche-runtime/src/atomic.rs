@@ -725,6 +725,7 @@ fn ensure_dir_with(steps: &impl Steps, path: &Path, mode: DirMode) -> Result<(),
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::collections::BTreeMap;
     use std::os::unix::fs::{MetadataExt, symlink};
 
     use creche_testkit::root::TempRoot;
@@ -1835,6 +1836,207 @@ mod tests {
             fs::read(root.path().join("config.old")).unwrap(),
             b"not a tree"
         );
+    }
+
+    /// Whether the entry at `path` is a symlink.
+    fn is_symlink(path: &Path) -> bool {
+        fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }
+
+    #[test]
+    fn a_symlink_at_the_old_name_stops_the_swap_and_stays() {
+        // Python raises here too. `shutil.rmtree` refuses a symlink to a
+        // tree, and the rename refuses a symlink to no tree.
+        for aim in ["elsewhere", "no-such-tree"] {
+            let root = TempRoot::new().unwrap();
+            let elsewhere = root.path().join("elsewhere");
+            tree_with(&elsewhere, "other");
+            let target = root.path().join("config");
+            tree_with(&target, "current");
+            let old = root.path().join("config.old");
+            symlink(root.path().join(aim), &old).unwrap();
+            let staging = root.path().join("config.tmp");
+            tree_with(&staging, "newest");
+
+            let error = replace_dir(&staging, &target).unwrap_err();
+
+            assert_eq!(error.step, WriteStep::Rename, "{aim}");
+            assert_eq!(error.path, old, "{aim}");
+            assert_eq!(error.kind, io::ErrorKind::NotADirectory, "{aim}");
+            assert_eq!(text_in(&target), "current", "{aim}");
+            assert_eq!(text_in(&staging), "newest", "{aim}");
+            assert!(is_symlink(&old), "{aim}");
+            assert_eq!(text_in(&elsewhere), "other", "{aim}");
+        }
+    }
+
+    #[test]
+    fn a_target_that_is_a_symlink_to_no_tree_stops_the_swap() {
+        // `Path.exists` of Python follows a symlink, so this target is
+        // absent for the swap. The one rename then refuses the symlink.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+        symlink(root.path().join("no-such-tree"), &target).unwrap();
+        let staging = root.path().join("config.tmp");
+        tree_with(&staging, "newest");
+        let probe = Probe::new();
+
+        let error = replace_dir_with(&probe, &staging, &target).unwrap_err();
+
+        assert_eq!(error.step, WriteStep::Rename);
+        assert_eq!(error.path, target);
+        assert_eq!(error.kind, io::ErrorKind::NotADirectory);
+        assert_eq!(probe.count_of(WriteStep::Rename), 1);
+        assert!(is_symlink(&target));
+        assert_eq!(text_in(&staging), "newest");
+    }
+
+    // --- replace_dir: each kind of entry at the target and at the old name ---
+
+    /// What a test puts at the target or at the old name before a swap.
+    #[derive(Debug, Clone, Copy)]
+    enum Entry {
+        /// No entry.
+        Absent,
+        /// A directory with one file.
+        Tree,
+        /// A file.
+        File,
+        /// A symlink to a directory with one file.
+        LinkToTree,
+        /// A symlink to a name that is absent.
+        LinkToNothing,
+    }
+
+    /// What a swap leaves.
+    #[derive(Debug, Clone, Copy)]
+    enum After {
+        /// The call is an error. Each entry is as it was before the call.
+        Refused,
+        /// The new tree is at the target. The old name is absent.
+        Swapped,
+        /// The new tree is at the target. The old name holds the entry that
+        /// was at the target.
+        MovedAside,
+        /// The new tree is at the target. The old name holds the entry that
+        /// it held before the call.
+        OldKept,
+    }
+
+    /// Puts `entry` at `path`. `text` is the text of the file, or of the
+    /// file in the tree. The tree of a symlink is `<text>-aim`, beside
+    /// `path`.
+    fn plant(path: &Path, entry: Entry, text: &str) {
+        match entry {
+            Entry::Absent => {}
+            Entry::Tree => tree_with(path, text),
+            Entry::File => fs::write(path, text).unwrap(),
+            Entry::LinkToTree => {
+                let aim = path.with_file_name(format!("{text}-aim"));
+                tree_with(&aim, text);
+                symlink(&aim, path).unwrap();
+            }
+            Entry::LinkToNothing => symlink(path.with_file_name("no-such"), path).unwrap(),
+        }
+    }
+
+    /// The entries of one directory: what each name holds.
+    type Entries = BTreeMap<String, String>;
+
+    /// Each entry of the directory `dir`. The text says what the name
+    /// holds: a tree with the text of its file, a file with its text, or a
+    /// symlink with the name of its aim.
+    fn entries_in(dir: &Path) -> Entries {
+        names_in(dir)
+            .into_iter()
+            .map(|name| {
+                let path = dir.join(&name);
+                let kind = fs::symlink_metadata(&path).unwrap().file_type();
+                let holds = if kind.is_symlink() {
+                    let aim = fs::read_link(&path).unwrap();
+
+                    format!("link to {}", aim.file_name().unwrap().to_str().unwrap())
+                } else if kind.is_dir() {
+                    format!("tree of {}", text_in(&path))
+                } else {
+                    format!("file of {}", fs::read_to_string(&path).unwrap())
+                };
+
+                (name, holds)
+            })
+            .collect()
+    }
+
+    /// The entries after a swap that put the new tree at the target. The
+    /// staging tree is gone, and the old name holds `old`. Each other entry
+    /// of `before` stays, for example the tree that a symlink names.
+    fn swapped(before: &Entries, old: Option<&String>) -> Entries {
+        let mut after = before.clone();
+        after.remove("config.tmp");
+        after.remove("config.old");
+        after.insert(String::from("config"), String::from("tree of newest"));
+        after.extend(old.map(|holds| (String::from("config.old"), holds.clone())));
+
+        after
+    }
+
+    /// What [`replace_dir`] leaves for each kind of entry at the target
+    /// `config` and at the old name `config.old`.
+    ///
+    /// No vector covers a swap. A run of the Python copy on the same
+    /// entries gave each row (`caregiver/src/caregiver/atomic.py:47-69`).
+    /// `Refused` is a call for which the copy raises.
+    const SWAPS: &[(Entry, Entry, After)] = &[
+        (Entry::Tree, Entry::Absent, After::Swapped),
+        (Entry::Tree, Entry::Tree, After::Swapped),
+        (Entry::Tree, Entry::File, After::Refused),
+        (Entry::Tree, Entry::LinkToTree, After::Refused),
+        (Entry::Tree, Entry::LinkToNothing, After::Refused),
+        (Entry::File, Entry::Absent, After::MovedAside),
+        (Entry::File, Entry::Tree, After::MovedAside),
+        (Entry::File, Entry::LinkToNothing, After::MovedAside),
+        (Entry::LinkToTree, Entry::Absent, After::MovedAside),
+        (Entry::LinkToTree, Entry::Tree, After::MovedAside),
+        (Entry::LinkToTree, Entry::LinkToNothing, After::MovedAside),
+        (Entry::LinkToNothing, Entry::Absent, After::Refused),
+        (Entry::LinkToNothing, Entry::Tree, After::Refused),
+        (Entry::LinkToNothing, Entry::File, After::Refused),
+        (Entry::LinkToNothing, Entry::LinkToTree, After::Refused),
+        (Entry::LinkToNothing, Entry::LinkToNothing, After::Refused),
+        (Entry::Absent, Entry::Absent, After::Swapped),
+        (Entry::Absent, Entry::Tree, After::Swapped),
+        (Entry::Absent, Entry::File, After::OldKept),
+        (Entry::Absent, Entry::LinkToTree, After::OldKept),
+        (Entry::Absent, Entry::LinkToNothing, After::OldKept),
+    ];
+
+    #[test]
+    fn a_swap_leaves_what_the_python_copy_leaves_for_each_kind_of_entry() {
+        for (at_target, at_old, after) in SWAPS {
+            let root = TempRoot::new().unwrap();
+            let target = root.path().join("config");
+            let staging = root.path().join("config.tmp");
+            tree_with(&staging, "newest");
+            plant(&target, *at_target, "current");
+            plant(&root.path().join("config.old"), *at_old, "stale");
+            let before = entries_in(root.path());
+
+            let result = replace_dir(&staging, &target);
+
+            let expected = match after {
+                After::Refused => before.clone(),
+                After::Swapped => swapped(&before, None),
+                After::MovedAside => swapped(&before, Some(&before["config"])),
+                After::OldKept => swapped(&before, Some(&before["config.old"])),
+            };
+            let case = format!("{at_target:?} at the target, {at_old:?} at the old name");
+            assert_eq!(
+                result.is_err(),
+                matches!(after, After::Refused),
+                "{case}: {result:?}"
+            );
+            assert_eq!(entries_in(root.path()), expected, "{case}");
+        }
     }
 
     #[test]
