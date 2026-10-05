@@ -204,7 +204,8 @@ def _freeze(
     """`frozen` and each of `paths`, with the digest of the file on disk.
 
     A path is relative to `vectors/data/`. `files` holds what the groups
-    write. A file freezes one time, when no group writes it.
+    write. A file freezes one time, when no group writes it. `index_rows`
+    then stops on a file that is no vector file and has no `kind`.
     """
     added = dict(frozen)
     for path in paths:
@@ -221,8 +222,6 @@ def _freeze(
         if not text.isascii():
             raise ValueError(f"{path} is not ASCII, so the generator did not write it")
 
-        # The call makes no row here. It stops on a file that can have none.
-        _frozen_row(path, text)
         added[path] = _digest(text)
 
     return added

@@ -38,6 +38,14 @@ STAYS = Surface(
     contract="no contract",
     vectors=(accepted("one", text_input("b"), "b"),),
 )
+#: A made surface whose path sorts after each other made path.
+LAST = Surface(
+    name="made.last",
+    path="z.json",
+    entry="made.package.last",
+    contract="no contract",
+    vectors=(refused("one", text_input("c"), "last"),),
+)
 #: A file of the generator that is no vector file. It has a `kind`.
 OTHER_KIND = '{\n "format": 1,\n "kind": "registries",\n "files": []\n}\n'
 
@@ -285,6 +293,29 @@ def test_a_removal_freezes_a_file_and_the_check_then_passes(
         "made.stays: 1 (1 accepted)",
         "made.leaves: 3 (1 accepted, 2 refused)",
         "total: 4",
+    ]
+
+
+def test_the_index_holds_the_frozen_files_in_the_order_of_their_paths(
+    tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A call names its files in each order. The index has one order."""
+    monkeypatch.setattr(generate, "GROUPS", _groups(STAYS))
+    (tree / LAST.path).write_text(render(LAST), encoding="utf-8")
+
+    assert LAST.path > LEAVES.path
+    assert generate.main(["--freeze", LAST.path, LEAVES.path], tree) == generate.EXIT_OK
+
+    text = (tree / generate.INDEX_FILE).read_text(encoding="utf-8")
+
+    assert [line for line in text.splitlines() if '.json": "' in line] == [
+        f'  "{LEAVES.path}": "{_sha256(render(LEAVES))}",',
+        f'  "{LAST.path}": "{_sha256(render(LAST))}"',
+    ]
+    assert _index(tree)["surfaces"] == [
+        generate.index_row(STAYS),
+        generate.index_row(LEAVES),
+        generate.index_row(LAST),
     ]
 
 
