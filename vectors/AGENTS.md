@@ -262,9 +262,11 @@ directory is not a workspace package, so a change here does not change
 - `_bearer` of `noticeboard.sessions.SessionReader` reads the token that the
   noticeboard sends to `attendance`. It has no public entry point.
   `noticeboard.sessions.token` covers it through one call of the reader. It
-  has the two rules of `read_api`. That surface holds files of mode 0600
-  with a token of 43 ASCII characters. No vector covers another mode, a
-  shorter token or a token with a character outside ASCII.
+  has the two rules of `read_api`. That surface holds files of mode 0600.
+  A token there has 43 ASCII characters, with nothing before it and with
+  one line feed or nothing after it. No vector covers another mode, a
+  shorter token, a token between spaces or a token with a character
+  outside ASCII.
 - `runtime.token.attendance` and `runtime.token.attendance_pep_read` hold no
   token. `TokenBook.load` returns nothing, and the tokens that it keeps are
   private.
@@ -353,6 +355,11 @@ directory is not a workspace package, so a change here does not change
 - `noticeboard.security.cookie` covers the cookie of the edit page. No
   vector covers the cookie of another answer. `runtime.edge.noticeboard`
   holds the names of the cookies of five answers.
+- Four noticeboard surfaces go through the app: `noticeboard.security.cookie`,
+  `noticeboard.app.query`, `noticeboard.route.family` and
+  `noticeboard.static.css`. Their vectors come from the versions of
+  Starlette and of FastAPI that `uv.lock` pins. A vector can move when
+  `uv.lock` takes a newer version.
 - `noticeboard.app.query` holds no offset with a decimal digit outside
   ASCII. Python `int` reads such a digit.
 - `noticeboard.route.family` holds no segment with an escaped slash that

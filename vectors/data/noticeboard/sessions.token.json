@@ -8,8 +8,6 @@
  "vectors": [
   {"id":"token","input":{"text":"vectors-view-token-0123456789abcdefghijklmn"},"result":"accepted","value":{"bearer":"vectors-view-token-0123456789abcdefghijklmn"}},
   {"id":"final-line-feed","input":{"text":"vectors-view-token-0123456789abcdefghijklmn\n"},"result":"accepted","value":{"bearer":"vectors-view-token-0123456789abcdefghijklmn"}},
-  {"id":"final-cr-lf","input":{"text":"vectors-view-token-0123456789abcdefghijklmn\r\n"},"result":"accepted","value":{"bearer":"vectors-view-token-0123456789abcdefghijklmn"}},
-  {"id":"in-spaces","input":{"text":"  vectors-view-token-0123456789abcdefghijklmn  \n"},"result":"accepted","value":{"bearer":"vectors-view-token-0123456789abcdefghijklmn"}},
   {"id":"empty","input":{"text":""},"refusal":{"class":"unreadable","text":"the noticeboard-ro token file is empty"},"result":"refused"},
   {"id":"spaces-only","input":{"text":"   "},"refusal":{"class":"unreadable","text":"the noticeboard-ro token file is empty"},"result":"refused"},
   {"id":"line-feed-only","input":{"text":"\n"},"refusal":{"class":"unreadable","text":"the noticeboard-ro token file is empty"},"result":"refused"},

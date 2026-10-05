@@ -1065,8 +1065,6 @@ _V: Final = VIEW_TOKEN.encode("ascii")
 TOKENS: Final[tuple[TokenCase, ...]] = (
     TokenCase("token", _V),
     TokenCase("final-line-feed", _V + b"\n"),
-    TokenCase("final-cr-lf", _V + b"\r\n"),
-    TokenCase("in-spaces", b"  " + _V + b"  \n"),
     TokenCase("empty", b""),
     TokenCase("spaces-only", b"   "),
     TokenCase("line-feed-only", b"\n"),

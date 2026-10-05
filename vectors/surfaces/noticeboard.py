@@ -93,6 +93,10 @@ HTTP_NOT_FOUND: Final = 404
 
 MODE_OWNER: Final = 0o600
 
+#: The start of the name of the temporary directory. No vector holds a path
+#: of that directory, so no vector holds this text.
+SCRATCH_PREFIX: Final = "vectors-noticeboard-"
+
 
 def _surface(
     tail: str,
@@ -1578,7 +1582,7 @@ def _style_surface(scratch: Path) -> Surface:
 
 
 def surfaces() -> tuple[Surface, ...]:
-    with tempfile.TemporaryDirectory(prefix="vectors-noticeboard-") as scratch_name:
+    with tempfile.TemporaryDirectory(prefix=SCRATCH_PREFIX) as scratch_name:
         scratch = Path(scratch_name)
         token_file = _token_file(scratch / "reader")
 

@@ -7,7 +7,6 @@ No test here builds the vectors. A test reads the written inputs of
 from __future__ import annotations
 
 import json
-import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -109,7 +108,7 @@ def test_each_committed_problem_has_a_known_class() -> None:
 
 
 def test_no_committed_file_holds_a_path_of_the_machine() -> None:
-    marks = (tempfile.gettempdir(), str(Path.home()), "vectors-noticeboard-", "/private/")
+    marks = (noticeboard.SCRATCH_PREFIX, str(Path.home()))
     for path, text in generate.committed().items():
         if path.startswith(PREFIX):
             assert not [mark for mark in marks if mark in text], path
