@@ -152,6 +152,16 @@ async fn trigger_at(mut stop: Signal, trigger: ShutdownTrigger) {
     }
 }
 
+// CONTRACT-QUESTION: contract 02 §3 rule 8 gives SIGHUP its job, a reload.
+// It does not say how many reloads follow two signals. The Python copies
+// differ. The chaperone runs one more reload for all the signals that arrive
+// while a reload runs (`chaperone/src/chaperone/reload_wiring.py:357-372`).
+// `attendance` and the trigger door run one reload for each SIGHUP that
+// their loop takes (`attendance/src/attendance/__main__.py:206`,
+// `door-trigger/src/agent_door_trigger/webhooks.py:257`). The reading here
+// is the rule of the chaperone for each Rust service: each SIGHUP has a
+// reload that starts after it, and no queue of reloads grows. A change costs
+// one function, `Hangups::next`.
 /// The SIGHUP signals of a process, one item for each reload to do.
 ///
 /// Signals that arrive while a reload runs give one more item, and not one

@@ -191,6 +191,13 @@ reason. The packet that writes the three bodies obeys these rules:
   The Python writer of the grant file uses another name. This crate names
   each temporary file `.<name>.<pid>.<count>.tmp`, as the Python `attendance`
   does. A change of the name costs one function, `temp_name`.
+- This `CONTRACT-QUESTION` comment is open in `src/signals.rs`: contract 02
+  §3 rule 8 gives SIGHUP its job and does not say how many reloads follow
+  two signals. `Hangups` gives one item for all the signals that arrive
+  while a reload runs. Each SIGHUP then has a reload that starts after it.
+  The Python chaperone has the same rule. The Python `attendance` and the
+  Python trigger door run one reload for each SIGHUP that their loop takes.
+  A change costs one function, `Hangups::next`.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same

@@ -731,6 +731,12 @@ Rules for the test:
   the grant file uses another name. The runtime names each temporary file
   `.<name>.<pid>.<count>.tmp`, as the Python `attendance` does. A change of
   the name costs one function, `temp_name`.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/signals.rs`: contract 02 §3 rule 8 does not
+  say how many reloads follow two SIGHUP signals. `Hangups` gives one item
+  for all the signals that arrive while a reload runs. Two Python services
+  run one reload for each SIGHUP that their loop takes. A change costs one
+  function, `Hangups::next`.
 - No check holds the rules of "The rules for a service", except a part of
   rule 2 and a part of rule 13. A service crate that breaks one of the
   other rules builds and passes the lint gate.
