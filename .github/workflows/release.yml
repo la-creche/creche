@@ -362,10 +362,10 @@ jobs:
 
   # The restart rule of the daemon units: bin/systemd-proof.sh. A unit with
   # `RestartPreventExitStatus=78` must stay stopped after exit status 78, and
-  # only systemd can prove that. The script starts three transient units on
+  # only systemd can prove that. The script makes three units of its own on
   # the systemd of the runner, as root. It then gives each unit file under
-  # systemd/ to `systemd-analyze verify`. It needs systemd as process 1 and
-  # sudo with no password.
+  # systemd/ to `systemd-analyze verify`. The runner must run systemd as its
+  # first process, and its sudo must not ask for a password.
   #
   # The job has the form of the `rust` job. It runs on every code change, and
   # on a change that touches no file of the proof its one step after the

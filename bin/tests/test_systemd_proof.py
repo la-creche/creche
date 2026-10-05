@@ -1,8 +1,9 @@
 """The systemd proof fails for each result that breaks the restart rule.
 
-`bin/systemd-proof.sh` proves on a Linux runner that a unit with
-`RestartPreventExitStatus=78` stays stopped after exit status 78
-(`rust/AGENTS.md`, "The config of a process"). Only that run is the proof.
+`bin/systemd-proof.sh` runs on a Linux runner. There it proves the restart
+rule of `rust/AGENTS.md`, "The config of a process": after exit status 78,
+systemd does not start a unit with `RestartPreventExitStatus=78` again. Only
+that run is the proof.
 This file holds the script itself: a proof that cannot fail proves nothing.
 Six things could go wrong without one red line, and each gets a check here:
 

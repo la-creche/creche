@@ -72,7 +72,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. For a push that changes `vectors/`, it runs `rust-gate.sh` when `cargo` is on `PATH`. For a push that changes a file under `integration/proc/` that is not prose, it runs the process-level suite. |
 | `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, the include check, `cargo fmt`, `cargo clippy` and `cargo deny` on the workspace under `rust/`. `--tests` adds `cargo test`. `cargo deny` runs where `cargo-deny` is on `PATH`. |
-| `systemd-proof.sh` | CI, from the `systemd-proof` job | Proves the restart rule of the daemon units on the systemd of the runner, with three transient units. Then gives each unit file under `systemd/` to `systemd-analyze verify`. `--unchanged FROM TO` says if a change needs no proof. |
+| `systemd-proof.sh` | CI, from the `systemd-proof` job and from the scope of each workflow | Proves the restart rule of the daemon units on the systemd of the runner, with three transient units. Then gives each unit file under `systemd/` to `systemd-analyze verify`. `--unchanged FROM TO` says if a change needs no proof. |
 
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
 only after `sudo creche-deploy`.
@@ -163,23 +163,26 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 ## The systemd proof
 
 `systemd-proof.sh` proves the restart rule of `rust/AGENTS.md`, "The config
-of a process". Only the `systemd-proof` job of CI runs it. The script needs
-Linux with systemd as process 1, and `sudo` with no password. On a machine
-without one of them, it fails before it starts a unit.
+of a process". Only CI runs it. The `systemd-proof` job runs the proof, and
+the scope of each workflow asks `--unchanged`.
 
-The script starts three transient units as root. Each unit holds
-`Restart=always`, `RestartSec=1`, `StartLimitIntervalSec=0` and
-`RestartPreventExitStatus=78`.
+The machine must run Linux with systemd as its first process, and `sudo`
+must not ask for a password. On another machine, the script fails before it
+starts a unit.
+
+The script makes three units of its own with `systemd-run`, as root. All
+three carry the same restart lines, and `RestartPreventExitStatus=78` is one
+of them. `RESTART_RULE` in the script lists the lines.
 
 | Case | The unit | What the script demands |
 |---|---|---|
-| 1 | The main process exits with 78. | The unit is `failed`, and `NRestarts` is 0. |
+| 1 | The main process exits with 78. | The state of the unit is `failed`, and `NRestarts` stays 0. |
 | 2 | The main process exits with 1. | `NRestarts` is above 0. |
-| 3 | A process of `ExecStartPre=` exits with 78. The main process sleeps. | `NRestarts` is above 0. |
+| 3 | The check process of `ExecStartPre=` exits with 78. The main process never starts. | `NRestarts` is above 0. |
 
-- The script waits 5 seconds after the three starts. It then reads case 2
-  and case 3 until each one shows a restart. It reads a case 60 times at
-  most, with one second between two reads.
+- The script waits after the three starts. It then reads case 2 and case 3
+  until each one shows a restart, with a limit on the reads. The constants
+  are at the top of the script.
 - The script reads case 1 last. Case 2 and case 3 are also the control of
   the measure. They show that a restart reaches `NRestarts` on that machine
   in the time that case 1 had.
@@ -187,8 +190,8 @@ The script starts three transient units as root. Each unit holds
   are there also when a case fails.
 - The script removes the three units at its end, also after a check that
   failed. It fails when systemd still holds one of them.
-- The three names are fixed, and each one starts with `creche-proof-`. The
-  script names no unit of a deployment.
+- The three names are fixed, and each one starts with `creche-proof-`. No
+  daemon unit has such a name.
 
 The script then gives each file under `systemd/` to `systemd-analyze
 verify`, one file in each call. It skips a Markdown file.

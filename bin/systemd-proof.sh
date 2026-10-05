@@ -10,15 +10,15 @@
 # THE RESTART RULE. A daemon that refuses its start exits with 78. A unit
 # with `Restart=always` stays stopped after that exit only when it holds
 # `RestartPreventExitStatus=78`, and systemd reads that line for the main
-# process alone. The proof starts three transient units. Each one holds
-# `Restart=always`, `RestartSec=1`, `StartLimitIntervalSec=0` and
-# `RestartPreventExitStatus=78`:
-#   case 1  the main process exits 78          the unit is `failed`, and
-#                                              NRestarts is 0
+# process alone. The proof makes three units of its own with systemd-run.
+# All three carry the same restart lines, RESTART_RULE below:
+#   case 1  the main process exits 78          the state of the unit is
+#                                              `failed`, and NRestarts
+#                                              stays 0
 #   case 2  the main process exits 1           NRestarts is above 0
-#   case 3  an `ExecStartPre=` process exits   NRestarts is above 0
-#           78, before a main process that
-#           sleeps
+#   case 3  the check process of               NRestarts is above 0
+#           `ExecStartPre=` exits 78, and the
+#           main process never starts
 # Case 2 and case 3 also prove the measure. They show that on this machine
 # a restart reaches NRestarts in the time that the unit of case 1 had.
 #
@@ -27,10 +27,10 @@
 # whose program is absent. For such a unit the proof is the syntax only: the
 # tool prints no other line. One line of the proof says so.
 #
-# Needs systemd as process 1 and sudo with no password. A machine without
-# one of the two fails the proof: nothing here stands in for systemd.
-# The script names no unit of a deployment. It makes its own three units and
-# removes them at its end, also after a check that failed.
+# The machine must run systemd as its first process, and sudo must not ask
+# for a password. On another machine the proof fails: nothing here stands in
+# for systemd. The three unit names belong to the proof alone. The script
+# removes its units at its end, also after a check that failed.
 set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
@@ -298,11 +298,13 @@ units_gone() {
 # file_verified FILE: one unit file through `systemd-analyze verify`. FILE is
 # an absolute path.
 #
-# `--recursive-errors=no`: the tool loads no other unit, and it fails for a
-# warning on a line of this file. `--man=no`: a manual page that the runner
-# lacks says nothing about the file. No sudo: the tool starts nothing. It
-# reads each file as a system unit, a user unit too, because the parser is
-# the same.
+# `--recursive-errors=no`: the tool loads no dependency of the unit, and it
+# fails for a warning on a line of this file. A timer or a path unit still
+# loads the service that it starts, from systemd/. A line of the tool on
+# that service thus refuses the timer or the path unit too. `--man=no`: a
+# manual page that the runner lacks says nothing about the file. No sudo:
+# the tool starts nothing. It reads each file as a system unit, a user unit
+# too, because the parser is the same.
 #
 # Each line that the tool prints must be the line for a program that the
 # machine does not hold. Such a line names this unit, or an instance of it
