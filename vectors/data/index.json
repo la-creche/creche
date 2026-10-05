@@ -180,6 +180,25 @@
   {"accepted":5,"entry":"agent_door_owui.app.create_app","path":"runtime/edge.door_owui.json","raised":0,"refused":0,"surface":"runtime.edge.door_owui","vectors":5},
   {"accepted":5,"entry":"agent_door_trigger.webhooks.create_app","path":"runtime/edge.door_trigger.json","raised":0,"refused":0,"surface":"runtime.edge.door_trigger","vectors":5},
   {"accepted":5,"entry":"chaperone.app.create_app","path":"runtime/edge.chaperone.json","raised":0,"refused":0,"surface":"runtime.edge.chaperone","vectors":5},
-  {"accepted":5,"entry":"noticeboard.app.build_app","path":"runtime/edge.noticeboard.json","raised":0,"refused":0,"surface":"runtime.edge.noticeboard","vectors":5}
+  {"accepted":5,"entry":"noticeboard.app.build_app","path":"runtime/edge.noticeboard.json","raised":0,"refused":0,"surface":"runtime.edge.noticeboard","vectors":5},
+  {"accepted":6,"entry":"noticeboard.security.check_key","path":"noticeboard/security.key.json","raised":0,"refused":14,"surface":"noticeboard.security.key","vectors":20},
+  {"accepted":21,"entry":"noticeboard.security.check_csrf","path":"noticeboard/security.csrf.json","raised":0,"refused":37,"surface":"noticeboard.security.csrf","vectors":58},
+  {"accepted":8,"entry":"noticeboard.security.is_keyless","path":"noticeboard/security.keyless.json","raised":0,"refused":17,"surface":"noticeboard.security.keyless","vectors":25},
+  {"accepted":60,"entry":"noticeboard.app.build_app, the route GET /families/chat/edit","path":"noticeboard/security.cookie.json","raised":0,"refused":0,"surface":"noticeboard.security.cookie","vectors":60},
+  {"accepted":47,"entry":"urllib.parse.parse_qsl, as the edit route of noticeboard.app calls it","path":"noticeboard/urlform.json","raised":0,"refused":0,"surface":"noticeboard.urlform","vectors":47},
+  {"accepted":59,"entry":"noticeboard.app.build_app, the route GET /audit","path":"noticeboard/app.query.json","raised":0,"refused":0,"surface":"noticeboard.app.query","vectors":59},
+  {"accepted":11,"entry":"noticeboard.app.build_app, the three routes of context.routes","path":"noticeboard/route.family.json","raised":0,"refused":31,"surface":"noticeboard.route.family","vectors":42},
+  {"accepted":11,"entry":"noticeboard.sessions.is_session","path":"noticeboard/route.session.json","raised":0,"refused":25,"surface":"noticeboard.route.session","vectors":36},
+  {"accepted":53,"entry":"noticeboard.sessions.SessionReader.sessions","path":"noticeboard/sessions.list.json","raised":0,"refused":10,"surface":"noticeboard.sessions.list","vectors":63},
+  {"accepted":47,"entry":"noticeboard.sessions.SessionReader.detail","path":"noticeboard/sessions.detail.json","raised":0,"refused":4,"surface":"noticeboard.sessions.detail","vectors":51},
+  {"accepted":32,"entry":"noticeboard.sessions.SessionReader.events","path":"noticeboard/sessions.events.json","raised":0,"refused":0,"surface":"noticeboard.sessions.events","vectors":32},
+  {"accepted":0,"entry":"noticeboard.sessions.SessionReader.sessions, .detail and .events","path":"noticeboard/sessions.refusal.json","raised":0,"refused":40,"surface":"noticeboard.sessions.refusal","vectors":40},
+  {"accepted":4,"entry":"noticeboard.sessions.SessionReader.sessions, the token file of the reader","path":"noticeboard/sessions.token.json","raised":0,"refused":5,"surface":"noticeboard.sessions.token","vectors":9},
+  {"accepted":77,"entry":"noticeboard.transcript.fold, on the lines of noticeboard.sessions.SessionReader.events","path":"noticeboard/transcript.fold.json","raised":0,"refused":0,"surface":"noticeboard.transcript.fold","vectors":77},
+  {"accepted":85,"entry":"noticeboard.auditfiles.read_page","path":"noticeboard/audit.page.json","raised":0,"refused":0,"surface":"noticeboard.audit.page","vectors":85},
+  {"accepted":25,"entry":"noticeboard.statusdocs.read_report","path":"noticeboard/statusdocs.report.json","raised":0,"refused":9,"surface":"noticeboard.statusdocs.report","vectors":34},
+  {"accepted":33,"entry":"noticeboard.verify.main, with --json and --env-file","path":"noticeboard/verify.envfile.json","raised":0,"refused":10,"surface":"noticeboard.verify.envfile","vectors":43},
+  {"accepted":24,"entry":"noticeboard.__main__.main, with --check","path":"noticeboard/cli.check.json","raised":0,"refused":12,"surface":"noticeboard.cli.check","vectors":36},
+  {"accepted":1,"entry":"noticeboard.app.build_app, the route GET /static/noticeboard.css","path":"noticeboard/static.css.json","raised":0,"refused":0,"surface":"noticeboard.static.css","vectors":1}
  ]
 }
