@@ -19,6 +19,13 @@
 //! the paragraph separator U+2029 as an escape. The two end a line in
 //! Unicode, and they are not control characters.
 //!
+//! [`format_line`] also writes the 12 controls of the bidirectional algorithm
+//! of Unicode as an escape, for example the right-to-left override U+202E. A
+//! terminal shows the characters after such a control in another order. A
+//! text from another process thus cannot change the order of the parts of a
+//! line. Each other format character stays as it is, for example a zero
+//! width joiner.
+//!
 //! A backslash stays as it is. A reader thus cannot tell the escape `\n`
 //! from the two characters `\n` of a message. The log is for a person, and
 //! no program reads the escapes back.
@@ -55,6 +62,11 @@
 // each Rust service, with the time in UTC. A change of the form costs one
 // function, `format_line`. An operator who compares a Python line with a
 // Rust line reads two different hours until each service is a Rust service.
+//
+// No contract says which characters a line holds, and the Python log writes
+// each character as it is. The reading here writes an escape for each
+// character that ends a line and for each control of the bidirectional
+// algorithm. A change of that set costs one function, `is_escaped`.
 
 use std::fmt;
 use std::io::{self, Write};
@@ -84,6 +96,24 @@ const DAYS_PER_YEAR: i128 = 365;
 /// is false for the two.
 const LINE_SEPARATOR: char = '\u{2028}';
 const PARAGRAPH_SEPARATOR: char = '\u{2029}';
+
+/// The 12 controls of the bidirectional algorithm of Unicode. A terminal
+/// shows the characters after such a control in another order, and
+/// `char::is_control` is false for each one.
+///
+/// The three marks: the Arabic letter mark, the left-to-right mark and the
+/// right-to-left mark.
+const ARABIC_LETTER_MARK: char = '\u{61c}';
+const LEFT_TO_RIGHT_MARK: char = '\u{200e}';
+const RIGHT_TO_LEFT_MARK: char = '\u{200f}';
+
+/// The two embeddings, their end and the two overrides: U+202A to U+202E.
+const FIRST_EMBEDDING: char = '\u{202a}';
+const LAST_OVERRIDE: char = '\u{202e}';
+
+/// The three isolates and their end: U+2066 to U+2069.
+const FIRST_ISOLATE: char = '\u{2066}';
+const LAST_ISOLATE: char = '\u{2069}';
 
 /// How important one line of the log is.
 ///
@@ -180,7 +210,8 @@ pub fn line(level: Level, target: &str, message: fmt::Arguments<'_>) {
 /// The function is pure: the caller gives the time. Each control character
 /// of `target` and of `message` becomes an escape, for example `\n` or
 /// `\u{1b}`. The separators U+2028 and U+2029 become an escape too. The
-/// result is thus always one line.
+/// result is thus always one line. Each control of the bidirectional
+/// algorithm becomes an escape, so the parts of the line keep their order.
 ///
 /// ```
 /// use std::time::{Duration, UNIX_EPOCH};
@@ -211,10 +242,25 @@ pub fn format_line(at: SystemTime, level: Level, target: &str, message: &str) ->
 }
 
 /// Whether `character` becomes an escape in a line: each control character,
-/// and the two separators of Unicode that end a line and are no control
-/// characters.
+/// the two separators of Unicode that end a line and are no control
+/// characters, and each control of the bidirectional algorithm.
 fn is_escaped(character: char) -> bool {
-    character.is_control() || matches!(character, LINE_SEPARATOR | PARAGRAPH_SEPARATOR)
+    character.is_control()
+        || matches!(character, LINE_SEPARATOR | PARAGRAPH_SEPARATOR)
+        || is_bidi_control(character)
+}
+
+/// Whether `character` is one of the 12 controls of the bidirectional
+/// algorithm of Unicode.
+const fn is_bidi_control(character: char) -> bool {
+    matches!(
+        character,
+        ARABIC_LETTER_MARK
+            | LEFT_TO_RIGHT_MARK
+            | RIGHT_TO_LEFT_MARK
+            | FIRST_EMBEDDING..=LAST_OVERRIDE
+            | FIRST_ISOLATE..=LAST_ISOLATE
+    )
 }
 
 /// Adds `text` to `line`, with each character of [`is_escaped`] as an escape.
@@ -394,6 +440,14 @@ mod tests {
         '\n', '\u{b}', '\u{c}', '\r', '\u{85}', '\u{2028}', '\u{2029}',
     ];
 
+    /// Each control of the bidirectional algorithm of Unicode: the three
+    /// marks, the five embeddings and overrides with their end, and the four
+    /// isolates with their end.
+    const BIDI_CONTROLS: [char; 12] = [
+        '\u{61c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
+        '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+    ];
+
     fn after_epoch(millis: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_millis(millis)
     }
@@ -505,7 +559,7 @@ mod tests {
 
     #[test]
     fn a_control_character_becomes_an_escape_and_the_line_stays_one_line() {
-        let table: [(&str, &str); 13] = [
+        let table: [(&str, &str); 15] = [
             ("first\nsecond", "first\\nsecond"),
             ("first\r\nsecond", "first\\r\\nsecond"),
             ("a\tb", "a\\tb"),
@@ -519,6 +573,10 @@ mod tests {
             // characters.
             ("first\u{2028}second", "first\\u{2028}second"),
             ("first\u{2029}second", "first\\u{2029}second"),
+            // Two controls of the bidirectional algorithm: an override, and
+            // an isolate with its end.
+            ("report\u{202e}txt.exe", "report\\u{202e}txt.exe"),
+            ("a\u{2066}b\u{2069}c", "a\\u{2066}b\\u{2069}c"),
             // Each other character stays as it is, a backslash too.
             (
                 "caf\u{e9} \u{a0} \\n \"quoted\"",
@@ -555,6 +613,34 @@ mod tests {
         assert!(!line.contains(LINE_ENDS), "{line:?}");
         assert!(!line.chars().any(char::is_control), "{line:?}");
         assert_eq!(line.matches("next").count(), 10);
+    }
+
+    #[test]
+    fn no_character_of_a_message_changes_the_order_of_the_line() {
+        let mut message = String::from("start");
+
+        for control in BIDI_CONTROLS {
+            message.push(control);
+            message.push_str("next");
+        }
+
+        let line = format_line(UNIX_EPOCH, Level::Info, "probe", &message);
+
+        assert!(!line.contains(BIDI_CONTROLS), "{line:?}");
+        assert_eq!(line.matches("\\u{").count(), BIDI_CONTROLS.len());
+        assert_eq!(line.matches("next").count(), BIDI_CONTROLS.len());
+    }
+
+    #[test]
+    fn a_format_character_with_no_direction_stays_as_it_is() {
+        // A zero width space, a zero width joiner, a soft hyphen and a byte
+        // order mark. None ends a line and none changes the order of a line.
+        let message = "a\u{200b}b\u{200d}c\u{ad}d\u{feff}e";
+
+        assert_eq!(
+            format_line(UNIX_EPOCH, Level::Info, "probe", message),
+            format!("1970-01-01T00:00:00.000Z INFO probe {message}")
+        );
     }
 
     #[test]

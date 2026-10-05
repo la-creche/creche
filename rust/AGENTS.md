@@ -701,6 +701,10 @@ Rules for the test:
   `crates/creche-runtime/src/log.rs`: no contract gives the form of a log
   line. The Python services write five forms. Three stamp the local time,
   and two have no time. The runtime writes one form, with the time in UTC.
+- The same comment covers the characters of a log line. No contract says
+  which characters a line holds, and the Python log writes each one as it
+  is. The runtime writes a control character, a line separator and a
+  bidirectional control as an escape.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/token.rs`: two rules of a token file check no
   mode, `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`. Contract 02 §3 rule 5
