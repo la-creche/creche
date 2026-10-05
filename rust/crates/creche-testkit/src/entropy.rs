@@ -16,8 +16,11 @@ use creche_runtime::entropy::{Entropy, EntropyError};
 ///
 /// The first byte that the source gives is 0, the next one is 1, and each
 /// later byte is one more. The count goes from 255 back to 0. The count
-/// continues from one call of `fill` to the next call, so two mints never
-/// get the same bytes.
+/// continues from one call of `fill` to the next call.
+///
+/// The bytes repeat after 256 bytes. A mint of 32 bytes thus repeats at the
+/// ninth mint, and a mint of 10 bytes repeats at mint number 129. A test
+/// that mints more values than that gets two equal values.
 ///
 /// The type has no Python origin.
 ///
@@ -124,6 +127,18 @@ mod tests {
         entropy.fill(&mut bytes).unwrap();
 
         assert_eq!(bytes[254..], [254, 255, 0, 1]);
+    }
+
+    #[test]
+    fn a_mint_of_32_bytes_repeats_at_the_ninth_mint() {
+        let entropy = CountingEntropy::new();
+        let mut mints = [[0_u8; 32]; 9];
+        for mint in &mut mints {
+            entropy.fill(mint).unwrap();
+        }
+
+        assert_eq!(mints[8], mints[0]);
+        assert!(mints[1..8].iter().all(|mint| *mint != mints[0]));
     }
 
     #[test]
