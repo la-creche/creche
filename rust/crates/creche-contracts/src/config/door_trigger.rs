@@ -8,7 +8,10 @@
 //! `agent-trigger fire` is not a daemon. A timer starts it one time for one
 //! family, and it has no config type here.
 
-use super::values::{BindAddress, DirPath, LanAddress, Port, Seconds, TokenFilePath};
+use super::values::{
+    BindAddress, DEFAULT_ATTENDANCE_SOCKET, DEFAULT_FAMILIES_DIR, DEFAULT_REGISTRY_ROOT, DirPath,
+    LanAddress, Port, Seconds, TokenFilePath, default_state_root, default_tokens_dir,
+};
 use super::{
     AtReload, AtStart, AttendanceTarget, Checked, ConfigError, ConfigErrors, Env, FailureAction,
     LAN_ADDRESS, Parsed, ProcessConfig, all2, all3, all4, door_target,
@@ -35,11 +38,8 @@ pub const REFRESH_S: &str = "DOOR_TRIGGER_REFRESH_S";
 
 /// The port of the webhook listener on the LAN address (`spec.md` §3.6).
 const WEBHOOK_PORT: &str = "8360";
-const DEFAULT_ATTENDANCE_SOCKET: &str = "/srv/agents/state/rework/sock/sessiond.sock";
-const DEFAULT_TOKEN_FILE: &str = "/srv/agents/state/rework/tokens/door-trigger.token";
-const DEFAULT_FAMILIES_DIR: &str = "/srv/agents/state/rework/families";
-const DEFAULT_REGISTRY_ROOT: &str = "/srv/agents/registry";
-const DEFAULT_WEBHOOKS_DIR: &str = "/srv/agents/state/rework/triggers/webhooks";
+const DEFAULT_TOKEN_FILE: &str = concat!(default_tokens_dir!(), "/door-trigger.token");
+const DEFAULT_WEBHOOKS_DIR: &str = concat!(default_state_root!(), "/triggers/webhooks");
 
 /// The time between two reads of the routes: the caregiver writes a status
 /// document again each 30 seconds or less (contract 05 §2 rule 4).
@@ -262,10 +262,19 @@ mod tests {
             config.attendance(),
             &AttendanceTarget::Socket(DEFAULT_ATTENDANCE_SOCKET.parse().unwrap())
         );
-        assert_eq!(config.token_file().as_str(), DEFAULT_TOKEN_FILE);
-        assert_eq!(config.families_dir().as_str(), DEFAULT_FAMILIES_DIR);
-        assert_eq!(config.registry_root().as_str(), DEFAULT_REGISTRY_ROOT);
-        assert_eq!(config.webhooks_dir().as_str(), DEFAULT_WEBHOOKS_DIR);
+        assert_eq!(
+            config.token_file().as_str(),
+            "/srv/agents/state/rework/tokens/door-trigger.token"
+        );
+        assert_eq!(
+            config.families_dir().as_str(),
+            "/srv/agents/state/rework/families"
+        );
+        assert_eq!(config.registry_root().as_str(), "/srv/agents/registry");
+        assert_eq!(
+            config.webhooks_dir().as_str(),
+            "/srv/agents/state/rework/triggers/webhooks"
+        );
         assert_eq!(config.refresh().as_secs_f64(), 30.0);
     }
 
