@@ -434,6 +434,26 @@ mod tests {
     /// The target of the hook of the child.
     const CHILD_PROGRAM: &str = "hook-test";
 
+    /// The variable that makes [`the_child_writes_each_kind_of_line`] act.
+    const WRITER_VARIABLE: &str = "CRECHE_RUNTIME_LOG_TEST_WRITER";
+
+    /// The name of that child test, as the test program takes it.
+    const WRITER_TEST: &str = "log::tests::the_child_writes_each_kind_of_line";
+
+    /// The target of each log line of that child.
+    const WRITER_PROGRAM: &str = "writer-test";
+
+    /// The level and the message of the line of each macro of that child.
+    const MACRO_LINES: [(&str, &str); 3] = [
+        ("INFO", "from-info 1"),
+        ("WARNING", "from-warning 2"),
+        ("ERROR", "from-error 3"),
+    ];
+
+    /// The line that the child gives to [`out_line`] and to [`err_line`].
+    const TO_STDOUT: &str = "to-stdout";
+    const TO_STDERR: &str = "to-stderr";
+
     /// Each character that ends a line in Unicode: line feed, vertical tab,
     /// form feed, carriage return, next line, and the two separators.
     const LINE_ENDS: [char; 7] = [
@@ -441,8 +461,8 @@ mod tests {
     ];
 
     /// Each control of the bidirectional algorithm of Unicode: the three
-    /// marks, the five embeddings and overrides with their end, and the four
-    /// isolates with their end.
+    /// marks, then the two embeddings and the two overrides with their end,
+    /// then the three isolates with their end.
     const BIDI_CONTROLS: [char; 12] = [
         '\u{61c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
         '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
@@ -529,7 +549,7 @@ mod tests {
 
     #[test]
     fn a_time_before_1970_has_its_date_and_cuts_toward_the_earlier_millisecond() {
-        let table: [(Duration, &str); 4] = [
+        let table: [(Duration, &str); 5] = [
             (Duration::from_millis(1), "1969-12-31T23:59:59.999Z"),
             (Duration::from_nanos(1), "1969-12-31T23:59:59.999Z"),
             (Duration::from_secs(86_400), "1969-12-31T00:00:00.000Z"),
@@ -537,6 +557,11 @@ mod tests {
             (
                 Duration::from_secs(2_203_891_200 + 1),
                 "1900-02-28T23:59:59.000Z",
+            ),
+            // A year below 1000 keeps its four digits.
+            (
+                Duration::from_secs(35_615_857_891),
+                "0841-05-18T10:08:29.000Z",
             ),
         ];
 
@@ -754,5 +779,79 @@ mod tests {
         assert!(line.contains(file!()), "{line}");
         assert!(!stderr.contains(PANIC_MESSAGE), "{stderr}");
         assert!(!stdout.contains(PANIC_MESSAGE), "{stdout}");
+    }
+
+    /// The child of the test below. Without the variable it does nothing.
+    /// With the variable it writes one line with each macro and one line
+    /// with each plain writer.
+    #[test]
+    fn the_child_writes_each_kind_of_line() {
+        if std::env::var_os(WRITER_VARIABLE).is_none() {
+            return;
+        }
+
+        crate::info!(WRITER_PROGRAM, "from-info {}", 1);
+        crate::warning!(WRITER_PROGRAM, "from-warning {}", 2);
+        crate::error!(WRITER_PROGRAM, "from-error {}", 3);
+        out_line(TO_STDOUT);
+        err_line(TO_STDERR);
+    }
+
+    #[test]
+    fn each_macro_and_each_writer_writes_one_line_to_its_own_stream() {
+        // The streams are the streams of the process, so the writes run in a
+        // child: this test program again, with only the child test.
+        let before = stamp(SystemTime::now());
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([WRITER_TEST, "--exact", "--nocapture", "--test-threads=1"])
+            .env(WRITER_VARIABLE, "1")
+            .output()
+            .unwrap();
+        let after = stamp(SystemTime::now());
+        let stderr = String::from_utf8(child.stderr).unwrap();
+        let stdout = String::from_utf8(child.stdout).unwrap();
+
+        assert!(child.status.success(), "{stdout}\n{stderr}");
+        assert!(stdout.contains("1 passed"), "{stdout}");
+
+        for (level, message) in MACRO_LINES {
+            // The line of a macro is on stderr, one time, with the level of
+            // that macro and with the time of the call.
+            let end = format!(" {level} {WRITER_PROGRAM} {message}");
+            let lines: Vec<&str> = stderr
+                .lines()
+                .filter(|line| line.contains(message))
+                .collect();
+            let [line] = lines.as_slice() else {
+                panic!("one line holds {message}: {stderr}");
+            };
+            let (at, rest) = line.split_once(' ').unwrap();
+
+            assert_eq!(format!(" {rest}"), end);
+            // Two stamps have the same form, so the order of two texts is
+            // the order of their times.
+            assert!(before.as_str() <= at, "{at} is before {before}");
+            assert!(at <= after.as_str(), "{at} is after {after}");
+            assert!(!stdout.contains(message), "{stdout}");
+        }
+
+        // The test program writes the name of the child test before the
+        // line of `out_line`, with no newline between the two.
+        let on_stdout: Vec<&str> = stdout
+            .lines()
+            .filter(|line| line.contains(TO_STDOUT))
+            .collect();
+        let [line] = on_stdout.as_slice() else {
+            panic!("one line holds {TO_STDOUT}: {stdout}");
+        };
+
+        assert!(line.ends_with(TO_STDOUT), "{line}");
+        assert!(!stderr.contains(TO_STDOUT), "{stderr}");
+        assert_eq!(
+            stderr.lines().filter(|line| *line == TO_STDERR).count(),
+            1,
+            "{stderr}"
+        );
+        assert!(!stdout.contains(TO_STDERR), "{stdout}");
     }
 }
