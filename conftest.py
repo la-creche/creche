@@ -127,6 +127,9 @@ def _settings_file() -> str:
     The directory takes no new file, so a `git config --global` of a test
     fails, as it did when the variable named the empty file. This process
     removes the directory when it ends.
+
+    A process that a signal ends runs no exit handler and leaves the
+    directory. Run `chmod 700` on such a directory before the delete.
     """
     directory = Path(tempfile.mkdtemp(prefix=SETTINGS_PREFIX))
     path = directory / "config"

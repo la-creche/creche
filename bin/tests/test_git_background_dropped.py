@@ -1,4 +1,4 @@
-"""No `git` command of a test run starts work that outlives it.
+"""No `git` command that inherits the environment of a test run starts work that outlives it.
 
 After a commit, a merge or a fetch, `git` starts `git maintenance run --auto`
 and does not wait for it. A repository that receives a push does the same.

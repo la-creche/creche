@@ -21,22 +21,29 @@ workflow: branches, hooks, CI, tags and releases.
   config file of the person who runs the suite, and none of the system. A
   fixture that needs a setting sets it in its own repository or with
   `git -c`.
-- That file holds `maintenance.auto=false` and `gc.autoDetach=false`, and
-  `GIT_CONFIG_COUNT` carries the same two settings. After a commit, a merge
-  or a fetch, `git` starts its maintenance and does not wait for it. A
-  repository that receives a push does the same. With the two settings, no
-  `git` child of a test starts that process. A test can then remove or copy
-  a throwaway repository right after a command. A fixture that needs the
+- The root `conftest.py` gives `core.excludesFile` and `core.attributesFile`
+  an empty file, through `GIT_CONFIG_COUNT`. It sets `GIT_ATTR_NOSYSTEM` to
+  `1`. A `git` child then reads no ignore file and no attributes file of
+  that person, and no attributes file of the system. The two settings
+  outrank the config of a repository. A fixture that needs one of the two
+  passes it with `git -c`.
+- The file of `GIT_CONFIG_GLOBAL` holds `maintenance.auto=false` and
+  `gc.autoDetach=false`, and `GIT_CONFIG_COUNT` carries the same two
+  settings. After a commit, a merge or a fetch, `git` starts its maintenance
+  and does not wait for it. A repository that receives a push does the same.
+  With `maintenance.auto=false` and `gc.autoDetach=false`, no `git` child
+  that inherits the environment of the test run starts that process. A test
+  can then remove or copy a throwaway repository right after a command.
+- The settings `maintenance.auto` and `gc.autoDetach` of `GIT_CONFIG_COUNT`
+  also outrank the config of a repository. A fixture that needs the
   maintenance passes `maintenance.auto=true` with `git -c`.
 - A fixture that builds the full environment of `git` gets neither the file
-  nor the settings of `GIT_CONFIG_COUNT`. Such a fixture passes
-  `-c maintenance.auto=false` itself.
-- The same file gives `core.excludesFile` and `core.attributesFile` an empty
-  file, through `GIT_CONFIG_COUNT`. It sets `GIT_ATTR_NOSYSTEM` to `1`. A
-  `git` child then reads no ignore file and no attributes file of that
-  person, and no attributes file of the system. The two settings outrank the
-  config of a repository. A fixture that needs one of the two passes it with
-  `git -c`.
+  nor the settings of `GIT_CONFIG_COUNT`. Pass `-c maintenance.auto=false`
+  in such a fixture. A fixture that names its own global config file gets
+  only the settings of `GIT_CONFIG_COUNT`. `git` removes those settings,
+  and each setting of `git -c`, from the environment of a repository that
+  receives a push. When one of these two fixtures pushes, write
+  `maintenance.auto=false` to the config of that repository.
 
 ## Hooks
 
