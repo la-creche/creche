@@ -20,6 +20,7 @@ import pytest
 from proc_board import BoardStack
 from proc_chat import chat_id, run_stream
 from proc_harness import Supervisor
+from proc_library import LibraryStack, write_vault
 from proc_owui import OwuiStack
 from proc_services import SERVICES, Service, command_of
 from proc_tree import Tree
@@ -107,6 +108,26 @@ def test_an_override_starts_the_terminal_door_on_a_terminal(
 
     assert child.wait(EXIT_DEADLINE_S) == 0, child.output()
     assert ran.read_text(encoding="utf-8").split() == ["door-tui"]
+
+
+def test_an_override_starts_the_index_builder(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The seventh topology builds its command itself, so it has a proof of its own."""
+    ran = tree.root / "override-ran"
+    monkeypatch.setenv(
+        SERVICES[Service.LIBRARY].override, str(_other_program(tree, Service.LIBRARY, ran))
+    )
+    stack = LibraryStack(tree, supervisor)
+    stack.prepare()
+    stack.start_tei()
+    write_vault(stack.vault())
+
+    built = stack.run_index(stack.vault(), stack.index_dir())
+
+    assert built.exit_code == 0, built.stderr
+    assert stack.store().path.is_file()
+    assert ran.read_text(encoding="utf-8").split() == ["library"]
 
 
 def _other_program(tree: Tree, service: Service, ran: Path) -> Path:

@@ -29,6 +29,7 @@ from proc_board import BoardStack
 from proc_caregiver import CaregiverStack
 from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
+from proc_library import LibraryStack
 from proc_owui import OwuiStack
 from proc_report import describe, end_processes
 from proc_services import KEEP_ROOTS_ENV, NO_SKIP_ENV, describe_table, unknown_variables
@@ -322,6 +323,23 @@ def tui(tui_prepared: TuiStack, launcher: Path) -> TuiStack:
     tui_prepared.start()
 
     return tui_prepared
+
+
+@pytest.fixture
+def library_prepared(tree: Tree, supervisor: Supervisor) -> LibraryStack:
+    """The seventh topology on disk, with no TEI stand-in. It needs no bundle."""
+    stack = LibraryStack(tree, supervisor)
+    stack.prepare()
+
+    return stack
+
+
+@pytest.fixture
+def library(library_prepared: LibraryStack) -> LibraryStack:
+    """The seventh topology: the TEI stand-in listens. A test runs the index builder."""
+    library_prepared.start_tei()
+
+    return library_prepared
 
 
 def _skip(reason: str) -> NoReturn:

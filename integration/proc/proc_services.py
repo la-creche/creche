@@ -40,6 +40,7 @@ class Service(StrEnum):
     CAREGIVER = "caregiver"
     CHAPERONE = "chaperone"
     NOTICEBOARD = "noticeboard"
+    LIBRARY = "library"
 
 
 class Origin(StrEnum):
@@ -60,7 +61,8 @@ class StartEntry:
     #: The one environment variable that replaces `program` and `selector`.
     override: str
     #: The unit files under `systemd/` whose `ExecStart` is this command.
-    #: Empty for a command the operator runs by hand.
+    #: Empty for a command the operator runs by hand, and for a command that
+    #: a unit runs inside a sandbox.
     units: tuple[str, ...]
 
 
@@ -114,6 +116,15 @@ SERVICES: Final[dict[Service, StartEntry]] = {
         selector=(),
         override="CRECHE_PROC_NOTICEBOARD",
         units=("creche-noticeboard.service",),
+    ),
+    # The two index units run the program in a sandbox: `sbx exec`, then
+    # `sh -c`. The program is not the first word of their `ExecStart`, so
+    # the row names no unit. `test_proc_table.py` reads the `sh -c` text.
+    Service.LIBRARY: StartEntry(
+        program="index-scope",
+        selector=(),
+        override="CRECHE_PROC_LIBRARY",
+        units=(),
     ),
 }
 
