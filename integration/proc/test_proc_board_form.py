@@ -142,8 +142,12 @@ async def test_a_post_cannot_change_a_locked_field(board_alone: BoardStack) -> N
     """Contract 01 §3.1: `kind` never changes.
 
     A browser posts no disabled control. A post that names `kind` did not
-    come from the form. The noticeboard drops the value, so the post is a
-    save that changes nothing, with the answer of that scenario.
+    come from the form.
+
+    CONTRACT-QUESTION: no section gives the answer to a post that names a
+    locked field. Reading taken: the noticeboard as it is, which drops the
+    value and answers the 303 of a save. The post is then a save that
+    changes nothing. A change costs the first assertion here.
     """
     tree = board_alone.tree
     before = proc_registry.read_family(tree, FAMILY)
@@ -422,9 +426,10 @@ async def test_a_save_removes_the_file_of_a_save_that_did_not_end(board_alone: B
     CONTRACT-QUESTION: §8.2 step 3 says "write". No contract gives the name
     of a temporary file, and none says who removes one that a save left.
     Reading taken: the noticeboard as it is. The name is a dot, the name of
-    the family file, 16 hex digits and `.noticeboard-tmp`. The next save of
-    the family removes each such file, and its commit holds the family file
-    alone. A change costs the name in `proc_registry.py` and this scenario.
+    the family file, a dot, 16 lower-case hex digits and `.noticeboard-tmp`.
+    The next save of the family removes each such file, and its commit holds
+    the family file alone. A change costs the name in `proc_registry.py` and
+    this scenario.
     """
     tree = board_alone.tree
     left = proc_registry.leave_temp_file(tree, FAMILY)

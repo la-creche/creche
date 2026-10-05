@@ -98,8 +98,8 @@ def test_an_override_starts_the_verify_hook_of_the_noticeboard(
 ) -> None:
     """The hook is a program of its own, with a variable of its own. It runs to its end.
 
-    The hook looks for the audit directory, which the chaperone makes on the
-    host. One audit record makes it here.
+    The hook looks for the audit directory, which the host has before a
+    service starts. One audit record makes it here.
     """
     ran = tree.root / "override-ran"
     monkeypatch.setenv(

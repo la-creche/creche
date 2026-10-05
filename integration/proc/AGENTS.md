@@ -260,8 +260,7 @@ noticeboard for `/healthz`.
     terminal door say why.
 21. Read a value of a family file through `load_family` of
     `proc_registry.py`. Write the text of a block of the edit form with
-    `block_text` of that module. No test names the markup of a family file.
-    A change of the markup then changes one module.
+    `block_text` of that module. No test reads the markup of a family file.
 
 ## The `caregiver` topology
 
@@ -702,8 +701,8 @@ the text of the failure. Work down this list.
   contract gives the name of the file that a save writes before the rename.
   No contract says who removes such a file after a save that did not end.
   The suite holds the noticeboard as it is:
-  - The name is a dot, the name of the family file, 16 hex digits and
-    `.noticeboard-tmp`.
+  - The name is a dot, the name of the family file, a dot, 16 lower-case
+    hex digits and `.noticeboard-tmp`.
   - The next save of the family removes the file, and its commit holds the
     family file alone.
 
@@ -725,10 +724,20 @@ the text of the failure. Work down this list.
   prints. The suite holds that the stdout of the hook with `--json` is one
   JSON object. The boolean `ok` of that object says what the exit code says.
   A change costs two assertions in `test_proc_board_verify.py`.
-- **No chaperone beside the verify hook of the noticeboard.** The hook looks
-  for the audit directory, which the chaperone makes on the host. Each
-  scenario that runs the hook writes one audit record first, in the place of
-  the chaperone.
+- **No fixture makes the audit directory for the verify hook of the
+  noticeboard.** The hook looks for that directory. The host has it before a
+  service starts (`systemd/creche-chaperone.service`). No fixture of this
+  topology makes it, so each scenario that runs the hook writes one audit
+  record first.
+- **The markup of a family file has more than one writer.** Rule 21 gives
+  the markup one reader. These places write the markup, or name it:
+  - `family_text` and `block_text` of `proc_registry.py`
+  - `write_family_file` and `Tree.family_file` of `proc_tree.py`
+  - the two `quiet` texts of `test_proc_trigger_quiet.py`
+  - one family text in `test_proc_caregiver_stage2.py`
+
+  `test_proc_table.py` reads the component manifest, which has the same
+  markup. A change of the markup costs each of those places.
 - **CONTRACT-QUESTION, the answers that no handler of a service makes.** No
   contract names the answer of a listener to four requests. The requests are
   an unknown path, a wrong method, a path with a final slash, and `HEAD` on

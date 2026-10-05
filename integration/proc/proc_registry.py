@@ -69,7 +69,8 @@ _UNTRACKED_TEXT: Final = "A note of the fixture. No commit holds it.\n"
 _EDITED_PROSE: Final = "Be helpful, and answer in one sentence.\n"
 
 #: The name of the file that a save of the noticeboard writes before the
-#: rename: a dot, the name of the family file, 16 hex digits and this end.
+#: rename: a dot, the name of the family file, a dot, 16 lower-case hex
+#: digits and this end.
 _TEMP_DIGITS: Final = "0123456789abcdef"
 _TEMP_END: Final = ".noticeboard-tmp"
 _TEMP_TEXT: Final = "The text of a save that did not end.\n"
