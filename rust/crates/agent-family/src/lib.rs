@@ -27,7 +27,6 @@ mod registry;
 mod report;
 #[cfg(test)]
 mod scratch;
-mod sha256;
 mod shape;
 mod yaml;
 mod zones;
