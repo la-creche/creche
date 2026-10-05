@@ -30,6 +30,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "bin" / "yaml-to-toml.py"
@@ -1172,6 +1173,99 @@ def test_a_wrong_command_line_exits_2(tmp_path: Path, args: tuple[str, ...]) -> 
     assert "usage:" in done.stderr
 
 
+# --- the values against a second reader --------------------------------------
+
+#: The two texts that the key `release` of a manifest holds as a boolean.
+RELEASE_TEXTS = {"yes": True, "no": False}
+
+
+def _without_nulls(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _without_nulls(one) for key, one in value.items() if one is not None}
+
+    if isinstance(value, list):
+        return [_without_nulls(one) for one in value]
+
+    return value
+
+
+def _safe_load_values(text: str, kind: Any) -> object:
+    """The values that a product reader gets from a YAML text.
+
+    Each product reader of the four kinds uses `yaml.safe_load`. The script
+    builds its values with a reader of its own, so this function is the one
+    anchor outside that reader. It applies the two rules of the script that
+    change a value: a null of a mapping gets no key, and the key `release` of
+    a manifest is a boolean.
+    """
+    value = _without_nulls(yaml.safe_load(text))
+    if kind is MANIFEST and isinstance(value, dict):
+        release = value.get("release")
+        if isinstance(release, str) and release in RELEASE_TEXTS:
+            value["release"] = RELEASE_TEXTS[release]
+
+    return value
+
+
+def _differs_from_safe_load(text: str, kind: Any) -> str | None:
+    """Where the TOML text of the script and `yaml.safe_load` differ, or None."""
+    written = tomllib.loads(y2t.convert(text, kind).toml)
+
+    return y2t._difference(_safe_load_values(text, kind), written, "")
+
+
+#: Texts that the script and `yaml.safe_load` must read to the same values.
+#: YAML 1.1 has forms of a number that TOML does not have: base 60, base 2,
+#: base 8 with one `0`, a sign `+` and a `_` between digits. Some texts here
+#: look like a number and are a text in YAML 1.1.
+SAME_VALUES = [
+    pytest.param(FAMILY_YAML, FAMILY, id="family"),
+    pytest.param(SERVER_YAML, SERVER, id="server"),
+    pytest.param(MANIFEST_YAML, MANIFEST, id="manifest"),
+    pytest.param('release: "no"\nunit: ~\n', MANIFEST, id="manifest-release-text"),
+    *(
+        pytest.param(text, FAMILY, id=text.strip())
+        for text in (
+            "a: 1:30\n",
+            "a: -1:30\n",
+            "a: 190:20:30\n",
+            "a: 1:30.5\n",
+            "a: 0b101\n",
+            "a: 0b1_0\n",
+            "a: 0x_1f\n",
+            "a: 00\n",
+            "a: 017\n",
+            "a: 08\n",
+            "a: 0o17\n",
+            "a: +1\n",
+            "a: -0\n",
+            "a: .5\n",
+            "a: -0.0\n",
+            "a: 1_000.5\n",
+            "a: 6.02e+23\n",
+            "a: 1.e+3\n",
+            "a: 1e3\n",
+            "a: 1e+3\n",
+            "a: +.INF\n",
+            "a: .NaN\n",
+            "a: Off\n",
+            "a: TRUE\n",
+            "a: y\n",
+            "a: Null\nb: 1\n",
+            "a:\nb: 1\n",
+            'a: "1:30"\n',
+            "a: [1:30, {b: 0b11}]\n",
+            "a: { b: [0x10, 1:00.0], c: ~ }\n",
+        )
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "kind"), SAME_VALUES)
+def test_the_script_and_safe_load_read_the_same_values(text: str, kind: Any) -> None:
+    assert _differs_from_safe_load(text, kind) is None
+
+
 # --- the walk over the files of the repository -------------------------------
 
 #: How git names a file of the four kinds. `kind_of` holds the same names.
@@ -1220,6 +1314,7 @@ def test_each_tracked_file_of_the_four_kinds_converts(name: str) -> None:
     converted = y2t.convert(yaml_text, kind)
     checked = y2t.check(yaml_text, converted.toml, kind)
 
+    assert _differs_from_safe_load(yaml_text, kind) is None
     assert checked.comments == converted.comments
     assert checked.nulls == converted.nulls
     assert not [line for line in converted.toml.splitlines() if line.startswith("[")]
