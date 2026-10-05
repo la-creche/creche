@@ -25,7 +25,7 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 |---|---|---|
 | Setup | `provision-library.sh` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
 | Operations | `creche-deploy`, `creche-handover`, `creche-handover-intake`, `rework-watchdog.sh`, `rework-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh` | Run unattended from units and timers. Fail loudly into the journal. |
-| Checks | `quality-gate.sh`, `rust-gate.sh` | Run from the hooks and from CI. No unit runs them. They use `set -euo pipefail`: the first failed check stops the run. |
+| Checks | `quality-gate.sh`, `rust-gate.sh`, `systemd-proof.sh` | Run from the hooks and from CI. `systemd-proof.sh` runs in CI only. No unit runs them. They use `set -euo pipefail`: the first failed check stops the run. |
 | Probe | `artifact-probe.sh` | It runs in CI only, from a workflow that a person or an agent starts by hand. No hook and no unit runs it. It uses `set -uo pipefail` and the counter of a gate, so one run records each result. It can use the GNU tools of a runner. It stays bash 3.2-clean, because its tests run it on a development machine. |
 | Library | `lib/envfile.sh`, `lib/docsrule.sh`, `lib/rustrule.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
 | Tests | `tests/test_*.py`, `tests/test_*.sh` | pytest collects the `.py` files. The `.sh` files run by hand: `bash bin/tests/<name>.sh`. None needs a host. |
@@ -81,6 +81,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. For a push that changes `vectors/`, it runs `rust-gate.sh` when `cargo` is on `PATH`. For a push that changes a file under `integration/proc/` that is not prose, it runs the process-level suite. |
 | `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, the include check, `cargo fmt`, `cargo clippy` and `cargo deny` on the workspace under `rust/`. `--tests` adds `cargo test`. `cargo deny` runs where `cargo-deny` is on `PATH`. |
+| `systemd-proof.sh` | CI, from the `systemd-proof` job and from the scope of each workflow | Proves the restart rule of the daemon units on the systemd of the runner, with three transient units. Then gives each unit file under `systemd/` to `systemd-analyze verify`. `--unchanged FROM TO` says if a change needs no proof. |
 | `artifact-probe.sh` | CI, from `.github/workflows/artifact-probe.yml` | It measures the tool facts for a binary component. CI builds such a component, and the host checks its signature. `build` makes a static `agent-family` program and proves that no file of its tree holds a path of the runner. It packs the tree two times and compares the bytes. `verify` checks the keyless signature of the archive with `cosign` inside `systemd-run`, as a user with no privilege. It writes `probe-report.json`. The script makes no tag and no Release. |
 
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
@@ -169,6 +170,64 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
   which a runner sets. The `rust` job installs `cargo-deny` from a release
   archive. It checks the SHA-256 of the archive before the unpack.
 
+## The systemd proof
+
+`systemd-proof.sh` proves the restart rule of `rust/AGENTS.md`, "The config
+of a process". Only CI runs it. The `systemd-proof` job runs the proof, and
+the scope of each workflow asks `--unchanged`.
+
+The machine must run Linux with systemd as its first process, and `sudo`
+must not ask for a password. On another machine, the script fails before it
+starts a unit.
+
+The script makes three units of its own with `systemd-run`, as root. All
+three carry the same restart lines, and `RestartPreventExitStatus=78` is one
+of them. `RESTART_RULE` in the script lists the lines.
+
+| Case | The unit | What the script demands |
+|---|---|---|
+| 1 | The main process exits with 78. | The state of the unit is `failed`, and `NRestarts` stays 0. |
+| 2 | The main process exits with 1. | `NRestarts` is above 0. |
+| 3 | The check process of `ExecStartPre=` exits with 78. The main process never starts. | `NRestarts` is above 0. |
+
+- The script waits after the three starts. It then reads case 2 and case 3
+  until each one shows a restart, with a limit on the reads. The constants
+  are at the top of the script.
+- The script reads case 1 last. Case 2 and case 3 are also the control of
+  the measure. They show that a restart reaches `NRestarts` on that machine
+  in the time that case 1 had.
+- The log has one line for each case, with its `NRestarts`. The three lines
+  are there also when a case fails.
+- The script removes the three units at its end, also after a check that
+  failed. It fails when systemd still holds one of them.
+- The three names are fixed, and each one starts with `creche-proof-`. No
+  daemon unit has such a name.
+
+The script then gives each file under `systemd/` to `systemd-analyze
+verify`, one file in each call. It skips a Markdown file.
+
+- A runner has no component tree, so the tool refuses a unit whose program
+  is absent. For such a unit the script checks the syntax only: the tool
+  must print no other line. The script prints one line that says so and
+  names the absent program.
+- Each other line of the tool refuses the unit, for example a key that
+  systemd does not know. A failure of the tool with no line refuses the unit
+  too.
+- The tool does not run as root, because it starts nothing. It reads each
+  file as a system unit, a user unit too.
+
+`systemd-proof.sh --unchanged FROM TO` exits with 0 only when the change from
+`FROM` to `TO` holds no file of the proof. The scope of `gate.yml` and the
+scope of `release.yml` ask it.
+
+- The files of the proof are each path under `systemd/` and the script.
+- A CI file is no file of the proof. `tests/test_gate_workflow.py` holds
+  each key of the job and the two scope questions.
+- A change that the script cannot read is not unchanged.
+- A script that fails gives no answer. The scope then runs the proof.
+- The tests in `tests/test_systemd_proof.py` use a fake systemd. Only a run
+  of the job proves a change to the script.
+
 ## Tests
 
 | Test | Pins |
@@ -180,8 +239,9 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 | `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. The `cargo deny` step: it runs where `cargo-deny` is on `PATH`, a machine without it passes with one line, and CI without it fails. |
 | `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`, and the two `[profile]` tables there. Each table of `rust/deny.toml`. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
 | `test_rust_config_units.py` | Each Rust config type names one daemon unit. Each daemon unit holds `Restart=always` and no `RestartPreventExitStatus`. Three daemon units hold an `ExecStartPre=` check, and the Rust config type of each one says so. Each variable of a unit has a constant in the Rust module of its daemon. That constant holds the name as a text, or it reads the name from the Rust module `endpoints`. The chaperone module reads two names from that module. No other file of the Rust config code holds the text of a name of `endpoints`. |
-| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job and the same `rust` job, and `!retest` restarts one run. The `rust` job checks the SHA-256 of the `cargo-deny` archive before the unpack. The cache of that job holds the copy of the crates.io index that cargo keeps. The key of the cache holds a hash of the toolchain file and of the lock file. |
+| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job, the same `rust` job and the same `systemd-proof` job. `!retest` restarts one run. The `rust` job checks the SHA-256 of the `cargo-deny` archive before the unpack. The cache of that job holds the copy of the crates.io index that cargo keeps. The key of the cache holds a hash of the toolchain file and of the lock file. The `systemd-proof` job runs the script on the runner itself, with no container. A scope skips the proof only when the script answers `unchanged`. |
 | `test_artifact_probe_workflow.py` | The probe workflow has one trigger, `workflow_dispatch`. Each job that measures runs on `main` only, so a run on another ref is a success that measures nothing. Only the job `sign` holds the identity token, and it has no checkout. The tests hold that job as a whole: its steps, the text of each one and the inputs of its actions. The whole text of the step that takes `cosign`: it compares the SHA-256 before the first use. `artifact-probe.sh`, against binstubs: the words of each child, each key of the report, and each case that fails the probe. Some cases need a tool of a runner: GNU tar, `sha256sum --check --strict` or `jq`. On a development machine without the tool, those cases skip. In CI each case runs, and a case whose tool is absent fails. |
+| `test_systemd_proof.py` | `systemd-proof.sh`, against a fake systemd. Each case fails on a wrong result, and a value of `NRestarts` that is no count fails. The script removes its units after each failure. Only the line for an absent program passes a unit file. `--unchanged` says yes only for a change with no file of the proof. The status and the unit line of the script equal the two Rust constants. |
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |
 | `test_unique_test_basenames.py` | No two test modules share a basename across the workspace. |
 | `test_git_env_dropped.py` | A test run that git starts writes nothing into the repository of the caller. The root `conftest.py` drops the five variables that the hooks unset. |
