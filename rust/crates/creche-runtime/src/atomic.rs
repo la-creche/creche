@@ -755,7 +755,10 @@ fn ensure_dir_with(steps: &impl Steps, path: &Path, mode: DirMode) -> Result<(),
 mod tests {
     use std::cell::RefCell;
     use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Read as _;
+    use std::os::fd::OwnedFd;
     use std::os::unix::fs::{MetadataExt, symlink};
+    use std::os::unix::net::UnixStream;
 
     use creche_testkit::root::TempRoot;
 
@@ -1450,6 +1453,28 @@ mod tests {
             Path::new("/srv/state")
         );
         assert_eq!(dir_of(Path::new("state/status.json")), Path::new("state"));
+    }
+
+    #[test]
+    fn the_host_write_takes_each_byte_or_fails() {
+        // One write call of the system can take a part of the bytes. A
+        // socket that does not block shows it: its buffer takes the first
+        // part, and the next call fails. The step must make that next
+        // call. A step that stops after one call reports a whole write.
+        let (writer, mut reader) = UnixStream::pair().unwrap();
+        writer.set_nonblocking(true).unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let mut file = File::from(OwnedFd::from(writer));
+        let bytes = vec![b'x'; 4 << 20];
+
+        let error = Host.write_temp(&mut file, &bytes).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+
+        // The socket holds the first part, so the error is the answer to a
+        // later call and not to the first one.
+        let mut first = [0_u8; 1];
+        assert_eq!(reader.read(&mut first).unwrap(), 1);
     }
 
     #[test]
