@@ -15,7 +15,7 @@
 //! |---|---|
 //! | [`site`] | The site file, `/etc/creche/site.env`. |
 //! | [`attendance`], [`caregiver`], [`chaperone`], [`door_owui`], [`door_trigger`], [`noticeboard`], [`intake`] | The config of one daemon. |
-//! | [`endpoints`] | The names of five variables that hold the address of another service. |
+//! | [`endpoints`] | The names of five variables that hold the address of another service, and the URL type of a plane. |
 //! | [`roster`] | The roster of MCP servers that the chaperone reads. |
 //! | [`mounts`] | `runtime.json`, `creds.json` and the env file of the playpen. |
 //!
@@ -54,6 +54,7 @@ pub use values::{
 };
 
 use crate::secret::{Secret, SecretError};
+use endpoints::{PlaneUrl, PlaneUrlError};
 
 // --- the failure action ---
 
@@ -449,6 +450,7 @@ config_value! {
     FilePath => Path,
     Seconds => Seconds,
     HttpUrl => Url,
+    PlaneUrl => PlaneUrl,
 }
 
 // --- the errors ---
@@ -519,6 +521,13 @@ pub enum ConfigError {
         /// The rule that the value breaks.
         error: HttpUrlError,
     },
+    /// The value is not the URL of a plane.
+    PlaneUrl {
+        /// The name of the variable.
+        variable: &'static str,
+        /// The rule that the value breaks.
+        error: PlaneUrlError,
+    },
     /// The value is not a secret.
     Secret {
         /// The name of the variable.
@@ -584,6 +593,7 @@ impl ConfigError {
             | Self::Path { variable, .. }
             | Self::Seconds { variable, .. }
             | Self::Url { variable, .. }
+            | Self::PlaneUrl { variable, .. }
             | Self::Secret { variable, .. }
             | Self::Site { variable, .. }
             | Self::NotASwitch { variable }
@@ -608,6 +618,7 @@ impl fmt::Display for ConfigError {
             Self::Path { error, .. } => write!(f, "{error}"),
             Self::Seconds { error, .. } => write!(f, "{error}"),
             Self::Url { error, .. } => write!(f, "{error}"),
+            Self::PlaneUrl { error, .. } => write!(f, "{error}"),
             Self::Secret { error, .. } => write!(f, "{error}"),
             Self::Site { error, .. } => write!(f, "{error}"),
             Self::NotASwitch { .. } => f.write_str("the value is not a yes or a no"),
@@ -633,6 +644,7 @@ impl Error for ConfigError {
             Self::Path { error, .. } => Some(error),
             Self::Seconds { error, .. } => Some(error),
             Self::Url { error, .. } => Some(error),
+            Self::PlaneUrl { error, .. } => Some(error),
             Self::Secret { error, .. } => Some(error),
             Self::Unset { .. }
             | Self::NotUtf8 { .. }

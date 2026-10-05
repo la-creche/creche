@@ -408,7 +408,7 @@ impl Error for PortError {}
 // --- a host and a port ---
 
 /// What separates the host from the port.
-const PORT_SEPARATOR: char = ':';
+pub(super) const PORT_SEPARATOR: char = ':';
 
 /// The host and the port that a service binds: `host:port`.
 ///
@@ -892,14 +892,17 @@ impl Error for SecondsError {}
 
 // --- a URL ---
 
+/// The scheme of a URL that a client reaches with no TLS.
+pub(super) const HTTP_SCHEME: &str = "http://";
+
 /// The two schemes that a URL of a config can have.
-const URL_SCHEMES: [&str; 2] = ["http://", "https://"];
+const URL_SCHEMES: [&str; 2] = [HTTP_SCHEME, "https://"];
 
 /// The characters that end the authority of a URL.
-const AUTHORITY_END: [char; 3] = ['/', '?', '#'];
+pub(super) const AUTHORITY_END: [char; 3] = ['/', '?', '#'];
 
 /// What separates the user of a URL from its host.
-const USER_SEPARATOR: char = '@';
+pub(super) const USER_SEPARATOR: char = '@';
 
 // CONTRACT-QUESTION: no contract gives a config URL a grammar. The three
 // doors check only the scheme, so `http://` alone passes there. `attendance`,
