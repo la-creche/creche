@@ -464,12 +464,13 @@ no_case() {
 }
 
 # journal: prints what the journal holds of the last child, for a case with a
-# result that the probe did not expect. The text goes to the log of the job
-# and never to the report. The step fails nothing.
+# result that the probe did not expect: the lines of systemd, of cosign and
+# of a nested systemd-run. The text goes to the log of the job and never to
+# the report. The step fails nothing.
 journal() {
   say "the journal since the start of that case:"
   sudo journalctl --no-pager --since "@$STARTED" --lines 200 \
-    --identifier systemd --identifier cosign || true
+    --identifier systemd --identifier cosign --identifier systemd-run || true
 }
 
 # verify_words BUNDLE ROOT WORKFLOW REF SHA BLOB: sets WORDS to the program
