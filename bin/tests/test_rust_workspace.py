@@ -30,6 +30,10 @@ a check here:
 
 A push that changes only `rust/` runs no pytest suite (`bin/lib/rustrule.sh`),
 so for such a change these checks run in CI.
+
+One more check holds one crate to a rule of its own. The crate file of
+`creche-util` names no dependency, because each other crate can depend on
+that crate (`rust/crates/creche-util/AGENTS.md`, rule 4).
 """
 
 from __future__ import annotations
