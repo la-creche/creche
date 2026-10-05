@@ -98,7 +98,7 @@ in `AGENTS.md` yourself.
 ## CI
 
 `.github/workflows/gate.yml` runs on every pull request and on every merge
-group. It has six kinds of job:
+group. It has seven kinds of job:
 
 1. `lint`: ruff, ruff format, pyright. On a docs-only pull request it also
    runs the tests marked `docs`.
@@ -107,13 +107,18 @@ group. It has six kinds of job:
 3. `playpen`: `pnpm test`, `pnpm run typecheck` and `pnpm run build`.
 4. `proc`: the process-level suite, `uv run pytest integration/proc -m slow`.
    The job builds the playpen first. A test that skips is a failure there.
-5. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
+5. `suites`: the two suites `integration/tests` and
+   `integration/tests_manager`. The job builds the playpen first. It runs
+   each suite with a pytest command of its own. A test that skips is a
+   failure there. Only `gate.yml` has this job. `integration/AGENTS.md` has
+   its rules.
+6. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
    `rust/rust-toolchain.toml` names. The job installs `cargo-deny` before
    the script runs. When the pull request changes no path under `rust/` and
    no path under `vectors/`, the job skips those steps and passes. A change
    to the Rust checks themselves also runs the steps.
    `rust_gate_path` in `bin/lib/rustrule.sh` lists those files.
-6. `gate`: red unless every other job passed. This is the one check the
+7. `gate`: red unless every other job passed. This is the one check the
    merge queue and the release executor read.
 
 Comment `!retest` on a pull request to restart its CI on the same commit.
