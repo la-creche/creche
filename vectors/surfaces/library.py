@@ -3,6 +3,8 @@
 - `library.chunk_text`: a text to its chunks.
 - `library.file_hash`: the bytes of a file to its digest.
 - `library.read_document`: the bytes of a text file to its text.
+- `library.report`: the fields of a report to the text of the report.
+- `library.tei_url`: the variables of the process to the URL of the embedder.
 
 Each file of a vector is in a temporary directory. No path of that directory
 goes into a vector.
@@ -10,14 +12,18 @@ goes into a vector.
 
 from __future__ import annotations
 
+import re
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from library.__main__ import ConfigError, tei_url
 from library.library import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
+    IndexReport,
     chunk_text,
     file_hash,
     read_document,
@@ -32,8 +38,10 @@ from vectors.core import (
     attempt,
     bytes_input,
     expand,
+    normalize,
     quiet_logs,
     raised,
+    refused,
     repeat_input,
     text_input,
 )
@@ -344,6 +352,233 @@ def _read_surface(scratch: Path) -> Surface:
     )
 
 
+# --- the report ---------------------------------------------------------------
+
+#: The scope of each report. It is a path of no machine.
+SCOPE: Final = "/corpus/notes"
+
+
+@dataclass(frozen=True)
+class ReportCase:
+    """The fields of one report. A path of a field is under `SCOPE`."""
+
+    id: str
+    indexed: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
+    unchanged: int = 0
+    chunks: int = 0
+    #: A path and the text of its error, in the order of the report.
+    errors: tuple[tuple[str, str], ...] = ()
+    rebuilt: bool = False
+
+    def args(self) -> dict[str, object]:
+        return {
+            "scope": SCOPE,
+            "indexed": self.indexed,
+            "removed": self.removed,
+            "unchanged": self.unchanged,
+            "chunks": self.chunks,
+            "errors": self.errors,
+            "rebuilt": self.rebuilt,
+        }
+
+
+def _under(*names: str) -> tuple[str, ...]:
+    return tuple(f"{SCOPE}/{name}" for name in names)
+
+
+def _error(name: str, text: str) -> tuple[str, str]:
+    return f"{SCOPE}/{name}", text
+
+
+REPORTS: Final[tuple[ReportCase, ...]] = (
+    ReportCase("nothing"),
+    ReportCase("one-file", indexed=_under("a.md"), chunks=1),
+    ReportCase(
+        "each-count",
+        indexed=_under("B.md", "a/b.md"),
+        removed=_under("old.md"),
+        unchanged=3,
+        chunks=7,
+    ),
+    ReportCase("only-unchanged", unchanged=12345),
+    ReportCase("only-removed", removed=_under("a b.md", "a-b/c.md")),
+    ReportCase("file-with-no-chunk", indexed=_under("empty.md")),
+    ReportCase("large-counts", indexed=_under("a.md"), unchanged=1234567, chunks=4294967296),
+    ReportCase("rebuilt", indexed=_under("a.md", "a/b.md"), chunks=2, rebuilt=True),
+    ReportCase("rebuilt-and-nothing", rebuilt=True),
+    ReportCase("one-error", errors=(_error("scan.pdf", "the file is no document"),)),
+    ReportCase(
+        "two-errors-in-order",
+        indexed=_under("a.md"),
+        chunks=1,
+        errors=(
+            _error("z/last.pdf", "the first error of the run"),
+            _error("a/first.pdf", "the second error of the run"),
+        ),
+    ),
+    ReportCase(
+        "rebuilt-with-an-error",
+        indexed=_under("a.md"),
+        chunks=2,
+        errors=(_error("scan.pdf", "the file is no document"),),
+        rebuilt=True,
+    ),
+    ReportCase("error-text-with-a-newline", errors=(_error("a.md", "line one\nline two"),)),
+    ReportCase("error-text-with-crlf", errors=(_error("a.md", "line one\r\nline two\r"),)),
+    ReportCase("error-text-empty", errors=(_error("a.md", ""),)),
+    ReportCase("error-text-with-spaces-at-the-ends", errors=(_error("a.md", "  text  "),)),
+    ReportCase("error-text-of-200-code-points", errors=(_error("a.md", "\u00e9" * 200),)),
+    ReportCase(
+        "text-not-ascii",
+        indexed=_under("caf\u00e9.md"),
+        chunks=1,
+        errors=(_error("\u65e5\u672c.md", "no text: \U0001f600"),),
+    ),
+    ReportCase("path-with-a-colon", errors=(_error("a: b.md", "text: with a colon"),)),
+)
+
+
+def _report_vector(case: ReportCase) -> Vector:
+    given: dict[str, Json] = {"args": normalize(case.args())}
+    report = IndexReport(
+        scope=SCOPE,
+        indexed=list(case.indexed),
+        removed=list(case.removed),
+        unchanged=case.unchanged,
+        chunks=case.chunks,
+        errors=dict(case.errors),
+        rebuilt=case.rebuilt,
+    )
+    outcome = attempt(report.render)
+    if isinstance(outcome, Raised):
+        return raised(case.id, given, outcome.exc)
+
+    return accepted(case.id, given, output=text_input(outcome))
+
+
+def _report_surface() -> Surface:
+    return Surface(
+        name=f"{GROUP}.report",
+        path=f"{GROUP}/report.json",
+        entry="library.library.IndexReport.render",
+        contract=RULES,
+        notes=(
+            "The input is the fields of one IndexReport, as args. args.errors is a list of "
+            "pairs in the order of the report: a path, then the text of its error.",
+            "output is the text that the entry point returns. It ends with no newline.",
+            f"args.scope is {SCOPE} in each vector, and each path of a vector is under it. "
+            "index_scope gives a report the full path of the scope and of each file.",
+            "A file with no chunk is in args.indexed. No vector has chunks with an empty "
+            "args.indexed. No error text is longer than 200 code points: index_scope cuts "
+            "a longer text before the report holds it.",
+        ),
+        vectors=tuple(_report_vector(case) for case in REPORTS),
+    )
+
+
+# --- the URL of the embedder --------------------------------------------------
+
+LAN: Final = "192.0.2.10"
+TEI: Final = "http://192.0.2.10:8085"
+
+#: A name of a variable in the text of a `ConfigError`.
+_VARIABLE: Final = re.compile(r"[A-Z][A-Z0-9_]+")
+
+
+@dataclass(frozen=True)
+class Environment:
+    """One environment of `index-scope`: an id and its variables."""
+
+    id: str
+    variables: dict[str, str]
+
+    def given(self) -> dict[str, Json]:
+        return {"args": normalize(self.variables)}
+
+
+def _env(env_id: str, **variables: str) -> Environment:
+    return Environment(env_id, variables)
+
+
+#: Each URL and each LAN address below is a text that the strict config
+#: types of the Rust crate take too. The entry point returns each text that is
+#: not empty (`vectors/AGENTS.md`, "Known gaps").
+ENVIRONMENTS: Final[tuple[Environment, ...]] = (
+    # --- the cases of library/tests/test_library_tei_url.py ---
+    _env("lan-address", AGENT_LAN_ADDRESS=LAN),
+    _env("tei-url", TEI_URL="http://tei.test:1"),
+    _env("no-variable"),
+    # --- which variable wins ---
+    _env("tei-url-wins", TEI_URL="http://tei.test:1", AGENT_LAN_ADDRESS=LAN),
+    _env("tei-url-empty", TEI_URL=""),
+    _env("tei-url-empty-and-lan-address", TEI_URL="", AGENT_LAN_ADDRESS=LAN),
+    _env("tei-url-white-space-and-lan-address", TEI_URL=" \t\r\n", AGENT_LAN_ADDRESS=LAN),
+    _env("tei-url-separators-and-lan-address", TEI_URL="\x1c\x1d\x1e\x1f", AGENT_LAN_ADDRESS=LAN),
+    _env("lan-address-empty", AGENT_LAN_ADDRESS=""),
+    _env("lan-address-white-space", AGENT_LAN_ADDRESS=" \t\r\n"),
+    _env("lan-address-separators", AGENT_LAN_ADDRESS="\x1c\x1d\x1e\x1f"),
+    _env("both-empty", TEI_URL="", AGENT_LAN_ADDRESS=""),
+    _env("tei-url-and-lan-address-empty", TEI_URL=TEI, AGENT_LAN_ADDRESS=""),
+    _env("other-variables", OTHER="1", tei_url="http://lower.test:1", AGENT_LAN_ADDRESS=LAN),
+    # --- white space around a value ---
+    _env("tei-url-spaces-around", TEI_URL=f"  {TEI}\n"),
+    _env("tei-url-separators-around", TEI_URL=f"\x1c\x1d{TEI}\x1e\x1f"),
+    _env("tei-url-space-of-unicode-around", TEI_URL=f"\x85\xa0{TEI}\u2028\u3000"),
+    _env("lan-address-spaces-around", AGENT_LAN_ADDRESS=f" {LAN}\r\n"),
+    _env("lan-address-separators-around", AGENT_LAN_ADDRESS=f"\x1f{LAN}\x1c"),
+    _env("lan-address-space-of-unicode-around", AGENT_LAN_ADDRESS=f"\xa0{LAN}\x85"),
+    # --- the forms of a value ---
+    _env("tei-url-final-slash", TEI_URL=f"{TEI}/"),
+    _env("tei-url-path-and-final-slash", TEI_URL=f"{TEI}/embedder/"),
+    _env("tei-url-no-port", TEI_URL="http://tei.test"),
+    _env("tei-url-host-name-and-port", TEI_URL="http://host-1.example:8085"),
+    _env("lan-address-host-name", AGENT_LAN_ADDRESS="host-1.example"),
+    _env("lan-address-one-label", AGENT_LAN_ADDRESS="localhost"),
+)
+
+
+def _named_variables(error: ConfigError) -> dict[str, list[str]]:
+    """Each variable that the text of a `ConfigError` names, in the order of the text."""
+    names: list[str] = _VARIABLE.findall(str(error))
+    if not names:
+        raise ValueError("a ConfigError that names no variable")
+
+    return {"variables": names}
+
+
+def _tei_url_vector(env: Environment) -> Vector:
+    variables: Mapping[str, str] = dict(env.variables)
+    outcome = attempt(lambda: tei_url(variables))
+    if not isinstance(outcome, Raised):
+        return accepted(env.id, env.given(), outcome)
+
+    if isinstance(outcome.exc, ConfigError):
+        return refused(env.id, env.given(), _named_variables(outcome.exc))
+
+    return raised(env.id, env.given(), outcome.exc)
+
+
+def _tei_url_surface() -> Surface:
+    return Surface(
+        name=f"{GROUP}.tei_url",
+        path=f"{GROUP}/tei_url.json",
+        entry="library.__main__.tei_url",
+        contract=RULES,
+        notes=(
+            "The input is the variables of the process, as args.",
+            "value is the base URL of the embedder, as the entry point returns it.",
+            "A refused vector is an environment for which the entry point raises its "
+            "ConfigError. refusal.variables is each variable that the error text names, in "
+            "the order of the text.",
+            "Each URL and each LAN address of a vector is a text that the config types of "
+            "the Rust crate take: a URL with the scheme http, a host, no user part and no "
+            "space inside, and a LAN address that is not the address of each interface.",
+        ),
+        vectors=tuple(_tei_url_vector(env) for env in ENVIRONMENTS),
+    )
+
+
 def surfaces() -> tuple[Surface, ...]:
     with tempfile.TemporaryDirectory(prefix="vectors-library-") as scratch_name, quiet_logs():
         scratch = Path(scratch_name)
@@ -352,4 +587,6 @@ def surfaces() -> tuple[Surface, ...]:
             _chunk_surface(),
             _hash_surface(scratch / "hash"),
             _read_surface(scratch / "read"),
+            _report_surface(),
+            _tei_url_surface(),
         )

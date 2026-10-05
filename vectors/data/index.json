@@ -183,6 +183,8 @@
   {"accepted":5,"entry":"noticeboard.app.build_app","path":"runtime/edge.noticeboard.json","raised":0,"refused":0,"surface":"runtime.edge.noticeboard","vectors":5},
   {"accepted":53,"entry":"library.library.chunk_text","path":"library/chunk_text.json","raised":0,"refused":0,"surface":"library.chunk_text","vectors":53},
   {"accepted":18,"entry":"library.library.file_hash","path":"library/file_hash.json","raised":0,"refused":0,"surface":"library.file_hash","vectors":18},
-  {"accepted":46,"entry":"library.library.read_document","path":"library/read_document.json","raised":0,"refused":0,"surface":"library.read_document","vectors":46}
+  {"accepted":46,"entry":"library.library.read_document","path":"library/read_document.json","raised":0,"refused":0,"surface":"library.read_document","vectors":46},
+  {"accepted":19,"entry":"library.library.IndexReport.render","path":"library/report.json","raised":0,"refused":0,"surface":"library.report","vectors":19},
+  {"accepted":20,"entry":"library.__main__.tei_url","path":"library/tei_url.json","raised":0,"refused":6,"surface":"library.tei_url","vectors":26}
  ]
 }
