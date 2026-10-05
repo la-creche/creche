@@ -687,7 +687,7 @@ impl fmt::Display for TaskLost {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Panicked => "the task panicked",
-            Self::Cancelled => "the runtime stopped before the task ended",
+            Self::Cancelled => "the task gave no value",
         })
     }
 }
@@ -1002,10 +1002,7 @@ mod tests {
     #[test]
     fn a_lost_task_names_its_reason() {
         assert_eq!(TaskLost::Panicked.to_string(), "the task panicked");
-        assert_eq!(
-            TaskLost::Cancelled.to_string(),
-            "the runtime stopped before the task ended"
-        );
+        assert_eq!(TaskLost::Cancelled.to_string(), "the task gave no value");
     }
 
     #[test]
