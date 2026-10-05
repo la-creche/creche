@@ -32,6 +32,7 @@ defect that a test finds late.
 |---|---|
 | `ids` | Each id grammar that `vectors/data/ids` covers. One type for each grammar. |
 | `secret` | `Secret`, the type of a token or a key. |
+| `slot` | `Slot` is the one lenient field type for a raw type: a value of a wrong kind does not fail the read. `MapOnly` wraps a nested table in a raw type whose read can fail: it refuses a value that is not a table. |
 | `time` | `Timestamp`, the one type of a time in a file or in a wire message. "Time" below holds its rules. |
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
@@ -528,8 +529,15 @@ The rule against a crash loop:
   systemd then starts the unit again, also when the unit file holds the line.
 - In the pull request that moves such a unit to a Rust binary, remove its
   `ExecStartPre=` line. The main process does the same parse.
-- Then prove on a Linux host that the unit stays stopped after exit status
-  78. No test in this repository runs systemd.
+- The `systemd-proof` job of CI proves both facts about the line on the
+  systemd of a Linux runner. After the main process exits with 78, systemd
+  does not start a unit that holds the line again. After a process of
+  `ExecStartPre=` exits with 78, systemd starts the unit again.
+- `bin/systemd-proof.sh` is that proof. It uses transient units of its own
+  and starts no daemon. `bin/AGENTS.md` has its three cases.
+- The proof runs for each code change that touches `systemd/`. It thus runs
+  for the pull request that adds the line to a unit. It also gives each unit
+  file to `systemd-analyze verify`.
 - `AtReload::KeepLastGood` never exits. A reload that fails keeps the last
   good value.
 - `config::reload` takes only a type that says `AtReload::KeepLastGood`. A
@@ -1785,6 +1793,8 @@ rule 4).
 - No unit file holds `RestartPreventExitStatus=78`, and no service exits
   with 78 for each config error. The failure action of each config type
   states what the port of its service must do.
-- No test runs systemd. The rule about `RestartPreventExitStatus` and
-  `ExecStartPre=` comes from the manual page `systemd.service(5)`. No run on
-  a host proves it.
+- The `systemd-proof` job proves the rule about `RestartPreventExitStatus`
+  and `ExecStartPre=` on the systemd of a CI runner. It uses transient units
+  of its own. No test starts a daemon unit of this repository under systemd.
+  The host can have another version of systemd, and no run on the host
+  proves the rule there.
