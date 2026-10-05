@@ -700,6 +700,19 @@ mod tests {
     }
 
     #[test]
+    fn a_file_over_the_cap_is_refused_before_the_read() {
+        // The file is open for a write only, so a read of it fails. The
+        // refusal is the size of the file, so no read came before it.
+        let (_root, path) = file_with(b"0123456789");
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+
+        assert_eq!(
+            read_open(file, cap(9)),
+            FileRead::Refused(ReadRefusal::TooLarge { cap: cap(9) })
+        );
+    }
+
+    #[test]
     fn the_largest_cap_reads_a_file_and_does_not_overflow() {
         let (_root, path) = file_with(b"0123456789");
         let (bytes, _facts) = taken(read_capped(&path, cap(usize::MAX), Follow::Refuse));
@@ -869,6 +882,29 @@ mod tests {
         let below = one.join("status.json");
         assert_eq!(read_capped(&below, cap(8), Follow::Follow), too_many());
         assert_eq!(read_capped(&below, cap(8), Follow::Refuse), too_many());
+    }
+
+    #[test]
+    fn only_the_answer_for_a_symlink_makes_a_symlink_refusal() {
+        // The open of a symlink can fail for another reason, for example
+        // with no free descriptor. The refusal then holds that reason.
+        let (root, path) = file_with(b"{}");
+        let link = root.path().join("link.json");
+        symlink(&path, &link).unwrap();
+        let reason = |errno: Errno| unreadable(&io::Error::from(errno));
+
+        assert_eq!(
+            open_refusal(&link, Follow::Refuse, Errno::LOOP),
+            ReadRefusal::Symlink
+        );
+        assert_eq!(
+            open_refusal(&link, Follow::Refuse, Errno::MFILE),
+            reason(Errno::MFILE)
+        );
+        assert_eq!(
+            open_refusal(&link, Follow::Follow, Errno::LOOP),
+            reason(Errno::LOOP)
+        );
     }
 
     #[test]
