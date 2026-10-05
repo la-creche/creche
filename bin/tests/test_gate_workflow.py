@@ -31,7 +31,8 @@ The `rust` job runs `bin/rust-gate.sh --tests` for a change that touches
 `rust/`, `vectors/`, or a file of the Rust checks themselves
 (`bin/lib/rustrule.sh`). On any other code change it skips every step but the
 checkout and is still a success, so `gate` reads green. The toolchain is the
-one `rust/rust-toolchain.toml` names.
+one `rust/rust-toolchain.toml` names. The job takes `cargo-deny` from a
+release archive, and it checks the SHA-256 of that archive before the unpack.
 
 The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the playpen first,
@@ -117,6 +118,47 @@ TOOLCHAIN_RUN = "rustup toolchain install --no-self-update"
 
 #: The directory rustup reads that file from.
 RUST_DIR = "rust"
+
+#: The step that gives the job `cargo-deny`, the program behind the `cargo
+#: deny` step of `bin/rust-gate.sh`.
+DENY_STEP = "cargo-deny"
+
+#: The version, and the SHA-256 of its release archive for the runner:
+#: `cargo-deny-<version>-x86_64-unknown-linux-musl.tar.gz`. To take another
+#: version, compute the SHA-256 of the new archive and compare it with the
+#: `.sha256` file of that release. Then change the two values here and in the
+#: two workflow files.
+DENY_ENV = {
+    "DENY_VERSION": "0.20.2",
+    "DENY_SHA256": "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f",
+}
+
+#: The whole text of the step. The archive comes from a release of the
+#: cargo-deny repository. `set -euo pipefail` stops the step at the first
+#: command that fails. The compare is before the unpack, and the unpack is
+#: before the line that puts the program on PATH. A pin of some lines only
+#: lets a second unpack or a second value of `found` in between them.
+DENY_RUN = """\
+set -euo pipefail
+name="cargo-deny-$DENY_VERSION-x86_64-unknown-linux-musl"
+archive="$RUNNER_TEMP/$name.tar.gz"
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \\
+  --output "$archive" \\
+  "https://github.com/EmbarkStudios/cargo-deny/releases/download/$DENY_VERSION/$name.tar.gz"
+found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+if [[ "$found" != "$DENY_SHA256" ]]; then
+  echo "cargo-deny: the archive has the SHA-256 $found, not $DENY_SHA256" >&2
+  exit 1
+fi
+mkdir -p "$RUNNER_TEMP/cargo-deny"
+tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-deny" --strip-components 1 "$name/cargo-deny"
+echo "$RUNNER_TEMP/cargo-deny" >> "$GITHUB_PATH"
+PATH="$RUNNER_TEMP/cargo-deny:$PATH" cargo deny --version
+"""
+
+#: Each key of the step. One more key can change what a failure of the step
+#: does, for example `continue-on-error` or `shell`.
+DENY_KEYS = {"name", "if", "working-directory", "env", "run"}
 
 #: The two files the cargo cache is good for.
 CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
@@ -376,13 +418,32 @@ def test_the_rust_job_runs_the_gate_the_hooks_run(
     """One copy of the cargo commands: `bin/rust-gate.sh`. A cargo line
     written here would drift from the one a commit and a push run."""
     runs = [step for step in jobs["rust"]["steps"] if "run" in step]
-    toolchain, checks = runs
+    toolchain, deny, checks = runs
 
+    assert deny["name"] == DENY_STEP
     assert checks["run"] == RUST_RUN
     assert toolchain["working-directory"] == RUST_DIR
     assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
     for step in jobs["rust"]["steps"]:
         assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_rust_job_takes_cargo_deny_from_an_archive_that_it_checked(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """No action installs `cargo-deny`, so no commit pin holds the program.
+    The SHA-256 of the archive is the pin. The step must compare it before
+    the unpack, and it must put nothing on PATH after a sum that differs.
+    The test holds the whole text of the step and each key of the step."""
+    (deny,) = [step for step in jobs["rust"]["steps"] if step.get("name") == DENY_STEP]
+    names = [step.get("name") or step.get("run") for step in jobs["rust"]["steps"]]
+
+    assert set(deny) == DENY_KEYS
+    assert deny["env"] == DENY_ENV
+    assert deny["working-directory"] == RUST_DIR
+    assert deny["run"] == DENY_RUN
+    assert names.index(DENY_STEP) < names.index(RUST_RUN)
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)

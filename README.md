@@ -109,7 +109,7 @@ bin/quality-gate.sh                    # ruff, ruff format, pyright
 uv run pytest -n auto                  # every Python suite in pyproject.toml
 cd playpen && pnpm install && pnpm test && pnpm run typecheck && pnpm run build
 uv run pytest integration/tests -m slow   # the cross-package gate, after pnpm build
-bin/rust-gate.sh --tests               # the Rust workspace: fmt, clippy, test
+bin/rust-gate.sh --tests               # the Rust workspace: fmt, clippy, deny, test
 ```
 
 No test needs a host, a sandbox, LiteLLM or a model. Every external thing

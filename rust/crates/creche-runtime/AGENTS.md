@@ -160,6 +160,17 @@ One more attribute waits for a body. The field `start` of
   readers of a door, of the chaperone and of `caregiver` check none. The two
   rules keep the reading of those readers. The owner decides if a rule gets
   a mode check.
+- This `CONTRACT-QUESTION` comment is open in `src/entropy.rs`: contract 02
+  §2 gives the length and the alphabet of a ULID and no layout of its bits.
+  It gives a mint no rule for two times of the clock. One is a time before
+  1970. The other is a time past 48 bits of milliseconds. Each Python copy
+  mints 26 characters for such a time. `new_ulid` refuses it. A change costs
+  one more mint in `creche-contracts`.
+- This `CONTRACT-QUESTION` comment is open in `src/atomic.rs`: contract 04
+  §1.3 step 2 names the temporary file of a grant file `<family>.json.tmp`.
+  The Python writer of the grant file uses another name. This crate names
+  each temporary file `.<name>.<pid>.<count>.tmp`, as the Python `attendance`
+  does. A change of the name costs one function, `temp_name`.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same

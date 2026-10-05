@@ -1,6 +1,6 @@
 """The Cargo workspace stays where it is and keeps its lint gate.
 
-Three things about `rust/` could change without one red line, and each gets
+Five things about `rust/` could change without one red line, and each gets
 a check here:
 
 1. **A lint lifted for every crate at once.** `[workspace.lints]` in
@@ -21,6 +21,12 @@ a check here:
    service, and its edge layer cannot answer. Without the checks, a release
    build wraps a number and continues with a wrong value
    (`rust/AGENTS.md`, "The rules for a service").
+5. **A license or a source that no person decided.** `rust/deny.toml` is the
+   policy that `cargo deny` checks the locked crates against. One edit there
+   allows each license or a crate from a git repository, and the check still
+   passes. Each table of the file is pinned entry for entry
+   (`rust/AGENTS.md`, "Dependencies"). The checks here read the file and
+   need no `cargo`.
 
 A push that changes only `rust/` runs no pytest suite (`bin/lib/rustrule.sh`),
 so for such a change these checks run in CI.
@@ -86,6 +92,46 @@ PROFILES = {
     "dev": {"panic": "unwind"},
 }
 
+#: The file that `cargo deny` reads, and each table that it can hold.
+DENY_FILE = "deny.toml"
+DENY_TABLES = {"graph", "advisories", "licenses", "bans", "sources"}
+
+#: Each license that a locked crate can need. No other one is permitted.
+LICENSES = ["MIT", "Apache-2.0", "BSD-3-Clause", "Unicode-3.0"]
+
+#: The one source of a locked crate: the index of crates.io. No git source.
+SOURCES = {
+    "unknown-registry": "deny",
+    "unknown-git": "deny",
+    "allow-registry": ["https://github.com/rust-lang/crates.io-index"],
+    "allow-git": [],
+}
+
+#: One version of each crate, and no `*` as a version. The second entry puts
+#: a crate that only a test uses in the count of versions. The last entry
+#: permits the path of one workspace crate in another, which has no version.
+BANS = {
+    "multiple-versions": "deny",
+    "multiple-versions-include-dev": True,
+    "wildcards": "deny",
+    "allow-wildcard-paths": True,
+}
+
+#: A yanked version fails the check. The table ignores no advisory.
+ADVISORIES = {"yanked": "deny"}
+
+#: The crates that the checks read: what a build for a host or for a
+#: development machine can use, with each feature on.
+GRAPH = {
+    "targets": [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ],
+    "all-features": True,
+}
+
 #: A file that makes its directory a part of a Cargo build.
 CARGO_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchain")
 
@@ -117,6 +163,40 @@ def test_only_a_test_can_break_a_lint_and_only_these_four() -> None:
 
 def test_a_panic_unwinds_and_a_release_build_checks_each_overflow() -> None:
     assert PROFILE == PROFILES
+
+
+def test_the_deny_file_holds_these_tables_and_no_other() -> None:
+    """A table that leaves the file takes the defaults of cargo-deny, and
+    most of those only warn. Each test below pins one table as a whole. A
+    key or a table inside one then cannot arrive without a red line, for
+    example `[licenses.private]` or `[sources.allow-org]`."""
+    assert set(_toml(DENY_FILE)) == DENY_TABLES
+
+
+def test_only_these_licenses_are_permitted() -> None:
+    """No exception for one crate and no private registry: the table is the
+    list, entry for entry. `include-dev` puts a crate that only a test uses
+    in the check. Without it, cargo-deny skips the license of such a crate."""
+    assert _toml(DENY_FILE)["licenses"] == {"allow": LICENSES, "include-dev": True}
+
+
+def test_crates_io_is_the_one_source_of_a_crate() -> None:
+    assert _toml(DENY_FILE)["sources"] == SOURCES
+
+
+def test_no_crate_has_two_versions_or_a_wildcard_version() -> None:
+    """No `skip` and no `allow`: an entry there is an exception for one
+    crate."""
+    assert _toml(DENY_FILE)["bans"] == BANS
+
+
+def test_a_yanked_crate_fails_and_no_advisory_is_ignored() -> None:
+    assert _toml(DENY_FILE)["advisories"] == ADVISORIES
+
+
+def test_the_checks_read_each_crate_of_these_four_targets() -> None:
+    """A target that leaves the list takes its crates out of each check."""
+    assert _toml(DENY_FILE)["graph"] == GRAPH
 
 
 def test_the_toolchain_is_the_rust_version_of_the_workspace() -> None:
