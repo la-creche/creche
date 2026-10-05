@@ -1471,6 +1471,44 @@ mod tests {
         assert_eq!(current(&mut token), token_bytes(FIRST));
     }
 
+    /// The `stat` of the Python cache follows a symlink at the path of the
+    /// token file, as its read does
+    /// (`chaperone/src/chaperone/delegate.py:204-210`).
+    #[test]
+    fn a_cached_token_follows_a_symlink_to_the_token_file() {
+        let (root, link, mut token) = cached(TokenRule::ATTENDANCE_PEP_READ);
+        let first = root.path().join("first.token");
+        let second = root.path().join("second.token");
+        write_line(&first, FIRST);
+        write_line(&second, SECOND);
+        std::os::unix::fs::symlink(&first, &link).unwrap();
+
+        assert_eq!(current(&mut token), token_bytes(FIRST));
+        // The reader holds the facts of the file behind the link. The `stat`
+        // of the next call gives the same facts, so that call reads no file.
+        let held = token.last.as_ref().map(|(facts, _)| *facts);
+
+        assert_eq!(held, readfile::facts(&first));
+        assert_eq!(held, readfile::facts(&link));
+        assert_eq!(current(&mut token), token_bytes(FIRST));
+
+        // The link now names another file.
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&second, &link).unwrap();
+
+        assert_eq!(current(&mut token), token_bytes(SECOND));
+
+        // The mode rule reads the mode of the file behind the link.
+        fs::set_permissions(&second, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert_eq!(
+            current(&mut token),
+            Err(TokenError::ModeTooWide {
+                allowed: ModeRule::OwnerAndGroupRead
+            })
+        );
+    }
+
     // --- the bearer ---
 
     /// One header with the name `Authorization`.
