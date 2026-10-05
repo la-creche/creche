@@ -15,6 +15,7 @@
 //! |---|---|
 //! | [`site`] | The site file, `/etc/creche/site.env`. |
 //! | [`attendance`], [`caregiver`], [`chaperone`], [`door_owui`], [`door_trigger`], [`noticeboard`], [`intake`] | The config of one daemon. |
+//! | [`endpoints`] | The names of some variables that hold the address of another service, and the URL type of a plane. |
 //! | [`roster`] | The roster of MCP servers that the chaperone reads. |
 //! | [`mounts`] | `runtime.json`, `creds.json` and the env file of the playpen. |
 //!
@@ -38,6 +39,7 @@ pub mod caregiver;
 pub mod chaperone;
 pub mod door_owui;
 pub mod door_trigger;
+pub mod endpoints;
 pub mod intake;
 pub mod mounts;
 pub mod noticeboard;
@@ -51,6 +53,7 @@ pub use values::{
 };
 
 use crate::secret::{Secret, SecretError};
+use endpoints::{PlaneUrl, PlaneUrlError};
 
 // --- the failure action ---
 
@@ -446,6 +449,7 @@ config_value! {
     FilePath => Path,
     Seconds => Seconds,
     HttpUrl => Url,
+    PlaneUrl => PlaneUrl,
 }
 
 // --- the errors ---
@@ -516,6 +520,13 @@ pub enum ConfigError {
         /// The rule that the value breaks.
         error: HttpUrlError,
     },
+    /// The value is not the URL of a plane.
+    PlaneUrl {
+        /// The name of the variable.
+        variable: &'static str,
+        /// The rule that the value breaks.
+        error: PlaneUrlError,
+    },
     /// The value is not a secret.
     Secret {
         /// The name of the variable.
@@ -581,6 +592,7 @@ impl ConfigError {
             | Self::Path { variable, .. }
             | Self::Seconds { variable, .. }
             | Self::Url { variable, .. }
+            | Self::PlaneUrl { variable, .. }
             | Self::Secret { variable, .. }
             | Self::Site { variable, .. }
             | Self::NotASwitch { variable }
@@ -605,6 +617,7 @@ impl fmt::Display for ConfigError {
             Self::Path { error, .. } => write!(f, "{error}"),
             Self::Seconds { error, .. } => write!(f, "{error}"),
             Self::Url { error, .. } => write!(f, "{error}"),
+            Self::PlaneUrl { error, .. } => write!(f, "{error}"),
             Self::Secret { error, .. } => write!(f, "{error}"),
             Self::Site { error, .. } => write!(f, "{error}"),
             Self::NotASwitch { .. } => f.write_str("the value is not a yes or a no"),
@@ -630,6 +643,7 @@ impl Error for ConfigError {
             Self::Path { error, .. } => Some(error),
             Self::Seconds { error, .. } => Some(error),
             Self::Url { error, .. } => Some(error),
+            Self::PlaneUrl { error, .. } => Some(error),
             Self::Secret { error, .. } => Some(error),
             Self::Unset { .. }
             | Self::NotUtf8 { .. }
@@ -865,10 +879,10 @@ pub fn key_of_file(text: &str) -> Result<Secret, KeyError> {
 /// The text without the space at its two ends, as `str.strip` of Python gives
 /// it.
 ///
-/// A reader of a token file or of a header calls this function, so the crate
-/// holds one copy of the rule. Python removes each `White_Space` character of
-/// Unicode and the four separators U+001C to U+001F. `str::trim` keeps the
-/// four separators.
+/// A reader of a token file or of a header calls this function. The one copy
+/// of the rule is `creche_util::pytext::strip`. Python removes each
+/// `White_Space` character of Unicode and the four separators U+001C to
+/// U+001F. `str::trim` keeps the four separators.
 ///
 /// ```
 /// use creche_contracts::config::python_strip;
@@ -881,7 +895,7 @@ pub fn key_of_file(text: &str) -> Result<Secret, KeyError> {
 /// ```
 #[must_use]
 pub fn python_strip(text: &str) -> &str {
-    pytext::strip(text)
+    creche_util::pytext::strip(text)
 }
 
 #[cfg(test)]
