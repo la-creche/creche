@@ -64,6 +64,10 @@ const THIS_DIR: &str = ".";
 /// What an error says for a target that has no file name, for example `/`.
 const NO_FILE_NAME: &str = "the path has no file name";
 
+/// What an error says when the old name of [`replace_dir`] holds a file or a
+/// symlink to an entry.
+const OLD_NAME_TAKEN: &str = "the old name holds an entry that is not a directory";
+
 /// The count of the temporary files that this process named.
 static NAMED: AtomicU64 = AtomicU64::new(0);
 
@@ -352,6 +356,14 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 ///
 /// When step 3 fails, the old tree stays at `<target>.old`, and `target` is
 /// absent. The next call that succeeds removes that old tree.
+///
+/// The function removes `<target>.old` only when it is a directory. With a
+/// file there, or a symlink to an entry, a call for a `target` that exists
+/// is an error at step 2, and no entry moves. A `target` that is a file, or
+/// a symlink to an entry, goes to `<target>.old` in step 2 and stays there.
+/// The function moves the symlink itself, and not the tree that the symlink
+/// names. The Python copy leaves the same entries and refuses the same
+/// calls.
 ///
 /// The Python origin is `caregiver/src/caregiver/atomic.py:47-69`.
 ///
@@ -666,6 +678,18 @@ fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
 }
 
+/// The error for an old name that holds a file or a symlink to an entry.
+/// [`replace_dir`] removes only a directory there. Python raises for such an
+/// entry (`shutil.rmtree`), so the swap refuses it.
+fn old_name_taken(displaced: &Path) -> WriteError {
+    WriteError {
+        step: WriteStep::Rename,
+        path: displaced.to_owned(),
+        kind: io::ErrorKind::NotADirectory,
+        os_text: String::from(OLD_NAME_TAKEN),
+    }
+}
+
 /// [`replace_dir`] on the given [`Steps`].
 fn replace_dir_with(steps: &impl Steps, staging: &Path, target: &Path) -> Result<(), WriteError> {
     let Some(name) = target.file_name() else {
@@ -682,12 +706,17 @@ fn replace_dir_with(steps: &impl Steps, staging: &Path, target: &Path) -> Result
 
     // `exists` follows a symlink, as `Path.exists` of Python does.
     if target.exists() {
-        // A call that stopped after its first rename left this tree. Only a
-        // directory is removed. The rename refuses each other entry.
         if is_real_dir(&displaced) {
+            // A call that stopped after its first rename left this tree.
             steps
                 .remove_tree(&displaced)
                 .map_err(|error| failed(WriteStep::RemoveOld, &displaced, &error))?;
+        } else if displaced.exists() {
+            // The old name holds a file, or a symlink to an entry. Only a
+            // directory is removed. The rename of a directory refuses such
+            // an entry. The rename of a file or of a symlink replaces it, so
+            // the refusal is here, for each kind of target.
+            return Err(old_name_taken(&displaced));
         }
 
         steps
@@ -725,7 +754,7 @@ fn ensure_dir_with(steps: &impl Steps, path: &Path, mode: DirMode) -> Result<(),
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::os::unix::fs::{MetadataExt, symlink};
 
     use creche_testkit::root::TempRoot;
@@ -1891,6 +1920,35 @@ mod tests {
         assert_eq!(text_in(&staging), "newest");
     }
 
+    #[test]
+    fn an_old_name_that_holds_no_tree_is_refused_before_each_rename() {
+        // The target is a file. The system renames a file onto a file, so
+        // this refusal is not an answer of the system.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+        fs::write(&target, b"current").unwrap();
+        let old = root.path().join("config.old");
+        fs::write(&old, b"stale").unwrap();
+        let staging = root.path().join("config.tmp");
+        tree_with(&staging, "newest");
+        let probe = Probe::new();
+
+        let error = replace_dir_with(&probe, &staging, &target).unwrap_err();
+
+        assert_eq!(
+            error,
+            WriteError {
+                step: WriteStep::Rename,
+                path: old.clone(),
+                kind: io::ErrorKind::NotADirectory,
+                os_text: String::from("the old name holds an entry that is not a directory"),
+            }
+        );
+        assert_eq!(probe.count_of(WriteStep::Rename), 0);
+        assert_eq!(fs::read(&target).unwrap(), b"current");
+        assert_eq!(fs::read(&old).unwrap(), b"stale");
+    }
+
     // --- replace_dir: each kind of entry at the target and at the old name ---
 
     /// What a test puts at the target or at the old name before a swap.
@@ -1994,9 +2052,13 @@ mod tests {
         (Entry::Tree, Entry::LinkToNothing, After::Refused),
         (Entry::File, Entry::Absent, After::MovedAside),
         (Entry::File, Entry::Tree, After::MovedAside),
+        (Entry::File, Entry::File, After::Refused),
+        (Entry::File, Entry::LinkToTree, After::Refused),
         (Entry::File, Entry::LinkToNothing, After::MovedAside),
         (Entry::LinkToTree, Entry::Absent, After::MovedAside),
         (Entry::LinkToTree, Entry::Tree, After::MovedAside),
+        (Entry::LinkToTree, Entry::File, After::Refused),
+        (Entry::LinkToTree, Entry::LinkToTree, After::Refused),
         (Entry::LinkToTree, Entry::LinkToNothing, After::MovedAside),
         (Entry::LinkToNothing, Entry::Absent, After::Refused),
         (Entry::LinkToNothing, Entry::Tree, After::Refused),
@@ -2012,6 +2074,14 @@ mod tests {
 
     #[test]
     fn a_swap_leaves_what_the_python_copy_leaves_for_each_kind_of_entry() {
+        // The table has each pair of the five kinds one time.
+        let pairs: BTreeSet<String> = SWAPS
+            .iter()
+            .map(|(at_target, at_old, _after)| format!("{at_target:?} {at_old:?}"))
+            .collect();
+        assert_eq!(pairs.len(), 25);
+        assert_eq!(SWAPS.len(), 25);
+
         for (at_target, at_old, after) in SWAPS {
             let root = TempRoot::new().unwrap();
             let target = root.path().join("config");
