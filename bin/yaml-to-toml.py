@@ -44,15 +44,21 @@ parsed values are equal after rules 5 and 6 and the two files hold the same
 count of comments. The script also runs that check on each text before it
 prints the text.
 
-Exit status: 0 for a good run, 1 for a pair that differs, 2 for a file or a
-command line that the script refuses.
+Exit status: 0 for a good run, 1 for a pair that differs, and 2 for each
+other end of a run: a file or a command line that the script refuses, an
+output that the script cannot write, and a fault that the script does not
+name. A Python older than 3.12 cannot read the script and ends with its own
+status 1.
 """
 
 from __future__ import annotations
 
 import argparse
 import bisect
+import contextlib
+import errno
 import math
+import os
 import re
 import sys
 import tomllib
@@ -61,15 +67,22 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import cast
-
-import yaml
+from typing import TextIO, cast
 
 PROGRAM = "yaml-to-toml"
 
 EXIT_OK = 0
 EXIT_DIFFERS = 1
 EXIT_REFUSED = 2
+
+try:
+    import yaml
+except ModuleNotFoundError:
+    # A run without `uv run` can get a Python that has no PyYAML. Python ends
+    # with status 1 for a fault that no code handles, and status 1 means a
+    # pair that differs.
+    print(f"{PROGRAM}: PyYAML is missing: start the script with `uv run`", file=sys.stderr)
+    raise SystemExit(EXIT_REFUSED) from None
 
 #: The indent of one item of a list that has one line for each item.
 INDENT = "    "
@@ -1061,8 +1074,32 @@ def _read(path: Path) -> str:
 
 def _write(text: str) -> None:
     """Write UTF-8 to stdout, under each locale."""
-    sys.stdout.buffer.write(text.encode("utf-8"))
-    sys.stdout.buffer.flush()
+    # Python gives `sys.stdout` the value None when it starts with stdout closed.
+    stream = cast("TextIO | None", sys.stdout)
+    if stream is None:
+        raise OSError(errno.EBADF, "stdout is closed")
+
+    try:
+        stream.buffer.write(text.encode("utf-8"))
+        stream.buffer.flush()
+    except OSError:
+        _drop_stdout(stream)
+        raise
+
+
+def _drop_stdout(stream: TextIO) -> None:
+    """Point stdout at the null device after a write that failed.
+
+    Python flushes stdout one more time at its end. The bytes that the failed
+    write left in the buffer fail that flush too, and Python then replaces the
+    exit status of the script with its own.
+    """
+    with contextlib.suppress(OSError):
+        null = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(null, stream.fileno())
+        finally:
+            os.close(null)
 
 
 def _nulls_text(nulls: tuple[Null, ...]) -> str:
@@ -1090,6 +1127,15 @@ def _run(yaml_path: Path, toml_path: Path | None) -> None:
     _write(converted.toml)
 
 
+def _os_fault_text(fault: OSError) -> str:
+    """What the system says of a fault, after the file that the fault names."""
+    what = fault.strerror or type(fault).__name__
+    if fault.filename is None:
+        return what
+
+    return f"{fault.filename}: {what}"
+
+
 def main(argv: list[str]) -> int:
     yaml_path, toml_path = _arguments(argv)
     try:
@@ -1101,7 +1147,15 @@ def main(argv: list[str]) -> int:
         print(f"{PROGRAM}: {yaml_path}: {fault}", file=sys.stderr)
         return EXIT_REFUSED
     except OSError as fault:
-        print(f"{PROGRAM}: {fault.filename}: {fault.strerror}", file=sys.stderr)
+        print(f"{PROGRAM}: {_os_fault_text(fault)}", file=sys.stderr)
+        return EXIT_REFUSED
+    except Exception as fault:
+        # Python ends with status 1 for a fault that no code handles, and
+        # status 1 means a pair that differs. The line names the type alone,
+        # because the text of a fault can hold a value of the file.
+        print(
+            f"{PROGRAM}: {yaml_path}: the script stopped: {type(fault).__name__}", file=sys.stderr
+        )
         return EXIT_REFUSED
 
     return EXIT_OK

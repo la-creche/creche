@@ -20,6 +20,7 @@ Four things are held:
 
 from __future__ import annotations
 
+import errno
 import importlib.util
 import os
 import subprocess
@@ -1180,6 +1181,89 @@ def test_a_file_that_is_not_there_exits_2(tmp_path: Path) -> None:
     assert done.returncode == EXIT_REFUSED
     assert done.stdout == ""
     assert "Traceback" not in done.stderr
+
+
+#: Starts a program with stdout closed: `sh` closes it, and `exec` gives the
+#: program the process.
+CLOSED_STDOUT = ("/bin/sh", "-c", 'exec "$0" "$@" >&-')
+
+
+@pytest.mark.parametrize("mode", [(), ("--check",)])
+def test_a_closed_stdout_exits_2(tmp_path: Path, mode: tuple[str, ...]) -> None:
+    """Status 1 is a pair that differs. A fault of another kind never gives it."""
+    source = tmp_path / "family.yaml"
+    target = tmp_path / "family.toml"
+    source.write_text("name: chat\n", encoding="utf-8")
+    target.write_text('name = "chat"\n', encoding="utf-8")
+    files = [str(source), *([str(target)] if mode else [])]
+
+    done = subprocess.run(
+        [*CLOSED_STDOUT, sys.executable, str(SCRIPT), *mode, *files],
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+    assert done.returncode == EXIT_REFUSED
+    assert done.stderr == "yaml-to-toml: stdout is closed\n"
+
+
+def test_a_reader_of_stdout_that_left_exits_2(tmp_path: Path) -> None:
+    source = tmp_path / "family.yaml"
+    source.write_text("name: chat\n", encoding="utf-8")
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+
+    try:
+        done = subprocess.run(
+            [sys.executable, str(SCRIPT), str(source)],
+            stdout=write_end,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+    finally:
+        os.close(write_end)
+
+    assert done.returncode == EXIT_REFUSED
+    assert done.stderr == f"yaml-to-toml: {os.strerror(errno.EPIPE)}\n"
+
+
+def test_a_python_with_no_pyyaml_exits_2(tmp_path: Path) -> None:
+    """`-S` starts Python with no package of the venv, as a run without `uv run` can."""
+    source = tmp_path / "family.yaml"
+    source.write_text("name: chat\n", encoding="utf-8")
+
+    done = subprocess.run(
+        [sys.executable, "-I", "-S", str(SCRIPT), str(source)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+    assert done.returncode == EXIT_REFUSED
+    assert done.stdout == ""
+    assert done.stderr == "yaml-to-toml: PyYAML is missing: start the script with `uv run`\n"
+
+
+def test_a_fault_that_the_script_does_not_name_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def stop(*_args: object) -> None:
+        raise RuntimeError("hunter2")
+
+    monkeypatch.setattr(y2t, "_run", stop)
+
+    assert y2t.main([str(tmp_path / "family.yaml")]) == EXIT_REFUSED
+
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.count("\n") == 1
+    assert "RuntimeError" in printed.err
+    assert "hunter2" not in printed.err
 
 
 @pytest.mark.parametrize(
