@@ -24,13 +24,16 @@
 //! The detail is the text that the Python release tool writes for the same
 //! input. A detail holds no text of the input but a [`SafeToken`].
 //!
-//! Three private modules read and write the text forms. Each one gives what
-//! the Python library of the release tool gives: `yaml` for `PyYAML`, `json`
-//! for the `json` module, and `sha256` for `hashlib`.
+//! Two private modules read and write the text forms. Each one gives what
+//! the Python library of the release tool gives: `yaml` for `PyYAML` and
+//! `json` for the `json` module. The hash is `creche_util::sha256`, which
+//! gives what `hashlib` gives.
 
 use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
+
+use creche_util::{hex, sha256};
 
 use crate::ids::{Sha256Hex, Sha256HexError};
 
@@ -38,7 +41,6 @@ mod component;
 mod json;
 mod request;
 mod resolved;
-mod sha256;
 mod state;
 mod yaml;
 
@@ -785,7 +787,10 @@ impl Digest {
     /// The digest of `bytes`. The hash function gives 64 lower-case hex
     /// bytes, which is the grammar of the type.
     fn of(bytes: &[u8]) -> Self {
-        Self(format!("{DIGEST_PREFIX}{}", sha256::hex_digest(bytes)))
+        Self(format!(
+            "{DIGEST_PREFIX}{}",
+            hex::lower(&sha256::digest(bytes))
+        ))
     }
 }
 

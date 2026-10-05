@@ -23,7 +23,6 @@ same messages.
 | `src/registry.rs` | `load_registry` and `revision_of`. |
 | `src/classify.rs` | `classify`: live or replacement, field by field. |
 | `src/zones.rs` | Whether the host knows a time zone. |
-| `src/sha256.rs` | SHA-256, for the revision. |
 | `src/scratch.rs` | Test code only: a directory that one test fills. |
 | `src/report.rs`, `src/json.rs`, `src/cli.rs`, `src/main.rs` | The report, and the program that prints it. |
 | `tests/vectors.rs` | The differential test against the Python package. |

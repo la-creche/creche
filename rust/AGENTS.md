@@ -22,6 +22,7 @@ defect that a test finds late.
 
 | Crate | What it holds |
 |---|---|
+| `creche-util` | Each shared helper: SHA-256, the hex text of bytes and the white space rules of Python `str`. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
@@ -43,7 +44,7 @@ defect that a test finds late.
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
 `src/manifest.rs` holds the closed sets, the catalog and the differential
-test of `manifest`. Its other files are in `src/manifest/`. Three of them are
+test of `manifest`. Its other files are in `src/manifest/`. Two of them are
 private readers and writers. Each one gives what a Python library of the
 release tool gives:
 
@@ -55,7 +56,6 @@ release tool gives:
 | `resolved.rs` | The resolved manifest, its hash, the gate id and the approval summary. |
 | `yaml.rs` | Private. A port of `yaml.safe_load` of PyYAML: YAML 1.1, with each tag and each anchor. |
 | `json.rs` | Private. A reader that takes what Python `json.loads` takes, and writers for the text of `json.dumps`. |
-| `sha256.rs` | Private. SHA-256, because the crate has no dependency that gives a hash. |
 
 No type of `manifest` implements a `serde` trait. The module does not hold
 rule 1 yet ("Known gaps"). The raw type of `manifest` is the private
@@ -88,6 +88,25 @@ read.
    and for each part. `ids::Tag` is the pattern.
 8. Give each type its own doc comment and its own error type. The doc
    comment names the contract section.
+
+## Where a helper goes
+
+A shared helper is a pure function with two users. The users are two crates,
+or two modules that hold two contracts. `creche-util` holds each shared
+helper. Today it holds SHA-256, the hex text of bytes and the white space
+rules of Python `str`.
+
+1. Put a shared helper in `creche-util`.
+2. Write no second copy of a helper that `creche-util` holds. Call the
+   function of that crate.
+3. Keep a helper with one user in the module of that user.
+4. Keep a step that adds a prefix to a result, or cuts it, in the caller.
+5. Read `crates/creche-util/AGENTS.md` before you add a helper. It holds the
+   six rules for what the crate takes.
+
+Reason: two copies of a helper drift, as two copies of a value do (rule 13).
+The revision of a registry and the id of an approval gate each come from a
+digest. A copy that drifts gives another revision and another gate id.
 
 ## Checks
 
@@ -401,6 +420,7 @@ and never a raw text.
 |---|---|
 | `site` | The site file: `SiteFile` is the raw form, and `Site` is the valid form. |
 | `attendance`, `caregiver`, `chaperone`, `door_owui`, `door_trigger`, `noticeboard`, `intake` | The config of one daemon. |
+| `endpoints` | The names of some variables that hold the address of another service. A daemon module reads such a name from this module. `PlaneUrl` is the URL of a plane. A plane is a service of the host that each sandbox calls: the chaperone and LiteLLM. |
 | `roster` | The roster of the chaperone. `RawRoster` takes its tree through `serde`. |
 | `mounts` | `runtime.json`, `creds.json` and the env file of the playpen. |
 
@@ -964,11 +984,12 @@ rule 4).
     check for this rule yet. `decisions-gate-early` starts the check on
     each new crate, and `decisions-private-fields-gate` extends it to each
     crate.
-  - Rule 13. Some values have two sources today. One example is the default
-    state root, which more than one module of `config` defines. Packet
-    `decisions-config-endpoints` gives it one home. A second example is the
-    field `zone` of `quiet.daily` in the family file: the host has a time
-    zone.
+  - Rule 13. Some values have two sources today. One example is the field
+    `zone` of `quiet.daily` in the family file: the host has a time zone.
+    A second example is the name of each directory below the state root,
+    for example `families`. `creche_contracts::config` holds such a name,
+    and `creche_runtime::layout` holds a copy. No packet has that change
+    yet.
   - "The panic rule", clause 8. The gate has no check for this clause yet.
     Packet `decisions-gate-early` adds one.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
@@ -980,18 +1001,18 @@ rule 4).
     deletes the parameter.
   - The address of another service. `config::chaperone` and
     `config::caregiver` define the port of another service as a constant.
-    Packet `decisions-config-endpoints` adds the names of the variables.
-    The packet that makes a service read a variable deletes the constant
-    of that service.
+    `config::endpoints` holds the names of the variables. The packet that
+    makes a service read a variable deletes the constant of that service.
   - Time. The crate needs a single type for each time that a file or a
     wire message holds, in the RFC 3339 `date-time` form. Today `session`
     and `status` each define one. Packet `decisions-time-type` adds the
     single type.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
-  - Shared helpers. A helper with users in two crates belongs in one helper
-    crate: SHA-256, hex, base64 and the Python white space rule. Do not add
-    a copy. Packet `decisions-util` creates the crate.
+  - Shared helpers. Base64 has more than one copy. Packet
+    `decisions-util-runtime` moves it to `creche-util`. "Known gaps" of
+    `crates/creche-util/AGENTS.md` names each other function that is
+    still open. No packet has that part yet.
   - Vector reader. `vectors/data` needs a single reader. The owner still
     has to confirm this. Three readers exist today. Packet
     `decisions-vectors-crate` reduces them to one.
@@ -1145,11 +1166,6 @@ rule 4).
   5. `UnidentifiedRecord`, contract 04 §6. The contract does not describe the
      log of a request that names no family. The type writes what the Python
      chaperone writes.
-  6. `SandboxEvidence::Claimed`, contract 04 §3.2 and §6.2. The contract moves
-     a sandbox id with no proof into `claimed`, and `claimed` has no key for
-     it. The variant writes the id into `sandbox_id` with
-     `sandbox_id_trusted: false`, as the writer of the Python chaperone can.
-     The Python chaperone itself writes `null` in each record.
 - The module `grants` has its own JSON reader and writer, and `serde_json`
   does not read a grant file or a request body. The Python code takes JSON
   that is not strict, and it reports each issue of a document. `grants::Value`
@@ -1186,8 +1202,6 @@ rule 4).
 - `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
   The port of the chaperone adds the decision function and the function that
   approves a held call. No other code builds a value.
-- The crate has no public SHA-256. The chaperone gives `grants::ArgsDigest`
-  the digest of `Arguments::digest_input`. The test has a SHA-256 of its own.
 - No vector covers a request body with a content type that is not JSON. The
   HTTP layer of the port holds that rule.
 - These `CONTRACT-QUESTION` comments are open in
@@ -1246,8 +1260,6 @@ rule 4).
 - No other module uses the private `yaml` and `json` readers of `manifest`.
   The `family` module needs the same YAML reader. The owner of the crate
   moves that reader when a second module uses it.
-- `manifest` has its own SHA-256, which is private. A crate for the hash
-  replaces it when the workspace takes one.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/session/`:
   1. The JSON reader, contract 02 §3 rule 3. The contract gives a body no
@@ -1291,6 +1303,10 @@ rule 4).
   14. `TurnView`, contract 02 §4.4. The Python code writes the empty text
       as the sandbox of a turn that no sandbox served. The type does the
       same.
+  15. `ServiceNote::IllegalTransition`, contract 02 §4.3 and §8.1. No
+      contract names the note for a refused move of a turn. The Python
+      `attendance` writes that note only for a move that its state table
+      refuses. The type takes each pair of turn states.
 - The `session` module differs from the Python code on purpose in four
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
@@ -1592,6 +1608,14 @@ rule 4).
   13. `mounts::Credentials`, contract 03 §12. The contract does not say what
       a reader does with a secret that is not a JSON string. The type refuses
       it, and an empty secret. The Python reader makes text of each value.
+  14. `endpoints::PlaneUrl`, contract 01 §3.7 rule 4 and contract 03 §7. The
+      first section names the two plane endpoints as `host:port`. The second
+      section gives the two URLs as fixed values of the form
+      `http://<host>:<port>`. No contract gives the URL of a plane a
+      grammar. The type takes `http://`, a host and a port, and no other
+      byte. The port has no sign and no zero at its start. A host name
+      keeps its letter case. No Python reader holds this grammar, so no
+      vector covers the type.
 - No type reads the text of a roster file, and no type writes it. PyYAML
   reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
   the crate selects one. `roster::RawRoster` then takes its tree.
