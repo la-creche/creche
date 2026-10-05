@@ -32,28 +32,34 @@ mod tests {
     use creche_testkit::entropy::CountingEntropy;
     use tokio::runtime::Builder;
 
-    /// The start of each clock of this file: 2031-04-18T06:43:10.123456789Z,
-    /// as seconds and nanoseconds from 1970.
-    const START_SECONDS: u64 = 1_934_260_990;
-    const START_NANOS: u32 = 123_456_789;
+    /// The start of each clock of this file: 2026-10-01T15:50:49.637Z, as
+    /// seconds and nanoseconds from 1970.
+    ///
+    /// The start is on a whole millisecond, 849.637 seconds. Its Python float
+    /// is below that millisecond. Each Python copy thus mints the millisecond
+    /// 849.636 at the start, and the time stamp of a journal line holds
+    /// `.637`. The sum of the seconds and of the fraction gives another
+    /// float, and that float gives the millisecond 849.637.
+    const START_SECONDS: u64 = 1_790_869_849;
+    const START_NANOS: u32 = 637_000_000;
 
     /// The float that Python `time.time()` gives at the start.
-    const START_PYTHON_FLOAT: f64 = 1934260990.1234567;
+    const START_PYTHON_FLOAT: f64 = 1790869849.6369998;
 
     /// The id that each Python copy mints at the start for the bytes 0 to 9,
     /// and the id for the bytes 10 to 19. The copies are the five of
     /// `creche_runtime::entropy::new_ulid` and the first mint of
     /// `attendance/src/attendance/ids.py:110-138`.
-    const ID_AT_START_BYTES_0: &str = "01R9DF0W5B000G40R40M30E209";
-    const ID_AT_START_BYTES_10: &str = "01R9DF0W5B185GR38E1W8124GK";
+    const ID_AT_START_BYTES_0: &str = "01M3W2JHH4000G40R40M30E209";
+    const ID_AT_START_BYTES_10: &str = "01M3W2JHH4185GR38E1W8124GK";
 
     /// The id of the Python copies 5 milliseconds after the start, for the
     /// bytes 10 to 19.
-    const ID_AFTER_5_MS_BYTES_10: &str = "01R9DF0W5G185GR38E1W8124GK";
+    const ID_AFTER_5_MS_BYTES_10: &str = "01M3W2JHHA185GR38E1W8124GK";
 
     /// The id of the Python copies 90 seconds after the start, for the bytes
     /// 20 to 29.
-    const ID_AFTER_90_S_BYTES_20: &str = "01R9DF3M1V2GAHC5RR34D1P70X";
+    const ID_AFTER_90_S_BYTES_20: &str = "01M3W2N9DM2GAHC5RR34D1P70X";
 
     /// The text of `secrets.token_urlsafe(32)` of Python for the bytes 0 to
     /// 31, 32 to 63 and 64 to 95. `mint_webhook_token` of the caregiver and
@@ -67,7 +73,7 @@ mod tests {
     /// The id of the Python copies at the start for the bytes 32 to 41, and
     /// the Python token for the bytes 42 to 73. A test that mints a token, an
     /// id and a token from one source reads these two after the first token.
-    const ID_AT_START_BYTES_32: &str = "01R9DF0W5B40GJ48S44MK2EA19";
+    const ID_AT_START_BYTES_32: &str = "01M3W2JHH440GJ48S44MK2EA19";
     const TOKEN_OF_BYTES_42: &str = "KissLS4vMDEyMzQ1Njc4OTo7PD0-P0BBQkNERUZHSEk";
 
     /// The count of bytes of a token of the Python services.
@@ -155,10 +161,10 @@ mod tests {
         let entropy = CountingEntropy::new();
         let bytes = NonZeroUsize::new(TOKEN_BYTES).unwrap();
 
-        for (mint, text) in PYTHON_TOKENS.into_iter().enumerate() {
+        for (row, text) in PYTHON_TOKENS.into_iter().enumerate() {
             let token = url_token(&entropy, bytes).unwrap();
 
-            assert!(token.matches(text.as_bytes()), "mint {mint}");
+            assert!(token.matches(text.as_bytes()), "row {row}");
         }
     }
 
@@ -189,11 +195,11 @@ mod tests {
         let request = manifest::Timestamp::new(unix_seconds(now).unwrap()).unwrap();
 
         // `rfc3339` and `rfc3339_ms` of `attendance/src/attendance/clock.py:20-34`.
-        assert_eq!(journal.rfc3339(), "2031-04-18T06:43:10Z");
-        assert_eq!(journal.rfc3339_millis(), "2031-04-18T06:43:10.123Z");
+        assert_eq!(journal.rfc3339(), "2026-10-01T15:50:49Z");
+        assert_eq!(journal.rfc3339_millis(), "2026-10-01T15:50:49.637Z");
         // `rfc3339` of `caregiver/src/caregiver/clock.py:20-23` and
         // `rfc3339_s` of `chaperone/src/chaperone/family_ids.py:39-41`.
-        assert_eq!(status.to_rfc3339(), "2031-04-18T06:43:10Z");
+        assert_eq!(status.to_rfc3339(), "2026-10-01T15:50:49Z");
         // `time.time()` of `handover/src/handover/cli.py:144`.
         assert_eq!(request.get().to_bits(), START_PYTHON_FLOAT.to_bits());
 
@@ -202,7 +208,7 @@ mod tests {
         let journal = session::Timestamp::from_unix_micros(unix_micros(later).unwrap()).unwrap();
         let status = status::time::Timestamp::try_from(later).unwrap();
 
-        assert_eq!(journal.rfc3339_millis(), "2031-04-18T06:44:40.123Z");
-        assert_eq!(status.to_rfc3339(), "2031-04-18T06:44:40Z");
+        assert_eq!(journal.rfc3339_millis(), "2026-10-01T15:52:19.637Z");
+        assert_eq!(status.to_rfc3339(), "2026-10-01T15:52:19Z");
     }
 }
