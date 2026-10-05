@@ -72,9 +72,13 @@ STORE_CONTRACT: Final = "contract 03 §7.3 rule 6, and the store schema of libra
 #: The text of `library/tests/test_library.py` for the bounds of a chunk.
 _TEST_TEXT: Final = "\n\n".join(f"paragraph {number} " + "x" * 300 for number in range(10))
 
-#: Each character that `str.strip` removes and `\n` is not: a paragraph of
+#: Each character that `str.strip` removes, but the newline: a paragraph of
 #: these characters alone is no paragraph.
-_PYTHON_SPACE: Final = " \t\r\x0b\x0c\x1c\x1d\x1e\x1f\x85\xa0\u1680\u2000\u2028\u2029\u202f\u3000"
+_PYTHON_SPACE: Final = (
+    " \t\r\x0b\x0c\x1c\x1d\x1e\x1f\x85\xa0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
 
 
 @dataclass(frozen=True)
