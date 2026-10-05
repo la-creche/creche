@@ -309,9 +309,10 @@ jobs:
   # component add` gives it the LLVM tools that cargo-llvm-cov calls. The
   # toolchain file does not name that component: no other job needs it.
   #
-  # The job keeps no cache: each run builds the workspace one time, with the
-  # measurement in each crate. The time limit stops a test that does not end
-  # there. A job has 6 hours by default.
+  # The job keeps no cache: each run builds the workspace one time. The tool
+  # puts the measurement into each crate of the workspace and into no
+  # dependency. The time limit stops a test that does not end with the
+  # measurement in it. A job has 6 hours by default.
   rust-coverage:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
