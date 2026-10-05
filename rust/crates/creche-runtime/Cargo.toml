@@ -20,6 +20,7 @@ hyper-util = { workspace = true }
 rustix = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+tower = { workspace = true }
 
 # The testkit depends on this crate, so a test inside src/ sees other types
 # than the testkit does. AGENTS.md, rule 3, says where such a test goes.
