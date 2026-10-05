@@ -72,11 +72,18 @@ command and the name of one environment variable.
 | `caregiver` | `caregiver` | `CRECHE_PROC_CAREGIVER` |
 | `chaperone` | `chaperone` | `CRECHE_PROC_CHAPERONE` |
 | `noticeboard` | `noticeboard` | `CRECHE_PROC_NOTICEBOARD` |
+| `noticeboard-verify` | `noticeboard-verify` | `CRECHE_PROC_NOTICEBOARD_VERIFY` |
 
 The default command is the program and the first words of the unit's
 `ExecStart`. The program comes from the `bin` directory of the workspace
 venv, which is in the place of the component tree. `test_proc_table.py`
 compares each row with the unit file.
+
+No unit runs `noticeboard-verify`. It is the verify hook of the noticeboard
+(contract 06 §4), and the release executor runs it to its end. Its default
+command is the program of `verify.command` in `noticeboard/component.yaml`.
+`test_proc_table.py` compares the row and the words of the suite with that
+manifest.
 
 ### Replace a service with another binary
 
@@ -155,6 +162,11 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | The fifth, `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
 | The sixth, `proc_tui.py`: the terminal door, the Open WebUI door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Runs `sbx exec -it` with the real launcher bundle, which starts the pi stand-in on the terminal. |
 
+The fifth topology has a second program: the verify hook of the
+noticeboard. A test plays the release executor. It writes the env file of
+the unit and runs the hook to its end. The hook reads that file and asks the
+noticeboard for `/healthz`.
+
 | File | Topology | What the scenarios check |
 |---|---|---|
 | `test_proc_owui_turns.py` | door and `attendance` | the thirteen stage 1 scenarios, with the numbers of the old suite |
@@ -174,6 +186,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_board_form.py` | noticeboard | each kind of control of the edit form, a locked field, a save that changes nothing, a save that `git` refuses, the marks of the commit, what a save leaves in the checkout |
 | `test_proc_board_restart.py` | noticeboard | two starts on one root and one port: a saved family, and a form that stays open across the restart |
+| `test_proc_board_verify.py` | noticeboard and its verify hook | the hook of contract 06 §4: a pass, a failure, the env file, no secret in the output |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a JSON body with no `Content-Type` header, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
@@ -689,6 +702,15 @@ the text of the failure. Work down this list.
   restart of the service ends no token. A form that was open before a
   restart then saves after it. A change costs one scenario in
   `test_proc_board_restart.py`.
+- **CONTRACT-QUESTION, the output of the verify hook of the noticeboard.**
+  Contract 06 §4 rule 3 gives the exit code. No contract gives what a hook
+  prints. The suite holds that the stdout of the hook with `--json` is one
+  JSON object. The boolean `ok` of that object says what the exit code says.
+  A change costs two assertions in `test_proc_board_verify.py`.
+- **No chaperone beside the verify hook of the noticeboard.** The hook looks
+  for the audit directory, which the chaperone makes on the host. Each
+  scenario that runs the hook writes one audit record first, in the place of
+  the chaperone.
 - **CONTRACT-QUESTION, the answers that no handler of a service makes.** No
   contract names the answer of a listener to four requests. The requests are
   an unknown path, a wrong method, a path with a final slash, and `HEAD` on

@@ -22,8 +22,8 @@ from proc_chat import chat_id, run_stream
 from proc_harness import Supervisor
 from proc_owui import OwuiStack
 from proc_services import SERVICES, Service, command_of
-from proc_tree import Tree
-from proc_trigger import REVIEW, TriggerStack, hook_path
+from proc_tree import Tree, append_audit, audit_record
+from proc_trigger import CHAT, REVIEW, TriggerStack, hook_path
 from proc_tui import TuiStack
 
 CHECK_FLAG = "--check"
@@ -91,6 +91,30 @@ async def test_an_override_starts_the_noticeboard(
 
     assert health.status_code == httpx.codes.OK
     assert ran.read_text(encoding="utf-8").split() == ["noticeboard"]
+
+
+def test_an_override_starts_the_verify_hook_of_the_noticeboard(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hook is a program of its own, with a variable of its own. It runs to its end.
+
+    The hook looks for the audit directory, which the chaperone makes on the
+    host. One audit record makes it here.
+    """
+    ran = tree.root / "override-ran"
+    monkeypatch.setenv(
+        SERVICES[Service.NOTICEBOARD_VERIFY].override,
+        str(_other_program(tree, Service.NOTICEBOARD_VERIFY, ran)),
+    )
+    stack = BoardStack(tree, supervisor)
+    stack.prepare()
+    append_audit(tree, [audit_record(CHAT, "embed")])
+    stack.start_board()
+
+    checked = stack.verify(stack.write_unit_file())
+
+    assert checked.exit_code == 0, checked.stdout + checked.stderr
+    assert ran.read_text(encoding="utf-8").split() == ["noticeboard-verify"]
 
 
 def test_an_override_starts_the_terminal_door_on_a_terminal(

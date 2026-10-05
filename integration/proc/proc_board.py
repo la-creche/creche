@@ -18,23 +18,39 @@ is a git repository with one commit (`proc_registry.py`).
 No `caregiver` runs here. A scenario that saves a family proves the commit
 and nothing after it: on the host `caregiver` reads the registry and
 converges.
+
+The verify hook of the noticeboard is a second program, started through
+`Service.NOTICEBOARD_VERIFY`. The release executor runs it to its end
+(contract 06 §4). It reads the env file of the unit, and it asks the
+noticeboard for `/healthz`.
 """
 
 from __future__ import annotations
 
 import re
 import signal
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 import httpx
 import proc_html
 import proc_registry
-from proc_harness import LOOPBACK, STOP_GRACE_S, Child, ProcError, TcpAddress
+from proc_harness import LOOPBACK, STOP_GRACE_S, Child, Finished, ProcError, TcpAddress
 from proc_html import Element, form_values
-from proc_services import Service
+from proc_services import Service, command_of
 from proc_stack import CLIENT_TIMEOUT, Stack
-from proc_tree import AUTONOMOUS, FAMILY, LAN_ADDRESS, VIEW_KEY, Tree, add_family, write_view_key
+from proc_tree import (
+    AUTONOMOUS,
+    FAMILY,
+    LAN_ADDRESS,
+    VIEW_KEY,
+    Tree,
+    add_family,
+    write_env_file,
+    write_view_key,
+)
 
 #: The autonomous family of the fixture. The name is the one the old stage 5
 #: suite uses.
@@ -61,6 +77,14 @@ HTTP_OK: Final = 200
 _LINE_END: Final = re.compile(r"\r\n|\r|\n")
 _POSTED_LINE_END: Final = "\r\n"
 
+#: The variable of the site file. The unit reads that file beside its own
+#: env file, and the verify hook does not.
+SITE_ADDRESS_ENV: Final = "AGENT_LAN_ADDRESS"
+
+#: The two flags of `verify.command` in `noticeboard/component.yaml`.
+VERIFY_JSON: Final = "--json"
+VERIFY_ENV_FILE: Final = "--env-file"
+
 
 def board_env(tree: Tree, host: str, port: int) -> dict[str, str]:
     """The variables `creche-noticeboard.service` reads from its two files.
@@ -70,7 +94,7 @@ def board_env(tree: Tree, host: str, port: int) -> dict[str, str]:
     The key comes from a file of mode 0600, as the unit says it can.
     """
     return {
-        "AGENT_LAN_ADDRESS": LAN_ADDRESS,
+        SITE_ADDRESS_ENV: LAN_ADDRESS,
         "VIEW_BIND": host,
         "VIEW_PORT": str(port),
         "VIEW_ACCESS_KEY_FILE": str(tree.view_key_file),
@@ -84,6 +108,26 @@ def _env_for_bind(tree: Tree, bind: str) -> dict[str, str]:
     host, _, port = bind.rpartition(":")
 
     return board_env(tree, host, int(port))
+
+
+def unit_file_env(tree: Tree, port: int) -> dict[str, str]:
+    """The variables of the env file that the unit names, for a loopback bind.
+
+    The unit reads two files. The verify hook reads only this one
+    (contract 06 §4 rule 7), so the variable of the site file is not here.
+    """
+    env = board_env(tree, LOOPBACK, port)
+    del env[SITE_ADDRESS_ENV]
+
+    return env
+
+
+def verify_words(env_file: Path) -> tuple[str, ...]:
+    """The words after the program in `verify.command` of the manifest.
+
+    `test_proc_table.py` holds them against `noticeboard/component.yaml`.
+    """
+    return (VERIFY_JSON, VERIFY_ENV_FILE, str(env_file))
 
 
 @dataclass(slots=True)
@@ -130,6 +174,34 @@ class BoardStack(Stack):
         env = board_env(self.tree, LOOPBACK, self.board_port)
         self.board = self.spawn(Service.NOTICEBOARD, env)
         self.supervisor.wait_ready(self.board, TcpAddress(self.board_port))
+
+    def write_unit_file(self, values: Mapping[str, str] | None = None) -> Path:
+        """Write the env file of the unit, and return its path.
+
+        None gives the variables of `unit_file_env` for the port of the
+        noticeboard of this test.
+        """
+        chosen = unit_file_env(self.tree, self.board_port) if values is None else values
+        write_env_file(self.tree.view_env_file, chosen)
+
+        return self.tree.view_env_file
+
+    def verify(self, env_file: Path, env: Mapping[str, str] | None = None) -> Finished:
+        """Run the verify hook to its end, with the words of the manifest.
+
+        `env` is the whole environment of the hook. None gives the base
+        environment of a service: the release executor gives a hook a small
+        environment with no variable of its unit (contract 06 §4 rule 7).
+        """
+        words = verify_words(env_file)
+
+        if env is None:
+            return self.run(Service.NOTICEBOARD_VERIFY, {}, *words)
+
+        command = command_of(Service.NOTICEBOARD_VERIFY)
+        name = Service.NOTICEBOARD_VERIFY.value
+
+        return self.supervisor.run(name, [*command.words, *words], env, self.tree.root)
 
     @property
     def origin(self) -> str:
