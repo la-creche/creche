@@ -30,6 +30,10 @@ directory is not a workspace package, so a change here does not change
    `tests/test_vectors_runtime.py`. It builds the group `runtime` alone, in
    about one second.
 9. `pyright` checks this directory in strict mode.
+10. Do not drop an input because the Rust result differs from the Python
+    result. The one exception is resolution (c) in `rust/AGENTS.md`, section
+    "The differential test". The pull request then explains why resolutions
+    (d), (b) and (a) do not fit. A plain Rust test holds the dropped input.
 
 ## Module map
 

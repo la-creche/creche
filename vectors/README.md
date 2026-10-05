@@ -172,8 +172,8 @@ with its default settings is such a reader.
    Rust code must write the same message.
 9. For `raised`, make sure that the Rust code refuses the input.
 
-A Rust test that differs from a vector on purpose names the vector id and
-the decision. Do not delete the vector.
+No Rust test may disagree with a vector by design. When a Rust result and a
+vector disagree, follow "The differential test" in `rust/AGENTS.md`.
 
 ## Rules for a new surface
 

@@ -209,9 +209,10 @@ one grammar give different results.
 2. Mark the type with a `CONTRACT-QUESTION` comment. The comment names each
    copy and what the copy does.
 3. List the question under "Known gaps".
-4. In the test table of the type, give each surface one stance. `equal` means
-   that the type and the copy agree on each vector. `stricter` means that the
-   copy accepts an input of `disagreements.json` and the type refuses it.
+4. A surface in the test table of the type has the stance `equal`: the type
+   and the copy give the same result for each vector. `stricter` is an old
+   second stance. Do not use it for a new surface. Packet `decisions-ids`
+   deletes it from `ids`.
 
 Reason: a value passes more than one copy before the platform uses it. The
 strictest copy is thus the grammar that holds on the host. A type that takes
@@ -221,27 +222,20 @@ When each Python copy accepts an input, the Rust type accepts it too. This
 rule also applies when a stricter reading of the contract is possible. Name
 such a case in the pull request. The owner decides it.
 
-The rule has two exceptions:
+Rule 9 makes each type refuse a digit outside ASCII. Do not record that
+refusal as a difference.
 
-- A digit that is not ASCII. Rule 9 refuses it. Each such difference is a
-  row of the `DEVIATIONS` table in the test.
-- A number of more than 4300 digits in a version. Python reads no longer
-  text as an integer, so the types refuse it. No vector holds such a number.
+## When two Python versions differ
 
-The `session` module has three more exceptions. The owner did not decide
-them yet. Each one is a row of `DEVIATIONS` in `session/python.rs`, and
-"Known gaps" lists them.
+The Python workspace runs under more than one Python version. For some
+inputs, the result depends on the version.
 
-- A JSON text that is not strict JSON in UTF-8, for example a text with a
-  byte order mark, with `NaN` or with a lone surrogate.
-- A JSON text that nests deeper than 128 levels.
-- A sequence number that does not fit 64 bits.
+1. Follow Python 3.13 in the Rust code.
+2. Cover such an input with a plain Rust test. It cannot be a vector: rule 7
+   of `vectors/AGENTS.md` demands the same output under each version.
 
-The module `untrusted` has the first two exceptions too, for an answer. Its
-nesting limit is 127 levels. It also reads an integer that does not fit 64
-bits as 0, and each Python copy keeps that integer. The owner did not decide
-the three yet. Each one is a row of `DEVIATIONS` in the test of the module,
-and "Known gaps" lists them.
+Reason: a port can match one behavior only. A fixed version gives each
+packet the same target.
 
 ## The channel module
 
@@ -408,6 +402,12 @@ The rule against a crash loop:
   not.
 - `config::start` and `config::reload` take the error type of each parse.
   The roster and the site file have an error type of their own.
+- A cutover release moves a component from its Python package to its Rust
+  binary. In that release, the verify hook parses the env file and the site
+  file on the host with the Rust config types. A failed hook makes the
+  release restore the Python tree. The report of the hook lists each
+  refused variable by name and holds no value. The check needs no manual
+  command on the host.
 
 More rules for a config type:
 
@@ -421,8 +421,8 @@ More rules for a config type:
   `bin/tests/test_rust_config_units.py` fails for a variable of a unit that
   has no constant.
 - `config/python.rs` holds the differential test of the module. Its table
-  `SURFACES` names each `config.` surface, and its table `DEVIATIONS` names
-  each difference on purpose.
+  `SURFACES` names each `config.` surface. A later packet deletes its second
+  table, `DEVIATIONS`. Do not add a row to that table.
 
 ## The rules for a service
 
@@ -623,12 +623,55 @@ Rules for the test:
   that the type implements.
 - Put a table in the test that names each surface. Make the test fail when
   the index holds a surface of your module that no table names.
-- Write each difference on purpose as a row of a `DEVIATIONS` table in the
-  test. The row names the surface, the vector and the contract section. Make
-  the test fail for a row that names no difference.
+- The test passes only when each vector of each surface gives the same
+  result in Rust. Do not record a difference in a table. Do not give a
+  surface a stance, and do not add a second, laxer type. "When the two
+  results differ" below has the procedure.
 - Do not compare against a count of vectors that the test holds. A change to
   a product package can add a vector with no change under `rust/`.
 - `ids::tests::python` is the pattern.
+
+#### When the two results differ
+
+For one input, the Rust result can differ from the Python result. The
+packet then stops at that input and resolves the difference. Four
+resolutions exist, and each one has a letter as its name. Check them in this
+order: (d), (b), (a), (c). Use the first one that fits.
+
+- **Resolution (d): change the Rust code.** Use it when the contract shows
+  that the Rust result is wrong. Use it also when a Rust change by itself
+  brings the two results together.
+- **Resolution (b): align the Python copies.** Use it when the Python code
+  has two copies of a grammar and the copies disagree. Bring each copy to
+  the strictest one, in a pull request of the Python package. Regenerate the
+  vectors in that pull request.
+- **Resolution (a): make the Python reader strict.** Change the Python
+  reader in its own package, and regenerate the vectors. Put the Rust change
+  into that same pull request. Use this resolution in each of these cases:
+  1. The owner decided that the rule is strict.
+  2. Python code of the platform writes the value.
+  3. One file has two readers, and they must agree.
+  4. A caller of the platform sends the value today.
+
+**Resolution (c): take the input out of the surface.** It is the last
+resolution, and it fits two cases only. Case 1: nothing in a contract or on
+the platform can show the difference. No contract decides the input, no
+platform writer makes it and no platform caller sends it. Case 2: a daemon
+calls the Python reader at its start. The generator then no longer writes
+the input on that surface, and a plain Rust test pins the Rust result with
+the input inline. The pull request explains why (d), (b) and (a) do not fit.
+
+**Do not add a refusal to a Python reader that a daemon calls at its
+start.** Such a refusal can stop a service on a value that it accepted at
+its previous start. So (b) and (a) are not for this reader. The Rust type
+still refuses the value. The verify hook of the cutover release parses the
+actual files on the host with the Rust types, so it finds such a value. A
+failed hook makes the release restore the Python tree ("The config of a
+process").
+
+Some differences from the Python origin are in no vector. Describe such a
+difference in the doc comment of the Rust function. Pin it with one plain
+test.
 
 ## Dependencies
 
@@ -692,6 +735,15 @@ Rules for the test:
 
 ## Known gaps
 
+- Rules that the code does not hold yet. A line gives the packet that closes
+  the gap. The same packet removes the line.
+  - Tables of differences. Some tests still have one. Add no table and no
+    row. The packets `decisions-tables-*`, `decisions-ids` and
+    `decisions-runtime-tables` delete them.
+- Two texts of "When the two results differ" wait for a confirmation of the
+  owner. One is resolution (c). The other is the paragraph on a Python
+  reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
+  depends on resolution (c). If the owner says no, change those texts.
 - The owner did not decide if the advisory check blocks a merge. Today it
   does: step 5 of `bin/rust-gate.sh` makes the four checks. A change with no
   new dependency can thus fail on a new advisory. The other choice is an
