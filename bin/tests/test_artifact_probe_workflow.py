@@ -25,8 +25,10 @@ The second half runs the bash text: the two steps that guard the signature,
 and then the script. Each program that only a runner has is a stub: `curl`,
 `sudo` and what runs behind it, `rustup`, `cargo`, `file` and `systemctl`. A
 stub writes the words that it got to a log, and the tests read the words
-from there. The cases that pack an archive need GNU tar, and two cases need
-`sha256sum --check --strict`. Those cases run on Linux, where CI runs them.
+from there. The cases that pack an archive need GNU tar, two cases need
+`sha256sum --check --strict`, and the cases that read a report need jq. On a
+development machine without such a tool, its cases skip. In CI no case
+skips: a case whose tool is absent fails there.
 """
 
 from __future__ import annotations
@@ -196,6 +198,13 @@ IDENTITY: Final = (
 )
 
 STUB_MODE: Final = 0o755
+
+#: Whether this is a run of CI. A runner sets `CI`, and `bin/rust-gate.sh`
+#: reads the variable the same way. A case that needs a tool of a runner
+#: skips on a development machine that does not have the tool. In CI it runs,
+#: so a runner that lost the tool fails the gate and does not pass with a
+#: case that nothing ran.
+IN_CI: Final = bool(os.environ.get("CI"))
 
 #: The separator of the words of one logged call.
 UNIT_SEPARATOR: Final = "\x1f"
@@ -520,10 +529,11 @@ def _sha256sum_checks_a_line() -> bool:
 
 
 needs_sha256sum_check = pytest.mark.skipif(
-    not _sha256sum_checks_a_line(), reason="the step uses `sha256sum --check --strict`"
+    not IN_CI and not _sha256sum_checks_a_line(),
+    reason="the step uses `sha256sum --check --strict`",
 )
 needs_sha256sum = pytest.mark.skipif(
-    shutil.which("sha256sum") is None, reason="the step uses sha256sum"
+    not IN_CI and shutil.which("sha256sum") is None, reason="the step uses sha256sum"
 )
 
 
@@ -857,7 +867,9 @@ class Verify:
         return [call[1:] for call in _calls(self.log, "sudo") if call[1] == RUN_WORDS[0]]
 
 
-needs_jq = pytest.mark.skipif(shutil.which("jq") is None, reason="the script writes with jq")
+needs_jq = pytest.mark.skipif(
+    not IN_CI and shutil.which("jq") is None, reason="the script writes with jq"
+)
 
 
 def _check(
@@ -1137,7 +1149,9 @@ def _has_gnu_tar() -> bool:
     return "GNU tar" in done.stdout
 
 
-needs_gnu_tar = pytest.mark.skipif(not _has_gnu_tar(), reason="the pack needs GNU tar")
+needs_gnu_tar = pytest.mark.skipif(
+    not IN_CI and not _has_gnu_tar(), reason="the pack needs GNU tar"
+)
 
 
 class Build:
