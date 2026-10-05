@@ -832,27 +832,52 @@ CI runs the script, and the check `gate` needs that job. The rule thus blocks
 a merge.
 
 The script runs `cargo llvm-cov` on the workspace, with the toolchain of
-`rust-toolchain.toml`. The tool writes a report with the counts of each file.
-A region is one span of code with one count, for example one arm of a
+`rust-toolchain.toml`. The tool writes a report with the segments of each
+file. A region is one span of code with one count, for example one arm of a
 `match`. The script then makes four checks. It fails when:
 
 1. A region or a line of a listed file ran in no test.
-2. A listed file is not in the report.
+2. A listed file is not in the report, or the report holds no region of it.
 3. A listed file holds the text `coverage(off)`.
 4. `crates/chaperone-policy/src` holds a `.rs` file that is not in the list.
    Before that directory exists, this check does nothing.
 
+How the script counts:
+
+- The compiler can build more than one copy of a function. A generic
+  function has one copy for each type. cargo builds a crate one time with
+  its unit tests and one time for the tests under `tests/`.
+- A region ran when one copy or more ran it. A unit test and a test under
+  `tests/` can thus each run one part of a function.
+- The script reads the segments of each file in the report. A segment gives
+  the count of a region as the sum of each copy.
+- The script does not read the summary of the report. The summary takes
+  only the best copy of each function. It can thus show a region as not run
+  although another copy ran it.
+- A line ran when a region that starts on it ran. It also ran when the code
+  that reaches it from an earlier line ran. `llvm-cov show` prints the same
+  count for the line.
+- The script compares counts and reads no percent. A percent of a large file
+  can round to 100.
+- The script prints one line with the counts of each crate. Those counts
+  come from the segments too. The counts of a file outside the list have no
+  threshold.
+- A failure line names each region that no test ran, as `line:column`. It
+  names each such line as a number or a range. It names 20 places at most.
+- A run reports each failure of the four checks, not only the first one.
+
 More facts about the checks:
 
-- The script compares the two counts of a file: the items, and the items
-  that ran. It reads no percent. A percent of a large file can round to 100.
-- The script prints one line with the counts of each crate. The counts of a
-  file outside the list have no threshold.
-- A run reports each failure of the four checks, not only the first one.
 - The rule has no exception. Do not remove a file from the list to make the
   job pass. Do not add `#[coverage(off)]` to a listed file.
 - The steps of the job run for a change under `rust/` or `vectors/`, as the
-  steps of the `rust` job do.
+  steps of the `rust` job do. A change of the script also runs them.
+- Check 4 must read the whole directory. The script stops when
+  `crates/chaperone-policy/src` is not a directory. It also stops for a
+  symbolic link to a directory there, and for a directory that it cannot
+  read.
+- The script stops for a report in another form, for example a segment that
+  is not three numbers and three flags.
 
 Rules for the list:
 
@@ -871,6 +896,14 @@ These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
 - The report holds a file only when the test build compiles a function of
   that file. A file with `mod` lines only, or with types only, is in no
   report. Such a file in the list fails check 2 ("Known gaps").
+- The tool leaves some files of the workspace out of the report by their
+  path. One kind is a file with the name `tests.rs`, or with a name that
+  ends in `_tests.rs` or `-tests.rs`. The other kind is a file below a
+  directory `tests`, `examples` or `benches`. Such a file in the list fails
+  check 2.
+- The report holds only code that the run compiles. A build with the unit
+  tests does not compile code behind `cfg(not(test))`. No check reads such
+  code ("Known gaps").
 - The report holds no region for the code of a standard derive, for example
   `#[derive(Debug, Clone, PartialEq)]`.
 - The report counts the test code of a listed file too. The message of an
@@ -883,6 +916,9 @@ These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
 - The run starts no doc test.
 - The run sets neither `cfg(coverage)` nor `cfg(coverage_nightly)`. It thus
   compiles the code that `cargo test` compiles.
+- The toolchain 1.92.0 refuses the attribute `#[coverage(off)]` with a
+  compile error. Check 3 is the guard for a later toolchain that takes the
+  attribute.
 
 To run the script on your machine:
 
@@ -897,8 +933,20 @@ The script has two flags:
   `bin/tests/test_rust_coverage.py` gives the script its reports with this
   flag.
 - `--branch` adds a fifth check: a test took each side of each branch of a
-  listed file. Only a nightly toolchain takes the flag, and no job uses it
-  today. Packet `decisions-ci-coverage` adds a job that does.
+  listed file. No job uses the flag today. Packet `decisions-ci-coverage`
+  adds a job that does.
+
+Facts about the flag `--branch`:
+
+- Only a nightly toolchain measures a branch. With the flag, the script
+  stops when the report holds no branch.
+- The report holds a branch one time for each copy of its code. The script
+  adds the counts of the copies, as it does for a region.
+- A failure line names each side that no test took, for example
+  `12:8 false`.
+- The report does not mark a side that cannot run, for example the second
+  side of `if true`. The check fails for such a side. Write no constant
+  condition in a listed file.
 
 The coverage rule of the Python package stays as it is (`chaperone/AGENTS.md`,
 rule 4).
@@ -1024,14 +1072,18 @@ rule 4).
   is. No report holds such a file, so the script fails for it. With check 4,
   each `.rs` file of `chaperone-policy` thus needs a function that a test
   runs. A change costs one check of the script.
-- Check 3 of "The coverage rule" reads the text of a listed file only. A
-  macro of another file can put the attribute on an item of a listed file.
-- A change of `bin/rust-coverage.sh` alone does not start the steps of the
-  `rust-coverage` job. `rust_gate_path` in `bin/lib/rustrule.sh` does not
-  name the script. The tests of the script use no `cargo`, so only a run of
-  the job proves the cargo step.
+- Check 3 of "The coverage rule" reads the text of a listed file only. It
+  finds the spelling `coverage(off)`, which `cargo fmt` writes. A macro of
+  another file can put the attribute on an item of a listed file.
+- "The coverage rule" binds only code that the run compiles. Code of a
+  listed file behind a `cfg` that no build of the run sets is in no report.
+  No check finds such code.
 - No job runs the branch check of "The coverage rule". The flag `--branch`
   needs a nightly toolchain. Packet `decisions-ci-coverage` adds the job.
+- The facts about the flag `--branch` are measurements with a nightly
+  toolchain of December 2025 and `llvm-cov` 21, with no `cargo-llvm-cov`.
+  Packet `decisions-ci-coverage` measures them again with the tools of its
+  job.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. If the owner says no, change those two lines.
