@@ -707,7 +707,8 @@ the text of the failure. Work down this list.
   name in `proc_registry.py` and one scenario in `test_proc_board_form.py`.
 - **CONTRACT-QUESTION, the mode of a family file after a save.** No contract
   gives it. The suite holds that a save of the noticeboard keeps the mode of
-  the file. A change costs one assertion in `test_proc_board_form.py`.
+  the file. The scenario runs with mode 0640 and with mode 0600. A change
+  costs one assertion in `test_proc_board_form.py`.
 - **CONTRACT-QUESTION, the end of a CSRF token of the noticeboard.**
   `docs/rework/spec.md` §8.3 rule 3 puts the token in a cookie and in a
   hidden field. No section says when a token ends. The suite holds that a

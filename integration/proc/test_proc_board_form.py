@@ -421,7 +421,8 @@ async def test_a_save_removes_the_file_of_a_save_that_did_not_end(board_alone: B
     assert proc_registry.uncommitted(tree) == ""
 
 
-async def test_a_save_keeps_the_mode_of_the_family_file(board_alone: BoardStack) -> None:
+@pytest.mark.parametrize("mode", [GROUP_READ_MODE, SECRET_MODE], ids=["0640", "0600"])
+async def test_a_save_keeps_the_mode_of_the_family_file(board_alone: BoardStack, mode: int) -> None:
     """A save writes a new file and renames it. The new file has the mode of the old one.
 
     CONTRACT-QUESTION: no contract gives the mode of a family file after a
@@ -429,13 +430,11 @@ async def test_a_save_keeps_the_mode_of_the_family_file(board_alone: BoardStack)
     the host another account reads the registry, and a narrower mode can
     hide the file from it. A change costs the last assertion here.
 
-    The mode of the scenario is 0640. When the run itself makes a file with
-    that mode, the scenario takes 0600, so that a save which keeps no mode
-    fails in each run.
+    The scenario runs with two modes. A save that keeps no mode writes one
+    mode in both cases. One of the two cases then fails, with each umask of
+    the run.
     """
     tree = board_alone.tree
-    found = proc_registry.family_mode(tree, FAMILY)
-    mode = GROUP_READ_MODE if found != GROUP_READ_MODE else SECRET_MODE
     proc_registry.set_family_mode(tree, FAMILY, mode)
 
     response = await saved_edit(board_alone, FAMILY, description=NEW_DESCRIPTION)
