@@ -4117,6 +4117,9 @@ mod tests {
                 "0 6 * * 1-5",
                 " 0  6 * *\t1 ",
                 "*/15 0-6,22 1 1,7 1-5",
+                // Each of the four separators U+001C to U+001F ends a field,
+                // as it does for `str.split()` of Python.
+                "0\u{1f}6\u{1c}*\u{1d}*\u{1e}1",
             ],
             &[
                 "",
