@@ -7,9 +7,10 @@
 //! 2. A writer writes UTC with `Z`.
 //! 3. A text with no UTC offset is not a time.
 //!
-//! This module also holds the one copy of the date arithmetic of the
-//! workspace. The private type `Date` gives the day count of a date, and the
-//! date of a day count. No other module computes one from the other.
+//! This module also holds the date arithmetic of the workspace. The private
+//! type `Date` gives the day count of a date, and the date of a day count.
+//! `rust/AGENTS.md`, "Time", lists each older copy of that arithmetic and the
+//! packet that removes it.
 
 use std::error::Error;
 use std::fmt;
@@ -90,7 +91,8 @@ const MICROS_MAX: i64 = (Date::LAST.days_from_epoch() + 1) * MICROS_PER_DAY - 1;
 /// One day of the Gregorian calendar, in the years 0000 to 9999. The leap
 /// year rule of today holds for each year.
 ///
-/// This type is the one copy of the date arithmetic of the workspace.
+/// This type is the date arithmetic of the module. New code writes no second
+/// copy (`rust/AGENTS.md`, "Time").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Date {
     year: i64,

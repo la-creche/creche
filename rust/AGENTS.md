@@ -264,7 +264,7 @@ holds one instant in UTC, to the microsecond, in the years 0001 to 9999.
   seconds, and `to_rfc3339_millis` writes milliseconds.
 - Define no second type for a time text.
 - Write no date arithmetic in another module. The `time` module holds the
-  one copy.
+  copy that stays.
 - A caller decides what it does with a text that is no time. For example, a
   view reads the file as stale, and a request gets a refusal.
 
@@ -293,10 +293,11 @@ writer for that log only. Delete the writer when that log writes `Z`.
 `manifest::Timestamp` is a count of seconds and not a time text. This
 section does not apply to it.
 
-Four older parts of the workspace still hold a time type or date arithmetic
+Six older parts of the workspace still hold a time type or date arithmetic
 of their own. Add no user of them. One packet moves each part to
-`Timestamp`. The pull request that moves a part deletes its row. The pull
-request that moves the last part deletes this paragraph and the table.
+`Timestamp` or deletes the part. The pull request of that packet deletes
+the row of the part. The pull request that deletes the last row also
+deletes this paragraph and the table.
 
 | Part | Packet |
 |---|---|
@@ -304,6 +305,8 @@ request that moves the last part deletes this paragraph and the table.
 | `AuditTime` of `grants` | `decisions-time` |
 | `session::Timestamp` | `strict-attendance-time` |
 | The stamp of a log line in `creche-runtime` | `decisions-runtime-time` |
+| The `!!timestamp` value of the YAML reader of `agent-family` | `toml-drop-yaml-validator` |
+| The `!!timestamp` check of `manifest::yaml` | `toml-drop-yaml-manifest` |
 
 ## When two Python copies of a grammar disagree
 
