@@ -71,7 +71,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `sync-code-corpus.sh` | OPERATOR, hourly | Refreshes the dedicated code clones the library indexes. The repository list lives outside the corpus. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. For a push that changes `vectors/`, it runs `rust-gate.sh` when `cargo` is on `PATH`. For a push that changes a file under `integration/proc/` that is not prose, it runs the process-level suite. |
-| `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, the include check, `cargo fmt` and `cargo clippy` on the workspace under `rust/`. `--tests` adds `cargo test`. |
+| `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, the include check, `cargo fmt`, `cargo clippy` and `cargo deny` on the workspace under `rust/`. `--tests` adds `cargo test`. `cargo deny` runs where `cargo-deny` is on `PATH`. |
 
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
 only after `sudo creche-deploy`.
@@ -116,7 +116,7 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 
 | Mode | The change touches `rust/` when | `rust-gate.sh` runs |
 |---|---|---|
-| no flag | the index or the work tree differs from `HEAD` under `rust/` | the `[lints]` check, the include check, `cargo fmt`, `cargo clippy` |
+| no flag | the index or the work tree differs from `HEAD` under `rust/` | the `[lints]` check, the include check, `cargo fmt`, `cargo clippy`, `cargo deny` |
 | `--tests-for` | one path or more is under `rust/` | the same, then `cargo test` |
 | `--tests` | always | the same, then `cargo test` |
 | `--docs` | never | nothing |
@@ -150,6 +150,14 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 - The include check refuses a Rust source file that includes a Markdown
   file. A change of Markdown only runs no cargo step, so such a file can
   break a doc test with no cargo run.
+- `cargo deny --locked check` runs after `cargo clippy`. It holds the locked
+  crates to `rust/deny.toml`: the licenses, the sources, the bans and the
+  advisories. `rust/AGENTS.md` has the table.
+- That step needs `cargo-deny` on `PATH`. rustup does not install it.
+  Without it, `rust-gate.sh` prints one line and runs each other step.
+- In CI, `rust-gate.sh` fails without `cargo-deny`. The script reads `CI`,
+  which a runner sets. The `rust` job installs `cargo-deny` from a release
+  archive. It checks the SHA-256 of the archive before the unpack.
 
 ## Tests
 
@@ -159,10 +167,10 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
 | `test_bin_hook_env.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
-| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. |
-| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`, and the two `[profile]` tables there. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
+| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. The `cargo deny` step: it runs where `cargo-deny` is on `PATH`, a machine without it passes with one line, and CI without it fails. |
+| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`, and the two `[profile]` tables there. Each table of `rust/deny.toml`. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
 | `test_rust_config_units.py` | Each Rust config type names one daemon unit. Each daemon unit holds `Restart=always` and no `RestartPreventExitStatus`. Three daemon units hold an `ExecStartPre=` check, and the Rust config type of each one says so. Each variable of a unit has a constant in the Rust module of its daemon. |
-| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job and the same `rust` job, and `!retest` restarts one run. |
+| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job and the same `rust` job, and `!retest` restarts one run. The `rust` job checks the SHA-256 of the `cargo-deny` archive before the unpack. |
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |
 | `test_unique_test_basenames.py` | No two test modules share a basename across the workspace. |
 | `test_git_env_dropped.py` | A test run that git starts writes nothing into the repository of the caller. The root `conftest.py` drops the five variables that the hooks unset. |

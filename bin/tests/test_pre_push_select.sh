@@ -19,7 +19,8 @@
 # Runs the real gate and the real hook. `uv` and `cargo` are fakes on PATH
 # that write their argv to a file, and the hook runs in a throwaway repository whose
 # bin/quality-gate.sh is a fake that writes its own. Every exit code comes
-# straight from `$?`, never through a pipe.
+# straight from `$?`, never through a pipe. A fake `cargo-deny` is on PATH
+# too, so the cargo steps are the same on each machine.
 #
 # Run: bash bin/tests/test_pre_push_select.sh
 set -uo pipefail
@@ -76,8 +77,20 @@ printf '%s\n' "${1:-}" >> "$CARGO_LOG"
 FAKE
 chmod 0755 "$WORK/bin/cargo"
 
+# bin/rust-gate.sh runs `cargo deny` only where cargo-deny is on PATH. The
+# rest of PATH is the PATH of the caller, which can hold that program or not.
+# Without it, the gate passes with one line, and where CI is set the gate
+# fails. A runner of the `tests` job sets CI and has no cargo-deny. With this
+# fake, each of those machines runs the same steps. The gate asks only
+# whether the program is there. cargo starts it, so a direct call fails.
+cat > "$WORK/bin/cargo-deny" <<'FAKE'
+#!/usr/bin/env bash
+exit 1
+FAKE
+chmod 0755 "$WORK/bin/cargo-deny"
+
 #: The cargo subcommands of a run that tests Rust, in order.
-RUST_STEPS="fmt clippy test"
+RUST_STEPS="fmt clippy deny test"
 
 # gate ARG...: the real gate, with the fake uv and the fake cargo. Sets RC,
 # PYTEST to the pytest lines uv was asked for, one per pytest process (""

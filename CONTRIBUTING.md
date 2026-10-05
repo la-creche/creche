@@ -49,7 +49,8 @@ workflow: branches, hooks, CI, tags and releases.
 
 `githooks/pre-commit` runs `bin/quality-gate.sh` with no flag: ruff, ruff
 format and pyright. When the index or the work tree differs from `HEAD`
-under `rust/`, it also runs `cargo fmt` and `cargo clippy`.
+under `rust/`, it also runs `cargo fmt` and `cargo clippy`. It then runs
+`cargo deny` where `cargo-deny` is on `PATH`.
 
 `githooks/pre-push` runs the same checks, then tests:
 
@@ -58,7 +59,7 @@ under `rust/`, it also runs `cargo fmt` and `cargo clippy`.
 | a path under a package, for example `chaperone/app.py` | that package's suite, `--tests-for`. For a product package, also `vectors/tests` |
 | a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite. The hook passes `--tests-for`, and the gate runs every suite |
 | a path under `vectors/`, for example `vectors/data/index.json` | `vectors/tests`, and the cargo steps when `cargo` is on `PATH` |
-| a path under `rust/`, for example `rust/Cargo.lock` | `cargo fmt`, `cargo clippy` and `cargo test`, and no pytest suite for that path |
+| a path under `rust/`, for example `rust/Cargo.lock` | `cargo fmt`, `cargo clippy`, `cargo deny` where `cargo-deny` is on `PATH`, and `cargo test`. No pytest suite for that path |
 | a path under `integration/proc/`, for example `integration/proc/proc_tree.py` | the process-level suite on four workers, and no other suite for that path. A test that skips is a failure, as in the `proc` job of CI. A Markdown file there, outside `tests/` and `fixtures/`, picks no suite |
 | Markdown only, outside `tests/` and `fixtures/` | the tests marked `docs`, `--docs` |
 | nothing, or a deleted branch | no test |
@@ -84,6 +85,11 @@ The cargo steps are `bin/rust-gate.sh`. The rule that starts them is
   suites.
 - When the hook cannot read what a push changes, it runs the full suite and
   the cargo steps. That push needs `cargo`.
+- The `cargo deny` step needs the program `cargo-deny`. rustup does not
+  install it. Without it on `PATH`, the gate prints one line and runs each
+  other step. In CI, the gate fails without it.
+- The `cargo deny` step reads the advisory database from the network.
+  `rust/AGENTS.md` has what the step checks.
 
 No hook checks a commit message. Check the subject against the seven rules
 in `AGENTS.md` yourself.
@@ -101,9 +107,10 @@ group. It has six kinds of job:
 4. `proc`: the process-level suite, `uv run pytest integration/proc -m slow`.
    The job builds the playpen first. A test that skips is a failure there.
 5. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
-   `rust/rust-toolchain.toml` names. When the pull request changes no path
-   under `rust/` and no path under `vectors/`, the job skips those steps and
-   passes. A change to the Rust checks themselves also runs the steps.
+   `rust/rust-toolchain.toml` names. The job installs `cargo-deny` before
+   the script runs. When the pull request changes no path under `rust/` and
+   no path under `vectors/`, the job skips those steps and passes. A change
+   to the Rust checks themselves also runs the steps.
    `rust_gate_path` in `bin/lib/rustrule.sh` lists those files.
 6. `gate`: red unless every other job passed. This is the one check the
    merge queue and the release executor read.

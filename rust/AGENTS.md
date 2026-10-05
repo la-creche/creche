@@ -16,6 +16,7 @@ defect that a test finds late.
 | `rust-toolchain.toml` | The one toolchain version. rustup reads it for each cargo command under `rust/`. |
 | `rustfmt.toml` | The line width: 100, the same as ruff. |
 | `clippy.toml` | The lints that a test can break. |
+| `deny.toml` | The policy for the locked crates: the licenses, the sources, the bans and the advisories. `cargo deny` reads it. |
 | `crates/<name>/` | One crate. Each directory there is a workspace member. |
 
 | Crate | What it holds |
@@ -102,7 +103,17 @@ You need rustup. It installs the toolchain at the first cargo command under
 2. The include check. No Rust source file includes a Markdown file.
 3. `cargo fmt --all --check`.
 4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
-5. `cargo test --workspace --locked`, with `--tests` only.
+5. `cargo deny --locked check`, where `cargo-deny` is on `PATH`.
+6. `cargo test --workspace --locked`, with `--tests` only.
+
+Step 5 needs the program `cargo-deny`. rustup does not install it.
+
+- Without `cargo-deny` on `PATH`, the script prints one line and runs each
+  other step. CI runs step 5 for the same change.
+- In CI, the script fails without `cargo-deny`. The `rust` job installs it
+  before the script runs. `.github/workflows/gate.yml` names the version.
+- To run step 5 on your machine, install that version of `cargo-deny`.
+- Step 5 reads the advisory database from the network.
 
 `bin/quality-gate.sh` starts `bin/rust-gate.sh` only for a change that
 touches `rust/`. `bin/AGENTS.md` has the table. Every path under `rust/`
@@ -225,6 +236,12 @@ them yet. Each one is a row of `DEVIATIONS` in `session/python.rs`, and
   byte order mark, with `NaN` or with a lone surrogate.
 - A JSON text that nests deeper than 128 levels.
 - A sequence number that does not fit 64 bits.
+
+The module `untrusted` has the first two exceptions too, for an answer. Its
+nesting limit is 127 levels. It also reads an integer that does not fit 64
+bits as 0, and each Python copy keeps that integer. The owner did not decide
+the three yet. Each one is a row of `DEVIATIONS` in the test of the module,
+and "Known gaps" lists them.
 
 ## The channel module
 
@@ -630,15 +647,56 @@ Rules for the test:
   16 digits or more can differ from the Python value in its last bit. Do not
   remove the feature.
 
+### The check of the locked crates
+
+`deny.toml` is the policy for the crates of `Cargo.lock`.
+`cargo deny --locked check` makes four checks against it:
+
+| Check | What fails |
+|---|---|
+| `licenses` | A crate that needs a license outside this list: `MIT`, `Apache-2.0`, `BSD-3-Clause`, `Unicode-3.0`. |
+| `sources` | A crate from a registry that is not crates.io. A crate from a git repository. |
+| `bans` | Two versions of one crate. A dependency with the version `*`. |
+| `advisories` | A crate with a vulnerability advisory or with an `unmaintained` advisory. A direct dependency with an `unsound` advisory. A version that its author removed from the registry. |
+
+- `bin/tests/test_rust_workspace.py` pins each table of `deny.toml`, entry
+  for entry.
+- To add a license or a source, change that pin in the same commit. Give
+  the reason in the commit message.
+- The same rule applies to each other entry, for example an advisory that
+  the check ignores.
+- The checks read each crate that a build for one of four targets can use:
+  Linux with glibc and macOS, each on x86-64 and on arm64. `deny.toml` lists
+  the targets.
+- A crate that only a test uses is in the `licenses` check and in the count
+  of versions. Two keys of `deny.toml` do this: `include-dev` and
+  `multiple-versions-include-dev`. Without its key, each of the two checks
+  skips such a crate.
+- A crate of this workspace names another one by its path, with no version.
+  `deny.toml` permits that only for a crate with `publish = false`.
+- The check does not read the code of a crate. A crate that passes is not a
+  crate that a person here reviewed.
+
 ## Known gaps
 
-- CI does not run `cargo deny`. No check reads the advisories or the
-  licenses of the locked crates.
+- The owner did not decide if the advisory check blocks a merge. Today it
+  does: step 5 of `bin/rust-gate.sh` makes the four checks. A change with no
+  new dependency can thus fail on a new advisory. The other choice is an
+  advisory check on a schedule.
+- `release.yml` runs the same step after a merge that touches `rust/` or
+  `vectors/`. A new advisory there fails the `rust` job, and that push gets
+  no tag. The next push that passes gets the tags of both.
+- The check of the locked crates reads four targets. A crate that only a
+  build for another target uses gets no check, for example a build for Linux
+  with musl or for Windows. `Cargo.lock` holds such crates.
+- `bin/rust-gate.sh` does not check the version of the `cargo-deny` on
+  `PATH`. Another version can read `deny.toml` in another way.
 - No release uses Rust code.
-- Most bodies of `creche-runtime`, of `creche-testkit` and of the module
-  `untrusted` are stubs. A stub panics when code calls it.
-  `crates/creche-runtime/AGENTS.md` and `crates/creche-testkit/AGENTS.md`
-  list each stub and the packet that writes its body.
+- Most bodies of `creche-runtime` and of `creche-testkit` are stubs. A stub
+  panics when code calls it. `crates/creche-runtime/AGENTS.md` and
+  `crates/creche-testkit/AGENTS.md` list each stub and the packet that
+  writes its body. The list of the first file still names the module
+  `untrusted`. The bodies of that module are complete.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/log.rs`: no contract gives the form of a log
   line. The Python services write five forms. Three stamp the local time,
@@ -648,6 +706,17 @@ Rules for the test:
   mode, `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`. Contract 02 §3 rule 5
   gives each token file a mode. The Python readers behind the two rules
   check none, and the rules do the same.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/entropy.rs`: contract 02 §2 gives a mint of a
+  ULID no rule for two times of the clock. One is a time before 1970. The
+  other is a time past 48 bits of milliseconds. Each Python copy mints 26
+  characters for such a time. `new_ulid` refuses it.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/atomic.rs`: contract 04 §1.3 step 2 names the
+  temporary file of a grant file `<family>.json.tmp`. The Python writer of
+  the grant file uses another name. The runtime names each temporary file
+  `.<name>.<pid>.<count>.tmp`, as the Python `attendance` does. A change of
+  the name costs one function, `temp_name`.
 - No check holds the rules of "The rules for a service", except a part of
   rule 13. A service crate that breaks a rule builds and passes the lint
   gate.
@@ -905,6 +974,58 @@ Rules for the test:
   `session::ServiceNote` have public fields. Some fields are a plain
   `String`: the contract gives them no grammar. Code can build such a body
   with each text.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/untrusted.rs`:
+  1. `parse_object`, contract 02 §3 rule 3. The contract says that a body is
+     JSON. It does not say if a reader takes what `json.loads` of Python
+     takes past strict JSON in UTF-8. Each Python client takes a part of it.
+     Difference 1 and difference 6 below say which part. The reader is
+     `serde_json`, which refuses each part.
+  2. `DEPTH_MAX`, contract 02 §3 rule 3. The contract gives a body no nesting
+     limit. `parse_object` reads 127 levels, the limit of `serde_json`. The
+     tree of the module stops at 128 levels, for a deserializer with no
+     limit.
+  3. `int`, contracts 02, 04 and 05. No contract gives a count a range. The
+     Python readers keep an integer of each size. The reader gives an `i64`,
+     and it reads a larger integer as 0.
+- The module `untrusted` differs from the Python helpers on purpose in six
+  ways. Each one is a row of `DEVIATIONS` in the test of the module.
+  1. An answer is strict JSON in UTF-8, with no byte order mark. It holds no
+     `NaN`, no `Infinity`, no number outside the range of a float and no half
+     of a surrogate pair. Each Python client reads `NaN`, `Infinity`, such a
+     number and the escape of such a half. The noticeboard, the delegate
+     client of the chaperone and `caregiver` give `json.loads` the bytes.
+     They also read a byte order mark, UTF-16, UTF-32 and the bytes of such
+     a half. The three doors give `json.loads` the text of `httpx`, and they
+     refuse the first three.
+  2. An answer nests 127 levels at most.
+  3. `int` reads an integer that no `i64` holds as 0.
+  4. `number` reads the integer `-0` as `-0.0`. Python reads it as `0.0`.
+  5. `text` reads a field that is no text as the empty text. `_text` of the
+     delegate client of the chaperone reads it as `None`.
+  6. An answer holds no byte that is not UTF-8. The three doors read such a
+     byte as U+FFFD, because `httpx` makes a text of the body first. The
+     three other clients refuse the answer, and `parse_object` refuses it
+     too. The port of a door gives `parse_object` the lossy text of the body,
+     or it names the difference in its pull request.
+
+  One more row is a vector on which the two sides accept the same document.
+  The raw type of the test keeps an integer past 64 bits as a float.
+- `untrusted::parse_object` refuses the whole answer for difference 1, for
+  difference 2 and for difference 6. The Python services write the JSON body
+  of an answer with the JSON response class of their web framework. That
+  class writes no `NaN`, no `Infinity` and no half of a surrogate pair. It
+  writes an integer of each size. The owner of the crate decides if the
+  module gets a JSON reader of its own, as `channel`, `grants`, `status` and
+  `manifest` have.
+- The module `untrusted` has no reader that tells a value that is no list
+  from an empty list. `untrusted::list` reads both as the empty list.
+  `is_list` of each door gives `False` for the first only, and `as_array` of
+  `attendance` gives `None` for the first only.
+- `untrusted::parse_object` gives `NotAnObject::NotObject` for an object that
+  the raw type refuses. `NotAnObject` has no variant for that case. A raw
+  type refuses no object when each of its fields names a reader of the
+  module and has `default`.
 - `Secret` does not erase its bytes when the value drops. A sure erase needs
   `unsafe` code, and the lint gate forbids `unsafe` code.
 - `Secret::matches` has no branch on a byte of the secret. The compiler gives
