@@ -197,8 +197,8 @@ impl PathAndQuery {
 
 /// The body of a request.
 ///
-/// `Debug` prints the count of the bytes and never a byte: a body can hold a
-/// prompt.
+/// `Debug` prints no byte and no count of the bytes: a body can hold a prompt
+/// or a key, and the count can give the length of that key.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Body {
     /// No body.
@@ -212,7 +212,7 @@ impl fmt::Debug for Body {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => f.write_str("Empty"),
-            Self::Json(bytes) => write!(f, "Json(<{} bytes>)", bytes.len()),
+            Self::Json(_) => f.write_str("Json(..)"),
         }
     }
 }
@@ -311,7 +311,9 @@ impl Client {
 
 /// One whole answer.
 ///
-/// `Debug` prints the count of the bytes of the body and never a byte.
+/// `Debug` prints the status and the headers. It prints no byte of the body
+/// and no count of the bytes: an answer can hold a key, and the count can
+/// give the length of that key.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Reply {
     /// The status.
@@ -327,8 +329,7 @@ impl fmt::Debug for Reply {
         f.debug_struct("Reply")
             .field("status", &self.status)
             .field("headers", &self.headers)
-            .field("body", &format_args!("<{} bytes>", self.body.len()))
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -483,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn the_debug_of_a_body_and_of_an_answer_prints_no_byte() {
+    fn the_debug_of_a_body_and_of_an_answer_prints_no_byte_and_no_count() {
         let body = Body::Json(br#"{"prompt":"correct horse"}"#.to_vec());
         let reply = Reply {
             status: StatusCode::OK,
@@ -491,11 +492,13 @@ mod tests {
             body: b"correct horse".to_vec(),
         };
 
-        assert_eq!(format!("{body:?}"), "Json(<26 bytes>)");
+        // A body can hold a key, so the text holds no count of its bytes:
+        // not the 26 of the request and not the 13 of the answer.
+        assert_eq!(format!("{body:?}"), "Json(..)");
         assert_eq!(format!("{:?}", Body::Empty), "Empty");
         assert_eq!(
             format!("{reply:?}"),
-            "Reply { status: 200, headers: {}, body: <13 bytes> }"
+            "Reply { status: 200, headers: {}, .. }"
         );
     }
 
