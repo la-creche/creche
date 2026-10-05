@@ -72,6 +72,10 @@ EDGE = 262_144
 #: limit of `json.loads` in each supported Python version.
 DEEP = 2_000
 
+#: More digits than `json.loads` takes for one integer. Its limit is 4300 in
+#: each supported Python version.
+MANY_DIGITS = 5_000
+
 #: The longest `kind` that the output names.
 LONGEST_KIND = "a" * 32
 
@@ -146,6 +150,11 @@ CASES: list[tuple[str, bytes, tuple[str, ...]]] = [
         _line(b'"' + MARKER.encode() + b'"', rb'{"text":"\udfff"}'),
         _lone("other"),
     ),
+    # One character outside `a` to `z` and `_` is sufficient: a digit, an
+    # upper case letter, a `-`.
+    ("lone-kind-digit", _line(b'"note1"', rb'{"text":"\ud800"}'), _lone("other")),
+    ("lone-kind-upper-case", _line(b'"Note"', rb'{"text":"\ud800"}'), _lone("other")),
+    ("lone-kind-dash", _line(b'"a-b"', rb'{"text":"\ud800"}'), _lone("other")),
     ("lone-kind-final-newline", _line(rb'"note\n"', rb'{"text":"\ud800"}'), _lone("other")),
     ("lone-kind-empty", _line(b'""', rb'{"text":"\ud800"}'), _lone("other")),
     ("lone-kind-no-text", _line(b"7", rb'{"text":"\ud800"}'), _lone("other")),
@@ -170,6 +179,7 @@ CASES: list[tuple[str, bytes, tuple[str, ...]]] = [
     ("no-json", b"no JSON " + MARKER.encode() + b"\n", (NO_JSON,)),
     ("a-list", b"[1,2]\n", (NO_JSON,)),
     ("too-deep", b"[" * 100_000 + b"\n", (NO_JSON,)),
+    ("integer-too-long", _line(b'"note"', b'{"n":' + b"1" * MANY_DIGITS + b"}"), (NO_JSON,)),
     ("no-utf8", _line(b'"note"', b'{"text":"\xff"}'), (NO_JSON,)),
     ("empty", b"\n", (NO_JSON,)),
 ]
@@ -182,14 +192,14 @@ JOURNALS = 3
 #: table above.
 KNOWN_ANSWER = b"""\
 files 3
-lines 31
+lines 35
 files_not_read 0
-lines_not_json 5
+lines_not_json 6
 lines_unfinished 1
-lone_surrogate_lines 13
+lone_surrogate_lines 16
 lone_surrogate_lines.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1
 lone_surrogate_lines.note 4
-lone_surrogate_lines.other 6
+lone_surrogate_lines.other 9
 lone_surrogate_lines.pi_event 1
 lone_surrogate_lines.turn_queued 1
 cut_events_small 2
@@ -469,6 +479,17 @@ def test_a_journal_that_does_not_open_counts_as_not_read(tmp_path: Path) -> None
     assert done.stderr.startswith(b"journal-scan: ") and done.stderr.count(b"\n") == 1
 
 
+def test_a_journal_that_no_user_can_write_is_read(tmp_path: Path) -> None:
+    """The program asks for read access only. A request to write fails on this journal."""
+    journal = _journal(tmp_path, FAMILY, SESSION, PLAIN)
+    journal.chmod(0o444)
+
+    done = _scan(tmp_path)
+
+    assert done.returncode == EXIT_READ_ALL, done.stderr
+    assert done.stdout == _report({FILES: 1, LINES: 1})
+
+
 @pytest.mark.parametrize("closed", [FAMILY, f"{FAMILY}/{SESSION}"], ids=["family", "session"])
 def test_a_directory_that_does_not_open_counts_as_not_read(tmp_path: Path, closed: str) -> None:
     _journal(tmp_path, FAMILY, SESSION, PLAIN)
@@ -497,6 +518,33 @@ def test_a_symbolic_link_is_not_followed_and_counts_as_not_read(tmp_path: Path) 
 
     assert done.returncode == EXIT_LOWER_LIMIT
     assert done.stdout == _report({FILES: 1, NOT_READ: LINKS})
+
+
+def test_a_directory_that_becomes_a_link_is_not_followed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A name can change to a symbolic link after the program looked at it.
+
+    Here the look of the program goes through each link, so each link is a
+    directory for the program. The open that comes next must still refuse the
+    link. Both links go to a journal with a line of COUNT 1.
+    """
+    journal = _journal(tmp_path / "outside", "family", "session", LONE_NOTE)
+    root = tmp_path / "sessions"
+    (root / FAMILY).mkdir(parents=True)
+    (root / "linked-family").symlink_to(journal.parent.parent, target_is_directory=True)
+    (root / FAMILY / "linked-session").symlink_to(journal.parent, target_is_directory=True)
+    program: dict[str, Any] = runpy.run_path(str(SCRIPT), run_name="journal_scan")
+
+    def through_links(name: str, *, dir_fd: int) -> os.stat_result:
+        return os.stat(name, dir_fd=dir_fd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "lstat", through_links)
+        status = program["main"]([str(root)], SOME_USER)
+
+    assert status == EXIT_LOWER_LIMIT
+    assert capsys.readouterr().out.encode() == _report({NOT_READ: 2})
 
 
 def test_a_directory_with_the_name_of_a_journal_counts_as_not_read(tmp_path: Path) -> None:
