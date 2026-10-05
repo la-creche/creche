@@ -604,11 +604,14 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the markup of a page of the noticeboard.**
   `docs/rework/spec.md` §8.1 says what each page shows. No contract gives
   the markup. The suite reads the markup of the templates as the interface.
-  A change of the markup costs the names in `test_proc_board_pages.py` and
-  `test_proc_board_edit.py`.
+  A change of the markup costs the names in `test_proc_board_pages.py`,
+  `test_proc_board_edit.py`, `test_proc_board_reports.py` and
+  `proc_board_reports.py`.
 - **The names that the suite reads in the markup.** The suite finds a table
   by its class, and a cell by the text of its column head. It finds a report
-  by the classes `problem`, `problems` and `issues`.
+  by the classes `problem`, `problems` and `issues`. It finds a mark beside
+  a value by the class `flag`. It finds a link between two pages of the
+  audit page by its text: `older` or `newer`.
 - **CONTRACT-QUESTION, the answer to a route parameter that is no id.**
   `docs/rework/spec.md` §8.1 lists the routes. No section gives the answer
   for a parameter that is not a family name or a session id. The suite holds
@@ -659,6 +662,13 @@ the text of the failure. Work down this list.
   session, it keeps a record whose field holds the value as a part. No
   scenario holds that difference. A change costs one scenario in
   `test_proc_board_pages.py` and one in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a state root with no audit directory.**
+  `docs/rework/spec.md` §8.3 gives the audit page a banner for audit files
+  that the service cannot read. No contract names a state root with no
+  audit directory. The suite holds that the page then has the same report:
+  a list with the class `problems`, and the table. The noticeboard shows
+  `cannot list the audit directory` and the reason. A change costs one
+  scenario in `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, the body of a refusal of the noticeboard.**
   `docs/rework/spec.md` §8.3 rule 4 permits a word for the fault in a
   refusal, and no value. No contract gives the form of the body or a word.
@@ -689,7 +699,7 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, where the noticeboard reads its key.**
   `docs/rework/spec.md` §8.3 names the key and no source of it. The suite
   holds the two variables that `noticeboard/AGENTS.md` names:
-  - `VIEW_ACCESS_KEY` holds the key when no key file is named.
+  - `VIEW_ACCESS_KEY` holds the key when no variable names a key file.
   - `VIEW_ACCESS_KEY_FILE` names a file that holds the key. A final newline
     of the file is no part of the key.
 

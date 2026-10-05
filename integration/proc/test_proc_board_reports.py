@@ -92,7 +92,7 @@ NOT_JSON = f'{{"family": "{FAMILY}", "state": "in_sync", '
 #: Contract 05 §7: what one family spent in the window, and how a page
 #: writes that number of dollars.
 SPEND_USD = 3.42
-SPEND_TEXT = "3.42"
+SPEND_TEXT = f"{SPEND_USD:.2f}"
 
 #: How far the `as_of` of a spend that is not current is behind `written_at`.
 OLD_SPEND_AGE = timedelta(hours=1)
@@ -414,10 +414,17 @@ async def test_a_filter_of_the_audit_page_keeps_its_records(
 
 
 async def test_the_audit_page_reports_a_missing_directory(board_alone: BoardStack) -> None:
-    """`docs/rework/spec.md` §8.3: the page shows a banner and the rest of itself.
+    """The page says what it cannot read, and it shows the rest of itself.
 
     No scenario of this root wrote an audit record, so the state root holds
     no audit directory.
+
+    CONTRACT-QUESTION: `docs/rework/spec.md` §8.3 gives a banner for audit
+    files that the service cannot read. No contract names a state root with
+    no audit directory. Reading taken: that page gets the same report, a
+    list with the class `problems`, and it still holds the table. The
+    noticeboard shows `cannot list the audit directory` with the reason. A
+    change costs this scenario.
     """
     assert not board_alone.tree.audit_dir.exists()
 
@@ -431,8 +438,9 @@ async def test_the_audit_page_reports_a_missing_directory(board_alone: BoardStac
 async def test_a_record_with_a_line_separator_is_one_row(board_alone: BoardStack) -> None:
     """LF alone ends a record. U+2028 is legal inside a JSON string.
 
-    Contract 04 §6 makes the file JSONL, and contract 02 §8 gives the rule
-    for each such file: a reader splits on LF only.
+    Contract 04 §6 makes the file JSONL. Contract 02 §8 gives the rule for
+    the event stream: a reader splits on LF only. The noticeboard uses the
+    same rule for the audit file.
     """
     tree = board_alone.tree
     (today,) = audit_days(1)
@@ -573,7 +581,7 @@ async def test_a_post_at_the_body_limit_is_a_save(board_alone: BoardStack) -> No
 
 
 async def test_a_literal_key_in_the_environment_is_the_key(board_prepared: BoardStack) -> None:
-    """`VIEW_ACCESS_KEY` holds the key when no key file is named.
+    """`VIEW_ACCESS_KEY` holds the key when no variable names a key file.
 
     CONTRACT-QUESTION: §8.3 names the key. No contract says where the
     process reads it. Reading taken: the two variables of
@@ -653,6 +661,7 @@ def test_a_value_that_is_not_valid_refuses_to_start(
     child = board_prepared.spawn(Service.NOTICEBOARD, env)
 
     assert child.wait(EXIT_DEADLINE_S) != 0, child.output()
+    # Only the page-size case gives the service this port.
     assert not is_listening(TcpAddress(port))
 
 
