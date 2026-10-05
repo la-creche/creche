@@ -3,7 +3,7 @@
  "contract": "no contract: the rules of library/AGENTS.md",
  "entry": "library.library.file_hash",
  "format": 1,
- "notes": ["The input is the bytes of one file. The generator writes them to a file and gives the entry point the path.","value is the digest as 32 hexadecimal digits in lower case: BLAKE2b with a digest of 16 bytes, no key, no salt and no personal text."],
+ "notes": ["The input is the bytes of one file. The generator writes them to a file and gives the entry point the path.","value is the digest as 32 hexadecimal digits in lower case. The hash is BLAKE2b with a digest of 16 bytes, no key, no salt and no personalization."],
  "surface": "library.file_hash",
  "vectors": [
   {"id":"empty","input":{"text":""},"result":"accepted","value":"cae66941d9efbd404e4d88758ea67670"},

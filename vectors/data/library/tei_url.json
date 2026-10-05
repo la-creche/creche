@@ -3,7 +3,7 @@
  "contract": "no contract: the rules of library/AGENTS.md",
  "entry": "library.__main__.tei_url",
  "format": 1,
- "notes": ["The input is the variables of the process, as args.","value is the base URL of the embedder, as the entry point returns it.","A refused vector is an environment for which the entry point raises its ConfigError. refusal.variables is each variable that the error text names, in the order of the text.","Each URL and each LAN address of a vector is a text that the config types of the Rust crate take: a URL with the scheme http, a host, no user part and no space inside, and a LAN address that is not the address of each interface."],
+ "notes": ["The input is the variables of the process, as args.","value is the base URL of the embedder, as the entry point returns it.","A refused vector is an environment for which the entry point raises its ConfigError. refusal.variables is each variable that the error text names, in the order of the text.","Each URL of a vector has the scheme http, a host, no user part and no space inside. Each LAN address of a vector is an IPv4 address or a host name, and it is not 0.0.0.0. The config types of the Rust crate take each such text."],
  "surface": "library.tei_url",
  "vectors": [
   {"id":"lan-address","input":{"args":{"AGENT_LAN_ADDRESS":"192.0.2.10"}},"result":"accepted","value":"http://192.0.2.10:8085"},

@@ -272,8 +272,8 @@ def _hash_surface(scratch: Path) -> Surface:
         notes=(
             "The input is the bytes of one file. The generator writes them to a file and "
             "gives the entry point the path.",
-            "value is the digest as 32 hexadecimal digits in lower case: BLAKE2b with a "
-            "digest of 16 bytes, no key, no salt and no personal text.",
+            "value is the digest as 32 hexadecimal digits in lower case. The hash is "
+            "BLAKE2b with a digest of 16 bytes, no key, no salt and no personalization.",
         ),
         vectors=tuple(_hash_vector(content, scratch) for content in HASH_CONTENTS),
     )
@@ -587,9 +587,9 @@ def _tei_url_surface() -> Surface:
             "A refused vector is an environment for which the entry point raises its "
             "ConfigError. refusal.variables is each variable that the error text names, in "
             "the order of the text.",
-            "Each URL and each LAN address of a vector is a text that the config types of "
-            "the Rust crate take: a URL with the scheme http, a host, no user part and no "
-            "space inside, and a LAN address that is not the address of each interface.",
+            "Each URL of a vector has the scheme http, a host, no user part and no space "
+            "inside. Each LAN address of a vector is an IPv4 address or a host name, and it "
+            "is not 0.0.0.0. The config types of the Rust crate take each such text.",
         ),
         vectors=tuple(_tei_url_vector(env) for env in ENVIRONMENTS),
     )
@@ -763,8 +763,8 @@ def _embedding_surface(scratch: Path) -> Surface:
         notes=(
             f"The input is one vector of {DIMS} values, as args. args.first holds the first "
             "values. Each other value is args.fill. A value is a float or an integer.",
-            f"The corpus is one file, {_ONE_FILE}, with one chunk. The embedder is a stub "
-            "that returns the vector for that chunk.",
+            f"The corpus is one file, {_ONE_FILE}, with the text '{_ONE_CHUNK}'. The "
+            "embedder is a stub that returns the vector for that one chunk.",
             "output is the bytes of the column embedding of the one row of chunks_emb: "
             f"{DIMS * 4} bytes. The bytes of each vector are not UTF-8, so output has the "
             f"form {_BASE64}.",
@@ -817,8 +817,8 @@ def _schema_surface(scratch: Path) -> Surface:
             "The input is args.model: the model of a stub embedder. The corpus is an empty "
             "directory, and no store exists before the run.",
             "value.tables holds the statement that sqlite_master keeps for each of five "
-            f"tables: {', '.join(_TABLES)}. It holds no statement of chunks_vec and of a "
-            "table that a virtual table makes for itself.",
+            f"tables: {', '.join(_TABLES)}. It holds no statement of chunks_vec, and none "
+            "of a table that a virtual table makes for itself.",
             "value.meta holds each row of meta as a pair of key and value, in the order of "
             f"the keys. The store also holds the row {_UPDATED_AT}. Its value is the time of "
             "the run, and no vector holds it.",
@@ -1102,8 +1102,8 @@ def _index_surface(scratch: Path) -> Surface:
             f"file of the path. {MODEL_STEP} gives the embedder the model of the key name. "
             f"{RUN} calls the entry point. The index directory is outside the scope, and "
             "each run of a vector uses the same one.",
-            "The embedder is a stub with the model args.model at the start. For a text "
-            f"whose code points have the sum s, value i of its vector is "
+            "The embedder is a stub with the model args.model at the start. Let s be the "
+            "sum of the code points of a text. Value i of the vector of that text is "
             f"((s * (i + 1)) % 1000) / 1000 - 0.5, for i from 0 to {DIMS - 1}.",
             f"value.runs holds one item for each step {RUN}, in order. report holds the "
             "counts of the report of that run. batches holds the count of texts of each "
