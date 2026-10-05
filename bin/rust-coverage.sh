@@ -166,25 +166,30 @@ class Counts(NamedTuple):
 NOTHING = Counts(0, 0)
 
 
-class File(NamedTuple):
-    """The counts of one file of the report, or the sum of some files.
-    `entry` is the raw entry of one file: only a failure line reads it."""
+class Sums(NamedTuple):
+    """The counts of one file of the report, or of some files together."""
 
     regions: Counts
     lines: Counts
     branches: Counts
-    entry: object
 
-    def plus(self, other: File) -> File:
-        return File(
+    def plus(self, other: Sums) -> Sums:
+        return Sums(
             self.regions.plus(other.regions),
             self.lines.plus(other.lines),
             self.branches.plus(other.branches),
-            None,
         )
 
 
-NO_FILE = File(NOTHING, NOTHING, NOTHING, None)
+NO_SUMS = Sums(NOTHING, NOTHING, NOTHING)
+
+
+class File(NamedTuple):
+    """One file of the report: its counts, and its raw entry. Only a failure
+    line reads the entry."""
+
+    sums: Sums
+    entry: object
 
 
 def _no_key_twice(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -272,12 +277,12 @@ def read_report(path: str, rust_dir: str) -> dict[str, File]:
 
         where = f"the summary of {name}"
         summary = _member(one, "summary", f"the entry of {name}")
-        files[name] = File(
+        sums = Sums(
             _counts(summary, "regions", where),
             _counts(summary, "lines", where),
             _counts(summary, "branches", where),
-            one,
         )
+        files[name] = File(sums, one)
 
     return files
 
@@ -373,19 +378,19 @@ def check_listed(root: str, name: str, files: dict[str, File], measure: Measure)
 
         return problems
 
-    if found.regions.missed():
+    regions, lines, branches = found.sums
+    if regions.missed():
         problems.append(
-            f"{name}: no test ran {found.regions.missed()} of {found.regions.total} "
-            f"regions. They start at {_places(found.entry, name)}"
+            f"{name}: no test ran {regions.missed()} of {regions.total} regions. "
+            f"They start at {_places(found.entry, name)}"
         )
 
-    if found.lines.missed():
-        problems.append(f"{name}: no test ran {found.lines.missed()} of {found.lines.total} lines")
+    if lines.missed():
+        problems.append(f"{name}: no test ran {lines.missed()} of {lines.total} lines")
 
-    if measure is Measure.BRANCHES and found.branches.missed():
+    if measure is Measure.BRANCHES and branches.missed():
         problems.append(
-            f"{name}: no test took {found.branches.missed()} of {found.branches.total} "
-            "sides of a branch"
+            f"{name}: no test took {branches.missed()} of {branches.total} sides of a branch"
         )
 
     return problems
@@ -413,24 +418,24 @@ def crate_of(name: str, rust_dir: str) -> str:
     return NO_CRATE
 
 
-def crate_rows(root: str, rust_dir: str, files: dict[str, File]) -> dict[str, File]:
+def crate_rows(root: str, rust_dir: str, files: dict[str, File]) -> dict[str, Sums]:
     """The sum of each crate. A crate of the workspace that the report does
     not hold has a row too, so a crate with no measured code shows."""
-    rows: dict[str, File] = {}
+    rows: dict[str, Sums] = {}
     crates = os.path.join(root, rust_dir, CRATES)
     if os.path.isdir(crates):
         for one in os.listdir(crates):
             if os.path.isfile(os.path.join(crates, one, CRATE_FILE)):
-                rows[one] = NO_FILE
+                rows[one] = NO_SUMS
 
     for name, found in files.items():
         crate = crate_of(name, rust_dir)
-        rows[crate] = rows.get(crate, NO_FILE).plus(found)
+        rows[crate] = rows.get(crate, NO_SUMS).plus(found.sums)
 
     return rows
 
 
-def row(label: str, sums: File, measure: Measure) -> str:
+def row(label: str, sums: Sums, measure: Measure) -> str:
     text = f"{label}: tests ran {sums.regions.of('regions')}, {sums.lines.of('lines')}"
     if measure is Measure.BRANCHES:
         text += f", {sums.branches.of('sides of a branch')}"
@@ -452,7 +457,7 @@ def main(root: str, rust_dir: str, report: str, wanted: str) -> int:
         paths, problems = read_list(root, rust_dir)
         files = read_report(report, rust_dir)
         rows = crate_rows(root, rust_dir, files)
-        total = NO_FILE
+        total = NO_SUMS
         for crate in sorted(rows):
             say(row(f"crate {crate}", rows[crate], measure))
             total = total.plus(rows[crate])
