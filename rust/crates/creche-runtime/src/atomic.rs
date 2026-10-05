@@ -1204,6 +1204,26 @@ mod tests {
     }
 
     #[test]
+    fn the_host_create_gives_the_temporary_file_no_bit_past_its_mode() {
+        // The bytes go into the temporary file before the second mode
+        // call. A private file thus has no bit for the group or for each
+        // user from its create on.
+        let root = TempRoot::new().unwrap();
+
+        for (name, mode, bits) in [
+            (".creds.json.1.0.tmp", FileMode::Private, 0o600),
+            (".grant.json.1.1.tmp", FileMode::GroupRead, 0o640),
+            (".status.json.1.2.tmp", FileMode::PublicRead, 0o644),
+        ] {
+            let temp = root.path().join(name);
+
+            let _file = Host.create_temp(&temp, mode).unwrap();
+
+            assert_eq!(mode_of(&temp) & !bits, 0, "{name}");
+        }
+    }
+
+    #[test]
     fn a_leftover_that_the_write_cannot_remove_stops_the_write() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("status.json");
@@ -1475,6 +1495,18 @@ mod tests {
         // later call and not to the first one.
         let mut first = [0_u8; 1];
         assert_eq!(reader.read(&mut first).unwrap(), 1);
+    }
+
+    #[test]
+    fn each_sync_step_of_the_host_asks_the_system() {
+        // No test can see what a sync does to the disk. The system refuses
+        // the sync of a socket and of the null device. An error from a
+        // step thus shows that the step asks the system for the sync.
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let file = File::from(OwnedFd::from(socket));
+
+        Host.sync_temp(&file).unwrap_err();
+        Host.sync_dir(Path::new("/dev/null")).unwrap_err();
     }
 
     #[test]
