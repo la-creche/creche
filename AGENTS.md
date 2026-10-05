@@ -77,6 +77,12 @@ rule.
 - A layer talks only to the layer directly below it. Do not call through a
   layer.
 
+## Time
+
+A time in a file or in a wire message is a `date-time` of RFC 3339,
+section 5.6. A writer writes each time in UTC, with `Z` as the offset. A
+text with no UTC offset is not a time.
+
 ## Where the rules for a directory live
 
 | Directory | Read |

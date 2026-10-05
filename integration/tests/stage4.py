@@ -81,7 +81,7 @@ from caregiver.litellm_keys import FakeLiteLLMKeys
 from conftest import chat_body, owui_headers
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from stack import FAMILY, LOCK_BEAT_MS, Stack, fake_pi_script, repo_root
+from stack import FAMILY, LOCK_BEAT_MS, Stack, fake_pi_exec, repo_root
 
 from caregiver import paths as caregiver_paths
 
@@ -551,7 +551,7 @@ class Stage4:
             f'FAKE_PI_FORK_LOG="{self._fork_dir}/$$.log"\n'
             "export FAKE_PI_FORK_LOG\n"
             f'. "{self.stack.state_root.parent / "pi-env.sh"}"\n'
-            f'exec node "{fake_pi_script()}" "$@"\n',
+            f"{fake_pi_exec()}",
             encoding="utf-8",
         )
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

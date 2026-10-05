@@ -16,7 +16,7 @@ use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
 
-use super::values::{DirPath, FilePath, HttpUrl, LanAddress, Port, Seconds};
+use super::values::{DEFAULT_STATE_ROOT, DirPath, FilePath, HttpUrl, LanAddress, Port, Seconds};
 use super::{
     AtReload, AtStart, AttendanceTarget, Checked, ConfigError, ConfigErrors, Env, FailureAction,
     LAN_ADDRESS, Parsed, ProcessConfig, all2, all3, all4, pytext,
@@ -27,7 +27,6 @@ use crate::secret::Secret;
 /// an argument list (invariant 13).
 pub const MASTER_KEY: &str = "LITELLM_MASTER_KEY";
 
-const DEFAULT_STATE_ROOT: &str = "/srv/agents/state/rework";
 const DEFAULT_RELEASE_ROOT: &str = "/var/lib/creche-handover";
 
 /// The file that a `playpen` release installs. Its references win over the

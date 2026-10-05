@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+creche-util = { path = "../creche-util" }
 serde = { workspace = true }
 # `raw_value`: the session module reads a member of a body as its JSON text,
 # so a number of any size and an unknown member cost no parse.
