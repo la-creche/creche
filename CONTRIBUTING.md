@@ -98,7 +98,7 @@ in `AGENTS.md` yourself.
 ## CI
 
 `.github/workflows/gate.yml` runs on every pull request and on every merge
-group. It has eight kinds of job:
+group. It has nine kinds of job:
 
 1. `lint`: ruff, ruff format, pyright. On a docs-only pull request it also
    runs the tests marked `docs`.
@@ -107,23 +107,28 @@ group. It has eight kinds of job:
 3. `playpen`: `pnpm test`, `pnpm run typecheck` and `pnpm run build`.
 4. `proc`: the process-level suite, `uv run pytest integration/proc -m slow`.
    The job builds the playpen first. A test that skips is a failure there.
-5. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
+5. `suites`: the two suites `integration/tests` and
+   `integration/tests_manager`. The job builds the playpen first. It runs
+   each suite with a pytest command of its own. A test that skips is a
+   failure there. Only `gate.yml` has this job. `integration/AGENTS.md` has
+   its rules.
+6. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
    `rust/rust-toolchain.toml` names. The job installs `cargo-deny` before
    the script runs. When the pull request changes no path under `rust/` and
    no path under `vectors/`, the job skips those steps and passes. A change
    to the Rust checks themselves also runs the steps.
    `rust_gate_path` in `bin/lib/rustrule.sh` lists those files.
-6. `rust-coverage`: `bin/rust-coverage.sh`, the coverage rule of the Rust
+7. `rust-coverage`: `bin/rust-coverage.sh`, the coverage rule of the Rust
    workspace. The job installs `cargo-llvm-cov` before the script runs. It
    skips its steps for the same changes as the `rust` job. `rust/AGENTS.md`
    has the rule.
-7. `systemd-proof`: `bin/systemd-proof.sh`, on the systemd of the runner.
+8. `systemd-proof`: `bin/systemd-proof.sh`, on the systemd of the runner.
    It proves that a unit with `RestartPreventExitStatus=78` stays stopped
    after exit status 78. It also gives each unit file to
    `systemd-analyze verify`. When the pull request changes no file of the
    proof, the job skips that step and passes. `bin/AGENTS.md` lists those
    files.
-8. `gate`: red unless every other job passed. This is the one check the
+9. `gate`: red unless every other job passed. This is the one check the
    merge queue and the release executor read.
 
 Comment `!retest` on a pull request to restart its CI on the same commit.
