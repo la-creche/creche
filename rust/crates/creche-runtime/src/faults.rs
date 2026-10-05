@@ -10,8 +10,9 @@
 //! `since` and when the service writes the file again.
 //!
 //! The Python writers are `attendance/src/attendance/faults.py:128-138` and
-//! `chaperone/src/chaperone/faults.py:118-133`. The table `DEVIATIONS` in
-//! the tests of this module names each difference from the two.
+//! `chaperone/src/chaperone/faults.py:118-133`. No vector covers a write. The
+//! doc comment of [`publish`] names each difference from the two writers, and
+//! one plain test holds each one.
 
 use std::error::Error;
 use std::fmt;
@@ -83,6 +84,25 @@ impl Error for PublishError {
 ///
 /// The Python origins are `attendance/src/attendance/faults.py:128-138` and
 /// `chaperone/src/chaperone/faults.py:68-89`, `:105-106` and `:118-133`.
+///
+/// The function differs from its Python origins in five ways:
+///
+/// 1. The writer of `attendance` does not sync the directory
+///    (`attendance/src/attendance/atomic.py:42-61`). This function syncs it
+///    after the rename, as the chaperone does.
+/// 2. The temporary file of the chaperone is `<family>.json.tmp`
+///    (`chaperone/src/chaperone/faults.py:71`). This function writes
+///    `.<family>.json.<pid>.<count>.tmp`, the form of `attendance`.
+/// 3. The chaperone makes its directory and sets the mode one time, when
+///    its writer starts (`chaperone/src/chaperone/faults.py:105-106`). This
+///    function does both at each call, as `attendance` does.
+/// 4. The chaperone takes the family as a text. For a text that is no
+///    family name, it writes a log line and no file
+///    (`chaperone/src/chaperone/faults.py:108-116`). This function takes a
+///    file that holds a `FamilyName`.
+/// 5. The chaperone writes a log line for a write that fails, and its
+///    caller gets `False` (`chaperone/src/chaperone/faults.py:128-133`).
+///    This function returns the error. The service writes the log line.
 ///
 /// ```
 /// use creche_contracts::status::fault_file::FaultFile;
@@ -349,62 +369,9 @@ mod tests {
         assert_eq!(names_in(temp.path()), ["faults"]);
     }
 
-    /// One difference between this module and a Python writer of a fault
-    /// file.
-    struct Deviation {
-        /// The Python file and the lines of the writer.
-        python: &'static str,
-        /// What the writer does.
-        copy: &'static str,
-        /// What this module does.
-        here: &'static str,
-        /// The check that this module does what the row says.
-        holds: fn(),
-    }
-
-    /// Each difference on purpose between [`publish`] and a Python writer.
-    /// No vector covers a write, so a row names the Python lines.
-    const DEVIATIONS: &[Deviation] = &[
-        Deviation {
-            python: "attendance/src/attendance/atomic.py:50-58",
-            copy: "The writer of attendance syncs the temporary file and renames it. It does \
-                   not sync the directory.",
-            here: "The write also syncs the directory after the rename, as the chaperone does.",
-            holds: the_write_syncs_the_directory,
-        },
-        Deviation {
-            python: "chaperone/src/chaperone/faults.py:71",
-            copy: "The temporary file of the chaperone is <family>.json.tmp. Each write of one \
-                   family uses that one name.",
-            here: "The temporary file is .<family>.json.<pid>.<count>.tmp, the form of \
-                   attendance. The write does not use the name of the chaperone.",
-            holds: the_write_does_not_use_the_name_of_the_chaperone,
-        },
-        Deviation {
-            python: "chaperone/src/chaperone/faults.py:105-106",
-            copy: "The chaperone makes its directory and sets the mode one time, when the \
-                   writer starts.",
-            here: "Each publish makes the directory and sets the mode, as attendance does.",
-            holds: each_publish_makes_the_directory_with_its_mode,
-        },
-        Deviation {
-            python: "chaperone/src/chaperone/faults.py:108-116",
-            copy: "The chaperone takes the family as a text. It writes a log line and no file \
-                   for a text that is no family name.",
-            here: "The file holds a FamilyName, so each file has a path of one part in the \
-                   directory of its writer.",
-            holds: the_path_is_one_file_name_in_the_directory,
-        },
-        Deviation {
-            python: "chaperone/src/chaperone/faults.py:128-133",
-            copy: "The chaperone writes a log line for a write that fails, and its caller gets \
-                   False.",
-            here: "publish returns the error with the step and the path. The service writes \
-                   the log line.",
-            holds: a_write_that_fails_names_its_step,
-        },
-    ];
-
+    /// Difference 1 of [`publish`]. The writer of `attendance` makes no sync
+    /// of the directory (`attendance/src/attendance/atomic.py:42-61`).
+    #[test]
     fn the_write_syncs_the_directory() {
         // No test can see a sync from outside the write. `HOW` is the one
         // value that `publish` gives the write, and the tests of `atomic`
@@ -414,6 +381,9 @@ mod tests {
         assert_eq!(HOW.mode, FileMode::GroupRead);
     }
 
+    /// Difference 2 of [`publish`]. The temporary file of the chaperone is
+    /// `<family>.json.tmp` (`chaperone/src/chaperone/faults.py:71`).
+    #[test]
     fn the_write_does_not_use_the_name_of_the_chaperone() {
         let temp = TempRoot::new().unwrap();
         let root = state_root(&temp);
@@ -433,6 +403,9 @@ mod tests {
         assert_eq!(names_in(&dir), [FILE_NAME, "chat.json.tmp"]);
     }
 
+    /// Difference 3 of [`publish`]. The chaperone makes its directory one
+    /// time (`chaperone/src/chaperone/faults.py:105-106`).
+    #[test]
     fn each_publish_makes_the_directory_with_its_mode() {
         let temp = TempRoot::new().unwrap();
         let root = state_root(&temp);
@@ -454,6 +427,9 @@ mod tests {
         assert_eq!(names_in(&dir), [FILE_NAME]);
     }
 
+    /// Difference 4 of [`publish`]. The chaperone takes the family as a text
+    /// (`chaperone/src/chaperone/faults.py:108-116`).
+    #[test]
     fn the_path_is_one_file_name_in_the_directory() {
         let temp = TempRoot::new().unwrap();
         let root = state_root(&temp);
@@ -471,6 +447,9 @@ mod tests {
         }
     }
 
+    /// Difference 5 of [`publish`]. The caller of the Python chaperone gets
+    /// `False` (`chaperone/src/chaperone/faults.py:128-133`).
+    #[test]
     fn a_write_that_fails_names_its_step() {
         let temp = TempRoot::new().unwrap();
         let root = state_root(&temp);
@@ -489,29 +468,5 @@ mod tests {
         assert!(!error.os_text.is_empty());
         // The write that failed leaves no temporary file.
         assert_eq!(names_in(&root.fault_dir(FaultWriter::Pep)), [FILE_NAME]);
-    }
-
-    #[test]
-    fn each_deviation_names_its_python_lines_and_holds() {
-        for row in DEVIATIONS {
-            let (file, lines) = row.python.rsplit_once(':').unwrap();
-
-            assert!(file.ends_with(".py"), "{}", row.python);
-            assert!(
-                lines
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || byte == b'-'),
-                "{}",
-                row.python
-            );
-            assert!(
-                !row.copy.is_empty() && !row.here.is_empty(),
-                "{}",
-                row.python
-            );
-            assert_ne!(row.copy, row.here, "{}", row.python);
-
-            (row.holds)();
-        }
     }
 }
