@@ -1051,11 +1051,6 @@ test.
   5. `UnidentifiedRecord`, contract 04 §6. The contract does not describe the
      log of a request that names no family. The type writes what the Python
      chaperone writes.
-  6. `SandboxEvidence::Claimed`, contract 04 §3.2 and §6.2. The contract moves
-     a sandbox id with no proof into `claimed`, and `claimed` has no key for
-     it. The variant writes the id into `sandbox_id` with
-     `sandbox_id_trusted: false`, as the writer of the Python chaperone can.
-     The Python chaperone itself writes `null` in each record.
 - The module `grants` has its own JSON reader and writer, and `serde_json`
   does not read a grant file or a request body. The Python code takes JSON
   that is not strict, and it reports each issue of a document. `grants::Value`
@@ -1197,6 +1192,10 @@ test.
   14. `TurnView`, contract 02 §4.4. The Python code writes the empty text
       as the sandbox of a turn that no sandbox served. The type does the
       same.
+  15. `ServiceNote::IllegalTransition`, contract 02 §4.3 and §8.1. No
+      contract names the note for a refused move of a turn. The Python
+      `attendance` writes that note only for a move that its state table
+      refuses. The type takes each pair of turn states.
 - The `session` module differs from the Python code on purpose in four
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
