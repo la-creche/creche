@@ -396,6 +396,7 @@ and never a raw text.
 |---|---|
 | `site` | The site file: `SiteFile` is the raw form, and `Site` is the valid form. |
 | `attendance`, `caregiver`, `chaperone`, `door_owui`, `door_trigger`, `noticeboard`, `intake` | The config of one daemon. |
+| `endpoints` | The names of five variables that hold the address of another service. A daemon module reads such a name from this module. |
 | `roster` | The roster of the chaperone. `RawRoster` takes its tree through `serde`. |
 | `mounts` | `runtime.json`, `creds.json` and the env file of the playpen. |
 
@@ -896,9 +897,8 @@ test.
     deletes the parameter.
   - The address of another service. `config::chaperone` and
     `config::caregiver` define the port of another service as a constant.
-    Packet `decisions-config-endpoints` adds the names of the variables.
-    The packet that makes a service read a variable deletes the constant
-    of that service.
+    `config::endpoints` holds the names of the variables. The packet that
+    makes a service read a variable deletes the constant of that service.
   - Time. The crate needs a single type for each time that a file or a
     wire message holds, in the RFC 3339 `date-time` form. Today `session`
     and `status` each define one. Packet `decisions-time-type` adds the

@@ -14,7 +14,9 @@ change without one red line, and each gets a check here:
    this pin and that text.
 3. **A variable of a unit that no config type knows.** Each `Environment=`
    name with the prefix of its service, and each flag of the caregiver
-   command, is in the Rust module of that daemon.
+   command, is in the Rust module of that daemon. The module `endpoints`
+   is the one home of some names. The module of the daemon then reads the
+   name from there.
 4. **A unit that checks its config before the main process starts, with a
    doc that does not say so.** systemd reads `RestartPreventExitStatus` only
    for the main process. A unit with an `ExecStartPre=... --check` line
@@ -80,6 +82,11 @@ PRE_CHECKED = {
 #: What the doc comment of a config type says when its unit holds the check.
 REMOVE_THE_CHECK = "removes the `ExecStartPre` line"
 
+#: The Rust module that is the one home of some names, each for a variable
+#: that holds the address of another service. The constant there has the
+#: name of its variable.
+ENDPOINTS = "endpoints"
+
 
 def _unit(name: str) -> str:
     return (UNITS / name).read_text(encoding="utf-8")
@@ -92,6 +99,21 @@ def _module(name: str) -> str:
 def _lines(text: str) -> list[str]:
     """Each line of a unit file that is not a comment."""
     return [line.strip() for line in text.splitlines() if not line.lstrip().startswith("#")]
+
+
+def _reads_endpoint(source: str, endpoints: str, name: str) -> bool:
+    """Whether the module `source` reads the constant `name` of the module
+    `endpoints`, and that module holds the text of the name."""
+    reads = f"{ENDPOINTS}::{name}" in source
+    home = f'pub const {name}: &str = "{name}";' in endpoints
+
+    return reads and home
+
+
+def _has_constant(source: str, endpoints: str, name: str) -> bool:
+    """Whether the module `source` holds a constant for the variable `name`:
+    the name as a text, or a read of that name from the module `endpoints`."""
+    return f'"{name}"' in source or _reads_endpoint(source, endpoints, name)
 
 
 def _restarting_units() -> set[str]:
@@ -174,15 +196,42 @@ def test_the_exit_status_of_a_bad_config_is_ex_config() -> None:
 
 
 def test_each_variable_of_a_unit_has_a_constant() -> None:
+    endpoints = _module(ENDPOINTS)
     for unit, (module, prefix) in MODULES.items():
         if prefix is None:
             continue
 
         source = _module(module)
         names = [name for name in ENVIRONMENT.findall(_unit(unit)) if name.startswith(prefix)]
-        missing = [name for name in names if f'"{name}"' not in source]
+        missing = [name for name in names if not _has_constant(source, endpoints, name)]
 
         assert not missing, f"{unit}: rust/.../config/{module}.rs has no constant for {missing}"
+
+
+def test_a_constant_is_a_text_or_a_name_of_the_endpoints_module() -> None:
+    home = 'pub const PEP_APPROVAL_URL: &str = "PEP_APPROVAL_URL";\n'
+    reads = "pub const APPROVAL_URL: &str = endpoints::PEP_APPROVAL_URL;\n"
+    text = 'pub const BIND: &str = "PEP_BIND";\n'
+
+    assert _has_constant(text, "", "PEP_BIND")
+    assert _has_constant(reads, home, "PEP_APPROVAL_URL")
+    assert not _has_constant(reads, "", "PEP_APPROVAL_URL"), "the endpoints module has no text"
+    assert not _has_constant(reads, text, "PEP_APPROVAL_URL"), "the endpoints module has no text"
+    assert not _has_constant(text, home, "PEP_APPROVAL_URL"), "the module reads no name"
+
+
+def test_the_chaperone_module_reads_its_names_of_the_endpoints_module() -> None:
+    """The check above also passes for a name that a module holds as a text."""
+    source = _module("chaperone")
+    endpoints = _module(ENDPOINTS)
+
+    where = "rust/.../config/chaperone.rs"
+
+    for name in ("PEP_APPROVAL_URL", "AGENT_HA_URL"):
+        assert _reads_endpoint(source, endpoints, name), (
+            f"{where}: the module no longer reads {name} from endpoints.rs"
+        )
+        assert f'= "{name}";' not in source, f"{where}: a second constant holds the text {name}"
 
 
 def test_the_chaperone_unit_gives_its_variables_in_the_unit_file() -> None:

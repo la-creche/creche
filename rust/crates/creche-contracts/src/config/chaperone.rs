@@ -11,7 +11,7 @@ use super::values::{
 };
 use super::{
     AtReload, AtStart, Checked, ConfigError, ConfigErrors, Env, FailureAction, LAN_ADDRESS, Parsed,
-    ProcessConfig, all2, all3, all4,
+    ProcessConfig, all2, all3, all4, endpoints,
 };
 
 /// The variable that names the state root: `grants/`, `audit/` and
@@ -42,7 +42,7 @@ pub const DISPATCH_TOKEN_FILE: &str = "PEP_DISPATCH_TOKEN_FILE";
 /// The variable that names the spool of release requests.
 pub const RELEASE_REQUESTS_DIR: &str = "PEP_RELEASE_REQUESTS_DIR";
 /// The variable that names the hook of an approval gate.
-pub const APPROVAL_URL: &str = "PEP_APPROVAL_URL";
+pub const APPROVAL_URL: &str = endpoints::PEP_APPROVAL_URL;
 /// The variable that gives the time between two sweeps of the faulted
 /// families.
 pub const FAULT_SWEEP_INTERVAL_S: &str = "PEP_FAULT_SWEEP_INTERVAL_S";
@@ -50,7 +50,7 @@ pub const FAULT_SWEEP_INTERVAL_S: &str = "PEP_FAULT_SWEEP_INTERVAL_S";
 /// site file.
 pub const HA_URL: &str = "HA_URL";
 /// The variable of the site file that names Home Assistant.
-pub const SITE_HA_URL: &str = "AGENT_HA_URL";
+pub const SITE_HA_URL: &str = endpoints::AGENT_HA_URL;
 
 /// The port of the chaperone on the LAN address.
 const PEP_PORT: &str = "8300";
