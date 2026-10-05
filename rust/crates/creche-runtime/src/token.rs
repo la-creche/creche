@@ -151,10 +151,12 @@ pub enum Encoding {
 /// The rules of one reader of a token file.
 ///
 /// ```
-/// use creche_runtime::token::{ModeRule, TokenRule};
+/// use creche_runtime::token::{Encoding, ModeRule, TokenRule, Trim};
 ///
 /// assert_eq!(TokenRule::ATTENDANCE.min_bytes(), 32);
 /// assert_eq!(TokenRule::ATTENDANCE.mode(), ModeRule::OwnerOnly);
+/// assert_eq!(TokenRule::ATTENDANCE.trim(), Trim::AsciiSpace);
+/// assert_eq!(TokenRule::ATTENDANCE.encoding(), Encoding::AnyBytes);
 /// assert_eq!(TokenRule::NOT_EMPTY.min_bytes(), 1);
 /// ```
 ///
