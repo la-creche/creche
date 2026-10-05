@@ -22,6 +22,7 @@ converges.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Final
 
@@ -29,7 +30,7 @@ import httpx
 import proc_html
 import proc_registry
 from proc_harness import LOOPBACK, Child, ProcError
-from proc_html import Element
+from proc_html import Element, form_values
 from proc_services import Service
 from proc_stack import CLIENT_TIMEOUT, Stack
 from proc_tree import AUTONOMOUS, FAMILY, LAN_ADDRESS, VIEW_KEY, Tree, add_family, write_view_key
@@ -52,6 +53,12 @@ VERB_SAVE: Final = "save"
 
 HTML_TYPE: Final = "text/html"
 HTTP_OK: Final = 200
+
+#: A browser sends each line end of a form value as CR LF (the HTML
+#: standard, "Converting an entry list to a list of name-value pairs"). A
+#: page gives the text of a text area with another line end.
+_LINE_END: Final = re.compile(r"\r\n|\r|\n")
+_POSTED_LINE_END: Final = "\r\n"
 
 
 def board_env(tree: Tree, host: str, port: int) -> dict[str, str]:
@@ -128,6 +135,38 @@ class BoardStack(Stack):
         return httpx.AsyncClient(
             base_url=self.origin, headers=headers, timeout=CLIENT_TIMEOUT, follow_redirects=False
         )
+
+
+class Browser:
+    """One open edit form: its fields, its cookie, and how it posts."""
+
+    def __init__(self, stack: BoardStack, client: httpx.AsyncClient, family: str) -> None:
+        self.stack = stack
+        self.client = client
+        self.path = f"/families/{family}/edit"
+        self.values: dict[str, str] = {}
+        self.cookie = ""
+
+    async def open(self) -> None:
+        response = await self.client.get(self.path)
+        assert response.status_code == httpx.codes.OK, response.text
+        self.values = form_values(html_of(response).one("form"))
+        self.cookie = csrf_of(response)
+
+    def sender(self) -> dict[str, str]:
+        """What a browser on the page of the form sends: its cookie and its origin."""
+        return {"Cookie": f"{CSRF_COOKIE}={self.cookie}", "Origin": self.stack.origin}
+
+    async def post(self, verb: str, headers: dict[str, str] | None = None) -> httpx.Response:
+        """Click one button. `headers` takes the place of what a browser sends.
+
+        Each line end of a value goes out as CR LF, as from a browser.
+        """
+        sent = self.sender() if headers is None else headers
+        fields = self.values | {VERB_FIELD: verb}
+        data = {name: _LINE_END.sub(_POSTED_LINE_END, value) for name, value in fields.items()}
+
+        return await self.client.post(self.path, data=data, headers=sent)
 
 
 async def page_of(client: httpx.AsyncClient, path: str) -> Element:

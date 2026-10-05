@@ -243,6 +243,10 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 20. A scenario that needs pi on a terminal starts on a session that ran a
     turn and that no terminal held before. The first four Known gaps of the
     terminal door say why.
+21. Read a value of a family file through `load_family` of
+    `proc_registry.py`. Write the text of a block of the edit form with
+    `block_text` of that module. No test names the markup of a family file.
+    A change of the markup then changes one module.
 
 ## The `caregiver` topology
 
@@ -748,7 +752,7 @@ the text of the failure. Work down this list.
 | `proc_harness.py` | a child in its own process group, the wait for an address, the teardown, the check at session end |
 | `proc_terminal.py`, `proc_login.py` | the test side of a pseudo-terminal, and the program that gives a command its controlling terminal |
 | `proc_tree.py` | the root, and one writer for each file a service reads |
-| `proc_registry.py` | the registry of the root: the text of a family file, the git repository, and what `git` reports |
+| `proc_registry.py` | the registry of the root: the text of a family file, the one reader of a family file, the git repository, and what `git` reports |
 | `proc_ids.py` | the ids that a door mints |
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |

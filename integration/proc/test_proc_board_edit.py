@@ -20,14 +20,13 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import proc_registry
 import pytest
-import yaml
 from proc_board import (
     CSRF_COOKIE,
     CSRF_FIELD,
-    VERB_FIELD,
     VERB_PREVIEW,
     VERB_SAVE,
     BoardStack,
+    Browser,
     csrf_of,
     html_of,
     page_of,
@@ -48,35 +47,6 @@ FIRST_COMMIT = 1
 
 #: How many browsers save one family at one time.
 SAVES_AT_ONE_TIME = 4
-
-
-class Browser:
-    """One open edit form: its fields, its cookie, and how it posts."""
-
-    def __init__(self, stack: BoardStack, client: httpx.AsyncClient, family: str) -> None:
-        self.stack = stack
-        self.client = client
-        self.path = f"/families/{family}/edit"
-        self.values: dict[str, str] = {}
-        self.cookie = ""
-
-    async def open(self) -> None:
-        response = await self.client.get(self.path)
-        assert response.status_code == httpx.codes.OK, response.text
-        self.values = form_values(html_of(response).one("form"))
-        self.cookie = csrf_of(response)
-
-    def sender(self) -> dict[str, str]:
-        """What a browser on the page of the form sends: its cookie and its origin."""
-        return {"Cookie": f"{CSRF_COOKIE}={self.cookie}", "Origin": self.stack.origin}
-
-    async def post(self, verb: str, headers: dict[str, str] | None = None) -> httpx.Response:
-        """Click one button. `headers` takes the place of what a browser sends."""
-        sent = self.sender() if headers is None else headers
-
-        return await self.client.post(
-            self.path, data=self.values | {VERB_FIELD: verb}, headers=sent
-        )
 
 
 async def test_the_form_holds_the_family_file_and_its_token(board_alone: BoardStack) -> None:
@@ -119,6 +89,7 @@ async def test_a_save_is_one_commit_of_one_file(board_alone: BoardStack) -> None
 
     commit = proc_registry.head(tree)
     text = proc_registry.read_family(tree, FAMILY)
+    saved = proc_registry.load_family(tree, FAMILY)
     target = urlsplit(response.headers["location"])
 
     assert response.status_code == httpx.codes.SEE_OTHER
@@ -128,7 +99,7 @@ async def test_a_save_is_one_commit_of_one_file(board_alone: BoardStack) -> None
     assert commit.subject == SUBJECT
     assert commit.paths == (family_path(tree, FAMILY),)
     assert proc_registry.uncommitted(tree) == ""
-    assert yaml.safe_load(text)["description"] == NEW_DESCRIPTION
+    assert saved["description"] == NEW_DESCRIPTION
     # §8.2 step 1: the edit is a patch on the file, so its comments stay.
     assert FILE_COMMENT in text
     assert after.one("h1").text.startswith(FAMILY)
@@ -176,12 +147,12 @@ async def test_a_save_after_a_preview_is_the_commit_of_the_edit(board_alone: Boa
         response = await browser.post(VERB_SAVE)
 
     commit = proc_registry.head(tree)
-    text = proc_registry.read_family(tree, FAMILY)
+    saved = proc_registry.load_family(tree, FAMILY)
 
     assert response.status_code == httpx.codes.SEE_OTHER
     assert proc_registry.commit_count(tree) == FIRST_COMMIT + 1
     assert commit.subject == SUBJECT
-    assert yaml.safe_load(text)["description"] == NEW_DESCRIPTION
+    assert saved["description"] == NEW_DESCRIPTION
     assert proc_registry.uncommitted(tree) == ""
 
 

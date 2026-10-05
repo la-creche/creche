@@ -21,8 +21,9 @@ from __future__ import annotations
 import os
 import subprocess
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final, cast
 
+import yaml
 from proc_tree import (
     ATTENDED,
     AUTONOMOUS,
@@ -166,6 +167,29 @@ def family_path(tree: Tree, name: str) -> str:
 
 def read_family(tree: Tree, name: str) -> str:
     return tree.family_file(name).read_text(encoding="utf-8")
+
+
+def load_family(tree: Tree, name: str) -> dict[str, Any]:
+    """One family file of the checkout, as the mapping of contract 01 §2.
+
+    This is the one reader of a family file in the suite. A scenario asserts
+    on a field of the mapping, and no test names the markup of the file.
+    """
+    loaded: object = yaml.safe_load(read_family(tree, name))
+
+    if not isinstance(loaded, dict):
+        raise RegistryError(f"{family_path(tree, name)} holds no mapping at the top level")
+
+    return cast("dict[str, Any]", loaded)
+
+
+def block_text(key: str, value: object) -> str:
+    """One field as the edit form of the noticeboard takes it in a block.
+
+    A block control holds the key line and the value, in the markup of the
+    family file.
+    """
+    return yaml.safe_dump({key: value}, sort_keys=False)
 
 
 def commit_all(tree: Tree, subject: str = _FIRST_SUBJECT) -> None:
