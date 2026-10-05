@@ -1080,6 +1080,22 @@ mod tests {
 """
 
 
+#: A test module with no last line: the file ends inside it.
+OPEN_TESTS = "#[cfg(test)]\nmod tests {\n    use std::panic::catch_unwind;\n"
+
+#: The end of a test module that holds a comment too, as `cargo fmt` keeps it.
+COMMENT_ENDS = {
+    "a line comment": "} // mod tests",
+    "a block comment": "} /* mod tests */",
+}
+
+
+def _crlf(text: str) -> str:
+    """`text` with CR LF at the end of each line. `cargo fmt` keeps such a
+    file as it is."""
+    return text.replace("\n", "\r\n")
+
+
 def _stray_catch(path: str) -> str:
     """The line of the panic check for one file."""
     return f"rust-gate: {path} holds `catch_unwind` outside the three places of the panic rule"
@@ -1135,8 +1151,28 @@ def test_the_entry_file_of_a_crate_with_no_runtime_can_catch_a_panic(
 #: Test code that catches a panic: a path, and the text of the file.
 CATCHING_TEST_CODE = {
     "a tests directory": (f"{CRATE}/tests/boundary.rs", CATCHES),
-    "a tests directory below src": (f"{CRATE}/src/tests/boundary.rs", CATCHES),
+    "a directory below the tests directory": (f"{CRATE}/tests/common/mod.rs", CATCHES),
     "a test module": (RUST_PATH, "pub fn run() {}\n" + CATCHING_TESTS),
+    "a test module with CR LF line ends": (
+        RUST_PATH,
+        _crlf("pub fn run() {}\n" + CATCHING_TESTS + "\npub fn later() {}\n"),
+    ),
+    "the second function of a test module": (
+        RUST_PATH,
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        "    fn first() {\n"
+        "        let _ = 1;\n"
+        "    }\n\n"
+        "    fn second() {\n"
+        "        let _ = std::panic::catch_unwind(|| ());\n"
+        "    }\n"
+        "}\n",
+    ),
+    "a test module below a longer name": (
+        RUST_PATH,
+        "pub fn my_catch_unwind_helper() {}\n" + CATCHING_TESTS,
+    ),
     "a test module that the crate can use": (
         RUST_PATH,
         "pub fn run() {}\n" + CATCHING_TESTS.replace("mod tests", "pub(crate) mod testing"),
@@ -1159,6 +1195,21 @@ CATCHING_TEST_CODE = {
 )
 def test_test_code_can_catch_a_panic(tree: Tree, path: str, body: str) -> None:
     done = _run_on(tree, {path: body})
+
+    assert done.code == 0, done.out + done.err
+    assert done.cargo == LINT_STEPS
+
+
+#: Names that hold the word and are not the word.
+LONGER_NAMES = {
+    "the word at the end": "pub fn my_catch_unwind() {}\n",
+    "the word at the start": "pub fn catch_unwinding() {}\n",
+}
+
+
+@pytest.mark.parametrize("body", LONGER_NAMES.values(), ids=LONGER_NAMES.keys())
+def test_a_longer_name_is_not_a_panic_catch(tree: Tree, body: str) -> None:
+    done = _run_on(tree, {RUST_PATH: body})
 
     assert done.code == 0, done.out + done.err
     assert done.cargo == LINT_STEPS
@@ -1212,12 +1263,66 @@ STRAY_CATCHES: dict[str, tuple[dict[str, str], list[str]]] = {
         {RUST_PATH: "#[cfg(test)]\nmod python;\n\n" + CATCHES},
         [RUST_PATH],
     ),
+    "in a module below a test mark on one item": (
+        {
+            RUST_PATH: (
+                "#[cfg(test)]\nmod python;\n\n"
+                "pub mod wire {\n"
+                "    pub fn run() {\n"
+                "        let _ = std::panic::catch_unwind(|| ());\n"
+                "    }\n"
+                "}\n"
+            )
+        },
+        [RUST_PATH],
+    ),
+    "below a test module that ends with a line comment": (
+        {
+            RUST_PATH: (
+                "#[cfg(test)]\nmod tests {\n    use super::run;\n"
+                + COMMENT_ENDS["a line comment"]
+                + "\n\n"
+                + CATCHES
+            )
+        },
+        [RUST_PATH],
+    ),
+    "below a test module that ends with a block comment": (
+        {
+            RUST_PATH: (
+                "#[cfg(test)]\nmod tests {\n    use super::run;\n"
+                + COMMENT_ENDS["a block comment"]
+                + "\n\n"
+                + CATCHES
+            )
+        },
+        [RUST_PATH],
+    ),
+    "below a test module, with CR LF line ends": (
+        {RUST_PATH: _crlf("#[cfg(test)]\nmod tests {\n    use super::run;\n}\n\n" + CATCHES)},
+        [RUST_PATH],
+    ),
+    "a tests directory below src": (
+        {f"{CRATE}/src/tests/boundary.rs": CATCHES},
+        [f"{CRATE}/src/tests/boundary.rs"],
+    ),
     "a crate with the name tests": (
         {
             "rust/crates/tests/Cargo.toml": _crate_file("tests"),
             "rust/crates/tests/src/lib.rs": CATCHES,
         },
         ["rust/crates/tests/src/lib.rs"],
+    ),
+    "a crate with a longer name than the runtime": (
+        {
+            f"{RUNTIME_CRATE}-fakes/Cargo.toml": _crate_file("creche-runtime-fakes"),
+            f"{RUNTIME_CRATE}-fakes/src/lib.rs": CATCHES,
+        },
+        [f"{RUNTIME_CRATE}-fakes/src/lib.rs"],
+    ),
+    "the entry file of a crate with no crate file": (
+        {"rust/crates/two/src/entry.rs": CATCHES},
+        ["rust/crates/two/src/entry.rs"],
     ),
     "two files, with a line for each one": (
         {
@@ -1243,6 +1348,19 @@ def test_a_panic_catch_in_another_place_is_refused(
     assert done.code == 1
     assert done.cargo == []
     assert done.err.splitlines() == [_stray_catch(path) for path in refused]
+
+
+def test_a_panic_catch_in_a_test_module_with_no_end_is_refused(tree: Tree) -> None:
+    """The scan reads no code below the first line of a test module that it
+    finds no end of. A check that passed then would pass the word in code
+    that no scan read."""
+    done = _run_on(tree, {RUST_PATH: OPEN_TESTS})
+
+    assert done.code == 1
+    assert done.cargo == []
+    assert done.err.splitlines() == [
+        f"rust-gate: {RUST_PATH} holds a test module, and the panic check found no end of it"
+    ]
 
 
 # --- the public-field check: no struct field with `pub` -----------------------
@@ -1335,12 +1453,25 @@ PUBLIC_FIELDS: dict[str, tuple[dict[str, str], list[tuple[str, str, str]]]] = {
         {RUST_PATH: "pub struct One {\n    pub(in crate::wire) name: String,\n}\n"},
         [(RUST_PATH, "One", "name")],
     ),
+    "a visibility for the module of the struct": (
+        {RUST_PATH: "pub struct One {\n    pub(self) name: String,\n}\n"},
+        [(RUST_PATH, "One", "name")],
+    ),
     "a struct inside a function": (
         {RUST_PATH: "pub fn run() {\n    struct Local {\n        pub seen: bool,\n    }\n}\n"},
         [(RUST_PATH, "Local", "seen")],
     ),
     "below a test mark on one item": (
         {RUST_PATH: "#[cfg(test)]\nmod python;\n\npub struct One {\n    pub name: String,\n}\n"},
+        [(RUST_PATH, "One", "name")],
+    ),
+    "in a module below a test mark on one item": (
+        {
+            RUST_PATH: (
+                "#[cfg(test)]\nmod python;\n\n"
+                "pub mod wire {\n    pub struct One {\n        pub name: String,\n    }\n}\n"
+            )
+        },
         [(RUST_PATH, "One", "name")],
     ),
     "below the test module": (
@@ -1352,12 +1483,83 @@ PUBLIC_FIELDS: dict[str, tuple[dict[str, str], list[tuple[str, str, str]]]] = {
         },
         [(RUST_PATH, "One", "name")],
     ),
+    "below a test module that ends with a line comment": (
+        {
+            RUST_PATH: (
+                "#[cfg(test)]\nmod tests {\n    use super::One;\n"
+                + COMMENT_ENDS["a line comment"]
+                + "\n\npub struct One {\n    pub name: String,\n}\n"
+            )
+        },
+        [(RUST_PATH, "One", "name")],
+    ),
+    "below a test module that ends with a block comment": (
+        {
+            RUST_PATH: (
+                "#[cfg(test)]\nmod tests {\n    use super::One;\n"
+                + COMMENT_ENDS["a block comment"]
+                + "\n\npub struct One {\n    pub name: String,\n}\n"
+            )
+        },
+        [(RUST_PATH, "One", "name")],
+    ),
+    "CR LF line ends": (
+        {RUST_PATH: _crlf("pub struct One {\n    id: u32,\n    pub name: String,\n}\n")},
+        [(RUST_PATH, "One", "name")],
+    ),
+    "a CR with no LF": (
+        {RUST_PATH: "pub struct One {\r    id: u32,\r    pub name: String,\r}\n"},
+        [(RUST_PATH, "One", "name")],
+    ),
+    "below a test module, with CR LF line ends": (
+        {
+            RUST_PATH: _crlf(
+                "#[cfg(test)]\nmod tests {\n    use super::One;\n}\n\n"
+                "pub struct One {\n    pub name: String,\n}\n"
+            )
+        },
+        [(RUST_PATH, "One", "name")],
+    ),
+    "a name with a letter that is not ASCII": (
+        {RUST_PATH: "pub struct École {\n    pub name: String,\n}\n"},
+        [(RUST_PATH, "École", "name")],
+    ),
+    "a where clause with a brace inside a bracket": (
+        {
+            RUST_PATH: (
+                "pub struct One\n"
+                "where\n"
+                "    [u8; { 1 + 1 }]: Sized,\n"
+                "    (u8, [u8; { 2 }]): Sized,\n"
+                "{\n"
+                "    pub name: String,\n"
+                "}\n"
+            )
+        },
+        [(RUST_PATH, "One", "name")],
+    ),
+    "a tests directory below src": (
+        {f"{CRATE}/src/tests/common.rs": "pub struct Probe {\n    pub seen: u32,\n}\n"},
+        [(f"{CRATE}/src/tests/common.rs", "Probe", "seen")],
+    ),
     "a crate with the name tests": (
         {
             "rust/crates/tests/Cargo.toml": _crate_file("tests"),
             "rust/crates/tests/src/lib.rs": "pub struct One {\n    pub name: String,\n}\n",
         },
         [("rust/crates/tests/src/lib.rs", "One", "name")],
+    ),
+    "a crate with a part of a name of the list": (
+        {
+            "rust/crates/creche/Cargo.toml": _crate_file("creche"),
+            "rust/crates/creche/src/lib.rs": "pub struct One {\n    pub name: String,\n}\n",
+            "rust/crates/testkit/Cargo.toml": _crate_file("testkit"),
+            "rust/crates/testkit/src/lib.rs": "pub struct Two {\n    pub name: String,\n}\n",
+        },
+        [
+            ("rust/crates/creche/src/lib.rs", "One", "name"),
+            ("rust/crates/testkit/src/lib.rs", "Two", "name"),
+        ],
     ),
     "two files, with a line for each field": (
         {
@@ -1410,6 +1612,10 @@ PUBLIC_PARTS = {
         ["0"],
     ),
     "a part that is a tuple": ("pub struct Pair(pub (u8, u8));\n", ["0"]),
+    "more than one line, with CR LF line ends": (
+        _crlf("pub struct Pair(\n    pub u32,\n    String,\n    pub Vec<u8>,\n);\n"),
+        ["0", "2"],
+    ),
 }
 
 
@@ -1463,12 +1669,55 @@ FIELDS_IN_TEST_CODE = {
         "            pub seen: u32,\n        }\n    }\n}\n\n"
         "pub struct One {\n    name: String,\n}\n",
     ),
+    "a test module with CR LF line ends": (
+        RUST_PATH,
+        _crlf(
+            "#[cfg(test)]\nmod tests {\n    pub struct Probe {\n        pub seen: u32,\n    }\n}\n"
+            "\npub struct One {\n    name: String,\n}\n"
+        ),
+    ),
+    "a test module that ends with a line comment": (
+        RUST_PATH,
+        "#[cfg(test)]\nmod tests {\n    pub struct Probe(pub u32);\n"
+        + COMMENT_ENDS["a line comment"]
+        + "\n",
+    ),
+    "a test module that ends with a block comment": (
+        RUST_PATH,
+        "#[cfg(test)]\nmod tests {\n    pub struct Probe(pub u32);\n"
+        + COMMENT_ENDS["a block comment"]
+        + "\n",
+    ),
+    "below the first function of a test module": (
+        RUST_PATH,
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        "    fn first() {\n"
+        "        let _ = 1;\n"
+        "    }\n\n"
+        "    pub struct Probe {\n"
+        "        pub seen: u32,\n"
+        "    }\n"
+        "}\n",
+    ),
+    "below a line of a text that starts with a brace": (
+        RUST_PATH,
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        '    const SAMPLE: &str = r#"{\n'
+        '  "name": "one"\n'
+        '}"#;\n\n'
+        "    pub struct Probe {\n"
+        "        pub seen: u32,\n"
+        "    }\n"
+        "}\n",
+    ),
     "a tests directory": (
         f"{CRATE}/tests/common.rs",
         "pub struct Probe {\n    pub seen: u32,\n}\n",
     ),
-    "a tests directory below src": (
-        f"{CRATE}/src/tests/common.rs",
+    "a directory below the tests directory": (
+        f"{CRATE}/tests/common/mod.rs",
         "pub struct Probe(pub u32);\n",
     ),
 }
@@ -1547,6 +1796,25 @@ def _brace_in_a_generic_argument(tree: Tree) -> None:
     )
 
 
+def _brace_in_a_later_generic_argument(tree: Tree) -> None:
+    tree.write(
+        RUST_PATH,
+        "pub struct One<const N: usize>\nwhere\n    [u8; (2 > 1) as usize]: Sized,\n"
+        "    Holder<{ N }>: Marker,\n{\n    pub bytes: [u8; N],\n}\n",
+    )
+
+
+def _test_module_with_no_end(tree: Tree) -> None:
+    tree.write(RUST_PATH, "#[cfg(test)]\nmod tests {\n    pub struct Probe(pub u32);\n")
+
+
+def _test_module_with_another_last_line(tree: Tree) -> None:
+    tree.write(
+        RUST_PATH,
+        "#[cfg(test)]\nmod tests {\n    pub struct Probe(pub u32);\n} pub struct One(pub u8);\n",
+    )
+
+
 def _source_file_that_is_gone(tree: Tree) -> None:
     (tree.root / CRATE / "src" / "gone.rs").symlink_to("no-such-file.rs")
 
@@ -1556,11 +1824,22 @@ NO_END = (
     f"rust-gate: {RUST_PATH} holds the struct `One`, and the public-field check found no end of it"
 )
 
+#: The line for a test module whose end the scan does not find.
+NO_MODULE_END = (
+    f"rust-gate: {RUST_PATH} holds a test module, and the public-field check found no end of it"
+)
+
 #: Trees that the scan cannot read to the end. Each case is a function that
 #: writes the tree, then the last line of the gate.
 NOT_READ = {
     "a struct with no end": (_struct_with_no_end, NO_END),
     "a brace in a generic argument": (_brace_in_a_generic_argument, NO_END),
+    "a brace in a later generic argument": (_brace_in_a_later_generic_argument, NO_END),
+    "a test module with no end": (_test_module_with_no_end, NO_MODULE_END),
+    "a test module with code on its last line": (
+        _test_module_with_another_last_line,
+        NO_MODULE_END,
+    ),
     "a source file that is gone": (
         _source_file_that_is_gone,
         "rust-gate: the public-field check did not read rust/crates",
@@ -1596,6 +1875,50 @@ def test_a_public_field_in_a_crate_of_the_list_passes(tree: Tree) -> None:
     done = _run_on(tree, files)
 
     assert f'\nFIELD_CHECK_SKIPS="{" ".join(FIELD_CHECK_SKIPS)}"\n' in script
+    assert done.code == 0, done.out + done.err
+    assert done.cargo == LINT_STEPS
+
+
+def test_a_file_that_the_check_skips_hides_no_other_file(tree: Tree) -> None:
+    """One scan reads each file of the tree, in the order of `find`. What
+    the scan keeps for a file that it skips must not reach the next file:
+    not the skip, and not a test module with no end."""
+    skipped = "pub struct One {\n    pub name: String,\n}\n\n#[cfg(test)]\nmod tests {\n"
+    read = "pub struct Two {\n    pub name: String,\n}\n"
+    others = ("aaa", "one", "zzz")
+    files: dict[str, str] = {f"{CRATE}/tests/common.rs": skipped}
+    for name in FIELD_CHECK_SKIPS:
+        files[f"rust/crates/{name}/Cargo.toml"] = _crate_file(name)
+        files[f"rust/crates/{name}/src/lib.rs"] = skipped
+    for name in others:
+        files[f"rust/crates/{name}/Cargo.toml"] = _crate_file(name)
+        files[f"rust/crates/{name}/src/lib.rs"] = read
+
+    done = _run_on(tree, files)
+
+    assert done.code == 1
+    assert done.cargo == []
+    assert done.err.splitlines() == [
+        _public_field(f"rust/crates/{name}/src/lib.rs", "Two", "name") for name in others
+    ]
+
+
+def test_the_check_reads_no_test_module_of_a_file_that_it_skips(tree: Tree) -> None:
+    """A test module with no end fails the check only in a file that the
+    check reads. It reads no crate of the list and no file below the
+    directory `tests` of a crate."""
+    body = "#[cfg(test)]\nmod tests {\n    pub struct Probe(pub u32);\n"
+    name = FIELD_CHECK_SKIPS[0]
+
+    done = _run_on(
+        tree,
+        {
+            f"rust/crates/{name}/Cargo.toml": _crate_file(name),
+            f"rust/crates/{name}/src/lib.rs": body,
+            f"{CRATE}/tests/common.rs": body,
+        },
+    )
+
     assert done.code == 0, done.out + done.err
     assert done.cargo == LINT_STEPS
 
