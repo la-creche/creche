@@ -126,6 +126,57 @@ set -euo pipefail
 #: The line that compares the archive with the job output of `build`.
 DIGEST_CHECK: Final = 'sha256sum --check --strict <<< "$DIGEST"'
 
+#: The whole text of the step that compares. `dotglob`: a name that starts
+#: with a period is a second file too. The name of the archive starts with a
+#: letter or a digit, so cosign cannot read it as an option.
+DIGEST_RUN: Final = """\
+set -euo pipefail
+shopt -s dotglob
+line='^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._-]*$'
+if [[ ! "$DIGEST" =~ $line ]]; then
+  echo "sign: the job build gave no SHA-256 line" >&2
+  exit 1
+fi
+archive="${DIGEST:66}"
+for file in *; do
+  if [[ "$file" != "$archive" ]]; then
+    echo "sign: the job build did not name the file $file" >&2
+    exit 1
+  fi
+done
+sha256sum --check --strict <<< "$DIGEST"
+echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+"""
+
+#: The directory of the job `sign` that holds the archive and its bundle.
+SIGN_DIRECTORY: Final = "probe"
+
+#: The machine of each job.
+RUNNER: Final = "ubuntu-latest"
+
+#: Each key of each job. One more key can change where a job runs or what
+#: a failure of it does, for example `continue-on-error`.
+JOB_KEYS: Final = {
+    "guard": {"runs-on", "steps"},
+    "build": {"needs", "if", "runs-on", "timeout-minutes", "outputs", "steps"},
+    "sign": {"needs", "if", "runs-on", "timeout-minutes", "permissions", "env", "steps"},
+    "verify": {"needs", "if", "runs-on", "timeout-minutes", "steps"},
+}
+
+#: What the job `build` hands to the two later jobs.
+BUILD_OUTPUTS: Final = {
+    "digest": "${{ steps.build.outputs.digest }}",
+    "toolchain": "${{ steps.build.outputs.toolchain }}",
+    "remap_needed": "${{ steps.build.outputs.remap_needed }}",
+}
+
+#: What the step `verify` reads from the two earlier jobs.
+VERIFY_ENV: Final = {
+    "PROBE_SIGNED": "${{ steps.signed.outputs.download-path }}",
+    "PROBE_TOOLCHAIN": "${{ needs.build.outputs.toolchain }}",
+    "PROBE_REMAP_NEEDED": "${{ needs.build.outputs.remap_needed }}",
+}
+
 #: Each action of the file. `test_gate_workflow.py` holds each one to a
 #: commit id with its tag beside it.
 CHECKOUT: Final = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
@@ -388,6 +439,12 @@ def test_the_jobs_run_one_after_the_other() -> None:
     assert _needs("verify") == [GUARD, "build", SIGN]
 
 
+@pytest.mark.parametrize("job", JOB_NAMES)
+def test_each_job_has_its_keys_and_no_other(job: str) -> None:
+    assert set(JOBS[job]) == JOB_KEYS[job]
+    assert JOBS[job]["runs-on"] == RUNNER
+
+
 def test_only_the_sign_job_holds_the_identity_token_and_nothing_else() -> None:
     assert PROBE["permissions"] == {"contents": "read"}
     assert JOBS[SIGN]["permissions"] == {"id-token": "write"}
@@ -410,6 +467,32 @@ def test_the_sign_job_runs_no_code_of_the_repository() -> None:
     for run in _runs(SIGN):
         assert "bin/" not in run, "a step of the sign job starts a script of the repository"
         assert "${{" not in run, "a step of the sign job holds an expression in its text"
+
+
+def test_the_sign_job_has_five_steps_and_no_other() -> None:
+    """The job that holds the identity token is pinned as a whole: the order
+    of its steps, the whole text of each `run` step, each key of the step
+    that compares, and the inputs of the two actions. A new step, a key that
+    lets a failed step pass, or another directory then fails here."""
+    download, digest, _, _, upload = _steps(SIGN)
+
+    assert [step.get("name") for step in _steps(SIGN)] == [None, "digest", COSIGN_STEP, SIGN, None]
+    assert _runs(SIGN) == [DIGEST_RUN, COSIGN_RUN, SIGN_RUN]
+    assert download == {
+        "uses": DOWNLOAD,
+        "with": {"name": "probe-archive", "path": SIGN_DIRECTORY},
+    }
+    assert set(digest) == {"name", "working-directory", "run"}
+    assert digest["working-directory"] == SIGN_DIRECTORY
+    assert upload == {
+        "uses": UPLOAD,
+        "with": {
+            "name": "probe-signed",
+            "path": SIGN_DIRECTORY,
+            "if-no-files-found": "error",
+            "retention-days": 1,
+        },
+    }
 
 
 @pytest.mark.parametrize("job", JOB_NAMES)
@@ -480,7 +563,7 @@ def test_the_build_job_hands_the_archive_and_its_digest_on() -> None:
 
     assert _runs("build") == [BUILD_RUN]
     assert set(step) == {"name", "id", "run"}
-    assert build["outputs"]["digest"] == "${{ steps.build.outputs.digest }}"
+    assert build["outputs"] == BUILD_OUTPUTS
     assert upload["with"]["path"] == "${{ steps.build.outputs.archive }}"
 
 
@@ -505,6 +588,9 @@ def test_the_sign_job_signs_only_the_archive_that_the_build_job_named() -> None:
 ARCHIVE: Final = f"agent-family-{TARGET}.tar.gz"
 ARCHIVE_BYTES: Final = b"the bytes of an archive"
 ARCHIVE_LINE: Final = f"{hashlib.sha256(ARCHIVE_BYTES).hexdigest()}  {ARCHIVE}"
+
+#: A file name that a program reads as its options.
+OPTION_NAME: Final = "-rf"
 
 
 def _sha256sum_checks_a_line() -> bool:
@@ -578,12 +664,25 @@ def test_the_digest_step_refuses_an_archive_with_other_bytes(tmp_path: Path) -> 
     assert handed == ""
 
 
-def test_the_digest_step_refuses_a_file_that_the_build_job_did_not_name(tmp_path: Path) -> None:
-    files = {ARCHIVE: ARCHIVE_BYTES, "second.tar.gz": b""}
+@pytest.mark.parametrize("second", ["second.tar.gz", ".hidden"])
+def test_the_digest_step_refuses_a_file_that_the_build_job_did_not_name(
+    tmp_path: Path, second: str
+) -> None:
+    """A plain `*` does not match a name that starts with a period. The step
+    sets `dotglob`, so such a file is a second file too."""
+    files = {ARCHIVE: ARCHIVE_BYTES, second: b""}
     done, handed = _digest_step(tmp_path, ARCHIVE_LINE, files)
 
     assert done.returncode == 1
-    assert "did not name the file second.tar.gz" in done.stderr
+    assert f"did not name the file {second}" in done.stderr
+    assert handed == ""
+
+
+def test_the_digest_step_refuses_a_directory_with_no_file(tmp_path: Path) -> None:
+    done, handed = _digest_step(tmp_path, ARCHIVE_LINE, {})
+
+    assert done.returncode == 1
+    assert "did not name the file" in done.stderr
     assert handed == ""
 
 
@@ -596,13 +695,27 @@ def test_the_digest_step_refuses_a_file_that_the_build_job_did_not_name(tmp_path
         ARCHIVE_LINE.upper(),
         ARCHIVE_LINE.replace("  ", "  ../"),
         f"{ARCHIVE_LINE} second.tar.gz",
+        ARCHIVE_LINE.replace(ARCHIVE, OPTION_NAME),
+        ARCHIVE_LINE.replace(ARCHIVE, f".{ARCHIVE}"),
     ],
-    ids=["empty", "no-digest", "one-space", "upper-case", "a-directory", "two-names"],
+    ids=[
+        "empty",
+        "no-digest",
+        "one-space",
+        "upper-case",
+        "a-directory",
+        "two-names",
+        "an-option",
+        "a-hidden-name",
+    ],
 )
 def test_the_digest_step_refuses_a_job_output_that_is_no_sha256_line(
     tmp_path: Path, line: str
 ) -> None:
-    done, handed = _digest_step(tmp_path, line, {ARCHIVE: ARCHIVE_BYTES})
+    """The file of the line exists in each case, so only the line itself can
+    stop the step."""
+    files = {ARCHIVE: ARCHIVE_BYTES, OPTION_NAME: ARCHIVE_BYTES, f".{ARCHIVE}": ARCHIVE_BYTES}
+    done, handed = _digest_step(tmp_path, line, files)
 
     assert done.returncode == 1
     assert "gave no SHA-256 line" in done.stderr
@@ -704,7 +817,8 @@ def test_the_verify_job_runs_the_script_on_the_signed_files() -> None:
     step = _named("verify", "verify")
 
     assert _runs("verify") == [COSIGN_RUN, VERIFY_RUN]
-    assert step["env"]["PROBE_SIGNED"] == "${{ steps.signed.outputs.download-path }}"
+    assert set(step) == {"name", "id", "env", "run"}
+    assert step["env"] == VERIFY_ENV
     assert _steps("verify")[1]["id"] == "signed"
 
 

@@ -34,9 +34,10 @@
 # run is a success. Do not cancel such a run. A cancelled run on the head of
 # a pull request blocks the release of that pull request.
 #
-# EACH RUN ON `main` WRITES ONE ENTRY TO THE PUBLIC SIGSTORE LOG. The entry
-# names this repository, this workflow file and the commit. No one can remove
-# an entry. The operator decides when a run starts.
+# A RUN ON `main` IS PUBLIC AND PERMANENT. The job `sign` adds one record to
+# the transparency log of the public Sigstore instance. Each person can read
+# there which repository, which workflow file and which commit signed. The
+# record stays for all time. So the operator decides when a run starts.
 #
 # THE JOB `sign` HOLDS THE IDENTITY TOKEN AND NO CODE OF THE REPOSITORY. It
 # has no checkout and no local action. It takes the archive of `build`,
@@ -116,11 +117,15 @@ jobs:
       # Each job of a run can write a workflow artifact. So the job signs
       # only the file that the job output names, and only when its bytes
       # have the SHA-256 of that output. A second file stops the job.
+      # `dotglob`: a name that starts with a period is a second file too.
+      # The name of the archive starts with a letter or a digit, so cosign
+      # cannot read it as an option.
       - name: digest
         working-directory: probe
         run: |
           set -euo pipefail
-          line='^[0-9a-f]{64}  [A-Za-z0-9._-]+$'
+          shopt -s dotglob
+          line='^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._-]*$'
           if [[ ! "$DIGEST" =~ $line ]]; then
             echo "sign: the job build gave no SHA-256 line" >&2
             exit 1
