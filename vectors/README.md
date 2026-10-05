@@ -172,8 +172,8 @@ with its default settings is such a reader.
    Rust code must write the same message.
 9. For `raised`, make sure that the Rust code refuses the input.
 
-No Rust test may disagree with a vector by design. When a Rust result and a
-vector disagree, follow "The differential test" in `rust/AGENTS.md`.
+A Rust test must not disagree with a vector on purpose. When a Rust result
+and a vector disagree, follow "The differential test" in `rust/AGENTS.md`.
 
 ## Rules for a new surface
 

@@ -563,9 +563,9 @@ to 5 give a Rust service the Python behavior on purpose.
     the call in `main`, the code before the first of the three runs with
     the standard hook.
 17. **A daemon that refuses its start exits with `EX_CONFIG`, status 78.**
-    This applies to each cause of the list below. A command that does its
-    work and then ends can keep another status for a usage error, when no
-    unit restarts it.
+    This applies to each cause of the list below. A command that runs to
+    its end can keep another status for a usage error, when no unit
+    restarts it.
     Reason: a restart repairs none of these causes. Only status 78 keeps a
     unit with `RestartPreventExitStatus=78` stopped.
     - An invalid config.
@@ -620,13 +620,13 @@ one panic can stop and what it can damage.
    - A program without the runtime: a unit of work is a step, a pass or a
      connection.
 5. **After a panic, a boundary ends that unit of work and starts the next
-   unit.** A boundary answers with a constant text. Never catch a panic and
-   then continue the unit of work that panicked.
+   unit.** A boundary answers with a constant text. Do not continue a unit
+   of work after its panic.
    Reason: a panic can leave the values of that unit of work in a wrong
    state.
 6. **A caught panic must not leave a partial file or a lock that blocks the
    next unit of work.** Write a file with the atomic writer or in a
-   must-complete task. Take a lock with `tasks::locked` only.
+   must-complete task. Lock a std `Mutex` with `tasks::locked` only.
    Reason: the program continues after the catch, and later work uses the
    same files and locks.
 7. **A panic outside the boundaries of clause 4 ends the program.** The
