@@ -419,11 +419,11 @@ impl Error for NotAnObject {}
 // also take a byte order mark, UTF-16 and UTF-32. The three doors give
 // `json.loads` the text of `httpx`, so they refuse those three, and they read
 // a byte that is not UTF-8 as U+FFFD. This reader refuses each of them, as
-// the `session` module does for a request. With its default settings,
-// `json.dumps` of Python writes `NaN`, `Infinity` and the escape of one half
-// of a surrogate pair. A Rust client refuses the whole answer of a writer
-// that does. A reader that takes them costs a JSON reader of this module in
-// place of `serde_json`.
+// the `session` module does for a request. The Python services write the
+// JSON body of an answer with the JSON response class of their web framework.
+// That class writes no `NaN`, no `Infinity` and no half of a surrogate pair,
+// and it writes an integer of each size. A reader that takes them costs a
+// JSON reader of this module in place of `serde_json`.
 pub fn parse_object<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, NotAnObject> {
     let mut reader = serde_json::Deserializer::from_slice(bytes);
     let value = read(&mut reader).map_err(|_| NotAnObject::NotJson)?;

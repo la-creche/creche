@@ -944,10 +944,12 @@ Rules for the test:
   One more row is a vector on which the two sides accept the same document.
   The raw type of the test keeps an integer past 64 bits as a float.
 - `untrusted::parse_object` refuses the whole answer for difference 1, for
-  difference 2 and for difference 6. With its default settings, `json.dumps`
-  of Python writes `NaN`, `Infinity` and the escape of one half of a
-  surrogate pair. The owner of the crate decides if the module gets a JSON
-  reader of its own, as `channel`, `grants`, `status` and `manifest` have.
+  difference 2 and for difference 6. The Python services write the JSON body
+  of an answer with the JSON response class of their web framework. That
+  class writes no `NaN`, no `Infinity` and no half of a surrogate pair. It
+  writes an integer of each size. The owner of the crate decides if the
+  module gets a JSON reader of its own, as `channel`, `grants`, `status` and
+  `manifest` have.
 - The module `untrusted` has no reader that tells a value that is no list
   from an empty list. `untrusted::list` reads both as the empty list.
   `is_list` of each door gives `False` for the first only, and `as_array` of
