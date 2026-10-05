@@ -25,7 +25,8 @@
 //! a function here ports, and each result is equal. Some differences from a
 //! Python copy are in no vector. The doc comment of [`read`] and of
 //! [`CachedToken::current`] names each one, and one plain test holds each
-//! one.
+//! one. The exception is the device that `CachedToken::current` compares: no
+//! test can move a file to another device.
 
 use std::borrow::Cow;
 use std::error::Error;
@@ -555,8 +556,9 @@ fn universal_newlines(text: &str) -> Cow<'_, str> {
 ///
 /// A token can rotate while the service runs, and the writer of the file can
 /// start after its reader. This type reads at the time of the call. It
-/// compares the facts of the file with the facts of its last read, and reads
-/// the file only when a fact moved. A `stat` that fails never serves the
+/// compares four facts of the file with the facts of its last read: the
+/// device, the inode, the size and the time of the last change. It reads the
+/// file only when one of them moved. A `stat` that fails never serves the
 /// value of the last read. A read that fails drops the value of the last
 /// read.
 ///
@@ -622,16 +624,20 @@ impl CachedToken {
     /// The token of the file as it is now.
     ///
     /// The call makes one `stat`. It reads the file when the `stat` fails,
-    /// when no earlier read gave a token, and when a fact of the file moved:
-    /// the device, the inode, the size, the time of the last change or the
-    /// mode. The call blocks for the `stat` and for the read.
+    /// when no earlier read gave a token, and when one of four facts of the
+    /// file moved: the device, the inode, the size or the time of the last
+    /// change. The call blocks for the `stat` and for the read.
+    ///
+    /// A new mode alone starts no read, as in the Python cache. The call
+    /// thus checks the mode of the rule only when it reads the file.
     ///
     /// The Python origin is `chaperone/src/chaperone/delegate.py:189-210`.
     /// The call differs from it in two ways:
     ///
     /// 1. The Python cache compares three facts: the time of the last
-    ///    change, the size and the inode. This call also compares the device
-    ///    and the mode. After a new mode alone, it reads the file again.
+    ///    change, the size and the inode. This call also compares the
+    ///    device, because one inode number can name two files on two
+    ///    devices.
     /// 2. After a read that fails, the Python cache keeps the facts and the
     ///    token of its last good read. It gives that token again when the
     ///    file has those facts again. This call drops the token, and the
@@ -644,7 +650,7 @@ impl CachedToken {
     pub fn current(&mut self) -> Result<&Secret, TokenError> {
         let now = readfile::facts(&self.path);
         let read = match self.last.take() {
-            Some((then, token)) if now == Some(then) => (then, token),
+            Some((then, token)) if now.is_some_and(|now| same_content(now, then)) => (then, token),
             // The field is empty here. A read that fails thus leaves no
             // token of an earlier read.
             _ => read_file(&self.path, self.rule)?,
@@ -653,6 +659,23 @@ impl CachedToken {
 
         Ok(token)
     }
+}
+
+// CONTRACT-QUESTION: contract 04 §7.3 names three facts for the compare of
+// the delegate token file: the time of the last change, the size and the
+// inode. The reading here adds the device, because an inode number is an id
+// only on one device. A file on another device with the three facts of the
+// last read thus starts a read, and the Python cache gives its old token
+// there. No writer of the platform moves a token file to another device. A
+// change costs one line of `same_content`.
+/// Whether the facts `now` name the file and the content that the facts
+/// `then` named: the same device, inode, size and time of the last change.
+///
+/// The mode is no part of the compare. Contract 04 §7.3 permits a read only
+/// after one of its three facts moved, and a `chmod` moves none of them.
+fn same_content(now: FileFacts, then: FileFacts) -> bool {
+    (now.dev(), now.ino(), now.len(), now.modified_ns())
+        == (then.dev(), then.ino(), then.len(), then.modified_ns())
 }
 
 /// How [`bearer_of`] treats the space around the value of the header.
@@ -744,7 +767,7 @@ mod tests {
     use std::collections::HashSet;
     use std::fs::{self, File};
     use std::os::unix::fs::PermissionsExt;
-    use std::time::SystemTime;
+    use std::time::{Duration, SystemTime};
 
     use ::http::HeaderValue;
     use creche_testkit::root::TempRoot;
@@ -1684,8 +1707,12 @@ mod tests {
 
         assert_eq!(current(&mut token), token_bytes(SECOND));
 
-        // The mode rule reads the mode of the file behind the link.
-        fs::set_permissions(&second, fs::Permissions::from_mode(0o644)).unwrap();
+        // The mode rule reads the mode of the file behind the link. The
+        // link now names a file that each user can read.
+        let wide = root.path().join("wide.token");
+        write_token(&wide, format!("{FIRST}\n").as_bytes(), 0o644);
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&wide, &link).unwrap();
 
         assert_eq!(
             current(&mut token),
@@ -1695,10 +1722,42 @@ mod tests {
         );
     }
 
-    /// Difference 1 of [`CachedToken::current`]. The Python cache compares
-    /// three facts (`chaperone/src/chaperone/delegate.py:204-210`).
+    /// The four facts that [`CachedToken::current`] compares. The mode is
+    /// not one of them.
+    fn compared(facts: FileFacts) -> (u64, u64, u64, i128) {
+        (facts.dev(), facts.ino(), facts.len(), facts.modified_ns())
+    }
+
+    /// The Python cache reads no file after a new mode alone
+    /// (`chaperone/src/chaperone/delegate.py:204-210`), and
+    /// [`CachedToken::current`] does the same. The file here has another
+    /// token and the mode `0000` at the second call.
     #[test]
-    fn a_new_mode_makes_the_next_call_read_the_file() {
+    fn a_new_mode_alone_starts_no_read() {
+        let (_root, path, mut token) = cached(TokenRule::DOOR);
+        write_line(&path, FIRST);
+
+        assert_eq!(current(&mut token), token_bytes(FIRST));
+
+        // The content changes, and each fact but the mode is put back.
+        let before = readfile::facts(&path).unwrap();
+        let time = modified(&path);
+        write_line(&path, SECOND);
+        set_modified(&path, time);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        let after = readfile::facts(&path).unwrap();
+
+        assert_eq!(compared(after), compared(before));
+        assert_ne!(after.mode(), before.mode());
+        // The old token proves that the call read no file.
+        assert_eq!(current(&mut token), token_bytes(FIRST));
+    }
+
+    /// A rule with a mode check reads the mode only when the call reads the
+    /// file. A wider mode alone thus leaves the token in use. The next read
+    /// of the file refuses that mode.
+    #[test]
+    fn a_cached_token_checks_the_mode_only_at_a_read() {
         let (_root, path, mut token) = cached(TokenRule::ATTENDANCE_PEP_READ);
         write_line(&path, FIRST);
 
@@ -1708,17 +1767,65 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
         let after = readfile::facts(&path).unwrap();
 
-        // The three facts of the Python cache did not move.
-        assert_eq!(
-            (after.modified_ns(), after.len(), after.ino()),
-            (before.modified_ns(), before.len(), before.ino())
-        );
+        assert_eq!(compared(after), compared(before));
+        assert_eq!(current(&mut token), token_bytes(FIRST));
+
+        // The size of the file moves, so the call reads the file.
+        write_token(&path, format!("{SECOND}{SECOND}\n").as_bytes(), 0o644);
+
         assert_eq!(
             current(&mut token),
             Err(TokenError::ModeTooWide {
                 allowed: ModeRule::OwnerAndGroupRead
             })
         );
+    }
+
+    /// The time of the last change is one of the four facts. A token of the
+    /// same size in the same file is read when that time alone moved.
+    #[test]
+    fn a_new_time_alone_starts_a_read() {
+        let (_root, path, mut token) = cached(TokenRule::DOOR);
+        write_line(&path, FIRST);
+
+        assert_eq!(current(&mut token), token_bytes(FIRST));
+
+        let before = readfile::facts(&path).unwrap();
+        let later = modified(&path) + Duration::from_secs(1);
+        write_line(&path, SECOND);
+        set_modified(&path, later);
+        let after = readfile::facts(&path).unwrap();
+
+        assert_eq!(
+            (after.dev(), after.ino(), after.len()),
+            (before.dev(), before.ino(), before.len())
+        );
+        assert_ne!(after.modified_ns(), before.modified_ns());
+        assert_eq!(current(&mut token), token_bytes(SECOND));
+    }
+
+    /// The size is one of the four facts. A longer token in the same file is
+    /// read when the size alone moved.
+    #[test]
+    fn a_new_size_alone_starts_a_read() {
+        let (_root, path, mut token) = cached(TokenRule::DOOR);
+        write_line(&path, FIRST);
+
+        assert_eq!(current(&mut token), token_bytes(FIRST));
+
+        let before = readfile::facts(&path).unwrap();
+        let time = modified(&path);
+        let longer = format!("{SECOND}{SECOND}");
+        write_line(&path, &longer);
+        set_modified(&path, time);
+        let after = readfile::facts(&path).unwrap();
+
+        assert_eq!(
+            (after.dev(), after.ino(), after.modified_ns()),
+            (before.dev(), before.ino(), before.modified_ns())
+        );
+        assert_ne!(after.len(), before.len());
+        assert_eq!(current(&mut token), token_bytes(&longer));
     }
 
     /// Difference 2 of [`CachedToken::current`]. The Python cache keeps the

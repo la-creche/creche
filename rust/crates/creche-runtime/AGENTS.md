@@ -191,6 +191,11 @@ reason. The packet that writes the three bodies obeys these rules:
      takes each case. `bearer_of` takes only `Bearer`. `BearerTrim` thus has
      no value for the rule of the chaperone. The port of the chaperone needs
      the answer first.
+  4. `same_content`: contract 04 §7.3 names three facts that the reader of
+     the delegate token file compares. They are the time of the last change,
+     the size and the inode. `CachedToken` also compares the device, because
+     an inode number is an id only on one device. The Python cache compares
+     the three facts. A change costs one line.
 - The test of `token` walks no vector of `runtime.bearer.chaperone`. Two
   vectors of that surface hold the scheme in another case of letters:
   `scheme-lower-case` and `scheme-upper-case`. The Python chaperone accepts
@@ -203,11 +208,16 @@ reason. The packet that writes the three bodies obeys these rules:
   so the test gives the bytes to the private function `bearer_in`. Three
   Python services accept that request. No test of this crate shows what a
   Rust service answers. The HTTP server is a stub.
-- `token::CachedToken` reads the file again only when a fact of the file
-  moved. It does not see a new token that has each fact of the old one: the
-  device, the inode, the size, the time of the last change and the mode. The
-  Python cache has the same limit. A writer that replaces the file with a
-  rename gives it a new inode.
+- `token::CachedToken` reads the file again only when one of four facts of
+  the file moved. The facts are the device, the inode, the size and the time
+  of the last change. It does not see a new token that has each fact of the
+  old one. The Python cache has the same limit. A writer that replaces the
+  file with a rename gives it a new inode.
+- `token::CachedToken` checks the mode of its rule only when it reads the
+  file. A wider mode alone starts no read, so the token stays in use. The
+  Python cache checks no mode, as `TokenRule::DOOR` checks none. The owner
+  of the crate decides this case before a cached token gets a rule with a
+  mode check.
 - `token::CachedToken::current` blocks for one `stat`, and for one read
   after a change. It gives a borrow of the token. A caller thus cannot run
   it in `Tasks::spawn_blocking` and keep the token after the call. Rule 7 of

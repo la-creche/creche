@@ -1068,6 +1068,10 @@ test.
      `token::bearer_of` takes only `Bearer`, so `BearerTrim` has no value
      for the rule of the chaperone. The test of `token` thus walks no vector
      of `runtime.bearer.chaperone`.
+  4. `same_content`, contract 04 §7.3. The contract names three facts that
+     the reader of the delegate token file compares: the time of the last
+     change, the size and the inode. `token::CachedToken` also compares the
+     device.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/entropy.rs`: contract 02 §2 gives a mint of a
   ULID no rule for two times of the clock. One is a time before 1970. The
