@@ -642,7 +642,7 @@ the text of the failure. Work down this list.
   pages. The suite holds the page of the noticeboard as it is:
   - The newest record is first, across the day files and in one file.
   - A link with the text `older` leads to the next records.
-  - A link with the text `newer` leads back.
+  - A link with the text `newer` leads one page back.
 
   A change costs one scenario in `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, an audit line that is no record.** Contract 04 §6

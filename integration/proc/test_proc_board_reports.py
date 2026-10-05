@@ -315,7 +315,8 @@ async def test_the_audit_page_pages_from_the_newest_record(board_prepared: Board
     records or the links between two pages. Reading taken: the page of the
     noticeboard as it is. The newest record is first, across the files and
     in one file. A link with the text `older` leads to the next records, and
-    a link with the text `newer` leads back. A change costs this scenario.
+    a link with the text `newer` leads one page back. A change costs this
+    scenario.
     """
     tree = board_prepared.tree
     today, yesterday = audit_days(2)
@@ -330,6 +331,7 @@ async def test_the_audit_page_pages_from_the_newest_record(board_prepared: Board
         middle = await follow(browser, newest, OLDER)
         oldest = await follow(browser, middle, OLDER)
         back = await follow(browser, middle, NEWER)
+        again = await follow(browser, oldest, NEWER)
 
     newest_first = CALLS[::-1]
 
@@ -339,6 +341,7 @@ async def test_the_audit_page_pages_from_the_newest_record(board_prepared: Board
     assert tools_of(oldest) == newest_first[2 * PAGE_SIZE :]
     assert link_named(oldest, OLDER) is None
     assert tools_of(back) == tools_of(newest)
+    assert tools_of(again) == tools_of(middle)
 
 
 async def test_an_audit_line_that_is_not_json_takes_one_row(board_alone: BoardStack) -> None:
