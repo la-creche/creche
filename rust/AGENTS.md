@@ -708,11 +708,12 @@ Rules for the test:
   on the machine. With a complete `Cargo.lock`, cargo does not read
   crates.io again for a crate that the copy holds. A version that its
   author removes after cargo wrote the copy thus passes the check.
-- The `rust` job keeps that copy in its cache. The key of the cache is the
-  toolchain file and the lock file. A run can thus read the copy that an
-  earlier run saved, until one of the two files changes. The other choice is
-  a `rust` job that keeps no copy of the index in its cache. cargo then
-  reads crates.io at each run.
+- The `rust` job keeps that copy in its cache. The key of the cache holds a
+  hash of the toolchain file and of the lock file. A run can thus read the
+  copy that an earlier run saved, until one of the two files changes.
+  `bin/tests/test_gate_workflow.py` pins the path of the copy and the key.
+  The other choice is a `rust` job that keeps no copy of the index in its
+  cache. cargo then reads crates.io at each run.
 - `cargo-deny` prints the warning `index-failure` for a crate when it cannot
   read the index entry of that crate. The check then cannot find a removed
   version of that crate. The warning does not fail step 5. An advisory for
