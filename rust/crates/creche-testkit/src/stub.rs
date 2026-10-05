@@ -1639,6 +1639,9 @@ mod tests {
     /// be under load, so the limit is long.
     const LONG: Duration = Duration::from_secs(60);
 
+    /// The longest path of a Unix socket on macOS, in bytes.
+    const SOCKET_PATH_MAX: usize = 104;
+
     fn block_on<F: Future>(future: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1701,9 +1704,6 @@ mod tests {
 
     #[test]
     fn two_stubs_under_one_root_have_two_sockets_that_fit_a_socket_path() {
-        // The longest path of a Unix socket on macOS, in bytes.
-        const SOCKET_PATH_MAX: usize = 104;
-
         block_on(async {
             let root = TempRoot::new().unwrap();
             let first = HttpStub::unix(&root).await.unwrap();
@@ -2701,9 +2701,6 @@ mod tests {
 
     #[test]
     fn two_refused_sockets_under_one_root_have_two_paths_that_fit_a_socket_path() {
-        // The longest path of a Unix socket on macOS, in bytes.
-        const SOCKET_PATH_MAX: usize = 104;
-
         let root = TempRoot::new().unwrap();
         let first = refused_socket(&root).unwrap();
         let second = refused_socket(&root).unwrap();
