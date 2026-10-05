@@ -183,19 +183,19 @@ pub enum AccessLog {
 /// `UNROUTED`, with no header and with no body. A route answers it with
 /// status 405, and no handler runs. Two rules follow:
 ///
-/// - **No route of a service takes each method.** `any`, `route_service`,
-///   `nest_service` and a fallback of a method router make such a route. Its
-///   handler runs for the question, and it gets a `HEAD` request with the
-///   method `UNROUTED`.
+/// - **Give each route of a service its methods by name.** `any`,
+///   `route_service`, `nest_service` and a fallback of a method router make
+///   a route for each method. The handler of such a route runs for the
+///   question, and it gets a `HEAD` request with the method `UNROUTED`.
 /// - **A layer that `routes` has also gets the question.** Give the router a
 ///   layer of the service before the call only when the layer can get such a
 ///   request.
 ///
 /// # The log
 ///
-/// The access line has the target `http`: `GET /v1/models 200`. It names the
-/// method that the client sent. A request whose client left before the
-/// answer writes no access line.
+/// The access line has the target `http`: `GET /v1/models 200`. For a `HEAD`
+/// request it holds `HEAD`, and not the method that the router got. A
+/// request whose client left before the answer writes no access line.
 ///
 /// # The Python origin
 ///
@@ -428,6 +428,8 @@ async fn unmatched<E: ErrorBodies>(
 /// The other form of `path`: with no final slash for a path that ends in one
 /// or more, and with one final slash for each other path. `None` for the
 /// path `/`, for a path of slashes only, and for a target that is no path.
+///
+/// The Python origin is `fastapi/routing.py:2746-2751`.
 fn other_form(path: &str) -> Option<String> {
     if path == "/" || !path.starts_with('/') {
         return None;
@@ -443,6 +445,10 @@ fn other_form(path: &str) -> Option<String> {
 /// Asks the route table if a route has `path`. The answer of the table to a
 /// path that no route has is status 404, and each other status says that a
 /// route has the path.
+///
+/// The Python origin is the second loop over the routes
+/// (`fastapi/routing.py:2753-2755`). That loop runs no handler and no
+/// middleware.
 async fn has_route(table: Router, unrouted: Method, path: &str) -> bool {
     let Ok(target) = path.parse::<Uri>() else {
         return false;
@@ -938,7 +944,7 @@ mod tests {
                         "INFO http GET /healthz 200",
                         "INFO http GET /no/such/path 404",
                         "INFO http POST /healthz 405",
-                        // The line names the method that the client sent.
+                        // `HEAD`, and not the method that the router got.
                         "INFO http HEAD /healthz 405",
                         "INFO http GET /healthz/ 307",
                     ]
@@ -1674,6 +1680,8 @@ mod tests {
             // The path `/` and a path of slashes only have no other form.
             ("GET", "/", None),
             ("GET", "//", None),
+            // A target that is no path.
+            ("OPTIONS", "*", None),
         ];
 
         runtime().block_on(async {
@@ -1868,8 +1876,8 @@ mod tests {
         }
     }
 
-    /// The rule of [`edge`]: no route of a service takes each method. This
-    /// test holds what such a route gets.
+    /// The rule of [`edge`]: each route of a service has its methods by
+    /// name. This test holds what a route for each method gets.
     #[test]
     fn a_route_that_takes_each_method_gets_the_question_and_each_head_request() {
         runtime().block_on(async {
