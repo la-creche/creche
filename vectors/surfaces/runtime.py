@@ -27,7 +27,7 @@ import asyncio
 import enum
 import json
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol, cast
@@ -56,6 +56,7 @@ from chaperone.delegate import DoorTokenError, read_door_token
 from fastapi import FastAPI
 from noticeboard.app import build_app as build_noticeboard_app
 from noticeboard.config import Config as NoticeboardConfig
+from noticeboard.security import CSRF_COOKIE
 from noticeboard.sessions import SessionReader, Transport
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp, Message
@@ -1597,14 +1598,24 @@ SERVICES: Final[tuple[Service, ...]] = (
         notes=(
             "The noticeboard of the generator binds loopback and has no access key, so its "
             "key check lets each request through.",
+            f"The noticeboard adds the cookie {CSRF_COOKIE} to the answer of each request "
+            "that its key check lets through. The value of that cookie is random for a "
+            "request that holds no such cookie. The one exception is the answer to a handler "
+            "that raises: the vector handler-raises has no cookie.",
             _NOTE_OWN_HANDLER,
         ),
     ),
 )
 
 
-def _answer(status: int, headers: Mapping[str, str], content: bytes) -> dict[str, object]:
-    """What a vector keeps of one answer."""
+def _answer(
+    status: int, headers: Mapping[str, str], cookies: Sequence[str], content: bytes
+) -> dict[str, object]:
+    """What a vector keeps of one answer.
+
+    `cookies` is the value of each `Set-Cookie` header. A mapping of the
+    headers holds only one text for the header of that name.
+    """
     answer: dict[str, object] = {
         "status": status,
         "content_type": headers.get("content-type"),
@@ -1618,6 +1629,10 @@ def _answer(status: int, headers: Mapping[str, str], content: bytes) -> dict[str
     if location is not None:
         answer["location"] = urlsplit(location).path
 
+    if cookies:
+        # The value of a cookie can be random. A vector keeps the name only.
+        answer["cookies"] = sorted(cookie.partition("=")[0].strip() for cookie in cookies)
+
     return answer
 
 
@@ -1629,7 +1644,8 @@ def _edge_vector(client: TestClient, vector_id: str, method: str, path: str) -> 
     if isinstance(outcome, Raised):
         return raised(vector_id, given, outcome.exc)
 
-    answer = _answer(outcome.status_code, outcome.headers, outcome.content)
+    cookies = outcome.headers.get_list("set-cookie")
+    answer = _answer(outcome.status_code, outcome.headers, cookies, outcome.content)
 
     return accepted(vector_id, given, answer)
 
@@ -1666,6 +1682,9 @@ def _edge_surface(service: Service, scratch: Path) -> Surface:
             "value.allow is each method of the Allow header, in sorted order. value.location "
             "is the path of the Location header. The header also holds the scheme and the "
             "host name of the test client. An answer with no such header has no such key.",
+            "value.cookies is the name of the cookie of each Set-Cookie header, in sorted "
+            "order. No vector holds the value or an attribute of a cookie. An answer with no "
+            "such header has no such key.",
             *service.notes,
         ),
         context={"raise_path": RAISE_PATH},

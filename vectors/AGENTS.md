@@ -284,6 +284,8 @@ directory is not a workspace package, so a change here does not change
   exception. The vector `handler-raises` holds the answer of that handler.
 - `runtime.edge.door_trigger` has no vector for HEAD on a GET route. The
   listener has no GET route.
+- A `runtime.edge` vector holds the name of each cookie of an answer. No
+  vector holds the value or an attribute of a cookie.
 - No `runtime.edge` vector holds the `Content-Length` header. The answer to
   HEAD has no body, and its `Content-Length` is 31. That is the length of
   the body for a wrong method.
