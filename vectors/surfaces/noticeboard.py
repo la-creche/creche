@@ -789,6 +789,8 @@ def _segment_surface(scratch: Path) -> Surface:
         (
             "The input is one path segment, as a client sends it: ASCII, with a percent "
             "escape for each byte that needs one.",
+            f"Each input of the surface {cases.NAME_SURFACE} is here as a segment, with the "
+            "id of its vector there.",
             "The generator puts the segment into each path of context.routes, in the place "
             "of {}. It sends one GET request for each path.",
             "An accepted vector is a segment that each of the three routes takes as a family "
@@ -826,6 +828,8 @@ def _session_id_surface() -> Surface:
         f"{SESSION_API} §2",
         (
             "The input is one route parameter, with each percent escape decoded.",
+            f"Each input of the surface {cases.SESSION_SURFACE} is here, with the id of its "
+            "vector there.",
             "An accepted vector is a text that the entry point takes as a session id.",
             "The session route of noticeboard.app calls the entry point. It answers status 404 "
             "for a text that the entry point refuses. No vector holds that answer.",

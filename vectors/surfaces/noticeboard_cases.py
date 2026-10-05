@@ -22,8 +22,9 @@ from typing import Any, Final
 from attendance.models import LineKind
 
 from noticeboard import auditfiles, jsonfiles, sessions, statusdocs, transcript
+from vectors.surfaces import ids
 from vectors.surfaces.config import LAN, VIEW_KEY
-from vectors.surfaces.ids import ARABIC_ONE, NAME_CASES, SESSION_CASES
+from vectors.surfaces.ids import ARABIC_ONE
 from vectors.surfaces.session_cases import (
     DIGEST,
     FAMILY,
@@ -516,22 +517,39 @@ def segment(text: str) -> str:
     )
 
 
-#: Texts that are no input of the id surfaces, as the route gets them.
-_ROUTE_TEXTS: Final[tuple[tuple[str, str], ...]] = (
-    ("not-a-name", "Not A Name"),
-    ("final-line-feed", "chat\n"),
-    ("final-arabic-digit", "cha" + ARABIC_ONE),
-    ("nul-inside", "ch\x00at"),
-    ("question-mark", "chat?"),
-    ("hash", "chat#"),
-)
+#: The id surface of each grammar that a route parameter follows.
+NAME_SURFACE: Final = "id.family_name.noticeboard"
+SESSION_SURFACE: Final = "id.session_id.attendance"
+
+
+def _id_inputs(surface: str) -> tuple[tuple[str, str], ...]:
+    """Each input of one id surface: the id of its vector and its text.
+
+    A copy of a grammar gets the inputs of each other copy, with the same
+    vector ids (`vectors/README.md`, rule 2 for a new surface). A difference
+    between two copies is then a difference on one vector id.
+    """
+    (found,) = (one for one in ids.surfaces() if one.name == surface)
+    inputs: list[tuple[str, str]] = []
+    for vector in found.vectors:
+        given = vector.body["input"]
+        text = given.get("text") if isinstance(given, dict) else None
+        if not isinstance(text, str):
+            raise ValueError(f"{surface}: the input of {vector.id} is no text")
+
+        inputs.append((vector.id, text))
+
+    return tuple(inputs)
+
 
 #: Each family route parameter: an id and the segment as a client sends it.
 SEGMENTS: Final[tuple[tuple[str, str], ...]] = (
-    *((case_id, segment(text)) for case_id, text in NAME_CASES),
-    *((case_id, segment(text)) for case_id, text in _ROUTE_TEXTS),
+    *((case_id, segment(text)) for case_id, text in _id_inputs(NAME_SURFACE)),
+    # --- texts that the id surface does not hold ---
+    ("not-a-name", segment("Not A Name")),
+    ("question-mark", segment("chat?")),
+    ("hash", segment("chat#")),
     # --- a segment that only its written form tells apart ---
-    ("empty", ""),
     ("one-dot", "."),
     ("escaped-dots", "%2E%2E"),
     ("escaped-letter", "ch%61t"),
@@ -540,18 +558,10 @@ SEGMENTS: Final[tuple[tuple[str, str], ...]] = (
     ("escape-not-hex", "chat%zz"),
 )
 
-#: Each session id that the id surfaces of the session grammar get, and the
-#: texts that the route must refuse.
+#: Each session id of the id surface, and two texts that it does not hold.
 SESSION_IDS: Final[tuple[tuple[str, str], ...]] = (
-    *SESSION_CASES,
-    ("empty", ""),
+    *_id_inputs(SESSION_SURFACE),
     ("not-an-id", "not an id"),
-    ("final-line-feed", "owui-x\n"),
-    ("final-cr", "owui-x\r"),
-    ("space-at-the-start", " owui-x"),
-    ("space-at-the-end", "owui-x "),
-    ("nul-at-the-end", "owui-x\x00"),
-    ("final-arabic-digit", "owui-" + ARABIC_ONE),
     ("each-door-prefix", "job-auto-tui-owui-1"),
 )
 
