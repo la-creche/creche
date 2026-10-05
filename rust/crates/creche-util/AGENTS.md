@@ -31,7 +31,8 @@ rule has its reason.
    with such a rule is a second home for it.
 3. **It has two users.** The two users are two crates, or two modules that
    hold two contracts. A function with one user stays in the module of that
-   user.
+   user. The functions of one published rule count as one helper: `is_space`,
+   `strip` and `words` are the white space rule of Python `str`.
    Reason: a reader finds a function with one user beside that user. This
    crate must not collect each small function of the workspace.
 4. **The standard library is enough for it.** The crate file has no
@@ -88,7 +89,20 @@ function of the caller.
 - The crate holds no base64 yet. The workspace has more than one base64
   decoder and one base64 encoder. Packet `decisions-util-runtime` moves them
   here.
-- `py_strip` in `crates/agent-family/src/yaml/construct.rs` is a second copy
-  of the rule of `pytext::strip`. No packet has this change yet.
+- `pytext::words` has one user module today: `family`. It is here as a part
+  of the white space rule, which has users in `config`, `family` and
+  `session`. Rule 3 permits that with its sentence on the functions of one
+  published rule. The owner confirms that sentence with the six rules. The
+  other choice makes `words` a private function of `family`.
+- `is_header_space` in `crates/creche-contracts/src/ids.rs` holds the set of
+  `pytext::is_space` as a written list. `OwuiChatId::from_header` trims a
+  header value with it. It is a second copy of the set. A change to `ids`
+  needs the owner of the crate (`rust/AGENTS.md`, "Where a new type goes").
+  No packet has this change yet.
+- `py_strip` in `crates/agent-family/src/yaml/construct.rs` holds a white
+  space set of its own. It trims a text before the reader makes a number of
+  that text. The rule for a number is not the rule of `pytext::strip`. The
+  module doc of `pytext` gives the difference. No packet changes `py_strip`
+  yet.
 - `sha256::digest` has no branch and no index that depends on a byte of the
   message. No test and no compiler check proves that its time is constant.
