@@ -78,15 +78,30 @@
 //! [`parse_object`] reads the bytes with `serde_json`. An answer is thus
 //! strict JSON in UTF-8. `json.loads` of Python reads more, and each Python
 //! client reads an answer with it. [`parse_object`] refuses these answers,
-//! and a Python client reads them:
+//! and each Python client reads them:
 //!
 //! - An answer with the word `NaN`, `Infinity` or `-Infinity`.
 //! - An answer with a number outside the range of a float: `1e400`, or an
 //!   integer of 400 digits.
-//! - An answer with one half of a surrogate pair, as an escape or as bytes.
-//! - An answer that starts with a byte order mark.
-//! - An answer in UTF-16 or in UTF-32.
-//! - An answer that nests 128 levels or more.
+//! - An answer with the escape of one half of a surrogate pair.
+//! - An answer that nests 128 levels or more, up to the recursion limit of
+//!   the interpreter.
+//!
+//! The Python clients do not read the encoding of an answer in one way. The
+//! noticeboard, the delegate client of the chaperone and `caregiver` give
+//! the bytes of the body to `json.loads`. The three doors give it the text
+//! that `httpx` makes from the body. `httpx` reads the body as UTF-8 when the
+//! header names no charset, and it reads a byte that is not UTF-8 as U+FFFD.
+//! [`parse_object`] refuses each of these answers:
+//!
+//! - An answer that starts with a byte order mark, and an answer in UTF-16
+//!   or in UTF-32. The three clients that give bytes read it. The doors
+//!   refuse it.
+//! - An answer with a byte that is not UTF-8. The doors read it, with U+FFFD
+//!   in the place of the byte. The three clients that give bytes refuse it.
+//! - An answer with the bytes of one half of a surrogate pair. The three
+//!   clients that give bytes read the half. The doors read U+FFFD three
+//!   times.
 //!
 //! The differential test at the end of this file walks the vectors
 //! `runtime.untrusted.*` and `runtime.parse_object.*` of `vectors/data`. Its
@@ -377,6 +392,16 @@ impl Error for NotAnObject {}
 /// an empty object for each refusal. A port of it calls `unwrap_or_default`
 /// on the result.
 ///
+/// A Python door does not give `json.loads` the bytes of the body. It gives
+/// the text that `httpx` makes from them, and `httpx` reads a byte that is
+/// not UTF-8 as U+FFFD. This function refuses a body with such a byte. The
+/// port of a door has two choices:
+///
+/// 1. It gives the bytes of `String::from_utf8_lossy(body)` to this function.
+///    The port then reads the body that the Python door reads.
+/// 2. It gives the body itself, and it names the difference in its pull
+///    request.
+///
 /// # Errors
 ///
 /// [`NotAnObject::NotJson`] for bytes that are not one JSON text, and
@@ -388,13 +413,17 @@ impl Error for NotAnObject {}
 //
 // CONTRACT-QUESTION: contract 02 §3 rule 3 says that a body is JSON. It does
 // not say if a reader takes what `json.loads` of Python takes past strict
-// JSON: `NaN`, a number outside the range of a float, one half of a surrogate
-// pair, a byte order mark, UTF-16 and UTF-32. Each Python client takes them.
-// This reader refuses them, as the `session` module does for a request. With
-// its default settings, `json.dumps` of Python writes `NaN`, `Infinity` and
-// the escape of one half of a surrogate pair. A Rust client refuses the whole
-// answer of a writer that does. A reader that takes them costs a JSON reader
-// of this module in place of `serde_json`.
+// JSON in UTF-8. Each Python client takes `NaN`, a number outside the range
+// of a float and the escape of one half of a surrogate pair. The noticeboard,
+// the delegate client and `caregiver` give the bytes to `json.loads`, so they
+// also take a byte order mark, UTF-16 and UTF-32. The three doors give
+// `json.loads` the text of `httpx`, so they refuse those three, and they read
+// a byte that is not UTF-8 as U+FFFD. This reader refuses each of them, as
+// the `session` module does for a request. With its default settings,
+// `json.dumps` of Python writes `NaN`, `Infinity` and the escape of one half
+// of a surrogate pair. A Rust client refuses the whole answer of a writer
+// that does. A reader that takes them costs a JSON reader of this module in
+// place of `serde_json`.
 pub fn parse_object<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, NotAnObject> {
     let mut reader = serde_json::Deserializer::from_slice(bytes);
     let value = read(&mut reader).map_err(|_| NotAnObject::NotJson)?;
@@ -1682,6 +1711,38 @@ mod tests {
         }
     }
 
+    /// What a port of a door reads from the lossy text of a body.
+    fn lossy(body: &[u8]) -> Result<Each, NotAnObject> {
+        parse_object(String::from_utf8_lossy(body).as_bytes())
+    }
+
+    /// A Python door reads the text that `httpx` makes from a body. A byte
+    /// that is not UTF-8 is U+FFFD there. A port that gives the lossy text of
+    /// the body reads what the door reads, and it refuses what the door
+    /// refuses.
+    #[test]
+    fn a_port_of_a_door_keeps_the_door_reading_with_a_lossy_text() {
+        let one_byte = b"{\"text\": \"a\xffb\"}";
+        let half_a_pair = b"{\"text\": \"\xed\xa0\x80\"}";
+        let refused: [&[u8]; 4] = [
+            // A byte order mark.
+            b"\xef\xbb\xbf{}",
+            // UTF-16 with a mark, and with none.
+            b"\xff\xfe{\x00}\x00",
+            b"{\x00}\x00",
+            // UTF-32 with no mark.
+            b"{\x00\x00\x00}\x00\x00\x00",
+        ];
+
+        assert_eq!(parse_object::<Each>(one_byte), Err(NotAnObject::NotJson));
+        assert_eq!(lossy(one_byte).unwrap().text, "a\u{fffd}b");
+        assert_eq!(parse_object::<Each>(half_a_pair), Err(NotAnObject::NotJson));
+        assert_eq!(lossy(half_a_pair).unwrap().text, "\u{fffd}\u{fffd}\u{fffd}");
+        for body in refused {
+            assert_eq!(lossy(body), Err(NotAnObject::NotJson), "{body:?}");
+        }
+    }
+
     // --- the tree of one value ---
 
     fn tree(input: &str) -> Json {
@@ -2664,7 +2725,8 @@ mod tests {
         struct Line {
             /// The Python file and the line.
             python: &'static str,
-            /// The bytes that the Python line reads.
+            /// The bytes that the Python line reads. For a door, they are the
+            /// body of the answer, and the line reads the text of `httpx`.
             input: &'static [u8],
             /// What the Python line gives for the bytes, as JSON text. A run
             /// of the Python code gave this text. No test holds it.
@@ -2717,6 +2779,12 @@ mod tests {
         const UTF_32: &str = "The contract says that a body is JSON and names no encoding. \
             json.loads of Python finds UTF-32 from the first bytes, with a byte order mark and \
             without. serde_json reads UTF-8 only.";
+
+        const NOT_UTF_8: &str = "The contract says that a body is JSON and names no encoding. \
+            A Python door gives json.loads the text that httpx makes from the body, and httpx \
+            reads a byte that is not UTF-8 as U+FFFD. The noticeboard, the delegate client and \
+            caregiver give json.loads the bytes, and they refuse the byte. The Rust reader \
+            refuses it too.";
 
         const DEPTH_LIMIT: &str = "The contract gives no nesting limit. Python reads a text \
             until the recursion limit of the interpreter, which differs between two versions. \
@@ -2854,6 +2922,17 @@ mod tests {
                 differs: Differs::Refuses,
                 contract: STRICT_JSON,
                 decision: LONE_SURROGATE,
+            },
+            Deviation {
+                at: At::Line(Line {
+                    python: "door-owui/src/agent_door_owui/attendance.py:315-323",
+                    input: b"{\"field\": \"a\xffb\"}",
+                    python_gives: r#"{"field":"a\ufffdb"}"#,
+                    replay: line_document,
+                }),
+                differs: Differs::Refuses,
+                contract: STRICT_JSON,
+                decision: NOT_UTF_8,
             },
             Deviation {
                 at: At::Line(Line {

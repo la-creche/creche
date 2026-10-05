@@ -910,8 +910,9 @@ Rules for the test:
   `crates/creche-contracts/src/untrusted.rs`:
   1. `parse_object`, contract 02 §3 rule 3. The contract says that a body is
      JSON. It does not say if a reader takes what `json.loads` of Python
-     takes past strict JSON. Each Python client takes it. The reader is
-     `serde_json`, which refuses it.
+     takes past strict JSON in UTF-8. Each Python client takes a part of it.
+     Difference 1 and difference 6 below say which part. The reader is
+     `serde_json`, which refuses each part.
   2. `DEPTH_MAX`, contract 02 §3 rule 3. The contract gives a body no nesting
      limit. `parse_object` reads 127 levels, the limit of `serde_json`. The
      tree of the module stops at 128 levels, for a deserializer with no
@@ -919,25 +920,34 @@ Rules for the test:
   3. `int`, contracts 02, 04 and 05. No contract gives a count a range. The
      Python readers keep an integer of each size. The reader gives an `i64`,
      and it reads a larger integer as 0.
-- The module `untrusted` differs from the Python helpers on purpose in five
+- The module `untrusted` differs from the Python helpers on purpose in six
   ways. Each one is a row of `DEVIATIONS` in the test of the module.
   1. An answer is strict JSON in UTF-8, with no byte order mark. It holds no
      `NaN`, no `Infinity`, no number outside the range of a float and no half
-     of a surrogate pair. Each Python client reads an answer that breaks one
-     of these rules.
+     of a surrogate pair. Each Python client reads `NaN`, `Infinity`, such a
+     number and the escape of such a half. The noticeboard, the delegate
+     client of the chaperone and `caregiver` give `json.loads` the bytes.
+     They also read a byte order mark, UTF-16, UTF-32 and the bytes of such
+     a half. The three doors give `json.loads` the text of `httpx`, and they
+     refuse the first three.
   2. An answer nests 127 levels at most.
   3. `int` reads an integer that no `i64` holds as 0.
   4. `number` reads the integer `-0` as `-0.0`. Python reads it as `0.0`.
   5. `text` reads a field that is no text as the empty text. `_text` of the
      delegate client of the chaperone reads it as `None`.
+  6. An answer holds no byte that is not UTF-8. The three doors read such a
+     byte as U+FFFD, because `httpx` makes a text of the body first. The
+     three other clients refuse the answer, and `parse_object` refuses it
+     too. The port of a door gives `parse_object` the lossy text of the body,
+     or it names the difference in its pull request.
 
   One more row is a vector on which the two sides accept the same document.
   The raw type of the test keeps an integer past 64 bits as a float.
-- `untrusted::parse_object` refuses the whole answer for difference 1 and
-  for difference 2. With its default settings, `json.dumps` of Python writes
-  `NaN`, `Infinity` and the escape of one half of a surrogate pair. The owner
-  of the crate decides if the module gets a JSON reader of its own, as
-  `channel`, `grants`, `status` and `manifest` have.
+- `untrusted::parse_object` refuses the whole answer for difference 1, for
+  difference 2 and for difference 6. With its default settings, `json.dumps`
+  of Python writes `NaN`, `Infinity` and the escape of one half of a
+  surrogate pair. The owner of the crate decides if the module gets a JSON
+  reader of its own, as `channel`, `grants`, `status` and `manifest` have.
 - The module `untrusted` has no reader that tells a value that is no list
   from an empty list. `untrusted::list` reads both as the empty list.
   `is_list` of each door gives `False` for the first only, and `as_array` of
