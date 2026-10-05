@@ -909,8 +909,8 @@ fn audit_record(args: &serde_json::Map<String, Json>) -> AuditRecord {
         .map(|name| name.parse::<SandboxName>().unwrap());
     let sandbox = match (sandbox, args["sandbox_id_trusted"].as_bool().unwrap()) {
         (None, false) => SandboxEvidence::Unknown,
-        (Some(sandbox), false) => SandboxEvidence::Claimed(sandbox),
         (Some(sandbox), true) => SandboxEvidence::Trusted(sandbox),
+        (Some(_), false) => panic!("a sandbox name with no proof"),
         (None, true) => panic!("a trusted sandbox with no name"),
     };
     let claims = &args["claimed"];
