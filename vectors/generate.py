@@ -56,9 +56,9 @@ DISAGREEMENTS_FILE: Final = "ids/disagreements.json"
 #: `vectors/data/`, with the SHA-256 of the bytes of that file.
 FROZEN_KEY: Final = "frozen"
 #: A digest in the index: 64 hexadecimal digits in lower case.
-DIGEST: Final = re.compile(r"[0-9a-f]{64}")
+_DIGEST: Final = re.compile(r"[0-9a-f]{64}")
 #: A tree with no frozen file.
-NOTHING_FROZEN: Final[Mapping[str, str]] = MappingProxyType({})
+_NOTHING_FROZEN: Final[Mapping[str, str]] = MappingProxyType({})
 #: What to do with an index that does not give the frozen files.
 RESTORE_INDEX: Final = f"take {INDEX_FILE} of the base branch, then run the generator again"
 
@@ -187,7 +187,7 @@ def _frozen_map(index: Mapping[str, object]) -> dict[str, str]:
         if path == INDEX_FILE or not _is_data_path(path):
             raise ValueError(f"{INDEX_FILE}: {path!r} is no path of a frozen file")
 
-        if not isinstance(digest, str) or DIGEST.fullmatch(digest) is None:
+        if not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None:
             raise ValueError(f"{INDEX_FILE}: the digest of {path} is not 64 hexadecimal digits")
 
         frozen[path] = digest
@@ -195,7 +195,7 @@ def _frozen_map(index: Mapping[str, object]) -> dict[str, str]:
     return frozen
 
 
-def freeze(
+def _freeze(
     paths: Sequence[str],
     frozen: Mapping[str, str],
     files: Mapping[str, str],
@@ -222,7 +222,7 @@ def freeze(
             raise ValueError(f"{path} is not ASCII, so the generator did not write it")
 
         # The call makes no row here. It stops on a file that can have none.
-        frozen_row(path, text)
+        _frozen_row(path, text)
         added[path] = _digest(text)
 
     return added
@@ -239,7 +239,7 @@ def index_row(surface: Surface) -> dict[str, Json]:
     }
 
 
-def frozen_row(path: str, text: str) -> dict[str, Json] | None:
+def _frozen_row(path: str, text: str) -> dict[str, Json] | None:
     """The index row of a frozen file, from the file itself.
 
     A vector file has no `kind`. Each other file of the generator has one,
@@ -288,7 +288,9 @@ def index_rows(
     rows = [index_row(surface) for surface in surfaces]
     for path in sorted(frozen):
         text = on_disk.get(path)
-        row = frozen_row(path, text) if text is not None and _digest(text) == frozen[path] else None
+        row = (
+            _frozen_row(path, text) if text is not None and _digest(text) == frozen[path] else None
+        )
         if row is not None:
             rows.append(row)
 
@@ -312,7 +314,7 @@ def render_index(rows: Sequence[dict[str, Json]], frozen: Mapping[str, str]) -> 
     )
 
 
-def build_groups() -> tuple[tuple[Surface, ...], dict[str, str]]:
+def _build_groups() -> tuple[tuple[Surface, ...], dict[str, str]]:
     """Every surface that a group builds, and every file of a group by relative path."""
     surfaces: list[Surface] = []
     files: dict[str, str] = {}
@@ -341,7 +343,7 @@ def build(root: Path = DATA_DIR) -> tuple[tuple[Surface, ...], dict[str, str]]:
     """
     on_disk = committed(root)
     frozen = frozen_of(on_disk)
-    surfaces, files = build_groups()
+    surfaces, files = _build_groups()
     files[INDEX_FILE] = render_index(index_rows(surfaces, files, frozen, on_disk), frozen)
 
     return surfaces, files
@@ -385,7 +387,7 @@ def stale(
     files: Mapping[str, str],
     on_disk: Mapping[str, str],
     stray: Sequence[str] = (),
-    frozen: Mapping[str, str] = NOTHING_FROZEN,
+    frozen: Mapping[str, str] = _NOTHING_FROZEN,
 ) -> list[str]:
     """One line per file that is missing, different or left over.
 
@@ -430,7 +432,7 @@ def _refuse_link(root: Path, target: Path) -> None:
 
 
 def write(
-    files: Mapping[str, str], root: Path = DATA_DIR, frozen: Mapping[str, str] = NOTHING_FROZEN
+    files: Mapping[str, str], root: Path = DATA_DIR, frozen: Mapping[str, str] = _NOTHING_FROZEN
 ) -> list[str]:
     """Make `root` hold `files`, the frozen files and no other JSON file.
 
@@ -491,8 +493,8 @@ def main(argv: Sequence[str] | None = None, root: Path = DATA_DIR) -> int:
 
     on_disk = committed(root)
     known = frozen_of(on_disk)
-    surfaces, files = build_groups()
-    frozen = freeze(paths, known, files, on_disk)
+    surfaces, files = _build_groups()
+    frozen = _freeze(paths, known, files, on_disk)
     rows = index_rows(surfaces, files, frozen, on_disk)
     files[INDEX_FILE] = render_index(rows, frozen)
     if args.counts:
