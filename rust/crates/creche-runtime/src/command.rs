@@ -22,9 +22,6 @@
 //! `caregiver/src/caregiver/driver.py:84-105`. This module is a new design
 //! and not a translation of that call.
 //!
-//! Some function bodies of this module are stubs. `AGENTS.md` of this crate
-//! lists the stubs and the packet that writes them.
-//!
 //! # The owner of a run
 //!
 //! [`TokioRunner`] gives each run one owner task, which is a task of
@@ -81,6 +78,8 @@ use std::str::Utf8Error;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rustix::io::Errno;
+use rustix::process::{Pid, Signal, kill_process};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use tokio::runtime::Handle;
@@ -122,6 +121,13 @@ const ILLEGAL_NAME: &str = "illegal environment variable name";
 /// The text of [`RunError::NotStarted`] for a list of words with no program.
 /// No constructor makes such a list.
 const NO_PROGRAM: &str = "the command names no program";
+
+/// The text of [`RunError::NotStarted`] for a child that has no pipe for one
+/// of its three streams. `tokio` gives each pipe that the command asks for.
+const NO_PIPE: &str = "the child program has no pipe for a stream";
+
+/// The text of [`SignalError`] for a process id that is no id of a child.
+const NO_PROCESS_ID: &str = "the id of the child program is not valid";
 
 /// How long a child program can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1565,17 +1571,44 @@ impl PipedCommand {
 /// The caller is the owner of the child: one task holds the [`Piped`], and
 /// each other task asks that task through a message.
 ///
+/// The child gets the exact words of the command. No shell reads them.
+///
+/// Call the function inside the runtime. On a thread with no runtime, and in
+/// a runtime with no timer or with no I/O driver, no program starts.
+///
+/// The Python origin is `ExecChannel.start` of
+/// `attendance/src/attendance/exec_channel.py:103-121`.
+///
 /// # Errors
 ///
 /// [`RunError::NotStarted`] when the operating system does not start the
-/// program.
-#[expect(
-    clippy::todo,
-    unused_variables,
-    reason = "skeleton: packet foundation-command writes this body"
-)]
+/// program, when a name of the environment holds `=`, and when the thread
+/// has no runtime that can hold a child.
 pub fn spawn_piped(command: PipedCommand) -> Result<Piped, RunError> {
-    todo!()
+    let mut program = tokio_command(&command.argv, &command.env, command.cwd.as_deref())?;
+    program
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = start(program)?;
+
+    let (Some(stdin), Some(stdout), Some(stderr)) =
+        (child.stdin.take(), child.stdout.take(), child.stderr.take())
+    else {
+        // The drop of the child kills it.
+        return Err(not_started(NO_PIPE));
+    };
+
+    Ok(Piped {
+        stdin,
+        stdout,
+        stderr,
+        child: ChildGuard {
+            child,
+            program: command.program().to_owned(),
+            ended: None,
+        },
+    })
 }
 
 /// A child program that runs, with its three pipes.
@@ -1640,55 +1673,181 @@ impl Piped {
 
 /// The one value that stops a child program and waits for its end.
 ///
-/// To drop the guard kills the child.
+/// To drop the guard kills the child. The runtime then reads the end of the
+/// child, so the operating system keeps no entry for it.
+///
+/// Call each function inside the runtime that started the child.
+///
+/// Only [`spawn_piped`] gives a guard:
+///
+/// ```
+/// use creche_runtime::command::{ChildGuard, Ended, PipedCommand, RunError, spawn_piped};
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let ended = runtime.block_on(async {
+///     let (stdin, _stdout, _stderr, child) = spawn_piped(PipedCommand::new("cat"))?.into_parts();
+///     let mut child: ChildGuard = child;
+///
+///     // The child reads the end of its input and exits.
+///     drop(stdin);
+///
+///     Ok::<Ended, RunError>(child.wait().await)
+/// })?;
+///
+/// assert_eq!(ended, Ended::Code(0));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build a guard around a child that it
+/// started itself. Such a child has no flag that kills it at the drop:
+///
+/// ```compile_fail,E0451
+/// use creche_runtime::command::{ChildGuard, Ended, PipedCommand, RunError, spawn_piped};
+///
+/// fn guard(child: tokio::process::Child) -> ChildGuard {
+///     ChildGuard {
+///         child,
+///         program: String::new(),
+///         ended: None,
+///     }
+/// }
+/// ```
 #[derive(Debug)]
-pub struct ChildGuard(());
+pub struct ChildGuard {
+    child: Child,
+    /// The program of the child, for a line in the log.
+    program: String,
+    /// How the child ended. `None` until a wait gives the end.
+    ended: Option<Ended>,
+}
 
 impl ChildGuard {
     /// Sends SIGTERM to the child. The call does nothing after the child
     /// ended, so it never signals another process with the same id.
     ///
+    /// The Python origin is the `process.terminate()` call of
+    /// `attendance/src/attendance/exec_channel.py:176-177`.
+    ///
     /// # Errors
     ///
     /// [`SignalError`] when the operating system refuses the signal.
-    #[expect(
-        clippy::todo,
-        reason = "skeleton: packet foundation-command writes this body"
-    )]
     pub fn terminate(&self) -> Result<(), SignalError> {
-        todo!()
+        // After the end, the operating system can give the id of the child
+        // to a new process.
+        if self.ended.is_some() {
+            return Ok(());
+        }
+        let Some(id) = self.child.id() else {
+            return Ok(());
+        };
+        let Some(pid) = i32::try_from(id).ok().and_then(Pid::from_raw) else {
+            return Err(SignalError {
+                kind: io::ErrorKind::InvalidInput,
+                os_text: String::from(NO_PROCESS_ID),
+            });
+        };
+
+        match kill_process(pid, Signal::TERM) {
+            // No such process: the child ended, and the wait did not read
+            // its end yet. CPython ignores the same error
+            // (`subprocess.py:2244-2248`, version 3.13).
+            Ok(()) | Err(Errno::SRCH) => Ok(()),
+            Err(errno) => {
+                let error = io::Error::from(errno);
+
+                Err(SignalError {
+                    kind: error.kind(),
+                    os_text: os_text(&error),
+                })
+            }
+        }
     }
 
-    /// Sends SIGKILL to the child and does not wait.
-    #[expect(
-        clippy::todo,
-        reason = "skeleton: packet foundation-command writes this body"
-    )]
+    /// Sends SIGKILL to the child and does not wait. The call does nothing
+    /// after the child ended.
+    ///
+    /// The Python origin is the `process.kill()` call of
+    /// `attendance/src/attendance/exec_channel.py:282-283`. It ignores the
+    /// error of a child that ended, and this function ignores each error of
+    /// the signal: [`ChildGuard::wait`] says if the child ended.
     pub fn start_kill(&mut self) {
-        todo!()
+        if self.ended.is_some() {
+            return;
+        }
+
+        drop(self.child.start_kill());
     }
 
-    /// Waits for the end of the child.
+    /// Waits for the end of the child. A second call gives the same end.
     ///
     /// The future is cancel safe: a caller can drop it and call the function
     /// again.
-    #[expect(
-        clippy::todo,
-        reason = "skeleton: packet foundation-command writes this body"
-    )]
+    ///
+    /// When the wait call of the operating system fails, the function
+    /// writes one `ERROR` line and gives the exit status 255. The end of the
+    /// child is then not known, and no caller reads it as a success. The
+    /// child watcher of `asyncio` gives the same status for such an end
+    /// (`asyncio/unix_events.py:1000-1012` of CPython, version 3.13). After
+    /// that, [`ChildGuard::terminate`] and [`ChildGuard::start_kill`] send
+    /// no signal. The drop of the guard still sends SIGKILL to the id of the
+    /// child: `tokio` holds that flag. A wait call fails only in a process
+    /// that ignores SIGCHLD, or that waits for its children in a second
+    /// place.
+    ///
+    /// The Python origin is the `process.wait()` call of
+    /// `attendance/src/attendance/exec_channel.py:265`.
     pub async fn wait(&mut self) -> Ended {
-        todo!()
+        if let Some(ended) = self.ended {
+            return ended;
+        }
+
+        let ended = match self.child.wait().await {
+            Ok(status) => Ended::of(status),
+            Err(error) => {
+                report_no_end(&self.program, &error);
+
+                Ended::Code(STATUS_UNKNOWN)
+            }
+        };
+        self.ended = Some(ended);
+
+        ended
     }
 
     /// Stops the child in order: SIGTERM, a wait of `grace` at most, SIGKILL,
     /// a second wait of `grace` at most.
-    #[expect(
-        clippy::todo,
-        unused_variables,
-        reason = "skeleton: packet foundation-command writes this body"
-    )]
+    ///
+    /// The function waits only for the child, and it holds no pipe. The
+    /// owner of the three pipes reads them or drops them. Drop the standard
+    /// input first: a child in good condition reads the end of its input and
+    /// exits.
+    ///
+    /// A caller that drops the future stops the sequence at its current
+    /// step. A second call starts the sequence again.
+    ///
+    /// The Python origin is `_reap` of
+    /// `attendance/src/attendance/exec_channel.py:268-287`, after the
+    /// `terminate` call of `close` (`:176-177`). That code differs in two
+    /// ways. It closes the standard input before SIGTERM (`:172-174`).
+    /// Inside each time limit it waits for the end of the child and of each
+    /// pipe (`:244-265`).
     pub async fn end(&mut self, grace: Duration) -> EndOutcome {
-        todo!()
+        // An error of the signal changes no step: the wait and the kill
+        // follow.
+        drop(self.terminate());
+
+        if let Ok(ended) = tokio::time::timeout(grace, self.wait()).await {
+            return EndOutcome::Ended(ended);
+        }
+
+        self.start_kill();
+
+        match tokio::time::timeout(grace, self.wait()).await {
+            Ok(ended) => EndOutcome::Ended(ended),
+            Err(_elapsed) => EndOutcome::LeftRunning,
+        }
     }
 }
 
@@ -1716,7 +1875,8 @@ mod tests {
     use creche_testkit::program::write_program;
     use creche_testkit::root::TempRoot;
     use rustix::io::{FdFlags, fcntl_setfd};
-    use tokio::io::ReadBuf;
+    use rustix::process::{WaitOptions, waitpid};
+    use tokio::io::{AsyncBufReadExt, BufReader, ReadBuf};
     use tokio::runtime::{Builder, Runtime};
 
     use super::*;
@@ -1769,6 +1929,14 @@ mod tests {
     /// bytes to its standard error.
     const WRITER: &str = "head -c \"$1\" /dev/zero\nhead -c \"$2\" /dev/zero >&2\n";
 
+    /// A program that prints its process id and then runs for longer than
+    /// [`LIMIT`].
+    const PIPED_HOLD: &str = "echo $$\nexec sleep 300\n";
+
+    /// As [`PIPED_HOLD`], and the program ignores SIGTERM. The program that
+    /// `exec` starts ignores the signal too.
+    const PIPED_DEAF: &str = "trap '' TERM\necho $$\nexec sleep 300\n";
+
     /// The program that prints its environment, one variable for each line.
     const ENV: &str = "/usr/bin/env";
 
@@ -1777,6 +1945,9 @@ mod tests {
 
     /// The number of SIGKILL.
     const KILLED: i32 = 9;
+
+    /// The number of SIGPIPE.
+    const BROKEN_PIPE: i32 = 13;
 
     /// The number of SIGTERM.
     const TERMINATED: i32 = 15;
@@ -2200,6 +2371,21 @@ mod tests {
     /// can give the id of a child that is gone to a new process.
     fn is_child(pid: u32) -> bool {
         ps(pid, "ppid=") == Some(std::process::id().to_string())
+    }
+
+    /// Waits until `ps` shows no child of this test program with the id
+    /// `pid`: the child ended, and its owner read its end.
+    async fn gone(pid: u32) {
+        let left = async {
+            while is_child(pid) {
+                tokio::time::sleep(TICK).await;
+            }
+        };
+
+        assert!(
+            tokio::time::timeout(LIMIT, left).await.is_ok(),
+            "the child {pid} is still there"
+        );
     }
 
     /// Whether the process `pid` runs: `ps` shows it, and not as a process
@@ -3334,6 +3520,342 @@ mod tests {
         });
     }
 
+    /// Reads one line of a pipe of a child, with its newline.
+    async fn next_line<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> String {
+        let mut line = String::new();
+        let read = tokio::time::timeout(LIMIT, reader.read_line(&mut line)).await;
+
+        read.unwrap().unwrap();
+
+        line
+    }
+
+    /// Reads one line of a pipe of a child that holds a process id.
+    async fn next_id<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> u32 {
+        next_line(reader).await.trim().parse().unwrap()
+    }
+
+    /// Starts the script `text` with three pipes and reads the process id
+    /// that it prints first.
+    async fn piped_with_pid(bench: &Bench, text: &str) -> (u32, ChildStdin, ChildGuard) {
+        let piped = spawn_piped(PipedCommand::new(bench.program("piped", text))).unwrap();
+        let (stdin, stdout, _stderr, child) = piped.into_parts();
+        let pid = next_id(&mut BufReader::new(stdout)).await;
+
+        (pid, stdin, child)
+    }
+
+    #[test]
+    fn a_piped_child_gets_its_words_its_environment_and_its_directory() {
+        let bench = Bench::new();
+        let program = bench.program(
+            "show",
+            "printf '%s|%s|%s\\n' \"$1\" \"$SHOWN\" \"$(pwd -P)\"\n",
+        );
+        let command = PipedCommand::new(program)
+            .arg("a b")
+            .env(EnvPolicy::Exactly(vec![
+                (String::from("SHOWN"), String::from("yes")),
+                (String::from("PATH"), std::env::var("PATH").unwrap()),
+            ]))
+            .cwd(bench.root.path());
+        let expected = format!(
+            "a b|yes|{}\n",
+            fs::canonicalize(bench.root.path()).unwrap().display()
+        );
+
+        runtime().block_on(async {
+            let (_stdin, stdout, _stderr, mut child) = spawn_piped(command).unwrap().into_parts();
+            let mut reader = BufReader::new(stdout);
+
+            assert_eq!(next_line(&mut reader).await, expected);
+            assert_eq!(within(child.wait()).await, Ended::Code(0));
+        });
+    }
+
+    #[test]
+    fn a_piped_child_talks_on_its_pipes_and_ends_at_the_end_of_its_input() {
+        runtime().block_on(async {
+            let (mut stdin, stdout, stderr, mut child) =
+                spawn_piped(PipedCommand::new("cat")).unwrap().into_parts();
+            let mut reader = BufReader::new(stdout);
+
+            for line in ["first\n", "second\n"] {
+                stdin.write_all(line.as_bytes()).await.unwrap();
+
+                assert_eq!(next_line(&mut reader).await, line);
+            }
+
+            drop(stdin);
+
+            assert_eq!(within(child.wait()).await, Ended::Code(0));
+            assert_eq!(next_line(&mut reader).await, "");
+            assert_eq!(next_line(&mut BufReader::new(stderr)).await, "");
+
+            // After the end, each call gives the same end and sends no
+            // signal.
+            assert_eq!(within(child.wait()).await, Ended::Code(0));
+            assert_eq!(child.terminate(), Ok(()));
+            child.start_kill();
+            assert_eq!(child.end(GRACE).await, EndOutcome::Ended(Ended::Code(0)));
+        });
+    }
+
+    #[test]
+    fn the_child_has_the_default_action_for_a_broken_pipe() {
+        // This process ignores SIGPIPE, as each Rust program does. A child
+        // must not: a Python child gets the default action too. The child
+        // writes to a pipe that no process reads, and the signal ends it.
+        //
+        // The child writes more than one time. A program that another test
+        // thread starts at this moment holds a copy of the read end until
+        // its own start completes, and a write in that time is no error. A
+        // child that ignores the signal writes 200 times and exits with
+        // status 0.
+        let bench = Bench::new();
+        let program = bench.program(
+            "writer",
+            "read line\n\
+             count=0\n\
+             while [ \"$count\" -lt 200 ]; do\n\
+             echo written\n\
+             sleep 0.05\n\
+             count=$((count + 1))\n\
+             done\n\
+             exit 0\n",
+        );
+
+        let ended = runtime().block_on(async {
+            let (mut stdin, stdout, _stderr, mut child) = spawn_piped(PipedCommand::new(program))
+                .unwrap()
+                .into_parts();
+
+            drop(stdout);
+            stdin.write_all(b"go\n").await.unwrap();
+
+            within(child.wait()).await
+        });
+
+        assert_eq!(ended, Ended::Signal(BROKEN_PIPE));
+    }
+
+    #[test]
+    fn the_wait_for_a_piped_child_is_cancel_safe() {
+        let bench = Bench::new();
+
+        runtime().block_on(async {
+            let (_pid, stdin, mut child) =
+                piped_with_pid(&bench, "echo $$\nread line\nexit 5\n").await;
+
+            // Each turn drops a wait that did not end.
+            for _ in 0..3 {
+                assert!(
+                    tokio::time::timeout(TICK, child.wait()).await.is_err(),
+                    "the child ended early"
+                );
+            }
+
+            drop(stdin);
+
+            assert_eq!(within(child.wait()).await, Ended::Code(5));
+        });
+    }
+
+    #[test]
+    fn terminate_ends_a_piped_child_with_sigterm() {
+        let bench = Bench::new();
+
+        runtime().block_on(async {
+            let (pid, _stdin, mut child) = piped_with_pid(&bench, PIPED_HOLD).await;
+
+            assert!(is_child(pid));
+            assert_eq!(child.terminate(), Ok(()));
+            assert_eq!(within(child.wait()).await, Ended::Signal(TERMINATED));
+            assert!(!is_child(pid));
+        });
+    }
+
+    #[test]
+    fn start_kill_ends_a_piped_child_that_ignores_sigterm() {
+        let bench = Bench::new();
+
+        runtime().block_on(async {
+            let (pid, _stdin, mut child) = piped_with_pid(&bench, PIPED_DEAF).await;
+
+            assert_eq!(child.terminate(), Ok(()));
+            assert!(
+                tokio::time::timeout(GRACE, child.wait()).await.is_err(),
+                "the child ended at SIGTERM"
+            );
+
+            child.start_kill();
+
+            assert_eq!(within(child.wait()).await, Ended::Signal(KILLED));
+            assert!(!is_child(pid));
+        });
+    }
+
+    /// The Python origin closes the standard input of the child before
+    /// SIGTERM (`attendance/src/attendance/exec_channel.py:172-174`).
+    /// `ChildGuard::end` holds no pipe: here the input stays open to the end.
+    #[test]
+    fn end_stops_a_piped_child_with_sigterm_inside_the_grace() {
+        let bench = Bench::new();
+
+        runtime().block_on(async {
+            let (pid, stdin, mut child) = piped_with_pid(&bench, PIPED_HOLD).await;
+
+            assert_eq!(
+                within(child.end(HOUR)).await,
+                EndOutcome::Ended(Ended::Signal(TERMINATED))
+            );
+            assert!(!is_child(pid));
+
+            drop(stdin);
+        });
+    }
+
+    #[test]
+    fn end_kills_a_piped_child_that_ignores_sigterm_after_the_grace() {
+        let bench = Bench::new();
+
+        runtime().block_on(async {
+            let (pid, _stdin, mut child) = piped_with_pid(&bench, PIPED_DEAF).await;
+
+            {
+                let mut ending = pin!(child.end(HOUR));
+
+                // The first wait: SIGTERM does not end the child, and no
+                // kill comes before the grace passed.
+                assert!(tokio::time::timeout(GRACE, &mut ending).await.is_err());
+                assert!(runs(pid));
+
+                skip(HOUR).await;
+
+                // The grace of the first wait passed, and the kill follows.
+                assert_eq!(
+                    within(&mut ending).await,
+                    EndOutcome::Ended(Ended::Signal(KILLED))
+                );
+            }
+
+            assert!(!is_child(pid));
+        });
+    }
+
+    #[test]
+    fn end_with_no_grace_does_not_wait_and_the_guard_still_reads_the_end() {
+        let bench = Bench::new();
+
+        runtime().block_on(async {
+            let (pid, _stdin, mut child) = piped_with_pid(&bench, PIPED_DEAF).await;
+            let outcome = child.end(Duration::ZERO).await;
+
+            // The kill came, and the second wait had no time. On a slow
+            // host the child can end inside the one look of that wait.
+            assert!(
+                outcome == EndOutcome::LeftRunning
+                    || outcome == EndOutcome::Ended(Ended::Signal(KILLED)),
+                "{outcome:?}"
+            );
+            assert_eq!(within(child.wait()).await, Ended::Signal(KILLED));
+            assert!(!is_child(pid));
+        });
+    }
+
+    /// Inside each time limit, the Python origin waits for the end of the
+    /// child and of each pipe
+    /// (`attendance/src/attendance/exec_channel.py:244-265`).
+    /// `ChildGuard::end` waits for the child only.
+    #[test]
+    fn end_does_not_wait_for_a_pipe_that_another_program_holds() {
+        let bench = Bench::new();
+        // The child starts a program that keeps the three pipes open for
+        // longer than the test runs. It prints the id of that program and
+        // then its own id.
+        let script = "sleep 300 &\necho $!\necho $$\nexec sleep 300\n";
+
+        runtime().block_on(async {
+            let piped = spawn_piped(PipedCommand::new(bench.program("piped", script))).unwrap();
+            let (stdin, stdout, _stderr, mut child) = piped.into_parts();
+            let mut reader = BufReader::new(stdout);
+            let stray = next_id(&mut reader).await;
+            let pid = next_id(&mut reader).await;
+
+            assert_eq!(
+                within(child.end(HOUR)).await,
+                EndOutcome::Ended(Ended::Signal(TERMINATED))
+            );
+            assert!(!is_child(pid));
+            // The pipes are still open: the other program holds them.
+            assert!(runs(stray));
+
+            kill_stray(stray);
+            drop(stdin);
+        });
+    }
+
+    #[test]
+    fn the_drop_of_a_guard_kills_the_child_and_the_runtime_reads_its_end() {
+        let bench = Bench::new();
+
+        runtime().block_on(async {
+            let (pid, stdin, child) = piped_with_pid(&bench, PIPED_DEAF).await;
+
+            assert!(runs(pid));
+
+            drop(child);
+            gone(pid).await;
+            drop(stdin);
+        });
+    }
+
+    #[test]
+    fn a_guard_sends_no_signal_after_its_wait_gave_an_end() {
+        let bench = Bench::new();
+
+        runtime().block_on(async {
+            let (pid, _stdin, mut child) = piped_with_pid(&bench, PIPED_HOLD).await;
+
+            // The state after a wait call that failed: the guard holds an
+            // end, and the operating system can give the id of the child to
+            // a new process. Here the program still runs, so a signal shows.
+            child.ended = Some(Ended::Code(STATUS_UNKNOWN));
+
+            assert_eq!(child.terminate(), Ok(()));
+            child.start_kill();
+            assert_eq!(
+                child.end(GRACE).await,
+                EndOutcome::Ended(Ended::Code(STATUS_UNKNOWN))
+            );
+            assert_eq!(child.wait().await, Ended::Code(STATUS_UNKNOWN));
+
+            tokio::time::sleep(GRACE).await;
+
+            assert!(runs(pid));
+
+            // The drop still kills: `tokio` holds that flag.
+            drop(child);
+            gone(pid).await;
+        });
+    }
+
+    #[test]
+    fn a_piped_program_that_does_not_start_is_a_result() {
+        let bench = Bench::new();
+        let absent = bench.file("no-such-program");
+        let refused = runtime().block_on(async {
+            spawn_piped(PipedCommand::new(absent.to_str().unwrap())).map(|_piped| ())
+        });
+
+        assert_eq!(
+            refused,
+            Err(RunError::NotStarted {
+                os_text: String::from("No such file or directory"),
+            })
+        );
+    }
+
     /// The variable that selects the scenario of
     /// [`the_child_runs_one_scenario`].
     const CHILD_VARIABLE: &str = "CRECHE_RUNTIME_COMMAND_TEST_CHILD";
@@ -3365,7 +3887,7 @@ mod tests {
         lines: &'static [&'static str],
     }
 
-    const SCENARIOS: [Scenario; 14] = [
+    const SCENARIOS: [Scenario; 16] = [
         Scenario {
             name: "unread-failure",
             run: a_failure_with_no_caller,
@@ -3415,6 +3937,14 @@ mod tests {
             ],
         },
         Scenario {
+            name: "guard-wait-failed",
+            run: a_wait_call_of_a_guard_that_fails,
+            lines: &[
+                "ERROR command the wait for the program cat failed, and its end is not \
+                      known: No child processes",
+            ],
+        },
+        Scenario {
             name: "read-failed",
             run: a_read_that_fails,
             lines: &["ERROR command a read from the program tool failed: Input/output error"],
@@ -3448,6 +3978,11 @@ mod tests {
         Scenario {
             name: "no-timer",
             run: a_run_with_no_timer,
+            lines: &[],
+        },
+        Scenario {
+            name: "piped-no-runtime",
+            run: a_piped_child_with_no_runtime,
             lines: &[],
         },
     ];
@@ -3653,6 +4188,33 @@ mod tests {
         assert_eq!(result, Err(RunError::OwnerLost));
     }
 
+    /// The wait call of a guard fails: another part of the process read the
+    /// end of the child first. The end is then the exit status 255 and
+    /// never a success, and the log holds one line. The child watcher of
+    /// `asyncio` gives the same status (`asyncio/unix_events.py:1000-1012`
+    /// of CPython, version 3.13).
+    fn a_wait_call_of_a_guard_that_fails() {
+        let seen = runtime().block_on(async {
+            let (_stdin, _stdout, _stderr, mut child) =
+                spawn_piped(PipedCommand::new("cat")).unwrap().into_parts();
+            let id = i32::try_from(child.child.id().unwrap()).unwrap();
+
+            child.start_kill();
+            // This call takes the end of the child away from the guard.
+            waitpid(Pid::from_raw(id), WaitOptions::empty()).unwrap();
+
+            let first = within(child.wait()).await;
+            let second = within(child.wait()).await;
+
+            // After that end, the guard sends no signal to the id.
+            (first, second, child.terminate())
+        });
+        let unknown = Ended::Code(STATUS_UNKNOWN);
+
+        assert_eq!(seen, (unknown, unknown, Ok(())));
+        assert_ne!(unknown.python_returncode(), 0);
+    }
+
     /// A read from a stream of a child fails after 7 bytes. The read cuts
     /// the exchange, and the owner writes one line.
     fn a_read_that_fails() {
@@ -3729,5 +4291,23 @@ mod tests {
         builder.enable_io();
 
         refused_by_the_runtime(builder, "the runtime of this thread has no timer");
+    }
+
+    /// `spawn_piped` on a thread with no runtime starts no program.
+    fn a_piped_child_with_no_runtime() {
+        let bench = Bench::new();
+        let program = bench.program("program", "touch \"$1/started\"\n");
+        let refused = spawn_piped(PipedCommand::new(program).arg(bench.dir())).map(|_piped| ());
+
+        assert_eq!(
+            refused,
+            Err(RunError::NotStarted {
+                os_text: String::from("no runtime runs on this thread"),
+            })
+        );
+
+        thread::sleep(GRACE);
+
+        assert!(!bench.file("started").exists());
     }
 }
