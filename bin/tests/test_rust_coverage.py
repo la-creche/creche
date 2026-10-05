@@ -204,7 +204,7 @@ class Tree:
         list names."""
         self.write(LIST, "".join(f"{line}\n" for line in ("# the list", *paths)))
 
-    def _run(self, args: list[str], path: str, env: dict[str, str], cwd: Path) -> Run:
+    def run(self, args: list[str], path: str, env: dict[str, str], cwd: Path) -> Run:
         log = self.root.parent / "cargo.log"
         log.unlink(missing_ok=True)
         done = subprocess.run(
@@ -236,7 +236,7 @@ class Tree:
         """Checks `report` with `--report`. PATH holds no cargo."""
         args = [*flags, "--report", str(self._saved(report))]
 
-        return self._run(args, self.tools, {}, self.root.parent)
+        return self.run(args, self.tools, {}, self.root.parent)
 
     def cover(
         self, report: dict[str, Any], *flags: str, path: str | None = None, fail: bool = False
@@ -245,7 +245,7 @@ class Tree:
         to the path that the script names. With `fail`, the fake exits 1."""
         env = {"CARGO_REPORT": str(self._saved(report))} | ({"CARGO_FAIL": "1"} if fail else {})
 
-        return self._run([*flags], self.with_cov if path is None else path, env, self.root.parent)
+        return self.run([*flags], self.with_cov if path is None else path, env, self.root.parent)
 
 
 def _lines(path: Path) -> list[str]:
@@ -675,6 +675,17 @@ BAD_REPORTS: dict[str, dict[str, Any] | str] = {
 }
 
 
+def test_a_report_that_is_no_file_stops_the_run(tree: Tree) -> None:
+    tree.names(FULL)
+
+    done = tree.run(["--report", "absent.json"], tree.tools, {}, tree.root.parent)
+
+    assert done.code == 1, done.out + done.err
+    assert done.out == ""
+    assert len(done.lines) == 1, done.err
+    assert done.lines[0].startswith("rust-coverage: cannot read the report: ")
+
+
 @pytest.mark.parametrize("name", BAD_REPORTS)
 def test_a_report_in_another_form_stops_the_run(tree: Tree, name: str) -> None:
     """The first file of each report is the listed one. A reader that takes
@@ -806,7 +817,7 @@ def test_a_report_of_an_earlier_run_starts_no_cargo(tree: Tree) -> None:
     saved = tree.root.parent / "report.json"
     saved.write_text(json.dumps(ALL_RAN), encoding="utf-8")
 
-    done = tree._run(["--report", "report.json"], tree.with_cov, {}, saved.parent)
+    done = tree.run(["--report", "report.json"], tree.with_cov, {}, saved.parent)
 
     assert _passed(done), done.out + done.err
     assert done.cargo == []
@@ -829,7 +840,7 @@ def test_a_report_of_an_earlier_run_starts_no_cargo(tree: Tree) -> None:
     ids=" ".join,
 )
 def test_a_command_line_in_another_form_is_a_usage_error(tree: Tree, args: list[str]) -> None:
-    done = tree._run(args, tree.with_cov, {}, tree.root.parent)
+    done = tree.run(args, tree.with_cov, {}, tree.root.parent)
 
     assert done.code == 2, done.out + done.err
     assert done.out == ""
