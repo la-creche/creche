@@ -265,8 +265,8 @@ holds one instant in UTC, to the microsecond, in the years 0001 to 9999.
 - Define no second type for a time text.
 - Write no date arithmetic in another module. The `time` module holds the
   copy that stays.
-- A caller decides what it does with a text that is no time. For example, a
-  view reads the file as stale, and a request gets a refusal.
+- The caller of the reader decides what a refused text means. For example,
+  a view reads the file as stale, and a request gets a refusal.
 
 Reason: with two grammars, one text is a time for one reader and no time
 for another reader. Two copies of the date arithmetic drift.

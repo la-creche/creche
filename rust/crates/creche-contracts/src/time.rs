@@ -4,7 +4,7 @@
 //! is in `rust/AGENTS.md`, "Time":
 //!
 //! 1. A time text is a `date-time` of RFC 3339, section 5.6.
-//! 2. A writer writes UTC with `Z`.
+//! 2. A writer writes each time in UTC, with `Z` as the offset.
 //! 3. A text with no UTC offset is not a time.
 //!
 //! This module also holds the date arithmetic of the workspace. The private
@@ -229,21 +229,20 @@ const fn days_in_month(year: i64, month: i64) -> i64 {
 ///
 /// 1. The date, `YYYY-MM-DD`. The month has the day.
 /// 2. `T` or `t`.
-/// 3. The time of the day, `HH:MM:SS`: hour 00 to 23, minute 00 to 59 and
-///    second 00 to 59.
+/// 3. The time of the day, `HH:MM:SS`. The hour is 23 at most. The minute and
+///    the second are 59 at most.
 /// 4. An optional fraction of the second: `.` and 1 to 9 digits. The type
 ///    keeps the first six digits and drops the others. It does not round.
-/// 5. The UTC offset: `Z`, `z`, `+HH:MM` or `-HH:MM`, with hours 00 to 23 and
-///    minutes 00 to 59. `-00:00` is UTC.
+/// 5. The UTC offset: `Z`, `z`, `+HH:MM` or `-HH:MM`. Its hours are 23 at
+///    most, and its minutes are 59 at most. The offset `-00:00` names UTC, as
+///    `+00:00` does.
 ///
 /// The value is the instant in UTC. The type does not keep the offset of the
 /// text. The year is 0001 to 9999, in the text and in UTC.
 ///
-/// The reader refuses each other text. Some examples: a space in place of
-/// the `T`, a text with no offset, a date with no time, a week date, the
-/// offset `+0530`, a comma before the fraction, a digit that is not ASCII, a
-/// space at an end and a final newline. What a caller does with a refused
-/// text is the rule of that caller.
+/// The reader refuses each other text. The example below shows two such
+/// texts, and the table `REFUSED` of the tests holds one text of each kind.
+/// What a caller does with a refused text is the rule of that caller.
 ///
 /// The type has three writers and no `Display`, so each writer names its
 /// form. It implements no `serde` trait. A raw type reads the text, and one
@@ -800,7 +799,7 @@ mod tests {
         ("9999-W52-6", TimestampError::Form),
         ("0001-01-01T00:00:00+00:01", TimestampError::OutOfRange),
         ("9999-12-31T23:59:59-00:01", TimestampError::OutOfRange),
-        // A space for the `T`, no offset and hour 24.
+        // A space in place of the `T`, a text with no offset and hour 24.
         ("2999-01-01 00:00:00Z", TimestampError::Form),
         ("2999-01-01T00:00:00", TimestampError::NoOffset),
         ("2026-10-06T06:00:00.5", TimestampError::NoOffset),
