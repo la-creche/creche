@@ -8,6 +8,13 @@ Bash only: `#!/usr/bin/env bash`. A script that may run on a development
 machine stays bash 3.2-clean: no associative arrays, no `mapfile`, no
 `${var,,}`, no `&>>`.
 
+One script is an exception: `journal-scan.py` is Python, with the first line
+`#!/usr/bin/env python3`. Reason: it reads JSON, and the standard library of
+Python has a JSON reader. It needs only the standard library, so the Python
+of the host starts it without the venv. It refuses a Python version that is
+older than the version in its header. The gate checks it with ruff and not
+with pyright: `pyrightconfig.json` names no path under `bin/`.
+
 ## Every script's header says who runs it
 
 `ROOT`, `OPERATOR` or `CI`, in the first three lines, with the exact command.
@@ -68,6 +75,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `rework-watchdog.sh` | OPERATOR, every minute | The outage alarm. Checks the chaperone's `/healthz`, `caregiver`'s freshness, `attendance`'s socket and `is-failed` for the units. Pushes once per change of verdict. `--last` prints the verdict. Shares no fate with what it watches. |
 | `rework-registry-sync.sh` | OPERATOR, every minute | `git fetch --prune`, then `git merge --ff-only`, on the registry checkout. Never rebases, resets, cleans or pushes. |
 | `sbx-drift-check.sh` | OPERATOR, daily | Read-only. Alarms when the global sbx policy holds any network allow, or when a per-sandbox rule allows a host that is not the LAN address and not in the seeded allowlist. |
+| `journal-scan.py` | OPERATOR, by hand | Read-only. A person starts it, and the one argument is the sessions root. It counts the journal lines in which UTF-8 cannot encode a key or a value. It also counts the `pi_event` lines whose event the host cut for another cause than its size. It prints each count. The only text of a journal line that the output can show is a `kind` word. |
 | `sync-code-corpus.sh` | OPERATOR, hourly | Refreshes the dedicated code clones the library indexes. The repository list lives outside the corpus. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. For a push that changes `vectors/`, it runs `rust-gate.sh` when `cargo` is on `PATH`. For a push that changes a file under `integration/proc/` that is not prose, it runs the process-level suite. |
@@ -177,6 +185,7 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 | `test_git_config_dropped.py` | No `git` child of a test run reads the config file of a person or of the system. The same holds for the ignore file and the attributes file of a person. The root `conftest.py` sets the variables that do this. |
 | `test_git_background_dropped.py` | No `git` command that inherits the environment of a test run starts the maintenance that `git` does not wait for. That holds for a commit, a merge, a fetch and a repository that receives a push. The root `conftest.py` sets the two settings that do this. A fixture that asks for the maintenance gets it in the foreground. |
 | `test_ignored_signal_kept.py` | A test run that starts with SIGINT, SIGTERM or SIGHUP ignored passes the same tests, and the signal stays ignored. The fixture of the root `conftest.py` still fails a handler that a test leaves. |
+| `test_journal_scan.py` | Each count of `journal-scan.py` equals a known answer. A run changes no file and no directory. The output holds no family name, no session name and no marker text of a line. The three copied constants, the place of a journal and the keys of a cut event equal their source in `attendance`. The oldest Python version of the program equals the one in the root `pyproject.toml`. |
 | `test_creche_deploy.py`, `test_rework_watchdog.py`, `test_rework_registry_sync.py`, `test_sbx_drift_check.py`, `test_sync_code_corpus.py`, `test_provision_library.py`, `test_rework_intake_unit.py` | Each script, against binstubs and a temp root. |
 
 ## Adding a script
