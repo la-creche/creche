@@ -94,6 +94,9 @@ HTTP_NOT_FOUND: Final = 404
 
 MODE_OWNER: Final = 0o600
 
+#: The name of the token file of the reader.
+TOKEN_NAME: Final = "view-ro.token"
+
 #: The start of the name of the temporary directory. No vector holds a path
 #: of that directory, so no vector holds this text.
 SCRATCH_PREFIX: Final = "vectors-noticeboard-"
@@ -405,7 +408,7 @@ def _write(path: Path, raw: bytes, mode: int = MODE_OWNER) -> Path:
 
 def _token_file(scratch: Path) -> Path:
     """The token file of each reader that a surface does not give another one."""
-    return _write(scratch / "view-ro.token", cases.VIEW_TOKEN.encode("ascii") + b"\n")
+    return _write(scratch / TOKEN_NAME, cases.VIEW_TOKEN.encode("ascii") + b"\n")
 
 
 def _answered(answer: cases.Answer) -> StandIn:
@@ -416,7 +419,14 @@ def _answered(answer: cases.Answer) -> StandIn:
 _NO_SESSION: Final = Reply(status=HTTP_OK, body=b'{"sessions":[]}')
 
 
-def _app(scratch: Path, *, cookie_secure: bool = True) -> FastAPI:
+class Secure(enum.Enum):
+    """The switch of the config for `Secure` on the cookie of the form guard."""
+
+    ON = "on"
+    OFF = "off"
+
+
+def _app(scratch: Path, secure: Secure = Secure.ON) -> FastAPI:
     """The service on loopback with no key, over a state root of its own."""
     config = Config(
         bind=cases.LOOPBACK,
@@ -426,7 +436,7 @@ def _app(scratch: Path, *, cookie_secure: bool = True) -> FastAPI:
         attendance_socket=None,
         attendance_url=SOCKET_BASE_URL,
         page_size=DEFAULT_PAGE_SIZE,
-        cookie_secure=cookie_secure,
+        cookie_secure=secure is Secure.ON,
     )
     reader = SessionReader(transport=StandIn(_NO_SESSION), token_file=_token_file(scratch))
 
@@ -572,10 +582,10 @@ def _form_token(app: ASGIApp, case: cases.CookieCase) -> tuple[str, list[str]] |
     return _page(answer).inputs[CSRF_FIELD], answer.values(b"set-cookie")
 
 
-def _cookie_vector(app: ASGIApp, case: cases.CookieCase, secure: bool) -> Vector:
-    vector_id = f"{case.id}.secure-{'on' if secure else 'off'}"
+def _cookie_vector(app: ASGIApp, case: cases.CookieCase, secure: Secure) -> Vector:
+    vector_id = f"{case.id}.secure-{secure.value}"
     given: dict[str, Json] = {"args": {"cookie": _bytes_json(case.raw)}}
-    params: dict[str, Json] = {"cookie_secure": secure}
+    params: dict[str, Json] = {"cookie_secure": secure is Secure.ON}
     first = _form_token(app, case)
     second = _form_token(app, case)
     if isinstance(first, Raised):
@@ -599,10 +609,7 @@ def _cookie_vector(app: ASGIApp, case: cases.CookieCase, secure: bool) -> Vector
 
 
 def _cookie_surface(scratch: Path) -> Surface:
-    apps = {
-        secure: _app(scratch / f"cookie-{number}", cookie_secure=secure)
-        for number, secure in enumerate((True, False))
-    }
+    apps = {secure: _app(scratch / f"cookie-{secure.value}", secure) for secure in Secure}
 
     return _surface(
         "security.cookie",
@@ -633,7 +640,7 @@ def _cookie_surface(scratch: Path) -> Surface:
         tuple(
             _cookie_vector(apps[secure], case, secure)
             for case in cases.COOKIES
-            for secure in (True, False)
+            for secure in Secure
         ),
         {"path": EDIT_PATH},
     )
@@ -1117,7 +1124,7 @@ def _file_input(raw: bytes | None) -> dict[str, Json]:
 
 def _token_vector(case: cases.TokenCase, scratch: Path) -> Vector:
     given = _file_input(case.raw)
-    path = scratch / case.id / "view-ro.token"
+    path = scratch / case.id / TOKEN_NAME
     path.parent.mkdir(parents=True)
     if case.raw is not None:
         _write(path, case.raw)
