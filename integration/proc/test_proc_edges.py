@@ -119,9 +119,22 @@ READ_JSON = (Service.ATTENDANCE, Service.DOOR_OWUI, Service.CHAPERONE)
 NO_RELOAD = (Service.DOOR_OWUI, Service.NOTICEBOARD)
 
 FINAL_SLASH = "/"
-NOT_JSON = b"not json at all"
 JSON_TYPE = {"Content-Type": "application/json"}
 CONTENT_TYPE = "content-type"
+
+#: How deep the third body of `NOT_JSON` nests.
+NESTING = 100_000
+
+#: Three bodies that no listener takes as a request. The first is a text
+#: that is not JSON. The second is three bytes that are not UTF-8. The third
+#: is 100,000 arrays, one inside the next. RFC 8259 §9 lets a reader set a
+#: limit on the nesting. A reader with a limit refuses the third body. A
+#: reader with no limit finds an array, and each request here is an object.
+NOT_JSON = {
+    "a-text": b"not json at all",
+    "not-utf-8": b"\xff\xfe\xfd",
+    "deep-nesting": b"[" * NESTING + b"]" * NESTING,
+}
 
 #: What the caller of the chaperone sends (contract 04 §7.1).
 INVOKE_AGENT = "invoke_agent"
@@ -318,18 +331,21 @@ async def test_attendance_reads_a_body_with_no_content_type(
 # CONTRACT-QUESTION: contract 02 §14 gives `attendance` the code
 # `bad_request` with status 400 for a malformed field. No contract gives the
 # door or the chaperone an answer to a body that is not JSON: contract 04 §5
-# has no row for it. Reading taken: one assertion for the three, a status of
-# the 4xx class, and no work started. Today `attendance` answers 400 with
-# `bad_request`, the door answers 400 with `bad_body`, and the chaperone
-# answers 422. A change to one status for each listener costs one assertion
-# here.
+# has no row for it. No contract gives a body a limit on its nesting.
+# Reading taken: one assertion for the three listeners and for each body of
+# `NOT_JSON`, a status of the 4xx class, and no work started. Today
+# `attendance` answers 400 with `bad_request` to each body, and the door
+# answers 400 with `bad_body` to each body. The chaperone answers 422 to the
+# text and 400 to the other two bodies. A change to one status for each
+# listener costs one assertion here.
+@pytest.mark.parametrize("body", list(NOT_JSON.values()), ids=list(NOT_JSON))
 @pytest.mark.parametrize("listener", READ_JSON, indirect=True)
-async def test_a_body_that_is_not_json_is_refused(listener: Listener) -> None:
+async def test_a_body_that_is_not_json_is_refused(listener: Listener, body: bytes) -> None:
     """The listener checks the shape before a session exists and before a turn starts."""
     work = work_of(listener.service)
 
     async with listener.client() as client:
-        answer = await client.post(work.path, headers=work.headers | JSON_TYPE, content=NOT_JSON)
+        answer = await client.post(work.path, headers=work.headers | JSON_TYPE, content=body)
 
     assert answer.is_client_error, f"{answer.status_code}\n{answer.text}"
     assert work_done(listener.stack) == []

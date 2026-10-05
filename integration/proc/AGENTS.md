@@ -676,10 +676,19 @@ the text of the failure. Work down this list.
   `attendance` the code `bad_request` with status 400. No contract gives the
   Open WebUI door or the chaperone an answer, and contract 04 §5 has no row
   for such a body. The suite holds one thing for the three services: a
-  status of the 4xx class, with no session and no turn. Today `attendance`
-  answers 400, the door answers 400 with the code `bad_body`, and the
-  chaperone answers 422. A change costs one assertion in
-  `test_proc_edges.py`.
+  status of the 4xx class, with no session and no turn. A change costs one
+  assertion in `test_proc_edges.py`.
+
+  The scenario sends three bodies to each of the three services:
+  - A text that is not JSON.
+  - Three bytes that are not UTF-8.
+  - 100,000 arrays, one inside the next. No contract gives a body a limit
+    on its nesting. A reader with a limit refuses this body. A reader with
+    no limit finds an array, and each request of the scenario is an object.
+
+  Today `attendance` answers 400 to each body. The door answers 400 with the
+  code `bad_body` to each body. The chaperone answers 422 to the text and
+  400 to the other two bodies.
 - **CONTRACT-QUESTION, a listener at a signal.** No contract says what a
   listener does at `SIGINT`, at `SIGHUP` with no reload, or at a stop with an
   open stream. No contract names an exit code after a signal.
