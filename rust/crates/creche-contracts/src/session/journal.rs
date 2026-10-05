@@ -24,6 +24,7 @@ use super::fields::{
     Title, TurnRef, words,
 };
 use super::json::{self, EncodeError, Fault, Kind, Object};
+use super::state::TurnState;
 use super::time::Timestamp;
 use super::view::{SessionView, Usage};
 use crate::ids::{GateId, SandboxName, Sha256Hex, Ulid};
@@ -348,6 +349,11 @@ pub struct TerminalExchange {
 }
 
 /// A note that `attendance` writes. Each one has a fixed set of fields.
+///
+/// `attendance` releases separately, so a reader can get a note that this
+/// type does not know. A reader does not refuse that note. It keeps the body
+/// as a note of free form, [`Note::Other`]. It does the same for a known word
+/// whose fields are not the exact fields of that note.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "note", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ServiceNote {
@@ -386,6 +392,21 @@ pub enum ServiceNote {
         /// The text of the log line.
         message: String,
     },
+    // CONTRACT-QUESTION: contract 02 §8.1 leaves the body of a note free, and
+    // no contract names this note. The Python `attendance` writes the two
+    // states as text, and it writes the note only for a move that its state
+    // table refuses. The variant takes each pair of states, also a move that
+    // §4.3 permits, because the Python writer of a line checks no body. A
+    // variant that takes only a refused move costs one check in the reader
+    // and a new input for the vector `note-illegal-transition`.
+    /// `attendance` refused a move of a turn (contract 02 §4.3). The turn did
+    /// not move, and it keeps the state `from`.
+    IllegalTransition {
+        /// The state of the turn.
+        from: TurnState,
+        /// The state that the refused move leads to.
+        to: TurnState,
+    },
 }
 
 impl ServiceNote {
@@ -393,7 +414,9 @@ impl ServiceNote {
     const fn members(&self) -> usize {
         match self {
             Self::SandboxSwitched { .. } => 5,
-            Self::ProcessExit { .. } | Self::PlaypenLog { .. } => 3,
+            Self::ProcessExit { .. } | Self::PlaypenLog { .. } | Self::IllegalTransition { .. } => {
+                3
+            }
             Self::PersonaTruncated { .. } | Self::UnexpectedPlaypenReason { .. } => 2,
         }
     }
@@ -1088,6 +1111,39 @@ mod tests {
             serde_json::to_string(&switched).unwrap(),
             r#"{"note":"sandbox_switched","from":null,"to":"chat-s3","mode":"drain","reason":""}"#
         );
+    }
+
+    #[test]
+    fn a_refused_move_reads_as_its_note_and_keeps_its_order() {
+        let line = StoredLine::parse(
+            concat!(
+                r#"{"journal_seq":42,"ts":"2026-10-05T19:22:05.118Z","kind":"note","#,
+                r#""turn":"01JBQ7WZ0X4T9V6K2H8M3N5PQR","#,
+                r#""body":{"to":"settled","note":"illegal_transition","from":"running"}}"#
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        let body = line.body().unwrap();
+        let other_state = json!({"note": "illegal_transition", "from": "running", "to": "done"});
+        let no_target = json!({"note": "illegal_transition", "from": "running"});
+
+        assert_eq!(
+            body,
+            JournalBody::Note(Note::Service(ServiceNote::IllegalTransition {
+                from: TurnState::Running,
+                to: TurnState::Settled,
+            }))
+        );
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"note":"illegal_transition","from":"running","to":"settled"}"#
+        );
+        for body in [object(other_state), object(no_target)] {
+            assert!(
+                matches!(Note::from(body.clone()), Note::Other(other) if other.body() == &body)
+            );
+        }
     }
 
     #[test]

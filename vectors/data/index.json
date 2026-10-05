@@ -131,7 +131,7 @@
   {"accepted":9,"entry":"attendance.models.WriterLease.to_api","path":"session/answer.lease.json","raised":0,"refused":0,"surface":"session.answer.lease","vectors":9},
   {"accepted":7,"entry":"attendance.api.build_app","path":"session/stream.encode.json","raised":0,"refused":0,"surface":"session.stream.encode","vectors":7},
   {"accepted":60,"entry":"attendance.journal.Journal.replay","path":"session/journal.read.json","raised":0,"refused":31,"surface":"session.journal.read","vectors":91},
-  {"accepted":97,"entry":"attendance.journal.Journal.append","path":"session/journal.write.json","raised":0,"refused":0,"surface":"session.journal.write","vectors":97},
+  {"accepted":98,"entry":"attendance.journal.Journal.append","path":"session/journal.write.json","raised":0,"refused":0,"surface":"session.journal.write","vectors":98},
   {"accepted":6,"entry":"attendance.streams.StreamHub.stream","path":"session/stream.live.json","raised":0,"refused":0,"surface":"session.stream.live","vectors":6},
   {"accepted":18,"entry":"attendance.outcomes.write","path":"session/outcome.write.json","raised":0,"refused":0,"surface":"session.outcome.write","vectors":18},
   {"accepted":9,"entry":"attendance.states.can_move","path":"session/turn.move.json","raised":0,"refused":27,"surface":"session.turn.move","vectors":36},

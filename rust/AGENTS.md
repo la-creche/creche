@@ -1192,6 +1192,10 @@ test.
   14. `TurnView`, contract 02 §4.4. The Python code writes the empty text
       as the sandbox of a turn that no sandbox served. The type does the
       same.
+  15. `ServiceNote::IllegalTransition`, contract 02 §4.3 and §8.1. No
+      contract names the note for a refused move of a turn. The Python
+      `attendance` writes that note only for a move that its state table
+      refuses. The type takes each pair of turn states.
 - The `session` module differs from the Python code on purpose in four
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
