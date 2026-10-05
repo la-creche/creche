@@ -200,6 +200,27 @@ Each rule has its reason. Do not break a rule without a change to this file.
     tag for a component when a path under that component changes. A path
     under `rust/` is under no component, so a change here mints no tag and
     starts no release.
+12. **Make each field of a struct private.** Code in another module gets a
+    value through an accessor method.
+    Reason: other code can write a public field directly, so no constructor
+    checks that value.
+    - For a record or a view, write an accessor for each field. Write `new`
+      with a parameter for each required field. Write a `with_<field>`
+      method for each optional field.
+    - When only a reader function builds a view, write the accessors and no
+      public constructor.
+    - A raw form for `serde` gets its values from `Deserialize` alone. Write
+      no public constructor for it.
+    - For an error struct, write the accessors and no public constructor.
+    - Two fields can state one fact together. Set such a pair through a
+      single method.
+    - The rule does not apply to the fields of an enum variant.
+13. **Keep one source for each value.** Define a constant, a limit, a name
+    or a grammar in one module only. Code in other places imports it from
+    that module. When the host already has a value, do not ask for it in
+    the family file.
+    Reason: two copies of a value drift. An edit changes one copy, and the
+    other copy stays.
 
 ## JSON
 
@@ -602,10 +623,11 @@ commit message.
 - Give each parsing constructor one table of accepted texts and one table of
   refused texts. For a text grammar, refuse a final newline and a digit that
   is not ASCII.
-- Give each type with a private field a `compile_fail` doc test. It shows
-  that code outside the module cannot build the type from a raw value. Put a
-  doc test that compiles beside it, with the same `use` line. A wrong path
-  then cannot make the `compile_fail` test pass.
+- Give each public struct that has a field a `compile_fail` doc test. Rule
+  12 makes each field private. The test shows that code outside the module
+  cannot build the struct from a raw value. Put a doc test that compiles
+  beside it, with the same `use` line. A wrong path then cannot make the
+  `compile_fail` test pass.
 - An error code on a `compile_fail` test, for example `E0423`, is a note for
   the reader. The toolchain of this workspace does not check the code. The
   test passes on each compile error.
@@ -770,6 +792,33 @@ test.
     each module to the shared reader: `decisions-raw-serde-channel`,
     `decisions-raw-serde-grants`, `decisions-raw-serde-manifest` and
     `decisions-raw-serde-status`.
+  - Rule 12. A count at the time of this line found 101 structs with a
+    public field. The packets `decisions-private-*` and
+    `decisions-runtime-private` make the fields private. The gate has no
+    check for this rule yet. `decisions-gate-early` starts the check on
+    each new crate, and `decisions-private-fields-gate` extends it to each
+    crate.
+  - Rule 13. Some values have two sources today. One example is the default
+    state root, which more than one module of `config` defines. Packet
+    `decisions-config-endpoints` gives it one home. A second example is the
+    field `zone` of `quiet.daily` in the family file: the host has a time
+    zone.
+  - Time. The crate needs a single type for each time that a file or a
+    wire message holds, in the RFC 3339 `date-time` form. Today `session`
+    and `status` each define one. Packet `decisions-time-type` adds the
+    single type.
+  - Epoch. The crate needs a single epoch type with the range 1 to
+    2^53 - 1. Packet `decisions-epoch` adds it.
+  - Shared helpers. A helper with users in two crates belongs in one helper
+    crate: SHA-256, hex, base64 and the Python white space rule. Do not add
+    a copy. Packet `decisions-util` creates the crate.
+  - Vector reader. `vectors/data` needs a single reader. The owner still
+    has to confirm this. Three readers exist today. Packet
+    `decisions-vectors-crate` reduces them to one.
+  - Coverage. A Rust file that ports a decision module of the chaperone
+    needs a coverage rule (`chaperone/AGENTS.md`, rule 4). Nothing measures
+    Rust coverage today. Packet `decisions-ci-coverage-gate` adds the rule
+    and the job.
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
