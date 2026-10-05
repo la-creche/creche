@@ -506,8 +506,9 @@ to 5 give a Rust service the Python behavior on purpose.
    future.** Write the cleanup in the owner task.
    Reason: the code after such an `await` does not run when the caller goes
    away.
-6. **Do not change `panic = "unwind"`. Give each `Router` to
-   `http::layers::edge`. Run each daemon loop through `Tasks::spawn_loop`.**
+6. **Give each `Router` to `http::layers::edge`. Run each daemon loop
+   through `Tasks::spawn_loop`.** "The panic rule" below has the full rule
+   for a panic.
    Reason: a panic then ends one request or one pass, and the service
    continues. A router with no `edge` also loses its handler when a client
    leaves. No compiler check finds such a router.
@@ -559,12 +560,84 @@ to 5 give a Rust service the Python behavior on purpose.
     `service::load` and `service::refuse_start` set the same hook. Without
     the call in `main`, the code before the first of the three runs with
     the standard hook.
+17. **A daemon that refuses its start exits with `EX_CONFIG`, status 78.**
+    This applies to each cause of the list below. A command that does its
+    work and then ends can keep another status for a usage error, when no
+    unit restarts it.
+    Reason: a restart repairs none of these causes. Only status 78 keeps a
+    unit with `RestartPreventExitStatus=78` stopped.
+    - An invalid config.
+    - A bad argument on the command line.
+    - A token file or a key file that the daemon cannot use.
+    - A target of a client that the daemon cannot use, for example a URL.
+18. **Take each address of another service from the environment.** Here an
+    address is also a URL, a host or a port. Write no default for one in
+    the code. A fixed path, a count, an interval and a duration stay in the
+    code. Make each one a named constant with one home.
+    Reason: where another service listens is a fact of the host. A default
+    in the code is a second copy of that fact. With a wrong copy, a service
+    calls the wrong peer and no config error shows it.
 
 The lint gate checks rule 2 in part: `Completion` is `must_use`, so the
 build fails for a `Completion` that the code does not use. It checks rule 13
 in part: `await_holding_lock` refuses a guard that the code holds across an
 `await`. `service::run` holds rule 16 in part: it sets the hook before the
 runtime starts. No check holds the other rules. The reviewer checks them.
+
+## The panic rule
+
+Each binary crate follows this rule. The lint gate reads source text only,
+so a program that passes the gate can still panic. The clauses limit what
+one panic can stop and what it can damage.
+
+1. **Each profile keeps `panic = "unwind"` and keeps the overflow checks
+   on.** The release profile sets `overflow-checks = true`. The dev profile
+   has the checks by default. `bin/tests/test_rust_workspace.py` pins both
+   profile tables.
+   Reason: under `abort`, the first panic stops the program, and a boundary
+   cannot catch it.
+2. **`main` has three steps and no other code.** A service on
+   `creche-runtime` gets the steps from rules 11, 12 and 16 of "The rules
+   for a service".
+   Reason: no boundary is around the code of `main`, and no library test
+   runs it.
+   1. Set the panic hook.
+   2. Build `Env`, one time.
+   3. Call the entry function of the library, and return its `ExitCode`.
+3. **The panic hook logs a single `ERROR` line.** That line names the
+   program and the place of the panic: file, line and column. The panic
+   message stays out of the log.
+   Reason: a panic message can carry bytes of a request or of a file.
+4. **Put a boundary that catches a panic around each unit of work.**
+   Reason: one panic then costs one unit of work, and the program
+   continues.
+   - A request: the boundary is `http::layers::edge`.
+   - A pass of a loop: the boundary is `Tasks::spawn_loop`.
+   - A tracked task: the boundary is `Tasks::spawn_must_complete` or
+     `Tasks::spawn_blocking`.
+   - A program without the runtime: a unit of work is a step, a pass or a
+     connection.
+5. **After a panic, a boundary drops that unit of work and takes the next
+   unit.** A boundary answers with a constant text. Never catch a panic and
+   then continue the unit of work that panicked.
+   Reason: a panic can leave the values of that unit of work in a wrong
+   state.
+6. **A caught panic must not leave a partial file or a lock that blocks the
+   next unit of work.** Write a file with the atomic writer or in a
+   must-complete task. Take a lock with `tasks::locked` only.
+   Reason: the program continues after the catch, and later work uses the
+   same files and locks.
+7. **When a panic escapes each boundary, the program ends.** The entry
+   function is the last catch. It logs one `ERROR` line, and the exit
+   status is 1. The exit status of a panic is never 78.
+   Reason: status 78 means a config fault, and a panic is not one.
+8. **Only three places can call `catch_unwind`.**
+   Reason: the reviewer then knows where each boundary is.
+   1. Code of the crate `creche-runtime`.
+   2. `src/entry.rs` in a crate with no dependency on `creche-runtime`.
+   3. Test code.
+9. **A stack overflow and an abort are not in the scope of this rule.** No
+   boundary can catch either one, and the program ends.
 
 ## Code style
 
@@ -803,6 +876,20 @@ test.
     `decisions-config-endpoints` gives it one home. A second example is the
     field `zone` of `quiet.daily` in the family file: the host has a time
     zone.
+  - "The panic rule", clause 8. The gate has no check for this clause yet.
+    Packet `decisions-gate-early` adds one.
+  - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
+    program of the workspace today. Its `main` sets no panic hook and
+    parses the command line itself. Its library has no entry function that
+    catches a panic. No packet is planned for this gap.
+  - The exit status of a refused start. `service::refuse_start` has a
+    parameter for a second exit status. Packet `decisions-runtime-exit`
+    deletes the parameter.
+  - The address of another service. `config::chaperone` and
+    `config::caregiver` define the port of another service as a constant.
+    Packet `decisions-config-endpoints` adds the names of the variables.
+    The packet that makes a service read a variable deletes the constant
+    of that service.
   - Time. The crate needs a single type for each time that a file or a
     wire message holds, in the RFC 3339 `date-time` form. Today `session`
     and `status` each define one. Packet `decisions-time-type` adds the
