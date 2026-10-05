@@ -63,6 +63,12 @@ const HEAD_MAX: usize = 64 * 1024;
 /// The most bytes of the body of a request.
 const BODY_MAX: usize = 16 * 1024 * 1024;
 
+/// The most bytes that a body in the chunked form takes on the wire: each
+/// chunk line, each chunk and each trailer line. A chunk line and a trailer
+/// line add bytes that [`BODY_MAX`] does not count, so the bytes of such a
+/// body have a limit of their own.
+const CHUNKED_MAX: usize = 2 * BODY_MAX;
+
 /// The most bytes of the line that starts a chunk: the size and its
 /// extension.
 const CHUNK_LINE_MAX: usize = 1024;
@@ -99,6 +105,10 @@ pub enum End {
     NoScript,
     /// The bytes of the client are no HTTP/1.1 request that the stub reads.
     /// The stub closed the connection with no byte.
+    ///
+    /// The stub reads a head of 64 KiB at most and a body of 16 MiB at most.
+    /// A body in the chunked form takes 32 MiB at most on the wire, with its
+    /// chunk lines and its trailer lines.
     BadRequest,
 }
 
@@ -1252,7 +1262,21 @@ fn body_of(framing: Framing, rest: &[u8]) -> Parsed<(Vec<u8>, usize)> {
 
 /// The body in the chunked form that `rest` starts with: each chunk, the
 /// last chunk of size zero, and each trailer line up to the empty line.
+///
+/// A body that takes more than [`CHUNKED_MAX`] bytes on the wire is no body,
+/// also before it is whole. A client that sends chunk lines or trailer lines
+/// with no end thus ends as [`End::BadRequest`].
 fn chunked_body(rest: &[u8]) -> Parsed<(Vec<u8>, usize)> {
+    match chunks_of(rest) {
+        Parsed::Whole((_, used)) if used > CHUNKED_MAX => Parsed::Bad,
+        Parsed::Partial if rest.len() > CHUNKED_MAX => Parsed::Bad,
+        parsed => parsed,
+    }
+}
+
+/// The chunks and the trailer lines that `rest` starts with, with no limit
+/// on their bytes on the wire.
+fn chunks_of(rest: &[u8]) -> Parsed<(Vec<u8>, usize)> {
     let mut body = Vec::new();
     let mut at = 0_usize;
 
@@ -2326,6 +2350,47 @@ mod tests {
             Parsed::Whole((b"a".to_vec(), at_the_cap.len()))
         );
         assert_eq!(chunked_body(&past_the_cap), Parsed::Bad);
+    }
+
+    #[test]
+    fn a_chunked_body_has_a_cap_on_its_bytes_on_the_wire() {
+        // The count of the bytes of the body, and not the bytes: a failure
+        // then prints two numbers.
+        let lengths =
+            |bytes: &[u8]| chunked_body(bytes).map_whole(|(body, used)| (body.len(), used));
+
+        // One chunk with each byte that a body can hold, the last chunk, and
+        // then trailer lines up to 4 bytes before the cap. Each line has its
+        // line end.
+        let line = [[b'a'; 1000].as_slice(), CRLF].concat();
+        let mut bytes = format!("{BODY_MAX:x}\r\n").into_bytes();
+        bytes.resize(bytes.len() + BODY_MAX, b'a');
+        bytes.extend_from_slice(b"\r\n0\r\n");
+        while bytes.len() + line.len() + 5 <= CHUNKED_MAX {
+            bytes.extend_from_slice(&line);
+        }
+        let last_line = CHUNKED_MAX - bytes.len() - 2 * CRLF.len();
+        bytes.resize(bytes.len() + last_line, b'a');
+        bytes.extend_from_slice(CRLF);
+        let lines_end = bytes.len();
+
+        // The empty line makes the body whole, with each byte of the cap.
+        bytes.extend_from_slice(CRLF);
+        assert_eq!(bytes.len(), CHUNKED_MAX);
+        assert_eq!(lengths(&bytes), Parsed::Whole((BODY_MAX, CHUNKED_MAX)));
+
+        // The start of one more trailer line, up to the cap and one byte
+        // past it.
+        bytes.truncate(lines_end);
+        bytes.extend_from_slice(b"bb");
+        assert_eq!(bytes.len(), CHUNKED_MAX);
+        assert_eq!(lengths(&bytes), Parsed::Partial);
+        bytes.push(b'b');
+        assert_eq!(lengths(&bytes), Parsed::Bad);
+
+        // A whole body past the cap.
+        bytes.extend_from_slice(b"\r\n\r\n");
+        assert_eq!(lengths(&bytes), Parsed::Bad);
     }
 
     #[test]
