@@ -163,6 +163,14 @@ DENY_KEYS = {"name", "if", "working-directory", "env", "run"}
 #: The two files the cargo cache is good for.
 CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
 
+#: The whole key of the cargo cache: the system of the runner, then one hash
+#: of the two files.
+CACHE_KEY = "rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}"
+
+#: The copy of the crates.io index that cargo keeps on the runner. For a
+#: version that its author removed, `cargo deny` reads only this copy.
+INDEX_COPY = "~/.cargo/registry/index"
+
 #: The whole test command of the `proc` job, as `integration/proc/AGENTS.md`
 #: gives it.
 PROC_RUN = "uv run pytest integration/proc -m slow"
@@ -458,6 +466,23 @@ def test_the_cargo_cache_is_keyed_by_the_toolchain_and_the_lock(
         assert f"'{name}'" in cache["with"]["key"]
         assert (REPO / name).is_file(), f"the cache key names {name}"
     assert "restore-keys" not in cache["with"]
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_cargo_cache_keeps_the_index_copy_until_a_keyed_file_changes(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """The cache holds the copy of the crates.io index, and its key changes
+    only with the two files. A run can thus read the copy that an earlier
+    run saved, and `cargo deny` reads only that copy for a removed version.
+    "Known gaps" of `rust/AGENTS.md` lists that limit and names both facts.
+    Change that entry in the commit that changes the path or the key."""
+    (cache,) = [
+        step for step in jobs["rust"]["steps"] if step.get("uses", "").startswith("actions/cache@")
+    ]
+
+    assert INDEX_COPY in cache["with"]["path"].split()
+    assert cache["with"]["key"] == CACHE_KEY
 
 
 def test_the_release_skips_rust_only_over_a_commit_whose_run_passed() -> None:
