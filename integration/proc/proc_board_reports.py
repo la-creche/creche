@@ -7,7 +7,7 @@ Three kinds of helper are here:
    another value changes a copy, and `board_env` stays as it is.
 2. Readers of an answer that `proc_board.py` does not have: an element by
    its class alone, a link by its text, a row of the audit table that holds a
-   report, the attributes of the cookie.
+   report, the attributes of the cookie, the check of a JSON body.
 3. One post of the edit form, as a browser sends it.
 
 Nothing here knows a module of a service. Each reader takes an HTTP answer.
@@ -16,6 +16,7 @@ Nothing here knows a module of a service. Each reader takes an HTTP answer.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from typing import Final
 
@@ -174,13 +175,36 @@ def cookie_attributes(response: httpx.Response) -> dict[str, str]:
 
 
 def is_json(body: bytes) -> bool:
-    """Whether the bytes of one answer are a JSON text."""
+    """Whether the bytes of one answer are a strict JSON text in UTF-8.
+
+    `json.loads` alone takes more than that. This check refuses each of
+    these: a byte order mark, UTF-16 and UTF-32, the tokens `NaN`, `Infinity`
+    and `-Infinity`, a number past the range of a float, and one half of a
+    surrogate pair.
+    """
     try:
-        json.loads(body)
+        value = json.loads(
+            body.decode("utf-8"), parse_constant=_refuse_constant, parse_float=_finite
+        )
+        # One half of a surrogate pair has no UTF-8 form.
+        json.dumps(value, ensure_ascii=False).encode("utf-8")
     except ValueError:
         return False
 
     return True
+
+
+def _refuse_constant(token: str) -> float:
+    raise ValueError(f"{token} is no token of JSON")
+
+
+def _finite(token: str) -> float:
+    number = float(token)
+
+    if not math.isfinite(number):
+        raise ValueError(f"{token} is past the range of a float")
+
+    return number
 
 
 async def save_with(

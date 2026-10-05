@@ -170,7 +170,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
 | `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
-| `test_proc_board_reports.py` | noticeboard | a status document that a reader cannot use, the fault, the spend and the step of a family, the audit page with more than one page, its filters and a line that is no record, the perimeter of `docs/rework/spec.md` §8.3, a config that refuses a start |
+| `test_proc_board_reports.py` | noticeboard | a status document that a reader cannot use, the fault, the spend and the step of a family, the audit page with more than one page, its filters and a line that is no record, the perimeter of `docs/rework/spec.md` §8.3, a config that refuses a start, the JSON check of `proc_board_reports.py` |
 | `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, a save after a preview, the one commit, saves at one time, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
@@ -662,10 +662,12 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the body of a refusal of the noticeboard.**
   `docs/rework/spec.md` §8.3 rule 4 permits a word for the fault in a
   refusal, and no value. No contract gives the form of the body or a word.
-  The suite holds that the body is a JSON text and that it holds no key.
-  For a missing key, the noticeboard answers
-  `{"ok":false,"error":"no_key"}`. A change costs one assertion in
-  `test_proc_board_reports.py`.
+  The suite holds that the body is a strict JSON text in UTF-8 and that it
+  holds no key. The docstring of `is_json` in `proc_board_reports.py` lists
+  what the check refuses. The check has no rule for the nesting, for the
+  size of an integer or for a key that an object holds two times. For a
+  missing key, the noticeboard answers `{"ok":false,"error":"no_key"}`. A
+  change costs one assertion in `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, the attributes of the cookie of the noticeboard.**
   `docs/rework/spec.md` §8.3 rule 3 gives `SameSite=Strict` and `HttpOnly`.
   No contract gives `Secure`, `Path` or a variable for one of the two. The

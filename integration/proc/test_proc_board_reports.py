@@ -12,6 +12,9 @@ scenarios here are in three groups:
    refusal, the cookie, the size of a post, and a start that the config
    refuses.
 
+Two tests at the end hold the JSON check of `proc_board_reports.py` against
+its own rule. They start no service.
+
 Each scenario asks as a browser behind the reverse proxy does, and reads the
 answer through `proc_html.py`. The suite writes each file that `caregiver`
 and the chaperone write on the host (`proc_tree.py`).
@@ -146,6 +149,19 @@ NEW_DESCRIPTION = "Answers in metric units."
 FIRST_COMMIT = 1
 
 EXIT_DEADLINE_S = 30.0
+
+#: A refusal that is strict JSON in UTF-8, and seven bodies that are not. A
+#: lax reader takes each of the seven.
+STRICT_BODY = '{"ok": false, "error": "no_key"}'
+LAX_BODIES = {
+    "nan": b'{"ok": false, "error": NaN}',
+    "infinity": b'{"ok": false, "error": -Infinity}',
+    "float-past-the-range": b'{"ok": false, "error": 1e999}',
+    "byte-order-mark": b"\xef\xbb\xbf" + STRICT_BODY.encode("utf-8"),
+    "utf-16": STRICT_BODY.encode("utf-16"),
+    "utf-32": STRICT_BODY.encode("utf-32"),
+    "lone-surrogate": b'{"ok": false, "error": "\\ud800"}',
+}
 
 
 # ------------------------------------------------- the home and family pages
@@ -615,3 +631,17 @@ def test_a_value_that_is_not_valid_refuses_to_start(
 
     assert child.wait(EXIT_DEADLINE_S) != 0, child.output()
     assert not is_listening(TcpAddress(port))
+
+
+# ------------------------------------------------------------ the JSON check
+
+
+def test_the_json_check_takes_a_strict_text() -> None:
+    """The check of the refusal scenario takes a strict JSON text in UTF-8."""
+    assert is_json(STRICT_BODY.encode("utf-8"))
+
+
+@pytest.mark.parametrize("body", LAX_BODIES.values(), ids=LAX_BODIES.keys())
+def test_the_json_check_refuses_a_lax_text(body: bytes) -> None:
+    """A body that only a lax reader takes is no JSON text for this suite."""
+    assert not is_json(body)
