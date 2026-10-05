@@ -167,6 +167,7 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 | `test_unique_test_basenames.py` | No two test modules share a basename across the workspace. |
 | `test_git_env_dropped.py` | A test run that git starts writes nothing into the repository of the caller. The root `conftest.py` drops the five variables that the hooks unset. |
 | `test_git_config_dropped.py` | No `git` child of a test run reads the config file of a person or of the system. The same holds for the ignore file and the attributes file of a person. The root `conftest.py` sets the variables that do this. |
+| `test_git_background_dropped.py` | No `git` command of a test run starts the maintenance that `git` does not wait for. That holds for a commit, a merge, a fetch and a repository that receives a push. The root `conftest.py` sets the two settings that do this. A fixture that asks for the maintenance gets it in the foreground. |
 | `test_ignored_signal_kept.py` | A test run that starts with SIGINT, SIGTERM or SIGHUP ignored passes the same tests, and the signal stays ignored. The fixture of the root `conftest.py` still fails a handler that a test leaves. |
 | `test_creche_deploy.py`, `test_rework_watchdog.py`, `test_rework_registry_sync.py`, `test_sbx_drift_check.py`, `test_sync_code_corpus.py`, `test_provision_library.py`, `test_rework_intake_unit.py` | Each script, against binstubs and a temp root. |
 

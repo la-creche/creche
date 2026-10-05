@@ -16,10 +16,21 @@ workflow: branches, hooks, CI, tags and releases.
   imports a test. git also sets them for `git rebase --exec` and for
   `git bisect run`. A test run from there then cannot write into the
   repository of the caller.
-- The root `conftest.py` also sets `GIT_CONFIG_GLOBAL` to an empty file and
-  `GIT_CONFIG_NOSYSTEM` to `1`. A `git` child of a test then reads no config
-  file of the person who runs the suite, and none of the system. A fixture
-  that needs a setting sets it in its own repository or with `git -c`.
+- The root `conftest.py` also sets `GIT_CONFIG_GLOBAL` to a file of its own
+  and `GIT_CONFIG_NOSYSTEM` to `1`. A `git` child of a test then reads no
+  config file of the person who runs the suite, and none of the system. A
+  fixture that needs a setting sets it in its own repository or with
+  `git -c`.
+- That file holds `maintenance.auto=false` and `gc.autoDetach=false`, and
+  `GIT_CONFIG_COUNT` carries the same two settings. After a commit, a merge
+  or a fetch, `git` starts its maintenance and does not wait for it. A
+  repository that receives a push does the same. With the two settings, no
+  `git` child of a test starts that process. A test can then remove or copy
+  a throwaway repository right after a command. A fixture that needs the
+  maintenance passes `maintenance.auto=true` with `git -c`.
+- A fixture that builds the full environment of `git` gets neither the file
+  nor the settings of `GIT_CONFIG_COUNT`. Such a fixture passes
+  `-c maintenance.auto=false` itself.
 - The same file gives `core.excludesFile` and `core.attributesFile` an empty
   file, through `GIT_CONFIG_COUNT`. It sets `GIT_ATTR_NOSYSTEM` to `1`. A
   `git` child then reads no ignore file and no attributes file of that
