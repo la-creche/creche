@@ -35,7 +35,7 @@ import socket
 import stat
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -609,10 +609,16 @@ class _Listener:
 
 
 class _QuietServer(uvicorn.Server):
-    """Signals belong to pytest, not to a listener inside one test."""
+    """Signals belong to pytest, not to a listener inside one test.
 
-    def install_signal_handlers(self) -> None:
-        return
+    `serve` of uvicorn enters `capture_signals` and sets its own handlers for
+    SIGINT and SIGTERM there. This override sets none. Each signal then keeps
+    the handler that it had before the test.
+    """
+
+    @contextlib.contextmanager
+    def capture_signals(self) -> Generator[None, None, None]:
+        yield
 
 
 def _live_channel_argv(service: SessionService) -> list[list[str]]:
