@@ -79,6 +79,11 @@ mod tests {
     /// The count of bytes of a token of the Python services.
     const TOKEN_BYTES: usize = 32;
 
+    /// The first time whose milliseconds do not fit the 48 bits of a ULID,
+    /// as seconds and nanoseconds from 1970.
+    const PAST_48_BITS_SECONDS: u64 = 281_474_976_710;
+    const PAST_48_BITS_NANOS: u32 = 656_000_000;
+
     fn start() -> SystemTime {
         UNIX_EPOCH + Duration::new(START_SECONDS, START_NANOS)
     }
@@ -115,6 +120,20 @@ mod tests {
         // The count of the source is where it was. The id holds the bytes 0
         // to 9.
         assert_eq!(mint(&clock, &entropy), ID_AT_START_BYTES_0);
+    }
+
+    #[test]
+    fn a_time_past_48_bits_takes_10_bytes_of_the_counting_source() {
+        let past = UNIX_EPOCH + Duration::new(PAST_48_BITS_SECONDS, PAST_48_BITS_NANOS);
+        let clock = FixedClock::new(past);
+        let entropy = CountingEntropy::new();
+
+        assert_eq!(new_ulid(&clock, &entropy), Err(MintError::TimeOutOfRange));
+
+        clock.set(start());
+
+        // The refused mint made its fill. The id holds the bytes 10 to 19.
+        assert_eq!(mint(&clock, &entropy), ID_AT_START_BYTES_10);
     }
 
     #[test]
