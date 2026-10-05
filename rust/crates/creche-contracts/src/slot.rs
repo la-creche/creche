@@ -8,8 +8,8 @@
 //! - [`Slot`] keeps the fact. A raw type with a `Slot` at each field is
 //!   total: its read fails for no value of a field. The conversion to the
 //!   valid type then reports each field.
-//! - [`MapOnly`] fails the read. It is for a raw type that is not total. The
-//!   read of such a document gives one refusal.
+//! - [`MapOnly`] fails the read. A raw type whose read can fail uses it for
+//!   a nested table. One wrong value then refuses the whole document.
 //!
 //! The module names no format. `serde` fills each type from the reader of a
 //! format, and the code here uses the visitors of `serde` only.
@@ -135,9 +135,9 @@ impl<T> Lenient for Slot<T> {}
 /// A type that a [`Slot`] reads from a table and from no other kind.
 ///
 /// A raw struct implements it when it is the value of a field of another raw
-/// type: `impl Nested for RawRow {}`. A struct that derives `Deserialize`
-/// also takes a list: `serde` then fills its fields by position. A `Slot`
-/// asks for the kind of the value before the struct reads it, so a list is
+/// type: `impl Nested for RawRow {}`. The derived reader of a struct accepts
+/// a list too, and gives the first item to the first field. A `Slot` asks
+/// for the kind of the value before the struct reads it, so a list is
 /// `Other(Found::List)`.
 pub(crate) trait Nested {}
 
@@ -710,8 +710,8 @@ pub(crate) mod tests {
             holds(float, &Slot::<u64>::Other(Found::Float));
         }
 
-        // The kind is the kind that the reader gives. This reader gives the
-        // token `-0` as a float.
+        // The reader decides the kind. `serde_json` reads the token `-0` as
+        // a float.
         holds("-0", &Slot::<i64>::Other(Found::Float));
     }
 
