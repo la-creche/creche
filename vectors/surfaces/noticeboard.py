@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import enum
 import io
 import json
 import logging
@@ -149,51 +150,58 @@ _NOTE_LATIN: Final = "The web framework decodes the bytes of a header as Latin-1
 
 # --- the class of a problem -------------------------------------------------------------
 
-NONE: Final = "none"
-MISSING: Final = "missing"
-UNREADABLE: Final = "unreadable"
-TOO_LARGE: Final = "too large"
-NOT_JSON: Final = "not JSON"
-NOT_AN_OBJECT: Final = "not an object"
-REFUSED: Final = "refused"
-UNREACHABLE: Final = "unreachable"
-CAPPED: Final = "capped"
+
+class Kind(enum.Enum):
+    """The class of one problem that a reader of the noticeboard gives a page."""
+
+    NONE = "none"
+    MISSING = "missing"
+    UNREADABLE = "unreadable"
+    TOO_LARGE = "too large"
+    NOT_JSON = "not JSON"
+    NOT_AN_OBJECT = "not an object"
+    REFUSED = "refused"
+    UNREACHABLE = "unreachable"
+    #: A notice: the reader stopped at a limit and kept what it read before.
+    CAPPED = "capped"
+
 
 #: Where the message of the JSON reader starts in a problem text.
 _NOT_JSON_MARK: Final = " is not JSON: "
 
 #: The start of each problem text that has one class, whatever follows.
-_STARTS: Final[tuple[tuple[str, str], ...]] = (
-    ("attendance refused: ", REFUSED),
-    ("cannot reach attendance: ", UNREACHABLE),
-    ("cannot call attendance: ", UNREACHABLE),
-    ("cannot read the noticeboard-ro token: ", UNREADABLE),
-    ("the noticeboard-ro token file is ", UNREADABLE),
-    ("cannot list the audit directory: ", UNREADABLE),
-    ("attendance answered over ", TOO_LARGE),
-    ("the stream passed ", CAPPED),
-    ("stopped after ", CAPPED),
-    ("showing the newest ", CAPPED),
+_STARTS: Final[tuple[tuple[str, Kind], ...]] = (
+    ("attendance refused: ", Kind.REFUSED),
+    ("cannot reach attendance: ", Kind.UNREACHABLE),
+    ("cannot call attendance: ", Kind.UNREACHABLE),
+    ("cannot read the noticeboard-ro token: ", Kind.UNREADABLE),
+    ("the noticeboard-ro token file is ", Kind.UNREADABLE),
+    ("cannot list the audit directory: ", Kind.UNREADABLE),
+    ("attendance answered over ", Kind.TOO_LARGE),
+    ("the stream passed ", Kind.CAPPED),
+    ("stopped after ", Kind.CAPPED),
+    ("showing the newest ", Kind.CAPPED),
 )
 
 #: The end of each problem text that has one class, whatever comes before.
-_ENDS: Final[tuple[tuple[str, str], ...]] = (
-    (" with no error code", REFUSED),
-    (", not a JSON object", NOT_AN_OBJECT),
-    (" is missing", MISSING),
-    (" bytes; refusing to parse it", TOO_LARGE),
-    (" bytes and was not parsed", TOO_LARGE),
+_ENDS: Final[tuple[tuple[str, Kind], ...]] = (
+    (" with no error code", Kind.REFUSED),
+    (", not a JSON object", Kind.NOT_AN_OBJECT),
+    (" is missing", Kind.MISSING),
+    (" bytes; refusing to parse it", Kind.TOO_LARGE),
+    (" bytes and was not parsed", Kind.TOO_LARGE),
 )
 
+_KINDS: Final = [kind.value for kind in Kind]
 _NOTE_PROBLEM: Final = (
-    "A problem is an object. class is one of none, missing, unreadable, too large, not JSON, "
-    "not an object, refused, unreachable and capped. capped is a notice: the reader stopped "
-    "at a limit and kept what it read before."
+    f"A problem is an object. class is one of {', '.join(_KINDS[:-1])} and {_KINDS[-1]}. "
+    f"{Kind.CAPPED.value} is a notice: the reader stopped at a limit and kept what it read "
+    "before."
 )
 _NOTE_PROBLEM_TEXT: Final = (
-    "text is the sentence that a page shows. A problem of the class not JSON has no text: "
-    "its sentence ends with a message of the JSON reader of Python. It has start, the part "
-    "of the sentence before that message."
+    f"text is the sentence that a page shows. A problem of the class {Kind.NOT_JSON.value} "
+    "has no text: its sentence ends with a message of the JSON reader of Python. It has "
+    "start, the part of the sentence before that message."
 )
 
 
@@ -205,19 +213,19 @@ def problem_of(text: str) -> dict[str, Json]:
     holds it.
     """
     if not text:
-        return {"class": NONE}
+        return {"class": Kind.NONE.value}
 
     for start, kind in _STARTS:
         if text.startswith(start):
-            return {"class": kind, "text": text}
+            return {"class": kind.value, "text": text}
 
     if _NOT_JSON_MARK in text:
         head, mark, _ = text.partition(_NOT_JSON_MARK)
-        return {"class": NOT_JSON, "start": head + mark}
+        return {"class": Kind.NOT_JSON.value, "start": head + mark}
 
     for end, kind in _ENDS:
         if text.endswith(end):
-            return {"class": kind, "text": text}
+            return {"class": kind.value, "text": text}
 
     raise ValueError(f"no class for the problem text {text!r}")
 

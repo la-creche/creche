@@ -26,35 +26,26 @@ STRICT_DEPTH = 64
 #: The largest integer that a strict reader takes.
 STRICT_INT_MAX = 2**64 - 1
 
-CLASSES = frozenset(
-    {
-        noticeboard.NONE,
-        noticeboard.MISSING,
-        noticeboard.UNREADABLE,
-        noticeboard.TOO_LARGE,
-        noticeboard.NOT_JSON,
-        noticeboard.NOT_AN_OBJECT,
-        noticeboard.REFUSED,
-        noticeboard.UNREACHABLE,
-        noticeboard.CAPPED,
-    }
-)
+CLASSES = frozenset(kind.value for kind in noticeboard.Kind)
 
 #: One sentence of the noticeboard for each class.
 SENTENCES = (
-    ("", noticeboard.NONE),
-    ("validation.json is missing", noticeboard.MISSING),
-    ("the noticeboard-ro token file is empty", noticeboard.UNREADABLE),
-    ("cannot list the audit directory: No such file or directory", noticeboard.UNREADABLE),
-    ("attendance answered over 4194304 bytes; refusing to parse it", noticeboard.TOO_LARGE),
-    ("2026-09-19.jsonl: a record passed 524288 bytes and was not parsed", noticeboard.TOO_LARGE),
-    ("a journal line is not JSON: Expecting value", noticeboard.NOT_JSON),
-    ("validation.json is list, not a JSON object", noticeboard.NOT_AN_OBJECT),
-    ("attendance refused: not_found (404) no such session", noticeboard.REFUSED),
-    ("attendance answered 502 with no error code", noticeboard.REFUSED),
-    (cases.UNREACHABLE, noticeboard.UNREACHABLE),
-    ("stopped after 5000 journal lines", noticeboard.CAPPED),
-    ("showing the newest 30 day files of 31", noticeboard.CAPPED),
+    ("", noticeboard.Kind.NONE),
+    ("validation.json is missing", noticeboard.Kind.MISSING),
+    ("the noticeboard-ro token file is empty", noticeboard.Kind.UNREADABLE),
+    ("cannot list the audit directory: No such file or directory", noticeboard.Kind.UNREADABLE),
+    ("attendance answered over 4194304 bytes; refusing to parse it", noticeboard.Kind.TOO_LARGE),
+    (
+        "2026-09-19.jsonl: a record passed 524288 bytes and was not parsed",
+        noticeboard.Kind.TOO_LARGE,
+    ),
+    ("a journal line is not JSON: Expecting value", noticeboard.Kind.NOT_JSON),
+    ("validation.json is list, not a JSON object", noticeboard.Kind.NOT_AN_OBJECT),
+    ("attendance refused: not_found (404) no such session", noticeboard.Kind.REFUSED),
+    ("attendance answered 502 with no error code", noticeboard.Kind.REFUSED),
+    (cases.UNREACHABLE, noticeboard.Kind.UNREACHABLE),
+    ("stopped after 5000 journal lines", noticeboard.Kind.CAPPED),
+    ("showing the newest 30 day files of 31", noticeboard.Kind.CAPPED),
 )
 
 
@@ -80,14 +71,19 @@ def _walk(value: Json) -> Iterator[Json]:
 
 
 def test_each_sentence_has_its_class() -> None:
+    assert {kind for _, kind in SENTENCES} == set(noticeboard.Kind)
+
     for text, kind in SENTENCES:
-        assert noticeboard.problem_of(text)["class"] == kind, text
+        assert noticeboard.problem_of(text)["class"] == kind.value, text
 
 
 def test_a_message_of_the_json_reader_is_in_no_problem() -> None:
     problem = noticeboard.problem_of("a journal line is not JSON: Expecting value: line 1")
 
-    assert problem == {"class": noticeboard.NOT_JSON, "start": "a journal line is not JSON: "}
+    assert problem == {
+        "class": noticeboard.Kind.NOT_JSON.value,
+        "start": "a journal line is not JSON: ",
+    }
 
 
 def test_an_unknown_sentence_stops_the_generator() -> None:
@@ -104,7 +100,7 @@ def test_each_committed_problem_has_a_known_class() -> None:
     }
 
     assert found <= CLASSES
-    assert noticeboard.NOT_JSON in found
+    assert noticeboard.Kind.NOT_JSON.value in found
 
 
 def test_no_committed_file_holds_a_path_of_the_machine() -> None:
