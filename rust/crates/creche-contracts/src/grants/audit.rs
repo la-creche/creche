@@ -370,22 +370,15 @@ impl Claimed {
 
 /// Which sandbox made the call, and whether that is evidence (contract 04
 /// §3.2).
+///
+/// A record names a sandbox only with proof: `sandbox_id` holds a name only
+/// when `sandbox_id_trusted` is `true`. The type has no value for a name that
+/// a caller gives with no proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SandboxEvidence {
     /// The chaperone could not map the connection to a sandbox. The Python
     /// chaperone writes this value for each record.
     Unknown,
-    // CONTRACT-QUESTION: contract 04 §3.2 says that a sandbox id with no proof
-    // moves into `claimed`, and §6.2 gives `claimed` three keys and none for
-    // a sandbox. §6.1 keeps `sandbox_id_trusted` for an id that is not
-    // evidence. The Python chaperone writes `null` and `false` in each
-    // record, and its writer also takes an id with `false`. This variant
-    // writes what that writer writes: the id in `sandbox_id`, and
-    // `sandbox_id_trusted: false`. The port of the chaperone must not build
-    // this variant before the contract says where such an id goes. A change
-    // costs this variant and the vector `sandbox-claimed`.
-    /// The caller names this sandbox, and the chaperone has no proof.
-    Claimed(SandboxName),
     /// The connection comes from the one address of this sandbox.
     Trusted(SandboxName),
 }
@@ -509,7 +502,6 @@ impl AuditRecord {
     pub fn to_line(&self) -> Vec<u8> {
         let (sandbox, trusted) = match &self.sandbox {
             SandboxEvidence::Unknown => (None, false),
-            SandboxEvidence::Claimed(sandbox) => (Some(sandbox), false),
             SandboxEvidence::Trusted(sandbox) => (Some(sandbox), true),
         };
         let claimed = &self.claimed;
@@ -845,11 +837,10 @@ mod tests {
     fn a_record_writes_the_sandbox_and_the_chain() {
         let sandbox: SandboxName = "chat-s3".parse().unwrap();
         let trusted = AuditRecord {
-            sandbox: SandboxEvidence::Trusted(sandbox.clone()),
+            sandbox: SandboxEvidence::Trusted(sandbox),
             ..record()
         };
-        let claimed = AuditRecord {
-            sandbox: SandboxEvidence::Claimed(sandbox),
+        let chained = AuditRecord {
             family: "vault-oracle".parse().unwrap(),
             callers: vec!["chat".parse().unwrap()],
             action: AuditAction::Manifest,
@@ -861,16 +852,40 @@ mod tests {
         assert!(
             line_of(&trusted).contains("\"sandbox_id\": \"chat-s3\", \"sandbox_id_trusted\": true")
         );
-        assert!(
-            line_of(&claimed)
-                .contains("\"sandbox_id\": \"chat-s3\", \"sandbox_id_trusted\": false")
-        );
-        assert!(line_of(&claimed).contains("\"tool\": \"$manifest\""));
-        assert!(line_of(&claimed).contains(
+        assert!(line_of(&chained).contains("\"tool\": \"$manifest\""));
+        assert!(line_of(&chained).contains(
             "\"decision\": \"deny\", \"reason\": \"rate_limited\", \"latency_ms\": null"
         ));
-        assert!(line_of(&claimed).ends_with("\"chain\": [\"chat\", \"vault-oracle\"]}\n"));
-        assert_eq!(claimed.chain().count(), 2);
+        assert!(line_of(&chained).ends_with("\"chain\": [\"chat\", \"vault-oracle\"]}\n"));
+        assert_eq!(chained.chain().count(), 2);
+    }
+
+    /// The input of the vector `sandbox-claimed`, which left the surface
+    /// `chaperone.audit_line`: the sandbox `chat-s3` with
+    /// `sandbox_id_trusted: false`. The Python writer takes that pair and
+    /// writes it. No value of `SandboxEvidence` holds it.
+    #[test]
+    fn a_record_names_a_sandbox_only_with_proof() {
+        let sandbox: SandboxName = "chat-s3".parse().unwrap();
+        let no_proof = "\"sandbox_id\": \"chat-s3\", \"sandbox_id_trusted\": false";
+
+        for evidence in [SandboxEvidence::Unknown, SandboxEvidence::Trusted(sandbox)] {
+            // The match has no wildcard arm, so a new variant does not build
+            // here before it has a row.
+            let written = match &evidence {
+                SandboxEvidence::Unknown => "\"sandbox_id\": null, \"sandbox_id_trusted\": false",
+                SandboxEvidence::Trusted(_) => {
+                    "\"sandbox_id\": \"chat-s3\", \"sandbox_id_trusted\": true"
+                }
+            };
+            let line = line_of(&AuditRecord {
+                sandbox: evidence,
+                ..record()
+            });
+
+            assert!(line.contains(written), "{line}");
+            assert!(!line.contains(no_proof), "{line}");
+        }
     }
 
     #[test]

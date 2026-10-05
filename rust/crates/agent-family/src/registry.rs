@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 
 use creche_contracts::family::{Family, Issue, RawFamily, Severity};
 use creche_contracts::server::{RawServer, Server};
+use creche_util::{hex, sha256};
 
 use crate::crossref::{HostFacts, Index, check_family, check_server};
 use crate::parse::{DOCUMENT, parse_family, parse_server};
 use crate::report::Report;
-use crate::sha256::hex_digest;
 use crate::zones::ZoneFacts;
 
 const FAMILY_FILE: &str = "family.yaml";
@@ -245,7 +245,7 @@ pub fn revision_of(root: &Path) -> String {
         data.push(0);
     }
 
-    let digest = hex_digest(&data);
+    let digest = hex::lower(&sha256::digest(&data));
     let short: String = digest.chars().take(REVISION_CHARS).collect();
 
     format!("{REVISION_PREFIX}{short}")
