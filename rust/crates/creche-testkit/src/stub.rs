@@ -658,9 +658,7 @@ impl Drop for Abort {
 /// Do not connect to the port of a stub that dropped. The operating system
 /// can give that port to the stub of another test. Do not use a dropped
 /// stub for a connect that the operating system refuses: the listener can
-/// still be open. Bind a `UnixListener` on a path under a `TempRoot`, drop
-/// that listener, and connect to the path. That drop closes the socket at
-/// once. The file stays, and no listener holds it.
+/// still be open. Use [`refused_socket`] for that connect.
 ///
 /// The type has no Python origin.
 ///
@@ -2643,15 +2641,15 @@ mod tests {
         block_on(async {
             let root = TempRoot::new().unwrap();
             let absent = root.path().join("absent.sock");
-            // The file of a socket whose listener closed. The operating
-            // system refuses each connect to it.
-            let closed = root.path().join("closed.sock");
-            drop(UnixListener::bind(&closed).unwrap());
+            // The file of a socket that never listened. A listener that the
+            // test drops is not such a file: a child program that another
+            // test starts while the listener is open keeps it open.
+            let refused = refused_socket(&root).unwrap();
 
             let no_file = RawHttp::unix(&absent, GET).await.unwrap_err();
             let no_file_then_eof = RawHttp::unix_then_eof(&absent, GET).await.unwrap_err();
-            let no_listener = RawHttp::unix(&closed, GET).await.unwrap_err();
-            let no_listener_then_eof = RawHttp::unix_then_eof(&closed, GET).await.unwrap_err();
+            let no_listener = RawHttp::unix(&refused, GET).await.unwrap_err();
+            let no_listener_then_eof = RawHttp::unix_then_eof(&refused, GET).await.unwrap_err();
             // No listener has the port 0, so the test connects to no port
             // that another test can hold. The operating system selects the
             // kind of the error: Linux refuses the connect, and macOS has no
