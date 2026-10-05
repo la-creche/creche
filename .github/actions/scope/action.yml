@@ -13,6 +13,13 @@
 # `true`. So does a change to a file of the Rust checks themselves, this one
 # included: only a run with the real cargo proves it. So does a change under
 # vectors/: the Rust tests read vectors/data.
+#
+# `systemd` is a third answer on the same change: `false` only when
+# bin/systemd-proof.sh says that the change holds no file of the systemd
+# proof (`--unchanged`). The answer starts as `true`, so a script that fails,
+# or that is absent, runs the proof. The files of the proof are systemd/, the
+# script and the CI files that hold the `systemd-proof` job, this one
+# included.
 name: scope
 description: Say whether the pull request changes docs only or code
 
@@ -23,6 +30,9 @@ outputs:
   rust:
     description: true when the change touches rust/, vectors/ or the Rust checks, false when it does not
     value: ${{ steps.scope.outputs.rust }}
+  systemd:
+    description: true when the change touches a file of the systemd proof, false when it does not
+    value: ${{ steps.scope.outputs.systemd }}
 
 runs:
   using: composite
@@ -53,3 +63,10 @@ runs:
         fi
         echo "rust=$rust" >> "$GITHUB_OUTPUT"
         echo "rust: $rust"
+
+        systemd=true
+        if bin/systemd-proof.sh --unchanged "$base" HEAD; then
+          systemd=false
+        fi
+        echo "systemd=$systemd" >> "$GITHUB_OUTPUT"
+        echo "systemd: $systemd"
