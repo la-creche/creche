@@ -54,7 +54,7 @@ DISAGREEMENTS_FILE: Final = "ids/disagreements.json"
 
 #: The key of the index that holds the frozen files: each path under
 #: `vectors/data/`, with the SHA-256 of the bytes of that file.
-FROZEN_KEY: Final = "frozen"
+_FROZEN_KEY: Final = "frozen"
 #: A digest in the index: 64 hexadecimal digits in lower case.
 _DIGEST: Final = re.compile(r"[0-9a-f]{64}")
 #: A tree with no frozen file.
@@ -179,11 +179,11 @@ def frozen_of(on_disk: Mapping[str, str]) -> dict[str, str]:
 
 def _frozen_map(index: Mapping[str, object]) -> dict[str, str]:
     """The map of the frozen files in the members of an index, checked."""
-    if FROZEN_KEY not in index:
-        raise ValueError(f"{INDEX_FILE} has no `{FROZEN_KEY}` map")
+    if _FROZEN_KEY not in index:
+        raise ValueError(f"{INDEX_FILE} has no `{_FROZEN_KEY}` map")
 
     frozen: dict[str, str] = {}
-    for path, digest in _members(index[FROZEN_KEY], f"`{FROZEN_KEY}` of {INDEX_FILE}").items():
+    for path, digest in _members(index[_FROZEN_KEY], f"`{_FROZEN_KEY}` of {INDEX_FILE}").items():
         if path == INDEX_FILE or not _is_data_path(path):
             raise ValueError(f"{INDEX_FILE}: {path!r} is no path of a frozen file")
 
@@ -308,7 +308,7 @@ def render_index(rows: Sequence[dict[str, Json]], frozen: Mapping[str, str]) -> 
     held = "{\n" + ",\n".join(pins) + "\n }" if pins else "{}"
 
     return (
-        f'{{\n "format": {FORMAT},\n "{FROZEN_KEY}": {held},\n'
+        f'{{\n "format": {FORMAT},\n "{_FROZEN_KEY}": {held},\n'
         f' "kind": "index",\n "surfaces": {body}\n}}\n'
     )
 
