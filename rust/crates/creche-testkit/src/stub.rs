@@ -1573,7 +1573,7 @@ where
 /// while the listener is open holds each open socket of the process until
 /// its own start completes. After the drop, that child still holds the
 /// listener, and the operating system completes a connect to it. The test
-/// then fails now and then.
+/// then fails in some runs.
 ///
 /// A child can hold a socket that never listens in the same way. The
 /// operating system still refuses each connect to it.
