@@ -148,9 +148,12 @@ pub enum Output {
 /// The last two parts differ from `subprocess.run` of Python. That call gives
 /// the child the standard input of the process, and it captures output with
 /// no cap. A port of such a call states its standard input: [`Stdin::Inherit`],
-/// or [`Stdin::Null`] on purpose. It also states its cap. Each default that
-/// the port keeps is a difference from the Python call, and a row of the
-/// `DEVIATIONS` table of its test.
+/// or [`Stdin::Null`] on purpose. It also states its cap. A port that keeps
+/// one of the two defaults names that default in the doc comment of its
+/// function.
+///
+/// Each word of a command is UTF-8 text. Python also gives a child a word
+/// with bytes that are not UTF-8.
 ///
 /// ```
 /// use std::time::Duration;
@@ -362,15 +365,105 @@ impl Ended {
 /// `Debug` prints how the child ended. It prints no byte of a stream and no
 /// count of the bytes: a child can write a secret to its output, and the
 /// count is then the length of that secret.
+///
+/// A runner makes the value. A test makes one for the script of a fake
+/// runner:
+///
+/// ```
+/// use creche_runtime::command::{Ended, Finished};
+///
+/// let finished = Finished::new(Ended::Code(1)).with_stderr("no such sandbox\n");
+///
+/// assert_eq!(finished.ended(), Ended::Code(1));
+/// assert_eq!(finished.stdout(), b"");
+/// assert_eq!(finished.stderr(), b"no such sandbox\n");
+/// assert_eq!(format!("{finished:?}"), "Finished { ended: Code(1), .. }");
+/// ```
+///
+/// Code outside this module cannot build the value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_runtime::command::{Ended, Finished};
+///
+/// let finished = Finished {
+///     ended: Ended::Code(1),
+///     stdout: Vec::new(),
+///     stderr: b"no such sandbox\n".to_vec(),
+/// };
+/// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct Finished {
+    ended: Ended,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+impl Finished {
+    /// A child that ended in this way and wrote no byte.
+    ///
+    /// The Python origin is the `CompletedProcess` that `subprocess.run`
+    /// returns, for example at `caregiver/src/caregiver/driver.py:87-89`.
+    #[must_use]
+    pub fn new(ended: Ended) -> Self {
+        Self {
+            ended,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    }
+
+    /// The value with these bytes as the standard output.
+    ///
+    /// The Python origin is the `stdout` argument of a `CompletedProcess`
+    /// that a test makes, for example at
+    /// `caregiver/tests/test_driver.py:33`.
+    #[must_use]
+    pub fn with_stdout(mut self, bytes: impl Into<Vec<u8>>) -> Self {
+        self.stdout = bytes.into();
+
+        self
+    }
+
+    /// The value with these bytes as the standard error.
+    ///
+    /// The Python origin is the `stderr` argument of a `CompletedProcess`
+    /// that a test makes, for example at
+    /// `caregiver/tests/test_driver.py:33`.
+    #[must_use]
+    pub fn with_stderr(mut self, bytes: impl Into<Vec<u8>>) -> Self {
+        self.stderr = bytes.into();
+
+        self
+    }
+
     /// How the child ended. An exit status that is not 0 is a result here
     /// and not an error: the caller decides what it means.
-    pub ended: Ended,
+    ///
+    /// The Python origin is each read of `returncode`, for example
+    /// `caregiver/src/caregiver/timers.py:373`.
+    #[must_use]
+    pub fn ended(&self) -> Ended {
+        self.ended
+    }
+
     /// Each byte of the standard output. Empty for [`Output::Inherit`].
-    pub stdout: Vec<u8>,
+    ///
+    /// The Python origin is each read of `stdout`, for example
+    /// `caregiver/src/caregiver/timers.py:388`. That value is text.
+    /// [`python_text`] makes the same text from these bytes.
+    #[must_use]
+    pub fn stdout(&self) -> &[u8] {
+        &self.stdout
+    }
+
     /// Each byte of the standard error. Empty for [`Output::Inherit`].
-    pub stderr: Vec<u8>,
+    ///
+    /// The Python origin is each read of `stderr`, for example
+    /// `caregiver/src/caregiver/timers.py:374`.
+    #[must_use]
+    pub fn stderr(&self) -> &[u8] {
+        &self.stderr
+    }
 }
 
 impl fmt::Debug for Finished {
@@ -648,16 +741,63 @@ pub fn spawn_piped(command: PipedCommand) -> Result<Piped, RunError> {
 }
 
 /// A child program that runs, with its three pipes.
+///
+/// Only [`spawn_piped`] gives a value. [`Piped::into_parts`] gives each pipe
+/// and the guard of the child to the task that owns it:
+///
+/// ```
+/// use creche_runtime::command::{ChildGuard, Piped};
+/// use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
+///
+/// fn parts(piped: Piped) -> (ChildStdin, ChildStdout, ChildStderr, ChildGuard) {
+///     piped.into_parts()
+/// }
+/// ```
+///
+/// Code outside this module cannot build a value. The three pipes and the
+/// guard of a value are thus parts of one child:
+///
+/// ```compile_fail,E0451
+/// use creche_runtime::command::{ChildGuard, Piped};
+/// use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
+///
+/// fn whole(
+///     stdin: ChildStdin,
+///     stdout: ChildStdout,
+///     stderr: ChildStderr,
+///     child: ChildGuard,
+/// ) -> Piped {
+///     Piped {
+///         stdin,
+///         stdout,
+///         stderr,
+///         child,
+///     }
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Piped {
-    /// The standard input of the child. To drop it closes the pipe.
-    pub stdin: ChildStdin,
-    /// The standard output of the child.
-    pub stdout: ChildStdout,
-    /// The standard error of the child.
-    pub stderr: ChildStderr,
-    /// The child itself: the one value that stops it and waits for it.
-    pub child: ChildGuard,
+    stdin: ChildStdin,
+    stdout: ChildStdout,
+    stderr: ChildStderr,
+    child: ChildGuard,
+}
+
+impl Piped {
+    /// The four parts of the child, each one as a value that one task owns:
+    /// the standard input, the standard output, the standard error, and the
+    /// guard that stops the child and waits for it.
+    ///
+    /// To drop the standard input closes the pipe. To drop the guard kills
+    /// the child.
+    ///
+    /// The Python origin is the three pipes of the process that
+    /// `ExecChannel.start` keeps
+    /// (`attendance/src/attendance/exec_channel.py:108-113`).
+    #[must_use]
+    pub fn into_parts(self) -> (ChildStdin, ChildStdout, ChildStderr, ChildGuard) {
+        (self.stdin, self.stdout, self.stderr, self.child)
+    }
 }
 
 /// The one value that stops a child program and waits for its end.
@@ -747,11 +887,7 @@ mod tests {
         async fn run(&self, command: Command) -> Result<Finished, RunError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
 
-            Ok(Finished {
-                ended: Ended::Code(0),
-                stdout: command.argv().join(" ").into_bytes(),
-                stderr: Vec::new(),
-            })
+            Ok(Finished::new(Ended::Code(0)).with_stdout(command.argv().join(" ")))
         }
     }
 
@@ -879,11 +1015,9 @@ mod tests {
 
     #[test]
     fn the_debug_of_a_result_prints_no_byte_and_no_count() {
-        let finished = Finished {
-            ended: Ended::Signal(9),
-            stdout: SECRET_VALUE.as_bytes().to_vec(),
-            stderr: b"warning".to_vec(),
-        };
+        let finished = Finished::new(Ended::Signal(9))
+            .with_stdout(SECRET_VALUE)
+            .with_stderr("warning");
         let text = format!("{finished:?}");
 
         assert_eq!(text, "Finished { ended: Signal(9), .. }");
@@ -891,6 +1025,35 @@ mod tests {
         // bytes of a stream: not the 28 of stdout and not the 7 of stderr.
         assert!(!text.contains(&SECRET_VALUE.len().to_string()), "{text}");
         assert!(!text.contains('7'), "{text}");
+    }
+
+    #[test]
+    fn a_result_gives_its_end_and_the_bytes_of_each_stream() {
+        let plain = Finished::new(Ended::Code(2));
+
+        assert_eq!(plain.ended(), Ended::Code(2));
+        assert_eq!(plain.stdout(), b"");
+        assert_eq!(plain.stderr(), b"");
+
+        let full = plain
+            .clone()
+            .with_stdout(b"to-output\n".to_vec())
+            .with_stderr("to-error\n");
+
+        assert_eq!(full.ended(), Ended::Code(2));
+        assert_eq!(full.stdout(), b"to-output\n");
+        assert_eq!(full.stderr(), b"to-error\n");
+        assert_ne!(full, plain);
+
+        // A second call replaces the bytes of the first call.
+        let replaced = full.clone().with_stdout("second").with_stderr(Vec::new());
+
+        assert_eq!(replaced.stdout(), b"second");
+        assert_eq!(replaced.stderr(), b"");
+        assert_eq!(
+            Finished::new(Ended::Code(2)).with_stdout("second"),
+            replaced
+        );
     }
 
     #[test]
@@ -923,15 +1086,15 @@ mod tests {
         let by_arc_reference = block_on(sendable(head_of(&shared))).unwrap();
 
         for finished in [by_reference, by_arc, by_arc_reference] {
-            assert_eq!(finished.ended, Ended::Code(0));
-            assert_eq!(finished.stdout, b"git rev-parse HEAD");
+            assert_eq!(finished.ended(), Ended::Code(0));
+            assert_eq!(finished.stdout(), b"git rev-parse HEAD");
         }
 
         assert_eq!(shared.calls.load(Ordering::SeqCst), 3);
 
         let owned = block_on(sendable(head_of(Echo::default()))).unwrap();
 
-        assert_eq!(owned.stdout, b"git rev-parse HEAD");
+        assert_eq!(owned.stdout(), b"git rev-parse HEAD");
     }
 
     #[test]
