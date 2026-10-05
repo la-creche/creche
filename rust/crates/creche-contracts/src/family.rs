@@ -43,6 +43,7 @@ use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
 
+use creche_util::pytext;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -450,20 +451,10 @@ pub fn python_float_text(value: f64) -> String {
     format!("{sign}{first}.{rest}")
 }
 
-/// Whether Python takes `c` as a space: `str.isspace`.
-fn is_py_space(c: char) -> bool {
-    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
-}
-
-/// The words of a text, as `str.split()` gives them.
-fn py_words(text: &str) -> impl Iterator<Item = &str> {
-    text.split(is_py_space).filter(|word| !word.is_empty())
-}
-
 /// The text with each run of spaces as one space: `" ".join(text.split())`.
 #[must_use]
 pub fn collapse(text: &str) -> String {
-    py_words(text).collect::<Vec<_>>().join(" ")
+    pytext::words(text).collect::<Vec<_>>().join(" ")
 }
 
 /// Whether `path` is `root` or is below it. The check reads whole segments.
@@ -1797,11 +1788,11 @@ impl FromStr for Cron {
             return Ok(Self(text.to_owned()));
         }
 
-        if py_words(text).count() != CRON_FIELDS {
+        if pytext::words(text).count() != CRON_FIELDS {
             return Err(CronError::Fields);
         }
 
-        if !py_words(text).all(is_cron_field) {
+        if !pytext::words(text).all(is_cron_field) {
             return Err(CronError::Character);
         }
 
