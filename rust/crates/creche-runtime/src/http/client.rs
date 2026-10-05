@@ -2597,6 +2597,27 @@ mod tests {
     }
 
     #[test]
+    fn a_base_path_with_each_byte_is_the_start_of_a_request_line() {
+        // A target that passes at the start of a service must not fail at
+        // each call. The `http` crate takes each base path as the start of
+        // a request line, whatever bytes the URL holds.
+        for byte in 0..=u8::MAX {
+            let path = String::from_utf8_lossy(&[b'a', byte, b'b']).into_owned();
+            let prefix = base_prefix(&path);
+            let line = PathAndQuery::from_segments(&["v1", "sessions"]).after(&prefix);
+
+            assert!(prefix.starts_with("/a"), "{byte:#04x}: {prefix}");
+            assert!(prefix.ends_with('b'), "{byte:#04x}: {prefix}");
+            assert!(prefix.is_ascii(), "{byte:#04x}: {prefix}");
+            assert_eq!(
+                Uri::try_from(line.clone()).unwrap().path(),
+                line,
+                "{byte:#04x}"
+            );
+        }
+    }
+
+    #[test]
     fn a_url_with_https_gives_tls_not_supported() {
         for text in [
             "https://192.0.2.10",
@@ -2776,6 +2797,33 @@ mod tests {
             let path = PathAndQuery::from_segments(&["v1", "s"]).with_query(pairs);
 
             assert_eq!(path.target, target, "{pairs:?}");
+        }
+    }
+
+    #[test]
+    fn a_path_and_a_query_with_each_byte_are_a_request_line() {
+        // The `http` crate takes each target that the type writes, so only
+        // the count of the bytes can make a request that the client cannot
+        // write.
+        for byte in 0..=u8::MAX {
+            let text = String::from_utf8_lossy(&[b'a', byte, b'b']).into_owned();
+            let target = PathAndQuery::from_segments(&["v1", &text])
+                .with_query(&[(&text, &text)])
+                .after("");
+            let uri = Uri::try_from(target.clone()).unwrap();
+
+            assert!(target.is_ascii(), "{byte:#04x}: {target}");
+            assert_eq!(
+                uri.path_and_query().map(|parts| parts.as_str()),
+                Some(target.as_str()),
+                "{byte:#04x}"
+            );
+            // The text adds no segment and no pair.
+            assert_eq!(target.matches('/').count(), 2, "{byte:#04x}: {target}");
+            assert_eq!(target.matches('?').count(), 1, "{byte:#04x}: {target}");
+            assert_eq!(target.matches('=').count(), 1, "{byte:#04x}: {target}");
+            assert_eq!(target.matches('&').count(), 0, "{byte:#04x}: {target}");
+            assert_eq!(target.matches('#').count(), 0, "{byte:#04x}: {target}");
         }
     }
 
