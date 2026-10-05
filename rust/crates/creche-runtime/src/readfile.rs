@@ -368,8 +368,14 @@ fn open_flags(follow: Follow) -> OFlags {
 /// Opens `path`. When a signal stops the call, the function makes the call
 /// again, as the open of the standard library and the open of Python do.
 fn open_path(path: &Path, flags: OFlags) -> Result<OwnedFd, Errno> {
+    again_after_a_signal(|| rustix::fs::open(path, flags, Mode::empty()))
+}
+
+/// Makes `call` until its answer is not the error of a call that a signal
+/// stopped. The result is that answer.
+fn again_after_a_signal<T>(mut call: impl FnMut() -> Result<T, Errno>) -> Result<T, Errno> {
     loop {
-        match rustix::fs::open(path, flags, Mode::empty()) {
+        match call() {
             Err(errno) if errno == Errno::INTR => {}
             result => return result,
         }
@@ -700,6 +706,19 @@ mod tests {
     }
 
     #[test]
+    fn a_file_over_the_cap_is_refused_before_the_read() {
+        // The file is open for a write only, so a read of it fails. The
+        // refusal is the size of the file, so no read came before it.
+        let (_root, path) = file_with(b"0123456789");
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+
+        assert_eq!(
+            read_open(file, cap(9)),
+            FileRead::Refused(ReadRefusal::TooLarge { cap: cap(9) })
+        );
+    }
+
+    #[test]
     fn the_largest_cap_reads_a_file_and_does_not_overflow() {
         let (_root, path) = file_with(b"0123456789");
         let (bytes, _facts) = taken(read_capped(&path, cap(usize::MAX), Follow::Refuse));
@@ -869,6 +888,61 @@ mod tests {
         let below = one.join("status.json");
         assert_eq!(read_capped(&below, cap(8), Follow::Follow), too_many());
         assert_eq!(read_capped(&below, cap(8), Follow::Refuse), too_many());
+    }
+
+    #[test]
+    fn only_the_answer_for_a_symlink_makes_a_symlink_refusal() {
+        // The open of a symlink can fail for another reason, for example
+        // with no free descriptor. The refusal then holds that reason.
+        let (root, path) = file_with(b"{}");
+        let link = root.path().join("link.json");
+        symlink(&path, &link).unwrap();
+        let reason = |errno: Errno| unreadable(&io::Error::from(errno));
+
+        assert_eq!(
+            open_refusal(&link, Follow::Refuse, Errno::LOOP),
+            ReadRefusal::Symlink
+        );
+        assert_eq!(
+            open_refusal(&link, Follow::Refuse, Errno::MFILE),
+            reason(Errno::MFILE)
+        );
+        assert_eq!(
+            open_refusal(&link, Follow::Follow, Errno::LOOP),
+            reason(Errno::LOOP)
+        );
+    }
+
+    #[test]
+    fn a_call_that_a_signal_stops_is_made_again() {
+        let mut calls = 0;
+
+        let result = again_after_a_signal(|| {
+            calls += 1;
+
+            if calls < 3 {
+                Err(Errno::INTR)
+            } else {
+                Ok("open")
+            }
+        });
+
+        assert_eq!(result, Ok("open"));
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn a_call_with_another_error_is_made_one_time() {
+        let mut calls = 0;
+
+        let result: Result<(), Errno> = again_after_a_signal(|| {
+            calls += 1;
+
+            Err(Errno::NOENT)
+        });
+
+        assert_eq!(result, Err(Errno::NOENT));
+        assert_eq!(calls, 1);
     }
 
     #[test]

@@ -753,6 +753,12 @@ Rules for the test:
   `.<name>.<pid>.<count>.tmp`, as the Python `attendance` does. A change of
   the name costs one function, `temp_name`.
 - This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/atomic.rs`: contract 01 §6.1 gives the swap of
+  a directory no rule for a `stat` that the system refuses. The Python copy
+  raises there on Python 3.12 and on Python 3.13. On Python 3.14 it reads
+  the refusal as "no entry". `replace_dir` is an error there, and no entry
+  moves. A change costs one function, `says_no_entry`.
+- This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/signals.rs`: contract 02 §3 rule 8 does not
   say how many reloads follow two SIGHUP signals. `Hangups` gives one item
   for all the signals that arrive while a reload runs. Two Python services
