@@ -9,11 +9,13 @@
 use std::error::Error;
 use std::fmt;
 
+use creche_util::{hex, sha256};
+
 use super::json::{self, Charset};
 use super::state::SourceFacts;
 use super::{
     Action, ContractId, ContractNumber, Digest, MANIFEST_CONTRACT_MAJOR, MANIFEST_CONTRACT_MINOR,
-    Requester, sha256,
+    Requester,
 };
 use crate::ids::{ComponentName, GateId, GateIdError, GitObjectId, Ulid, Version};
 
@@ -580,9 +582,9 @@ fn push_contract(out: &mut String, row: &ContractRow) {
 /// error denies the release.
 pub fn gate_id(manifest_sha256: &Digest) -> Result<GateId, GateIdError> {
     let joined = format!("{manifest_sha256}{GATE_PURPOSE}");
-    let hex = sha256::hex_digest(joined.as_bytes());
+    let digest = hex::lower(&sha256::digest(joined.as_bytes()));
 
-    hex.get(..GATE_ID_HEX).unwrap_or(&hex).parse()
+    digest.get(..GATE_ID_HEX).unwrap_or(&digest).parse()
 }
 
 /// The request id in the form that the approval flow takes: lower case.
