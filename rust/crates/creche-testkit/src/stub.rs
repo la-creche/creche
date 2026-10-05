@@ -621,8 +621,10 @@ struct State {
     stopped: bool,
 }
 
-/// Stops the accept task of a stub when the stub drops. That task holds the
-/// listener and the task of each connection.
+/// Asks the runtime to stop the accept task of a stub when the stub drops.
+/// That task holds the listener and the task of each connection. The
+/// runtime drops them when it next runs the task, and not in the drop of
+/// this value.
 struct Abort(AbortHandle);
 
 impl Drop for Abort {
@@ -639,13 +641,19 @@ impl Drop for Abort {
 ///
 /// The stub reads one request from each connection, gives one answer and
 /// closes the connection. The first request that it reads whole takes the
-/// first answer of the script. The stub stops when the value drops: it
-/// closes the listener and each open connection.
+/// first answer of the script.
+///
+/// The stub stops after the value drops. The drop only asks the runtime to
+/// stop the tasks of the stub. The listener and each open connection close
+/// when the runtime next runs those tasks. A connect that comes before that
+/// time still completes, and it gets no answer.
 ///
 /// Do not connect to the port of a stub that dropped. The operating system
-/// can give that port to the stub of another test. For a connect that the
-/// operating system refuses, drop a stub on a Unix socket and connect to
-/// its path: the file stays, and no listener holds it.
+/// can give that port to the stub of another test. Do not use a dropped
+/// stub for a connect that the operating system refuses: the listener can
+/// still be open. Bind a `UnixListener` on a path under a `TempRoot`, drop
+/// that listener, and connect to the path. That drop closes the socket at
+/// once. The file stays, and no listener holds it.
 ///
 /// The type has no Python origin.
 ///
@@ -896,8 +904,9 @@ impl Listener {
 /// The accept task of a stub: one task for each connection, until
 /// [`HttpStub::stop_accepting`].
 ///
-/// The runtime drops this future when the stub drops. The listener and the
-/// task of each connection then go with it.
+/// The drop of the stub asks the runtime to stop this task. The runtime
+/// drops this future when it next runs the task. The listener and the task
+/// of each connection then go with it.
 async fn accept_each(listener: Listener, state: Arc<watch::Sender<State>>) {
     let mut changes = state.subscribe();
     let mut connections = JoinSet::new();
