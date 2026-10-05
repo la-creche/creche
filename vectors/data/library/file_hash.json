@@ -1,0 +1,28 @@
+{
+ "context": {},
+ "contract": "no contract: the rules of library/AGENTS.md",
+ "entry": "library.library.file_hash",
+ "format": 1,
+ "notes": ["The input is the bytes of one file. The generator writes them to a file and gives the entry point the path.","value is the digest as 32 hexadecimal digits in lower case: BLAKE2b with a digest of 16 bytes, no key, no salt and no personal text."],
+ "surface": "library.file_hash",
+ "vectors": [
+  {"id":"empty","input":{"text":""},"result":"accepted","value":"cae66941d9efbd404e4d88758ea67670"},
+  {"id":"one-byte","input":{"text":"a"},"result":"accepted","value":"27c35e6e9373877f29e562464e46497e"},
+  {"id":"one-byte-nul","input":{"text":"\u0000"},"result":"accepted","value":"7025e075d5e2f6cde3cc051a31f07660"},
+  {"id":"one-byte-not-utf8","input":{"base64":"/w=="},"result":"accepted","value":"6da6440737d89ae8dded8ee4a1259bdd"},
+  {"id":"abc","input":{"text":"abc"},"result":"accepted","value":"cf4ab791c62b8d2b2109c90275287816"},
+  {"id":"text-not-ascii","input":{"text":"caf\u00e9 \ud83d\ude00"},"result":"accepted","value":"2c19eff590f634e1b037f30bae62cd75"},
+  {"id":"each-byte-value","input":{"base64":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="},"result":"accepted","value":"c2472c0ac37a8dbdb25f05ada0d82643"},
+  {"id":"bytes-127","input":{"text":"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012"},"result":"accepted","value":"32e1356cf7bc8726983ffeff898812db"},
+  {"id":"bytes-128","input":{"text":"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123"},"result":"accepted","value":"c5f465fbeb7095c1adabbf881f50e176"},
+  {"id":"bytes-129","input":{"text":"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234"},"result":"accepted","value":"1b374c6f1822e2db46752ae8a84157e3"},
+  {"id":"bytes-255","input":{"text":"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"},"result":"accepted","value":"8ea12284b657ae84ee9f4202a86bd6f8"},
+  {"id":"bytes-256","input":{"text":"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"},"result":"accepted","value":"663a80c324b079c43d1972ec15d8685a"},
+  {"id":"bytes-257","input":{"text":"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012345678"},"result":"accepted","value":"bd456bc0940fa317d96514446599d617"},
+  {"id":"bytes-65535","input":{"repeat":[["0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",1057],["0",1]]},"result":"accepted","value":"38fb7d3bf4d069e56d1029fe5e3b7206"},
+  {"id":"bytes-65536","input":{"repeat":[["0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",1057],["01",1]]},"result":"accepted","value":"1e87508acb89bd71f303e43c452e62ea"},
+  {"id":"bytes-65537","input":{"repeat":[["0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",1057],["012",1]]},"result":"accepted","value":"f9319a0bab0133235c1cb9af51068308"},
+  {"id":"bytes-131072","input":{"repeat":[["0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",2114],["0123",1]]},"result":"accepted","value":"b48659e96306a766f74d588ea41d61d3"},
+  {"id":"bytes-1048577","input":{"repeat":[["0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",16912],["0123456789abcdefghijklmnopqrstuvw",1]]},"result":"accepted","value":"5de15181b688b5eda746dba9b819a107"}
+ ]
+}

@@ -180,6 +180,9 @@
   {"accepted":5,"entry":"agent_door_owui.app.create_app","path":"runtime/edge.door_owui.json","raised":0,"refused":0,"surface":"runtime.edge.door_owui","vectors":5},
   {"accepted":5,"entry":"agent_door_trigger.webhooks.create_app","path":"runtime/edge.door_trigger.json","raised":0,"refused":0,"surface":"runtime.edge.door_trigger","vectors":5},
   {"accepted":5,"entry":"chaperone.app.create_app","path":"runtime/edge.chaperone.json","raised":0,"refused":0,"surface":"runtime.edge.chaperone","vectors":5},
-  {"accepted":5,"entry":"noticeboard.app.build_app","path":"runtime/edge.noticeboard.json","raised":0,"refused":0,"surface":"runtime.edge.noticeboard","vectors":5}
+  {"accepted":5,"entry":"noticeboard.app.build_app","path":"runtime/edge.noticeboard.json","raised":0,"refused":0,"surface":"runtime.edge.noticeboard","vectors":5},
+  {"accepted":53,"entry":"library.library.chunk_text","path":"library/chunk_text.json","raised":0,"refused":0,"surface":"library.chunk_text","vectors":53},
+  {"accepted":18,"entry":"library.library.file_hash","path":"library/file_hash.json","raised":0,"refused":0,"surface":"library.file_hash","vectors":18},
+  {"accepted":46,"entry":"library.library.read_document","path":"library/read_document.json","raised":0,"refused":0,"surface":"library.read_document","vectors":46}
  ]
 }

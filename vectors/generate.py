@@ -27,6 +27,7 @@ from vectors.surfaces import (
     family_file,
     grants,
     ids,
+    library,
     manifest,
     runtime,
     server_file,
@@ -74,6 +75,7 @@ GROUPS: Final[dict[str, Callable[[], tuple[Surface, ...]]]] = {
     "manifest": manifest.surfaces,
     "session": session.surfaces,
     "runtime": runtime.surfaces,
+    "library": library.surfaces,
 }
 
 
