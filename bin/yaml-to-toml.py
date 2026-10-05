@@ -170,6 +170,13 @@ class Reason(Enum):
     OWN_CHECK = "the TOML text that the script wrote fails its own check"
 
 
+class Place(Enum):
+    """Where a mapping is in its file. Rule 6 reads the top mapping only."""
+
+    TOP = "the top value of the file"
+    BELOW = "a value below the top value"
+
+
 class Refusal(Exception):
     """The script refuses a file. `line` counts from 1."""
 
@@ -480,11 +487,11 @@ class _Reader:
         if not isinstance(node, yaml.MappingNode):
             raise Refusal(Reason.NOT_A_MAPPING, None if node is None else _line(node))
 
-        return self._mapping(node, "", top=True)
+        return self._mapping(node, "", Place.TOP)
 
     def _item(self, node: yaml.Node, path: str) -> Item | None:
         if isinstance(node, yaml.MappingNode):
-            return self._mapping(node, path, top=False)
+            return self._mapping(node, path, Place.BELOW)
 
         if isinstance(node, yaml.SequenceNode):
             return self._sequence(node, path)
@@ -494,7 +501,7 @@ class _Reader:
 
         raise Refusal(Reason.NOT_YAML, _line(node))
 
-    def _mapping(self, node: yaml.MappingNode, path: str, *, top: bool) -> Mapping:
+    def _mapping(self, node: yaml.MappingNode, path: str, place: Place) -> Mapping:
         pairs: list[tuple[Key, Item]] = []
         seen: set[str] = set()
         for key_node, value_node in node.value:
@@ -509,7 +516,7 @@ class _Reader:
                 self.nulls.append(Null(_line(value_node), below))
                 continue
 
-            if top and self._kind is FileKind.MANIFEST and key.text == RELEASE_KEY:
+            if place is Place.TOP and self._kind is FileKind.MANIFEST and key.text == RELEASE_KEY:
                 item = _release(item)
 
             pairs.append((key, item))
