@@ -145,6 +145,9 @@ LINE_END = b"\r\n"
 #: How long one answer may take on a loaded machine.
 ANSWER_DEADLINE_S = 30.0
 
+#: How many bytes of an answer one read takes.
+READ_BYTES = 65536
+
 #: How long the system has to reap a killed process.
 EXIT_DEADLINE_S = 30.0
 
@@ -563,18 +566,30 @@ async def raw_answer(address: Address, request: bytes) -> bytes:
 
     The read ends when the service closes the connection. A service that
     keeps the connection open after a request with `Connection: close` fails
-    the read at the deadline.
+    here at the deadline. The failure gives that cause and each byte that
+    came before the deadline.
     """
     if isinstance(address, UnixAddress):
         reader, writer = await asyncio.open_unix_connection(str(address.path))
     else:
         reader, writer = await asyncio.open_connection(address.host, address.port)
 
+    answer = b""
+
     try:
         writer.write(request)
         await writer.drain()
 
-        return await asyncio.wait_for(reader.read(), ANSWER_DEADLINE_S)
+        async with asyncio.timeout(ANSWER_DEADLINE_S):
+            while chunk := await reader.read(READ_BYTES):
+                answer += chunk
+
+        return answer
+    except TimeoutError:
+        raise AssertionError(
+            f"the listener kept the connection open for {ANSWER_DEADLINE_S} s "
+            f"after a request with `Connection: close`. It sent {answer!r}"
+        ) from None
     finally:
         writer.close()
 
