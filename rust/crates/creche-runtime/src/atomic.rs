@@ -2461,8 +2461,8 @@ mod tests {
     const LEFT_UNTIL_THE_NEXT_WRITE: &str = "A write that fails before the link leaves its \
         temporary file. The next write of that name removes it.";
 
-    const REMOVED_BEFORE_THE_LINK: &str = "A new file that fails before the link removes its \
-        temporary file.";
+    const REMOVED_BEFORE_THE_LINK: &str = "A write of a new file that fails before the link \
+        removes its temporary file.";
 
     /// Each difference on purpose between this module and a Python copy. No
     /// vector covers a write, so a row names the Python lines.
