@@ -760,7 +760,7 @@ VERDICTS = [
     # The Rust checks run on every code PR. The job skips its own steps when
     # the PR touches nothing under rust/, and is a success.
     (_needs("code", {"rust": "skipped"}), False),
-    # The coverage job does the same, and a time limit cancels it.
+    # The coverage job does the same. A run of it that did not end is red too.
     (_needs("code", {COVERAGE_JOB: "skipped"}), False),
     (_needs("code", {COVERAGE_JOB: "cancelled"}), False),
     # The process suite is in no shard. A code PR on which it did not run
