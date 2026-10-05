@@ -23,6 +23,7 @@ import pytest
 from proc_board import (
     CSRF_COOKIE,
     CSRF_FIELD,
+    NEW_DESCRIPTION,
     VERB_PREVIEW,
     VERB_SAVE,
     BoardStack,
@@ -35,7 +36,6 @@ from proc_html import form_values, table_rows
 from proc_registry import FILE_COMMENT, family_path
 from proc_tree import FAMILY
 
-NEW_DESCRIPTION = "Answers in metric units."
 SUBJECT = "Change what the chat family says it is"
 SUBJECT_FIELD = "subject"
 OTHER_ORIGIN = "http://other.example"

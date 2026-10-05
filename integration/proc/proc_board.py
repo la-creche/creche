@@ -48,6 +48,8 @@ from proc_tree import (
     VIEW_KEY,
     Tree,
     add_family,
+    append_audit,
+    audit_record,
     write_env_file,
     write_view_key,
 )
@@ -81,6 +83,22 @@ _POSTED_LINE_END: Final = "\r\n"
 #: env file, and the verify hook does not.
 SITE_ADDRESS_ENV: Final = "AGENT_LAN_ADDRESS"
 
+#: Three variables of the env file of the unit that a scenario changes: the
+#: key itself, the file that holds the key, and the state directory. The
+#: unit names one of the first two.
+KEY_ENV: Final = "VIEW_ACCESS_KEY"
+KEY_FILE_ENV: Final = "VIEW_ACCESS_KEY_FILE"
+STATE_ROOT_ENV: Final = "VIEW_STATE_ROOT"
+
+#: The tool of the one audit record of `BoardStack.write_audit_record`. Each
+#: family of the fixture holds the verb.
+AUDITED_TOOL: Final = "embed"
+
+#: Two values that a scenario types into the `description` control: one for
+#: a first save, and one for a save after it.
+NEW_DESCRIPTION: Final = "Answers in metric units."
+LATER_DESCRIPTION: Final = "Answers in metric units, in one sentence."
+
 #: The two flags of `verify.command` in `noticeboard/component.yaml`.
 VERIFY_JSON: Final = "--json"
 VERIFY_ENV_FILE: Final = "--env-file"
@@ -97,8 +115,8 @@ def board_env(tree: Tree, host: str, port: int) -> dict[str, str]:
         SITE_ADDRESS_ENV: LAN_ADDRESS,
         "VIEW_BIND": host,
         "VIEW_PORT": str(port),
-        "VIEW_ACCESS_KEY_FILE": str(tree.view_key_file),
-        "VIEW_STATE_ROOT": str(tree.state_root),
+        KEY_FILE_ENV: str(tree.view_key_file),
+        STATE_ROOT_ENV: str(tree.state_root),
         "VIEW_REGISTRY_DIR": str(tree.registry_root),
         "VIEW_SESSIOND_SOCKET": str(tree.attendance_socket),
     }
@@ -110,7 +128,7 @@ def _env_for_bind(tree: Tree, bind: str) -> dict[str, str]:
     return board_env(tree, host, int(port))
 
 
-def unit_file_env(tree: Tree, port: int) -> dict[str, str]:
+def view_env(tree: Tree, port: int) -> dict[str, str]:
     """The variables of the env file that the unit names, for a loopback bind.
 
     The unit reads two files. The verify hook reads only this one
@@ -175,13 +193,22 @@ class BoardStack(Stack):
         self.board = self.spawn(Service.NOTICEBOARD, env)
         self.supervisor.wait_ready(self.board, TcpAddress(self.board_port))
 
-    def write_unit_file(self, values: Mapping[str, str] | None = None) -> Path:
+    def write_audit_record(self) -> None:
+        """Write one audit record, so that the root has the audit directory.
+
+        The host has that directory before a service starts
+        (`systemd/creche-chaperone.service`). No fixture of this topology
+        makes it, and the verify hook looks for it.
+        """
+        append_audit(self.tree, [audit_record(FAMILY, AUDITED_TOOL)])
+
+    def write_view_env(self, values: Mapping[str, str] | None = None) -> Path:
         """Write the env file of the unit, and return its path.
 
-        None gives the variables of `unit_file_env` for the port of the
+        None gives the variables of `view_env` for the port of the
         noticeboard of this test.
         """
-        chosen = unit_file_env(self.tree, self.board_port) if values is None else values
+        chosen = view_env(self.tree, self.board_port) if values is None else values
         write_env_file(self.tree.view_env_file, chosen)
 
         return self.tree.view_env_file

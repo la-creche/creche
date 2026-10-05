@@ -27,13 +27,20 @@ from urllib.parse import urlsplit
 import httpx
 import proc_registry
 import pytest
-from proc_board import REVIEW, VERB_PREVIEW, VERB_SAVE, BoardStack, Browser, html_of, page_of
+from proc_board import (
+    LATER_DESCRIPTION,
+    NEW_DESCRIPTION,
+    REVIEW,
+    VERB_PREVIEW,
+    VERB_SAVE,
+    BoardStack,
+    Browser,
+    html_of,
+    page_of,
+)
 from proc_html import CHECKED_VALUE, Element, form_values, table_rows
 from proc_registry import FILE_COMMENT, family_path
 from proc_tree import ATTENDED, AUTONOMOUS, FAMILY, GROUP_READ_MODE, SECRET_MODE
-
-NEW_DESCRIPTION = "Answers in metric units."
-LATER_DESCRIPTION = "Answers in metric units, in one sentence."
 
 #: Contract 01 §2: the fields of a thin family or of an autonomous family.
 #: The first name is the one control of the mapping `job`.

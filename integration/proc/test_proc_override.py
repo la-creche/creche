@@ -22,8 +22,8 @@ from proc_chat import chat_id, run_stream
 from proc_harness import Supervisor
 from proc_owui import OwuiStack
 from proc_services import SERVICES, Service, command_of
-from proc_tree import Tree, append_audit, audit_record
-from proc_trigger import CHAT, REVIEW, TriggerStack, hook_path
+from proc_tree import Tree
+from proc_trigger import REVIEW, TriggerStack, hook_path
 from proc_tui import TuiStack
 
 CHECK_FLAG = "--check"
@@ -108,10 +108,10 @@ def test_an_override_starts_the_verify_hook_of_the_noticeboard(
     )
     stack = BoardStack(tree, supervisor)
     stack.prepare()
-    append_audit(tree, [audit_record(CHAT, "embed")])
+    stack.write_audit_record()
     stack.start_board()
 
-    checked = stack.verify(stack.write_unit_file())
+    checked = stack.verify(stack.write_view_env())
 
     assert checked.exit_code == 0, checked.stdout + checked.stderr
     assert ran.read_text(encoding="utf-8").split() == ["noticeboard-verify"]

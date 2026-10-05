@@ -14,11 +14,8 @@ from __future__ import annotations
 
 import httpx
 import proc_registry
-from proc_board import VERB_SAVE, BoardStack, Browser
+from proc_board import LATER_DESCRIPTION, NEW_DESCRIPTION, VERB_SAVE, BoardStack, Browser
 from proc_tree import FAMILY
-
-NEW_DESCRIPTION = "Answers in metric units."
-LATER_DESCRIPTION = "Answers in metric units, in one sentence."
 
 
 async def test_the_next_start_reads_a_saved_family(board_alone: BoardStack) -> None:

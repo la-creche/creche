@@ -28,27 +28,20 @@ import json
 from typing import Any, cast
 
 import pytest
-from proc_board import BoardStack, unit_file_env
+from proc_board import KEY_ENV, KEY_FILE_ENV, STATE_ROOT_ENV, BoardStack, view_env
 from proc_harness import Finished
 from proc_stack import base_env
-from proc_tree import FAMILY, VIEW_KEY, append_audit, audit_record, token_of
-
-KEY_ENV = "VIEW_ACCESS_KEY"
-KEY_FILE_ENV = "VIEW_ACCESS_KEY_FILE"
-STATE_ROOT_ENV = "VIEW_STATE_ROOT"
+from proc_tree import VIEW_KEY, token_of
 
 #: Two paths in the root of a test that no fixture makes.
 NO_STATE_ROOT = "no-such-state"
 NO_ENV_FILE = "no-such.env"
 
-#: The tool of the one audit record. Each family of the fixture holds the verb.
-AUDITED_TOOL = "embed"
-
 
 @pytest.fixture
 def serving(board_alone: BoardStack) -> BoardStack:
     """A noticeboard that serves, on a root with each directory that the host has."""
-    append_audit(board_alone.tree, [audit_record(FAMILY, AUDITED_TOOL)])
+    board_alone.write_audit_record()
 
     return board_alone
 
@@ -56,7 +49,7 @@ def serving(board_alone: BoardStack) -> BoardStack:
 @pytest.fixture
 def silent(board_prepared: BoardStack) -> BoardStack:
     """The same root, with no noticeboard."""
-    append_audit(board_prepared.tree, [audit_record(FAMILY, AUDITED_TOOL)])
+    board_prepared.write_audit_record()
 
     return board_prepared
 
@@ -72,7 +65,7 @@ def report_of(done: Finished) -> dict[str, Any]:
 
 def test_the_hook_passes_beside_a_noticeboard_that_serves(serving: BoardStack) -> None:
     """§4 rule 3: exit 0 is a pass."""
-    done = serving.verify(serving.write_unit_file())
+    done = serving.verify(serving.write_view_env())
 
     assert done.exit_code == 0, done.stdout + done.stderr
     assert report_of(done)["ok"] is True
@@ -81,9 +74,9 @@ def test_the_hook_passes_beside_a_noticeboard_that_serves(serving: BoardStack) -
 def test_the_hook_fails_when_no_noticeboard_serves(silent: BoardStack) -> None:
     """§4 rule 3. The root is whole, and nothing listens on the port of the env file."""
     port = silent.supervisor.free_port()
-    values = unit_file_env(silent.tree, port)
+    values = view_env(silent.tree, port)
 
-    done = silent.verify(silent.write_unit_file(values))
+    done = silent.verify(silent.write_view_env(values))
 
     assert done.exit_code != 0
     assert report_of(done)["ok"] is False
@@ -96,10 +89,10 @@ def test_the_hook_fails_when_the_state_directory_is_missing(serving: BoardStack)
     one fault.
     """
     tree = serving.tree
-    values = unit_file_env(tree, serving.board_port)
+    values = view_env(tree, serving.board_port)
     values[STATE_ROOT_ENV] = str(tree.root / NO_STATE_ROOT)
 
-    done = serving.verify(serving.write_unit_file(values))
+    done = serving.verify(serving.write_view_env(values))
 
     assert done.exit_code != 0
 
@@ -110,7 +103,7 @@ def test_the_hook_needs_no_variable_but_those_of_the_env_file(serving: BoardStac
     The hook starts with no variable at all. It reads each value from the
     env file.
     """
-    done = serving.verify(serving.write_unit_file(), env={})
+    done = serving.verify(serving.write_view_env(), env={})
 
     assert done.exit_code == 0, done.stdout + done.stderr
 
@@ -124,7 +117,7 @@ def test_the_hook_fails_when_the_env_file_is_missing(serving: BoardStack) -> Non
     by mistake.
     """
     tree = serving.tree
-    env = base_env(tree) | unit_file_env(tree, serving.board_port)
+    env = base_env(tree) | view_env(tree, serving.board_port)
 
     done = serving.verify(tree.root / NO_ENV_FILE, env=env)
 
@@ -139,13 +132,13 @@ def test_the_hook_prints_no_key_and_no_token(serving: BoardStack, key_in: str) -
     The hook reads the key in both cases. It finds the token file of the
     `view-ro` principal in the state directory.
     """
-    values = unit_file_env(serving.tree, serving.board_port)
+    values = view_env(serving.tree, serving.board_port)
 
     if key_in == "the-env-file":
         del values[KEY_FILE_ENV]
         values[KEY_ENV] = VIEW_KEY
 
-    done = serving.verify(serving.write_unit_file(values))
+    done = serving.verify(serving.write_view_env(values))
     printed = done.stdout + done.stderr
 
     assert done.exit_code == 0, printed
