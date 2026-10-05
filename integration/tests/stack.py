@@ -80,6 +80,35 @@ LOCK_BEAT_MS = 150
 LOCK_STALE_S = 0.6
 LOCK_POLL_S = 0.05
 
+#: The lines of a pi shim that join the words `--mode` and `rpc` into
+#: `--mode=rpc` for the program that runs.
+#:
+#: A sandbox on the host is a microVM with a process table of its own. A test
+#: has no microVM, so each playpen of the machine is in one table. On Linux a
+#: playpen counts each process of that table whose arguments hold `--mode` and
+#: `rpc` as two words, and `ready` reports the count (contract 03 §3 rule 4).
+#: With two words, the fake pi of one sandbox is such a process for the
+#: playpen of a second sandbox, and the family of that sandbox ends `degraded`
+#: with the fault `orphan_processes`. With one word, no playpen counts a fake
+#: pi. `fake-pi.mjs` reads only `--session-id`, so it runs the same.
+#:
+#: `integration/proc/proc_standins.py` has the same lines for its own pi
+#: wrapper. The two suites share no module.
+ONE_MODE_WORD = (
+    "n=$#\n"
+    'while [ "$n" -gt 0 ]; do\n'
+    "  word=$1\n"
+    "  shift\n"
+    "  n=$((n - 1))\n"
+    '  if [ "$word" = --mode ] && [ "$n" -gt 0 ]; then\n'
+    '    word="--mode=$1"\n'
+    "    shift\n"
+    "    n=$((n - 1))\n"
+    "  fi\n"
+    '  set -- "$@" "$word"\n'
+    "done\n"
+)
+
 _TOKEN_MODE = 0o600
 _START_TIMEOUT_S = 10.0
 _STOP_GRACE_S = 2.0
@@ -99,6 +128,12 @@ def playpen_bundle() -> Path:
 def fake_pi_script() -> Path:
     """The playpen package's own double for `pi --mode rpc`."""
     return repo_root() / "playpen" / "test" / "fake-pi.mjs"
+
+
+def fake_pi_exec() -> str:
+    """The last lines of each pi shim: the mode becomes one word, then the
+    shim becomes the fake pi. `ONE_MODE_WORD` says why."""
+    return f'{ONE_MODE_WORD}exec node "{fake_pi_script()}" "$@"\n'
 
 
 def fake_sbx_script() -> Path:
@@ -319,15 +354,18 @@ class Stack:
     def _write_pi_shim(self) -> None:
         """`AGENT_PI_BIN` needs one executable. `fake-pi.mjs` is not one.
 
-        The shim does three things and nothing else.
+        The shim does four things and nothing else.
 
         1. Appends one line per start. That is the process record scenario 7
            reads: a held-open process means a second message adds no line.
+           The line keeps the words that the playpen sent.
         2. Sources `pi-env.sh`, because `buildTurnEnv` passes five names
            through and no more, so `FAKE_PI_*` cannot reach the child any
            other way. The playpen's own harness adds the same variables
            the same way, outside the production environment logic.
-        3. `exec`s, so this stays ONE process and stdin EOF and every signal
+        3. Joins `--mode` and `rpc` into one word (`ONE_MODE_WORD`), so the
+           playpen of another sandbox does not count the fake pi.
+        4. `exec`s, so this stays ONE process and stdin EOF and every signal
            reach the fake pi unchanged.
 
         Two sessions can start two shims at once. The shell may write a long
@@ -345,7 +383,7 @@ class Stack:
             f'printf "%s\\n" "$*" >> "{self.pi_spawn_log}"\n'
             f'rmdir "{lock}"\n'
             f'. "{self._pi_env_file}"\n'
-            f'exec node "{fake_pi_script()}" "$@"\n',
+            f"{fake_pi_exec()}",
             encoding="utf-8",
         )
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

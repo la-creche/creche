@@ -54,7 +54,7 @@ from caregiver.apply import ApplyResult, apply_once
 from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from fastapi import FastAPI
-from stack import FAMILY, LOCK_BEAT_MS, Stack, fake_pi_script, repo_root
+from stack import FAMILY, LOCK_BEAT_MS, Stack, fake_pi_exec, repo_root
 
 from caregiver import paths as caregiver_paths
 
@@ -382,7 +382,7 @@ class Stage3:
             f'rmdir "{lock}"\n'
             f': > "$PWD/{LEFT_BY_PREFIX}$$"\n'
             f'. "{self.stack.work_root.parent / "pi-env.sh"}"\n'
-            f'exec node "{fake_pi_script()}" "$@"\n',
+            f"{fake_pi_exec()}",
             encoding="utf-8",
         )
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
