@@ -955,6 +955,9 @@ test.
     Packet `decisions-config-endpoints` adds the names of the variables.
     The packet that makes a service read a variable deletes the constant
     of that service.
+  - Rule 10. `time::Timestamp` has no differential test. No Python reader
+    has its grammar today. Packet `strict-noticeboard-time` adds that
+    reader, its vectors and the test.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
   - Shared helpers. A helper with users in two crates belongs in one helper
