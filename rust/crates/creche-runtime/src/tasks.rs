@@ -135,11 +135,20 @@ impl Shutdown {
     ///
     /// The future is cancel safe: a caller can drop it in a `select!` and
     /// call the function again.
+    ///
+    /// The Python origin is `wait` of
+    /// `caregiver/src/caregiver/loop.py:1225-1231`. The stop handler ends
+    /// that wait early (`:1237-1240`).
     pub async fn cancelled(&self) {
         self.token.cancelled().await;
     }
 
     /// Whether the stop signal was triggered.
+    ///
+    /// The Python origins are `stopped` of
+    /// `caregiver/src/caregiver/loop.py:1222-1223` and the `should_exit`
+    /// flag that `stop` of `attendance/src/attendance/__main__.py:201-203`
+    /// sets.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.token.is_cancelled()
@@ -246,6 +255,11 @@ impl Tasks {
     }
 
     /// The stop signal of these tasks.
+    ///
+    /// No Python copy has this function. A Python service keeps its tasks
+    /// and its stop flag in two places: the fields of
+    /// `attendance/src/attendance/service.py:210-212` and the flag that
+    /// `stop` of `attendance/src/attendance/__main__.py:201-203` sets.
     #[must_use]
     pub fn shutdown(&self) -> &Shutdown {
         &self.shutdown
@@ -601,6 +615,54 @@ impl<F: Future> Future for Guard<F> {
 /// The output is the value of the task, or [`TaskLost`]. To drop the value
 /// does not stop the task.
 ///
+/// The lint gate refuses a statement that starts a task and does not use the
+/// value. Await the value. For a result that no caller reads, write
+/// `drop(completion)`:
+///
+/// ```
+/// #![deny(unused_must_use)]
+/// use std::time::Duration;
+///
+/// use creche_runtime::tasks::{Drained, Tasks, shutdown_pair};
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let (_trigger, shutdown) = shutdown_pair();
+/// let tasks = Tasks::new(shutdown);
+///
+/// let drained = runtime.block_on(async {
+///     drop(tasks.spawn_must_complete("ledger-write", async {}));
+///
+///     tasks.drain(Duration::from_secs(1)).await
+/// });
+/// assert_eq!(drained, Drained::Clean);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// The same code with no `drop` does not build. The lint is the one error:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use std::time::Duration;
+///
+/// use creche_runtime::tasks::{Drained, Tasks, shutdown_pair};
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let (_trigger, shutdown) = shutdown_pair();
+/// let tasks = Tasks::new(shutdown);
+///
+/// let drained = runtime.block_on(async {
+///     tasks.spawn_must_complete("ledger-write", async {});
+///
+///     tasks.drain(Duration::from_secs(1)).await
+/// });
+/// assert_eq!(drained, Drained::Clean);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
 /// The future is cancel safe: a caller can wait on `&mut completion` in a
 /// `select!` and wait again later. A poll after the output gives
 /// [`TaskLost::Cancelled`] and does not panic.
@@ -629,6 +691,7 @@ impl<F: Future> Future for Guard<F> {
 ///
 /// let completion = Completion::<u8> { task: None };
 /// ```
+#[must_use = "the task runs without it, and its result is lost: await it or drop it on purpose"]
 pub struct Completion<T> {
     /// `None` when no task started, and after the output.
     task: Option<Guarded<T>>,
@@ -682,7 +745,7 @@ impl fmt::Display for TaskLost {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Panicked => "the task panicked",
-            Self::Cancelled => "the runtime stopped before the task ended",
+            Self::Cancelled => "the task gave no value",
         })
     }
 }
@@ -997,10 +1060,7 @@ mod tests {
     #[test]
     fn a_lost_task_names_its_reason() {
         assert_eq!(TaskLost::Panicked.to_string(), "the task panicked");
-        assert_eq!(
-            TaskLost::Cancelled.to_string(),
-            "the runtime stopped before the task ended"
-        );
+        assert_eq!(TaskLost::Cancelled.to_string(), "the task gave no value");
     }
 
     #[test]

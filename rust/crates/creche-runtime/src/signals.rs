@@ -24,6 +24,7 @@ use std::panic;
 use tokio::runtime::Handle;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
+use crate::readfile::os_text;
 use crate::tasks::{Shutdown, ShutdownTrigger};
 
 /// What a process does at SIGHUP.
@@ -137,22 +138,6 @@ fn listen(kind: SignalKind) -> Result<Signal, SignalError> {
     }
 }
 
-/// The text of `error` with no ` (os error N)` at its end: the text of
-/// `strerror`.
-///
-/// `readfile::os_text` replaces this copy when its body exists.
-fn os_text(error: &io::Error) -> String {
-    let text = error.to_string();
-    let Some(code) = error.raw_os_error() else {
-        return text;
-    };
-
-    match text.strip_suffix(&format!(" (os error {code})")) {
-        Some(plain) => plain.to_owned(),
-        None => text,
-    }
-}
-
 /// Triggers the stop signal at the first signal of `stop`.
 ///
 /// The task ends at the stop signal, also when another signal or the end of
@@ -167,6 +152,16 @@ async fn trigger_at(mut stop: Signal, trigger: ShutdownTrigger) {
     }
 }
 
+// CONTRACT-QUESTION: contract 02 §3 rule 8 gives SIGHUP its job, a reload.
+// It does not say how many reloads follow two signals. The Python copies
+// differ. The chaperone runs one more reload for all the signals that arrive
+// while a reload runs (`chaperone/src/chaperone/reload_wiring.py:357-372`).
+// `attendance` and the trigger door run one reload for each SIGHUP that
+// their loop takes (`attendance/src/attendance/__main__.py:206`,
+// `door-trigger/src/agent_door_trigger/webhooks.py:257`). The reading here
+// is the rule of the chaperone for each Rust service: each SIGHUP has a
+// reload that starts after it, and no queue of reloads grows. A change costs
+// one function, `Hangups::next`.
 /// The SIGHUP signals of a process, one item for each reload to do.
 ///
 /// Signals that arrive while a reload runs give one more item, and not one
@@ -227,6 +222,9 @@ impl Hangups {
     ///
     /// After the stop signal, each call gives `None` at once, also when a
     /// SIGHUP waits. Leave the loop at the first `None`.
+    ///
+    /// The Python origin is `signal_arrived` with `_run` of
+    /// `chaperone/src/chaperone/reload_wiring.py:357-372`.
     pub async fn next(&mut self) -> Option<()> {
         tokio::select! {
             biased;
@@ -285,6 +283,11 @@ mod tests {
     /// signal.
     const SIGKILL: i32 = 9;
 
+    /// A number that no program can take as a signal. The C library of Linux
+    /// keeps it for its own use and refuses a handler for it. macOS has no
+    /// signal with that number.
+    const NO_SIGNAL: i32 = 32;
+
     #[test]
     fn an_error_names_the_answer_of_the_system() {
         let error = SignalError {
@@ -330,7 +333,7 @@ mod tests {
     }
 
     // A test of this file must not install a handler: the handler stays in
-    // the test program and takes the signal from each other test. The three
+    // the test program and takes the signal from each other test. The four
     // tests below get an error before the first handler. `tests/signals.rs`
     // holds each test that installs one, in a child.
 
@@ -391,6 +394,24 @@ mod tests {
             SignalError {
                 kind: io::ErrorKind::Other,
                 os_text: String::from("Refusing to register signal 9"),
+            }
+        );
+    }
+
+    #[test]
+    fn a_handler_that_the_system_refuses_gives_the_text_of_strerror() {
+        // `tokio` has no rule for this number, so it asks the operating
+        // system. The system refuses, and the call installs nothing.
+        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+        let error = runtime
+            .block_on(async { listen(SignalKind::from_raw(NO_SIGNAL)) })
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            SignalError {
+                kind: io::ErrorKind::InvalidInput,
+                os_text: String::from("Invalid argument"),
             }
         );
     }
