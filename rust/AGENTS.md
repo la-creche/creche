@@ -56,8 +56,8 @@ release tool gives:
 | `json.rs` | Private. A reader that takes what Python `json.loads` takes, and writers for the text of `json.dumps`. |
 | `sha256.rs` | Private. SHA-256, because the crate has no dependency that gives a hash. |
 
-No type of `manifest` implements a `serde` trait. The module is one of the
-four exceptions that rule 1 names. The raw type of `manifest` is the private
+No type of `manifest` implements a `serde` trait. The module does not hold
+rule 1 yet ("Known gaps"). The raw type of `manifest` is the private
 value tree of its `yaml` reader or of its `json` reader. `Draft` is the raw
 type of a request that a requester plans. The reason is the reason of
 `channel`: no `serde` reader reads what `yaml.safe_load` and `json.loads`
@@ -133,11 +133,14 @@ Each rule has its reason. Do not break a rule without a change to this file.
    conversion never sees an invalid value.
    Reason: one conversion holds every check, so no code path can skip a
    check.
-   Exception: the modules `channel`, `grants`, `manifest` and `status` use
-   no raw `serde` type. Each one reads a document with a reader of its own.
-   "Layout", "The channel module", "The JSON reader of `status`" and "Known
-   gaps" give the reasons. The owner decides if the exception of `grants`
-   stays.
+   This rule has no exception for a module. "JSON" below has the rules for
+   a JSON text. Such a text takes three steps:
+   1. The strict reader in the `json` module of `creche-contracts` reads
+      the text.
+   2. The reader fills a raw `serde` type whose fields are lenient. A
+      lenient field takes a JSON value of each kind. A wrong kind is then
+      an issue for step 3 and not a failed read.
+   3. A single conversion builds the valid type.
 2. **Give each id, name, path, size, duration and token its own type.** The
    type has a private field and a parsing constructor. Do not implement
    `Default`. Do not derive `Deserialize` directly. Use
@@ -198,6 +201,31 @@ Each rule has its reason. Do not break a rule without a change to this file.
     under `rust/` is under no component, so a change here mints no tag and
     starts no release.
 
+## JSON
+
+A JSON text of a contract must be strict JSON. The reader refuses a text
+that does not meet each line of this list:
+
+- The encoding is UTF-8. The text starts with no byte order mark.
+- `NaN`, `Infinity` and `-Infinity` are not valid tokens.
+- A string has no lone surrogate. This applies to a channel line too.
+- An object has each key one time only.
+- The nesting depth is 64 levels or less.
+- Each integer token is in the range of 64 bits.
+- Each float token is a finite number.
+
+Reason: for a text outside these rules, two readers can return two values.
+
+`creche-contracts` must have one JSON reader and one JSON writer, in its
+`json` module. Packets `decisions-json-check` and `decisions-json-reader`
+add that module. Write no JSON parser, no JSON value tree and no code that
+formats a float in another module.
+
+When the reader refuses a text, apply the failure action that rule 8
+demands. The module error keeps the name of the broken rule. The service
+uses that name to record a notice for the operator. The notice arrives with
+packet `decisions-notice`.
+
 ## When two Python copies of a grammar disagree
 
 The Python code holds more than one copy of most id grammars.
@@ -255,8 +283,8 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
-Rule 1 names a raw `serde` type. The `channel` module is one of four
-exceptions.
+Rule 1 names a raw `serde` type. The `channel` module does not hold rule 1
+yet ("Known gaps").
 Its raw type is `channel::json::Json`, from a reader of its own. The Python
 host reads a line with `json.loads`, and `serde_json` does not read what
 `json.loads` reads:
@@ -737,9 +765,17 @@ test.
 
 - Rules that the code does not hold yet. A line gives the packet that closes
   the gap. The same packet removes the line.
+  - Rule 1. Four modules have a JSON reader of their own and no raw `serde`
+    type: `channel`, `grants`, `manifest` and `status`. One packet moves
+    each module to the shared reader: `decisions-raw-serde-channel`,
+    `decisions-raw-serde-grants`, `decisions-raw-serde-manifest` and
+    `decisions-raw-serde-status`.
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
+- Two lines of "JSON" wait for a confirmation of the owner: the duplicate
+  key line and the 64-bit integer line. The Python readers accept both kinds
+  of text today. If the owner says no, change those two lines.
 - Two texts of "When the two results differ" wait for a confirmation of the
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
