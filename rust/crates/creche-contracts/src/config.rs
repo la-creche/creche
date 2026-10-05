@@ -880,10 +880,10 @@ pub fn key_of_file(text: &str) -> Result<Secret, KeyError> {
 /// The text without the space at its two ends, as `str.strip` of Python gives
 /// it.
 ///
-/// A reader of a token file or of a header calls this function, so the crate
-/// holds one copy of the rule. Python removes each `White_Space` character of
-/// Unicode and the four separators U+001C to U+001F. `str::trim` keeps the
-/// four separators.
+/// A reader of a token file or of a header calls this function. The one copy
+/// of the rule is `creche_util::pytext::strip`. Python removes each
+/// `White_Space` character of Unicode and the four separators U+001C to
+/// U+001F. `str::trim` keeps the four separators.
 ///
 /// ```
 /// use creche_contracts::config::python_strip;
@@ -896,7 +896,7 @@ pub fn key_of_file(text: &str) -> Result<Secret, KeyError> {
 /// ```
 #[must_use]
 pub fn python_strip(text: &str) -> &str {
-    pytext::strip(text)
+    creche_util::pytext::strip(text)
 }
 
 #[cfg(test)]
