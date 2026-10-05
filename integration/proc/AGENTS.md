@@ -687,6 +687,11 @@ the text of the failure. Work down this list.
   A change costs the last assertions of three scenarios in
   `test_proc_board_form.py`. No scenario changes a second file of the
   family that the save writes.
+- **CONTRACT-QUESTION, the line end of a family file after a save.** No
+  contract gives it. A browser posts each line end of a control as CR LF.
+  The suite holds that the file holds no CR after a save of a block or of a
+  list of lines. A change costs one assertion in each of two scenarios of
+  `test_proc_board_form.py`.
 - **CONTRACT-QUESTION, the marks of a commit of the noticeboard.**
   `docs/rework/spec.md` §8.2 gives the commit. No contract gives its author
   or a trailer. The suite holds the author name `noticeboard` and the

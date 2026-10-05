@@ -192,6 +192,14 @@ def read_family(tree: Tree, name: str) -> str:
     return tree.family_file(name).read_text(encoding="utf-8")
 
 
+def family_bytes(tree: Tree, name: str) -> bytes:
+    """One family file as it is on the disk.
+
+    `read_family` gives each line end as LF. Only the bytes show a CR.
+    """
+    return tree.family_file(name).read_bytes()
+
+
 def load_family(tree: Tree, name: str) -> dict[str, Any]:
     """One family file of the checkout, as the mapping of contract 01 §2.
 

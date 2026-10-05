@@ -61,6 +61,9 @@ NEW_VERBS = {
     "ha_call": {"allow": [{"domain": "light", "service": "turn_on", "entity_id": "light.desk"}]},
 }
 
+#: The first byte of the line end that a browser posts.
+CARRIAGE_RETURN = b"\r"
+
 #: Who the noticeboard says made a commit, and the trailer of that commit.
 COMMIT_AUTHOR = "noticeboard"
 COMMIT_TRAILER = "Via: noticeboard"
@@ -170,6 +173,11 @@ async def test_two_lines_save_a_list_of_two(board_alone: BoardStack) -> None:
 
     `Browser` sends each line end as CR LF, as a browser does. So a save
     that splits the text at LF alone writes a CR into each name.
+
+    CONTRACT-QUESTION: no contract gives the line end of a family file after
+    a save. Reading taken: the noticeboard as it is. Each line of the file
+    ends with LF, and the file holds no CR. A change costs the last
+    assertion here and in the scenario of the block.
     """
     tree = board_alone.tree
     typed = "".join(f"{host}\n" for host in EGRESS)
@@ -178,6 +186,7 @@ async def test_two_lines_save_a_list_of_two(board_alone: BoardStack) -> None:
 
     assert response.status_code == httpx.codes.SEE_OTHER
     assert proc_registry.load_family(tree, FAMILY)["egress"] == list(EGRESS)
+    assert CARRIAGE_RETURN not in proc_registry.family_bytes(tree, FAMILY)
 
 
 async def test_a_number_control_saves_a_number(board_alone: BoardStack) -> None:
@@ -199,7 +208,13 @@ async def test_a_number_control_saves_a_number(board_alone: BoardStack) -> None:
 
 
 async def test_an_edited_block_saves_and_reads_back(board_alone: BoardStack) -> None:
-    """Contract 01 §3.5: `verbs` is a mapping of a verb to its fence."""
+    """Contract 01 §3.5: `verbs` is a mapping of a verb to its fence.
+
+    A browser posts each line end of the block as CR LF. A save that writes
+    the block as it came puts a CR into the file, and the mapping still
+    reads back equal. So the scenario also reads the bytes of the file. The
+    scenario of the lines has the CONTRACT-QUESTION for the line end.
+    """
     tree = board_alone.tree
     typed = proc_registry.block_text("verbs", NEW_VERBS)
 
@@ -207,6 +222,7 @@ async def test_an_edited_block_saves_and_reads_back(board_alone: BoardStack) -> 
 
     assert response.status_code == httpx.codes.SEE_OTHER
     assert proc_registry.load_family(tree, FAMILY)["verbs"] == NEW_VERBS
+    assert CARRIAGE_RETURN not in proc_registry.family_bytes(tree, FAMILY)
 
 
 async def test_a_block_that_names_another_field_writes_nothing(board_alone: BoardStack) -> None:
