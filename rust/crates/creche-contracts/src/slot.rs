@@ -1,12 +1,17 @@
-//! The lenient field type of a raw type.
+//! The lenient field type of a raw type, and a wrapper that takes only a
+//! table.
 //!
 //! A raw type holds a document before a check (`rust/AGENTS.md`, rule 1). A
 //! key of a document can hold a value of a kind that its field does not
-//! take. A [`Slot`] keeps that fact. A raw type with a `Slot` at each field
-//! is total: its read fails for no value of a field. The conversion to the
-//! valid type then reports each field.
+//! take. Two types of this module say what the read does then:
 //!
-//! The module names no format. `serde` fills a `Slot` from the reader of a
+//! - [`Slot`] keeps the fact. A raw type with a `Slot` at each field is
+//!   total: its read fails for no value of a field. The conversion to the
+//!   valid type then reports each field.
+//! - [`MapOnly`] fails the read. It is for a raw type that is not total. The
+//!   read of such a document gives one refusal.
+//!
+//! The module names no format. `serde` fills each type from the reader of a
 //! format, and the code here uses the visitors of `serde` only.
 
 use std::collections::BTreeMap;
@@ -15,7 +20,7 @@ use std::marker::PhantomData;
 
 use serde::de::value::MapAccessDeserializer;
 use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The kind of a value, as a `serde` reader gives it.
 ///
@@ -370,6 +375,42 @@ impl<'de, T: Nested + Deserialize<'de>> FieldType<'de> for T {
 impl<'de, T: Nested + Deserialize<'de>> Deserialize<'de> for Slot<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         read(deserializer)
+    }
+}
+
+/// A `T` that deserializes from a mapping and from no other form.
+///
+/// A struct that derives `Deserialize` also takes a sequence: `serde` then
+/// fills the fields by position. No Python reader does that. Each one
+/// refuses a list where the contract gives a mapping. `MapOnly` refuses the
+/// sequence form, and the read of the document then fails. A raw type that
+/// is total uses a [`Slot`] there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MapOnly<T>(pub(crate) T);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for MapOnly<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct OnlyMap<T>(PhantomData<T>);
+
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for OnlyMap<T> {
+            type Value = MapOnly<T>;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a mapping")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                T::deserialize(MapAccessDeserializer::new(map)).map(MapOnly)
+            }
+        }
+
+        deserializer.deserialize_map(OnlyMap(PhantomData))
+    }
+}
+
+impl<T: Serialize> Serialize for MapOnly<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
     }
 }
 
@@ -976,5 +1017,36 @@ mod tests {
         assert!(!Slot::<bool>::Null.is_true());
         assert!(!Slot::<bool>::Missing.is_true());
         assert!(!Slot::<bool>::Other(Found::Text).is_true());
+    }
+
+    #[derive(Debug, PartialEq, Deserialize, Serialize)]
+    struct Row {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+    }
+
+    #[test]
+    fn a_derived_struct_takes_a_sequence() {
+        let row: Row = serde_json::from_str(r#"["run", ["-v"]]"#).unwrap();
+
+        assert_eq!(row.command, "run");
+    }
+
+    #[test]
+    fn a_map_only_struct_takes_a_mapping_and_no_sequence() {
+        let row: MapOnly<Row> = serde_json::from_str(r#"{"command": "run"}"#).unwrap();
+
+        assert_eq!(row.0.command, "run");
+        assert_eq!(
+            serde_json::to_string(&row).unwrap(),
+            r#"{"command":"run","args":[]}"#
+        );
+        for text in [r#"["run", ["-v"]]"#, r#""run""#, "null", "7", "true"] {
+            assert!(
+                serde_json::from_str::<MapOnly<Row>>(text).is_err(),
+                "{text}"
+            );
+        }
     }
 }

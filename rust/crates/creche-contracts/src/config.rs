@@ -31,7 +31,6 @@ use std::str::FromStr;
 mod pytext;
 #[cfg(test)]
 mod python;
-mod shape;
 mod values;
 
 pub mod attendance;

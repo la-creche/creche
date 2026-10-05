@@ -24,10 +24,10 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::pytext;
-use super::shape::MapOnly;
 use super::values::{DirPath, PathError};
 use crate::ids::{SandboxName, SandboxNameError};
 use crate::secret::Secret;
+use crate::slot::MapOnly;
 
 // --- JSON as Python writes it ---
 
