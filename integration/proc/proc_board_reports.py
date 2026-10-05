@@ -8,7 +8,8 @@ Three kinds of helper are here:
 2. Readers of an answer that `proc_board.py` does not have: an element by
    its class alone, a link by its text, a row of the audit table that holds a
    report, the attributes of the cookie, the check of a JSON body.
-3. One post of the edit form, as a browser sends it.
+3. One post of the edit form, as a browser sends it, with a body of an exact
+   size.
 
 Nothing here knows a module of a service. Each reader takes an HTTP answer.
 """
@@ -19,6 +20,7 @@ import json
 import math
 from collections.abc import Mapping
 from typing import Final
+from urllib.parse import urlencode
 
 import httpx
 from proc_board import (
@@ -54,6 +56,14 @@ FLAG: Final = "flag"
 #: The class of the audit table and of the table of the home page.
 AUDIT_TABLE: Final = "audit"
 FAMILIES_TABLE: Final = "families"
+
+#: The type of the body that a browser posts from a form.
+FORM_TYPE: Final = "application/x-www-form-urlencoded"
+
+#: A field that no form of the noticeboard has, and the one byte that fills
+#: it. The field makes a post longer.
+_PADDING_FIELD: Final = "padding"
+_PADDING: Final = "p"
 
 _SET_COOKIE: Final = "set-cookie"
 
@@ -207,13 +217,14 @@ def _finite(token: str) -> float:
     return number
 
 
-async def save_with(
-    stack: BoardStack, client: httpx.AsyncClient, family: str, extra: Mapping[str, str]
+async def save_of_size(
+    stack: BoardStack, client: httpx.AsyncClient, family: str, edit: Mapping[str, str], size: int
 ) -> httpx.Response:
-    """Open the edit form of one family, then post it with the save button.
+    """Open the edit form of one family, then post a save with a body of `size` bytes.
 
     The post holds each field that a browser posts, the cookie of the form
-    and the origin of the page. `extra` adds a field or replaces one.
+    and the origin of the page. `edit` replaces a field. One more field,
+    which no form has, fills the body to the size.
     """
     path = f"/families/{family}/edit"
     opened = await client.get(path)
@@ -221,9 +232,18 @@ async def save_with(
     if opened.status_code != HTTP_OK:
         raise ProcError(f"GET {path} answered {opened.status_code}\n{opened.text}")
 
-    values = form_values(html_of(opened).one("form"))
-    sender = {"Cookie": f"{CSRF_COOKIE}={csrf_of(opened)}", "Origin": stack.origin}
+    fields = form_values(html_of(opened).one("form")) | dict(edit) | {VERB_FIELD: VERB_SAVE}
+    room = size - len(urlencode(fields | {_PADDING_FIELD: ""}))
 
-    return await client.post(
-        path, data=values | dict(extra) | {VERB_FIELD: VERB_SAVE}, headers=sender
-    )
+    if room < 0:
+        raise ProcError(f"the form with no padding is longer than {size} bytes")
+
+    # `urlencode` writes ASCII, and one padding character is one byte of it.
+    body = urlencode(fields | {_PADDING_FIELD: _PADDING * room}).encode("ascii")
+    sender = {
+        "Cookie": f"{CSRF_COOKIE}={csrf_of(opened)}",
+        "Origin": stack.origin,
+        "Content-Type": FORM_TYPE,
+    }
+
+    return await client.post(path, content=body, headers=sender)

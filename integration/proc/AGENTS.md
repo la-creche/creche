@@ -676,9 +676,16 @@ the text of the failure. Work down this list.
   costs three scenarios in `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, a post to the noticeboard that is too long.** No
   contract gives a limit for the body of a post, or the answer to a longer
-  body. The suite holds the answer of the noticeboard as it is: a body past
-  1 MiB gets 403, and the registry stays as it was. A change costs one
-  assertion in `test_proc_board_reports.py`.
+  body. The suite holds the noticeboard as it is:
+  - A body of 1 MiB and one byte gets 403, and the registry stays as it was.
+  - A body of exactly 1 MiB is a save.
+
+  One field that no form has fills each body to its size. The noticeboard
+  ignores such a field, and the save of the second scenario depends on
+  that. Each scenario sends the whole body before it reads the answer. A
+  service that closes the connection before it read the body can fail the
+  first scenario with a write error. A change costs two scenarios in
+  `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, where the noticeboard reads its key.**
   `docs/rework/spec.md` §8.3 names the key and no source of it. The suite
   holds the two variables that `noticeboard/AGENTS.md` names:
@@ -842,7 +849,7 @@ the text of the failure. Work down this list.
 | `standin_sbx.py`, `standin_systemctl.py`, `standin_litellm.py` | the three stand-in programs of this directory |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
 | `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py` | one topology each |
-| `proc_board_reports.py` | a start of the noticeboard with a changed environment, and the readers of a report, of a paging link and of the cookie |
+| `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |

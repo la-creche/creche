@@ -55,7 +55,7 @@ from proc_board_reports import (
     is_json,
     link_named,
     problem_rows,
-    save_with,
+    save_of_size,
     start_board_with,
     tools_of,
     with_class,
@@ -142,9 +142,8 @@ OTHER_KEY = "another-view-key-" + "a" * 32
 #: The value of `VIEW_COOKIE_SECURE` for a run with no TLS.
 NOT_SECURE = "0"
 
-#: 1 MiB. A post with a field of this size has a body past it.
+#: 1 MiB: the longest body of a post that the noticeboard reads.
 BODY_LIMIT = 1 << 20
-PADDING_FIELD = "padding"
 NEW_DESCRIPTION = "Answers in metric units."
 FIRST_COMMIT = 1
 
@@ -527,25 +526,43 @@ async def test_a_post_past_the_body_limit_is_refused(board_alone: BoardStack) ->
     """Each byte of a request body is input. The size is checked before use.
 
     The post is a save with an edit, from the form and with its token. One
-    more field makes the body longer than 1 MiB. The same post with a short
-    field is a save.
+    more field makes the body one byte longer than 1 MiB. The same post with
+    one byte less is a save: `test_a_post_at_the_body_limit_is_a_save`.
 
     CONTRACT-QUESTION: no contract gives a limit for the body of a post or
-    the answer to a longer one. Reading taken: the answer of the noticeboard
-    as it is, 403, and nothing written. The noticeboard answers with the
-    word `bad_token`, and it sets the cookie. A change costs one assertion
-    here.
+    the answer to a longer one. Reading taken: the noticeboard as it is. A
+    body past 1 MiB gets 403 and writes nothing, and a body of exactly
+    1 MiB is read. The noticeboard answers with the word `bad_token`, and it
+    sets the cookie. It reads no field that its form does not have. A change
+    costs one assertion here and one scenario.
     """
     tree = board_alone.tree
     before = proc_registry.read_family(tree, FAMILY)
-    fields = {"description": NEW_DESCRIPTION, PADDING_FIELD: "p" * BODY_LIMIT}
+    edit = {"description": NEW_DESCRIPTION}
 
     async with board_alone.client() as browser:
-        answer = await save_with(board_alone, browser, FAMILY, fields)
+        answer = await save_of_size(board_alone, browser, FAMILY, edit, BODY_LIMIT + 1)
 
     assert answer.status_code == httpx.codes.FORBIDDEN
     assert proc_registry.read_family(tree, FAMILY) == before
     assert proc_registry.commit_count(tree) == FIRST_COMMIT
+    assert proc_registry.uncommitted(tree) == ""
+
+
+async def test_a_post_at_the_body_limit_is_a_save(board_alone: BoardStack) -> None:
+    """The limit is 1 MiB and no less: a body of exactly that size is a save.
+
+    CONTRACT-QUESTION: see `test_a_post_past_the_body_limit_is_refused`.
+    """
+    tree = board_alone.tree
+    edit = {"description": NEW_DESCRIPTION}
+
+    async with board_alone.client() as browser:
+        answer = await save_of_size(board_alone, browser, FAMILY, edit, BODY_LIMIT)
+
+    assert answer.status_code == httpx.codes.SEE_OTHER
+    assert proc_registry.commit_count(tree) == FIRST_COMMIT + 1
+    assert NEW_DESCRIPTION in proc_registry.read_family(tree, FAMILY)
     assert proc_registry.uncommitted(tree) == ""
 
 
