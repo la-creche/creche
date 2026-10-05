@@ -28,6 +28,10 @@
 //! paused time forward when no task has work, also while bytes are on their
 //! way through the operating system.
 //!
+//! [`HttpStub`] needs a runtime of `tokio` with the I/O driver and the time
+//! driver. Build that runtime with `enable_all`. `tokio` panics when a
+//! driver is absent.
+//!
 //! The two types have no Python origin. A Python test of a client gives
 //! `httpx` a transport of the test, for example `httpx.MockTransport` in
 //! `door-owui/tests/test_owui_transport.py:44`.
@@ -713,13 +717,20 @@ pub struct HttpStub {
 impl HttpStub {
     /// A stub on a free port of the loopback address `127.0.0.1`.
     ///
-    /// Call it inside a runtime of `tokio` with the I/O driver. The stub
-    /// runs as a task of that runtime.
+    /// Call it inside a runtime of `tokio` with the I/O driver and the time
+    /// driver (`enable_all`). The stub runs as a task of that runtime.
     ///
     /// # Errors
     ///
     /// The error of the operating system when it refuses the bind, and an
     /// error for a call outside a runtime.
+    ///
+    /// # Panics
+    ///
+    /// `tokio` panics when a driver is absent. With no I/O driver, this call
+    /// panics. With no time driver, the task of a connection panics at the
+    /// first pause of its answer. The client then gets no more byte, and
+    /// [`HttpStub::ends`] gets no entry for that connection.
     pub async fn loopback() -> io::Result<Self> {
         let runtime = Handle::try_current().map_err(io::Error::other)?;
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
@@ -736,13 +747,18 @@ impl HttpStub {
     /// A stub on a Unix socket under `root`. Two stubs under one root have
     /// two sockets.
     ///
-    /// Call it inside a runtime of `tokio` with the I/O driver. The stub
-    /// runs as a task of that runtime.
+    /// Call it inside a runtime of `tokio` with the I/O driver and the time
+    /// driver (`enable_all`). The stub runs as a task of that runtime.
     ///
     /// # Errors
     ///
     /// The error of the operating system when it refuses the bind, and an
     /// error for a call outside a runtime.
+    ///
+    /// # Panics
+    ///
+    /// `tokio` panics when a driver is absent, as [`HttpStub::loopback`]
+    /// says.
     pub async fn unix(root: &TempRoot) -> io::Result<Self> {
         let runtime = Handle::try_current().map_err(io::Error::other)?;
         let count = SOCKETS.fetch_add(1, Ordering::Relaxed);
