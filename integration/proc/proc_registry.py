@@ -19,8 +19,12 @@ another checkout cannot send a command to that checkout.
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final, cast
 
 import yaml
@@ -50,6 +54,21 @@ _BRANCH: Final = "main"
 _GIT: Final = "git"
 _GIT_TIMEOUT_S: Final = 30.0
 _NO_FILE: Final = os.devnull
+
+#: The file that `git` makes while a command writes the index. A second
+#: command that finds the file writes nothing and fails.
+_INDEX_LOCK: Final = ".git/index.lock"
+
+#: A file of the checkout that no commit holds, outside each family. A save
+#: of the noticeboard must leave it as it is.
+UNTRACKED_PATH: Final = "notes/draft.md"
+_UNTRACKED_TEXT: Final = "A note of the fixture. No commit holds it.\n"
+
+#: The name of the file that a save of the noticeboard writes before the
+#: rename: a dot, the name of the family file, 16 hex digits and this end.
+_TEMP_DIGITS: Final = "0123456789abcdef"
+_TEMP_END: Final = ".noticeboard-tmp"
+_TEMP_TEXT: Final = "The text of a save that did not end.\n"
 
 
 class RegistryError(Exception):
@@ -192,6 +211,52 @@ def block_text(key: str, value: object) -> str:
     return yaml.safe_dump({key: value}, sort_keys=False)
 
 
+def family_mode(tree: Tree, name: str) -> int:
+    """The permission bits of one family file."""
+    return stat.S_IMODE(tree.family_file(name).stat().st_mode)
+
+
+def set_family_mode(tree: Tree, name: str, mode: int) -> None:
+    tree.family_file(name).chmod(mode)
+
+
+def leave_temp_file(tree: Tree, name: str) -> Path:
+    """Put the temporary file of a save that did not end beside one family file.
+
+    A save writes its text to a file in the directory of the family, then
+    renames the file. A process that ends between the two steps leaves the
+    file. No commit holds it. Returns its path.
+    """
+    target = tree.family_file(name)
+    left = target.with_name(f".{target.name}.{_TEMP_DIGITS}{_TEMP_END}")
+    left.write_text(_TEMP_TEXT, encoding="utf-8")
+
+    return left
+
+
+def write_untracked(tree: Tree) -> str:
+    """Put one file in the checkout that no commit holds. Returns its path, as `git` prints it."""
+    write_registry_file(tree, tree.registry_root / UNTRACKED_PATH, _UNTRACKED_TEXT)
+
+    return UNTRACKED_PATH
+
+
+@contextmanager
+def index_locked(tree: Tree) -> Generator[None]:
+    """Hold the lock of the index, as a `git` command of another program does.
+
+    While the lock is there, no `git` command can write the index, so no
+    commit is possible. The lock goes at the end of the block.
+    """
+    lock = tree.registry_root / _INDEX_LOCK
+    lock.touch(exist_ok=False)
+
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
 def commit_all(tree: Tree, subject: str = _FIRST_SUBJECT) -> None:
     """Make the checkout a git repository, and commit every file in it.
 
@@ -234,9 +299,23 @@ def head(tree: Tree) -> Commit:
     )
 
 
+def trailers(tree: Tree) -> tuple[str, ...]:
+    """Each trailer line of the newest commit, as `git` reads the message."""
+    lines = _git(tree, "log", "-1", "--format=%(trailers:only,unfold)").split("\n")
+
+    return tuple(line for line in lines if line)
+
+
 def uncommitted(tree: Tree) -> str:
     """What `git status` lists: a change that no commit holds. Empty when none."""
     return _git(tree, "status", "--porcelain")
+
+
+def untracked(tree: Tree) -> tuple[str, ...]:
+    """Each file of the checkout that no commit holds and that `git` does not ignore."""
+    paths = _git(tree, "ls-files", "--others", "--exclude-standard").split("\n")
+
+    return tuple(path for path in paths if path)
 
 
 def _git(tree: Tree, *args: str) -> str:

@@ -172,6 +172,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
 | `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, a save after a preview, the one commit, saves at one time, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
+| `test_proc_board_form.py` | noticeboard | each kind of control of the edit form, a locked field, a save that changes nothing, a save that `git` refuses, the marks of the commit, what a save leaves in the checkout |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a JSON body with no `Content-Type` header, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
@@ -632,6 +633,55 @@ the text of the failure. Work down this list.
 - **A save of the noticeboard ends at the commit.** No `caregiver` runs
   beside the noticeboard, so no scenario proves that a saved family file
   converges.
+- **CONTRACT-QUESTION, the controls of the edit form of the noticeboard.**
+  `docs/rework/spec.md` §8.1 says that the form comes from the family
+  schema. No contract gives the control of a field. The suite holds the form
+  of the noticeboard as it is:
+  - A boolean is a box.
+  - A list of names is one name on each line.
+  - A number is a text.
+  - Each other shape is a block that starts with the key line of its field.
+  - A field that the kind forbids is a disabled control with its rule
+    beside it.
+
+  A change costs the scenario of that control in `test_proc_board_form.py`.
+- **The names that the form scenarios read in the markup.**
+  `test_proc_board_form.py` finds a control by its `name`, in an element
+  with the class `field`. It finds the rule of a locked control by the class
+  `rule`. It finds the sentence about a new sandbox by the class `flag`.
+- **CONTRACT-QUESTION, a save of the noticeboard that makes no commit.**
+  `docs/rework/spec.md` §8.2 says what a save writes. No section gives the
+  answer when a save writes nothing. The suite holds the answers of the
+  noticeboard as they are:
+  - A save that changes nothing gets the 303 of a save.
+  - A post that names a locked field gets the same 303. The noticeboard
+    drops the value.
+  - A save that `git` refuses gets the edit page with status 200 and a
+    report.
+
+  A change costs two assertions in each of two scenarios of
+  `test_proc_board_form.py`, and one assertion in a third scenario.
+- **CONTRACT-QUESTION, the marks of a commit of the noticeboard.**
+  `docs/rework/spec.md` §8.2 gives the commit. No contract gives its author
+  or a trailer. The suite holds the author name `noticeboard` and the
+  trailer `Via: noticeboard`. `noticeboard/AGENTS.md` lists the trailer
+  under its own "Known gaps". A change costs two assertions in
+  `test_proc_board_form.py`.
+- **CONTRACT-QUESTION, the temporary file of a save of the noticeboard.** No
+  contract gives the name of the file that a save writes before the rename.
+  No contract says who removes such a file after a save that did not end.
+  The suite holds the noticeboard as it is:
+  - The name is a dot, the name of the family file, 16 hex digits and
+    `.noticeboard-tmp`.
+  - The next save of the family removes the file, and its commit holds the
+    family file alone.
+
+  A second program that saves must use the same name form. With another
+  form, neither program removes the file of the other. A change costs the
+  name in `proc_registry.py` and one scenario in `test_proc_board_form.py`.
+- **CONTRACT-QUESTION, the mode of a family file after a save.** No contract
+  gives it. The suite holds that a save of the noticeboard keeps the mode of
+  the file. A change costs one assertion in `test_proc_board_form.py`.
 - **CONTRACT-QUESTION, the answers that no handler of a service makes.** No
   contract names the answer of a listener to four requests. The requests are
   an unknown path, a wrong method, a path with a final slash, and `HEAD` on
