@@ -2235,6 +2235,12 @@ mod tests {
     const SYNC_HAS_A_NAME: &str = "DirSync names the choice. A port takes DirSync::Sync, and the \
         write then syncs the directory.";
 
+    const LEFT_UNTIL_THE_NEXT_WRITE: &str = "A write that fails before the link leaves its \
+        temporary file. The next write of that name removes it.";
+
+    const REMOVED_BEFORE_THE_LINK: &str = "A new file that fails before the link removes its \
+        temporary file.";
+
     /// Each difference on purpose between this module and a Python copy. No
     /// vector covers a write, so a row names the Python lines.
     const DEVIATIONS: &[Deviation] = &[
@@ -2378,6 +2384,18 @@ mod tests {
             holds: a_new_file_uses_the_one_name,
         },
         Deviation {
+            python: "handover/src/handover/executor/spool.py:372-378",
+            copy: LEFT_UNTIL_THE_NEXT_WRITE,
+            here: REMOVED_BEFORE_THE_LINK,
+            holds: a_failed_new_file_leaves_no_file,
+        },
+        Deviation {
+            python: "handover/src/handover/requester/file.py:197-203",
+            copy: LEFT_UNTIL_THE_NEXT_WRITE,
+            here: REMOVED_BEFORE_THE_LINK,
+            holds: a_failed_new_file_leaves_no_file,
+        },
+        Deviation {
             python: "handover/src/handover/intake/store.py:320-335",
             copy: "The copy creates the name itself, with a create that refuses a name that \
                    exists. Then it writes the bytes.",
@@ -2511,6 +2529,21 @@ mod tests {
             fs::read(&python_temp).unwrap(),
             b"the file of another writer"
         );
+    }
+
+    fn a_failed_new_file_leaves_no_file() {
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("entry.json");
+
+        write_new_with(
+            &Probe::failing(WriteStep::SyncTemp),
+            &target,
+            b"{}",
+            FileMode::GroupRead,
+        )
+        .unwrap_err();
+
+        assert!(names_in(root.path()).is_empty());
     }
 
     fn a_new_file_is_whole_before_it_has_its_name() {
