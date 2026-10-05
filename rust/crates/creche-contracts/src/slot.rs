@@ -378,8 +378,13 @@ impl<'de, T: Nested + Deserialize<'de>> FieldType<'de> for T {
 }
 
 /// A table. `T` reads the keys, so the read of the table fails when the read
-/// of `T` fails. The read of a raw struct fails for no table when each field
-/// is a `Slot` with `#[serde(default)]` and the struct refuses no key.
+/// of `T` fails. The read of a raw struct fails for no table when each line
+/// of this list is true:
+///
+/// 1. Each field is a `Slot` with `#[serde(default)]`.
+/// 2. The struct refuses no key.
+/// 3. The reader gives each key one time. A derived struct refuses a key
+///    that it gets two times.
 impl<'de, T: Nested + Deserialize<'de>> Deserialize<'de> for Slot<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         read(deserializer)
@@ -904,6 +909,20 @@ pub(crate) mod tests {
         );
 
         assert!(serde_json::from_str::<Slot<Strict>>(r#"{"other": 1}"#).is_err());
+    }
+
+    #[test]
+    fn a_key_two_times_fails_the_read_of_a_struct() {
+        type Counts = BTreeMap<String, Slot<i64>>;
+
+        let twice = r#"{"count": 1, "count": 2}"#;
+
+        assert!(serde_json::from_str::<Slot<RawLimit>>(twice).is_err());
+        // A table with free keys keeps the last value of the key.
+        holds(
+            twice,
+            &Slot::Value(Counts::from([("count".to_owned(), Slot::Value(2))])),
+        );
     }
 
     #[test]
