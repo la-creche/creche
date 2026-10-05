@@ -1,11 +1,13 @@
 # PR gate: lint, the full suite, the playpen's vitest suite, the process-level
-# suite, the Rust checks and the systemd proof, as jobs that run at once on
-# separate runners.
+# suite, the two old integration suites, the Rust checks and the systemd
+# proof, as jobs that run at once on separate runners.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
 #           ├── playpen     code   the TypeScript suite and its build
 #           ├── proc        code   the process-level suite, each service
 #           │                      as a process, on the built playpen
+#           ├── suites      code   the two old suites of integration/,
+#           │                      each one in a pytest run of its own
 #           ├── rust        code   cargo fmt, clippy, deny and test, for a
 #           │                      change under rust/ or vectors/. No such
 #           │                      change: no cargo step
@@ -31,8 +33,8 @@
 #
 # A PR of nothing but docs runs `bin/quality-gate.sh --docs` in the lint job,
 # lint and only the tests that read a doc: no shard, no playpen job, no proc
-# job, no rust job and no systemd-proof job (bin/lib/docsrule.sh, the rule
-# the hook reads too).
+# job, no suites job, no rust job and no systemd-proof job
+# (bin/lib/docsrule.sh, the rule the hook reads too).
 #
 # Every shard runs the whole of pyproject.toml's `testpaths` with
 # `--shard K/N` (conftest.py): a test's own id puts it in exactly one shard.
@@ -42,7 +44,8 @@
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
 # release.yml runs the same `tests`, `playpen`, `proc`, `rust` and
-# `systemd-proof` jobs after the merge.
+# `systemd-proof` jobs after the merge. It does not run the `suites` job
+# yet.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -210,6 +213,111 @@ jobs:
         env:
           CRECHE_PROC_NO_SKIP: "1"
 
+  # The two old suites of integration/ (integration/AGENTS.md):
+  # integration/tests and integration/tests_manager. They run the services
+  # inside the pytest process, on the built playpen. They are not in
+  # `testpaths`: no shard runs them. The job has the setup of the `proc`
+  # job: node, pnpm, the build with the same TEST-NET-1 address, then the
+  # venv.
+  #
+  # The job runs each suite with a pytest command of its own, as
+  # integration/AGENTS.md tells a person to run them.
+  #
+  # A test of these suites skips itself when the bundle is missing, and a
+  # run in which every test skips is green and judged nothing. These suites
+  # read no switch that makes a skip a failure. So each run writes a JUnit
+  # report, and the last step reads both. It fails for a test that skipped,
+  # for a suite that ran no test and for a report that is missing. It prints
+  # the counts and the time of each suite.
+  #
+  # The time limit is the limit of the `proc` job. On a laptop the two
+  # suites run in about 6 minutes.
+  #
+  # Only this file has the job. The job is new to CI, and one red run of it
+  # in release.yml stops the tags of that merge. release.yml gets the job
+  # after it passed 20 runs of the merge queue in a row.
+  # bin/tests/test_gate_workflow.py names that one exception.
+  suites:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: playpen/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: playpen/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile && pnpm run build
+        working-directory: playpen
+        env:
+          AGENT_LAN_ADDRESS: 192.0.2.10
+
+      - uses: ./.github/actions/uv-sync
+
+      # PYTEST_ADDOPTS: the report is the one addition to the command that
+      # integration/AGENTS.md gives.
+      - run: uv run pytest integration/tests -m slow
+        env:
+          PYTEST_ADDOPTS: --junitxml=${{ runner.temp }}/suites/tests.xml
+
+      - run: uv run pytest integration/tests_manager -m slow
+        env:
+          PYTEST_ADDOPTS: --junitxml=${{ runner.temp }}/suites/tests_manager.xml
+
+      # REPORTS: the report of each suite, one path on each line, in the
+      # order of the two runs. A run that fails stops the job before this
+      # step.
+      - name: no test skipped
+        shell: python3 {0}
+        env:
+          REPORTS: |-
+            ${{ runner.temp }}/suites/tests.xml
+            ${{ runner.temp }}/suites/tests_manager.xml
+        run: |
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          red = []
+          reports = [Path(one) for one in os.environ["REPORTS"].splitlines() if one]
+          if not reports:
+              red.append("REPORTS names no report")
+
+          for report in reports:
+              name = report.stem
+              try:
+                  suites = list(ET.parse(report).getroot().iter("testsuite"))
+              except (OSError, ET.ParseError) as error:
+                  red.append(f"{name}: no report to read: {error}")
+                  continue
+
+              tests = sum(int(one.get("tests", "0")) for one in suites)
+              skipped = sum(int(one.get("skipped", "0")) for one in suites)
+              seconds = sum(float(one.get("time", "0")) for one in suites)
+              ran = tests - skipped
+              print(f"{name}: {ran} of {tests} tests ran, {skipped} skipped, {seconds:.0f} s")
+
+              if ran == 0:
+                  red.append(f"{name}: the suite ran no test")
+              elif skipped:
+                  red.append(f"{name}: {skipped} of {tests} tests skipped")
+
+          for line in red:
+              print(f"::error::{line}")
+
+          sys.exit(1 if red else 0)
+
   # The Cargo workspace under rust/: bin/rust-gate.sh, the checks the hooks
   # run. The job runs on every code change, and on a change that touches
   # nothing under rust/ every step but the checkout is skipped
@@ -330,7 +438,7 @@ jobs:
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, playpen, proc, rust, systemd-proof]
+    needs: [scope, lint, tests, playpen, proc, suites, rust, systemd-proof]
     if: always()
     runs-on: ubuntu-latest
     steps:

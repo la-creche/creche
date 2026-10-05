@@ -39,6 +39,12 @@ in no shard: `testpaths` does not hold it. The job builds the playpen first,
 and a test that skips is a failure there. A run in which every test skips
 because the bundle is missing would be green and would judge nothing.
 
+The `suites` job runs the two old suites of `integration/`, each one in a
+pytest run of its own. It has the setup of the `proc` job. Its last step reads
+the JUnit report of each run, and it fails for a test that skipped. Only
+`gate.yml` has the job: `ONLY_IN` names that one difference between the two
+files.
+
 The `systemd-proof` job runs `bin/systemd-proof.sh` for a change that touches
 a file of the proof: `systemd/` or the script.
 On any other code change it skips its one step after the checkout and is
@@ -229,6 +235,68 @@ PLAYPEN_DIR = "playpen"
 #: example site's TEST-NET-1 address is the one the suite writes too.
 BUILD_ENV = {"AGENT_LAN_ADDRESS": "192.0.2.10"}
 
+#: The job that runs the two old suites of `integration/`.
+SUITES_JOB = "suites"
+
+#: The jobs that one workflow has and the other one lacks. This is the one
+#: named exception to "the release runs the jobs of the gate". The `suites`
+#: job is new to CI, and one red run of it in `release.yml` stops the tags of
+#: that merge. So the release gets the job after it passed 20 runs of the
+#: merge queue in a row. The pull request that adds the job to `release.yml`
+#: empties this table.
+ONLY_IN: dict[str, set[str]] = {GATE_NAME: {SUITES_JOB}, RELEASE_NAME: set()}
+
+#: The whole test command of each suite, as `integration/AGENTS.md` gives it,
+#: by the name of its report. The job runs each command as it is, in a step of
+#: its own.
+SUITE_RUNS = {
+    "tests": "uv run pytest integration/tests -m slow",
+    "tests_manager": "uv run pytest integration/tests_manager -m slow",
+}
+
+#: Where the runs of the job write their JUnit reports, and the option that
+#: names one report. The option travels in a variable, so the command stays
+#: as it is.
+REPORT_DIR = "${{ runner.temp }}/suites"
+REPORT_OPTION = "--junitxml="
+REPORT_VARIABLE = "PYTEST_ADDOPTS"
+
+#: The last step of the job, and the variable that gives it the reports. These
+#: suites read no switch that makes a skip a failure, so this step reads the
+#: report of each run.
+NO_SKIP_STEP = "no test skipped"
+NO_SKIP_KEYS = {"name", "shell", "env", "run"}
+NO_SKIP_SHELL = "python3 {0}"
+REPORTS_VARIABLE = "REPORTS"
+
+#: Each key of the job. One more key can change what a failure of the job
+#: does, for example `continue-on-error`.
+SUITES_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "steps"}
+
+#: The time limit of the job in minutes: the limit of the `proc` job.
+SUITES_MINUTES = 20
+
+#: One small test file for each kind of pytest run that the last step judges.
+SMALL_RUNS = {
+    "ran": "def test_one():\n    pass\n",
+    "one_skipped": (
+        "import pytest\n\n\n"
+        "def test_one():\n    pass\n\n\n"
+        "def test_two():\n    pytest.skip('the bundle is absent')\n"
+    ),
+    "each_skipped": (
+        "import pytest\n\n"
+        "pytestmark = pytest.mark.skipif(True, reason='the bundle is absent')\n\n\n"
+        "def test_one():\n    pass\n\n\n"
+        "def test_two():\n    pass\n"
+    ),
+    "no_test": "ONE = 1\n",
+}
+
+#: A report that no run wrote, and a report that is no XML text.
+ABSENT_REPORT = "absent"
+BROKEN_REPORT = "broken"
+
 #: The steps that give a job node and pnpm, by the start of `uses`.
 NODE_ACTIONS = ("pnpm/action-setup@", "actions/setup-node@")
 
@@ -363,7 +431,7 @@ def test_the_docs_scope_runs_no_shard_no_playpen_and_no_rust(
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
     only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
 
-    assert only_code == {"tests", "playpen", "proc", "rust", SYSTEMD_JOB}
+    assert only_code == {"tests", "playpen", "proc", "rust", SYSTEMD_JOB} | ONLY_IN[last]
     assert {name for name, rule in by_scope.items() if rule is None} == {"scope", "lint"}
 
 
@@ -382,6 +450,16 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
     release its PR could not, or the reverse."""
     for name in ("tests", "playpen", "proc", "rust", SYSTEMD_JOB):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
+
+
+def test_the_two_workflows_differ_only_by_the_jobs_of_the_exception() -> None:
+    """`ONLY_IN` is the whole difference. A job that enters one file alone
+    fails here, and so does a job of the table that both files have."""
+    gate = set(JOBS) - {GATE_NAME}
+    release = set(RELEASE_JOBS) - {RELEASE_NAME}
+
+    assert gate - release == ONLY_IN[GATE_NAME]
+    assert release - gate == ONLY_IN[RELEASE_NAME]
 
 
 def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
@@ -441,6 +519,162 @@ def test_the_proc_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: st
     """A teardown waits for each process group. A fault in the harness can
     cost every test that wait, and a job with no limit has six hours."""
     assert 0 < jobs["proc"]["timeout-minutes"] <= 30
+
+
+def _report_of(name: str) -> str:
+    """The path of the JUnit report of one suite, as the workflow spells it."""
+    return f"{REPORT_DIR}/{name}.xml"
+
+
+def _setup_of(job: dict[str, Any], run: str) -> list[dict[str, Any]]:
+    """The steps of a job before the step whose command is `run`."""
+    runs = [step.get("run") for step in job["steps"]]
+
+    return job["steps"][: runs.index(run)]
+
+
+def _suite_steps() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The steps of the `suites` job after its setup: one for each suite, and
+    the last one."""
+    suites = JOBS[SUITES_JOB]
+    first = next(iter(SUITE_RUNS.values()))
+    *runs, last = suites["steps"][len(_setup_of(suites, first)) :]
+
+    return runs, last
+
+
+def test_the_suites_job_has_the_setup_of_the_proc_job() -> None:
+    """Each step before the first suite is a step of the `proc` job, in the
+    same order: the checkout, node and pnpm, the build of the playpen, then
+    the venv. The two jobs then judge the bundle of one build command."""
+    suites = JOBS[SUITES_JOB]
+    setup = _setup_of(suites, next(iter(SUITE_RUNS.values())))
+
+    assert set(suites) == SUITES_KEYS
+    assert suites["needs"] == "scope"
+    assert suites["if"] == ONLY_CODE
+    assert suites["runs-on"] == JOBS["proc"]["runs-on"]
+    assert setup == _setup_of(JOBS["proc"], PROC_RUN)
+    assert [step.get("uses") or step["run"] for step in setup][-2:] == [PLAYPEN_BUILD, UV_SYNC]
+
+
+def test_the_suites_job_runs_each_suite_in_a_pytest_run_of_its_own() -> None:
+    """After the setup the job has one step for each suite, then the last
+    step. A suite step holds the whole command of `integration/AGENTS.md`,
+    with no path of one test and no `-k`. Its one other key is the variable
+    that names its report."""
+    runs, last = _suite_steps()
+
+    assert len(runs) == len(SUITE_RUNS)
+    for step, (name, run) in zip(runs, SUITE_RUNS.items(), strict=True):
+        assert step == {"run": run, "env": {REPORT_VARIABLE: REPORT_OPTION + _report_of(name)}}
+    assert last["name"] == NO_SKIP_STEP
+
+
+def test_the_last_step_of_the_suites_job_reads_the_report_of_each_suite() -> None:
+    """The step gets one path for each suite, on a line of its own. A path
+    that differs from the path of a run would judge a report that no run
+    wrote. No `if` and no `continue-on-error` can hold the step back."""
+    _, last = _suite_steps()
+
+    assert set(last) == NO_SKIP_KEYS
+    assert last["shell"] == NO_SKIP_SHELL
+    assert last["env"] == {REPORTS_VARIABLE: "\n".join(_report_of(name) for name in SUITE_RUNS)}
+
+
+def test_the_suites_job_has_the_time_limit_of_the_proc_job() -> None:
+    """The stack of a test waits for each listener and for each child at its
+    teardown. A fault there can cost each test that wait."""
+    assert JOBS[SUITES_JOB]["timeout-minutes"] == SUITES_MINUTES
+    assert JOBS["proc"]["timeout-minutes"] == SUITES_MINUTES
+
+
+@pytest.fixture(scope="module")
+def reports(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """A JUnit report for each kind of run in `SMALL_RUNS`, from the pytest of
+    this workspace, plus the two reports that are not one. The last step must
+    read the form that this pytest writes."""
+    root = tmp_path_factory.mktemp("reports")
+    env = {name: value for name, value in os.environ.items() if name != REPORT_VARIABLE}
+    found = {ABSENT_REPORT: root / "absent.xml", BROKEN_REPORT: root / "broken.xml"}
+    found[BROKEN_REPORT].write_text("<testsuites>", encoding="utf-8")
+
+    for name, body in SMALL_RUNS.items():
+        home = root / name
+        home.mkdir()
+        (home / "test_small.py").write_text(body, encoding="utf-8")
+        found[name] = root / f"{name}.xml"
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "no:cacheprovider",
+                f"--rootdir={home}",
+                f"--confcutdir={home}",
+                f"{REPORT_OPTION}{found[name]}",
+                "test_small.py",
+            ],
+            cwd=home,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert found[name].is_file(), f"the run `{name}` wrote no report"
+
+    return found
+
+
+def _no_skip(paths: list[Path]) -> subprocess.CompletedProcess[str]:
+    """Runs the last step of the `suites` job over `paths`."""
+    _, last = _suite_steps()
+
+    return subprocess.run(
+        [sys.executable, "-c", last["run"]],
+        env={REPORTS_VARIABLE: "\n".join(str(path) for path in paths)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+#: (the report of each suite, whether the last step is green)
+NO_SKIP_VERDICTS: list[tuple[list[str], bool]] = [
+    (["ran", "ran"], True),
+    # One test that skips is red, in each of the two places.
+    (["ran", "one_skipped"], False),
+    (["one_skipped", "ran"], False),
+    # A suite in which each test skips is the run that judged nothing.
+    (["ran", "each_skipped"], False),
+    (["ran", "no_test"], False),
+    # A suite with no report did not run, or it wrote to another path.
+    (["ran", ABSENT_REPORT], False),
+    (["ran", BROKEN_REPORT], False),
+    ([], False),
+]
+
+
+@pytest.mark.parametrize(("kinds", "green"), NO_SKIP_VERDICTS, ids=str)
+def test_the_suites_job_is_green_only_when_no_test_skipped(
+    reports: dict[str, Path], kinds: list[str], green: bool
+) -> None:
+    done = _no_skip([reports[kind] for kind in kinds])
+
+    assert (done.returncode == 0) == green, done.stdout + done.stderr
+
+
+def test_the_last_step_prints_the_counts_of_each_suite(reports: dict[str, Path]) -> None:
+    """The log of a run shows how many tests ran and how many skipped, for
+    each suite. A reader counts the green runs of the job from those lines."""
+    done = _no_skip([reports["ran"], reports["one_skipped"], reports["each_skipped"]])
+
+    assert "ran: 1 of 1 tests ran, 0 skipped" in done.stdout
+    assert "one_skipped: 1 of 2 tests ran, 1 skipped" in done.stdout
+    assert "each_skipped: 0 of 2 tests ran, 2 skipped" in done.stdout
+    assert "::error::one_skipped: 1 of 2 tests skipped" in done.stdout
+    assert "::error::each_skipped: the suite ran no test" in done.stdout
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -698,11 +932,17 @@ def test_a_shard_outside_one_to_n_is_refused(text: str) -> None:
         _root_conftest().parse_shard(text)
 
 
-def _needs(scope: str | None, results: dict[str, str]) -> str:
-    """`toJSON(needs)` as the last job sees it: every job a success but for
-    the ones `results` names. Both workflows need the same seven jobs."""
-    names = sorted(set(JOBS) - {GATE_NAME})
-    assert names == sorted(set(RELEASE_JOBS) - {RELEASE_NAME})
+def _needs(
+    scope: str | None,
+    results: dict[str, str],
+    jobs: dict[str, dict[str, Any]] = JOBS,
+    last: str = GATE_NAME,
+) -> str:
+    """`toJSON(needs)` as the last job of a workflow sees it: every job a
+    success but for the ones `results` names. The gate needs each job of the
+    release and the jobs of `ONLY_IN`. A name in `results` that the workflow
+    lacks is left out."""
+    names = sorted(set(jobs) - {last})
     needs = {name: {"result": results.get(name, "success"), "outputs": {}} for name in names}
     if scope is not None:
         needs["scope"]["outputs"] = {"scope": scope}
@@ -715,6 +955,7 @@ DOCS = {
     "tests": "skipped",
     "playpen": "skipped",
     "proc": "skipped",
+    SUITES_JOB: "skipped",
     "rust": "skipped",
     SYSTEMD_JOB: "skipped",
 }
@@ -741,13 +982,23 @@ VERDICTS = [
     # The process suite is in no shard. A code PR on which it did not run
     # is red.
     (_needs("code", {"proc": "skipped"}), False),
+    # The two old suites of integration/ are in no shard either.
+    (_needs("code", {SUITES_JOB: "failure"}), False),
+    (_needs("code", {SUITES_JOB: "skipped"}), False),
     # The systemd proof runs on every code PR, as the Rust checks do. The
     # job skips its own step when the PR touches no file of the proof.
     (_needs("code", {SYSTEMD_JOB: "skipped"}), False),
     # A job that ran on a docs PR is not what the scope asks for.
     (_needs("docs", DOCS | {"rust": "success"}), False),
     (_needs("docs", DOCS | {"proc": "success"}), False),
+    (_needs("docs", DOCS | {SUITES_JOB: "success"}), False),
     (_needs("docs", DOCS | {SYSTEMD_JOB: "success"}), False),
+    # The release has no `suites` job yet (`ONLY_IN`), and its verdict asks
+    # for none.
+    (_needs("code", {}, RELEASE_JOBS, RELEASE_NAME), True),
+    (_needs("docs", DOCS, RELEASE_JOBS, RELEASE_NAME), True),
+    (_needs("code", {"proc": "failure"}, RELEASE_JOBS, RELEASE_NAME), False),
+    (_needs("docs", DOCS | {"proc": "success"}, RELEASE_JOBS, RELEASE_NAME), False),
     # No scope: the scope job failed and everything behind it was skipped.
     (_needs(None, DOCS | {"scope": "failure"}), False),
 ]
