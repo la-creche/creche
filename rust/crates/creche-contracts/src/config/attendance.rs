@@ -10,6 +10,7 @@ use std::str::FromStr;
 
 use super::values::TokenFilePath;
 use super::values::{BindHost, DirPath, HttpUrl, LanAddress, Port, Seconds, SocketPath};
+use super::values::{DEFAULT_ATTENDANCE_SOCKET, DEFAULT_STATE_ROOT};
 use super::{
     AtReload, AtStart, Checked, ConfigError, ConfigErrors, Env, FailureAction, LAN_ADDRESS, Parsed,
     ProcessConfig, all2, all3, all4,
@@ -47,9 +48,7 @@ pub const LOCK_STALE_S: &str = "SESSIOND_LOCK_STALE_S";
 pub const LOCK_POLL_S: &str = "SESSIOND_LOCK_POLL_S";
 
 const DEFAULT_SESSIONS_ROOT: &str = "/srv/agents/sessions";
-const DEFAULT_STATE_ROOT: &str = "/srv/agents/state/rework";
 const DEFAULT_WORK_ROOT: &str = "/srv/agents/work";
-const DEFAULT_SOCKET: &str = "/srv/agents/state/rework/sock/sessiond.sock";
 const DEFAULT_LOG_DIR: &str = "/var/log/sessiond";
 const DEFAULT_OWUI_KEY_FILE: &str = "/srv/agents/state/rework/tokens/owui-api.key";
 
@@ -419,7 +418,7 @@ impl AttendanceConfig {
             env.parse_or(LOG_DIR, || DEFAULT_LOG_DIR.parse()),
         );
         let listen = all4(
-            env.parse_or(SOCKET, || DEFAULT_SOCKET.parse()),
+            env.parse_or(SOCKET, || DEFAULT_ATTENDANCE_SOCKET.parse()),
             bind(env),
             lan_address(env),
             env.parse_or(LAN_PORT, || DEFAULT_LAN_PORT.parse()),

@@ -5,7 +5,7 @@
 //! reader is `agent_door_owui.config.from_env`. That function also reads the
 //! two key files, so no vector covers it.
 
-use super::values::{BindAddress, DirPath, TokenFilePath};
+use super::values::{BindAddress, DEFAULT_ATTENDANCE_SOCKET, DirPath, TokenFilePath};
 use super::{
     AtReload, AtStart, AttendanceTarget, Checked, ConfigError, ConfigErrors, Env, FailureAction,
     Parsed, ProcessConfig, all2, all3, door_target,
@@ -29,7 +29,6 @@ pub const FAMILIES_DIR: &str = "DOOR_OWUI_FAMILIES_DIR";
 /// The bind of the door when the variable is not set (contract 02 §3 rule
 /// 9 gives the port).
 const DEFAULT_BIND: &str = "127.0.0.1:8340";
-const DEFAULT_ATTENDANCE_SOCKET: &str = "/srv/agents/state/rework/sock/sessiond.sock";
 const DEFAULT_TOKEN_FILE: &str = "/srv/agents/state/rework/tokens/door-owui.token";
 const DEFAULT_FAMILIES_DIR: &str = "/srv/agents/state/rework/families";
 

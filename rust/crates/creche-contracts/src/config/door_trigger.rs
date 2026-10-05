@@ -8,7 +8,9 @@
 //! `agent-trigger fire` is not a daemon. A timer starts it one time for one
 //! family, and it has no config type here.
 
-use super::values::{BindAddress, DirPath, LanAddress, Port, Seconds, TokenFilePath};
+use super::values::{
+    BindAddress, DEFAULT_ATTENDANCE_SOCKET, DirPath, LanAddress, Port, Seconds, TokenFilePath,
+};
 use super::{
     AtReload, AtStart, AttendanceTarget, Checked, ConfigError, ConfigErrors, Env, FailureAction,
     LAN_ADDRESS, Parsed, ProcessConfig, all2, all3, all4, door_target,
@@ -35,7 +37,6 @@ pub const REFRESH_S: &str = "DOOR_TRIGGER_REFRESH_S";
 
 /// The port of the webhook listener on the LAN address (`spec.md` §3.6).
 const WEBHOOK_PORT: &str = "8360";
-const DEFAULT_ATTENDANCE_SOCKET: &str = "/srv/agents/state/rework/sock/sessiond.sock";
 const DEFAULT_TOKEN_FILE: &str = "/srv/agents/state/rework/tokens/door-trigger.token";
 const DEFAULT_FAMILIES_DIR: &str = "/srv/agents/state/rework/families";
 const DEFAULT_REGISTRY_ROOT: &str = "/srv/agents/registry";

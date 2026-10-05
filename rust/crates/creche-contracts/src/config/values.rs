@@ -6,6 +6,10 @@
 //!
 //! No error type here holds the text. A config value can be a secret, and a
 //! caller writes the error to a log.
+//!
+//! The module also holds the two default paths that more than one daemon
+//! reads: the state root and the socket of `attendance`. The module of a
+//! daemon reads them from here and holds no copy of the text.
 
 use std::error::Error;
 use std::fmt;
@@ -757,6 +761,25 @@ path_type! {
     None
 }
 
+// --- the default paths that more than one daemon reads ---
+
+/// The text of the default state root, for the `concat!` of a path below it.
+macro_rules! default_state_root {
+    () => {
+        "/srv/agents/state/rework"
+    };
+}
+
+/// The state root when no variable and no flag names one. The platform keeps
+/// its state below this directory.
+pub(super) const DEFAULT_STATE_ROOT: &str = default_state_root!();
+
+/// The Unix socket of `attendance` below the default state root. A client
+/// calls this socket when no variable and no flag names a target (contract
+/// 02 §3 rule 1).
+pub(super) const DEFAULT_ATTENDANCE_SOCKET: &str =
+    concat!(default_state_root!(), "/sock/sessiond.sock");
+
 // --- a duration ---
 
 // CONTRACT-QUESTION: contract 03 §11.4 rule 4 and the other sections that
@@ -1336,6 +1359,22 @@ mod tests {
         for name in ["", ".", "..", "a/b", "/a", "a\0"] {
             assert_eq!(root.join(name), None, "{name:?}");
         }
+    }
+
+    #[test]
+    fn the_socket_of_attendance_is_below_the_default_state_root() {
+        let root: DirPath = DEFAULT_STATE_ROOT.parse().unwrap();
+        let socket: SocketPath = DEFAULT_ATTENDANCE_SOCKET.parse().unwrap();
+
+        assert_eq!(root.as_str(), "/srv/agents/state/rework");
+        assert_eq!(
+            socket.as_str(),
+            "/srv/agents/state/rework/sock/sessiond.sock"
+        );
+        assert_eq!(
+            socket.as_str(),
+            root.child("sock").child("sessiond.sock").as_str()
+        );
     }
 
     #[test]
