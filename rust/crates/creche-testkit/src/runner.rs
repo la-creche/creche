@@ -463,10 +463,12 @@ mod tests {
 
         assert!(text.starts_with("FakeRunner"), "{text}");
         assert!(text.contains("sbx"), "{text}");
-        // The output has 13 bytes. `Finished` prints their count. A `Debug`
-        // that prints a byte list prints each byte as a number, so the text
-        // of the output is no proof.
-        assert!(text.contains("stdout: <13 bytes>"), "{text}");
+        // The output has 13 bytes. `Finished` prints no byte and no count of
+        // the bytes. A `Debug` that prints a byte list prints each byte as a
+        // number, so the text of the output is no proof alone.
+        assert!(text.contains("Finished { ended: Code(0), .. }"), "{text}");
+        assert!(!text.contains("13"), "{text}");
+        assert!(!text.contains("99, 111"), "{text}");
         assert!(!text.contains("correct"), "{text}");
     }
 

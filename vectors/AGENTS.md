@@ -153,6 +153,11 @@ directory is not a workspace package, so a change here does not change
   calls for each merge key of a chain. The vector assumes the default
   recursion limit of Python and a caller that is less than 180 calls deep.
   With a deeper caller, the reader refuses that input.
+- A vector with an integer of more than 4,300 digits assumes the default
+  digit limit of Python `int`. With `PYTHONINTMAXSTRDIGITS=0`, Python reads
+  such an integer, and the vector can move. `integer-4301-digits` of
+  `runtime.parse_object.noticeboard` then moves from `refused` to
+  `accepted`.
 - The session surfaces go through the routes of `attendance.api`. The
   service behind the routes is a stand-in. No vector covers a refusal that
   the real service makes after the parse: a token, a family kind, a lease.
@@ -241,6 +246,12 @@ directory is not a workspace package, so a change here does not change
 - No vector covers `_read_token` of `agent_door_tui.config` or of
   `agent_door_trigger.config`. Each one is a copy of the reader that
   `runtime.token.door` covers.
+- No surface covers two more readers of a token file or of a key file.
+  `read_api` of `attendance.owui_copy` reads the key of Open WebUI. `_bearer`
+  of `noticeboard.sessions.SessionReader` reads the token that the
+  noticeboard sends to `attendance`, and it has no public entry point. Each
+  one reads UTF-8 text, removes the whitespace of Python `str.strip` from
+  the two ends and has no least count of bytes.
 - `runtime.token.attendance` and `runtime.token.attendance_pep_read` hold no
   token. `TokenBook.load` returns nothing, and the tokens that it keeps are
   private.
@@ -248,6 +259,9 @@ directory is not a workspace package, so a change here does not change
   `absent`. Each other vector is a file that the generator can read. No
   vector covers a directory at the path, a file that the generator cannot
   read or a file of more than 1 MiB.
+- No vector covers a symbolic link at the path of a token file. Each of the
+  six readers follows the link. A reader with a mode rule reads the mode of
+  the file that the link names.
 - Each bearer reader is a private function: `_bearer_value` of
   `attendance.auth` and of `agent_door_trigger.webhooks`, `_authenticate` of
   `agent_door_owui.app`, `_bearer` and `_bearer_matches` of `chaperone.app`.
@@ -260,6 +274,8 @@ directory is not a workspace package, so a change here does not change
   header value. No network client can thus send the header of five vectors:
   `scheme-and-space`, `scheme-and-spaces`, `space-before-the-scheme`,
   `space-at-the-end` and `tab-at-the-end`.
+- No vector covers a request with two `Authorization` headers. Each of the
+  four copies reads the first one.
 - The answers of a `runtime.edge` surface come from the versions of
   Starlette and of FastAPI that `uv.lock` pins. A vector can move when
   `uv.lock` takes a newer version.
@@ -268,3 +284,12 @@ directory is not a workspace package, so a change here does not change
   exception. The vector `handler-raises` holds the answer of that handler.
 - `runtime.edge.door_trigger` has no vector for HEAD on a GET route. The
   listener has no GET route.
+- A `runtime.edge` vector holds the name of each cookie of an answer. No
+  vector holds the value or an attribute of a cookie.
+- No `runtime.edge` vector holds the `Content-Length` header. The answer to
+  HEAD has no body, and its `Content-Length` is 31. That is the length of
+  the body for a wrong method.
+- No `runtime.edge` vector covers a final slash with a wrong method or with
+  a query. The web framework answers the first with status 307, before it
+  checks the method. It keeps the query in the `Location` header of the
+  second. A vector holds only the path of that header.

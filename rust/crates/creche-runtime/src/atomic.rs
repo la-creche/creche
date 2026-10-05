@@ -50,6 +50,8 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use rustix::io::Errno;
+
 use crate::readfile::os_text;
 
 /// The end of the name of a temporary file.
@@ -63,6 +65,10 @@ const THIS_DIR: &str = ".";
 
 /// What an error says for a target that has no file name, for example `/`.
 const NO_FILE_NAME: &str = "the path has no file name";
+
+/// What an error says when the old name of [`replace_dir`] holds a file or a
+/// symlink to an entry.
+const OLD_NAME_TAKEN: &str = "the old name holds an entry that is not a directory";
 
 /// The count of the temporary files that this process named.
 static NAMED: AtomicU64 = AtomicU64::new(0);
@@ -352,6 +358,18 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 ///
 /// When step 3 fails, the old tree stays at `<target>.old`, and `target` is
 /// absent. The next call that succeeds removes that old tree.
+///
+/// The function removes `<target>.old` only when it is a directory. With a
+/// file there, or a symlink to an entry, a call for a `target` that exists
+/// is an error at step 2, and no entry moves. A `target` that is a file, or
+/// a symlink to an entry, goes to `<target>.old` in step 2 and stays there.
+/// The function moves the symlink itself, and not the tree that the symlink
+/// names.
+///
+/// The function looks at `target` and at `<target>.old` through a symlink.
+/// The system can refuse that look, for example in a directory that the
+/// process cannot enter. The call is then an error at step 2, and no entry
+/// moves.
 ///
 /// The Python origin is `caregiver/src/caregiver/atomic.py:47-69`.
 ///
@@ -666,6 +684,51 @@ fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
 }
 
+// CONTRACT-QUESTION: contract 01 §6.1 rule 1 says what a reader of the tree
+// gets. It gives the swap no rule for a look at `target` or at
+// `<target>.old` that the system refuses, for example through a symlink
+// into a directory that the process cannot enter. `Path.exists` of Python
+// 3.12 and of Python 3.13 raises there, so the Python copy moves no entry.
+// `Path.exists` of Python 3.14 reads each error as "no entry". The reading
+// here is the stricter one: the swap is an error, and no entry moves. A
+// change to the other reading costs one function, `says_no_entry`.
+
+/// Whether an entry is at `path`. The look follows a symlink.
+///
+/// Three answers of the system say that no entry is there: no such entry, a
+/// part of the path that is no directory, and a chain of symlinks with no
+/// end. `Path.exists` of each supported Python version reads those three as
+/// absent. Each other error is the error.
+fn entry_at(path: &Path) -> io::Result<bool> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if says_no_entry(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether `error` is one of the three answers that [`entry_at`] reads as no
+/// entry. The standard library has no stable name for the third kind, so
+/// the check reads the number of the error.
+fn says_no_entry(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    ) || Errno::from_io_error(error) == Some(Errno::LOOP)
+}
+
+/// The error for an old name that holds a file or a symlink to an entry.
+/// [`replace_dir`] removes only a directory there. Python raises for such an
+/// entry (`shutil.rmtree`), so the swap refuses it.
+fn old_name_taken(displaced: &Path) -> WriteError {
+    WriteError {
+        step: WriteStep::Rename,
+        path: displaced.to_owned(),
+        kind: io::ErrorKind::NotADirectory,
+        os_text: String::from(OLD_NAME_TAKEN),
+    }
+}
+
 /// [`replace_dir`] on the given [`Steps`].
 fn replace_dir_with(steps: &impl Steps, staging: &Path, target: &Path) -> Result<(), WriteError> {
     let Some(name) = target.file_name() else {
@@ -680,14 +743,23 @@ fn replace_dir_with(steps: &impl Steps, staging: &Path, target: &Path) -> Result
         .make_dirs(dir)
         .map_err(|error| failed(WriteStep::MakeParents, dir, &error))?;
 
-    // `exists` follows a symlink, as `Path.exists` of Python does.
-    if target.exists() {
-        // A call that stopped after its first rename left this tree. Only a
-        // directory is removed. The rename refuses each other entry.
+    // Each look follows a symlink, as `Path.exists` of Python does. A look
+    // that the system refuses stops the swap before the first rename.
+    let looked =
+        |path: &Path| entry_at(path).map_err(|error| failed(WriteStep::Rename, path, &error));
+
+    if looked(target)? {
         if is_real_dir(&displaced) {
+            // A call that stopped after its first rename left this tree.
             steps
                 .remove_tree(&displaced)
                 .map_err(|error| failed(WriteStep::RemoveOld, &displaced, &error))?;
+        } else if looked(&displaced)? {
+            // The old name holds a file, or a symlink to an entry. Only a
+            // directory is removed. The rename of a directory refuses such
+            // an entry. The rename of a file or of a symlink replaces it, so
+            // the refusal is here, for each kind of target.
+            return Err(old_name_taken(&displaced));
         }
 
         steps
@@ -725,7 +797,11 @@ fn ensure_dir_with(steps: &impl Steps, path: &Path, mode: DirMode) -> Result<(),
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Read as _;
+    use std::os::fd::OwnedFd;
     use std::os::unix::fs::{MetadataExt, symlink};
+    use std::os::unix::net::UnixStream;
 
     use creche_testkit::root::TempRoot;
 
@@ -762,6 +838,9 @@ mod tests {
         /// What another process does to the path of the temporary file
         /// before the write sets the mode.
         before_mode: Option<fn(&Path)>,
+        /// What another process does to a file before the write removes
+        /// that file.
+        before_remove: Option<fn(&Path)>,
         /// Each step, in the order of the calls.
         seen: RefCell<Vec<WriteStep>>,
         /// The path of each temporary file that the code asked for.
@@ -776,6 +855,7 @@ mod tests {
                 count: 7,
                 umask: 0,
                 before_mode: None,
+                before_remove: None,
                 seen: RefCell::new(Vec::new()),
                 temps: RefCell::new(Vec::new()),
             }
@@ -888,6 +968,10 @@ mod tests {
 
         fn remove_file(&self, path: &Path) -> io::Result<()> {
             self.pass(WriteStep::RemoveOld)?;
+
+            if let Some(change) = self.before_remove {
+                change(path);
+            }
 
             Host.remove_file(path)
         }
@@ -1163,6 +1247,36 @@ mod tests {
     }
 
     #[test]
+    fn the_host_create_gives_the_temporary_file_no_bit_past_its_mode() {
+        // The bytes go into the temporary file before the second mode
+        // call. A private file thus has no bit for the group or for each
+        // user from its create on.
+        let root = TempRoot::new().unwrap();
+
+        for (name, mode, bits) in [
+            (".creds.json.1.0.tmp", FileMode::Private, 0o600),
+            (".grant.json.1.1.tmp", FileMode::GroupRead, 0o640),
+            (".status.json.1.2.tmp", FileMode::PublicRead, 0o644),
+        ] {
+            let temp = root.path().join(name);
+
+            let _file = Host.create_temp(&temp, mode).unwrap();
+
+            assert_eq!(mode_of(&temp) & !bits, 0, "{name}");
+        }
+
+        // A umask of 077 gives a create with no mode the mode of a private
+        // file, so the rows above pass for such a create. A mode with no
+        // read bit shows the create under that umask too: a create with no
+        // mode gives the owner the read bit.
+        let temp = root.path().join(".probe.1.3.tmp");
+
+        let _file = open_temp(&temp, 0o200).unwrap();
+
+        assert_eq!(mode_of(&temp) & !0o200, 0);
+    }
+
+    #[test]
     fn a_leftover_that_the_write_cannot_remove_stops_the_write() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("status.json");
@@ -1175,6 +1289,51 @@ mod tests {
         assert_eq!(error.step, WriteStep::RemoveOld);
         assert_eq!(error.path, leftover);
         assert_eq!(fs::read(&target).unwrap(), b"original");
+    }
+
+    /// Removes the file at `path`, as a second process does when it clears
+    /// the temporary files of a directory.
+    fn taken_away(path: &Path) {
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_leftover_that_goes_away_before_its_remove_does_not_stop_a_write() {
+        // The create refuses the name of the leftover file. A second
+        // process then removes that file, and the remove finds no file.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("status.json");
+        fs::write(probe_temp(&target), b"half of an old docu").unwrap();
+        let probe = Probe {
+            before_remove: Some(taken_away),
+            ..Probe::new()
+        };
+
+        write_with(&probe, &target, b"{}", STRICT).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"{}");
+        assert_eq!(names_in(root.path()), ["status.json"]);
+        assert_eq!(probe.count_of(WriteStep::CreateTemp), 2);
+        assert_eq!(probe.count_of(WriteStep::RemoveOld), 1);
+    }
+
+    #[test]
+    fn only_a_name_that_exists_gets_a_remove_and_a_second_create() {
+        // The create fails for a full disk, and no file has the temporary
+        // name. The write stops there: it removes no file and does not
+        // create one more time.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("status.json");
+        let probe = Probe::failing(WriteStep::CreateTemp);
+
+        let error = write_with(&probe, &target, b"{}", STRICT).unwrap_err();
+
+        assert_eq!(error, no_space(WriteStep::CreateTemp, &probe_temp(&target)));
+        assert_eq!(
+            probe.steps(),
+            [WriteStep::MakeParents, WriteStep::CreateTemp]
+        );
+        assert!(names_in(root.path()).is_empty());
     }
 
     #[test]
@@ -1389,6 +1548,40 @@ mod tests {
     }
 
     #[test]
+    fn the_host_write_takes_each_byte_or_fails() {
+        // One write call of the system can take a part of the bytes. A
+        // socket that does not block shows it: its buffer takes the first
+        // part, and the next call fails. The step must make that next
+        // call. A step that stops after one call reports a whole write.
+        let (writer, mut reader) = UnixStream::pair().unwrap();
+        writer.set_nonblocking(true).unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let mut file = File::from(OwnedFd::from(writer));
+        let bytes = vec![b'x'; 4 << 20];
+
+        let error = Host.write_temp(&mut file, &bytes).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+
+        // The socket holds the first part, so the error is the answer to a
+        // later call and not to the first one.
+        let mut first = [0_u8; 1];
+        assert_eq!(reader.read(&mut first).unwrap(), 1);
+    }
+
+    #[test]
+    fn each_sync_step_of_the_host_asks_the_system() {
+        // No test can see what a sync does to the disk. The system refuses
+        // the sync of a socket and of the null device. An error from a
+        // step thus shows that the step asks the system for the sync.
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let file = File::from(OwnedFd::from(socket));
+
+        Host.sync_temp(&file).unwrap_err();
+        Host.sync_dir(Path::new("/dev/null")).unwrap_err();
+    }
+
+    #[test]
     fn the_host_syncs_a_directory_and_refuses_an_absent_one() {
         let root = TempRoot::new().unwrap();
 
@@ -1554,6 +1747,24 @@ mod tests {
 
         assert_eq!(fs::read(&target).unwrap(), b"{}");
         assert_eq!(names_in(root.path()), ["entry.json"]);
+    }
+
+    #[test]
+    fn a_temporary_file_that_goes_away_after_the_link_is_no_error() {
+        // A second process removes the temporary file after the link. The
+        // remove then finds no file, and the new name already has the bytes.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("entry.json");
+        let probe = Probe {
+            before_remove: Some(taken_away),
+            ..Probe::new()
+        };
+
+        write_new_with(&probe, &target, b"{\"id\":1}", FileMode::GroupRead).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"{\"id\":1}");
+        assert_eq!(names_in(root.path()), ["entry.json"]);
+        assert_eq!(probe.count_of(WriteStep::RemoveOld), 1);
     }
 
     // --- replace_dir: the tests of caregiver/tests/test_atomic.py ---
@@ -1785,6 +1996,347 @@ mod tests {
         );
     }
 
+    /// Whether the entry at `path` is a symlink.
+    fn is_symlink(path: &Path) -> bool {
+        fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }
+
+    #[test]
+    fn a_symlink_at_the_old_name_stops_the_swap_and_stays() {
+        // Python raises here too. `shutil.rmtree` refuses a symlink to a
+        // tree, and the rename refuses a symlink to no tree.
+        for aim in ["elsewhere", "no-such-tree"] {
+            let root = TempRoot::new().unwrap();
+            let elsewhere = root.path().join("elsewhere");
+            tree_with(&elsewhere, "other");
+            let target = root.path().join("config");
+            tree_with(&target, "current");
+            let old = root.path().join("config.old");
+            symlink(root.path().join(aim), &old).unwrap();
+            let staging = root.path().join("config.tmp");
+            tree_with(&staging, "newest");
+
+            let error = replace_dir(&staging, &target).unwrap_err();
+
+            assert_eq!(error.step, WriteStep::Rename, "{aim}");
+            assert_eq!(error.path, old, "{aim}");
+            assert_eq!(error.kind, io::ErrorKind::NotADirectory, "{aim}");
+            assert_eq!(text_in(&target), "current", "{aim}");
+            assert_eq!(text_in(&staging), "newest", "{aim}");
+            assert!(is_symlink(&old), "{aim}");
+            assert_eq!(text_in(&elsewhere), "other", "{aim}");
+        }
+    }
+
+    #[test]
+    fn a_target_that_is_a_symlink_to_no_tree_stops_the_swap() {
+        // `Path.exists` of Python follows a symlink, so this target is
+        // absent for the swap. The one rename then refuses the symlink.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+        symlink(root.path().join("no-such-tree"), &target).unwrap();
+        let staging = root.path().join("config.tmp");
+        tree_with(&staging, "newest");
+        let probe = Probe::new();
+
+        let error = replace_dir_with(&probe, &staging, &target).unwrap_err();
+
+        assert_eq!(error.step, WriteStep::Rename);
+        assert_eq!(error.path, target);
+        assert_eq!(error.kind, io::ErrorKind::NotADirectory);
+        assert_eq!(probe.count_of(WriteStep::Rename), 1);
+        assert!(is_symlink(&target));
+        assert_eq!(text_in(&staging), "newest");
+    }
+
+    #[test]
+    fn an_old_name_that_holds_no_tree_is_refused_before_each_rename() {
+        // The target is a file. The system renames a file onto a file, so
+        // this refusal is not an answer of the system.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+        fs::write(&target, b"current").unwrap();
+        let old = root.path().join("config.old");
+        fs::write(&old, b"stale").unwrap();
+        let staging = root.path().join("config.tmp");
+        tree_with(&staging, "newest");
+        let probe = Probe::new();
+
+        let error = replace_dir_with(&probe, &staging, &target).unwrap_err();
+
+        assert_eq!(
+            error,
+            WriteError {
+                step: WriteStep::Rename,
+                path: old.clone(),
+                kind: io::ErrorKind::NotADirectory,
+                os_text: String::from("the old name holds an entry that is not a directory"),
+            }
+        );
+        assert_eq!(probe.count_of(WriteStep::Rename), 0);
+        assert_eq!(fs::read(&target).unwrap(), b"current");
+        assert_eq!(fs::read(&old).unwrap(), b"stale");
+    }
+
+    /// Runs a swap of `config.tmp` onto `config` in the directory `root`,
+    /// with a symlink at `link` whose aim the system refuses to look at.
+    /// The aim is in a directory that the process cannot enter. The result
+    /// is the result of the swap, the count of its renames, and the entries
+    /// before and after it.
+    fn swap_past_a_closed_aim(
+        root: &Path,
+        link: &Path,
+    ) -> (Result<(), WriteError>, usize, [Entries; 2]) {
+        let closed = root.join("closed");
+        tree_with(&closed, "other");
+        symlink(closed.join("instructions.md"), link).unwrap();
+        let staging = root.join("config.tmp");
+        tree_with(&staging, "newest");
+        let before = entries_in(root);
+        let probe = Probe::new();
+
+        fs::set_permissions(&closed, Permissions::from_mode(0o000)).unwrap();
+        let result = replace_dir_with(&probe, &staging, &root.join("config"));
+        fs::set_permissions(&closed, Permissions::from_mode(0o700)).unwrap();
+
+        (
+            result,
+            probe.count_of(WriteStep::Rename),
+            [before, entries_in(root)],
+        )
+    }
+
+    /// The error of a swap for a look at `path` that the system refused.
+    fn no_permission(path: &Path) -> WriteError {
+        WriteError {
+            step: WriteStep::Rename,
+            path: path.to_owned(),
+            kind: io::ErrorKind::PermissionDenied,
+            os_text: String::from("Permission denied"),
+        }
+    }
+
+    #[test]
+    fn an_old_name_that_the_system_refuses_to_look_at_stops_the_swap() {
+        // The superuser enters each directory, so the mode refuses nothing
+        // there.
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+
+        // The target is a file. The system renames a file onto a symlink,
+        // so a swap that reads the refusal as "no entry" replaces the
+        // symlink at the old name.
+        let root = TempRoot::new().unwrap();
+        fs::write(root.path().join("config"), b"current").unwrap();
+        let old = root.path().join("config.old");
+
+        let (result, renames, [before, after]) = swap_past_a_closed_aim(root.path(), &old);
+
+        assert_eq!(result, Err(no_permission(&old)));
+        assert_eq!(renames, 0);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn a_target_that_the_system_refuses_to_look_at_stops_the_swap() {
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+
+        let (result, renames, [before, after]) = swap_past_a_closed_aim(root.path(), &target);
+
+        assert_eq!(result, Err(no_permission(&target)));
+        assert_eq!(renames, 0);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn three_answers_of_the_system_say_that_no_entry_is_at_a_path() {
+        let root = TempRoot::new().unwrap();
+        let file = root.path().join("file");
+        fs::write(&file, b"").unwrap();
+        let link = root.path().join("link");
+        symlink(&file, &link).unwrap();
+        let one = root.path().join("one");
+        let two = root.path().join("two");
+        symlink(&one, &two).unwrap();
+        symlink(&two, &one).unwrap();
+
+        for path in [root.path(), file.as_path(), link.as_path()] {
+            assert!(entry_at(path).unwrap(), "{}", path.display());
+        }
+
+        // No such entry, a part of the path that is no directory, and a
+        // chain of symlinks with no end.
+        for path in [root.path().join("no-such"), file.join("below"), one] {
+            assert!(!entry_at(&path).unwrap(), "{}", path.display());
+        }
+    }
+
+    // --- replace_dir: each kind of entry at the target and at the old name ---
+
+    /// What a test puts at the target or at the old name before a swap.
+    #[derive(Debug, Clone, Copy)]
+    enum Entry {
+        /// No entry.
+        Absent,
+        /// A directory with one file.
+        Tree,
+        /// A file.
+        File,
+        /// A symlink to a directory with one file.
+        LinkToTree,
+        /// A symlink to a name that is absent.
+        LinkToNothing,
+    }
+
+    /// What a swap leaves.
+    #[derive(Debug, Clone, Copy)]
+    enum After {
+        /// The call is an error. Each entry is as it was before the call.
+        Refused,
+        /// The new tree is at the target. The old name is absent.
+        Swapped,
+        /// The new tree is at the target. The old name holds the entry that
+        /// was at the target.
+        MovedAside,
+        /// The new tree is at the target. The old name holds the entry that
+        /// it held before the call.
+        OldKept,
+    }
+
+    /// Puts `entry` at `path`. `text` is the text of the file, or of the
+    /// file in the tree. The tree of a symlink is `<text>-aim`, beside
+    /// `path`.
+    fn plant(path: &Path, entry: Entry, text: &str) {
+        match entry {
+            Entry::Absent => {}
+            Entry::Tree => tree_with(path, text),
+            Entry::File => fs::write(path, text).unwrap(),
+            Entry::LinkToTree => {
+                let aim = path.with_file_name(format!("{text}-aim"));
+                tree_with(&aim, text);
+                symlink(&aim, path).unwrap();
+            }
+            Entry::LinkToNothing => symlink(path.with_file_name("no-such"), path).unwrap(),
+        }
+    }
+
+    /// The entries of one directory: what each name holds.
+    type Entries = BTreeMap<String, String>;
+
+    /// Each entry of the directory `dir`. The text says what the name
+    /// holds: a tree with the text of its file, a file with its text, or a
+    /// symlink with the name of its aim.
+    fn entries_in(dir: &Path) -> Entries {
+        names_in(dir)
+            .into_iter()
+            .map(|name| {
+                let path = dir.join(&name);
+                let kind = fs::symlink_metadata(&path).unwrap().file_type();
+                let holds = if kind.is_symlink() {
+                    let aim = fs::read_link(&path).unwrap();
+
+                    format!("link to {}", aim.file_name().unwrap().to_str().unwrap())
+                } else if kind.is_dir() {
+                    format!("tree of {}", text_in(&path))
+                } else {
+                    format!("file of {}", fs::read_to_string(&path).unwrap())
+                };
+
+                (name, holds)
+            })
+            .collect()
+    }
+
+    /// The entries after a swap that put the new tree at the target. The
+    /// staging tree is gone, and the old name holds `old`. Each other entry
+    /// of `before` stays, for example the tree that a symlink names.
+    fn swapped(before: &Entries, old: Option<&String>) -> Entries {
+        let mut after = before.clone();
+        after.remove("config.tmp");
+        after.remove("config.old");
+        after.insert(String::from("config"), String::from("tree of newest"));
+        after.extend(old.map(|holds| (String::from("config.old"), holds.clone())));
+
+        after
+    }
+
+    /// What [`replace_dir`] leaves for each kind of entry at the target
+    /// `config` and at the old name `config.old`.
+    ///
+    /// No vector covers a swap. A run of the Python copy on the same
+    /// entries gave each row (`caregiver/src/caregiver/atomic.py:47-69`).
+    /// `Refused` is a call for which the copy raises.
+    const SWAPS: &[(Entry, Entry, After)] = &[
+        (Entry::Tree, Entry::Absent, After::Swapped),
+        (Entry::Tree, Entry::Tree, After::Swapped),
+        (Entry::Tree, Entry::File, After::Refused),
+        (Entry::Tree, Entry::LinkToTree, After::Refused),
+        (Entry::Tree, Entry::LinkToNothing, After::Refused),
+        (Entry::File, Entry::Absent, After::MovedAside),
+        (Entry::File, Entry::Tree, After::MovedAside),
+        (Entry::File, Entry::File, After::Refused),
+        (Entry::File, Entry::LinkToTree, After::Refused),
+        (Entry::File, Entry::LinkToNothing, After::MovedAside),
+        (Entry::LinkToTree, Entry::Absent, After::MovedAside),
+        (Entry::LinkToTree, Entry::Tree, After::MovedAside),
+        (Entry::LinkToTree, Entry::File, After::Refused),
+        (Entry::LinkToTree, Entry::LinkToTree, After::Refused),
+        (Entry::LinkToTree, Entry::LinkToNothing, After::MovedAside),
+        (Entry::LinkToNothing, Entry::Absent, After::Refused),
+        (Entry::LinkToNothing, Entry::Tree, After::Refused),
+        (Entry::LinkToNothing, Entry::File, After::Refused),
+        (Entry::LinkToNothing, Entry::LinkToTree, After::Refused),
+        (Entry::LinkToNothing, Entry::LinkToNothing, After::Refused),
+        (Entry::Absent, Entry::Absent, After::Swapped),
+        (Entry::Absent, Entry::Tree, After::Swapped),
+        (Entry::Absent, Entry::File, After::OldKept),
+        (Entry::Absent, Entry::LinkToTree, After::OldKept),
+        (Entry::Absent, Entry::LinkToNothing, After::OldKept),
+    ];
+
+    #[test]
+    fn a_swap_leaves_what_the_python_copy_leaves_for_each_kind_of_entry() {
+        // The table has each pair of the five kinds one time.
+        let pairs: BTreeSet<String> = SWAPS
+            .iter()
+            .map(|(at_target, at_old, _after)| format!("{at_target:?} {at_old:?}"))
+            .collect();
+        assert_eq!(pairs.len(), 25);
+        assert_eq!(SWAPS.len(), 25);
+
+        for (at_target, at_old, after) in SWAPS {
+            let root = TempRoot::new().unwrap();
+            let target = root.path().join("config");
+            let staging = root.path().join("config.tmp");
+            tree_with(&staging, "newest");
+            plant(&target, *at_target, "current");
+            plant(&root.path().join("config.old"), *at_old, "stale");
+            let before = entries_in(root.path());
+
+            let result = replace_dir(&staging, &target);
+
+            let expected = match after {
+                After::Refused => before.clone(),
+                After::Swapped => swapped(&before, None),
+                After::MovedAside => swapped(&before, Some(&before["config"])),
+                After::OldKept => swapped(&before, Some(&before["config.old"])),
+            };
+            let case = format!("{at_target:?} at the target, {at_old:?} at the old name");
+            assert_eq!(
+                result.is_err(),
+                matches!(after, After::Refused),
+                "{case}: {result:?}"
+            );
+            assert_eq!(entries_in(root.path()), expected, "{case}");
+        }
+    }
+
     #[test]
     fn a_swap_target_with_no_file_name_is_refused_before_each_step() {
         let root = TempRoot::new().unwrap();
@@ -1910,6 +2462,12 @@ mod tests {
 
     const SYNC_HAS_A_NAME: &str = "DirSync names the choice. A port takes DirSync::Sync, and the \
         write then syncs the directory.";
+
+    const LEFT_UNTIL_THE_NEXT_WRITE: &str = "A write that fails before the link leaves its \
+        temporary file. The next write of that name removes it.";
+
+    const REMOVED_BEFORE_THE_LINK: &str = "A write of a new file that fails before the link \
+        removes its temporary file.";
 
     /// Each difference on purpose between this module and a Python copy. No
     /// vector covers a write, so a row names the Python lines.
@@ -2054,12 +2612,33 @@ mod tests {
             holds: a_new_file_uses_the_one_name,
         },
         Deviation {
+            python: "handover/src/handover/executor/spool.py:372-378",
+            copy: LEFT_UNTIL_THE_NEXT_WRITE,
+            here: REMOVED_BEFORE_THE_LINK,
+            holds: a_failed_new_file_leaves_no_file,
+        },
+        Deviation {
+            python: "handover/src/handover/requester/file.py:197-203",
+            copy: LEFT_UNTIL_THE_NEXT_WRITE,
+            here: REMOVED_BEFORE_THE_LINK,
+            holds: a_failed_new_file_leaves_no_file,
+        },
+        Deviation {
             python: "handover/src/handover/intake/store.py:320-335",
             copy: "The copy creates the name itself, with a create that refuses a name that \
                    exists. Then it writes the bytes.",
             here: "write_new writes a temporary file and links it to the name. The name gets a \
                    file that is whole.",
             holds: a_new_file_is_whole_before_it_has_its_name,
+        },
+        Deviation {
+            python: "caregiver/src/caregiver/atomic.py:61-62",
+            copy: "On Python 3.14, the copy reads each error of a look at the target or at the \
+                   old name as no entry. On Python 3.12 and on Python 3.13, the copy raises \
+                   for an error such as a directory that the process cannot enter.",
+            here: "replace_dir is an error for such a look, as the copy is on Python 3.12 and \
+                   on Python 3.13.",
+            holds: an_old_name_that_the_system_refuses_to_look_at_stops_the_swap,
         },
     ];
 
@@ -2187,6 +2766,21 @@ mod tests {
             fs::read(&python_temp).unwrap(),
             b"the file of another writer"
         );
+    }
+
+    fn a_failed_new_file_leaves_no_file() {
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("entry.json");
+
+        write_new_with(
+            &Probe::failing(WriteStep::SyncTemp),
+            &target,
+            b"{}",
+            FileMode::GroupRead,
+        )
+        .unwrap_err();
+
+        assert!(names_in(root.path()).is_empty());
     }
 
     fn a_new_file_is_whole_before_it_has_its_name() {
