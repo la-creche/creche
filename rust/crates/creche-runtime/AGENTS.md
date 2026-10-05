@@ -196,18 +196,23 @@ reason. The packet that writes the three bodies obeys these rules:
      the size and the inode. `CachedToken` also compares the device, because
      an inode number is an id only on one device. The Python cache compares
      the three facts. A change costs one line.
-- The test of `token` walks no vector of `runtime.bearer.chaperone`. Two
-  vectors of that surface hold the scheme in another case of letters:
-  `scheme-lower-case` and `scheme-upper-case`. The Python chaperone accepts
-  the two requests, and `bearer_of` gives no bearer for them. The test names
-  the surface in the constant `NO_PORT_HERE`. Remove the constant when each
-  Python copy has one rule for the scheme. Then name the surface in the
-  table `COPIES`.
+- The test of `token` walks no vector of `runtime.bearer.chaperone`. The
+  Python chaperone accepts the scheme in each case of letters, and
+  `bearer_of` gives no bearer for the vectors `scheme-lower-case` and
+  `scheme-upper-case`. The constant `NO_PORT_HERE` names the surface. This
+  difference on an HTTP surface is open. No Rust service reads a bearer
+  yet.
+- The test `no_trim_gives_each_result_of_the_surface_with_no_walk` holds the
+  reason for `NO_PORT_HERE`. It fails when one value of `BearerTrim` gives
+  each result of the surface. Remove the constant then. Name the surface in
+  the table `COPIES`.
 - The vector `byte-1c-at-the-end` of the `runtime.bearer` surfaces holds a
-  header that ends with the byte `0x1c`. A `HeaderValue` holds no such byte,
-  so the test gives the bytes to the private function `bearer_in`. Three
-  Python services accept that request. No test of this crate shows what a
-  Rust service answers. The HTTP server is a stub.
+  header that ends with the byte `0x1c`. Three Python services accept that
+  request. A `HeaderValue` holds no such byte, so no request gives that
+  header to `bearer_of`. The test gives the bytes to the private function
+  `bearer_in`: the vector proves that function and no service. This
+  difference on an HTTP surface is open. No test of this crate shows what a
+  Rust service answers, because the HTTP server is a stub.
 - `token::CachedToken` reads the file again only when one of four facts of
   the file moved. The facts are the device, the inode, the size and the time
   of the last change. It does not see a new token that has each fact of the

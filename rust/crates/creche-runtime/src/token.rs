@@ -718,10 +718,12 @@ pub enum BearerTrim {
 /// A `HeaderValue` holds no control byte of ASCII but the tab. The Python
 /// parser of a request gives an app the bytes `0x1c` to `0x1f` and `0x7f`,
 /// and `str.strip` of Python removes the first four. The vector
-/// `byte-1c-at-the-end` holds such a header. No request can give this
-/// function those bytes, so the test gives them to the private reader of a
-/// header value. The answer of a Rust service to such a request is a rule of
-/// its HTTP server.
+/// `byte-1c-at-the-end` holds such a header, and three Python services take
+/// that request. No request can give this function those bytes, so the test
+/// gives them to the private reader of a header value. A Rust service thus
+/// cannot take that request as the Python service does. The difference is
+/// open: `AGENTS.md` of this crate lists it under "Known gaps". The answer of
+/// a Rust service to such a request is a rule of its HTTP server.
 ///
 /// This function is no port of the header reader of the chaperone
 /// (`chaperone/src/chaperone/app.py:350-355`). That reader also takes the
@@ -771,7 +773,7 @@ mod tests {
 
     use ::http::HeaderValue;
     use creche_testkit::root::TempRoot;
-    use creche_testkit::vectors::{self, IndexRow, Marker, Outcome, Vector};
+    use creche_testkit::vectors::{self, IndexRow, Marker, Outcome, Surface, Vector};
     use serde_json::Value;
 
     use super::*;
@@ -2101,7 +2103,15 @@ mod tests {
     /// scheme in each case of letters, and [`bearer_of`] is no port of it:
     /// no value of [`BearerTrim`] stands for that rule. `AGENTS.md` of this
     /// crate lists the open point under "Known gaps".
+    ///
+    /// The test `no_trim_gives_each_result_of_the_surface_with_no_walk` holds
+    /// that reason. It fails when a value of `BearerTrim` gives each result
+    /// of the surface. Delete this constant then, and name the surface in
+    /// [`COPIES`].
     const NO_PORT_HERE: &str = "runtime.bearer.chaperone";
+
+    /// Each value of [`BearerTrim`].
+    const EACH_TRIM: [BearerTrim; 2] = [BearerTrim::PythonStrip, BearerTrim::Exact];
 
     /// The start of the name of each surface of this module.
     const SURFACE_GROUPS: [&str; 2] = ["runtime.token.", "runtime.bearer."];
@@ -2201,6 +2211,11 @@ mod tests {
     ///
     /// The function builds the request when a header value can hold the
     /// bytes. `bearer_of` must then give what `bearer_in` gives.
+    ///
+    /// For bytes that no header value holds, the result is the result of
+    /// `bearer_in` alone. No request gives a Rust service those bytes, so
+    /// such a vector proves the private function and not a service. The
+    /// vector `byte-1c-at-the-end` holds such bytes.
     fn offered_in(header: Option<&[u8]>, trim: BearerTrim, at: &str) -> Option<Vec<u8>> {
         let Some(header) = header else {
             return bearer_of(&HeaderMap::new(), trim);
@@ -2230,33 +2245,48 @@ mod tests {
         );
     }
 
-    /// Walks each vector of one bearer surface.
-    fn walk_copy(copy: &BearerCopy) {
-        let surface = vectors::surface(copy.surface).unwrap();
+    /// Whether this module takes the request of one bearer vector under
+    /// `trim`: the bearer of the request matches the token of the service.
+    fn takes(surface: &Surface, vector: &Vector, trim: BearerTrim, at: &str) -> bool {
         let held = surface
             .context()
             .get("token")
             .and_then(Value::as_str)
             .unwrap();
+        // A vector with `params.token` is for a service that holds that
+        // token.
+        let token = vector
+            .params()
+            .and_then(|params| params.get("token"))
+            .and_then(Value::as_str)
+            .unwrap_or(held);
+        let token = Secret::try_from(token.to_owned()).unwrap();
+        let header = header_of(vector, at);
+
+        offered_in(header.as_deref(), trim, at).is_some_and(|offered| token.matches(&offered))
+    }
+
+    /// Walks each vector of one bearer surface.
+    fn walk_copy(copy: &BearerCopy) {
+        let surface = vectors::surface(copy.surface).unwrap();
 
         for vector in surface.vectors() {
             let at = format!("{} {}", copy.surface, vector.id());
-            // A vector with `params.token` is for a service that holds that
-            // token.
-            let token = vector
-                .params()
-                .and_then(|params| params.get("token"))
-                .and_then(Value::as_str)
-                .unwrap_or(held);
-            let token = Secret::try_from(token.to_owned()).unwrap();
-            let header = header_of(vector, &at);
-            let takes = offered_in(header.as_deref(), copy.trim, &at)
-                .is_some_and(|offered| token.matches(&offered));
 
-            same_as_the_copy(vector, takes, &at);
+            same_as_the_copy(vector, takes(&surface, vector, copy.trim, &at), &at);
         }
 
         assert!(!surface.vectors().is_empty(), "{}", copy.surface);
+    }
+
+    /// Whether this module and the Python copy of `surface` give two results
+    /// for one vector or more, under `trim`.
+    fn differs_under(surface: &Surface, trim: BearerTrim) -> bool {
+        surface.vectors().iter().any(|vector| {
+            let at = format!("{} {}", surface.name(), vector.id());
+
+            takes(surface, vector, trim, &at) != (vector.result() == Outcome::Accepted)
+        })
     }
 
     #[test]
@@ -2348,6 +2378,44 @@ mod tests {
     fn each_bearer_vector_is_what_its_python_copy_does() {
         for copy in COPIES {
             walk_copy(copy);
+        }
+    }
+
+    /// The reason for [`NO_PORT_HERE`] holds: under each value of
+    /// [`BearerTrim`], this module and the Python copy give two results for
+    /// one vector or more of that surface.
+    ///
+    /// When this test fails, one value of `BearerTrim` gives each result of
+    /// the Python copy. Delete `NO_PORT_HERE` then, and name the surface in
+    /// [`COPIES`] with that value.
+    #[test]
+    fn no_trim_gives_each_result_of_the_surface_with_no_walk() {
+        let surface = vectors::surface(NO_PORT_HERE).unwrap();
+
+        for trim in EACH_TRIM {
+            assert!(
+                differs_under(&surface, trim),
+                "{trim:?} gives each result of {NO_PORT_HERE}: name the surface in COPIES"
+            );
+        }
+    }
+
+    /// A test of the test: `differs_under` finds no difference on a surface
+    /// of [`COPIES`] under the trim of its row. It finds one under each
+    /// other trim.
+    #[test]
+    fn the_check_of_a_difference_reads_the_trim() {
+        for copy in COPIES {
+            let surface = vectors::surface(copy.surface).unwrap();
+
+            for trim in EACH_TRIM {
+                assert_eq!(
+                    differs_under(&surface, trim),
+                    trim != copy.trim,
+                    "{} {trim:?}",
+                    copy.surface
+                );
+            }
         }
     }
 

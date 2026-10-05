@@ -998,6 +998,13 @@ test.
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
+  - "The differential test". Two parts of the test of `token` in
+    `creche-runtime` do not hold the rule. The test walks no vector of
+    `runtime.bearer.chaperone`, and the constant `NO_PORT_HERE` names that
+    surface. The test gives the header of the vector `byte-1c-at-the-end`
+    to a private function, because no request holds that header. Packet
+    `attendance-one-bearer` gives each Python copy one rule for the
+    bearer. It deletes the constant and the private path.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. If the owner says no, change those two lines.
