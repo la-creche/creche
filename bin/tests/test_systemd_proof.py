@@ -34,6 +34,7 @@ the script and the fakes call, so no test reaches the systemd of the machine.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -266,6 +267,10 @@ class Machine:
                 # A temporary directory inside a checkout must not lend the
                 # run that checkout's git state.
                 "GIT_CEILING_DIRECTORIES": str(self.root.parent),
+                # The script runs git. That child reads no config file of a
+                # person and none of the system.
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1",
             }
             | ({"SUDO_ASKS": "1"} if asks else {}),
             cwd=self.root.parent,
@@ -660,6 +665,59 @@ def test_a_change_that_git_cannot_read_is_not_unchanged(machine: Machine, base: 
     assert done.code == 1, done.out + done.err
     # The scope asks this on every machine: it needs no systemd.
     assert done.calls == []
+
+
+def _git(repo: Path, *args: str) -> None:
+    """Runs git in the throwaway tree. The root `conftest.py` gives the
+    child no git state and no config file of the caller."""
+    done = subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def _commit_the_tree(machine: Machine) -> None:
+    """Makes the throwaway tree a repository with one commit on `main`."""
+    _git(machine.root, "init", "-q", "-b", "main")
+    _git(machine.root, "add", "-A")
+    _git(machine.root, "commit", "-q", "-m", "first")
+
+
+#: Two words of `--unchanged` of which one names no commit. git reads such a
+#: word as an option or as a path. It then compares another pair of trees,
+#: finds no change and prints no path.
+NO_COMMIT = [
+    ["--quiet", "HEAD"],
+    ["HEAD", "--quiet"],
+    ["--", "HEAD"],
+    ["HEAD", "--cached"],
+    ["HEAD", "bin"],
+]
+
+
+@pytest.mark.parametrize("words", NO_COMMIT, ids=" ".join)
+def test_a_word_that_names_no_commit_is_not_unchanged(machine: Machine, words: list[str]) -> None:
+    """The tree is a repository with one commit here. From `HEAD` to `HEAD`
+    nothing changes: that call is the control, and it says `unchanged`."""
+    _commit_the_tree(machine)
+
+    assert machine.run("--unchanged", "HEAD", "HEAD").code == 0
+    done = machine.run("--unchanged", *words)
+
+    assert done.code == 1, done.out + done.err
+    assert done.calls == []
+
+
+def test_a_file_with_the_name_of_a_commit_does_not_change_the_answer(machine: Machine) -> None:
+    """A file at the root has the name of the branch. git must read each of
+    the two words as a commit, and never as that file."""
+    (machine.root / "main").write_text("", encoding="utf-8")
+    _commit_the_tree(machine)
+
+    assert machine.run("--unchanged", "main", "main").code == 0
 
 
 @pytest.mark.parametrize(

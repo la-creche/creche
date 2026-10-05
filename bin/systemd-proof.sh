@@ -113,11 +113,22 @@ proof_path() {
 
 # unchanged FROM TO: whether FROM..TO changes no file of the proof. A change
 # that git cannot read is not unchanged: the proof is the safe answer.
+#
+# Each of the two words must name a commit. Without that check git reads a
+# word such as `--quiet` as an option, or as a path. It then compares another
+# pair, prints no path, and the answer would be `unchanged`.
 unchanged() {
-  local paths path
+  local paths path word
+
+  for word in "$1" "$2"; do
+    if ! git rev-parse --verify --quiet --end-of-options "$word^{commit}" \
+      >/dev/null 2>&1; then
+      return 1
+    fi
+  done
 
   if ! paths="$(git -c core.quotePath=false diff --name-only --no-renames \
-    "$1" "$2" 2>/dev/null)"; then
+    "$1" "$2" -- 2>/dev/null)"; then
     return 1
   fi
 
