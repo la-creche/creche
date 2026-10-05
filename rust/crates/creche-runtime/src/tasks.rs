@@ -617,7 +617,51 @@ impl<F: Future> Future for Guard<F> {
 ///
 /// The lint gate refuses a statement that starts a task and does not use the
 /// value. Await the value. For a result that no caller reads, write
-/// `drop(completion)`.
+/// `drop(completion)`:
+///
+/// ```
+/// #![deny(unused_must_use)]
+/// use std::time::Duration;
+///
+/// use creche_runtime::tasks::{Drained, Tasks, shutdown_pair};
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let (_trigger, shutdown) = shutdown_pair();
+/// let tasks = Tasks::new(shutdown);
+///
+/// let drained = runtime.block_on(async {
+///     drop(tasks.spawn_must_complete("ledger-write", async {}));
+///
+///     tasks.drain(Duration::from_secs(1)).await
+/// });
+/// assert_eq!(drained, Drained::Clean);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// The same code with no `drop` does not build. The lint is the one error:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use std::time::Duration;
+///
+/// use creche_runtime::tasks::{Drained, Tasks, shutdown_pair};
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let (_trigger, shutdown) = shutdown_pair();
+/// let tasks = Tasks::new(shutdown);
+///
+/// let drained = runtime.block_on(async {
+///     tasks.spawn_must_complete("ledger-write", async {});
+///
+///     tasks.drain(Duration::from_secs(1)).await
+/// });
+/// assert_eq!(drained, Drained::Clean);
+/// # Ok::<(), std::io::Error>(())
+/// ```
 ///
 /// The future is cancel safe: a caller can wait on `&mut completion` in a
 /// `select!` and wait again later. A poll after the output gives
