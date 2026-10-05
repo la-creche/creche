@@ -59,6 +59,12 @@ CODE_INDEX = f"{CODE_INDEX_PREFIX}{REPO}"
 
 #: The statement of each table that a reader depends on, as SQLite keeps it
 #: (`library/AGENTS.md`, "Store schema").
+#:
+#: CONTRACT-QUESTION: that section also gives `chunks_vec`, as a `vec0`
+#: table. Contract 03 §7.3 rule 6 lets a reader take the vectors from
+#: `chunks_emb` alone, so no reader depends on the form of `chunks_vec`.
+#: Reading taken: the suite holds no form for that table. It holds the
+#: statement that reads it. A change costs one entry here.
 SCHEMA = {
     "meta": "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)",
     "files": "CREATE TABLE files(path TEXT PRIMARY KEY, hash TEXT, mtime REAL, indexed_at REAL)",

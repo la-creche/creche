@@ -643,7 +643,7 @@ def test_tei_holds_a_call_that_holds_a_text(tei: Tei) -> None:
 
     with ThreadPoolExecutor(max_workers=1) as pool, _tei_client(tei) as client:
         held = pool.submit(_post_embed, tei, held_body)
-        wait_until(lambda: _embed_bodies(tei) == [held_body], "the held call", EXIT_DEADLINE_S)
+        wait_until(lambda: _embed_bodies(tei) == [held_body], "the held call", TEI_TIMEOUT_S)
         free = client.post(EMBED_ROUTE, json={"inputs": ["a pear"]})
         still_held = not held.done()
         untune(tei.tree, TEI, TEI_HOLD_EMBED)

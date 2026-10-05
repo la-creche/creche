@@ -358,9 +358,9 @@ while it runs. Neither fixture needs the playpen bundle.
     stand-in holds the last embed call of the run. `release_hold` ends the
     hold.
 
-The command is the one of the two index units. `test_proc_table.py` holds
-the words of `index_words` against the shell text of each unit. No scenario
-runs `sbx exec`, the shell or the `sleep` of that text.
+The two index units give the command. `test_proc_table.py` holds the words
+of `index_words` against the shell text of each unit. No scenario runs
+`sbx exec`, the shell or the `sleep` of that text.
 
 ## Add a stand-in program
 
@@ -432,7 +432,7 @@ each one.
 
 A call holds a text when the text is a part of one of its inputs. The line
 of a held call is in `calls.jsonl` before the call waits. A scenario waits
-for that line, and then it acts.
+for that line before it acts.
 
 ## Add a topology
 
@@ -830,9 +830,10 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the exit status of `index-scope`.** No contract names
   one. The suite holds status 2 for a command line that the program
   refuses, as the program returns today. It accepts each status that is not
-  0 in four cases: a start with no TEI address, a preflight that fails, a
-  signal, and a store that the program cannot read. A change to one fixed
-  status costs one assertion per scenario in `test_proc_library_start.py`.
+  0 in four cases. The cases are a start with no TEI address, a failed
+  preflight, a signal, and a store that the program cannot read. A change
+  to one fixed status costs one assertion per scenario in
+  `test_proc_library_start.py`.
 - **CONTRACT-QUESTION, the report of `index-scope`.** No contract gives the
   text that the program writes on stdout. The suite holds the first line as
   the program writes it today, and the path at the start of each error
