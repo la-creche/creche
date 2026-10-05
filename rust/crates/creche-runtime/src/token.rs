@@ -21,8 +21,11 @@
 //! compares them with its token through `Secret::matches`.
 //!
 //! The vectors `runtime.token.*` and `runtime.bearer.*` hold what each Python
-//! copy does. The test of this module walks each one. Its table `DEVIATIONS`
-//! names each difference from a Python copy.
+//! copy does. The test of this module walks each vector of each surface that
+//! a function here ports, and each result is equal. Some differences from a
+//! Python copy are in no vector. The doc comment of [`read`] and of
+//! [`CachedToken::current`] names each one, and one plain test holds each
+//! one.
 
 use std::borrow::Cow;
 use std::error::Error;
@@ -67,9 +70,11 @@ const GROUP_READ: u32 = 0o040;
 // (`door-trigger/src/agent_door_trigger/webhooks.py:165-170`) take only
 // `Bearer` and one space. The chaperone
 // (`chaperone/src/chaperone/app.py:350-355`) takes the scheme in each case.
-// The reading here is the strictest copy: only `Bearer` and one space. A
-// client of the chaperone that sends `bearer` then gets a refusal. A change
-// costs one more value of `BearerTrim` or one more argument of `bearer_of`.
+// The reading here is the strictest copy: only `Bearer` and one space. This
+// module is thus no port of the reader of the chaperone, and its test walks
+// no vector of `runtime.bearer.chaperone`. Two vectors of that surface hold
+// the scheme in another case of letters. A change costs one more value of
+// `BearerTrim`, or the same rule in each Python copy.
 /// The start of the header value that holds a bearer: the scheme and one
 /// space.
 const BEARER: &[u8] = b"Bearer ";
@@ -356,6 +361,34 @@ impl Error for TokenError {}
 /// `noticeboard/src/noticeboard/sessions.py:318-339`. No vector covers the
 /// two.
 ///
+/// The function differs from its Python origins in three ways. No vector
+/// holds one of them:
+///
+/// 1. Each Python reader reads a token file of each size into memory. This
+///    function refuses a file of more than 1 MiB: [`TokenError::TooLarge`].
+/// 2. A Python reader reads a device as a file, and it waits at a FIFO. This
+///    function refuses a path that is no regular file:
+///    [`TokenError::Unreadable`], with the text of the refusal of the read.
+/// 3. `attendance` and the trigger door read the mode with a `stat` of the
+///    path, apart from the read of the bytes
+///    (`attendance/src/attendance/atomic.py:120-127`,
+///    `door-trigger/src/agent_door_trigger/tokens.py:69-78`). This function
+///    takes the mode of the open file that gave the bytes.
+///
+/// A [`TokenError`] names more causes than two of the Python readers do. Each
+/// side refuses the same files, and a service maps each error to its own
+/// answer:
+///
+/// - The trigger door gives one answer for each file that it does not take,
+///   and it checks the mode before the read
+///   (`door-trigger/src/agent_door_trigger/tokens.py:43-66`). This function
+///   checks the mode last.
+/// - `caregiver` gives one refusal for a file that the system does not give
+///   and for a file that is not UTF-8
+///   (`caregiver/src/caregiver/switch.py:86-89`). This function gives
+///   [`TokenError::Unreadable`] for the first and [`TokenError::NotUtf8`]
+///   for the second.
+///
 /// ```
 /// use std::path::Path;
 ///
@@ -594,6 +627,15 @@ impl CachedToken {
     /// mode. The call blocks for the `stat` and for the read.
     ///
     /// The Python origin is `chaperone/src/chaperone/delegate.py:189-210`.
+    /// The call differs from it in two ways:
+    ///
+    /// 1. The Python cache compares three facts: the time of the last
+    ///    change, the size and the inode. This call also compares the device
+    ///    and the mode. After a new mode alone, it reads the file again.
+    /// 2. After a read that fails, the Python cache keeps the facts and the
+    ///    token of its last good read. It gives that token again when the
+    ///    file has those facts again. This call drops the token, and the
+    ///    next call reads the file.
     ///
     /// # Errors
     ///
@@ -646,11 +688,22 @@ pub enum BearerTrim {
 /// character do not match.
 ///
 /// The Python origins are `attendance/src/attendance/auth.py:139` and
-/// `:234-239`, `door-owui/src/agent_door_owui/app.py:158-172`,
-/// `door-trigger/src/agent_door_trigger/webhooks.py:165-170` and
-/// `chaperone/src/chaperone/app.py:350-355` and `:452-464`. The chaperone
-/// also takes the scheme in another case of letters, and this function does
-/// not.
+/// `:234-239`, `door-owui/src/agent_door_owui/app.py:158-172` and
+/// `door-trigger/src/agent_door_trigger/webhooks.py:165-170`. The chaperone
+/// compares the same bytes (`chaperone/src/chaperone/app.py:452-464`).
+///
+/// A `HeaderValue` holds no control byte of ASCII but the tab. The Python
+/// parser of a request gives an app the bytes `0x1c` to `0x1f` and `0x7f`,
+/// and `str.strip` of Python removes the first four. The vector
+/// `byte-1c-at-the-end` holds such a header. No request can give this
+/// function those bytes, so the test gives them to the private reader of a
+/// header value. The answer of a Rust service to such a request is a rule of
+/// its HTTP server.
+///
+/// This function is no port of the header reader of the chaperone
+/// (`chaperone/src/chaperone/app.py:350-355`). That reader also takes the
+/// scheme in another case of letters. No value of [`BearerTrim`] stands for
+/// its rule.
 ///
 /// ```
 /// use creche_runtime::token::{BearerTrim, bearer_of};
@@ -759,7 +812,7 @@ mod tests {
         read(&path, rule).map(|token| token.expose_secret().to_vec())
     }
 
-    /// The word of a vector file for the kind of a refusal.
+    /// A short name for the variant of an error.
     fn kind_of(error: &TokenError) -> &'static str {
         match error {
             TokenError::Unreadable { .. } => "unreadable",
@@ -1251,6 +1304,131 @@ mod tests {
         assert_eq!(kinds, HashSet::from(["short", "mode", "not_utf8"]));
     }
 
+    // --- where the read differs from a Python reader, and its finer errors ---
+
+    /// Difference 1 of [`read`]. Each Python reader reads a file of each
+    /// size, for example `attendance/src/attendance/auth.py:247`.
+    #[test]
+    fn a_file_past_the_cap_is_too_large() {
+        let at_the_cap = vec![b'a'; FILE_CAP.get()];
+        let past_the_cap = vec![b'a'; FILE_CAP.get() + 1];
+
+        assert_eq!(FILE_CAP.get(), 1 << 20);
+        for rule in RULES {
+            assert_eq!(
+                read_bytes(&at_the_cap, OWNER, rule).map(|token| token.len()),
+                Ok(FILE_CAP.get())
+            );
+            assert_eq!(
+                read_bytes(&past_the_cap, OWNER, rule),
+                Err(TokenError::TooLarge)
+            );
+        }
+    }
+
+    /// Difference 2 of [`read`]. A Python door gives the text of the system
+    /// for a directory (`door-owui/src/agent_door_owui/config.py:124-128`),
+    /// and each Python reader reads a device as a file.
+    #[test]
+    fn a_path_that_is_no_regular_file_is_unreadable() {
+        let root = TempRoot::new().unwrap();
+        let not_a_file = TokenError::Unreadable {
+            os_text: String::from("the path is not a regular file"),
+        };
+
+        assert_eq!(
+            ReadRefusal::NotAFile.to_string(),
+            "the path is not a regular file"
+        );
+        for rule in RULES {
+            for path in [root.path(), Path::new("/dev/null")] {
+                assert_eq!(
+                    read(path, rule).map(|_| ()),
+                    Err(not_a_file.clone()),
+                    "{}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    /// Difference 3 of [`read`]. The reader of `attendance` makes a `stat` of
+    /// the path after the read (`attendance/src/attendance/auth.py:261` and
+    /// `:278`).
+    #[test]
+    fn the_mode_check_takes_the_mode_of_the_read() {
+        let wide = |allowed| Err(TokenError::ModeTooWide { allowed });
+        let checked = |mode, rule| token_of(CORE.as_bytes(), mode, rule).map(|_| ());
+
+        // `token_of` takes the bytes and the mode of one read, and no path.
+        assert_eq!(checked(0o600, TokenRule::ATTENDANCE), Ok(()));
+        assert_eq!(
+            checked(0o640, TokenRule::ATTENDANCE),
+            wide(ModeRule::OwnerOnly)
+        );
+        assert_eq!(checked(0o640, TokenRule::ATTENDANCE_PEP_READ), Ok(()));
+        assert_eq!(
+            checked(0o644, TokenRule::ATTENDANCE_PEP_READ),
+            wide(ModeRule::OwnerAndGroupRead)
+        );
+
+        // The mode of the read is the mode of the file behind a symlink.
+        let (root, path) = token_file(CORE.as_bytes(), 0o644);
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+
+        assert_eq!(
+            read(&link, TokenRule::ATTENDANCE).map(|_| ()),
+            wide(ModeRule::OwnerOnly)
+        );
+    }
+
+    /// The reader of the trigger door checks the mode first, and it gives one
+    /// answer for each refusal
+    /// (`door-trigger/src/agent_door_trigger/tokens.py:43-66`). [`read`]
+    /// checks the mode last, and each cause has its own error.
+    #[test]
+    fn the_webhook_rule_checks_the_mode_last() {
+        let short = &CORE.as_bytes()[..31];
+
+        assert_eq!(
+            read_bytes(short, 0o644, TokenRule::WEBHOOK),
+            Err(TokenError::TooShort { min_bytes: 32 })
+        );
+        assert_eq!(
+            read_bytes(b"", 0o644, TokenRule::WEBHOOK),
+            Err(TokenError::Empty)
+        );
+        assert_eq!(
+            read_bytes(&NOT_TEXT, 0o644, TokenRule::WEBHOOK),
+            Err(TokenError::NotUtf8)
+        );
+        assert_eq!(
+            read_bytes(CORE.as_bytes(), 0o644, TokenRule::WEBHOOK),
+            Err(TokenError::ModeTooWide {
+                allowed: ModeRule::OwnerOnly
+            })
+        );
+    }
+
+    /// The reader of `caregiver` gives one refusal for the two files
+    /// (`caregiver/src/caregiver/switch.py:86-89`). [`read`] gives each one
+    /// its own error.
+    #[test]
+    fn a_file_that_is_not_text_is_not_a_file_that_the_system_refuses() {
+        let (root, path) = token_file(&NOT_TEXT, OWNER);
+
+        for rule in [TokenRule::NOT_EMPTY, TokenRule::DOOR] {
+            assert_eq!(read(&path, rule).map(|_| ()), Err(TokenError::NotUtf8));
+            assert_eq!(
+                read(&root.path().join("no-such-token"), rule).map(|_| ()),
+                Err(TokenError::Unreadable {
+                    os_text: String::from(NO_SUCH_FILE)
+                })
+            );
+        }
+    }
+
     // --- the cached token ---
 
     /// The names and the tokens of
@@ -1517,6 +1695,60 @@ mod tests {
         );
     }
 
+    /// Difference 1 of [`CachedToken::current`]. The Python cache compares
+    /// three facts (`chaperone/src/chaperone/delegate.py:204-210`).
+    #[test]
+    fn a_new_mode_makes_the_next_call_read_the_file() {
+        let (_root, path, mut token) = cached(TokenRule::ATTENDANCE_PEP_READ);
+        write_line(&path, FIRST);
+
+        assert_eq!(current(&mut token), token_bytes(FIRST));
+
+        let before = readfile::facts(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let after = readfile::facts(&path).unwrap();
+
+        // The three facts of the Python cache did not move.
+        assert_eq!(
+            (after.modified_ns(), after.len(), after.ino()),
+            (before.modified_ns(), before.len(), before.ino())
+        );
+        assert_eq!(
+            current(&mut token),
+            Err(TokenError::ModeTooWide {
+                allowed: ModeRule::OwnerAndGroupRead
+            })
+        );
+    }
+
+    /// Difference 2 of [`CachedToken::current`]. The Python cache keeps the
+    /// facts and the token of its last good read
+    /// (`chaperone/src/chaperone/delegate.py:196-201`).
+    #[test]
+    fn a_read_that_fails_drops_the_last_token() {
+        let (_root, path, mut token) = cached(TokenRule::DOOR);
+        write_line(&path, FIRST);
+
+        assert_eq!(current(&mut token), token_bytes(FIRST));
+
+        let first = readfile::facts(&path).unwrap();
+        let time = modified(&path);
+        write_line(&path, "tiny");
+
+        assert_eq!(
+            current(&mut token),
+            Err(TokenError::TooShort { min_bytes: 32 })
+        );
+        assert!(token.last.is_none());
+
+        // The file gets another token and each fact of the first read.
+        write_line(&path, SECOND);
+        set_modified(&path, time);
+
+        assert_eq!(readfile::facts(&path), Some(first));
+        assert_eq!(current(&mut token), token_bytes(SECOND));
+    }
+
     // --- the bearer ---
 
     /// One header with the name `Authorization`.
@@ -1643,25 +1875,58 @@ mod tests {
 
     // --- the differential test ---
 
-    /// What a vector of a token surface records beside its result.
+    /// The words that one Python reader has for its refusals.
+    ///
+    /// A [`TokenError`] names six causes. A Python reader has a word for some
+    /// of them, and a vector records that word. A reader has no word for a
+    /// cause that it cannot meet.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum Records {
-        /// The kind of each refusal, and no token. The entry point returns
-        /// nothing.
-        Kind,
-        /// The kind of each refusal, and the token of each file that the
-        /// reader takes.
-        KindAndToken,
-        /// The token of each file that the reader takes, and no kind. The
-        /// entry point gives one answer for each file that it does not take.
-        Token,
+    enum Words {
+        /// `attendance`: `unreadable`, `empty`, `short` and `mode`
+        /// (`attendance/src/attendance/auth.py:242-265`). Its entry point
+        /// returns nothing, so an accepted vector holds no token.
+        Book,
+        /// A door and the delegate client: `unreadable`, `not_utf8` and
+        /// `short` (`door-owui/src/agent_door_owui/config.py:124-144`,
+        /// `chaperone/src/chaperone/delegate.py:147-160`).
+        Door,
+        /// `caregiver`: `unreadable` and `empty`. `unreadable` is also its
+        /// word for a file that is not UTF-8
+        /// (`caregiver/src/caregiver/switch.py:86-92`).
+        Caregiver,
+        /// The trigger door: no word. The reader gives one answer for each
+        /// file that it does not take
+        /// (`door-trigger/src/agent_door_trigger/tokens.py:35-66`).
+        NoWord,
     }
 
-    /// One Python reader of a token file, and the rule that stands for it.
+    impl Words {
+        /// The word of the reader for `error`. `None` when the reader has no
+        /// word for it.
+        fn word(self, error: &TokenError) -> Option<&'static str> {
+            match (self, error) {
+                (Self::Book | Self::Door | Self::Caregiver, TokenError::Unreadable { .. })
+                | (Self::Caregiver, TokenError::NotUtf8) => Some("unreadable"),
+                (Self::Door, TokenError::NotUtf8) => Some("not_utf8"),
+                (Self::Book | Self::Caregiver, TokenError::Empty) => Some("empty"),
+                (Self::Book | Self::Door, TokenError::TooShort { .. }) => Some("short"),
+                (Self::Book, TokenError::ModeTooWide { .. }) => Some("mode"),
+                _ => None,
+            }
+        }
+
+        /// Whether an accepted vector of the reader holds the token.
+        fn records_the_token(self) -> bool {
+            self != Self::Book
+        }
+    }
+
+    /// One Python reader of a token file, the rule that stands for it and
+    /// the words of the reader.
     struct Reader {
         surface: &'static str,
         rule: TokenRule,
-        records: Records,
+        words: Words,
     }
 
     /// Each `runtime.token.` surface. The walk reads the table, so each
@@ -1670,32 +1935,32 @@ mod tests {
         Reader {
             surface: "runtime.token.attendance",
             rule: TokenRule::ATTENDANCE,
-            records: Records::Kind,
+            words: Words::Book,
         },
         Reader {
             surface: "runtime.token.attendance_pep_read",
             rule: TokenRule::ATTENDANCE_PEP_READ,
-            records: Records::Kind,
+            words: Words::Book,
         },
         Reader {
             surface: "runtime.token.door",
             rule: TokenRule::DOOR,
-            records: Records::KindAndToken,
+            words: Words::Door,
         },
         Reader {
             surface: "runtime.token.delegate",
             rule: TokenRule::DOOR,
-            records: Records::KindAndToken,
+            words: Words::Door,
         },
         Reader {
             surface: "runtime.token.webhook",
             rule: TokenRule::WEBHOOK,
-            records: Records::Token,
+            words: Words::NoWord,
         },
         Reader {
             surface: "runtime.token.caregiver",
             rule: TokenRule::NOT_EMPTY,
-            records: Records::KindAndToken,
+            words: Words::Caregiver,
         },
     ];
 
@@ -1706,7 +1971,7 @@ mod tests {
         trim: BearerTrim,
     }
 
-    /// Each `runtime.bearer.` surface.
+    /// Each `runtime.bearer.` surface whose Python copy [`bearer_of`] ports.
     const COPIES: &[BearerCopy] = &[
         BearerCopy {
             surface: "runtime.bearer.attendance",
@@ -1720,348 +1985,19 @@ mod tests {
             surface: "runtime.bearer.door_trigger",
             trim: BearerTrim::PythonStrip,
         },
-        // No trim holds the scheme rule of the chaperone. `DEVIATIONS` names
-        // the two vectors on which this module is stricter.
-        BearerCopy {
-            surface: "runtime.bearer.chaperone",
-            trim: BearerTrim::PythonStrip,
-        },
     ];
+
+    /// The one surface of the bearer group that has no walk here.
+    ///
+    /// Its Python copy is the header reader of the chaperone
+    /// (`chaperone/src/chaperone/app.py:350-355`). That reader takes the
+    /// scheme in each case of letters, and [`bearer_of`] is no port of it:
+    /// no value of [`BearerTrim`] stands for that rule. `AGENTS.md` of this
+    /// crate lists the open point under "Known gaps".
+    const NO_PORT_HERE: &str = "runtime.bearer.chaperone";
 
     /// The start of the name of each surface of this module.
     const SURFACE_GROUPS: [&str; 2] = ["runtime.token.", "runtime.bearer."];
-
-    /// How the two sides differ on one vector.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum Differs {
-        /// The two sides refuse the file. The Python copy gives the kind
-        /// `python`, and this module gives the kind `here`.
-        Kind {
-            python: &'static str,
-            here: &'static str,
-        },
-        /// The Python copy takes the request, and this module refuses it.
-        Refuses,
-    }
-
-    /// Where a difference shows.
-    #[derive(Clone, Copy)]
-    enum Shows {
-        /// In vectors of one surface. The walk of that surface makes sure
-        /// that the two sides differ on each one as `differs` says.
-        InVectors {
-            surface: &'static str,
-            vectors: &'static [&'static str],
-            differs: Differs,
-        },
-        /// In no vector. `holds` makes sure that this module does what the
-        /// row says.
-        InNoVector { holds: fn() },
-    }
-
-    /// One difference on purpose between this module and a Python copy.
-    struct Deviation {
-        /// The Python file and the lines of each copy that differs.
-        python: &'static [&'static str],
-        /// What the copy does.
-        copy: &'static str,
-        /// What this module does.
-        here: &'static str,
-        shows: Shows,
-    }
-
-    /// Each difference on purpose between this module and a Python copy. A
-    /// vector that no row names must be equal on the two sides.
-    const DEVIATIONS: &[Deviation] = &[
-        Deviation {
-            python: &["caregiver/src/caregiver/switch.py:86-89"],
-            copy: "The reader of caregiver gives one refusal for a file that the system does \
-                   not give and for a file that is not UTF-8.",
-            here: "A file that is not UTF-8 is NotUtf8. Unreadable is only a file that the \
-                   system does not give.",
-            shows: Shows::InVectors {
-                surface: "runtime.token.caregiver",
-                vectors: &["not-utf8", "not-utf8-short", "31-bytes-in-byte-a0"],
-                differs: Differs::Kind {
-                    python: "unreadable",
-                    here: "not_utf8",
-                },
-            },
-        },
-        Deviation {
-            python: &["chaperone/src/chaperone/app.py:350-355"],
-            copy: "The chaperone splits the value at the first space and takes the scheme \
-                   bearer in each case of letters.",
-            here: "bearer_of takes only Bearer and one space, as the three other copies do. \
-                   BearerTrim has no value for the rule of the chaperone.",
-            shows: Shows::InVectors {
-                surface: "runtime.bearer.chaperone",
-                vectors: &["scheme-lower-case", "scheme-upper-case"],
-                differs: Differs::Refuses,
-            },
-        },
-        Deviation {
-            python: &[
-                "attendance/src/attendance/auth.py:247",
-                "door-trigger/src/agent_door_trigger/tokens.py:48",
-                "door-owui/src/agent_door_owui/config.py:125",
-                "chaperone/src/chaperone/delegate.py:148",
-                "caregiver/src/caregiver/switch.py:87",
-            ],
-            copy: "Each reader reads a token file of each size into memory.",
-            here: "The read has a cap of 1 MiB. A larger file is TooLarge.",
-            shows: Shows::InNoVector {
-                holds: a_file_past_the_cap_is_too_large,
-            },
-        },
-        Deviation {
-            python: &[
-                "door-owui/src/agent_door_owui/config.py:124-128",
-                "chaperone/src/chaperone/delegate.py:147-151",
-                "attendance/src/attendance/auth.py:246-249",
-            ],
-            copy: "The open of a directory fails, and a door gives the text of the system: Is \
-                   a directory. Each reader reads a device as a file.",
-            here: "A directory, a FIFO and a device are Unreadable. The error holds the text \
-                   of the read, which is no text of the system.",
-            shows: Shows::InNoVector {
-                holds: a_path_that_is_no_regular_file_is_unreadable,
-            },
-        },
-        Deviation {
-            python: &[
-                "attendance/src/attendance/atomic.py:120-127",
-                "attendance/src/attendance/auth.py:278",
-            ],
-            copy: "The reader of attendance reads the mode with a stat of the path, after the \
-                   read of the bytes.",
-            here: "The mode is a fact of the open file that gave the bytes. The check takes \
-                   no path and makes no second stat.",
-            shows: Shows::InNoVector {
-                holds: the_mode_check_takes_the_mode_of_the_read,
-            },
-        },
-        Deviation {
-            python: &["door-trigger/src/agent_door_trigger/tokens.py:43-66"],
-            copy: "The reader of a webhook token checks the mode before the read. It gives \
-                   one answer, None, for each file that it does not take.",
-            here: "The mode is the last check, and each refusal has its own TokenError. A \
-                   short file with a wide mode is TooShort.",
-            shows: Shows::InNoVector {
-                holds: the_webhook_rule_checks_the_mode_last,
-            },
-        },
-        Deviation {
-            python: &["chaperone/src/chaperone/delegate.py:204-210"],
-            copy: "The cache compares three facts of a stat: the time of the last change, the \
-                   size and the inode.",
-            here: "The cache compares each fact of FileFacts, so also the device and the mode. \
-                   After a new mode alone, the next call reads the file.",
-            shows: Shows::InNoVector {
-                holds: a_new_mode_makes_the_next_call_read_the_file,
-            },
-        },
-        Deviation {
-            python: &["chaperone/src/chaperone/delegate.py:196-201"],
-            copy: "A read that fails keeps the facts and the token of the last good read. The \
-                   cache gives that token again when the file has those facts again.",
-            here: "A read that fails drops the token of the last good read. The next call \
-                   reads the file.",
-            shows: Shows::InNoVector {
-                holds: a_read_that_fails_drops_the_last_token,
-            },
-        },
-    ];
-
-    fn a_file_past_the_cap_is_too_large() {
-        let at_the_cap = vec![b'a'; FILE_CAP.get()];
-        let past_the_cap = vec![b'a'; FILE_CAP.get() + 1];
-
-        assert_eq!(FILE_CAP.get(), 1 << 20);
-        for rule in RULES {
-            assert_eq!(
-                read_bytes(&at_the_cap, OWNER, rule).map(|token| token.len()),
-                Ok(FILE_CAP.get())
-            );
-            assert_eq!(
-                read_bytes(&past_the_cap, OWNER, rule),
-                Err(TokenError::TooLarge)
-            );
-        }
-    }
-
-    fn a_path_that_is_no_regular_file_is_unreadable() {
-        let root = TempRoot::new().unwrap();
-        let not_a_file = TokenError::Unreadable {
-            os_text: String::from("the path is not a regular file"),
-        };
-
-        assert_eq!(
-            ReadRefusal::NotAFile.to_string(),
-            "the path is not a regular file"
-        );
-        for rule in RULES {
-            for path in [root.path(), Path::new("/dev/null")] {
-                assert_eq!(
-                    read(path, rule).map(|_| ()),
-                    Err(not_a_file.clone()),
-                    "{}",
-                    path.display()
-                );
-            }
-        }
-    }
-
-    fn the_mode_check_takes_the_mode_of_the_read() {
-        let wide = |allowed| Err(TokenError::ModeTooWide { allowed });
-        let checked = |mode, rule| token_of(CORE.as_bytes(), mode, rule).map(|_| ());
-
-        // `token_of` takes the bytes and the mode of one read, and no path.
-        assert_eq!(checked(0o600, TokenRule::ATTENDANCE), Ok(()));
-        assert_eq!(
-            checked(0o640, TokenRule::ATTENDANCE),
-            wide(ModeRule::OwnerOnly)
-        );
-        assert_eq!(checked(0o640, TokenRule::ATTENDANCE_PEP_READ), Ok(()));
-        assert_eq!(
-            checked(0o644, TokenRule::ATTENDANCE_PEP_READ),
-            wide(ModeRule::OwnerAndGroupRead)
-        );
-
-        // The mode of the read is the mode of the file behind a symlink.
-        let (root, path) = token_file(CORE.as_bytes(), 0o644);
-        let link = root.path().join("link");
-        std::os::unix::fs::symlink(&path, &link).unwrap();
-
-        assert_eq!(
-            read(&link, TokenRule::ATTENDANCE).map(|_| ()),
-            wide(ModeRule::OwnerOnly)
-        );
-    }
-
-    fn the_webhook_rule_checks_the_mode_last() {
-        let short = &CORE.as_bytes()[..31];
-
-        assert_eq!(
-            read_bytes(short, 0o644, TokenRule::WEBHOOK),
-            Err(TokenError::TooShort { min_bytes: 32 })
-        );
-        assert_eq!(
-            read_bytes(b"", 0o644, TokenRule::WEBHOOK),
-            Err(TokenError::Empty)
-        );
-        assert_eq!(
-            read_bytes(&NOT_TEXT, 0o644, TokenRule::WEBHOOK),
-            Err(TokenError::NotUtf8)
-        );
-        assert_eq!(
-            read_bytes(CORE.as_bytes(), 0o644, TokenRule::WEBHOOK),
-            Err(TokenError::ModeTooWide {
-                allowed: ModeRule::OwnerOnly
-            })
-        );
-    }
-
-    fn a_new_mode_makes_the_next_call_read_the_file() {
-        let (_root, path, mut token) = cached(TokenRule::ATTENDANCE_PEP_READ);
-        write_line(&path, FIRST);
-
-        assert_eq!(current(&mut token), token_bytes(FIRST));
-
-        let before = readfile::facts(&path).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        let after = readfile::facts(&path).unwrap();
-
-        // The three facts of the Python cache did not move.
-        assert_eq!(
-            (after.modified_ns(), after.len(), after.ino()),
-            (before.modified_ns(), before.len(), before.ino())
-        );
-        assert_eq!(
-            current(&mut token),
-            Err(TokenError::ModeTooWide {
-                allowed: ModeRule::OwnerAndGroupRead
-            })
-        );
-    }
-
-    fn a_read_that_fails_drops_the_last_token() {
-        let (_root, path, mut token) = cached(TokenRule::DOOR);
-        write_line(&path, FIRST);
-
-        assert_eq!(current(&mut token), token_bytes(FIRST));
-
-        let first = readfile::facts(&path).unwrap();
-        let time = modified(&path);
-        write_line(&path, "tiny");
-
-        assert_eq!(
-            current(&mut token),
-            Err(TokenError::TooShort { min_bytes: 32 })
-        );
-        assert!(token.last.is_none());
-
-        // The file gets another token and each fact of the first read.
-        write_line(&path, SECOND);
-        set_modified(&path, time);
-
-        assert_eq!(readfile::facts(&path), Some(first));
-        assert_eq!(current(&mut token), token_bytes(SECOND));
-    }
-
-    /// The row of [`DEVIATIONS`] that names the vector `id` of `surface`:
-    /// its place in the table, the id as the row holds it and the
-    /// difference.
-    fn deviation_at(surface: &str, id: &str) -> Option<(usize, &'static str, Differs)> {
-        let mut rows = DEVIATIONS.iter().enumerate().filter_map(|(place, row)| {
-            let Shows::InVectors {
-                surface: named,
-                vectors,
-                differs,
-            } = row.shows
-            else {
-                return None;
-            };
-            let vector = vectors.iter().find(|vector| **vector == id)?;
-
-            (named == surface).then_some((place, *vector, differs))
-        });
-        let row = rows.next();
-
-        assert!(rows.next().is_none(), "{surface} {id}: two rows name it");
-
-        row
-    }
-
-    /// Each pair of a row and a vector id that names a vector of `surface`.
-    fn deviations_in(surface: &str) -> HashSet<(usize, &'static str)> {
-        DEVIATIONS
-            .iter()
-            .enumerate()
-            .filter_map(|(place, row)| match row.shows {
-                Shows::InVectors {
-                    surface: named,
-                    vectors,
-                    ..
-                } if named == surface => Some(vectors.iter().map(move |vector| (place, *vector))),
-                Shows::InVectors { .. } | Shows::InNoVector { .. } => None,
-            })
-            .flatten()
-            .collect()
-    }
-
-    /// Makes sure that the two sides refuse a token file with two kinds, as
-    /// a row says.
-    fn kinds_differ(differs: Differs, vector: &Vector, rust: Result<(), &TokenError>, at: &str) {
-        let Differs::Kind { python, here } = differs else {
-            panic!("{at}: no rule of a token file is stricter than its Python reader");
-        };
-
-        assert_ne!(python, here, "{at}: the row names no difference");
-        assert_eq!(vector.result(), Outcome::Refused, "{at}: the Python code");
-        assert_eq!(vector.refusal(), Some(&Value::from(python)), "{at}");
-        assert_eq!(rust.map_err(kind_of), Err(here), "{at}");
-    }
 
     /// The token that an accepted vector holds, when it holds one.
     fn python_token(vector: &Vector) -> Option<&str> {
@@ -2077,20 +2013,19 @@ mod tests {
         at: &str,
     ) {
         match (vector.result(), rust) {
-            (Outcome::Accepted, Ok(token)) => match (reader.records, python_token(vector)) {
-                (Records::Kind, None) => {}
-                (Records::KindAndToken | Records::Token, Some(text)) => {
+            (Outcome::Accepted, Ok(token)) => {
+                let held = python_token(vector);
+
+                assert_eq!(held.is_some(), reader.words.records_the_token(), "{at}");
+                if let Some(text) = held {
                     assert!(token.matches(text.as_bytes()), "{at}: another token");
                 }
-                (records, held) => panic!("{at}: {records:?}, and the vector holds {held:?}"),
-            },
-            (Outcome::Refused, Err(error)) => match (reader.records, vector.refusal()) {
-                (Records::Token, None) => {}
-                (Records::Kind | Records::KindAndToken, Some(kind)) => {
-                    assert_eq!(kind, &Value::from(kind_of(error)), "{at}");
-                }
-                (records, held) => panic!("{at}: {records:?}, and the vector holds {held:?}"),
-            },
+            }
+            (Outcome::Refused, Err(error)) => {
+                let word = reader.words.word(error).map(Value::from);
+
+                assert_eq!(vector.refusal(), word.as_ref(), "{at}: {error:?}");
+            }
             // The Rust code refuses a file on which the Python code raises.
             (Outcome::Raised, Err(_)) => {}
             (python, rust) => panic!("{at}: the Python code {python}, the Rust code {rust:?}"),
@@ -2122,29 +2057,16 @@ mod tests {
     fn walk_reader(reader: &Reader) {
         let surface = vectors::surface(reader.surface).unwrap();
         let root = TempRoot::new().unwrap();
-        let mut deviated = HashSet::new();
 
         for (number, vector) in surface.vectors().iter().enumerate() {
             let at = format!("{} {}", reader.surface, vector.id());
             let path = root.path().join(format!("token-{number}"));
             place(&path, vector, &at);
-            let rust = read(&path, reader.rule);
 
-            if let Some((row, id, differs)) = deviation_at(reader.surface, vector.id()) {
-                kinds_differ(differs, vector, rust.as_ref().map(|_| ()), &at);
-                deviated.insert((row, id));
-            } else {
-                same_as_the_reader(reader, vector, &rust, &at);
-            }
+            same_as_the_reader(reader, vector, &read(&path, reader.rule), &at);
         }
 
         assert!(!surface.vectors().is_empty(), "{}", reader.surface);
-        assert_eq!(
-            deviated,
-            deviations_in(reader.surface),
-            "{}: a row names a vector that the surface does not hold",
-            reader.surface
-        );
     }
 
     /// The bytes of the `Authorization` header of a bearer vector. `None`
@@ -2188,6 +2110,19 @@ mod tests {
         offered
     }
 
+    /// Makes sure that this module takes a request only when the Python copy
+    /// takes it. `takes` says if the bearer of the request matches the token
+    /// of the service. The Rust code refuses a request on which the Python
+    /// code raises.
+    fn same_as_the_copy(vector: &Vector, takes: bool, at: &str) {
+        assert_eq!(
+            takes,
+            vector.result() == Outcome::Accepted,
+            "{at}: the Python code {}",
+            vector.result()
+        );
+    }
+
     /// Walks each vector of one bearer surface.
     fn walk_copy(copy: &BearerCopy) {
         let surface = vectors::surface(copy.surface).unwrap();
@@ -2196,7 +2131,6 @@ mod tests {
             .get("token")
             .and_then(Value::as_str)
             .unwrap();
-        let mut deviated = HashSet::new();
 
         for vector in surface.vectors() {
             let at = format!("{} {}", copy.surface, vector.id());
@@ -2212,31 +2146,10 @@ mod tests {
             let takes = offered_in(header.as_deref(), copy.trim, &at)
                 .is_some_and(|offered| token.matches(&offered));
 
-            match deviation_at(copy.surface, vector.id()) {
-                Some((row, id, Differs::Refuses)) => {
-                    assert_eq!(vector.result(), Outcome::Accepted, "{at}: the Python code");
-                    assert!(!takes, "{at}: the row names no difference");
-                    deviated.insert((row, id));
-                }
-                Some((_, _, Differs::Kind { .. })) => {
-                    panic!("{at}: a bearer vector records no kind");
-                }
-                None => assert_eq!(
-                    takes,
-                    vector.result() == Outcome::Accepted,
-                    "{at}: the Python code {}",
-                    vector.result()
-                ),
-            }
+            same_as_the_copy(vector, takes, &at);
         }
 
         assert!(!surface.vectors().is_empty(), "{}", copy.surface);
-        assert_eq!(
-            deviated,
-            deviations_in(copy.surface),
-            "{}: a row names a vector that the surface does not hold",
-            copy.surface
-        );
     }
 
     #[test]
@@ -2245,6 +2158,7 @@ mod tests {
             .iter()
             .map(|reader| reader.surface)
             .chain(COPIES.iter().map(|copy| copy.surface))
+            .chain([NO_PORT_HERE])
             .collect();
         let unique: HashSet<&str> = listed.iter().copied().collect();
         let index = vectors::index().unwrap();
@@ -2263,6 +2177,60 @@ mod tests {
     }
 
     #[test]
+    fn each_reader_has_a_word_only_for_a_cause_that_it_can_meet() {
+        let causes = [
+            TokenError::Unreadable {
+                os_text: String::from(NO_SUCH_FILE),
+            },
+            TokenError::TooLarge,
+            TokenError::Empty,
+            TokenError::TooShort { min_bytes: 32 },
+            TokenError::ModeTooWide {
+                allowed: ModeRule::OwnerOnly,
+            },
+            TokenError::NotUtf8,
+        ];
+        let words_of = |words: Words| -> Vec<Option<&str>> {
+            causes.iter().map(|cause| words.word(cause)).collect()
+        };
+
+        assert_eq!(
+            words_of(Words::Book),
+            [
+                Some("unreadable"),
+                None,
+                Some("empty"),
+                Some("short"),
+                Some("mode"),
+                None
+            ]
+        );
+        assert_eq!(
+            words_of(Words::Door),
+            [
+                Some("unreadable"),
+                None,
+                None,
+                Some("short"),
+                None,
+                Some("not_utf8")
+            ]
+        );
+        assert_eq!(
+            words_of(Words::Caregiver),
+            [
+                Some("unreadable"),
+                None,
+                Some("empty"),
+                None,
+                None,
+                Some("unreadable")
+            ]
+        );
+        assert_eq!(words_of(Words::NoWord), [None; 6]);
+    }
+
+    #[test]
     fn each_token_vector_is_what_its_python_reader_does() {
         for reader in READERS {
             walk_reader(reader);
@@ -2276,96 +2244,107 @@ mod tests {
         }
     }
 
+    /// A test of the test: the walk fails for a refusal with a word that is
+    /// not the word of the reader.
     #[test]
-    fn each_deviation_names_its_python_lines_and_a_difference() {
-        let listed: HashSet<&str> = READERS
+    #[should_panic(expected = "runtime.token.caregiver absent")]
+    fn the_walk_fails_for_another_word_of_the_reader() {
+        let surface = vectors::surface("runtime.token.caregiver").unwrap();
+        let vector = surface.vector("absent").unwrap();
+        let reader = READERS
             .iter()
-            .map(|reader| reader.surface)
-            .chain(COPIES.iter().map(|copy| copy.surface))
-            .collect();
-        let mut with_no_vector = 0;
+            .find(|reader| reader.surface == surface.name())
+            .unwrap();
 
-        for row in DEVIATIONS {
-            assert!(!row.python.is_empty(), "{}", row.copy);
-            for python in row.python {
-                let (file, lines) = python.rsplit_once(':').unwrap();
-
-                assert!(file.ends_with(".py"), "{python}");
-                assert!(
-                    lines
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || byte == b'-'),
-                    "{python}"
-                );
-            }
-            assert!(!row.copy.is_empty() && !row.here.is_empty());
-            assert_ne!(row.copy, row.here);
-
-            match row.shows {
-                Shows::InVectors {
-                    surface,
-                    vectors,
-                    differs,
-                } => {
-                    assert!(listed.contains(surface), "{surface}");
-                    assert!(!vectors.is_empty(), "{surface}");
-                    if let Differs::Kind { python, here } = differs {
-                        assert_ne!(python, here, "{surface}");
-                    }
-                }
-                Shows::InNoVector { holds } => {
-                    holds();
-                    with_no_vector += 1;
-                }
-            }
-        }
-
-        assert!(with_no_vector > 0, "the table holds no row with no vector");
-    }
-
-    /// A test of the test: a row whose two kinds are one kind fails.
-    #[test]
-    #[should_panic(expected = "the row names no difference")]
-    fn a_row_that_names_no_difference_fails() {
-        let surface = vectors::surface("runtime.token.caregiver").unwrap();
-        let vector = surface.vector("absent").unwrap();
-        let same = Differs::Kind {
-            python: "unreadable",
-            here: "unreadable",
-        };
-        let error = TokenError::Unreadable {
-            os_text: String::from(NO_SUCH_FILE),
-        };
-
-        kinds_differ(same, vector, Err(&error), "a row");
-    }
-
-    /// A test of the test: a row for a vector on which the two sides give
-    /// one kind fails.
-    #[test]
-    #[should_panic(expected = "a row for a vector with one kind")]
-    fn a_row_for_a_vector_with_one_kind_on_the_two_sides_fails() {
-        let surface = vectors::surface("runtime.token.caregiver").unwrap();
-        let vector = surface.vector("absent").unwrap();
-        let differs = Differs::Kind {
-            python: "unreadable",
-            here: "not_utf8",
-        };
-        let error = TokenError::Unreadable {
-            os_text: String::from(NO_SUCH_FILE),
-        };
-
-        kinds_differ(
-            differs,
+        assert_eq!(vector.refusal(), Some(&Value::from("unreadable")));
+        same_as_the_reader(
+            reader,
             vector,
-            Err(&error),
-            "a row for a vector with one kind",
+            &Err(TokenError::Empty),
+            "runtime.token.caregiver absent",
         );
     }
 
+    /// A test of the test: the walk fails when the Rust code takes a file
+    /// that the Python reader refuses.
+    #[test]
+    #[should_panic(expected = "the Python code refused")]
+    fn the_walk_fails_for_a_file_that_only_the_rust_code_takes() {
+        let surface = vectors::surface("runtime.token.webhook").unwrap();
+        let vector = surface.vector("absent").unwrap();
+        let reader = READERS
+            .iter()
+            .find(|reader| reader.surface == surface.name())
+            .unwrap();
+        let token = Secret::try_from(String::from(CORE)).unwrap();
+
+        same_as_the_reader(reader, vector, &Ok(token), "runtime.token.webhook absent");
+    }
+
+    /// A test of the test: the walk fails when the Rust code gives another
+    /// token than the Python reader.
+    #[test]
+    #[should_panic(expected = "runtime.token.door 32-bytes: another token")]
+    fn the_walk_fails_for_another_token() {
+        let surface = vectors::surface("runtime.token.door").unwrap();
+        let vector = surface.vector("32-bytes").unwrap();
+        let reader = READERS
+            .iter()
+            .find(|reader| reader.surface == surface.name())
+            .unwrap();
+        let other = Secret::try_from(String::from(SECOND)).unwrap();
+
+        assert_eq!(python_token(vector), Some(CORE));
+        same_as_the_reader(reader, vector, &Ok(other), "runtime.token.door 32-bytes");
+    }
+
+    /// A test of the test: the walk fails for an accepted vector with no
+    /// token, when the reader of the table records the token.
+    #[test]
+    #[should_panic(expected = "a door reader and a vector with no token")]
+    fn the_walk_fails_for_a_vector_with_no_token_of_its_reader() {
+        let surface = vectors::surface("runtime.token.attendance").unwrap();
+        let vector = surface.vector("32-bytes").unwrap();
+        let reader = READERS
+            .iter()
+            .find(|reader| reader.surface == "runtime.token.door")
+            .unwrap();
+        let token = Secret::try_from(String::from(CORE)).unwrap();
+
+        assert_eq!(python_token(vector), None);
+        same_as_the_reader(
+            reader,
+            vector,
+            &Ok(token),
+            "a door reader and a vector with no token",
+        );
+    }
+
+    /// A test of the test: the walk fails when the Rust code takes a request
+    /// that the Python copy refuses.
+    #[test]
+    #[should_panic(expected = "runtime.bearer.door_owui wrong-token: the Python code refused")]
+    fn the_walk_fails_for_a_request_that_only_the_rust_code_takes() {
+        let surface = vectors::surface("runtime.bearer.door_owui").unwrap();
+        let vector = surface.vector("wrong-token").unwrap();
+
+        same_as_the_copy(vector, true, "runtime.bearer.door_owui wrong-token");
+    }
+
+    /// A test of the test: the walk fails when the Rust code refuses a
+    /// request that the Python copy takes.
+    #[test]
+    #[should_panic(expected = "runtime.bearer.door_owui exact: the Python code accepted")]
+    fn the_walk_fails_for_a_request_that_only_the_python_copy_takes() {
+        let surface = vectors::surface("runtime.bearer.door_owui").unwrap();
+        let vector = surface.vector("exact").unwrap();
+
+        same_as_the_copy(vector, false, "runtime.bearer.door_owui exact");
+    }
+
     /// The vector `byte-1c-at-the-end` holds a control byte. No header value
-    /// of the HTTP types holds that byte, so no Rust service gets such a
-    /// request. The walk gives the bytes to `bearer_in` for that reason.
+    /// of the HTTP types holds that byte, so no request gives it to
+    /// `bearer_of`. The walk gives the bytes to `bearer_in` for that reason.
     #[test]
     fn a_header_value_holds_no_control_byte() {
         let surface = vectors::surface("runtime.bearer.attendance").unwrap();
