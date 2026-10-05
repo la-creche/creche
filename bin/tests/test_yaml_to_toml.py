@@ -5,16 +5,18 @@ a component manifest and a roster. Each test here holds its own YAML text.
 No test reads a YAML fixture of the repository by name, because the
 migration removes those files.
 
-Four things are held:
+Five things are held:
 
 1. **The layout.** The header of the script holds its seven rules. Each rule
    has a written YAML text here and the exact TOML text that the script
    prints for it.
 2. **The refusals.** Each of the eight YAML features stops the script, and
    so does a value that TOML cannot hold.
-3. **The proof of a pair.** `--check` passes only for equal values and an
-   equal count of comments.
-4. **The walk.** Each tracked YAML file of the four kinds converts, and the
+3. **The proof of a pair.** `--check` exits 0 for a pair with the same
+   values and the same count of comments, and for no other pair.
+4. **The second reader.** The values of a TOML text equal what
+   `yaml.safe_load` gives for the YAML text.
+5. **The walk.** Each tracked YAML file of the four kinds converts, and the
    pair passes the check. A tree with no such file passes.
 """
 
@@ -196,7 +198,7 @@ def test_the_layout_holds_the_values_in_the_order_of_the_yaml_file() -> None:
 
 
 def test_no_line_is_a_table_header() -> None:
-    """A key after a header belongs to that table, so a header moves keys."""
+    """A line such as `[model]` takes each later key into its table."""
     for line in _toml(FAMILY_YAML).splitlines():
         assert not line.startswith("[")
 

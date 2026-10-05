@@ -4,8 +4,9 @@
 """Convert one YAML file of the four kinds to TOML, or prove one converted pair.
 
 TEMPORARY. This script is a tool of the migration from YAML to TOML. Packet
-`toml-converter-leave` removes it when no tracked file of the four kinds is
-YAML. It needs PyYAML, which the workspace venv holds, so run it with `uv run`.
+`toml-converter-leave` deletes the script when the tree holds no YAML file of
+the four kinds. The script needs PyYAML, which the workspace venv holds, so
+start it with `uv run`.
 
 The four kinds, by the name of the file:
 
@@ -20,8 +21,8 @@ The layout of the TOML text:
    file. A value keeps the type that PyYAML gives it: a YAML word such as
    `yes` or `off` becomes `true` or `false`, and a quoted number stays a text.
 2. A nested mapping becomes dotted keys: `model.router = "..."`. The text
-   holds no table header. A key after a header belongs to that table, so a
-   header would change the order of the file.
+   has no `[table]` line. Such a line takes each later key into its table,
+   and the keys could then not stay in the order of the YAML file.
 3. A list becomes an array, and a mapping in a list becomes an inline table
    on one line. A list that is on one line in the YAML file stays on one
    line. Each other list gets one line for each item.
@@ -39,10 +40,10 @@ also refuses a value that TOML cannot hold: a null in a list, one key two
 times in a mapping, an integer outside 64 bits and half of a surrogate pair.
 `Reason` holds each refusal. A refusal names a line and no value of the file.
 
-`--check` reads the TOML text with `tomllib`. It passes only when the two
-parsed values are equal after rules 5 and 6 and the two files hold the same
-count of comments. The script also runs that check on each text before it
-prints the text.
+`--check` reads the TOML text with `tomllib`. A pair passes when `tomllib`
+gives the values that rules 5 and 6 leave of the YAML file, and both files
+hold the same count of comments. The script also runs that check on each
+text before it prints the text.
 
 Exit status: 0 for a good run, 1 for a pair that differs, and 2 for each
 other end of a run: a file or a command line that the script refuses, an
