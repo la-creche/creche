@@ -156,6 +156,112 @@ One release per merged change. A request names the components to move. Root
 builds and deploys them, and each component's verify hook runs. A release
 that stacks unrelated changes enlarges the blast radius of a bad one.
 
+## Removal of a Python package
+
+In the port to Rust, a Rust binary takes the place of a Python package. The
+Python package stays on `main` until each component whose build installed
+it is proven. An agent then creates one pull request that removes the
+package.
+
+Reason: a revert is the way back from a cutover release. That revert needs
+the Python package on `main`.
+
+| Word | Meaning |
+|---|---|
+| cutover release | The release that moves a component from its Python package to its Rust binary. `rust/AGENTS.md` has its rules. |
+| cutover tag | The tag of the cutover release. |
+| cutover commit | The commit of `main` that the cutover tag names. |
+| proof time | The time after the cutover release in which the Rust binary must run with no fault. |
+| removal pull request | The pull request that removes one Python package. |
+
+### When a component is proven
+
+A component is proven when each of these six checks holds:
+
+1. **CI.** At the cutover commit, the `proc` job and the `rust` job of
+   `release.yml` passed. In that run, the default command of each service
+   of the component started the Rust binary. `integration/proc/AGENTS.md`
+   has the service table.
+2. **The host.** The ledger entry of the cutover release has the status
+   `succeeded`. Each `verify` row of the component in that entry says `ok`.
+   A release with the status `restored` does not count.
+3. **Time.** The proof time is complete.
+4. **No fault.** In the proof time, each of these three facts holds:
+   - No release of the component has the status `restored` or `failed`.
+   - systemd restarted no unit of the component by itself.
+   - No unit of the component had an exit status other than 0.
+5. **Use.** In the proof time, the component did its usual work on the
+   host. A component that had no work in that time is not proven.
+6. **Defects.** No open defect of severity high or medium names the Rust
+   version of the component.
+
+Two lines give the proof time:
+
+- The proof time starts when the cutover release succeeds.
+- The proof time is 7 days of 24 hours each.
+
+When one check does not hold, the component is not proven. No rule gives the
+start of a new proof time. The owner of the repository decides it.
+
+### The removal pull request
+
+One removal pull request removes one Python package. Two lines say who
+does what:
+
+- An agent creates a removal pull request and does not merge it.
+- The owner of the repository merges a removal pull request.
+
+The body of the pull request is the text of
+`.github/PULL_REQUEST_TEMPLATE/remove-package.md`, with each line complete.
+
+Create the pull request only when each of these three conditions holds:
+
+1. Each component whose Python build installed the package is proven.
+2. No row of the component catalog names the directory of the package, as
+   its path or as a bundle (`handover/src/handover/catalog.py`).
+3. No `pyproject.toml` of another package names the package.
+
+The pull request makes these six changes:
+
+1. It removes the source, the tests and the `pyproject.toml` of the
+   package.
+2. It removes the entries of the package from the root `pyproject.toml`,
+   from `pyrightconfig.json` and from the ruff config.
+3. It writes `uv.lock` again with `uv lock`.
+4. It removes each module under `vectors/surfaces/` that imports the
+   package. It keeps each file under `vectors/data`. It pins each kept file
+   by its SHA-256, so that nobody edits that file by hand.
+5. It removes each test that imports the package. It removes each stand-in
+   that only the Python service needed.
+6. It changes or removes each line of a rule file that names a file of the
+   package. It does the same for each comment of a unit file under
+   `systemd/`. A rule file is an `AGENTS.md` file or this file.
+
+The merge of a removal pull request can mint tags. A change to `uv.lock`
+moves each component that is still a venv component. Each new tag asks the
+operator for a release. The body of the pull request thus shows what the
+merge starts:
+
+1. Run the tag allocator with `--dry-run` on the head of the branch. "Tags
+   and releases" has the command.
+2. Put the output in the body of the pull request. The output lists each
+   tag that the merge mints.
+3. Below the output, name each release that the merge starts.
+
+This repository is public, and each pull request is public too. The
+sanitization rule of `AGENTS.md` applies to the text of a removal pull
+request. That text names no host and no family of a deployment. It
+describes no defect, and it holds no evidence.
+
+Keep the evidence in a private place. The template has one line for each
+component. On that line, give only a link to the evidence, for the owner.
+
+The way back from a removal is a revert of the removal pull request.
+
+The owner did not confirm two lines of this section yet. One line gives
+the length of the proof time. The other line names who merges. Each of the
+two values has only that one line. The template holds neither value.
+
 ## The docs rule
 
 A change of nothing but Markdown runs only the tests marked `docs`. The one
