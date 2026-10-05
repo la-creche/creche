@@ -227,8 +227,11 @@ pub enum AccessLog {
 /// - For a request with no `Host` header that names a host, the Python
 ///   framework writes the address of its listener into the `Location`
 ///   header (`starlette/datastructures.py:49-54`). The header here then
-///   holds the path and the query only. A listener on a Unix socket gives
-///   that same answer in Python.
+///   holds the path and the query only.
+/// - `uvicorn` takes the scheme of the `Location` header from the header
+///   `X-Forwarded-Proto` of a client on the loopback address
+///   (`uvicorn/middleware/proxy_headers.py:35-51`). The scheme here is
+///   `http` for each client.
 ///
 /// ```
 /// use axum::Router;
@@ -1721,6 +1724,11 @@ mod tests {
     /// The Python framework writes the address of its listener for a `Host`
     /// header that names no host (`starlette/datastructures.py:49-54`). The
     /// header here then holds the path and the query only.
+    ///
+    /// `uvicorn` takes the scheme from the header `X-Forwarded-Proto` of a
+    /// client on the loopback address
+    /// (`uvicorn/middleware/proxy_headers.py:35-51`). The scheme here is
+    /// `http` for each client.
     #[test]
     fn the_location_names_the_host_of_a_host_header_that_names_one() {
         let table = [
@@ -1750,6 +1758,15 @@ mod tests {
                 assert_eq!(answer.status, 307, "{host:?}");
                 assert_eq!(answer.header("location"), Some(place), "{host:?}");
             }
+
+            let forwarded = service
+                .ask(
+                    b"GET /healthz/ HTTP/1.1\r\nHost: test\r\nX-Forwarded-Proto: https\r\n\
+                      Connection: close\r\n\r\n",
+                )
+                .await;
+
+            assert_eq!(forwarded.header("location"), Some("http://test/healthz"));
             service.stop().await;
         });
     }
