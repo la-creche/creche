@@ -249,6 +249,10 @@ impl Error for MintError {
 /// service that needs ids which never repeat and always sort holds its own
 /// state on top of this function.
 ///
+/// The function makes one fill of 10 bytes for each id. It makes no fill for
+/// a time before 1970. A test with a source that counts thus knows the bytes
+/// of each id.
+///
 /// Five Python copies mint the same text from the same time and the same
 /// bytes: `door-trigger/src/agent_door_trigger/ulid.py:30-55`,
 /// `door-tui/src/agent_door_tui/ids.py:95-111`,
@@ -282,7 +286,7 @@ pub fn new_ulid(clock: &dyn Clock, entropy: &dyn Entropy) -> Result<Ulid, MintEr
 }
 
 /// Mints one random token: `bytes` random bytes, as URL-safe base64 with no
-/// padding.
+/// padding. The function makes one fill of `bytes` bytes.
 ///
 /// 32 bytes give 43 characters. This is the text of `secrets.token_urlsafe`
 /// of Python: `noticeboard/src/noticeboard/security.py:74-76` and
