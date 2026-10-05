@@ -31,6 +31,7 @@ defect that a test finds late.
 |---|---|
 | `ids` | Each id grammar that `vectors/data/ids` covers. One type for each grammar. |
 | `secret` | `Secret`, the type of a token or a key. |
+| `time` | `Timestamp`, the one type of a time in a file or in a wire message. "Time" below holds its rules. |
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
 | `session` | The session API: contract 02. `session.rs` declares the files under `session/`. |
@@ -266,6 +267,65 @@ When the reader refuses a text, apply the failure action that rule 8
 demands. The module error keeps the name of the broken rule. The service
 uses that name to record a notice for the operator. Packet
 `decisions-notice` adds the notice.
+
+## Time
+
+A time in a file or in a wire message is a `date-time` of RFC 3339,
+section 5.6. A writer writes each time in UTC, with `Z` as the offset. A
+text with no UTC offset is not a time. The root `AGENTS.md` holds the same
+rule for each language.
+
+`creche_contracts::time::Timestamp` is the one type for such a time. It
+holds one instant in UTC, to the microsecond, in the years 0001 to 9999.
+
+- Read a time text only with the `FromStr` of `Timestamp`.
+- Write a time only with a writer of `Timestamp`. `to_rfc3339` writes whole
+  seconds, and `to_rfc3339_millis` writes milliseconds.
+- Define no second type for a time text.
+- Write no date arithmetic in another module. The `time` module holds the
+  copy that stays.
+- The caller of the reader decides what a refused text means. For example,
+  a view reads the file as stale, and a request gets a refusal.
+
+Reason: with two grammars, one text is a time for one reader and no time
+for another reader. Two copies of the date arithmetic drift.
+
+The reader takes these parts, in this sequence. It refuses each other
+text.
+
+1. The date, `YYYY-MM-DD`.
+2. `T` or `t`.
+3. The time of the day, `HH:MM:SS`.
+4. An optional fraction: `.` and 1 to 9 digits. The type keeps the first
+   six digits.
+5. The offset: `Z`, `z`, `+HH:MM` or `-HH:MM`.
+
+Thus the reader refuses a space in place of the `T`. It also refuses second
+60 and the year 0000. "Known gaps" has the question about the limits of the
+reader.
+
+`to_rfc3339_millis_plus_00_00` is a third writer. It writes milliseconds
+and the offset `+00:00`. The chaperone keeps a log of each request that
+names no family, and the lines of that log have this offset today. Use the
+writer for that log only. Delete the writer when that log writes `Z`.
+
+`manifest::Timestamp` is a count of seconds and not a time text. This
+section does not apply to it.
+
+Six older parts of the workspace still hold a time type or date arithmetic
+of their own. Add no user of them. One packet moves each part to
+`Timestamp` or deletes the part. The pull request of that packet deletes
+the row of the part. The pull request that deletes the last row also
+deletes this paragraph and the table.
+
+| Part | Packet |
+|---|---|
+| `status::time` | `decisions-time` |
+| `AuditTime` of `grants` | `decisions-time` |
+| `session::Timestamp` | `strict-attendance-time` |
+| The stamp of a log line in `creche-runtime` | `decisions-runtime-time` |
+| The `!!timestamp` value of the YAML reader of `agent-family` | `toml-drop-yaml-validator` |
+| The `!!timestamp` check of `manifest::yaml` | `toml-drop-yaml-manifest` |
 
 ## When two Python copies of a grammar disagree
 
@@ -918,10 +978,9 @@ test.
     `config::caregiver` define the port of another service as a constant.
     `config::endpoints` holds the names of the variables. The packet that
     makes a service read a variable deletes the constant of that service.
-  - Time. The crate needs a single type for each time that a file or a
-    wire message holds, in the RFC 3339 `date-time` form. Today `session`
-    and `status` each define one. Packet `decisions-time-type` adds the
-    single type.
+  - Rule 10. `time::Timestamp` has no differential test. No Python reader
+    has its grammar today. Packet `strict-noticeboard-time` adds that
+    reader, its vectors and the test.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
   - Shared helpers. Base64 has more than one copy. Packet
@@ -1033,6 +1092,16 @@ test.
   3. A package version with `+`, with `-` or of more than 64 bytes.
 - `crates/agent-family/AGENTS.md` lists the `CONTRACT-QUESTION` comments
   and the known gaps of the family file and of the server file.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-contracts/src/time.rs`: the contracts name RFC 3339 for a
+  time and say no more about its grammar. `time::Timestamp` refuses three
+  texts that section 5.6 of RFC 3339 permits. A change costs one check of
+  the reader and the rows of that text in the two test tables.
+  1. A fraction of more than 9 digits.
+  2. Second 60, the form of a leap second.
+  3. The year 0000. One day of that year can name an instant of the year
+     0001 through its offset, for example `0000-12-31T23:30:00-01:00`. No
+     Python reader of the platform takes such a text.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. The contract writes the pattern with `$`. In
