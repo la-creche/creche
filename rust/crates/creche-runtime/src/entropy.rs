@@ -171,9 +171,10 @@ fn fill_at(device: &Path, bytes: &mut [u8]) -> Result<(), EntropyError> {
     Err(failed_read(&error))
 }
 
-/// The error for a read of the device that failed. The text is the text of
-/// `strerror` of Python, with no number of the error: [`os_text`] holds that
-/// rule for each error type of this crate.
+/// The error for a read of the device that failed. The text of an error of
+/// the operating system is the text of `strerror` of Python, with no number
+/// of the error: [`os_text`] holds that rule. A device that ends early gets
+/// [`DEVICE_ENDED`].
 fn failed_read(error: &io::Error) -> EntropyError {
     let os_text = if error.kind() == io::ErrorKind::UnexpectedEof {
         String::from(DEVICE_ENDED)
