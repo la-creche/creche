@@ -19,9 +19,9 @@ Six things could go wrong without one red line, and each gets a check here:
 4. **A unit file that the tool refuses, and that passes.** The one line that
    passes is the line for a program that the machine does not hold. Each
    other line refuses the unit, and so does a failure with no line.
-5. **A change that needs the proof, and skips it.** `--unchanged` answers
-   yes only for a change that it can read and that holds no file of the
-   proof.
+5. **A change that needs the proof, and skips it.** `--unchanged` says no
+   for a change that git cannot read, and a wrong call is no answer. The
+   table of the changes is in `bin/tests/test_gate_workflow.py`.
 6. **A proof of another line than the one the Rust code names.** The status
    and the unit line of the script equal `EX_CONFIG` and `NO_RESTART_LINE`
    of `rust/crates/creche-contracts/src/config.rs`.
@@ -34,7 +34,6 @@ the script and the fakes call, so no test reaches the systemd of the machine.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
@@ -651,85 +650,16 @@ def test_a_tree_with_no_unit_file_fails(machine: Machine) -> None:
     assert done.of("systemd-analyze") == []
 
 
-#: A change, and whether it leaves each file of the proof as it was.
-CHANGES = [
-    (["chaperone/src/chaperone/app.py"], True),
-    (["rust/Cargo.lock", "docs/later.md"], True),
-    (["bin/quality-gate.sh"], True),
-    ([".github/actions/verdict/action.yml"], True),
-    # Only the directory at the root holds the unit files.
-    (["docs/systemd/notes.md"], True),
-    (["systemd-notes.txt"], True),
-    (["systemd/creche-one.service"], False),
-    (["systemd/creche-new@.timer"], False),
-    # Every path under systemd/ counts, a Markdown file too.
-    (["systemd/AGENTS.md"], False),
-    (["chaperone/src/chaperone/app.py", "systemd/creche-one.service"], False),
-    # git writes this path inside double quotes.
-    (['systemd/creche-"one".service'], False),
-    ([PROOF], False),
-    # The files that hold the job and ask this rule.
-    ([".github/workflows/gate.yml"], False),
-    ([".github/workflows/release.yml"], False),
-    ([".github/actions/scope/action.yml"], False),
-]
-
-
-def _git(repo: Path, *args: str) -> str:
-    leaked = (
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_OBJECT_DIRECTORY",
-    )
-    env = {name: value for name, value in os.environ.items() if name not in leaked}
-    done = subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", *args],
-        env=env | {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert done.returncode == 0, done.stdout + done.stderr
-
-    return done.stdout.strip()
-
-
-@pytest.mark.parametrize(("paths", "unchanged"), CHANGES, ids=lambda one: str(one))
-def test_only_a_change_with_no_file_of_the_proof_is_unchanged(
-    machine: Machine, paths: list[str], unchanged: bool
-) -> None:
-    _git(machine.root, "init", "-q", "-b", "main")
-    _git(machine.root, "add", "-A")
-    _git(machine.root, "commit", "-q", "-m", "the base")
-    base = _git(machine.root, "rev-parse", "HEAD")
-    for name in paths:
-        (machine.root / name).parent.mkdir(parents=True, exist_ok=True)
-        # One more line, not a new body: the script is one of the paths.
-        with (machine.root / name).open("a", encoding="utf-8") as file:
-            file.write("# changed\n")
-    _git(machine.root, "add", "-A")
-    _git(machine.root, "commit", "-q", "-m", "the change")
+@pytest.mark.parametrize("base", ["", "0" * 40, "HEAD"])
+def test_a_change_that_git_cannot_read_is_not_unchanged(machine: Machine, base: str) -> None:
+    """The throwaway tree is no repository, so git reads no change there.
+    The proof is the safe answer. `bin/tests/test_gate_workflow.py` holds
+    the table of the changes that git can read, through the scope of CI."""
     done = machine.run("--unchanged", base, "HEAD")
 
-    assert done.code == (0 if unchanged else 1), done.out + done.err
+    assert done.code == 1, done.out + done.err
     # The scope asks this on every machine: it needs no systemd.
     assert done.calls == []
-
-
-@pytest.mark.parametrize("base", ["", "0" * 40, "no-such-ref"])
-def test_a_change_that_git_cannot_read_is_not_unchanged(machine: Machine, base: str) -> None:
-    """The proof is the safe answer. This also holds in a tree that is no
-    repository."""
-    assert machine.run("--unchanged", base, "HEAD").code == 1
-
-    _git(machine.root, "init", "-q", "-b", "main")
-    _git(machine.root, "add", "-A")
-    _git(machine.root, "commit", "-q", "-m", "the base")
-
-    assert machine.run("--unchanged", base, "HEAD").code == 1
-    assert machine.run("--unchanged", "HEAD", "HEAD").code == 0
 
 
 @pytest.mark.parametrize(

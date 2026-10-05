@@ -802,9 +802,15 @@ SCOPES = [
     (["systemd/creche-attendance.service"], ("code", "false", "true")),
     (["chaperone/src/chaperone/app.py", "systemd/creche-follow.timer"], ("code", "false", "true")),
     (["bin/systemd-proof.sh"], ("code", "false", "true")),
-    # The `systemd-proof` job is left out of a docs PR, whatever this answer
-    # is.
+    (["systemd/creche-new@.timer"], ("code", "false", "true")),
+    # git writes this path inside double quotes.
+    (['systemd/creche-"one".service'], ("code", "false", "true")),
+    # Every path under systemd/ counts, a Markdown file too. The
+    # `systemd-proof` job is left out of a docs PR, whatever this answer is.
     (["systemd/AGENTS.md"], ("docs", "false", "true")),
+    # Only the directory at the root holds the unit files.
+    (["docs/systemd/notes.md"], ("docs", "false", "false")),
+    (["systemd-notes.txt"], ("code", "false", "false")),
 ]
 
 
@@ -893,6 +899,12 @@ def test_a_change_the_scope_cannot_read_is_code_and_rust(checkout: Path) -> None
     """No merge group, and no `origin/main` to take a merge-base with: the
     full suite, the cargo checks and the systemd proof are the safe answer."""
     assert _scope_of(checkout, "") == ("code", "true", "true")
+
+
+def test_a_base_that_the_clone_lacks_is_code_rust_and_systemd(checkout: Path) -> None:
+    """A merge group names its base. A clone that lacks that commit reads no
+    change, and each check is then the safe answer."""
+    assert _scope_of(checkout, "0" * 40) == ("code", "true", "true")
 
 
 @pytest.mark.parametrize("fault", ["absent", "not executable", "fails"])

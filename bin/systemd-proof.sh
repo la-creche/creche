@@ -62,15 +62,13 @@ RESTART_RULE=(
   "--property=$NO_RESTART_LINE"
 )
 
-#: The three test units, one for each case. The names are fixed, and no
-#: deployment has a unit with one of them.
+#: The three test units, one for each case. No deployment has these names.
 MAIN_REFUSES="creche-proof-main-78.service"
 MAIN_FAILS="creche-proof-main-1.service"
 CHECK_REFUSES="creche-proof-pre-78.service"
 TEST_UNITS=("$MAIN_REFUSES" "$MAIN_FAILS" "$CHECK_REFUSES")
 
-#: The seconds that each unit gets before the first read: five times the
-#: delay of a restart.
+#: The seconds before the first read: five times the delay of a restart.
 WATCH_SECONDS=5
 
 #: How many times the proof reads a unit that must start again, one second

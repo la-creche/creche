@@ -314,8 +314,7 @@ jobs:
   # No `container:` key: a container has no systemd as process 1. On a
   # machine without one of the two the script fails. It does not skip.
   #
-  # The time limit: the script waits at most 60 s for each unit that must
-  # start again, and a job has 6 hours by default.
+  # The time limit: a job has 6 hours by default, and the proof needs minutes.
   systemd-proof:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
