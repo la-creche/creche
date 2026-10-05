@@ -310,8 +310,7 @@ async def test_a_wrong_method_gets_405(listener: Listener) -> None:
 # that demands the header costs this scenario, and each caller that sends
 # none.
 #
-# The door also reads such a body today, and the chaperone answers 422 to
-# it. No scenario holds either.
+# The chaperone answers 422 to such a body today. No scenario holds that.
 async def test_attendance_reads_a_body_with_no_content_type(
     owui: OwuiStack, attendance_api: httpx.AsyncClient
 ) -> None:
@@ -326,6 +325,27 @@ async def test_attendance_reads_a_body_with_no_content_type(
     assert answer.status_code == httpx.codes.CREATED, answer.text
     assert answer.json()["session"] == session
     assert owui.tree.sessions_of(FAMILY) == [session]
+
+
+# CONTRACT-QUESTION: no contract says what the door does with a chat request
+# that has no `Content-Type` header. Reading taken: the door reads the body
+# as JSON and runs the turn, as it does today. A reading that demands the
+# header costs this scenario.
+async def test_the_door_reads_a_body_with_no_content_type(
+    owui: OwuiStack, door: httpx.AsyncClient
+) -> None:
+    """A chat request with no such header runs its turn, and the turn settles."""
+    chat = chat_id()
+    body = json.dumps(chat_body(PROMPT, stream=False)).encode()
+    request = door.build_request(
+        "POST", CHAT_PATH, headers=owui_headers(chat, message_id()), content=body
+    )
+    assert CONTENT_TYPE not in request.headers, "this scenario sends no such header"
+
+    answer = await door.send(request)
+
+    assert answer.status_code == httpx.codes.OK, answer.text
+    await await_settled(owui.tree, session_of(chat))
 
 
 # CONTRACT-QUESTION: contract 02 §14 gives `attendance` the code

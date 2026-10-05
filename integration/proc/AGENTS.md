@@ -667,11 +667,12 @@ the text of the failure. Work down this list.
     credential, each other listener answers 404.
 - **CONTRACT-QUESTION, a JSON body with no `Content-Type` header.**
   Contract 02 §3 rule 3 says that a request body is JSON. It names no
-  header. The suite holds that `attendance` reads such a body, as it does
-  today. A change costs one scenario in `test_proc_edges.py`.
+  header. No contract says what the Open WebUI door does with such a body.
+  The suite holds that `attendance` and the door each read such a body, as
+  they do today. A change costs one scenario for each service in
+  `test_proc_edges.py`.
 
-  The Open WebUI door also reads such a body today. The chaperone answers
-  422 to it. No scenario holds either.
+  The chaperone answers 422 to such a body today. No scenario holds that.
 - **CONTRACT-QUESTION, a body that is not JSON.** Contract 02 §14 gives
   `attendance` the code `bad_request` with status 400. No contract gives the
   Open WebUI door or the chaperone an answer, and contract 04 §5 has no row
