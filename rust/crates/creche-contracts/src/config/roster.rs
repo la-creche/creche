@@ -25,8 +25,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use super::shape::MapOnly;
 use super::{AtReload, AtStart, Checked, FailureAction};
+use crate::slot::MapOnly;
 
 /// What starts an env value that refers to a secret of the chaperone.
 const SECRET_PREFIX: &str = "secret:";

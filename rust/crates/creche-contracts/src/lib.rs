@@ -16,6 +16,7 @@ pub mod manifest;
 pub mod secret;
 pub mod server;
 pub mod session;
+mod slot;
 pub mod status;
 pub mod time;
 pub mod untrusted;
