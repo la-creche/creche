@@ -175,7 +175,9 @@ pub fn digest(message: &[u8]) -> [u8; DIGEST_BYTES] {
         compress(&mut state, block);
     }
 
-    // A slice has `isize::MAX` bytes at most, so the count of bits fits.
+    // FIPS 180-4 defines the digest for a message of less than 2^64 bits,
+    // which is 2^61 bytes. No supported host holds a slice of that length.
+    // For a longer slice, the count of bits wraps.
     let bits = u64::try_from(message.len())
         .unwrap_or(u64::MAX)
         .wrapping_mul(8);
