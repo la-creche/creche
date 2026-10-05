@@ -1,0 +1,13 @@
+[package]
+name = "creche-util"
+description = "The shared helpers of the creche workspace: SHA-256, hex text and the white space rules of Python"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# No `[dependencies]` table: a helper of this crate needs `std` only
+# (AGENTS.md of this crate, rule 4).
