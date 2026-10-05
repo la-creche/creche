@@ -15,7 +15,7 @@
 //! |---|---|
 //! | [`site`] | The site file, `/etc/creche/site.env`. |
 //! | [`attendance`], [`caregiver`], [`chaperone`], [`door_owui`], [`door_trigger`], [`noticeboard`], [`intake`] | The config of one daemon. |
-//! | [`endpoints`] | The names of five variables that hold the address of another service, and the URL type of a plane. |
+//! | [`endpoints`] | The names of some variables that hold the address of another service, and the URL type of a plane. |
 //! | [`roster`] | The roster of MCP servers that the chaperone reads. |
 //! | [`mounts`] | `runtime.json`, `creds.json` and the env file of the playpen. |
 //!

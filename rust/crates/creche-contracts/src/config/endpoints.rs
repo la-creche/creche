@@ -1,4 +1,4 @@
-//! The address of another service: the names of five variables, and the URL
+//! The address of another service: the names of some variables, and the URL
 //! type of a plane.
 //!
 //! A service takes each address of another service from its environment
@@ -42,12 +42,14 @@ pub const PEP_APPROVAL_URL: &str = "PEP_APPROVAL_URL";
 const LEADING_ZERO: char = '0';
 
 // CONTRACT-QUESTION: contract 01 §3.7 rule 4 names the two plane endpoints
-// as `host:port`. No contract gives the URL of a plane a grammar, and no
-// Python reader holds one. The type takes the narrowest reading: `http://`,
-// a host, a colon and a port, and no other byte. The port is decimal digits
-// with no sign and no zero at its start, so one endpoint has one text. A
-// laxer reading, for example a final slash or a port of `08300`, costs one
-// function: `from_str`.
+// as `host:port`. Contract 03 §7 gives the two URLs as fixed values of the
+// form `http://<host>:<port>`. No contract gives the URL of a plane a
+// grammar, and no Python reader holds one. The type takes the narrowest
+// reading: `http://`, a host, a colon and a port, and no other byte. The
+// port is decimal digits with no sign and no zero at its start, so one port
+// has one text. A host name keeps its letter case. A laxer reading, for
+// example a final slash or a port of `08300`, costs one function:
+// `from_str`.
 /// The URL of a plane: `http://<host>:<port>`, and no other byte.
 ///
 /// The host has the form of a [`LanAddress`]: an IPv4 address or a host
@@ -55,9 +57,10 @@ const LEADING_ZERO: char = '0';
 /// zero at its start. The type refuses `https`, a user part, a path, a
 /// query and a fragment. A final slash is a path.
 ///
-/// One endpoint thus has one text. [`PlaneUrl::endpoint`] gives the
-/// `host:port` of contract 01 §3.7 rule 4, and `Display` gives the text of
-/// the URL again.
+/// One port thus has one text. A host name keeps its letter case, so two
+/// texts that differ only in that case give two values.
+/// [`PlaneUrl::endpoint`] gives the `host:port` of contract 01 §3.7 rule 4,
+/// and `Display` gives the text of the URL again.
 ///
 /// ```
 /// use creche_contracts::config::endpoints::PlaneUrl;
@@ -315,6 +318,17 @@ mod tests {
         ] {
             assert_eq!(text.parse::<PlaneUrl>().unwrap_err(), error, "{text:?}");
         }
+    }
+
+    #[test]
+    fn a_host_name_keeps_its_letter_case() {
+        let lower: PlaneUrl = "http://localhost:80".parse().unwrap();
+        let upper: PlaneUrl = "http://LOCALHOST:80".parse().unwrap();
+
+        assert_ne!(lower, upper);
+        assert_eq!(lower.endpoint(), "localhost:80");
+        assert_eq!(upper.endpoint(), "LOCALHOST:80");
+        assert_eq!(upper.to_string(), "http://LOCALHOST:80");
     }
 
     #[test]

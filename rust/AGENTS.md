@@ -396,7 +396,7 @@ and never a raw text.
 |---|---|
 | `site` | The site file: `SiteFile` is the raw form, and `Site` is the valid form. |
 | `attendance`, `caregiver`, `chaperone`, `door_owui`, `door_trigger`, `noticeboard`, `intake` | The config of one daemon. |
-| `endpoints` | The names of five variables that hold the address of another service. A daemon module reads such a name from this module. `PlaneUrl` is the URL of a plane. A plane is a service of the host that each sandbox calls: the chaperone and LiteLLM. |
+| `endpoints` | The names of some variables that hold the address of another service. A daemon module reads such a name from this module. `PlaneUrl` is the URL of a plane. A plane is a service of the host that each sandbox calls: the chaperone and LiteLLM. |
 | `roster` | The roster of the chaperone. `RawRoster` takes its tree through `serde`. |
 | `mounts` | `runtime.json`, `creds.json` and the env file of the playpen. |
 
@@ -1499,11 +1499,14 @@ test.
   13. `mounts::Credentials`, contract 03 §12. The contract does not say what
       a reader does with a secret that is not a JSON string. The type refuses
       it, and an empty secret. The Python reader makes text of each value.
-  14. `endpoints::PlaneUrl`, contract 01 §3.7 rule 4. The contract names the
-      two plane endpoints as `host:port`. No contract gives the URL of a
-      plane a grammar. The type takes `http://`, a host and a port, and no
-      other byte. The port has no sign and no zero at its start. No Python
-      reader holds this grammar, so no vector covers the type.
+  14. `endpoints::PlaneUrl`, contract 01 §3.7 rule 4 and contract 03 §7. The
+      first section names the two plane endpoints as `host:port`. The second
+      section gives the two URLs as fixed values of the form
+      `http://<host>:<port>`. No contract gives the URL of a plane a
+      grammar. The type takes `http://`, a host and a port, and no other
+      byte. The port has no sign and no zero at its start. A host name
+      keeps its letter case. No Python reader holds this grammar, so no
+      vector covers the type.
 - No type reads the text of a roster file, and no type writes it. PyYAML
   reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
   the crate selects one. `roster::RawRoster` then takes its tree.
