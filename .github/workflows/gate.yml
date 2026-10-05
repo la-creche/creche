@@ -1,13 +1,16 @@
 # PR gate: lint, the full suite, the playpen's vitest suite, the process-level
-# suite and the Rust checks, as jobs that run at once on separate runners.
+# suite, the Rust checks and the Rust coverage rule, as jobs that run at once
+# on separate runners.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
 #           ├── playpen     code   the TypeScript suite and its build
 #           ├── proc        code   the process-level suite, each service
 #           │                      as a process, on the built playpen
-#           └── rust        code   cargo fmt, clippy, deny and test, for a
-#                                  change under rust/ or vectors/. No such
-#                                  change: no cargo step
+#           ├── rust        code   cargo fmt, clippy, deny and test, for a
+#           │                      change under rust/ or vectors/. No such
+#           │                      change: no cargo step
+#           └── rust-coverage  code   the tests with cargo llvm-cov and the
+#                                  coverage rule, for the same change
 #   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
 #                                 │   docs PR the tests marked `docs`
 #                                 └── gate   red unless every job passed
@@ -26,7 +29,8 @@
 #
 # A PR of nothing but docs runs `bin/quality-gate.sh --docs` in the lint job,
 # lint and only the tests that read a doc: no shard, no playpen job, no proc
-# job and no rust job (bin/lib/docsrule.sh, the rule the hook reads too).
+# job, no rust job and no rust-coverage job (bin/lib/docsrule.sh, the rule the
+# hook reads too).
 #
 # Every shard runs the whole of pyproject.toml's `testpaths` with
 # `--shard K/N` (conftest.py): a test's own id puts it in exactly one shard.
@@ -35,8 +39,8 @@
 #
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
-# release.yml runs the same `tests`, `playpen`, `proc` and `rust` jobs after
-# the merge.
+# release.yml runs the same `tests`, `playpen`, `proc`, `rust` and
+# `rust-coverage` jobs after the merge.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -291,10 +295,85 @@ jobs:
       - run: bin/rust-gate.sh --tests
         if: needs.scope.outputs.rust != 'false'
 
+  # The coverage rule of the Cargo workspace: bin/rust-coverage.sh
+  # (rust/AGENTS.md, "The coverage rule"). The script runs the tests with
+  # `cargo llvm-cov`. It fails when a region or a line of a file in
+  # rust/coverage-files.txt ran in no test. It prints one line with the
+  # counts of each crate.
+  #
+  # The job takes the rule of the `rust` job: it runs on every code change,
+  # and on a change that touches nothing under rust/ every step but the
+  # checkout is skipped. The job is then a success.
+  #
+  # The toolchain is the one rust/rust-toolchain.toml names. `rustup
+  # component add` gives it the LLVM tools that cargo-llvm-cov calls. The
+  # toolchain file does not name that component: no other job needs it.
+  #
+  # The job keeps no cache: each run builds the workspace one time, with the
+  # measurement in each crate. The time limit stops a test that does not end
+  # there. A job has 6 hours by default.
+  rust-coverage:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # As in the `rust` job: no build here starts from the last one.
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: toolchain
+        if: needs.scope.outputs.rust != 'false'
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          rustup component add llvm-tools-preview
+          cargo --version
+
+      # cargo-llvm-cov: the program behind the `cargo llvm-cov` step of
+      # bin/rust-coverage.sh. rustup does not install it, and no action does
+      # here. The step takes the archive from a release of the cargo-llvm-cov
+      # repository. It checks the SHA-256 of the archive against the constant
+      # before the unpack, so an archive that changed stops the job. The
+      # archive holds the program and no directory.
+      #
+      # To take another version, change the two constants together. Compute
+      # the SHA-256 of the new archive, and compare it with the digest that
+      # the release page shows for that archive.
+      # bin/tests/test_gate_workflow.py pins both.
+      - name: cargo-llvm-cov
+        if: needs.scope.outputs.rust != 'false'
+        working-directory: rust
+        env:
+          LLVM_COV_VERSION: "0.9.1"
+          LLVM_COV_SHA256: "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522"
+        run: |
+          set -euo pipefail
+          name="cargo-llvm-cov-x86_64-unknown-linux-musl"
+          archive="$RUNNER_TEMP/$name.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v$LLVM_COV_VERSION/$name.tar.gz"
+          found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          if [[ "$found" != "$LLVM_COV_SHA256" ]]; then
+            echo "cargo-llvm-cov: the archive has the SHA-256 $found, not $LLVM_COV_SHA256" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/cargo-llvm-cov"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-llvm-cov" cargo-llvm-cov
+          echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
+          PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
+
+      - run: bin/rust-coverage.sh
+        if: needs.scope.outputs.rust != 'false'
+
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, playpen, proc, rust]
+    needs: [scope, lint, tests, playpen, proc, rust, rust-coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:

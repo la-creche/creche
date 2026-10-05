@@ -34,6 +34,12 @@ checkout and is still a success, so `gate` reads green. The toolchain is the
 one `rust/rust-toolchain.toml` names. The job takes `cargo-deny` from a
 release archive, and it checks the SHA-256 of that archive before the unpack.
 
+The `rust-coverage` job runs `bin/rust-coverage.sh` for the same change, and
+skips its steps as the `rust` job does. It adds the LLVM tools to the same
+toolchain, and it takes `cargo-llvm-cov` from a release archive that it
+checked in the same way. `gate` needs the job, so a file of
+`rust/coverage-files.txt` with code that no test runs blocks a merge.
+
 The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the playpen first,
 and a test that skips is a failure there. A run in which every test skips
@@ -159,6 +165,69 @@ PATH="$RUNNER_TEMP/cargo-deny:$PATH" cargo deny --version
 #: Each key of the step. One more key can change what a failure of the step
 #: does, for example `continue-on-error` or `shell`.
 DENY_KEYS = {"name", "if", "working-directory", "env", "run"}
+
+#: The job that holds the coverage rule of the Rust workspace
+#: (`rust/AGENTS.md`, "The coverage rule").
+COVERAGE_JOB = "rust-coverage"
+
+#: The whole of that rule: one script, with no flag. `--report` would check
+#: a report of an earlier run, and `--branch` needs a nightly toolchain.
+COVERAGE_RUN = "bin/rust-coverage.sh"
+
+#: The whole text of the toolchain step of that job. The first line installs
+#: the toolchain that `rust/rust-toolchain.toml` names. The second line adds
+#: the LLVM tools to it, which `cargo llvm-cov` calls. The toolchain file
+#: does not change.
+COVERAGE_TOOLCHAIN_RUN = """\
+rustup toolchain install --no-self-update
+rustup component add llvm-tools-preview
+cargo --version
+"""
+
+#: The step that gives the job `cargo-llvm-cov`, the program behind the
+#: `cargo llvm-cov` step of `bin/rust-coverage.sh`.
+COVERAGE_STEP = "cargo-llvm-cov"
+
+#: The version, and the SHA-256 of its release archive for the runner:
+#: `cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz` of the release
+#: `v<version>`. To take another version, compute the SHA-256 of the new
+#: archive and compare it with the digest that the release page shows. Then
+#: change the two values here and in the two workflow files.
+COVERAGE_ENV = {
+    "LLVM_COV_VERSION": "0.9.1",
+    "LLVM_COV_SHA256": "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522",
+}
+
+#: The whole text of the step, as for `cargo-deny`: the compare is before the
+#: unpack, and the unpack is before the line that puts the program on PATH.
+#: The archive holds the program and no directory, so the unpack names the
+#: one member that it takes.
+COVERAGE_INSTALL_RUN = """\
+set -euo pipefail
+name="cargo-llvm-cov-x86_64-unknown-linux-musl"
+archive="$RUNNER_TEMP/$name.tar.gz"
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \\
+  --output "$archive" \\
+  "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v$LLVM_COV_VERSION/$name.tar.gz"
+found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+if [[ "$found" != "$LLVM_COV_SHA256" ]]; then
+  echo "cargo-llvm-cov: the archive has the SHA-256 $found, not $LLVM_COV_SHA256" >&2
+  exit 1
+fi
+mkdir -p "$RUNNER_TEMP/cargo-llvm-cov"
+tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-llvm-cov" cargo-llvm-cov
+echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
+PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
+"""
+
+#: Each key of the job, and each key of its three steps after the checkout.
+#: One more key can make a red step green, for example `continue-on-error`.
+COVERAGE_JOB_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
+COVERAGE_STEP_KEYS = [
+    {"name", "if", "working-directory", "run"},
+    {"name", "if", "working-directory", "env", "run"},
+    {"if", "run"},
+]
 
 #: The two files the cargo cache is good for.
 CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
@@ -322,7 +391,8 @@ def test_the_docs_scope_runs_no_shard_no_playpen_and_no_rust(
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
     only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
 
-    assert only_code == {"tests", "playpen", "proc", "rust"}
+    assert only_code == {"tests", "playpen", "proc", "rust", COVERAGE_JOB}
+    assert only_code == set(DOCS), "the verdict table of this file names other jobs"
     assert {name for name, rule in by_scope.items() if rule is None} == {"scope", "lint"}
 
 
@@ -339,7 +409,7 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
     """A change to one file's shards, playpen steps, process suite or Rust
     steps that misses the other would let a merge pass a release its PR could
     not, or the reverse."""
-    for name in ("tests", "playpen", "proc", "rust"):
+    for name in ("tests", "playpen", "proc", "rust", COVERAGE_JOB):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
 
 
@@ -485,6 +555,65 @@ def test_the_cargo_cache_keeps_the_index_copy_until_a_keyed_file_changes(
     assert cache["with"]["key"] == CACHE_KEY
 
 
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_a_change_outside_rust_skips_every_coverage_step_and_not_the_job(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """As for the `rust` job: the job runs on each code change, and each step
+    after the checkout carries the rule. The job has no key that hides a red
+    step."""
+    job = jobs[COVERAGE_JOB]
+    checkout, *steps = job["steps"]
+
+    assert set(job) == COVERAGE_JOB_KEYS
+    assert job["needs"] == "scope"
+    assert job["if"] == ONLY_CODE
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert "if" not in checkout
+    assert [set(step) for step in steps] == COVERAGE_STEP_KEYS
+    for step in steps:
+        assert step["if"] == ONLY_RUST, f"{step.get('name') or step['run']} always runs"
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_coverage_job_runs_the_script_on_the_pinned_toolchain(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """One copy of the cargo line and of the rule: `bin/rust-coverage.sh`.
+    The step gives the script no flag. rustup takes the toolchain from
+    `rust/rust-toolchain.toml`, so the step runs inside `rust/` and names no
+    toolchain."""
+    _checkout, toolchain, _install, script = jobs[COVERAGE_JOB]["steps"]
+
+    assert toolchain["working-directory"] == RUST_DIR
+    assert toolchain["run"] == COVERAGE_TOOLCHAIN_RUN
+    assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
+    assert script["run"] == COVERAGE_RUN
+    assert (REPO / COVERAGE_RUN).is_file()
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_coverage_job_takes_cargo_llvm_cov_from_an_archive_that_it_checked(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """No action installs `cargo-llvm-cov`, so no commit pin holds the
+    program. The SHA-256 of the archive is the pin, as for `cargo-deny`. The
+    test holds the whole text of the step and the two constants."""
+    _checkout, _toolchain, install, _script = jobs[COVERAGE_JOB]["steps"]
+
+    assert install["name"] == COVERAGE_STEP
+    assert install["env"] == COVERAGE_ENV
+    assert install["working-directory"] == RUST_DIR
+    assert install["run"] == COVERAGE_INSTALL_RUN
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_coverage_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: str) -> None:
+    """A test that does not end under the measurement holds the job, and a
+    job with no limit has six hours."""
+    assert 0 < jobs[COVERAGE_JOB]["timeout-minutes"] <= 30
+
+
 def test_the_release_skips_rust_only_over_a_commit_whose_run_passed() -> None:
     """As for `docs`: a push never skips the Rust checks over a tree whose
     Rust failed, or is still in, its own run."""
@@ -594,7 +723,7 @@ def test_a_shard_outside_one_to_n_is_refused(text: str) -> None:
 
 def _needs(scope: str | None, results: dict[str, str]) -> str:
     """`toJSON(needs)` as the last job sees it: every job a success but for
-    the ones `results` names. Both workflows need the same six jobs."""
+    the ones `results` names. Both workflows need the same seven jobs."""
     names = sorted(set(JOBS) - {GATE_NAME})
     assert names == sorted(set(RELEASE_JOBS) - {RELEASE_NAME})
     needs = {name: {"result": results.get(name, "success"), "outputs": {}} for name in names}
@@ -605,7 +734,13 @@ def _needs(scope: str | None, results: dict[str, str]) -> str:
 
 
 #: What a docs PR skips. A code PR skips nothing.
-DOCS = {"tests": "skipped", "playpen": "skipped", "proc": "skipped", "rust": "skipped"}
+DOCS = {
+    "tests": "skipped",
+    "playpen": "skipped",
+    "proc": "skipped",
+    "rust": "skipped",
+    COVERAGE_JOB: "skipped",
+}
 
 #: (what the jobs did, whether `gate` is green)
 VERDICTS = [
@@ -615,6 +750,7 @@ VERDICTS = [
     (_needs("code", {"tests": "failure"}), False),
     (_needs("code", {"playpen": "cancelled"}), False),
     (_needs("code", {"rust": "failure"}), False),
+    (_needs("code", {COVERAGE_JOB: "failure"}), False),
     (_needs("code", {"proc": "failure"}), False),
     (_needs("code", {"lint": "failure"}), False),
     (_needs("docs", DOCS | {"lint": "failure"}), False),
@@ -624,11 +760,15 @@ VERDICTS = [
     # The Rust checks run on every code PR. The job skips its own steps when
     # the PR touches nothing under rust/, and is a success.
     (_needs("code", {"rust": "skipped"}), False),
+    # The coverage job does the same, and a time limit cancels it.
+    (_needs("code", {COVERAGE_JOB: "skipped"}), False),
+    (_needs("code", {COVERAGE_JOB: "cancelled"}), False),
     # The process suite is in no shard. A code PR on which it did not run
     # is red.
     (_needs("code", {"proc": "skipped"}), False),
     # A job that ran on a docs PR is not what the scope asks for.
     (_needs("docs", DOCS | {"rust": "success"}), False),
+    (_needs("docs", DOCS | {COVERAGE_JOB: "success"}), False),
     (_needs("docs", DOCS | {"proc": "success"}), False),
     # No scope: the scope job failed and everything behind it was skipped.
     (_needs(None, DOCS | {"scope": "failure"}), False),
