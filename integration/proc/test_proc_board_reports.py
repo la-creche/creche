@@ -603,8 +603,9 @@ def test_a_value_that_is_not_valid_refuses_to_start(
     range for one, or an exit code for a value outside it. Reading taken: a
     port that is no number and a page size of 0 each refuse to start, with
     a code that is not 0, as for each other refused start of this suite.
-    The noticeboard exits with 2 and writes one line on stderr. A change to
-    one fixed code costs one assertion here.
+    The noticeboard writes one line on stderr that names the variable. Its
+    code is the code of each other start that its config refuses. A change
+    to one fixed code costs one assertion here.
     """
     tree = board_prepared.tree
     port = board_prepared.supervisor.free_port()
