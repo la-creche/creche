@@ -359,8 +359,9 @@ impl Ended {
 
 /// A child program that ran to its end.
 ///
-/// `Debug` prints the count of the bytes of each stream and never a byte: a
-/// child can write a secret to its output.
+/// `Debug` prints how the child ended. It prints no byte of a stream and no
+/// count of the bytes: a child can write a secret to its output, and the
+/// count is then the length of that secret.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Finished {
     /// How the child ended. An exit status that is not 0 is a result here
@@ -376,9 +377,7 @@ impl fmt::Debug for Finished {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Finished")
             .field("ended", &self.ended)
-            .field("stdout", &format_args!("<{} bytes>", self.stdout.len()))
-            .field("stderr", &format_args!("<{} bytes>", self.stderr.len()))
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -879,17 +878,19 @@ mod tests {
     }
 
     #[test]
-    fn the_debug_of_a_result_prints_no_byte_of_the_output() {
+    fn the_debug_of_a_result_prints_no_byte_and_no_count() {
         let finished = Finished {
             ended: Ended::Signal(9),
             stdout: SECRET_VALUE.as_bytes().to_vec(),
             stderr: b"warning".to_vec(),
         };
+        let text = format!("{finished:?}");
 
-        assert_eq!(
-            format!("{finished:?}"),
-            "Finished { ended: Signal(9), stdout: <28 bytes>, stderr: <7 bytes> }"
-        );
+        assert_eq!(text, "Finished { ended: Signal(9), .. }");
+        // The output can be a secret, so the text holds no count of the
+        // bytes of a stream: not the 28 of stdout and not the 7 of stderr.
+        assert!(!text.contains(&SECRET_VALUE.len().to_string()), "{text}");
+        assert!(!text.contains('7'), "{text}");
     }
 
     #[test]
