@@ -684,16 +684,21 @@ fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
 }
 
+// CONTRACT-QUESTION: contract 01 §6.1 rule 1 says what a reader of the tree
+// gets. It gives the swap no rule for a look at `target` or at
+// `<target>.old` that the system refuses, for example through a symlink
+// into a directory that the process cannot enter. `Path.exists` of Python
+// 3.12 and of Python 3.13 raises there, so the Python copy moves no entry.
+// `Path.exists` of Python 3.14 reads each error as "no entry". The reading
+// here is the stricter one: the swap is an error, and no entry moves. A
+// change to the other reading costs one function, `says_no_entry`.
+
 /// Whether an entry is at `path`. The look follows a symlink.
 ///
 /// Three answers of the system say that no entry is there: no such entry, a
 /// part of the path that is no directory, and a chain of symlinks with no
-/// end. Each other error is the error, for example the error for a
-/// directory that the process cannot enter.
-///
-/// `Path.exists` of Python 3.12 and of Python 3.13 reads those three answers
-/// as absent and raises for each other error. `Path.exists` of Python 3.14
-/// reads each error as absent. The function takes the stricter reading.
+/// end. `Path.exists` of each supported Python version reads those three as
+/// absent. Each other error is the error.
 fn entry_at(path: &Path) -> io::Result<bool> {
     match fs::metadata(path) {
         Ok(_) => Ok(true),

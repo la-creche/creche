@@ -191,6 +191,13 @@ reason. The packet that writes the three bodies obeys these rules:
   The Python writer of the grant file uses another name. This crate names
   each temporary file `.<name>.<pid>.<count>.tmp`, as the Python `attendance`
   does. A change of the name costs one function, `temp_name`.
+- This `CONTRACT-QUESTION` comment is open in `src/atomic.rs`: contract 01
+  §6.1 gives the swap of a directory no rule for a `stat` that the system
+  refuses. An example is a `stat` through a symlink into a directory that
+  the process cannot enter. The Python copy raises there on Python 3.12 and
+  on Python 3.13. On Python 3.14 it reads the refusal as "no entry".
+  `replace_dir` is an error there, and no entry moves. A change costs one
+  function, `says_no_entry`.
 - This `CONTRACT-QUESTION` comment is open in `src/signals.rs`: contract 02
   §3 rule 8 gives SIGHUP its job and does not say how many reloads follow
   two signals. `Hangups` gives one item for all the signals that arrive
