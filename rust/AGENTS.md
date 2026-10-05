@@ -882,6 +882,10 @@ test.
     crate.
   - Rule 13. Some values have two sources today. One example is the field
     `zone` of `quiet.daily` in the family file: the host has a time zone.
+    A second example is the name of each directory below the state root,
+    for example `families`. `creche_contracts::config` holds such a name,
+    and `creche_runtime::layout` holds a copy. No packet has that change
+    yet.
   - "The panic rule", clause 8. The gate has no check for this clause yet.
     Packet `decisions-gate-early` adds one.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only

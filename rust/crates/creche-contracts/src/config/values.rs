@@ -12,7 +12,8 @@
 //! documents and the registry checkout. The module of a daemon reads them
 //! from here and holds no copy of the text. A default path of one daemon
 //! below the state root takes the text of the state root from
-//! `default_state_root!`.
+//! `default_state_root!`. A default token file takes the text of its
+//! directory from `default_tokens_dir!`.
 
 use std::error::Error;
 use std::fmt;
@@ -774,9 +775,30 @@ macro_rules! default_state_root {
 }
 pub(super) use default_state_root;
 
+/// The text of the default token directory, for the `concat!` of a file in
+/// it. A service keeps its token files and its key files there.
+macro_rules! default_tokens_dir {
+    () => {
+        concat!($crate::config::values::default_state_root!(), "/tokens")
+    };
+}
+pub(super) use default_tokens_dir;
+
+/// The text of the name that `FAMILIES_DIR_NAME` holds, for the `concat!`
+/// of a path.
+macro_rules! families_dir_name {
+    () => {
+        "families"
+    };
+}
+
 /// The state root when no variable and no flag names one. The platform keeps
 /// its state below this directory.
 pub(super) const DEFAULT_STATE_ROOT: &str = default_state_root!();
+
+/// The name of the directory below a state root that holds one directory
+/// for each family.
+pub(super) const FAMILIES_DIR_NAME: &str = families_dir_name!();
 
 /// The Unix socket of `attendance` below the default state root. A client
 /// calls this socket when no variable and no flag names a target (contract
@@ -786,7 +808,8 @@ pub(super) const DEFAULT_ATTENDANCE_SOCKET: &str =
 
 /// The directory of the status documents below the default state root. A
 /// door reads the status document of each family there.
-pub(super) const DEFAULT_FAMILIES_DIR: &str = concat!(default_state_root!(), "/families");
+pub(super) const DEFAULT_FAMILIES_DIR: &str =
+    concat!(default_state_root!(), "/", families_dir_name!());
 
 /// The registry checkout when no variable names one.
 pub(super) const DEFAULT_REGISTRY_ROOT: &str = "/srv/agents/registry";
@@ -1397,8 +1420,9 @@ mod tests {
         let registry: DirPath = DEFAULT_REGISTRY_ROOT.parse().unwrap();
         let root: DirPath = DEFAULT_STATE_ROOT.parse().unwrap();
 
+        assert_eq!(FAMILIES_DIR_NAME, "families");
         assert_eq!(families.as_str(), "/srv/agents/state/rework/families");
-        assert_eq!(families, root.child("families"));
+        assert_eq!(families, root.child(FAMILIES_DIR_NAME));
         assert_eq!(registry.as_str(), "/srv/agents/registry");
     }
 

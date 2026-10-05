@@ -25,7 +25,7 @@ use serde_json::Value;
 
 use super::pytext;
 use super::shape::MapOnly;
-use super::values::{DirPath, PathError};
+use super::values::{DirPath, FAMILIES_DIR_NAME, PathError};
 use crate::ids::{SandboxName, SandboxNameError};
 use crate::secret::Secret;
 
@@ -1009,9 +1009,6 @@ pub const SANDBOX_VAR: &str = "AGENT_SANDBOX";
 /// What separates a name from its value in the env file.
 const ASSIGN: char = '=';
 
-/// The directory of each family under the state root.
-const FAMILIES_DIR: &str = "families";
-
 /// The credentials directory of a family.
 const CREDS_DIR: &str = "creds";
 
@@ -1121,7 +1118,7 @@ impl PlaypenEnv {
     #[must_use]
     pub fn for_sandbox(state_root: &DirPath, sandbox: &SandboxName) -> Self {
         let family = state_root
-            .child(FAMILIES_DIR)
+            .child(FAMILIES_DIR_NAME)
             .child(sandbox.family().as_str());
 
         Self {

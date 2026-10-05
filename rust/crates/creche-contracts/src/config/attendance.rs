@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use super::values::TokenFilePath;
 use super::values::{BindHost, DirPath, HttpUrl, LanAddress, Port, Seconds, SocketPath};
-use super::values::{DEFAULT_ATTENDANCE_SOCKET, DEFAULT_STATE_ROOT, default_state_root};
+use super::values::{DEFAULT_ATTENDANCE_SOCKET, DEFAULT_STATE_ROOT, default_tokens_dir};
 use super::{
     AtReload, AtStart, Checked, ConfigError, ConfigErrors, Env, FailureAction, LAN_ADDRESS, Parsed,
     ProcessConfig, all2, all3, all4,
@@ -50,7 +50,7 @@ pub const LOCK_POLL_S: &str = "SESSIOND_LOCK_POLL_S";
 const DEFAULT_SESSIONS_ROOT: &str = "/srv/agents/sessions";
 const DEFAULT_WORK_ROOT: &str = "/srv/agents/work";
 const DEFAULT_LOG_DIR: &str = "/var/log/sessiond";
-const DEFAULT_OWUI_KEY_FILE: &str = concat!(default_state_root!(), "/tokens/owui-api.key");
+const DEFAULT_OWUI_KEY_FILE: &str = concat!(default_tokens_dir!(), "/owui-api.key");
 
 /// The optional LAN port of `attendance` (contract 02 §3 rule 9).
 const DEFAULT_LAN_PORT: &str = "8350";

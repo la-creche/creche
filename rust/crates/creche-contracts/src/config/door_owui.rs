@@ -7,7 +7,7 @@
 
 use super::values::{
     BindAddress, DEFAULT_ATTENDANCE_SOCKET, DEFAULT_FAMILIES_DIR, DirPath, TokenFilePath,
-    default_state_root,
+    default_tokens_dir,
 };
 use super::{
     AtReload, AtStart, AttendanceTarget, Checked, ConfigError, ConfigErrors, Env, FailureAction,
@@ -32,7 +32,7 @@ pub const FAMILIES_DIR: &str = "DOOR_OWUI_FAMILIES_DIR";
 /// The bind of the door when the variable is not set (contract 02 §3 rule
 /// 9 gives the port).
 const DEFAULT_BIND: &str = "127.0.0.1:8340";
-const DEFAULT_TOKEN_FILE: &str = concat!(default_state_root!(), "/tokens/door-owui.token");
+const DEFAULT_TOKEN_FILE: &str = concat!(default_tokens_dir!(), "/door-owui.token");
 
 /// The config of the Open WebUI door: each value that the door reads from
 /// its environment.

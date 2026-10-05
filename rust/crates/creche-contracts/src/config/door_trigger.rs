@@ -10,7 +10,7 @@
 
 use super::values::{
     BindAddress, DEFAULT_ATTENDANCE_SOCKET, DEFAULT_FAMILIES_DIR, DEFAULT_REGISTRY_ROOT, DirPath,
-    LanAddress, Port, Seconds, TokenFilePath, default_state_root,
+    LanAddress, Port, Seconds, TokenFilePath, default_state_root, default_tokens_dir,
 };
 use super::{
     AtReload, AtStart, AttendanceTarget, Checked, ConfigError, ConfigErrors, Env, FailureAction,
@@ -38,7 +38,7 @@ pub const REFRESH_S: &str = "DOOR_TRIGGER_REFRESH_S";
 
 /// The port of the webhook listener on the LAN address (`spec.md` §3.6).
 const WEBHOOK_PORT: &str = "8360";
-const DEFAULT_TOKEN_FILE: &str = concat!(default_state_root!(), "/tokens/door-trigger.token");
+const DEFAULT_TOKEN_FILE: &str = concat!(default_tokens_dir!(), "/door-trigger.token");
 const DEFAULT_WEBHOOKS_DIR: &str = concat!(default_state_root!(), "/triggers/webhooks");
 
 /// The time between two reads of the routes: the caregiver writes a status
