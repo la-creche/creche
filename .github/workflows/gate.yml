@@ -1,6 +1,6 @@
 # PR gate: lint, the full suite, the playpen's vitest suite, the process-level
-# suite, the two old integration suites and the Rust checks, as jobs that
-# run at once on separate runners.
+# suite, the two old integration suites, the Rust checks and the systemd
+# proof, as jobs that run at once on separate runners.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
 #           ├── playpen     code   the TypeScript suite and its build
@@ -8,9 +8,13 @@
 #           │                      as a process, on the built playpen
 #           ├── suites      code   the two old suites of integration/,
 #           │                      each one in a pytest run of its own
-#           └── rust        code   cargo fmt, clippy, deny and test, for a
-#                                  change under rust/ or vectors/. No such
-#                                  change: no cargo step
+#           ├── rust        code   cargo fmt, clippy, deny and test, for a
+#           │                      change under rust/ or vectors/. No such
+#           │                      change: no cargo step
+#           └── systemd-proof
+#                           code   the restart rule of the daemon units, on
+#                                  the systemd of the runner, for a change
+#                                  under systemd/. No such change: no proof
 #   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
 #                                 │   docs PR the tests marked `docs`
 #                                 └── gate   red unless every job passed
@@ -29,8 +33,8 @@
 #
 # A PR of nothing but docs runs `bin/quality-gate.sh --docs` in the lint job,
 # lint and only the tests that read a doc: no shard, no playpen job, no proc
-# job, no suites job and no rust job (bin/lib/docsrule.sh, the rule the hook
-# reads too).
+# job, no suites job, no rust job and no systemd-proof job
+# (bin/lib/docsrule.sh, the rule the hook reads too).
 #
 # Every shard runs the whole of pyproject.toml's `testpaths` with
 # `--shard K/N` (conftest.py): a test's own id puts it in exactly one shard.
@@ -39,8 +43,9 @@
 #
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
-# release.yml runs the same `tests`, `playpen`, `proc` and `rust` jobs after
-# the merge. It does not run the `suites` job yet.
+# release.yml runs the same `tests`, `playpen`, `proc`, `rust` and
+# `systemd-proof` jobs after the merge. It does not run the `suites` job
+# yet.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -71,6 +76,7 @@ jobs:
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       rust: ${{ steps.scope.outputs.rust }}
+      systemd: ${{ steps.scope.outputs.systemd }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -400,10 +406,39 @@ jobs:
       - run: bin/rust-gate.sh --tests
         if: needs.scope.outputs.rust != 'false'
 
+  # The restart rule of the daemon units: bin/systemd-proof.sh. A unit with
+  # `RestartPreventExitStatus=78` must stay stopped after exit status 78, and
+  # only systemd can prove that. The script makes three units of its own on
+  # the systemd of the runner, as root. It then gives each unit file under
+  # systemd/ to `systemd-analyze verify`. The runner must run systemd as its
+  # first process, and its sudo must not ask for a password.
+  #
+  # The job has the form of the `rust` job. It runs on every code change, and
+  # on a change that touches no file of the proof its one step after the
+  # checkout is skipped (`--unchanged` of the script). The job is then a
+  # success. The files of the proof are systemd/ and the script.
+  #
+  # No `container:` key: a container has no systemd as process 1. On a
+  # machine without one of the two the script fails. It does not skip.
+  #
+  # The time limit: a job has 6 hours by default, and the proof needs minutes.
+  systemd-proof:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - run: bin/systemd-proof.sh
+        if: needs.scope.outputs.systemd != 'false'
+
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, playpen, proc, suites, rust]
+    needs: [scope, lint, tests, playpen, proc, suites, rust, systemd-proof]
     if: always()
     runs-on: ubuntu-latest
     steps:
