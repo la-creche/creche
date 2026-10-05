@@ -36,8 +36,8 @@ from proc_html import Element, form_values, table_rows
 from proc_services import Service
 from proc_tree import Tree
 
-#: Variables that `noticeboard/AGENTS.md` names and that `board_env` does not
-#: set, and the port variable that a scenario replaces.
+#: The variables of `noticeboard/AGENTS.md` that a scenario sets, replaces or
+#: removes.
 KEY_ENV: Final = "VIEW_ACCESS_KEY"
 KEY_FILE_ENV: Final = "VIEW_ACCESS_KEY_FILE"
 COOKIE_SECURE_ENV: Final = "VIEW_COOKIE_SECURE"

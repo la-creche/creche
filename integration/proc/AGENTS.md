@@ -660,10 +660,10 @@ the text of the failure. Work down this list.
   scenario holds that difference. A change costs one scenario in
   `test_proc_board_pages.py` and one in `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, the body of a refusal of the noticeboard.**
-  `docs/rework/spec.md` §8.3 rule 4 says that the answer names the word that
-  was wrong, and never the value. No contract gives the form of the body or
-  a word. The suite holds that the body is a JSON text and that it holds no
-  key. For a missing key, the noticeboard answers
+  `docs/rework/spec.md` §8.3 rule 4 permits a word for the fault in a
+  refusal, and no value. No contract gives the form of the body or a word.
+  The suite holds that the body is a JSON text and that it holds no key.
+  For a missing key, the noticeboard answers
   `{"ok":false,"error":"no_key"}`. A change costs one assertion in
   `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, the attributes of the cookie of the noticeboard.**

@@ -81,9 +81,9 @@ class Validity(StrEnum):
 class Fault(StrEnum):
     """A fault code of contract 05 §3.3 that a scenario publishes."""
 
-    #: A newer sandbox image exists, and no switch ran.
+    #: The sandbox of the family runs an older image than the host has.
     IMAGE_BEHIND = "image_behind"
-    #: LiteLLM did not answer a spend read (§7 rule 4).
+    #: `caregiver` could not read the spend of the family (§7 rule 4).
     SPEND_UNKNOWN = "spend_unknown"
 
 

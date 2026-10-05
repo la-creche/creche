@@ -446,7 +446,7 @@ async def test_an_unknown_path_with_no_key_is_refused(board_alone: BoardStack) -
 async def test_the_body_of_a_refusal_is_json_with_no_key(
     board_alone: BoardStack, key: str | None
 ) -> None:
-    """§8.3 rule 4: the answer names the word that was wrong, never the value.
+    """§8.3 rule 4: a refusal says what was wrong. It never holds a value.
 
     CONTRACT-QUESTION: rule 4 gives no form of the body and no word. Reading
     taken: the body is a JSON text, and it holds no key. The noticeboard
