@@ -35,7 +35,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::io;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -676,14 +676,15 @@ impl Drop for Abort {
 ///
 /// fn moved(stub: HttpStub) -> HttpStub {
 ///     HttpStub {
-///         port: Some(80),
+///         address: None,
 ///         ..stub
 ///     }
 /// }
 /// ```
 pub struct HttpStub {
-    /// The loopback port, for a stub on TCP.
-    port: Option<u16>,
+    /// The address that the listener has, for a stub on TCP: the loopback
+    /// address and the port.
+    address: Option<SocketAddr>,
     /// The path of the socket, for a stub on a Unix socket.
     socket: Option<PathBuf>,
     state: Arc<watch::Sender<State>>,
@@ -704,12 +705,12 @@ impl HttpStub {
     pub async fn loopback() -> io::Result<Self> {
         let runtime = Handle::try_current().map_err(io::Error::other)?;
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let port = listener.local_addr()?.port();
+        let address = listener.local_addr()?;
 
         Ok(Self::start(
             &runtime,
             Listener::Tcp(listener),
-            Some(port),
+            Some(address),
             None,
         ))
     }
@@ -742,14 +743,14 @@ impl HttpStub {
     fn start(
         runtime: &Handle,
         listener: Listener,
-        port: Option<u16>,
+        address: Option<SocketAddr>,
         socket: Option<PathBuf>,
     ) -> Self {
         let state = Arc::new(watch::Sender::new(State::default()));
         let accept = runtime.spawn(accept_each(listener, Arc::clone(&state)));
 
         Self {
-            port,
+            address,
             socket,
             state,
             _accept: Abort(accept.abort_handle()),
@@ -759,7 +760,10 @@ impl HttpStub {
     /// The loopback port of the stub. `None` for a stub on a Unix socket.
     #[must_use]
     pub const fn port(&self) -> Option<u16> {
-        self.port
+        match self.address {
+            Some(address) => Some(address.port()),
+            None => None,
+        }
     }
 
     /// The path of the socket of the stub. `None` for a stub on a loopback
@@ -840,7 +844,7 @@ impl HttpStub {
 impl fmt::Debug for HttpStub {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HttpStub")
-            .field("port", &self.port)
+            .field("port", &self.port())
             .field("socket", &self.socket)
             .finish_non_exhaustive()
     }
@@ -1551,6 +1555,9 @@ mod tests {
             let answer = soon(RawHttp::tcp(port, GET)).await.unwrap();
 
             assert_ne!(port, 0);
+            // The listener holds the loopback address only, and not each
+            // interface of the host.
+            assert_eq!(stub.address.unwrap().ip(), Ipv4Addr::LOCALHOST);
             assert_eq!(stub.socket(), None);
             assert_eq!(
                 String::from_utf8(answer).unwrap(),
@@ -2300,6 +2307,49 @@ mod tests {
         }
 
         assert_eq!(chunked_body(&long_line), Parsed::Bad);
+    }
+
+    #[test]
+    fn a_chunk_line_with_its_line_end_has_1024_bytes_at_most() {
+        let body_after = |line_len: usize| {
+            let mut bytes = b"1;".to_vec();
+            bytes.resize(line_len, b'x');
+            bytes.extend_from_slice(b"\r\na\r\n0\r\n\r\n");
+
+            bytes
+        };
+        let at_the_cap = body_after(CHUNK_LINE_MAX);
+        let past_the_cap = body_after(CHUNK_LINE_MAX + 1);
+
+        assert_eq!(
+            chunked_body(&at_the_cap),
+            Parsed::Whole((b"a".to_vec(), at_the_cap.len()))
+        );
+        assert_eq!(chunked_body(&past_the_cap), Parsed::Bad);
+    }
+
+    #[test]
+    fn the_bytes_of_a_request_end_where_the_request_ends() {
+        let requests: [&[u8]; 3] = [
+            b"GET / HTTP/1.1\r\nHost: stub\r\n\r\n",
+            b"POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\nbody",
+            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n\
+              4\r\nbody\r\n0\r\nTrailer: 1\r\n\r\n",
+        ];
+
+        for request in requests {
+            let with_more = [request, b"GET /next HTTP/1.1\r\n\r\n".as_slice()].concat();
+            let Parsed::Whole(recorded) = request_of(&with_more) else {
+                panic!("the bytes start with one request");
+            };
+
+            assert_eq!(
+                recorded.bytes(),
+                request,
+                "{:?}",
+                String::from_utf8_lossy(request)
+            );
+        }
     }
 
     #[test]
