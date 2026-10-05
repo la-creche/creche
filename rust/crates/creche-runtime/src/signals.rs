@@ -222,6 +222,9 @@ impl Hangups {
     ///
     /// After the stop signal, each call gives `None` at once, also when a
     /// SIGHUP waits. Leave the loop at the first `None`.
+    ///
+    /// The Python origin is `signal_arrived` with `_run` of
+    /// `chaperone/src/chaperone/reload_wiring.py:357-372`.
     pub async fn next(&mut self) -> Option<()> {
         tokio::select! {
             biased;

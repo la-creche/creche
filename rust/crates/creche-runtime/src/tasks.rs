@@ -135,11 +135,20 @@ impl Shutdown {
     ///
     /// The future is cancel safe: a caller can drop it in a `select!` and
     /// call the function again.
+    ///
+    /// The Python origin is `wait` of
+    /// `caregiver/src/caregiver/loop.py:1225-1231`. The stop handler ends
+    /// that wait early (`:1237-1240`).
     pub async fn cancelled(&self) {
         self.token.cancelled().await;
     }
 
     /// Whether the stop signal was triggered.
+    ///
+    /// The Python origins are `stopped` of
+    /// `caregiver/src/caregiver/loop.py:1222-1223` and the `should_exit`
+    /// flag that `stop` of `attendance/src/attendance/__main__.py:201-203`
+    /// sets.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.token.is_cancelled()
@@ -246,6 +255,11 @@ impl Tasks {
     }
 
     /// The stop signal of these tasks.
+    ///
+    /// No Python copy has this function. A Python service keeps its tasks
+    /// and its stop flag in two places: the fields of
+    /// `attendance/src/attendance/service.py:210-212` and the flag that
+    /// `stop` of `attendance/src/attendance/__main__.py:201-203` sets.
     #[must_use]
     pub fn shutdown(&self) -> &Shutdown {
         &self.shutdown
