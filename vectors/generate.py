@@ -513,6 +513,12 @@ def main(argv: Sequence[str] | None = None, root: Path = DATA_DIR) -> int:
     if broken:
         return _report(broken)
 
+    # A write removes each JSON file with no group and no line in the map. A
+    # freeze that names only some of those files must not remove the others.
+    unnamed = sorted(on_disk.keys() - files.keys() - frozen.keys()) if paths else []
+    if unnamed:
+        return _report([f"left over: {path}" for path in unnamed])
+
     # A removed file had no group and no line in the map of the frozen files.
     for path in write(files, root, frozen):
         print(f"removed: {path}")

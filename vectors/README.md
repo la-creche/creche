@@ -117,6 +117,10 @@ removes each JSON file that no group writes and that is not frozen. It
 prints the line `removed: <path>` for each one. If it removed a file of the
 package, restore the file with `git checkout -- vectors/data`.
 
+In step 3, name each file that step 2 reports. `--freeze` writes nothing
+while a JSON file that no group writes has no name in the call. It reports
+that file as `left over` and exits with status 1. It removes no file.
+
 `--freeze` writes each other file of the generator too. Read the diff of
 `vectors/data/`. A file that a group still writes can change in that run,
 for example `ids/disagreements.json`.

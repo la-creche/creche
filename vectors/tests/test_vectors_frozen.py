@@ -304,6 +304,34 @@ def test_a_run_with_no_flag_removes_and_names_a_file_with_no_group(
     assert _index(tree)["surfaces"] == [generate.index_row(STAYS)]
 
 
+def test_a_freeze_writes_nothing_while_a_file_with_no_group_has_no_name(
+    tree: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A freeze of one file must not remove a second file of the package that leaves."""
+    other = "made/other.json"
+    (tree / other).write_text(OTHER_KIND, encoding="utf-8")
+    monkeypatch.setattr(generate, "GROUPS", _groups(STAYS))
+    before = generate.committed(tree)
+    capsys.readouterr()
+
+    assert generate.main(["--freeze", LEAVES.path], tree) == generate.EXIT_STALE
+
+    refused_freeze = capsys.readouterr()
+
+    assert refused_freeze.err.splitlines() == [f"left over: {other}"]
+    assert refused_freeze.out == ""
+    assert generate.committed(tree) == before
+
+    # With a name for each such file, the freeze writes and removes nothing.
+    assert generate.main(["--freeze", LEAVES.path, other], tree) == generate.EXIT_OK
+    assert capsys.readouterr().out.splitlines() == ["wrote 2 files, 1 vectors"]
+    assert generate.committed(tree).keys() == before.keys()
+    assert _index(tree)["frozen"] == {
+        LEAVES.path: _sha256(before[LEAVES.path]),
+        other: _sha256(OTHER_KIND),
+    }
+
+
 def test_a_changed_frozen_file_fails_the_check_and_stops_a_write(
     tree: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
