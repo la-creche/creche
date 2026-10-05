@@ -682,6 +682,10 @@ Rules for the test:
   skips such a crate.
 - A crate of this workspace names another one by its path, with no version.
   `deny.toml` permits that only for a crate with `publish = false`.
+- The `advisories` check reads the advisory database from the network at
+  each run. It finds a version that its author removed only in the copy of
+  the registry index that cargo keeps on the machine. "Known gaps" has the
+  limits of that copy.
 - The check does not read the code of a crate. A crate that passes is not a
   crate that a person here reviewed.
 
@@ -699,6 +703,20 @@ Rules for the test:
   with musl or for Windows. `Cargo.lock` holds such crates.
 - `bin/rust-gate.sh` does not check the version of the `cargo-deny` on
   `PATH`. Another version can read `deny.toml` in another way.
+- The `advisories` check does not read the registry for a version that its
+  author removed. It reads the copy of the registry index that cargo keeps
+  on the machine. With a complete `Cargo.lock`, cargo does not read the
+  registry again for a crate that the copy holds. A version that its author
+  removes after cargo wrote the copy thus passes the check.
+- The `rust` job keeps that copy in its cache. The key of the cache is the
+  toolchain file and the lock file. A run can thus read the copy that an
+  earlier run saved, until one of the two files changes. The other choice is
+  a `rust` job that keeps no copy of the index in its cache. cargo then
+  reads the registry at each run.
+- `cargo-deny` prints the warning `index-failure` for a crate when it cannot
+  read the index entry of that crate. The `advisories` check then passes
+  for that crate. The flag `-D index-failure` of `cargo deny check` makes
+  the warning an error. Step 5 does not have the flag.
 - No release uses Rust code.
 - Most bodies of `creche-runtime` and of `creche-testkit` are stubs. A stub
   panics when code calls it. `crates/creche-runtime/AGENTS.md` and
