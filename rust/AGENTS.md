@@ -100,11 +100,56 @@ You need rustup. It installs the toolchain at the first cargo command under
 `bin/rust-gate.sh` runs these steps in this order:
 
 1. The `[lints]` check. Each crate must take the lint gate.
-2. The include check. No Rust source file includes a Markdown file.
+2. Three text checks. Each one reads the source text and runs no cargo
+   command.
+   - The include check. No Rust source file includes a Markdown file.
+   - The panic check. The word `catch_unwind` is only in the three
+     places of clause 8 of "The panic rule".
+   - The public-field check. No field of a struct has `pub`. Rule 12
+     names the two forms that pass.
 3. `cargo fmt --all --check`.
 4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
 5. `cargo deny --locked check`, where `cargo-deny` is on `PATH`.
 6. `cargo test --workspace --locked`, with `--tests` only.
+
+The panic check and the public-field check read each `.rs` file under
+`crates/`. Both checks use one definition of test code:
+
+- A file below a directory `tests` of a crate is test code. The directory
+  of a crate does not count: `crates/tests` is a crate.
+- In each other file, test code is each module with a body that has the
+  line `#[cfg(test)]` directly above its first line.
+- Such a module ends at the line that holds only its `}`, at the indent of
+  its first line. `cargo fmt` writes a module in that form. Each check
+  reads the code after that line again.
+- A `#[cfg(test)]` line above another item starts no test code, for
+  example above `mod python;`. Each check reads that item and the code
+  after it. Each check also reads the file `python.rs` of that module,
+  unless the file is below a directory `tests`.
+- A string of more than one line can hold a line that equals the last line
+  of its test module. Each check then reads the rest of that module as
+  code that is not test code. Give such a line an indent in the string.
+
+More rules of the panic check:
+
+- The check prints one line for each file with the word in a fourth
+  place, and fails.
+- The word in a comment counts too.
+- Place 2 of clause 8 is `src/entry.rs` in a crate with no dependency on
+  `creche-runtime`. For the check, a crate has that dependency when its
+  `Cargo.toml` holds the name. A comment that holds the name counts too.
+
+More rules of the public-field check:
+
+- The check reads the field list of each struct. A tuple struct has one
+  too. The check prints one line for each field with `pub`, and fails.
+- Only `pub(crate)` and `pub(super)` pass. The check refuses each other
+  form of `pub` on a field, for example `pub(in crate::wire)`.
+- The check reads no test code.
+- The check also fails when the scan cannot read a file, and when it does
+  not find the end of a struct.
+- The script has a list of the crates that the check does not read yet.
+  "Known gaps" has the names.
 
 Step 5 needs the program `cargo-deny`. rustup does not install it.
 
@@ -875,17 +920,15 @@ test.
     them to the `json` module.
   - Rule 12. A count at the time of this line found 101 structs with a
     public field. The packets `decisions-private-*` and
-    `decisions-runtime-private` make the fields private. The gate has no
-    check for this rule yet. `decisions-gate-early` starts the check on
-    each new crate, and `decisions-private-fields-gate` extends it to each
+    `decisions-runtime-private` make the fields private. The public-field
+    check of `bin/rust-gate.sh` does not read the crates of those structs
+    yet. Packet `decisions-private-fields-gate` extends the check to each
     crate.
   - Rule 13. Some values have two sources today. One example is the default
     state root, which more than one module of `config` defines. Packet
     `decisions-config-endpoints` gives it one home. A second example is the
     field `zone` of `quiet.daily` in the family file: the host has a time
     zone.
-  - "The panic rule", clause 8. The gate has no check for this clause yet.
-    Packet `decisions-gate-early` adds one.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
     program of the workspace today. Its `main` sets no panic hook and
     parses the command line itself. Its library has no entry function that
@@ -917,6 +960,29 @@ test.
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
+- Two checks do not read four crates yet: `agent-family`,
+  `creche-contracts`, `creche-runtime` and `creche-testkit`. Each check has
+  a list of its own with the four names. No list names a new crate, so both
+  checks read a new crate from its first commit. Add no name to a list.
+  - The public-field check of `bin/rust-gate.sh`. Packet
+    `decisions-runtime-private` deletes `creche-runtime` and
+    `creche-testkit` from the list of the script. Packet
+    `decisions-private-fields-gate` deletes that list.
+  - The table test of `bin/tests/test_rust_workspace.py`. In each `.rs`
+    file, it looks for the name `DEVIATIONS` and for a struct whose name
+    starts with `Deviation`. Packet `decisions-runtime-tables` deletes
+    `creche-runtime` from the list of the test. Packet
+    `decisions-tables-guard` deletes that list.
+  - The public-field check reads the source text and expands no macro. It
+    does not find a field that a macro adds to a struct. It finds a struct
+    only at a line whose first word, after a visibility, is `struct`.
+    `cargo fmt` writes each struct in that form, but it does not format
+    the text of a macro call.
+  - Rule 12 does not name `pub(self)` and `pub(in <path>)`. The
+    public-field check refuses both forms. The owner did not confirm that
+    reading. A change costs one condition in the scan. The same condition
+    holds the two forms that pass, so a change to the third sentence of
+    rule 12 also changes it.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. If the owner says no, change those two lines.
