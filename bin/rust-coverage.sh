@@ -20,13 +20,11 @@
 #   3. a listed file holds the text `coverage(off)`
 #   4. rust/crates/chaperone-policy/src holds a .rs file that is not in the
 #      list. Before that directory exists, this case cannot occur
-# The check reads counts and no percent: a percent can round to 100. Each
-# crate gets one line with its counts. The counts of a file outside the list
-# have no threshold.
+# The check reads counts and no percent: a percent can round to 100. It takes
+# the counts from the segments of the report, and never from a summary. A
+# region thus ran when one copy of its code ran it. Each crate gets one line
+# with its counts. The counts of a file outside the list have no threshold.
 set -euo pipefail
-
-#: The one directory that holds every Cargo file (rust/AGENTS.md).
-RUST_DIR="rust"
 
 #: The flag that adds the branches to the rule, and what the check then
 #: measures. Without the flag it measures the regions and the lines.
@@ -80,11 +78,17 @@ fi
 cd "$(dirname -- "${BASH_SOURCE[0]}")/.."
 ROOT="$PWD"
 
+# RUST_DIR: the one directory that holds every Cargo file.
+. bin/lib/rustrule.sh
+
 # check_report ROOT RUST_DIR REPORT MEASURE: the four rules over one report,
 # and the counts of each crate. The report is JSON, so the check is a Python
-# program: python3 has a JSON reader and bash has none. The program reads no
-# variable of the environment and no file but the report, the list and the
-# files that the list names.
+# program: python3 has a JSON reader and bash has none. `-I` keeps the
+# program apart from the caller: it reads no variable of the environment, and
+# it imports no module from the directory of the caller. It reads no file but
+# the report, the list and the files that the list names.
+# bin/tests/test_rust_coverage.py gives the program to ruff: no other check
+# reads Python inside a shell script.
 check_report() {
   python3 -I - "$@" <<'PY'
 from __future__ import annotations
@@ -101,6 +105,11 @@ PROGRAM = "rust-coverage"
 
 #: The list, under the Rust directory. Each file that it names has the rule.
 LIST_NAME = "coverage-files.txt"
+
+#: The file that holds the rule text, under the Rust directory, and the name
+#: of its section there.
+RULE_FILE = "AGENTS.md"
+RULE_SECTION = "The coverage rule"
 
 #: The directory of the crates, under the Rust directory.
 CRATES = "crates"
@@ -134,6 +143,17 @@ MOST_PLACES = 20
 #: The types of one segment of a file: three numbers, then three flags.
 SEGMENT_FORM = (int, int, int, bool, bool, bool)
 
+#: The types of one branch of a file: nine numbers. The first four are the
+#: place. The next two are the counts of the two sides.
+BRANCH_FORM = (int, int, int, int, int, int, int, int, int)
+
+#: How many numbers of a branch are its place. The counts of the two sides
+#: follow them.
+BRANCH_PLACE = 4
+
+#: The two sides of a branch, in the order of their counts.
+SIDES = ("true", "false")
+
 
 class Measure(enum.Enum):
     """What a listed file must have in full. `BRANCHES` adds the branches to
@@ -144,20 +164,18 @@ class Measure(enum.Enum):
 
 
 class Refused(Exception):
-    """The list or the report is not in the form that this script reads."""
+    """The list, the report or the tree is not in the form that this script
+    reads."""
 
 
 class Counts(NamedTuple):
-    """How many items a file has, and how many of them a test ran."""
+    """How many items some files have, and how many of them a test ran."""
 
     total: int
     ran: int
 
     def plus(self, other: Counts) -> Counts:
         return Counts(self.total + other.total, self.ran + other.ran)
-
-    def missed(self) -> int:
-        return self.total - self.ran
 
     def of(self, noun: str) -> str:
         return f"{self.ran} of {self.total} {noun}"
@@ -171,25 +189,66 @@ class Sums(NamedTuple):
 
     regions: Counts
     lines: Counts
-    branches: Counts
+    sides: Counts
 
     def plus(self, other: Sums) -> Sums:
         return Sums(
             self.regions.plus(other.regions),
             self.lines.plus(other.lines),
-            self.branches.plus(other.branches),
+            self.sides.plus(other.sides),
         )
 
 
 NO_SUMS = Sums(NOTHING, NOTHING, NOTHING)
 
 
-class File(NamedTuple):
-    """One file of the report: its counts, and its raw entry. Only a failure
-    line reads the entry."""
+class Part(NamedTuple):
+    """The items of one kind in one file: how many the file has, how many of
+    them no test ran, and where those are."""
 
-    sums: Sums
-    entry: object
+    total: int
+    missed: int
+    places: tuple[str, ...]
+
+    def counts(self) -> Counts:
+        return Counts(self.total, self.total - self.missed)
+
+    def shown(self) -> str:
+        """The first places, and how many more the file has."""
+        more = len(self.places) - MOST_PLACES
+
+        return ", ".join(self.places[:MOST_PLACES]) + (f" and {more} more" if more > 0 else "")
+
+
+class File(NamedTuple):
+    """One file of the report: its regions, its lines and the sides of its
+    branches."""
+
+    regions: Part
+    lines: Part
+    sides: Part
+
+    def sums(self) -> Sums:
+        return Sums(self.regions.counts(), self.lines.counts(), self.sides.counts())
+
+
+class Segment(NamedTuple):
+    """One segment of a file, as llvm-cov writes it. `runs` is how many
+    times the code ran, from this place to the next segment. It is the sum
+    of each copy of the code: a generic function has one copy for each type,
+    and cargo builds a crate one time with its unit tests and one time
+    without them."""
+
+    line: int
+    column: int
+    runs: int
+    counted: bool
+    starts: bool
+    gap: bool
+
+    def is_region(self) -> bool:
+        """Whether a region with a count starts here."""
+        return self.counted and self.starts and not self.gap
 
 
 def _no_key_twice(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -229,29 +288,126 @@ def _items(holder: object, key: str, where: str) -> list[object]:
     return cast("list[object]", value)
 
 
-def _count(holder: object, key: str, where: str) -> int:
-    """A count is an integer of zero or more. `True` is no integer here."""
-    value = _member(holder, key, where)
-    if type(value) is not int or value < 0:
-        raise Refused(f"`{key}` in {where} is not a count")
+def _row(one: object, form: tuple[type, ...], what: str) -> list[object]:
+    """One list of the report whose items have exactly the types of `form`.
+    `True` is no number here, and a number is zero or more."""
+    items = cast("list[object]", one) if isinstance(one, list) else []
+    if tuple(type(item) for item in items) != form:
+        raise Refused(f"{what} is not in the form of the tool")
 
-    return value
+    if any(type(item) is int and item < 0 for item in items):
+        raise Refused(f"{what} holds a number below zero")
+
+    return items
 
 
-def _counts(summary: object, key: str, where: str) -> Counts:
-    block = _member(summary, key, where)
-    inside = f"`{key}` of {where}"
-    made = Counts(_count(block, "count", inside), _count(block, "covered", inside))
-    if made.ran > made.total:
-        raise Refused(f"{inside} has more items that ran than items")
+def _segments(entry: object, name: str) -> list[Segment]:
+    """The segments of one file, in the order of the file."""
+    made: list[Segment] = []
+    for one in _items(entry, "segments", f"the entry of {name}"):
+        row = _row(one, SEGMENT_FORM, f"a segment of {name}")
+        segment = Segment(*cast("tuple[int, int, int, bool, bool, bool]", tuple(row)))
+        if made and (segment.line, segment.column) < (made[-1].line, made[-1].column):
+            raise Refused(f"the segments of {name} are not in the order of the file")
+
+        made.append(segment)
 
     return made
+
+
+def _regions(segments: list[Segment]) -> Part:
+    """Each region of a file, and each one that no test ran: no copy of the
+    code ran it."""
+    starts = [one for one in segments if one.is_region()]
+    places = tuple(f"{one.line}:{one.column}" for one in starts if one.runs == 0)
+
+    return Part(len(starts), len(places), places)
+
+
+def _lines(segments: list[Segment]) -> Part:
+    """Each line of a file that holds code, and each one that no test ran.
+    The count of a line is the count that `llvm-cov show` prints for it: the
+    largest count of the regions that start on the line and of the segment
+    that reaches the line from an earlier one."""
+    total = 0
+    missed = 0
+    runs: list[tuple[int, int]] = []
+    reaching: Segment | None = None
+    at = 0
+    while at < len(segments):
+        line = segments[at].line
+        here: list[Segment] = []
+        while at < len(segments) and segments[at].line == line:
+            here.append(segments[at])
+            at += 1
+
+        counts = [one.runs for one in here if one.is_region()]
+        skipped = here[0].starts and not here[0].counted
+        reached = reaching is not None and reaching.counted
+        has_code = (not skipped and (reached or bool(counts))) or any(
+            one.starts and one.counted for one in here
+        )
+        if has_code:
+            total += 1
+            if max([reaching.runs if reaching is not None else 0, *counts]) == 0:
+                missed += 1
+                runs.append((line, line))
+
+        # No segment starts on the lines from here to the next segment. The
+        # last segment of this line reaches each of them.
+        reaching = here[-1]
+        after = segments[at].line - line - 1 if at < len(segments) else 0
+        if after > 0 and reaching.counted:
+            total += after
+            if reaching.runs == 0:
+                missed += after
+                runs.append((line + 1, line + after))
+
+    return Part(total, missed, _ranges(runs))
+
+
+def _ranges(runs: list[tuple[int, int]]) -> tuple[str, ...]:
+    """`runs` as texts, in the order of the file. Two runs that touch are one
+    range: `12-15`."""
+    joined: list[tuple[int, int]] = []
+    for first, last in runs:
+        if joined and joined[-1][1] + 1 == first:
+            joined[-1] = (joined[-1][0], last)
+        else:
+            joined.append((first, last))
+
+    return tuple(str(first) if first == last else f"{first}-{last}" for first, last in joined)
+
+
+def _sides(entry: object, name: str) -> Part:
+    """Each side of each branch of a file, and each one that no test took.
+    The report holds one entry for each copy of the code, so the counts of
+    one place add up. Only a nightly toolchain writes a branch."""
+    taken: dict[tuple[int, ...], list[int]] = {}
+    for one in _items(entry, "branches", f"the entry of {name}"):
+        numbers = cast("list[int]", _row(one, BRANCH_FORM, f"a branch of {name}"))
+        counts = taken.setdefault(tuple(numbers[:BRANCH_PLACE]), [0] * len(SIDES))
+        for side in range(len(SIDES)):
+            counts[side] += numbers[BRANCH_PLACE + side]
+
+    places = tuple(
+        f"{place[0]}:{place[1]} {SIDES[side]}"
+        for place in sorted(taken)
+        for side in range(len(SIDES))
+        if taken[place][side] == 0
+    )
+
+    return Part(len(SIDES) * len(taken), len(places), places)
 
 
 def read_report(path: str, rust_dir: str) -> dict[str, File]:
     """Each file of the report, by its path from the root of the repository.
     The report names a file by its full path, and it names the workspace file
-    too. A file outside that workspace keeps its full path."""
+    too. A file outside that workspace keeps its full path.
+
+    The reader takes the segments and the branches of a file, and never its
+    summary. The summary takes the best copy of each function. It thus counts
+    a region as code that no test ran although another copy ran it."""
     try:
         with open(path, encoding="utf-8") as file:
             raw = json.load(file, object_pairs_hook=_no_key_twice, parse_constant=_no_constant)
@@ -275,14 +431,8 @@ def read_report(path: str, rust_dir: str) -> dict[str, File]:
         if name in files:
             raise Refused(f"the report holds {name} two times")
 
-        where = f"the summary of {name}"
-        summary = _member(one, "summary", f"the entry of {name}")
-        sums = Sums(
-            _counts(summary, "regions", where),
-            _counts(summary, "lines", where),
-            _counts(summary, "branches", where),
-        )
-        files[name] = File(sums, one)
+        segments = _segments(one, name)
+        files[name] = File(_regions(segments), _lines(segments), _sides(one, name))
 
     return files
 
@@ -326,26 +476,6 @@ def read_list(root: str, rust_dir: str) -> tuple[list[str], list[str]]:
     return paths, problems
 
 
-def _places(entry: object, name: str) -> str:
-    """Where a region of the file starts that no test ran, as `line:column`.
-    A segment of the report is `[line, column, count, has a count, starts a
-    region, is a gap]`."""
-    found: list[str] = []
-    for one in _items(entry, "segments", f"the entry of {name}"):
-        items = cast("list[object]", one) if isinstance(one, list) else []
-        if tuple(type(item) for item in items) != SEGMENT_FORM:
-            raise Refused(f"a segment of {name} is not three numbers and three flags")
-
-        line, column, count, counted, starts, gap = items
-        if counted and starts and not gap and count == 0:
-            found.append(f"{line}:{column}")
-
-    shown = " ".join(found[:MOST_PLACES])
-    more = len(found) - MOST_PLACES
-
-    return shown + (f" and {more} more" if more > 0 else "")
-
-
 def _holds_text(path: str, text: str) -> bool:
     try:
         with open(path, "rb") as file:
@@ -354,7 +484,9 @@ def _holds_text(path: str, text: str) -> bool:
         raise Refused(f"cannot read a file of the list: {why}") from why
 
 
-def check_listed(root: str, name: str, files: dict[str, File], measure: Measure) -> list[str]:
+def check_listed(
+    root: str, rust_dir: str, name: str, files: dict[str, File], measure: Measure
+) -> list[str]:
     """Each rule that one listed file breaks."""
     on_disk = os.path.join(root, name)
     if not os.path.isfile(on_disk):
@@ -368,29 +500,36 @@ def check_listed(root: str, name: str, files: dict[str, File], measure: Measure)
     # rule does not say what a listed file with no function is. A report
     # holds no entry for such a file, for example a file with `mod` lines
     # only or with types only. The reading here is the strict one: such a
-    # file fails. A change costs this one check.
+    # file fails, and so does a file of which the report holds no region. A
+    # change costs this one check.
     found = files.get(name)
     if found is None:
         problems.append(
-            f"{name}: the report does not hold this file. A report holds a file "
-            "only when the test build compiles a function of it"
+            f"{name}: the report does not hold this file. "
+            f'{rust_dir}/{RULE_FILE}, "{RULE_SECTION}", lists each cause'
         )
 
         return problems
 
-    regions, lines, branches = found.sums
-    if regions.missed():
+    regions, lines, sides = found
+    if regions.total == 0:
+        problems.append(f"{name}: the report holds no region of this file")
+
+    if regions.missed:
         problems.append(
-            f"{name}: no test ran {regions.missed()} of {regions.total} regions. "
-            f"They start at {_places(found.entry, name)}"
+            f"{name}: no test ran {regions.missed} of {regions.total} regions. "
+            f"They start at {regions.shown()}"
         )
 
-    if lines.missed():
-        problems.append(f"{name}: no test ran {lines.missed()} of {lines.total} lines")
-
-    if measure is Measure.BRANCHES and branches.missed():
+    if lines.missed:
         problems.append(
-            f"{name}: no test took {branches.missed()} of {branches.total} sides of a branch"
+            f"{name}: no test ran {lines.missed} of {lines.total} lines. They are {lines.shown()}"
+        )
+
+    if measure is Measure.BRANCHES and sides.missed:
+        problems.append(
+            f"{name}: no test took {sides.missed} of {sides.total} sides of a branch. "
+            f"They are at {sides.shown()}"
         )
 
     return problems
@@ -398,10 +537,27 @@ def check_listed(root: str, name: str, files: dict[str, File], measure: Measure)
 
 def check_pure(root: str, rust_dir: str, paths: list[str]) -> list[str]:
     """Each `.rs` file of the pure decision crate that the list does not
-    name. Before that crate exists, the rule checks nothing."""
+    name. Before that crate exists, the rule checks nothing. A tree that the
+    walk cannot read in full stops the run: a directory that is a symbolic
+    link, and a directory that gives an error."""
     shown = f"{rust_dir}/{PURE_SRC}"
+    top = os.path.join(root, rust_dir, PURE_SRC)
+    if not os.path.lexists(top):
+        return []
+
+    if os.path.islink(top) or not os.path.isdir(top):
+        raise Refused(f"{shown} is not a directory")
+
+    def stop(why: OSError) -> NoReturn:
+        raise Refused(f"cannot read a directory of {shown}: {why}") from why
+
     problems: list[str] = []
-    for where, _dirs, names in os.walk(os.path.join(root, rust_dir, PURE_SRC)):
+    for where, dirs, names in os.walk(top, onerror=stop):
+        for one in dirs:
+            if os.path.islink(os.path.join(where, one)):
+                link = os.path.relpath(os.path.join(where, one), root)
+                raise Refused(f"{link} is a symbolic link to a directory")
+
         for one in names:
             name = os.path.relpath(os.path.join(where, one), root)
             if one.endswith(RUST_FILE) and name not in paths:
@@ -430,7 +586,7 @@ def crate_rows(root: str, rust_dir: str, files: dict[str, File]) -> dict[str, Su
 
     for name, found in files.items():
         crate = crate_of(name, rust_dir)
-        rows[crate] = rows.get(crate, NO_SUMS).plus(found.sums)
+        rows[crate] = rows.get(crate, NO_SUMS).plus(found.sums())
 
     return rows
 
@@ -438,7 +594,7 @@ def crate_rows(root: str, rust_dir: str, files: dict[str, File]) -> dict[str, Su
 def row(label: str, sums: Sums, measure: Measure) -> str:
     text = f"{label}: tests ran {sums.regions.of('regions')}, {sums.lines.of('lines')}"
     if measure is Measure.BRANCHES:
-        text += f", {sums.branches.of('sides of a branch')}"
+        text += f", {sums.sides.of('sides of a branch')}"
 
     return text
 
@@ -464,8 +620,14 @@ def main(root: str, rust_dir: str, report: str, wanted: str) -> int:
         say(row("the workspace", total, measure))
         say(f"paths in {rust_dir}/{LIST_NAME}: {len(paths)}")
 
+        if measure is Measure.BRANCHES and total.sides.total == 0:
+            raise Refused(
+                "the report holds no branch, so the run measured none. "
+                "Only a nightly toolchain measures the branches"
+            )
+
         for name in paths:
-            problems += check_listed(root, name, files, measure)
+            problems += check_listed(root, rust_dir, name, files, measure)
         problems += check_pure(root, rust_dir, paths)
     except Refused as why:
         fail(str(why))
