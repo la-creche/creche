@@ -1259,6 +1259,16 @@ mod tests {
 
             assert_eq!(mode_of(&temp) & !bits, 0, "{name}");
         }
+
+        // A umask of 077 gives a create with no mode the mode of a private
+        // file, so the rows above pass for such a create. A mode with no
+        // read bit shows the create under that umask too: a create with no
+        // mode gives the owner the read bit.
+        let temp = root.path().join(".probe.1.3.tmp");
+
+        let _file = open_temp(&temp, 0o200).unwrap();
+
+        assert_eq!(mode_of(&temp) & !0o200, 0);
     }
 
     #[test]
