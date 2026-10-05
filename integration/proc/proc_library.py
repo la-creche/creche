@@ -397,11 +397,14 @@ class LibraryStack:
         write_note(scope / MEETING, f"Please {HELD_TEXT}. The {SECOND_WORD} is in the lobby.")
         tune(self.tree, TEI, TEI_HOLD_EMBED, HELD_TEXT)
         child = self.start_index(scope, index_dir)
-        wait_until(
-            lambda: any(HELD_TEXT in text for texts in self.embedded() for text in texts),
-            "the embed call that the stand-in holds",
-            INDEX_DEADLINE_S,
-        )
+
+        def held() -> bool:
+            if child.exit_code() is not None:
+                raise ProcError(f"the run ended before the stand-in held a call\n{child.output()}")
+
+            return any(HELD_TEXT in text for texts in self.embedded() for text in texts)
+
+        wait_until(held, "the embed call that the stand-in holds", INDEX_DEADLINE_S)
 
         return child
 
