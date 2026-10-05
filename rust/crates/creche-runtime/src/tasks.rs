@@ -601,6 +601,10 @@ impl<F: Future> Future for Guard<F> {
 /// The output is the value of the task, or [`TaskLost`]. To drop the value
 /// does not stop the task.
 ///
+/// The lint gate refuses a statement that starts a task and does not use the
+/// value. Await the value. For a result that no caller reads, write
+/// `drop(completion)`.
+///
 /// The future is cancel safe: a caller can wait on `&mut completion` in a
 /// `select!` and wait again later. A poll after the output gives
 /// [`TaskLost::Cancelled`] and does not panic.
@@ -629,6 +633,7 @@ impl<F: Future> Future for Guard<F> {
 ///
 /// let completion = Completion::<u8> { task: None };
 /// ```
+#[must_use = "the task runs without it, and its result is lost: await it or drop it on purpose"]
 pub struct Completion<T> {
     /// `None` when no task started, and after the output.
     task: Option<Guarded<T>>,

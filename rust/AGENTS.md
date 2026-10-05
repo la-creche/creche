@@ -511,10 +511,11 @@ to 5 give a Rust service the Python behavior on purpose.
     the call in `main`, the code before the first of the three runs with
     the standard hook.
 
-The lint gate checks rule 13 in part: `await_holding_lock` refuses a guard
-that the code holds across an `await`. `service::run` holds rule 16 in part:
-it sets the hook before the runtime starts. No check holds the other rules.
-The reviewer checks them.
+The lint gate checks rule 2 in part: `Completion` is `must_use`, so the
+build fails for a `Completion` that the code does not use. It checks rule 13
+in part: `await_holding_lock` refuses a guard that the code holds across an
+`await`. `service::run` holds rule 16 in part: it sets the hook before the
+runtime starts. No check holds the other rules. The reviewer checks them.
 
 ## Code style
 
@@ -731,8 +732,8 @@ Rules for the test:
   `.<name>.<pid>.<count>.tmp`, as the Python `attendance` does. A change of
   the name costs one function, `temp_name`.
 - No check holds the rules of "The rules for a service", except a part of
-  rule 13. A service crate that breaks a rule builds and passes the lint
-  gate.
+  rule 2 and a part of rule 13. A service crate that breaks one of the
+  other rules builds and passes the lint gate.
 - `family` and `server` use the id types of `ids`. They refuse three texts
   that the Python package `agent_family` accepts. Each vector with such a
   text is a row of `DEVIATIONS` in `crates/agent-family/tests/vectors.rs`.
