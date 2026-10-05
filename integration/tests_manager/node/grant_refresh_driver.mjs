@@ -31,6 +31,9 @@ if (bundlePath === undefined || reportPath === undefined || paceArg === undefine
 const paceMs = Number(paceArg);
 const polls = pollsArg === undefined ? 40 : Number(pollsArg);
 
+/** `PiExposure.Hidden` of `playpen/bridge/pi-api.ts`, as pi spells it. */
+const HIDDEN = "hidden";
+
 /**
  * pi 0.99.1's three tool-set methods, with pi's own semantics.
  *
@@ -38,6 +41,10 @@ const polls = pollsArg === undefined ? 40 : Number(pollsArg);
  * `playpen/test/real-pi.test.ts` measures them against the real pi. They
  * are restated here because a driver cannot import a TypeScript test helper,
  * and getting one wrong would make a wrong bridge look right.
+ *
+ * `registerTool` follows `FakePi.registerTool` of that file. A tool with the
+ * exposure `hidden` leaves the active list and keeps its definition. A new
+ * name joins the list, and so does a name that was hidden before.
  */
 class ToolSetPi {
   constructor() {
@@ -46,9 +53,15 @@ class ToolSetPi {
   }
 
   registerTool(tool) {
-    const fresh = !this.byName.has(tool.name);
+    const before = this.byName.get(tool.name);
     this.byName.set(tool.name, tool);
-    if (fresh) {
+
+    if (tool.exposure === HIDDEN) {
+      this.active = this.active.filter((name) => name !== tool.name);
+      return;
+    }
+
+    if (before === undefined || before.exposure === HIDDEN) {
       this.active.push(tool.name);
     }
   }
