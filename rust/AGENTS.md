@@ -56,8 +56,8 @@ release tool gives:
 | `json.rs` | Private. A reader that takes what Python `json.loads` takes, and writers for the text of `json.dumps`. |
 | `sha256.rs` | Private. SHA-256, because the crate has no dependency that gives a hash. |
 
-No type of `manifest` implements a `serde` trait. The module is one of the
-four exceptions that rule 1 names. The raw type of `manifest` is the private
+No type of `manifest` implements a `serde` trait. The module does not hold
+rule 1 yet ("Known gaps"). The raw type of `manifest` is the private
 value tree of its `yaml` reader or of its `json` reader. `Draft` is the raw
 type of a request that a requester plans. The reason is the reason of
 `channel`: no `serde` reader reads what `yaml.safe_load` and `json.loads`
@@ -133,11 +133,14 @@ Each rule has its reason. Do not break a rule without a change to this file.
    conversion never sees an invalid value.
    Reason: one conversion holds every check, so no code path can skip a
    check.
-   Exception: the modules `channel`, `grants`, `manifest` and `status` use
-   no raw `serde` type. Each one reads a document with a reader of its own.
-   "Layout", "The channel module", "The JSON reader of `status`" and "Known
-   gaps" give the reasons. The owner decides if the exception of `grants`
-   stays.
+   This rule has no exception for a module. "JSON" below has the rules for
+   a JSON text. Such a text takes three steps:
+   1. The strict reader in the `json` module of `creche-contracts` reads
+      the text.
+   2. The reader fills a raw `serde` type whose fields are lenient. A
+      lenient field takes a JSON value of each kind. A wrong kind is then
+      an issue for step 3 and not a failed read.
+   3. A single conversion builds the valid type.
 2. **Give each id, name, path, size, duration and token its own type.** The
    type has a private field and a parsing constructor. Do not implement
    `Default`. Do not derive `Deserialize` directly. Use
@@ -197,6 +200,53 @@ Each rule has its reason. Do not break a rule without a change to this file.
     tag for a component when a path under that component changes. A path
     under `rust/` is under no component, so a change here mints no tag and
     starts no release.
+12. **Give no struct a public field.** Code outside the crate gets a value
+    through an accessor method. A field with `pub(crate)` or `pub(super)` is
+    not a public field.
+    Reason: other code can write a public field directly, so no constructor
+    checks that value.
+    - For a record or a view, write an accessor for each field. Write `new`
+      with a parameter for each required field. Write a `with_<field>`
+      method for each optional field.
+    - When only a reader function builds a view, write the accessors and no
+      public constructor.
+    - A raw form for `serde` gets its values from `Deserialize` alone. Write
+      no public constructor for it.
+    - For an error struct, write the accessors and no public constructor.
+    - Two fields can state one fact together. Set such a pair through a
+      single method.
+    - The rule does not apply to the fields of an enum variant.
+13. **Keep one source for each value.** Define a constant, a limit, a name
+    or a grammar in one module only. Code in other places imports it from
+    that module. When the host already has a value, do not ask for it in
+    the family file.
+    Reason: two copies of a value drift. An edit changes one copy, and the
+    other copy stays.
+
+## JSON
+
+A JSON text of a contract must be strict JSON. The reader refuses a text
+that does not meet each line of this list:
+
+- The encoding is UTF-8. The text starts with no byte order mark.
+- `NaN`, `Infinity` and `-Infinity` are not valid tokens.
+- A string has no lone surrogate. This applies to a channel line too.
+- An object has each key one time only.
+- The nesting depth is 64 levels or less.
+- Each integer token is in the range of 64 bits.
+- Each float token is a finite number.
+
+Reason: for a text outside these rules, two readers can return two values.
+
+`creche-contracts` must have one JSON reader and one JSON writer, in its
+`json` module. Packets `decisions-json-check` and `decisions-json-reader`
+add that module. Write no JSON parser, no JSON value tree and no code that
+formats a float in another module.
+
+When the reader refuses a text, apply the failure action that rule 8
+demands. The module error keeps the name of the broken rule. The service
+uses that name to record a notice for the operator. Packet
+`decisions-notice` adds the notice.
 
 ## When two Python copies of a grammar disagree
 
@@ -209,9 +259,10 @@ one grammar give different results.
 2. Mark the type with a `CONTRACT-QUESTION` comment. The comment names each
    copy and what the copy does.
 3. List the question under "Known gaps".
-4. In the test table of the type, give each surface one stance. `equal` means
-   that the type and the copy agree on each vector. `stricter` means that the
-   copy accepts an input of `disagreements.json` and the type refuses it.
+4. A surface in the test table of the type has the stance `equal`: the type
+   and the copy give the same result for each vector. `stricter` is an old
+   second stance. Do not use it for a new surface. Packet `decisions-ids`
+   deletes it from `ids`.
 
 Reason: a value passes more than one copy before the platform uses it. The
 strictest copy is thus the grammar that holds on the host. A type that takes
@@ -221,27 +272,21 @@ When each Python copy accepts an input, the Rust type accepts it too. This
 rule also applies when a stricter reading of the contract is possible. Name
 such a case in the pull request. The owner decides it.
 
-The rule has two exceptions:
+Rule 9 makes each type refuse a digit outside ASCII. Add no table row for
+that refusal. When a Python copy accepts such a digit, follow "When the two
+results differ".
 
-- A digit that is not ASCII. Rule 9 refuses it. Each such difference is a
-  row of the `DEVIATIONS` table in the test.
-- A number of more than 4300 digits in a version. Python reads no longer
-  text as an integer, so the types refuse it. No vector holds such a number.
+## When two Python versions differ
 
-The `session` module has three more exceptions. The owner did not decide
-them yet. Each one is a row of `DEVIATIONS` in `session/python.rs`, and
-"Known gaps" lists them.
+The Python workspace runs under more than one Python version. For some
+inputs, the result depends on the version.
 
-- A JSON text that is not strict JSON in UTF-8, for example a text with a
-  byte order mark, with `NaN` or with a lone surrogate.
-- A JSON text that nests deeper than 128 levels.
-- A sequence number that does not fit 64 bits.
+1. Follow Python 3.13 in the Rust code.
+2. Cover such an input with a plain Rust test. It cannot be a vector: rule 7
+   of `vectors/AGENTS.md` demands the same output under each version.
 
-The module `untrusted` has the first two exceptions too, for an answer. Its
-nesting limit is 127 levels. It also reads an integer that does not fit 64
-bits as 0, and each Python copy keeps that integer. The owner did not decide
-the three yet. Each one is a row of `DEVIATIONS` in the test of the module,
-and "Known gaps" lists them.
+Reason: a port can match one behavior only. A fixed version gives each
+packet the same target.
 
 ## The channel module
 
@@ -261,8 +306,8 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
-Rule 1 names a raw `serde` type. The `channel` module is one of four
-exceptions.
+Rule 1 names a raw `serde` type. The `channel` module does not hold rule 1
+yet ("Known gaps").
 Its raw type is `channel::json::Json`, from a reader of its own. The Python
 host reads a line with `json.loads`, and `serde_json` does not read what
 `json.loads` reads:
@@ -408,6 +453,12 @@ The rule against a crash loop:
   not.
 - `config::start` and `config::reload` take the error type of each parse.
   The roster and the site file have an error type of their own.
+- A cutover release moves a component from its Python package to its Rust
+  binary. In that release, the verify hook parses the env file and the site
+  file on the host with the Rust config types. A failed hook makes the
+  release restore the Python tree. The report of the hook lists each
+  refused variable by name and holds no value. The check needs no manual
+  command on the host.
 
 More rules for a config type:
 
@@ -421,8 +472,8 @@ More rules for a config type:
   `bin/tests/test_rust_config_units.py` fails for a variable of a unit that
   has no constant.
 - `config/python.rs` holds the differential test of the module. Its table
-  `SURFACES` names each `config.` surface, and its table `DEVIATIONS` names
-  each difference on purpose.
+  `SURFACES` names each `config.` surface. A later packet deletes its second
+  table, `DEVIATIONS`. Do not add a row to that table.
 
 ## The rules for a service
 
@@ -457,8 +508,9 @@ to 5 give a Rust service the Python behavior on purpose.
    future.** Write the cleanup in the owner task.
    Reason: the code after such an `await` does not run when the caller goes
    away.
-6. **Do not change `panic = "unwind"`. Give each `Router` to
-   `http::layers::edge`. Run each daemon loop through `Tasks::spawn_loop`.**
+6. **Give each `Router` to `http::layers::edge`. Run each daemon loop
+   through `Tasks::spawn_loop`.** "The panic rule" below has the full rule
+   for a panic.
    Reason: a panic then ends one request or one pass, and the service
    continues. A router with no `edge` also loses its handler when a client
    leaves. No compiler check finds such a router.
@@ -510,12 +562,84 @@ to 5 give a Rust service the Python behavior on purpose.
     `service::load` and `service::refuse_start` set the same hook. Without
     the call in `main`, the code before the first of the three runs with
     the standard hook.
+17. **A daemon that refuses its start exits with `EX_CONFIG`, status 78.**
+    This applies to each cause of the list below. A command that runs to
+    its end can keep another status for a usage error, when no unit
+    restarts it.
+    Reason: a restart repairs none of these causes. Only status 78 keeps a
+    unit with `RestartPreventExitStatus=78` stopped.
+    - An invalid config.
+    - A bad argument on the command line.
+    - A token file or a key file that the daemon cannot use.
+    - A target of a client that the daemon cannot use, for example a URL.
+18. **Take each address of another service from the environment.** Here an
+    address is also a URL, a host or a port. Write no default for one in
+    the code. A fixed path, a count, an interval and a duration stay in the
+    code. Make each one a named constant with one home.
+    Reason: where another service listens is a fact of the host. A default
+    in the code is a second copy of that fact. With a wrong copy, a service
+    calls the wrong peer and no config error shows it.
 
 The lint gate checks rule 2 in part: `Completion` is `must_use`, so the
 build fails for a `Completion` that the code does not use. It checks rule 13
 in part: `await_holding_lock` refuses a guard that the code holds across an
 `await`. `service::run` holds rule 16 in part: it sets the hook before the
 runtime starts. No check holds the other rules. The reviewer checks them.
+
+## The panic rule
+
+Each binary crate follows this rule. The lint gate reads source text only,
+so a program that passes the gate can still panic. The clauses limit what
+one panic can stop and what it can damage.
+
+1. **Each profile keeps `panic = "unwind"` and keeps the overflow checks
+   on.** The release profile sets `overflow-checks = true`. The dev profile
+   has the checks by default. `bin/tests/test_rust_workspace.py` pins both
+   profile tables.
+   Reason: under `abort`, the first panic stops the program, and a boundary
+   cannot catch it.
+2. **`main` has three steps and no other code.** A service on
+   `creche-runtime` gets the steps from rules 11, 12 and 16 of "The rules
+   for a service".
+   Reason: no boundary is around the code of `main`, and no library test
+   runs it.
+   1. Set the panic hook.
+   2. Build `Env`, one time.
+   3. Call the entry function of the library, and return its `ExitCode`.
+3. **The panic hook logs a single `ERROR` line.** That line names the
+   program and the place of the panic: file, line and column. The log
+   never holds the panic message.
+   Reason: a panic message can carry bytes of a request or of a file.
+4. **Put a boundary that catches a panic around each unit of work.**
+   Reason: one panic then ends one unit of work, and the program
+   continues.
+   - A request: the boundary is `http::layers::edge`.
+   - A pass of a loop: the boundary is `Tasks::spawn_loop`.
+   - A tracked task: the boundary is `Tasks::spawn_must_complete` or
+     `Tasks::spawn_blocking`.
+   - A program without the runtime: a unit of work is a step, a pass or a
+     connection.
+5. **After a panic, a boundary ends that unit of work and starts the next
+   unit.** A boundary answers with a constant text. Do not continue a unit
+   of work after its panic.
+   Reason: a panic can leave the values of that unit of work in a wrong
+   state.
+6. **A caught panic must not leave a partial file or a lock that blocks the
+   next unit of work.** Write a file with the atomic writer or in a
+   must-complete task. Lock a std `Mutex` with `tasks::locked` only.
+   Reason: the program continues after the catch, and later work uses the
+   same files and locks.
+7. **A panic outside the boundaries of clause 4 ends the program.** The
+   entry function catches that panic and logs one `ERROR` line. The exit
+   status is then 1. The exit status of a panic is never 78.
+   Reason: status 78 means a config fault, and a panic is not one.
+8. **Only three places can call `catch_unwind`.**
+   Reason: the reviewer then knows where each boundary is.
+   1. Code of the crate `creche-runtime`.
+   2. `src/entry.rs` in a crate with no dependency on `creche-runtime`.
+   3. Test code.
+9. **A stack overflow and an abort are not in the scope of this rule.** No
+   boundary can catch either one, and the program ends.
 
 ## Code style
 
@@ -574,10 +698,11 @@ commit message.
 - Give each parsing constructor one table of accepted texts and one table of
   refused texts. For a text grammar, refuse a final newline and a digit that
   is not ASCII.
-- Give each type with a private field a `compile_fail` doc test. It shows
-  that code outside the module cannot build the type from a raw value. Put a
-  doc test that compiles beside it, with the same `use` line. A wrong path
-  then cannot make the `compile_fail` test pass.
+- Give each public struct that has a field a `compile_fail` doc test. Rule
+  12 permits no public field. The test shows that code outside the module
+  cannot build the struct from a raw value. Put a doc test that compiles
+  beside it, with the same `use` line. A wrong path then cannot make the
+  `compile_fail` test pass.
 - An error code on a `compile_fail` test, for example `E0423`, is a note for
   the reader. The toolchain of this workspace does not check the code. The
   test passes on each compile error.
@@ -623,12 +748,55 @@ Rules for the test:
   that the type implements.
 - Put a table in the test that names each surface. Make the test fail when
   the index holds a surface of your module that no table names.
-- Write each difference on purpose as a row of a `DEVIATIONS` table in the
-  test. The row names the surface, the vector and the contract section. Make
-  the test fail for a row that names no difference.
+- The test passes only when the Rust result equals the result of each
+  vector of each surface. Do not record a difference in a table. Give a
+  surface no stance other than `equal`. Do not add a second, laxer type.
+  "When the two results differ" below has the procedure.
 - Do not compare against a count of vectors that the test holds. A change to
   a product package can add a vector with no change under `rust/`.
 - `ids::tests::python` is the pattern.
+
+#### When the two results differ
+
+For one input, the Rust result can differ from the Python result. The
+packet then stops at that input and resolves the difference. Four
+resolutions exist, and each one has a letter as its name. Check them in this
+order: (d), (b), (a), (c). Use the first one that fits.
+
+- **Resolution (d): change the Rust code.** Use it when the contract shows
+  that the Rust result is wrong. Use it also when a Rust change by itself
+  makes the two results equal.
+- **Resolution (b): align the Python copies.** Use it when the Python code
+  has two copies of a grammar and the copies disagree. Change each copy to
+  the strictest one, in a pull request of the Python package. Regenerate the
+  vectors in that pull request.
+- **Resolution (a): make the Python reader strict.** Change the Python
+  reader in its own package, and regenerate the vectors. Put the Rust change
+  into that same pull request. Use this resolution in each of these cases:
+  1. The owner decided that the rule is strict.
+  2. Python code of the platform writes the value.
+  3. One file has two readers, and they must agree.
+  4. A caller of the platform sends the value today.
+
+**Resolution (c): remove the input from the surface.** It is the last
+resolution, and it fits two cases only. Case 1: nothing in a contract or on
+the platform can show the difference. No contract decides the input, no
+platform writer makes it and no platform caller sends it. Case 2: a daemon
+calls the Python reader at its start. The generator then no longer writes
+the input on that surface, and a plain Rust test pins the Rust result with
+the input inline. The pull request explains why (d), (b) and (a) do not fit.
+
+**Do not add a refusal to a Python reader that a daemon calls at its
+start.** Such a refusal can stop a service on a value that it accepted at
+its previous start. So (b) and (a) are not for this reader. The Rust type
+still refuses the value. The verify hook of the cutover release parses the
+actual files on the host with the Rust types, so it finds such a value. A
+failed hook makes the release restore the Python tree ("The config of a
+process").
+
+Some differences from the Python origin are in no vector. Describe such a
+difference in the doc comment of the Rust function. Pin it with one plain
+test.
 
 ## Dependencies
 
@@ -692,6 +860,75 @@ Rules for the test:
 
 ## Known gaps
 
+- Rules that the code does not hold yet. A line names each packet that
+  changes the code for its rule. Delete a line in the pull request that
+  makes the code hold the rule, and not before. Some lines name no packet
+  for a part of the work. No packet has that part yet.
+  - Rule 1. Four modules have a JSON reader of their own and no raw `serde`
+    type: `channel`, `grants`, `manifest` and `status`. One packet moves
+    each module to the shared reader: `decisions-raw-serde-channel`,
+    `decisions-raw-serde-grants`, `decisions-raw-serde-manifest` and
+    `decisions-raw-serde-status`.
+  - "JSON". Other modules read a JSON text with `serde_json` directly, for
+    example `session`, `untrusted` and `config::mounts`. `agent-family`
+    has a JSON writer of its own. Packet `decisions-raw-serde-others` moves
+    them to the `json` module.
+  - Rule 12. A count at the time of this line found 101 structs with a
+    public field. The packets `decisions-private-*` and
+    `decisions-runtime-private` make the fields private. The gate has no
+    check for this rule yet. `decisions-gate-early` starts the check on
+    each new crate, and `decisions-private-fields-gate` extends it to each
+    crate.
+  - Rule 13. Some values have two sources today. One example is the default
+    state root, which more than one module of `config` defines. Packet
+    `decisions-config-endpoints` gives it one home. A second example is the
+    field `zone` of `quiet.daily` in the family file: the host has a time
+    zone.
+  - "The panic rule", clause 8. The gate has no check for this clause yet.
+    Packet `decisions-gate-early` adds one.
+  - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
+    program of the workspace today. Its `main` sets no panic hook and
+    parses the command line itself. Its library has no entry function that
+    catches a panic. No packet has this change yet.
+  - The exit status of a refused start. `service::refuse_start` has a
+    parameter for a second exit status. Packet `decisions-runtime-exit`
+    deletes the parameter.
+  - The address of another service. `config::chaperone` and
+    `config::caregiver` define the port of another service as a constant.
+    Packet `decisions-config-endpoints` adds the names of the variables.
+    The packet that makes a service read a variable deletes the constant
+    of that service.
+  - Time. The crate needs a single type for each time that a file or a
+    wire message holds, in the RFC 3339 `date-time` form. Today `session`
+    and `status` each define one. Packet `decisions-time-type` adds the
+    single type.
+  - Epoch. The crate needs a single epoch type with the range 1 to
+    2^53 - 1. Packet `decisions-epoch` adds it.
+  - Shared helpers. A helper with users in two crates belongs in one helper
+    crate: SHA-256, hex, base64 and the Python white space rule. Do not add
+    a copy. Packet `decisions-util` creates the crate.
+  - Vector reader. `vectors/data` needs a single reader. The owner still
+    has to confirm this. Three readers exist today. Packet
+    `decisions-vectors-crate` reduces them to one.
+  - Coverage. A Rust file that ports a decision module of the chaperone
+    needs a coverage rule (`chaperone/AGENTS.md`, rule 4). Nothing measures
+    Rust coverage today. Packet `decisions-ci-coverage-gate` adds the rule
+    and the job.
+  - Tables of differences. Some tests still have one. Add no table and no
+    row. The packets `decisions-tables-*`, `decisions-ids` and
+    `decisions-runtime-tables` delete them.
+- Two lines of "JSON" wait for a confirmation of the owner: the duplicate
+  key line and the 64-bit integer line. The Python readers accept both kinds
+  of text today. If the owner says no, change those two lines.
+- Two texts of "When the two results differ" wait for a confirmation of the
+  owner. One is resolution (c). The other is the paragraph on a Python
+  reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
+  depends on resolution (c). If the owner says no, change those texts.
+- Rule 12 permits a field with `pub(crate)` or `pub(super)`. The owner did
+  not confirm that reading yet. Some structs have such a field today, for
+  example the raw forms of `status`. The other reading makes each such
+  field private too. If the owner selects it, change the third sentence of
+  rule 12.
 - The owner did not decide if the advisory check blocks a merge. Today it
   does: step 5 of `bin/rust-gate.sh` makes the four checks. A change with no
   new dependency can thus fail on a new advisory. The other choice is an

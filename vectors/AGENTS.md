@@ -30,6 +30,10 @@ directory is not a workspace package, so a change here does not change
    `tests/test_vectors_runtime.py`. It builds the group `runtime` alone, in
    about one second.
 9. `pyright` checks this directory in strict mode.
+10. Do not remove an input because the Rust result differs from the Python
+    result. The one exception is resolution (c) in `rust/AGENTS.md`, section
+    "The differential test". The pull request then explains why resolutions
+    (d), (b) and (a) do not fit. A plain Rust test holds the removed input.
 
 ## Module map
 
@@ -60,6 +64,9 @@ directory is not a workspace package, so a change here does not change
 
 - An input that makes the Python code raise has no vector until its fix
   merges. Rule 5 states why.
+- Rule 10 depends on resolution (c) of `rust/AGENTS.md`. That text waits
+  for a confirmation of the owner. "Known gaps" of `rust/AGENTS.md` has the
+  open point.
 - No vector covers a scalar of `component.yaml` that PyYAML cannot build,
   such as a word with the tag `!!int`. The Python code refuses it and names
   no line. The Rust reader refuses it and names a line. Such a vector first

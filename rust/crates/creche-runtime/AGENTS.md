@@ -92,14 +92,15 @@ them again.
 10. Where a surface `runtime.*` of `vectors/data` covers a function, the test
     of that function walks each vector. Read the vectors through
     `creche_testkit::vectors`. Name each surface in a table of the test.
-11. Write each difference from a Python copy as a row of a `DEVIATIONS`
-    table in the test of the module. The row names the vector. When no
-    vector covers the case, the row names the Python file and the line.
+11. Some differences from the Python origin are in no vector. Describe such
+    a difference in the doc comment of the Rust function. Pin it with one
+    plain test. Packet `decisions-runtime-tables` removes the `DEVIATIONS`
+    tables of this crate. Until then, add no row to one.
     - A new `Command` has an empty standard input and an output cap of 1 MiB.
       `subprocess.run` of Python gives the child the standard input of the
       process and has no cap.
-    - A port of such a call that keeps one of the two defaults has a
-      difference. Write it as a row.
+    - A port of such a call can keep one of the two defaults. The doc
+      comment of its function then names that default.
 12. Name the Python origin of each function in its doc comment, with the file
     and the line.
 13. Write no `println!` and no `eprintln!` in code that is not a test. Use

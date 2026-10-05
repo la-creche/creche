@@ -50,9 +50,8 @@ only when steps 3 and 4 give no error.
 
 1. Change no rule here without a vector. `tests/vectors.rs` walks each
    vector of the five surfaces of this crate.
-2. Write a difference from the Python code as a row of `DEVIATIONS` in
-   `tests/vectors.rs`. The row names the surface, the vector and the
-   contract section.
+2. For a difference from the Python code, do what "The differential test"
+   of `rust/AGENTS.md` says.
 3. Keep the message of an issue equal to the Python message. The operator
    reads one text from both validators.
 4. `src/yaml/` is a port. Each function has the name of its PyYAML function
