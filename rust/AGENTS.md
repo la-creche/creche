@@ -880,12 +880,8 @@ test.
     check for this rule yet. `decisions-gate-early` starts the check on
     each new crate, and `decisions-private-fields-gate` extends it to each
     crate.
-  - Rule 13. Some values have two sources today. One example is the text of
-    the default state root. `config::values` holds its constant, and six
-    default paths still start with a copy of that text. They are in
-    `config::attendance`, `config::door_owui` and `config::door_trigger`. No
-    packet has this change yet. A second example is the field `zone` of
-    `quiet.daily` in the family file: the host has a time zone.
+  - Rule 13. Some values have two sources today. One example is the field
+    `zone` of `quiet.daily` in the family file: the host has a time zone.
   - "The panic rule", clause 8. The gate has no check for this clause yet.
     Packet `decisions-gate-early` adds one.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only

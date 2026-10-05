@@ -7,9 +7,12 @@
 //! No error type here holds the text. A config value can be a secret, and a
 //! caller writes the error to a log.
 //!
-//! The module also holds the two default paths that more than one daemon
-//! reads: the state root and the socket of `attendance`. The module of a
-//! daemon reads them from here and holds no copy of the text.
+//! The module also holds each default path that more than one daemon reads:
+//! the state root, the socket of `attendance`, the directory of the status
+//! documents and the registry checkout. The module of a daemon reads them
+//! from here and holds no copy of the text. A default path of one daemon
+//! below the state root takes the text of the state root from
+//! `default_state_root!`.
 
 use std::error::Error;
 use std::fmt;
@@ -769,6 +772,7 @@ macro_rules! default_state_root {
         "/srv/agents/state/rework"
     };
 }
+pub(super) use default_state_root;
 
 /// The state root when no variable and no flag names one. The platform keeps
 /// its state below this directory.
@@ -779,6 +783,13 @@ pub(super) const DEFAULT_STATE_ROOT: &str = default_state_root!();
 /// 02 §3 rule 1).
 pub(super) const DEFAULT_ATTENDANCE_SOCKET: &str =
     concat!(default_state_root!(), "/sock/sessiond.sock");
+
+/// The directory of the status documents below the default state root. A
+/// door reads the status document of each family there.
+pub(super) const DEFAULT_FAMILIES_DIR: &str = concat!(default_state_root!(), "/families");
+
+/// The registry checkout when no variable names one.
+pub(super) const DEFAULT_REGISTRY_ROOT: &str = "/srv/agents/registry";
 
 // --- a duration ---
 
@@ -1378,6 +1389,17 @@ mod tests {
             socket.as_str(),
             root.child("sock").child("sessiond.sock").as_str()
         );
+    }
+
+    #[test]
+    fn a_default_path_of_two_daemons_keeps_its_text() {
+        let families: DirPath = DEFAULT_FAMILIES_DIR.parse().unwrap();
+        let registry: DirPath = DEFAULT_REGISTRY_ROOT.parse().unwrap();
+        let root: DirPath = DEFAULT_STATE_ROOT.parse().unwrap();
+
+        assert_eq!(families.as_str(), "/srv/agents/state/rework/families");
+        assert_eq!(families, root.child("families"));
+        assert_eq!(registry.as_str(), "/srv/agents/registry");
     }
 
     #[test]
