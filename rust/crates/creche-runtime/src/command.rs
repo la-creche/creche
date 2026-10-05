@@ -1343,6 +1343,30 @@ async fn past_limit(limit: TimeLimit) -> Duration {
     }
 }
 
+/// The two calls that [`kill`] makes on a child program. The child of
+/// `tokio` is the one implementation outside the tests. A test gives a
+/// child whose end it controls.
+///
+/// The trait has no Python origin. A Python test replaces `subprocess.run`
+/// as a whole (`caregiver/tests/test_driver.py:23-52`).
+trait Ending {
+    /// Sends SIGKILL to the child and does not wait.
+    fn kill_now(&mut self) -> io::Result<()>;
+
+    /// Waits for the end of the child.
+    fn end(&mut self) -> impl Future<Output = io::Result<ExitStatus>> + Send;
+}
+
+impl Ending for Child {
+    fn kill_now(&mut self) -> io::Result<()> {
+        self.start_kill()
+    }
+
+    fn end(&mut self) -> impl Future<Output = io::Result<ExitStatus>> + Send {
+        self.wait()
+    }
+}
+
 /// Kills the child `program` and waits for its end. Then reads each of its
 /// streams to the end, for [`AFTER_KILL`] at most.
 ///
@@ -1358,14 +1382,18 @@ async fn past_limit(limit: TimeLimit) -> Duration {
 /// (`subprocess.py:557-570`, version 3.13). That code waits for the end of
 /// the child in the same way and reads no stream after it. This function
 /// reads each stream for [`AFTER_KILL`] at most.
-async fn kill(
+async fn kill<C, O, E>(
     program: &str,
-    child: &mut Child,
-    stdout: Option<&mut (ChildStdout, ByteCap)>,
-    stderr: Option<&mut (ChildStderr, ByteCap)>,
-) {
+    child: &mut C,
+    stdout: Option<&mut (O, ByteCap)>,
+    stderr: Option<&mut (E, ByteCap)>,
+) where
+    C: Ending,
+    O: AsyncRead + Unpin,
+    E: AsyncRead + Unpin,
+{
     // The call does nothing when the child ended first.
-    if let Err(error) = child.start_kill() {
+    if let Err(error) = child.kill_now() {
         crate::error!(
             LOG_TARGET,
             "the kill of the program {program} failed, and its owner waits for its end: {}",
@@ -1373,7 +1401,7 @@ async fn kill(
         );
     }
 
-    if let Err(error) = child.wait().await {
+    if let Err(error) = child.end().await {
         report_no_end(program, &error);
     }
 
@@ -1962,6 +1990,10 @@ mod tests {
 
     /// The number of the error EPIPE, on Linux and on macOS.
     const PIPE_ERROR: i32 = 32;
+
+    /// The number of the error EPERM, on Linux and on macOS. Its text is
+    /// `Operation not permitted` on both.
+    const NOT_PERMITTED: i32 = 1;
 
     fn limit() -> TimeLimit {
         TimeLimit::After(Duration::from_secs(30))
@@ -2788,6 +2820,110 @@ mod tests {
         });
     }
 
+    /// A child for [`kill`] whose end the test controls.
+    struct FakeChild {
+        /// The number of the error that the kill call gives. `None` for a
+        /// kill that the operating system takes.
+        refused: Option<i32>,
+        /// The count of the kill calls.
+        kills: usize,
+        /// The wait ends when the test cancels this token.
+        ended: CancellationToken,
+    }
+
+    impl FakeChild {
+        fn new(refused: Option<i32>) -> Self {
+            Self {
+                refused,
+                kills: 0,
+                ended: CancellationToken::new(),
+            }
+        }
+    }
+
+    impl Ending for FakeChild {
+        fn kill_now(&mut self) -> io::Result<()> {
+            self.kills += 1;
+
+            match self.refused {
+                Some(errno) => Err(io::Error::from_raw_os_error(errno)),
+                None => Ok(()),
+            }
+        }
+
+        fn end(&mut self) -> impl Future<Output = io::Result<ExitStatus>> + Send {
+            let ended = self.ended.clone();
+
+            async move {
+                ended.cancelled().await;
+
+                Ok(ExitStatus::from_raw(KILLED))
+            }
+        }
+    }
+
+    /// A stream of a child that another program holds open: no byte comes,
+    /// and no end.
+    struct HeldStream;
+
+    impl AsyncRead for HeldStream {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            _buffer: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
+    /// Kills `child`, which has no stream, and holds that the owner waits
+    /// for its end: the kill returns only after the end came.
+    async fn killed_and_waited_for(child: &mut FakeChild) {
+        let ended = child.ended.clone();
+        let mut killing = pin!(kill::<_, &[u8], &[u8]>("tool", child, None, None));
+
+        // The kill call came, and the end did not: the owner waits.
+        assert!(tokio::time::timeout(GRACE, &mut killing).await.is_err());
+
+        ended.cancel();
+        within(&mut killing).await;
+    }
+
+    #[test]
+    fn the_owner_waits_for_the_end_of_a_child_that_it_killed() {
+        runtime().block_on(async {
+            let mut child = FakeChild::new(None);
+
+            killed_and_waited_for(&mut child).await;
+
+            assert_eq!(child.kills, 1);
+        });
+    }
+
+    #[test]
+    fn the_owner_reads_a_held_stream_for_one_second_after_the_end_and_no_more() {
+        runtime().block_on(async {
+            let cap = ByteCap::new(8).unwrap();
+            let mut held = (HeldStream, cap);
+            let mut at_its_end = (b"rest".as_slice(), cap);
+            let mut child = FakeChild::new(None);
+            child.ended.cancel();
+
+            let mut killing = pin!(kill(
+                "tool",
+                &mut child,
+                Some(&mut held),
+                Some(&mut at_its_end)
+            ));
+
+            // The child ended, and one stream is still open: the owner reads.
+            assert!(tokio::time::timeout(GRACE, &mut killing).await.is_err());
+
+            skip(AFTER_KILL).await;
+            within(&mut killing).await;
+        });
+    }
+
     #[test]
     fn a_runner_and_its_future_go_to_another_thread() {
         fn shareable<T: Send + Sync + Clone>() {}
@@ -3418,6 +3554,32 @@ mod tests {
     }
 
     #[test]
+    fn a_killed_child_with_no_pipe_is_gone_when_the_run_returns() {
+        let bench = Bench::new();
+        // The child has the output streams of this process and writes
+        // nothing. No pipe says when the child ended: only the wait of the
+        // owner does.
+        let command = bench
+            .command(DEAF_HOLD, TimeLimit::None, AtShutdown::Kill)
+            .output(Output::Inherit);
+
+        runtime().block_on(async {
+            let mut run = pin!(bench.runner.run(command));
+            let pid = id_in(&mut run, &bench, "pid").await;
+
+            assert!(runs(pid));
+
+            bench.trigger.trigger();
+
+            assert_eq!(within(&mut run).await, Err(RunError::Stopped));
+            // The owner read the end of the child before it gave the error.
+            assert!(!is_child(pid));
+
+            bench.drained().await;
+        });
+    }
+
+    #[test]
     fn a_run_with_kill_after_the_stop_signal_starts_no_program() {
         let bench = Bench::new();
         let command = bench.command("touch \"$1/started\"\n", limit(), AtShutdown::Kill);
@@ -3887,7 +4049,7 @@ mod tests {
         lines: &'static [&'static str],
     }
 
-    const SCENARIOS: [Scenario; 16] = [
+    const SCENARIOS: [Scenario; 17] = [
         Scenario {
             name: "unread-failure",
             run: a_failure_with_no_caller,
@@ -3942,6 +4104,14 @@ mod tests {
             lines: &[
                 "ERROR command the wait for the program cat failed, and its end is not \
                       known: No child processes",
+            ],
+        },
+        Scenario {
+            name: "kill-refused",
+            run: a_kill_that_the_system_refuses,
+            lines: &[
+                "ERROR command the kill of the program tool failed, and its owner waits for \
+                      its end: Operation not permitted",
             ],
         },
         Scenario {
@@ -4213,6 +4383,20 @@ mod tests {
 
         assert_eq!(seen, (unknown, unknown, Ok(())));
         assert_ne!(unknown.python_returncode(), 0);
+    }
+
+    /// The operating system refuses the kill of a child: the child runs as
+    /// another user. The owner writes one line and still waits for the end
+    /// of the child. CPython waits for that end too, when the kill raises
+    /// an error (`subprocess.py:1130-1131`, version 3.13).
+    fn a_kill_that_the_system_refuses() {
+        runtime().block_on(async {
+            let mut child = FakeChild::new(Some(NOT_PERMITTED));
+
+            killed_and_waited_for(&mut child).await;
+
+            assert_eq!(child.kills, 1);
+        });
     }
 
     /// A read from a stream of a child fails after 7 bytes. The read cuts
