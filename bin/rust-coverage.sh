@@ -495,8 +495,9 @@ if [[ -z "$REPORT" ]]; then
 
   # The report goes into a directory of its own, and the script removes it
   # at its end. With a template, mktemp reads TMPDIR on each system. With
-  # none, the mktemp of macOS does not.
-  MADE="$(mktemp -d "${TMPDIR:-/tmp}/rust-coverage.XXXXXX")"
+  # none, the mktemp of macOS does not. macOS ends TMPDIR with a slash.
+  MADE_IN="${TMPDIR:-/tmp}"
+  MADE="$(mktemp -d "${MADE_IN%/}/rust-coverage.XXXXXX")"
   trap 'rm -rf "$MADE"' EXIT
   REPORT="$MADE/coverage.json"
 
