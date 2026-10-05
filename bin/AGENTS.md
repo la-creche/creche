@@ -161,12 +161,15 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 - The public-field check refuses `pub` on a field of a struct, in each
   crate under `rust/crates`. It permits the forms `pub(crate)` and
   `pub(super)`. It reads no test code.
-- The public-field check does not read four crates yet: `agent-family`,
-  `creche-contracts`, `creche-runtime` and `creche-testkit`. The list
-  `FIELD_CHECK_SKIPS` of the script names them. Add no name to it.
+- The public-field check does not read each crate yet. The list
+  `FIELD_CHECK_SKIPS` of the script names the crates that it skips. Add no
+  name to it. "Known gaps" of `rust/AGENTS.md` has the names, and the
+  packets that delete them.
 - The panic check and the public-field check read the text and need no
   `cargo`. `rust/AGENTS.md`, "Checks", has the rules of both, and what
   test code is.
+- Each of the two checks fails for a file that ends inside a test module.
+  The check then read no code below the first line of that module.
 - `cargo deny --locked check` runs after `cargo clippy`. It holds the locked
   crates to `rust/deny.toml`: the licenses, the sources, the bans and the
   advisories. `rust/AGENTS.md` has the table.
@@ -184,8 +187,8 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
 | `test_bin_hook_env.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
-| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. The `cargo deny` step: it runs where `cargo-deny` is on `PATH`, a machine without it passes with one line, and CI without it fails. The panic check: each of the three places passes, and a file in another place fails. The public-field check: what fails, what passes, and each name of its list. |
-| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`, and the two `[profile]` tables there. Each table of `rust/deny.toml`. No Cargo file is outside `rust/`. No Rust source file holds a table of differences. The test looks for the name `DEVIATIONS` and for a struct whose name starts with `Deviation`. The test has a list of four crates that it does not read yet. A change under `rust/` mints no tag. |
+| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. The `cargo deny` step: it runs where `cargo-deny` is on `PATH`, a machine without it passes with one line, and CI without it fails. The panic check: each of the three places passes, and a file in another place fails. The public-field check: what fails, what passes, and each name of its list. Both checks: what test code is, and a file that ends inside a test module fails. |
+| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`, and the two `[profile]` tables there. Each table of `rust/deny.toml`. No Cargo file is outside `rust/`. No Rust source file holds a table of differences. The test looks for the name `DEVIATIONS` and for a struct whose name starts with `Deviation`. The test has a list of the crates that it does not read yet, and it fails for a name with no crate. A change under `rust/` mints no tag. |
 | `test_rust_config_units.py` | Each Rust config type names one daemon unit. Each daemon unit holds `Restart=always` and no `RestartPreventExitStatus`. Three daemon units hold an `ExecStartPre=` check, and the Rust config type of each one says so. Each variable of a unit has a constant in the Rust module of its daemon. That constant holds the name as a text, or it reads the name from the Rust module `endpoints`. The chaperone module reads two names from that module. No other file of the Rust config code holds the text of a name of `endpoints`. |
 | `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job and the same `rust` job, and `!retest` restarts one run. The `rust` job checks the SHA-256 of the `cargo-deny` archive before the unpack. The cache of that job holds the copy of the crates.io index that cargo keeps. The key of the cache holds a hash of the toolchain file and of the lock file. |
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |

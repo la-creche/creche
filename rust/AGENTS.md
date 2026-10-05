@@ -134,20 +134,29 @@ You need rustup. It installs the toolchain at the first cargo command under
 The panic check and the public-field check read each `.rs` file under
 `crates/`. Both checks use one definition of test code:
 
-- A file below a directory `tests` of a crate is test code. The directory
-  of a crate does not count: `crates/tests` is a crate.
+- A file below `crates/<name>/tests/` is test code. cargo builds the files
+  of that directory as test targets.
+- A directory `tests` in another place does not count. `crates/tests` is a
+  crate, and `crates/<name>/src/tests/` is a module of its crate.
 - In each other file, test code is each module with a body that has the
   line `#[cfg(test)]` directly above its first line.
-- Such a module ends at the line that holds only its `}`, at the indent of
-  its first line. `cargo fmt` writes a module in that form. Each check
-  reads the code after that line again.
+- Such a module ends at the first line that starts with its `}`, at the
+  indent of its first line. Only a comment can follow the `}` on that
+  line. `cargo fmt` writes a module in that form. Each check reads the
+  code after that line again.
+- Each check fails for a file that ends inside a test module. The check
+  found no last line of that module, so it read no code below the first
+  line.
 - A `#[cfg(test)]` line above another item starts no test code, for
   example above `mod python;`. Each check reads that item and the code
   after it. Each check also reads the file `python.rs` of that module,
-  unless the file is below a directory `tests`.
-- A string of more than one line can hold a line that equals the last line
-  of its test module. Each check then reads the rest of that module as
-  code that is not test code. Give such a line an indent in the string.
+  unless the file is below `crates/<name>/tests/`.
+- A string of more than one line can hold a line that has the form of the
+  last line of its test module. Each check then reads the rest of that
+  module as code that is not test code. Give such a line an indent in the
+  string.
+- Each check reads a line that ends with CR LF as a line that ends with
+  LF.
 
 More rules of the panic check:
 
@@ -997,13 +1006,23 @@ test.
   - The public-field check reads the source text and expands no macro. It
     does not find a field that a macro adds to a struct. It finds a struct
     only at a line whose first word, after a visibility, is `struct`.
-    `cargo fmt` writes each struct in that form, but it does not format
-    the text of a macro call.
-  - Rule 12 does not name `pub(self)` and `pub(in <path>)`. The
-    public-field check refuses both forms. The owner did not confirm that
-    reading. A change costs one condition in the scan. The same condition
-    holds the two forms that pass, so a change to the third sentence of
-    rule 12 also changes it.
+    `cargo fmt` writes each struct in that form.
+  - The panic check and the public-field check read the form that
+    `cargo fmt` writes. `cargo fmt` does not format an item below
+    `#[rustfmt::skip]` and does not format the text of a macro call. Text
+    in another form can hide code from both checks. These are two
+    examples:
+    - The last line of a test module has another indent than its first
+      line. Both checks then read no code up to the next line with `}` at
+      the indent of the first line.
+    - A struct starts after another word on its line, for example after
+      an attribute. The public-field check does not find that struct.
+  - This `CONTRACT-QUESTION` comment is open in `bin/rust-gate.sh`: rule
+    12 does not name `pub(self)` and `pub(in <path>)`. The public-field
+    check refuses both forms. The owner did not confirm that reading. A
+    change costs one condition in the scan. The same condition holds the
+    two forms that pass, so a change to the third sentence of rule 12
+    also changes it.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. If the owner says no, change those two lines.
