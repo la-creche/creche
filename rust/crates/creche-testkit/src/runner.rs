@@ -418,13 +418,16 @@ mod tests {
             String::from("SBX_NO_TELEMETRY"),
             String::from("1"),
         )]));
+        // Three commands that differ: a list in the reverse order is then
+        // another list.
+        let as_json = command(&["sbx", "ls", "--json"]);
 
         let _ = block_on(runner.run(listed.clone()));
         let _ = block_on(runner.run(removed.clone()));
-        let _ = block_on(runner.run(listed.clone()));
+        let _ = block_on(runner.run(as_json.clone()));
         let calls = runner.calls();
 
-        assert_eq!(calls, [listed.clone(), removed.clone(), listed]);
+        assert_eq!(calls, [listed, removed.clone(), as_json]);
         assert_eq!(calls[1].program(), "sbx");
         assert_eq!(calls[1].argv(), ["sbx", "rm", "chat-s1"]);
         assert_eq!(calls[1].env_policy(), removed.env_policy());
@@ -460,6 +463,10 @@ mod tests {
 
         assert!(text.starts_with("FakeRunner"), "{text}");
         assert!(text.contains("sbx"), "{text}");
+        // The output has 13 bytes. `Finished` prints their count. A `Debug`
+        // that prints a byte list prints each byte as a number, so the text
+        // of the output is no proof.
+        assert!(text.contains("stdout: <13 bytes>"), "{text}");
         assert!(!text.contains("correct"), "{text}");
     }
 
