@@ -24,6 +24,7 @@ use std::panic;
 use tokio::runtime::Handle;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
+use crate::readfile::os_text;
 use crate::tasks::{Shutdown, ShutdownTrigger};
 
 /// What a process does at SIGHUP.
@@ -134,22 +135,6 @@ fn listen(kind: SignalKind) -> Result<Signal, SignalError> {
                 os_text: String::from(NO_SIGNAL_DRIVER),
             })
         }
-    }
-}
-
-/// The text of `error` with no ` (os error N)` at its end: the text of
-/// `strerror`.
-///
-/// `readfile::os_text` replaces this copy when its body exists.
-fn os_text(error: &io::Error) -> String {
-    let text = error.to_string();
-    let Some(code) = error.raw_os_error() else {
-        return text;
-    };
-
-    match text.strip_suffix(&format!(" (os error {code})")) {
-        Some(plain) => plain.to_owned(),
-        None => text,
     }
 }
 
