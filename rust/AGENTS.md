@@ -714,9 +714,11 @@ Rules for the test:
   a `rust` job that keeps no copy of the index in its cache. cargo then
   reads the registry at each run.
 - `cargo-deny` prints the warning `index-failure` for a crate when it cannot
-  read the index entry of that crate. The `advisories` check then passes
-  for that crate. The flag `-D index-failure` of `cargo deny check` makes
-  the warning an error. Step 5 does not have the flag.
+  read the index entry of that crate. The check then cannot find a removed
+  version of that crate. The warning does not fail step 5. An advisory for
+  that crate still fails the check. The flag `-D index-failure` of
+  `cargo deny check` makes the warning an error. Step 5 does not have the
+  flag.
 - No release uses Rust code.
 - Most bodies of `creche-runtime` and of `creche-testkit` are stubs. A stub
   panics when code calls it. `crates/creche-runtime/AGENTS.md` and
