@@ -276,7 +276,9 @@ pub enum TokenError {
     },
     /// The file holds more than 1 MiB.
     TooLarge,
-    /// The file holds no byte, or only space.
+    /// The file holds no byte, or only space. [`TokenRule::DOOR`] does not
+    /// give this error: it gives [`TokenError::TooShort`] for such a file, as
+    /// each Python door does.
     Empty,
     /// The token has less bytes than the rule demands.
     TooShort {
