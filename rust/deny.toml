@@ -18,8 +18,10 @@ targets = [
 ]
 all-features = true
 
-# `yanked`: a locked version that its author removed from the registry fails
-# the check.
+# `yanked`: a locked version that its author removed from crates.io fails the
+# check. For such a version, the check reads only the copy of the crates.io
+# index that cargo keeps on the machine. rust/AGENTS.md, "Known gaps", has
+# the limits of that copy.
 #
 # The other levels are the defaults of cargo-deny 0.20.2. The check fails for
 # a crate with a vulnerability advisory and for a crate with an `unmaintained`

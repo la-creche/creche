@@ -21,6 +21,7 @@ use creche_contracts::manifest::{self, Timestamp};
 use creche_contracts::secret::Secret;
 
 use crate::clock::{self, Clock};
+use crate::readfile::os_text;
 
 /// The random device of the host.
 const DEVICE: &str = "/dev/urandom";
@@ -170,7 +171,10 @@ fn fill_at(device: &Path, bytes: &mut [u8]) -> Result<(), EntropyError> {
     Err(failed_read(&error))
 }
 
-/// The error for a read of the device that failed.
+/// The error for a read of the device that failed. The text of an error of
+/// the operating system is the text of `strerror` of Python, with no number
+/// of the error: [`os_text`] holds that rule. A device that ends early gets
+/// [`DEVICE_ENDED`].
 fn failed_read(error: &io::Error) -> EntropyError {
     let os_text = if error.kind() == io::ErrorKind::UnexpectedEof {
         String::from(DEVICE_ENDED)
@@ -181,25 +185,6 @@ fn failed_read(error: &io::Error) -> EntropyError {
     EntropyError {
         kind: error.kind(),
         os_text,
-    }
-}
-
-/// The text of an error of the operating system, as `strerror` of Python
-/// gives it: `No such file or directory`. The `Display` of [`io::Error`] adds
-/// the number of the error to that text, ` (os error 2)`. This function
-/// removes that part.
-///
-/// `readfile::os_text` holds the same rule. That function is a stub until
-/// its packet merges, and this module does not wait for that packet.
-fn os_text(error: &io::Error) -> String {
-    let text = error.to_string();
-    let Some(code) = error.raw_os_error() else {
-        return text;
-    };
-
-    match text.strip_suffix(format!(" (os error {code})").as_str()) {
-        Some(start) => start.to_owned(),
-        None => text,
     }
 }
 
@@ -265,6 +250,11 @@ impl Error for MintError {
 /// service that needs ids which never repeat and always sort holds its own
 /// state on top of this function.
 ///
+/// The function makes one fill of 10 bytes for each id. It makes no fill for
+/// a time before 1970. For a time past 48 bits of milliseconds it makes the
+/// fill and then refuses. A test with a source that counts thus knows the
+/// bytes of each id.
+///
 /// Five Python copies mint the same text from the same time and the same
 /// bytes: `door-trigger/src/agent_door_trigger/ulid.py:30-55`,
 /// `door-tui/src/agent_door_tui/ids.py:95-111`,
@@ -298,7 +288,7 @@ pub fn new_ulid(clock: &dyn Clock, entropy: &dyn Entropy) -> Result<Ulid, MintEr
 }
 
 /// Mints one random token: `bytes` random bytes, as URL-safe base64 with no
-/// padding.
+/// padding. The function makes one fill of `bytes` bytes.
 ///
 /// 32 bytes give 43 characters. This is the text of `secrets.token_urlsafe`
 /// of Python: `noticeboard/src/noticeboard/security.py:74-76` and
@@ -608,8 +598,20 @@ mod tests {
         let plain = io::Error::other("a text with no number");
 
         assert!(no_entry.to_string().ends_with(" (os error 2)"));
-        assert_eq!(os_text(&no_entry), "No such file or directory");
-        assert_eq!(os_text(&plain), "a text with no number");
+        assert_eq!(
+            failed_read(&no_entry),
+            EntropyError {
+                kind: io::ErrorKind::NotFound,
+                os_text: String::from("No such file or directory"),
+            }
+        );
+        assert_eq!(
+            failed_read(&plain),
+            EntropyError {
+                kind: io::ErrorKind::Other,
+                os_text: String::from("a text with no number"),
+            }
+        );
     }
 
     // --- the mint of a ULID ---
