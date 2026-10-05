@@ -53,6 +53,14 @@ pub enum Found {
 /// document with no such key then reads as [`Slot::Missing`]. Without the
 /// attribute, the read of that document fails.
 ///
+/// A raw struct can carry the attribute one time: it derives `Default` and
+/// has `#[serde(default)]` on the struct. Each field then reads an absent
+/// key as `Missing`.
+///
+/// The compiler does not find a field that lacks the attribute. Call
+/// `tests::reads_empty_table` in the test of each raw struct: it gives
+/// `false` for a struct with such a field.
+///
 /// The read of a `Slot` does not fail for the kind of a value. A kind that
 /// the field does not take is [`Slot::Other`]. The `Slot` asks the reader
 /// for the kind of the value. The reader of a text format gives that kind,
@@ -415,8 +423,22 @@ impl<T: Serialize> Serialize for MapOnly<T> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use serde::de::value::MapDeserializer;
+
     use super::*;
+
+    /// Whether `T` reads a table that holds no key.
+    ///
+    /// The answer is `false` for a raw struct with a `Slot` field that lacks
+    /// `#[serde(default)]`. The table comes from no text, so the check names
+    /// no format. The test of a raw struct in each module can call it.
+    pub(crate) fn reads_empty_table<T: for<'de> Deserialize<'de>>() -> bool {
+        let no_entry = std::iter::empty::<(&str, &str)>();
+        let table = MapDeserializer::<_, de::value::Error>::new(no_entry);
+
+        T::deserialize(table).is_ok()
+    }
 
     /// A nested raw struct. Each field is a `Slot`, so it reads each table.
     #[derive(Debug, Default, PartialEq, Deserialize)]
@@ -564,6 +586,40 @@ mod tests {
 
         assert!(serde_json::from_str::<NoDefault>(r#"{"name": null}"#).is_ok());
         assert!(serde_json::from_str::<NoDefault>("{}").is_err());
+        assert!(!reads_empty_table::<NoDefault>());
+    }
+
+    #[test]
+    fn a_struct_with_the_default_attribute_reads_each_absent_key() {
+        #[derive(Debug, Default, PartialEq, Deserialize)]
+        #[serde(default)]
+        struct OneAttribute {
+            name: Slot<String>,
+            count: Slot<i64>,
+        }
+
+        let read: OneAttribute = serde_json::from_str(r#"{"count": 5}"#).unwrap();
+
+        assert_eq!(read.name, Slot::Missing);
+        assert_eq!(read.count, Slot::Value(5));
+        assert!(reads_empty_table::<OneAttribute>());
+    }
+
+    #[test]
+    fn the_check_of_an_empty_table_finds_an_absent_attribute() {
+        #[derive(Debug, Deserialize)]
+        struct OneAbsent {
+            #[serde(default)]
+            #[expect(dead_code, reason = "the test reads only whether the parse fails")]
+            name: Slot<String>,
+            #[expect(dead_code, reason = "the test reads only whether the parse fails")]
+            count: Slot<i64>,
+        }
+
+        assert!(reads_empty_table::<RawLimit>());
+        assert!(reads_empty_table::<RawDocument>());
+        assert!(reads_empty_table::<BTreeMap<String, Slot<String>>>());
+        assert!(!reads_empty_table::<OneAbsent>());
     }
 
     /// One JSON text of each kind but `null`.
