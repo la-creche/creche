@@ -607,6 +607,10 @@ impl TryFrom<SystemTime> for Timestamp {
 /// No variant holds the text. The text is untrusted, and a caller writes this
 /// error to a log.
 ///
+/// A text can break more than one rule. The error is then the first variant
+/// of this sequence that applies: `Form` or `NoOffset`, `NotADate`,
+/// `NotATimeOfDay`, `NotAnOffset`, `OutOfRange`.
+///
 /// The set is closed. It does not cross a process boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TimestampError {
@@ -852,6 +856,14 @@ mod tests {
         ("2026-00-06T06:00:00Z", TimestampError::NotADate),
         ("2026-10-32T06:00:00Z", TimestampError::NotADate),
         ("2026-04-31T06:00:00Z", TimestampError::NotADate),
+        // A text that breaks more than one rule. The error is the first one
+        // in the sequence of `TimestampError`.
+        ("0000-13-01T25:00:00+2400", TimestampError::Form),
+        ("0000-13-01T25:00:00", TimestampError::NoOffset),
+        ("2026-13-01T25:00:00+24:00", TimestampError::NotADate),
+        ("2026-10-06T25:00:00+24:00", TimestampError::NotATimeOfDay),
+        ("0000-01-01T00:00:00+24:00", TimestampError::NotAnOffset),
+        ("0000-13-01T00:00:00Z", TimestampError::NotADate),
     ];
 
     /// A text of an instant, and what `to_rfc3339` writes for it.
@@ -1072,6 +1084,21 @@ mod tests {
             Timestamp::try_from(last + Duration::from_nanos(1)),
             Err(TimestampError::OutOfRange)
         );
+    }
+
+    #[test]
+    fn a_clock_reading_past_64_bits_of_microseconds_is_refused() {
+        // A clock that cannot hold such a reading gives no value to check.
+        let far = Duration::from_secs(1 << 62);
+        let readings = [UNIX_EPOCH.checked_add(far), UNIX_EPOCH.checked_sub(far)];
+
+        for reading in readings.into_iter().flatten() {
+            assert_eq!(
+                Timestamp::try_from(reading),
+                Err(TimestampError::OutOfRange),
+                "{reading:?}"
+            );
+        }
     }
 
     #[test]
