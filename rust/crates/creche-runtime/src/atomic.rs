@@ -762,6 +762,9 @@ mod tests {
         /// What another process does to the path of the temporary file
         /// before the write sets the mode.
         before_mode: Option<fn(&Path)>,
+        /// What another process does to a file before the write removes
+        /// that file.
+        before_remove: Option<fn(&Path)>,
         /// Each step, in the order of the calls.
         seen: RefCell<Vec<WriteStep>>,
         /// The path of each temporary file that the code asked for.
@@ -776,6 +779,7 @@ mod tests {
                 count: 7,
                 umask: 0,
                 before_mode: None,
+                before_remove: None,
                 seen: RefCell::new(Vec::new()),
                 temps: RefCell::new(Vec::new()),
             }
@@ -888,6 +892,10 @@ mod tests {
 
         fn remove_file(&self, path: &Path) -> io::Result<()> {
             self.pass(WriteStep::RemoveOld)?;
+
+            if let Some(change) = self.before_remove {
+                change(path);
+            }
 
             Host.remove_file(path)
         }
@@ -1175,6 +1183,32 @@ mod tests {
         assert_eq!(error.step, WriteStep::RemoveOld);
         assert_eq!(error.path, leftover);
         assert_eq!(fs::read(&target).unwrap(), b"original");
+    }
+
+    /// Removes the file at `path`, as a second process does when it clears
+    /// the temporary files of a directory.
+    fn taken_away(path: &Path) {
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_leftover_that_goes_away_before_its_remove_does_not_stop_a_write() {
+        // The create refuses the name of the leftover file. A second
+        // process then removes that file, and the remove finds no file.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("status.json");
+        fs::write(probe_temp(&target), b"half of an old docu").unwrap();
+        let probe = Probe {
+            before_remove: Some(taken_away),
+            ..Probe::new()
+        };
+
+        write_with(&probe, &target, b"{}", STRICT).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"{}");
+        assert_eq!(names_in(root.path()), ["status.json"]);
+        assert_eq!(probe.count_of(WriteStep::CreateTemp), 2);
+        assert_eq!(probe.count_of(WriteStep::RemoveOld), 1);
     }
 
     #[test]
@@ -1554,6 +1588,24 @@ mod tests {
 
         assert_eq!(fs::read(&target).unwrap(), b"{}");
         assert_eq!(names_in(root.path()), ["entry.json"]);
+    }
+
+    #[test]
+    fn a_temporary_file_that_goes_away_after_the_link_is_no_error() {
+        // A second process removes the temporary file after the link. The
+        // remove then finds no file, and the new name already has the bytes.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("entry.json");
+        let probe = Probe {
+            before_remove: Some(taken_away),
+            ..Probe::new()
+        };
+
+        write_new_with(&probe, &target, b"{\"id\":1}", FileMode::GroupRead).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"{\"id\":1}");
+        assert_eq!(names_in(root.path()), ["entry.json"]);
+        assert_eq!(probe.count_of(WriteStep::RemoveOld), 1);
     }
 
     // --- replace_dir: the tests of caregiver/tests/test_atomic.py ---
