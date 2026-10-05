@@ -244,8 +244,8 @@ formats a float in another module.
 
 When the reader refuses a text, apply the failure action that rule 8
 demands. The module error keeps the name of the broken rule. The service
-uses that name to record a notice for the operator. The notice arrives with
-packet `decisions-notice`.
+uses that name to record a notice for the operator. Packet
+`decisions-notice` adds the notice.
 
 ## When two Python copies of a grammar disagree
 
@@ -605,11 +605,11 @@ one panic can stop and what it can damage.
    2. Build `Env`, one time.
    3. Call the entry function of the library, and return its `ExitCode`.
 3. **The panic hook logs a single `ERROR` line.** That line names the
-   program and the place of the panic: file, line and column. The panic
-   message stays out of the log.
+   program and the place of the panic: file, line and column. The log
+   never holds the panic message.
    Reason: a panic message can carry bytes of a request or of a file.
 4. **Put a boundary that catches a panic around each unit of work.**
-   Reason: one panic then costs one unit of work, and the program
+   Reason: one panic then ends one unit of work, and the program
    continues.
    - A request: the boundary is `http::layers::edge`.
    - A pass of a loop: the boundary is `Tasks::spawn_loop`.
@@ -617,7 +617,7 @@ one panic can stop and what it can damage.
      `Tasks::spawn_blocking`.
    - A program without the runtime: a unit of work is a step, a pass or a
      connection.
-5. **After a panic, a boundary drops that unit of work and takes the next
+5. **After a panic, a boundary ends that unit of work and starts the next
    unit.** A boundary answers with a constant text. Never catch a panic and
    then continue the unit of work that panicked.
    Reason: a panic can leave the values of that unit of work in a wrong
@@ -627,9 +627,9 @@ one panic can stop and what it can damage.
    must-complete task. Take a lock with `tasks::locked` only.
    Reason: the program continues after the catch, and later work uses the
    same files and locks.
-7. **When a panic escapes each boundary, the program ends.** The entry
-   function is the last catch. It logs one `ERROR` line, and the exit
-   status is 1. The exit status of a panic is never 78.
+7. **A panic outside the boundaries of clause 4 ends the program.** The
+   entry function catches that panic and logs one `ERROR` line. The exit
+   status is then 1. The exit status of a panic is never 78.
    Reason: status 78 means a config fault, and a panic is not one.
 8. **Only three places can call `catch_unwind`.**
    Reason: the reviewer then knows where each boundary is.
@@ -763,9 +763,9 @@ order: (d), (b), (a), (c). Use the first one that fits.
 
 - **Resolution (d): change the Rust code.** Use it when the contract shows
   that the Rust result is wrong. Use it also when a Rust change by itself
-  brings the two results together.
+  makes the two results equal.
 - **Resolution (b): align the Python copies.** Use it when the Python code
-  has two copies of a grammar and the copies disagree. Bring each copy to
+  has two copies of a grammar and the copies disagree. Change each copy to
   the strictest one, in a pull request of the Python package. Regenerate the
   vectors in that pull request.
 - **Resolution (a): make the Python reader strict.** Change the Python
@@ -776,7 +776,7 @@ order: (d), (b), (a), (c). Use the first one that fits.
   3. One file has two readers, and they must agree.
   4. A caller of the platform sends the value today.
 
-**Resolution (c): take the input out of the surface.** It is the last
+**Resolution (c): remove the input from the surface.** It is the last
 resolution, and it fits two cases only. Case 1: nothing in a contract or on
 the platform can show the difference. No contract decides the input, no
 platform writer makes it and no platform caller sends it. Case 2: a daemon
@@ -858,8 +858,8 @@ test.
 
 ## Known gaps
 
-- Rules that the code does not hold yet. A line gives the packet that closes
-  the gap. The same packet removes the line.
+- Rules that the code does not hold yet. A line names the packet that makes
+  the code hold the rule. The same packet removes the line.
   - Rule 1. Four modules have a JSON reader of their own and no raw `serde`
     type: `channel`, `grants`, `manifest` and `status`. One packet moves
     each module to the shared reader: `decisions-raw-serde-channel`,
@@ -881,7 +881,7 @@ test.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
     program of the workspace today. Its `main` sets no panic hook and
     parses the command line itself. Its library has no entry function that
-    catches a panic. No packet is planned for this gap.
+    catches a panic. No packet has this change yet.
   - The exit status of a refused start. `service::refuse_start` has a
     parameter for a second exit status. Packet `decisions-runtime-exit`
     deletes the parameter.
