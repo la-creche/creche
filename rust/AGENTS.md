@@ -200,8 +200,9 @@ Each rule has its reason. Do not break a rule without a change to this file.
     tag for a component when a path under that component changes. A path
     under `rust/` is under no component, so a change here mints no tag and
     starts no release.
-12. **Make each field of a struct private.** Code in another module gets a
-    value through an accessor method.
+12. **Give no struct a public field.** Code outside the crate gets a value
+    through an accessor method. A field with `pub(crate)` or `pub(super)` is
+    not a public field.
     Reason: other code can write a public field directly, so no constructor
     checks that value.
     - For a record or a view, write an accessor for each field. Write `new`
@@ -697,7 +698,7 @@ commit message.
   refused texts. For a text grammar, refuse a final newline and a digit that
   is not ASCII.
 - Give each public struct that has a field a `compile_fail` doc test. Rule
-  12 makes each field private. The test shows that code outside the module
+  12 permits no public field. The test shows that code outside the module
   cannot build the struct from a raw value. Put a doc test that compiles
   beside it, with the same `use` line. A wrong path then cannot make the
   `compile_fail` test pass.
@@ -916,6 +917,11 @@ test.
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
   depends on resolution (c). If the owner says no, change those texts.
+- Rule 12 permits a field with `pub(crate)` or `pub(super)`. The owner did
+  not confirm that reading yet. Some structs have such a field today, for
+  example the raw forms of `status`. The other reading makes each such
+  field private too. If the owner selects it, change the third sentence of
+  rule 12.
 - The owner did not decide if the advisory check blocks a merge. Today it
   does: step 5 of `bin/rust-gate.sh` makes the four checks. A change with no
   new dependency can thus fail on a new advisory. The other choice is an
