@@ -16,7 +16,7 @@ change without one red line, and each gets a check here:
    name with the prefix of its service, and each flag of the caregiver
    command, is in the Rust module of that daemon. The module `endpoints`
    is the one home of some names. The module of the daemon then reads the
-   name from there.
+   name from there, and no other file of the config code holds its text.
 4. **A unit that checks its config before the main process starts, with a
    doc that does not say so.** systemd reads `RestartPreventExitStatus` only
    for the main process. A unit with an `ExecStartPre=... --check` line
@@ -87,6 +87,9 @@ REMOVE_THE_CHECK = "removes the `ExecStartPre` line"
 #: name of its variable.
 ENDPOINTS = "endpoints"
 
+#: `pub const NAME: &str = "NAME";` in that module.
+ENDPOINT_NAME = re.compile(r'^pub const ([A-Z][A-Z0-9_]*): &str = "\1";', re.MULTILINE)
+
 
 def _unit(name: str) -> str:
     return (UNITS / name).read_text(encoding="utf-8")
@@ -104,7 +107,7 @@ def _lines(text: str) -> list[str]:
 def _reads_endpoint(source: str, endpoints: str, name: str) -> bool:
     """Whether the module `source` reads the constant `name` of the module
     `endpoints`, and that module holds the text of the name."""
-    reads = f"{ENDPOINTS}::{name}" in source
+    reads = re.search(rf"\b{ENDPOINTS}::{re.escape(name)}\b", source) is not None
     home = f'pub const {name}: &str = "{name}";' in endpoints
 
     return reads and home
@@ -219,6 +222,12 @@ def test_a_constant_is_a_text_or_a_name_of_the_endpoints_module() -> None:
     assert not _has_constant(reads, text, "PEP_APPROVAL_URL"), "the endpoints module has no text"
     assert not _has_constant(text, home, "PEP_APPROVAL_URL"), "the module reads no name"
 
+    longer = "pub const APPROVAL_URL: &str = endpoints::PEP_APPROVAL_URL_OLD;\n"
+    other = "pub const APPROVAL_URL: &str = old_endpoints::PEP_APPROVAL_URL;\n"
+
+    assert not _has_constant(longer, home, "PEP_APPROVAL_URL"), "the module reads a longer name"
+    assert not _has_constant(other, home, "PEP_APPROVAL_URL"), "the module reads another module"
+
 
 def test_the_chaperone_module_reads_its_names_of_the_endpoints_module() -> None:
     """The check above also passes for a name that a module holds as a text."""
@@ -232,6 +241,22 @@ def test_the_chaperone_module_reads_its_names_of_the_endpoints_module() -> None:
             f"{where}: the module no longer reads {name} from endpoints.rs"
         )
         assert f'= "{name}";' not in source, f"{where}: a second constant holds the text {name}"
+
+
+def test_each_name_of_the_endpoints_module_has_one_home() -> None:
+    """No other file of the config code holds the text of such a name."""
+    names = ENDPOINT_NAME.findall(_module(ENDPOINTS))
+
+    assert names, "rust/.../config/endpoints.rs holds no name"
+
+    for path in [CONFIG.with_suffix(".rs"), *sorted(CONFIG.glob("*.rs"))]:
+        if path.stem == ENDPOINTS:
+            continue
+
+        source = path.read_text(encoding="utf-8")
+        copies = [name for name in names if f'"{name}"' in source]
+
+        assert not copies, f"{path.relative_to(REPO)}: a second text of {copies}"
 
 
 def test_the_chaperone_unit_gives_its_variables_in_the_unit_file() -> None:
