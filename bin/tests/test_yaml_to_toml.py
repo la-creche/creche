@@ -186,7 +186,7 @@ def test_a_family_file_gets_the_one_layout() -> None:
 
 
 def test_the_layout_holds_the_values_in_the_order_of_the_yaml_file() -> None:
-    value = tomllib.loads(FAMILY_TOML)
+    value = tomllib.loads(_toml(FAMILY_YAML))
 
     assert list(value) == ["name", "kind", "model", "files", "tools", "verbs", "egress", "shell"]
     assert value["model"] == {"router": "agent-router", "budget_usd_per_day": 15}
@@ -196,7 +196,7 @@ def test_the_layout_holds_the_values_in_the_order_of_the_yaml_file() -> None:
 
 def test_no_line_is_a_table_header() -> None:
     """A key after a header belongs to that table, so a header moves keys."""
-    for line in FAMILY_TOML.splitlines():
+    for line in _toml(FAMILY_YAML).splitlines():
         assert not line.startswith("[")
 
 
@@ -578,6 +578,8 @@ def test_a_null_in_a_mapping_of_a_list_is_dropped_and_named() -> None:
         ("name: chat\n# end", 'name = "chat"\n# end\n'),
         ("name: chat # one\rkind: x\r", 'name = "chat" # one\nkind = "x"\n'),
         ("name: chat\x85kind: x # one\x85", 'name = "chat"\nkind = "x" # one\n'),
+        ("name: chat\u2028kind: x # one\u2028", 'name = "chat"\nkind = "x" # one\n'),
+        ("name: chat\u2029kind: x # one\u2029", 'name = "chat"\nkind = "x" # one\n'),
     ],
 )
 def test_each_form_of_a_yaml_text_converts(yaml_text: str, toml_text: str) -> None:
@@ -870,9 +872,10 @@ def test_a_byte_order_mark_is_refused() -> None:
     assert raised.value.reason is y2t.Reason.BYTE_ORDER_MARK
 
 
-def test_half_of_a_surrogate_pair_is_refused_with_its_line() -> None:
+@pytest.mark.parametrize("text", ['a: 1\nb: "\\ud800"\n', 'a: 1\n"\\udfff": 1\n'])
+def test_half_of_a_surrogate_pair_is_refused_with_its_line(text: str) -> None:
     with pytest.raises(y2t.Refusal) as raised:
-        y2t.convert('a: 1\nb: "\\ud800"\n', FAMILY)
+        y2t.convert(text, FAMILY)
 
     assert raised.value.reason is y2t.Reason.TEXT
     assert raised.value.line == 2
@@ -1052,6 +1055,27 @@ def test_the_check_refuses_a_yaml_feature_too() -> None:
         y2t.check("a: &x 1\n", "a = 1\n", FAMILY)
 
     assert raised.value.reason is y2t.Reason.ANCHOR
+
+
+#: A value of `DEEP` levels, in a form that YAML and TOML both read.
+DEEP_VALUE = "[" * DEEP + "1" + "]" * DEEP
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "toml_text", "reason"),
+    [
+        pytest.param(f"a: {DEEP_VALUE}\n", "a = 1\n", "DEPTH", id="deep-yaml"),
+        pytest.param("a: 1\n", f"a = {DEEP_VALUE}\n", "NOT_TOML", id="deep-toml"),
+    ],
+)
+def test_the_check_refuses_a_deep_text_of_each_side(
+    yaml_text: str, toml_text: str, reason: str
+) -> None:
+    """A pair that the script cannot read is refused. It does not read as a difference."""
+    with pytest.raises(y2t.Refusal) as raised:
+        y2t.check(yaml_text, toml_text, FAMILY)
+
+    assert raised.value.reason is y2t.Reason[reason]
 
 
 # --- the command line --------------------------------------------------------
