@@ -141,10 +141,13 @@ need() {
   done
 }
 
-# note TEXT: one line in the log and one line of the step summary.
+# note TEXT: one line in the log and one line of the step summary. It stops
+# the run when the summary takes no line: a result that no page shows is not
+# a recorded result.
 note() {
   say "$1"
-  printf -- '- %s\n' "$1" >> "$GITHUB_STEP_SUMMARY"
+  printf -- '- %s\n' "$1" >> "$GITHUB_STEP_SUMMARY" ||
+    die "cannot write to GITHUB_STEP_SUMMARY"
 }
 
 #: The arguments of the one jq call that writes the report: each result is
@@ -406,7 +409,7 @@ build() {
     printf 'archive=%s\n' "$pack_one/$name"
     printf 'toolchain=%s\n' "$TOOLCHAIN"
     printf 'remap_needed=%s\n' "$remap_needed"
-  } >> "$GITHUB_OUTPUT"
+  } >> "$GITHUB_OUTPUT" || die "cannot write to GITHUB_OUTPUT"
   say "digest: $line"
 }
 
@@ -574,8 +577,10 @@ verify() {
   sudo install -o root -g root -m 0644 -- "$bundle" "$copy.sigstore.json" ||
     die "cannot copy the bundle"
 
-  # From here each failure counts, and the report is written.
-  printf 'report=%s\n' "$report" >> "$GITHUB_OUTPUT"
+  # From here each failure counts, and the report is written. Without this
+  # line the upload step has no path, so the run stops when the write fails.
+  printf 'report=%s\n' "$report" >> "$GITHUB_OUTPUT" ||
+    die "cannot write to GITHUB_OUTPUT"
 
   # 2. The words that start each child are RUN, above.
 

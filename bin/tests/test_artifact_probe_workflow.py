@@ -339,8 +339,10 @@ fi
 #: `cargo`: it writes its directory, its words and the build variables to
 #: STUB_LOG. Then it makes one program in the install root. The program holds
 #: STUB_REMAP_TEXT in a build with the remap flags, and STUB_PLAIN_TEXT in a
-#: build without them. With STUB_RECORD it also leaves the record file that
-#: cargo writes without `--no-track`.
+#: build without them. It ends with the status STUB_HELP_STATUS, it has the
+#: mode STUB_PROGRAM_MODE, and with STUB_PROGRAM_LINK it is a link. With
+#: STUB_RECORD the stub also leaves the record file that cargo writes without
+#: `--no-track`.
 CARGO_STUB: Final = """#!/usr/bin/env bash
 {
   printf '%s\\037' cargo "$PWD" "$@"
@@ -349,6 +351,7 @@ CARGO_STUB: Final = """#!/usr/bin/env bash
   printf 'RUSTUP_TOOLCHAIN=%s\\037' "${RUSTUP_TOOLCHAIN:-}"
   printf 'CARGO_INCREMENTAL=%s\\037' "${CARGO_INCREMENTAL:-}"
   printf 'RUSTFLAGS=%s\\037' "${RUSTFLAGS-<unset>}"
+  printf 'CARGO_ENCODED_RUSTFLAGS=%s\\037' "${CARGO_ENCODED_RUSTFLAGS-<unset>}"
   printf '\\n'
 } >> "$STUB_LOG"
 
@@ -369,8 +372,33 @@ mkdir -p "$CARGO_INSTALL_ROOT/bin"
 if [[ -n "${STUB_RECORD:-}" ]]; then
   touch "$CARGO_INSTALL_ROOT/.crates.toml"
 fi
-printf '#!/bin/sh\\n# %s\\nexit 0\\n' "$text" > "$CARGO_INSTALL_ROOT/bin/agent-family"
-chmod 0755 "$CARGO_INSTALL_ROOT/bin/agent-family"
+program="$CARGO_INSTALL_ROOT/bin/agent-family"
+printf '#!/bin/sh\\n# %s\\nexit %s\\n' "$text" "${STUB_HELP_STATUS:-0}" > "$program"
+chmod "${STUB_PROGRAM_MODE:-0755}" "$program"
+if [[ -n "${STUB_PROGRAM_LINK:-}" ]]; then
+  mv "$program" "$program.real"
+  ln -s "$program.real" "$program"
+fi
+"""
+
+#: `gzip`: the real program, and then one byte that differs for each call.
+GZIP_STUB: Final = """#!/usr/bin/env bash
+count="$(cat "$STUB_COUNT" 2> /dev/null || echo 0)"
+echo "$((count + 1))" > "$STUB_COUNT"
+"$STUB_REAL_GZIP" "$@" || exit 1
+printf '%s' "$count"
+"""
+
+#: `tar`: the real program, with another mode for each member that it packs.
+TAR_STUB: Final = """#!/usr/bin/env bash
+words=()
+for word in "$@"; do
+  if [[ "$word" == "--mode=0755" ]]; then
+    word="--mode=0700"
+  fi
+  words+=("$word")
+done
+exec "$STUB_REAL_TAR" "${words[@]}"
 """
 
 #: What `file` says for a static program of the target, and for a program
@@ -914,6 +942,14 @@ def _stub(directory: Path, name: str, text: str) -> Path:
     return stub
 
 
+def _no_file(tmp_path: Path) -> Path:
+    """A path that no program can append to: it is a directory."""
+    directory = tmp_path / "no-file"
+    directory.mkdir()
+
+    return directory
+
+
 def _calls(log: Path, first: str) -> list[list[str]]:
     """The words of each logged call that starts with `first`."""
     if not log.exists():
@@ -1217,6 +1253,48 @@ def test_the_two_fault_classes_are_recorded_and_fail_nothing(tmp_path: Path) -> 
     assert run.report["status_time_limit"] == 143
 
 
+@needs_jq
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [("ProtectClock=yes\n", ""), ("UMask=", "UMask=0077\nUMask=")],
+    ids=["absent", "two-times"],
+)
+def test_a_unit_file_without_each_sandbox_line_one_time_fails_the_probe(
+    tmp_path: Path, old: str, new: str
+) -> None:
+    """The nested case then does not run: a unit with other sandbox lines
+    is not the unit of the release executor."""
+    text = HANDOVER_UNIT.read_text(encoding="utf-8")
+    workspace = tmp_path / "work-space"
+    (workspace / "systemd").mkdir(parents=True)
+    (workspace / "systemd" / HANDOVER_UNIT.name).write_text(
+        text.replace(old, new), encoding="utf-8"
+    )
+    run = Verify(tmp_path, GITHUB_WORKSPACE=str(workspace))
+
+    assert text.count(old) == 1
+    assert run.done.returncode == 1, run.said
+    assert run.report["status_nested"] is None
+    assert "does not hold each sandbox line one time" in run.done.stdout
+    assert "PROBE: FAIL (1)" in run.done.stdout
+    assert len(run.children) == 9
+
+
+@pytest.mark.parametrize("variable", ["GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"])
+def test_verify_stops_when_it_cannot_write_a_file_of_the_runner(
+    tmp_path: Path, variable: str
+) -> None:
+    """Without the first file the upload step gets no path of the report.
+    Without the second one no result reaches the page of the run. The run
+    stops before the first child, so it does not pass with a result that
+    nobody can read."""
+    run = Verify(tmp_path, **{variable: str(_no_file(tmp_path))})
+
+    assert run.done.returncode == 1, run.said
+    assert f"cannot write to {variable}" in run.done.stderr
+    assert run.children == []
+
+
 def test_verify_stops_before_the_first_child_without_the_signed_files(tmp_path: Path) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
@@ -1266,6 +1344,10 @@ def _has_gnu_tar() -> bool:
 needs_gnu_tar = pytest.mark.skipif(
     not IN_CI and not _has_gnu_tar(), reason="the pack needs GNU tar"
 )
+
+#: The two programs of this machine that a stub of the pack starts.
+REAL_TAR: Final = shutil.which("tar") or "tar"
+REAL_GZIP: Final = shutil.which("gzip") or "gzip"
 
 
 class Build:
@@ -1377,6 +1459,73 @@ def test_a_build_that_made_no_program_in_the_install_root_stops(tmp_path: Path) 
     assert "the build made no program at bin/agent-family" in run.done.stderr
 
 
+def test_a_program_that_does_not_run_stops_the_build(tmp_path: Path) -> None:
+    run = Build(tmp_path, STUB_HELP_STATUS="1")
+
+    assert run.done.returncode == 1, run.said
+    assert "the program did not run: --help failed" in run.done.stderr
+    assert "digest" not in run.outputs
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"STUB_PROGRAM_MODE": "0644"}, {"STUB_PROGRAM_LINK": "1"}],
+    ids=["no-execute-bit", "a-link"],
+)
+def test_a_thing_at_the_program_path_that_is_no_program_stops_the_build(
+    tmp_path: Path, overrides: dict[str, str]
+) -> None:
+    run = Build(tmp_path, **overrides)
+
+    assert run.done.returncode == 1, run.said
+    assert "the build made no program at bin/agent-family" in run.done.stderr
+
+
+def test_build_stops_when_its_work_directory_exists(tmp_path: Path) -> None:
+    """Each install root must start empty. A file of an earlier build would
+    go into the archive."""
+    temp = tmp_path / "other-temp"
+    (temp / "artifact-probe").mkdir(parents=True)
+    run = Build(tmp_path, RUNNER_TEMP=str(temp))
+
+    assert run.done.returncode == 1
+    assert "exists: each install root must start empty" in run.done.stderr
+    assert _calls(run.log, "rustup") == []
+
+
+def test_build_takes_no_rustflags_from_its_environment(tmp_path: Path) -> None:
+    """cargo reads CARGO_ENCODED_RUSTFLAGS before RUSTFLAGS. A value of the
+    caller would replace the remap flags of the first build, and it would
+    give flags to the build that must have none."""
+    run = Build(tmp_path, RUSTFLAGS="--cfg other", CARGO_ENCODED_RUSTFLAGS="--cfg=other")
+    remapped, plain = _calls(run.log, "cargo")
+
+    assert remapped[-2:] == [f"RUSTFLAGS={run.remap_flags}", "CARGO_ENCODED_RUSTFLAGS=<unset>"]
+    assert plain[-2:] == ["RUSTFLAGS=<unset>", "CARGO_ENCODED_RUSTFLAGS=<unset>"]
+
+
+def test_build_reads_the_cargo_home_of_its_environment(tmp_path: Path) -> None:
+    """The cargo home is then a remap flag and a needle. It is not below
+    HOME here, so only its own needle finds the path."""
+    cargo_home = tmp_path / "cargo-home"
+    text = f"{cargo_home}/registry/src/one.rs"
+    run = Build(tmp_path, CARGO_HOME=str(cargo_home), STUB_REMAP_TEXT=text)
+    (remapped,) = _calls(run.log, "cargo")
+
+    assert run.done.returncode == 1, run.said
+    assert f"--remap-path-prefix={cargo_home}=/probe/cargo-home " in remapped[-2]
+    assert "bin/agent-family holds the cargo home" in run.done.stdout
+    assert "bin/agent-family holds HOME" not in run.done.stdout
+
+
+def test_build_stops_when_it_cannot_write_the_step_summary(tmp_path: Path) -> None:
+    run = Build(tmp_path, GITHUB_STEP_SUMMARY=str(_no_file(tmp_path)))
+
+    assert run.done.returncode == 1, run.said
+    assert "cannot write to GITHUB_STEP_SUMMARY" in run.done.stderr
+    assert _calls(run.log, "cargo") == []
+
+
 def test_build_stops_for_a_path_that_rustflags_cannot_carry(tmp_path: Path) -> None:
     run = Build(tmp_path, RUNNER_TEMP=str(tmp_path / "a temp"))
 
@@ -1411,6 +1560,7 @@ def test_build_installs_the_toolchain_of_rust_and_builds_from_the_root(tmp_path:
             f"CARGO_INSTALL_ROOT={work}/remap/agent-family",
             *shared,
             f"RUSTFLAGS={run.remap_flags}",
+            "CARGO_ENCODED_RUSTFLAGS=<unset>",
         ],
         [
             "cargo",
@@ -1419,6 +1569,7 @@ def test_build_installs_the_toolchain_of_rust_and_builds_from_the_root(tmp_path:
             f"CARGO_INSTALL_ROOT={work}/plain/agent-family",
             *shared,
             "RUSTFLAGS=<unset>",
+            "CARGO_ENCODED_RUSTFLAGS=<unset>",
         ],
     ]
 
@@ -1492,3 +1643,37 @@ def test_a_tree_with_a_second_thing_beside_its_programs_stops_the_build(tmp_path
     assert run.done.returncode == 1, run.said
     assert "no regular file directly in bin/" in run.done.stderr
     assert "digest" not in run.outputs
+
+
+@needs_gnu_tar
+def test_two_packs_that_differ_stop_the_build(tmp_path: Path) -> None:
+    """An archive that differs from one run to the next has no SHA-256 that
+    a second build can prove."""
+    _stub(tmp_path / "stubs", "gzip", GZIP_STUB)
+    run = Build(tmp_path, STUB_REAL_GZIP=REAL_GZIP, STUB_COUNT=str(tmp_path / "count"))
+
+    assert run.done.returncode == 1, run.said
+    assert "two packs of one tree differ" in run.done.stderr
+    assert "digest" not in run.outputs
+
+
+@needs_gnu_tar
+def test_an_archive_member_with_another_mode_stops_the_build(tmp_path: Path) -> None:
+    """The script reads the archive that it packed. It does not trust the
+    words that it gave to tar."""
+    _stub(tmp_path / "stubs", "tar", TAR_STUB)
+    run = Build(tmp_path, STUB_REAL_TAR=REAL_TAR)
+
+    assert run.done.returncode == 1, run.said
+    assert "a member of the archive is not a regular file" in run.done.stderr
+    assert "digest" not in run.outputs
+
+
+@needs_gnu_tar
+def test_build_stops_when_it_cannot_hand_its_results_on(tmp_path: Path) -> None:
+    """Without the job outputs the job `sign` gets no SHA-256 line. The job
+    `build` must not pass then."""
+    run = Build(tmp_path, GITHUB_OUTPUT=str(_no_file(tmp_path)))
+
+    assert run.done.returncode == 1, run.said
+    assert "cannot write to GITHUB_OUTPUT" in run.done.stderr
