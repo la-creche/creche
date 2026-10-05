@@ -226,6 +226,12 @@ them yet. Each one is a row of `DEVIATIONS` in `session/python.rs`, and
 - A JSON text that nests deeper than 128 levels.
 - A sequence number that does not fit 64 bits.
 
+The module `untrusted` has the first two exceptions too, for an answer. Its
+nesting limit is 127 levels. It also reads an integer that does not fit 64
+bits as 0, and each Python copy keeps that integer. The owner did not decide
+the three yet. Each one is a row of `DEVIATIONS` in the test of the module,
+and "Known gaps" lists them.
+
 ## The channel module
 
 `crates/creche-contracts/src/channel.rs` declares the parts. Each part is a
