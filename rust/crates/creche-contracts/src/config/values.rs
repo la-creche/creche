@@ -965,7 +965,7 @@ impl HttpUrl {
     /// The URL of a service on the LAN address: `http://<address>:<port>`.
     #[must_use]
     pub fn on_lan(address: &LanAddress, port: Port) -> Self {
-        Self(format!("http://{address}:{port}"))
+        Self(format!("{HTTP_SCHEME}{address}{PORT_SEPARATOR}{port}"))
     }
 }
 
