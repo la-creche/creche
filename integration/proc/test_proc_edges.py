@@ -322,7 +322,7 @@ async def test_attendance_reads_a_body_with_no_content_type(
 # here.
 @pytest.mark.parametrize("listener", READ_JSON, indirect=True)
 async def test_a_body_that_is_not_json_is_refused(listener: Listener) -> None:
-    """The shape is checked before a session exists and before a turn starts."""
+    """The listener checks the shape before a session exists and before a turn starts."""
     work = work_of(listener.service)
 
     async with listener.client() as client:
