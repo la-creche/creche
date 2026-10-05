@@ -1603,7 +1603,8 @@ where
 /// # Errors
 ///
 /// The error of the operating system when it gives no socket or refuses the
-/// path, for example under a root that is gone.
+/// path, for example under a root that is gone. `InvalidInput` for a path
+/// that is too long for a socket.
 pub fn refused_socket(root: &TempRoot) -> io::Result<PathBuf> {
     let count = SOCKETS.fetch_add(1, Ordering::Relaxed);
     let path = root.path().join(format!("refused-{count}.sock"));
@@ -2726,6 +2727,19 @@ mod tests {
 
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
         assert!(!root.path().exists());
+    }
+
+    #[test]
+    fn a_path_that_is_too_long_for_a_socket_gives_invalid_input() {
+        let root = TempRoot::new().unwrap();
+        // The file name alone is longer than the longest path of a socket,
+        // on Linux too. A test of this module cannot make a root with such
+        // a path, so the test calls the function that binds.
+        let path = root.path().join("s".repeat(2 * SOCKET_PATH_MAX));
+        let error = never_listens(&path).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
     /// A child program that starts while a socket is open holds that socket
