@@ -58,13 +58,20 @@
 //!   such an object.
 //! - A struct with named fields reads from an object only. A derived `serde`
 //!   type alone also takes a list and fills its fields by position. No Python
-//!   reader does that.
+//!   reader does that. The rule has one exception: a struct that a variant of
+//!   an enum with `#[serde(untagged)]` holds. `serde` reads such an enum from
+//!   a buffer of its own, and the struct there also reads from a list.
 //! - A value nests 128 levels of lists and objects at most. `serde_json`
 //!   stops one level before, so [`parse_object`] reads 127 levels.
 //! - The tree owns each text. A `T` that borrows a `&str` from the input
 //!   refuses each value. Give `T` a `String`.
 //! - The tree keeps no JSON text. A `T` that holds a
 //!   `serde_json::value::RawValue` refuses each value.
+//! - The tree holds an integer past 64 bits as the nearest float. A `u128`
+//!   and an `i128` refuse that float. Alone, each one reads the integer.
+//! - An `f32` reads from the nearest `f64`. A number outside the range of an
+//!   `f32` then reads as an infinity, and `serde_json` alone refuses it. The
+//!   last bit of another number can differ. Give `T` an `f64`.
 //!
 //! # What is JSON here
 //!
@@ -671,8 +678,8 @@ macro_rules! only {
     };
 }
 
-/// A raw type reads from the tree as it reads from `serde_json`, with one
-/// difference: a struct with named fields reads from an object only.
+/// A raw type reads from the tree as it reads from `serde_json`, with the
+/// differences that the module documentation lists.
 impl<'de> Deserializer<'de> for Json {
     type Error = Mismatch;
 
@@ -680,7 +687,12 @@ impl<'de> Deserializer<'de> for Json {
         match self {
             Self::Null => visitor.visit_unit(),
             Self::Bool(value) => visitor.visit_bool(value),
-            Self::Int(value) => visitor.visit_i64(value),
+            // `serde_json` gives an integer that is not negative to
+            // `visit_u64`, and a negative integer to `visit_i64`.
+            Self::Int(value) => match u64::try_from(value) {
+                Ok(whole) => visitor.visit_u64(whole),
+                Err(_) => visitor.visit_i64(value),
+            },
             Self::Large(value) => visitor.visit_u64(value),
             Self::Float(value) => visitor.visit_f64(value),
             Self::Text(value) => visitor.visit_string(value),
@@ -1742,7 +1754,157 @@ mod tests {
             reads_as_serde_json_reads::<serde_json::Value>(input);
             reads_as_serde_json_reads::<Wrapped>(input);
             reads_as_serde_json_reads::<Shape>(input);
+            reads_as_serde_json_reads::<NoSign>(input);
+            reads_as_serde_json_reads::<Signed>(input);
         }
+    }
+
+    /// A visitor with one visit for a number: `visit_u64`. A visitor of the
+    /// standard types has each visit, and a visitor that a person writes can
+    /// have one.
+    struct OnlyNoSign;
+
+    impl Visitor<'_> for OnlyNoSign {
+        type Value = u64;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a whole number with no sign")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<u64, E> {
+            Ok(value)
+        }
+    }
+
+    /// A raw type that reads only through `visit_u64`.
+    #[derive(Debug, PartialEq)]
+    struct NoSign(u64);
+
+    impl<'de> Deserialize<'de> for NoSign {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            deserializer.deserialize_u64(OnlyNoSign).map(Self)
+        }
+    }
+
+    /// A visitor with one visit for a number: `visit_i64`.
+    struct OnlySigned;
+
+    impl Visitor<'_> for OnlySigned {
+        type Value = i64;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a whole number with a sign")
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<i64, E> {
+            Ok(value)
+        }
+    }
+
+    /// A raw type that reads only through `visit_i64`.
+    #[derive(Debug, PartialEq)]
+    struct Signed(i64);
+
+    impl<'de> Deserialize<'de> for Signed {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            deserializer.deserialize_i64(OnlySigned).map(Self)
+        }
+    }
+
+    /// `serde_json` gives an integer that is not negative to `visit_u64` and
+    /// a negative integer to `visit_i64`. The tree does the same, so a list
+    /// drops no member that the raw type reads alone.
+    #[test]
+    fn an_integer_goes_to_the_visit_that_serde_json_calls() {
+        let input = "[7,0,-3,18446744073709551615,9223372036854775807,-9223372036854775808]";
+        let no_sign: Vec<NoSign> = direct(input, |reader| list(reader)).unwrap();
+        let signed: Vec<Signed> = direct(input, |reader| list(reader)).unwrap();
+
+        assert_eq!(
+            no_sign,
+            [
+                NoSign(7),
+                NoSign(0),
+                NoSign(u64::MAX),
+                NoSign(9_223_372_036_854_775_807)
+            ]
+        );
+        assert_eq!(signed, [Signed(-3), Signed(i64::MIN)]);
+        for member in ["7", "0", "18446744073709551615"] {
+            assert!(serde_json::from_str::<NoSign>(member).is_ok(), "{member}");
+            assert!(serde_json::from_str::<Signed>(member).is_err(), "{member}");
+        }
+        for member in ["-3", "-9223372036854775808"] {
+            assert!(serde_json::from_str::<NoSign>(member).is_err(), "{member}");
+            assert!(serde_json::from_str::<Signed>(member).is_ok(), "{member}");
+        }
+    }
+
+    /// A raw type with a struct inside `#[serde(untagged)]`.
+    #[derive(Debug, PartialEq, Deserialize)]
+    #[serde(untagged)]
+    enum Loose {
+        Held(Strict),
+    }
+
+    /// The differences from `serde_json` that the module documentation lists
+    /// for a number.
+    #[test]
+    fn a_wide_integer_and_a_narrow_float_differ_from_serde_json() {
+        // An integer past 64 bits is a float in the tree.
+        const PAST_64_BITS: [&str; 2] = ["18446744073709551616", "-9223372036854775809"];
+
+        for input in EACH_KIND {
+            reads_as_serde_json_reads::<f32>(input);
+            if !PAST_64_BITS.contains(&input) {
+                reads_as_serde_json_reads::<u128>(input);
+                reads_as_serde_json_reads::<i128>(input);
+            }
+        }
+
+        assert_eq!(
+            serde_json::from_str::<u128>("18446744073709551616").unwrap(),
+            18_446_744_073_709_551_616
+        );
+        assert_eq!(
+            u128::deserialize(tree("18446744073709551616")),
+            Err(Mismatch)
+        );
+        assert_eq!(
+            serde_json::from_str::<i128>("-9223372036854775809").unwrap(),
+            -9_223_372_036_854_775_809
+        );
+        assert_eq!(
+            i128::deserialize(tree("-9223372036854775809")),
+            Err(Mismatch)
+        );
+
+        // A number outside the range of an `f32`.
+        assert!(serde_json::from_str::<f32>("1e39").is_err());
+        assert_eq!(f32::deserialize(tree("1e39")), Ok(f32::INFINITY));
+
+        // A text a little above the middle of two `f32` values. The nearest
+        // `f64` is the middle itself, and the tie then goes to the even one.
+        let above_the_middle = "1.0000000596046447753906251";
+        let alone = serde_json::from_str::<f32>(above_the_middle).unwrap();
+        let below_a_reader = f32::deserialize(tree(above_the_middle)).unwrap();
+
+        assert_eq!(alone.to_bits(), 1.000_000_1_f32.to_bits());
+        assert_eq!(below_a_reader.to_bits(), 1.0_f32.to_bits());
+    }
+
+    /// `serde` reads an enum with `#[serde(untagged)]` from a buffer of its
+    /// own. A struct that a variant holds reads from a list there, from the
+    /// tree and from `serde_json` alike.
+    #[test]
+    fn a_struct_inside_an_untagged_enum_reads_from_a_list() {
+        let held = |id: u64| Loose::Held(Strict { id });
+        let members: Vec<Loose> = direct(r#"[[7],{"id":8},[]]"#, |reader| list(reader)).unwrap();
+
+        assert_eq!(Loose::deserialize(tree("[7]")), Ok(held(7)));
+        assert_eq!(serde_json::from_str::<Loose>("[7]").unwrap(), held(7));
+        assert_eq!(Loose::deserialize(tree(r#"{"id":7}"#)), Ok(held(7)));
+        assert_eq!(members, [held(7), held(8)]);
     }
 
     /// A visitor that takes each kind of value. It gives the name of the
@@ -1927,8 +2089,8 @@ mod tests {
         assert!(FreeForm::deserialize(Json::Null).is_err());
     }
 
-    /// The one difference from `serde_json`: a struct with named fields
-    /// reads from an object only.
+    /// A difference from `serde_json`: a struct with named fields reads from
+    /// an object only.
     #[test]
     fn a_struct_with_named_fields_reads_from_no_list() {
         assert_eq!(Strict::deserialize(tree("[7]")), Err(Mismatch));
