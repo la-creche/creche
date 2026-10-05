@@ -20,11 +20,17 @@
 //! 5. Two vectors of the file have the same id.
 //! 6. An input, an `output` or a marker object has a form that the format
 //!    does not name.
+//! 7. The index names a frozen file with a path that is not under
+//!    `vectors/data`, or with a digest that is not 64 hexadecimal digits.
+//!
+//! A frozen file is a data file whose Python origin left the repository. The
+//! index holds the SHA-256 of each one. The reader reads the form of that map
+//! and compares no digest: `vectors/tests` holds each digest.
 //!
 //! The reader has no Python origin. `vectors/core.py` writes the files that
 //! it reads.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -45,6 +51,9 @@ const INDEX_FILE: &str = "index.json";
 
 /// The `kind` of the index file.
 const INDEX_KIND: &str = "index";
+
+/// The count of the hexadecimal digits of a SHA-256.
+const DIGEST_DIGITS: usize = 64;
 
 /// The key of the value that the Python code parsed an input into.
 const VALUE_KEY: &str = "value";
@@ -241,6 +250,15 @@ fn is_data_path(path: &str) -> bool {
     let mut parts = Path::new(path).components().peekable();
 
     parts.peek().is_some() && parts.all(|part| matches!(part, Component::Normal(_)))
+}
+
+/// Whether `text` is a SHA-256 in the form of the index: 64 hexadecimal
+/// digits in lower case.
+fn is_digest(text: &str) -> bool {
+    text.len() == DIGEST_DIGITS
+        && text
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// One vector file: each vector of one surface.
@@ -744,6 +762,10 @@ fn check_markers(value: &Value) -> Result<(), String> {
 #[serde(deny_unknown_fields)]
 struct RawIndex {
     format: u64,
+    /// The frozen files: the path of each one under `vectors/data`, and the
+    /// SHA-256 of its bytes. The key is required. An index with no frozen
+    /// file holds an empty map.
+    frozen: BTreeMap<String, String>,
     kind: String,
     surfaces: Vec<RawIndexRow>,
 }
@@ -813,8 +835,8 @@ enum RawChunk {
 ///
 /// # Errors
 ///
-/// [`VectorsError`] for an index that the reader cannot read, and for a
-/// format that is not 1.
+/// [`VectorsError`] for an index that the reader cannot read, for a format
+/// that is not 1, and for a map of the frozen files with a wrong form.
 pub fn index() -> Result<Vec<IndexRow>, VectorsError> {
     index_of(&read_text(INDEX_FILE)?)
 }
@@ -853,6 +875,19 @@ fn index_of(text: &str) -> Result<Vec<IndexRow>, VectorsError> {
             "the kind is {:?}, and the kind of the index is {INDEX_KIND:?}",
             raw.kind
         )));
+    }
+    for (path, digest) in &raw.frozen {
+        if !is_data_path(path) {
+            return Err(refused(format!(
+                "the frozen path {path:?} is not a path under vectors/data"
+            )));
+        }
+        if !is_digest(digest) {
+            return Err(refused(format!(
+                "the digest of the frozen file {path} is not {DIGEST_DIGITS} hexadecimal digits \
+                 in lower case"
+            )));
+        }
     }
 
     let rows: Vec<IndexRow> = raw
@@ -1224,10 +1259,14 @@ mod tests {
         assert!(Input::checked(bad_chunk).is_err());
     }
 
+    /// A text in the form of a digest of the index.
+    const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
     #[test]
     fn the_index_reads_each_row() {
         let text = json!({
             "format": 1,
+            "frozen": {"runtime/old.json": DIGEST, "old.json": DIGEST},
             "kind": "index",
             "surfaces": [{
                 "surface": "runtime.test",
@@ -1254,9 +1293,28 @@ mod tests {
 
     #[test]
     fn an_index_with_no_surface_reads_as_no_row() {
-        let rows = index_of(r#"{"format": 1, "kind": "index", "surfaces": []}"#).unwrap();
+        let rows =
+            index_of(r#"{"format": 1, "frozen": {}, "kind": "index", "surfaces": []}"#).unwrap();
 
         assert_eq!(rows, []);
+    }
+
+    #[test]
+    fn a_digest_has_64_hexadecimal_digits_in_lower_case() {
+        assert!(is_digest(DIGEST));
+        assert!(is_digest(&"f".repeat(64)));
+
+        for text in [
+            String::new(),
+            "0".repeat(63),
+            "0".repeat(65),
+            "A".repeat(64),
+            "g".repeat(64),
+            format!("{}\n", "0".repeat(63)),
+            "\u{e9}".repeat(32),
+        ] {
+            assert!(!is_digest(&text), "{text:?}");
+        }
     }
 
     /// The JSON text of an index with one row, with one member of the index
@@ -1264,6 +1322,7 @@ mod tests {
     fn index_with(key: &str, member: Value) -> String {
         let mut index = json!({
             "format": 1,
+            "frozen": {},
             "kind": "index",
             "surfaces": [{
                 "surface": "runtime.test",
@@ -1286,7 +1345,7 @@ mod tests {
 
     #[test]
     fn an_index_that_breaks_a_rule_is_refused() {
-        let refused: [(String, &str); 12] = [
+        let refused: [(String, &str); 20] = [
             (
                 index_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
@@ -1326,6 +1385,37 @@ mod tests {
             (index_with("extra", json!(1)), "unknown field `extra`"),
             (index_with("vectors", json!(-1)), "invalid value"),
             (String::from("{"), "EOF while parsing"),
+            (
+                String::from(r#"{"format": 1, "kind": "index", "surfaces": []}"#),
+                "missing field `frozen`",
+            ),
+            (index_with("frozen", json!([])), "invalid type"),
+            (
+                index_with("frozen", json!({"runtime/old.json": 7})),
+                "invalid type",
+            ),
+            (
+                index_with("frozen", json!({"../../Cargo.toml": DIGEST})),
+                "the frozen path \"../../Cargo.toml\" is not a path under vectors/data",
+            ),
+            (
+                index_with("frozen", json!({"/etc/hosts": DIGEST})),
+                "the frozen path \"/etc/hosts\" is not a path under vectors/data",
+            ),
+            (
+                index_with("frozen", json!({"": DIGEST})),
+                "the frozen path \"\" is not a path under vectors/data",
+            ),
+            (
+                index_with("frozen", json!({"runtime/old.json": "0123"})),
+                "the digest of the frozen file runtime/old.json is not 64 hexadecimal digits in \
+                 lower case",
+            ),
+            (
+                index_with("frozen", json!({"runtime/old.json": DIGEST.to_uppercase()})),
+                "the digest of the frozen file runtime/old.json is not 64 hexadecimal digits in \
+                 lower case",
+            ),
         ];
 
         for (text, reason) in refused {

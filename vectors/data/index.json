@@ -1,5 +1,6 @@
 {
  "format": 1,
+ "frozen": {},
  "kind": "index",
  "surfaces": [
   {"accepted":10,"entry":"attendance.ids.is_family","path":"ids/family_name.attendance.json","raised":0,"refused":30,"surface":"id.family_name.attendance","vectors":40},

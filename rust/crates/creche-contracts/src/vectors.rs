@@ -5,6 +5,7 @@
 //! uses this module. The module is test code: it stops the test on a file
 //! that it cannot read.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -27,6 +28,9 @@ const DISAGREEMENTS_FILE: &str = "ids/disagreements.json";
 
 /// The `kind` of the index file.
 const INDEX_KIND: &str = "index";
+
+/// The count of the hexadecimal digits of a SHA-256.
+const DIGEST_DIGITS: usize = 64;
 
 /// The `kind` of the disagreements file.
 const DISAGREEMENTS_KIND: &str = "disagreements";
@@ -77,6 +81,9 @@ pub(crate) struct IndexRow {
 #[serde(deny_unknown_fields)]
 struct Index {
     format: u64,
+    /// The frozen files: the path of each one under `vectors/data`, and the
+    /// SHA-256 of its bytes. `vectors/README.md` says what a frozen file is.
+    frozen: BTreeMap<String, String>,
     kind: String,
     surfaces: Vec<IndexRow>,
 }
@@ -319,6 +326,14 @@ pub(crate) fn index() -> Vec<IndexRow> {
 
     assert_eq!(index.format, FORMAT, "{INDEX_FILE}: the format");
     assert_eq!(index.kind, INDEX_KIND, "{INDEX_FILE}: the kind");
+    for (path, digest) in &index.frozen {
+        let lower_hex = |byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f');
+
+        assert!(
+            digest.len() == DIGEST_DIGITS && digest.bytes().all(lower_hex),
+            "{INDEX_FILE}: the digest of the frozen file {path}"
+        );
+    }
 
     index.surfaces
 }
