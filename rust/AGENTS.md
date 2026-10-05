@@ -1051,11 +1051,6 @@ test.
   5. `UnidentifiedRecord`, contract 04 §6. The contract does not describe the
      log of a request that names no family. The type writes what the Python
      chaperone writes.
-  6. `SandboxEvidence::Claimed`, contract 04 §3.2 and §6.2. The contract moves
-     a sandbox id with no proof into `claimed`, and `claimed` has no key for
-     it. The variant writes the id into `sandbox_id` with
-     `sandbox_id_trusted: false`, as the writer of the Python chaperone can.
-     The Python chaperone itself writes `null` in each record.
 - The module `grants` has its own JSON reader and writer, and `serde_json`
   does not read a grant file or a request body. The Python code takes JSON
   that is not strict, and it reports each issue of a document. `grants::Value`
