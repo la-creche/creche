@@ -5,9 +5,10 @@ here writes its journals by hand, as bytes, in a scratch directory. No test
 starts the service, so the bytes of a line are exactly what the test says.
 
 Most tests start the program as a child. The child gets no variable, no site
-directory and so no package of the venv: that is how a host starts it. One
-test calls the entry function in this process, because only that call can
-say that the user is root.
+directory and so no package of the venv: that is how a host starts it. Some
+tests load the program in this process. Only there can a test say that the
+user is root, name another Python version, or change what the system gives
+to the program.
 
 The program cannot import `attendance`, so it has its own copy of some values
 of that package. The last tests compare each copy with the value in
