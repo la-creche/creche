@@ -22,7 +22,7 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, Self
 
 import pytest
 from attendance.models import LineKind
@@ -43,6 +43,9 @@ SESSION = "SES-77e2"
 MARKER = "MRK-90ab"
 
 ROOT_UID = 0
+
+#: A user that is not root, for a call of the entry function in this process.
+SOME_USER = 1000
 
 EXIT_READ_ALL = 0
 EXIT_LOWER_LIMIT = 1
@@ -300,6 +303,68 @@ def test_an_unfinished_line_is_in_no_other_count(tmp_path: Path) -> None:
 
     assert done.returncode == EXIT_READ_ALL
     assert done.stdout == _report({FILES: 1, LINES: 1, UNFINISHED: 1})
+
+
+class _LateWriter:
+    """What the program gets from `open`, for one journal that grows.
+
+    After the first read of the program, a writer adds `rest` to the journal.
+    """
+
+    def __init__(self, lines: BinaryIO, journal: Path, rest: bytes) -> None:
+        self._lines = lines
+        self._journal = journal
+        self._rest = rest
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._lines.close()
+
+    def __iter__(self) -> Self:
+        return self
+
+    def __next__(self) -> bytes:
+        raw = self._lines.readline()
+
+        if not raw:
+            raise StopIteration
+
+        if self._rest:
+            with self._journal.open("ab") as writer:
+                writer.write(self._rest)
+
+            self._rest = b""
+
+        return raw
+
+
+def test_the_rest_of_an_unfinished_line_is_no_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The service ends its last line when the program is at the end of the journal.
+
+    A second read then gives the rest of that line, with a newline. The rest
+    is no line of the journal, so the program must not count it.
+    """
+    cut = len(PLAIN) // 2
+    journal = _journal(tmp_path, FAMILY, SESSION, PLAIN[:cut])
+
+    def late_open(fd: int, mode: str, *, closefd: bool) -> _LateWriter:
+        assert mode == "rb"
+
+        return _LateWriter(open(fd, "rb", closefd=closefd), journal, PLAIN[cut:])
+
+    program: dict[str, Any] = runpy.run_path(
+        str(SCRIPT), init_globals={"open": late_open}, run_name="journal_scan"
+    )
+
+    status = program["main"]([str(tmp_path)], SOME_USER)
+
+    assert status == EXIT_READ_ALL
+    assert capsys.readouterr().out.encode() == _report({FILES: 1, UNFINISHED: 1})
+    assert journal.read_bytes() == PLAIN
 
 
 # --------------------------------------------------------- test 2: read-only

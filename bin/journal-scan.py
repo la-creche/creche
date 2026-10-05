@@ -19,9 +19,10 @@ THE OUTPUT. One row for each number, as `<name> <number>`, in this order:
                                the two can be.
   lines_not_json               The lines that `json.loads` refuses, and the
                                lines whose JSON value is not an object.
-  lines_unfinished             The last lines that have no newline. The
-                               service may still write such a line, so the
-                               program does not judge it.
+  lines_unfinished             The last lines that have no newline, one for
+                               each journal at most. The service may still
+                               write such a line. The program does not judge
+                               it, and it stops the read of that journal.
   lone_surrogate_lines         COUNT 1. The lines with a key or a value that
                                UTF-8 cannot encode, at any level of the
                                object. Such a text has a surrogate code
@@ -249,10 +250,13 @@ def _read_to_end(journal: int, counts: Counts) -> bool:
 
     with open(journal, "rb", closefd=False) as lines:
         for raw in lines:
-            if raw.endswith(_LF):
-                _judge(raw, counts)
-            else:
+            if not raw.endswith(_LF):
+                # The journal ends here for now. When the service ends this
+                # line, a later read gives the rest of it, which is no line.
                 counts.lines_unfinished += 1
+                break
+
+            _judge(raw, counts)
 
     return True
 
