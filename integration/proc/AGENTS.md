@@ -173,6 +173,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, a save after a preview, the one commit, saves at one time, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_board_form.py` | noticeboard | each kind of control of the edit form, a locked field, a save that changes nothing, a save that `git` refuses, the marks of the commit, what a save leaves in the checkout |
+| `test_proc_board_restart.py` | noticeboard | two starts on one root and one port: a saved family, and a form that stays open across the restart |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a JSON body with no `Content-Type` header, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
@@ -682,6 +683,12 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the mode of a family file after a save.** No contract
   gives it. The suite holds that a save of the noticeboard keeps the mode of
   the file. A change costs one assertion in `test_proc_board_form.py`.
+- **CONTRACT-QUESTION, the end of a CSRF token of the noticeboard.**
+  `docs/rework/spec.md` §8.3 rule 3 puts the token in a cookie and in a
+  hidden field. No section says when a token ends. The suite holds that a
+  restart of the service ends no token. A form that was open before a
+  restart then saves after it. A change costs one scenario in
+  `test_proc_board_restart.py`.
 - **CONTRACT-QUESTION, the answers that no handler of a service makes.** No
   contract names the answer of a listener to four requests. The requests are
   an unknown path, a wrong method, a path with a final slash, and `HEAD` on

@@ -23,13 +23,14 @@ converges.
 from __future__ import annotations
 
 import re
+import signal
 from dataclasses import dataclass
 from typing import Final
 
 import httpx
 import proc_html
 import proc_registry
-from proc_harness import LOOPBACK, Child, ProcError
+from proc_harness import LOOPBACK, STOP_GRACE_S, Child, ProcError, TcpAddress
 from proc_html import Element, form_values
 from proc_services import Service
 from proc_stack import CLIENT_TIMEOUT, Stack
@@ -112,6 +113,23 @@ class BoardStack(Stack):
         self.board, self.board_port = self.start_on_port(
             Service.NOTICEBOARD, lambda bind: _env_for_bind(self.tree, bind)
         )
+
+    def restart_board(self) -> None:
+        """Stop the noticeboard as its unit does, then start it on the same root and port.
+
+        The stop has the time that the teardown gives a group, which is the
+        `TimeoutStopSec` of the unit. The first process ended before the
+        second one starts. So one process at most holds the registry, and the
+        teardown finds one group.
+        """
+        if self.board is None:
+            raise ProcError("the noticeboard was not started")
+
+        self.board.send(signal.SIGTERM)
+        self.board.wait(STOP_GRACE_S)
+        env = board_env(self.tree, LOOPBACK, self.board_port)
+        self.board = self.spawn(Service.NOTICEBOARD, env)
+        self.supervisor.wait_ready(self.board, TcpAddress(self.board_port))
 
     @property
     def origin(self) -> str:
