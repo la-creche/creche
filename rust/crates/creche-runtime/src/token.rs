@@ -315,7 +315,8 @@ impl Error for TokenError {}
 ///
 /// The function reads the file one time, with a cap of 1 MiB, and follows a
 /// symlink. The mode is a fact of the file that gave the bytes, so the
-/// function makes no second `stat`.
+/// function makes no second `stat`. The function blocks: in a runtime, call
+/// it through `Tasks::spawn_blocking`.
 ///
 /// A rule with [`Trim::AsciiSpace`] reads bytes, as `attendance` and the
 /// trigger door do. The checks, in this order:
@@ -581,7 +582,7 @@ impl CachedToken {
     /// The call makes one `stat`. It reads the file when the `stat` fails,
     /// when no earlier read gave a token, and when a fact of the file moved:
     /// the device, the inode, the size, the time of the last change or the
-    /// mode.
+    /// mode. The call blocks for the `stat` and for the read.
     ///
     /// The Python origin is `chaperone/src/chaperone/delegate.py:189-210`.
     ///

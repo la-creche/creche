@@ -175,6 +175,12 @@ One more attribute waits for a body. The field `start` of
   device, the inode, the size, the time of the last change and the mode. The
   Python cache has the same limit. A writer that replaces the file with a
   rename gives it a new inode.
+- `token::CachedToken::current` blocks for one `stat`, and for one read
+  after a change. It gives a borrow of the token. A caller thus cannot run
+  it in `Tasks::spawn_blocking` and keep the token after the call. Rule 7 of
+  "The rules for a service" in `rust/AGENTS.md` has no exception for that
+  `stat`. The owner of the crate decides: an exception, or one more reader
+  of the type. The port of the chaperone needs the answer.
 - No test gives `faults::publish` a fault file whose source is `caregiver`.
   `FaultFile::new` refuses that source, so no code can build such a file. A
   test gives the private function `publish_as` no writer in its place.
