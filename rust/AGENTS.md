@@ -859,13 +859,19 @@ test.
 
 ## Known gaps
 
-- Rules that the code does not hold yet. A line names the packet that makes
-  the code hold the rule. The same packet removes the line.
+- Rules that the code does not hold yet. A line names each packet that
+  changes the code for its rule. Delete a line in the pull request that
+  makes the code hold the rule, and not before. Some lines name no packet
+  for a part of the work. No packet has that part yet.
   - Rule 1. Four modules have a JSON reader of their own and no raw `serde`
     type: `channel`, `grants`, `manifest` and `status`. One packet moves
     each module to the shared reader: `decisions-raw-serde-channel`,
     `decisions-raw-serde-grants`, `decisions-raw-serde-manifest` and
     `decisions-raw-serde-status`.
+  - "JSON". Other modules read a JSON text with `serde_json` directly, for
+    example `session`, `untrusted` and `config::mounts`. `agent-family`
+    has a JSON writer of its own. Packet `decisions-raw-serde-others` moves
+    them to the `json` module.
   - Rule 12. A count at the time of this line found 101 structs with a
     public field. The packets `decisions-private-*` and
     `decisions-runtime-private` make the fields private. The gate has no
