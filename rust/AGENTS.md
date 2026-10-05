@@ -21,6 +21,7 @@ defect that a test finds late.
 
 | Crate | What it holds |
 |---|---|
+| `creche-util` | Each shared helper: SHA-256, the hex text of bytes and the white space rules of Python `str`. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
@@ -43,7 +44,7 @@ defect that a test finds late.
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
 `src/manifest.rs` holds the closed sets, the catalog and the differential
-test of `manifest`. Its other files are in `src/manifest/`. Three of them are
+test of `manifest`. Its other files are in `src/manifest/`. Two of them are
 private readers and writers. Each one gives what a Python library of the
 release tool gives:
 
@@ -55,7 +56,6 @@ release tool gives:
 | `resolved.rs` | The resolved manifest, its hash, the gate id and the approval summary. |
 | `yaml.rs` | Private. A port of `yaml.safe_load` of PyYAML: YAML 1.1, with each tag and each anchor. |
 | `json.rs` | Private. A reader that takes what Python `json.loads` takes, and writers for the text of `json.dumps`. |
-| `sha256.rs` | Private. SHA-256, because the crate has no dependency that gives a hash. |
 
 No type of `manifest` implements a `serde` trait. The module does not hold
 rule 1 yet ("Known gaps"). The raw type of `manifest` is the private
@@ -88,6 +88,25 @@ read.
    and for each part. `ids::Tag` is the pattern.
 8. Give each type its own doc comment and its own error type. The doc
    comment names the contract section.
+
+## Where a helper goes
+
+A shared helper is a pure function with two users. The users are two crates,
+or two modules that hold two contracts. `creche-util` holds each shared
+helper. Today it holds SHA-256, the hex text of bytes and the white space
+rules of Python `str`.
+
+1. Put a shared helper in `creche-util`.
+2. Write no second copy of a helper that `creche-util` holds. Call the
+   function of that crate.
+3. Keep a helper with one user in the module of that user.
+4. Keep a step that adds a prefix to a result, or cuts it, in the caller.
+5. Read `crates/creche-util/AGENTS.md` before you add a helper. It holds the
+   six rules for what the crate takes.
+
+Reason: two copies of a helper drift, as two copies of a value do (rule 13).
+The revision of a registry and the id of an approval gate each come from a
+digest. A copy that drifts gives another revision and another gate id.
 
 ## Checks
 
@@ -964,9 +983,10 @@ test.
     reader, its vectors and the test.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
-  - Shared helpers. A helper with users in two crates belongs in one helper
-    crate: SHA-256, hex, base64 and the Python white space rule. Do not add
-    a copy. Packet `decisions-util` creates the crate.
+  - Shared helpers. Base64 has more than one copy. Packet
+    `decisions-util-runtime` moves it to `creche-util`. "Known gaps" of
+    `crates/creche-util/AGENTS.md` names each other function that is
+    still open. No packet has that part yet.
   - Vector reader. `vectors/data` needs a single reader. The owner still
     has to confirm this. Three readers exist today. Packet
     `decisions-vectors-crate` reduces them to one.
@@ -1157,8 +1177,6 @@ test.
 - `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
   The port of the chaperone adds the decision function and the function that
   approves a held call. No other code builds a value.
-- The crate has no public SHA-256. The chaperone gives `grants::ArgsDigest`
-  the digest of `Arguments::digest_input`. The test has a SHA-256 of its own.
 - No vector covers a request body with a content type that is not JSON. The
   HTTP layer of the port holds that rule.
 - These `CONTRACT-QUESTION` comments are open in
@@ -1217,8 +1235,6 @@ test.
 - No other module uses the private `yaml` and `json` readers of `manifest`.
   The `family` module needs the same YAML reader. The owner of the crate
   moves that reader when a second module uses it.
-- `manifest` has its own SHA-256, which is private. A crate for the hash
-  replaces it when the workspace takes one.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/session/`:
   1. The JSON reader, contract 02 §3 rule 3. The contract gives a body no
