@@ -79,7 +79,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `sync-code-corpus.sh` | OPERATOR, hourly | Refreshes the dedicated code clones the library indexes. The repository list lives outside the corpus. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. For a push that changes `vectors/`, it runs `rust-gate.sh` when `cargo` is on `PATH`. For a push that changes a file under `integration/proc/` that is not prose, it runs the process-level suite. |
-| `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, the include check, `cargo fmt`, `cargo clippy` and `cargo deny` on the workspace under `rust/`. `--tests` adds `cargo test`. `cargo deny` runs where `cargo-deny` is on `PATH`. |
+| `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, three text checks, `cargo fmt`, `cargo clippy` and `cargo deny` on the workspace under `rust/`. The text checks are the include check, the panic check and the public-field check. The script has a list of the crates that the public-field check does not read yet. `--tests` adds `cargo test`. `cargo deny` runs where `cargo-deny` is on `PATH`. |
 | `rust-coverage.sh` | CI and OPERATOR, from the `rust-coverage` job | The coverage rule of the workspace under `rust/`. Runs the tests with `cargo llvm-cov`, then checks the report against `rust/coverage-files.txt`. Fails when a region or a line of a listed file ran in no test. Takes each count from the segments of the report, and none from a summary. Prints one line with the counts of each crate, and one line for each failure. `--report FILE` checks a report of an earlier run and starts no cargo. `--branch` adds the branches, on a nightly toolchain. Needs `python3`, `cargo-llvm-cov` and the component `llvm-tools-preview`. Sources `lib/rustrule.sh` for the name of the Rust directory. `rust/AGENTS.md` has the rule. |
 | `systemd-proof.sh` | CI, from the `systemd-proof` job and from the scope of each workflow | Proves the restart rule of the daemon units on the systemd of the runner, with three transient units. Then gives each unit file under `systemd/` to `systemd-analyze verify`. `--unchanged FROM TO` says if a change needs no proof. |
 
@@ -126,7 +126,7 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 
 | Mode | The change touches `rust/` when | `rust-gate.sh` runs |
 |---|---|---|
-| no flag | the index or the work tree differs from `HEAD` under `rust/` | the `[lints]` check, the include check, `cargo fmt`, `cargo clippy`, `cargo deny` |
+| no flag | the index or the work tree differs from `HEAD` under `rust/` | the `[lints]` check, the three text checks, `cargo fmt`, `cargo clippy`, `cargo deny` |
 | `--tests-for` | one path or more is under `rust/` | the same, then `cargo test` |
 | `--tests` | always | the same, then `cargo test` |
 | `--docs` | never | nothing |
@@ -161,6 +161,26 @@ of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
 - The include check refuses a Rust source file that includes a Markdown
   file. A change of Markdown only runs no cargo step, so such a file can
   break a doc test with no cargo run.
+- The panic check permits the word `catch_unwind` in three places only.
+  It refuses each other Rust source file under `rust/crates` with that
+  word. A reviewer then knows where each panic boundary is. The three
+  places are:
+  1. The crate `creche-runtime`.
+  2. `src/entry.rs` in a crate whose `Cargo.toml` does not name
+     `creche-runtime`.
+  3. Test code.
+- The public-field check refuses `pub` on a field of a struct, in each
+  crate under `rust/crates`. It permits the forms `pub(crate)` and
+  `pub(super)`. It reads no test code.
+- The public-field check does not read each crate yet. The list
+  `FIELD_CHECK_SKIPS` of the script names the crates that it skips. Add no
+  name to it. "Known gaps" of `rust/AGENTS.md` has the names, and the
+  packets that delete them.
+- The panic check and the public-field check read the text and need no
+  `cargo`. `rust/AGENTS.md`, "Checks", has the rules of both, and what
+  test code is.
+- Each of the two checks fails for a file that ends inside a test module.
+  The check then read no code below the first line of that module.
 - `cargo deny --locked check` runs after `cargo clippy`. It holds the locked
   crates to `rust/deny.toml`: the licenses, the sources, the bans and the
   advisories. `rust/AGENTS.md` has the table.
@@ -236,8 +256,8 @@ scope of `release.yml` ask it.
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
 | `test_bin_hook_env.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
-| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. The `cargo deny` step: it runs where `cargo-deny` is on `PATH`, a machine without it passes with one line, and CI without it fails. |
-| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`, and the two `[profile]` tables there. Each table of `rust/deny.toml`. No Cargo file is outside `rust/`. A change under `rust/` mints no tag. |
+| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. The `cargo deny` step: it runs where `cargo-deny` is on `PATH`, a machine without it passes with one line, and CI without it fails. The panic check: each of the three places passes, and a file in another place fails. The public-field check: what fails, what passes, and each name of its list. Both checks: what test code is, and a file that ends inside a test module fails. |
+| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`, and the two `[profile]` tables there. Each table of `rust/deny.toml`. No Cargo file is outside `rust/`. No Rust source file holds a table of differences. The test looks for the name `DEVIATIONS` and for a struct whose name starts with `Deviation`. The test has a list of the crates that it does not read yet, and it fails for a name with no crate. A change under `rust/` mints no tag. |
 | `test_rust_config_units.py` | Each Rust config type names one daemon unit. Each daemon unit holds `Restart=always` and no `RestartPreventExitStatus`. Three daemon units hold an `ExecStartPre=` check, and the Rust config type of each one says so. Each variable of a unit has a constant in the Rust module of its daemon. That constant holds the name as a text, or it reads the name from the Rust module `endpoints`. The chaperone module reads two names from that module. No other file of the Rust config code holds the text of a name of `endpoints`. |
 | `test_rust_coverage.py` | `rust-coverage.sh` against a small report, with no `cargo`. A listed file fails when one of its regions or lines ran in no test. The counts come from the segments of the report: two copies of a function can each run one part of it. One report holds the segments that `llvm-cov` wrote for a real file. A listed file that is not in the report fails. The text `coverage(off)` in a listed file fails. A file of `rust/crates/chaperone-policy/src` outside the list fails. A list or a report in another form stops the run. A fake `cargo` shows the cargo step, word for word. The Python program of the script imports no module of the caller, and ruff passes it. |
 | `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job, the same `rust` job and the same `systemd-proof` job. `!retest` restarts one run. The `rust` job checks the SHA-256 of the `cargo-deny` archive before the unpack. The cache of that job holds the copy of the crates.io index that cargo keeps. The key of the cache holds a hash of the toolchain file and of the lock file. The `systemd-proof` job runs the script on the runner itself, with no container. A scope skips the proof only when the script answers `unchanged`. Only `gate.yml` has the `suites` job. The table `ONLY_IN` of the test holds that one difference. The job has the setup of the `proc` job and one pytest run for each of the two old suites of `integration/`. Its last step fails for a test that skipped and for a suite that ran no test. The two files also hold the same `rust-coverage` job. That job runs `rust-coverage.sh` with no flag, and it checks the SHA-256 of the `cargo-llvm-cov` archive before the unpack. The check `gate` needs the job. |
