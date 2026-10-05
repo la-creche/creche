@@ -19,26 +19,109 @@
 //! talks on its pipes. The caller is then the owner.
 //!
 //! The Python services call `subprocess.run`, for example in `_run` of
-//! `caregiver/src/caregiver/driver.py`. This module is a new design and not
-//! a translation of that call.
+//! `caregiver/src/caregiver/driver.py:84-105`. This module is a new design
+//! and not a translation of that call.
 //!
 //! Some function bodies of this module are stubs. `AGENTS.md` of this crate
 //! lists the stubs and the packet that writes them.
+//!
+//! # The owner of a run
+//!
+//! [`TokioRunner`] gives each run one owner task, which is a task of
+//! [`Tasks`]. The owner starts the program, writes its standard input, reads
+//! its two output streams and waits for its end. The caller only waits for
+//! the owner. The owner ends the run in one of six ways:
+//!
+//! 1. The child ended and each output stream is at its end: [`Finished`].
+//! 2. The time limit passed: the owner kills the child, and the run gives
+//!    [`RunError::TimedOut`].
+//! 3. A stream held more than its cap: the owner kills the child, and the
+//!    run gives [`RunError::OutputTooLarge`].
+//! 4. The command says [`AtShutdown::Kill`], and the stop signal came or the
+//!    caller went away: the owner kills the child, and the run gives
+//!    [`RunError::Stopped`].
+//! 5. The operating system did not start the program:
+//!    [`RunError::NotStarted`].
+//! 6. The operating system failed a read or a write of the owner: the owner
+//!    kills the child, and the run gives [`RunError::OwnerLost`]. A wait
+//!    call that fails gives the same error. The log holds one `ERROR` line
+//!    for each such failure.
+//!
+//! With [`AtShutdown::Finish`], the stop signal and a caller that goes away
+//! change nothing: the child runs to its end or to its time limit.
+//!
+//! A kill is SIGKILL to the child, and to no other process. After a kill the
+//! owner waits for the end of the child, so a run that ended leaves no child
+//! that runs. The owner then reads each of the two streams for 1 second at
+//! most. A program that the child started can hold a stream open. It does
+//! not hold the owner past that second, and the kill does not end it.
+//!
+//! Call each function of this module inside the runtime that `service::run`
+//! builds. In a runtime with no timer or with no I/O driver, no program
+//! starts and the run gives [`RunError::NotStarted`].
+//!
+//! # What this module does not do
+//!
+//! The Python `handover` limits the size of a file that a child writes
+//! (`handover/src/handover/executor/host.py:359-376` and `:407`). A function
+//! sets that limit in the child before the program starts. Such a function
+//! needs `unsafe` code in Rust, and the lint gate forbids it. No part of this
+//! module sets the limit.
 
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
-use std::future::Future;
+use std::future::{self, Future};
+use std::io;
+use std::os::unix::process::ExitStatusExt;
+use std::panic;
 use std::path::{Path, PathBuf};
+use std::process::{ExitStatus, Stdio};
 use std::str::Utf8Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
+use tokio::runtime::Handle;
+use tokio::task::unconstrained;
+use tokio_util::sync::CancellationToken;
 
-use crate::readfile::ByteCap;
+use crate::readfile::{ByteCap, os_text};
 use crate::signals::SignalError;
-use crate::tasks::Tasks;
+use crate::tasks::{Shutdown, Tasks};
+
+/// The target of each line that this module writes to the log.
+const LOG_TARGET: &str = "command";
+
+/// The name of each owner task. The log line of an owner that panicked
+/// holds it.
+const OWNER_TASK: &str = "command-owner";
+
+/// How long an owner reads the two output streams of a child after a kill
+/// and the end of that child.
+const AFTER_KILL: Duration = Duration::from_secs(1);
+
+/// The exit status of a child whose end the operating system did not give.
+/// It is not 0, so no caller reads that end as a success.
+const STATUS_UNKNOWN: u8 = 255;
+
+/// The text of [`RunError::NotStarted`] for a thread with no runtime.
+const NO_RUNTIME: &str = "no runtime runs on this thread";
+
+/// The text of [`RunError::NotStarted`] for a runtime with no timer.
+const NO_TIMER: &str = "the runtime of this thread has no timer";
+
+/// The text of [`RunError::NotStarted`] for a runtime with no I/O driver.
+const NO_IO_DRIVER: &str = "the runtime of this thread has no I/O driver";
+
+/// The text of [`RunError::NotStarted`] for a name of a variable that holds
+/// `=`. It is the text of the `ValueError` of Python for that name.
+const ILLEGAL_NAME: &str = "illegal environment variable name";
+
+/// The text of [`RunError::NotStarted`] for a list of words with no program.
+/// No constructor makes such a list.
+const NO_PROGRAM: &str = "the command names no program";
 
 /// How long a child program can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -368,6 +451,28 @@ impl Ended {
             Self::Signal(number) => number.saturating_neg(),
         }
     }
+
+    /// How a child ended, from the two readers of its wait status: the exit
+    /// status and the signal.
+    ///
+    /// The operating system gives one of the two, and an exit status from 0
+    /// to 255. Each other pair is an end that is not known.
+    ///
+    /// The Python origin is `_handle_exitstatus` of CPython
+    /// (`subprocess.py:1997-2004`, version 3.13).
+    fn from_status(code: Option<i32>, signal: Option<i32>) -> Self {
+        match (code, signal) {
+            (Some(code), _) => Self::Code(u8::try_from(code).unwrap_or(STATUS_UNKNOWN)),
+            (None, Some(number)) => Self::Signal(number),
+            (None, None) => Self::Code(STATUS_UNKNOWN),
+        }
+    }
+
+    /// How a child ended, from the wait status that the operating system
+    /// gave. [`Ended::from_status`] names the Python origin.
+    fn of(status: ExitStatus) -> Self {
+        Self::from_status(status.code(), status.signal())
+    }
 }
 
 /// A child program that ran to its end.
@@ -487,6 +592,9 @@ impl fmt::Debug for Finished {
 /// Why a run gave no [`Finished`].
 ///
 /// No variant holds a byte of the output or of the input of the child.
+/// `TimeoutExpired` of Python holds the output up to the time limit
+/// (`subprocess.py:1263-1272`, version 3.13), and [`RunError::TimedOut`]
+/// holds none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunError {
     /// The operating system did not start the program.
@@ -508,7 +616,15 @@ pub enum RunError {
     /// The process stops, the command says [`AtShutdown::Kill`], and the
     /// owner killed the child.
     Stopped,
-    /// The owner task panicked, or the runtime stopped it.
+    /// The owner gave no result, for one of three causes. The program can
+    /// have run, in part or to its end.
+    ///
+    /// 1. The owner task panicked.
+    /// 2. The runtime stopped the owner task, or no runtime ran on the
+    ///    thread of the caller.
+    /// 3. The operating system failed a read, a write or the wait call of
+    ///    the owner. The log holds one `ERROR` line with the text of that
+    ///    error.
     OwnerLost,
 }
 
@@ -566,32 +682,721 @@ impl<R: CommandRunner> CommandRunner for &R {
 }
 
 /// The runner that starts a real program, with `tokio`.
+///
+/// A clone is the same runner: its owner tasks are tasks of the same
+/// [`Tasks`].
+///
+/// ```
+/// use std::time::Duration;
+///
+/// use creche_runtime::command::{
+///     AtShutdown, Command, CommandRunner, Ended, TimeLimit, TokioRunner,
+/// };
+/// use creche_runtime::tasks::{Tasks, shutdown_pair};
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let (_trigger, shutdown) = shutdown_pair();
+/// let runner = TokioRunner::new(Tasks::new(shutdown));
+///
+/// let limit = TimeLimit::After(Duration::from_secs(30));
+/// let command =
+///     Command::new("/bin/sh", limit, AtShutdown::Finish).args(["-c", "echo done; exit 3"]);
+/// let finished = runtime.block_on(runner.run(command))?;
+///
+/// // An exit status that is not 0 is a result, and the caller reads it.
+/// assert_eq!(finished.ended(), Ended::Code(3));
+/// assert_eq!(finished.stdout(), b"done\n");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build a runner from its parts. Only
+/// [`TokioRunner::new`] gives one:
+///
+/// ```compile_fail,E0451
+/// use creche_runtime::command::TokioRunner;
+/// use creche_runtime::tasks::{Tasks, shutdown_pair};
+///
+/// let (_trigger, shutdown) = shutdown_pair();
+/// let runner = TokioRunner {
+///     tasks: Tasks::new(shutdown),
+/// };
+/// ```
+///
+/// The same lines build with the constructor:
+///
+/// ```
+/// use creche_runtime::command::TokioRunner;
+/// use creche_runtime::tasks::{Tasks, shutdown_pair};
+///
+/// let (_trigger, shutdown) = shutdown_pair();
+/// let runner = TokioRunner::new(Tasks::new(shutdown));
+/// ```
 #[derive(Debug, Clone)]
-pub struct TokioRunner(());
+pub struct TokioRunner {
+    tasks: Tasks,
+}
 
 impl TokioRunner {
     /// A runner whose owner tasks are tasks of `tasks`. A drain of `tasks`
     /// then waits for each child that must end whole.
-    #[expect(
-        clippy::todo,
-        unused_variables,
-        reason = "skeleton: packet foundation-command writes this body"
-    )]
+    ///
+    /// The function has no Python origin: `subprocess.run` blocks its
+    /// thread, and no task owns the child.
     #[must_use]
     pub fn new(tasks: Tasks) -> Self {
-        todo!()
+        Self { tasks }
     }
 }
 
 impl CommandRunner for TokioRunner {
-    #[expect(
-        clippy::todo,
-        unused_variables,
-        reason = "skeleton: packet foundation-command writes this body"
-    )]
+    /// Starts the program of `command` and waits for its end. The module
+    /// comment says how the owner task ends a run.
+    ///
+    /// The child gets the exact words of the command. No shell reads them.
+    ///
+    /// With [`AtShutdown::Kill`], a run that begins after the stop signal
+    /// starts no program and gives [`RunError::Stopped`]. With
+    /// [`AtShutdown::Finish`], such a run starts its program and runs to its
+    /// end.
+    ///
+    /// A run whose caller went away gives its result to no code. The owner
+    /// then writes one `WARNING` line for a result that is no success. The
+    /// line holds the program and the reason. It holds no byte of the
+    /// output.
+    ///
+    /// The Python origin is each `subprocess.run` call of a service, for
+    /// example `_run` of `caregiver/src/caregiver/driver.py:84-105`. The
+    /// handler of SIGTERM in `caregiver/src/caregiver/loop.py:1237-1240`
+    /// only sets a flag, so such a call runs to its end at a stop:
+    /// [`AtShutdown::Finish`] is that behavior.
+    ///
+    /// # Errors
+    ///
+    /// - [`RunError::NotStarted`] when the operating system does not start
+    ///   the program, when a name of the environment holds `=`, and in a
+    ///   runtime with no timer or with no I/O driver.
+    /// - [`RunError::TimedOut`] and [`RunError::OutputTooLarge`] after the
+    ///   owner killed the child for that reason.
+    /// - [`RunError::Stopped`] under [`AtShutdown::Kill`], after the stop
+    ///   signal.
+    /// - [`RunError::OwnerLost`] when the owner task panicked, when the
+    ///   runtime stopped it, on a thread with no runtime, and when the
+    ///   operating system failed a read, a write or the wait call.
     async fn run(&self, command: Command) -> Result<Finished, RunError> {
-        todo!()
+        let caller = CancellationToken::new();
+        // The caller drops this value when it goes away, and at its own
+        // end. The owner reads the first case from the token.
+        let _here = caller.clone().drop_guard();
+        let owner = own(command, self.tasks.shutdown().clone(), caller);
+
+        match self.tasks.spawn_must_complete(OWNER_TASK, owner).await {
+            Ok(result) => result,
+            Err(_lost) => Err(RunError::OwnerLost),
+        }
     }
+}
+
+/// The owner task of one run: the run itself, and then the line for a
+/// result that no caller reads.
+///
+/// The function has no Python origin: `subprocess.run` has no owner task.
+async fn own(
+    command: Command,
+    shutdown: Shutdown,
+    caller: CancellationToken,
+) -> Result<Finished, RunError> {
+    let result = run_child(&command, &shutdown, &caller).await;
+
+    if caller.is_cancelled() {
+        report_unread(command.program(), &result);
+    }
+
+    result
+}
+
+/// Writes the one line of a result that no caller reads, when the result is
+/// no success.
+///
+/// Two results get no line. A child that the owner killed because its caller
+/// went away: the command asked for that kill. A run that ended with
+/// [`RunError::OwnerLost`]: the log holds the `ERROR` line of its cause.
+///
+/// The Python origin is the done-callback of
+/// `attendance/src/attendance/tasks.py:17-31`, which writes one line for a
+/// task that failed and that no caller waits for.
+fn report_unread(program: &str, result: &Result<Finished, RunError>) {
+    let reason = match result {
+        Ok(finished) => match finished.ended {
+            Ended::Code(0) => return,
+            Ended::Code(status) => format!("exit status {status}"),
+            Ended::Signal(number) => format!("signal {number}"),
+        },
+        Err(RunError::Stopped | RunError::OwnerLost) => return,
+        Err(error) => error.to_string(),
+    };
+
+    crate::warning!(
+        LOG_TARGET,
+        "the program {program} gave its result to no caller: {reason}"
+    );
+}
+
+/// Why the owner stopped its wait for the child.
+enum Verdict {
+    /// The child ended and each stream is at its end, or the exchange was
+    /// cut.
+    Done(Result<Streams, Cut>),
+    /// The time limit of the command passed.
+    PastLimit(Duration),
+    /// The command says [`AtShutdown::Kill`], and the stop signal came or
+    /// the caller went away.
+    Stop,
+}
+
+/// What a child that ran to its end gives: the bytes of its standard
+/// output, the bytes of its standard error, and the result of the wait call.
+type Streams = (Vec<u8>, Vec<u8>, io::Result<ExitStatus>);
+
+/// Why an exchange with a child ended before the end of the child.
+#[derive(Debug, PartialEq, Eq)]
+enum Cut {
+    /// A stream of the child held more than this cap.
+    PastCap(ByteCap),
+    /// The operating system failed a read from a stream, or a write to the
+    /// standard input. The log holds the one line of that error.
+    Failed,
+}
+
+impl Cut {
+    /// The error of a run whose exchange ended in this way.
+    ///
+    /// The function has no Python origin: `subprocess.run` raises the error
+    /// of the operating system itself and has no cap.
+    fn error(self) -> RunError {
+        match self {
+            Self::PastCap(cap) => RunError::OutputTooLarge { cap },
+            Self::Failed => RunError::OwnerLost,
+        }
+    }
+}
+
+/// Starts the program of `command` and holds it to the end of the run.
+///
+/// The Python origin is `run` of CPython (`subprocess.py:512-580`, version
+/// 3.13), which each service calls.
+async fn run_child(
+    command: &Command,
+    shutdown: &Shutdown,
+    caller: &CancellationToken,
+) -> Result<Finished, RunError> {
+    let kills = command.at_shutdown == AtShutdown::Kill;
+    if kills && (shutdown.is_cancelled() || caller.is_cancelled()) {
+        return Err(RunError::Stopped);
+    }
+
+    let mut program = tokio_command(&command.argv, &command.env, command.cwd.as_deref())?;
+    let (input, cap) = set_streams(&mut program, &command.stdin, command.output);
+    let mut child = start(program)?;
+
+    let name = command.program();
+    let stdin = child.stdin.take();
+    let mut stdout = child.stdout.take().zip(cap);
+    let mut stderr = child.stderr.take().zip(cap);
+
+    // The exchange borrows the child and its pipes. It is gone at the end
+    // of the statement, so the code below it can kill the child and read
+    // the pipes.
+    let verdict = first_event(
+        exchange(
+            name,
+            &mut child,
+            stdin,
+            input,
+            stdout.as_mut(),
+            stderr.as_mut(),
+        ),
+        stop_asked(command.at_shutdown, shutdown, caller),
+        past_limit(command.limit),
+    )
+    .await;
+
+    let error = match verdict {
+        Verdict::Done(Ok((stdout, stderr, waited))) => {
+            return whole(name, &waited, stdout, stderr);
+        }
+        Verdict::Done(Err(cut)) => cut.error(),
+        Verdict::PastLimit(after) => RunError::TimedOut { after },
+        Verdict::Stop => RunError::Stopped,
+    };
+    kill(name, &mut child, stdout.as_mut(), stderr.as_mut()).await;
+
+    Err(error)
+}
+
+/// The result of a child `program` that ran to its end, from the result of
+/// the wait call and the bytes of its two streams.
+///
+/// A wait call that fails gives no status: another part of the process took
+/// it, or the process ignores SIGCHLD. The child ended, and how is not known.
+/// The function then writes one `ERROR` line and gives
+/// [`RunError::OwnerLost`]. CPython reads such an end as the return code 0
+/// (`subprocess.py:2040-2049`, version 3.13).
+fn whole(
+    program: &str,
+    waited: &io::Result<ExitStatus>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+) -> Result<Finished, RunError> {
+    match waited {
+        Ok(status) => Ok(Finished {
+            ended: Ended::of(*status),
+            stdout,
+            stderr,
+        }),
+        Err(error) => {
+            report_no_end(program, error);
+
+            Err(RunError::OwnerLost)
+        }
+    }
+}
+
+/// Writes the one line of a wait call that failed.
+///
+/// The function has no Python origin: CPython reads such an end as the
+/// return code 0 and writes no line (`subprocess.py:2040-2049`, version
+/// 3.13).
+fn report_no_end(program: &str, error: &io::Error) {
+    crate::error!(
+        LOG_TARGET,
+        "the wait for the program {program} failed, and its end is not known: {}",
+        os_text(error)
+    );
+}
+
+/// Waits for the first of the three events of a run: the end of the
+/// exchange, the event that makes the owner kill the child, and the time
+/// limit.
+///
+/// When two events are there at one poll, the end of the exchange is first.
+/// A child that ended whole then gives its result.
+///
+/// The function has no Python origin. CPython checks its time limit between
+/// two reads (`subprocess.py:2154-2155`, version 3.13).
+async fn first_event<X, S, L>(exchange: X, stop: S, limit: L) -> Verdict
+where
+    X: Future<Output = Result<Streams, Cut>>,
+    S: Future<Output = ()>,
+    L: Future<Output = Duration>,
+{
+    // `unconstrained`: `tokio` gives a task a budget of steps for one poll.
+    // An exchange whose stream always holds bytes uses the whole budget. A
+    // timer and a stop signal then get no step in that poll, and in no
+    // later poll. Without the budget, the two read their event at each
+    // poll.
+    tokio::select! {
+        biased;
+
+        done = exchange => Verdict::Done(done),
+        () = unconstrained(stop) => Verdict::Stop,
+        after = unconstrained(limit) => Verdict::PastLimit(after),
+    }
+}
+
+/// The `tokio` command for these words, this environment and this working
+/// directory. The child gets each word as it is.
+///
+/// The command kills its child when the code drops the child. An owner that
+/// panics, or that the runtime stops, then leaves no child that runs.
+///
+/// Each form of the environment has a Python origin:
+///
+/// - [`EnvPolicy::Inherit`] is a call with no `env`, for example
+///   `caregiver/src/caregiver/timers.py:392-398`.
+/// - [`EnvPolicy::InheritAnd`] is `caregiver/src/caregiver/driver.py:85`.
+/// - [`EnvPolicy::InheritOnly`] is
+///   `noticeboard/src/noticeboard/registrywrite.py:461`. As that line does,
+///   the function reads the variables of this process at the call.
+/// - [`EnvPolicy::Exactly`] is `handover/src/handover/executor/host.py:399`.
+fn tokio_command(
+    argv: &[String],
+    env: &EnvPolicy,
+    cwd: Option<&Path>,
+) -> Result<tokio::process::Command, RunError> {
+    let Some((program, arguments)) = argv.split_first() else {
+        return Err(not_started(NO_PROGRAM));
+    };
+    let mut command = tokio::process::Command::new(program);
+    command.args(arguments);
+
+    match env {
+        EnvPolicy::Inherit => {}
+        EnvPolicy::InheritAnd(pairs) => set_pairs(&mut command, pairs)?,
+        EnvPolicy::InheritOnly(names) => {
+            command.env_clear();
+            command.envs(
+                std::env::vars_os()
+                    .filter(|(name, _)| names.iter().any(|kept| name == kept.as_str())),
+            );
+        }
+        EnvPolicy::Exactly(pairs) => {
+            command.env_clear();
+            set_pairs(&mut command, pairs)?;
+        }
+    }
+
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
+    command.kill_on_drop(true);
+
+    Ok(command)
+}
+
+/// Gives each of `pairs` to the environment of `command`. A later pair
+/// replaces an earlier pair of the same name.
+///
+/// A name that holds `=` is refused, as CPython refuses it
+/// (`subprocess.py:1906-1907`, version 3.13). The operating system would
+/// read such a pair as another name and another value.
+fn set_pairs(
+    command: &mut tokio::process::Command,
+    pairs: &[(String, String)],
+) -> Result<(), RunError> {
+    for (name, value) in pairs {
+        if name.contains('=') {
+            return Err(not_started(ILLEGAL_NAME));
+        }
+
+        command.env(name, value);
+    }
+
+    Ok(())
+}
+
+/// Sets the three streams of `program`. Returns the bytes that the owner
+/// writes to the standard input, and the cap of each output stream that the
+/// owner reads.
+///
+/// The Python origin of the inherited streams is the call of the terminal
+/// door, `door-tui/src/agent_door_tui/launch.py:70`. The origin of the input
+/// bytes is `handover/src/handover/executor/host.py:241-249`, which gives a
+/// secret to a child in that way.
+fn set_streams<'a>(
+    program: &mut tokio::process::Command,
+    stdin: &'a Stdin,
+    output: Output,
+) -> (&'a [u8], Option<ByteCap>) {
+    let input: &[u8] = match stdin {
+        Stdin::Null => {
+            program.stdin(Stdio::null());
+
+            &[]
+        }
+        Stdin::Inherit => {
+            program.stdin(Stdio::inherit());
+
+            &[]
+        }
+        Stdin::Bytes(bytes) => {
+            program.stdin(Stdio::piped());
+
+            bytes
+        }
+    };
+    let cap = match output {
+        Output::Capture { cap } => {
+            program.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+            Some(cap)
+        }
+        Output::Inherit => {
+            program.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+
+            None
+        }
+    };
+
+    (input, cap)
+}
+
+/// A [`RunError::NotStarted`] with a text of this module.
+///
+/// The function has no Python origin.
+fn not_started(text: &str) -> RunError {
+    RunError::NotStarted {
+        os_text: text.to_owned(),
+    }
+}
+
+/// Starts `program`, when the runtime of this thread can hold a child.
+///
+/// The Python origin is the `OSError` that each service takes from
+/// `subprocess.run`, for example at
+/// `door-tui/src/agent_door_tui/launch.py:69-76`: a program that does not
+/// start is a result.
+///
+/// The child gets each descriptor of this process that has no close-on-exec
+/// flag. CPython closes each descriptor past 2 in the child
+/// (`subprocess.py:819`, version 3.13). The Rust standard library and `tokio`
+/// open each descriptor with the flag, and `readfile` of this crate does the
+/// same.
+///
+/// One error leaves a program with no owner. `tokio` starts the program
+/// first and gives its pipes to the I/O driver after that. When the driver
+/// refuses a pipe, the program runs and this function gives
+/// [`RunError::NotStarted`]. The pipes of that program are then closed.
+/// [`can_hold_child`] gives the driver a pipe first, so this case needs a
+/// driver that takes one pipe and refuses the next one.
+fn start(mut program: tokio::process::Command) -> Result<Child, RunError> {
+    can_hold_child()?;
+
+    program.spawn().map_err(|error| RunError::NotStarted {
+        os_text: os_text(&error),
+    })
+}
+
+/// Checks that the runtime of this thread can hold a child program.
+///
+/// `tokio` starts the program first and builds its own parts for the child
+/// after that. On a thread with no runtime, and in a runtime with no I/O
+/// driver, it panics at that second step. The program then runs with no
+/// owner. This check refuses before the program starts.
+///
+/// The signal driver of `tokio` is a part of its I/O driver, so one check
+/// holds the two. The owner also needs the timer, for the time limit and
+/// for the read of the streams after a kill.
+///
+/// The function has no Python origin: `subprocess.run` needs no runtime.
+fn can_hold_child() -> Result<(), RunError> {
+    if Handle::try_current().is_err() {
+        return Err(not_started(NO_RUNTIME));
+    }
+
+    // `sleep` panics in a runtime with no timer, when the code makes the
+    // future.
+    if panic::catch_unwind(|| drop(tokio::time::sleep(Duration::ZERO))).is_err() {
+        return Err(not_started(NO_TIMER));
+    }
+
+    // A pipe of `tokio` panics in a runtime with no I/O driver.
+    match panic::catch_unwind(tokio::net::unix::pipe::pipe) {
+        Ok(Ok(pipe)) => {
+            drop(pipe);
+
+            Ok(())
+        }
+        // The operating system gives no pipe, so it gives the child none.
+        Ok(Err(error)) => Err(RunError::NotStarted {
+            os_text: os_text(&error),
+        }),
+        Err(payload) => {
+            drop(payload);
+
+            Err(not_started(NO_IO_DRIVER))
+        }
+    }
+}
+
+/// Writes the input, reads the two output streams and waits for the end of
+/// the child, all at one time. A child that reads its input late, or that
+/// fills one pipe before it reads, then does not stop the exchange.
+///
+/// The future ends when the child ended and each stream is at its end. A
+/// program that the child started can hold a stream open after the end of
+/// the child. The exchange then continues to the time limit of the command,
+/// as the exchange of CPython does. It ends early, with a [`Cut`], when a
+/// stream holds more than its cap and when the operating system fails a
+/// read or a write.
+///
+/// CPython does the same exchange in `_communicate`
+/// (`subprocess.py:2094-2203`, version 3.13).
+async fn exchange(
+    program: &str,
+    child: &mut Child,
+    stdin: Option<ChildStdin>,
+    input: &[u8],
+    stdout: Option<&mut (ChildStdout, ByteCap)>,
+    stderr: Option<&mut (ChildStderr, ByteCap)>,
+) -> Result<Streams, Cut> {
+    let ((), stdout, stderr, waited) = tokio::try_join!(
+        feed(program, stdin, input),
+        capture(program, stdout),
+        capture(program, stderr),
+        async { Ok(child.wait().await) },
+    )?;
+
+    Ok((stdout, stderr, waited))
+}
+
+/// Writes `input` to the standard input of the child `program` and closes
+/// the pipe.
+///
+/// A child can end, or close its input, before it read each byte. The write
+/// then fails with a broken pipe, and that is no error of the run: the end
+/// of the child says what occurred. CPython ignores the same error
+/// (`subprocess.py:2164-2168`, version 3.13).
+///
+/// Each other error of the write cuts the exchange, as it ends the call of
+/// CPython. The function writes one `ERROR` line for it. The line holds no
+/// byte of the input.
+async fn feed<W>(program: &str, stdin: Option<W>, input: &[u8]) -> Result<(), Cut>
+where
+    W: AsyncWrite + Unpin,
+{
+    let Some(mut pipe) = stdin else {
+        return Ok(());
+    };
+
+    match pipe.write_all(input).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => {
+            crate::error!(
+                LOG_TARGET,
+                "the write to the input of the program {program} failed: {}",
+                os_text(&error)
+            );
+
+            Err(Cut::Failed)
+        }
+    }
+}
+
+/// Reads a stream of the child `program` to its end. An absent stream gives
+/// no byte. A stream that holds more than its cap gives [`Cut::PastCap`] at
+/// the first byte past the cap.
+///
+/// A read error cuts the exchange, as it ends the call of CPython. The
+/// function writes one `ERROR` line for it. The line holds no byte of the
+/// stream.
+///
+/// CPython reads a stream with no cap (`subprocess.py:2173-2177`, version
+/// 3.13).
+async fn capture<R>(program: &str, stream: Option<&mut (R, ByteCap)>) -> Result<Vec<u8>, Cut>
+where
+    R: AsyncRead + Unpin,
+{
+    let Some((pipe, cap)) = stream else {
+        return Ok(Vec::new());
+    };
+    // One byte past the cap shows that the child wrote more than the cap.
+    let most = u64::try_from(cap.get())
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+
+    if let Err(error) = pipe.take(most).read_to_end(&mut bytes).await {
+        crate::error!(
+            LOG_TARGET,
+            "a read from the program {program} failed: {}",
+            os_text(&error)
+        );
+
+        return Err(Cut::Failed);
+    }
+
+    if bytes.len() > cap.get() {
+        return Err(Cut::PastCap(*cap));
+    }
+
+    Ok(bytes)
+}
+
+/// Waits for the event that makes the owner kill the child: the stop signal,
+/// or a caller that went away. For [`AtShutdown::Finish`] the future never
+/// ends.
+///
+/// The function has no Python origin: `subprocess.run` reads no stop signal
+/// (`caregiver/src/caregiver/loop.py:1237-1240` only sets a flag).
+async fn stop_asked(at_shutdown: AtShutdown, shutdown: &Shutdown, caller: &CancellationToken) {
+    match at_shutdown {
+        AtShutdown::Finish => future::pending().await,
+        AtShutdown::Kill => tokio::select! {
+            () = shutdown.cancelled() => {}
+            () = caller.cancelled() => {}
+        },
+    }
+}
+
+/// Waits for the time limit and gives it. For [`TimeLimit::None`] the future
+/// never ends.
+///
+/// The Python origin is the `timeout` of each `subprocess.run` call, for
+/// example `caregiver/src/caregiver/driver.py:88`.
+async fn past_limit(limit: TimeLimit) -> Duration {
+    match limit {
+        TimeLimit::After(after) => {
+            tokio::time::sleep(after).await;
+
+            after
+        }
+        TimeLimit::None => future::pending().await,
+    }
+}
+
+/// Kills the child `program` and waits for its end. Then reads each of its
+/// streams to the end, for [`AFTER_KILL`] at most.
+///
+/// The wait for the end of the child has no time limit. SIGKILL ends a
+/// child, and the owner leaves no child that runs. When the operating system
+/// refuses the signal, the function writes one `ERROR` line, and the owner
+/// still waits for the end of the child.
+///
+/// A program that the child started can hold a stream open after the kill.
+/// The time limit of the read keeps the owner from a wait with no end.
+///
+/// The Python origin is the kill at the time limit in `run` of CPython
+/// (`subprocess.py:557-570`, version 3.13). That code waits for the end of
+/// the child in the same way and reads no stream after it. This function
+/// reads each stream for [`AFTER_KILL`] at most.
+async fn kill(
+    program: &str,
+    child: &mut Child,
+    stdout: Option<&mut (ChildStdout, ByteCap)>,
+    stderr: Option<&mut (ChildStderr, ByteCap)>,
+) {
+    // The call does nothing when the child ended first.
+    if let Err(error) = child.start_kill() {
+        crate::error!(
+            LOG_TARGET,
+            "the kill of the program {program} failed, and its owner waits for its end: {}",
+            os_text(&error)
+        );
+    }
+
+    if let Err(error) = child.wait().await {
+        report_no_end(program, &error);
+    }
+
+    let streams = async {
+        tokio::join!(
+            discard(stdout.map(|(pipe, _)| pipe)),
+            discard(stderr.map(|(pipe, _)| pipe)),
+        )
+    };
+
+    // After the limit, a program that the child started holds a stream. The
+    // owner drops its end of the stream and does not wait for that program.
+    drop(tokio::time::timeout(AFTER_KILL, streams).await);
+}
+
+/// Reads a stream of the child to its end and drops each byte. A read error
+/// is the end of the stream.
+///
+/// The Python origin is `_drained` of
+/// `attendance/src/attendance/exec_channel.py:231-241`.
+async fn discard<R>(pipe: Option<&mut R>)
+where
+    R: AsyncRead + Unpin,
+{
+    let Some(pipe) = pipe else {
+        return;
+    };
+
+    drop(tokio::io::copy(pipe, &mut tokio::io::sink()).await);
 }
 
 /// What [`python_text`] does with bytes that are not UTF-8.
@@ -898,18 +1703,94 @@ pub enum EndOutcome {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::PermissionsExt;
+    use std::pin::{Pin, pin};
+    use std::process::Output as ChildOutput;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Context, Poll, Waker};
+    use std::thread;
+    use std::time::Instant;
+
+    use creche_testkit::program::write_program;
+    use creche_testkit::root::TempRoot;
+    use rustix::io::{FdFlags, fcntl_setfd};
+    use tokio::io::ReadBuf;
+    use tokio::runtime::{Builder, Runtime};
 
     use super::*;
+    use crate::tasks::{Drained, ShutdownTrigger, shutdown_pair};
 
     /// The value of a variable of the tests. No output of `Debug` holds it.
     const SECRET_VALUE: &str = "correct horse battery staple";
+
+    /// The longest time that a test waits for a step. The time is real, and
+    /// a host with much load is slow.
+    const LIMIT: Duration = Duration::from_secs(60);
+
+    /// The time between two looks at a file or at a process.
+    const TICK: Duration = Duration::from_millis(10);
+
+    /// A time limit that no test waits for. A test moves the clock of
+    /// `tokio` past it with [`skip`], after the program wrote its process
+    /// id. The speed of the host then decides no result.
+    const HOUR: Duration = Duration::from_secs(3600);
+
+    /// A time limit that a scenario waits for in real time.
+    const SHORT_LIMIT: Duration = Duration::from_secs(3);
+
+    /// A time in which a test shows that an event does not come: a child
+    /// that waits does not end, and a caller that waits gets no result.
+    const GRACE: Duration = Duration::from_millis(300);
+
+    /// The longest time of a test that shows a wait with no end. It is
+    /// shorter than [`LIMIT`], so a defect fails the test soon.
+    const STARVED: Duration = Duration::from_secs(10);
+
+    /// A program that writes its process id to the file `pid` and then runs
+    /// for longer than [`LIMIT`]: a test that waits for its end passes only
+    /// when some code ended it. `exec` keeps the id, so the child is one
+    /// process.
+    const HOLD: &str = "echo $$ > \"$1/pid\"\nexec sleep 300\n";
+
+    /// As [`HOLD`], and the program ignores SIGTERM. The program that `exec`
+    /// starts ignores the signal too, so only SIGKILL ends the child.
+    const DEAF_HOLD: &str = "trap '' TERM\necho $$ > \"$1/pid\"\nexec sleep 300\n";
+
+    /// A program that writes its process id, waits for the file `go`, writes
+    /// the file `done` and exits with status 0.
+    const GATED: &str = "echo $$ > \"$1/pid\"\n\
+                         while [ ! -e \"$1/go\" ]; do sleep 0.05; done\n\
+                         echo whole > \"$1/done\"\n\
+                         echo finished\n";
+
+    /// A program that writes `$1` bytes to its standard output and `$2`
+    /// bytes to its standard error.
+    const WRITER: &str = "head -c \"$1\" /dev/zero\nhead -c \"$2\" /dev/zero >&2\n";
+
+    /// The program that prints its environment, one variable for each line.
+    const ENV: &str = "/usr/bin/env";
+
+    /// The shell of the tests that need no script file.
+    const SHELL: &str = "/bin/sh";
 
     /// The number of SIGKILL.
     const KILLED: i32 = 9;
 
     /// The number of SIGTERM.
     const TERMINATED: i32 = 15;
+
+    /// The number of the error EIO, on Linux and on macOS. Its text is
+    /// `Input/output error` on both.
+    const IO_ERROR: i32 = 5;
+
+    /// The number of the error ECHILD, on Linux and on macOS. Its text is
+    /// `No child processes` on both.
+    const NO_CHILD: i32 = 10;
+
+    /// The number of the error EPIPE, on Linux and on macOS.
+    const PIPE_ERROR: i32 = 32;
 
     fn limit() -> TimeLimit {
         TimeLimit::After(Duration::from_secs(30))
@@ -1172,6 +2053,201 @@ mod tests {
         }
     }
 
+    /// A runtime with a timer and an I/O driver, as `service::run` builds it.
+    fn runtime() -> Runtime {
+        Builder::new_current_thread().enable_all().build().unwrap()
+    }
+
+    /// The parts of one test: a directory, the stop signal, the tasks and a
+    /// runner.
+    struct Bench {
+        root: TempRoot,
+        trigger: ShutdownTrigger,
+        tasks: Tasks,
+        runner: TokioRunner,
+    }
+
+    impl Bench {
+        fn new() -> Self {
+            let (trigger, shutdown) = shutdown_pair();
+            let tasks = Tasks::new(shutdown);
+
+            Self {
+                root: TempRoot::new().unwrap(),
+                trigger,
+                runner: TokioRunner::new(tasks.clone()),
+                tasks,
+            }
+        }
+
+        /// Writes the script `text` as the program `name` and gives its path.
+        fn program(&self, name: &str, text: &str) -> String {
+            write_program(&self.root, name, text)
+                .unwrap()
+                .into_os_string()
+                .into_string()
+                .unwrap()
+        }
+
+        /// The directory of the test, as a word of a command.
+        fn dir(&self) -> String {
+            self.root.path().to_str().unwrap().to_owned()
+        }
+
+        /// The path of the file `name` in the directory of the test.
+        fn file(&self, name: &str) -> PathBuf {
+            self.root.path().join(name)
+        }
+
+        /// A run of the script `text` that gets the directory of the test as
+        /// its first argument.
+        fn command(&self, text: &str, limit: TimeLimit, at_shutdown: AtShutdown) -> Command {
+            Command::new(self.program("program", text), limit, at_shutdown).arg(self.dir())
+        }
+
+        /// Runs `command` to its end, in a runtime of its own.
+        fn run(&self, command: Command) -> Result<Finished, RunError> {
+            runtime().block_on(within(self.runner.run(command)))
+        }
+
+        /// Opens the gate of [`GATED`].
+        fn open_gate(&self) {
+            fs::write(self.file("go"), b"").unwrap();
+        }
+
+        /// Waits for the end of each owner task.
+        async fn drained(&self) {
+            assert_eq!(self.tasks.drain(LIMIT).await, Drained::Clean);
+        }
+    }
+
+    /// Waits for `work`, for [`LIMIT`] at most. A step that does not end
+    /// then fails its test and does not hold the test program.
+    async fn within<F: Future>(work: F) -> F::Output {
+        tokio::time::timeout(LIMIT, work)
+            .await
+            .unwrap_or_else(|_| panic!("a step did not end in {} seconds", LIMIT.as_secs()))
+    }
+
+    /// Moves the clock of `tokio` forward by `time` and then lets it run
+    /// again. Each timer of the code under test that ends in that time is
+    /// then past its end.
+    ///
+    /// Call it on a runtime with one thread, at a moment when the test
+    /// itself waits on no timer: [`within`] also ends at a jump of the
+    /// clock.
+    async fn skip(time: Duration) {
+        tokio::time::pause();
+        tokio::time::advance(time).await;
+        tokio::time::resume();
+    }
+
+    /// Waits for a whole line in the file `path` and gives it with no
+    /// newline.
+    async fn line_of(path: &Path) -> String {
+        let read = async {
+            loop {
+                if let Ok(text) = fs::read_to_string(path)
+                    && let Some(line) = text.strip_suffix('\n')
+                {
+                    return line.to_owned();
+                }
+
+                tokio::time::sleep(TICK).await;
+            }
+        };
+
+        tokio::time::timeout(LIMIT, read)
+            .await
+            .unwrap_or_else(|_| panic!("no line in {}", path.display()))
+    }
+
+    /// Waits for the process id that a program wrote to the file `path`.
+    async fn pid_of(path: PathBuf) -> u32 {
+        line_of(&path).await.parse().unwrap()
+    }
+
+    /// Polls the run `run` until its program wrote a process id to the file
+    /// `name` of the bench. The run must not end in that time.
+    async fn id_in<F>(run: &mut Pin<&mut F>, bench: &Bench, name: &str) -> u32
+    where
+        F: Future<Output = Result<Finished, RunError>>,
+    {
+        tokio::select! {
+            biased;
+
+            result = run => panic!("the run ended: {result:?}"),
+            pid = pid_of(bench.file(name)) => pid,
+        }
+    }
+
+    /// One column of `ps` for the process `pid`. `None` when no such
+    /// process is there.
+    fn ps(pid: u32, column: &str) -> Option<String> {
+        let listed = std::process::Command::new("ps")
+            .args(["-o", column, "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&listed.stdout).trim().to_owned();
+
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Whether the process `pid` is a child of this test program. A child
+    /// that ended is a child until some code reads its end.
+    ///
+    /// The check reads the parent and not only the id: the operating system
+    /// can give the id of a child that is gone to a new process.
+    fn is_child(pid: u32) -> bool {
+        ps(pid, "ppid=") == Some(std::process::id().to_string())
+    }
+
+    /// Whether the process `pid` runs: `ps` shows it, and not as a process
+    /// that ended and waits for its parent.
+    fn runs(pid: u32) -> bool {
+        ps(pid, "state=").is_some_and(|state| !state.starts_with('Z'))
+    }
+
+    /// Sends SIGKILL to the process `pid`, which is no child of the test.
+    fn kill_stray(pid: u32) {
+        let killed = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .unwrap();
+
+        assert!(killed.success(), "the process {pid} was not there");
+    }
+
+    /// The lines of the standard output of a child, in order of their text.
+    fn sorted_lines(finished: &Finished) -> Vec<String> {
+        let mut lines: Vec<String> = std::str::from_utf8(finished.stdout())
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        lines.sort();
+
+        lines
+    }
+
+    /// The standard output of a child, as text.
+    fn output_of(finished: &Finished) -> &str {
+        std::str::from_utf8(finished.stdout()).unwrap()
+    }
+
+    /// Each variable of this process that a child must get: the name and
+    /// the value are one line of text, as `env` prints it.
+    ///
+    /// macOS removes each `DYLD_` variable at the start of a program of the
+    /// system, and `env` is such a program.
+    fn own_variables() -> Vec<(String, String)> {
+        std::env::vars_os()
+            .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+            .filter(|(name, value)| !name.contains('\n') && !value.contains('\n'))
+            .filter(|(name, _)| !name.starts_with("DYLD_"))
+            .collect()
+    }
+
     #[test]
     fn the_python_return_code_is_the_status_or_the_negative_signal() {
         let table = [
@@ -1187,6 +2263,60 @@ mod tests {
         for (ended, code) in table {
             assert_eq!(ended.python_returncode(), code, "{ended:?}");
         }
+    }
+
+    #[test]
+    fn a_wait_status_gives_the_exit_status_or_the_signal() {
+        let table = [
+            ((Some(0), None), Ended::Code(0)),
+            ((Some(3), None), Ended::Code(3)),
+            ((Some(255), None), Ended::Code(255)),
+            ((None, Some(KILLED)), Ended::Signal(KILLED)),
+            ((None, Some(TERMINATED)), Ended::Signal(TERMINATED)),
+            // The operating system gives none of the next four.
+            ((Some(256), None), Ended::Code(STATUS_UNKNOWN)),
+            ((Some(-1), None), Ended::Code(STATUS_UNKNOWN)),
+            ((Some(3), Some(KILLED)), Ended::Code(3)),
+            ((None, None), Ended::Code(STATUS_UNKNOWN)),
+        ];
+
+        for ((code, signal), ended) in table {
+            assert_eq!(Ended::from_status(code, signal), ended);
+        }
+
+        assert_ne!(Ended::Code(STATUS_UNKNOWN).python_returncode(), 0);
+    }
+
+    #[test]
+    fn the_status_of_the_operating_system_gives_its_end() {
+        // The wait status of a child: the exit status in the second byte,
+        // or the number of the signal in the first byte.
+        let exited = ExitStatus::from_raw(3 << 8);
+        let killed = ExitStatus::from_raw(KILLED);
+
+        assert_eq!(Ended::of(exited), Ended::Code(3));
+        assert_eq!(Ended::of(killed), Ended::Signal(KILLED));
+    }
+
+    #[test]
+    fn a_child_that_ran_to_its_end_gives_its_status_and_its_streams() {
+        let exited = Ok(ExitStatus::from_raw(3 << 8));
+        let finished = whole("tool", &exited, b"out".to_vec(), b"err".to_vec());
+
+        assert_eq!(
+            finished,
+            Ok(Finished::new(Ended::Code(3))
+                .with_stdout("out")
+                .with_stderr("err"))
+        );
+    }
+
+    #[test]
+    fn each_cut_of_an_exchange_has_its_error() {
+        let cap = ByteCap::new(7).unwrap();
+
+        assert_eq!(Cut::PastCap(cap).error(), RunError::OutputTooLarge { cap });
+        assert_eq!(Cut::Failed.error(), RunError::OwnerLost);
     }
 
     /// Each row: the bytes, the text under `Strict`, the text under
@@ -1286,5 +2416,1318 @@ mod tests {
         // The one byte of U+00E9 in Latin-1. A Python process in a Latin-1
         // locale reads it, and this function refuses it.
         assert!(python_text(b"caf\xe9", Decode::Strict).is_err());
+    }
+
+    /// A stream of a child that gives some bytes and then an error of the
+    /// operating system.
+    struct BrokenStream {
+        /// The bytes before the error. Empty after the first read.
+        first: &'static [u8],
+    }
+
+    impl AsyncRead for BrokenStream {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            buffer: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            if self.first.is_empty() {
+                return Poll::Ready(Err(io::Error::from_raw_os_error(IO_ERROR)));
+            }
+
+            buffer.put_slice(self.first);
+            self.first = &[];
+
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    /// The standard input of a child that takes no byte: each write gives
+    /// the error of the operating system with this number.
+    struct RefusingPipe {
+        errno: i32,
+    }
+
+    impl AsyncWrite for RefusingPipe {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            _bytes: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Err(io::Error::from_raw_os_error(self.errno)))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    /// Reads the stream `bytes` with the cap `cap`.
+    fn captured(bytes: &[u8], cap: ByteCap) -> Result<Vec<u8>, Cut> {
+        let mut stream = (bytes, cap);
+
+        block_on(capture("tool", Some(&mut stream)))
+    }
+
+    #[test]
+    fn a_stream_is_whole_up_to_its_cap_and_refused_one_byte_past_it() {
+        let cap = ByteCap::new(5).unwrap();
+
+        for (length, whole) in [(0, true), (4, true), (5, true), (6, false), (5000, false)] {
+            let bytes = vec![b'x'; length];
+            let expected = if whole {
+                Ok(bytes.clone())
+            } else {
+                Err(Cut::PastCap(cap))
+            };
+
+            assert_eq!(captured(&bytes, cap), expected, "{length}");
+        }
+    }
+
+    #[test]
+    fn the_largest_cap_reads_a_stream_and_does_not_overflow() {
+        // One byte past this cap is no count of bytes. The reader must not
+        // add 1 to the cap.
+        let cap = ByteCap::new(usize::MAX).unwrap();
+
+        assert_eq!(captured(b"each byte", cap), Ok(b"each byte".to_vec()));
+    }
+
+    #[test]
+    fn an_absent_stream_gives_no_byte() {
+        let read = block_on(capture::<&[u8]>("tool", None));
+
+        assert_eq!(read, Ok(Vec::new()));
+    }
+
+    #[test]
+    fn an_absent_input_and_an_input_that_the_child_takes_are_no_cut() {
+        let absent = block_on(feed::<Vec<u8>>("tool", None, b"input"));
+        let taken = block_on(feed("tool", Some(Vec::new()), b"input"));
+
+        assert_eq!(absent, Ok(()));
+        assert_eq!(taken, Ok(()));
+    }
+
+    /// An exchange that never ends and never waits. Each turn takes one step
+    /// of the budget that `tokio` gives its task for one poll, as a read
+    /// from a stream that always holds bytes does.
+    async fn busy() -> Result<Streams, Cut> {
+        loop {
+            tokio::task::consume_budget().await;
+        }
+    }
+
+    #[test]
+    fn an_exchange_that_never_waits_does_not_hold_back_the_time_limit() {
+        runtime().block_on(async {
+            let event = first_event(
+                busy(),
+                future::pending(),
+                past_limit(TimeLimit::After(TICK)),
+            );
+            let verdict = tokio::time::timeout(STARVED, event).await;
+
+            assert!(matches!(verdict, Ok(Verdict::PastLimit(after)) if after == TICK));
+        });
+    }
+
+    #[test]
+    fn an_exchange_that_never_waits_does_not_hold_back_the_stop_signal() {
+        runtime().block_on(async {
+            let (trigger, shutdown) = shutdown_pair();
+            let caller = CancellationToken::new();
+            let stop = tokio::spawn(async move {
+                tokio::time::sleep(TICK).await;
+                trigger.trigger();
+            });
+            let event = first_event(
+                busy(),
+                stop_asked(AtShutdown::Kill, &shutdown, &caller),
+                future::pending(),
+            );
+            let verdict = tokio::time::timeout(STARVED, event).await;
+
+            assert!(matches!(verdict, Ok(Verdict::Stop)));
+            stop.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn an_exchange_that_ended_is_first_when_each_event_is_there() {
+        runtime().block_on(async {
+            let done = async { Ok((b"out".to_vec(), Vec::new(), Ok(ExitStatus::from_raw(0)))) };
+            let verdict = first_event(done, future::ready(()), future::ready(TICK)).await;
+
+            assert!(matches!(
+                verdict,
+                Verdict::Done(Ok((stdout, _, Ok(status)))) if stdout == b"out" && status.success()
+            ));
+
+            // The event that kills is before the time limit.
+            let verdict = first_event(busy(), future::ready(()), future::ready(TICK)).await;
+
+            assert!(matches!(verdict, Verdict::Stop));
+        });
+    }
+
+    #[test]
+    fn the_wait_for_a_kill_event_never_ends_under_finish() {
+        runtime().block_on(async {
+            let (trigger, shutdown) = shutdown_pair();
+            let caller = CancellationToken::new();
+
+            trigger.trigger();
+            caller.cancel();
+
+            let asked = stop_asked(AtShutdown::Finish, &shutdown, &caller);
+
+            assert!(tokio::time::timeout(GRACE, asked).await.is_err());
+
+            // Under `Kill`, each of the two events ends the wait.
+            let (_trigger, running) = shutdown_pair();
+            let here = CancellationToken::new();
+
+            within(stop_asked(AtShutdown::Kill, &shutdown, &here)).await;
+            within(stop_asked(AtShutdown::Kill, &running, &caller)).await;
+
+            let asked = stop_asked(AtShutdown::Kill, &running, &here);
+
+            assert!(tokio::time::timeout(GRACE, asked).await.is_err());
+        });
+    }
+
+    #[test]
+    fn a_runner_and_its_future_go_to_another_thread() {
+        fn shareable<T: Send + Sync + Clone>() {}
+        fn movable<T: Send>() {}
+
+        shareable::<TokioRunner>();
+        movable::<ChildGuard>();
+        movable::<Piped>();
+
+        let bench = Bench::new();
+        let command = Command::new("true", limit(), AtShutdown::Kill);
+
+        // The call starts nothing: no code polls the future.
+        drop(sendable(bench.runner.run(command)));
+    }
+
+    #[test]
+    fn the_child_gets_each_word_as_it_is() {
+        let bench = Bench::new();
+        let program = bench.program(
+            "words",
+            "for word in \"$@\"; do printf '<%s>\\n' \"$word\"; done\n",
+        );
+        let words = [
+            "a b",
+            "",
+            "--flag=x y",
+            "$HOME",
+            "'quoted'",
+            "caf\u{e9}",
+            "*",
+            "two\nlines",
+            "; echo no",
+            "-n",
+            "\\",
+            "`id`",
+        ];
+        let command = Command::new(program, limit(), AtShutdown::Kill).args(words);
+        let finished = bench.run(command).unwrap();
+        let expected: String = words.iter().map(|word| format!("<{word}>\n")).collect();
+
+        assert_eq!(finished.ended(), Ended::Code(0));
+        assert_eq!(output_of(&finished), expected);
+        assert_eq!(finished.stderr(), b"");
+    }
+
+    #[test]
+    fn a_run_gives_the_two_streams_and_the_exit_status() {
+        let bench = Bench::new();
+        let command = bench.command(
+            "echo to-output\necho to-error >&2\nexit 3\n",
+            limit(),
+            AtShutdown::Kill,
+        );
+        let finished = bench.run(command).unwrap();
+
+        assert_eq!(finished.ended(), Ended::Code(3));
+        assert_eq!(finished.ended().python_returncode(), 3);
+        assert_eq!(finished.stdout(), b"to-output\n");
+        assert_eq!(finished.stderr(), b"to-error\n");
+    }
+
+    #[test]
+    fn a_child_that_a_signal_ends_gives_the_signal() {
+        let bench = Bench::new();
+        let command = bench.command("kill -TERM $$\nsleep 30\n", limit(), AtShutdown::Kill);
+        let finished = bench.run(command).unwrap();
+
+        assert_eq!(finished.ended(), Ended::Signal(TERMINATED));
+        assert_eq!(finished.ended().python_returncode(), -15);
+    }
+
+    #[test]
+    fn the_child_runs_in_the_working_directory_of_the_command() {
+        let bench = Bench::new();
+        let command = bench
+            .command("pwd -P\n", limit(), AtShutdown::Kill)
+            .cwd(bench.root.path());
+        let finished = bench.run(command).unwrap();
+        let expected = format!(
+            "{}\n",
+            fs::canonicalize(bench.root.path()).unwrap().display()
+        );
+
+        assert_eq!(output_of(&finished), expected);
+    }
+
+    #[test]
+    fn inherit_gives_the_child_each_variable_of_this_process() {
+        let bench = Bench::new();
+        let command = Command::new(ENV, limit(), AtShutdown::Kill).env(EnvPolicy::Inherit);
+        let lines = sorted_lines(&bench.run(command).unwrap());
+        let own = own_variables();
+
+        assert!(own.iter().any(|(name, _)| name == "PATH"));
+
+        for (name, value) in own {
+            assert!(lines.contains(&format!("{name}={value}")), "{name}");
+        }
+    }
+
+    #[test]
+    fn inherit_and_adds_its_pairs_and_the_last_pair_of_a_name_stays() {
+        let bench = Bench::new();
+        let pairs = [
+            ("CRECHE_TEST_ADDED", "first"),
+            ("PATH", "/replaced"),
+            ("CRECHE_TEST_ADDED", "two words"),
+        ]
+        .map(|(name, value)| (name.to_owned(), value.to_owned()));
+        let command =
+            Command::new(ENV, limit(), AtShutdown::Kill).env(EnvPolicy::InheritAnd(pairs.to_vec()));
+        let lines = sorted_lines(&bench.run(command).unwrap());
+
+        assert!(lines.contains(&String::from("CRECHE_TEST_ADDED=two words")));
+        assert!(lines.contains(&String::from("PATH=/replaced")));
+        assert!(!lines.contains(&String::from("CRECHE_TEST_ADDED=first")));
+
+        let kept: Vec<(String, String)> = own_variables()
+            .into_iter()
+            .filter(|(name, _)| name != "PATH")
+            .collect();
+
+        assert!(!kept.is_empty());
+
+        for (name, value) in kept {
+            assert!(lines.contains(&format!("{name}={value}")), "{name}");
+        }
+    }
+
+    #[test]
+    fn inherit_only_gives_the_named_variables_and_no_other() {
+        let bench = Bench::new();
+        let names = ["PATH", "CRECHE_TEST_NOT_SET"].map(String::from).to_vec();
+        let command =
+            Command::new(ENV, limit(), AtShutdown::Kill).env(EnvPolicy::InheritOnly(names));
+        let lines = sorted_lines(&bench.run(command).unwrap());
+
+        assert_eq!(lines, [format!("PATH={}", std::env::var("PATH").unwrap())]);
+    }
+
+    #[test]
+    fn exactly_gives_its_pairs_and_no_other() {
+        let bench = Bench::new();
+        let pairs = [("B", "two words"), ("A", "1"), ("EMPTY", "")]
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .to_vec();
+        let some = Command::new(ENV, limit(), AtShutdown::Kill).env(EnvPolicy::Exactly(pairs));
+        let none = Command::new(ENV, limit(), AtShutdown::Kill).env(EnvPolicy::Exactly(Vec::new()));
+
+        assert_eq!(
+            sorted_lines(&bench.run(some).unwrap()),
+            ["A=1", "B=two words", "EMPTY="]
+        );
+        assert_eq!(bench.run(none).unwrap().stdout(), b"");
+    }
+
+    #[test]
+    fn the_child_finds_a_program_on_the_path_of_its_own_environment() {
+        let bench = Bench::new();
+        bench.program("creche-test-tool", "echo found\n");
+
+        // Python looks for the program on the `PATH` of the environment
+        // that the call gives, and so does this runner.
+        let path = vec![(String::from("PATH"), bench.dir())];
+        let command = Command::new("creche-test-tool", limit(), AtShutdown::Kill)
+            .env(EnvPolicy::Exactly(path));
+
+        assert_eq!(bench.run(command).unwrap().stdout(), b"found\n");
+    }
+
+    #[test]
+    fn a_name_of_the_environment_with_an_equal_sign_starts_no_program() {
+        let bench = Bench::new();
+        let program = bench.program("program", "touch \"$1/started\"\n");
+        let pair = vec![(String::from("A=B"), String::from(SECRET_VALUE))];
+
+        for policy in [
+            EnvPolicy::InheritAnd(pair.clone()),
+            EnvPolicy::Exactly(pair),
+        ] {
+            let command = Command::new(&program, limit(), AtShutdown::Kill)
+                .arg(bench.dir())
+                .env(policy);
+
+            // The text is the text of the `ValueError` of Python.
+            assert_eq!(
+                bench.run(command),
+                Err(RunError::NotStarted {
+                    os_text: String::from("illegal environment variable name"),
+                })
+            );
+            assert!(!bench.file("started").exists());
+        }
+    }
+
+    #[test]
+    fn a_program_that_does_not_start_is_a_result_with_the_text_of_the_system() {
+        let bench = Bench::new();
+        let plain = bench.file("plain");
+        fs::write(&plain, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&plain, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let table = [
+            (bench.file("no-such-program"), "No such file or directory"),
+            (plain, "Permission denied"),
+            (bench.root.path().to_owned(), "Permission denied"),
+        ];
+
+        for (program, text) in table {
+            let command = Command::new(program.to_str().unwrap(), limit(), AtShutdown::Kill);
+
+            assert_eq!(
+                bench.run(command),
+                Err(RunError::NotStarted {
+                    os_text: String::from(text),
+                }),
+                "{}",
+                program.display()
+            );
+        }
+
+        // A name with no `/`: the child looks on its own `PATH`, which holds
+        // only the directory of the test.
+        let path = vec![(String::from("PATH"), bench.dir())];
+        let no_name = Command::new("creche-test-no-such-program", limit(), AtShutdown::Finish)
+            .env(EnvPolicy::Exactly(path));
+
+        assert_eq!(
+            bench.run(no_name),
+            Err(RunError::NotStarted {
+                os_text: String::from("No such file or directory"),
+            })
+        );
+    }
+
+    #[test]
+    fn a_word_with_a_nul_byte_and_an_absent_directory_start_no_program() {
+        let bench = Bench::new();
+        let with_nul = bench
+            .command("touch \"$1/started\"\n", limit(), AtShutdown::Kill)
+            .arg("a\0b");
+        let no_dir = Command::new(SHELL, limit(), AtShutdown::Kill).cwd(bench.file("no-such-dir"));
+
+        assert!(matches!(
+            bench.run(with_nul),
+            Err(RunError::NotStarted { .. })
+        ));
+        assert!(!bench.file("started").exists());
+        assert_eq!(
+            bench.run(no_dir),
+            Err(RunError::NotStarted {
+                os_text: String::from("No such file or directory"),
+            })
+        );
+    }
+
+    /// CPython closes each descriptor past 2 in the child
+    /// (`subprocess.py:819`, version 3.13). The Rust child keeps a
+    /// descriptor that has no close-on-exec flag.
+    #[test]
+    fn the_child_gets_a_descriptor_only_when_it_has_no_close_on_exec_flag() {
+        let bench = Bench::new();
+        // The standard library opens each file with the flag.
+        let flagged = fs::File::open(bench.root.path()).unwrap();
+        let plain = fs::File::open(bench.root.path()).unwrap();
+        fcntl_setfd(&plain, FdFlags::empty()).unwrap();
+
+        // The shell reads the program from a word, so it opens no file of
+        // its own.
+        let listed = "for fd in \"$@\"; do \
+                      if [ -e \"/dev/fd/$fd\" ]; then echo open; else echo closed; fi; \
+                      done";
+        let command = Command::new(SHELL, limit(), AtShutdown::Kill).args([
+            String::from("-c"),
+            String::from(listed),
+            String::from(SHELL),
+            flagged.as_raw_fd().to_string(),
+            plain.as_raw_fd().to_string(),
+        ]);
+        let finished = bench.run(command).unwrap();
+
+        assert_eq!(output_of(&finished), "closed\nopen\n");
+    }
+
+    #[test]
+    fn the_child_reads_the_bytes_of_its_input_and_then_the_end() {
+        let bench = Bench::new();
+        // More than a pipe holds: the owner writes and reads at one time.
+        let large: Vec<u8> = (0..300_000_u32)
+            .map(|n| b'a' + u8::try_from(n % 26).unwrap())
+            .collect();
+
+        for input in [b"one line\n".to_vec(), Vec::new(), large] {
+            let command =
+                Command::new("cat", limit(), AtShutdown::Kill).stdin(Stdin::Bytes(input.clone()));
+            let finished = bench.run(command).unwrap();
+
+            assert_eq!(finished.ended(), Ended::Code(0));
+            assert_eq!(finished.stdout(), input);
+        }
+    }
+
+    #[test]
+    fn an_empty_input_is_the_end_at_once() {
+        let bench = Bench::new();
+        let command = Command::new("cat", limit(), AtShutdown::Kill).stdin(Stdin::Null);
+        let finished = bench.run(command).unwrap();
+
+        assert_eq!(finished.ended(), Ended::Code(0));
+        assert_eq!(finished.stdout(), b"");
+    }
+
+    #[test]
+    fn a_child_that_reads_no_input_is_no_error() {
+        let bench = Bench::new();
+        // The child ends before the owner wrote each byte: the write fails.
+        let command = bench
+            .command("echo done\nexit 4\n", limit(), AtShutdown::Kill)
+            .stdin(Stdin::Bytes(vec![b'x'; 1 << 20]));
+        let finished = bench.run(command).unwrap();
+
+        assert_eq!(finished.ended(), Ended::Code(4));
+        assert_eq!(finished.stdout(), b"done\n");
+    }
+
+    #[test]
+    fn the_owner_reads_the_two_streams_at_one_time() {
+        let bench = Bench::new();
+        // Each stream holds more than a pipe holds. An owner that reads one
+        // stream to its end first never gets the second.
+        let command = bench.command(
+            "head -c 200000 /dev/zero >&2\nhead -c 200000 /dev/zero\n",
+            limit(),
+            AtShutdown::Kill,
+        );
+        let finished = bench.run(command).unwrap();
+
+        assert_eq!(finished.ended(), Ended::Code(0));
+        assert_eq!(finished.stdout().len(), 200_000);
+        assert_eq!(finished.stderr().len(), 200_000);
+    }
+
+    #[test]
+    fn inherited_streams_give_the_status_and_no_byte() {
+        let bench = Bench::new();
+        let command = Command::new("true", TimeLimit::None, AtShutdown::Finish)
+            .stdin(Stdin::Inherit)
+            .output(Output::Inherit);
+
+        assert_eq!(bench.run(command), Ok(Finished::new(Ended::Code(0))));
+    }
+
+    #[test]
+    fn a_stream_of_exactly_the_cap_is_whole() {
+        let bench = Bench::new();
+        let cap = ByteCap::new(1000).unwrap();
+        let command = Command::new(bench.program("writer", WRITER), limit(), AtShutdown::Kill)
+            .args(["1000", "1000"])
+            .output(Output::Capture { cap });
+        let finished = bench.run(command).unwrap();
+
+        assert_eq!(finished.ended(), Ended::Code(0));
+        assert_eq!(finished.stdout(), vec![0_u8; 1000]);
+        assert_eq!(finished.stderr(), vec![0_u8; 1000]);
+    }
+
+    #[test]
+    fn one_byte_past_the_cap_on_a_stream_gives_output_too_large() {
+        let bench = Bench::new();
+        let cap = ByteCap::new(1000).unwrap();
+        let program = bench.program("writer", WRITER);
+
+        for sizes in [["1001", "0"], ["0", "1001"], ["1001", "1001"]] {
+            let command = Command::new(&program, limit(), AtShutdown::Kill)
+                .args(sizes)
+                .output(Output::Capture { cap });
+
+            assert_eq!(
+                bench.run(command),
+                Err(RunError::OutputTooLarge { cap }),
+                "{sizes:?}"
+            );
+        }
+    }
+
+    /// `subprocess.run` of Python reads the output of a child with no cap
+    /// (`caregiver/src/caregiver/driver.py:87-89`). A new command has a cap
+    /// of 1 MiB for each stream.
+    #[test]
+    fn a_new_command_reads_one_mib_of_a_stream_and_no_more() {
+        let bench = Bench::new();
+        let program = bench.program("writer", WRITER);
+        let whole = Command::new(&program, limit(), AtShutdown::Kill).args(["1048576", "0"]);
+        let past = Command::new(&program, limit(), AtShutdown::Kill).args(["1048577", "0"]);
+
+        assert_eq!(bench.run(whole).unwrap().stdout().len(), 1_048_576);
+        assert_eq!(
+            bench.run(past),
+            Err(RunError::OutputTooLarge {
+                cap: ByteCap::ONE_MIB
+            })
+        );
+    }
+
+    #[test]
+    fn a_child_that_writes_with_no_end_is_killed_at_the_cap() {
+        let bench = Bench::new();
+        let cap = ByteCap::new(4096).unwrap();
+        let command = bench
+            .command(
+                "echo $$ > \"$1/pid\"\nexec yes\n",
+                limit(),
+                AtShutdown::Finish,
+            )
+            .output(Output::Capture { cap });
+
+        runtime().block_on(async {
+            let result = within(bench.runner.run(command)).await;
+
+            assert_eq!(result, Err(RunError::OutputTooLarge { cap }));
+            // The owner read the end of the child before it gave the error.
+            assert!(!is_child(pid_of(bench.file("pid")).await));
+
+            bench.drained().await;
+        });
+    }
+
+    #[test]
+    fn the_owner_kills_a_child_at_its_time_limit_and_no_process_is_left() {
+        let bench = Bench::new();
+        // The kill is SIGKILL: it ends a child that ignores SIGTERM.
+        let command = bench.command(DEAF_HOLD, TimeLimit::After(HOUR), AtShutdown::Finish);
+
+        runtime().block_on(async {
+            let mut run = pin!(bench.runner.run(command));
+            let pid = id_in(&mut run, &bench, "pid").await;
+
+            // Before the time limit, the owner lets the child run.
+            assert!(tokio::time::timeout(GRACE, &mut run).await.is_err());
+            assert!(runs(pid));
+
+            skip(HOUR).await;
+
+            assert_eq!(
+                within(&mut run).await,
+                Err(RunError::TimedOut { after: HOUR })
+            );
+            // The owner read the end of the child before it gave the error.
+            assert!(!is_child(pid));
+
+            bench.drained().await;
+        });
+    }
+
+    #[test]
+    fn a_time_limit_of_zero_ends_the_run_at_once() {
+        let bench = Bench::new();
+        let command = Command::new(
+            "sleep",
+            TimeLimit::After(Duration::ZERO),
+            AtShutdown::Finish,
+        )
+        .arg("300");
+
+        assert_eq!(
+            bench.run(command),
+            Err(RunError::TimedOut {
+                after: Duration::ZERO
+            })
+        );
+    }
+
+    /// At the time limit, CPython kills the child, waits for its end and
+    /// reads no stream after it (`subprocess.py:557-570`, version 3.13).
+    /// The owner reads each stream for 1 second at most after that end.
+    #[test]
+    fn a_program_that_holds_a_stream_does_not_hold_the_owner() {
+        let bench = Bench::new();
+        // The child ends at once. The program that it started keeps the two
+        // streams open for longer than the test runs.
+        let command = bench.command(
+            "sleep 300 &\necho $! > \"$1/stray\"\necho early\n",
+            TimeLimit::After(HOUR),
+            AtShutdown::Finish,
+        );
+
+        runtime().block_on(async {
+            let mut run = pin!(bench.runner.run(command));
+            let stray = id_in(&mut run, &bench, "stray").await;
+
+            // The child ended, and a stream is still open. The exchange
+            // continues to the time limit, as the exchange of CPython does.
+            assert!(tokio::time::timeout(GRACE, &mut run).await.is_err());
+
+            let asked = Instant::now();
+            skip(HOUR).await;
+            let result = within(&mut run).await;
+
+            // The error holds no byte of the output: not the line `early`.
+            assert_eq!(result, Err(RunError::TimedOut { after: HOUR }));
+            // The owner read the streams for its whole second, and it did
+            // not wait for the program that holds them.
+            assert!(asked.elapsed() >= AFTER_KILL);
+            assert!(runs(stray));
+
+            kill_stray(stray);
+            bench.drained().await;
+        });
+    }
+
+    #[test]
+    fn a_dropped_caller_with_kill_leaves_no_process() {
+        let bench = Bench::new();
+        // No time limit: only the caller that goes away ends the child.
+        let command = bench.command(HOLD, TimeLimit::None, AtShutdown::Kill);
+
+        runtime().block_on(async {
+            let pid = {
+                let mut run = pin!(bench.runner.run(command));
+                let pid = id_in(&mut run, &bench, "pid").await;
+
+                assert!(runs(pid));
+
+                pid
+                // The future of the run drops here: the caller left.
+            };
+
+            bench.drained().await;
+
+            assert!(!is_child(pid));
+        });
+    }
+
+    #[test]
+    fn a_dropped_caller_with_finish_lets_the_child_end_whole() {
+        let bench = Bench::new();
+        let command = bench.command(GATED, limit(), AtShutdown::Finish);
+
+        runtime().block_on(async {
+            let pid = {
+                let mut run = pin!(bench.runner.run(command));
+
+                id_in(&mut run, &bench, "pid").await
+                // The future of the run drops here: the caller left.
+            };
+
+            // The owner lets the child run.
+            tokio::time::sleep(GRACE).await;
+
+            assert!(runs(pid));
+            assert!(!bench.file("done").exists());
+
+            bench.open_gate();
+            bench.drained().await;
+
+            assert_eq!(fs::read(bench.file("done")).unwrap(), b"whole\n");
+            assert!(!is_child(pid));
+        });
+    }
+
+    #[test]
+    fn the_stop_signal_with_finish_lets_the_child_end_whole_while_the_drain_waits() {
+        let bench = Bench::new();
+        let command = bench.command(GATED, limit(), AtShutdown::Finish);
+
+        runtime().block_on(async {
+            let caller = tokio::spawn({
+                let runner = bench.runner.clone();
+
+                async move { runner.run(command).await }
+            });
+            let pid = pid_of(bench.file("pid")).await;
+
+            bench.trigger.trigger();
+
+            // The owner is a tracked task: a drain counts it while the child
+            // runs.
+            assert_eq!(
+                bench.tasks.drain(GRACE).await,
+                Drained::TimedOut { left: 1 }
+            );
+
+            let open_late = async {
+                tokio::time::sleep(GRACE).await;
+
+                // The stop signal did not end the child, and the drain still
+                // waits for its owner.
+                assert!(runs(pid));
+                assert!(!bench.file("done").exists());
+
+                bench.open_gate();
+            };
+            let (drained, ()) = tokio::join!(bench.tasks.drain(LIMIT), open_late);
+
+            assert_eq!(drained, Drained::Clean);
+            assert_eq!(fs::read(bench.file("done")).unwrap(), b"whole\n");
+            assert!(!is_child(pid));
+
+            let finished = within(caller).await.unwrap().unwrap();
+
+            assert_eq!(finished.ended(), Ended::Code(0));
+            assert_eq!(finished.stdout(), b"finished\n");
+        });
+    }
+
+    #[test]
+    fn the_stop_signal_with_kill_gives_stopped_and_leaves_no_process() {
+        let bench = Bench::new();
+        // No time limit: only the stop signal ends the child. The child
+        // ignores SIGTERM, and the kill of the owner is SIGKILL.
+        let command = bench.command(DEAF_HOLD, TimeLimit::None, AtShutdown::Kill);
+
+        runtime().block_on(async {
+            let mut run = pin!(bench.runner.run(command));
+            let pid = id_in(&mut run, &bench, "pid").await;
+
+            assert!(runs(pid));
+
+            bench.trigger.trigger();
+
+            assert_eq!(within(&mut run).await, Err(RunError::Stopped));
+            // The owner read the end of the child before it gave the error.
+            assert!(!is_child(pid));
+
+            bench.drained().await;
+        });
+    }
+
+    #[test]
+    fn a_run_with_kill_after_the_stop_signal_starts_no_program() {
+        let bench = Bench::new();
+        let command = bench.command("touch \"$1/started\"\n", limit(), AtShutdown::Kill);
+
+        bench.trigger.trigger();
+
+        assert_eq!(bench.run(command), Err(RunError::Stopped));
+        assert!(!bench.file("started").exists());
+
+        // The owner does not try the start. A try gives `NotStarted` for a
+        // program that is absent.
+        let absent = bench.file("no-such-program");
+        let command = Command::new(absent.to_str().unwrap(), limit(), AtShutdown::Kill);
+
+        assert_eq!(bench.run(command), Err(RunError::Stopped));
+    }
+
+    #[test]
+    fn a_run_with_finish_after_the_stop_signal_runs_to_its_end() {
+        let bench = Bench::new();
+        let command = bench.command("touch \"$1/started\"\n", limit(), AtShutdown::Finish);
+
+        bench.trigger.trigger();
+
+        assert_eq!(bench.run(command).unwrap().ended(), Ended::Code(0));
+        assert!(bench.file("started").exists());
+    }
+
+    #[test]
+    fn a_runner_works_on_a_runtime_with_more_than_one_thread() {
+        let bench = Bench::new();
+        let program = bench.program("echo", "echo \"$1\"\n");
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let outputs = runtime.block_on(async {
+            let callers: Vec<_> = (0..8_u8)
+                .map(|n| {
+                    let runner = bench.runner.clone();
+                    let command =
+                        Command::new(&program, limit(), AtShutdown::Kill).arg(n.to_string());
+
+                    tokio::spawn(async move { runner.run(command).await })
+                })
+                .collect();
+            let mut outputs = Vec::new();
+
+            for caller in callers {
+                let finished = within(caller).await.unwrap().unwrap();
+
+                outputs.push(finished.stdout().to_vec());
+            }
+            bench.drained().await;
+
+            outputs
+        });
+        let expected: Vec<Vec<u8>> = (0..8_u8).map(|n| format!("{n}\n").into_bytes()).collect();
+
+        assert_eq!(outputs, expected);
+    }
+
+    #[test]
+    fn the_stop_of_the_runtime_kills_the_child_and_the_caller_gets_owner_lost() {
+        let bench = Bench::new();
+        // No time limit: only the drop of the child ends it.
+        let command = bench.command(HOLD, TimeLimit::None, AtShutdown::Finish);
+        let first = runtime();
+        let mut run = Box::pin(bench.runner.run(command));
+
+        let pid = first.block_on(async {
+            tokio::select! {
+                biased;
+
+                result = &mut run => panic!("the run ended: {result:?}"),
+                pid = pid_of(bench.file("pid")) => pid,
+            }
+        });
+
+        assert!(runs(pid));
+
+        // The runtime drops the owner task, and the drop of the child kills
+        // it. No code of this runtime reads its end, so `ps` can still show
+        // the child as a process that ended.
+        drop(first);
+
+        let second = runtime();
+
+        assert_eq!(second.block_on(within(run)), Err(RunError::OwnerLost));
+        second.block_on(async {
+            let dead = async {
+                while runs(pid) {
+                    tokio::time::sleep(TICK).await;
+                }
+            };
+
+            assert!(tokio::time::timeout(LIMIT, dead).await.is_ok());
+        });
+    }
+
+    /// The variable that selects the scenario of
+    /// [`the_child_runs_one_scenario`].
+    const CHILD_VARIABLE: &str = "CRECHE_RUNTIME_COMMAND_TEST_CHILD";
+
+    /// The name of the child test, as the test program takes it.
+    const CHILD_TEST: &str = "command::tests::the_child_runs_one_scenario";
+
+    /// The target of the panic hook of the child.
+    const CHILD_PROGRAM: &str = "child";
+
+    /// The text that each scenario gets on its standard input. Only the
+    /// scenario `inherit` gives it to a child.
+    const CHILD_INPUT: &[u8] = b"from-the-input\n";
+
+    /// A program of [`SHELL`] that waits for the file `go` in the directory
+    /// `$0` and then exits with the status `$1`.
+    const GATE_THEN_EXIT: &str = "while [ ! -e \"$0/go\" ]; do sleep 0.05; done; exit \"$1\"";
+
+    /// A scenario that writes to the log, to the output of the test program
+    /// or to its panic hook. It runs in a child, so the test can read what
+    /// it wrote.
+    struct Scenario {
+        /// The value of [`CHILD_VARIABLE`] that selects the scenario.
+        name: &'static str,
+        /// What the child does.
+        run: fn(),
+        /// Each line that this module and `tasks` must write to the log:
+        /// the level, the target and the message.
+        lines: &'static [&'static str],
+    }
+
+    const SCENARIOS: [Scenario; 14] = [
+        Scenario {
+            name: "unread-failure",
+            run: a_failure_with_no_caller,
+            lines: &[
+                "WARNING command the program /bin/sh gave its result to no caller: exit status 3",
+            ],
+        },
+        Scenario {
+            name: "unread-limit",
+            run: a_time_limit_with_no_caller,
+            lines: &[
+                "WARNING command the program /bin/sh gave its result to no caller: the \
+                      program ran past its limit of 3 seconds",
+            ],
+        },
+        Scenario {
+            name: "unread-success",
+            run: a_success_with_no_caller,
+            lines: &[],
+        },
+        Scenario {
+            name: "read-failure",
+            run: a_failure_with_a_caller,
+            lines: &[],
+        },
+        Scenario {
+            name: "unread-kill",
+            run: a_kill_with_no_caller,
+            lines: &[],
+        },
+        Scenario {
+            name: "inherit",
+            run: a_child_with_the_streams_of_the_process,
+            lines: &[],
+        },
+        Scenario {
+            name: "null-input",
+            run: a_child_with_an_empty_input,
+            lines: &[],
+        },
+        Scenario {
+            name: "wait-failed",
+            run: a_wait_call_of_an_owner_that_fails,
+            lines: &[
+                "ERROR command the wait for the program tool failed, and its end is not \
+                      known: No child processes",
+            ],
+        },
+        Scenario {
+            name: "read-failed",
+            run: a_read_that_fails,
+            lines: &["ERROR command a read from the program tool failed: Input/output error"],
+        },
+        Scenario {
+            name: "write-failed",
+            run: a_write_that_fails,
+            lines: &[
+                "ERROR command the write to the input of the program tool failed: \
+                      Input/output error",
+            ],
+        },
+        Scenario {
+            name: "write-broken-pipe",
+            run: a_write_to_a_broken_pipe,
+            lines: &[],
+        },
+        Scenario {
+            name: "no-runtime",
+            run: a_run_with_no_runtime,
+            lines: &[
+                "ERROR tasks the task command-owner did not start: no runtime runs on this \
+                      thread",
+            ],
+        },
+        Scenario {
+            name: "no-io-driver",
+            run: a_run_with_no_io_driver,
+            lines: &[],
+        },
+        Scenario {
+            name: "no-timer",
+            run: a_run_with_no_timer,
+            lines: &[],
+        },
+    ];
+
+    /// Runs one scenario in a child: this test program again, with only the
+    /// child test. The child gets [`CHILD_INPUT`] on its standard input and
+    /// must end inside [`LIMIT`].
+    fn run_scenario(scenario: &str) -> ChildOutput {
+        use std::io::Write;
+
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([CHILD_TEST, "--exact", "--nocapture", "--test-threads=1"])
+            .env(CHILD_VARIABLE, scenario)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // A scenario that reads no input can end before this write, and the
+        // write then fails. The scenario `inherit` checks that the text
+        // came.
+        let _ = child.stdin.take().unwrap().write_all(CHILD_INPUT);
+
+        let deadline = Instant::now() + LIMIT;
+
+        // A scenario writes a few lines, so a pipe never fills.
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() > deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+
+                panic!("the scenario {scenario} did not end");
+            }
+
+            thread::sleep(TICK);
+        }
+
+        child.wait_with_output().unwrap()
+    }
+
+    /// The child of [`each_scenario_writes_its_lines`]. Without the variable
+    /// it does nothing. With the variable it sets the panic hook, as a
+    /// service does, and runs the one scenario that the variable names.
+    #[test]
+    fn the_child_runs_one_scenario() {
+        let Some(name) = std::env::var_os(CHILD_VARIABLE) else {
+            return;
+        };
+        let scenario = SCENARIOS
+            .iter()
+            .find(|scenario| name == scenario.name)
+            .unwrap();
+
+        crate::log::init(CHILD_PROGRAM);
+        (scenario.run)();
+    }
+
+    #[test]
+    fn each_scenario_writes_its_lines() {
+        for scenario in SCENARIOS {
+            let name = scenario.name;
+            let child = run_scenario(name);
+            let stdout = String::from_utf8(child.stdout).unwrap();
+            let stderr = String::from_utf8(child.stderr).unwrap();
+
+            assert!(child.status.success(), "{name}: {stdout}\n{stderr}");
+            assert!(stdout.contains("1 passed"), "{name}: {stdout}");
+
+            // A line of the log: the time, the level, the target, the
+            // message. The hook of the child writes with its own target.
+            let written: Vec<&str> = stderr
+                .lines()
+                .filter_map(|line| line.split_once(' '))
+                .map(|(_time, line)| line)
+                .filter(|line| {
+                    ["command", "tasks"].iter().any(|target| {
+                        ["WARNING", "ERROR", "INFO"]
+                            .iter()
+                            .any(|level| line.starts_with(&format!("{level} {target} ")))
+                    })
+                })
+                .collect();
+
+            assert_eq!(written, scenario.lines, "{name}: {stderr}");
+            // No line holds a byte of an input or of an output.
+            assert!(!stderr.contains(SECRET_VALUE), "{name}: {stderr}");
+
+            if name == "inherit" {
+                assert!(stdout.contains("from-the-input\n"), "{stdout}");
+                assert!(stderr.contains("to-the-error\n"), "{stderr}");
+            }
+        }
+    }
+
+    /// What a scenario does with the gate of [`GATE_THEN_EXIT`] after the
+    /// caller left.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Gate {
+        /// The scenario opens the gate, and the child exits.
+        Open,
+        /// The gate stays closed. The owner ends the child.
+        Closed,
+    }
+
+    /// Starts a run of [`GATE_THEN_EXIT`], drops its caller and waits for
+    /// the owner.
+    fn leave(status: &str, limit: TimeLimit, at_shutdown: AtShutdown, gate: Gate) {
+        let bench = Bench::new();
+        let command = Command::new(SHELL, limit, at_shutdown).args([
+            "-c",
+            GATE_THEN_EXIT,
+            &bench.dir(),
+            status,
+        ]);
+
+        runtime().block_on(async {
+            // The caller starts the run and leaves before its end.
+            let left = tokio::time::timeout(GRACE, bench.runner.run(command)).await;
+
+            assert!(left.is_err(), "the run ended: {left:?}");
+
+            if gate == Gate::Open {
+                bench.open_gate();
+            }
+            bench.drained().await;
+        });
+    }
+
+    /// A child exits with status 3 after its caller left. The owner writes
+    /// one line with the status.
+    fn a_failure_with_no_caller() {
+        leave("3", limit(), AtShutdown::Finish, Gate::Open);
+    }
+
+    /// A child runs past its time limit after its caller left. The owner
+    /// writes one line with the reason.
+    fn a_time_limit_with_no_caller() {
+        let limit = TimeLimit::After(SHORT_LIMIT);
+
+        leave("0", limit, AtShutdown::Finish, Gate::Closed);
+    }
+
+    /// A child exits with status 0 after its caller left. The owner writes
+    /// no line.
+    fn a_success_with_no_caller() {
+        leave("0", limit(), AtShutdown::Finish, Gate::Open);
+    }
+
+    /// A child exits with status 3, and its caller reads that. The owner
+    /// writes no line: the caller decides what the status means.
+    fn a_failure_with_a_caller() {
+        let bench = Bench::new();
+        let command = Command::new(SHELL, limit(), AtShutdown::Finish).args(["-c", "exit 3"]);
+
+        assert_eq!(bench.run(command).unwrap().ended(), Ended::Code(3));
+    }
+
+    /// The owner kills a child because its caller left. The command asked
+    /// for that, so the owner writes no line.
+    fn a_kill_with_no_caller() {
+        leave("3", limit(), AtShutdown::Kill, Gate::Closed);
+    }
+
+    /// A child reads the standard input of the process and writes to its
+    /// two output streams: the terminal, for the door that needs it.
+    fn a_child_with_the_streams_of_the_process() {
+        let bench = Bench::new();
+        let command = Command::new(SHELL, TimeLimit::None, AtShutdown::Finish)
+            .args(["-c", "cat; echo to-the-error >&2"])
+            .stdin(Stdin::Inherit)
+            .output(Output::Inherit);
+
+        assert_eq!(bench.run(command), Ok(Finished::new(Ended::Code(0))));
+    }
+
+    /// The standard input of the process holds a line. A child with
+    /// `Stdin::Null`, which is the input of a new command, reads none of it.
+    /// `subprocess.run` of Python gives the child the standard input of the
+    /// process (`caregiver/src/caregiver/driver.py:87-89`).
+    fn a_child_with_an_empty_input() {
+        let bench = Bench::new();
+        let finished = bench
+            .run(Command::new("cat", limit(), AtShutdown::Kill))
+            .unwrap();
+
+        assert_eq!(finished.ended(), Ended::Code(0));
+        assert_eq!(finished.stdout(), b"");
+    }
+
+    /// The wait call of an owner fails: the operating system holds no child
+    /// with that id. The run then gives an error and never a success, and
+    /// the log holds one line. CPython gives the return code 0
+    /// (`subprocess.py:2040-2049`, version 3.13).
+    fn a_wait_call_of_an_owner_that_fails() {
+        let no_child = Err(io::Error::from_raw_os_error(NO_CHILD));
+        let result = whole(
+            "tool",
+            &no_child,
+            SECRET_VALUE.as_bytes().to_vec(),
+            Vec::new(),
+        );
+
+        assert_eq!(result, Err(RunError::OwnerLost));
+    }
+
+    /// A read from a stream of a child fails after 7 bytes. The read cuts
+    /// the exchange, and the owner writes one line.
+    fn a_read_that_fails() {
+        let cap = ByteCap::new(100).unwrap();
+        let mut stream = (BrokenStream { first: b"partial" }, cap);
+        let read = block_on(capture("tool", Some(&mut stream)));
+
+        assert_eq!(read, Err(Cut::Failed));
+    }
+
+    /// A write to the standard input of a child fails, and the error is no
+    /// broken pipe. The write cuts the exchange, and the owner writes one
+    /// line, with no byte of the input.
+    fn a_write_that_fails() {
+        let pipe = RefusingPipe { errno: IO_ERROR };
+        let written = block_on(feed("tool", Some(pipe), SECRET_VALUE.as_bytes()));
+
+        assert_eq!(written, Err(Cut::Failed));
+    }
+
+    /// The child closed its standard input before it read each byte. That
+    /// is no error of the run, and the owner writes no line.
+    fn a_write_to_a_broken_pipe() {
+        let pipe = RefusingPipe { errno: PIPE_ERROR };
+        let written = block_on(feed("tool", Some(pipe), SECRET_VALUE.as_bytes()));
+
+        assert_eq!(written, Ok(()));
+    }
+
+    /// A run on a thread with no runtime starts no program and gives
+    /// `OwnerLost` at its first poll.
+    fn a_run_with_no_runtime() {
+        let bench = Bench::new();
+        let command = bench.command("touch \"$1/started\"\n", limit(), AtShutdown::Finish);
+        let run = pin!(bench.runner.run(command));
+        let mut context = Context::from_waker(Waker::noop());
+
+        assert_eq!(
+            run.poll(&mut context),
+            Poll::Ready(Err(RunError::OwnerLost))
+        );
+        assert!(!bench.file("started").exists());
+    }
+
+    /// A run in a runtime that `builder` made starts no program and gives
+    /// `NotStarted` with `text`.
+    fn refused_by_the_runtime(mut builder: Builder, text: &str) {
+        let bench = Bench::new();
+        let command = bench.command("touch \"$1/started\"\n", limit(), AtShutdown::Finish);
+        let runtime = builder.build().unwrap();
+
+        assert_eq!(
+            runtime.block_on(bench.runner.run(command)),
+            Err(RunError::NotStarted {
+                os_text: text.to_owned(),
+            })
+        );
+        assert!(!bench.file("started").exists());
+    }
+
+    /// In a runtime with no I/O driver, `tokio` panics after the start of a
+    /// program. The owner refuses before that start.
+    fn a_run_with_no_io_driver() {
+        let mut builder = Builder::new_current_thread();
+        builder.enable_time();
+
+        refused_by_the_runtime(builder, "the runtime of this thread has no I/O driver");
+    }
+
+    /// In a runtime with no timer, the owner has no time limit. It starts
+    /// no program.
+    fn a_run_with_no_timer() {
+        let mut builder = Builder::new_current_thread();
+        builder.enable_io();
+
+        refused_by_the_runtime(builder, "the runtime of this thread has no timer");
     }
 }
