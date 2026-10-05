@@ -490,11 +490,16 @@ def test_a_unit_that_systemd_drops_late_passes(machine: Machine) -> None:
     assert done.reads(CHECK_REFUSES, "LoadState") == 3
 
 
-def test_a_machine_with_another_process_1_fails_before_any_unit(machine: Machine) -> None:
-    done = machine.run(init="/sbin/launchd")
+@pytest.mark.parametrize("first", ["/sbin/launchd", "not-systemd", "systemd-shim", ""])
+def test_a_machine_with_another_process_1_fails_before_any_unit(
+    machine: Machine, first: str
+) -> None:
+    """Only the whole name `systemd` passes. A name that holds that word as
+    a part is another program."""
+    done = machine.run(init=first)
 
     assert done.code == 1, done.out + done.err
-    assert "systemd-proof: process 1 is '/sbin/launchd', not systemd" in done.err
+    assert f"systemd-proof: process 1 is '{first}', not systemd" in done.err
     assert done.of("sudo") == []
     assert done.of("systemd-run") == []
 

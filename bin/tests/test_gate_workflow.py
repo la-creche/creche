@@ -895,6 +895,23 @@ def test_the_scope_says_whether_a_change_touches_rust(
     assert _scope_of(checkout, base) == scope
 
 
+def test_a_unit_file_that_moves_out_of_systemd_runs_the_proof(checkout: Path) -> None:
+    """git can report a move as one change with the new path only. The scope
+    must see the old path too: the proof then reads one unit file less."""
+    (checkout / "systemd").mkdir()
+    (checkout / "systemd" / "creche-one.service").write_text(
+        "[Service]\nExecStart=/bin/true\n", encoding="utf-8"
+    )
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "a unit")
+    base = _git(checkout, "rev-parse", "HEAD")
+    (checkout / "units").mkdir()
+    _git(checkout, "mv", "systemd/creche-one.service", "units/creche-one.service")
+    _git(checkout, "commit", "-q", "-m", "the move")
+
+    assert _scope_of(checkout, base) == ("code", "false", "true")
+
+
 def test_a_change_the_scope_cannot_read_is_code_and_rust(checkout: Path) -> None:
     """No merge group, and no `origin/main` to take a merge-base with: the
     full suite, the cargo checks and the systemd proof are the safe answer."""
