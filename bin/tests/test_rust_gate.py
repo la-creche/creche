@@ -1,7 +1,7 @@
 """When the quality gate runs cargo, and what it runs.
 
 `bin/quality-gate.sh` runs the Rust checks only for a change that touches
-`rust/` (`bin/lib/rustrule.sh`). Eight things could go wrong without one red
+`rust/` (`bin/lib/rustrule.sh`). Nine things could go wrong without one red
 line, and each gets a check here:
 
 1. **A Python change that needs cargo.** Some sessions commit from a sandbox
@@ -32,6 +32,10 @@ line, and each gets a check here:
    needs `cargo-deny`, which rustup does not install. A developer machine
    without it passes with one line. In CI the same gate fails, so a `rust`
    job that lost its install step is red.
+9. **A panic boundary that no reviewer knows.** Only three places can hold
+   `catch_unwind`: the runtime crate, the entry file of a crate with no
+   runtime, and test code (`rust/AGENTS.md`, "The panic rule").
+   `bin/rust-gate.sh` refuses the word in each other file.
 
 Everything runs the real gate in a throwaway repository. `uv` and `cargo`
 are fakes that write their argv to a file. PATH holds only those fakes and
@@ -1042,6 +1046,199 @@ def test_every_rust_file_that_includes_markdown_gets_its_own_line(tree: Tree) ->
         f"rust-gate: {RUST_PATH} includes a Markdown file",
         f"rust-gate: {CRATE}/tests/wire.rs includes a Markdown file",
     ]
+
+
+# --- the panic check: where a file can hold `catch_unwind` --------------------
+
+
+def _crate_file(name: str, *more: str) -> str:
+    """A crate file that takes the lint gate, with `more` lines below it."""
+    return "\n".join([f'[package]\nname = "{name}"\n\n[lints]\nworkspace = true', *more, ""])
+
+
+#: The crate whose code can catch a panic, and the entry file of each other
+#: crate.
+RUNTIME_CRATE = "rust/crates/creche-runtime"
+ENTRY_PATH = f"{CRATE}/src/entry.rs"
+
+#: A Rust file that catches a panic outside test code.
+CATCHES = "pub fn run() {\n    let _ = std::panic::catch_unwind(|| ());\n}\n"
+
+#: A test module that catches a panic.
+CATCHING_TESTS = """
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_panic_is_caught() {
+        assert!(std::panic::catch_unwind(|| panic!("stop")).is_err());
+    }
+}
+"""
+
+
+def _stray_catch(path: str) -> str:
+    """The line of the panic check for one file."""
+    return f"rust-gate: {path} holds `catch_unwind` outside the three places of the panic rule"
+
+
+def _run_on(tree: Tree, files: dict[str, str]) -> Run:
+    """Writes `files` and runs the Rust gate."""
+    for path, body in files.items():
+        tree.write(path, body)
+
+    return tree.run(RUST_GATE)
+
+
+def test_the_runtime_crate_can_catch_a_panic(tree: Tree) -> None:
+    """The runtime holds each boundary of a service: the edge layer, the
+    loop and the tracked task."""
+    done = _run_on(
+        tree,
+        {
+            f"{RUNTIME_CRATE}/Cargo.toml": _crate_file("creche-runtime"),
+            f"{RUNTIME_CRATE}/src/tasks.rs": CATCHES,
+        },
+    )
+
+    assert done.code == 0, done.out + done.err
+    assert done.cargo == LINT_STEPS
+
+
+#: Crate files that name no dependency on the runtime crate.
+NO_RUNTIME = {
+    "no dependency": _crate_file("one"),
+    "the contracts only": _crate_file(
+        "one", "", "[dependencies]", 'creche-contracts = { path = "../creche-contracts" }'
+    ),
+    "a longer name": _crate_file(
+        "one", "", "[dev-dependencies]", 'creche-runtime-fakes = { path = "../fakes" }'
+    ),
+}
+
+
+@pytest.mark.parametrize("crate_file", NO_RUNTIME.values(), ids=NO_RUNTIME.keys())
+def test_the_entry_file_of_a_crate_with_no_runtime_can_catch_a_panic(
+    tree: Tree, crate_file: str
+) -> None:
+    """A program with no runtime has no boundary but its own. Its one place
+    for the call is `src/entry.rs`."""
+    done = _run_on(tree, {f"{CRATE}/Cargo.toml": crate_file, ENTRY_PATH: CATCHES})
+
+    assert done.code == 0, done.out + done.err
+    assert done.cargo == LINT_STEPS
+
+
+#: Test code that catches a panic: a path, and the text of the file.
+CATCHING_TEST_CODE = {
+    "a tests directory": (f"{CRATE}/tests/boundary.rs", CATCHES),
+    "a tests directory below src": (f"{CRATE}/src/tests/boundary.rs", CATCHES),
+    "a test module": (RUST_PATH, "pub fn run() {}\n" + CATCHING_TESTS),
+    "a test module that the crate can use": (
+        RUST_PATH,
+        "pub fn run() {}\n" + CATCHING_TESTS.replace("mod tests", "pub(crate) mod testing"),
+    ),
+    "a test module inside a module": (
+        RUST_PATH,
+        "pub mod wire {\n"
+        "    #[cfg(test)]\n"
+        "    mod tests {\n"
+        "        use std::panic::catch_unwind;\n"
+        "    }\n"
+        "}\n\n"
+        "pub fn later() {}\n",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("path", "body"), CATCHING_TEST_CODE.values(), ids=CATCHING_TEST_CODE.keys()
+)
+def test_test_code_can_catch_a_panic(tree: Tree, path: str, body: str) -> None:
+    done = _run_on(tree, {path: body})
+
+    assert done.code == 0, done.out + done.err
+    assert done.cargo == LINT_STEPS
+
+
+#: Files that hold the word in another place. Each case is the files of the
+#: tree, then each file that the check refuses.
+STRAY_CATCHES: dict[str, tuple[dict[str, str], list[str]]] = {
+    "a library file": ({RUST_PATH: CATCHES}, [RUST_PATH]),
+    "the entry file of a crate on the runtime": (
+        {
+            f"{CRATE}/Cargo.toml": _crate_file(
+                "one", "", "[dependencies]", 'creche-runtime = { path = "../creche-runtime" }'
+            ),
+            ENTRY_PATH: CATCHES,
+        },
+        [ENTRY_PATH],
+    ),
+    "the entry file of a crate with the runtime in its tests": (
+        {
+            f"{CRATE}/Cargo.toml": _crate_file(
+                "one", "", "[dev-dependencies.creche-runtime]", 'path = "../creche-runtime"'
+            ),
+            ENTRY_PATH: CATCHES,
+        },
+        [ENTRY_PATH],
+    ),
+    "the entry file of a crate that gives the runtime another name": (
+        {
+            f"{CRATE}/Cargo.toml": _crate_file(
+                "one", "", "[dependencies]", 'runtime = { package = "creche-runtime" }'
+            ),
+            ENTRY_PATH: CATCHES,
+        },
+        [ENTRY_PATH],
+    ),
+    "an entry file in another directory": (
+        {f"{CRATE}/src/bin/entry.rs": CATCHES},
+        [f"{CRATE}/src/bin/entry.rs"],
+    ),
+    "above the test module": ({RUST_PATH: CATCHES + CATCHING_TESTS}, [RUST_PATH]),
+    "below the test module": (
+        {RUST_PATH: "#[cfg(test)]\nmod tests {\n    use super::run;\n}\n\n" + CATCHES},
+        [RUST_PATH],
+    ),
+    "a comment": (
+        {RUST_PATH: "/// The runtime calls `catch_unwind` for this crate.\npub fn run() {}\n"},
+        [RUST_PATH],
+    ),
+    "below a test mark on one item": (
+        {RUST_PATH: "#[cfg(test)]\nmod python;\n\n" + CATCHES},
+        [RUST_PATH],
+    ),
+    "a crate with the name tests": (
+        {
+            "rust/crates/tests/Cargo.toml": _crate_file("tests"),
+            "rust/crates/tests/src/lib.rs": CATCHES,
+        },
+        ["rust/crates/tests/src/lib.rs"],
+    ),
+    "two files, with a line for each one": (
+        {
+            RUST_PATH: CATCHES,
+            f"{CRATE}/src/boundary.rs": CATCHES,
+            f"{CRATE}/tests/boundary.rs": CATCHES,
+            "rust/target/debug/build/out.rs": CATCHES,
+        },
+        [f"{CRATE}/src/boundary.rs", RUST_PATH],
+    ),
+}
+
+
+@pytest.mark.parametrize(("files", "refused"), STRAY_CATCHES.values(), ids=STRAY_CATCHES.keys())
+def test_a_panic_catch_in_another_place_is_refused(
+    tree: Tree, files: dict[str, str], refused: list[str]
+) -> None:
+    """A reviewer reads three places for a boundary. A call in a fourth
+    place is a boundary that no reviewer reads. The check reads the text, so
+    the word in a comment counts too."""
+    done = _run_on(tree, files)
+
+    assert done.code == 1
+    assert done.cargo == []
+    assert done.err.splitlines() == [_stray_catch(path) for path in refused]
 
 
 # --- the rule CI asks: does this change touch rust/? -------------------------
