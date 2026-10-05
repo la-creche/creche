@@ -272,8 +272,9 @@ When each Python copy accepts an input, the Rust type accepts it too. This
 rule also applies when a stricter reading of the contract is possible. Name
 such a case in the pull request. The owner decides it.
 
-Rule 9 makes each type refuse a digit outside ASCII. Do not record that
-refusal as a difference.
+Rule 9 makes each type refuse a digit outside ASCII. Add no table row for
+that refusal. When a Python copy accepts such a digit, follow "When the two
+results differ".
 
 ## When two Python versions differ
 
@@ -747,10 +748,10 @@ Rules for the test:
   that the type implements.
 - Put a table in the test that names each surface. Make the test fail when
   the index holds a surface of your module that no table names.
-- The test passes only when each vector of each surface gives the same
-  result in Rust. Do not record a difference in a table. Do not give a
-  surface a stance, and do not add a second, laxer type. "When the two
-  results differ" below has the procedure.
+- The test passes only when the Rust result equals the result of each
+  vector of each surface. Do not record a difference in a table. Give a
+  surface no stance other than `equal`. Do not add a second, laxer type.
+  "When the two results differ" below has the procedure.
 - Do not compare against a count of vectors that the test holds. A change to
   a product package can add a vector with no change under `rust/`.
 - `ids::tests::python` is the pattern.

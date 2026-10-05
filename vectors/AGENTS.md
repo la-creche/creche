@@ -64,6 +64,9 @@ directory is not a workspace package, so a change here does not change
 
 - An input that makes the Python code raise has no vector until its fix
   merges. Rule 5 states why.
+- Rule 10 depends on resolution (c) of `rust/AGENTS.md`. That text waits
+  for a confirmation of the owner. "Known gaps" of `rust/AGENTS.md` has the
+  open point.
 - No vector covers a scalar of `component.yaml` that PyYAML cannot build,
   such as a word with the tag `!!int`. The Python code refuses it and names
   no line. The Rust reader refuses it and names a line. Such a vector first
