@@ -787,6 +787,48 @@ mod tests {
         );
     }
 
+    /// Each type has the impl with the marker `()`. A [`Lenient`] type also
+    /// has the impl with the marker `u8`. A call that names no marker then
+    /// builds only for a type that is not `Lenient`.
+    trait NotLenient<Marker> {
+        fn holds() {}
+    }
+
+    impl<T> NotLenient<()> for T {}
+    impl<T: Lenient> NotLenient<u8> for T {}
+
+    /// The same pair of impls for [`Nested`].
+    trait NotNested<Marker> {
+        fn holds() {}
+    }
+
+    impl<T> NotNested<()> for T {}
+    impl<T: Nested> NotNested<u8> for T {}
+
+    /// The same pair of impls for a type that `serde` reads.
+    trait NoReader<Marker> {
+        fn holds() {}
+    }
+
+    impl<T> NoReader<()> for T {}
+    impl<T: for<'de> Deserialize<'de>> NoReader<u8> for T {}
+
+    /// Each line fails the build when its type gets the trait that the line
+    /// names. The test has no assertion: the build is the check.
+    #[test]
+    fn a_list_item_and_a_free_value_must_be_a_slot() {
+        <String as NotLenient<_>>::holds();
+        <RawLimit as NotLenient<_>>::holds();
+        <Option<RawLimit> as NotLenient<_>>::holds();
+        <BTreeMap<String, String> as NotNested<_>>::holds();
+
+        <Slot<Vec<String>> as NoReader<_>>::holds();
+        <Slot<Vec<RawLimit>> as NoReader<_>>::holds();
+        <Slot<BTreeMap<String, String>> as NoReader<_>>::holds();
+        // `Row` derives its reader and has no impl of `Nested`.
+        <Slot<Row> as NoReader<_>>::holds();
+    }
+
     #[test]
     fn a_nested_struct_that_refuses_a_key_fails_the_read() {
         #[derive(Debug, PartialEq, Deserialize)]
