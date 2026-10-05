@@ -135,6 +135,13 @@ GRAPH = {
 #: A file that makes its directory a part of a Cargo build.
 CARGO_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchain")
 
+#: The crate of the shared helpers. Each other crate can depend on it.
+HELPER_CRATE = "creche-util"
+
+#: Each table of a crate file that can name a dependency. `target` holds the
+#: dependencies of one platform.
+DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies", "target")
+
 #: Paths a Rust commit changes: a manifest, a source file and a document.
 RUST_PATHS = ("rust/Cargo.lock", "rust/crates/creche-contracts/src/ids.rs", "rust/AGENTS.md")
 
@@ -227,6 +234,18 @@ def test_no_crate_carries_a_version_to_bump() -> None:
         package = tomllib.loads(manifest.read_text(encoding="utf-8"))["package"]
 
         assert "version" not in package, f"{manifest.parent.name} carries a version"
+
+
+def test_the_helper_crate_has_no_dependency() -> None:
+    """A dependency of `creche-util` becomes a dependency of each crate that
+    uses a shared helper. The crate needs `std` only
+    (`rust/crates/creche-util/AGENTS.md`, rule 4)."""
+    manifest = tomllib.loads(
+        (REPO / RUST_DIR / "crates" / HELPER_CRATE / "Cargo.toml").read_text(encoding="utf-8")
+    )
+    named = [table for table in DEPENDENCY_TABLES if table in manifest]
+
+    assert named == [], f"{HELPER_CRATE} names a dependency: {named}"
 
 
 def test_every_cargo_file_is_under_rust() -> None:

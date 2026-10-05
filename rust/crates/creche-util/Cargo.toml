@@ -10,4 +10,5 @@ publish.workspace = true
 workspace = true
 
 # No `[dependencies]` table: a helper of this crate needs `std` only
-# (AGENTS.md of this crate, rule 4).
+# (AGENTS.md of this crate, rule 4). bin/tests/test_rust_workspace.py fails
+# for a dependency table here.
