@@ -121,11 +121,65 @@ You need rustup. It installs the toolchain at the first cargo command under
 `bin/rust-gate.sh` runs these steps in this order:
 
 1. The `[lints]` check. Each crate must take the lint gate.
-2. The include check. No Rust source file includes a Markdown file.
+2. Three text checks. Each one reads the source text and runs no cargo
+   command.
+   - The include check. No Rust source file includes a Markdown file.
+   - The panic check. The word `catch_unwind` is only in the three
+     places of clause 8 of "The panic rule".
+   - The public-field check. No field of a struct has `pub`. Rule 12
+     names the two forms that pass.
 3. `cargo fmt --all --check`.
 4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
 5. `cargo deny --locked check`, where `cargo-deny` is on `PATH`.
 6. `cargo test --workspace --locked`, with `--tests` only.
+
+The panic check and the public-field check read each `.rs` file under
+`crates/`. Both checks use one definition of test code:
+
+- A file below `crates/<name>/tests/` is test code. cargo builds the files
+  of that directory as test targets.
+- A directory `tests` in another place does not count. `crates/tests` is a
+  crate, and `crates/<name>/src/tests/` is a module of its crate.
+- In each other file, test code is each module with a body that has the
+  line `#[cfg(test)]` directly above its first line.
+- Such a module ends at the first line that starts with its `}`, at the
+  indent of its first line. Only a comment can follow the `}` on that
+  line. `cargo fmt` writes a module in that form. Each check reads the
+  code after that line again.
+- Each check fails for a file that ends inside a test module. The check
+  found no last line of that module, so it read no code below the first
+  line.
+- A `#[cfg(test)]` line above another item starts no test code, for
+  example above `mod python;`. Each check reads that item and the code
+  after it. Each check also reads the file `python.rs` of that module,
+  unless the file is below `crates/<name>/tests/`.
+- A string of more than one line can hold a line that has the form of the
+  last line of its test module. Each check then reads the rest of that
+  module as code that is not test code. Give such a line an indent in the
+  string.
+- Each check reads a line that ends with CR LF as a line that ends with
+  LF.
+
+More rules of the panic check:
+
+- The check prints one line for each file with the word in a fourth
+  place, and fails.
+- The word in a comment counts too.
+- Place 2 of clause 8 is `src/entry.rs` in a crate with no dependency on
+  `creche-runtime`. For the check, a crate has that dependency when its
+  `Cargo.toml` holds the name. A comment that holds the name counts too.
+
+More rules of the public-field check:
+
+- The check reads the field list of each struct. A tuple struct has one
+  too. The check prints one line for each field with `pub`, and fails.
+- Only `pub(crate)` and `pub(super)` pass. The check refuses each other
+  form of `pub` on a field, for example `pub(in crate::wire)`.
+- The check reads no test code.
+- The check also fails when the scan cannot read a file, and when it does
+  not find the end of a struct.
+- The script has a list of the crates that the check does not read yet.
+  "Known gaps" has the names.
 
 Step 5 needs the program `cargo-deny`. rustup does not install it.
 
@@ -963,9 +1017,9 @@ test.
     them to the `json` module.
   - Rule 12. A count at the time of this line found 101 structs with a
     public field. The packets `decisions-private-*` and
-    `decisions-runtime-private` make the fields private. The gate has no
-    check for this rule yet. `decisions-gate-early` starts the check on
-    each new crate, and `decisions-private-fields-gate` extends it to each
+    `decisions-runtime-private` make the fields private. The public-field
+    check of `bin/rust-gate.sh` does not read the crates of those structs
+    yet. Packet `decisions-private-fields-gate` extends the check to each
     crate.
   - Rule 13. Some values have two sources today. One example is the field
     `zone` of `quiet.daily` in the family file: the host has a time zone.
@@ -973,8 +1027,6 @@ test.
     for example `families`. `creche_contracts::config` holds such a name,
     and `creche_runtime::layout` holds a copy. No packet has that change
     yet.
-  - "The panic rule", clause 8. The gate has no check for this clause yet.
-    Packet `decisions-gate-early` adds one.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
     program of the workspace today. Its `main` sets no panic hook and
     parses the command line itself. Its library has no entry function that
@@ -1012,6 +1064,39 @@ test.
     to a private function, because no request holds that header. Packet
     `attendance-one-bearer` gives each Python copy one rule for the
     bearer. It deletes the constant and the private path.
+- Two checks do not read four crates yet: `agent-family`,
+  `creche-contracts`, `creche-runtime` and `creche-testkit`. Each check has
+  a list of its own with the four names. No list names a new crate, so both
+  checks read a new crate from its first commit. Add no name to a list.
+  - The public-field check of `bin/rust-gate.sh`. Packet
+    `decisions-runtime-private` deletes `creche-runtime` and
+    `creche-testkit` from the list of the script. Packet
+    `decisions-private-fields-gate` deletes that list.
+  - The table test of `bin/tests/test_rust_workspace.py`. In each `.rs`
+    file, it looks for the name `DEVIATIONS` and for a struct whose name
+    starts with `Deviation`. Packet `decisions-runtime-tables` deletes
+    `creche-runtime` from the list of the test. Packet
+    `decisions-tables-guard` deletes that list.
+  - The public-field check reads the source text and expands no macro. It
+    does not find a field that a macro adds to a struct. It finds a struct
+    only at a line whose first word, after a visibility, is `struct`.
+    `cargo fmt` writes each struct in that form.
+  - The panic check and the public-field check read the form that
+    `cargo fmt` writes. `cargo fmt` does not format an item below
+    `#[rustfmt::skip]` and does not format the text of a macro call. Text
+    in another form can hide code from both checks. These are two
+    examples:
+    - The last line of a test module has another indent than its first
+      line. Both checks then read no code up to the next line with `}` at
+      the indent of the first line.
+    - A struct starts after another word on its line, for example after
+      an attribute. The public-field check does not find that struct.
+  - This `CONTRACT-QUESTION` comment is open in `bin/rust-gate.sh`: rule
+    12 does not name `pub(self)` and `pub(in <path>)`. The public-field
+    check refuses both forms. The owner did not confirm that reading. A
+    change costs one condition in the scan. The same condition holds the
+    two forms that pass, so a change to the third sentence of rule 12
+    also changes it.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. If the owner says no, change those two lines.
