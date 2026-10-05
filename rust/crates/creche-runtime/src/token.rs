@@ -349,6 +349,13 @@ impl Error for TokenError {}
 /// `door-tui/src/agent_door_tui/config.py:119-144` and
 /// `door-trigger/src/agent_door_trigger/config.py:210-237`.
 ///
+/// Two more Python readers of a secret file read text, remove the space of
+/// `str.strip` and take each count of bytes but zero, as
+/// [`TokenRule::NOT_EMPTY`] does:
+/// `attendance/src/attendance/owui_copy.py:439-453` and
+/// `noticeboard/src/noticeboard/sessions.py:318-339`. No vector covers the
+/// two.
+///
 /// ```
 /// use std::path::Path;
 ///
