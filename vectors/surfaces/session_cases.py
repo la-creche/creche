@@ -1652,6 +1652,13 @@ APPENDS: Final[tuple[Append, ...]] = (
     _note("note-process-exit", "process_exit", reason="killed", code=137),
     _note("note-process-exit-no-code", "process_exit", reason="idle", code=None),
     _note("note-playpen-log", "playpen_log", level="warn", message="pi wrote to stderr"),
+    _note(
+        "note-illegal-transition",
+        "illegal_transition",
+        TURN,
+        **{"from": "running"},
+        to="settled",
+    ),
     # --- a note of another form: the contract leaves the body free ---
     _free_note("note-any-body", a={"b": [1, 2.5, "c", None, True]}, z=""),
     _free_note("note-other-word", count=3, note="written_by_hand"),

@@ -1,15 +1,18 @@
-//! SHA-256 (FIPS 180-4), for the hash of a resolved manifest.
+//! SHA-256: the hash of FIPS 180-4 that gives a digest of 256 bits.
 //!
-//! The crate has no dependency that gives a hash. The input here is public
-//! text, so the time of the function tells nothing. The tests hold the answers
-//! of FIPS 180-4, and the differential test holds the answers of Python
-//! `hashlib`.
+//! [`digest`] gives the bytes that `hashlib.sha256(message).digest()` of
+//! Python gives. The tests hold the example digests of FIPS 180-4 and one
+//! message at each length where the pad changes its form.
+//!
+//! No branch and no index of the code depends on a byte of the message. No
+//! test and no compiler check proves that the time of the function is
+//! constant.
 
 /// The count of bytes in one block.
 const BLOCK_BYTES: usize = 64;
 
 /// The count of bytes in one digest.
-pub(super) const DIGEST_BYTES: usize = 32;
+const DIGEST_BYTES: usize = 32;
 
 /// The count of bytes that hold the bit count at the end of the last block.
 const LENGTH_BYTES: usize = 8;
@@ -154,15 +157,27 @@ fn compress(state: &mut [u32; 8], block: &[u8]) {
     }
 }
 
-/// The SHA-256 digest of `message`.
-pub(super) fn digest(message: &[u8]) -> [u8; DIGEST_BYTES] {
+/// The SHA-256 digest of `message`: 32 bytes (FIPS 180-4 section 6.2).
+///
+/// ```
+/// use creche_util::{hex, sha256};
+///
+/// assert_eq!(
+///     hex::lower(&sha256::digest(b"abc")),
+///     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+/// );
+/// ```
+#[must_use]
+pub fn digest(message: &[u8]) -> [u8; DIGEST_BYTES] {
     let mut state = START;
     let mut blocks = message.chunks_exact(BLOCK_BYTES);
     for block in &mut blocks {
         compress(&mut state, block);
     }
 
-    // A slice has `isize::MAX` bytes at most, so the count of bits fits.
+    // FIPS 180-4 defines the digest for a message of less than 2^64 bits,
+    // which is 2^61 bytes. No supported host holds a slice of that length.
+    // For a longer slice, the count of bits wraps.
     let bits = u64::try_from(message.len())
         .unwrap_or(u64::MAX)
         .wrapping_mul(8);
@@ -185,17 +200,15 @@ pub(super) fn digest(message: &[u8]) -> [u8; DIGEST_BYTES] {
     out
 }
 
-/// The SHA-256 digest of `message` as 64 lower-case hex bytes.
-pub(super) fn hex_digest(message: &[u8]) -> String {
-    digest(message)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hex;
+
+    /// The digest of `message` as 64 lower-case hex bytes.
+    fn hex_digest(message: &[u8]) -> String {
+        hex::lower(&digest(message))
+    }
 
     #[test]
     fn the_digest_of_each_fips_message_is_the_fips_answer() {
@@ -232,6 +245,8 @@ mod tests {
         );
     }
 
+    /// Each answer is what `hashlib.sha256(b"a" * length).hexdigest()` of
+    /// Python gives.
     #[test]
     fn each_length_near_a_block_edge_has_its_own_digest() {
         // The pad changes form at 55, 56, 63 and 64 bytes.
@@ -260,5 +275,21 @@ mod tests {
         for (length, answer) in table {
             assert_eq!(hex_digest(&vec![b'a'; length]), answer, "{length} bytes");
         }
+    }
+
+    /// 1000 bytes are 15 whole blocks and a tail of 40 bytes. The answer is
+    /// what `hashlib.sha256(b"a" * 1000).hexdigest()` of Python gives.
+    #[test]
+    fn a_message_of_whole_blocks_and_a_tail_has_the_python_digest() {
+        assert_eq!(
+            hex_digest(&[b'a'; 1000]),
+            "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"
+        );
+    }
+
+    #[test]
+    fn a_digest_has_32_bytes() {
+        assert_eq!(digest(b"").len(), 32);
+        assert_eq!(hex_digest(b"").len(), 64);
     }
 }
