@@ -923,6 +923,10 @@ test.
     single type.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
+  - Shared helpers. Base64 has more than one copy. Packet
+    `decisions-util-runtime` moves it to `creche-util`. "Known gaps" of
+    `crates/creche-util/AGENTS.md` names each other function that is
+    still open. No packet has that part yet.
   - Vector reader. `vectors/data` needs a single reader. The owner still
     has to confirm this. Three readers exist today. Packet
     `decisions-vectors-crate` reduces them to one.
