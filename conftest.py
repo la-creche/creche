@@ -10,8 +10,10 @@ machines at once (.github/workflows/gate.yml).
 
 It also drops the variables that point a `git` child at the repository of
 the caller, when pytest imports this file. At the same time it gives each
-`git` child an empty global config file, no config file of the system, and
-no ignore file and no attributes file of a person.
+`git` child a global config file that holds only the settings of this file,
+no config file of the system, and no ignore file and no attributes file of a
+person. Those settings stop the maintenance that `git` starts and does not
+wait for.
 
 A run that starts with a signal ignored, from a background job or under
 `nohup`, passes the same tests and keeps that signal ignored.
@@ -19,8 +21,11 @@ A run that starts with a signal ignored, from a background job or under
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import os
 import pwd
+import shutil
 import signal
 import tempfile
 import zlib
@@ -54,25 +59,100 @@ def _drop_git_env() -> None:
         os.environ.pop(name, None)
 
 
-#: What gives a `git` child an empty file in place of the global config file,
-#: and no config file of the system. The global file is the one of the person
-#: who runs the suite, in the home directory or in the variable.
+#: What gives a `git` child no config file of the system. `_drop_git_config`
+#: also names a file of this run in place of the global config file. The
+#: global file is the one of the person who runs the suite, in the home
+#: directory or in the variable.
 #:
 #: `git` also reads an ignore file and an attributes file from the config
 #: directory of that person, and an attributes file of the system. No
-#: variable names another place for the first two, so the two pairs give each
-#: setting the empty file. A pair outranks the config of a repository: a
+#: variable names another place for the first two, so the first two pairs give
+#: each setting the empty file. A pair outranks the config of a repository: a
 #: fixture that needs one of the two settings passes it with `git -c`.
+#:
+#: The last two pairs are the settings of `GIT_SETTINGS`.
 GIT_NO_CONFIG = {
-    "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_ATTR_NOSYSTEM": "1",
-    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_COUNT": "4",
     "GIT_CONFIG_KEY_0": "core.excludesFile",
     "GIT_CONFIG_VALUE_0": os.devnull,
     "GIT_CONFIG_KEY_1": "core.attributesFile",
     "GIT_CONFIG_VALUE_1": os.devnull,
+    "GIT_CONFIG_KEY_2": "maintenance.auto",
+    "GIT_CONFIG_VALUE_2": "false",
+    "GIT_CONFIG_KEY_3": "gc.autoDetach",
+    "GIT_CONFIG_VALUE_3": "false",
 }
+
+#: The variable that names the global config file.
+GIT_GLOBAL_ENV = "GIT_CONFIG_GLOBAL"
+
+#: The global config file of a test run: the settings that stop the work
+#: `git` starts and does not wait for. After a commit, a merge or a fetch,
+#: `git` starts `git maintenance run --auto`. A repository that receives a
+#: push does the same. That process detaches. From git 2.55 it keeps
+#: `objects/maintenance.lock` until it ends, after the command returned. A
+#: test that removes or copies the repository in that time finds a file that
+#: is gone.
+#:
+#: * `maintenance.auto`: no command starts that process.
+#: * `gc.autoDetach`: maintenance that a fixture asks for runs in the
+#:   foreground. `maintenance.autoDetach` falls back to this setting.
+#:
+#: Each setting reaches a `git` child in two ways, because each way has a gap.
+#: A fixture that names its own global file does not read this one, and it
+#: gets the pairs of `GIT_NO_CONFIG`. `git` removes the pairs from the
+#: environment of the repository that receives a push, and that repository
+#: reads this file. A fixture that needs maintenance passes
+#: `maintenance.auto=true` with `git -c`.
+#:
+#: `core.fsmonitor` is not here. Its default starts no program. A pair for it
+#: would outrank the config of a repository, and some tests write that config
+#: to prove that the code under test passes the setting itself.
+GIT_SETTINGS = "[maintenance]\n\tauto = false\n[gc]\n\tautoDetach = false\n"
+
+#: The start of the name of the directory that holds the file.
+SETTINGS_PREFIX = "git-settings-"
+
+#: The mode that lets no account make a file in that directory, and the mode
+#: that lets this process remove it.
+READ_ONLY = 0o500
+OWNER_ONLY = 0o700
+
+
+def _settings_file() -> str:
+    """Write `GIT_SETTINGS` to a file of this process. Return its path.
+
+    The directory takes no new file, so a `git config --global` of a test
+    fails, as it did when the variable named the empty file. This process
+    removes the directory when it ends.
+
+    A process that a signal ends runs no exit handler and leaves the
+    directory. Run `chmod 700` on such a directory before the delete.
+    """
+    directory = Path(tempfile.mkdtemp(prefix=SETTINGS_PREFIX))
+    path = directory / "config"
+    path.write_text(GIT_SETTINGS, encoding="utf-8")
+    directory.chmod(READ_ONLY)
+    atexit.register(_remove_settings, directory, os.getpid())
+
+    return str(path)
+
+
+def _remove_settings(directory: Path, owner: int) -> None:
+    """Remove the directory of `_settings_file`, in the process that made it.
+
+    A fork of that process holds the same exit handler. It must not remove a
+    file that its parent still names. A directory that is gone is no error.
+    """
+    if os.getpid() != owner:
+        return
+
+    with contextlib.suppress(OSError):
+        directory.chmod(OWNER_ONLY)
+
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 def _drop_git_config() -> None:
@@ -84,8 +164,12 @@ def _drop_git_config() -> None:
     each repository. Other settings change what a test sees. The ignore file
     of that person can keep a file of a fixture out of `git add -A`.
     bin/tests/test_git_config_dropped.py holds the proof.
+
+    The same variables stop the maintenance of `git`.
+    bin/tests/test_git_background_dropped.py holds that proof.
     """
     os.environ.update(GIT_NO_CONFIG)
+    os.environ[GIT_GLOBAL_ENV] = _settings_file()
 
 
 # At import and not in a hook. pytest imports this file before it imports a

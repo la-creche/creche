@@ -11,10 +11,12 @@ default branch, a commit template, a signing rule.
 directory of that person. An ignore file can keep a file of a fixture out of
 `git add -A`.
 
-The root `conftest.py` names an empty global file and no system file when
-pytest imports it, before pytest imports a test. It also names an empty
-ignore file and an empty attributes file. Each `git` child of the run gets
-those variables.
+The root `conftest.py` names a global file of its own and no system file
+when pytest imports it, before pytest imports a test. That file holds two
+settings and nothing of a person
+(`bin/tests/test_git_background_dropped.py`). It also names an empty ignore
+file and an empty attributes file. Each `git` child of the run gets those
+variables.
 
 Each test here starts pytest as a child, with a file of a person or of the
 system in the environment of the child.
@@ -31,20 +33,31 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
-#: What makes `git` read an empty file in place of the global config file,
-#: no config file and no attributes file of the system, and an empty file in
-#: place of the ignore file and the attributes file of a person. The root
+#: What makes `git` read no config file and no attributes file of the system,
+#: and an empty file in place of the ignore file and the attributes file of a
+#: person. The last two pairs stop the maintenance of `git`. The root
 #: `conftest.py` sets each one.
 NO_CONFIG = {
-    "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_ATTR_NOSYSTEM": "1",
-    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_COUNT": "4",
     "GIT_CONFIG_KEY_0": "core.excludesFile",
     "GIT_CONFIG_VALUE_0": os.devnull,
     "GIT_CONFIG_KEY_1": "core.attributesFile",
     "GIT_CONFIG_VALUE_1": os.devnull,
+    "GIT_CONFIG_KEY_2": "maintenance.auto",
+    "GIT_CONFIG_VALUE_2": "false",
+    "GIT_CONFIG_KEY_3": "gc.autoDetach",
+    "GIT_CONFIG_VALUE_3": "false",
 }
+
+#: The variable that names the global config file, and what the file of the
+#: root `conftest.py` holds. Each pytest process has its own file.
+GLOBAL_ENV = "GIT_CONFIG_GLOBAL"
+SETTINGS = "[maintenance]\n\tauto = false\n[gc]\n\tautoDetach = false\n"
+
+#: Each variable that the root `conftest.py` sets.
+SET = (*NO_CONFIG, GLOBAL_ENV)
 
 #: The variable that names the config file of the system, for a test that
 #: cannot write the real one.
@@ -83,16 +96,17 @@ NOT_SET = f"{HIDDEN_NAME}: {MARKER_ATTRIBUTE}: unspecified\n"
 #: What the variables held when this module was imported: before any fixture
 #: ran.
 AT_IMPORT = {name: os.environ.get(name) for name in NO_CONFIG}
+GLOBAL_AT_IMPORT = os.environ.get(GLOBAL_ENV, "")
 
 
 def _pytest(tmp_path: Path, test: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Runs one test of this repository in a child pytest.
 
     The child gets the environment of this process without the variables of
-    `NO_CONFIG`, then `env`. So it starts as a run from the shell of a
-    person starts. The child keeps its temporary files under `tmp_path`.
+    `SET`, then `env`. So it starts as a run from the shell of a person
+    starts. The child keeps its temporary files under `tmp_path`.
     """
-    inherited = {name: value for name, value in os.environ.items() if name not in NO_CONFIG}
+    inherited = {name: value for name, value in os.environ.items() if name not in SET}
 
     return subprocess.run(
         [
@@ -218,6 +232,7 @@ def test_git_reads_no_config_file_of_a_person() -> None:
     )
 
     assert AT_IMPORT == NO_CONFIG
+    assert Path(GLOBAL_AT_IMPORT).read_text(encoding="utf-8") == SETTINGS
     assert read.returncode == KEY_NOT_FOUND, read.stdout + read.stderr
     assert read.stdout == ""
 
