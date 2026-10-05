@@ -42,9 +42,10 @@ const HIDDEN = "hidden";
  * are restated here because a driver cannot import a TypeScript test helper,
  * and getting one wrong would make a wrong bridge look right.
  *
- * `registerTool` follows `FakePi.registerTool` of that file. A tool with the
- * exposure `hidden` leaves the active list and keeps its definition. A new
- * name joins the list, and so does a name that was hidden before.
+ * `registerTool` follows `FakePi.registerTool` of that file. A registration
+ * as `hidden` removes the name from the active list, and the definition
+ * stays. A registration with another exposure adds the name when the name
+ * is new, or when its last registration was `hidden`.
  */
 class ToolSetPi {
   constructor() {

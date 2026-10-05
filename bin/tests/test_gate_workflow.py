@@ -199,15 +199,15 @@ SUITES_JOB = "suites"
 
 #: The jobs that one workflow has and the other one lacks. This is the one
 #: named exception to "the release runs the jobs of the gate". The `suites`
-#: job is new. In `release.yml`, a suite that fails one run of five would hold
-#: back every tag. So the release gets the job after it passed 20 runs of the
+#: job is new to CI, and one red run of it in `release.yml` stops the tags of
+#: that merge. So the release gets the job after it passed 20 runs of the
 #: merge queue in a row. The pull request that adds the job to `release.yml`
 #: empties this table.
 ONLY_IN: dict[str, set[str]] = {GATE_NAME: {SUITES_JOB}, RELEASE_NAME: set()}
 
 #: The whole test command of each suite, as `integration/AGENTS.md` gives it,
-#: by the name of its report. One command cannot run both: several test files
-#: import `conftest` by name.
+#: by the name of its report. The job runs each command as it is, in a step of
+#: its own.
 SUITE_RUNS = {
     "tests": "uv run pytest integration/tests -m slow",
     "tests_manager": "uv run pytest integration/tests_manager -m slow",
@@ -600,7 +600,7 @@ def _no_skip(paths: list[Path]) -> subprocess.CompletedProcess[str]:
 
 
 #: (the report of each suite, whether the last step is green)
-NO_SKIP_VERDICTS = [
+NO_SKIP_VERDICTS: list[tuple[list[str], bool]] = [
     (["ran", "ran"], True),
     # One test that skips is red, in each of the two places.
     (["ran", "one_skipped"], False),
@@ -849,7 +849,7 @@ DOCS = {
     "tests": "skipped",
     "playpen": "skipped",
     "proc": "skipped",
-    "suites": "skipped",
+    SUITES_JOB: "skipped",
     "rust": "skipped",
 }
 
@@ -874,12 +874,12 @@ VERDICTS = [
     # is red.
     (_needs("code", {"proc": "skipped"}), False),
     # The two old suites of integration/ are in no shard either.
-    (_needs("code", {"suites": "failure"}), False),
-    (_needs("code", {"suites": "skipped"}), False),
+    (_needs("code", {SUITES_JOB: "failure"}), False),
+    (_needs("code", {SUITES_JOB: "skipped"}), False),
     # A job that ran on a docs PR is not what the scope asks for.
     (_needs("docs", DOCS | {"rust": "success"}), False),
     (_needs("docs", DOCS | {"proc": "success"}), False),
-    (_needs("docs", DOCS | {"suites": "success"}), False),
+    (_needs("docs", DOCS | {SUITES_JOB: "success"}), False),
     # The release has no `suites` job yet (`ONLY_IN`), and its verdict asks
     # for none.
     (_needs("code", {}, RELEASE_JOBS, RELEASE_NAME), True),

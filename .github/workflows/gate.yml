@@ -214,9 +214,8 @@ jobs:
   # job: node, pnpm, the build with the same TEST-NET-1 address, then the
   # venv.
   #
-  # Each suite is a pytest run of its own. One command cannot run two of the
-  # three suites of integration/, because several test files import
-  # `conftest` by name.
+  # The job runs each suite with a pytest command of its own, as
+  # integration/AGENTS.md tells a person to run them.
   #
   # A test of these suites skips itself when the bundle is missing, and a
   # run in which every test skips is green and judged nothing. These suites
@@ -228,9 +227,9 @@ jobs:
   # The time limit is the limit of the `proc` job. On a laptop the two
   # suites run in about 6 minutes.
   #
-  # Only this file has the job. In release.yml, a suite that fails one run
-  # of five would hold back every tag. release.yml gets the job after it
-  # passed 20 runs of the merge queue in a row.
+  # Only this file has the job. The job is new to CI, and one red run of it
+  # in release.yml stops the tags of that merge. release.yml gets the job
+  # after it passed 20 runs of the merge queue in a row.
   # bin/tests/test_gate_workflow.py names that one exception.
   suites:
     needs: scope
