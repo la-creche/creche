@@ -350,10 +350,11 @@ pub struct TerminalExchange {
 
 /// A note that `attendance` writes. Each one has a fixed set of fields.
 ///
-/// `attendance` releases separately, so a reader can get a note that this
-/// type does not know. A reader does not refuse that note. It keeps the body
-/// as a note of free form, [`Note::Other`]. It does the same for a known word
-/// whose fields are not the exact fields of that note.
+/// A newer `attendance` can write a note word that this enum does not have.
+/// `Note::from` does not refuse such a body: the result is [`Note::Other`],
+/// and it holds each member of the body. A body with a word of this enum can
+/// differ from its variant: a member is absent or extra, or a value has a
+/// wrong type. Such a body is a [`Note::Other`] too.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "note", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ServiceNote {
@@ -399,8 +400,10 @@ pub enum ServiceNote {
     // §4.3 permits, because the Python writer of a line checks no body. A
     // variant that takes only a refused move costs one check in the reader
     // and a new input for the vector `note-illegal-transition`.
-    /// `attendance` refused a move of a turn (contract 02 §4.3). The turn did
-    /// not move, and it keeps the state `from`.
+    /// A turn in the state `from` did not go to the state `to`: the state
+    /// table of `attendance` does not permit that move (contract 02 §4.3).
+    /// The turn stays in `from`. When `from` or `to` is a word that
+    /// [`TurnState`] does not have, the body reads as a [`Note::Other`].
     IllegalTransition {
         /// The state of the turn.
         from: TurnState,
