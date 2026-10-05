@@ -39,8 +39,8 @@ const MICRO_DIGITS: usize = 6;
 const YEAR_MIN: i64 = 1;
 const YEAR_MAX: i64 = 9_999;
 
-/// The largest value of each other field of a text.
-const MONTH_MAX: i64 = 12;
+/// The largest hour, minute and second of a text. The largest month is
+/// `MONTHS_PER_YEAR`.
 const HOUR_MAX: i64 = 23;
 const MINUTE_MAX: i64 = 59;
 const SECOND_MAX: i64 = 59;
@@ -65,10 +65,12 @@ const DAYS_PER_YEAR: i64 = 365;
 /// group, from zero. Each of the two ends with a leap day.
 const LAST_OF_FOUR: i64 = 3;
 
-/// The day count of the calendar starts a year on March 1. A leap day is then
-/// the last day of a year. March is month 3, and a year has 12 months.
-const MARCH: i64 = 3;
+/// The months of a year. December, month 12, is the last month of a text.
 const MONTHS_PER_YEAR: i64 = 12;
+
+/// The day count of the calendar starts a year on March 1, which is month 3.
+/// A leap day is then the last day of a year.
+const MARCH: i64 = 3;
 
 /// From March, the months have 31, 30, 31, 30 and 31 days, and the pattern
 /// starts again. Five months have 153 days. The two formulas that use the
@@ -105,13 +107,13 @@ impl Date {
     };
     const LAST: Self = Self {
         year: YEAR_MAX,
-        month: MONTH_MAX,
+        month: MONTHS_PER_YEAR,
         day: 31,
     };
 
     /// The date, when the month is 1 to 12 and the month has the day.
     const fn new(year: i64, month: i64, day: i64) -> Option<Self> {
-        if month < 1 || month > MONTH_MAX || day < 1 || day > days_in_month(year, month) {
+        if month < 1 || month > MONTHS_PER_YEAR || day < 1 || day > days_in_month(year, month) {
             return None;
         }
 
@@ -1096,7 +1098,7 @@ mod tests {
             };
         }
 
-        if date.month < MONTH_MAX {
+        if date.month < MONTHS_PER_YEAR {
             return Date {
                 month: date.month + 1,
                 day: 1,
