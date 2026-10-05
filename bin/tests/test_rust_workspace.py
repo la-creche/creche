@@ -286,8 +286,16 @@ def test_every_cargo_file_is_under_rust() -> None:
 
 def test_no_test_holds_a_table_of_differences() -> None:
     """The test reads the text of each file, test code too: a table of
-    differences lives in a test. A comment that holds the name counts."""
+    differences lives in a test. A comment that holds the name counts.
+
+    A wrong path of the crates reads no file, and a name of the list with
+    no crate skips nothing. The test fails for both."""
     crates = REPO / RUST_DIR / CRATES_DIR
+    absent = [name for name in TABLE_CRATES if not (crates / name).is_dir()]
+
+    assert crates.is_dir(), f"no directory {RUST_DIR}/{CRATES_DIR}"
+    assert absent == [], f"the list names a crate that is not there: {absent}"
+
     tables: list[str] = []
     for source in sorted(crates.rglob("*.rs")):
         if source.relative_to(crates).parts[0] in TABLE_CRATES:
