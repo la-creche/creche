@@ -328,6 +328,10 @@ class Tree:
     def family_file(self, family: str = FAMILY) -> Path:
         return self.registry_family_dir(family) / "family.yaml"
 
+    def family_prose_file(self, family: str = FAMILY) -> Path:
+        """The `instructions.md` of one family in the registry (contract 01 §1)."""
+        return self.registry_family_dir(family) / "instructions.md"
+
     def playpen_env(self, family: str = FAMILY, sandbox: str | None = None) -> Path:
         return self.family_dir(family) / f"supervisor-{sandbox or first_sandbox(family)}.env"
 
@@ -459,7 +463,7 @@ def write_family_file(tree: Tree, body: Mapping[str, Any]) -> None:
 
 def write_family_prose(tree: Tree, family: str = FAMILY, text: str = INSTRUCTIONS) -> None:
     """Put the `instructions.md` of one family in the registry (contract 01 §1)."""
-    write_registry_file(tree, tree.registry_family_dir(family) / "instructions.md", text)
+    write_registry_file(tree, tree.family_prose_file(family), text)
 
 
 def publish_family(tree: Tree, body: Mapping[str, Any], prose: str = INSTRUCTIONS) -> None:

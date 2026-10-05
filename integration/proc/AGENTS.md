@@ -675,6 +675,18 @@ the text of the failure. Work down this list.
 
   A change costs two assertions in each of two scenarios of
   `test_proc_board_form.py`, and one assertion in a third scenario.
+- **CONTRACT-QUESTION, a save of the noticeboard beside a change of a
+  person.** `docs/rework/spec.md` §8.2 says that a save writes one commit. No
+  section says what a save does with a change that a person left in the
+  checkout. The suite holds the noticeboard as it is:
+  - The commit holds the family file alone.
+  - A file that no commit holds stays as it was.
+  - A changed file of another family stays changed.
+  - A staged file of another family stays staged.
+
+  A change costs the last assertions of three scenarios in
+  `test_proc_board_form.py`. No scenario changes a second file of the
+  family that the save writes.
 - **CONTRACT-QUESTION, the marks of a commit of the noticeboard.**
   `docs/rework/spec.md` §8.2 gives the commit. No contract gives its author
   or a trailer. The suite holds the author name `noticeboard` and the

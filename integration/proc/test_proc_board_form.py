@@ -293,6 +293,14 @@ async def test_the_commit_of_a_save_names_the_noticeboard(board_alone: BoardStac
     assert COMMIT_TRAILER in proc_registry.trailers(tree)
 
 
+# CONTRACT-QUESTION: §8.2 says that a save writes one commit. No section says
+# what a save does with a change that a person left in the checkout. Reading
+# taken: the noticeboard as it is. The commit holds the family file alone. A
+# file with no commit stays as it was, and so does a changed file and a staged
+# file of another family. A change costs the last assertions of the next three
+# scenarios.
+
+
 async def test_a_save_leaves_an_untracked_file_untracked(board_alone: BoardStack) -> None:
     """§8.2: a save is one commit of one family. It takes no other file of the checkout."""
     tree = board_alone.tree
@@ -303,6 +311,42 @@ async def test_a_save_leaves_an_untracked_file_untracked(board_alone: BoardStack
     assert response.status_code == httpx.codes.SEE_OTHER
     assert proc_registry.head(tree).paths == (family_path(tree, FAMILY),)
     assert proc_registry.untracked(tree) == (stray,)
+
+
+async def test_a_save_leaves_a_changed_file_of_another_family(board_alone: BoardStack) -> None:
+    """§8.2: a save is one commit of one family.
+
+    A person changed the instructions of the other family and made no
+    commit. A save that commits each changed file of the checkout takes that
+    change into its commit.
+    """
+    tree = board_alone.tree
+    other = proc_registry.edit_family_prose(tree, REVIEW)
+
+    response = await saved_edit(board_alone, FAMILY, description=NEW_DESCRIPTION)
+
+    assert response.status_code == httpx.codes.SEE_OTHER
+    assert proc_registry.head(tree).paths == (family_path(tree, FAMILY),)
+    assert proc_registry.changed(tree) == (other,)
+    assert proc_registry.staged(tree) == ()
+
+
+async def test_a_save_leaves_a_staged_file_of_another_family(board_alone: BoardStack) -> None:
+    """§8.2: a save is one commit of one family.
+
+    A person changed the instructions of the other family and put the change
+    in the index, for a commit of their own. A save that commits the whole
+    index takes that change into its commit.
+    """
+    tree = board_alone.tree
+    other = proc_registry.stage_family_prose(tree, REVIEW)
+
+    response = await saved_edit(board_alone, FAMILY, description=NEW_DESCRIPTION)
+
+    assert response.status_code == httpx.codes.SEE_OTHER
+    assert proc_registry.head(tree).paths == (family_path(tree, FAMILY),)
+    assert proc_registry.staged(tree) == (other,)
+    assert proc_registry.changed(tree) == ()
 
 
 async def test_a_save_of_an_autonomous_family_keeps_its_triggers(board_alone: BoardStack) -> None:

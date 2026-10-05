@@ -64,6 +64,10 @@ _INDEX_LOCK: Final = ".git/index.lock"
 UNTRACKED_PATH: Final = "notes/draft.md"
 _UNTRACKED_TEXT: Final = "A note of the fixture. No commit holds it.\n"
 
+#: What a person types into the instructions of a family before a commit of
+#: their own. A save of the noticeboard for another family must leave it.
+_EDITED_PROSE: Final = "Be helpful, and answer in one sentence.\n"
+
 #: The name of the file that a save of the noticeboard writes before the
 #: rename: a dot, the name of the family file, 16 hex digits and this end.
 _TEMP_DIGITS: Final = "0123456789abcdef"
@@ -241,6 +245,29 @@ def write_untracked(tree: Tree) -> str:
     return UNTRACKED_PATH
 
 
+def edit_family_prose(tree: Tree, name: str) -> str:
+    """Change the instructions of one family in the checkout, with no commit.
+
+    A person with an editor does this. A commit holds the file, so `git`
+    lists it as changed. Returns its path, as `git` prints it.
+    """
+    write_family_prose(tree, name, _EDITED_PROSE)
+
+    return tree.family_prose_file(name).relative_to(tree.registry_root).as_posix()
+
+
+def stage_family_prose(tree: Tree, name: str) -> str:
+    """Change the instructions of one family, then put the change in the index.
+
+    A person does this with `git add`, before a commit of their own. Returns
+    the path of the file, as `git` prints it.
+    """
+    path = edit_family_prose(tree, name)
+    _git(tree, "add", "--", path)
+
+    return path
+
+
 @contextmanager
 def index_locked(tree: Tree) -> Generator[None]:
     """Hold the lock of the index, as a `git` command of another program does.
@@ -301,9 +328,7 @@ def head(tree: Tree) -> Commit:
 
 def trailers(tree: Tree) -> tuple[str, ...]:
     """Each trailer line of the newest commit, as `git` reads the message."""
-    lines = _git(tree, "log", "-1", "--format=%(trailers:only,unfold)").split("\n")
-
-    return tuple(line for line in lines if line)
+    return _lines(_git(tree, "log", "-1", "--format=%(trailers:only,unfold)"))
 
 
 def uncommitted(tree: Tree) -> str:
@@ -313,9 +338,22 @@ def uncommitted(tree: Tree) -> str:
 
 def untracked(tree: Tree) -> tuple[str, ...]:
     """Each file of the checkout that no commit holds and that `git` does not ignore."""
-    paths = _git(tree, "ls-files", "--others", "--exclude-standard").split("\n")
+    return _lines(_git(tree, "ls-files", "--others", "--exclude-standard"))
 
-    return tuple(path for path in paths if path)
+
+def changed(tree: Tree) -> tuple[str, ...]:
+    """Each file of a commit whose text in the checkout is not its text in the index."""
+    return _lines(_git(tree, "diff", "--name-only"))
+
+
+def staged(tree: Tree) -> tuple[str, ...]:
+    """Each file whose text in the index is not its text in the newest commit."""
+    return _lines(_git(tree, "diff", "--cached", "--name-only"))
+
+
+def _lines(output: str) -> tuple[str, ...]:
+    """The lines of one `git` output that hold a text."""
+    return tuple(line for line in output.split("\n") if line)
 
 
 def _git(tree: Tree, *args: str) -> str:
