@@ -15,8 +15,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pytest
-
 from vectors import generate
 from vectors.core import ACCEPTED, FORMAT, RAISED, REFUSED, Json, depth, has_surrogate
 
@@ -49,15 +47,8 @@ def _first_difference(wanted: str, found: str) -> str:
     return "one file is a prefix of the other"
 
 
-@pytest.fixture(scope="module")
-def built() -> dict[str, str]:
-    """Every file that the generator writes. This is the one build of the suite."""
-    _, files = generate.build()
-
-    return files
-
-
-def test_committed_files_are_current(built: dict[str, str]) -> None:
+def test_committed_files_are_current() -> None:
+    _, built = generate.build()
     on_disk = generate.committed()
     frozen = generate.frozen_of(built)
     problems = generate.stale(built, on_disk, generate.strays(), frozen)
@@ -69,19 +60,20 @@ def test_committed_files_are_current(built: dict[str, str]) -> None:
 
     assert not problems, f"{REGENERATE}: {problems} {details}"
 
+    # No group writes a frozen file, and the build keeps the map of the index.
+    assert sorted(frozen.keys() & built.keys()) == []
+    assert frozen == generate.frozen_of(on_disk)
 
-def test_each_frozen_file_has_its_digest_and_no_generator(built: dict[str, str]) -> None:
+
+# The tests below read the committed files. The test above holds them equal
+# to what the generator writes, and it is the only one that pays for a build.
+
+
+def test_each_frozen_file_has_its_digest() -> None:
     """No group writes a frozen file again, so nobody can repair a changed one."""
     on_disk = generate.committed()
-    frozen = generate.frozen_of(on_disk)
 
-    assert generate.damaged(frozen, on_disk) == [], RESTORE
-    assert sorted(frozen.keys() & built.keys()) == []
-    assert generate.frozen_of(built) == frozen
-
-
-# The tests below read the committed files. The two tests above hold them
-# equal to what the generator writes, and they share the one build.
+    assert generate.damaged(generate.frozen_of(on_disk), on_disk) == [], RESTORE
 
 
 def test_every_file_is_strict_ascii_json() -> None:
