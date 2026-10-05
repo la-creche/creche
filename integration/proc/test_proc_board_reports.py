@@ -123,6 +123,9 @@ JOB_STATUS = "job_status"
 SESSION_ONE = f"owui-{uuid.UUID(int=1)}"
 SESSION_TWO = f"owui-{uuid.UUID(int=2)}"
 
+#: Contract 04 §5 row 4: the reason of a call to a tool that no grant holds.
+NOT_GRANTED = "tool_not_granted"
+
 #: U+2028. Built with `chr`, so this file holds no character that an editor
 #: does not show.
 LINE_SEPARATOR = chr(0x2028)
@@ -396,7 +399,7 @@ async def test_a_filter_of_the_audit_page_keeps_its_records(
     records = [
         audit_in_session(audit_record(FAMILY, EMBED), SESSION_ONE),
         audit_in_session(
-            audit_record(FAMILY, HA_CALL, decision="deny", reason="not_granted"), SESSION_TWO
+            audit_record(FAMILY, HA_CALL, decision="deny", reason=NOT_GRANTED), SESSION_TWO
         ),
         audit_in_session(audit_record(REVIEW, JOB_STATUS), SESSION_TWO),
     ]
