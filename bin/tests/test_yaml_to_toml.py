@@ -842,6 +842,8 @@ DEEP = 1000
         ("NOT_YAML", "a: =\n"),
         ("NOT_YAML", "a: \x01\n"),
         ("NOT_YAML", "a:\tb\n"),
+        ("NOT_YAML", "a: 0x_\n"),
+        pytest.param("NOT_YAML", "a: " + "9" * 5000 + "\n", id="NOT_YAML-5000-digits"),
         pytest.param("DEPTH", "a: " + "[" * DEEP + "1" + "]" * DEEP + "\n", id="DEPTH-lists"),
         pytest.param("DEPTH", "a: " + "{ k: " * DEEP + "1" + " }" * DEEP + "\n", id="DEPTH-maps"),
     ],
