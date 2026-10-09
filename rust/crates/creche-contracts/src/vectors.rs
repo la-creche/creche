@@ -325,7 +325,15 @@ struct Disagreements {
 
 /// Every row of `vectors/data/index.json`, in the order of the file.
 pub(crate) fn index() -> Vec<IndexRow> {
-    let index: Index = read(INDEX_FILE);
+    index_of(&text_of(INDEX_FILE))
+}
+
+/// The rows of the index whose JSON text is `text`.
+///
+/// The function stops the test on a text that is no index of format 1, and
+/// on a map `frozen` in a form that the generator does not write.
+fn index_of(text: &str) -> Vec<IndexRow> {
+    let index: Index = parsed(INDEX_FILE, text);
 
     assert_eq!(index.format, FORMAT, "{INDEX_FILE}: the format");
     assert_eq!(index.kind, INDEX_KIND, "{INDEX_FILE}: the kind");
@@ -406,15 +414,25 @@ pub(crate) fn disagreements() -> Vec<Disagreement> {
 
 /// Reads one JSON file under `vectors/data`.
 fn read<T: DeserializeOwned>(path: &str) -> T {
+    parsed(path, &text_of(path))
+}
+
+/// The text of the file `path` under `vectors/data`.
+fn text_of(path: &str) -> String {
     let file = PathBuf::from(DATA_DIR).join(path);
-    let text = match fs::read_to_string(&file) {
+
+    match fs::read_to_string(&file) {
         Ok(text) => text,
         Err(error) => panic!("{}: {error}", file.display()),
-    };
+    }
+}
 
-    match serde_json::from_str(&text) {
+/// The value that `serde` reads from `text`, the JSON text of the file
+/// `path`.
+fn parsed<T: DeserializeOwned>(path: &str, text: &str) -> T {
+    match serde_json::from_str(text) {
         Ok(value) => value,
-        Err(error) => panic!("{}: {error}", file.display()),
+        Err(error) => panic!("{path}: {error}"),
     }
 }
 
@@ -657,35 +675,84 @@ mod tests {
     /// A text in the form of a digest of the index.
     const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-    fn frozen_map(path: &str, digest: &str) -> BTreeMap<String, String> {
-        BTreeMap::from([(path.to_owned(), digest.to_owned())])
+    /// The JSON text of an index with one member replaced.
+    fn index_with(key: &str, member: Value) -> String {
+        let mut index = json!({"format": 1, "frozen": {}, "kind": "index", "surfaces": []});
+        index[key] = member;
+
+        index.to_string()
+    }
+
+    /// The JSON text of an index with one frozen file.
+    fn index_frozen(path: &str, digest: &str) -> String {
+        index_with("frozen", json!({path: digest}))
     }
 
     #[test]
-    fn a_map_of_frozen_files_in_the_form_of_the_generator_reads() {
-        check_frozen(&BTreeMap::new());
+    fn an_index_in_the_form_of_the_generator_reads() {
+        let row = json!({
+            "surface": "runtime.test",
+            "path": "runtime/test.json",
+            "entry": "package.entry",
+            "vectors": 0,
+            "accepted": 0,
+            "refused": 0,
+            "raised": 0,
+        });
+
+        assert_eq!(index_of(&index_with("surfaces", json!([row]))).len(), 1);
 
         for path in ["old.json", "runtime/old.json", "runtime/index.json"] {
-            check_frozen(&frozen_map(path, DIGEST));
+            assert!(index_of(&index_frozen(path, DIGEST)).is_empty(), "{path}");
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: the format")]
+    fn an_index_of_another_format_stops_the_test() {
+        let _ = index_of(&index_with("format", json!(2)));
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: the kind")]
+    fn an_index_of_another_kind_stops_the_test() {
+        let _ = index_of(&index_with("kind", json!("registries")));
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: missing field `frozen`")]
+    fn an_index_with_no_map_of_frozen_files_stops_the_test() {
+        let _ = index_of(r#"{"format": 1, "kind": "index", "surfaces": []}"#);
     }
 
     #[test]
     #[should_panic(expected = "\"runtime/../old.json\" is no path of a frozen file")]
     fn a_frozen_path_that_goes_up_stops_the_test() {
-        check_frozen(&frozen_map("runtime/../old.json", DIGEST));
+        let _ = index_of(&index_frozen("runtime/../old.json", DIGEST));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"runtime//old.json\" is no path of a frozen file")]
+    fn a_frozen_path_with_an_empty_part_stops_the_test() {
+        let _ = index_of(&index_frozen("runtime//old.json", DIGEST));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"runtime/./old.json\" is no path of a frozen file")]
+    fn a_frozen_path_with_a_dot_part_stops_the_test() {
+        let _ = index_of(&index_frozen("runtime/./old.json", DIGEST));
     }
 
     #[test]
     #[should_panic(expected = "\"index.json\" is no path of a frozen file")]
     fn the_index_as_a_frozen_file_stops_the_test() {
-        check_frozen(&frozen_map("index.json", DIGEST));
+        let _ = index_of(&index_frozen("index.json", DIGEST));
     }
 
     #[test]
     #[should_panic(expected = "\"runtime/old.txt\" is no path of a frozen file")]
     fn a_frozen_path_with_another_suffix_stops_the_test() {
-        check_frozen(&frozen_map("runtime/old.txt", DIGEST));
+        let _ = index_of(&index_frozen("runtime/old.txt", DIGEST));
     }
 
     /// `ids::Sha256Hex` holds the grammar of a digest and its tests. The two
@@ -695,7 +762,7 @@ mod tests {
         expected = "the digest of the frozen file runtime/old.json: byte 10 of a SHA-256 digest"
     )]
     fn a_frozen_digest_in_upper_case_stops_the_test() {
-        check_frozen(&frozen_map("runtime/old.json", &DIGEST.to_uppercase()));
+        let _ = index_of(&index_frozen("runtime/old.json", &DIGEST.to_uppercase()));
     }
 
     #[test]
@@ -703,7 +770,7 @@ mod tests {
         expected = "the digest of the frozen file runtime/old.json: a SHA-256 digest has 64 bytes"
     )]
     fn a_frozen_digest_of_63_digits_stops_the_test() {
-        check_frozen(&frozen_map("runtime/old.json", &"0".repeat(63)));
+        let _ = index_of(&index_frozen("runtime/old.json", &"0".repeat(63)));
     }
 
     #[test]
