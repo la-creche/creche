@@ -3372,6 +3372,7 @@ mod tests {
         let at = built.written_at();
         let validation = validation(Verdict::Failed, ValidHistory::OnceValid);
         let credentials = built.credentials().unwrap().clone();
+        let spend = Spend::new(SpendWindow::Day, usd(1.25), at, SpendSource::Litellm);
         let empty = DocumentParts::new(
             built.family().clone(),
             FamilyState::Invalid,
@@ -3393,18 +3394,23 @@ mod tests {
         assert_eq!(built.sandboxes()[1].channel(), ChannelState::Closed);
         assert_eq!(built.sandboxes()[1].ready_at(), None);
         assert_eq!(built.sandboxes()[1].supervisor_env(), None);
+        assert_eq!(credentials.next_rotation_at(), None);
         assert_eq!(
             credentials.with_next_rotation_at(at).next_rotation_at(),
             Some(at)
         );
+        assert_eq!(spend.budget_usd(), None);
         assert_eq!(Limits::new(), Limits::default());
+        assert_eq!(Limits::new().max_running_turns(), None);
         assert_eq!(Limits::new().max_queued_turns(), None);
+        assert_eq!(Limits::new().job_timeout_s(), None);
         assert_eq!(
             Limits::new().with_max_running_turns(4).max_running_turns(),
             Some(4)
         );
         assert_eq!(Triggers::new(), Triggers::default());
         assert!(Triggers::new().webhooks().is_empty());
+        assert!(!Triggers::new().enqueue());
         assert!(Triggers::new().with_enqueue().enqueue());
         assert_eq!(empty.kind(), None);
         assert!(empty.faults().is_empty());
