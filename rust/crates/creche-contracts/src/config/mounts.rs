@@ -512,7 +512,8 @@ impl Error for RuntimeIssue {}
 
 /// Each issue of one `runtime.json`: one issue or more.
 ///
-/// Only the parse of a [`RuntimeConfig`] makes a value.
+/// Only [`RuntimeConfig::parse`] and the conversion from a
+/// [`RawRuntimeConfig`] make a value.
 ///
 /// ```
 /// use creche_contracts::config::mounts::{RuntimeConfig, RuntimeConfigErrors, RuntimeIssue};
