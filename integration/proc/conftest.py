@@ -29,7 +29,7 @@ from proc_board import BoardStack
 from proc_caregiver import CaregiverStack
 from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
-from proc_library import LibraryStack
+from proc_library import LibraryStack, node_has_sqlite
 from proc_owui import OwuiStack
 from proc_report import describe, end_processes
 from proc_services import KEEP_ROOTS_ENV, NO_SKIP_ENV, describe_table, unknown_variables
@@ -340,6 +340,18 @@ def library(library_prepared: LibraryStack) -> LibraryStack:
     library_prepared.start_tei()
 
     return library_prepared
+
+
+@pytest.fixture(scope="session")
+def node_sqlite() -> None:
+    """The `node` of the run can read a store. A test that needs it and has none skips.
+
+    The reader of a store is a Node program that imports `node:sqlite`, as
+    the bridge of the playpen does. A Node with no such module cannot run
+    it.
+    """
+    if not node_has_sqlite():
+        _skip("the `node` on PATH has no `node:sqlite` module, and the reader of a store needs it")
 
 
 def _skip(reason: str) -> NoReturn:
