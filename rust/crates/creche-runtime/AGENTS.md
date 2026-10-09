@@ -279,6 +279,17 @@ reason. The packet that writes the three bodies obeys these rules:
   service has a handler of its own for an exception, so no surface
   `runtime.edge.*` holds the answer of the framework. The constant is the
   text of `starlette/middleware/errors.py:259`. A plain test holds it.
+- No route behind `http::layers::edge` answers `HEAD`. The edge gives each
+  `HEAD` request another method before the router gets it, so a route that
+  names `HEAD` gets no request. The Python noticeboard answers `HEAD` on a
+  file of its static mount with status 200 and no body. A router behind
+  `edge` answers status 405 for that route. The port of the noticeboard
+  needs an answer first: a change to `edge`, or a route outside it.
+- A layer that a router has before `edge` gets only the answer of a handler.
+  The Python noticeboard adds a cookie to an answer of its framework too,
+  for example to an answer with status 404. A layer on the result of `edge`
+  gets each answer. It runs outside the task of the request and outside the
+  panic boundary. The port of the noticeboard needs that answer too.
 - `http::server` and `http::layers` differ from the server and from the
   framework of the Python services in more ways. The doc comments of `bind`,
   `serve`, `edge` and `read_body` name each one, and a plain test holds each

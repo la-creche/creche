@@ -162,6 +162,8 @@ pub enum AccessLog {
 ///   and the answer for [`EdgeFailure::WrongMethod`], with the `Allow`
 ///   header. No handler runs. `axum` alone runs the handler of `GET`. The
 ///   client gets the headers of the answer and no body, for each status.
+///   No route behind the function answers `HEAD`: a route that names
+///   `HEAD` gets no request.
 /// - **A final slash.** A path that no route has can differ from a path of a
 ///   route only in its final slashes: `/healthz/` for `/healthz`, or
 ///   `/healthz` for `/healthz/`. Such a request gets status 307 with no
@@ -193,6 +195,11 @@ pub enum AccessLog {
 /// - **A layer that `routes` has also gets the question.** Give the router a
 ///   layer of the service before the call only when the layer can get such a
 ///   request.
+/// - **A layer that `routes` has gets only the answer of a handler.** The
+///   answer for a path that no route has, the answer with status 307 and the
+///   answer for a wrong method pass no such layer. A layer that must get
+///   each answer goes on the result of the function. It then runs outside
+///   the task of the request and outside the panic boundary.
 ///
 /// # The log
 ///
@@ -2076,6 +2083,46 @@ mod tests {
             assert_eq!(slash.status, 307);
             assert_eq!(*locked(&seen), ["UNROUTED /healthz 0"]);
             assert_eq!(calls.load(Ordering::SeqCst), 0);
+            service.stop().await;
+        });
+    }
+
+    /// The rule of [`edge`]: a layer that the router has gets only the
+    /// answer of a handler. Each answer that the edge makes passes no layer
+    /// of the service.
+    #[test]
+    fn a_layer_of_the_router_gets_no_answer_that_the_edge_makes() {
+        const MARK: &str = "x-layer";
+
+        async fn mark(request: Request, next: Next) -> Response {
+            let mut answer = next.run(request).await;
+            answer
+                .headers_mut()
+                .insert(MARK, HeaderValue::from_static("seen"));
+
+            answer
+        }
+
+        let table = [
+            ("GET", "/healthz", 200, Some("seen")),
+            ("GET", "/no/such/path", 404, None),
+            ("GET", "/healthz/", 307, None),
+            ("DELETE", "/healthz", 405, None),
+            ("HEAD", "/healthz", 405, None),
+        ];
+
+        runtime().block_on(async {
+            let routes = Router::new()
+                .route("/healthz", json_route(&["GET"]))
+                .layer(middleware::from_fn(mark));
+            let service = Service::starlette(routes).await;
+
+            for (method, target, status, marked) in table {
+                let answer = service.ask(&request(method, target)).await;
+
+                assert_eq!(answer.status, status, "{method} {target}");
+                assert_eq!(answer.header(MARK), marked, "{method} {target}");
+            }
             service.stop().await;
         });
     }
