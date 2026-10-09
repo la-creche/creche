@@ -1,0 +1,144 @@
+# The branch check of the Rust coverage rule, one time a day
+# (rust/AGENTS.md, "The coverage rule").
+#
+#   guard ── branch-coverage
+#
+# gate.yml holds the regions and the lines of each file in
+# rust/coverage-files.txt, on the toolchain of rust/rust-toolchain.toml. Only
+# a nightly compiler measures a branch. This workflow runs the same script
+# with `--branch` on one nightly toolchain. The script then also fails for a
+# side of a branch of a listed file that no test took.
+#
+#   guard             prints the ref. It always runs.
+#   branch-coverage   installs the nightly and cargo-llvm-cov, then runs
+#                     `bin/rust-coverage.sh --branch`.
+#
+# THE RUN BLOCKS NO MERGE AND NO RELEASE. The check `gate` does not need it,
+# and release.yml does not read it. A schedule runs on the newest commit of
+# `main`. That commit is the merge of a pull request and never the head of
+# one, so the release executor does not read the run
+# (handover/src/handover/executor/provenance.py, P5).
+#
+# START IT BY HAND ON `main` ONLY. The release executor reads each workflow
+# run on the head of a merged pull request, and each one must be a success.
+# So a run on another ref measures nothing: `guard` passes, the job
+# `branch-coverage` is skipped, and the run is a success. Do not cancel such
+# a run. A cancelled run on the head of a pull request blocks the release of
+# that pull request. To measure a branch before its merge, run the script on
+# a development machine (rust/AGENTS.md has the steps).
+#
+# A RED RUN REACHES A PERSON THROUGH GITHUB ONLY. GitHub sends the
+# notification of a failed scheduled run to one account: the account that
+# last changed the `cron` line below, or that turned this workflow on again.
+# The Actions page of the repository lists each run. No job of this
+# repository reads the result.
+#
+# CONTRACT-QUESTION: rust/AGENTS.md, "The coverage rule". No rule says how a
+# red run of this workflow must reach a person, and no rule names that
+# person. The reading here: the workflow holds the read-only token and sends
+# nothing by itself, so the notification of GitHub is the one path. A change
+# costs one step with a token that can write, for example a step that opens
+# an issue.
+#
+# GITHUB CAN SKIP A RUN. It can delay or drop a scheduled run when its load
+# is high. It turns the schedule of a public repository off after 60 days
+# with no activity in the repository.
+#
+# The job runs the code of `main` with the read-only token. It writes no
+# cache and no artifact.
+#
+# bin/tests/test_gate_workflow.py pins this file.
+name: coverage-nightly
+
+on:
+  schedule:
+    # One time a day, at 04:37 UTC. Not at minute 0: the start of an hour is
+    # when GitHub delays a schedule most.
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # No `if`: this job is what makes a run on another ref a success.
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ref
+        run: 'echo "coverage-nightly: the ref of this run is $GITHUB_REF"'
+
+  # The time limit: a test that does not end with the measurement in it
+  # holds the job, and a job has 6 hours by default. The job keeps no cache:
+  # one run a day builds the workspace one time.
+  branch-coverage:
+    needs: guard
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # As in the `rust-coverage` job of gate.yml: no build here starts from
+      # the last one.
+      CARGO_INCREMENTAL: 0
+      # The one nightly toolchain of this workflow, by its date. rustup reads
+      # this variable for each cargo command of the job, and the variable
+      # outranks rust/rust-toolchain.toml. That file does not change: it
+      # moves the tag of each binary component.
+      #
+      # A nightly gets no later fix, so the date is the pin. This nightly is
+      # from the week in which the compiler 1.92.0 of that file came out, and
+      # both use LLVM 21. It is the compiler 1.94 before its release, so it
+      # writes some regions in other places (rust/AGENTS.md has the facts).
+      # To take another date, select the last nightly for which
+      # `rustc --version` prints the version number of that file. That
+      # nightly is near the point where the compiler of that file left the
+      # main line. No run proved yet that the two write each region in the
+      # same place. Run the script with `--branch` on a machine with that
+      # nightly, and measure the facts about a branch in rust/AGENTS.md
+      # again. Then change the value here and in
+      # bin/tests/test_gate_workflow.py.
+      RUSTUP_TOOLCHAIN: nightly-2025-12-13
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The runner has rustup, so no action installs the toolchain. The
+      # component gives the toolchain the LLVM tools that cargo-llvm-cov
+      # calls. The two version lines show in the log which compiler measured.
+      - name: toolchain
+        working-directory: rust
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update \
+            --component llvm-tools-preview
+          rustc --version
+          cargo --version
+
+      # cargo-llvm-cov: the step of the `rust-coverage` job of gate.yml, word
+      # for word, with the same two constants. bin/tests/test_gate_workflow.py
+      # holds the three copies equal: gate.yml, release.yml and this file. To
+      # take another version, change the two constants in the three files
+      # together.
+      - name: cargo-llvm-cov
+        working-directory: rust
+        env:
+          LLVM_COV_VERSION: "0.9.1"
+          LLVM_COV_SHA256: "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522"
+        run: |
+          set -euo pipefail
+          name="cargo-llvm-cov-x86_64-unknown-linux-musl"
+          archive="$RUNNER_TEMP/$name.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v$LLVM_COV_VERSION/$name.tar.gz"
+          found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          if [[ "$found" != "$LLVM_COV_SHA256" ]]; then
+            echo "cargo-llvm-cov: the archive has the SHA-256 $found, not $LLVM_COV_SHA256" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/cargo-llvm-cov"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-llvm-cov" cargo-llvm-cov
+          echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
+          PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
+
+      - run: bin/rust-coverage.sh --branch
