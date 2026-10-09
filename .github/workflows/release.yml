@@ -9,6 +9,8 @@
 #           │                      as a process, on the built playpen
 #           ├── rust        code   cargo fmt, clippy, deny and test, for a
 #           │                      push that touches rust/ or vectors/
+#           ├── rust-coverage  code   the tests with cargo llvm-cov and the
+#           │                      coverage rule, for the same push
 #           └── systemd-proof
 #                           code   the restart rule of the daemon units, on
 #                                  the systemd of the runner, for a push
@@ -49,14 +51,15 @@
 # A docs-only push onto a commit whose own run passed runs only the tests
 # marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
 # runs.
-# The `tests`, `playpen`, `proc`, `rust` and `systemd-proof` jobs are
-# gate.yml's, and bin/tests/test_gate_workflow.py holds the two files to the
-# same shard command — diff the two when changing either.
+# The `tests`, `playpen`, `proc`, `rust`, `rust-coverage` and
+# `systemd-proof` jobs are gate.yml's, and bin/tests/test_gate_workflow.py
+# holds the two files to the same shard command — diff the two when changing
+# either.
 #
 # A push that touches nothing under rust/ and nothing under vectors/, onto a
-# commit whose own run passed, skips the steps of the `rust` job
-# (bin/lib/rustrule.sh). The job is still a success. A change under rust/
-# reaches no component, so it mints no tag
+# commit whose own run passed, skips the steps of the `rust` job and of the
+# `rust-coverage` job (bin/lib/rustrule.sh). Each job is still a success. A
+# change under rust/ reaches no component, so it mints no tag
 # (handover/src/handover/allocate.py).
 #
 # The `systemd-proof` job follows the same rule for its own files. A push
@@ -360,6 +363,82 @@ jobs:
       - run: bin/rust-gate.sh --tests
         if: needs.scope.outputs.rust != 'false'
 
+  # The coverage rule of the Cargo workspace: bin/rust-coverage.sh
+  # (rust/AGENTS.md, "The coverage rule"). The script runs the tests with
+  # `cargo llvm-cov`. It fails when a region or a line of a file in
+  # rust/coverage-files.txt ran in no test. It prints one line with the
+  # counts of each crate.
+  #
+  # The job takes the rule of the `rust` job: it runs on every code change,
+  # and on a change that touches nothing under rust/ every step but the
+  # checkout is skipped. The job is then a success.
+  #
+  # The toolchain is the one rust/rust-toolchain.toml names. `rustup
+  # component add` gives it the LLVM tools that cargo-llvm-cov calls. The
+  # toolchain file does not name that component: no other job needs it.
+  #
+  # The job keeps no cache: each run builds the workspace one time. The tool
+  # puts the measurement into each crate of the workspace and into no
+  # dependency. The time limit stops a test that does not end with the
+  # measurement in it. A job has 6 hours by default.
+  rust-coverage:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # As in the `rust` job: no build here starts from the last one.
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: toolchain
+        if: needs.scope.outputs.rust != 'false'
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          rustup component add llvm-tools-preview
+          cargo --version
+
+      # cargo-llvm-cov: the program behind the `cargo llvm-cov` step of
+      # bin/rust-coverage.sh. rustup does not install it, and no action does
+      # here. The step takes the archive from a release of the cargo-llvm-cov
+      # repository. It checks the SHA-256 of the archive against the constant
+      # before the unpack, so an archive that changed stops the job. The
+      # archive holds the program and no directory.
+      #
+      # To take another version, change the two constants together. Compute
+      # the SHA-256 of the new archive, and compare it with the digest that
+      # the release page shows for that archive.
+      # bin/tests/test_gate_workflow.py pins both.
+      - name: cargo-llvm-cov
+        if: needs.scope.outputs.rust != 'false'
+        working-directory: rust
+        env:
+          LLVM_COV_VERSION: "0.9.1"
+          LLVM_COV_SHA256: "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522"
+        run: |
+          set -euo pipefail
+          name="cargo-llvm-cov-x86_64-unknown-linux-musl"
+          archive="$RUNNER_TEMP/$name.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v$LLVM_COV_VERSION/$name.tar.gz"
+          found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          if [[ "$found" != "$LLVM_COV_SHA256" ]]; then
+            echo "cargo-llvm-cov: the archive has the SHA-256 $found, not $LLVM_COV_SHA256" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/cargo-llvm-cov"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-llvm-cov" cargo-llvm-cov
+          echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
+          PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
+
+      - run: bin/rust-coverage.sh
+        if: needs.scope.outputs.rust != 'false'
+
   # The restart rule of the daemon units: bin/systemd-proof.sh. A unit with
   # `RestartPreventExitStatus=78` must stay stopped after exit status 78, and
   # only systemd can prove that. The script makes three units of its own on
@@ -389,12 +468,12 @@ jobs:
       - run: bin/systemd-proof.sh
         if: needs.scope.outputs.systemd != 'false'
 
-  # `always()`: on a docs push `tests`, `playpen`, `proc`, `rust` and
-  # `systemd-proof` are skipped, and a job that needs a skipped job is
-  # skipped by default. The verdict step is what holds the tags back when a
-  # job failed.
+  # `always()`: on a docs push `tests`, `playpen`, `proc`, `rust`,
+  # `rust-coverage` and `systemd-proof` are skipped, and a job that needs a
+  # skipped job is skipped by default. The verdict step is what holds the tags
+  # back when a job failed.
   release:
-    needs: [scope, lint, tests, playpen, proc, rust, systemd-proof]
+    needs: [scope, lint, tests, playpen, proc, rust, rust-coverage, systemd-proof]
     if: always()
     runs-on: ubuntu-latest
     permissions:

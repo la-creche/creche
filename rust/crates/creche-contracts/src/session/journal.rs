@@ -28,6 +28,7 @@ use super::state::TurnState;
 use super::time::Timestamp;
 use super::view::{SessionView, Usage};
 use crate::ids::{GateId, SandboxName, Sha256Hex, Ulid};
+use crate::status::time::Freshness;
 
 words! {
     /// The kind of one line of the event stream (contract 02 §8.1).
@@ -190,77 +191,431 @@ impl<'de> Deserialize<'de> for GateReason {
 // --- the body of each kind ---
 
 /// The body of a `session_titled` line.
+///
+/// ```
+/// use creche_contracts::session::{SessionTitled, Title};
+///
+/// let title: Title = "Boiler alarm".parse()?;
+/// let titled = SessionTitled::new(title);
+/// assert_eq!(titled.title().as_str(), "Boiler alarm");
+/// # Ok::<(), creche_contracts::session::TitleError>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{SessionTitled, Title};
+///
+/// fn titled(title: Title) -> SessionTitled {
+///     SessionTitled { title }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionTitled {
+    title: Title,
+}
+
+impl SessionTitled {
+    /// The body for a session that got this title.
+    #[must_use]
+    pub fn new(title: Title) -> Self {
+        Self { title }
+    }
+
     /// The new title.
-    pub title: Title,
+    #[must_use]
+    pub fn title(&self) -> &Title {
+        &self.title
+    }
 }
 
 /// The body of a `writer_changed` line.
+///
+/// ```
+/// use creche_contracts::session::{Holder, LeaseReason, WriterChanged};
+///
+/// let changed = WriterChanged::new(Holder::Tui, LeaseReason::Granted);
+/// assert_eq!(changed.holder(), Holder::Tui);
+/// assert_eq!(changed.reason(), LeaseReason::Granted);
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{Holder, LeaseReason, WriterChanged};
+///
+/// let changed = WriterChanged { holder: Holder::Tui, reason: LeaseReason::Granted };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WriterChanged {
+    holder: Holder,
+    reason: LeaseReason,
+}
+
+impl WriterChanged {
+    /// The body for a change of the lease that is about this door.
+    #[must_use]
+    pub fn new(holder: Holder, reason: LeaseReason) -> Self {
+        Self { holder, reason }
+    }
+
     /// The door that the change is about.
-    pub holder: Holder,
+    #[must_use]
+    pub fn holder(&self) -> Holder {
+        self.holder
+    }
+
     /// What occurred.
-    pub reason: LeaseReason,
+    #[must_use]
+    pub fn reason(&self) -> LeaseReason {
+        self.reason
+    }
 }
 
 /// The body of a `turn_queued` line.
+///
+/// ```
+/// use creche_contracts::session::{Prompt, QueueDepth, TurnQueued};
+///
+/// let prompt: Prompt = "Is the boiler on?".parse()?;
+/// let queued = TurnQueued::new(prompt, QueueDepth::try_from(1_u64)?);
+/// assert_eq!(queued.queue_depth().get(), 1);
+/// assert_eq!(queued.idempotency_key(), None);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{Prompt, QueueDepth, TurnQueued};
+///
+/// fn queued(prompt: Prompt, queue_depth: QueueDepth) -> TurnQueued {
+///     TurnQueued { prompt, idempotency_key: None, queue_depth }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnQueued {
+    prompt: Prompt,
+    idempotency_key: Option<IdempotencyKey>,
+    queue_depth: QueueDepth,
+}
+
+impl TurnQueued {
+    /// The body for a turn with this user text, at this place in the queue.
+    /// The turn has no idempotency key.
+    #[must_use]
+    pub fn new(prompt: Prompt, queue_depth: QueueDepth) -> Self {
+        Self {
+            prompt,
+            idempotency_key: None,
+            queue_depth,
+        }
+    }
+
+    /// The same body with this idempotency key.
+    #[must_use]
+    pub fn with_idempotency_key(mut self, idempotency_key: IdempotencyKey) -> Self {
+        self.idempotency_key = Some(idempotency_key);
+
+        self
+    }
+
     /// The user text. The journal holds it before the turn enters the queue.
-    pub prompt: Prompt,
+    #[must_use]
+    pub fn prompt(&self) -> &Prompt {
+        &self.prompt
+    }
+
     /// The idempotency key of the turn.
-    pub idempotency_key: Option<IdempotencyKey>,
+    #[must_use]
+    pub fn idempotency_key(&self) -> Option<&IdempotencyKey> {
+        self.idempotency_key.as_ref()
+    }
+
     /// The place of the turn in the queue of its family, from 1.
-    pub queue_depth: QueueDepth,
+    #[must_use]
+    pub fn queue_depth(&self) -> QueueDepth {
+        self.queue_depth
+    }
 }
 
 /// The body of a `turn_started` line.
+///
+/// ```
+/// use creche_contracts::ids::SandboxName;
+/// use creche_contracts::session::{DeadlineS, Prompt, TurnStarted};
+/// use creche_contracts::status::time::Freshness;
+///
+/// let prompt: Prompt = "Is the boiler on?".parse()?;
+/// let sandbox: SandboxName = "chat-s2".parse()?;
+/// let started = TurnStarted::new(prompt, sandbox, DeadlineS::TURN, Freshness::Fresh);
+/// assert_eq!(started.sandbox().as_str(), "chat-s2");
+/// assert_eq!(started.persona_hash(), None);
+/// assert!(!started.status_stale());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::ids::SandboxName;
+/// use creche_contracts::session::{DeadlineS, Prompt, TurnStarted};
+/// use creche_contracts::status::time::Freshness;
+///
+/// fn started(prompt: Prompt, sandbox: SandboxName) -> TurnStarted {
+///     let status_stale = Freshness::Fresh == Freshness::Stale;
+///     let deadline_s = DeadlineS::TURN;
+///     TurnStarted { prompt, sandbox, deadline_s, persona_hash: None, status_stale }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnStarted {
+    prompt: Prompt,
+    sandbox: SandboxName,
+    deadline_s: DeadlineS,
+    persona_hash: Option<Sha256Hex>,
+    status_stale: bool,
+}
+
+impl TurnStarted {
+    /// The body for a turn with this user text, in this sandbox, with this
+    /// limit. `status` says if the status document of the family was stale.
+    /// The turn has no persona digest.
+    #[must_use]
+    pub fn new(
+        prompt: Prompt,
+        sandbox: SandboxName,
+        deadline_s: DeadlineS,
+        status: Freshness,
+    ) -> Self {
+        Self {
+            prompt,
+            sandbox,
+            deadline_s,
+            persona_hash: None,
+            status_stale: status == Freshness::Stale,
+        }
+    }
+
+    /// The same body with this digest of the persona text.
+    #[must_use]
+    pub fn with_persona_hash(mut self, persona_hash: Sha256Hex) -> Self {
+        self.persona_hash = Some(persona_hash);
+
+        self
+    }
+
     /// The user text. It is on disk before `attendance` sends `start_turn`.
-    pub prompt: Prompt,
+    #[must_use]
+    pub fn prompt(&self) -> &Prompt {
+        &self.prompt
+    }
+
     /// The sandbox that serves the turn.
-    pub sandbox: SandboxName,
+    #[must_use]
+    pub fn sandbox(&self) -> &SandboxName {
+        &self.sandbox
+    }
+
     /// The limit of the turn.
-    pub deadline_s: DeadlineS,
+    #[must_use]
+    pub fn deadline_s(&self) -> DeadlineS {
+        self.deadline_s
+    }
+
     /// The SHA-256 digest of the persona text of the turn.
-    pub persona_hash: Option<Sha256Hex>,
+    #[must_use]
+    pub fn persona_hash(&self) -> Option<&Sha256Hex> {
+        self.persona_hash.as_ref()
+    }
+
     /// Whether the status document of the family was more than 90 seconds old
     /// when the turn started (contract 02 §5.1).
-    pub status_stale: bool,
+    #[must_use]
+    pub fn status_stale(&self) -> bool {
+        self.status_stale
+    }
 }
 
 /// The body of an `approval_requested` line.
+///
+/// ```
+/// use creche_contracts::ids::GateId;
+/// use creche_contracts::session::ApprovalRequested;
+///
+/// let gate_id: GateId = "0123456789abcdef".parse()?;
+/// let requested = ApprovalRequested::new("ha_call".to_owned(), String::new(), gate_id);
+/// assert_eq!(requested.tool(), "ha_call");
+/// assert_eq!(requested.summary(), "");
+/// # Ok::<(), creche_contracts::ids::GateIdError>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::ids::GateId;
+/// use creche_contracts::session::ApprovalRequested;
+///
+/// fn requested(gate_id: GateId) -> ApprovalRequested {
+///     ApprovalRequested { tool: String::new(), summary: String::new(), gate_id }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalRequested {
+    tool: String,
+    summary: String,
+    gate_id: GateId,
+}
+
+impl ApprovalRequested {
+    /// The body for a call with this name that the chaperone holds at this
+    /// gate. `summary` says what the call does.
+    #[must_use]
+    pub fn new(tool: String, summary: String, gate_id: GateId) -> Self {
+        Self {
+            tool,
+            summary,
+            gate_id,
+        }
+    }
+
     /// The name of the call that the chaperone holds.
-    pub tool: String,
+    #[must_use]
+    pub fn tool(&self) -> &str {
+        &self.tool
+    }
+
     /// What the call does, for a person. `attendance` writes the empty text.
-    pub summary: String,
+    #[must_use]
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
     /// The id of the gate.
-    pub gate_id: GateId,
+    #[must_use]
+    pub fn gate_id(&self) -> &GateId {
+        &self.gate_id
+    }
 }
 
 /// The body of an `approval_resolved` line.
+///
+/// ```
+/// use creche_contracts::session::{ApprovalResolved, GateReason};
+///
+/// let resolved = ApprovalResolved::new(GateReason::Approved, 12);
+/// assert_eq!(resolved.decision(), &GateReason::Approved);
+/// assert_eq!(resolved.waited_s(), 12);
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{ApprovalResolved, GateReason};
+///
+/// let resolved = ApprovalResolved { decision: GateReason::Approved, waited_s: 12 };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalResolved {
+    decision: GateReason,
+    waited_s: u64,
+}
+
+impl ApprovalResolved {
+    /// The body for a gate that the chaperone resolved in this way, after a
+    /// wait of this count of seconds.
+    #[must_use]
+    pub fn new(decision: GateReason, waited_s: u64) -> Self {
+        Self { decision, waited_s }
+    }
+
     /// How the chaperone resolved the gate.
-    pub decision: GateReason,
+    #[must_use]
+    pub fn decision(&self) -> &GateReason {
+        &self.decision
+    }
+
     /// How many seconds the call waited.
-    pub waited_s: u64,
+    #[must_use]
+    pub fn waited_s(&self) -> u64 {
+        self.waited_s
+    }
 }
 
 /// The body of a `turn_settled` line.
+///
+/// ```
+/// use creche_contracts::session::{TurnSettled, Usage};
+///
+/// let usage = Usage::new(4120, 188, 0, 0, 0.014)?;
+/// let settled = TurnSettled::new(usage).with_leaf_id("e6".to_owned());
+/// assert_eq!(settled.usage().output(), 188);
+/// assert_eq!(settled.leaf_id(), Some("e6"));
+/// assert_eq!(settled.user_entry_id(), None);
+/// # Ok::<(), creche_contracts::session::FieldError>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{TurnSettled, Usage};
+///
+/// fn settled(usage: Usage) -> TurnSettled {
+///     TurnSettled { usage, leaf_id: None, user_entry_id: None }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnSettled {
+    usage: Usage,
+    leaf_id: Option<String>,
+    user_entry_id: Option<String>,
+}
+
+impl TurnSettled {
+    /// The body for a turn with these token counts and this cost. The body
+    /// names no pi entry.
+    #[must_use]
+    pub fn new(usage: Usage) -> Self {
+        Self {
+            usage,
+            leaf_id: None,
+            user_entry_id: None,
+        }
+    }
+
+    /// The same body with this id of the newest pi entry.
+    #[must_use]
+    pub fn with_leaf_id(mut self, leaf_id: String) -> Self {
+        self.leaf_id = Some(leaf_id);
+
+        self
+    }
+
+    /// The same body with this id of the pi entry of the user message.
+    #[must_use]
+    pub fn with_user_entry_id(mut self, user_entry_id: String) -> Self {
+        self.user_entry_id = Some(user_entry_id);
+
+        self
+    }
+
     /// The token counts and the cost of the turn.
-    pub usage: Usage,
+    #[must_use]
+    pub fn usage(&self) -> Usage {
+        self.usage
+    }
+
     /// The newest pi entry after the turn.
-    pub leaf_id: Option<String>,
+    #[must_use]
+    pub fn leaf_id(&self) -> Option<&str> {
+        self.leaf_id.as_deref()
+    }
+
     /// The pi entry of the user message of the turn.
-    pub user_entry_id: Option<String>,
+    #[must_use]
+    pub fn user_entry_id(&self) -> Option<&str> {
+        self.user_entry_id.as_deref()
+    }
 }
 
 /// The body of a `turn_failed` line and of a `turn_aborted` line: a reason,
@@ -327,25 +682,135 @@ impl TurnEnded {
 }
 
 /// The body of a `branch_fallback` line.
+///
+/// ```
+/// use creche_contracts::session::BranchFallback;
+///
+/// let fallback = BranchFallback::new("unmapped_parent".to_owned());
+/// assert_eq!(fallback.reason(), "unmapped_parent");
+/// assert_eq!(fallback.wanted_entry(), None);
+/// assert_eq!(fallback.with_wanted_entry("e4".to_owned()).wanted_entry(), Some("e4"));
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::BranchFallback;
+///
+/// let fallback = BranchFallback { wanted_entry: None, reason: "unmapped_parent".to_owned() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchFallback {
+    wanted_entry: Option<String>,
+    reason: String,
+}
+
+impl BranchFallback {
+    /// The body for a turn that runs as a plain prompt for this reason. The
+    /// body names no pi entry.
+    #[must_use]
+    pub fn new(reason: String) -> Self {
+        Self {
+            wanted_entry: None,
+            reason,
+        }
+    }
+
+    /// The same body with this id of the pi entry that the turn was to fork
+    /// from.
+    #[must_use]
+    pub fn with_wanted_entry(mut self, wanted_entry: String) -> Self {
+        self.wanted_entry = Some(wanted_entry);
+
+        self
+    }
+
     /// The pi entry that the turn was to fork from.
-    pub wanted_entry: Option<String>,
+    #[must_use]
+    pub fn wanted_entry(&self) -> Option<&str> {
+        self.wanted_entry.as_deref()
+    }
+
     /// Why the turn runs as a plain prompt.
-    pub reason: String,
+    #[must_use]
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
 }
 
 /// The body of a `terminal_exchange` line (contract 02 §10.5).
+///
+/// ```
+/// use creche_contracts::session::TerminalExchange;
+///
+/// let exchange = TerminalExchange::new(
+///     "e6".to_owned(),
+///     "e5".to_owned(),
+///     "Is the boiler on?".to_owned(),
+///     "Yes.".to_owned(),
+/// );
+/// assert_eq!(exchange.entry_id(), "e6");
+/// assert_eq!(exchange.parent_entry_id(), "e5");
+/// assert_eq!(exchange.prompt(), "Is the boiler on?");
+/// assert_eq!(exchange.answer(), "Yes.");
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::TerminalExchange;
+///
+/// let exchange = TerminalExchange {
+///     entry_id: "e6".to_owned(),
+///     parent_entry_id: "e5".to_owned(),
+///     prompt: "Is the boiler on?".to_owned(),
+///     answer: "Yes.".to_owned(),
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalExchange {
+    entry_id: String,
+    parent_entry_id: String,
+    prompt: String,
+    answer: String,
+}
+
+impl TerminalExchange {
+    /// The body for one exchange. `entry_id` is the pi entry of the answer,
+    /// and `parent_entry_id` is the pi entry of the prompt.
+    #[must_use]
+    pub fn new(entry_id: String, parent_entry_id: String, prompt: String, answer: String) -> Self {
+        Self {
+            entry_id,
+            parent_entry_id,
+            prompt,
+            answer,
+        }
+    }
+
     /// The pi entry of the answer.
-    pub entry_id: String,
+    #[must_use]
+    pub fn entry_id(&self) -> &str {
+        &self.entry_id
+    }
+
     /// The pi entry of the prompt.
-    pub parent_entry_id: String,
+    #[must_use]
+    pub fn parent_entry_id(&self) -> &str {
+        &self.parent_entry_id
+    }
+
     /// What the person typed in the terminal.
-    pub prompt: String,
+    #[must_use]
+    pub fn prompt(&self) -> &str {
+        &self.prompt
+    }
+
     /// What the model answered.
-    pub answer: String,
+    #[must_use]
+    pub fn answer(&self) -> &str {
+        &self.answer
+    }
 }
 
 /// A note that `attendance` writes. Each one has a fixed set of fields.
@@ -492,6 +957,18 @@ impl From<Map<String, Value>> for Note {
 ///
 /// Each field of each body is a valid type, so each value of this enum is a
 /// body that `attendance` can write.
+///
+/// The set of kinds is closed, so this enum has no variant for an unknown
+/// kind. A reader refuses a line of another kind before it reads a body:
+/// [`StoredLine::parse`] gives [`LineError::BadKind`]. [`JournalBody::read`]
+/// refuses a body that is not the body of its kind. A newer writer can send
+/// three values that the reader accepts:
+///
+/// - A member that a typed body does not have. The reader ignores it.
+/// - A note word that [`ServiceNote`] does not have. The body is a
+///   [`Note::Other`].
+/// - A gate word that [`GateReason`] does not know. The word is a
+///   [`GateReason::Other`].
 ///
 /// The body of a `pi_event` is the event of pi. The contract says that the
 /// host does not change it, so it stays a JSON object. The writer sorts the
@@ -650,10 +1127,7 @@ struct Envelope<'a, Body: Serialize + ?Sized> {
 ///     Holder, JournalBody, JournalLine, JournalSeq, LeaseReason, Timestamp, WriterChanged,
 /// };
 ///
-/// let body = JournalBody::WriterChanged(WriterChanged {
-///     holder: Holder::Tui,
-///     reason: LeaseReason::Granted,
-/// });
+/// let body = JournalBody::WriterChanged(WriterChanged::new(Holder::Tui, LeaseReason::Granted));
 /// let ts: Timestamp = "2026-10-05T19:22:05.118Z".parse()?;
 /// let line = JournalLine::new(JournalSeq::try_from(42_u64)?, ts, None, body);
 /// assert_eq!(
@@ -766,6 +1240,15 @@ struct OverrunBody {
 /// itself have none: they are not in a journal file, and they hold the newest
 /// sequence number that the reader got.
 ///
+/// The set of kinds is closed, so this enum has no variant for an unknown
+/// record. This crate has the writer of a record. It has no reader that makes
+/// this enum. Such a reader has no value for a record of a kind that
+/// [`LineKind`] does not have, so it refuses that record.
+///
+/// [`StoredLine::parse`] reads a line of a journal file and no record of the
+/// stream. It gives [`LineError::BadKind`] for a line of another kind. It
+/// gives [`LineError::BadSeq`] for the two records with no sequence number.
+///
 /// ```
 /// use creche_contracts::session::{StreamRecord, Timestamp};
 ///
@@ -781,6 +1264,12 @@ struct OverrunBody {
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+// CONTRACT-QUESTION: contract 02 §8.1 says that the set of kinds is closed. It
+// does not say what a reader of the stream does with a record of another
+// kind. The reading here is a refusal: this enum has no variant for such a
+// record. The Python readers of the stream give no output for a line of a
+// kind that they do not use. A reader that keeps such a record costs one
+// variant here and one arm in `kind` and in `encode`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamRecord {
     /// A line of the journal.
@@ -1060,6 +1549,8 @@ mod tests {
         text.parse().unwrap()
     }
 
+    const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
     #[test]
     fn a_gate_reason_that_is_not_known_is_kept() {
         for (word, reason) in &GATE_REASONS {
@@ -1162,6 +1653,177 @@ mod tests {
         assert_eq!(
             heartbeat.unwrap_err().to_string(),
             "the body is not the body of a heartbeat line of a journal"
+        );
+    }
+
+    #[test]
+    fn a_body_from_its_constructor_is_the_body_that_a_reader_gets() {
+        let prompt = || "hi".parse::<Prompt>().unwrap();
+        let depth = QueueDepth::try_from(2_u64).unwrap();
+        let usage = Usage::new(1, 2, 3, 4, 0.5).unwrap();
+        let queued = TurnQueued::new(prompt(), depth);
+        let started = TurnStarted::new(
+            prompt(),
+            "chat-s2".parse().unwrap(),
+            DeadlineS::TURN,
+            Freshness::Fresh,
+        );
+        let stale = TurnStarted::new(
+            prompt(),
+            "chat-s2".parse().unwrap(),
+            DeadlineS::SWITCH,
+            Freshness::Stale,
+        );
+        let settled = TurnSettled::new(usage);
+        let fallback = BranchFallback::new("unmapped_parent".to_owned());
+        let bodies = [
+            (
+                JournalBody::SessionTitled(SessionTitled::new("A".parse().unwrap())),
+                r#"{"title":"A"}"#,
+            ),
+            (
+                JournalBody::WriterChanged(WriterChanged::new(
+                    Holder::Owui,
+                    LeaseReason::TakenOver,
+                )),
+                r#"{"holder":"owui","reason":"taken_over"}"#,
+            ),
+            (
+                JournalBody::TurnQueued(queued.clone()),
+                r#"{"prompt":"hi","idempotency_key":null,"queue_depth":2}"#,
+            ),
+            (
+                JournalBody::TurnQueued(queued.with_idempotency_key("k-1".parse().unwrap())),
+                r#"{"prompt":"hi","idempotency_key":"k-1","queue_depth":2}"#,
+            ),
+            (
+                JournalBody::TurnStarted(started),
+                concat!(
+                    r#"{"prompt":"hi","sandbox":"chat-s2","deadline_s":3600,"#,
+                    r#""persona_hash":null,"status_stale":false}"#
+                ),
+            ),
+            (
+                JournalBody::TurnStarted(stale.with_persona_hash(HASH.parse().unwrap())),
+                concat!(
+                    r#"{"prompt":"hi","sandbox":"chat-s2","deadline_s":300,"persona_hash":"#,
+                    r#""0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","#,
+                    r#""status_stale":true}"#
+                ),
+            ),
+            (
+                JournalBody::ApprovalRequested(ApprovalRequested::new(
+                    "ha_call".to_owned(),
+                    "boiler on".to_owned(),
+                    "0123456789abcdef".parse().unwrap(),
+                )),
+                r#"{"tool":"ha_call","summary":"boiler on","gate_id":"0123456789abcdef"}"#,
+            ),
+            (
+                JournalBody::ApprovalResolved(ApprovalResolved::new(GateReason::ApprovalDenied, 7)),
+                r#"{"decision":"approval_denied","waited_s":7}"#,
+            ),
+            (
+                JournalBody::TurnSettled(settled.clone()),
+                concat!(
+                    r#"{"usage":{"input":1,"output":2,"cache_read":3,"cache_write":4,"#,
+                    r#""cost_usd":0.5},"leaf_id":null,"user_entry_id":null}"#
+                ),
+            ),
+            (
+                JournalBody::TurnSettled(
+                    settled
+                        .with_leaf_id("e6".to_owned())
+                        .with_user_entry_id("e5".to_owned()),
+                ),
+                concat!(
+                    r#"{"usage":{"input":1,"output":2,"cache_read":3,"cache_write":4,"#,
+                    r#""cost_usd":0.5},"leaf_id":"e6","user_entry_id":"e5"}"#
+                ),
+            ),
+            (
+                JournalBody::BranchFallback(fallback.clone()),
+                r#"{"wanted_entry":null,"reason":"unmapped_parent"}"#,
+            ),
+            (
+                JournalBody::BranchFallback(fallback.with_wanted_entry("e4".to_owned())),
+                r#"{"wanted_entry":"e4","reason":"unmapped_parent"}"#,
+            ),
+            (
+                JournalBody::TerminalExchange(TerminalExchange::new(
+                    "e6".to_owned(),
+                    "e5".to_owned(),
+                    "asked".to_owned(),
+                    "answered".to_owned(),
+                )),
+                r#"{"entry_id":"e6","parent_entry_id":"e5","prompt":"asked","answer":"answered"}"#,
+            ),
+        ];
+
+        for (body, text) in bodies {
+            let members = object(serde_json::from_str(text).unwrap());
+
+            assert_eq!(serde_json::to_string(&body).unwrap(), text);
+            assert_eq!(
+                JournalBody::read(body.kind(), members).unwrap(),
+                body,
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_accessor_gives_the_field_of_its_name() {
+        let exchange = TerminalExchange::new(
+            "e6".to_owned(),
+            "e5".to_owned(),
+            "asked".to_owned(),
+            "answered".to_owned(),
+        );
+        let requested = ApprovalRequested::new(
+            "ha_call".to_owned(),
+            "boiler on".to_owned(),
+            "0123456789abcdef".parse().unwrap(),
+        );
+        let started = TurnStarted::new(
+            "hi".parse().unwrap(),
+            "chat-s2".parse().unwrap(),
+            DeadlineS::SWITCH,
+            Freshness::Stale,
+        )
+        .with_persona_hash(HASH.parse().unwrap());
+        let queued = TurnQueued::new("hi".parse().unwrap(), QueueDepth::try_from(2_u64).unwrap())
+            .with_idempotency_key("k-1".parse().unwrap());
+        let settled = TurnSettled::new(Usage::new(1, 2, 3, 4, 0.5).unwrap())
+            .with_leaf_id("e6".to_owned())
+            .with_user_entry_id("e5".to_owned());
+
+        assert_eq!(
+            [
+                exchange.entry_id(),
+                exchange.parent_entry_id(),
+                exchange.prompt(),
+                exchange.answer()
+            ],
+            ["e6", "e5", "asked", "answered"]
+        );
+        assert_eq!(
+            [requested.tool(), requested.summary()],
+            ["ha_call", "boiler on"]
+        );
+        assert_eq!(requested.gate_id().as_str(), "0123456789abcdef");
+        assert_eq!(started.prompt().as_str(), "hi");
+        assert_eq!(started.sandbox().as_str(), "chat-s2");
+        assert_eq!(started.deadline_s(), DeadlineS::SWITCH);
+        assert_eq!(started.persona_hash().map(Sha256Hex::as_str), Some(HASH));
+        assert!(started.status_stale());
+        assert_eq!(
+            queued.idempotency_key().map(IdempotencyKey::as_str),
+            Some("k-1")
+        );
+        assert_eq!(
+            (settled.leaf_id(), settled.user_entry_id()),
+            (Some("e6"), Some("e5"))
         );
     }
 
@@ -1290,6 +1952,52 @@ mod tests {
                 "\n"
             )
         );
+    }
+
+    #[test]
+    fn a_stored_line_is_no_record_that_the_stream_makes() {
+        let ts = at("2026-10-05T19:22:31.070Z");
+        let records = [
+            StreamRecord::Heartbeat { ts, last_seq: 77 },
+            StreamRecord::Overrun { ts, last_seq: 77 },
+        ];
+
+        for record in records {
+            assert_eq!(
+                StoredLine::parse(&record.encode().unwrap()).unwrap_err(),
+                LineError::BadSeq
+            );
+        }
+    }
+
+    #[test]
+    fn a_reader_takes_three_values_of_a_newer_writer() {
+        let extra = object(json!({"title": "A", "colour": "red"}));
+        let word = object(json!({"decision": "approval_escalated", "waited_s": 3}));
+        let note = object(json!({"note": "written_by_hand"}));
+        let holder = object(json!({"holder": "kiosk", "reason": "granted"}));
+        let kind = br#"{"journal_seq":1,"kind":"turn_paused"}"#;
+
+        assert_eq!(
+            JournalBody::read(LineKind::SessionTitled, extra).unwrap(),
+            JournalBody::SessionTitled(SessionTitled::new("A".parse().unwrap()))
+        );
+        assert!(matches!(
+            JournalBody::read(LineKind::ApprovalResolved, word).unwrap(),
+            JournalBody::ApprovalResolved(resolved)
+                if resolved.decision().as_str() == "approval_escalated" && resolved.waited_s() == 3
+        ));
+        assert!(matches!(
+            JournalBody::read(LineKind::Note, note).unwrap(),
+            JournalBody::Note(Note::Other(_))
+        ));
+        assert_eq!(
+            JournalBody::read(LineKind::WriterChanged, holder)
+                .unwrap_err()
+                .kind(),
+            LineKind::WriterChanged
+        );
+        assert_eq!(StoredLine::parse(kind).unwrap_err(), LineError::BadKind);
     }
 
     #[test]
