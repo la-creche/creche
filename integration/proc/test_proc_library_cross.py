@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import math
 import os
+import shlex
 import signal
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -75,6 +76,7 @@ from proc_library import (
     write_note,
     write_vault,
 )
+from proc_services import SERVICES, Service, command_of
 from proc_standins import TEI, TEI_MODEL, tune
 
 #: A model id that the stand-in gives after a change of model.
@@ -125,6 +127,9 @@ SECOND_CHUNK = (FULL_DOC, 1)
 #: The start of what `store_content` says of a time that it refuses.
 UPDATED_REFUSED = "`updated_at` of `meta`"
 INDEXED_REFUSED = "`indexed_at` of "
+
+#: What the program of the variable writes into its record at each start.
+STARTED = "started"
 
 
 def test_the_program_and_the_reference_build_the_same_store(library: LibraryStack) -> None:
@@ -300,6 +305,29 @@ def test_the_two_programs_print_the_same_report_line(library: LibraryStack) -> N
     assert report_of(rebuild.reference).rebuilt
     assert all(report.has_error_for(broken) for report in reports)
     assert all(len(report.errors) == 1 for report in reports)
+    assert _differences(library) == []
+
+
+def test_the_reference_does_not_start_the_program_of_the_variable(
+    library: LibraryStack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the variable of the row set, the reference is still the default command.
+
+    The variable names a program here that records each of its starts and
+    then becomes the judged command of this run. One run of the reference
+    leaves no record. One run of the program leaves one.
+    """
+    scope = library.vault()
+    write_vault(scope)
+    record = library.tree.root / "program-starts"
+    monkeypatch.setenv(SERVICES[Service.LIBRARY].override, str(_recording_program(library, record)))
+
+    _by_reference(library, scope, BY_REFERENCE)
+    after_reference = record.exists()
+    _by_program(library, scope, JUDGED)
+
+    assert not after_reference
+    assert record.read_text(encoding="utf-8").split() == [STARTED]
     assert _differences(library) == []
 
 
@@ -493,6 +521,24 @@ def _differences(library: LibraryStack) -> list[str]:
 def _first_line(done: Finished) -> str:
     """The first line of what one run wrote on its stdout."""
     return done.stdout.split("\n")[0]
+
+
+def _recording_program(library: LibraryStack, record: Path) -> Path:
+    """A program for the variable of the row: it records its start, then runs the judged command.
+
+    The judged command is the one of this run: the default command, or the
+    binary that the variable names. So the scenario judges the program that
+    the run chose.
+    """
+    judged = shlex.join(command_of(Service.LIBRARY).words)
+    path = library.tree.root / "recording-library"
+    path.write_text(
+        f'#!/bin/sh\necho {STARTED} >> {shlex.quote(str(record))}\nexec {judged} "$@"\n',
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+    return path
 
 
 def _parts_of(
