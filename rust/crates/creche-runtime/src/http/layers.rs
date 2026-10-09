@@ -433,7 +433,7 @@ async fn unmatched<E: ErrorBodies>(
 ///
 /// The Python origin is `fastapi/routing.py:2746-2751`.
 fn other_form(path: &str) -> Option<String> {
-    if path == "/" || !path.starts_with('/') {
+    if !path.starts_with('/') {
         return None;
     }
     if !path.ends_with('/') {
@@ -2411,10 +2411,10 @@ mod tests {
         });
     }
 
-    /// The gap of the module doc and of the table `UNRECORDED`. The runtime
-    /// has one thread, and the client writes the request and closes its side
-    /// in one step. The server thus reads the request and the end of the
-    /// bytes in one step too.
+    /// The difference that the doc comment of [`edge`] names for a client
+    /// that closes its side at once. The runtime has one thread, and the
+    /// client writes the request and closes its side in one step. The server
+    /// thus reads the request and the end of the bytes in one step too.
     #[test]
     fn a_request_whose_client_closed_its_side_at_once_runs_no_handler() {
         let table: [&[u8]; 2] = [
