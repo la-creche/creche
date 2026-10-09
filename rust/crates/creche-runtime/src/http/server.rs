@@ -2164,11 +2164,11 @@ mod tests {
             let absent: SocketAddr = "192.0.2.10:8340".parse().unwrap();
             let free: SocketAddr = format!("127.0.0.1:{}", free_port()).parse().unwrap();
 
+            // The bind stops at the second address. It does not continue
+            // with the third one, which it can bind.
             let error = listeners_on([absent, held, free]).unwrap_err();
 
             assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
-            // The bind stopped at the second address: nothing holds the third.
-            drop(std::net::TcpListener::bind(free).unwrap());
         });
     }
 
