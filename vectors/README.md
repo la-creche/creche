@@ -42,6 +42,7 @@ release replaces that surface.
 | `data/manifest/` | the component manifest, the release request, the live-state document and the resolved manifest |
 | `data/session/` | the session API: the request bodies, the queries, the error body, the journal and the event stream |
 | `data/runtime/` | the helper code that each service copies: the lenient field readers, the token files, the bearer of a request and the answers of the web framework |
+| `data/noticeboard/` | the noticeboard: the checks of its perimeter, the form body, the route parameters, the readers of `attendance`, of the audit files and of a validation report, the verify hook and `noticeboard --check` |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 
 ## Regenerate
@@ -127,6 +128,10 @@ An `input` object has exactly one key.
 | `repeat` | a long text. Each item is `[text, count]`. Repeat each text `count` times. Join the results in order. |
 | `args` | the named arguments of a builder. A value can be a marker object. |
 | `chunks` | the chunks of one byte stream, in order. Each chunk is a `text` or a `base64` object. |
+
+An `args` input can hold a file. Such a file is an object with a `name` and
+with one of the keys `text`, `base64` and `repeat`. The key has the meaning
+of the table above.
 
 ### The normalized value
 
