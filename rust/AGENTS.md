@@ -1577,9 +1577,6 @@ To make the fifth check on your machine, for example before a merge:
   no lenient field. No packet has that part yet.
 - The error of `mcp::Line::parse` holds no id. A server that answers a
   request which the reader refuses thus writes an error with the id `null`.
-- `mcp::Line::Error` keeps no `data` member with the value `null`. The
-  reader gives the same value for that member and for no member, and the
-  writer then writes no `data`.
 - Each result type of `mcp` keeps a part of what MCP names. The doc comment
   of a type lists that part. The reader drops each other member, for
   example the output schema of a tool. MCP gives a tool a title in two

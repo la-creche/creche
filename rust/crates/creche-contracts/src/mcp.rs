@@ -365,6 +365,16 @@ fn reread<T: DeserializeOwned>(value: &Opaque) -> Result<T, WireError> {
     Ok(json::read(&text, ByteCap::new(text.len()))?)
 }
 
+/// The opaque value that `value` writes.
+///
+/// Only a read makes an [`Opaque`]. The function thus gives the text of the
+/// writer to the strict reader, as [`reread`] does.
+fn opaque_of<T: Serialize + ?Sized>(value: &T) -> Result<Opaque, WireError> {
+    let text = json::write(value, COMPACT).map_err(WireError::NoJsonForm)?;
+
+    Ok(Opaque::read(&text, ByteCap::new(text.len()))?)
+}
+
 /// A JSON object that the module keeps whole and does not read.
 ///
 /// The parameters of a request and the result of a request are such an
@@ -432,9 +442,7 @@ impl Object {
     /// [`WireError::NoJsonForm`] for a value that the writer refuses, and
     /// [`WireError::NotObject`] for a value that writes no object.
     pub fn of<T: Serialize + ?Sized>(value: &T) -> Result<Self, WireError> {
-        let text = json::write(value, COMPACT).map_err(WireError::NoJsonForm)?;
-
-        Self::read(&text, ByteCap::new(text.len()))
+        Self::try_from(opaque_of(value)?)
     }
 
     /// The members of the object as a `T`. A caller reads the parameters of
@@ -617,8 +625,9 @@ pub enum Line {
         code: Integer,
         /// A short description of the error.
         message: String,
-        /// More about the error, in a form that the sender selects. The
-        /// reader gives `None` for the value `null` too.
+        /// More about the error, in a form that the sender selects.
+        /// JSON-RPC 2.0 permits a value of each kind here. The value `null`
+        /// is thus `Some`, and `None` is an error with no `data` member.
         data: Option<Opaque>,
     },
 }
@@ -768,9 +777,13 @@ impl RawLine {
         let error = required(self.error, ERROR)?;
         let code = required(error.code, CODE)?;
         let message = required(error.message, MESSAGE)?;
+        // The slot of an opaque member keeps no value for the word `null`,
+        // and it gives no `Other`.
         let data = match error.data {
+            Slot::Missing => None,
+            Slot::Null => Some(opaque_of(&())?),
             Slot::Value(data) => Some(data),
-            Slot::Missing | Slot::Null | Slot::Other(_) => None,
+            Slot::Other(_) => return Err(WireError::Member("data")),
         };
 
         Ok(Line::Error {
@@ -1889,9 +1902,14 @@ mod tests {
                 r#""id":9,"error":{"code":1,"message":"m","data":"more"}"#,
                 error(Some(9), 1, "m", Some(r#""more""#)),
             ),
+            // The value `null` is data too. It is not an absent member.
             (
                 r#""id":9,"error":{"code":-0,"message":"m","data":null}"#,
-                error(Some(9), 0, "m", None),
+                error(Some(9), 0, "m", Some("null")),
+            ),
+            (
+                r#""id":9,"error":{"code":-0,"message":"m","data":false}"#,
+                error(Some(9), 0, "m", Some("false")),
             ),
         ]
     }
@@ -2133,6 +2151,18 @@ mod tests {
             written(&detailed),
             message(r#""id":3,"error":{"code":-32602,"message":"Invalid params","data":[1,"a"]}"#)
         );
+
+        // Data with the value `null` is a member, and no data is none. Each
+        // of the two reads back as the value that the writer got.
+        let null = error(Some(3), 1, "m", Some("null"));
+        let none = error(Some(3), 1, "m", None);
+        let null_text = r#"{"jsonrpc":"2.0","id":3,"error":{"code":1,"message":"m","data":null}}"#;
+        let none_text = r#"{"jsonrpc":"2.0","id":3,"error":{"code":1,"message":"m"}}"#;
+        assert_ne!(null, none);
+        assert_eq!(written(&null), null_text);
+        assert_eq!(written(&none), none_text);
+        assert_eq!(line(null_text), null);
+        assert_eq!(line(none_text), none);
 
         // The style of the caller applies to each part of a line.
         let spaced = Style::new(Layout::Spaced, Charset::Ascii, KeyOrder::AsGiven);
