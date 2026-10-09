@@ -1031,6 +1031,10 @@ These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
 - The report counts the test code of a listed file too. The message of an
   assertion is a region that runs only when the assertion fails. An example
   is `assert!(ok, "text")`. An assertion with no message has no such region.
+- `assert!(matches!(...))` in a listed file fails check 1. The arm of
+  `matches!` that does not match is a region. That arm does not run while
+  the assertion holds. Use `assert_eq!` in its place, or put the test under
+  `tests/`.
 - The report holds no file of the `tests/` directory of a crate. Put a test
   that needs a message there.
 - A `const fn` that only the compiler evaluates counts as code that no test
