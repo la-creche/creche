@@ -86,19 +86,83 @@ fn number(name: &str, text: Option<&str>) -> Result<Option<i128>, ApiError> {
 
 // --- list sessions ---
 
-/// The parameters of `GET /v1/sessions`, as the text of the URL.
+/// The parameters of `GET /v1/sessions`, as the text of the URL. Code builds
+/// a value by hand: [`RawListQuery::new`] holds no parameter, and a `with_`
+/// method sets each parameter that the URL holds.
+///
+/// ```
+/// use creche_contracts::session::RawListQuery;
+///
+/// fn page_after<'a>(raw: RawListQuery<'a>, cursor: &'a str) -> RawListQuery<'a> {
+///     raw.with_cursor(cursor)
+/// }
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::RawListQuery;
+///
+/// fn page_after<'a>(raw: RawListQuery<'a>, cursor: &'a str) -> RawListQuery<'a> {
+///     RawListQuery { cursor: Some(cursor), ..raw }
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RawListQuery<'a> {
-    /// Only the sessions of one family.
-    pub family: Option<&'a str>,
-    /// Only the sessions in one state.
-    pub state: Option<&'a str>,
-    /// Only the sessions of families of one kind.
-    pub kind: Option<&'a str>,
-    /// The largest count of sessions in the answer.
-    pub limit: Option<&'a str>,
-    /// The cursor of the page before.
-    pub cursor: Option<&'a str>,
+    family: Option<&'a str>,
+    state: Option<&'a str>,
+    kind: Option<&'a str>,
+    limit: Option<&'a str>,
+    cursor: Option<&'a str>,
+}
+
+impl<'a> RawListQuery<'a> {
+    /// The query of a URL that holds no parameter.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The same query with `family`: only the sessions of one family.
+    #[must_use]
+    pub fn with_family(mut self, family: &'a str) -> Self {
+        self.family = Some(family);
+
+        self
+    }
+
+    /// The same query with `state`: only the sessions in one state.
+    #[must_use]
+    pub fn with_state(mut self, state: &'a str) -> Self {
+        self.state = Some(state);
+
+        self
+    }
+
+    /// The same query with `kind`: only the sessions of families of one kind.
+    #[must_use]
+    pub fn with_kind(mut self, kind: &'a str) -> Self {
+        self.kind = Some(kind);
+
+        self
+    }
+
+    /// The same query with `limit`: the largest count of sessions in the
+    /// answer.
+    #[must_use]
+    pub fn with_limit(mut self, limit: &'a str) -> Self {
+        self.limit = Some(limit);
+
+        self
+    }
+
+    /// The same query with `cursor`: the cursor of the page before.
+    #[must_use]
+    pub fn with_cursor(mut self, cursor: &'a str) -> Self {
+        self.cursor = Some(cursor);
+
+        self
+    }
 }
 
 /// The query of `GET /v1/sessions`: list sessions (contract 02 §5.2).
@@ -109,7 +173,7 @@ pub struct RawListQuery<'a> {
 /// ```
 /// use creche_contracts::session::{ListQuery, RawListQuery};
 ///
-/// let raw = RawListQuery { family: Some("chat"), limit: Some("5"), ..RawListQuery::default() };
+/// let raw = RawListQuery::new().with_family("chat").with_limit("5");
 /// let query = ListQuery::try_from(raw)?;
 /// assert_eq!(query.limit().get(), 5);
 /// assert_eq!(query.state(), None);
@@ -227,15 +291,66 @@ impl TurnsWanted {
 
 // --- read the event stream ---
 
-/// The parameters of `GET .../events`, as the text of the URL.
+/// The parameters of `GET .../events`, as the text of the URL. Code builds a
+/// value by hand: [`RawEventsQuery::new`] holds no parameter, and a `with_`
+/// method sets each parameter that the URL holds.
+///
+/// ```
+/// use creche_contracts::session::RawEventsQuery;
+///
+/// fn of_turn<'a>(raw: RawEventsQuery<'a>, turn: &'a str) -> RawEventsQuery<'a> {
+///     raw.with_turn(turn)
+/// }
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::RawEventsQuery;
+///
+/// fn of_turn<'a>(raw: RawEventsQuery<'a>, turn: &'a str) -> RawEventsQuery<'a> {
+///     RawEventsQuery { turn: Some(turn), ..raw }
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RawEventsQuery<'a> {
-    /// The stream starts after this sequence number.
-    pub from_seq: Option<&'a str>,
-    /// Only the lines of one turn.
-    pub turn: Option<&'a str>,
-    /// Whether the stream stays open after the replay.
-    pub follow: Option<&'a str>,
+    from_seq: Option<&'a str>,
+    turn: Option<&'a str>,
+    follow: Option<&'a str>,
+}
+
+impl<'a> RawEventsQuery<'a> {
+    /// The query of a URL that holds no parameter.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The same query with `from_seq`: the stream starts after this sequence
+    /// number.
+    #[must_use]
+    pub fn with_from_seq(mut self, from_seq: &'a str) -> Self {
+        self.from_seq = Some(from_seq);
+
+        self
+    }
+
+    /// The same query with `turn`: only the lines of one turn.
+    #[must_use]
+    pub fn with_turn(mut self, turn: &'a str) -> Self {
+        self.turn = Some(turn);
+
+        self
+    }
+
+    /// The same query with `follow`: whether the stream stays open after the
+    /// replay.
+    #[must_use]
+    pub fn with_follow(mut self, follow: &'a str) -> Self {
+        self.follow = Some(follow);
+
+        self
+    }
 }
 
 /// The three texts that mean that a stream ends after the replay.
@@ -250,7 +365,7 @@ const DO_NOT_FOLLOW: [&str; 3] = ["0", "false", "no"];
 /// ```
 /// use creche_contracts::session::{EventsQuery, Follow, RawEventsQuery};
 ///
-/// let raw = RawEventsQuery { from_seq: Some("41"), follow: Some("No"), ..RawEventsQuery::default() };
+/// let raw = RawEventsQuery::new().with_from_seq("41").with_follow("No");
 /// let query = EventsQuery::try_from(raw)?;
 /// assert_eq!(query.from_seq(), 41);
 /// assert_eq!(query.follow(), Follow::ReplayOnly);
@@ -387,17 +502,9 @@ mod tests {
 
     #[test]
     fn the_number_of_a_list_is_read_before_each_other_parameter() {
-        let raw = RawListQuery {
-            family: Some("Chat"),
-            limit: Some("ten"),
-            ..RawListQuery::default()
-        };
+        let raw = RawListQuery::new().with_family("Chat").with_limit("ten");
         let refusal = ListQuery::try_from(raw).unwrap_err();
-        let family = ListQuery::try_from(RawListQuery {
-            limit: Some("0"),
-            ..raw
-        })
-        .unwrap_err();
+        let family = ListQuery::try_from(raw.with_limit("0")).unwrap_err();
 
         assert_eq!(refusal.message(), "limit is not a number");
         assert_eq!(family.message(), "family is not a family name");
@@ -405,13 +512,37 @@ mod tests {
     }
 
     #[test]
+    fn each_parameter_has_its_own_method() {
+        let list = RawListQuery::new()
+            .with_family("chat")
+            .with_state("idle")
+            .with_kind("thin")
+            .with_limit("7")
+            .with_cursor("after-7");
+        let list = ListQuery::try_from(list).unwrap();
+        let events = RawEventsQuery::new()
+            .with_from_seq("41")
+            .with_turn("a turn")
+            .with_follow("no");
+        let events = EventsQuery::try_from(events).unwrap();
+
+        assert_eq!(list.family().map(FamilyName::as_str), Some("chat"));
+        assert_eq!(list.state(), Some(SessionState::Idle));
+        assert_eq!(list.kind(), Some(SessionKind::Thin));
+        assert_eq!(list.limit().get(), 7);
+        assert_eq!(list.cursor(), Some("after-7"));
+        assert_eq!(events.from_seq(), 41);
+        assert_eq!(events.turn().map(TurnRef::as_str), Some("a turn"));
+        assert_eq!(events.follow(), Follow::ReplayOnly);
+        assert_eq!(RawListQuery::new(), RawListQuery::default());
+        assert_eq!(RawEventsQuery::new(), RawEventsQuery::default());
+    }
+
+    #[test]
     fn a_stream_follows_but_for_three_words() {
         let follow = |text: &str| {
-            EventsQuery::try_from(RawEventsQuery {
-                follow: Some(text),
-                ..RawEventsQuery::default()
-            })
-            .map(|query| query.follow())
+            EventsQuery::try_from(RawEventsQuery::new().with_follow(text))
+                .map(|query| query.follow())
         };
 
         for text in ["0", "false", "no", "FALSE", " No\t", "\u{a0}0\u{1f}"] {
@@ -424,12 +555,7 @@ mod tests {
 
     #[test]
     fn a_sequence_number_past_64_bits_is_refused() {
-        let from = |text: &str| {
-            EventsQuery::try_from(RawEventsQuery {
-                from_seq: Some(text),
-                ..RawEventsQuery::default()
-            })
-        };
+        let from = |text: &str| EventsQuery::try_from(RawEventsQuery::new().with_from_seq(text));
 
         assert_eq!(
             from("18446744073709551615").map(|query| query.from_seq()),
