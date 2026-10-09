@@ -109,6 +109,9 @@ MEETING: Final = "meeting.md"
 BIKES_TEXT: Final = "Bicycle storage rules were updated in March."
 MEETING_TEXT: Final = "The meeting is on Tuesday in the lobby.\n\nBring your badge."
 
+#: Another text for the second note, for a scenario that changes one file.
+MOVED_TEXT: Final = "The meeting moved to Thursday."
+
 #: What `start_held_update` writes. Each note gets one word that no other
 #: text of a scenario holds. The second note also gets the text that makes
 #: the stand-in hold its embed call.

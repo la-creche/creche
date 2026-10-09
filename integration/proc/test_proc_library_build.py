@@ -37,6 +37,7 @@ from proc_library import (
     META_DIMS,
     META_MODEL,
     META_UPDATED,
+    MOVED_TEXT,
     NOTES,
     REPO,
     SECOND_WORD,
@@ -169,8 +170,7 @@ def test_incremental_only_reembeds_changed(library: LibraryStack) -> None:
 
     again = _run(library, scope)
     calls_again = library.embedded()[first_calls:]
-    moved = "The meeting moved to Thursday."
-    write_note(scope / MEETING, moved)
+    write_note(scope / MEETING, MOVED_TEXT)
     changed = _run(library, scope)
     calls_changed = library.embedded()[first_calls + len(calls_again) :]
     after = library.store().files()
@@ -178,10 +178,10 @@ def test_incremental_only_reembeds_changed(library: LibraryStack) -> None:
     assert (again.indexed, again.unchanged) == (0, 2)
     assert calls_again == [[CANARY]]
     assert (changed.indexed, changed.unchanged) == (1, 1)
-    assert calls_changed == [[CANARY], [moved]]
+    assert calls_changed == [[CANARY], [MOVED_TEXT]]
     assert after[_note(scope, BIKES)] == built[_note(scope, BIKES)]
     assert after[_note(scope, MEETING)].hash != built[_note(scope, MEETING)].hash
-    assert library.store().texts_of(scope.resolve() / MEETING) == [moved]
+    assert library.store().texts_of(scope.resolve() / MEETING) == [MOVED_TEXT]
 
 
 def test_deletion_removes_rows(library: LibraryStack) -> None:
@@ -488,7 +488,7 @@ def test_the_index_directory_holds_only_the_store(library: LibraryStack) -> None
 
     _run(library, scope)
     after_build = os.listdir(library.index_dir())
-    write_note(scope / MEETING, "The meeting moved to Thursday.")
+    write_note(scope / MEETING, MOVED_TEXT)
     _run(library, scope)
     after_update = os.listdir(library.index_dir())
 

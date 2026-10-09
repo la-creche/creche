@@ -29,6 +29,7 @@ from proc_library import (
     LAN_ADDRESS_ENV,
     MEETING,
     META_MODEL,
+    MOVED_TEXT,
     SECOND_WORD,
     TEI_PORT,
     TEI_URL_ENV,
@@ -183,7 +184,7 @@ def test_the_url_is_built_from_the_lan_address(library_prepared: LibraryStack) -
 def test_an_unreachable_tei_leaves_the_store_untouched(library: LibraryStack) -> None:
     """`library/AGENTS.md`, "Run it": the program asks TEI first, and stops when none answers."""
     scope, built = _built(library)
-    write_note(scope / MEETING, "The meeting moved to Thursday.")
+    write_note(scope / MEETING, MOVED_TEXT)
     nothing_listens = f"http://{LOOPBACK}:{library.supervisor.free_port()}"
 
     done = library.run_index(scope, library.index_dir(), env={TEI_URL_ENV: nothing_listens})
@@ -196,7 +197,7 @@ def test_a_tei_with_other_dimensions_is_refused(library: LibraryStack) -> None:
     """A vector of another length is a vector of another model. The canary shows it."""
     scope, built = _built(library)
     first_calls = len(library.embedded())
-    write_note(scope / MEETING, "The meeting moved to Thursday.")
+    write_note(scope / MEETING, MOVED_TEXT)
     tune(library.tree, TEI, TEI_DIMS, OTHER_DIMS)
 
     done = library.run_index(scope, library.index_dir())
