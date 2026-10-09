@@ -1036,11 +1036,11 @@ the text of the failure. Work down this list.
 - **The suite declares no dependency of its own.** The suite imports
   PyYAML, `httpx` and `sqlite_vec`, and the `dev` group of the root
   `pyproject.toml` names none of them. The product packages bring the three
-  into the venv. Only `library` brings `sqlite_vec`. When the last package
-  that needs one of the three leaves the workspace, the suite stops at its
-  imports. Add the name to the `dev` group in the pull request that removes
-  that package. The change moves `uv.lock`, and `uv.lock` moves each venv
-  component.
+  into the venv, and only `library` brings `sqlite_vec`. When the last
+  package that needs one of the three leaves the workspace, the suite stops
+  at its imports. Add the name to the `dev` group in the pull request that
+  removes that package. The change moves `uv.lock`, and `uv.lock` moves each
+  venv component.
 - **CONTRACT-QUESTION, the exit status of `index-scope`.** No contract names
   one. The suite holds status 2 for a command line that the program
   refuses, as the program returns today. It accepts each status that is not
@@ -1054,12 +1054,47 @@ the text of the failure. Work down this list.
   line. A person reads that text in the journal of the unit. A change costs
   one pattern in `proc_library.py`.
 - **CONTRACT-QUESTION, the form of `chunks_vec`.** `library/AGENTS.md` gives
-  the table as a `vec0` table. Contract 03 §7.3 rule 6 lets a reader take
-  the vectors from `chunks_emb` alone. The suite holds one thing for
-  `chunks_vec`: on a connection with `sqlite-vec`, the statement
-  `SELECT rowid, embedding FROM chunks_vec` gives the vector of each chunk.
-  A scenario that holds the form of the table costs one assertion in
+  the table as a `vec0` table. Contract 03 §7.3 rule 6 has a reader take
+  the vectors from `chunks_emb`, and never from `chunks_vec`. The suite
+  holds one thing for `chunks_vec`: on a connection with `sqlite-vec`, the
+  statement `SELECT rowid, embedding FROM chunks_vec` gives the vector of
+  each chunk. A scenario that holds the form of the table costs one
+  assertion in `test_proc_library_build.py`.
+- **CONTRACT-QUESTION, what a store holds for a corpus.**
+  `library/AGENTS.md` gives the schema and six rules. No contract gives the
+  order of the chunk ids, the text of a chunk or the path of a file. The
+  suite holds the program as it is:
+  - The chunk ids follow the order of the file paths, part by part.
+  - A text file is UTF-8. Each bad sequence becomes U+FFFD, and each line
+    end becomes one line feed.
+  - A chunk has 1000 characters at most. A piece of a long paragraph
+    starts with the last 200 characters of the piece before it.
+  - A file with no text has a row in `files` and no chunk.
+  - The program does not follow a link to a directory.
+  - Each stored path starts with the resolved corpus directory.
+
+  A change costs the scenario of that point in
   `test_proc_library_build.py`.
+- **CONTRACT-QUESTION, the address of TEI.** `library/AGENTS.md` names the
+  variable `TEI_URL` and the build argument `AGENT_LAN_ADDRESS`. No contract
+  gives the rule between the two. The suite holds the program as it is:
+  - `TEI_URL` wins.
+  - With `AGENT_LAN_ADDRESS` alone, the program dials port 8085 of that
+    address.
+  - With neither one, the program names `AGENT_LAN_ADDRESS` on stderr and
+    makes no call.
+
+  A change costs three scenarios in `test_proc_library_start.py`.
+- **CONTRACT-QUESTION, a store file that is no store.** No contract says
+  what `index-scope` does with a `store.db` that is no SQLite database, or
+  with one of 0 bytes. The suite holds the program as it is: the run ends
+  with a status that is not 0, and the file keeps its bytes. A program that
+  builds a new store in that place fails two scenarios of
+  `test_proc_library_start.py`. A change costs those two scenarios.
+- **CONTRACT-QUESTION, a TEI that names no model.** No contract gives the
+  answer of `GET /info`. The suite holds the program as it is: for an
+  answer with no `model_id`, the store records the model `unknown`. A
+  change costs one scenario in `test_proc_library_start.py`.
 - **The TEI stand-in copies facts that no test of this suite can check.**
   The stand-in refuses a call with more than 32 texts with status 413. It
   refuses a route that it does not know, a body of another shape, and a

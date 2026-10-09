@@ -100,6 +100,12 @@ def test_a_scope_that_is_no_directory_is_refused(library: LibraryStack) -> None:
 
 
 # -------------------------------------------------------- the address of TEI
+#
+# CONTRACT-QUESTION: `library/AGENTS.md` names `TEI_URL` and the build
+# argument `AGENT_LAN_ADDRESS`. No contract gives the rule between the two.
+# Reading taken: the program as it is. The URL wins, the address alone gives
+# the port of TEI on that address, and a start with neither one names the
+# address variable. A change costs the three scenarios of this part.
 
 
 def test_main_stops_before_any_call_without_an_address(library: LibraryStack) -> None:
@@ -176,6 +182,11 @@ def test_a_tei_with_other_dimensions_is_refused(library: LibraryStack) -> None:
 
 
 def test_a_tei_that_names_no_model_is_recorded_as_unknown(library: LibraryStack) -> None:
+    """An answer of `GET /info` with no `model_id` gives a store of the model `unknown`.
+
+    CONTRACT-QUESTION: no contract gives the answer of `GET /info`. Reading
+    taken: the program as it is. A change costs this scenario.
+    """
     scope = library.vault()
     write_vault(scope)
     tune(library.tree, TEI, TEI_NO_MODEL_ID)
@@ -230,6 +241,12 @@ def test_sigkill_during_a_run_leaves_the_store_untouched(library: LibraryStack) 
 
 
 # ------------------------------------------- a store that the run cannot read
+#
+# CONTRACT-QUESTION: no contract says what the program does with a store
+# file that is no store. Reading taken: the program as it is, which is the
+# conservative one. The run ends with a status that is not 0, and the file
+# keeps its bytes. A program that builds a new store in that place fails
+# the two scenarios of this part.
 
 
 def test_a_store_that_is_no_database_stops_the_run(library: LibraryStack) -> None:

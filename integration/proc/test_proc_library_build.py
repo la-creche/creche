@@ -61,10 +61,11 @@ CODE_INDEX = f"{CODE_INDEX_PREFIX}{REPO}"
 #: (`library/AGENTS.md`, "Store schema").
 #:
 #: CONTRACT-QUESTION: that section also gives `chunks_vec`, as a `vec0`
-#: table. Contract 03 §7.3 rule 6 lets a reader take the vectors from
-#: `chunks_emb` alone, so no reader depends on the form of `chunks_vec`.
-#: Reading taken: the suite holds no form for that table. It holds the
-#: statement that reads it. A change costs one entry here.
+#: table. Contract 03 §7.3 rule 6 has a reader take the vectors from
+#: `chunks_emb`, and never from `chunks_vec`. So no reader depends on the
+#: form of `chunks_vec`. Reading taken: the suite holds no form for that
+#: table. It holds the statement that reads it. A change costs one entry
+#: here.
 SCHEMA = {
     "meta": "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)",
     "files": "CREATE TABLE files(path TEXT PRIMARY KEY, hash TEXT, mtime REAL, indexed_at REAL)",
@@ -292,6 +293,12 @@ def test_vault_profile_ignores_source_files(library: LibraryStack) -> None:
 
 
 # ------------------------------------------------------ what a process shows
+#
+# CONTRACT-QUESTION: `library/AGENTS.md` gives the schema and six rules. No
+# contract gives the order of the chunk ids, the text of a chunk or the path
+# of a file. Reading taken: the program as it is, because a second writer
+# of one store must give the same rows. `integration/proc/AGENTS.md` lists
+# each point under "Known gaps". A change costs the scenario of that point.
 
 
 def test_the_chunk_ids_follow_the_path_order(library: LibraryStack) -> None:
@@ -369,9 +376,10 @@ def test_an_empty_file_has_a_files_row_and_no_chunk(library: LibraryStack) -> No
 def test_the_store_has_the_schema_of_the_contract(library: LibraryStack) -> None:
     """`library/AGENTS.md`, "Store schema": the schema is the contract for each reader.
 
-    Contract 03 §7.3 rule 6 lets a reader take the vectors from `chunks_emb`
-    alone. So this scenario holds no form for `chunks_vec`. It holds that the
-    statement of rule 6 gives one row for each chunk.
+    Contract 03 §7.3 rule 6 has a reader take the vectors from `chunks_emb`,
+    and never from `chunks_vec`. So this scenario holds no form for
+    `chunks_vec`. It holds that one statement gives one row of that table
+    for each chunk, on a connection with `sqlite-vec`.
     """
     scope = library.vault()
     write_vault(scope)
