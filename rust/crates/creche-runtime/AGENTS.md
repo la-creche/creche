@@ -260,6 +260,20 @@ reason. The packet that writes the three bodies obeys these rules:
   or sets `PATH`. For a path with a `/`, Linux refuses the file and macOS
   gives it to `/bin/sh`. A service that names each program by its absolute
   path gets the refusal on Linux.
+- A child of `command` gets each descriptor of the process that has no
+  close-on-exec flag. CPython closes each descriptor past 2 in the child.
+  Open each descriptor of a service with the flag. `rustix` sets the flag
+  only when the call asks for it. Give `OFlags::CLOEXEC` to each open call
+  of `rustix`.
+- `tokio` starts a program first and gives its pipes to the I/O driver after
+  that. When the driver refuses a pipe, `command` gives
+  `RunError::NotStarted`, and the program runs with no owner. This process
+  then closes its ends of the pipes of that program.
+- After a wait call that failed, the drop of the child sends SIGKILL to the
+  id of the child, because `tokio` holds that flag. The operating system can
+  give that id to another process before the drop. This applies to a run
+  that gave `RunError::OwnerLost` for a failed wait call. It also applies to
+  the drop of a `ChildGuard` after such a call.
 - No test gives `faults::publish` a fault file whose source is `caregiver`.
   `FaultFile::new` refuses that source, so no code can build such a file. A
   test gives the private function `publish_as` no writer in its place.

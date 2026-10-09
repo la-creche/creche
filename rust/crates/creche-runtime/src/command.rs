@@ -949,6 +949,10 @@ async fn run_child(
 /// The function then writes one `ERROR` line and gives
 /// [`RunError::OwnerLost`]. CPython reads such an end as the return code 0
 /// (`subprocess.py:2040-2049`, version 3.13).
+///
+/// The owner drops the child after that error, and the drop sends SIGKILL to
+/// the id of the child: `tokio` holds that flag. The operating system can
+/// give the id to another process by then.
 fn whole(
     program: &str,
     waited: &io::Result<ExitStatus>,
