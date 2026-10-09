@@ -46,12 +46,15 @@ const SECRET_PREFIX: &str = "secret:";
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// Code outside this module cannot build a value from a raw map:
+/// Code outside this module cannot write the struct as a literal, also not
+/// with the field of another value:
 ///
-/// ```compile_fail,E0423
+/// ```compile_fail,E0451
 /// use creche_contracts::config::roster::{RawRoster, Roster};
 ///
-/// let raw = RawRoster(None);
+/// fn copy_of(raw: RawRoster) -> RawRoster {
+///     RawRoster { ..raw }
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]

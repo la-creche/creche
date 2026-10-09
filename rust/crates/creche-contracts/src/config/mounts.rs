@@ -266,13 +266,14 @@ struct RuntimeFields {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// Code outside this module cannot build a value, and cannot read its field:
+/// Code outside this module cannot write the struct as a literal, also not
+/// with the field of another value:
 ///
-/// ```compile_fail,E0423
+/// ```compile_fail,E0451
 /// use creche_contracts::config::mounts::{RawRuntimeConfig, RuntimeConfig, Shell};
 ///
 /// fn copy_of(raw: RawRuntimeConfig) -> RawRuntimeConfig {
-///     RawRuntimeConfig(raw.0)
+///     RawRuntimeConfig { ..raw }
 /// }
 /// ```
 #[derive(Debug, Deserialize)]
