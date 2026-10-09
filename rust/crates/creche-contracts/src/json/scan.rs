@@ -170,8 +170,20 @@ pub(super) fn integer_value(token: &str) -> Option<i128> {
 
 /// The value of a number token with a fraction or an exponent, after the
 /// rounding to a float of 64 bits. `None` for a value that is not finite.
+///
+/// `serde_json` reads the token here, and `StrictText::parse` gives the same
+/// text to `serde_json`. The check and each later read thus have one value
+/// for a token.
+///
+/// Do not read the token with `str::parse::<f64>`. The standard library of
+/// the toolchain 1.92.0 reads the digits of an exponent until their value is
+/// 65,536 or more, and it drops each later digit. It thus reads an exponent
+/// of 655,360 or more as a smaller one. A token with such an exponent and
+/// with more than 65,000 other digits can then get a wrong value.
 pub(super) fn float_value(token: &str) -> Option<f64> {
-    token.parse().ok().filter(|float: &f64| float.is_finite())
+    serde_json::from_str::<f64>(token)
+        .ok()
+        .filter(|float| float.is_finite())
 }
 
 /// The place of the pass in the text.
@@ -1011,6 +1023,25 @@ mod tests {
                 !WITH_A_LATER_FAULT.contains(&text),
                 "{shown:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_long_float_token_counts_each_digit_of_its_exponent() {
+        // The digits before the exponent move the value by 66,001 or by
+        // 700,001 places. Only the full exponent gives the right value.
+        let zeros = "0".repeat(66_000);
+        let past_the_range = format!("0.{zeros}1e655360");
+        let rounds_to_zero = format!("1{zeros}e-655360");
+        let one = format!("0.{}1e700001", "0".repeat(700_000));
+
+        assert_eq!(float_value(&past_the_range), None);
+        assert_eq!(float_value(&rounds_to_zero), Some(0.0));
+        assert_eq!(float_value(&one), Some(1.0));
+
+        assert_eq!(refusal(past_the_range.as_bytes()), (Rule::FloatRange, 0));
+        for text in [&rounds_to_zero, &one] {
+            assert_eq!(outcome(text.as_bytes()), Outcome::Strict(Found::Float));
         }
     }
 

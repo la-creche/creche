@@ -575,6 +575,34 @@ mod tests {
     }
 
     #[test]
+    fn a_long_float_token_has_one_value_for_each_reader() {
+        const LONG: ByteCap = ByteCap::new(1_048_576);
+
+        // Each token has a long run of zeros, which moves its value by as
+        // many places as the exponent moves it back. A reader that drops a
+        // digit of the exponent gives 0 or no finite value.
+        let rows: [(String, f64); 5] = [
+            (format!("0.{}1e66001", "0".repeat(66_000)), 1.0),
+            (format!("0.{}1e700001", "0".repeat(700_000)), 1.0),
+            (format!("0.{}1e655660", "0".repeat(655_359)), 1e300),
+            (format!("1{}e-655360", "0".repeat(66_000)), 0.0),
+            (format!("-1{}e-655360", "0".repeat(655_360)), -1.0),
+        ];
+
+        for (text, float) in rows {
+            let strict = check(text.as_bytes(), LONG).unwrap();
+            let Ok(Number::Float(as_number)) = strict.parse::<Number>() else {
+                panic!("the token is a float");
+            };
+            let in_a_slot: Slot<Number> = strict.parse().unwrap();
+
+            assert_eq!(as_number.to_bits(), float.to_bits());
+            assert_eq!(strict.parse::<f64>().map(f64::to_bits), Ok(float.to_bits()));
+            assert_eq!(in_a_slot, Slot::Value(Number::Float(float)));
+        }
+    }
+
+    #[test]
     fn a_number_reads_no_value_of_another_kind() {
         for text in ["null", "true", "\"7\"", "[7]", "{\"count\": 7}"] {
             assert!(matches!(
