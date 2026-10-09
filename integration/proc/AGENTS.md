@@ -1106,8 +1106,10 @@ the text of the failure. Work down this list.
 - **The TEI stand-in copies facts that no test of this suite can check.**
   The stand-in refuses a call with more than 32 texts with status 413. It
   refuses a route that it does not know, a body of another shape, and a
-  body with no `Content-Length` header. No run of the real service checked
-  those answers for this suite. A change costs one check in
+  body with no `Content-Length` header. Its answer of `GET /info` holds the
+  key `max_client_batch_size` beside `model_id`, because the real service
+  answers more keys than the index builder reads. No run of the real
+  service checked those answers for this suite. A change costs one check in
   `standin_tei.py` and its test.
 - **No scenario dials TEI on the LAN address.** With `AGENT_LAN_ADDRESS`
   alone, the program dials port 8085 of that address. No test can listen

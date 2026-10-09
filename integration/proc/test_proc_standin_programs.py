@@ -94,6 +94,9 @@ EMBED_ROUTE = "/embed"
 #: A word that one text of a tuned embed call holds.
 MARK = "quince"
 
+#: What each answer of `/info` holds beside the model.
+BATCH_LIMIT = {"max_client_batch_size": standin_tei.MAX_BATCH}
+
 #: A request with a body in chunks: it has no `Content-Length` header.
 NO_LENGTH_REQUEST = (
     b"POST /embed HTTP/1.1\r\nHost: tei\r\nContent-Type: application/json\r\n"
@@ -565,13 +568,23 @@ def test_litellm_fails_a_request_when_a_test_says_so(litellm: Litellm) -> None:
 
 
 def test_tei_names_its_model(tei: Tei) -> None:
+    """The answer holds one key more than the model, as the real service answers more keys.
+
+    A reader that refuses a key that it does not know fails on this answer.
+    """
     with _tei_client(tei) as client:
         first = client.get(INFO_ROUTE)
         tune(tei.tree, TEI, TEI_MODEL, "another/model")
         second = client.get(INFO_ROUTE)
 
-    assert (first.status_code, first.json()) == (HTTP_OK, {"model_id": standin_tei.DEFAULT_MODEL})
-    assert (second.status_code, second.json()) == (HTTP_OK, {"model_id": "another/model"})
+    assert (first.status_code, first.json()) == (
+        HTTP_OK,
+        {"model_id": standin_tei.DEFAULT_MODEL, **BATCH_LIMIT},
+    )
+    assert (second.status_code, second.json()) == (
+        HTTP_OK,
+        {"model_id": "another/model", **BATCH_LIMIT},
+    )
 
 
 def test_tei_names_no_model_when_a_test_says_so(tei: Tei) -> None:
@@ -580,7 +593,7 @@ def test_tei_names_no_model_when_a_test_says_so(tei: Tei) -> None:
     with _tei_client(tei) as client:
         info = client.get(INFO_ROUTE)
 
-    assert (info.status_code, info.json()) == (HTTP_OK, {})
+    assert (info.status_code, info.json()) == (HTTP_OK, BATCH_LIMIT)
 
 
 def test_tei_fails_info_when_a_test_says_so(tei: Tei) -> None:

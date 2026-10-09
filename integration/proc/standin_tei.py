@@ -5,8 +5,13 @@
 No test may load an embedding model. `index-scope` still makes these two
 requests, and this program answers each one:
 
-    GET  /info    the model that the service has       {"model_id": <model>}
+    GET  /info    the model that the service has       {"model_id": <model>, ...}
     POST /embed   {"inputs": [<text>, ...]}            one vector for each text
+
+The answer of `/info` also holds `max_client_batch_size`, with the value of
+`MAX_BATCH`. The real service answers more keys than the index builder
+reads. A reader that refuses a key that it does not know then fails in this
+suite, before it fails on a host.
 
 A vector depends on its text alone, so a test can compute the vector that a
 store must hold. Value `i` of a vector is `((s * (i + 1)) % 1000) / 1000 - 0.5`,
@@ -81,6 +86,10 @@ DEFAULT_DIMS: Final = 768
 #: call, and its default limit is this number.
 MAX_BATCH: Final = 32
 
+#: The two keys of the answer of `/info`: the model, and the limit above.
+MODEL_KEY: Final = "model_id"
+BATCH_KEY: Final = "max_client_batch_size"
+
 #: The terms of the vector rule: the modulus, and half of the range.
 _MODULUS: Final = 1000
 _CENTRE: Final = 0.5
@@ -138,10 +147,12 @@ class Embedder:
         if self._tuned(TUNE_FAIL_INFO) is not None:
             return HTTP_UNAVAILABLE, {"error": "info failed"}
 
-        if self._tuned(TUNE_NO_MODEL_ID) is not None:
-            return HTTP_OK, {}
+        info: dict[str, object] = {BATCH_KEY: MAX_BATCH}
 
-        return HTTP_OK, {"model_id": self._tuned(TUNE_MODEL) or DEFAULT_MODEL}
+        if self._tuned(TUNE_NO_MODEL_ID) is None:
+            info[MODEL_KEY] = self._tuned(TUNE_MODEL) or DEFAULT_MODEL
+
+        return HTTP_OK, info
 
     def _embed(self, body: object) -> Answer:
         texts = _texts_of(body)
