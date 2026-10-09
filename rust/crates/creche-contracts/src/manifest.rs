@@ -1598,16 +1598,36 @@ mod tests {
             .iter()
             .map(|(name, wanted)| (name.clone(), text_of(wanted).to_owned()))
             .collect::<BTreeMap<String, String>>();
-
-        Some(Draft {
-            id: text_field(args, "request_id").parse().ok()?,
-            kind: text_field(args, "kind").to_owned(),
+        let draft = Draft::new(
+            text_field(args, "request_id").parse().ok()?,
+            text_field(args, "kind").to_owned(),
             components,
-            rollback_of: optional_field(args, "rollback_of").map(str::to_owned),
-            requested_by: text_field(args, "requested_by").to_owned(),
-            requester_session: optional_field(args, "requester_session").map(str::to_owned),
-            now: float_of(text_field(args, "now_bits")),
-        })
+            text_field(args, "requested_by").to_owned(),
+            float_of(text_field(args, "now_bits")),
+        );
+
+        Some(with_optional_parts(
+            draft,
+            optional_field(args, "rollback_of"),
+            optional_field(args, "requester_session"),
+        ))
+    }
+
+    /// The draft with each optional part that the caller holds.
+    fn with_optional_parts(
+        draft: Draft,
+        rollback_of: Option<&str>,
+        requester_session: Option<&str>,
+    ) -> Draft {
+        let draft = match rollback_of {
+            Some(target) => draft.with_rollback_of(target.to_owned()),
+            None => draft,
+        };
+
+        match requester_session {
+            Some(session) => draft.with_requester_session(session.to_owned()),
+            None => draft,
+        }
     }
 
     #[test]
@@ -1654,18 +1674,20 @@ mod tests {
         for now in times {
             for (kind, rollback_of) in &kinds {
                 for requester_session in &sessions {
-                    let draft = Draft {
-                        id: id.clone(),
-                        kind: (*kind).to_owned(),
-                        components: releasable_names()
-                            .map(|name| (name.to_owned(), "latest".to_owned()))
-                            .chain([("chaperone".to_owned(), "1.2.3".to_owned())])
-                            .collect(),
-                        rollback_of: rollback_of.clone(),
-                        requested_by: "agent-control".to_owned(),
-                        requester_session: requester_session.clone(),
-                        now,
-                    };
+                    let draft = with_optional_parts(
+                        Draft::new(
+                            id.clone(),
+                            (*kind).to_owned(),
+                            releasable_names()
+                                .map(|name| (name.to_owned(), "latest".to_owned()))
+                                .chain([("chaperone".to_owned(), "1.2.3".to_owned())])
+                                .collect(),
+                            "agent-control".to_owned(),
+                            now,
+                        ),
+                        rollback_of.as_deref(),
+                        requester_session.as_deref(),
+                    );
                     let planned = Request::plan(&draft).unwrap();
                     let read = Request::parse(&planned.to_bytes(), &id).unwrap();
 
@@ -1679,15 +1701,13 @@ mod tests {
 
         assert_eq!(
             Request::parse(
-                &Request::plan(&Draft {
-                    id: id.clone(),
-                    kind: "release".to_owned(),
-                    components: BTreeMap::from([("chaperone".to_owned(), "1.2.3".to_owned())]),
-                    rollback_of: None,
-                    requested_by: "human".to_owned(),
-                    requester_session: None,
-                    now: 1.0,
-                })
+                &Request::plan(&Draft::new(
+                    id.clone(),
+                    "release".to_owned(),
+                    BTreeMap::from([("chaperone".to_owned(), "1.2.3".to_owned())]),
+                    "human".to_owned(),
+                    1.0,
+                ))
                 .unwrap()
                 .to_bytes(),
                 &other
