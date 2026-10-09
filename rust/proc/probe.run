@@ -1,0 +1,14 @@
+# The program creche-probe of the crate creche-testkit, in the place of the
+# noticeboard. bin/proc-rust.sh reads this file, and rust/AGENTS.md, "The
+# judge of a program", has the rules.
+#
+# The file leaves one scenario of test_proc_board_start.py out. "Known gaps"
+# of integration/proc/AGENTS.md has the entry, and the packet that ends it.
+package creche-testkit
+program creche-probe
+variable CRECHE_PROC_NOTICEBOARD
+select integration/proc/test_proc_board_start.py::test_the_check_validates_and_binds_nothing
+select integration/proc/test_proc_board_start.py::test_a_wildcard_bind_refuses_to_start
+select integration/proc/test_proc_board_start.py::test_a_key_file_that_is_not_there_refuses_to_start
+select integration/proc/test_proc_board_start.py::test_no_bind_and_no_site_address_refuses_to_start
+select integration/proc/test_proc_board_start.py::test_sigterm_ends_the_service

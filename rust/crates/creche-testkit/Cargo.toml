@@ -9,6 +9,15 @@ publish.workspace = true
 [lints]
 workspace = true
 
+# The one program of this crate. The process-level suite under
+# integration/proc judges it as a process (bin/proc-rust.sh, with
+# rust/proc/probe.run). `test = false`: the file holds no test, so cargo
+# builds no test program for it.
+[[bin]]
+name = "creche-probe"
+path = "src/bin/creche-probe.rs"
+test = false
+
 [dependencies]
 creche-contracts = { path = "../creche-contracts" }
 creche-runtime = { path = "../creche-runtime" }

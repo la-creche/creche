@@ -18,6 +18,7 @@ defect that a test finds late.
 | `clippy.toml` | The lints that a test can break. |
 | `deny.toml` | The policy for the locked crates: the licenses, the sources, the bans and the advisories. `cargo deny` reads it. |
 | `coverage-files.txt` | The list of the files that the coverage rule binds. `bin/rust-coverage.sh` reads it. |
+| `proc/<name>.run` | One file for each Rust program that the process-level suite judges. `bin/proc-rust.sh` reads it. "The judge of a program" below holds its rules. |
 | `crates/<name>/` | One crate. Each directory there is a workspace member. |
 
 | Crate | What it holds |
@@ -26,7 +27,7 @@ defect that a test finds late.
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
-| `creche-testkit` | Test helpers for each crate. No release holds it. `crates/creche-testkit/AGENTS.md` holds its rules. |
+| `creche-testkit` | Test helpers for each crate, and the program `creche-probe`. No release holds it. `crates/creche-testkit/AGENTS.md` holds its rules. |
 
 | Module of `creche-contracts` | What it holds |
 |---|---|
@@ -1094,6 +1095,83 @@ Some differences from the Python origin are in no vector. Describe such a
 difference in the doc comment of the Rust function. Pin it with one plain
 test.
 
+## The judge of a program
+
+The process-level suite under `integration/proc` is the judge of a port. It
+starts each service as a process. One variable for each service replaces the
+start command of that service. `integration/proc/AGENTS.md` has the service
+table and the rules of the suite.
+
+`bin/proc-rust.sh` gives the suite a Rust program of this workspace. The
+`proc-rust` job of CI runs the script for each code change, and the check
+`gate` needs that job. No hook runs the script.
+
+The script reads each file `proc/<name>.run`. One file gives one program to
+the suite, in the place of one service. A line of a file is a comment that
+starts with `#`, or one key, one space and one value. A file has no empty
+line.
+
+| Key | Value | Lines |
+|---|---|---|
+| `package` | The cargo package that holds the program. | One |
+| `program` | The name of the program in that package. | One |
+| `variable` | The variable of the service in the service table. | One |
+| `select` | One test file of the suite, or one test of a file as pytest names it: `integration/proc/<file>.py::<test>`. | One or more |
+
+The script reads each file before the first build. A file that breaks a rule
+stops the run there. For each file, in the order of the names, the script
+does these steps:
+
+1. It removes the program that an earlier build left.
+2. It runs `cargo build --release --locked -p <package>` in `rust/`.
+3. It runs `uv run pytest <each selected test> -m slow` at the root of the
+   repository. The variable of the file holds the path of the built program,
+   as one word of a shell. `CRECHE_PROC_NO_SKIP` is `1`, so a test that
+   skips is a failure.
+
+The first step that fails stops the run. `bin/proc-rust.sh --dry-run` prints
+the lines of each file and starts nothing.
+
+Reason for step 1: a build can write its program to another place, for
+example with `CARGO_TARGET_DIR`. Without step 1, the suite then judges the
+program of an earlier build.
+
+To give the suite the program of a unit:
+
+1. Add one file `proc/<unit>.run`. Edit no other file of that directory.
+2. Select each scenario of the service that the program stands for.
+3. Change no scenario for the program (`integration/proc/AGENTS.md`,
+   "Replace a service with another binary").
+4. Run `bin/proc-rust.sh`. It needs `cargo` and `uv` on `PATH`.
+5. A selected scenario can need the built playpen. Then give the `proc-rust`
+   job the build steps of the `proc` job, in `gate.yml` and in `release.yml`.
+   Change the pin in `bin/tests/test_gate_workflow.py` in the same commit.
+
+When the program fails a scenario, the two programs differ. Stop at that
+scenario and resolve the difference. "When the two results differ" above has
+the procedure. Each resolution ends in one of two changes:
+
+- A change of the Rust program. The scenario then passes.
+- A change of the Python service and of its scenario, in a pull request of
+  that package.
+
+Do not leave a scenario of the service out of a file. Do not record the
+difference in a table or in a list. `proc/probe.run` is the one exception,
+until packet `strict-exit-78` merges. "Known gaps" of
+`integration/proc/AGENTS.md` has its entry.
+
+`bin/tests/test_proc_rust.py` holds each file against three things:
+
+- The variable is the variable of a row of the service table.
+- The program is a program of a crate of this workspace.
+- The suite has each selected test.
+
+`proc/probe.run` is the first file. It gives the program `creche-probe` of
+`creche-testkit` to the suite, in the place of the noticeboard. The program
+is no service. It proves that the modules of `creche-runtime` work together
+in one process. The file selects scenarios of
+`integration/proc/test_proc_board_start.py`.
+
 ## The coverage rule
 
 Some Rust files port a decision module of the chaperone. The tests must run
@@ -1426,10 +1504,11 @@ To make the fifth check on your machine, for example before a merge:
     `2750` of the directory of a socket. `atomic::DirMode` of
     `creche-runtime` holds it, and `http::server` holds a copy. No packet
     has that change yet.
-  - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
-    program of the workspace today. Its `main` sets no panic hook and
-    parses the command line itself. Its library has no entry function that
-    catches a panic. No packet has this change yet.
+  - "The panic rule", clauses 2, 3 and 7. The program `agent-family` does
+    not hold them. Its `main` sets no panic hook and parses the command
+    line itself. Its library has no entry function that catches a panic.
+    No packet has this change yet. `creche-probe` of `creche-testkit` is
+    the other program of the workspace, and it holds the three clauses.
   - The address of another service. `config::chaperone` and
     `config::caregiver` define the port of another service as a constant.
     `config::endpoints` holds the names of the variables. The packet that
@@ -1642,11 +1721,19 @@ To make the fifth check on your machine, for example before a merge:
   `cargo deny check` makes the warning an error. Step 5 does not have the
   flag.
 - No release uses Rust code.
-- Most bodies of `creche-runtime` and of `creche-testkit` are stubs. A stub
-  panics when code calls it. `crates/creche-runtime/AGENTS.md` and
-  `crates/creche-testkit/AGENTS.md` list each stub and the packet that
-  writes its body. The list of the first file still names the module
-  `untrusted`. The bodies of that module are complete.
+- The process-level suite judges one Rust program today: `creche-probe`,
+  which is no service.
+- No check holds that a selected scenario of a `.run` file starts the
+  service of that file. The suite starts the default command of each service
+  whose variable is not set. A file can name the variable of one service and
+  select the scenarios of another service. The job then passes, and it
+  judged the Python program. The reviewer of a `.run` file compares the
+  variable with the service that each selected scenario starts.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-testkit/src/probe.rs`: no contract names the exit status of
+  a program whose listener does not bind. `creche-probe` ends with status 3
+  there, as the Python noticeboard does. The same question is open in
+  `crates/creche-runtime/src/service.rs`.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/log.rs`: no contract says which characters a
   log line holds. The Python log writes each character as it is. The
