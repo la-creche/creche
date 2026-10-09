@@ -11,7 +11,8 @@
 //! reason outside the config type goes through [`refuse_start`]. Three
 //! examples are a wrong word of the command line, a token file that is not
 //! valid and an `https` URL. Each refused start of a daemon ends with
-//! `EX_CONFIG`. A unit with `RestartPreventExitStatus=78` then stays
+//! [`EX_CONFIG`]. A unit that holds the line of
+//! [`NO_RESTART_LINE`](creche_contracts::config::NO_RESTART_LINE) then stays
 //! stopped.
 //!
 //! # The form of a `main`
@@ -269,7 +270,7 @@
 //! each one.
 //!
 //! - A Python service ends a refused start with status 2, with status 1 or
-//!   with status 78 (`attendance/src/attendance/__main__.py:32`,
+//!   with `os.EX_CONFIG` (`attendance/src/attendance/__main__.py:32`,
 //!   `door-owui/src/agent_door_owui/__main__.py:36`,
 //!   `chaperone/src/chaperone/__main__.py:192`). [`load`] and
 //!   [`refuse_start`] give `EX_CONFIG` for each one.
@@ -900,8 +901,9 @@ pub enum Loaded<C, E> {
 /// For a type that says [`AtStart::ExitConfig`](config::AtStart::ExitConfig),
 /// the function writes one line to stderr for each error:
 /// `<program>: <error>`. A line names the variable and never its value. The
-/// exit status is then `EX_CONFIG`, and the unit of the daemon must hold
-/// `RestartPreventExitStatus=78`.
+/// exit status is then [`EX_CONFIG`], and the unit of the daemon must hold
+/// the line of
+/// [`NO_RESTART_LINE`](creche_contracts::config::NO_RESTART_LINE).
 ///
 /// An error list that gives no line is one line, with the reason
 /// `the config is not valid`. A program thus never stops with no reason on
@@ -964,9 +966,9 @@ fn write_refusal(writer: &mut dyn io::Write, program: &str, reason: &dyn fmt::Di
 /// A daemon calls it for each cause of a refused start that is outside its
 /// config type: a wrong word of the command line, a token file or a key file
 /// that it cannot use, and a URL that its client cannot use. No restart
-/// repairs such a cause. With `EX_CONFIG`, a unit that holds
-/// `RestartPreventExitStatus=78` stays stopped (`rust/AGENTS.md`, "The rules
-/// for a service", rule 17).
+/// repairs such a cause. With [`EX_CONFIG`], a unit that holds the line of
+/// [`NO_RESTART_LINE`](creche_contracts::config::NO_RESTART_LINE) stays
+/// stopped (`rust/AGENTS.md`, "The rules for a service", rule 17).
 ///
 /// The line is `<program>: <reason>`. `reason` is an error of this crate or
 /// of `creche-contracts`, and no such error holds a secret.
