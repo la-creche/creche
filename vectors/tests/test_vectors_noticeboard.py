@@ -20,6 +20,9 @@ from vectors.surfaces import noticeboard_cases as cases
 
 PREFIX = "noticeboard/"
 
+#: The vector file of the surface `noticeboard.security.cookie`.
+COOKIE_FILE = f"{PREFIX}security.cookie.json"
+
 #: The deepest nesting that a strict reader of a contract takes.
 STRICT_DEPTH = 64
 
@@ -207,7 +210,7 @@ def test_the_strict_check_refuses_what_a_lax_reader_takes() -> None:
 
 
 def test_each_header_of_a_cookie_is_one_that_a_server_gives_an_app() -> None:
-    """A server removes the space at the two ends of a value and refuses a control byte."""
+    """A server removes the space at the two ends of a value. No header here has a control byte."""
     for case in cases.COOKIES:
         raw = case.raw or b""
 
@@ -219,6 +222,25 @@ def test_each_cookie_token_is_in_the_bounds_of_the_surface() -> None:
     longest = max(len(case.raw or b"") for case in cases.COOKIES)
 
     assert longest == len(b"view_csrf=") + cases.COOKIE_BYTES
+
+
+def _kept_tokens() -> list[str]:
+    """Each token that the service read from a request, in the committed cookie vectors."""
+    document = _committed()[COOKIE_FILE]
+    vectors = cast("list[dict[str, dict[str, Json]]]", document["vectors"])
+    tokens = [vector["value"]["token"] for vector in vectors]
+
+    return [token for token in tokens if isinstance(token, str)]
+
+
+def test_each_kept_cookie_token_is_a_text_of_cookie_octets() -> None:
+    """The surface holds no token that the service keeps and a strict type of a token refuses."""
+    kept = _kept_tokens()
+
+    assert kept
+    for token in kept:
+        assert 1 <= len(token) <= cases.COOKIE_BYTES, token
+        assert set(token) <= cases.COOKIE_OCTETS, token
 
 
 def test_each_query_and_each_segment_is_ascii() -> None:

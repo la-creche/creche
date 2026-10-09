@@ -347,11 +347,13 @@ directory is not a workspace package, so a change here does not change
   `runtime.parse_object.noticeboard` holds such texts for the reader of one
   file. `vectors/tests/test_vectors_noticeboard.py` holds this rule for the
   written inputs.
-- `noticeboard.security.cookie` holds a token of 512 bytes or less, and
-  each character of a token is one that a cookie value can hold with no
-  escape. No vector covers a longer token. No vector covers a token with a
-  space, a comma, a semicolon, a backslash, a double quote or a byte above
-  127. The Python service keeps such a token.
+- A token that the service keeps in a vector of `noticeboard.security.cookie`
+  has 1 to 512 bytes, and each byte of it is a `cookie-octet` of RFC 6265.
+  No vector covers a longer token. No vector covers a token with a space, a
+  comma, a semicolon, a backslash, a double quote or a byte above 127. The
+  Python service keeps such a token.
+  `vectors/tests/test_vectors_noticeboard.py` holds this rule for the
+  committed vectors.
 - `noticeboard.security.cookie` covers the cookie of the edit page. No
   vector covers the cookie of another answer. `runtime.edge.noticeboard`
   holds the names of the cookies of five answers.
@@ -362,6 +364,12 @@ directory is not a workspace package, so a change here does not change
   `uv.lock` takes a newer version.
 - `noticeboard.app.query` holds no offset with a decimal digit outside
   ASCII. Python `int` reads such a digit.
+- No answer of `attendance`, no line of an event stream and no audit record
+  of a noticeboard surface holds a count below zero. The Python readers of
+  the noticeboard take an integer of each sign.
+- `noticeboard.statusdocs.report` gives the entry point the absolute path of
+  a file that the generator makes. No vector covers a relative path or a
+  path with a NUL character.
 - `noticeboard.route.family` holds no segment with an escaped slash that
   makes the path of another route, for example `chat%2Fedit`. The web
   framework decodes the path before it finds the route. The segment of the

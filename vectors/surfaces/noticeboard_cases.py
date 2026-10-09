@@ -263,6 +263,11 @@ PLAIN_MARKS: Final = "!#$%&'*+-.^_`|~:"
 #: The most bytes that the cookie of the form guard is to have.
 COOKIE_BYTES: Final = 512
 
+#: Each character that a token of a cookie input is made of: a `cookie-octet`
+#: of RFC 6265. It is a printable ASCII character, and it is no space, no
+#: double quote, no comma, no semicolon and no backslash.
+COOKIE_OCTETS: Final = frozenset(chr(code) for code in range(0x21, 0x7F)) - frozenset('",;\\')
+
 
 @dataclass(frozen=True)
 class CookieCase:
