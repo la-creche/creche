@@ -21,9 +21,9 @@ from typing import Any, Final
 
 from attendance.models import LineKind
 
-from noticeboard import auditfiles, jsonfiles, sessions, statusdocs, transcript
+from noticeboard import auditfiles, jsonfiles, security, sessions, statusdocs, transcript
 from vectors.surfaces import ids
-from vectors.surfaces.config import LAN, VIEW_KEY
+from vectors.surfaces.config import INT_DIGITS_MAX, LAN, VIEW_KEY
 from vectors.surfaces.ids import ARABIC_ONE
 from vectors.surfaces.session_cases import (
     DIGEST,
@@ -254,7 +254,10 @@ KEYLESS: Final[tuple[tuple[str, str], ...]] = (
 # --- the cookie of the form guard -------------------------------------------------------
 
 _T: Final = FORM_TOKEN.encode("ascii")
-_NAME: Final = b"view_csrf="
+_COOKIE: Final = security.CSRF_COOKIE.encode("ascii")
+
+#: The start of a `Cookie` header that gives the cookie of the form guard a value.
+COOKIE_NAME: Final = _COOKIE + b"="
 
 #: Each character that the cookie writer of Python puts between no quotes,
 #: beside the letters and the digits.
@@ -279,48 +282,48 @@ class CookieCase:
 
 
 COOKIES: Final[tuple[CookieCase, ...]] = (
-    CookieCase("token", _NAME + _T),
+    CookieCase("token", COOKIE_NAME + _T),
     # --- no token in the request ---
     CookieCase("no-header", None),
     CookieCase("empty-header", b""),
-    CookieCase("empty-value", _NAME),
-    CookieCase("name-alone", b"view_csrf"),
+    CookieCase("empty-value", COOKIE_NAME),
+    CookieCase("name-alone", _COOKIE),
     CookieCase("another-cookie-alone", b"session=abc"),
-    CookieCase("quoted-empty-value", _NAME + b'""'),
+    CookieCase("quoted-empty-value", COOKIE_NAME + b'""'),
     # --- the name ---
-    CookieCase("name-upper-case", b"VIEW_CSRF=" + _T),
-    CookieCase("name-with-more-letters", b"view_csrf2=" + _T),
-    CookieCase("name-after-more-letters", b"xview_csrf=" + _T),
+    CookieCase("name-upper-case", COOKIE_NAME.upper() + _T),
+    CookieCase("name-with-more-letters", _COOKIE + b"2=" + _T),
+    CookieCase("name-after-more-letters", b"x" + COOKIE_NAME + _T),
     # --- more than one cookie ---
-    CookieCase("after-another-cookie", b"session=abc; " + _NAME + _T),
-    CookieCase("before-another-cookie", _NAME + _T + b"; session=abc"),
-    CookieCase("no-space-after-the-semicolon", b"session=abc;" + _NAME + _T),
-    CookieCase("semicolon-at-the-end", _NAME + _T + b";"),
-    CookieCase("comma-between-two-cookies", b"session=abc, " + _NAME + _T),
-    CookieCase("two-values", _NAME + b"first; " + _NAME + b"second"),
-    CookieCase("two-values-last-empty", _NAME + _T + b"; " + _NAME),
-    CookieCase("another-cookie-outside-ascii", b"session=caf\xc3\xa9; " + _NAME + _T),
+    CookieCase("after-another-cookie", b"session=abc; " + COOKIE_NAME + _T),
+    CookieCase("before-another-cookie", COOKIE_NAME + _T + b"; session=abc"),
+    CookieCase("no-space-after-the-semicolon", b"session=abc;" + COOKIE_NAME + _T),
+    CookieCase("semicolon-at-the-end", COOKIE_NAME + _T + b";"),
+    CookieCase("comma-between-two-cookies", b"session=abc, " + COOKIE_NAME + _T),
+    CookieCase("two-values", COOKIE_NAME + b"first; " + COOKIE_NAME + b"second"),
+    CookieCase("two-values-last-empty", COOKIE_NAME + _T + b"; " + COOKIE_NAME),
+    CookieCase("another-cookie-outside-ascii", b"session=caf\xc3\xa9; " + COOKIE_NAME + _T),
     # --- the two ends of the name and of the value ---
     CookieCase(
         "spaces-around-the-name-and-the-value",
-        b"session=abc;  view_csrf = " + _T + b" ; theme=dark",
+        b"session=abc;  " + _COOKIE + b" = " + _T + b" ; theme=dark",
     ),
     CookieCase(
         "tabs-around-the-name-and-the-value",
-        b"session=abc;\tview_csrf\t=\t" + _T + b"\t; theme=dark",
+        b"session=abc;\t" + _COOKIE + b"\t=\t" + _T + b"\t; theme=dark",
     ),
-    CookieCase("byte-a0-after-the-value", _NAME + _T + b"\xa0"),
-    CookieCase("byte-a0-before-the-name", b"session=abc;\xa0" + _NAME + _T),
+    CookieCase("byte-a0-after-the-value", COOKIE_NAME + _T + b"\xa0"),
+    CookieCase("byte-a0-before-the-name", b"session=abc;\xa0" + COOKIE_NAME + _T),
     # --- the characters of the value ---
-    CookieCase("one-character", _NAME + b"a"),
-    CookieCase("each-plain-mark", _NAME + PLAIN_MARKS.encode("ascii")),
-    CookieCase("equals-inside", _NAME + b"a=b"),
-    CookieCase("slash-inside", _NAME + b"a/b"),
-    CookieCase("512-bytes", _NAME + b"a" * COOKIE_BYTES),
+    CookieCase("one-character", COOKIE_NAME + b"a"),
+    CookieCase("each-plain-mark", COOKIE_NAME + PLAIN_MARKS.encode("ascii")),
+    CookieCase("equals-inside", COOKIE_NAME + b"a=b"),
+    CookieCase("slash-inside", COOKIE_NAME + b"a/b"),
+    CookieCase("512-bytes", COOKIE_NAME + b"a" * COOKIE_BYTES),
     # --- quotes around the value ---
-    CookieCase("quoted", _NAME + b'"' + _T + b'"'),
-    CookieCase("quoted-equals-inside", _NAME + b'"a=b"'),
-    CookieCase("quoted-octal-escape", _NAME + b'"\\141bc"'),
+    CookieCase("quoted", COOKIE_NAME + b'"' + _T + b'"'),
+    CookieCase("quoted-equals-inside", COOKIE_NAME + b'"a=b"'),
+    CookieCase("quoted-octal-escape", COOKIE_NAME + b'"\\141bc"'),
 )
 
 # --- the form body ----------------------------------------------------------------------
@@ -331,7 +334,10 @@ FORMS: Final[tuple[Body, ...]] = (
     Body("two-fields", b"a=1&b=2"),
     Body(
         "the-edit-form",
-        b"csrf_token=" + _T + b"&description=the+house+assistant&shell=on&subject=&verb=save",
+        security.CSRF_FIELD.encode("ascii")
+        + b"="
+        + _T
+        + b"&description=the+house+assistant&shell=on&subject=&verb=save",
     ),
     # --- a piece with no name or no value ---
     Body("blank-value", b"a="),
@@ -385,11 +391,15 @@ FORMS: Final[tuple[Body, ...]] = (
 
 # --- the query of the audit page --------------------------------------------------------
 
-#: The day file that the audit page of the query surface reads.
-QUERY_DAY: Final = "2026-09-19.jsonl"
+#: The day file of the audit records here. The audit page of the query
+#: surface reads it, and most cases of the audit surface hold it.
+DAY: Final = "2026-09-19.jsonl"
 
-#: A family text of 200 characters. A filter value has that many at most.
-LONG_FAMILY: Final = "f" * 200
+#: The count of characters that the audit page keeps of one filter value.
+FILTER_CHARS: Final = 200
+
+#: A family text of that many characters.
+LONG_FAMILY: Final = "f" * FILTER_CHARS
 
 _FACE: Final = "\U0001f600"
 
@@ -482,7 +492,7 @@ QUERIES: Final[tuple[Body, ...]] = (
     Body("200-characters", b"family=" + LONG_FAMILY.encode("ascii")),
     Body("201-characters", b"family=" + LONG_FAMILY.encode("ascii") + b"x"),
     Body("space-and-201-characters", b"family=+" + LONG_FAMILY.encode("ascii") + b"x"),
-    Body("201-characters-outside-the-bmp", b"session=" + b"%F0%9F%98%80" * 201),
+    Body("201-characters-outside-the-bmp", b"session=" + b"%F0%9F%98%80" * (FILTER_CHARS + 1)),
     # --- the offset ---
     Body("offset-zero", b"offset=0"),
     Body("offset-one", b"offset=1"),
@@ -502,8 +512,8 @@ QUERIES: Final[tuple[Body, ...]] = (
     Body("offset-hex", b"offset=0x1"),
     Body("offset-30-digits", b"offset=123456789012345678901234567890"),
     Body("offset-negative-30-digits", b"offset=-123456789012345678901234567890"),
-    _long("offset-4300-digits", ("offset=", 1), ("0", 4299), ("1", 1)),
-    _long("offset-4301-digits", ("offset=", 1), ("0", 4300), ("1", 1)),
+    _long("offset-4300-digits", ("offset=", 1), ("0", INT_DIGITS_MAX - 1), ("1", 1)),
+    _long("offset-4301-digits", ("offset=", 1), ("0", INT_DIGITS_MAX), ("1", 1)),
     Body("offset-two-times", b"offset=1&offset=2"),
     Body("offset-with-a-filter", b"family=chat&offset=1"),
 )
@@ -1253,7 +1263,6 @@ TRANSCRIPTS: Final[tuple[Body, ...]] = (
 
 # --- the audit files (contract 04 §6) ---------------------------------------------------
 
-DAY: Final = "2026-09-19.jsonl"
 DAY_BEFORE: Final = "2026-09-18.jsonl"
 
 _ARGS_CAP: Final = auditfiles.MAX_ARGS_CHARS
@@ -1295,7 +1304,7 @@ _TWO_DAYS: Final = (
     _day(DAY_BEFORE, *_numbered(3, family="code")),
     _day(DAY, *_numbered(3)),
 )
-_MIXED: Final = (_day(QUERY_DAY, *QUERY_RECORDS),)
+_MIXED: Final = (_day(DAY, *QUERY_RECORDS),)
 _RECORD: Final = _json(_audit())
 _OTHER_RECORD: Final = _json(_audit(family="code"))
 

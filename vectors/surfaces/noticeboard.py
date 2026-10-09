@@ -81,6 +81,7 @@ from vectors.core import (
     text_input,
 )
 from vectors.surfaces import noticeboard_cases as cases
+from vectors.surfaces.config import INT_DIGITS_MAX
 from vectors.surfaces.session_cases import FAMILY, SESSION, Body
 
 GROUP: Final = "noticeboard"
@@ -708,7 +709,7 @@ def _query_vector(app: ASGIApp, body: Body) -> Vector:
 
 def _query_surface(scratch: Path) -> Surface:
     home = scratch / "query"
-    _write(home / "state" / "audit" / cases.QUERY_DAY, cases.QUERY_FILE)
+    _write(home / "state" / "audit" / cases.DAY, cases.QUERY_FILE)
     app = _app(home)
 
     return _surface(
@@ -723,11 +724,11 @@ def _query_surface(scratch: Path) -> Surface:
             "value.filters is the value of each of the four inputs of the filter form on the "
             "page. value.rows is the count of records that the page shows.",
             "The service reads the last value of a name. It removes the whitespace of Python "
-            "str.strip from the two ends of a filter value. Then it keeps the first 200 "
-            "characters. A character is one code point.",
+            f"str.strip from the two ends of a filter value. Then it keeps the first "
+            f"{cases.FILTER_CHARS} characters. A character is one code point.",
             "The service reads the offset with int of Python and reads a negative number as "
-            "0. It reads a text that int refuses as 0. int refuses a text of more than 4300 "
-            "digits.",
+            f"0. It reads a text that int refuses as 0. int refuses a text of more than "
+            f"{INT_DIGITS_MAX} digits.",
             "The filters family and decision take a record whose field equals the value. The "
             "filters tool and session take a record whose field holds the value.",
             _NOTE_APP,
@@ -737,7 +738,7 @@ def _query_surface(scratch: Path) -> Surface:
         {
             "path": AUDIT_PATH,
             "page_size": DEFAULT_PAGE_SIZE,
-            "audit_file": {"name": cases.QUERY_DAY, "text": cases.QUERY_FILE.decode("utf-8")},
+            "audit_file": {"name": cases.DAY, "text": cases.QUERY_FILE.decode("utf-8")},
         },
     )
 

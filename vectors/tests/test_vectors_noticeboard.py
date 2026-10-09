@@ -14,7 +14,7 @@ from typing import Any, cast
 import pytest
 
 from vectors import generate
-from vectors.core import INT_MIN, Json, depth, has_surrogate
+from vectors.core import INT_MAX, INT_MIN, Json, depth, has_surrogate
 from vectors.surfaces import noticeboard
 from vectors.surfaces import noticeboard_cases as cases
 
@@ -25,9 +25,6 @@ COOKIE_FILE = f"{PREFIX}security.cookie.json"
 
 #: The deepest nesting that a strict reader of a contract takes.
 STRICT_DEPTH = 64
-
-#: The largest integer that a strict reader takes.
-STRICT_INT_MAX = 2**64 - 1
 
 CLASSES = frozenset(kind.value for kind in noticeboard.Kind)
 
@@ -154,7 +151,7 @@ def _strict(raw: bytes) -> None:
         if isinstance(item, float) and item in (float("inf"), float("-inf")):
             raise ValueError("a number is not finite")
 
-        if isinstance(item, int) and not INT_MIN <= item <= STRICT_INT_MAX:
+        if isinstance(item, int) and not INT_MIN <= item <= INT_MAX:
             raise ValueError("an integer is outside 64 bits")
 
         if isinstance(item, dict) and [key for key in item if has_surrogate(key)]:
@@ -221,7 +218,7 @@ def test_each_header_of_a_cookie_is_one_that_a_server_gives_an_app() -> None:
 def test_each_cookie_token_is_in_the_bounds_of_the_surface() -> None:
     longest = max(len(case.raw or b"") for case in cases.COOKIES)
 
-    assert longest == len(b"view_csrf=") + cases.COOKIE_BYTES
+    assert longest == len(cases.COOKIE_NAME) + cases.COOKIE_BYTES
 
 
 def _kept_tokens() -> list[str]:
