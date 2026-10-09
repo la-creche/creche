@@ -210,6 +210,56 @@ def _index_text(frozen: object) -> str:
     return json.dumps({"format": 1, "frozen": frozen, "kind": "index", "surfaces": []})
 
 
+#: Each path that the map can hold, by its form. The Rust reader of
+#: `creche-testkit` has the same two tables in its tests.
+FROZEN_PATHS = (
+    "old.json",
+    "runtime/old.json",
+    "runtime/index.json",
+    "runtime/a b.json",
+    "runtime/.json",
+    "runtime/..json",
+)
+#: Each form of a path that the map cannot hold.
+NO_FROZEN_PATHS = (
+    "",
+    ".",
+    "..",
+    "index.json",
+    "/etc/hosts.json",
+    "//old.json",
+    "../../Cargo.json",
+    "runtime/../old.json",
+    "./old.json",
+    "runtime/./old.json",
+    "runtime//old.json",
+    "old.json/",
+    "old.json/.",
+    "runtime/old.txt",
+    "runtime/old.JSON",
+    "runtime/old.json\n",
+    "runtime/old.json ",
+    "runtime",
+    "json",
+)
+
+
+def test_the_map_reads_each_path_of_a_json_file_below_the_root() -> None:
+    frozen = dict.fromkeys(FROZEN_PATHS, WRONG_DIGEST)
+
+    assert generate.frozen_of({"index.json": _index_text(frozen)}) == frozen
+
+
+def test_the_map_refuses_a_path_in_another_form() -> None:
+    for path in NO_FROZEN_PATHS:
+        with pytest.raises(ValueError) as refused_read:
+            generate.frozen_of({"index.json": _index_text({path: WRONG_DIGEST})})
+
+        assert str(refused_read.value) == (
+            f"index.json: {path!r} is no path of a frozen file; {generate.RESTORE_INDEX}"
+        )
+
+
 @pytest.mark.parametrize(
     ("on_disk", "reason"),
     [
@@ -218,13 +268,6 @@ def _index_text(frozen: object) -> str:
         ({"index.json": "[]"}, "index.json is no JSON object"),
         ({"index.json": '{"format": 1, "kind": "index", "surfaces": []}'}, "has no `frozen` map"),
         ({"index.json": _index_text([])}, "`frozen` of index.json is no JSON object"),
-        ({"index.json": _index_text({"": WRONG_DIGEST})}, "'' is no path of a frozen file"),
-        ({"index.json": _index_text({"index.json": WRONG_DIGEST})}, "is no path of a frozen file"),
-        ({"index.json": _index_text({"../a.json": WRONG_DIGEST})}, "is no path of a frozen file"),
-        ({"index.json": _index_text({"/a.json": WRONG_DIGEST})}, "is no path of a frozen file"),
-        ({"index.json": _index_text({"./a.json": WRONG_DIGEST})}, "is no path of a frozen file"),
-        ({"index.json": _index_text({"a//b.json": WRONG_DIGEST})}, "is no path of a frozen file"),
-        ({"index.json": _index_text({"a/b.txt": WRONG_DIGEST})}, "is no path of a frozen file"),
         ({"index.json": _index_text({"a.json": "0" * 63})}, "is not 64 hexadecimal digits"),
         ({"index.json": _index_text({"a.json": "0" * 65})}, "is not 64 hexadecimal digits"),
         ({"index.json": _index_text({"a.json": "A" * 64})}, "is not 64 hexadecimal digits"),
@@ -415,6 +458,19 @@ def test_a_frozen_file_of_another_kind_gets_a_line_and_no_row(
 
     assert generate.main(["--check"], tree) == generate.EXIT_OK
     assert capsys.readouterr().out.splitlines() == ["frozen: made/registries.json"]
+
+
+@pytest.mark.parametrize("name", [".json", "..json", "a.b.json", "a b.json"])
+def test_the_map_can_name_each_json_file_that_the_generator_reads(tree: Path, name: str) -> None:
+    """The generator reads each `*.json` file. Its next run must read the index of a freeze."""
+    path = f"made/{name}"
+    (tree / path).write_text(OTHER_KIND, encoding="utf-8")
+
+    assert generate.main(["--freeze", path], tree) == generate.EXIT_OK
+    assert _index(tree)["frozen"] == {path: _sha256(OTHER_KIND)}
+    assert generate.main(["--check"], tree) == generate.EXIT_OK
+    assert generate.main([], tree) == generate.EXIT_OK
+    assert (tree / path).read_text(encoding="utf-8") == OTHER_KIND
 
 
 @pytest.mark.parametrize(

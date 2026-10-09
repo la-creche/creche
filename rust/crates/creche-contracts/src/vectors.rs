@@ -29,6 +29,10 @@ const DISAGREEMENTS_FILE: &str = "ids/disagreements.json";
 /// The `kind` of the index file.
 const INDEX_KIND: &str = "index";
 
+/// The end of the name of each file under `vectors/data` that the generator
+/// reads.
+const JSON_SUFFIX: &str = ".json";
+
 /// The count of the hexadecimal digits of a SHA-256.
 const DIGEST_DIGITS: usize = 64;
 
@@ -326,16 +330,33 @@ pub(crate) fn index() -> Vec<IndexRow> {
 
     assert_eq!(index.format, FORMAT, "{INDEX_FILE}: the format");
     assert_eq!(index.kind, INDEX_KIND, "{INDEX_FILE}: the kind");
-    for (path, digest) in &index.frozen {
+    check_frozen(&index.frozen);
+
+    index.surfaces
+}
+
+/// Stops the test on a line of the map `frozen` in a form that the generator
+/// does not write. The reader of `creche-testkit` refuses the same lines, and
+/// `vectors/generate.py` does too.
+///
+/// A path names a file below `vectors/data` with a name that ends in
+/// `.json`. It has no part that is empty, `.` or `..`, and it is not the
+/// index. A digest has 64 hexadecimal digits in lower case. The function
+/// compares no digest with a file: `vectors/tests` holds each digest.
+fn check_frozen(frozen: &BTreeMap<String, String>) {
+    for (path, digest) in frozen {
+        let names_only = path.split('/').all(|part| !matches!(part, "" | "." | ".."));
         let lower_hex = |byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f');
 
+        assert!(
+            path != INDEX_FILE && path.ends_with(JSON_SUFFIX) && names_only,
+            "{INDEX_FILE}: {path:?} is no path of a frozen file"
+        );
         assert!(
             digest.len() == DIGEST_DIGITS && digest.bytes().all(lower_hex),
             "{INDEX_FILE}: the digest of the frozen file {path}"
         );
     }
-
-    index.surfaces
 }
 
 /// The vector file of one surface. The index gives the path.
@@ -634,6 +655,52 @@ mod tests {
         ] {
             assert_eq!(Marker::of(&value), None, "{value}");
         }
+    }
+
+    /// A text in the form of a digest of the index.
+    const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn frozen_map(path: &str, digest: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([(path.to_owned(), digest.to_owned())])
+    }
+
+    #[test]
+    fn a_map_of_frozen_files_in_the_form_of_the_generator_reads() {
+        check_frozen(&BTreeMap::new());
+
+        for path in ["old.json", "runtime/old.json", "runtime/index.json"] {
+            check_frozen(&frozen_map(path, DIGEST));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "\"runtime/../old.json\" is no path of a frozen file")]
+    fn a_frozen_path_that_goes_up_stops_the_test() {
+        check_frozen(&frozen_map("runtime/../old.json", DIGEST));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"index.json\" is no path of a frozen file")]
+    fn the_index_as_a_frozen_file_stops_the_test() {
+        check_frozen(&frozen_map("index.json", DIGEST));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"runtime/old.txt\" is no path of a frozen file")]
+    fn a_frozen_path_with_another_suffix_stops_the_test() {
+        check_frozen(&frozen_map("runtime/old.txt", DIGEST));
+    }
+
+    #[test]
+    #[should_panic(expected = "the digest of the frozen file runtime/old.json")]
+    fn a_frozen_digest_in_upper_case_stops_the_test() {
+        check_frozen(&frozen_map("runtime/old.json", &DIGEST.to_uppercase()));
+    }
+
+    #[test]
+    #[should_panic(expected = "the digest of the frozen file runtime/old.json")]
+    fn a_frozen_digest_of_63_digits_stops_the_test() {
+        check_frozen(&frozen_map("runtime/old.json", &"0".repeat(63)));
     }
 
     #[test]

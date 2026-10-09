@@ -168,7 +168,16 @@ One row has seven keys:
 | `vectors` | the count of the vectors in the file |
 | `accepted`, `refused`, `raised` | the count of the vectors with each result |
 
-A reader refuses an index with no `frozen` key.
+A path of the map `frozen` has one form:
+
+- The parts of the path have `/` between them.
+- No part is empty, `.` or `..`.
+- The name of the file ends with `.json`.
+- The path is not `index.json`.
+
+A reader refuses an index with no `frozen` key. It also refuses a path or a
+digest in another form. The generator and the Rust readers of `creche-testkit`
+and of `creche-contracts` hold these rules.
 
 ## The vector file
 

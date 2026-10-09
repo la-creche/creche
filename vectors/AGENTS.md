@@ -81,8 +81,10 @@ directory is not a workspace package, so a change here does not change
 - No file is frozen yet. The pull request that removes the first Python
   package freezes the first files.
 - No Rust code compares the bytes of a frozen file with its digest. The
-  Rust readers check only the form of the map `frozen`. `vectors/tests`
-  holds each digest.
+  readers of `creche-testkit` and of `creche-contracts` check only the form
+  of the map `frozen`. `vectors/tests` holds each digest.
+- The test of `agent-family` reads the index as a JSON tree. It checks no
+  part of the map `frozen`.
 - The committed index is the one home of the map `frozen`. A merge can
   take an index that lacks a line of the map. `--check` then reports that
   file as `left over`. A run of the generator with no flag removes the file

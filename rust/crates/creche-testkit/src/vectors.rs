@@ -20,12 +20,13 @@
 //! 5. Two vectors of the file have the same id.
 //! 6. An input, an `output` or a marker object has a form that the format
 //!    does not name.
-//! 7. The index names a frozen file with a path that is not under
-//!    `vectors/data`, or with a digest that is not 64 hexadecimal digits.
+//! 7. The index names a frozen file with a path or with a digest that the
+//!    generator does not write in that form.
 //!
 //! A frozen file is a data file whose Python origin left the repository. The
 //! index holds the SHA-256 of each one. The reader reads the form of that map
-//! and compares no digest: `vectors/tests` holds each digest.
+//! and compares no digest: `vectors/tests` holds each digest. The generator,
+//! `vectors/generate.py`, refuses the same paths and the same digests.
 //!
 //! The reader has no Python origin. `vectors/core.py` writes the files that
 //! it reads.
@@ -51,6 +52,10 @@ const INDEX_FILE: &str = "index.json";
 
 /// The `kind` of the index file.
 const INDEX_KIND: &str = "index";
+
+/// The end of the name of each file under `vectors/data` that the generator
+/// reads.
+const JSON_SUFFIX: &str = ".json";
 
 /// The count of the hexadecimal digits of a SHA-256.
 const DIGEST_DIGITS: usize = 64;
@@ -250,6 +255,20 @@ fn is_data_path(path: &str) -> bool {
     let mut parts = Path::new(path).components().peekable();
 
     parts.peek().is_some() && parts.all(|part| matches!(part, Component::Normal(_)))
+}
+
+/// Whether `path` can name a frozen file, in the one form that the generator
+/// writes: a file below `vectors/data` with a name that ends in `.json`. The
+/// path has no part that is empty, `.` or `..`. The index itself is no such
+/// file.
+///
+/// The check reads the text and not the parts of a [`Path`]: a [`Path`] also
+/// reads `a//b.json` and `a/./b.json` as `a/b.json`. `_frozen_map` of
+/// `vectors/generate.py` holds the same rule for a path and for a digest.
+fn is_frozen_path(path: &str) -> bool {
+    path != INDEX_FILE
+        && path.ends_with(JSON_SUFFIX)
+        && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
 }
 
 /// Whether `text` is a SHA-256 in the form of the index: 64 hexadecimal
@@ -877,10 +896,8 @@ fn index_of(text: &str) -> Result<Vec<IndexRow>, VectorsError> {
         )));
     }
     for (path, digest) in &raw.frozen {
-        if !is_data_path(path) {
-            return Err(refused(format!(
-                "the frozen path {path:?} is not a path under vectors/data"
-            )));
+        if !is_frozen_path(path) {
+            return Err(refused(format!("{path:?} is no path of a frozen file")));
         }
         if !is_digest(digest) {
             return Err(refused(format!(
@@ -1343,9 +1360,62 @@ mod tests {
         index.to_string()
     }
 
+    /// `vectors/tests/test_vectors_frozen.py` gives the generator the paths
+    /// of this test and of the next one. The two programs must agree on each
+    /// path.
+    #[test]
+    fn a_frozen_path_of_a_json_file_below_the_data_directory_reads() {
+        for path in [
+            "old.json",
+            "runtime/old.json",
+            "runtime/index.json",
+            "runtime/a b.json",
+            "runtime/.json",
+            "runtime/..json",
+        ] {
+            let read = index_of(&index_with("frozen", json!({path: DIGEST})));
+
+            assert_eq!(read.map(|rows| rows.len()), Ok(1), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn a_frozen_path_in_another_form_is_refused() {
+        for path in [
+            "",
+            ".",
+            "..",
+            "index.json",
+            "/etc/hosts.json",
+            "//old.json",
+            "../../Cargo.json",
+            "runtime/../old.json",
+            "./old.json",
+            "runtime/./old.json",
+            "runtime//old.json",
+            "old.json/",
+            "old.json/.",
+            "runtime/old.txt",
+            "runtime/old.JSON",
+            "runtime/old.json\n",
+            "runtime/old.json ",
+            "runtime",
+            "json",
+        ] {
+            let error = index_of(&index_with("frozen", json!({path: DIGEST}))).unwrap_err();
+
+            assert_eq!(error.file, "index.json", "{path:?}");
+            assert_eq!(
+                error.reason,
+                format!("{path:?} is no path of a frozen file"),
+                "{path:?}"
+            );
+        }
+    }
+
     #[test]
     fn an_index_that_breaks_a_rule_is_refused() {
-        let refused: [(String, &str); 20] = [
+        let refused: [(String, &str); 17] = [
             (
                 index_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
@@ -1393,18 +1463,6 @@ mod tests {
             (
                 index_with("frozen", json!({"runtime/old.json": 7})),
                 "invalid type",
-            ),
-            (
-                index_with("frozen", json!({"../../Cargo.toml": DIGEST})),
-                "the frozen path \"../../Cargo.toml\" is not a path under vectors/data",
-            ),
-            (
-                index_with("frozen", json!({"/etc/hosts": DIGEST})),
-                "the frozen path \"/etc/hosts\" is not a path under vectors/data",
-            ),
-            (
-                index_with("frozen", json!({"": DIGEST})),
-                "the frozen path \"\" is not a path under vectors/data",
             ),
             (
                 index_with("frozen", json!({"runtime/old.json": "0123"})),

@@ -126,14 +126,19 @@ def _digest(text: str) -> str:
 
 
 def _is_data_path(path: str) -> bool:
-    """Whether `committed` can give `path`: a JSON file below the root."""
+    """Whether `committed` can give `path`: a JSON file below the root.
+
+    The name ends with the suffix, as the name of each file that `committed`
+    reads. `PurePosixPath.suffix` is not the test: for a name of dots and
+    the suffix, it differs between two supported Python versions.
+    """
     pure = PurePosixPath(path)
 
     return (
         pure.as_posix() == path
         and not pure.is_absolute()
         and ".." not in pure.parts
-        and pure.suffix == JSON_SUFFIX
+        and pure.name.endswith(JSON_SUFFIX)
     )
 
 
@@ -378,7 +383,7 @@ def strays(root: Path = DATA_DIR) -> list[str]:
     return [
         path.relative_to(root).as_posix()
         for path in sorted(root.rglob("*"))
-        if path.is_symlink() or (path.is_file() and path.suffix != JSON_SUFFIX)
+        if path.is_symlink() or (path.is_file() and not path.name.endswith(JSON_SUFFIX))
     ]
 
 
