@@ -2895,10 +2895,13 @@ pub(super) mod tests {
                 // The client writes until no buffer takes a byte: the server
                 // reads no more.
                 let chunk = vec![b'a'; 64 * 1024];
-                while tokio::time::timeout(SHORT_DRAIN, client.write_all(&chunk))
-                    .await
-                    .is_ok()
-                {}
+                within(async {
+                    while let Ok(Ok(())) =
+                        tokio::time::timeout(SHORT_DRAIN, client.write_all(&chunk)).await
+                    {
+                    }
+                })
+                .await;
 
                 assert_eq!(served.stop().await, Ok(Drained::TimedOut { left: 1 }));
 
@@ -3394,8 +3397,10 @@ pub(super) mod tests {
         /// (`DEFAULT_MAX_BUFFER_SIZE` of `src/proto/h1/io.rs`).
         const HEAD_LIMIT: usize = 8192 + 4096 * 100;
 
-        /// A distance from the limit. The server reads a head in parts, so
-        /// the test asks for no answer at the limit itself.
+        /// A distance from the limit. The server reads a head in parts and
+        /// checks the limit only for a head that is not whole. One read can
+        /// thus make a head whole that is a little past the limit. No read
+        /// of a Unix socket gives the bytes of one more limit.
         const MARGIN: usize = 4096;
 
         runtime().block_on(async {
@@ -3416,7 +3421,7 @@ pub(super) mod tests {
             let below = within(RawHttp::unix(&path, &head(HEAD_LIMIT - MARGIN)))
                 .await
                 .unwrap();
-            let past = within(RawHttp::unix(&path, &head(HEAD_LIMIT + MARGIN)))
+            let past = within(RawHttp::unix(&path, &head(2 * HEAD_LIMIT)))
                 .await
                 .unwrap();
 

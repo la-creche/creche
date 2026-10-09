@@ -2588,9 +2588,10 @@ mod tests {
     /// service does (`uvicorn/protocols/http/h11_impl.py:259-263`). The
     /// client gets no answer.
     ///
-    /// The runtime has one thread in the first pass, and the client writes
-    /// and leaves in one step. The server thus reads the request and the end
-    /// of the bytes in one step too.
+    /// The runtime has one thread, and the client writes and leaves in one
+    /// step. The server thus reads the request and the end of the bytes in
+    /// one step too. With a second thread, the server can send its answer
+    /// before the client leaves.
     #[test]
     fn a_request_whose_client_left_at_once_runs_its_handler_to_the_end() {
         let table: [(Leaves, &[u8], usize); 4] = [
@@ -2616,44 +2617,42 @@ mod tests {
             ),
         ];
 
-        for runtime in each_runtime() {
-            runtime.block_on(async {
-                let (hand_over, mut bodies) = mpsc::channel::<usize>(table.len());
-                let routes = Router::new().route(
-                    "/count",
-                    post(move |request: Request| async move {
-                        let body = read_body(request.into_body(), cap(64)).await.unwrap();
-                        hand_over.send(body.len()).await.unwrap();
+        runtime().block_on(async {
+            let (hand_over, mut bodies) = mpsc::channel::<usize>(table.len());
+            let routes = Router::new().route(
+                "/count",
+                post(move |request: Request| async move {
+                    let body = read_body(request.into_body(), cap(64)).await.unwrap();
+                    hand_over.send(body.len()).await.unwrap();
 
-                        "counted"
-                    }),
-                );
-                let service = Service::starlette(routes).await;
+                    "counted"
+                }),
+            );
+            let service = Service::starlette(routes).await;
 
-                for (leaves, request, body) in table {
-                    match leaves {
-                        Leaves::Closes => {
-                            let mut client =
-                                std::os::unix::net::UnixStream::connect(&service.socket).unwrap();
-                            io::Write::write_all(&mut client, request).unwrap();
-                            drop(client);
-                        }
-                        Leaves::ClosesItsSide => {
-                            let answer = within(RawHttp::unix_then_eof(&service.socket, request))
-                                .await
-                                .unwrap();
-
-                            assert!(answer.is_empty(), "{leaves:?}: {answer:?}");
-                        }
+            for (leaves, request, body) in table {
+                match leaves {
+                    Leaves::Closes => {
+                        let mut client =
+                            std::os::unix::net::UnixStream::connect(&service.socket).unwrap();
+                        io::Write::write_all(&mut client, request).unwrap();
+                        drop(client);
                     }
+                    Leaves::ClosesItsSide => {
+                        let answer = within(RawHttp::unix_then_eof(&service.socket, request))
+                            .await
+                            .unwrap();
 
-                    assert_eq!(within(bodies.recv()).await, Some(body), "{leaves:?}");
+                        assert!(answer.is_empty(), "{leaves:?}: {answer:?}");
+                    }
                 }
-                // The stop waits for each connection and for each handler.
-                service.stop().await;
-                assert_eq!(within(bodies.recv()).await, None);
-            });
-        }
+
+                assert_eq!(within(bodies.recv()).await, Some(body), "{leaves:?}");
+            }
+            // The stop waits for each connection and for each handler.
+            service.stop().await;
+            assert_eq!(within(bodies.recv()).await, None);
+        });
     }
 
     #[test]
