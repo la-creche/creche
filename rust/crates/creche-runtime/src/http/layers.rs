@@ -5,9 +5,10 @@
 //! 1. An answer for a path that no route has, and one for a method that a
 //!    route does not take. The service states each answer through
 //!    [`ErrorBodies`].
-//! 2. The two answers of the Python web framework that `axum` does not give:
-//!    status 405 for `HEAD`, and status 307 for a known path with one more or
-//!    one less final slash.
+//! 2. Three answers of the Python web framework that `axum` does not give:
+//!    status 405 for `HEAD`, status 307 for a known path with one more or
+//!    one less final slash, and the answer for no route for a target with a
+//!    scheme and a host.
 //! 3. One task for each request. A client that leaves does not stop the
 //!    handler: the handler runs to its end, as a handler of a Python service
 //!    does. A handler that panics ends its own task only, and the client gets

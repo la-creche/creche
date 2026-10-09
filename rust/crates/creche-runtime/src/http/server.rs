@@ -27,6 +27,10 @@
 //! sends no request holds one descriptor until it leaves or until the stop
 //! of the service.
 //!
+//! A listener refuses three kinds of request before the router gets them,
+//! as the server of the Python services does. The doc comment of [`serve`]
+//! lists them.
+//!
 //! The doc comment of [`bind`] and of [`serve`] says what each function does
 //! in another way than its Python origin.
 //!
