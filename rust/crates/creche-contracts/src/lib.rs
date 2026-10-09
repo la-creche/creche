@@ -12,6 +12,7 @@ pub mod config;
 pub mod family;
 pub mod grants;
 pub mod ids;
+pub mod json;
 pub mod manifest;
 pub mod secret;
 pub mod server;
