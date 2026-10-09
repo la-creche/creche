@@ -28,7 +28,6 @@
 //! one. The exception is the device that `CachedToken::current` compares: no
 //! test can move a file to another device.
 
-use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -40,6 +39,7 @@ use creche_contracts::config::{self, KeyError, MIN_KEY_BYTES};
 use creche_contracts::secret::{Secret, SecretError};
 use rustix::io::Errno;
 
+use crate::command::{Decode, python_text};
 use crate::readfile::{self, ByteCap, FileFacts, FileRead, Follow, ReadRefusal};
 
 // CONTRACT-QUESTION: contract 02 §3 rule 7 gives a token a least count of
@@ -492,8 +492,11 @@ fn bytes_token(bytes: &[u8], rule: TokenRule) -> Result<Secret, TokenError> {
 /// `chaperone/src/chaperone/delegate.py:147-162` and
 /// `caregiver/src/caregiver/switch.py:86-94`.
 fn text_token(bytes: &[u8], rule: TokenRule) -> Result<Secret, TokenError> {
-    let text = str::from_utf8(bytes).map_err(|_| TokenError::NotUtf8)?;
-    let text = universal_newlines(text);
+    // The text mode of Python: strict UTF-8, then one LF for each CR LF and
+    // for each other CR. `Path.read_text` opens the file in that mode
+    // (`chaperone/src/chaperone/delegate.py:148`). A CR inside a token is
+    // thus an LF in the token that a Python door holds.
+    let text = python_text(bytes, Decode::Strict).map_err(|_| TokenError::NotUtf8)?;
 
     // `key_of_file` holds the strip and the count of a key of 32 bytes, so
     // this module holds no second copy of the two. It gives one refusal for
@@ -538,20 +541,6 @@ fn ascii_strip(mut bytes: &[u8]) -> &[u8] {
     }
 
     bytes
-}
-
-/// The text as the text mode of Python gives it: one LF for each CR LF and
-/// for each other CR.
-///
-/// `Path.read_text` of Python opens the file in that mode
-/// (`chaperone/src/chaperone/delegate.py:148`). A CR inside a token is thus
-/// an LF in the token that a Python door holds.
-fn universal_newlines(text: &str) -> Cow<'_, str> {
-    if !text.contains('\r') {
-        return Cow::Borrowed(text);
-    }
-
-    Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
 /// A token file that the service reads again only after the file moved.
@@ -1012,28 +1001,6 @@ mod tests {
         // the vertical tab, and `bytes.strip` of Python removes it.
         assert!(!b'\x0b'.is_ascii_whitespace());
         assert_eq!(b"\x0btoken\x0b".trim_ascii(), b"\x0btoken\x0b");
-    }
-
-    #[test]
-    fn the_text_mode_of_python_reads_each_cr_as_one_line_feed() {
-        let table = [
-            ("", ""),
-            ("token", "token"),
-            ("a\nb", "a\nb"),
-            ("a\rb", "a\nb"),
-            ("a\r\nb", "a\nb"),
-            ("a\r\r\nb", "a\n\nb"),
-            ("a\n\rb", "a\n\nb"),
-            ("\r", "\n"),
-            ("\r\n", "\n"),
-            ("token\r\n", "token\n"),
-        ];
-
-        for (file, text) in table {
-            assert_eq!(universal_newlines(file), text, "{file:?}");
-        }
-
-        assert!(matches!(universal_newlines("a\nb"), Cow::Borrowed(_)));
     }
 
     // --- the read ---

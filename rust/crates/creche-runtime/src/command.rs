@@ -1455,6 +1455,11 @@ pub enum Decode {
 /// `errors="replace"` at `handover/src/handover/executor/host.py:404` is the
 /// other form.
 ///
+/// The text mode of a Python file has the same rule. `token` thus reads the
+/// content of a token file with this function, as `Path.read_text` does at
+/// `chaperone/src/chaperone/delegate.py:148`. This function is the one copy
+/// of the rule in this crate.
+///
 /// ```
 /// use creche_runtime::command::{Decode, python_text};
 ///
@@ -2541,9 +2546,17 @@ mod tests {
     /// `Replace`. `None` for bytes that `Strict` refuses. CPython 3.13 gave
     /// each text, with `decode("utf-8", errors)` and then the two `replace`
     /// calls of `subprocess.py:1098-1100`.
-    const TEXTS: [(&[u8], Option<&str>, &str); 28] = [
+    const TEXTS: [(&[u8], Option<&str>, &str); 35] = [
         (b"", Some(""), ""),
         (b"plain\n", Some("plain\n"), "plain\n"),
+        // The content of a token file: `token` reads it with this function.
+        (b"token", Some("token"), "token"),
+        (b"token\r\n", Some("token\n"), "token\n"),
+        (b"a\nb", Some("a\nb"), "a\nb"),
+        (b"a\rb", Some("a\nb"), "a\nb"),
+        (b"a\r\nb", Some("a\nb"), "a\nb"),
+        (b"a\r\r\nb", Some("a\n\nb"), "a\n\nb"),
+        (b"a\n\rb", Some("a\n\nb"), "a\n\nb"),
         (b"one\r\ntwo", Some("one\ntwo"), "one\ntwo"),
         (b"one\rtwo", Some("one\ntwo"), "one\ntwo"),
         (b"\r", Some("\n"), "\n"),

@@ -235,11 +235,10 @@ reason. The packet that writes the three bodies obeys these rules:
   byte. A service gives the bytes to `Secret::matches`. It writes them to no
   log line. The owner of the crate decides if the result gets a type of its
   own.
-- `token::universal_newlines` holds the text mode rule of Python: one LF for
-  each CR LF and for each other CR. `command::python_text` is a stub for the
-  same rule. When that stub has its body, make `token` call it. Then delete
-  `universal_newlines`. `agent-family` holds one more copy of the rule in
-  `registry.rs`, and no packet has that copy yet.
+- `command::python_text` holds the text mode rule of Python: one LF for each
+  CR LF and for each other CR. `token` reads a token file with that
+  function. `agent-family` holds a second copy of the rule in `registry.rs`.
+  That crate does not depend on this crate. No packet has that copy yet.
 - No test gives `faults::publish` a fault file whose source is `caregiver`.
   `FaultFile::new` refuses that source, so no code can build such a file. A
   test gives the private function `publish_as` no writer in its place.
