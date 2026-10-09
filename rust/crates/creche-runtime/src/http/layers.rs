@@ -214,11 +214,6 @@ pub enum AccessLog {
 ///   (`attendance/src/attendance/api.py:52-67`). The lines here hold the
 ///   place of the panic, the name of the task, the method and the path. They
 ///   never hold the message of the panic.
-/// - `uvicorn` starts the task of a handler when it reads the head of a
-///   request (`uvicorn/protocols/http/h11_impl.py:259-263`). The server here
-///   starts it at the first poll of the request. A client that sends a whole
-///   request and closes its side in the same moment gets no handler. A
-///   Python service runs the handler of such a request to its end.
 /// - The Python framework matches a route against the decoded text of the
 ///   target of a request (`uvicorn/protocols/http/h11_impl.py:201-202`). A
 ///   router here matches the path as the client sent it: `/%68ealthz` is not
@@ -2346,44 +2341,86 @@ mod tests {
         });
     }
 
-    /// The difference that the doc comment of [`edge`] names for a client
-    /// that closes its side at once. The runtime has one thread, and the
-    /// client writes the request and closes its side in one step. The server
-    /// thus reads the request and the end of the bytes in one step too.
+    /// How a client leaves after it sent a whole request.
+    #[derive(Debug, Clone, Copy)]
+    enum Leaves {
+        /// It closes the connection.
+        Closes,
+        /// It closes only its side, and reads until the server closes.
+        ClosesItsSide,
+    }
+
+    /// A client sends a whole request and leaves in the same moment. The
+    /// handler runs to its end and reads the body, as a handler of a Python
+    /// service does (`uvicorn/protocols/http/h11_impl.py:259-263`). The
+    /// client gets no answer.
+    ///
+    /// The runtime has one thread in the first pass, and the client writes
+    /// and leaves in one step. The server thus reads the request and the end
+    /// of the bytes in one step too.
     #[test]
-    fn a_request_whose_client_closed_its_side_at_once_runs_no_handler() {
-        let table: [&[u8]; 2] = [
-            b"POST /count HTTP/1.1\r\nHost: test\r\n\r\n",
-            b"POST /count HTTP/1.1\r\nHost: test\r\nContent-Length: 7\r\n\r\n{\"n\":1}",
+    fn a_request_whose_client_left_at_once_runs_its_handler_to_the_end() {
+        let table: [(Leaves, &[u8], usize); 4] = [
+            (
+                Leaves::Closes,
+                b"POST /count HTTP/1.1\r\nHost: test\r\n\r\n",
+                0,
+            ),
+            (
+                Leaves::Closes,
+                b"POST /count HTTP/1.1\r\nHost: test\r\nContent-Length: 7\r\n\r\n{\"n\":1}",
+                7,
+            ),
+            (
+                Leaves::ClosesItsSide,
+                b"POST /count HTTP/1.1\r\nHost: test\r\n\r\n",
+                0,
+            ),
+            (
+                Leaves::ClosesItsSide,
+                b"POST /count HTTP/1.1\r\nHost: test\r\nContent-Length: 7\r\n\r\n{\"n\":1}",
+                7,
+            ),
         ];
 
-        runtime().block_on(async {
-            let calls = Arc::new(AtomicUsize::new(0));
-            let routes = Router::new().route(
-                "/count",
-                post({
-                    let calls = Arc::clone(&calls);
-
-                    move || async move {
-                        calls.fetch_add(1, Ordering::SeqCst);
+        for runtime in each_runtime() {
+            runtime.block_on(async {
+                let (hand_over, mut bodies) = mpsc::channel::<usize>(table.len());
+                let routes = Router::new().route(
+                    "/count",
+                    post(move |request: Request| async move {
+                        let body = read_body(request.into_body(), cap(64)).await.unwrap();
+                        hand_over.send(body.len()).await.unwrap();
 
                         "counted"
+                    }),
+                );
+                let service = Service::starlette(routes).await;
+
+                for (leaves, request, body) in table {
+                    match leaves {
+                        Leaves::Closes => {
+                            let mut client =
+                                std::os::unix::net::UnixStream::connect(&service.socket).unwrap();
+                            io::Write::write_all(&mut client, request).unwrap();
+                            drop(client);
+                        }
+                        Leaves::ClosesItsSide => {
+                            let answer = within(RawHttp::unix_then_eof(&service.socket, request))
+                                .await
+                                .unwrap();
+
+                            assert!(answer.is_empty(), "{leaves:?}: {answer:?}");
+                        }
                     }
-                }),
-            );
-            let service = Service::starlette(routes).await;
 
-            for request in table {
-                let answer = within(RawHttp::unix_then_eof(&service.socket, request))
-                    .await
-                    .unwrap();
-
-                assert!(answer.is_empty(), "{answer:?}");
-            }
-            // The stop waits for each connection and for each handler.
-            service.stop().await;
-            assert_eq!(calls.load(Ordering::SeqCst), 0);
-        });
+                    assert_eq!(within(bodies.recv()).await, Some(body), "{leaves:?}");
+                }
+                // The stop waits for each connection and for each handler.
+                service.stop().await;
+                assert_eq!(within(bodies.recv()).await, None);
+            });
+        }
     }
 
     #[test]

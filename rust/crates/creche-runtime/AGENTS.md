@@ -279,12 +279,6 @@ reason. The packet that writes the three bodies obeys these rules:
   service has a handler of its own for an exception, so no surface
   `runtime.edge.*` holds the answer of the framework. The constant is the
   text of `starlette/middleware/errors.py:259`. A plain test holds it.
-- A client can send a whole request and close its side in the same moment.
-  The server then drops the request before a handler starts. A Python
-  service runs that handler to its end. Contract 02 §5.4 lets a turn
-  continue after its caller disconnects. `hyper` has a switch for a client
-  that closes its side, and `axum::serve` does not set it. A test of
-  `src/http/layers.rs` holds what the code does today.
 - `http::server` and `http::layers` differ from the server and from the
   framework of the Python services in more ways. The doc comments of `bind`,
   `serve`, `edge` and `read_body` name each one, and a plain test holds each

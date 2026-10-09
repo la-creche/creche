@@ -848,6 +848,9 @@ enum Stream {
 /// holds that task. The cut is thus a signal that the connection reads: each
 /// read and each write gives an error after it. The server of `hyper` then
 /// closes the connection.
+///
+/// A connection also gives the end of the bytes of its client one poll late.
+/// [`ClientEnd`] has the reason.
 struct Connection {
     stream: Stream,
     /// Ready after the cut. Each read and each write polls it, so the task
@@ -856,6 +859,28 @@ struct Connection {
     /// The drop of this value takes the connection out of the count of the
     /// open connections.
     _open: TaskTrackerToken,
+    end: ClientEnd,
+}
+
+/// Whether a read of a connection saw the end of the bytes of its client.
+///
+/// A client can send a whole request and close its side in the same moment.
+/// `hyper` reads the request, and it reads again before it polls the future
+/// of the request. At the end of the bytes it then drops that future, so no
+/// handler starts. A Python service runs the handler of such a request to
+/// its end: `uvicorn` starts the task of a handler when it reads the head of
+/// a request (`uvicorn/protocols/http/h11_impl.py:259-263`).
+///
+/// The read that sees the end thus gives `hyper` no answer and wakes the
+/// task. `hyper` polls the future of the request in that same pass, and the
+/// edge layer starts the task of the handler there. The next read gives the
+/// end. The client gets no answer, as from a Python service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClientEnd {
+    /// No read saw the end.
+    NotSeen,
+    /// One read saw the end. Each later read gives it.
+    Seen,
 }
 
 impl Connection {
@@ -880,11 +905,27 @@ impl AsyncRead for Connection {
         if this.is_cut(context) {
             return Poll::Ready(Err(cut_error()));
         }
+        if this.end == ClientEnd::Seen {
+            return Poll::Ready(Ok(()));
+        }
 
-        match &mut this.stream {
+        let before = buffer.filled().len();
+        let polled = match &mut this.stream {
             Stream::Tcp(stream) => Pin::new(stream).poll_read(context, buffer),
             Stream::Unix(stream) => Pin::new(stream).poll_read(context, buffer),
+        };
+        // A read into a buffer with room that gives no byte is the end.
+        let at_end = matches!(polled, Poll::Ready(Ok(())))
+            && buffer.filled().len() == before
+            && buffer.remaining() > 0;
+        if !at_end {
+            return polled;
         }
+
+        this.end = ClientEnd::Seen;
+        context.waker().wake_by_ref();
+
+        Poll::Pending
     }
 }
 
@@ -1066,6 +1107,7 @@ impl Listener for Accepting {
                         // two connections thus share no lock.
                         cut: Box::pin(self.cut.child_token().cancelled_owned()),
                         _open: self.open.token(),
+                        end: ClientEnd::NotSeen,
                     };
 
                     return (connection, ());

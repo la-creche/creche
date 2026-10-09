@@ -1349,10 +1349,6 @@ rule 4).
   body that stops early. `StarletteBodies` answers the first as the
   framework answers an exception. It answers the two others with the status
   only.
-- The server of `creche-runtime` runs no handler for a client that sends a
-  whole request and closes its side in the same moment. A Python service
-  runs that handler to its end. `crates/creche-runtime/AGENTS.md` has the
-  cause.
 - No check holds the rules of "The rules for a service", except a part of
   rule 2 and a part of rule 13. A service crate that breaks one of the
   other rules builds and passes the lint gate.
