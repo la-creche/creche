@@ -37,6 +37,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use creche_contracts::ids::Sha256Hex;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -56,9 +57,6 @@ const INDEX_KIND: &str = "index";
 /// The end of the name of each file under `vectors/data` that the generator
 /// reads.
 const JSON_SUFFIX: &str = ".json";
-
-/// The count of the hexadecimal digits of a SHA-256.
-const DIGEST_DIGITS: usize = 64;
 
 /// The key of the value that the Python code parsed an input into.
 const VALUE_KEY: &str = "value";
@@ -264,20 +262,11 @@ fn is_data_path(path: &str) -> bool {
 ///
 /// The check reads the text and not the parts of a [`Path`]: a [`Path`] also
 /// reads `a//b.json` and `a/./b.json` as `a/b.json`. `_frozen_map` of
-/// `vectors/generate.py` holds the same rule for a path and for a digest.
+/// `vectors/generate.py` holds the same rule.
 fn is_frozen_path(path: &str) -> bool {
     path != INDEX_FILE
         && path.ends_with(JSON_SUFFIX)
         && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
-}
-
-/// Whether `text` is a SHA-256 in the form of the index: 64 hexadecimal
-/// digits in lower case.
-fn is_digest(text: &str) -> bool {
-    text.len() == DIGEST_DIGITS
-        && text
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// One vector file: each vector of one surface.
@@ -899,10 +888,9 @@ fn index_of(text: &str) -> Result<Vec<IndexRow>, VectorsError> {
         if !is_frozen_path(path) {
             return Err(refused(format!("{path:?} is no path of a frozen file")));
         }
-        if !is_digest(digest) {
+        if let Err(error) = digest.parse::<Sha256Hex>() {
             return Err(refused(format!(
-                "the digest of the frozen file {path} is not {DIGEST_DIGITS} hexadecimal digits \
-                 in lower case"
+                "the digest of the frozen file {path}: {error}"
             )));
         }
     }
@@ -1316,21 +1304,48 @@ mod tests {
         assert_eq!(rows, []);
     }
 
+    /// `ids::Sha256Hex` holds the grammar of a digest and its tests. This test
+    /// holds that the reader gives each digest of the map to that type.
     #[test]
-    fn a_digest_has_64_hexadecimal_digits_in_lower_case() {
-        assert!(is_digest(DIGEST));
-        assert!(is_digest(&"f".repeat(64)));
+    fn a_frozen_digest_in_another_form_is_refused() {
+        let refused = [
+            (String::new(), "a SHA-256 digest has 64 bytes"),
+            ("0".repeat(63), "a SHA-256 digest has 64 bytes"),
+            ("0".repeat(65), "a SHA-256 digest has 64 bytes"),
+            (
+                "g".repeat(64),
+                "a SHA-256 digest starts with 0 to 9 or a to f",
+            ),
+            (
+                DIGEST.to_uppercase(),
+                "byte 10 of a SHA-256 digest is not 0 to 9 or a to f",
+            ),
+            (
+                format!("{}\n", "0".repeat(63)),
+                "byte 63 of a SHA-256 digest is not 0 to 9 or a to f",
+            ),
+            (
+                "\u{e9}".repeat(32),
+                "a SHA-256 digest starts with 0 to 9 or a to f",
+            ),
+        ];
 
-        for text in [
-            String::new(),
-            "0".repeat(63),
-            "0".repeat(65),
-            "A".repeat(64),
-            "g".repeat(64),
-            format!("{}\n", "0".repeat(63)),
-            "\u{e9}".repeat(32),
-        ] {
-            assert!(!is_digest(&text), "{text:?}");
+        for (digest, fault) in refused {
+            let text = index_with("frozen", json!({"runtime/old.json": digest}));
+            let error = index_of(&text).unwrap_err();
+
+            assert_eq!(error.file, "index.json", "{digest:?}");
+            assert_eq!(
+                error.reason,
+                format!("the digest of the frozen file runtime/old.json: {fault}"),
+                "{digest:?}"
+            );
+        }
+
+        for digest in [DIGEST.to_owned(), "f".repeat(64)] {
+            let text = index_with("frozen", json!({"runtime/old.json": digest}));
+
+            assert_eq!(index_of(&text).map(|rows| rows.len()), Ok(1), "{digest}");
         }
     }
 
@@ -1415,7 +1430,7 @@ mod tests {
 
     #[test]
     fn an_index_that_breaks_a_rule_is_refused() {
-        let refused: [(String, &str); 17] = [
+        let refused: [(String, &str); 15] = [
             (
                 index_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
@@ -1463,16 +1478,6 @@ mod tests {
             (
                 index_with("frozen", json!({"runtime/old.json": 7})),
                 "invalid type",
-            ),
-            (
-                index_with("frozen", json!({"runtime/old.json": "0123"})),
-                "the digest of the frozen file runtime/old.json is not 64 hexadecimal digits in \
-                 lower case",
-            ),
-            (
-                index_with("frozen", json!({"runtime/old.json": DIGEST.to_uppercase()})),
-                "the digest of the frozen file runtime/old.json is not 64 hexadecimal digits in \
-                 lower case",
             ),
         ];
 

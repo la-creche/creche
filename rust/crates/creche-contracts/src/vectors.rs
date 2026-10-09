@@ -13,6 +13,8 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
+use crate::ids::Sha256Hex;
+
 /// The version of the file format that this reader takes.
 const FORMAT: u64 = 1;
 
@@ -32,9 +34,6 @@ const INDEX_KIND: &str = "index";
 /// The end of the name of each file under `vectors/data` that the generator
 /// reads.
 const JSON_SUFFIX: &str = ".json";
-
-/// The count of the hexadecimal digits of a SHA-256.
-const DIGEST_DIGITS: usize = 64;
 
 /// The `kind` of the disagreements file.
 const DISAGREEMENTS_KIND: &str = "disagreements";
@@ -341,21 +340,19 @@ pub(crate) fn index() -> Vec<IndexRow> {
 ///
 /// A path names a file below `vectors/data` with a name that ends in
 /// `.json`. It has no part that is empty, `.` or `..`, and it is not the
-/// index. A digest has 64 hexadecimal digits in lower case. The function
-/// compares no digest with a file: `vectors/tests` holds each digest.
+/// index. A digest is an [`Sha256Hex`]. The function compares no digest with
+/// a file: `vectors/tests` holds each digest.
 fn check_frozen(frozen: &BTreeMap<String, String>) {
     for (path, digest) in frozen {
         let names_only = path.split('/').all(|part| !matches!(part, "" | "." | ".."));
-        let lower_hex = |byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f');
 
         assert!(
             path != INDEX_FILE && path.ends_with(JSON_SUFFIX) && names_only,
             "{INDEX_FILE}: {path:?} is no path of a frozen file"
         );
-        assert!(
-            digest.len() == DIGEST_DIGITS && digest.bytes().all(lower_hex),
-            "{INDEX_FILE}: the digest of the frozen file {path}"
-        );
+        if let Err(error) = digest.parse::<Sha256Hex>() {
+            panic!("{INDEX_FILE}: the digest of the frozen file {path}: {error}");
+        }
     }
 }
 
@@ -691,14 +688,20 @@ mod tests {
         check_frozen(&frozen_map("runtime/old.txt", DIGEST));
     }
 
+    /// `ids::Sha256Hex` holds the grammar of a digest and its tests. The two
+    /// tests below hold that the reader gives each digest to that type.
     #[test]
-    #[should_panic(expected = "the digest of the frozen file runtime/old.json")]
+    #[should_panic(
+        expected = "the digest of the frozen file runtime/old.json: byte 10 of a SHA-256 digest"
+    )]
     fn a_frozen_digest_in_upper_case_stops_the_test() {
         check_frozen(&frozen_map("runtime/old.json", &DIGEST.to_uppercase()));
     }
 
     #[test]
-    #[should_panic(expected = "the digest of the frozen file runtime/old.json")]
+    #[should_panic(
+        expected = "the digest of the frozen file runtime/old.json: a SHA-256 digest has 64 bytes"
+    )]
     fn a_frozen_digest_of_63_digits_stops_the_test() {
         check_frozen(&frozen_map("runtime/old.json", &"0".repeat(63)));
     }
