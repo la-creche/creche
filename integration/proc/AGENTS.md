@@ -240,7 +240,8 @@ a test reads store.db with SQLite
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
    or in `proc_registry.py` makes it from a contract, never from a module of
-   a service.
+   a service. A corpus of the index builder is the one exception. It is
+   test data with no contract, and a writer of `proc_library.py` makes it.
 7. A service gets its whole environment from the test. No variable of the
    shell that runs the suite reaches a service, except `PATH`, `LANG` and
    `TMPDIR`.
@@ -346,8 +347,10 @@ stand-in. The fixture `library_prepared` starts nothing. A test runs the
 program itself: `run_index` runs it to its end, and `start_index` returns
 while it runs. Neither fixture needs the playpen bundle.
 
-1. Give the program `PATH` and one address variable, and nothing else. The
-   image of an index sandbox gives it no more. `run_index` does this.
+1. Give the program `PATH` and one address variable. The program needs no
+   other variable of the image of an index sandbox. The default command
+   also gets the variables of `DEFAULT_ONLY_ENV` in `proc_services.py`.
+   `run_index` does this.
 2. Write a corpus with a writer of `proc_library.py`. A vault scope is
    `vault/<name>` in the root. A code repository is `code/<name>`.
 3. Keep the index directory outside the corpus: `state/index/<name>` in the
@@ -461,6 +464,7 @@ for that line before it acts.
 2. Give the class a function that returns the environment of each new
    service. Use the variables of the unit file and no others.
 3. Write each new file of the root in `proc_tree.py`, from its contract.
+   Rule 6 names the one exception.
 4. Start a service that listens on a port with `start_on_port`.
 5. Add a fixture to `conftest.py`. Make it depend on `supervisor`, which ends
    every process.
