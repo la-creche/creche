@@ -14,16 +14,22 @@
 //! | [`router`] | `call`: one request through a router, with no socket. |
 //! | [`vectors`] | A reader of the vector files under `vectors/data`. |
 //!
+//! One more module is no stand-in. [`probe`] holds the program
+//! `creche-probe`: a program on each module of `creche-runtime`, which the
+//! process-level suite judges as a process.
+//!
 //! No release holds this crate. Add it only under `[dev-dependencies]`.
 //!
 //! The lint gate holds here as in each other crate: no code of the testkit
 //! panics. A function that can fail returns `Result`, and the test calls
-//! `unwrap`.
+//! `unwrap`. One route of [`probe`] is the exception: its handler panics on
+//! purpose, behind the panic boundary of the edge layer.
 //!
 //! `AGENTS.md` of this crate holds the rules for a change here.
 
 pub mod clock;
 pub mod entropy;
+pub mod probe;
 pub mod program;
 pub mod root;
 pub mod router;
