@@ -20,6 +20,7 @@
 //! | [`index`] | Each row of the index. |
 //! | [`surface`] | The vector file of one surface. |
 //! | [`disagreements`] | Each input on which two Python copies of one id grammar differ. |
+//! | [`registries`] | Each file of each registry that a vector names. |
 //!
 //! The reader refuses a vector file in each of these cases:
 //!
@@ -84,8 +85,10 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
 mod disagreements;
+mod registries;
 
 pub use disagreements::{Disagreement, disagreements};
+pub use registries::{RegistryFile, registries};
 
 /// The version of the file format that this reader takes.
 const FORMAT: u64 = 1;
