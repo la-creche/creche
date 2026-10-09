@@ -1073,6 +1073,7 @@ the text of the failure. Work down this list.
     characters of the piece before it.
   - A file with no text has a row in `files` and no chunk.
   - The program does not follow a link to a directory.
+  - A profile reads a suffix in upper case as the same suffix in lower case.
   - Each stored path starts with the resolved corpus directory.
   - The `hash` of a file is a BLAKE2b digest of 16 bytes, as hex text in
     lower case.

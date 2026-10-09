@@ -91,6 +91,10 @@ EXIT_USAGE: Final = 2
 NOTES: Final = "notes"
 REPO: Final = "demo"
 
+#: Each directory of build output that `write_repo` makes: each name that
+#: the `code` profile of `library/AGENTS.md` skips and that starts with no dot.
+BUILD_OUTPUT: Final = ("node_modules", "target", "dist", "build", "__pycache__")
+
 #: The index of a code repository has this prefix on the host.
 CODE_INDEX_PREFIX: Final = "code-"
 
@@ -525,7 +529,7 @@ def write_repo(root: Path) -> None:
     write_note(root / "pyproject.toml", '[project]\nname = "demo"\n')
     (root / "notes.pdf").write_bytes(b"%PDF-1.4 not source")
 
-    for junk in ("node_modules", "dist", "__pycache__"):
+    for junk in BUILD_OUTPUT:
         write_note(root / junk / "bundle.js", "// generated, never indexed\n")
 
     write_note(root / ".git" / "config.toml", "# vcs internals, never indexed\n")

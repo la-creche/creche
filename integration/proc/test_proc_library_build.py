@@ -122,6 +122,11 @@ MEETING_OTHER_DAY = MEETING_TEXT.replace("Tuesday", "Mondays")
 #: How far a scenario moves the mtime of a file: ten seconds, in nanoseconds.
 MTIME_STEP_NS = 10_000_000_000
 
+#: Two more notes for the `vault` profile: one with the second text suffix
+#: of the profile, and one with its suffix in upper case.
+PLAIN_NOTE = "plain.txt"
+UPPER_NOTE = "UPPER.MD"
+
 #: How many bytes the digest in the column `hash` of `files` has. The
 #: program writes a BLAKE2b digest of that size, as hex text in lower case.
 HASH_BYTES = 16
@@ -294,15 +299,21 @@ def test_code_profile_indexes_source_and_skips_build_output(library: LibraryStac
 
 
 def test_vault_profile_ignores_source_files(library: LibraryStack) -> None:
-    """This scenario gives the word `vault`. Each other vault scenario gives no profile word."""
+    """This scenario gives the word `vault`. Each other vault scenario gives no profile word.
+
+    The profile takes a `.txt` file. It reads a suffix in upper case as the
+    same suffix in lower case.
+    """
     scope = library.vault()
     write_vault(scope)
     write_note(scope / "script.py", "print('not prose')\n")
+    write_note(scope / PLAIN_NOTE, "A note with the suffix of a text file.")
+    write_note(scope / UPPER_NOTE, "A note with its suffix in upper case.")
 
     report = _run(library, scope, profile=Profile.VAULT)
 
-    assert report.indexed == 2
-    assert _names(library, scope) == {BIKES, MEETING}
+    assert report.indexed == 4
+    assert _names(library, scope) == {BIKES, MEETING, PLAIN_NOTE, UPPER_NOTE}
 
 
 # ------------------------------------------------------ what a process shows
