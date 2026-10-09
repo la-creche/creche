@@ -997,6 +997,12 @@ enum ClientEnd {
 
 impl Connection {
     /// Whether [`serve`] ended the connection.
+    ///
+    /// The read, each write and the flush ask this first. `hyper` waits in
+    /// one of the three when the cut comes, and which one depends on the
+    /// state of the request. For example, only the flush runs while a
+    /// handler gives no answer and does not read a body that waits. Only
+    /// the check that runs wakes the task of the connection at the cut.
     fn is_cut(&mut self, context: &mut Context<'_>) -> bool {
         self.cut.as_mut().poll(context).is_ready()
     }
@@ -1534,6 +1540,18 @@ fn limited<F: Future>(limit: Duration, closed: F) -> Option<tokio::time::Timeout
 ///   limit.
 /// - `uvicorn` sends the text of its status 400 also to a client that sent
 ///   `HEAD`. A listener here sends the headers of that answer and no body.
+/// - `h11` takes each byte from `0x21` to `0x7E` in a target
+///   (`h11/_abnf.py:54` and `:83`). A listener here has the grammar of the
+///   crate `http` (`src/uri/path.rs:418-457` of `http` 1.5.0). It answers
+///   status 400 with no body to `<`, `>` or a grave accent in a path, and to
+///   `"`, `<` or `>` in a query.
+/// - The Python framework takes a `#` in a target, and the text after it, as
+///   a part of the path or of the query. A listener here drops the `#` and
+///   the text after it.
+/// - `h11` reads a header line that continues on the next line, and each
+///   version text of the form `HTTP/1.2` (`h11/_abnf.py:84`). A listener
+///   here answers status 400 with no body to such a header line, and to each
+///   version but `HTTP/1.0` and `HTTP/1.1`.
 /// - `uvicorn` gives an app a header value with a control byte of ASCII, for
 ///   each such byte but NUL and white space (`h11/_abnf.py:55-56`). A
 ///   listener here takes only the tab: it answers status 400 to each other
@@ -2834,6 +2852,60 @@ pub(super) mod tests {
         }
     }
 
+    /// The handler gives no answer and does not read the body. The server
+    /// then reads no more byte of the connection and writes none, so only
+    /// the flush of the connection sees the cut.
+    #[test]
+    fn serve_ends_a_connection_whose_handler_reads_no_body_and_gives_no_answer() {
+        /// More bytes than the server and the two sockets hold.
+        const BODY: usize = 8 * 1024 * 1024;
+
+        for runtime in each_runtime() {
+            runtime.block_on(async {
+                let root = TempRoot::new().unwrap();
+                let path = socket_in(&root);
+                let entered = Arc::new(Notify::new());
+                let app = Router::new().route(
+                    "/healthz",
+                    get({
+                        let entered = Arc::clone(&entered);
+
+                        move |request: Request| async move {
+                            entered.notify_one();
+                            // The handler holds the body and never reads it.
+                            future::pending::<()>().await;
+                            drop(request);
+
+                            HEALTH_BODY
+                        }
+                    }),
+                );
+                let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+                let served = Served::start(vec![bound], app, SHORT_DRAIN);
+                let mut client = tokio::net::UnixStream::connect(&path).await.unwrap();
+                let head = format!(
+                    "GET /healthz HTTP/1.1\r\nHost: test\r\nContent-Length: {BODY}\r\n\r\n"
+                );
+                client.write_all(head.as_bytes()).await.unwrap();
+                within(entered.notified()).await;
+                // The client writes until no buffer takes a byte: the server
+                // reads no more.
+                let chunk = vec![b'a'; 64 * 1024];
+                while tokio::time::timeout(SHORT_DRAIN, client.write_all(&chunk))
+                    .await
+                    .is_ok()
+                {}
+
+                assert_eq!(served.stop().await, Ok(Drained::TimedOut { left: 1 }));
+
+                // The connection ended: the client reads its end, or an error.
+                let mut rest = Vec::new();
+                let _ = within(client.read_to_end(&mut rest)).await;
+                assert!(rest.is_empty(), "{rest:?}");
+            });
+        }
+    }
+
     #[test]
     fn a_stream_that_ends_at_the_stop_signal_gives_a_clean_stop() {
         for runtime in each_runtime() {
@@ -3196,6 +3268,74 @@ pub(super) mod tests {
         });
     }
 
+    /// `h11` reads each request of the first table, and a Python service
+    /// answers it. The Python framework has no route for the path of the
+    /// first request of the second table: the `#` is a part of that path.
+    #[test]
+    fn a_listener_has_the_grammar_of_its_http_crates() {
+        let refused: [&[u8]; 9] = [
+            b"GET /healthz<x HTTP/1.1\r\nHost: test\r\n\r\n",
+            b"GET /healthz>x HTTP/1.1\r\nHost: test\r\n\r\n",
+            b"GET /healthz`x HTTP/1.1\r\nHost: test\r\n\r\n",
+            b"GET /healthz?q=\"a\" HTTP/1.1\r\nHost: test\r\n\r\n",
+            b"GET /healthz?q=<a HTTP/1.1\r\nHost: test\r\n\r\n",
+            b"GET /healthz?q=a> HTTP/1.1\r\nHost: test\r\n\r\n",
+            // A header line that continues on the next line.
+            b"GET /healthz HTTP/1.1\r\nHost: test\r\nX-A: a\r\n b\r\n\r\n",
+            b"GET /healthz HTTP/1.2\r\nHost: test\r\n\r\n",
+            b"GET /healthz HTTP/2.0\r\nHost: test\r\n\r\n",
+        ];
+        let served: [(&[u8], &str); 3] = [
+            (
+                b"GET /healthz#part HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n",
+                "/healthz",
+            ),
+            (
+                b"GET /healthz?a=1#part HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n",
+                "/healthz?a=1",
+            ),
+            // The other bytes that the Python framework writes as `%XX`
+            // into a `Location` header.
+            (
+                b"GET /a\"{|}\\^?q={|}\\^` HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n",
+                "/a\"{|}\\^?q={|}\\^`",
+            ),
+        ];
+
+        runtime().block_on(async {
+            let root = TempRoot::new().unwrap();
+            let path = socket_in(&root);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let app = Router::new().fallback({
+                let calls = Arc::clone(&calls);
+
+                move |request: Request| async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+
+                    request.uri().to_string()
+                }
+            });
+            let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+            let served_app = Served::start(vec![bound], app, LONG_DRAIN);
+
+            for request in refused {
+                let answer = within(RawHttp::unix(&path, request)).await.unwrap();
+
+                assert_eq!(status_of(&answer), 400, "{request:?}");
+                assert!(body_of(&answer).is_empty(), "{request:?}");
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+            for (request, target) in served {
+                let answer = within(RawHttp::unix(&path, request)).await.unwrap();
+
+                assert_eq!(status_of(&answer), 200, "{request:?}");
+                assert_eq!(body_of(&answer), target.as_bytes(), "{request:?}");
+            }
+            assert_eq!(served_app.stop().await, Ok(Drained::Clean));
+        });
+    }
+
     #[test]
     fn a_head_past_16_kib_is_read() {
         runtime().block_on(async {
@@ -3240,6 +3380,46 @@ pub(super) mod tests {
             assert_eq!(status_of(&at_the_limit), 200);
             assert_eq!(status_of(&past_the_limit), 431);
             assert!(body_of(&past_the_limit).is_empty());
+            assert_eq!(served.stop().await, Ok(Drained::Clean));
+        });
+    }
+
+    #[test]
+    fn a_head_past_the_byte_limit_gets_status_431() {
+        /// The limit of `hyper` for the bytes of a head
+        /// (`DEFAULT_MAX_BUFFER_SIZE` of `src/proto/h1/io.rs`).
+        const HEAD_LIMIT: usize = 8192 + 4096 * 100;
+
+        /// A distance from the limit. The server reads a head in parts, so
+        /// the test asks for no answer at the limit itself.
+        const MARGIN: usize = 4096;
+
+        runtime().block_on(async {
+            let root = TempRoot::new().unwrap();
+            let path = socket_in(&root);
+            let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+            let served = Served::start(vec![bound], health_app(), LONG_DRAIN);
+            let head = |bytes: usize| {
+                let mut request =
+                    b"GET /healthz HTTP/1.1\r\nHost: test\r\nConnection: close\r\nX-Fill: "
+                        .to_vec();
+                request.resize(bytes - 4, b'a');
+                request.extend_from_slice(b"\r\n\r\n");
+
+                request
+            };
+
+            let below = within(RawHttp::unix(&path, &head(HEAD_LIMIT - MARGIN)))
+                .await
+                .unwrap();
+            let past = within(RawHttp::unix(&path, &head(HEAD_LIMIT + MARGIN)))
+                .await
+                .unwrap();
+
+            assert_eq!(HEAD_LIMIT, 417_792);
+            assert_eq!(status_of(&below), 200);
+            assert_eq!(status_of(&past), 431);
+            assert!(body_of(&past).is_empty());
             assert_eq!(served.stop().await, Ok(Drained::Clean));
         });
     }
