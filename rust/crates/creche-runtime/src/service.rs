@@ -903,6 +903,10 @@ pub enum Loaded<C, E> {
 /// exit status is then `EX_CONFIG`, and the unit of the daemon must hold
 /// `RestartPreventExitStatus=78`.
 ///
+/// An error list that gives no line is one line, with the reason
+/// `the config is not valid`. A program thus never stops with no reason on
+/// stderr.
+///
 /// The function first sets the panic hook of the process, as [`log::init`]
 /// does, with `program`.
 ///
@@ -918,6 +922,9 @@ pub fn load<C: Checked, E: ErrorLines>(
     load_to(&mut io::stderr().lock(), program, parsed)
 }
 
+/// The reason that [`load`] writes for an error list that gives no line.
+const NO_LINE_REASON: &str = "the config is not valid";
+
 /// [`load`] on the given writer. The function sets no panic hook.
 fn load_to<C: Checked, E: ErrorLines>(
     writer: &mut dyn io::Write,
@@ -927,8 +934,13 @@ fn load_to<C: Checked, E: ErrorLines>(
     match config::start(parsed) {
         Start::Run(config) => Loaded::Run(config),
         Start::Exit { errors } => {
-            for line in errors.lines() {
-                write_refusal(writer, program, &line);
+            let lines = errors.lines();
+
+            if lines.is_empty() {
+                write_refusal(writer, program, &NO_LINE_REASON);
+            }
+            for line in &lines {
+                write_refusal(writer, program, line);
             }
 
             Loaded::Exit(ExitCode::from(EX_CONFIG))
@@ -1150,6 +1162,16 @@ pub(crate) mod tests {
                 String::from("PORT: the variable is not set"),
                 String::from("BIND: the value is not UTF-8"),
             ]
+        }
+    }
+
+    /// The errors of a parse whose list gives no line.
+    #[derive(Debug, PartialEq)]
+    struct NoLines;
+
+    impl ErrorLines for NoLines {
+        fn lines(&self) -> Vec<String> {
+            Vec::new()
         }
     }
 
@@ -1518,6 +1540,20 @@ pub(crate) mod tests {
                 "noticeboard: BIND: the value is not UTF-8"
             ]
         );
+        assert!(written.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn an_error_list_with_no_line_still_writes_one_line() {
+        let mut written = Vec::new();
+
+        let loaded = load_to::<Exits, NoLines>(&mut written, "noticeboard", Err(NoLines));
+
+        let Loaded::Exit(status) = loaded else {
+            panic!("the type of the config says that the program exits");
+        };
+        assert!(same_status(status, EX_CONFIG));
+        assert_eq!(lines_of(&written), ["noticeboard: the config is not valid"]);
         assert!(written.ends_with(b"\n"));
     }
 
