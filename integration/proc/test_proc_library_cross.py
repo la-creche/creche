@@ -88,12 +88,13 @@ ADDED_LATER = "later/added.md"
 BACKFILL_CHUNKS = 1100
 REMOVED_DOC = "doc-0003.md"
 
-#: How many chunks the corpus of the killed-run scenario has. SQLite syncs
-#: the journal of a transaction when the changed pages no longer fit its
-#: page cache, which holds about 2 MB. The next program that opens the
-#: database replays only a journal that was synced. A store of this corpus
-#: has about 7 MB, and the killed run changes each chunk but those of the
-#: last file.
+#: How many chunks the corpus of the killed-run scenario has. A killed run
+#: can leave the journal of its transaction beside its work file. SQLite
+#: gives the pages of that journal to the next program that opens a file
+#: of that name, but only the pages that the killed run synced. It syncs a
+#: journal when the changed pages no longer fit its page cache, which holds
+#: about 2 MB. A store of this corpus has about 7 MB, and the killed run
+#: changes each chunk but those of the last file.
 KILLED_CHUNKS = 600
 
 #: How long the program has to end after a kill.
