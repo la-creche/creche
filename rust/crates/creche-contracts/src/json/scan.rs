@@ -868,7 +868,7 @@ mod tests {
     ];
 
     /// Rule 5: the offset of the first quote of the second key.
-    const DUPLICATE_KEY: [(&[u8], usize); 19] = [
+    const DUPLICATE_KEY: [(&[u8], usize); 16] = [
         (br#"{"a":1,"a":2}"#, 7),
         (br#"{"a":1,"a":1}"#, 7),
         (br#"{"a":1, "a":2}"#, 8),
@@ -890,10 +890,6 @@ mod tests {
         // An inner object.
         (br#"{"x":{"a":1,"a":2}}"#, 12),
         (br#"[{"a":1,"a":1}]"#, 8),
-        // The second key is before each later fault of the text.
-        (br#"{"a":1,"a":NaN}"#, 7),
-        (br#"{"a":1,"a""#, 7),
-        (br#"{"a":1,"a":18446744073709551616}"#, 7),
     ];
 
     /// Rule 4: the offset of the `\` of the escape that has no partner.
@@ -930,7 +926,7 @@ mod tests {
     ];
 
     /// Rule 7: an integer outside the range, at the first byte of its token.
-    const INTEGER_RANGE: [(&[u8], usize); 11] = [
+    const INTEGER_RANGE: [(&[u8], usize); 10] = [
         (b"18446744073709551616", 0),
         (b"-9223372036854775809", 0),
         (b"-18446744073709551615", 0),
@@ -942,8 +938,6 @@ mod tests {
         (b" 18446744073709551616", 1),
         (b"[1,18446744073709551616]", 3),
         (b"{\"a\":-9223372036854775809}", 5),
-        // The range rule is before the byte after the token.
-        (b"18446744073709551616x", 0),
     ];
 
     /// Rule 8: a float that is not finite, at the first byte of its token.
@@ -1003,26 +997,14 @@ mod tests {
         }
     }
 
-    /// The rows of `DUPLICATE_KEY` and of `INTEGER_RANGE` that also break a
-    /// rule of RFC 8259, after the offset of the refusal.
-    const WITH_A_LATER_FAULT: [&[u8]; 3] = [
-        br#"{"a":1,"a":NaN}"#,
-        br#"{"a":1,"a""#,
-        b"18446744073709551616x",
-    ];
-
     #[test]
     fn serde_json_reads_each_text_of_the_rules_that_rfc_8259_does_not_have() {
         // RFC 8259 permits a key two times and an integer of each size. A
-        // second reader thus reads each row with no later fault.
+        // second reader thus reads each row of the two tables.
         for (text, _) in DUPLICATE_KEY.into_iter().chain(INTEGER_RANGE) {
             let shown = String::from_utf8_lossy(text);
 
-            assert_eq!(
-                serde_json::from_slice::<Value>(text).is_ok(),
-                !WITH_A_LATER_FAULT.contains(&text),
-                "{shown:?}"
-            );
+            assert!(serde_json::from_slice::<Value>(text).is_ok(), "{shown:?}");
         }
     }
 
@@ -1137,7 +1119,7 @@ mod tests {
 
     #[test]
     fn the_first_offset_that_breaks_a_rule_is_the_refusal() {
-        let rows: [(&[u8], Rule, usize); 8] = [
+        let rows: [(&[u8], Rule, usize); 12] = [
             // A lone surrogate at byte 2, a second key at byte 12.
             (br#"{"\ud800":1,"\ud800":2}"#, Rule::LoneSurrogate, 2),
             // An integer past the range at byte 1, the end of the text later.
@@ -1153,6 +1135,18 @@ mod tests {
             (b"\"a\x01\\ud800\"", Rule::Syntax, 2),
             // A second key at byte 7, a value that is absent at byte 11.
             (br#"{"a":1,"a":}"#, Rule::DuplicateKey, 7),
+            // A second key at byte 7, a word of rule 3 at byte 11.
+            (br#"{"a":1,"a":NaN}"#, Rule::DuplicateKey, 7),
+            // A second key at byte 7, the end of the text at byte 10.
+            (br#"{"a":1,"a""#, Rule::DuplicateKey, 7),
+            // A second key at byte 7, an integer past the range at byte 11.
+            (
+                br#"{"a":1,"a":18446744073709551616}"#,
+                Rule::DuplicateKey,
+                7,
+            ),
+            // An integer past the range at byte 0, a byte after it at byte 20.
+            (b"18446744073709551616x", Rule::IntegerRange, 0),
         ];
 
         for (text, rule, at) in rows {
