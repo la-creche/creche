@@ -92,8 +92,9 @@ const JSON: &str = "application/json";
 const CLOSE: &str = "close";
 
 /// The headers that the client writes itself, and the one header that
-/// changes how a peer reads the end of a body. A [`Request`] holds no header
-/// of a caller with one of these names.
+/// changes how a peer reads the end of a body. [`Request::with_headers`]
+/// refuses a header of a caller with one of these names, so no [`Request`]
+/// holds one.
 const OWN_HEADERS: [HeaderName; 6] = [
     HOST,
     AUTHORIZATION,
@@ -749,14 +750,14 @@ impl fmt::Debug for Body {
 /// .with_headers(vec![(
 ///     HeaderName::from_static("x-door-instance"),
 ///     HeaderValue::from_static("tui.4711"),
-/// )])
+/// )])?
 /// .with_body(Body::Json(br#"{"family":"chat"}"#.to_vec()));
 ///
 /// assert_eq!(request.method(), Method::POST);
 /// assert_eq!(request.headers().len(), 1);
 /// assert!(request.bearer().is_some());
 /// assert!(!format!("{request:?}").contains("correct-horse"));
-/// # Ok::<(), creche_contracts::secret::SecretError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Code outside this module cannot build a request from raw values, so no
@@ -822,21 +823,37 @@ impl<'a> Request<'a> {
     /// the headers of the first one.
     ///
     /// The client writes `Host`, `Authorization`, `Content-Type`,
-    /// `Content-Length` and `Connection` itself. The function drops a header
-    /// with one of those names, and one with the name `Transfer-Encoding`. A
-    /// caller thus cannot replace the token or change where a body ends.
+    /// `Content-Length` and `Connection` itself. The function refuses a list
+    /// with a header of one of those names, and with one of the name
+    /// `Transfer-Encoding`. A caller thus cannot replace the token or change
+    /// where a body ends.
     ///
     /// The client writes the headers of the caller after its own headers. It
     /// writes the headers of one name together, at the place of the first
     /// one.
-    #[must_use]
-    pub fn with_headers(mut self, headers: Vec<(HeaderName, HeaderValue)>) -> Self {
-        self.headers = headers
-            .into_iter()
-            .filter(|(name, _)| !OWN_HEADERS.contains(name))
-            .collect();
+    ///
+    /// `httpx` takes a header of a caller with each of those names, and that
+    /// header replaces the one of the client. A Python call site that sets
+    /// one sets the value that this client writes: the token, or
+    /// `application/json` for a JSON body. A port of such a call gives the
+    /// token to [`Request::with_bearer`] and the body to
+    /// [`Request::with_body`].
+    ///
+    /// # Errors
+    ///
+    /// [`HeaderError::OwnName`] for a list with a header of one of the six
+    /// names. The request then keeps no header of the list.
+    pub fn with_headers(
+        mut self,
+        headers: Vec<(HeaderName, HeaderValue)>,
+    ) -> Result<Self, HeaderError> {
+        if let Some((name, _)) = headers.iter().find(|(name, _)| OWN_HEADERS.contains(name)) {
+            return Err(HeaderError::OwnName { name: name.clone() });
+        }
 
-        self
+        self.headers = headers;
+
+        Ok(self)
     }
 
     /// The request with this body.
@@ -884,6 +901,33 @@ impl<'a> Request<'a> {
         self.timeouts
     }
 }
+
+/// Why [`Request::with_headers`] refuses a list of headers.
+///
+/// The set is closed. The error holds the name of a header and no value. The
+/// type has no Python origin: `httpx` refuses no header of a caller for its
+/// name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderError {
+    /// A header of the list has a name that the client writes itself, or the
+    /// name `transfer-encoding`.
+    OwnName {
+        /// The name of the first such header of the list.
+        name: HeaderName,
+    },
+}
+
+impl fmt::Display for HeaderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OwnName { name } => {
+                write!(f, "a caller sets no header with the name {name}")
+            }
+        }
+    }
+}
+
+impl Error for HeaderError {}
 
 /// When a stream of [`Client::open`] ends at the latest.
 ///
@@ -2300,6 +2344,7 @@ mod tests {
         let request = get()
             .with_bearer(&secret)
             .with_headers(vec![header.clone()])
+            .unwrap()
             .with_body(body.clone());
 
         assert!(request.bearer().unwrap().matches(TOKEN.as_bytes()));
@@ -2310,40 +2355,87 @@ mod tests {
         assert_eq!(request.timeouts(), Timeouts::each(PATIENT));
     }
 
-    #[test]
-    fn a_request_holds_no_header_that_the_client_writes_itself() {
-        let header = |name: &'static str, value: &'static str| {
-            (
-                HeaderName::from_static(name),
-                HeaderValue::from_static(value),
-            )
-        };
+    /// One header of a caller.
+    fn header(name: &'static str, value: &'static str) -> (HeaderName, HeaderValue) {
+        (
+            HeaderName::from_static(name),
+            HeaderValue::from_static(value),
+        )
+    }
 
-        let request = get().with_headers(vec![
-            header("host", "other"),
-            header("authorization", "Bearer other"),
-            header("content-type", "text/plain"),
-            header("content-length", "999"),
-            header("connection", "keep-alive"),
-            header("transfer-encoding", "chunked"),
+    #[test]
+    fn a_request_refuses_a_header_that_the_client_writes_itself() {
+        for (name, value) in [
+            ("host", "other"),
+            ("authorization", "Bearer other"),
+            ("content-type", "text/plain"),
+            ("content-length", "999"),
+            ("connection", "keep-alive"),
+            ("transfer-encoding", "chunked"),
+        ] {
+            let refused = HeaderError::OwnName {
+                name: HeaderName::from_static(name),
+            };
+
+            // The place of the header in the list changes nothing, and the
+            // value changes nothing: the value that the client writes itself
+            // is refused too.
+            for list in [
+                vec![header(name, value)],
+                vec![header("x-door-instance", "one"), header(name, value)],
+                vec![header(name, value), header("accept", "text/plain")],
+                vec![header(name, "application/json")],
+            ] {
+                assert_eq!(get().with_headers(list).unwrap_err(), refused, "{name}");
+            }
+        }
+
+        // The error names the first such header of the list, and it holds
+        // no value.
+        let error = get()
+            .with_headers(vec![
+                header("accept", "text/plain"),
+                header("connection", HEADER_MARK),
+                header("host", "other"),
+            ])
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "a caller sets no header with the name connection"
+        );
+        assert!(!format!("{error:?}").contains(HEADER_MARK));
+    }
+
+    #[test]
+    fn a_request_keeps_each_other_header_of_its_caller_in_order() {
+        let list = vec![
             header("x-door-instance", "one"),
             header("accept", "application/x-ndjson"),
             header("x-door-instance", "two"),
-        ]);
+            // A name that only starts with a name of the client is a header
+            // of the caller.
+            header("content-typed", "x"),
+            header("x-host", "y"),
+        ];
 
-        assert_eq!(
-            request.headers(),
-            [
-                header("x-door-instance", "one"),
-                header("accept", "application/x-ndjson"),
-                header("x-door-instance", "two"),
-            ]
-        );
+        let request = get().with_headers(list.clone()).unwrap();
+
+        assert_eq!(request.headers(), list);
 
         // A second call replaces the headers of the first one.
-        let request = request.with_headers(vec![header("x-turn", "t-1")]);
+        let request = request.with_headers(vec![header("x-turn", "t-1")]).unwrap();
 
         assert_eq!(request.headers(), [header("x-turn", "t-1")]);
+
+        // A list with no header removes them.
+        assert!(
+            request
+                .with_headers(Vec::new())
+                .unwrap()
+                .headers()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -3017,10 +3109,11 @@ mod tests {
                     .send(
                         request(Method::POST, &["v1", "sessions"])
                             .with_bearer(&secret)
-                            .with_headers(vec![(
-                                HeaderName::from_static("x-door-instance"),
-                                HeaderValue::from_static("01JABCDEFGHJKMNPQRSTVWXYZ0"),
+                            .with_headers(vec![header(
+                                "x-door-instance",
+                                "01JABCDEFGHJKMNPQRSTVWXYZ0",
                             )])
+                            .unwrap()
                             .with_body(Body::Json(body.as_bytes().to_vec())),
                         ByteCap::ONE_MIB,
                         PATIENT,
@@ -3114,16 +3207,10 @@ mod tests {
     }
 
     #[test]
-    fn a_header_of_a_caller_with_a_name_of_the_client_is_not_sent() {
+    fn the_headers_of_a_caller_follow_the_headers_of_the_client() {
         runtime().block_on(async {
             let peer = peer(Transport::Unix).await;
             let secret = token();
-            let header = |name: &'static str, value: &'static str| {
-                (
-                    HeaderName::from_static(name),
-                    HeaderValue::from_static(value),
-                )
-            };
             peer.stub.script(Answer::status(StatusCode::OK).body("{}"));
 
             peer.client
@@ -3131,16 +3218,11 @@ mod tests {
                     request(Method::POST, &["v1", "x"])
                         .with_bearer(&secret)
                         .with_headers(vec![
-                            header("host", "other"),
-                            header("authorization", "Bearer other"),
-                            header("content-type", "text/plain"),
-                            header("content-length", "999"),
-                            header("connection", "keep-alive"),
-                            header("transfer-encoding", "chunked"),
                             header("x-door-instance", "one"),
                             header("accept", "application/x-ndjson"),
                             header("x-door-instance", "two"),
                         ])
+                        .unwrap()
                         .with_body(Body::Json(b"{}".to_vec())),
                     ByteCap::ONE_MIB,
                     PATIENT,
