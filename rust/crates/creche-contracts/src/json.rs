@@ -167,7 +167,15 @@
 //! assert_eq!(json::write(&broken, FILE), Err(WriteError::NotFinite));
 //! # Ok::<(), WriteError>(())
 //! ```
+//!
+//! # A value that the code does not read
+//!
+//! A contract calls some values opaque, for example the event of a channel
+//! line. [`Opaque`] holds one such value as the text that the reader
+//! checked. [`write()`] forms that text again in the style of the document
+//! around it.
 
+mod opaque;
 mod read;
 mod scan;
 mod write;
@@ -177,6 +185,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
+pub use self::opaque::Opaque;
 pub use self::read::{Integer, Number, ReadError, Shape, read};
 pub(crate) use self::write::write_raw_kept;
 pub use self::write::{Charset, KeyOrder, Layout, Style, WriteError, write};

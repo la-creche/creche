@@ -287,6 +287,23 @@ pub(crate) fn write_raw_kept<T: Serialize + ?Sized>(
     render(value, style, RawText::Kept)
 }
 
+/// The count of bytes that [`write()`] gives for `value` in the compact
+/// layout, with [`Charset::Utf8`] and the keys in their own order. The
+/// function keeps no byte.
+pub(super) fn compact_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, WriteError> {
+    let mut count = Count(0);
+    value.serialize(Value {
+        sink: &mut count,
+        rules: Rules {
+            style: Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGiven),
+            raw: RawText::Refused,
+        },
+        level: 0,
+    })?;
+
+    Ok(count.0)
+}
+
 fn render<T: Serialize + ?Sized>(
     value: &T,
     style: Style,
@@ -326,6 +343,15 @@ trait Sink {
 impl Sink for Vec<u8> {
     fn put(&mut self, bytes: &[u8]) {
         self.extend_from_slice(bytes);
+    }
+}
+
+/// A sink that counts the bytes and keeps none.
+struct Count(usize);
+
+impl Sink for Count {
+    fn put(&mut self, bytes: &[u8]) {
+        self.0 += bytes.len();
     }
 }
 
@@ -1498,6 +1524,7 @@ pub(super) mod tests {
                 assert_eq!(write(&in_a_map, style), Err(WriteError::NotFinite));
                 assert_eq!(write(&Some(float), style), Err(WriteError::NotFinite));
             }
+            assert_eq!(compact_len(&nested), Err(WriteError::NotFinite));
         }
 
         for float in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
@@ -2085,6 +2112,7 @@ pub(super) mod tests {
             assert_eq!(write(&stored, style), Err(WriteError::NoJsonForm));
             assert_eq!(write_raw_kept(&body, style).unwrap(), text.as_bytes());
         }
+        assert_eq!(compact_len(&body), Err(WriteError::NoJsonForm));
         assert_eq!(
             String::from_utf8(write_raw_kept(&stored, COMPACT).unwrap()).unwrap(),
             format!("{{\"seq\":7,\"body\":{text}}}")
@@ -2244,5 +2272,19 @@ pub(super) mod tests {
             WriteError::NotFinite.to_string(),
             "a float that is not finite"
         );
+    }
+
+    #[test]
+    fn the_compact_length_is_the_count_of_the_bytes_of_the_compact_form() {
+        assert_eq!(
+            compact_len(&sample()),
+            Ok(write(&sample(), COMPACT).unwrap().len())
+        );
+        assert_eq!(
+            compact_len(&keyed()),
+            Ok(write(&keyed(), COMPACT).unwrap().len())
+        );
+        assert_eq!(compact_len(&()), Ok(4));
+        assert_eq!(compact_len("\u{e9}\n"), Ok(6));
     }
 }
