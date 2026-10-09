@@ -1589,9 +1589,9 @@ To make the fifth check on your machine, for example before a merge:
   the `type` `object`, and the module does not check that member.
 - `mcp::WireError` is the one error type of the message, of `Object` and of
   the three results. A signature thus names a failure that its function
-  cannot give. The variant `Member` holds three reasons. Item 8 of "Where a
-  new type goes" asks for an error type for each type. No packet has that
-  part yet.
+  cannot give. The variant `Member` holds three reasons. "Where a new type
+  goes" gives each type an error type of its own, in item 8. No packet has
+  that part yet.
 - Against rule 13, `mcp` holds a second copy of one value of `json`. That
   value is the compact style, `COMPACT`. `json::Opaque` gives no member of
   its value and takes no typed value. The functions `reread` and
