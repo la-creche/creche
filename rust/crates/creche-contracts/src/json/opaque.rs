@@ -82,8 +82,8 @@ const COMPACT: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGi
 /// [`write`](super::write) then forms the value as it forms each other
 /// value, so the text is the text of `json.dumps` in the given [`Style`]:
 ///
-/// - A number has the form that Python gives it, and the form of its token
-///   is lost. The writer gives `1.5` for the token `1.50`, and `1e+21` for
+/// - A number has the form that Python gives it, and not the form of its
+///   token. The writer gives `1.5` for the token `1.50`, and `1e+21` for
 ///   the token `1e21`.
 /// - The characters of a token decide its kind, as for
 ///   [`Number`](super::Number). The token `-0` is the integer 0, and its
