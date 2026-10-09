@@ -14,6 +14,7 @@ pub mod grants;
 pub mod ids;
 pub mod json;
 pub mod manifest;
+pub mod mcp;
 pub mod secret;
 pub mod server;
 pub mod session;
