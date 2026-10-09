@@ -1164,6 +1164,19 @@ pub(crate) mod tests {
         std::str::from_utf8(written).unwrap().lines().collect()
     }
 
+    // --- the two exit statuses of the module ---
+
+    #[test]
+    fn a_panic_is_status_1_and_a_system_with_no_runtime_is_status_71() {
+        // The numbers are in this test, and not only the names: a change of
+        // a constant must fail a test. Clause 7 of the panic rule states the
+        // 1, and `sysexits.h` states the 71.
+        assert_eq!(PANIC_STATUS, 1);
+        assert_eq!(EX_OSERR, 71);
+        assert_ne!(PANIC_STATUS, EX_CONFIG);
+        assert_ne!(EX_OSERR, EX_CONFIG);
+    }
+
     // --- the program and the context ---
 
     #[test]
@@ -1285,6 +1298,37 @@ pub(crate) mod tests {
     }
 
     // --- the stop ---
+
+    #[test]
+    fn run_triggers_the_stop_before_it_waits_for_the_tasks() {
+        for program in each_program(LONG_DRAIN) {
+            let ended = Arc::new(AtomicBool::new(false));
+            let in_task = Arc::clone(&ended);
+            let started = Instant::now();
+
+            let status = run_through(&NoHandlers, program, |context| async move {
+                let stop = context.shutdown().clone();
+                // The task ends only at the stop signal, as a loop of a
+                // service does. No signal comes here: `main` returns.
+                drop(
+                    context
+                        .tasks()
+                        .spawn_must_complete("until-the-stop", async move {
+                            stop.cancelled().await;
+                            in_task.store(true, Ordering::SeqCst);
+                        }),
+                );
+
+                ExitCode::from(STATUS_OF_MAIN)
+            });
+            let waited = started.elapsed();
+
+            assert!(same_status(status, STATUS_OF_MAIN), "{program:?}");
+            assert!(ended.load(Ordering::SeqCst), "{program:?}");
+            // A wait before the trigger takes the whole drain limit.
+            assert!(waited < LONG_DRAIN / 2, "{program:?}: {waited:?}");
+        }
+    }
 
     #[test]
     fn the_rest_of_a_drain_limit_is_never_less_than_no_time() {
@@ -1698,8 +1742,9 @@ pub(crate) mod tests {
         Scenario {
             name: "main-call-panics",
             run: the_call_of_main_panics,
-            panics: 1,
-            check: |lines| assert_eq!(lines, [PANIC_LINE]),
+            panics: 2,
+            // One line for each of the two runtimes.
+            check: |lines| assert_eq!(lines, [PANIC_LINE, PANIC_LINE]),
         },
         Scenario {
             name: "enter-panics",
@@ -1868,22 +1913,38 @@ pub(crate) mod tests {
                 main_that_panics(context).await
             });
 
-            assert!(same_status(status, PANIC_STATUS));
-            assert!(!same_status(status, EX_CONFIG));
-            assert!(written.load(Ordering::SeqCst));
+            assert!(same_status(status, 1), "{program:?}");
+            assert!(!same_status(status, EX_CONFIG), "{program:?}");
+            assert!(written.load(Ordering::SeqCst), "{program:?}");
         }
     }
 
     /// The call of `main` makes the future. A panic there is a panic of
-    /// `main` too.
+    /// `main` too: a task that the call started still ends whole.
     fn the_call_of_main_panics() {
-        let program = Program::new(CHILD_PROGRAM, Threads::One, LONG_DRAIN);
+        for program in each_program(LONG_DRAIN) {
+            let written = Arc::new(AtomicBool::new(false));
+            let in_task = Arc::clone(&written);
 
-        let status = run(program, |_context| -> std::future::Ready<ExitCode> {
-            panic!("{PANIC_MESSAGE}")
-        });
+            let status = run(program, move |context| -> std::future::Ready<ExitCode> {
+                drop(
+                    context
+                        .tasks()
+                        .spawn_must_complete("slow-write", async move {
+                            tokio::time::sleep(TASK_TIME).await;
+                            in_task.store(true, Ordering::SeqCst);
+                        }),
+                );
 
-        assert!(same_status(status, PANIC_STATUS));
+                panic!("{PANIC_MESSAGE}")
+            });
+
+            assert!(same_status(status, 1), "{program:?}");
+            assert!(!same_status(status, EX_CONFIG), "{program:?}");
+            // Without the guard of the call, the panic leaves the runtime,
+            // and no wait for the tasks runs.
+            assert!(written.load(Ordering::SeqCst), "{program:?}");
+        }
     }
 
     fn the_body_of_an_entry_function_panics() {
@@ -1891,7 +1952,7 @@ pub(crate) mod tests {
         let panicked = enter(CHILD_PROGRAM, || panic!("{PANIC_MESSAGE}"));
 
         assert!(same_status(through, STATUS_OF_MAIN));
-        assert!(same_status(panicked, PANIC_STATUS));
+        assert!(same_status(panicked, 1));
         assert!(!same_status(panicked, EX_CONFIG));
     }
 
@@ -1905,7 +1966,7 @@ pub(crate) mod tests {
             ExitCode::SUCCESS
         });
 
-        assert!(same_status(status, EX_OSERR));
+        assert!(same_status(status, 71));
         assert!(!same_status(status, EX_CONFIG));
         assert!(!ran.load(Ordering::SeqCst));
     }
@@ -1921,7 +1982,7 @@ pub(crate) mod tests {
             ExitCode::SUCCESS
         });
 
-        assert!(same_status(status, EX_OSERR));
+        assert!(same_status(status, 71));
         assert!(!same_status(status, EX_CONFIG));
         assert!(!ran.load(Ordering::SeqCst));
     }
