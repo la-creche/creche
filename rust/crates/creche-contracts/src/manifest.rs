@@ -846,7 +846,7 @@ mod tests {
     use serde_json::{Map, Value, json};
 
     use super::*;
-    use crate::ids::{ComponentName, ContractVersion, GateId, Ulid};
+    use crate::ids::{ComponentName, ContractVersion, FamilyNameError, GateId, Ulid};
     use crate::vectors::{self, Input, Outcome, Vector};
 
     /// Each surface of this module, and the type or the function that the
@@ -1246,7 +1246,8 @@ mod tests {
             ),
         ];
         let fault_of = |field: &str, line: &str| {
-            ComponentManifest::parse(&manifest_with(field, line), None).map_err(|error| error.fault)
+            ComponentManifest::parse(&manifest_with(field, line), None)
+                .map_err(|error| error.fault().clone())
         };
 
         for (field, line) in &taken {
@@ -1280,6 +1281,37 @@ mod tests {
             Err(ManifestFault::Yaml(YamlFault::Deep)),
             "a nesting past the limit"
         );
+    }
+
+    #[test]
+    fn a_manifest_error_gives_the_scope_of_its_fault() {
+        let scope_of = |field: &str, line: &str| {
+            ComponentManifest::parse(&manifest_with(field, line), None)
+                .unwrap_err()
+                .scope()
+        };
+        let scopes = [
+            ("kind", "kind: []", Scope::Top),
+            (
+                "install",
+                "install: {to: /opt/x, prev: /opt/x.prev, bogus: 1}",
+                Scope::Install,
+            ),
+            (
+                "verify",
+                "verify: {command: [/bin/true], user: root, timeout_s: 5, bogus: 1}",
+                Scope::Verify,
+            ),
+            (
+                "restore",
+                "restore: {mode: automatic, keep: 1, bogus: 1}",
+                Scope::Restore,
+            ),
+        ];
+
+        for (field, line, scope) in scopes {
+            assert_eq!(scope_of(field, line), scope, "{line}");
+        }
     }
 
     #[test]
@@ -1597,16 +1629,36 @@ mod tests {
             .iter()
             .map(|(name, wanted)| (name.clone(), text_of(wanted).to_owned()))
             .collect::<BTreeMap<String, String>>();
-
-        Some(Draft {
-            id: text_field(args, "request_id").parse().ok()?,
-            kind: text_field(args, "kind").to_owned(),
+        let draft = Draft::new(
+            text_field(args, "request_id").parse().ok()?,
+            text_field(args, "kind").to_owned(),
             components,
-            rollback_of: optional_field(args, "rollback_of").map(str::to_owned),
-            requested_by: text_field(args, "requested_by").to_owned(),
-            requester_session: optional_field(args, "requester_session").map(str::to_owned),
-            now: float_of(text_field(args, "now_bits")),
-        })
+            text_field(args, "requested_by").to_owned(),
+            float_of(text_field(args, "now_bits")),
+        );
+
+        Some(with_optional_parts(
+            draft,
+            optional_field(args, "rollback_of"),
+            optional_field(args, "requester_session"),
+        ))
+    }
+
+    /// The draft with each optional part that the caller holds.
+    fn with_optional_parts(
+        draft: Draft,
+        rollback_of: Option<&str>,
+        requester_session: Option<&str>,
+    ) -> Draft {
+        let draft = match rollback_of {
+            Some(target) => draft.with_rollback_of(target.to_owned()),
+            None => draft,
+        };
+
+        match requester_session {
+            Some(session) => draft.with_requester_session(session.to_owned()),
+            None => draft,
+        }
     }
 
     #[test]
@@ -1653,18 +1705,20 @@ mod tests {
         for now in times {
             for (kind, rollback_of) in &kinds {
                 for requester_session in &sessions {
-                    let draft = Draft {
-                        id: id.clone(),
-                        kind: (*kind).to_owned(),
-                        components: releasable_names()
-                            .map(|name| (name.to_owned(), "latest".to_owned()))
-                            .chain([("chaperone".to_owned(), "1.2.3".to_owned())])
-                            .collect(),
-                        rollback_of: rollback_of.clone(),
-                        requested_by: "agent-control".to_owned(),
-                        requester_session: requester_session.clone(),
-                        now,
-                    };
+                    let draft = with_optional_parts(
+                        Draft::new(
+                            id.clone(),
+                            (*kind).to_owned(),
+                            releasable_names()
+                                .map(|name| (name.to_owned(), "latest".to_owned()))
+                                .chain([("chaperone".to_owned(), "1.2.3".to_owned())])
+                                .collect(),
+                            "agent-control".to_owned(),
+                            now,
+                        ),
+                        rollback_of.as_deref(),
+                        requester_session.as_deref(),
+                    );
                     let planned = Request::plan(&draft).unwrap();
                     let read = Request::parse(&planned.to_bytes(), &id).unwrap();
 
@@ -1678,15 +1732,13 @@ mod tests {
 
         assert_eq!(
             Request::parse(
-                &Request::plan(&Draft {
-                    id: id.clone(),
-                    kind: "release".to_owned(),
-                    components: BTreeMap::from([("chaperone".to_owned(), "1.2.3".to_owned())]),
-                    rollback_of: None,
-                    requested_by: "human".to_owned(),
-                    requester_session: None,
-                    now: 1.0,
-                })
+                &Request::plan(&Draft::new(
+                    id.clone(),
+                    "release".to_owned(),
+                    BTreeMap::from([("chaperone".to_owned(), "1.2.3".to_owned())]),
+                    "human".to_owned(),
+                    1.0,
+                ))
                 .unwrap()
                 .to_bytes(),
                 &other
@@ -2080,15 +2132,15 @@ mod tests {
         for vector in &surface.vectors {
             let args = vector.input.args().unwrap();
             let field = |key: &str| text_field(args, key).to_owned();
-            let summary = Summary::new(SummaryFields {
-                review: field("review"),
-                components: field("components"),
-                contracts: field("contracts"),
-                restarts: field("restarts"),
-                restore: field("restore"),
-                requested_by: field("requested_by"),
-                manifest: field("manifest"),
-            });
+            let summary = Summary::new(SummaryFields::new(
+                field("review"),
+                field("components"),
+                field("contracts"),
+                field("restarts"),
+                field("restore"),
+                field("requested_by"),
+                field("manifest"),
+            ));
             let value: Map<String, Value> = summary
                 .fields()
                 .into_iter()
@@ -2246,5 +2298,19 @@ mod tests {
         assert!("human".parse::<Requester>().is_ok());
         assert!("Human".parse::<Requester>().is_err());
         assert!("human\n".parse::<Requester>().is_err());
+    }
+
+    #[test]
+    fn a_requester_error_gives_the_rule_that_the_text_breaks() {
+        let fault_of = |text: &str| text.parse::<Requester>().unwrap_err().fault();
+        let faults = [
+            ("", FamilyNameError::TooShort),
+            ("Human", FamilyNameError::BadFirstByte),
+            ("hu man", FamilyNameError::BadByte { at: 2 }),
+        ];
+
+        for (text, fault) in faults {
+            assert_eq!(fault_of(text), fault, "{text:?}");
+        }
     }
 }

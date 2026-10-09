@@ -105,6 +105,27 @@ pub enum AtReload {
 
 /// What a process does when the parse of one config fails: one decision for
 /// the start and one for a reload.
+///
+/// [`FailureAction::new`] takes each pair of decisions.
+///
+/// ```
+/// use creche_contracts::config::{AtReload, AtStart, FailureAction};
+///
+/// let action = FailureAction::new(AtStart::ExitConfig, AtReload::KeepLastGood);
+/// assert_eq!(action.at_start(), AtStart::ExitConfig);
+/// assert_eq!(action.at_reload(), AtReload::KeepLastGood);
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::{AtReload, AtStart, FailureAction};
+///
+/// let action = FailureAction {
+///     at_start: AtStart::ExitConfig,
+///     at_reload: AtReload::KeepLastGood,
+/// };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FailureAction {
     at_start: AtStart,

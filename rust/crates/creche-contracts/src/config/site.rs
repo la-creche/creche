@@ -664,7 +664,29 @@ pub enum SiteFault {
 
 /// Why the site file gives no value for one key: the key and the reason.
 ///
-/// The error does not hold the value.
+/// The error does not hold the value. Only a reader of a [`SiteFile`] makes
+/// a value.
+///
+/// ```
+/// use creche_contracts::config::site::{SiteError, SiteFault, SiteFile, SiteKey};
+///
+/// let file = SiteFile::parse(b"AGENT_OPERATOR_USER=operator\n")?;
+/// let error: SiteError = file.lan_address().unwrap_err();
+/// assert_eq!(error.key(), SiteKey::LanAddress);
+/// assert_eq!(error.fault(), SiteFault::Unset);
+/// # Ok::<(), creche_contracts::config::site::SiteFileError>(())
+/// ```
+///
+/// Code outside this module cannot build an error from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::site::{SiteError, SiteFault, SiteFile, SiteKey};
+///
+/// let error = SiteError {
+///     key: SiteKey::LanAddress,
+///     fault: SiteFault::Unset,
+/// };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SiteError {
     key: SiteKey,
@@ -843,6 +865,30 @@ impl TryFrom<&SiteFile> for Site {
 }
 
 /// Each error of one conversion of a site file: one error or more.
+///
+/// Only the conversion from a [`SiteFile`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::site::{Site, SiteErrors, SiteFile, SiteKey};
+///
+/// let file = SiteFile::parse(b"AGENT_OPERATOR_USER=operator\n")?;
+/// let errors: SiteErrors = Site::try_from(&file).unwrap_err();
+/// let keys: Vec<SiteKey> = errors.as_slice().iter().map(|error| error.key()).collect();
+/// assert_eq!(
+///     keys,
+///     [SiteKey::GithubOwner, SiteKey::OperatorHome, SiteKey::LanAddress]
+/// );
+/// # Ok::<(), creche_contracts::config::site::SiteFileError>(())
+/// ```
+///
+/// Code outside this module cannot build a value from a raw list. A list
+/// with no error is not an error:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::config::site::{Site, SiteErrors, SiteFile, SiteKey};
+///
+/// let errors = SiteErrors(Vec::new());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SiteErrors(Vec<SiteError>);
 
