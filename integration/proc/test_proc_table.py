@@ -13,6 +13,7 @@ import pytest
 import yaml
 from proc_board import verify_words
 from proc_caregiver import serve_words
+from proc_library import Profile, index_words
 from proc_services import (
     DEFAULT_ONLY_ENV,
     SERVICES,
@@ -39,6 +40,14 @@ FLAG = "--"
 
 #: The three flags of `caregiver serve` that the suite adds to those of the unit.
 NOT_IN_THE_UNIT = {"--litellm-base-url", "--release-root", "--poll-interval-s"}
+
+#: The two units that run the index builder in a sandbox, and the profile
+#: word that each one gives. None is a unit that gives no such word.
+INDEX_UNITS = {"index@.service": None, "index-code@.service": Profile.CODE}
+
+#: The words of an `ExecStart` that give a shell its command text.
+SHELL = ("sh", "-c")
+END_OF_COMMAND = ";"
 
 
 def test_each_default_is_what_its_unit_runs() -> None:
@@ -84,6 +93,24 @@ def test_the_verify_hook_is_what_its_manifest_runs() -> None:
     assert Path(command[0]).name == entry.program
     assert entry.selector == ()
     assert verify_words(env_file) == command[1:]
+
+
+def test_the_index_units_run_the_program_of_the_library_row() -> None:
+    """The row of `library` names no unit, so its program is held here.
+
+    Each index unit runs a shell in a sandbox. The first command of the
+    shell text is the index builder with a corpus directory, an index
+    directory and the profile word of the unit. The suite gives the program
+    the same words: `index_words` of `proc_library.py`.
+    """
+    for unit, profile in INDEX_UNITS.items():
+        words = shlex.split(_exec_start(unit))
+        text_at = _index_after(words, SHELL)
+        command = shlex.split(words[text_at].partition(END_OF_COMMAND)[0])
+        suite = index_words(Path(command[1]), Path(command[2]), profile)
+
+        assert command[0] == SERVICES[Service.LIBRARY].program, unit
+        assert command[1:] == suite, unit
 
 
 def test_every_service_has_a_row_and_its_own_variable() -> None:
@@ -198,6 +225,13 @@ def _verify_command(manifest: Path) -> tuple[str, ...]:
     document = yaml.safe_load(manifest.read_text(encoding="utf-8"))
 
     return tuple(str(word) for word in document["verify"]["command"])
+
+
+def _index_after(words: list[str], run: tuple[str, ...]) -> int:
+    """The index of the word that follows the first place of `run` in `words`."""
+    starts = range(len(words) - len(run))
+
+    return next(at for at in starts if tuple(words[at : at + len(run)]) == run) + len(run)
 
 
 def _program(path: Path) -> Path:
