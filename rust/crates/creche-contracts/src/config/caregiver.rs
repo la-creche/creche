@@ -144,42 +144,198 @@ impl fmt::Display for ImageRefError {
 impl Error for ImageRefError {}
 
 /// The text of each flag of `caregiver serve`, as an argument parser gives
-/// it: the raw form. `None` stands for a flag that the command line does
-/// not hold.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// it: the raw form.
+///
+/// Code builds a value by hand. [`RawServe::new`] takes the two texts that
+/// each command line holds. A `with_` method sets one flag that the command
+/// line holds. A flag with no `with_` call is a flag that the command line
+/// does not hold.
+///
+/// ```
+/// use creche_contracts::config::caregiver::{CaregiverConfig, Mode, RawServe};
+/// use creche_contracts::config::Env;
+///
+/// let image = format!("registry.example/playpen@sha256:{}", "0123456789abcdef".repeat(4));
+/// let raw = RawServe::new(String::from("/srv/agents/registry"), image)
+///     .with_poll_interval_s(String::from("0.5"));
+/// let env = Env::from_pairs([("AGENT_LAN_ADDRESS", "192.0.2.10")]);
+/// let config = CaregiverConfig::from_parts(&raw, &env)?;
+/// assert_eq!(config.poll_interval().as_secs_f64(), 0.5);
+/// assert_eq!(config.mode(), Mode::Plan);
+/// # Ok::<(), creche_contracts::config::ConfigErrors>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::caregiver::{CaregiverConfig, Mode, RawServe};
+/// use creche_contracts::config::Env;
+///
+/// let image = format!("registry.example/playpen@sha256:{}", "0123456789abcdef".repeat(4));
+/// let raw = RawServe::new(String::from("/srv/agents/registry"), image);
+/// let raw = RawServe { poll_interval_s: Some(String::from("0.5")), ..raw };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawServe {
-    /// The registry root: the one positional argument.
-    pub registry: String,
-    /// `--image`: the image of the flavor `base`.
-    pub image: String,
-    /// `--image-python`: the image of the flavor `python`.
-    pub image_python: Option<String>,
-    /// `--released-images`: the file of a `playpen` release.
-    pub released_images: Option<String>,
-    /// `--state-root`
-    pub state_root: Option<String>,
-    /// `--release-root`
-    pub release_root: Option<String>,
-    /// `--litellm-base-url`
-    pub litellm_base_url: Option<String>,
-    /// `--sessiond-url`
-    pub sessiond_url: Option<String>,
-    /// `--sessiond-socket`. It wins over `--sessiond-url`.
-    pub sessiond_socket: Option<String>,
-    /// `--pep-url`. The empty text turns the watch off.
-    pub pep_url: Option<String>,
-    /// `--pep-probe-interval-s`
-    pub pep_probe_interval_s: Option<String>,
-    /// `--pep-unreachable-after-s`
-    pub pep_unreachable_after_s: Option<String>,
-    /// `--poll-interval-s`
-    pub poll_interval_s: Option<String>,
-    /// `--max-concurrent-passes`
-    pub max_concurrent_passes: Option<String>,
-    /// `--stop-grace-s`
-    pub stop_grace_s: Option<String>,
-    /// `--write`: act. Without it the service prints its plan and exits.
-    pub write: bool,
+    registry: String,
+    image: String,
+    image_python: Option<String>,
+    released_images: Option<String>,
+    state_root: Option<String>,
+    release_root: Option<String>,
+    litellm_base_url: Option<String>,
+    sessiond_url: Option<String>,
+    sessiond_socket: Option<String>,
+    pep_url: Option<String>,
+    pep_probe_interval_s: Option<String>,
+    pep_unreachable_after_s: Option<String>,
+    poll_interval_s: Option<String>,
+    max_concurrent_passes: Option<String>,
+    stop_grace_s: Option<String>,
+    write: bool,
+}
+
+impl RawServe {
+    /// The flags of a command line that holds the registry root and
+    /// `--image`, and no other flag.
+    ///
+    /// - `registry` is the registry root: the one positional argument.
+    /// - `image` is the text of `--image`: the image of the flavor `base`.
+    #[must_use]
+    pub fn new(registry: String, image: String) -> Self {
+        Self {
+            registry,
+            image,
+            image_python: None,
+            released_images: None,
+            state_root: None,
+            release_root: None,
+            litellm_base_url: None,
+            sessiond_url: None,
+            sessiond_socket: None,
+            pep_url: None,
+            pep_probe_interval_s: None,
+            pep_unreachable_after_s: None,
+            poll_interval_s: None,
+            max_concurrent_passes: None,
+            stop_grace_s: None,
+            write: false,
+        }
+    }
+
+    /// The same flags with `--image-python`: the image of the flavor `python`.
+    #[must_use]
+    pub fn with_image_python(mut self, image_python: String) -> Self {
+        self.image_python = Some(image_python);
+
+        self
+    }
+
+    /// The same flags with `--released-images`: the file of a `playpen`
+    /// release.
+    #[must_use]
+    pub fn with_released_images(mut self, released_images: String) -> Self {
+        self.released_images = Some(released_images);
+
+        self
+    }
+
+    /// The same flags with `--state-root`.
+    #[must_use]
+    pub fn with_state_root(mut self, state_root: String) -> Self {
+        self.state_root = Some(state_root);
+
+        self
+    }
+
+    /// The same flags with `--release-root`.
+    #[must_use]
+    pub fn with_release_root(mut self, release_root: String) -> Self {
+        self.release_root = Some(release_root);
+
+        self
+    }
+
+    /// The same flags with `--litellm-base-url`.
+    #[must_use]
+    pub fn with_litellm_base_url(mut self, litellm_base_url: String) -> Self {
+        self.litellm_base_url = Some(litellm_base_url);
+
+        self
+    }
+
+    /// The same flags with `--sessiond-url`.
+    #[must_use]
+    pub fn with_sessiond_url(mut self, sessiond_url: String) -> Self {
+        self.sessiond_url = Some(sessiond_url);
+
+        self
+    }
+
+    /// The same flags with `--sessiond-socket`. It wins over `--sessiond-url`.
+    #[must_use]
+    pub fn with_sessiond_socket(mut self, sessiond_socket: String) -> Self {
+        self.sessiond_socket = Some(sessiond_socket);
+
+        self
+    }
+
+    /// The same flags with `--pep-url`. The empty text turns the watch off.
+    #[must_use]
+    pub fn with_pep_url(mut self, pep_url: String) -> Self {
+        self.pep_url = Some(pep_url);
+
+        self
+    }
+
+    /// The same flags with `--pep-probe-interval-s`.
+    #[must_use]
+    pub fn with_pep_probe_interval_s(mut self, pep_probe_interval_s: String) -> Self {
+        self.pep_probe_interval_s = Some(pep_probe_interval_s);
+
+        self
+    }
+
+    /// The same flags with `--pep-unreachable-after-s`.
+    #[must_use]
+    pub fn with_pep_unreachable_after_s(mut self, pep_unreachable_after_s: String) -> Self {
+        self.pep_unreachable_after_s = Some(pep_unreachable_after_s);
+
+        self
+    }
+
+    /// The same flags with `--poll-interval-s`.
+    #[must_use]
+    pub fn with_poll_interval_s(mut self, poll_interval_s: String) -> Self {
+        self.poll_interval_s = Some(poll_interval_s);
+
+        self
+    }
+
+    /// The same flags with `--max-concurrent-passes`.
+    #[must_use]
+    pub fn with_max_concurrent_passes(mut self, max_concurrent_passes: String) -> Self {
+        self.max_concurrent_passes = Some(max_concurrent_passes);
+
+        self
+    }
+
+    /// The same flags with `--stop-grace-s`.
+    #[must_use]
+    pub fn with_stop_grace_s(mut self, stop_grace_s: String) -> Self {
+        self.stop_grace_s = Some(stop_grace_s);
+
+        self
+    }
+
+    /// The same flags with `--write`: the service acts. Without the flag, the
+    /// service prints its plan and exits.
+    #[must_use]
+    pub fn with_write(mut self) -> Self {
+        self.write = true;
+
+        self
+    }
 }
 
 /// Whether the service acts or only prints its plan.
@@ -276,12 +432,11 @@ impl Images {
 /// use creche_contracts::config::caregiver::{CaregiverConfig, PepWatch, RawServe};
 /// use creche_contracts::config::Env;
 ///
-/// let raw = RawServe {
-///     registry: String::from("/srv/agents/registry"),
-///     image: format!("registry.example/playpen@sha256:{}", "0123456789abcdef".repeat(4)),
-///     pep_url: Some(String::new()),
-///     ..RawServe::default()
-/// };
+/// let raw = RawServe::new(
+///     String::from("/srv/agents/registry"),
+///     format!("registry.example/playpen@sha256:{}", "0123456789abcdef".repeat(4)),
+/// )
+/// .with_pep_url(String::new());
 /// let env = Env::from_pairs([("AGENT_LAN_ADDRESS", "192.0.2.10")]);
 /// let config = CaregiverConfig::from_parts(&raw, &env)?;
 /// assert_eq!(config.pep_watch(), &PepWatch::Off);
@@ -296,12 +451,11 @@ impl Images {
 /// use creche_contracts::config::caregiver::{CaregiverConfig, PepWatch, RawServe};
 /// use creche_contracts::config::Env;
 ///
-/// let raw = RawServe {
-///     registry: String::from("/srv/agents/registry"),
-///     image: format!("registry.example/playpen@sha256:{}", "0123456789abcdef".repeat(4)),
-///     pep_url: Some(String::new()),
-///     ..RawServe::default()
-/// };
+/// let raw = RawServe::new(
+///     String::from("/srv/agents/registry"),
+///     format!("registry.example/playpen@sha256:{}", "0123456789abcdef".repeat(4)),
+/// )
+/// .with_pep_url(String::new());
 /// let env = Env::from_pairs([("AGENT_LAN_ADDRESS", "192.0.2.10")]);
 /// let config = CaregiverConfig::from_parts(&raw, &env).unwrap();
 /// let other = CaregiverConfig { max_passes: 0, ..config };
@@ -709,16 +863,12 @@ mod tests {
     /// The argument list of `systemd/creche-caregiver.service`, with the
     /// three variables of `managerd.env` in place.
     fn unit_args() -> RawServe {
-        RawServe {
-            registry: String::from("/srv/agents/registry"),
-            image: image("playpen"),
-            image_python: Some(image("playpen-python")),
-            state_root: Some(String::from("/srv/agents/state/rework")),
-            sessiond_socket: Some(String::from("/srv/agents/state/rework/sock/sessiond.sock")),
-            pep_url: Some(String::from("http://192.0.2.10:8300")),
-            write: true,
-            ..RawServe::default()
-        }
+        RawServe::new(String::from("/srv/agents/registry"), image("playpen"))
+            .with_image_python(image("playpen-python"))
+            .with_state_root(String::from("/srv/agents/state/rework"))
+            .with_sessiond_socket(String::from("/srv/agents/state/rework/sock/sessiond.sock"))
+            .with_pep_url(String::from("http://192.0.2.10:8300"))
+            .with_write()
     }
 
     /// The variables that the service reads: the site file and
@@ -781,11 +931,7 @@ mod tests {
 
     #[test]
     fn a_flag_that_is_not_set_takes_the_plane_on_the_lan_address() {
-        let raw = RawServe {
-            registry: String::from("/srv/agents/registry"),
-            image: image("playpen"),
-            ..RawServe::default()
-        };
+        let raw = RawServe::new(String::from("/srv/agents/registry"), image("playpen"));
         let config = CaregiverConfig::from_parts(&raw, &unit_env()).unwrap();
 
         assert_eq!(
@@ -798,6 +944,71 @@ mod tests {
         ));
         assert_eq!(config.images().python(), None);
         assert_eq!(config.mode(), Mode::Plan);
+    }
+
+    #[test]
+    fn each_with_method_sets_its_own_flag() {
+        let text = |flag: &str| Some(String::from(flag));
+        let raw = RawServe::new(String::from("registry"), String::from("image"))
+            .with_image_python(String::from("image_python"))
+            .with_released_images(String::from("released_images"))
+            .with_state_root(String::from("state_root"))
+            .with_release_root(String::from("release_root"))
+            .with_litellm_base_url(String::from("litellm_base_url"))
+            .with_sessiond_url(String::from("sessiond_url"))
+            .with_sessiond_socket(String::from("sessiond_socket"))
+            .with_pep_url(String::from("pep_url"))
+            .with_pep_probe_interval_s(String::from("pep_probe_interval_s"))
+            .with_pep_unreachable_after_s(String::from("pep_unreachable_after_s"))
+            .with_poll_interval_s(String::from("poll_interval_s"))
+            .with_max_concurrent_passes(String::from("max_concurrent_passes"))
+            .with_stop_grace_s(String::from("stop_grace_s"))
+            .with_write();
+        let flags = RawServe {
+            registry: String::from("registry"),
+            image: String::from("image"),
+            image_python: text("image_python"),
+            released_images: text("released_images"),
+            state_root: text("state_root"),
+            release_root: text("release_root"),
+            litellm_base_url: text("litellm_base_url"),
+            sessiond_url: text("sessiond_url"),
+            sessiond_socket: text("sessiond_socket"),
+            pep_url: text("pep_url"),
+            pep_probe_interval_s: text("pep_probe_interval_s"),
+            pep_unreachable_after_s: text("pep_unreachable_after_s"),
+            poll_interval_s: text("poll_interval_s"),
+            max_concurrent_passes: text("max_concurrent_passes"),
+            stop_grace_s: text("stop_grace_s"),
+            write: true,
+        };
+
+        assert_eq!(raw, flags);
+    }
+
+    #[test]
+    fn a_command_line_with_two_texts_holds_no_other_flag() {
+        let raw = RawServe::new(String::from("registry"), String::from("image"));
+        let flags = RawServe {
+            registry: String::from("registry"),
+            image: String::from("image"),
+            image_python: None,
+            released_images: None,
+            state_root: None,
+            release_root: None,
+            litellm_base_url: None,
+            sessiond_url: None,
+            sessiond_socket: None,
+            pep_url: None,
+            pep_probe_interval_s: None,
+            pep_unreachable_after_s: None,
+            poll_interval_s: None,
+            max_concurrent_passes: None,
+            stop_grace_s: None,
+            write: false,
+        };
+
+        assert_eq!(raw, flags);
     }
 
     #[test]
