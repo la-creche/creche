@@ -190,10 +190,12 @@ A reader refuses an index in each of these cases:
   leave two `frozen` maps.
 - A path or a digest has another form.
 
-The generator and the Rust readers of `creche-testkit` and of
-`creche-contracts` hold these rules. Each Rust reader first gives the index
-to the strict JSON reader of `creche-contracts`. `rust/AGENTS.md`, "JSON",
-has the rules of that reader.
+The generator and the Rust readers of `creche-vectors` and of
+`creche-contracts` hold these rules. The reader of `creche-contracts` first
+gives the index to the strict JSON reader of that crate. `rust/AGENTS.md`,
+"JSON", has the rules of that reader. The crate `creche-vectors` does not
+use `creche-contracts`. Its raw types refuse each index that is not strict
+JSON.
 
 ## The vector file
 
