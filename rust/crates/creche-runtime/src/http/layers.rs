@@ -166,7 +166,8 @@ pub enum AccessLog {
 ///   route only in its final slashes: `/healthz/` for `/healthz`, or
 ///   `/healthz` for `/healthz/`. Such a request gets status 307 with no
 ///   body, for each method. The `Location` header names the path of the
-///   route and keeps the query. The path `/` gets no such answer.
+///   route and keeps the query. It holds a byte outside a fixed set as
+///   `%XX`, for example `%7C` for `|`. The path `/` gets no such answer.
 /// - **A target with a scheme.** A target with a scheme and a host,
 ///   `http://host/path`, gets the answer for [`EdgeFailure::NoRoute`], for
 ///   each path. `axum` alone routes the path of such a target.
@@ -489,7 +490,10 @@ async fn has_route(table: Router, unrouted: Method, path: &str) -> bool {
 /// With no `Host` header that names a host, the value is the path and the
 /// query. `None` when the parts make no header value.
 ///
-/// The Python origin is `URL` of `starlette/datastructures.py:38-62`.
+/// The value holds each byte that [`stays`] refuses as `%XX`.
+///
+/// The Python origins are `URL` of `starlette/datastructures.py:38-62` and
+/// `RedirectResponse` of `starlette/responses.py:204-213`.
 fn location(headers: &HeaderMap, path: &str, query: Option<&str>) -> Option<HeaderValue> {
     let mut place = String::new();
     let host = headers
@@ -506,7 +510,67 @@ fn location(headers: &HeaderMap, path: &str, query: Option<&str>) -> Option<Head
         place.push_str(query);
     }
 
-    HeaderValue::from_str(&place).ok()
+    HeaderValue::from_str(&quoted(&place)).ok()
+}
+
+/// `text` with each byte that [`stays`] refuses as `%XX`, with hex digits in
+/// upper case. A `%` stays, so an escape of the client stays as it is.
+///
+/// The Python origin is `quote_from_bytes` of `urllib/parse.py:953-970`
+/// (CPython 3.13).
+fn quoted(text: &str) -> String {
+    let mut quoted = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if stays(byte) {
+            quoted.push(char::from(byte));
+        } else {
+            quoted.push('%');
+            quoted.push(hex_digit(byte >> 4));
+            quoted.push(hex_digit(byte & 0x0f));
+        }
+    }
+
+    quoted
+}
+
+/// Whether the Python framework writes `byte` into a `Location` header as it
+/// is: an ASCII letter, a digit, one of `_.-~`, or a byte of the `safe` text
+/// of the framework.
+///
+/// The Python origins are `_ALWAYS_SAFE` of `urllib/parse.py:841-844`
+/// (CPython 3.13) and the `safe` text of `starlette/responses.py:213`.
+const fn stays(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'_' | b'.'
+                | b'-'
+                | b'~'
+                | b':'
+                | b'/'
+                | b'%'
+                | b'#'
+                | b'?'
+                | b'='
+                | b'@'
+                | b'['
+                | b']'
+                | b'!'
+                | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+        )
+}
+
+/// The hex digit of `nibble` in upper case. `nibble` is 15 or less.
+fn hex_digit(nibble: u8) -> char {
+    char::from_digit(u32::from(nibble), 16).map_or('0', |digit| digit.to_ascii_uppercase())
 }
 
 /// Whether `text` is a host with an optional port: a name of ASCII letters,
@@ -1629,6 +1693,29 @@ mod tests {
                 Some("http://test/healthz?a=1&b=%20"),
             ),
             ("GET", "/healthz/?", Some("http://test/healthz")),
+            // The Python framework writes each of these bytes as `%XX`
+            // (`starlette/responses.py:213`).
+            (
+                "GET",
+                "/healthz/?q=a|b^c`d\\e{f}",
+                Some("http://test/healthz?q=a%7Cb%5Ec%60d%5Ce%7Bf%7D"),
+            ),
+            (
+                "GET",
+                "/items/a|b^c{d}\"e\\f/",
+                Some("http://test/items/a%7Cb%5Ec%7Bd%7D%22e%5Cf"),
+            ),
+            // An escape of the client stays as it is, in lower case too.
+            (
+                "GET",
+                "/healthz/?q=%7b%22&r=%2F",
+                Some("http://test/healthz?q=%7b%22&r=%2F"),
+            ),
+            (
+                "GET",
+                "/healthz/?q=:/%?=@[]!$&'()*+,;_.-~",
+                Some("http://test/healthz?q=:/%?=@[]!$&'()*+,;_.-~"),
+            ),
             ("GET", "/dir", Some("http://test/dir/")),
             ("PUT", "/dir?x=1", Some("http://test/dir/?x=1")),
             // The other form of `/dir//` is `/dir`, and no route has it.
@@ -1646,6 +1733,7 @@ mod tests {
             let calls = Arc::new(AtomicUsize::new(0));
             let routes = Router::new()
                 .route("/healthz", counted(&calls))
+                .route("/items/{id}", counted(&calls))
                 .route("/dir/", counted(&calls));
             let service = Service::starlette(routes).await;
 
@@ -1724,6 +1812,37 @@ mod tests {
             assert_eq!(forwarded.header("location"), Some("http://test/healthz"));
             service.stop().await;
         });
+    }
+
+    /// `quote` of Python, with the `safe` text of the framework, changes
+    /// these bytes of the range `0x21` to `0x7E`: `"<>\^{|}` and the grave
+    /// accent. It changes each byte outside that range.
+    #[test]
+    fn a_location_holds_each_byte_as_the_python_framework_writes_it() {
+        let changed = b"\"<>\\^`{|}";
+
+        for byte in 0..=u8::MAX {
+            let stays_in_python = (0x21..=0x7e).contains(&byte) && !changed.contains(&byte);
+
+            assert_eq!(stays(byte), stays_in_python, "{byte:#04x}");
+        }
+
+        assert_eq!(quoted("/a b\u{7f}"), "/a%20b%7F");
+        assert_eq!(quoted("%7b%zz%"), "%7b%zz%");
+        assert_eq!(quoted("\u{0}\u{1f}\u{ff}"), "%00%1F%C3%BF");
+
+        // A client of a listener cannot send a byte past `0x7E` in a target.
+        // A router that a test calls with no socket can get one.
+        let mut headers = HeaderMap::new();
+        assert_eq!(
+            location(&headers, "/caf\u{e9}", Some("n=\u{f1}")).unwrap(),
+            "/caf%C3%A9?n=%C3%B1"
+        );
+        headers.insert(HOST, HeaderValue::from_static("[2001:db8::1]:8340"));
+        assert_eq!(
+            location(&headers, "/caf\u{e9}", None).unwrap(),
+            "http://[2001:db8::1]:8340/caf%C3%A9"
+        );
     }
 
     /// The table holds what `_HOST_RE` of `starlette/datastructures.py:25`
