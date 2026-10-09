@@ -150,8 +150,35 @@ impl fmt::Display for Requester {
 
 /// Why a text is not a requester: the rule of the name grammar that it
 /// breaks.
+///
+/// Only the parse of a [`Requester`] makes a value.
+///
+/// ```
+/// use creche_contracts::ids::FamilyNameError;
+/// use creche_contracts::manifest::{Requester, RequesterError};
+///
+/// let error: RequesterError = "Human".parse::<Requester>().unwrap_err();
+/// assert_eq!(error.fault(), FamilyNameError::BadFirstByte);
+/// ```
+///
+/// Code outside this module cannot build an error from a rule:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::ids::FamilyNameError;
+/// use creche_contracts::manifest::{Requester, RequesterError};
+///
+/// let error = RequesterError(FamilyNameError::BadFirstByte);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RequesterError(pub FamilyNameError);
+pub struct RequesterError(FamilyNameError);
+
+impl RequesterError {
+    /// The rule of the name grammar that the text breaks.
+    #[must_use]
+    pub const fn fault(&self) -> FamilyNameError {
+        self.0
+    }
+}
 
 impl fmt::Display for RequesterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -220,23 +247,103 @@ impl Error for TimestampError {}
 /// The arguments of a requester, before root's parser checks them.
 ///
 /// This is the raw type of [`Request`]. Each field but the id is a text as
-/// the caller holds it. [`Request::plan`] makes the valid type.
+/// the caller holds it. [`Request::plan`] makes the valid type. Code builds a
+/// value by hand: [`Draft::new`] takes each field that a request always has,
+/// and a `with_` method sets each other field.
+///
+/// ```
+/// use std::collections::BTreeMap;
+///
+/// use creche_contracts::manifest::{Draft, Request, RequestKind};
+///
+/// let id = "01K5J8M2Q7V3X9R4T6N0B8C2DE".parse()?;
+/// let components = BTreeMap::from([(String::from("chaperone"), String::from("latest"))]);
+/// let draft = Draft::new(
+///     id,
+///     String::from("release"),
+///     components,
+///     String::from("human"),
+///     1758153590.0,
+/// )
+/// .with_requester_session(String::from("tui-01K5J7Z9R0P2M4C6H8K1N3V5W7"));
+/// let request = Request::plan(&draft)?;
+/// assert_eq!(request.kind(), &RequestKind::Release);
+/// assert!(request.requester_session().is_some());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use std::collections::BTreeMap;
+///
+/// use creche_contracts::manifest::{Draft, Request, RequestKind};
+///
+/// let id = "01K5J8M2Q7V3X9R4T6N0B8C2DE".parse().unwrap();
+/// let components = BTreeMap::from([(String::from("chaperone"), String::from("latest"))]);
+/// let draft = Draft::new(
+///     id,
+///     String::from("release"),
+///     components,
+///     String::from("human"),
+///     1758153590.0,
+/// );
+/// let rollback = Draft { kind: String::from("rollback"), ..draft };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Draft {
-    /// The id of the request. The requester mints it with [`mint_ulid`].
-    pub id: Ulid,
-    /// The kind: `release` or `rollback`.
-    pub kind: String,
-    /// Each component name and the version that the requester wants.
-    pub components: BTreeMap<String, String>,
-    /// The id of the release that a rollback undoes.
-    pub rollback_of: Option<String>,
-    /// Who asks.
-    pub requested_by: String,
-    /// The session that asks.
-    pub requester_session: Option<String>,
-    /// The clock of the requester, in seconds.
-    pub now: f64,
+    id: Ulid,
+    kind: String,
+    components: BTreeMap<String, String>,
+    rollback_of: Option<String>,
+    requested_by: String,
+    requester_session: Option<String>,
+    now: f64,
+}
+
+impl Draft {
+    /// The draft of the request `id`, with no rollback target and no
+    /// session. The requester mints the id with [`mint_ulid`].
+    ///
+    /// - `kind` is the kind: `release` or `rollback`.
+    /// - `components` holds each component name and the version that the
+    ///   requester wants.
+    /// - `requested_by` says who asks.
+    /// - `now` is the clock of the requester, in seconds.
+    #[must_use]
+    pub fn new(
+        id: Ulid,
+        kind: String,
+        components: BTreeMap<String, String>,
+        requested_by: String,
+        now: f64,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            components,
+            rollback_of: None,
+            requested_by,
+            requester_session: None,
+            now,
+        }
+    }
+
+    /// The same draft with the id of the release that a rollback undoes.
+    #[must_use]
+    pub fn with_rollback_of(mut self, rollback_of: String) -> Self {
+        self.rollback_of = Some(rollback_of);
+
+        self
+    }
+
+    /// The same draft with the session that asks.
+    #[must_use]
+    pub fn with_requester_session(mut self, requester_session: String) -> Self {
+        self.requester_session = Some(requester_session);
+
+        self
+    }
 }
 
 // CONTRACT-QUESTION: `stage7-releases.md` §2.3 calls the id of a request a

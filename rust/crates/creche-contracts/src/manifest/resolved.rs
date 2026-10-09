@@ -608,22 +608,93 @@ pub fn release_action(id: &Ulid, gate: &GateId) -> String {
 
 /// The seven fields of an approval summary, as root writes them before the
 /// cut.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// Code builds a value by hand: [`SummaryFields::new`] takes each field, in
+/// the order that the operator reads them. [`Summary::new`] makes the
+/// summary.
+///
+/// ```
+/// use creche_contracts::manifest::{Summary, SummaryFields};
+///
+/// let fields = SummaryFields::new(
+///     String::from("safe: each manifest verified"),
+///     String::from("chaperone 2.0.3 to 2.1.0"),
+///     String::from("6 contracts satisfied"),
+///     String::from("creche-chaperone.service"),
+///     String::from("automatic"),
+///     String::from("human"),
+///     String::from("0123456789ab"),
+/// );
+/// let summary = Summary::new(fields);
+/// assert_eq!(summary.review(), "safe: each manifest verified");
+/// assert_eq!(summary.restore(), "automatic");
+/// assert_eq!(summary.manifest(), "0123456789ab");
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::manifest::{Summary, SummaryFields};
+///
+/// let fields = SummaryFields::new(
+///     String::from("safe: each manifest verified"),
+///     String::from("chaperone 2.0.3 to 2.1.0"),
+///     String::from("6 contracts satisfied"),
+///     String::from("creche-chaperone.service"),
+///     String::from("automatic"),
+///     String::from("human"),
+///     String::from("0123456789ab"),
+/// );
+/// let fields = SummaryFields {
+///     review: String::from("suspect: one manifest changed"),
+///     ..fields
+/// };
+/// let summary = Summary::new(fields);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryFields {
-    /// The verdict of the review, first: `safe: ...` or `suspect: ...`.
-    pub review: String,
-    /// One line for each component that changes.
-    pub components: String,
-    /// The result of the contract check.
-    pub contracts: String,
-    /// The units that the release restarts, in order.
-    pub restarts: String,
-    /// `automatic`, or `manual:` and the component.
-    pub restore: String,
-    /// Who asked.
-    pub requested_by: String,
-    /// The first 12 hex bytes of the manifest hash.
-    pub manifest: String,
+    review: String,
+    components: String,
+    contracts: String,
+    restarts: String,
+    restore: String,
+    requested_by: String,
+    manifest: String,
+}
+
+impl SummaryFields {
+    /// The fields of a summary, in the order that the operator reads them.
+    ///
+    /// - `review` is the verdict of the review: `safe: ...` or
+    ///   `suspect: ...`. The operator reads it first.
+    /// - `components` holds one line for each component that changes.
+    /// - `contracts` is the result of the contract check.
+    /// - `restarts` holds the units that the release restarts, in order.
+    /// - `restore` is the restore rule: `automatic`, or `manual:` and the
+    ///   component.
+    /// - `requested_by` says who asks.
+    /// - `manifest` is the start of the manifest hash: its first 12 hex
+    ///   bytes.
+    #[must_use]
+    pub fn new(
+        review: String,
+        components: String,
+        contracts: String,
+        restarts: String,
+        restore: String,
+        requested_by: String,
+        manifest: String,
+    ) -> Self {
+        Self {
+            review,
+            components,
+            contracts,
+            restarts,
+            restore,
+            requested_by,
+            manifest,
+        }
+    }
 }
 
 /// The approval summary that the operator reads before the approval
@@ -635,11 +706,16 @@ pub struct SummaryFields {
 /// ```
 /// use creche_contracts::manifest::{Summary, SummaryFields};
 ///
-/// let summary = Summary::new(SummaryFields {
-///     review: "r".repeat(121),
-///     restore: String::from("automatic"),
-///     ..SummaryFields::default()
-/// });
+/// let fields = SummaryFields::new(
+///     "r".repeat(121),
+///     String::from("chaperone 2.0.3 to 2.1.0"),
+///     String::from("6 contracts satisfied"),
+///     String::from("creche-chaperone.service"),
+///     String::from("automatic"),
+///     String::from("human"),
+///     String::from("0123456789ab"),
+/// );
+/// let summary = Summary::new(fields);
 /// assert_eq!(summary.review().chars().count(), 120);
 /// assert!(summary.review().ends_with('\u{2026}'));
 /// assert_eq!(summary.restore(), "automatic");
@@ -648,11 +724,19 @@ pub struct SummaryFields {
 /// Code outside this module cannot put a longer field into a value:
 ///
 /// ```compile_fail,E0616
-/// use creche_contracts::manifest::Summary;
+/// use creche_contracts::manifest::{Summary, SummaryFields};
 ///
-/// fn change(mut summary: Summary) {
-///     summary.fields.review = "r".repeat(500);
-/// }
+/// let fields = SummaryFields::new(
+///     "r".repeat(121),
+///     String::from("chaperone 2.0.3 to 2.1.0"),
+///     String::from("6 contracts satisfied"),
+///     String::from("creche-chaperone.service"),
+///     String::from("automatic"),
+///     String::from("human"),
+///     String::from("0123456789ab"),
+/// );
+/// let mut summary = Summary::new(fields.clone());
+/// summary.fields = fields;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Summary {

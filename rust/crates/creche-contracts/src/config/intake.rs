@@ -33,6 +33,38 @@ const CERT_FILE: &str = "/etc/agent-intake/intake.crt";
 const KEY_FILE: &str = "/etc/agent-intake/intake.key";
 
 /// The hook that tells the operator about a pending secret.
+///
+/// Only the parse of an [`IntakeConfig`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::intake::{IntakeConfig, PushHook};
+/// use creche_contracts::config::site::SiteFile;
+/// use creche_contracts::config::{Env, HttpUrl};
+///
+/// let site = SiteFile::parse(b"AGENT_OPERATOR_USER=operator\nAGENT_LAN_ADDRESS=192.0.2.10\n")?;
+/// let env = Env::from_pairs([
+///     ("RELEASE_APPROVAL_URL", "http://192.0.2.10:1881/hook/release"),
+///     ("RELEASE_APPROVAL_TOKEN", "a-test-token-of-the-hook"),
+/// ]);
+/// let config = IntakeConfig::from_parts(&site, &env)?;
+/// let hook: &PushHook = config.push().ok_or("the two variables name a hook")?;
+/// let url: &HttpUrl = hook.url();
+/// assert_eq!(url.as_str(), "http://192.0.2.10:1881/hook/release");
+/// assert!(hook.token().matches(b"a-test-token-of-the-hook"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::intake::{IntakeConfig, PushHook};
+/// use creche_contracts::config::site::SiteFile;
+/// use creche_contracts::config::{Env, HttpUrl};
+///
+/// fn with_other_url(hook: PushHook, url: HttpUrl) -> PushHook {
+///     PushHook { url, ..hook }
+/// }
+/// ```
 #[derive(Debug)]
 pub struct PushHook {
     url: HttpUrl,

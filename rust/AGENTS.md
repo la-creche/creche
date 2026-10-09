@@ -2217,18 +2217,6 @@ To make the fifth check on your machine, for example before a merge:
   2. A roster row with an empty `command`, or with a name that is no server
      name.
   3. A `VIEW_COOKIE_SECURE` of `off`, which leaves the switch on.
-- Sixteen types of `config` have a private field and no `compile_fail` doc
-  test. The rule in "Tests" asks for one. The types are in four groups:
-  1. A part of a daemon config: `attendance::OwuiCopy`, `caregiver::Images`,
-     `chaperone::RosterFiles`, `chaperone::Doors` and `intake::PushHook`.
-     Only the parse of that config makes one.
-  2. A raw form, which checks nothing: `roster::RawRoster`,
-     `roster::RawUpstream`, `roster::RawArgDeny` and
-     `mounts::RawRuntimeConfig`.
-  3. An error type: `roster::RosterIssue`, `roster::RosterErrors`,
-     `site::SiteError`, `site::SiteErrors`, `mounts::RuntimeConfigErrors` and
-     `mounts::PlaypenEnvErrors`.
-  4. `FailureAction`. Its constructor is public and takes each pair.
 - No vector covers five configs: the chaperone without its `site` readers,
   the caregiver, the two doors and the intake. No Python entry point takes
   their variables as a map. The tests of those types use a copy of the

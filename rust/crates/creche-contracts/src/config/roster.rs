@@ -35,11 +35,53 @@ const SECRET_PREFIX: &str = "secret:";
 
 /// The tree of one roster file: a mapping from the name of an upstream to
 /// its row. A file with no content is a roster with no row.
+///
+/// Only `serde` and [`Roster::to_raw`] make a value.
+///
+/// ```
+/// use creche_contracts::config::roster::{RawRoster, Roster};
+///
+/// let raw: RawRoster = serde_json::from_str("null")?;
+/// assert_eq!(Roster::try_from(raw)?, Roster::empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot write the struct as a literal, also not
+/// with the field of another value:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::roster::{RawRoster, Roster};
+///
+/// fn copy_of(raw: RawRoster) -> RawRoster {
+///     RawRoster { ..raw }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct RawRoster(Option<BTreeMap<String, MapOnly<RawUpstream>>>);
 
 /// The row of one upstream, as the file holds it.
+///
+/// Only `serde` and [`Roster::to_raw`] make a value.
+///
+/// ```
+/// use creche_contracts::config::roster::RawUpstream;
+///
+/// let row: RawUpstream = serde_json::from_str(r#"{"command": "web-search"}"#)?;
+/// let text = serde_json::to_string(&row)?;
+/// assert_eq!(text, r#"{"command":"web-search","args":[],"env":{}}"#);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::roster::RawUpstream;
+///
+/// fn with_a_shell(row: RawUpstream) -> RawUpstream {
+///     RawUpstream { command: String::from("/bin/sh"), ..row }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawUpstream {
@@ -56,6 +98,28 @@ pub struct RawUpstream {
 
 /// One argument fence of an upstream, as the file holds it. Each of the
 /// three keys is necessary.
+///
+/// Only `serde` and [`Roster::to_raw`] make a value.
+///
+/// ```
+/// use creche_contracts::config::roster::RawArgDeny;
+///
+/// let text = r#"{"tools":["search"],"arg":"site","values":["a"]}"#;
+/// let fence: RawArgDeny = serde_json::from_str(text)?;
+/// assert_eq!(serde_json::to_string(&fence)?, text);
+/// assert!(serde_json::from_str::<RawArgDeny>(r#"{"tools":["search"]}"#).is_err());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::roster::RawArgDeny;
+///
+/// fn with_no_tool(fence: RawArgDeny) -> RawArgDeny {
+///     RawArgDeny { tools: Vec::new(), ..fence }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawArgDeny {
@@ -421,6 +485,35 @@ pub enum RosterFault {
 
 /// One reason why the tree of a roster file is not a roster: the upstream,
 /// the position of the `arg_denies` entry and the rule.
+///
+/// Only the conversion from a [`RawRoster`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::roster::{RawRoster, Roster, RosterFault, RosterIssue};
+///
+/// let raw: RawRoster = serde_json::from_str(
+///     r#"{"web-search": {"command": "web-search",
+///         "arg_denies": [{"tools": [], "arg": "site", "values": ["a"]}]}}"#,
+/// )?;
+/// let errors = Roster::try_from(raw).unwrap_err();
+/// let issue: &RosterIssue = errors.as_slice().first().ok_or("the tree has one issue")?;
+/// assert_eq!(issue.upstream(), "web-search");
+/// assert_eq!(issue.at(), 0);
+/// assert_eq!(issue.fault(), RosterFault::NoTool);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build an issue from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::roster::{RawRoster, Roster, RosterFault, RosterIssue};
+///
+/// let issue = RosterIssue {
+///     upstream: String::from("web-search"),
+///     at: 0,
+///     fault: RosterFault::NoTool,
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RosterIssue {
     upstream: String,
@@ -468,6 +561,29 @@ impl fmt::Display for RosterIssue {
 impl Error for RosterIssue {}
 
 /// Each issue of one roster tree: one issue or more.
+///
+/// Only the conversion from a [`RawRoster`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::roster::{RawRoster, Roster, RosterErrors};
+///
+/// let raw: RawRoster = serde_json::from_str(
+///     r#"{"web-search": {"command": "web-search",
+///         "arg_denies": [{"tools": [], "arg": "", "values": []}]}}"#,
+/// )?;
+/// let errors: RosterErrors = Roster::try_from(raw).unwrap_err();
+/// assert_eq!(errors.as_slice().len(), 1);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+///
+/// Code outside this module cannot build a value from a raw list. A list
+/// with no issue is not an error:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::config::roster::{RawRoster, Roster, RosterErrors};
+///
+/// let errors = RosterErrors(Vec::new());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RosterErrors(Vec<RosterIssue>);
 
