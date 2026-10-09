@@ -768,6 +768,10 @@ LISTS: Final[tuple[Answer, ...]] = (
     _listed("labels-empty", _session(labels={})),
     _listed("labels-20", _session(labels=_labels(sessions.MAX_LABELS))),
     _listed("labels-21", _session(labels=_labels(sessions.MAX_LABELS + 1))),
+    _listed(
+        "21-labels-not-sorted",
+        _session(labels=dict(reversed(_labels(sessions.MAX_LABELS + 1).items()))),
+    ),
     _listed("labels-sorted", _session(labels={"b": "2", "a": "1", "B": "3", "_": "4", "1": "5"})),
     _listed("label-600-characters", _session(labels={"note": "v" * 600})),
     _listed("label-key-600-characters", _session(labels={"k" * 600: "value"})),
@@ -1068,6 +1072,16 @@ REFUSALS: Final[tuple[Answer, ...]] = (
     _refusal("code-with-a-space", 404, {"error": {"code": "not found"}}),
     _refusal("code-spaces", 404, {"error": {"code": "  "}}),
     _refusal("code-spaces-and-no-message", 404, {"error": {"code": " ", "message": ""}}),
+    # --- the status comes before the size cap ---
+    Answer(
+        _long(
+            "body-over-the-size-cap",
+            ('{"error":{"code":"not_found"}', 1),
+            (" ", sessions.MAX_LIST_BYTES),
+            ("}", 1),
+        ),
+        404,
+    ),
 )
 
 # --- the token file of the reader (contract 02 §3 rule 5) -------------------------------
