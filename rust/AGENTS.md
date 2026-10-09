@@ -1333,8 +1333,10 @@ To make the fifth check on your machine, for example before a merge:
     `zone` of `quiet.daily` in the family file: the host has a time zone.
     A second example is the name of each directory below the state root,
     for example `families`. `creche_contracts::config` holds such a name,
-    and `creche_runtime::layout` holds a copy. No packet has that change
-    yet.
+    and `creche_runtime::layout` holds a copy. A third example is the mode
+    `2750` of the directory of a socket. `atomic::DirMode` of
+    `creche-runtime` holds it, and `http::server` holds a copy. No packet
+    has that change yet.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
     program of the workspace today. Its `main` sets no panic hook and
     parses the command line itself. Its library has no entry function that
@@ -1534,6 +1536,13 @@ To make the fifth check on your machine, for example before a merge:
   for all the signals that arrive while a reload runs. Two Python services
   run one reload for each SIGHUP that their loop takes. A change costs one
   function, `Hangups::next`.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/http/layers.rs`: no contract and no Python
+  framework gives an answer for three failures of the edge of a router. The
+  failures are a handler that the runtime stopped, a body past a cap and a
+  body that stops early. `StarletteBodies` answers the first as the
+  framework answers an exception. It answers the two others with the status
+  only.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-runtime/src/http/client.rs`:
   1. `Target::try_from` for an `HttpUrl`. No contract gives the base URL of

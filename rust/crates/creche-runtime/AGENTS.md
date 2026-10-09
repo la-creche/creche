@@ -211,8 +211,9 @@ reason. The packet that writes the three bodies obeys these rules:
   request. A `HeaderValue` holds no such byte, so no request gives that
   header to `bearer_of`. The test gives the bytes to the private function
   `bearer_in`: the vector proves that function and no service. This
-  difference on an HTTP surface is open. No test of this crate shows what a
-  Rust service answers, because the HTTP server is a stub.
+  difference on an HTTP surface is open. A Rust service answers such a
+  request with status 400, and no handler runs. `hyper` refuses a header
+  value with that byte. A test of `src/http/server.rs` holds that answer.
 - `token::CachedToken` reads the file again only when one of four facts of
   the file moved. The facts are the device, the inode, the size and the time
   of the last change. It does not see a new token that has each fact of the
@@ -298,6 +299,32 @@ reason. The packet that writes the three bodies obeys these rules:
   The Python chaperone has the same rule. The Python `attendance` and the
   Python trigger door run one reload for each SIGHUP that their loop takes.
   A change costs one function, `Hangups::next`.
+- This `CONTRACT-QUESTION` comment is open in `src/http/layers.rs`: no
+  contract and no Python framework gives an answer for three failures of the
+  edge. The failures are a handler that the runtime stopped, a body past a
+  cap and a body that stops early. `StarletteBodies` answers the first as
+  the framework answers an exception. It answers the two others with the
+  status only: 413 and 400. A change costs one arm of `answer`.
+- No vector holds the answer of `StarletteBodies` for a panic. Each Python
+  service has a handler of its own for an exception, so no surface
+  `runtime.edge.*` holds the answer of the framework. The constant is the
+  text of `starlette/middleware/errors.py:259`. A plain test holds it.
+- No route behind `http::layers::edge` answers `HEAD`. The edge gives each
+  `HEAD` request another method before the router gets it, so a route that
+  names `HEAD` gets no request. The Python noticeboard answers `HEAD` on a
+  file of its static mount with status 200 and no body. A router behind
+  `edge` answers status 405 for that route. The port of the noticeboard
+  needs an answer first: a change to `edge`, or a route outside it.
+- A layer that a router has before `edge` gets only the answer of a handler.
+  The Python noticeboard adds a cookie to an answer of its framework too,
+  for example to an answer with status 404. A layer on the result of `edge`
+  gets each answer. It runs outside the task of the request and outside the
+  panic boundary. The port of the noticeboard needs that answer too.
+- `http::server` and `http::layers` differ from the server and from the
+  framework of the Python services in more ways. The doc comments of `bind`,
+  `serve`, `edge` and `read_body` name each one, and a plain test holds each
+  one. Two examples: a listener sets no time limit on a connection, and a
+  router matches the path as the client sent it.
 - These `CONTRACT-QUESTION` comments are open in `src/http/client.rs`:
   1. `Target::try_from` for an `HttpUrl`: no contract gives the base URL of
      a service a grammar. `creche_contracts::config::HttpUrl` checks only
