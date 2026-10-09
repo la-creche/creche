@@ -1,0 +1,9 @@
+# The Rust files that the coverage rule binds. rust/AGENTS.md, "The coverage
+# rule", has the rule. bin/rust-coverage.sh reads this list.
+#
+# A line is a comment or one path. A comment starts with `#`. A path starts
+# at the root of the repository and names one Rust source file under rust/.
+# The list has no empty line.
+#
+# The list starts with no path. A pull request that ports a decision module
+# of the chaperone adds each Rust file of that module here.
