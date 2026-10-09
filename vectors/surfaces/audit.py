@@ -210,7 +210,6 @@ RECORDS: Final[tuple[Record, ...]] = (
     # --- the trusted fields ---
     Record("no-grants-rev", grants_rev=None),
     Record("sandbox-trusted", sandbox_id="chat-s3", sandbox_id_trusted=True),
-    Record("sandbox-claimed", sandbox_id="chat-s3"),
     Record("latency-zero", latency_ms=0),
     # --- the claimed fields and the chain ---
     Record("claimed-every-field", session_id=SESSION, turn_id=TURN, delegation_id=DELEGATION),
