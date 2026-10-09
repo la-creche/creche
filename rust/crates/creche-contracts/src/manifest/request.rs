@@ -150,8 +150,35 @@ impl fmt::Display for Requester {
 
 /// Why a text is not a requester: the rule of the name grammar that it
 /// breaks.
+///
+/// Only the parse of a [`Requester`] makes a value.
+///
+/// ```
+/// use creche_contracts::ids::FamilyNameError;
+/// use creche_contracts::manifest::{Requester, RequesterError};
+///
+/// let error: RequesterError = "Human".parse::<Requester>().unwrap_err();
+/// assert_eq!(error.fault(), FamilyNameError::BadFirstByte);
+/// ```
+///
+/// Code outside this module cannot build an error from a rule:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::ids::FamilyNameError;
+/// use creche_contracts::manifest::{Requester, RequesterError};
+///
+/// let error = RequesterError(FamilyNameError::BadFirstByte);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RequesterError(pub FamilyNameError);
+pub struct RequesterError(FamilyNameError);
+
+impl RequesterError {
+    /// The rule of the name grammar that the text breaks.
+    #[must_use]
+    pub const fn fault(&self) -> FamilyNameError {
+        self.0
+    }
+}
 
 impl fmt::Display for RequesterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
