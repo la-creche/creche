@@ -24,10 +24,11 @@
 //!
 //! 1. The format of the file is not 1.
 //! 2. The file holds a key that the format does not name.
-//! 3. The name or the entry point of the file differs from its index row.
-//! 4. A count of the file differs from its index row.
-//! 5. Two vectors of the file have the same id.
-//! 6. An input, an `output` or a marker object has a form that the format
+//! 3. The file or a vector of it is no JSON object.
+//! 4. The name or the entry point of the file differs from its index row.
+//! 5. A count of the file differs from its index row.
+//! 6. Two vectors of the file have the same id.
+//! 7. An input, an `output` or a marker object has a form that the format
 //!    does not name.
 //!
 //! The reader refuses the index in each of these cases:
@@ -35,11 +36,12 @@
 //! 1. The format is not 1, or the kind is not `index`.
 //! 2. The index or a row holds a key that the format does not name, or lacks
 //!    one.
-//! 3. An object of the index holds one key two times.
-//! 4. The path of a row is no path below `vectors/data`, or the three counts
+//! 3. The index or a row is no JSON object.
+//! 4. An object of the index holds one key two times.
+//! 5. The path of a row is no path below `vectors/data`, or the three counts
 //!    of a row do not add up.
-//! 5. Two rows have the same surface.
-//! 6. The index names a frozen file with a path or with a digest that the
+//! 6. Two rows have the same surface.
+//! 7. The index names a frozen file with a path or with a digest that the
 //!    generator does not write in that form.
 //!
 //! A frozen file is a data file whose Python origin left the repository. The
@@ -71,8 +73,10 @@ use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::marker::PhantomData;
 use std::path::PathBuf;
 
+use serde::de::value::MapAccessDeserializer;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
@@ -881,6 +885,51 @@ fn check_markers(value: &Value) -> Result<(), String> {
     }
 }
 
+/// A raw type that only a JSON object gives.
+///
+/// The derive of `serde` also reads a struct from an array that holds the
+/// values of its fields in order. The format of each file names an object.
+/// Each raw struct of this crate thus reads through this type: [`object_of`]
+/// for the text of a file, and [`objects`] for a field.
+struct ObjectOnly<T>(T);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for ObjectOnly<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(Members(PhantomData)).map(Self)
+    }
+}
+
+/// The `serde` visitor of [`ObjectOnly`].
+struct Members<T>(PhantomData<T>);
+
+impl<'de, T: Deserialize<'de>> Visitor<'de> for Members<T> {
+    type Value = T;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a JSON object")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<T, A::Error> {
+        T::deserialize(MapAccessDeserializer::new(map))
+    }
+}
+
+/// The raw value of a file whose JSON text is `text`. The text is one JSON
+/// object.
+fn object_of<'de, T: Deserialize<'de>>(text: &'de str) -> Result<T, serde_json::Error> {
+    serde_json::from_str::<ObjectOnly<T>>(text).map(|object| object.0)
+}
+
+/// Reads a field that is a list of JSON objects. A raw struct names this
+/// function in `deserialize_with`.
+fn objects<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Vec<T>, D::Error> {
+    let items = Vec::<ObjectOnly<T>>::deserialize(deserializer)?;
+
+    Ok(items.into_iter().map(|object| object.0).collect())
+}
+
 /// The index file, as `serde` reads it. It checks no rule of the format.
 /// `serde` refuses an object that holds one of these keys two times.
 #[derive(Debug, Deserialize)]
@@ -891,6 +940,7 @@ struct RawIndex {
     /// holds an empty map.
     frozen: RawFrozen,
     kind: String,
+    #[serde(deserialize_with = "objects")]
     surfaces: Vec<RawIndexRow>,
 }
 
@@ -961,7 +1011,8 @@ struct RawSurface {
     vectors: Vec<RawVector>,
 }
 
-/// One vector, as `serde` reads it.
+/// One vector, as `serde` reads it. A struct with a flattened field reads
+/// from a JSON object only, so it needs no [`ObjectOnly`].
 #[derive(Debug, Deserialize)]
 struct RawVector {
     id: String,
@@ -1038,13 +1089,14 @@ pub fn surface(name: &str) -> Result<Surface, VectorsError> {
 // `creche-contracts` holds the strict JSON reader and `ids::Sha256Hex`, and
 // rule 1 of `AGENTS.md` of this crate keeps that crate out of this one. The
 // rules do not say what a crate below `creche-contracts` does. The reading
-// here: the raw types of the index hold the rules of a strict text, and
-// `is_digest` holds the form of a digest. A change costs one helper in
-// `creche-util` for the digest.
+// here: the raw types of the index hold the rules of a strict text,
+// `is_digest` holds the form of a digest, and `ObjectOnly` does what
+// `slot::MapOnly` does. A change costs one helper in `creche-util` for the
+// digest, and a `serde` dependency there for the adapter.
 fn index_of(text: &str) -> Result<Vec<IndexRow>, VectorsError> {
     let refused = |reason: String| VectorsError::new(INDEX_FILE, reason);
     // The index holds no secret, and the message of `serde` names the field.
-    let raw: RawIndex = serde_json::from_str(text).map_err(|error| refused(error.to_string()))?;
+    let raw: RawIndex = object_of(text).map_err(|error| refused(error.to_string()))?;
 
     if raw.format != FORMAT {
         return Err(refused(wrong_format(raw.format)));
@@ -1087,7 +1139,7 @@ fn index_of(text: &str) -> Result<Vec<IndexRow>, VectorsError> {
 /// The vector file of the index row `row`, whose JSON text is `text`.
 fn surface_of(row: &IndexRow, text: &str) -> Result<Surface, VectorsError> {
     let refused = |reason: String| VectorsError::new(&row.path, reason);
-    let raw: RawSurface = serde_json::from_str(text).map_err(|error| refused(error.to_string()))?;
+    let raw: RawSurface = object_of(text).map_err(|error| refused(error.to_string()))?;
 
     if raw.format != FORMAT {
         return Err(refused(wrong_format(raw.format)));
@@ -1651,7 +1703,7 @@ mod tests {
 
     #[test]
     fn an_index_that_breaks_a_rule_is_refused() {
-        let refused: [(String, &str); 34] = [
+        let refused: [(String, &str); 36] = [
             (
                 index_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
@@ -1774,6 +1826,27 @@ mod tests {
                 index_text(r#""frozen": {}"#)
                     .replace("1", &format!("{}{}", "[".repeat(65), "]".repeat(65))),
                 "invalid type",
+            ),
+            // An array in the place of an object, with the values of the
+            // fields in order.
+            (
+                String::from(r#"[1, {}, "index", []]"#),
+                "invalid type: sequence, expected a JSON object",
+            ),
+            (
+                index_with(
+                    "surfaces",
+                    json!([[
+                        "runtime.test",
+                        "runtime/test.json",
+                        "package.entry",
+                        0,
+                        0,
+                        0,
+                        0
+                    ]]),
+                ),
+                "invalid type: sequence, expected a JSON object",
             ),
         ];
 
@@ -1907,7 +1980,7 @@ mod tests {
             {"id": "one", "input": {"text": "a"}, "result": "accepted"},
             {"id": "one", "input": {"text": ""}, "result": "refused"},
         ]));
-        let rules: [(String, &str); 15] = [
+        let rules: [(String, &str); 16] = [
             (
                 file_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
@@ -1966,8 +2039,15 @@ mod tests {
                 ])),
                 "the vector one: the content of a $int marker: the text is no decimal integer",
             ),
-            // The text of `serde` for a form that is wrong.
-            (String::from("[]"), "invalid length"),
+            // An array in the place of an object.
+            (
+                String::from("[]"),
+                "invalid type: sequence, expected a JSON object",
+            ),
+            (
+                String::from(r#"[1, "runtime.test", "package.entry", "no contract", [], {}, []]"#),
+                "invalid type: sequence, expected a JSON object",
+            ),
             (
                 file(&json!([
                     ["one", {"text": "a"}, "accepted"],
