@@ -16,6 +16,11 @@
 //! `integer_range` and `float_range`. The module also holds what a number
 //! token is: [`is_integer`], [`integer_value`] and [`float_value`]. The
 //! number types of `json` read a token with the same three functions.
+//!
+//! The module is the one home of the grammar. The writer and the walk over
+//! an opaque value import each of these items and hold no copy:
+//! [`FIRST_PLAIN`], [`HEX_DIGITS`], [`HEX`], [`is_space`], [`in_number`],
+//! the three words [`TRUE`], [`FALSE`] and [`NULL`], and [`string_at`].
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -38,11 +43,16 @@ const PAIRS_START: u32 = 0x1_0000;
 const HALF_BITS: u32 = 10;
 
 /// The count of hex digits of a `\u` escape, and the base of a hex digit.
-const HEX_DIGITS: usize = 4;
-const HEX: u32 = 16;
+pub(super) const HEX_DIGITS: usize = 4;
+pub(super) const HEX: u32 = 16;
 
 /// The first character that a string can hold with no escape.
-const FIRST_PLAIN: u8 = 0x20;
+pub(super) const FIRST_PLAIN: u8 = 0x20;
+
+/// The three words of JSON.
+pub(super) const TRUE: &str = "true";
+pub(super) const FALSE: &str = "false";
+pub(super) const NULL: &str = "null";
 
 /// The keys of one open object, each one after the decode of its escapes.
 type Keys<'a> = HashSet<Cow<'a, str>>;
@@ -116,9 +126,10 @@ pub(super) fn pass(text: &str) -> Result<Found, NotStrict> {
 // reading here refuses the text, because two readers can keep two values.
 // The owner did not confirm this reading yet (`rust/AGENTS.md`, "Known
 // gaps"). A change costs this function with the key set of `Open::Table`,
-// `Rule::DuplicateKey` and the rows of that rule in the tests. Only this
-// rule needs the text of a key. `Keep::Text` then has no user, and the lint
-// gate refuses it. Delete it with the decode of a key in `string`.
+// `Rule::DuplicateKey` and the rows of that rule in the tests. The writer
+// holds the same rule for the keys of a value, so a change also costs the
+// key check of `Table` in `write.rs`. `Keep::Text` stays: `string_at` reads
+// the text of each string of an opaque value.
 fn duplicate_key<'a>(keys: &mut Keys<'a>, key: Cow<'a, str>, at: usize) -> Result<(), NotStrict> {
     if !keys.insert(key) {
         return Err(NotStrict::new(Rule::DuplicateKey, at));
@@ -188,6 +199,35 @@ pub(super) fn float_value(token: &str) -> Option<f64> {
         .filter(|float| float.is_finite())
 }
 
+/// Whether `byte` is white space between two tokens: rule 3 of the module doc
+/// of `json`.
+pub(super) const fn is_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+}
+
+/// Whether `byte` can be in the run of a number: a digit, or one of the
+/// bytes `+`, `-`, `.`, `e` and `E`.
+pub(super) const fn in_number(byte: u8) -> bool {
+    matches!(byte, b'0'..=b'9' | b'+' | b'-' | b'.' | b'e' | b'E')
+}
+
+/// The text of the string whose first quote is at `at`, after the decode of
+/// each escape, and the offset after its last quote. A string with no escape
+/// borrows from `text`.
+///
+/// `None` when no string of rule 4 starts at `at`. The decode is the decode
+/// that gives the pass each key, so a key has one text for the reader and
+/// for the writer.
+pub(super) fn string_at(text: &str, at: usize) -> Option<(Cow<'_, str>, usize)> {
+    let mut cursor = Cursor { text, at };
+    if cursor.peek() != Some(b'"') {
+        return None;
+    }
+    let decoded = cursor.string(Keep::Text).ok()?;
+
+    Some((decoded, cursor.at))
+}
+
 /// The place of the pass in the text.
 struct Cursor<'a> {
     text: &'a str,
@@ -226,7 +266,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn skip_space(&mut self) {
-        while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+        while self.peek().is_some_and(is_space) {
             self.bump();
         }
     }
@@ -280,9 +320,9 @@ impl<'a> Cursor<'a> {
 
                 Found::Text
             }
-            Some(b't') => self.literal(b"true", Found::Boolean)?,
-            Some(b'f') => self.literal(b"false", Found::Boolean)?,
-            Some(b'n') => self.literal(b"null", Found::Null)?,
+            Some(b't') => self.literal(TRUE, Found::Boolean)?,
+            Some(b'f') => self.literal(FALSE, Found::Boolean)?,
+            Some(b'n') => self.literal(NULL, Found::Null)?,
             Some(b'-' | b'0'..=b'9') => self.number()?,
             Some(_) | None => return Err(self.refuse(Rule::Syntax)),
         };
@@ -292,9 +332,9 @@ impl<'a> Cursor<'a> {
 
     /// Reads each byte of `word`. The refusal is at the first byte that
     /// differs.
-    fn literal(&mut self, word: &[u8], kind: Found) -> Result<Found, NotStrict> {
-        for byte in word {
-            if !self.takes(*byte) {
+    fn literal(&mut self, word: &str, kind: Found) -> Result<Found, NotStrict> {
+        for byte in word.bytes() {
+            if !self.takes(byte) {
                 return Err(self.refuse(Rule::Syntax));
             }
         }
@@ -324,10 +364,7 @@ impl<'a> Cursor<'a> {
             }
         }
         // The grammar ends here, and the run does not: `01`, `1.5.2`, `1e5e3`.
-        if matches!(
-            self.peek(),
-            Some(b'0'..=b'9' | b'+' | b'-' | b'.' | b'e' | b'E')
-        ) {
+        if self.peek().is_some_and(in_number) {
             return Err(self.refuse(Rule::Syntax));
         }
 
@@ -656,6 +693,41 @@ mod tests {
             let strict = check(text.as_bytes(), ROOMY);
 
             assert_eq!(strict.map(|strict| strict.top()), Ok(kind), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn the_string_at_an_offset_has_its_decoded_text_and_its_end() {
+        let text = r#"{"plain": "caf\u00e9 \ud83d\ude00\n\/", "é": ""}"#;
+
+        // A string with no escape borrows from the text.
+        assert_eq!(string_at(text, 1), Some((Cow::Borrowed("plain"), 8)));
+        assert!(matches!(string_at(text, 1), Some((Cow::Borrowed(_), _))));
+        assert_eq!(
+            string_at(text, 10),
+            Some((Cow::Owned(String::from("caf\u{e9} \u{1f600}\n/")), 38))
+        );
+        assert_eq!(string_at(text, 40), Some((Cow::Borrowed("\u{e9}"), 44)));
+        assert_eq!(string_at(text, 46), Some((Cow::Borrowed(""), 48)));
+
+        // No string starts at a byte that is no quote, or past the text.
+        assert_eq!(string_at(text, 0), None);
+        assert_eq!(string_at(text, 2), None);
+        assert_eq!(string_at(text, 8), None);
+        assert_eq!(string_at(text, text.len()), None);
+        assert_eq!(string_at(text, text.len() + 7), None);
+
+        // A string that breaks rule 4 has no text.
+        for broken in [
+            "\"abc",
+            "\"abc\\",
+            "\"\\x\"",
+            "\"\\u12\"",
+            "\"\\ud800\"",
+            "\"\\udc00\"",
+            "\"a\nb\"",
+        ] {
+            assert_eq!(string_at(broken, 0), None, "{broken:?}");
         }
     }
 

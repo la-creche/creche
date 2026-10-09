@@ -31,7 +31,7 @@ defect that a test finds late.
 | Module of `creche-contracts` | What it holds |
 |---|---|
 | `ids` | Each id grammar that `vectors/data/ids` covers. One type for each grammar. |
-| `json` | The strict reader of a JSON text: `check`, `StrictText`, `read` and the number types `Number` and `Integer`. "JSON" below holds its rules. |
+| `json` | The strict reader and the writer of a JSON text. Its main items are `check`, `StrictText`, `read`, `Number`, `Integer`, `write`, `Style` and `Opaque`. "JSON" below holds its rules. |
 | `secret` | `Secret`, the type of a token or a key. |
 | `slot` | `Slot` is the one lenient field type for a raw type: a value of a wrong kind does not fail the read. `MapOnly` wraps a nested table in a raw type whose read can fail: it refuses a value that is not a table. |
 | `time` | `Timestamp`, the one type of a time in a file or in a wire message. "Time" below holds its rules. |
@@ -320,14 +320,19 @@ that does not meet each line of this list:
 Reason: for a text outside these rules, two readers can return two values.
 
 `creche-contracts` must have one JSON reader and one JSON writer, in its
-`json` module. The module holds the reader. Packet `decisions-json-reader`
-adds the writer. Write no JSON parser, no JSON value tree and no code that
-formats a float in another module.
+`json` module. The module holds both. Write no JSON parser, no JSON value
+tree and no code that formats a float in another module.
 
 The doc comment of the `json` module holds the full text of each rule. It
-also names the byte offset of each refusal. `src/json.rs` holds the types,
-`src/json/scan.rs` holds the pass over a text, and `src/json/read.rs` holds
-the typed read and the number types.
+also names the byte offset of each refusal. The module has five files:
+
+| File | What it holds |
+|---|---|
+| `src/json.rs` | The types of the check. |
+| `src/json/scan.rs` | The pass over a text, and the one copy of the grammar. The writer and `Opaque` import its byte sets and its words. |
+| `src/json/read.rs` | The typed read and the number types. |
+| `src/json/write.rs` | The writer, its styles and the one function that formats a float. |
+| `src/json/opaque.rs` | `Opaque`. |
 
 | Item of `json` | What it is |
 |---|---|
@@ -341,6 +346,13 @@ the typed read and the number types.
 | `Number`, `Integer` | A number of a raw type. Each one keeps the kind of its token: an integer or a float. |
 | `Found` | The kind of a JSON value. The `slot` module defines it, and `json` exports it. |
 | `DEPTH_MAX` | The nesting limit: 64. |
+| `write` | The function that writes a value as `json.dumps` of Python writes it. It gives the bytes or a `WriteError`. |
+| `Style` | The arguments of one `json.dumps` call: a `Layout`, a `Charset` and a `KeyOrder`. |
+| `Layout` | Where the white space goes. `Compact` has none. `Spaced` has the default of `json.dumps`. `Indent1` and `Indent2` have one item on each line. |
+| `Charset` | `Ascii` gives a `\u` escape for each character that is not printable ASCII. `Utf8` writes such a character as it is. |
+| `KeyOrder` | `AsGiven` keeps the order of the value. `Sorted` sorts the keys of each object by their code points. |
+| `WriteError` | The refusal of `write`. `NotFinite` is for a float that is not finite. `NoJsonForm` is for each other value that strict JSON cannot hold. |
+| `Opaque` | The value of a field that a contract calls opaque. It holds its compact form and keeps the order of its keys. |
 
 `check` applies the rules in this sequence:
 
@@ -366,10 +378,10 @@ In the raw type of a JSON text, give a number field the type
 as the integer 0. `Number` and `Integer` decide from the characters of the
 number.
 
-`Number` and `Integer` read the text of a token. `serde` reads some values
-from a buffer of its own, and that buffer keeps no such text. The read of
-`Number` or of `Integer` fails there. Put neither type in one of these four
-places:
+Three types read the text of a value: `Number`, `Integer` and `Opaque`.
+`serde` reads some values from a buffer of its own, and that buffer keeps no
+such text. The read of each of the three types fails there. Put none of them
+in one of these four places:
 
 1. Below `#[serde(flatten)]`. A named field beside a flattened field works.
 2. In an enum with `#[serde(untagged)]`.
@@ -385,9 +397,79 @@ to record a notice for the operator. Packet `decisions-notice` adds the
 notice. A peer does not learn which rule a text broke. Only the notice
 names the rule.
 
-No module of a contract calls the reader yet. "Known gaps" names the packet
-that moves each module to it. The two readers of `vectors/data` call `check`
-for the index file only.
+A module writes a JSON text with `write` and a `Style`:
+
+1. Give the valid type a `Serialize` that gives its keys in the sequence of
+   the Python writer.
+2. Select the `Style` that has the arguments of the `json.dumps` call of
+   that writer.
+3. Call `write`. Turn a `WriteError` into the error type of the module.
+
+Rules for the writer:
+
+- Do not build a JSON text of a contract by hand. Do not call
+  `serde_json::to_string` or `serde_json::to_vec` for such a text. For `NaN`
+  and for an infinity, `serde_json` writes `null`. It also writes a float in
+  another form than Python.
+- The writer gives `WriteError::NotFinite` and no text when a float is
+  `NaN` or an infinity. Make the type of a float field refuse such a value,
+  so the writer cannot get one.
+- The key of a map must be a text. The writer refuses a number as a key.
+- The writer refuses an integer outside the range of 64 bits, because the
+  reader refuses its digits. Only an `i128` or a `u128` can hold one.
+- The writer refuses a `RawValue` of `serde_json`. Its text has no style,
+  and no check reads it.
+- The writer refuses a value that nests more than 64 levels. The object of
+  a variant with a value is one level. "Known gaps" has the question.
+- The writer refuses an object that gets one key two times. A struct with a
+  flattened field can give such a key.
+- A text of `write` thus passes each rule of the reader but the size rule.
+  The writer has no cap.
+
+Rule 7 permits a free value only in a field that a contract calls opaque.
+`Opaque` is the type of such a field. Three examples are the detail of a
+fault, the event of a channel line and the arguments of a tool call.
+
+- In a raw type, the field is a `Slot<Opaque>`. The word `null` gives
+  `Slot::Null`, and a value of each other kind gives `Slot::Value`.
+- Some raw types must keep each member that they have no field for. Such a
+  raw type needs a `Deserialize` that a person writes. Its `visit_map`
+  matches the keys that the type names. For each key that is left, it calls
+  `next_value::<Opaque>()`.
+- Do not use `#[serde(flatten)]` for those members. The read of an `Opaque`
+  fails there.
+- An `Opaque` field with a name of its own works in a struct that also has
+  a flattened field. Only the flattened field reads from the buffer of
+  `serde`.
+- `write` forms an `Opaque` in the style of the document. A number gets the
+  form that Python gives it. For example, the token `1.50` gives `1.5`, and
+  the token `-0` gives `0`.
+- `Opaque::compact_len` gives the size of the value for a size rule. It
+  counts the bytes of the compact form in UTF-8.
+- With `KeyOrder::Sorted`, `write` sorts the keys of each object of an
+  `Opaque`. A digest over the arguments of a call takes that form as its
+  input.
+- An `Opaque` holds its compact form and not the text that it came from.
+  Two values are equal when those forms are equal. `[1, 2]` and `[1,2]` are
+  thus equal, and so are `1.50` and `1.5`.
+- The order of the keys is a part of an `Opaque`. Two objects with the same
+  members in another order are not equal.
+
+Only `session` calls the writer today. No module of a contract calls the
+reader yet. The two readers of `vectors/data` call `check` for the index
+file only. "Known gaps" names the packet that moves each module to the two.
+Until then, these parts stay:
+
+- Five older functions format a float: `float_text` of `channel`, of
+  `status` and of `manifest`, `float_repr` of `grants`, and
+  `python_float_text` of `family`. Add no user of them. The packets
+  `decisions-raw-serde-*` delete the first four. No packet has the fifth
+  one yet.
+- The `session` module writes the body of a stored journal line as the text
+  of the journal file. That text is a `RawValue`. A function that only this
+  crate can call keeps such a text: `write_raw_kept`. The writer counts no
+  level of that text and compares none of its keys. Add no second user of
+  the function. No packet deletes `write_raw_kept` yet.
 
 ## Time
 
@@ -613,9 +695,10 @@ A binary crate loads its config in this sequence:
    the first one.
 4. Give the result to `config::start`. It applies the failure action of the
    type.
-5. For `Start::Exit`, write each error to the log. Then return the status
+5. For `Start::Exit`, write each error to the log. Then return `EX_CONFIG`
    from `main` as an `ExitCode`. Do not call `std::process::exit`. The lint
-   gate refuses it.
+   gate refuses it. A service on `creche-runtime` gets step 4 and this step
+   from `service::load`.
 6. For `Start::RefuseEachCall`, start the listener, refuse each call and
    publish the errors as a fault.
 7. At a reload, give the last good value and the new result to
@@ -766,10 +849,10 @@ to 5 give a Rust service the Python behavior on purpose.
 16. **Call `log::init` first in `main`.**
     Reason: the standard panic hook of Rust writes the message of a panic
     to stderr. That message can hold a part of a request or of a file. The
-    hook of `log::init` writes only the place of the panic. `service::run`,
-    `service::load` and `service::refuse_start` set the same hook. Without
-    the call in `main`, the code before the first of the three runs with
-    the standard hook.
+    hook of `log::init` writes only the place of the panic.
+    `service::enter`, `service::run`, `service::load` and
+    `service::refuse_start` set the same hook. Without the call in `main`,
+    the code before the first of the four runs with the standard hook.
 17. **A daemon that refuses its start exits with `EX_CONFIG`, status 78.**
     This applies to each cause of the list below. A command that runs to
     its end can keep another status for a usage error, when no unit
@@ -841,6 +924,10 @@ one panic can stop and what it can damage.
    entry function catches that panic and logs one `ERROR` line. The exit
    status is then 1. The exit status of a panic is never 78.
    Reason: status 78 means a config fault, and a panic is not one.
+   - In a service on `creche-runtime`, the body of the entry function is
+     one call of `service::enter`. That function catches the panic.
+   - `service::run` catches a panic of the `main` that it runs. It then
+     waits for the tracked tasks before it returns status 1.
 8. **Only three places can call `catch_unwind`.**
    Reason: the reviewer then knows where each boundary is.
    1. Code of the crate `creche-runtime`.
@@ -1342,9 +1429,6 @@ To make the fifth check on your machine, for example before a merge:
     program of the workspace today. Its `main` sets no panic hook and
     parses the command line itself. Its library has no entry function that
     catches a panic. No packet has this change yet.
-  - The exit status of a refused start. `service::refuse_start` has a
-    parameter for a second exit status. Packet `decisions-runtime-exit`
-    deletes the parameter.
   - The address of another service. `config::chaperone` and
     `config::caregiver` define the port of another service as a constant.
     `config::endpoints` holds the names of the variables. The packet that
@@ -1439,10 +1523,33 @@ To make the fifth check on your machine, for example before a merge:
   changes:
   1. Change that line of "JSON".
   2. Delete its function, its `Rule` variant and its rows in the tests.
-  3. For the duplicate key line, also delete `Keep::Text` and the decode of
-     a key in `scan.rs`. Only `duplicate_key` needs the text of a key.
+  3. For the duplicate key line, also delete the key sets of `Table` in
+     `write.rs` and their rows in the tests. Keep `Keep::Text` in `scan.rs`:
+     `string_at` reads the text of each string of an `Opaque` with it.
   4. For the integer line, also give `Integer` a wider value.
      `integer_value` and that type hold the range of the line.
+  5. Change each line of "JSON" and of "Known gaps" that names the rule for
+     the writer. For the integer line, the writer takes its range from
+     `integer_value` and needs no change of code.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-contracts/src/json/write.rs`: "JSON" gives the reader a
+  nesting limit and a rule against a key that an object holds two times. No
+  rule says what the writer does with a value that breaks one of the two.
+  `write` takes the strict reading: it refuses such a value with
+  `WriteError::NoJsonForm`. The reader thus accepts each text of `write`.
+  - `json.dumps` of Python writes a value of each depth. A Rust service
+    thus refuses a deep value that the Python service writes.
+  - An `Opaque` can nest 64 levels by itself. Each array and each object
+    around it adds one level, so the writer can refuse a document that
+    holds a valid `Opaque`.
+  - `channel::claim::MAX_EVENT_DEPTH` is 64 too. A journal line holds an
+    event below one object or more. A line with the deepest event that
+    `channel` keeps thus nests more than 64 levels. `write` refuses that
+    line, and `check` refuses its text. No packet gives the two limits one
+    rule yet.
+  - The other reading writes each value, and the reader then refuses the
+    text. A change costs the check of `deeper` for the levels and the key
+    sets of `Table` for the keys.
 - Two texts of "When the two results differ" wait for a confirmation of the
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
@@ -1558,6 +1665,14 @@ To make the fifth check on your machine, for example before a merge:
      byte 0x7F. The Python client sends such a token when the character is
      not one of these: NUL, line feed, vertical tab, form feed and carriage
      return.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/service.rs`. No contract and no rule names the
+  exit status of a program that gets no runtime or no signal handler from
+  the operating system. Rule 17 of "The rules for a service" does not list
+  that cause. `service::run` returns status 71, `EX_OSERR` of `sysexits.h`,
+  so systemd starts the unit again. The same question is open for a
+  listener that does not bind. A Python service ends with status 3 there.
+  Each Rust service states that status in its own `main`.
 - No check holds the rules of "The rules for a service", except a part of
   rule 2 and a part of rule 13. A service crate that breaks one of the
   other rules builds and passes the lint gate.

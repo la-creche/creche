@@ -264,7 +264,7 @@ const fn is_bidi_control(character: char) -> bool {
 }
 
 /// Adds `text` to `line`, with each character of [`is_escaped`] as an escape.
-fn escape_into(line: &mut String, text: &str) {
+pub(crate) fn escape_into(line: &mut String, text: &str) {
     for character in text.chars() {
         if is_escaped(character) {
             line.extend(character.escape_default());
@@ -354,7 +354,7 @@ pub fn err_line(text: &str) {
 /// Writes `text` and one newline with one `write_all` call, then flushes.
 /// A write that fails is dropped: the caller has no better place to report
 /// it.
-fn write_line(writer: &mut dyn Write, text: &str) {
+pub(crate) fn write_line(writer: &mut dyn Write, text: &str) {
     let mut bytes = Vec::with_capacity(text.len().saturating_add(1));
     bytes.extend_from_slice(text.as_bytes());
     bytes.push(b'\n');
