@@ -268,6 +268,40 @@ reason. The packet that writes the three bodies obeys these rules:
   The Python chaperone has the same rule. The Python `attendance` and the
   Python trigger door run one reload for each SIGHUP that their loop takes.
   A change costs one function, `Hangups::next`.
+- These `CONTRACT-QUESTION` comments are open in `src/http/client.rs`:
+  1. `Target::try_from` for an `HttpUrl`: no contract gives the base URL of
+     a service a grammar. `creche_contracts::config::HttpUrl` checks only
+     the scheme, the user part and that a host is there. `httpx` takes most
+     of the URLs that pass that check. The function refuses a URL with a
+     query or with a fragment. It refuses a port that is not 1 to 65535 in
+     ASCII digits, and a host that is no `BindHost`. A laxer reading costs
+     one check and two functions, `host_and_port` and `port_of`.
+  2. `bearer_value`: contract 02 §3 rules 4 and 7 give a token a least count
+     of bytes and no set of bytes. The function refuses a token with a
+     control character that is not a tab, and a token with the byte 0x7F.
+     `httpx` sends such a token when the character is not one of these:
+     NUL, line feed, vertical tab, form feed and carriage return. The `http`
+     crate takes no header value with such a byte. A laxer reading thus
+     needs another header type.
+- `http::client::ClientError` has no variant for a request that the client
+  cannot write. A request target of more than 65,534 bytes gives
+  `ClientError::Protocol`. `TargetError::NotAnAddress` also stands for a base
+  URL with a query or with a fragment. A variant for each case changes a
+  type that the skeleton fixed. The owner of the crate decides.
+- `http::client::Target::unix` returns no error. A host text that a header
+  cannot hold gives an empty `Host` header. Each caller gives a constant of
+  its code as that text.
+- The connect limit of `http::client` does not stop the lookup of a host
+  name. `tokio` runs the lookup on a blocking thread. That thread continues
+  until the resolver of the host answers. A target with an IP address or
+  with a Unix socket has no lookup.
+- The write limit of `http::client` ends when hyper flushes the socket.
+  hyper 1.11.1 flushes one time for a request, after the last byte. A
+  version that flushes each part of a request gives the limit to each part.
+  No test shows that change.
+- No test of `http::client` makes a real connect wait, because no listener
+  holds a connect open on each operating system. The test of
+  `Phase::Connect` uses a private target that completes no connect.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same
