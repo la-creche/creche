@@ -1462,6 +1462,20 @@ To make the fifth check on your machine, for example before a merge:
   for all the signals that arrive while a reload runs. Two Python services
   run one reload for each SIGHUP that their loop takes. A change costs one
   function, `Hangups::next`.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-runtime/src/http/client.rs`:
+  1. `Target::try_from` for an `HttpUrl`. No contract gives the base URL of
+     a service a grammar. `config::HttpUrl` checks only the scheme, the user
+     part and that a host is there. The Python client takes most of the URLs
+     that pass that check. The function refuses a query and a fragment. It
+     refuses a port that is not 1 to 65535 in ASCII digits, and a host that
+     is no `config::BindHost`.
+  2. `bearer_value`, contract 02 §3 rules 4 and 7. The contract gives a
+     token a least count of bytes and no set of bytes. The client refuses a
+     token with a control character that is not a tab, and a token with the
+     byte 0x7F. The Python client sends such a token when the character is
+     not one of these: NUL, line feed, vertical tab, form feed and carriage
+     return.
 - No check holds the rules of "The rules for a service", except a part of
   rule 2 and a part of rule 13. A service crate that breaks one of the
   other rules builds and passes the lint gate.
