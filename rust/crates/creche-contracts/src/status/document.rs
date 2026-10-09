@@ -838,20 +838,21 @@ impl Limits {
 /// is. The document holds no value of a bearer.
 ///
 /// ```
-/// use creche_contracts::status::document::Webhook;
+/// use creche_contracts::status::document::{HostPath, Webhook};
 ///
-/// let token_path = "/state/triggers/chat/boiler-alert.token".parse().unwrap();
-/// let webhook = Webhook::new("boiler-alert".parse().unwrap(), token_path);
+/// let token_path: HostPath = "/state/triggers/chat/boiler-alert.token".parse().unwrap();
+/// let webhook = Webhook::new("boiler-alert".parse().unwrap(), token_path.clone());
 /// assert_eq!(webhook.name().as_str(), "boiler-alert");
+/// assert_eq!(webhook.token_path(), &token_path);
 /// ```
 ///
 /// Code outside this module cannot set a field:
 ///
 /// ```compile_fail,E0451
-/// use creche_contracts::status::document::Webhook;
+/// use creche_contracts::status::document::{HostPath, Webhook};
 ///
-/// fn moved(webhook: Webhook, other: Webhook) -> Webhook {
-///     Webhook { token_path: other.token_path, ..webhook }
+/// fn moved(webhook: Webhook, token_path: HostPath) -> Webhook {
+///     Webhook { token_path, ..webhook }
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
