@@ -25,6 +25,7 @@ topology with one writes only the registry and the token files, and
       state/outcomes/<family>/<id>.json  contract 02 §13.1, written by `attendance`
       state/triggers/webhooks/<family>/<name>.token   contract 05 §6.4
       state/view.key                     the key of the noticeboard
+      state/view.env                     contract 06 §4 rule 7, the env file of a unit
       sock/                              contract 02 §3 rule 1
       release/                           the root of the release executor, empty
       home/.config/systemd/user/         the unit directory of a user manager
@@ -76,6 +77,19 @@ class Validity(StrEnum):
     INVALID = "invalid"
     #: No revision ever validated, so nothing serves (§3.1).
     NEVER_VALID = "never_valid"
+
+
+class Fault(StrEnum):
+    """A fault code of contract 05 §3.3 that a scenario publishes."""
+
+    #: The sandbox of the family runs an older image than the host has.
+    IMAGE_BEHIND = "image_behind"
+    #: `caregiver` could not read the spend of the family (§7 rule 4).
+    SPEND_UNKNOWN = "spend_unknown"
+
+
+#: Contract 05 §3.3: the table there fixes `blocks_turns` for each code.
+_BLOCKS_TURNS: Final = {Fault.IMAGE_BEHIND: False, Fault.SPEND_UNKNOWN: False}
 
 
 MODEL_ALIAS: Final = "agent-router"
@@ -257,6 +271,11 @@ class Tree:
     def view_key_file(self) -> Path:
         return self.state_root / "view.key"
 
+    @property
+    def view_env_file(self) -> Path:
+        """The env file that the unit of the noticeboard and its verify hook both read."""
+        return self.state_root / "view.env"
+
     def webhook_token_file(self, family: str, name: str) -> Path:
         return self.webhooks_dir / family / f"{name}.token"
 
@@ -321,6 +340,10 @@ class Tree:
 
     def family_file(self, family: str = FAMILY) -> Path:
         return self.registry_family_dir(family) / "family.yaml"
+
+    def family_prose_file(self, family: str = FAMILY) -> Path:
+        """The `instructions.md` of one family in the registry (contract 01 §1)."""
+        return self.registry_family_dir(family) / "instructions.md"
 
     def playpen_env(self, family: str = FAMILY, sandbox: str | None = None) -> Path:
         return self.family_dir(family) / f"supervisor-{sandbox or first_sandbox(family)}.env"
@@ -453,7 +476,7 @@ def write_family_file(tree: Tree, body: Mapping[str, Any]) -> None:
 
 def write_family_prose(tree: Tree, family: str = FAMILY, text: str = INSTRUCTIONS) -> None:
     """Put the `instructions.md` of one family in the registry (contract 01 §1)."""
-    write_registry_file(tree, tree.registry_family_dir(family) / "instructions.md", text)
+    write_registry_file(tree, tree.family_prose_file(family), text)
 
 
 def publish_family(tree: Tree, body: Mapping[str, Any], prose: str = INSTRUCTIONS) -> None:
@@ -529,6 +552,9 @@ def write_status(
     max_running_turns: int | None = None,
     webhooks: tuple[str, ...] = (),
     written_at: str | None = None,
+    faults: tuple[dict[str, Any], ...] = (),
+    reconcile: dict[str, Any] | None = None,
+    spend: dict[str, Any] | None = None,
 ) -> None:
     """One whole status document (contract 05 §2.1, §4.1, §9).
 
@@ -549,6 +575,11 @@ def write_status(
     `webhooks` is each declared webhook: the document holds the path of the
     bearer file and no bearer (§6.4 rule 5). `written_at` is for a scenario
     that plays a `caregiver` that stopped (§2 rule 5).
+
+    `faults` is each open fault of §3.3, from `status_fault`. A document
+    with a fault is `degraded`. `reconcile` is the block of §3.4, from
+    `status_reconcile`. A document with that block is `reconciling`.
+    `spend` takes the place of the spend block of §7, from `status_spend`.
     """
     now = _rfc3339()
     rows = sandboxes if sandboxes is not None else ((first_sandbox(family), "ready"),)
@@ -604,7 +635,77 @@ def write_status(
         "pep": {"watch": "off", "url": "", "checked_at": None, "unreachable_since": None},
     }
 
+    document.update(_moved_blocks(validity, faults, reconcile, spend))
     _atomic_write(tree.status_file(family), json.dumps(document) + "\n", STATUS_MODE)
+
+
+def status_fault(code: Fault) -> dict[str, Any]:
+    """One open fault that `caregiver` found (contract 05 §3.3).
+
+    The four fields that each fault has, and no detail key.
+    """
+    return {
+        "code": code.value,
+        "blocks_turns": _BLOCKS_TURNS[code],
+        "since": _rfc3339(),
+        "source": "managerd",
+    }
+
+
+def status_reconcile(step: str) -> dict[str, Any]:
+    """The reconcile block of a pass that is inside one step (contract 05 §3.4).
+
+    The two revisions are equal. That is the document of a pass that a
+    new sandbox image started: no registry revision moved (§3.4).
+    """
+    return {
+        "since": _rfc3339(),
+        "from_rev": CONFIG_REV,
+        "to_rev": CONFIG_REV,
+        "step": step,
+        "attempts": 1,
+        "needs_switch": True,
+    }
+
+
+def status_spend(spend_usd: float, *, as_of: str | None = None) -> dict[str, Any]:
+    """The spend block of one family (contract 05 §7).
+
+    `as_of` is when `caregiver` read the number. The default is now. A
+    scenario gives an older time for a read that failed later (§7 rule 4).
+    """
+    return {
+        "window": "day",
+        "spend_usd": spend_usd,
+        "budget_usd": float(BUDGET_USD),
+        "as_of": as_of if as_of is not None else _rfc3339(),
+        "source": "litellm",
+    }
+
+
+def write_status_text(tree: Tree, family: str, text: str) -> None:
+    """Put a text in the place of one status document, by rename.
+
+    For a scenario in which a reader finds a file that is no document of
+    contract 05 §2. `caregiver` writes no such file.
+    """
+    _atomic_write(tree.status_file(family), text, STATUS_MODE)
+
+
+def remove_status(tree: Tree, family: str = FAMILY) -> None:
+    """Remove the status document of one family. Its directory stays.
+
+    A reader finds each family in a list of the families directory
+    (contract 05 §2 rule 6). It then finds this directory and no document.
+    """
+    tree.status_file(family).unlink()
+
+
+def remove_families_dir(tree: Tree) -> None:
+    """Remove the families directory of the state root, in one rename."""
+    moved = tree.state_root / ".removed-families"
+    tree.families_dir.rename(moved)
+    shutil.rmtree(moved)
 
 
 def write_playpen_env(tree: Tree, family: str = FAMILY, sandbox: str | None = None) -> None:
@@ -699,6 +800,18 @@ def write_view_key(tree: Tree) -> None:
     _atomic_write(tree.view_key_file, VIEW_KEY + "\n", SECRET_MODE)
 
 
+def write_env_file(path: Path, values: Mapping[str, str]) -> None:
+    """The env file of one unit, as its verify hook reads it (contract 06 §4 rule 7).
+
+    One `KEY=value` for each line, with no quote and no expansion. The unit
+    of the noticeboard says that its file can hold a key, so the mode is
+    0600.
+    """
+    lines = [f"{name}={value}" for name, value in values.items()]
+
+    _atomic_write(path, "\n".join(lines) + "\n", SECRET_MODE)
+
+
 def write_validation_report(tree: Tree, family: str, issues: list[dict[str, Any]]) -> None:
     """The report of one family that did not validate (contract 01 §7).
 
@@ -766,6 +879,53 @@ def append_audit(tree: Tree, records: list[dict[str, Any]]) -> None:
     path.chmod(AUDIT_MODE)
 
 
+def audit_days(count: int) -> tuple[str, ...]:
+    """The names of the newest UTC days, the newest first (contract 04 §6).
+
+    Each name has the form `YYYY-MM-DD`. One call reads the clock one
+    time, so its names are different days at midnight too.
+    """
+    today = datetime.now(UTC).toordinal()
+
+    return tuple(datetime.fromordinal(today - back).strftime("%Y-%m-%d") for back in range(count))
+
+
+def audit_on(record: dict[str, Any], day: str) -> dict[str, Any]:
+    """The same audit record at noon of one UTC day (contract 04 §6.1, `ts`)."""
+    return record | {"ts": f"{day}T12:00:00.000Z"}
+
+
+def audit_in_session(record: dict[str, Any], session: str) -> dict[str, Any]:
+    """The same audit record from a call that claimed a session (contract 04 §6.2)."""
+    return record | {"claimed": record["claimed"] | {"session_id": session}}
+
+
+def audit_line(record: dict[str, Any]) -> str:
+    """One audit record as the text of one line, with no LF.
+
+    A character outside ASCII stays as it is. JSON permits that in a
+    string, also for U+2028 and U+2029.
+    """
+    return json.dumps(record, ensure_ascii=False)
+
+
+def append_audit_lines(tree: Tree, day: str, lines: list[str]) -> None:
+    """Append lines to the audit file of one UTC day (contract 04 §6).
+
+    Each text goes into the file as it is, with LF after it. `audit_line`
+    gives the text of a record. A text that is no record is for a
+    scenario in which a reader finds a line that the chaperone did not
+    write whole. Mode 0640.
+    """
+    path = tree.audit_dir / f"{day}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.writelines(line + "\n" for line in lines)
+
+    path.chmod(AUDIT_MODE)
+
+
 def write_tokens(tree: Tree) -> None:
     """One token file per principal, at the mode contract 02 §3 rule 5 names."""
     tree.tokens_dir.mkdir(parents=True, exist_ok=True)
@@ -807,6 +967,37 @@ def _sandbox_row(tree: Tree, family: str, sandbox: str, state: str, now: str) ->
         "channel": "closed",
         "supervisor_env": str(tree.playpen_env(family, sandbox)),
     }
+
+
+def _moved_blocks(
+    validity: Validity,
+    faults: tuple[dict[str, Any], ...],
+    reconcile: dict[str, Any] | None,
+    spend: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The blocks that a scenario moves, with the state that each one fixes.
+
+    Contract 05 §2.1: `faults` is empty unless the state is `degraded`,
+    and `reconcile` is null unless the state is `reconciling`. A document
+    has one state (§3), so a call for two of them is an error.
+    """
+    states = [validity is not Validity.VALID, bool(faults), reconcile is not None]
+
+    if states.count(True) > 1:
+        raise ValueError("a status document has one state: invalid, degraded or reconciling")
+
+    blocks: dict[str, Any] = {}
+
+    if faults:
+        blocks |= {"state": "degraded", "faults": list(faults)}
+
+    if reconcile is not None:
+        blocks |= {"state": "reconciling", "reconcile": reconcile}
+
+    if spend is not None:
+        blocks["spend"] = spend
+
+    return blocks
 
 
 def _atomic_write(path: Path, text: str, mode: int) -> None:
