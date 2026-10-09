@@ -248,6 +248,7 @@ def test_the_two_programs_send_the_same_embed_calls(library: LibraryStack) -> No
     assert len(build.reference) > len(update.reference) > 1
     assert build.judged == build.reference
     assert update.judged == update.reference
+    assert _differences(library) == []
 
 
 def test_the_two_programs_print_the_same_report_line(library: LibraryStack) -> None:
@@ -273,6 +274,7 @@ def test_the_two_programs_print_the_same_report_line(library: LibraryStack) -> N
     assert report_of(rebuild.reference).rebuilt
     assert all(report.has_error_for(broken) for report in reports)
     assert all(len(report.errors) == 1 for report in reports)
+    assert _differences(library) == []
 
 
 # -------------------------------------------------------------------- helpers
