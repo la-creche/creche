@@ -1241,10 +1241,13 @@ struct OverrunBody {
 /// sequence number that the reader got.
 ///
 /// The set of kinds is closed, so this enum has no variant for an unknown
-/// record. A reader refuses a record of a kind that [`LineKind`] does not
-/// have. This crate has the writer of a record and no reader that makes this
-/// enum. [`StoredLine::parse`] reads a line of a journal file. It gives
-/// [`LineError::BadSeq`] for the two records with no sequence number.
+/// record. This crate has the writer of a record. It has no reader that makes
+/// this enum. Such a reader has no value for a record of a kind that
+/// [`LineKind`] does not have, so it refuses that record.
+///
+/// [`StoredLine::parse`] reads a line of a journal file and no record of the
+/// stream. It gives [`LineError::BadKind`] for a line of another kind. It
+/// gives [`LineError::BadSeq`] for the two records with no sequence number.
 ///
 /// ```
 /// use creche_contracts::session::{StreamRecord, Timestamp};
@@ -1261,6 +1264,12 @@ struct OverrunBody {
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+// CONTRACT-QUESTION: contract 02 §8.1 says that the set of kinds is closed. It
+// does not say what a reader of the stream does with a record of another
+// kind. The reading here is a refusal: this enum has no variant for such a
+// record. The Python readers of the stream give no output for a line of a
+// kind that they do not use. A reader that keeps such a record costs one
+// variant here and one arm in `kind` and in `encode`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamRecord {
     /// A line of the journal.

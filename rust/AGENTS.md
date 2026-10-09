@@ -1395,6 +1395,12 @@ test.
       contract names the note for a refused move of a turn. The Python
       `attendance` writes that note only for a move that its state table
       refuses. The type takes each pair of turn states.
+  16. `StreamRecord`, contract 02 §8.1. The contract says that the set of
+      kinds is closed. It does not say what a reader of the stream does
+      with a record of another kind. The type has no variant for such a
+      record, so a reader that makes the type refuses it. The Python
+      readers of the stream give no output for such a line. The crate has
+      no reader of a stream record yet.
 - The `session` module differs from the Python code on purpose in four
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
