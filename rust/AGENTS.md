@@ -1452,10 +1452,12 @@ test.
 - `session::JournalLine::new` does not check the turn against the kind of
   the body. A `turn_queued` line with no turn is a value of the type. The
   Python writer has no such check.
-- The body types of a journal line, for example `session::TurnStarted`, and
-  `session::ServiceNote` have public fields. Some fields are a plain
-  `String`: the contract gives them no grammar. Code can build such a body
-  with each text.
+- Some fields of the body types of a journal line and of
+  `session::ServiceNote` are a plain `String`: the contract gives them no
+  grammar. Code can build such a body with each text.
+- Only `serde` makes a `session::Lease`, a `session::SessionView` and a
+  `session::TurnView`, through the raw type of each one. No constructor
+  takes typed parts.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/untrusted.rs`:
   1. `parse_object`, contract 02 §3 rule 3. The contract says that a body is
