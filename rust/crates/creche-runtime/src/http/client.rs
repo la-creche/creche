@@ -1142,7 +1142,7 @@ impl Client {
             stall,
         };
 
-        let Some(Ok(answer)) = link.drive(sender.send_request(wire)).await else {
+        let Ok(answer) = link.drive(sender.send_request(wire)).await else {
             return Err(link.failure());
         };
         let (head, body) = answer.into_parts();
@@ -1550,28 +1550,33 @@ struct Link {
 }
 
 impl Link {
-    /// Runs the connection until `work` gives its value. `None` when the
-    /// connection ended and `work` has no value.
+    /// Runs the connection until `work` gives its value.
+    ///
+    /// `work` is a future of hyper for this connection: the wait for the
+    /// head, or the wait for a frame of the body. After the connection
+    /// ended, the function runs only `work`. hyper gives such a future its
+    /// value or an error when the connection ends, and at the latest when
+    /// the connection drops.
     ///
     /// The future is cancel safe when `work` is.
-    async fn drive<F: Future>(&mut self, work: F) -> Option<F::Output> {
+    async fn drive<F: Future>(&mut self, work: F) -> F::Output {
         let mut work = pin!(work);
 
         poll_fn(|cx| {
             if let Poll::Ready(value) = work.as_mut().poll(cx) {
-                return Poll::Ready(Some(value));
+                return Poll::Ready(value);
             }
 
             if self.poll_conn(cx).is_pending() {
                 return Poll::Pending;
             }
 
-            // The connection ended. Its last step gave `work` its value, or
-            // no value comes.
-            Poll::Ready(match work.as_mut().poll(cx) {
-                Poll::Ready(value) => Some(value),
-                Poll::Pending => None,
-            })
+            // The connection ended, and `poll_conn` dropped it. The value of
+            // `work` is there. `work` can still give no value in this poll:
+            // a future of `tokio` waits when its task has no budget left,
+            // and `tokio` then wakes the task. That wait is no failure of
+            // the connection, so the next poll asks `work` again.
+            work.as_mut().poll(cx)
         })
         .await
     }
@@ -1661,11 +1666,7 @@ impl Reading {
     /// body.
     async fn chunk(&mut self) -> Result<Option<Bytes>, ClientError> {
         loop {
-            let Some(next) = self.link.drive(self.body.frame()).await else {
-                return Err(self.link.failure());
-            };
-
-            match next {
+            match self.link.drive(self.body.frame()).await {
                 Some(Ok(frame)) => {
                     // A frame that is no chunk holds the trailers of the
                     // body. The loop reads the next frame.
@@ -4064,6 +4065,78 @@ mod tests {
 
                 assert_eq!(sent, Err(error.clone()));
                 assert_eq!(opened.unwrap_err(), error);
+            }
+        });
+    }
+
+    // --- a task with little budget ---
+
+    /// The units of budget that `tokio` gives a task for one poll. A future
+    /// of `tokio` that finds no unit left gives no value in that poll, also
+    /// when its value is there.
+    const BUDGET: usize = 128;
+
+    /// Runs `work` in a task that has little budget left. Before each poll
+    /// of `work`, the function takes `used` units of the budget of the task,
+    /// as other work of the same task does.
+    async fn with_budget_used<F: Future>(used: usize, work: F) -> F::Output {
+        let mut work = pin!(work);
+
+        poll_fn(|cx| {
+            for _ in 0..used {
+                let unit = pin!(tokio::task::coop::consume_budget());
+                if unit.poll(cx).is_pending() {
+                    break;
+                }
+            }
+
+            work.as_mut().poll(cx)
+        })
+        .await
+    }
+
+    #[test]
+    fn a_call_in_a_task_with_little_budget_left_gets_its_answer() {
+        runtime().block_on(async {
+            for transport in TRANSPORTS {
+                let peer = peer(transport).await;
+                // One unit is left for each poll of a call. The read of the
+                // socket takes it, and the connection ends in that poll. The
+                // head is there, and hyper gives it only in the next poll.
+                let used = BUDGET - 1;
+                peer.stub
+                    .script(Answer::status(StatusCode::OK).after(BEAT).body("one"));
+                peer.stub
+                    .script(Answer::status(StatusCode::OK).after(BEAT).body("two"));
+
+                let sent = with_budget_used(
+                    used,
+                    peer.client.send(
+                        request(Method::POST, &["v1", "x"]),
+                        ByteCap::ONE_MIB,
+                        PATIENT,
+                    ),
+                )
+                .await;
+                let opened =
+                    with_budget_used(used, peer.client.open(get(), StreamLimit::Within(PATIENT)))
+                        .await;
+
+                let reply = sent.unwrap();
+                assert_eq!(reply.status(), StatusCode::OK, "{transport:?}");
+                assert_eq!(reply.body(), b"one", "{transport:?}");
+                let mut stream = opened.unwrap();
+                assert_eq!(stream.status(), StatusCode::OK, "{transport:?}");
+                assert_eq!(
+                    with_budget_used(used, drain(&mut stream)).await,
+                    (b"two".to_vec(), Ok(())),
+                    "{transport:?}"
+                );
+                assert_eq!(
+                    ends(&peer.stub, 2).await,
+                    [End::Answered, End::Answered],
+                    "{transport:?}"
+                );
             }
         });
     }
