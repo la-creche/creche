@@ -13,7 +13,7 @@
 //! rule of its own. [`Fault`] and [`StatusDocument`] have a rule between two
 //! fields, so each one has a constructor that can fail.
 //!
-//! A writer builds a record in two steps:
+//! No struct has a public field. A writer builds a record in two steps:
 //!
 //! 1. `new` takes each field that has no start value.
 //! 2. One `with_` method sets each other field. Such a field starts as `None`,
@@ -1075,20 +1075,78 @@ pub enum Pep {
 // --- one fault ---
 
 /// The fields of one fault, for [`Fault::new`].
+///
+/// ```
+/// use creche_contracts::status::document::FaultParts;
+/// use creche_contracts::status::words::{FaultCode, FaultSource};
+///
+/// let since = "2031-04-18T09:52:40Z".parse().unwrap();
+/// let parts = FaultParts::new(FaultCode::GrantsStale, since, FaultSource::Pep);
+/// assert_ne!(parts.clone().with_stale(), parts);
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::document::FaultParts;
+/// use creche_contracts::status::words::{FaultCode, FaultSource};
+///
+/// fn of_pep(parts: FaultParts) -> FaultParts {
+///     FaultParts { code: FaultCode::GrantsStale, source: FaultSource::Pep, ..parts }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct FaultParts {
-    /// The code.
-    pub code: FaultCode,
-    /// Whether the fault stops new turns.
-    pub blocks_turns: bool,
-    /// When the service first saw the fault.
-    pub since: Timestamp,
-    /// The service that detected the fault.
-    pub source: FaultSource,
-    /// Whether the fault file of the source is stale (§3.3.1 rule 7).
-    pub stale: bool,
-    /// Each extra key of the fault, in the order that the writer keeps.
-    pub detail: Object,
+    code: FaultCode,
+    blocks_turns: bool,
+    since: Timestamp,
+    source: FaultSource,
+    stale: bool,
+    detail: Object,
+}
+
+impl FaultParts {
+    /// The parts of a fault with the code `code` that `source` detected.
+    ///
+    /// `blocks_turns` starts as the value that the table of §3.3 fixes for
+    /// the code. `stale` starts as `false`, and the fault has no extra key.
+    #[must_use]
+    pub fn new(code: FaultCode, since: Timestamp, source: FaultSource) -> Self {
+        Self {
+            code,
+            blocks_turns: code.blocks_turns(),
+            since,
+            source,
+            stale: false,
+            detail: Object::new(),
+        }
+    }
+
+    /// The same parts for a fault that does not stop new turns.
+    /// [`Fault::new`] says for which code a fault can differ from the table
+    /// in this way.
+    #[must_use]
+    pub fn with_turns_unblocked(mut self) -> Self {
+        self.blocks_turns = false;
+
+        self
+    }
+
+    /// The same parts for a fault from a fault file that is stale.
+    #[must_use]
+    pub fn with_stale(mut self) -> Self {
+        self.stale = true;
+
+        self
+    }
+
+    /// The same parts with these extra keys.
+    #[must_use]
+    pub fn with_detail(mut self, detail: Object) -> Self {
+        self.detail = detail;
+
+        self
+    }
 }
 
 /// One fault of the document (contract 05 §3.3).
@@ -1098,15 +1156,10 @@ pub struct FaultParts {
 /// use creche_contracts::status::json::Object;
 /// use creche_contracts::status::words::{FaultCode, FaultSource};
 ///
-/// let parts = FaultParts {
-///     code: FaultCode::GrantsStale,
-///     blocks_turns: true,
-///     since: "2031-04-18T09:52:40Z".parse()?,
-///     source: FaultSource::Pep,
-///     stale: false,
-///     detail: Object::new(),
-/// };
-/// let wrong_source = FaultParts { source: FaultSource::Sessiond, ..parts.clone() };
+/// let since = "2031-04-18T09:52:40Z".parse()?;
+/// let parts = FaultParts::new(FaultCode::GrantsStale, since, FaultSource::Pep)
+///     .with_detail(Object::new());
+/// let wrong_source = FaultParts::new(FaultCode::GrantsStale, since, FaultSource::Sessiond);
 /// assert!(Fault::new(parts).is_ok());
 /// assert!(Fault::new(wrong_source).is_err());
 /// # Ok::<(), creche_contracts::status::time::TimestampError>(())
@@ -1255,10 +1308,29 @@ impl Error for FaultError {}
 // --- the document ---
 
 /// The fields of one status document, for [`StatusDocument::new`].
+///
+/// ```
+/// use creche_contracts::status::document::DocumentParts;
+/// use creche_contracts::status::words::Kind;
+///
+/// fn attended(parts: DocumentParts) -> DocumentParts {
+///     parts.with_kind(Kind::Attended)
+/// }
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::document::DocumentParts;
+/// use creche_contracts::status::words::Kind;
+///
+/// fn attended(parts: DocumentParts) -> DocumentParts {
+///     DocumentParts { kind: Some(Kind::Attended), ..parts }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct DocumentParts {
-    /// The name of the family.
-    pub family: FamilyName,
+    family: FamilyName,
     // CONTRACT-QUESTION: contract 05 §2.1 says that `kind` is one of three
     // words. `caregiver` writes the empty text for a family that had no valid
     // revision, because it knows no kind then. The type takes that form as
@@ -1267,49 +1339,240 @@ pub struct DocumentParts {
     // exist. The type does not tie `None` to `never_valid` or to an empty
     // `sandboxes`: `caregiver.apply` takes the kind from the last document
     // and `never_valid` from the applied state, so the two can differ.
-    /// The kind of the family. `None` is the empty text in the file: no
-    /// revision of the family was valid, so `caregiver` knows no kind.
-    pub kind: Option<Kind>,
-    /// The state of the family.
-    pub state: FamilyState,
-    /// When `caregiver` wrote the document.
-    pub written_at: Timestamp,
-    /// The registry revision that `caregiver` last read.
-    pub registry_rev: String,
-    /// The revision that is live. Empty when no revision was applied.
-    pub applied_rev: String,
-    /// The revision of the family config mount. Empty when none was written.
-    pub config_rev: String,
-    /// The validation block.
-    pub validation: Validation,
+    kind: Option<Kind>,
+    state: FamilyState,
+    written_at: Timestamp,
+    registry_rev: String,
+    applied_rev: String,
+    config_rev: String,
+    validation: Validation,
     // CONTRACT-QUESTION: contract 05 §2.1 says that `faults` is empty in
     // each state but `degraded`. `caregiver` writes the open faults of a
     // family in the state `invalid` too. The type takes a fault in each state.
     // To refuse it, a reader of an invalid family does not see a fault that
     // stops its turns. `caregiver` writes no fault in the states `in_sync`
     // and `reconciling`, and the type does not refuse one there.
-    /// The open faults.
-    pub faults: Vec<Fault>,
-    /// The reconcile block. `Some` only in the state `reconciling`.
-    pub reconcile: Option<Reconcile>,
-    /// One row for each sandbox.
-    pub sandboxes: Vec<Sandbox>,
+    faults: Vec<Fault>,
+    reconcile: Option<Reconcile>,
+    sandboxes: Vec<Sandbox>,
     // CONTRACT-QUESTION: contract 05 §2.1 says that `credentials` is an
     // object. `caregiver` writes `null` for a family that never had
     // credentials. The type takes that form as `None`. To refuse it,
     // `caregiver` must publish no document before the first mint.
+    credentials: Option<Credentials>,
+    spend: Option<Spend>,
+    limits: Limits,
+    triggers: Triggers,
+    pep: Pep,
+}
+
+impl DocumentParts {
+    /// The parts of the document of `family`.
+    ///
+    /// The parts start with no kind, no fault, no reconcile block, no
+    /// sandbox, no credentials and no spend. The limits block starts with no
+    /// limit and the triggers block with no trigger. The `pep` block starts
+    /// as [`Pep::Off`].
+    #[must_use]
+    pub fn new(
+        family: FamilyName,
+        state: FamilyState,
+        written_at: Timestamp,
+        registry_rev: String,
+        applied_rev: String,
+        config_rev: String,
+        validation: Validation,
+    ) -> Self {
+        Self {
+            family,
+            kind: None,
+            state,
+            written_at,
+            registry_rev,
+            applied_rev,
+            config_rev,
+            validation,
+            faults: Vec::new(),
+            reconcile: None,
+            sandboxes: Vec::new(),
+            credentials: None,
+            spend: None,
+            limits: Limits::new(),
+            triggers: Triggers::new(),
+            pep: Pep::Off,
+        }
+    }
+
+    /// The same parts with this kind.
+    #[must_use]
+    pub fn with_kind(mut self, kind: Kind) -> Self {
+        self.kind = Some(kind);
+
+        self
+    }
+
+    /// The same parts with these open faults.
+    #[must_use]
+    pub fn with_faults(mut self, faults: Vec<Fault>) -> Self {
+        self.faults = faults;
+
+        self
+    }
+
+    /// The same parts with this reconcile block.
+    #[must_use]
+    pub fn with_reconcile(mut self, reconcile: Reconcile) -> Self {
+        self.reconcile = Some(reconcile);
+
+        self
+    }
+
+    /// The same parts with one row for each of these sandboxes.
+    #[must_use]
+    pub fn with_sandboxes(mut self, sandboxes: Vec<Sandbox>) -> Self {
+        self.sandboxes = sandboxes;
+
+        self
+    }
+
+    /// The same parts with this credentials block.
+    #[must_use]
+    pub fn with_credentials(mut self, credentials: Credentials) -> Self {
+        self.credentials = Some(credentials);
+
+        self
+    }
+
+    /// The same parts with this spend block.
+    #[must_use]
+    pub fn with_spend(mut self, spend: Spend) -> Self {
+        self.spend = Some(spend);
+
+        self
+    }
+
+    /// The same parts with this limits block.
+    #[must_use]
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+
+        self
+    }
+
+    /// The same parts with this triggers block.
+    #[must_use]
+    pub fn with_triggers(mut self, triggers: Triggers) -> Self {
+        self.triggers = triggers;
+
+        self
+    }
+
+    /// The same parts with this `pep` block.
+    #[must_use]
+    pub fn with_pep(mut self, pep: Pep) -> Self {
+        self.pep = pep;
+
+        self
+    }
+
+    /// The name of the family.
+    #[must_use]
+    pub fn family(&self) -> &FamilyName {
+        &self.family
+    }
+
+    /// The kind of the family. `None` is the empty text in the file: no
+    /// revision of the family was valid, so `caregiver` knows no kind.
+    #[must_use]
+    pub fn kind(&self) -> Option<Kind> {
+        self.kind
+    }
+
+    /// The state of the family.
+    #[must_use]
+    pub fn state(&self) -> FamilyState {
+        self.state
+    }
+
+    /// When `caregiver` wrote the document.
+    #[must_use]
+    pub fn written_at(&self) -> Timestamp {
+        self.written_at
+    }
+
+    /// The registry revision that `caregiver` last read.
+    #[must_use]
+    pub fn registry_rev(&self) -> &str {
+        &self.registry_rev
+    }
+
+    /// The revision that is live. Empty when no revision was applied.
+    #[must_use]
+    pub fn applied_rev(&self) -> &str {
+        &self.applied_rev
+    }
+
+    /// The revision of the family config mount. Empty when none was written.
+    #[must_use]
+    pub fn config_rev(&self) -> &str {
+        &self.config_rev
+    }
+
+    /// The validation block.
+    #[must_use]
+    pub fn validation(&self) -> &Validation {
+        &self.validation
+    }
+
+    /// The open faults.
+    #[must_use]
+    pub fn faults(&self) -> &[Fault] {
+        &self.faults
+    }
+
+    /// The reconcile block. `Some` only in the state `reconciling`.
+    #[must_use]
+    pub fn reconcile(&self) -> Option<&Reconcile> {
+        self.reconcile.as_ref()
+    }
+
+    /// One row for each sandbox.
+    #[must_use]
+    pub fn sandboxes(&self) -> &[Sandbox] {
+        &self.sandboxes
+    }
+
     /// The credentials block. `None` is `null` in the file: the family never
     /// had credentials.
-    pub credentials: Option<Credentials>,
+    #[must_use]
+    pub fn credentials(&self) -> Option<&Credentials> {
+        self.credentials.as_ref()
+    }
+
     /// The spend block. `None` is `null` in the file: no pass read the spend
     /// (§7 rule 3).
-    pub spend: Option<Spend>,
+    #[must_use]
+    pub fn spend(&self) -> Option<&Spend> {
+        self.spend.as_ref()
+    }
+
     /// The limits block.
-    pub limits: Limits,
+    #[must_use]
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
     /// The triggers block.
-    pub triggers: Triggers,
+    #[must_use]
+    pub fn triggers(&self) -> &Triggers {
+        &self.triggers
+    }
+
     /// The `pep` block.
-    pub pep: Pep,
+    #[must_use]
+    pub fn pep(&self) -> &Pep {
+        &self.pep
+    }
 }
 
 /// One status document of a family (contract 05 §2.1).
@@ -2847,5 +3110,276 @@ mod tests {
             HostPathError::NotAbsolute.to_string(),
             "a host path starts with /"
         );
+    }
+
+    // --- the constructors and the accessors of the records ---
+
+    fn time(text: &str) -> Timestamp {
+        text.parse().unwrap()
+    }
+
+    fn path(text: &str) -> HostPath {
+        text.parse().unwrap()
+    }
+
+    /// The document of `FULL` with three values changed. No two fields of one
+    /// record then hold the same value.
+    fn distinct() -> StatusDocument {
+        let token = ["credentials", "token_id"];
+        let object = changed(&full(), &["config_rev"], Some(&json(r#""cfg-7""#)));
+        let object = changed(&object, &token, Some(&json(r#""token-chat""#)));
+        let object = changed(&object, &["limits", "job_timeout_s"], Some(&json("900")));
+
+        StatusDocument::try_from(&RawStatus::from_object(&object)).unwrap()
+    }
+
+    /// One row of `sandboxes` of `FULL`, with each start value of
+    /// [`Sandbox::new`].
+    fn sandbox(id: &str, state: SandboxLifecycle, hash: &str, created_at: &str) -> Sandbox {
+        Sandbox::new(
+            id.parse().unwrap(),
+            state,
+            format!("registry.example/playpen@sha256:{hash}"),
+            hash.to_owned(),
+            2,
+            "2g".to_owned(),
+            time(created_at),
+        )
+    }
+
+    /// The parts of the document of [`distinct`], from the constructors.
+    fn built() -> DocumentParts {
+        let validation = Validation::new(
+            "reg-2".to_owned(),
+            time("2031-04-18T10:20:29Z"),
+            0,
+            1,
+            path("/state/families/chat/validation.json"),
+        )
+        .with_ok();
+        let mut detail = Object::new();
+        detail.insert("sandbox", json(r#""chat-s1""#));
+        let since = time("2031-04-18T10:00:00Z");
+        let orphans = FaultParts::new(FaultCode::OrphanProcesses, since, FaultSource::Sessiond)
+            .with_stale()
+            .with_detail(detail);
+        let reconcile = Reconcile::new(
+            time("2031-04-18T10:20:00Z"),
+            "reg-1".to_owned(),
+            "reg-2".to_owned(),
+            ReconcileStep::SwitchSandbox,
+            1,
+        )
+        .with_needs_switch();
+        let draining = SandboxLifecycle::Draining;
+        let serving = sandbox("chat-s1", draining, "aa", "2031-04-11T08:00:00Z")
+            .with_power(SandboxPower::Running)
+            .with_ready_at(time("2031-04-11T08:00:20Z"))
+            .with_channel(ChannelState::Open)
+            .with_supervisor_env(path("/state/families/chat/supervisor-chat-s1.env"));
+        let planned = SandboxLifecycle::Planned;
+        let planned = sandbox("chat-s2", planned, "bb", "2031-04-18T10:20:10Z");
+        let credentials = Credentials::new(
+            NonZeroU64::new(3).unwrap(),
+            "family-chat".to_owned(),
+            "token-chat".to_owned(),
+            time("2031-04-01T00:00:00Z"),
+            RotationState::Settled,
+        );
+        let as_of = time("2031-04-18T10:20:25Z");
+        let spend = Spend::new(SpendWindow::Day, usd(1.25), as_of, SpendSource::Litellm)
+            .with_budget_usd(usd(10.0));
+        let limits = Limits::new()
+            .with_max_queued_turns(100)
+            .with_job_timeout_s(900);
+        let token_path = path("/state/triggers/chat/boiler-alert.token");
+        let webhook = Webhook::new("boiler-alert".parse().unwrap(), token_path);
+        let pep = Pep::Unreachable {
+            url: "http://192.0.2.10:8300".to_owned(),
+            checked_at: Some(time("2031-04-18T10:20:28Z")),
+            since: time("2031-04-18T10:18:00Z"),
+        };
+
+        DocumentParts::new(
+            "chat".parse().unwrap(),
+            FamilyState::Reconciling,
+            time("2031-04-18T10:20:30Z"),
+            "reg-2".to_owned(),
+            "reg-1".to_owned(),
+            "cfg-7".to_owned(),
+            validation,
+        )
+        .with_kind(Kind::Attended)
+        .with_faults(vec![Fault::new(orphans).unwrap()])
+        .with_reconcile(reconcile)
+        .with_sandboxes(vec![serving, planned])
+        .with_credentials(credentials)
+        .with_spend(spend)
+        .with_limits(limits)
+        .with_triggers(Triggers::new().with_webhooks(vec![webhook]))
+        .with_pep(pep)
+    }
+
+    fn usd(amount: f64) -> Usd {
+        Usd::new(amount).unwrap()
+    }
+
+    #[test]
+    fn the_constructors_build_the_document_that_the_reader_makes() {
+        assert_eq!(StatusDocument::new(built()), Ok(distinct()));
+    }
+
+    #[test]
+    fn each_accessor_gives_the_value_of_its_field() {
+        let document = distinct();
+        let parts = document.parts();
+        let validation = parts.validation();
+        let reconcile = parts.reconcile().unwrap();
+        let sandbox = &parts.sandboxes()[0];
+        let credentials = parts.credentials().unwrap();
+        let spend = parts.spend().unwrap();
+        let webhook = &parts.triggers().webhooks()[0];
+
+        assert_eq!(parts.family().as_str(), "chat");
+        assert_eq!(parts.kind(), Some(Kind::Attended));
+        assert_eq!(parts.state(), FamilyState::Reconciling);
+        assert_eq!(parts.written_at(), time("2031-04-18T10:20:30Z"));
+        assert_eq!(parts.registry_rev(), "reg-2");
+        assert_eq!(parts.applied_rev(), "reg-1");
+        assert_eq!(parts.config_rev(), "cfg-7");
+        assert_eq!(parts.faults()[0].code(), FaultCode::OrphanProcesses);
+        assert_eq!(parts.sandboxes().len(), 2);
+        assert_eq!(parts.limits().max_running_turns(), None);
+        assert_eq!(parts.limits().max_queued_turns(), Some(100));
+        assert_eq!(parts.limits().job_timeout_s(), Some(900));
+        assert!(!parts.triggers().enqueue());
+        assert_eq!(parts.pep().watch(), WatchState::Unreachable);
+
+        assert_eq!(validation.rev(), "reg-2");
+        assert_eq!(validation.checked_at(), time("2031-04-18T10:20:29Z"));
+        assert!(validation.ok());
+        assert!(!validation.never_valid());
+        assert_eq!(validation.error_count(), 0);
+        assert_eq!(validation.warning_count(), 1);
+        assert_eq!(
+            validation.report_path(),
+            &path("/state/families/chat/validation.json")
+        );
+        assert_eq!(validation.first_error(), None);
+
+        assert_eq!(reconcile.since(), time("2031-04-18T10:20:00Z"));
+        assert_eq!(reconcile.from_rev(), "reg-1");
+        assert_eq!(reconcile.to_rev(), "reg-2");
+        assert_eq!(reconcile.step(), ReconcileStep::SwitchSandbox);
+        assert_eq!(reconcile.attempts(), 1);
+        assert!(reconcile.needs_switch());
+
+        assert_eq!(sandbox.id().as_str(), "chat-s1");
+        assert_eq!(sandbox.state(), SandboxLifecycle::Draining);
+        assert_eq!(sandbox.power(), SandboxPower::Running);
+        assert_eq!(sandbox.image(), "registry.example/playpen@sha256:aa");
+        assert_eq!(sandbox.spec_hash(), "aa");
+        assert_eq!(sandbox.cpus(), 2);
+        assert_eq!(sandbox.memory(), "2g");
+        assert_eq!(sandbox.created_at(), time("2031-04-11T08:00:00Z"));
+        assert_eq!(sandbox.ready_at(), Some(time("2031-04-11T08:00:20Z")));
+        assert_eq!(sandbox.channel(), ChannelState::Open);
+        assert_eq!(
+            sandbox.supervisor_env(),
+            Some(&path("/state/families/chat/supervisor-chat-s1.env"))
+        );
+
+        assert_eq!(credentials.epoch().get(), 3);
+        assert_eq!(credentials.key_id(), "family-chat");
+        assert_eq!(credentials.token_id(), "token-chat");
+        assert_eq!(credentials.rotated_at(), time("2031-04-01T00:00:00Z"));
+        assert_eq!(credentials.next_rotation_at(), None);
+        assert_eq!(credentials.rotation_state(), RotationState::Settled);
+
+        assert_eq!(spend.window(), SpendWindow::Day);
+        assert_eq!(spend.spend_usd(), usd(1.25));
+        assert_eq!(spend.budget_usd(), Some(usd(10.0)));
+        assert_eq!(spend.as_of(), time("2031-04-18T10:20:25Z"));
+        assert_eq!(spend.source(), SpendSource::Litellm);
+
+        assert_eq!(webhook.name().as_str(), "boiler-alert");
+        assert_eq!(
+            webhook.token_path(),
+            &path("/state/triggers/chat/boiler-alert.token")
+        );
+    }
+
+    #[test]
+    fn a_record_starts_with_no_value_in_each_optional_field() {
+        let built = built();
+        let at = built.written_at();
+        let validation = Validation::new(String::new(), at, 2, 0, path("/report"));
+        let credentials = built.credentials().unwrap().clone();
+        let empty = DocumentParts::new(
+            built.family().clone(),
+            FamilyState::Invalid,
+            at,
+            String::new(),
+            String::new(),
+            String::new(),
+            validation.clone(),
+        );
+        let first_error: FirstError = "boom".parse().unwrap();
+        let failed = validation.clone().with_first_error(first_error.clone());
+
+        assert!(!validation.ok());
+        assert!(!validation.never_valid());
+        assert_eq!(validation.first_error(), None);
+        assert!(validation.with_never_valid().never_valid());
+        assert_eq!(failed.first_error(), Some(&first_error));
+        assert_eq!(built.sandboxes()[1].power(), SandboxPower::Stopped);
+        assert_eq!(built.sandboxes()[1].channel(), ChannelState::Closed);
+        assert_eq!(built.sandboxes()[1].ready_at(), None);
+        assert_eq!(built.sandboxes()[1].supervisor_env(), None);
+        assert_eq!(
+            credentials.with_next_rotation_at(at).next_rotation_at(),
+            Some(at)
+        );
+        assert_eq!(Limits::new(), Limits::default());
+        assert_eq!(Limits::new().max_queued_turns(), None);
+        assert_eq!(
+            Limits::new().with_max_running_turns(4).max_running_turns(),
+            Some(4)
+        );
+        assert_eq!(Triggers::new(), Triggers::default());
+        assert!(Triggers::new().webhooks().is_empty());
+        assert!(Triggers::new().with_enqueue().enqueue());
+        assert_eq!(empty.kind(), None);
+        assert!(empty.faults().is_empty());
+        assert_eq!(empty.reconcile(), None);
+        assert!(empty.sandboxes().is_empty());
+        assert_eq!(empty.credentials(), None);
+        assert_eq!(empty.spend(), None);
+        assert_eq!(empty.limits(), Limits::new());
+        assert_eq!(empty.triggers(), &Triggers::new());
+        assert_eq!(empty.pep(), &Pep::Off);
+        assert!(StatusDocument::new(empty).is_ok());
+    }
+
+    #[test]
+    fn the_parts_of_a_fault_start_with_the_table_of_its_code() {
+        for code in FaultCode::ALL {
+            let detects = |source: &&FaultSource| code.is_detected_by(**source);
+            let source = *FaultSource::ALL.iter().find(detects).unwrap();
+            let parts = FaultParts::new(*code, time("2031-04-18T10:00:00Z"), source);
+            let fault = Fault::new(parts.clone()).unwrap();
+            let unblocked = Fault::new(parts.with_turns_unblocked());
+
+            assert_eq!(fault.blocks_turns(), code.blocks_turns(), "{code}");
+            assert!(!fault.is_stale(), "{code}");
+            assert!(fault.detail().is_empty(), "{code}");
+            if code.blocks_turns() && *code != FaultCode::SandboxStartFailed {
+                let against_table = Err(FaultError::BlocksTurnsAgainstTable);
+
+                assert_eq!(unblocked, against_table, "{code}");
+            } else {
+                assert!(!unblocked.unwrap().blocks_turns(), "{code}");
+            }
+        }
     }
 }
