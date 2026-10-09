@@ -107,8 +107,8 @@ pub(super) fn pass(text: &str) -> Result<Found, NotStrict> {
     Ok(top)
 }
 
-/// Rule 5: one object holds no key two times. `at` is the first quote of
-/// `key`.
+/// Rule 5: refuses `key` when its object already has an equal key. `at` is
+/// the offset of the first quote of `key`.
 //
 // CONTRACT-QUESTION: the contracts say that a text is JSON, for example
 // contract 02 §3 rule 3. None says if an object can hold one key two times.
@@ -168,8 +168,8 @@ pub(super) fn integer_value(token: &str) -> Option<i128> {
     in_range.then_some(value)
 }
 
-/// The value of a number token with a fraction or an exponent, after the
-/// rounding to a float of 64 bits. `None` for a value that is not finite.
+/// The float of 64 bits that is nearest to the value of `token`, a number
+/// that is no integer. `None` when that float is not finite.
 ///
 /// `serde_json` reads the token here, and `StrictText::parse` gives the same
 /// text to `serde_json`. The check and each later read thus have one value

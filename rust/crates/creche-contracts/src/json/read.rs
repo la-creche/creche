@@ -330,8 +330,8 @@ impl<'de> Deserialize<'de> for Integer {
 ///    the other order. Such an enum thus refuses an object for its key
 ///    order.
 ///
-/// A raw type can need the members that it gives no name. Write the
-/// `Deserialize` of that raw type as a map visitor, and use no
+/// A raw type can need the members that it gives no name. Give such a raw
+/// type a `Deserialize` by hand, in the form of a map visitor, and no
 /// `#[serde(flatten)]`.
 ///
 /// Without [`check`], the reader refuses an integer outside 64 bits and a

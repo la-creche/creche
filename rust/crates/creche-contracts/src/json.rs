@@ -216,7 +216,7 @@ pub enum Rule {
     Constant,
     /// A byte that is not white space follows the value.
     TrailingData,
-    /// More than [`DEPTH_MAX`] arrays and objects are open at one point.
+    /// The text nests more than [`DEPTH_MAX`] levels of arrays and objects.
     TooDeep,
     /// One object holds a key two times.
     DuplicateKey,
