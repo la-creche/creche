@@ -18,21 +18,41 @@ is a git repository with one commit (`proc_registry.py`).
 No `caregiver` runs here. A scenario that saves a family proves the commit
 and nothing after it: on the host `caregiver` reads the registry and
 converges.
+
+The verify hook of the noticeboard is a second program, started through
+`Service.NOTICEBOARD_VERIFY`. The release executor runs it to its end
+(contract 06 §4). It reads the env file of the unit, and it asks the
+noticeboard for `/healthz`.
 """
 
 from __future__ import annotations
 
+import re
+import signal
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 import httpx
 import proc_html
 import proc_registry
-from proc_harness import LOOPBACK, Child, ProcError
-from proc_html import Element
-from proc_services import Service
+from proc_harness import LOOPBACK, STOP_GRACE_S, Child, Finished, ProcError, TcpAddress
+from proc_html import Element, form_values
+from proc_services import Service, command_of
 from proc_stack import CLIENT_TIMEOUT, Stack
-from proc_tree import AUTONOMOUS, FAMILY, LAN_ADDRESS, VIEW_KEY, Tree, add_family, write_view_key
+from proc_tree import (
+    AUTONOMOUS,
+    FAMILY,
+    LAN_ADDRESS,
+    VIEW_KEY,
+    Tree,
+    add_family,
+    append_audit,
+    audit_record,
+    write_env_file,
+    write_view_key,
+)
 
 #: The autonomous family of the fixture. The name is the one the old stage 5
 #: suite uses.
@@ -53,6 +73,36 @@ VERB_SAVE: Final = "save"
 HTML_TYPE: Final = "text/html"
 HTTP_OK: Final = 200
 
+#: A browser sends each line end of a form value as CR LF (the HTML
+#: standard, "Converting an entry list to a list of name-value pairs"). A
+#: page gives the text of a text area with another line end.
+_LINE_END: Final = re.compile(r"\r\n|\r|\n")
+_POSTED_LINE_END: Final = "\r\n"
+
+#: The variable of the site file. The unit reads that file beside its own
+#: env file, and the verify hook does not.
+SITE_ADDRESS_ENV: Final = "AGENT_LAN_ADDRESS"
+
+#: Three variables of the env file of the unit that a scenario changes: the
+#: key itself, the file that holds the key, and the state directory. The
+#: unit names one of the first two.
+KEY_ENV: Final = "VIEW_ACCESS_KEY"
+KEY_FILE_ENV: Final = "VIEW_ACCESS_KEY_FILE"
+STATE_ROOT_ENV: Final = "VIEW_STATE_ROOT"
+
+#: The tool of the one audit record of `BoardStack.write_audit_record`. Each
+#: family of the fixture holds the verb.
+AUDITED_TOOL: Final = "embed"
+
+#: Two values that a scenario types into the `description` control: one for
+#: a first save, and one for a save after it.
+NEW_DESCRIPTION: Final = "Answers in metric units."
+LATER_DESCRIPTION: Final = "Answers in metric units, in one sentence."
+
+#: The two flags of `verify.command` in `noticeboard/component.yaml`.
+VERIFY_JSON: Final = "--json"
+VERIFY_ENV_FILE: Final = "--env-file"
+
 
 def board_env(tree: Tree, host: str, port: int) -> dict[str, str]:
     """The variables `creche-noticeboard.service` reads from its two files.
@@ -62,11 +112,11 @@ def board_env(tree: Tree, host: str, port: int) -> dict[str, str]:
     The key comes from a file of mode 0600, as the unit says it can.
     """
     return {
-        "AGENT_LAN_ADDRESS": LAN_ADDRESS,
+        SITE_ADDRESS_ENV: LAN_ADDRESS,
         "VIEW_BIND": host,
         "VIEW_PORT": str(port),
-        "VIEW_ACCESS_KEY_FILE": str(tree.view_key_file),
-        "VIEW_STATE_ROOT": str(tree.state_root),
+        KEY_FILE_ENV: str(tree.view_key_file),
+        STATE_ROOT_ENV: str(tree.state_root),
         "VIEW_REGISTRY_DIR": str(tree.registry_root),
         "VIEW_SESSIOND_SOCKET": str(tree.attendance_socket),
     }
@@ -76,6 +126,26 @@ def _env_for_bind(tree: Tree, bind: str) -> dict[str, str]:
     host, _, port = bind.rpartition(":")
 
     return board_env(tree, host, int(port))
+
+
+def view_env(tree: Tree, port: int) -> dict[str, str]:
+    """The variables of the env file that the unit names, for a loopback bind.
+
+    The unit reads two files. The verify hook reads only this one
+    (contract 06 §4 rule 7), so the variable of the site file is not here.
+    """
+    env = board_env(tree, LOOPBACK, port)
+    del env[SITE_ADDRESS_ENV]
+
+    return env
+
+
+def verify_words(env_file: Path) -> tuple[str, ...]:
+    """The words after the program in `verify.command` of the manifest.
+
+    `test_proc_table.py` holds them against `noticeboard/component.yaml`.
+    """
+    return (VERIFY_JSON, VERIFY_ENV_FILE, str(env_file))
 
 
 @dataclass(slots=True)
@@ -106,6 +176,60 @@ class BoardStack(Stack):
             Service.NOTICEBOARD, lambda bind: _env_for_bind(self.tree, bind)
         )
 
+    def restart_board(self) -> None:
+        """Stop the noticeboard as its unit does, then start it on the same root and port.
+
+        The stop has the time that the teardown gives a group, which is the
+        `TimeoutStopSec` of the unit. The first process ended before the
+        second one starts. So one process at most holds the registry, and the
+        teardown finds one group.
+        """
+        if self.board is None:
+            raise ProcError("the noticeboard was not started")
+
+        self.board.send(signal.SIGTERM)
+        self.board.wait(STOP_GRACE_S)
+        env = board_env(self.tree, LOOPBACK, self.board_port)
+        self.board = self.spawn(Service.NOTICEBOARD, env)
+        self.supervisor.wait_ready(self.board, TcpAddress(self.board_port))
+
+    def write_audit_record(self) -> None:
+        """Write one audit record, so that the root has the audit directory.
+
+        The host has that directory before a service starts
+        (`systemd/creche-chaperone.service`). No fixture of this topology
+        makes it, and the verify hook looks for it.
+        """
+        append_audit(self.tree, [audit_record(FAMILY, AUDITED_TOOL)])
+
+    def write_view_env(self, values: Mapping[str, str] | None = None) -> Path:
+        """Write the env file of the unit, and return its path.
+
+        None gives the variables of `view_env` for the port of the
+        noticeboard of this test.
+        """
+        chosen = view_env(self.tree, self.board_port) if values is None else values
+        write_env_file(self.tree.view_env_file, chosen)
+
+        return self.tree.view_env_file
+
+    def verify(self, env_file: Path, env: Mapping[str, str] | None = None) -> Finished:
+        """Run the verify hook to its end, with the words of the manifest.
+
+        `env` is the whole environment of the hook. None gives the base
+        environment of a service: the release executor gives a hook a small
+        environment with no variable of its unit (contract 06 §4 rule 7).
+        """
+        words = verify_words(env_file)
+
+        if env is None:
+            return self.run(Service.NOTICEBOARD_VERIFY, {}, *words)
+
+        command = command_of(Service.NOTICEBOARD_VERIFY)
+        name = Service.NOTICEBOARD_VERIFY.value
+
+        return self.supervisor.run(name, [*command.words, *words], env, self.tree.root)
+
     @property
     def origin(self) -> str:
         """Where a browser finds the noticeboard: the scheme, the host and the port."""
@@ -128,6 +252,38 @@ class BoardStack(Stack):
         return httpx.AsyncClient(
             base_url=self.origin, headers=headers, timeout=CLIENT_TIMEOUT, follow_redirects=False
         )
+
+
+class Browser:
+    """One open edit form: its fields, its cookie, and how it posts."""
+
+    def __init__(self, stack: BoardStack, client: httpx.AsyncClient, family: str) -> None:
+        self.stack = stack
+        self.client = client
+        self.path = f"/families/{family}/edit"
+        self.values: dict[str, str] = {}
+        self.cookie = ""
+
+    async def open(self) -> None:
+        response = await self.client.get(self.path)
+        assert response.status_code == httpx.codes.OK, response.text
+        self.values = form_values(html_of(response).one("form"))
+        self.cookie = csrf_of(response)
+
+    def sender(self) -> dict[str, str]:
+        """What a browser on the page of the form sends: its cookie and its origin."""
+        return {"Cookie": f"{CSRF_COOKIE}={self.cookie}", "Origin": self.stack.origin}
+
+    async def post(self, verb: str, headers: dict[str, str] | None = None) -> httpx.Response:
+        """Click one button. `headers` takes the place of what a browser sends.
+
+        Each line end of a value goes out as CR LF, as from a browser.
+        """
+        sent = self.sender() if headers is None else headers
+        fields = self.values | {VERB_FIELD: verb}
+        data = {name: _LINE_END.sub(_POSTED_LINE_END, value) for name, value in fields.items()}
+
+        return await self.client.post(self.path, data=data, headers=sent)
 
 
 async def page_of(client: httpx.AsyncClient, path: str) -> Element:

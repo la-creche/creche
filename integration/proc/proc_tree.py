@@ -25,6 +25,7 @@ topology with one writes only the registry and the token files, and
       state/outcomes/<family>/<id>.json  contract 02 §13.1, written by `attendance`
       state/triggers/webhooks/<family>/<name>.token   contract 05 §6.4
       state/view.key                     the key of the noticeboard
+      state/view.env                     contract 06 §4 rule 7, the env file of a unit
       sock/                              contract 02 §3 rule 1
       release/                           the root of the release executor, empty
       home/.config/systemd/user/         the unit directory of a user manager
@@ -270,6 +271,11 @@ class Tree:
     def view_key_file(self) -> Path:
         return self.state_root / "view.key"
 
+    @property
+    def view_env_file(self) -> Path:
+        """The env file that the unit of the noticeboard and its verify hook both read."""
+        return self.state_root / "view.env"
+
     def webhook_token_file(self, family: str, name: str) -> Path:
         return self.webhooks_dir / family / f"{name}.token"
 
@@ -334,6 +340,10 @@ class Tree:
 
     def family_file(self, family: str = FAMILY) -> Path:
         return self.registry_family_dir(family) / "family.yaml"
+
+    def family_prose_file(self, family: str = FAMILY) -> Path:
+        """The `instructions.md` of one family in the registry (contract 01 §1)."""
+        return self.registry_family_dir(family) / "instructions.md"
 
     def playpen_env(self, family: str = FAMILY, sandbox: str | None = None) -> Path:
         return self.family_dir(family) / f"supervisor-{sandbox or first_sandbox(family)}.env"
@@ -466,7 +476,7 @@ def write_family_file(tree: Tree, body: Mapping[str, Any]) -> None:
 
 def write_family_prose(tree: Tree, family: str = FAMILY, text: str = INSTRUCTIONS) -> None:
     """Put the `instructions.md` of one family in the registry (contract 01 §1)."""
-    write_registry_file(tree, tree.registry_family_dir(family) / "instructions.md", text)
+    write_registry_file(tree, tree.family_prose_file(family), text)
 
 
 def publish_family(tree: Tree, body: Mapping[str, Any], prose: str = INSTRUCTIONS) -> None:
@@ -788,6 +798,18 @@ def write_webhook_token(tree: Tree, family: str, name: str, token: str | None = 
 def write_view_key(tree: Tree) -> None:
     """The key file that the unit of the noticeboard names. Mode 0600."""
     _atomic_write(tree.view_key_file, VIEW_KEY + "\n", SECRET_MODE)
+
+
+def write_env_file(path: Path, values: Mapping[str, str]) -> None:
+    """The env file of one unit, as its verify hook reads it (contract 06 §4 rule 7).
+
+    One `KEY=value` for each line, with no quote and no expansion. The unit
+    of the noticeboard says that its file can hold a key, so the mode is
+    0600.
+    """
+    lines = [f"{name}={value}" for name, value in values.items()]
+
+    _atomic_write(path, "\n".join(lines) + "\n", SECRET_MODE)
 
 
 def write_validation_report(tree: Tree, family: str, issues: list[dict[str, Any]]) -> None:
