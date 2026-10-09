@@ -31,7 +31,7 @@ defect that a test finds late.
 | Module of `creche-contracts` | What it holds |
 |---|---|
 | `ids` | Each id grammar that `vectors/data/ids` covers. One type for each grammar. |
-| `json` | The strict reader of a JSON text: `check`, `StrictText`, `read` and the number types `Number` and `Integer`. "JSON" below holds its rules. |
+| `json` | The strict reader and the writer of a JSON text: `check`, `StrictText`, `read`, the number types `Number` and `Integer`, `write`, `Style` and the opaque value `Opaque`. "JSON" below holds its rules. |
 | `secret` | `Secret`, the type of a token or a key. |
 | `slot` | `Slot` is the one lenient field type for a raw type: a value of a wrong kind does not fail the read. `MapOnly` wraps a nested table in a raw type whose read can fail: it refuses a value that is not a table. |
 | `time` | `Timestamp`, the one type of a time in a file or in a wire message. "Time" below holds its rules. |
@@ -320,14 +320,19 @@ that does not meet each line of this list:
 Reason: for a text outside these rules, two readers can return two values.
 
 `creche-contracts` must have one JSON reader and one JSON writer, in its
-`json` module. The module holds the reader. Packet `decisions-json-reader`
-adds the writer. Write no JSON parser, no JSON value tree and no code that
-formats a float in another module.
+`json` module. The module holds both. Write no JSON parser, no JSON value
+tree and no code that formats a float in another module.
 
 The doc comment of the `json` module holds the full text of each rule. It
-also names the byte offset of each refusal. `src/json.rs` holds the types,
-`src/json/scan.rs` holds the pass over a text, and `src/json/read.rs` holds
-the typed read and the number types.
+also names the byte offset of each refusal. The module has five files:
+
+| File | What it holds |
+|---|---|
+| `src/json.rs` | The types of the check. |
+| `src/json/scan.rs` | The pass over a text. |
+| `src/json/read.rs` | The typed read and the number types. |
+| `src/json/write.rs` | The writer, its styles and the one function that formats a float. |
+| `src/json/opaque.rs` | `Opaque`. |
 
 | Item of `json` | What it is |
 |---|---|
@@ -341,6 +346,13 @@ the typed read and the number types.
 | `Number`, `Integer` | A number of a raw type. Each one keeps the kind of its token: an integer or a float. |
 | `Found` | The kind of a JSON value. The `slot` module defines it, and `json` exports it. |
 | `DEPTH_MAX` | The nesting limit: 64. |
+| `write` | The function that writes a value as `json.dumps` of Python writes it. It gives the bytes or a `WriteError`. |
+| `Style` | The arguments of one `json.dumps` call: a `Layout`, a `Charset` and a `KeyOrder`. |
+| `Layout` | Where the white space goes. `Compact` has none. `Spaced` has the default of `json.dumps`. `Indent1` and `Indent2` have one item on each line. |
+| `Charset` | `Ascii` writes each character outside printable ASCII as a `\u` escape. `Utf8` writes such a character as it is. |
+| `KeyOrder` | `AsGiven` keeps the order of the value. `Sorted` sorts the keys of each object by their code points. |
+| `WriteError` | The refusal of `write`. `NotFinite` is for a float that is not finite. `NoJsonForm` is for each other value that strict JSON cannot hold. |
+| `Opaque` | The value of a field that a contract calls opaque. It holds its checked text and keeps the order of its keys. |
 
 `check` applies the rules in this sequence:
 
@@ -366,10 +378,10 @@ In the raw type of a JSON text, give a number field the type
 as the integer 0. `Number` and `Integer` decide from the characters of the
 number.
 
-`Number` and `Integer` read the text of a token. `serde` reads some values
-from a buffer of its own, and that buffer keeps no such text. The read of
-`Number` or of `Integer` fails there. Put neither type in one of these four
-places:
+`Number`, `Integer` and `Opaque` read the text of a value. `serde` reads
+some values from a buffer of its own, and that buffer keeps no such text.
+The read of each of the three types fails there. Put none of them in one of
+these four places:
 
 1. Below `#[serde(flatten)]`. A named field beside a flattened field works.
 2. In an enum with `#[serde(untagged)]`.
@@ -385,8 +397,69 @@ to record a notice for the operator. Packet `decisions-notice` adds the
 notice. A peer does not learn which rule a text broke. Only the notice
 names the rule.
 
-No module calls the reader yet. "Known gaps" names the packet that moves
-each module to it.
+A module writes a JSON text with `write` and a `Style`:
+
+1. Give the valid type a `Serialize` that gives its keys in the sequence of
+   the Python writer.
+2. Select the `Style` that has the arguments of the `json.dumps` call of
+   that writer.
+3. Call `write`. Turn a `WriteError` into the error type of the module.
+
+Rules for the writer:
+
+- Do not build a JSON text of a contract by hand. Do not call
+  `serde_json::to_string` or `serde_json::to_vec` for such a text.
+  `serde_json` writes `null` for a float that is not finite, and it writes a
+  float in another form than Python.
+- For a float that is not finite, the writer gives
+  `WriteError::NotFinite` and no text. Make the type of a float field
+  refuse such a value, so the writer cannot get one.
+- The key of a map must be a text. The writer refuses a number as a key.
+- The writer refuses an integer outside the range of 64 bits, because the
+  reader refuses its digits. Only an `i128` or a `u128` can hold one.
+- The writer refuses a `RawValue` of `serde_json`. Its text has no style,
+  and no check reads it.
+- The writer does not count the levels of a value, and it does not compare
+  the keys of an object. Give it no value of more than 64 levels and no map
+  with one key two times. "Known gaps" has the question.
+
+Rule 7 permits a free value only in a field that a contract calls opaque.
+`Opaque` is the type of such a field. Three examples are the detail of a
+fault, the event of a channel line and the arguments of a tool call.
+
+- In a raw type, the field is a `Slot<Opaque>`. `null` reads as `Null`, and
+  each other value reads as `Value`.
+- A raw type can keep the value of each key that it gives no name. Write
+  the `Deserialize` of such a raw type by hand. A map visitor reads each
+  named key by its name, and each other value with
+  `next_value::<Opaque>()`. A derive with `#[serde(flatten)]` fails for
+  such a value.
+- A named `Opaque` field works beside a flattened field that ignores the
+  value of each other key.
+- `write` forms an `Opaque` in the style of the document. A number thus
+  goes out in the form of Python: `1.50` as `1.5`, `1e21` as `1e+21` and
+  `-0` as `0`.
+- `Opaque::compact_len` gives the size of the value for a size rule. It
+  counts the bytes of the compact form in UTF-8.
+- With `KeyOrder::Sorted`, `write` sorts the keys of each object of an
+  `Opaque`. A digest over the arguments of a call takes that form as its
+  input.
+- Two `Opaque` values are equal when their texts are equal. `[1, 2]` and
+  `[1,2]` are thus two values.
+
+Only `session` calls the writer today, and no module calls the reader.
+"Known gaps" names the packet that moves each module to the two. Until
+then, these parts stay:
+
+- Five older functions format a float: `float_text` of `channel`, of
+  `status` and of `manifest`, `float_repr` of `grants`, and
+  `python_float_text` of `family`. Add no user of them. The packets
+  `decisions-raw-serde-*` delete the first four. No packet has the fifth
+  one yet.
+- The `session` module writes the body of a stored journal line as the text
+  of the journal file. That text is a `RawValue`. A function that only this
+  crate can call keeps such a text: `write_raw_kept`. Add no second user of
+  it.
 
 ## Time
 
@@ -1442,6 +1515,21 @@ To make the fifth check on your machine, for example before a merge:
      a key in `scan.rs`. Only `duplicate_key` needs the text of a key.
   4. For the integer line, also give `Integer` a wider value.
      `integer_value` and that type hold the range of the line.
+  5. Change each line of "JSON" and of "Known gaps" that names the rule for
+     the writer. For the integer line, the writer takes its range from
+     `integer_value` and needs no change of code.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-contracts/src/json/write.rs`: "JSON" gives the reader a
+  nesting limit and a rule against a key that an object holds two times. No
+  rule says what the writer does with a value that breaks one of the two.
+  Each Python writer writes such a value, and `write` does the same. It
+  counts no level and compares no key. The reader thus refuses the text of
+  two kinds of value. One nests more than 64 levels: an `Opaque` can nest 64
+  levels by itself, and each object around it adds one level. The other is a
+  map that gives one key two times. The other reading refuses such a value
+  with a `WriteError`. That change costs one check of the level and one set
+  of keys in the writer. A Rust service then refuses a value that the Python
+  service writes.
 - Two texts of "When the two results differ" wait for a confirmation of the
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
