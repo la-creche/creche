@@ -20,6 +20,29 @@ Both suites skip themselves when `playpen/dist/playpen.js` is missing. A
 silent pass would be worse than a skip. Every test is marked `slow` in
 `conftest.py`. The suite needs `node` on `PATH`.
 
+## CI
+
+The `suites` job of `.github/workflows/gate.yml` runs both suites for each
+code change. No hook runs them. Run the two commands before you push a
+change to this directory.
+
+1. The job builds the playpen, as the `proc` job does.
+2. It runs each suite in a pytest run of its own, with the two commands
+   above.
+3. Its last step reads the JUnit report of each run.
+
+- A test that skips is a failure there. A suite that ran no test is a
+  failure too.
+- The variable `PYTEST_ADDOPTS` gives each run the path of its report. The
+  command stays as it is.
+- The last step prints one line for each suite: the tests that ran, the
+  total, the tests that skipped and the seconds.
+- The job has a time limit of 20 minutes.
+- `.github/workflows/release.yml` does not run the job yet. That file gets
+  the job after the job passed 20 runs of the merge queue in a row.
+- `bin/tests/test_gate_workflow.py` pins the job, both commands and the last
+  step.
+
 ## What runs
 
 ```
@@ -100,6 +123,13 @@ the suites above fails at collection, because the tests in `tests/` import
 18. A gate's limit must outlast `attendance`'s gate poll, twice over.
 19. A gated call carries the playpen's own turn id, read from the turn file.
 20. Fill `max_queued_turns` for real: 101 firings, not a patched constant.
+21. End each pi shim with `fake_pi_exec()` of `tests/stack.py`. The fake pi
+    then runs with `--mode=rpc` as one word. A test has no microVM, so each
+    playpen of the machine is in one process table. On Linux a playpen
+    counts each process there whose arguments hold `--mode` and `rpc` as two
+    words. With two words, a family with a second sandbox ends `degraded`
+    with the fault `orphan_processes`, on Linux only. The cost: no scenario
+    here can show that fault from the count of `ready`.
 
 ## Reading a failure
 
@@ -120,6 +150,8 @@ Work down this list. The first line that does not hold names the hop.
    mount problem.
 8. A turn that waits about `lock_stale_s`: a previous playpen left its lock.
 9. A teardown error: a listener would not stop. This suite's own bug.
+10. `degraded` with the fault `orphan_processes`, on Linux only: a fake pi
+    ran with `--mode` and `rpc` as two words. Read rule 21.
 
 ## Layout
 
@@ -131,7 +163,7 @@ Work down this list. The first line that does not hold names the hop.
 | `tests/stage2.py` to `stage5.py`, `stage_eq.py`, `wb2.py` | the wiring of each later stage |
 | `tests/test_stage1_gate.py` | the thirteen scenarios |
 | `tests/test_i2_stage2.py` to `test_i5_stage5.py` | each stage's scenarios |
-| `tests/test_*.py`, other | one packet each: the switch, the launcher, the terminal door, delegations, enqueue, grant refresh, the noticeboard's reads |
+| `tests/test_*.py`, other | one packet each: the switch, the launcher, the terminal door, delegations, enqueue, grant refresh, the noticeboard's reads, the pi shim |
 | `fixtures/*-registry/` | the families each stage publishes. Read-only inputs. |
 | `tests_manager/` | the `caregiver` writers against the real readers, with the Node drivers under `node/` |
 | `proc/` | the process-level suite: each service is a process. `proc/AGENTS.md` has its rules. |
