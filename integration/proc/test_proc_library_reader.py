@@ -166,10 +166,10 @@ def test_the_reader_refuses_a_store_that_is_not_alone(library: LibraryStack) -> 
 def test_the_reader_statements_are_those_of_the_bridge() -> None:
     """Each statement of `reader_store.mjs` is a statement of the bridge, and the reverse.
 
-    Two statements of the bridge are not one literal. One is the sum of
-    three literals. One is a template that takes the name of a table from
-    `VECTOR_TABLE`. So this test compares each literal and that constant,
-    and it compares no whole statement.
+    The bridge writes two of its statements in parts. It joins three
+    literals for one, and it puts `VECTOR_TABLE` into a template for the
+    other. The text of such a statement is in no one place of the file. So
+    this test holds each literal and the constant, one by one.
 
     The pattern of a literal does not find each statement that a file can
     hold. So the two files also make the same count of statements, neither

@@ -10,12 +10,11 @@
 //
 // The bridge is `playpen/bridge/index-store.ts`. The comment above each
 // statement here names the lines of that file. Each statement here has the
-// string literals of the bridge. Two statements there are not one literal:
-// one is the sum of three literals, and one is a template that takes the
-// name of a table from `VECTOR_TABLE`. `test_proc_library_reader.py` holds
-// each literal, that constant, the count of statements and the options of
-// the connection against the text of the bridge. Change the two files
-// together.
+// string literals of the bridge. The bridge writes two of its statements in
+// parts: it joins three literals for one, and it puts `VECTOR_TABLE` into a
+// template for the other. `test_proc_library_reader.py` holds each literal,
+// that constant, the count of statements and the options of the connection
+// against the text of the bridge. Change the two files together.
 //
 // This program does not rank a row and it does not check a row. It prints
 // what each statement gives, as one JSON object on stdout:

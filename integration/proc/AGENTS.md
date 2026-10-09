@@ -292,8 +292,8 @@ each one, and each one runs to its end.
    - what a command wrote on its stdout or its stderr
 
    Two tests of `test_proc_library_reader.py` start no program. Each one
-   reads files of the bridge as text, as `test_proc_table.py` reads the
-   unit files.
+   reads files of the bridge as text. `test_proc_table.py` reads the unit
+   files in the same way.
 4. Nothing under test may be faked. The five stand-ins are not under test.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
