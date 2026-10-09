@@ -20,6 +20,7 @@ from vectors.core import ACCEPTED, FORMAT, RAISED, REFUSED, Json, depth, has_sur
 
 REGENERATE = "run `uv run python -m vectors.generate` and read the diff"
 FIX_FIRST = "fix the defect in its package first: vectors/AGENTS.md rule 5"
+RESTORE = "restore the file from git: vectors/AGENTS.md rule 11"
 
 #: The forms an input takes: text, bytes that are not UTF-8, a long text
 #: written as repeated parts, the named arguments of a builder, or the chunks
@@ -49,7 +50,8 @@ def _first_difference(wanted: str, found: str) -> str:
 def test_committed_files_are_current() -> None:
     _, built = generate.build()
     on_disk = generate.committed()
-    problems = generate.stale(built, on_disk, generate.strays())
+    frozen = generate.frozen_of(built)
+    problems = generate.stale(built, on_disk, generate.strays(), frozen)
     details = [
         f"{path}: {_first_difference(built[path], on_disk[path])}"
         for path in sorted(built.keys() & on_disk.keys())
@@ -58,9 +60,20 @@ def test_committed_files_are_current() -> None:
 
     assert not problems, f"{REGENERATE}: {problems} {details}"
 
+    # No group writes a frozen file, and the build keeps the map of the index.
+    assert sorted(frozen.keys() & built.keys()) == []
+    assert frozen == generate.frozen_of(on_disk)
+
 
 # The tests below read the committed files. The test above holds them equal
 # to what the generator writes, and it is the only one that pays for a build.
+
+
+def test_each_frozen_file_has_its_digest() -> None:
+    """No group writes a frozen file again, so nobody can repair a changed one."""
+    on_disk = generate.committed()
+
+    assert generate.damaged(generate.frozen_of(on_disk), on_disk) == [], RESTORE
 
 
 def test_every_file_is_strict_ascii_json() -> None:
