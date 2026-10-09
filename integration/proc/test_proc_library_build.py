@@ -6,9 +6,10 @@ stdout, the store file and the record of the TEI stand-in.
 
 The first ten scenarios have the names of `library/tests/test_library.py`.
 That file holds the same rules with the program inside the test process and
-an object in the place of TEI. The other scenarios hold what only a process
-shows, or what no source line of the program says: the order of the files,
-how a text file is read, the files of the index directory during a run.
+an object in the place of TEI. The other scenarios hold a case that the
+old file does not have, what only a process shows, or what no source line of
+the program says: old bytes under a new mtime, the order of the files, how
+a text file is read, the files of the index directory during a run.
 
 The rules are the six rules and the store schema of `library/AGENTS.md`.
 """
@@ -112,6 +113,13 @@ NEW_MODEL = "new-model"
 
 #: How many chunks the corpus of the batch scenario has in its second file.
 REST_CHUNKS = 30
+
+#: The second note of the vault with one word changed. The text has the
+#: byte count of `MEETING_TEXT`, so the size of the file shows no change.
+MEETING_OTHER_DAY = MEETING_TEXT.replace("Tuesday", "Mondays")
+
+#: How far a scenario moves the mtime of a file: ten seconds, in nanoseconds.
+MTIME_STEP_NS = 10_000_000_000
 
 
 # --------------------------------------- the scenarios of `library/tests`
@@ -371,6 +379,37 @@ def test_an_empty_file_has_a_files_row_and_no_chunk(library: LibraryStack) -> No
     assert set(store.files()) == {_note(scope, "empty.md"), _note(scope, "full.md")}
     assert [chunk.path for chunk in store.chunks()] == [_note(scope, "full.md")]
     assert library.embedded() == [[CANARY], ["One note with text."]]
+
+
+def test_the_hash_decides_and_never_the_mtime(library: LibraryStack) -> None:
+    """Rule 1, both ways: a new mtime alone is no change, and new bytes under an old mtime are one.
+
+    A sync tool can keep the mtime of a file that it changed. The new text
+    of the second note has the byte count of the old one, so the size of
+    the file shows no change either.
+    """
+    scope = library.vault()
+    write_vault(scope)
+    _run(library, scope)
+    first_calls = len(library.embedded())
+    bikes = (scope / BIKES).stat()
+    os.utime(scope / BIKES, ns=(bikes.st_atime_ns, bikes.st_mtime_ns + MTIME_STEP_NS))
+
+    touched = _run(library, scope)
+    calls_touched = library.embedded()[first_calls:]
+    meeting = (scope / MEETING).stat()
+    write_note(scope / MEETING, MEETING_OTHER_DAY)
+    os.utime(scope / MEETING, ns=(meeting.st_atime_ns, meeting.st_mtime_ns))
+    rewritten = _run(library, scope)
+    calls_rewritten = library.embedded()[first_calls + len(calls_touched) :]
+    now = (scope / MEETING).stat()
+
+    assert (now.st_size, now.st_mtime_ns) == (meeting.st_size, meeting.st_mtime_ns)
+    assert (touched.indexed, touched.unchanged) == (0, 2)
+    assert calls_touched == [[CANARY]]
+    assert (rewritten.indexed, rewritten.unchanged) == (1, 1)
+    assert calls_rewritten == [[CANARY], [MEETING_OTHER_DAY]]
+    assert library.store().texts_of(scope.resolve() / MEETING) == [MEETING_OTHER_DAY]
 
 
 def test_the_store_has_the_schema_of_the_contract(library: LibraryStack) -> None:
