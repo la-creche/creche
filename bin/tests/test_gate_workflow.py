@@ -40,6 +40,14 @@ toolchain, and it takes `cargo-llvm-cov` from a release archive that it
 checked in the same way. `gate` needs the job, so a file of
 `rust/coverage-files.txt` with code that no test runs blocks a merge.
 
+`.github/workflows/coverage-nightly.yml` is a workflow of its own. One time a
+day it runs the same script with `--branch`, on one nightly toolchain that
+its one constant names by a date. No job of the two other files needs it, so
+it blocks no merge. It takes `cargo-llvm-cov` with the step and the two
+constants of the `rust-coverage` job, and the tests hold the three copies
+equal. The job that measures runs on `main` only. A run that a person starts
+on another ref is then a success, and it cannot block a release.
+
 The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the playpen first,
 and a test that skips is a failure there. A run in which every test skips
@@ -205,7 +213,8 @@ COVERAGE_STEP = "cargo-llvm-cov"
 #: `cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz` of the release
 #: `v<version>`. To take another version, compute the SHA-256 of the new
 #: archive and compare it with the digest that the release page shows. Then
-#: change the two values here and in the two workflow files.
+#: change the two values here and in the three workflow files: the gate, the
+#: release and the nightly run.
 COVERAGE_ENV = {
     "LLVM_COV_VERSION": "0.9.1",
     "LLVM_COV_SHA256": "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522",
@@ -248,6 +257,85 @@ COVERAGE_STEP_KEYS = [
     {"name", "if", "working-directory", "env", "run"},
     {"if", "run"},
 ]
+
+#: The workflow that runs the branch check of the coverage rule one time a
+#: day, as text and as data. It is a file of its own: the check `gate` does
+#: not need it, so it blocks no merge.
+NIGHTLY_TEXT = (WORKFLOWS / "coverage-nightly.yml").read_text(encoding="utf-8")
+NIGHTLY = yaml.safe_load(NIGHTLY_TEXT)
+NIGHTLY_JOBS: dict[str, dict[str, Any]] = NIGHTLY["jobs"]
+NIGHTLY_NAME = "coverage-nightly"
+
+#: When the workflow starts: at one minute of one hour of each day, and when
+#: a person starts it. The minute is not 0. GitHub delays a schedule most at
+#: the start of an hour.
+NIGHTLY_CRON = "37 4 * * *"
+NIGHTLY_EVENTS = {"schedule": [{"cron": NIGHTLY_CRON}], "workflow_dispatch": None}
+
+#: The whole token of the workflow. The job runs the code of `main`.
+READ_ONLY = {"contents": "read"}
+
+#: The job with no rule, and the job that measures. `guard` is what makes a
+#: run on another ref a success.
+NIGHTLY_GUARD = "guard"
+NIGHTLY_JOB = "branch-coverage"
+
+#: The one ref that the workflow measures on, as `jobs.<job>.if` spells it.
+#: The release executor reads each workflow run on the head of a merged pull
+#: request (`handover/src/handover/executor/provenance.py`, P5). A run that
+#: fails there blocks the release of that pull request.
+ON_MAIN = "github.ref == 'refs/heads/main'"
+
+#: The one nightly toolchain, by its date. A nightly gets no later fix, so
+#: the date is the pin. To take another date, run `bin/rust-coverage.sh
+#: --branch` on a machine with that nightly, and measure the facts about a
+#: branch in `rust/AGENTS.md` again. Then change the value here and in the
+#: workflow file.
+NIGHTLY_TOOLCHAIN = "nightly-2025-12-13"
+
+#: The form of that name. A name with no date, for example `nightly`, is
+#: another compiler on each day.
+DATED_NIGHTLY = re.compile(r"nightly-\d{4}-\d{2}-\d{2}")
+
+#: The variable that names the toolchain. rustup reads it for each cargo
+#: command, and it outranks `rust/rust-toolchain.toml`.
+TOOLCHAIN_VARIABLE = "RUSTUP_TOOLCHAIN"
+
+#: Each variable of the job. As for the `rust-coverage` job, one more can
+#: change what the run compiles.
+NIGHTLY_JOB_ENV = COVERAGE_JOB_ENV | {TOOLCHAIN_VARIABLE: NIGHTLY_TOOLCHAIN}
+
+#: The whole text of the toolchain step. It installs the toolchain of the
+#: variable with the LLVM tools that `cargo llvm-cov` calls. The two version
+#: lines show in the log which compiler measured.
+NIGHTLY_TOOLCHAIN_RUN = """\
+rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update \\
+  --component llvm-tools-preview
+rustc --version
+cargo --version
+"""
+
+#: The whole of the nightly rule: the script of the `rust-coverage` job, with
+#: the flag that adds the branches.
+NIGHTLY_RUN = COVERAGE_RUN + " --branch"
+
+#: Each key of the two jobs, and each key of the steps of the second one. One
+#: more key can make a red step green, for example `continue-on-error`. A
+#: step has no `if`: no step can leave the measurement out.
+NIGHTLY_KEYS = {
+    NIGHTLY_GUARD: {"runs-on", "steps"},
+    NIGHTLY_JOB: {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"},
+}
+NIGHTLY_STEP_KEYS = [
+    {"uses", "with"},
+    {"name", "working-directory", "run"},
+    {"name", "working-directory", "env", "run"},
+    {"run"},
+]
+
+#: The inputs of the checkout of the job. It keeps no token in the clone: the
+#: steps after it run the code of the repository.
+NIGHTLY_CHECKOUT = {"persist-credentials": False}
 
 #: The two files the cargo cache is good for.
 CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
@@ -899,6 +987,124 @@ def test_the_coverage_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last
     """A test that does not end under the measurement holds the job, and a
     job with no limit has six hours."""
     assert 0 < jobs[COVERAGE_JOB]["timeout-minutes"] <= 30
+
+
+def test_the_nightly_workflow_starts_one_time_a_day_and_by_hand() -> None:
+    """One schedule with one minute and one hour, and `workflow_dispatch`.
+    No pull request and no push starts the file, so no run of it is on the
+    head of a pull request by itself. PyYAML reads the key `on` as the
+    boolean."""
+    minute, hour, *rest = NIGHTLY_CRON.split(" ")
+
+    assert NIGHTLY["name"] == NIGHTLY_NAME
+    assert NIGHTLY[True] == NIGHTLY_EVENTS
+    assert minute.isdigit() and 0 < int(minute) < 60, "the schedule is at the start of an hour"
+    assert hour.isdigit() and int(hour) < 24
+    assert rest == ["*", "*", "*"], "the schedule is not one time a day"
+
+
+def test_the_nightly_workflow_holds_the_read_only_token() -> None:
+    """The job runs the code of `main`, so no job holds a token that writes.
+    The file has no `concurrency` key: a group can cancel a run, and a
+    cancelled run on the head of a pull request blocks its release."""
+    assert NIGHTLY["permissions"] == READ_ONLY
+    assert "concurrency" not in NIGHTLY
+    assert "env" not in NIGHTLY
+    for name, job in NIGHTLY_JOBS.items():
+        assert "permissions" not in job, f"{name} sets its own permissions"
+        assert "concurrency" not in job, f"{name} can cancel a run"
+
+
+def test_the_nightly_workflow_measures_on_main_only() -> None:
+    """A person can start the workflow on each ref. On another ref than
+    `main`, `guard` passes and the job that measures is skipped, so the run
+    is a success. `guard` has no rule, no checkout and no action: it runs no
+    code of the ref."""
+    guard = NIGHTLY_JOBS[NIGHTLY_GUARD]
+    job = NIGHTLY_JOBS[NIGHTLY_JOB]
+
+    assert list(NIGHTLY_JOBS) == [NIGHTLY_GUARD, NIGHTLY_JOB]
+    assert {name: set(one) for name, one in NIGHTLY_JOBS.items()} == NIGHTLY_KEYS
+    assert [set(step) for step in guard["steps"]] == [{"name", "run"}]
+    assert job["needs"] == NIGHTLY_GUARD
+    assert job["if"] == ON_MAIN
+
+
+def test_the_nightly_job_has_no_key_that_hides_a_red_step() -> None:
+    """The job has the runner and the time limit of the `rust-coverage` job.
+    No step has an `if` or a `continue-on-error`: a step that fails makes the
+    run red."""
+    job = NIGHTLY_JOBS[NIGHTLY_JOB]
+    checkout = job["steps"][0]
+
+    assert job["runs-on"] == COVERAGE_RUNNER
+    assert 0 < job["timeout-minutes"] <= 30
+    assert [set(step) for step in job["steps"]] == NIGHTLY_STEP_KEYS
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"] == NIGHTLY_CHECKOUT
+
+
+def test_the_nightly_job_installs_one_dated_nightly_from_one_constant() -> None:
+    """The date is the pin of the compiler. The file holds the name one time,
+    in the variable that rustup reads, and it holds no second nightly. The
+    toolchain step installs the toolchain of that variable and names no
+    other one."""
+    job = NIGHTLY_JOBS[NIGHTLY_JOB]
+    _checkout, toolchain, _install, _script = job["steps"]
+
+    assert DATED_NIGHTLY.fullmatch(NIGHTLY_TOOLCHAIN)
+    assert job["env"] == NIGHTLY_JOB_ENV
+    assert DATED_NIGHTLY.findall(NIGHTLY_TEXT) == [NIGHTLY_TOOLCHAIN]
+    assert toolchain["working-directory"] == RUST_DIR
+    assert toolchain["run"] == NIGHTLY_TOOLCHAIN_RUN
+    for step in job["steps"]:
+        assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
+
+
+def test_the_nightly_toolchain_is_in_the_nightly_workflow_only() -> None:
+    """The toolchain file of the workspace keeps its version: each job of the
+    gate and of the release builds with it, and a change of that file moves
+    the tag of each binary component. No job of those two files reads the
+    variable that outranks the file."""
+    pinned = tomllib.loads((REPO / RUST_DIR / "rust-toolchain.toml").read_text(encoding="utf-8"))
+
+    assert "nightly" not in pinned["toolchain"]["channel"]
+    for workflow in (GATE, RELEASE):
+        assert TOOLCHAIN_VARIABLE not in workflow.get("env", {})
+        for name, job in workflow["jobs"].items():
+            assert TOOLCHAIN_VARIABLE not in job.get("env", {}), f"{name} names a toolchain"
+            for step in job["steps"]:
+                assert TOOLCHAIN_VARIABLE not in step.get("env", {}), f"{name} names a toolchain"
+
+
+def test_the_three_workflows_take_the_same_cargo_llvm_cov() -> None:
+    """The nightly run and the merge gate must read a report of one tool
+    version: the script reads the form of that report. The nightly step is
+    the step of the `rust-coverage` job of each other file, without the rule
+    of that job. So the two constants and the whole text are equal in the
+    three files."""
+    _checkout, _toolchain, install, _script = NIGHTLY_JOBS[NIGHTLY_JOB]["steps"]
+
+    assert install["name"] == COVERAGE_STEP
+    assert install["env"] == COVERAGE_ENV
+    assert install["working-directory"] == RUST_DIR
+    assert install["run"] == COVERAGE_INSTALL_RUN
+    for jobs, last in WORKFLOW_JOBS:
+        _checkout, _toolchain, gated, _script = jobs[COVERAGE_JOB]["steps"]
+
+        assert install == {key: value for key, value in gated.items() if key != "if"}, last
+
+
+def test_the_nightly_job_runs_the_script_with_the_branch_flag() -> None:
+    """One copy of the cargo line and of the rule: `bin/rust-coverage.sh`.
+    `--branch` is the one difference from the `rust-coverage` job. The script
+    is the last step, after the toolchain and the tool."""
+    *_setup, script = NIGHTLY_JOBS[NIGHTLY_JOB]["steps"]
+
+    assert script == {"run": NIGHTLY_RUN}
+    assert (REPO / COVERAGE_RUN).is_file()
+    for jobs, _last in WORKFLOW_JOBS:
+        assert jobs[COVERAGE_JOB]["steps"][-1]["run"] == COVERAGE_RUN
 
 
 def test_the_release_skips_rust_only_over_a_commit_whose_run_passed() -> None:
