@@ -92,6 +92,7 @@ dependencies = [
  "bytes",
  "creche-contracts",
  "creche-testkit",
+ "creche-util",
  "http",
  "http-body-util",
  "hyper",

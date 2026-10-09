@@ -235,10 +235,6 @@ reason. The packet that writes the three bodies obeys these rules:
   byte. A service gives the bytes to `Secret::matches`. It writes them to no
   log line. The owner of the crate decides if the result gets a type of its
   own.
-- `command::python_text` holds the text mode rule of Python: one LF for each
-  CR LF and for each other CR. `token` reads a token file with that
-  function. `agent-family` holds a second copy of the rule in `registry.rs`.
-  That crate does not depend on this crate. No packet has that copy yet.
 - `command` sets no limit on the size of a file that a child writes. The
   Python `handover` sets one in the child before the program starts
   (`handover/src/handover/executor/host.py:359-376` and `:407`). In Rust

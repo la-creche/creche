@@ -78,6 +78,7 @@ use std::str::Utf8Error;
 use std::sync::Arc;
 use std::time::Duration;
 
+use creche_util::pytext;
 use rustix::io::Errno;
 use rustix::process::{Pid, Signal, kill_process};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -1471,8 +1472,9 @@ pub enum Decode {
 ///
 /// The text mode of a Python file has the same rule. `token` thus reads the
 /// content of a token file with this function, as `Path.read_text` does at
-/// `chaperone/src/chaperone/delegate.py:148`. This function is the one copy
-/// of the rule in this crate.
+/// `chaperone/src/chaperone/delegate.py:148`. The rule for the line ends
+/// has one home in the workspace: `creche_util::pytext::universal_newlines`.
+/// This function calls it.
 ///
 /// ```
 /// use creche_runtime::command::{Decode, python_text};
@@ -1497,7 +1499,7 @@ pub fn python_text(bytes: &[u8], decode: Decode) -> Result<String, Utf8Error> {
         Decode::Replace => String::from_utf8_lossy(bytes),
     };
 
-    Ok(text.replace("\r\n", "\n").replace('\r', "\n"))
+    Ok(pytext::universal_newlines(&text).into_owned())
 }
 
 /// A child program that lives long and talks on its three pipes, as data.

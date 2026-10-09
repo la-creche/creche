@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use creche_contracts::family::{Family, Issue, RawFamily, Severity};
 use creche_contracts::server::{RawServer, Server};
-use creche_util::{hex, sha256};
+use creche_util::{hex, pytext, sha256};
 
 use crate::crossref::{HostFacts, Index, check_family, check_server};
 use crate::parse::{DOCUMENT, parse_family, parse_server};
@@ -177,7 +177,7 @@ fn read(path: &Path) -> Result<String, String> {
     let text = String::from_utf8(bytes)
         .map_err(|_| format!("cannot read {name}: it is not UTF-8 text"))?;
 
-    Ok(text.replace("\r\n", "\n").replace('\r', "\n"))
+    Ok(pytext::universal_newlines(&text).into_owned())
 }
 
 /// Each directory under `base`, in the order of the names.

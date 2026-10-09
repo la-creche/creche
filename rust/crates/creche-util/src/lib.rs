@@ -11,7 +11,7 @@
 //! |---|---|
 //! | [`sha256`] | the SHA-256 digest of FIPS 180-4 |
 //! | [`hex`] | bytes as lower-case hex text |
-//! | [`pytext`] | the white space rules of `str` in Python |
+//! | [`pytext`] | the white space rules of `str` in Python, and the line end rule of its text mode |
 
 pub mod hex;
 pub mod pytext;

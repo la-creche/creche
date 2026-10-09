@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 creche-contracts = { path = "../creche-contracts" }
+creche-util = { path = "../creche-util" }
 axum = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
