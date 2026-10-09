@@ -57,8 +57,8 @@ pub use fields::{
 pub use journal::{
     ApprovalRequested, ApprovalResolved, BodyError, BranchFallback, GateReason, JournalBody,
     JournalLine, LineError, LineKind, LineKindError, Note, OtherGateReason, OtherNote, ServiceNote,
-    SessionTitled, StoredLine, StreamRecord, TerminalExchange, TurnEnded, TurnQueued, TurnSettled,
-    TurnStarted, WriterChanged,
+    SessionTitled, StatusAge, StoredLine, StreamRecord, TerminalExchange, TurnEnded, TurnQueued,
+    TurnSettled, TurnStarted, WriterChanged,
 };
 pub use json::EncodeError;
 pub use outcome::{
