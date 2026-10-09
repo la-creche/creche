@@ -1168,11 +1168,12 @@ type Conn = Connection<TokioIo<Watched>, Full<Bytes>>;
 /// The Python origin is the header of each call, for example
 /// `HttpTransport.get` of
 /// `noticeboard/src/noticeboard/attendancehttp.py:52`. `httpx` refuses a
-/// token with a byte that is not ASCII, with a NUL, a line feed or a carriage
-/// return, and with a space or a tab as its last byte
-/// (`attendancehttp.py:55-60`). This function refuses each of those tokens.
-/// It also refuses each other control character and the byte 0x7F, which
-/// `httpx` sends: the `http` crate takes no header value with such a byte.
+/// token with a byte that is not ASCII, with a NUL, or with one of the four
+/// characters from line feed to carriage return. It also refuses a token
+/// with a space or a tab as its last byte (`attendancehttp.py:55-60`). This
+/// function refuses each of those tokens. It also refuses each other control
+/// character but the tab, and the byte 0x7F. `httpx` sends such a token: the
+/// `http` crate takes no header value with such a byte.
 fn bearer_value(secret: &Secret) -> Result<HeaderValue, ClientError> {
     // CONTRACT-QUESTION: contract 02 §3 rules 4 and 7 give a token a least
     // count of bytes and no set of bytes. A token of the platform is ASCII
@@ -2667,9 +2668,10 @@ mod tests {
         "http://[::]:8300",
         "http://192.0.2:8300",
         "http://-host:8300",
+        // `httpx` takes the URL with no host, and it tries a connect.
+        "http://:8300",
         // `httpx` refuses each of these URLs too.
         "http://192.0.2.10:80:80",
-        "http://:8300",
         "http://::1:8300",
         "http://[::1",
         "http://[::1]x",
