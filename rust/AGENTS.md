@@ -1419,11 +1419,16 @@ rule 4).
   2. A fence key that its verb does not read.
   3. `NaN` and an integer past 64 bits in the arguments of a call.
   4. A request body in UTF-16 or in UTF-32.
-- `grants::AuditRecord` has public fields and holds no rule between two
-  fields. Contract 04 §6.4 has one: the two records of a gated call name the
-  same gate. The writer of the port holds that rule. The vectors of
-  `chaperone.audit_line` hold records that break the rule, because the Python
+- `grants::AuditRecord` holds no rule between its outcome and its gate.
+  Contract 04 §6.4 gives each record of a gated call the gate of that call.
+  The type permits a record with the outcome `Pending` and no gate. The
+  writer of the port holds that rule. The vectors of `chaperone.audit_line`
+  hold a denial with an approval reason and no gate, because the Python
   writer checks no field.
+- `AuditRecord::with_gate` takes the gate from a `grants::Held`, and `Held`
+  is a sketch. Only a test build has a constructor of `Held`:
+  `Held::in_test`. No program can write a record with a gate until the port
+  of the chaperone adds the decision function.
 - `GrantFile::to_bytes` refuses a file of more than 256 KiB (contract 04
   §1.2). The Python caregiver writes such a file, and the Python chaperone
   then refuses it. No vector holds such a file.
@@ -1433,9 +1438,10 @@ rule 4).
   functions read the JSON of a file and check no field. So `same_grants`
   differs: a file with no `limits` block is equal to a file with the three
   defaults.
-- `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
-  The port of the chaperone adds the decision function and the function that
-  approves a held call. No other code builds a value.
+- `grants::Allowed` and `grants::Held` are a sketch. No program builds a
+  value. The port of the chaperone adds the decision function and the
+  function that approves a held call. A program then builds a value only in
+  those two functions.
 - No vector covers a request body with a content type that is not JSON. The
   HTTP layer of the port holds that rule.
 - These `CONTRACT-QUESTION` comments are open in

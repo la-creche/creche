@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::ids::{FamilyName, GateId, SandboxName, SessionId, Sha256Hex, Ulid};
 
 use super::body::{Arguments, BODY_MAX_BYTES, CallTool};
-use super::decision::AuditOutcome;
+use super::decision::{AuditOutcome, Held};
 use super::file::GrantsRev;
 use super::json::{self, Charset, Integer, KeyOrder, Layout, Map, Style, Value};
 
@@ -233,14 +233,79 @@ impl ClaimedHeader {
 /// them. `None` stands for a header that the request does not have.
 ///
 /// This is the raw form. Each value is untrusted: the agent process writes it.
+/// [`Claimed::read`] is the one check of the three values.
+///
+/// ```
+/// use creche_contracts::grants::RawClaimed;
+///
+/// let raw = RawClaimed::new().with_turn_id("01JBQ7WZ0X4T9V6K2H8M3N5PQR");
+/// assert_eq!(raw.session_id(), None);
+/// assert_eq!(raw.turn_id(), Some("01JBQ7WZ0X4T9V6K2H8M3N5PQR"));
+/// assert_eq!(raw.delegation_id(), None);
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::grants::RawClaimed;
+///
+/// let raw = RawClaimed { session_id: None, turn_id: None, delegation_id: None };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RawClaimed<'a> {
+    session_id: Option<&'a str>,
+    turn_id: Option<&'a str>,
+    delegation_id: Option<&'a str>,
+}
+
+impl<'a> RawClaimed<'a> {
+    /// The headers of a request with no advisory header.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The same headers with this value of `X-Session-Id`.
+    #[must_use]
+    pub fn with_session_id(mut self, value: &'a str) -> Self {
+        self.session_id = Some(value);
+
+        self
+    }
+
+    /// The same headers with this value of `X-Turn-Id`.
+    #[must_use]
+    pub fn with_turn_id(mut self, value: &'a str) -> Self {
+        self.turn_id = Some(value);
+
+        self
+    }
+
+    /// The same headers with this value of `X-Delegation-Id`.
+    #[must_use]
+    pub fn with_delegation_id(mut self, value: &'a str) -> Self {
+        self.delegation_id = Some(value);
+
+        self
+    }
+
     /// The value of `X-Session-Id`.
-    pub session_id: Option<&'a str>,
+    #[must_use]
+    pub fn session_id(&self) -> Option<&'a str> {
+        self.session_id
+    }
+
     /// The value of `X-Turn-Id`.
-    pub turn_id: Option<&'a str>,
+    #[must_use]
+    pub fn turn_id(&self) -> Option<&'a str> {
+        self.turn_id
+    }
+
     /// The value of `X-Delegation-Id`.
-    pub delegation_id: Option<&'a str>,
+    #[must_use]
+    pub fn delegation_id(&self) -> Option<&'a str> {
+        self.delegation_id
+    }
 }
 
 /// One header whose value does not have the shape of its id. The chaperone
@@ -248,12 +313,43 @@ pub struct RawClaimed<'a> {
 ///
 /// The type holds the count of characters and never the value: the value is
 /// text that the caller chose (contract 04 §3.1 rule 4).
+///
+/// Only [`Claimed::read`] builds a value:
+///
+/// ```
+/// use creche_contracts::grants::{Claimed, ClaimedHeader, DroppedHeader, RawClaimed};
+///
+/// let (_, dropped) = Claimed::read(&RawClaimed::new().with_turn_id("not a ULID"));
+/// let dropped: &DroppedHeader = &dropped[0];
+/// assert_eq!(dropped.header(), ClaimedHeader::TurnId);
+/// assert_eq!(dropped.chars(), 10);
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::grants::{Claimed, ClaimedHeader, DroppedHeader, RawClaimed};
+///
+/// let dropped = DroppedHeader { header: ClaimedHeader::TurnId, chars: 10 };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DroppedHeader {
+    header: ClaimedHeader,
+    chars: usize,
+}
+
+impl DroppedHeader {
     /// The header.
-    pub header: ClaimedHeader,
+    #[must_use]
+    pub fn header(&self) -> ClaimedHeader {
+        self.header
+    }
+
     /// The count of characters of its value.
-    pub chars: usize,
+    #[must_use]
+    pub fn chars(&self) -> usize {
+        self.chars
+    }
 }
 
 /// What the caller says about itself (contract 04 §3, §6.2).
@@ -268,17 +364,16 @@ pub struct DroppedHeader {
 /// ```
 /// use creche_contracts::grants::{Claimed, ClaimedHeader, RawClaimed};
 ///
-/// let (claimed, dropped) = Claimed::read(&RawClaimed {
-///     session_id: Some("tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK"),
-///     turn_id: Some("not a ULID"),
-///     delegation_id: None,
-/// });
+/// let raw = RawClaimed::new()
+///     .with_session_id("tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK")
+///     .with_turn_id("not a ULID");
+/// let (claimed, dropped) = Claimed::read(&raw);
 ///
 /// assert_eq!(claimed.session_id().map(|id| id.as_str()), Some("tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK"));
 /// assert_eq!(claimed.turn_id(), None);
 /// assert_eq!(dropped.len(), 1);
-/// assert_eq!(dropped[0].header, ClaimedHeader::TurnId);
-/// assert_eq!(dropped[0].chars, 10);
+/// assert_eq!(dropped[0].header(), ClaimedHeader::TurnId);
+/// assert_eq!(dropped[0].chars(), 10);
 /// ```
 ///
 /// Code outside this module cannot build a value from raw parts:
@@ -403,48 +498,84 @@ impl AuditAction {
     }
 }
 
+/// The gate of a call and the wait for the operator at that gate. The two are
+/// one fact of a record: a record has a wait only with a gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Gated {
+    gate: GateId,
+    waited_ms: u64,
+}
+
 /// One audit record, version 2: one decision of the chaperone for one family
 /// (contract 04 §6).
 ///
-/// Each field has a valid type, and each field is public. The type holds no
-/// rule between two fields. The contract has one such rule: the two records
-/// of a gated call name the same gate, and the record of a call with no gate
-/// names none (contract 04 §6.4). The writer of the port holds that rule. It
-/// takes `gate` from the [`Held`](super::Held) of the call.
+/// Each field has a valid type. The type holds one rule between two keys of
+/// the line: a record has a wait for the operator only with a gate.
+/// [`with_gate`] sets the two together, and it takes the gate from the
+/// [`Held`] of the call. The two records of a gated call then name the same
+/// gate (contract 04 §6.4).
+///
+/// The type holds no rule between the outcome and the gate. The type permits a
+/// record with the outcome [`AuditOutcome::Pending`] and no gate. The writer of
+/// the port holds that rule.
 ///
 /// A record keeps the trusted fields apart from the claimed fields. The claimed
 /// fields come only from a [`Claimed`].
+///
+/// ```
+/// use creche_contracts::grants::{
+///     Arguments, AuditAction, AuditOutcome, AuditRecord, AuditTime, Claimed,
+/// };
+///
+/// let record = AuditRecord::new(
+///     AuditTime::from_unix_ms(1_789_760_467_412)?,
+///     "chat".parse().unwrap(),
+///     AuditAction::Manifest,
+///     Arguments::empty(),
+///     AuditOutcome::Granted,
+///     Claimed::none(),
+/// )
+/// .with_grants_rev("reg-9f21c4".parse().unwrap());
+///
+/// assert_eq!(record.family().as_str(), "chat");
+/// assert_eq!(record.gate(), None);
+/// assert_eq!(record.waited_ms(), 0);
+/// assert!(record.to_line().ends_with(b"\"chain\": [\"chat\"]}\n"));
+/// # Ok::<(), creche_contracts::grants::AuditTimeError>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::grants::{
+///     Arguments, AuditAction, AuditOutcome, AuditRecord, AuditTime, Claimed,
+/// };
+///
+/// let record = AuditRecord::new(
+///     AuditTime::from_unix_ms(1_789_760_467_412).unwrap(),
+///     "chat".parse().unwrap(),
+///     AuditAction::Manifest,
+///     Arguments::empty(),
+///     AuditOutcome::Granted,
+///     Claimed::none(),
+/// );
+/// let record = AuditRecord { latency_ms: Some(38), ..record };
+/// ```
+///
+/// [`with_gate`]: AuditRecord::with_gate
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditRecord {
-    /// The time of the write.
-    pub at: AuditTime,
-    /// The family that the bearer named.
-    pub family: FamilyName,
-    /// The sandbox of the caller.
-    pub sandbox: SandboxEvidence,
-    /// The revision of the grant file that made the decision.
-    pub grants_rev: Option<GrantsRev>,
-    /// What the caller asked for.
-    pub action: AuditAction,
-    /// The full arguments. `to_line` cuts each string of more than
-    /// [`AUDIT_TEXT_MAX_CHARS`] characters.
-    pub args: Arguments,
-    /// The decision and its reason.
-    pub outcome: AuditOutcome,
-    /// The milliseconds of the execution, with no wait for a gate. `None`
-    /// when nothing ran.
-    pub latency_ms: Option<u64>,
-    /// The milliseconds of the wait for the operator. 0 with no gate.
-    pub waited_ms: u64,
-    /// The gate of the call, when the call has one.
-    pub gate: Option<GateId>,
-    /// What the caller says about itself.
-    pub claimed: Claimed,
-    /// The families before this family in the delegation chain, the first
-    /// caller first (contract 04 §6.3). The chaperone builds the chain from
-    /// the delegation ids that it minted itself. Empty for a call with no
-    /// known delegation id.
-    pub callers: Vec<FamilyName>,
+    at: AuditTime,
+    family: FamilyName,
+    sandbox: SandboxEvidence,
+    grants_rev: Option<GrantsRev>,
+    action: AuditAction,
+    args: Arguments,
+    outcome: AuditOutcome,
+    latency_ms: Option<u64>,
+    gated: Option<Gated>,
+    claimed: Claimed,
+    callers: Vec<FamilyName>,
 }
 
 fn text(value: &str) -> Value {
@@ -491,6 +622,172 @@ fn truncated(value: &Value) -> Value {
 }
 
 impl AuditRecord {
+    /// The record of one decision for `family`, written at the time `at`.
+    ///
+    /// The record names no sandbox, no revision of a grant file, no latency,
+    /// no gate and no caller before `family`. A `with_` method sets each one.
+    #[must_use]
+    pub fn new(
+        at: AuditTime,
+        family: FamilyName,
+        action: AuditAction,
+        args: Arguments,
+        outcome: AuditOutcome,
+        claimed: Claimed,
+    ) -> Self {
+        Self {
+            at,
+            family,
+            sandbox: SandboxEvidence::Unknown,
+            grants_rev: None,
+            action,
+            args,
+            outcome,
+            latency_ms: None,
+            gated: None,
+            claimed,
+            callers: Vec::new(),
+        }
+    }
+
+    /// The same record with this evidence for the sandbox of the caller.
+    #[must_use]
+    pub fn with_sandbox(mut self, sandbox: SandboxEvidence) -> Self {
+        self.sandbox = sandbox;
+
+        self
+    }
+
+    /// The same record with the revision of the grant file that made the
+    /// decision.
+    #[must_use]
+    pub fn with_grants_rev(mut self, grants_rev: GrantsRev) -> Self {
+        self.grants_rev = Some(grants_rev);
+
+        self
+    }
+
+    /// The same record with the milliseconds of the execution. The wait for
+    /// a gate is not a part of them.
+    #[must_use]
+    pub fn with_latency_ms(mut self, latency_ms: u64) -> Self {
+        self.latency_ms = Some(latency_ms);
+
+        self
+    }
+
+    /// The same record with the gate of `held` and the milliseconds of the
+    /// wait for the operator at that gate.
+    ///
+    /// The gate and the wait are one fact. No method sets one of the two
+    /// alone, so a record has a wait only with a gate. Each record of one
+    /// gated call takes the gate from the same [`Held`], so the records name
+    /// the same gate (contract 04 §6.4). The first record of a gated call has
+    /// a wait of 0.
+    ///
+    /// ```
+    /// use creche_contracts::grants::{AuditRecord, Held};
+    ///
+    /// fn with_the_gate_of(record: AuditRecord, call: &Held, waited_ms: u64) -> AuditRecord {
+    ///     record.with_gate(call, waited_ms)
+    /// }
+    /// ```
+    #[must_use]
+    pub fn with_gate(mut self, held: &Held, waited_ms: u64) -> Self {
+        self.gated = Some(Gated {
+            gate: held.gate().clone(),
+            waited_ms,
+        });
+
+        self
+    }
+
+    /// The same record with the families before this family in the
+    /// delegation chain, the first caller first.
+    #[must_use]
+    pub fn with_callers(mut self, callers: Vec<FamilyName>) -> Self {
+        self.callers = callers;
+
+        self
+    }
+
+    /// The time of the write.
+    #[must_use]
+    pub fn at(&self) -> AuditTime {
+        self.at
+    }
+
+    /// The family that the bearer named.
+    #[must_use]
+    pub fn family(&self) -> &FamilyName {
+        &self.family
+    }
+
+    /// The sandbox of the caller.
+    #[must_use]
+    pub fn sandbox(&self) -> &SandboxEvidence {
+        &self.sandbox
+    }
+
+    /// The revision of the grant file that made the decision.
+    #[must_use]
+    pub fn grants_rev(&self) -> Option<&GrantsRev> {
+        self.grants_rev.as_ref()
+    }
+
+    /// What the caller asked for.
+    #[must_use]
+    pub fn action(&self) -> &AuditAction {
+        &self.action
+    }
+
+    /// The full arguments. `to_line` cuts each string of more than
+    /// [`AUDIT_TEXT_MAX_CHARS`] characters.
+    #[must_use]
+    pub fn args(&self) -> &Arguments {
+        &self.args
+    }
+
+    /// The decision and its reason.
+    #[must_use]
+    pub fn outcome(&self) -> AuditOutcome {
+        self.outcome
+    }
+
+    /// The milliseconds of the execution, with no wait for a gate. `None`
+    /// when nothing ran.
+    #[must_use]
+    pub fn latency_ms(&self) -> Option<u64> {
+        self.latency_ms
+    }
+
+    /// The milliseconds of the wait for the operator. 0 with no gate.
+    #[must_use]
+    pub fn waited_ms(&self) -> u64 {
+        self.gated.as_ref().map_or(0, |gated| gated.waited_ms)
+    }
+
+    /// The gate of the call, when the call has one.
+    #[must_use]
+    pub fn gate(&self) -> Option<&GateId> {
+        self.gated.as_ref().map(|gated| &gated.gate)
+    }
+
+    /// What the caller says about itself.
+    #[must_use]
+    pub fn claimed(&self) -> &Claimed {
+        &self.claimed
+    }
+
+    /// The families before this family in the delegation chain, the first
+    /// caller first (contract 04 §6.3). The chaperone builds the chain from
+    /// the delegation ids that it minted itself. Empty for a call with no
+    /// known delegation id.
+    #[must_use]
+    pub fn callers(&self) -> &[FamilyName] {
+        &self.callers
+    }
+
     /// The chain of the record: each caller, then this family.
     pub fn chain(&self) -> impl Iterator<Item = &FamilyName> {
         self.callers.iter().chain(std::iter::once(&self.family))
@@ -531,8 +828,8 @@ impl AuditRecord {
         record.insert("decision", text(self.outcome.decision().as_str()));
         record.insert("reason", text(self.outcome.reason()));
         record.insert("latency_ms", self.latency_ms.map_or(Value::Null, number));
-        record.insert("waited_ms", number(self.waited_ms));
-        record.insert("gate", optional(self.gate.as_ref(), GateId::as_str));
+        record.insert("waited_ms", number(self.waited_ms()));
+        record.insert("gate", optional(self.gate(), GateId::as_str));
         record.insert("claimed", Value::Map(claims));
         record.insert("chain", Value::List(chain.collect()));
 
@@ -544,12 +841,53 @@ impl AuditRecord {
 
 /// What stands for the arguments in the record of a request that names no
 /// family: their size and their digest, and never their content.
+///
+/// ```
+/// use creche_contracts::grants::ArgsDigest;
+/// use creche_contracts::ids::Sha256Hex;
+///
+/// let sha256: Sha256Hex =
+///     "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a".parse().unwrap();
+/// let digest = ArgsDigest::new(2, sha256.clone());
+/// assert_eq!(digest.bytes(), 2);
+/// assert_eq!(digest.sha256(), &sha256);
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::grants::ArgsDigest;
+/// use creche_contracts::ids::Sha256Hex;
+///
+/// let sha256: Sha256Hex =
+///     "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a".parse().unwrap();
+/// let digest = ArgsDigest { bytes: 2, sha256 };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArgsDigest {
+    bytes: u64,
+    sha256: Sha256Hex,
+}
+
+impl ArgsDigest {
+    /// The size and the digest of the arguments of one request: the count of
+    /// bytes of [`Arguments::digest_input`] and the SHA-256 of those bytes.
+    #[must_use]
+    pub fn new(bytes: u64, sha256: Sha256Hex) -> Self {
+        Self { bytes, sha256 }
+    }
+
     /// The count of bytes of [`Arguments::digest_input`].
-    pub bytes: u64,
+    #[must_use]
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
     /// The SHA-256 of [`Arguments::digest_input`].
-    pub sha256: Sha256Hex,
+    #[must_use]
+    pub fn sha256(&self) -> &Sha256Hex {
+        &self.sha256
+    }
 }
 
 /// Why the chaperone refused a request with a bearer that names no family
@@ -597,15 +935,52 @@ pub enum UnidentifiedRequest {
 ///
 /// The record holds no argument of the caller. A caller with no token must
 /// not put its bytes into a file that the host keeps.
+///
+/// ```
+/// use creche_contracts::grants::{AuditTime, UnidentifiedRecord, UnidentifiedRequest};
+///
+/// let at = AuditTime::from_unix_ms(0)?;
+/// let request = UnidentifiedRequest::Oversized { seen_bytes: 262_145 };
+/// let record = UnidentifiedRecord::new(at, request.clone());
+/// assert_eq!(record.at(), at);
+/// assert_eq!(record.request(), &request);
+/// # Ok::<(), creche_contracts::grants::AuditTimeError>(())
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::grants::{AuditTime, UnidentifiedRecord, UnidentifiedRequest};
+///
+/// let at = AuditTime::from_unix_ms(0).unwrap();
+/// let request = UnidentifiedRequest::Oversized { seen_bytes: 262_145 };
+/// let record = UnidentifiedRecord { at, request };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnidentifiedRecord {
-    /// The time of the write.
-    pub at: AuditTime,
-    /// What the request was.
-    pub request: UnidentifiedRequest,
+    at: AuditTime,
+    request: UnidentifiedRequest,
 }
 
 impl UnidentifiedRecord {
+    /// The record of `request`, written at the time `at`.
+    #[must_use]
+    pub fn new(at: AuditTime, request: UnidentifiedRequest) -> Self {
+        Self { at, request }
+    }
+
+    /// The time of the write.
+    #[must_use]
+    pub fn at(&self) -> AuditTime {
+        self.at
+    }
+
+    /// What the request was.
+    #[must_use]
+    pub fn request(&self) -> &UnidentifiedRequest {
+        &self.request
+    }
+
     /// The bytes of the one line that the chaperone appends to the file
     /// [`AuditTime::file_name`] of the other log, with its newline.
     #[must_use]
@@ -650,28 +1025,48 @@ mod tests {
     use std::time::Duration;
 
     use super::super::body::CallBody;
-    use super::super::decision::Reason;
+    use super::super::decision::{Executor, Reason};
     use super::*;
+
+    const GATE: &str = "0123456789abcdef";
+    const OTHER_GATE: &str = "fedcba9876543210";
 
     fn at(unix_ms: u64) -> AuditTime {
         AuditTime::from_unix_ms(unix_ms).unwrap()
     }
 
+    /// The record of one allowed call of `embed` with these arguments.
+    fn record_of(args: Arguments) -> AuditRecord {
+        AuditRecord::new(
+            at(1_789_760_467_412),
+            "chat".parse().unwrap(),
+            AuditAction::Call("embed".parse().unwrap()),
+            args,
+            AuditOutcome::Granted,
+            Claimed::none(),
+        )
+        .with_grants_rev("reg-9f21c4".parse().unwrap())
+        .with_latency_ms(38)
+    }
+
     fn record() -> AuditRecord {
-        AuditRecord {
-            at: at(1_789_760_467_412),
-            family: "chat".parse().unwrap(),
-            sandbox: SandboxEvidence::Unknown,
-            grants_rev: Some("reg-9f21c4".parse().unwrap()),
-            action: AuditAction::Call("embed".parse().unwrap()),
-            args: Arguments::empty(),
-            outcome: AuditOutcome::Granted,
-            latency_ms: Some(38),
-            waited_ms: 0,
-            gate: None,
-            claimed: Claimed::none(),
-            callers: Vec::new(),
-        }
+        record_of(Arguments::empty())
+    }
+
+    /// A call of `chat` that waits for the operator at the gate `gate`.
+    fn held_at(gate: &str) -> Held {
+        Held::in_test(
+            "chat".parse().unwrap(),
+            "reg-9f21c4".parse().unwrap(),
+            Executor::Delegate,
+            Arguments::empty(),
+            gate.parse().unwrap(),
+        )
+    }
+
+    /// A call of `chat` that waits for the operator at [`GATE`].
+    fn held() -> Held {
+        held_at(GATE)
     }
 
     fn line_of(record: &AuditRecord) -> String {
@@ -773,45 +1168,58 @@ mod tests {
         let session = "tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK";
         let ulid = "01JBQ7WZ0X4T9V6K2H8M3N5PQR";
         let lower = ulid.to_lowercase();
-        let (claimed, dropped) = Claimed::read(&RawClaimed {
-            session_id: Some(session),
-            turn_id: Some(ulid),
-            delegation_id: Some(ulid),
-        });
+        let raw = RawClaimed::new()
+            .with_session_id(session)
+            .with_turn_id(ulid)
+            .with_delegation_id(ulid);
+        let (claimed, dropped) = Claimed::read(&raw);
 
         assert_eq!(claimed.session_id().unwrap().as_str(), session);
         assert_eq!(claimed.turn_id().unwrap().as_str(), ulid);
         assert_eq!(claimed.delegation_id().unwrap().as_str(), ulid);
         assert_eq!(dropped, []);
 
-        let (claimed, dropped) = Claimed::read(&RawClaimed {
-            session_id: Some("../other\u{e9}"),
-            turn_id: Some(&lower),
-            delegation_id: Some(""),
-        });
+        let raw = RawClaimed::new()
+            .with_session_id("../other\u{e9}")
+            .with_turn_id(&lower)
+            .with_delegation_id("");
+        let (claimed, dropped) = Claimed::read(&raw);
+        let dropped: Vec<(ClaimedHeader, usize)> = dropped
+            .iter()
+            .map(|dropped| (dropped.header(), dropped.chars()))
+            .collect();
 
         assert_eq!(claimed, Claimed::none());
         assert_eq!(
             dropped,
             [
-                DroppedHeader {
-                    header: ClaimedHeader::SessionId,
-                    chars: 9
-                },
-                DroppedHeader {
-                    header: ClaimedHeader::TurnId,
-                    chars: 26
-                },
-                DroppedHeader {
-                    header: ClaimedHeader::DelegationId,
-                    chars: 0
-                },
+                (ClaimedHeader::SessionId, 9),
+                (ClaimedHeader::TurnId, 26),
+                (ClaimedHeader::DelegationId, 0),
             ]
         );
         assert_eq!(
             Claimed::read(&RawClaimed::default()),
             (Claimed::none(), vec![])
         );
+    }
+
+    #[test]
+    fn the_raw_headers_give_each_value_back() {
+        let none = RawClaimed::new();
+        let each = none
+            .with_session_id("tui-1")
+            .with_turn_id("a turn")
+            .with_delegation_id("a delegation");
+
+        assert_eq!(none, RawClaimed::default());
+        assert_eq!(
+            (none.session_id(), none.turn_id(), none.delegation_id()),
+            (None, None, None)
+        );
+        assert_eq!(each.session_id(), Some("tui-1"));
+        assert_eq!(each.turn_id(), Some("a turn"));
+        assert_eq!(each.delegation_id(), Some("a delegation"));
     }
 
     #[test]
@@ -836,18 +1244,17 @@ mod tests {
     #[test]
     fn a_record_writes_the_sandbox_and_the_chain() {
         let sandbox: SandboxName = "chat-s3".parse().unwrap();
-        let trusted = AuditRecord {
-            sandbox: SandboxEvidence::Trusted(sandbox),
-            ..record()
-        };
-        let chained = AuditRecord {
-            family: "vault-oracle".parse().unwrap(),
-            callers: vec!["chat".parse().unwrap()],
-            action: AuditAction::Manifest,
-            outcome: AuditOutcome::Denied(Reason::RateLimited),
-            latency_ms: None,
-            ..record()
-        };
+        let trusted = record().with_sandbox(SandboxEvidence::Trusted(sandbox));
+        let chained = AuditRecord::new(
+            at(1_789_760_467_412),
+            "vault-oracle".parse().unwrap(),
+            AuditAction::Manifest,
+            Arguments::empty(),
+            AuditOutcome::Denied(Reason::RateLimited),
+            Claimed::none(),
+        )
+        .with_grants_rev("reg-9f21c4".parse().unwrap())
+        .with_callers(vec!["chat".parse().unwrap()]);
 
         assert!(
             line_of(&trusted).contains("\"sandbox_id\": \"chat-s3\", \"sandbox_id_trusted\": true")
@@ -878,14 +1285,89 @@ mod tests {
                     "\"sandbox_id\": \"chat-s3\", \"sandbox_id_trusted\": true"
                 }
             };
-            let line = line_of(&AuditRecord {
-                sandbox: evidence,
-                ..record()
-            });
+            let line = line_of(&record().with_sandbox(evidence));
 
             assert!(line.contains(written), "{line}");
             assert!(!line.contains(no_proof), "{line}");
         }
+    }
+
+    #[test]
+    fn a_record_has_a_wait_only_with_a_gate() {
+        let held = held();
+        let no_gate = record();
+        let first = AuditRecord::new(
+            at(1_789_760_467_412),
+            "chat".parse().unwrap(),
+            AuditAction::Call("embed".parse().unwrap()),
+            Arguments::empty(),
+            AuditOutcome::Pending,
+            Claimed::none(),
+        )
+        .with_gate(&held, 0);
+        let second = record().with_gate(&held, 41_250);
+
+        assert_eq!((no_gate.gate(), no_gate.waited_ms()), (None, 0));
+        assert!(line_of(&no_gate).contains("\"waited_ms\": 0, \"gate\": null, "));
+
+        // The two records of one gated call take the gate from one `Held`.
+        assert_eq!(first.gate(), Some(held.gate()));
+        assert_eq!(second.gate(), first.gate());
+        assert_eq!((first.waited_ms(), second.waited_ms()), (0, 41_250));
+        assert!(line_of(&first).contains(&format!("\"waited_ms\": 0, \"gate\": \"{GATE}\", ")));
+        assert!(
+            line_of(&second).contains(&format!("\"waited_ms\": 41250, \"gate\": \"{GATE}\", "))
+        );
+
+        // A second call of the method replaces the gate and the wait together.
+        let other = held_at(OTHER_GATE);
+        let again = second.clone().with_gate(&other, 7);
+
+        assert_ne!(other.gate(), held.gate());
+        assert_eq!((again.gate(), again.waited_ms()), (Some(other.gate()), 7));
+        assert!(
+            line_of(&again).contains(&format!("\"waited_ms\": 7, \"gate\": \"{OTHER_GATE}\", "))
+        );
+    }
+
+    #[test]
+    fn a_record_gives_each_field_back() {
+        let sandbox: SandboxName = "chat-s3".parse().unwrap();
+        let caller: FamilyName = "chat".parse().unwrap();
+        let session = "tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK";
+        let (claimed, _) = Claimed::read(&RawClaimed::new().with_session_id(session));
+        let bare = AuditRecord::new(
+            at(7),
+            "vault-oracle".parse().unwrap(),
+            AuditAction::Manifest,
+            Arguments::empty(),
+            AuditOutcome::Denied(Reason::RateLimited),
+            claimed.clone(),
+        );
+        let full = bare
+            .clone()
+            .with_sandbox(SandboxEvidence::Trusted(sandbox.clone()))
+            .with_grants_rev("reg-9f21c4".parse().unwrap())
+            .with_latency_ms(38)
+            .with_callers(vec![caller.clone()]);
+
+        assert_eq!(bare.at(), at(7));
+        assert_eq!(bare.family().as_str(), "vault-oracle");
+        assert_eq!(bare.sandbox(), &SandboxEvidence::Unknown);
+        assert_eq!(bare.grants_rev(), None);
+        assert_eq!(bare.action(), &AuditAction::Manifest);
+        assert!(bare.args().as_map().is_empty());
+        assert_eq!(bare.outcome(), AuditOutcome::Denied(Reason::RateLimited));
+        assert_eq!(bare.latency_ms(), None);
+        assert_eq!((bare.gate(), bare.waited_ms()), (None, 0));
+        assert_eq!(bare.claimed(), &claimed);
+        assert!(bare.callers().is_empty());
+
+        assert_eq!(full.sandbox(), &SandboxEvidence::Trusted(sandbox));
+        assert_eq!(full.grants_rev().unwrap().as_str(), "reg-9f21c4");
+        assert_eq!(full.latency_ms(), Some(38));
+        assert_eq!(full.callers(), [caller]);
+        assert_eq!(full.family(), bare.family());
     }
 
     #[test]
@@ -896,7 +1378,7 @@ mod tests {
             "{{\"tool\":\"embed\",\"args\":{{\"at\":\"{at_cap}\",\"over\":[\"{at_cap}b\"],\"{key}\":1}}}}"
         );
         let args = CallBody::parse(body.as_bytes()).unwrap().into_parts().1;
-        let line = line_of(&AuditRecord { args, ..record() });
+        let line = line_of(&record_of(args));
 
         assert!(line.contains(&format!("\"at\": \"{at_cap}\", ")));
         assert!(line.contains(&format!("\"over\": [\"{at_cap}...<truncated>\"]")));
@@ -917,7 +1399,7 @@ mod tests {
             entries.join(",")
         );
         let args = CallBody::parse(body.as_bytes()).unwrap().into_parts().1;
-        let line = line_of(&AuditRecord { args, ..record() });
+        let line = line_of(&record_of(args));
         let written: Vec<String> = (0..KEYS)
             .rev()
             .map(|key| format!("\"k{key}\": 1"))
@@ -936,23 +1418,23 @@ mod tests {
         let digest: Sha256Hex = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
             .parse()
             .unwrap();
-        let refused = UnidentifiedRecord {
-            at: at(1_789_760_467_412),
-            request: UnidentifiedRequest::NoFamily {
-                action: AuditAction::Manifest,
-                refusal: Unidentified::RateLimited,
-                args: ArgsDigest {
-                    bytes: 2,
-                    sha256: digest,
-                },
-            },
+        let args = ArgsDigest::new(2, digest.clone());
+        let no_family = UnidentifiedRequest::NoFamily {
+            action: AuditAction::Manifest,
+            refusal: Unidentified::RateLimited,
+            args: args.clone(),
         };
-        let oversized = UnidentifiedRecord {
-            at: at(0),
-            request: UnidentifiedRequest::Oversized {
-                seen_bytes: 262_145,
-            },
+        let too_large = UnidentifiedRequest::Oversized {
+            seen_bytes: 262_145,
         };
+        let refused = UnidentifiedRecord::new(at(1_789_760_467_412), no_family.clone());
+        let oversized = UnidentifiedRecord::new(at(0), too_large.clone());
+
+        assert_eq!((args.bytes(), args.sha256()), (2, &digest));
+        assert_eq!(refused.at(), at(1_789_760_467_412));
+        assert_eq!(refused.request(), &no_family);
+        assert_eq!(oversized.at(), at(0));
+        assert_eq!(oversized.request(), &too_large);
 
         assert_eq!(
             String::from_utf8(refused.to_line()).unwrap(),

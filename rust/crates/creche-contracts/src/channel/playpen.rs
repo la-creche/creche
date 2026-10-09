@@ -192,21 +192,80 @@ impl Error for UsdError {}
 
 /// The usage of one turn, in the field names of the host (contract 03
 /// §5.2).
+///
+/// ```
+/// use creche_contracts::channel::playpen::{TurnUsage, Usd};
+///
+/// let usage = TurnUsage::new(1200, 80, 300, 40, Usd::ZERO);
+/// assert_eq!(usage.input(), 1200);
+/// assert_eq!(usage.output(), 80);
+/// assert_eq!(usage.cache_read(), 300);
+/// assert_eq!(usage.cache_write(), 40);
+/// assert_eq!(usage.cost_usd(), Usd::ZERO);
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::channel::playpen::{TurnUsage, Usd};
+///
+/// let usage = TurnUsage::new(1200, 80, 300, 40, Usd::ZERO);
+/// let usage = TurnUsage { output: 0, ..usage };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TurnUsage {
-    /// The input tokens.
-    pub input: u64,
-    /// The output tokens.
-    pub output: u64,
-    /// The tokens that the model read from its cache.
-    pub cache_read: u64,
-    /// The tokens that the model wrote to its cache.
-    pub cache_write: u64,
-    /// The cost.
-    pub cost_usd: Usd,
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+    cost_usd: Usd,
 }
 
 impl TurnUsage {
+    /// The usage of one turn: the input tokens, the output tokens, the
+    /// tokens that the model read from its cache, the tokens that it wrote
+    /// to its cache, and the cost.
+    #[must_use]
+    pub fn new(input: u64, output: u64, cache_read: u64, cache_write: u64, cost_usd: Usd) -> Self {
+        Self {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            cost_usd,
+        }
+    }
+
+    /// The input tokens.
+    #[must_use]
+    pub fn input(&self) -> u64 {
+        self.input
+    }
+
+    /// The output tokens.
+    #[must_use]
+    pub fn output(&self) -> u64 {
+        self.output
+    }
+
+    /// The tokens that the model read from its cache.
+    #[must_use]
+    pub fn cache_read(&self) -> u64 {
+        self.cache_read
+    }
+
+    /// The tokens that the model wrote to its cache.
+    #[must_use]
+    pub fn cache_write(&self) -> u64 {
+        self.cache_write
+    }
+
+    /// The cost.
+    #[must_use]
+    pub fn cost_usd(&self) -> Usd {
+        self.cost_usd
+    }
+
     fn encoded(&self) -> String {
         ObjectWriter::new()
             .raw("input", &self.input.to_string())
@@ -224,11 +283,11 @@ impl TurnUsage {
 /// use creche_contracts::channel::playpen::{Label, PlaypenMessage, Ready, Versions};
 /// use creche_contracts::channel::host::ProcessCap;
 ///
-/// let versions = Versions {
-///     supervisor: Label::cut("agent-supervisor/0.1.0"),
-///     pi: Label::cut("0.99.1"),
-///     node: Label::cut("24.1.0"),
-/// };
+/// let versions = Versions::new(
+///     Label::cut("agent-supervisor/0.1.0"),
+///     Label::cut("0.99.1"),
+///     Label::cut("24.1.0"),
+/// );
 /// let ready = Ready::new("chat-s3".parse().unwrap(), versions, ProcessCap::new(8), 0, Vec::new());
 /// assert!(PlaypenMessage::Ready(ready).encode().is_ok());
 /// ```
@@ -239,11 +298,11 @@ impl TurnUsage {
 /// use creche_contracts::channel::playpen::{Label, PlaypenMessage, Ready, Versions};
 /// use creche_contracts::channel::host::ProcessCap;
 ///
-/// let versions = Versions {
-///     supervisor: Label::cut("agent-supervisor/0.1.0"),
-///     pi: Label::cut("0.99.1"),
-///     node: Label::cut("24.1.0"),
-/// };
+/// let versions = Versions::new(
+///     Label::cut("agent-supervisor/0.1.0"),
+///     Label::cut("0.99.1"),
+///     Label::cut("24.1.0"),
+/// );
 /// let ready = Ready::new("chat-s3".parse().unwrap(), versions, ProcessCap::new(8), 0, Vec::new());
 /// let ready = Ready { pi: Label::cut("0.99.2"), ..ready };
 /// let message: Option<PlaypenMessage> = None;
@@ -261,14 +320,67 @@ pub struct Ready {
 }
 
 /// The three versions that `ready` reports.
+///
+/// ```
+/// use creche_contracts::channel::playpen::{Label, Versions};
+///
+/// let versions = Versions::new(
+///     Label::cut("agent-supervisor/0.1.0"),
+///     Label::cut("0.99.1"),
+///     Label::cut("24.1.0"),
+/// );
+/// assert_eq!(versions.supervisor().as_str(), "agent-supervisor/0.1.0");
+/// assert_eq!(versions.pi().as_str(), "0.99.1");
+/// assert_eq!(versions.node().as_str(), "24.1.0");
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::channel::playpen::{Label, Versions};
+///
+/// let versions = Versions {
+///     supervisor: Label::cut("agent-supervisor/0.1.0"),
+///     pi: Label::cut("0.99.1"),
+///     node: Label::cut("24.1.0"),
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Versions {
+    supervisor: Label,
+    pi: Label,
+    node: Label,
+}
+
+impl Versions {
+    /// The versions of one image: the name and the version of the playpen,
+    /// the pi version and the Node version.
+    #[must_use]
+    pub fn new(supervisor: Label, pi: Label, node: Label) -> Self {
+        Self {
+            supervisor,
+            pi,
+            node,
+        }
+    }
+
     /// The name and the version of the playpen.
-    pub supervisor: Label,
+    #[must_use]
+    pub fn supervisor(&self) -> &Label {
+        &self.supervisor
+    }
+
     /// The pi version inside the image.
-    pub pi: Label,
+    #[must_use]
+    pub fn pi(&self) -> &Label {
+        &self.pi
+    }
+
     /// The Node version inside the image.
-    pub node: Label,
+    #[must_use]
+    pub fn node(&self) -> &Label {
+        &self.node
+    }
 }
 
 impl Ready {
@@ -444,14 +556,80 @@ impl EventMessage {
 }
 
 /// What the playpen read from pi after a turn (contract 03 §5.2).
+///
+/// ```
+/// use creche_contracts::channel::playpen::TurnEntries;
+///
+/// let entries = TurnEntries::new()
+///     .with_user_entry_id("a1b2c3d4".parse().unwrap())
+///     .with_entry_count(4);
+/// assert_eq!(entries.user_entry_id().map(|id| id.as_str()), Some("a1b2c3d4"));
+/// assert_eq!(entries.leaf_id(), None);
+/// assert_eq!(entries.entry_count(), Some(4));
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::channel::playpen::TurnEntries;
+///
+/// let entries = TurnEntries { user_entry_id: None, leaf_id: None, entry_count: Some(4) };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TurnEntries {
+    user_entry_id: Option<EntryId>,
+    leaf_id: Option<EntryId>,
+    entry_count: Option<u64>,
+}
+
+impl TurnEntries {
+    /// What the playpen read when pi gave no entry id and no count.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The same value with this pi entry id of the user message of the turn.
+    #[must_use]
+    pub fn with_user_entry_id(mut self, user_entry_id: EntryId) -> Self {
+        self.user_entry_id = Some(user_entry_id);
+
+        self
+    }
+
+    /// The same value with this pi leaf entry id after the turn.
+    #[must_use]
+    pub fn with_leaf_id(mut self, leaf_id: EntryId) -> Self {
+        self.leaf_id = Some(leaf_id);
+
+        self
+    }
+
+    /// The same value with this count of entries that the turn added.
+    #[must_use]
+    pub fn with_entry_count(mut self, entry_count: u64) -> Self {
+        self.entry_count = Some(entry_count);
+
+        self
+    }
+
     /// The pi entry id of the user message of the turn.
-    pub user_entry_id: Option<EntryId>,
+    #[must_use]
+    pub fn user_entry_id(&self) -> Option<&EntryId> {
+        self.user_entry_id.as_ref()
+    }
+
     /// The pi leaf entry id after the turn.
-    pub leaf_id: Option<EntryId>,
+    #[must_use]
+    pub fn leaf_id(&self) -> Option<&EntryId> {
+        self.leaf_id.as_ref()
+    }
+
     /// The count of entries that the turn added.
-    pub entry_count: Option<u64>,
+    #[must_use]
+    pub fn entry_count(&self) -> Option<u64> {
+        self.entry_count
+    }
 }
 
 /// `turn_settled`: the turn ended and pi settled (contract 03 §5.2).
@@ -464,7 +642,7 @@ pub struct TurnEntries {
 ///
 /// let address = TurnAddress::new("tui-1".parse().unwrap(), "01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap());
 /// let seq = NonZeroU64::MIN;
-/// let usage = TurnUsage { input: 7, output: 1, cache_read: 0, cache_write: 0, cost_usd: Usd::ZERO };
+/// let usage = TurnUsage::new(7, 1, 0, 0, Usd::ZERO);
 /// let settled =
 ///     TurnSettled::new(address, seq, Residence::Resident, TurnEntries::default(), usage, 1500);
 /// assert!(PlaypenMessage::TurnSettled(settled).encode().is_ok());
@@ -480,7 +658,7 @@ pub struct TurnEntries {
 ///
 /// let address = TurnAddress::new("tui-1".parse().unwrap(), "01JBQ7WZ0X4T9V6K2H8M3N5PQR".parse().unwrap());
 /// let seq = NonZeroU64::MIN;
-/// let usage = TurnUsage { input: 7, output: 1, cache_read: 0, cache_write: 0, cost_usd: Usd::ZERO };
+/// let usage = TurnUsage::new(7, 1, 0, 0, Usd::ZERO);
 /// let settled =
 ///     TurnSettled::new(address, seq, Residence::Resident, TurnEntries::default(), usage, 1500);
 /// let settled = TurnSettled { settled_ms: 0, ..settled };
@@ -616,16 +794,100 @@ impl TurnFailed {
 }
 
 /// How a pi process ended, as the operating system reports it.
+///
+/// ```
+/// use creche_contracts::channel::playpen::{ExitStatus, Label};
+///
+/// let status = ExitStatus::new().with_pid(41).with_signal(Label::cut("SIGKILL"));
+/// assert_eq!(status.pid(), Some(41));
+/// assert_eq!(status.code(), None);
+/// assert_eq!(status.signal().map(Label::as_str), Some("SIGKILL"));
+/// assert_eq!(status.rss_peak_mb(), None);
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::channel::playpen::{ExitStatus, Label};
+///
+/// let status = ExitStatus {
+///     pid: Some(41),
+///     code: None,
+///     signal: Some(Label::cut("SIGKILL")),
+///     rss_peak_mb: None,
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExitStatus {
+    pid: Option<u32>,
+    code: Option<i32>,
+    signal: Option<Label>,
+    rss_peak_mb: Option<u64>,
+}
+
+impl ExitStatus {
+    /// The end of a process for which the operating system reports nothing.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The same status with this process id inside the sandbox.
+    #[must_use]
+    pub fn with_pid(mut self, pid: u32) -> Self {
+        self.pid = Some(pid);
+
+        self
+    }
+
+    /// The same status with this exit code.
+    #[must_use]
+    pub fn with_code(mut self, code: i32) -> Self {
+        self.code = Some(code);
+
+        self
+    }
+
+    /// The same status with the name of the signal that ended the process.
+    #[must_use]
+    pub fn with_signal(mut self, signal: Label) -> Self {
+        self.signal = Some(signal);
+
+        self
+    }
+
+    /// The same status with the largest resident memory of the process, in
+    /// megabytes.
+    #[must_use]
+    pub fn with_rss_peak_mb(mut self, rss_peak_mb: u64) -> Self {
+        self.rss_peak_mb = Some(rss_peak_mb);
+
+        self
+    }
+
     /// The process id inside the sandbox.
-    pub pid: Option<u32>,
+    #[must_use]
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
     /// The exit code.
-    pub code: Option<i32>,
+    #[must_use]
+    pub fn code(&self) -> Option<i32> {
+        self.code
+    }
+
     /// The name of the signal that ended the process.
-    pub signal: Option<Label>,
+    #[must_use]
+    pub fn signal(&self) -> Option<&Label> {
+        self.signal.as_ref()
+    }
+
     /// The largest resident memory of the process, in megabytes.
-    pub rss_peak_mb: Option<u64>,
+    #[must_use]
+    pub fn rss_peak_mb(&self) -> Option<u64> {
+        self.rss_peak_mb
+    }
 }
 
 /// `process_exit`: a pi process ended (contract 03 §5.4).
@@ -788,17 +1050,64 @@ impl Log {
 }
 
 /// One pi entry of an `entries` answer (contract 03 §5.8).
+///
+/// ```
+/// use creche_contracts::channel::playpen::{EntryText, Label, SessionEntry};
+///
+/// let entry = SessionEntry::new(
+///     "e5".parse().unwrap(),
+///     Label::cut("assistant"),
+///     EntryText::cut("21.4 degrees."),
+/// );
+/// assert_eq!(entry.id().as_str(), "e5");
+/// assert_eq!(entry.role().as_str(), "assistant");
+/// assert_eq!(entry.text().as_str(), "21.4 degrees.");
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::channel::playpen::{EntryText, Label, SessionEntry};
+///
+/// let entry = SessionEntry {
+///     id: "e5".parse().unwrap(),
+///     role: Label::cut("assistant"),
+///     text: EntryText::cut("21.4 degrees."),
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionEntry {
-    /// The pi entry id.
-    pub id: EntryId,
-    /// The role, as pi names it.
-    pub role: Label,
-    /// The text of the entry. An entry with no text has the empty text.
-    pub text: EntryText,
+    id: EntryId,
+    role: Label,
+    text: EntryText,
 }
 
 impl SessionEntry {
+    /// The entry `id` with the role `role`, as pi names it, and the text
+    /// `text`. An entry with no text has the empty text.
+    #[must_use]
+    pub fn new(id: EntryId, role: Label, text: EntryText) -> Self {
+        Self { id, role, text }
+    }
+
+    /// The pi entry id.
+    #[must_use]
+    pub fn id(&self) -> &EntryId {
+        &self.id
+    }
+
+    /// The role, as pi names it.
+    #[must_use]
+    pub fn role(&self) -> &Label {
+        &self.role
+    }
+
+    /// The text of the entry. An entry with no text has the empty text.
+    #[must_use]
+    pub fn text(&self) -> &EntryText {
+        &self.text
+    }
+
     fn encoded(&self) -> String {
         ObjectWriter::new()
             .text("id", self.id.as_str())
@@ -1163,11 +1472,11 @@ mod tests {
     fn ready() -> PlaypenMessage {
         PlaypenMessage::Ready(Ready::new(
             "chat-s3".parse().unwrap(),
-            Versions {
-                supervisor: Label::cut("agent-supervisor/0.1.0"),
-                pi: Label::cut("0.99.1"),
-                node: Label::cut("24.1.0"),
-            },
+            Versions::new(
+                Label::cut("agent-supervisor/0.1.0"),
+                Label::cut("0.99.1"),
+                Label::cut("24.1.0"),
+            ),
             ProcessCap::new(8),
             0,
             Cap::ALL.to_vec(),
@@ -1179,27 +1488,18 @@ mod tests {
             address(),
             seq(9),
             Residence::Resident,
-            TurnEntries {
-                user_entry_id: entry_id("a1b2c3d4"),
-                leaf_id: entry_id("e5f6a7b8"),
-                entry_count: Some(4),
-            },
-            TurnUsage {
-                input: 1200,
-                output: 80,
-                cache_read: 0,
-                cache_write: 0,
-                cost_usd: Usd::new(0.25).unwrap(),
-            },
+            TurnEntries::new()
+                .with_user_entry_id("a1b2c3d4".parse().unwrap())
+                .with_leaf_id("e5f6a7b8".parse().unwrap())
+                .with_entry_count(4),
+            TurnUsage::new(1200, 80, 0, 0, Usd::new(0.25).unwrap()),
             1500,
         ))
     }
 
     fn entries() -> PlaypenMessage {
-        let entry = |id: &str, role: &str, text: &str| SessionEntry {
-            id: id.parse().unwrap(),
-            role: Label::cut(role),
-            text: EntryText::cut(text),
+        let entry = |id: &str, role: &str, text: &str| {
+            SessionEntry::new(id.parse().unwrap(), Label::cut(role), EntryText::cut(text))
         };
         let read = Entries::read(
             TURN.parse().unwrap(),
@@ -1284,12 +1584,11 @@ mod tests {
             (
                 PlaypenMessage::ProcessExit(ProcessExit::new(
                     session(),
-                    ExitStatus {
-                        pid: Some(7),
-                        code: Some(-9),
-                        signal: Some(Label::cut("SIGKILL")),
-                        rss_peak_mb: Some(300),
-                    },
+                    ExitStatus::new()
+                        .with_pid(7)
+                        .with_code(-9)
+                        .with_signal(Label::cut("SIGKILL"))
+                        .with_rss_peak_mb(300),
                     Some(TURN.parse().unwrap()),
                     ExitReason::Crashed,
                 )),
@@ -1360,6 +1659,72 @@ mod tests {
 
         kinds.dedup();
         assert_eq!(kinds, PlaypenType::ALL);
+    }
+
+    #[test]
+    fn a_parameter_value_gives_each_field_back() {
+        let usage = TurnUsage::new(1200, 80, 300, 40, Usd::new(0.25).unwrap());
+        let versions = Versions::new(
+            Label::cut("agent-supervisor/0.1.0"),
+            Label::cut("0.99.1"),
+            Label::cut("24.1.0"),
+        );
+        let entries = TurnEntries::new()
+            .with_user_entry_id("a1b2c3d4".parse().unwrap())
+            .with_leaf_id("e5f6a7b8".parse().unwrap())
+            .with_entry_count(4);
+        let status = ExitStatus::new()
+            .with_pid(7)
+            .with_code(-9)
+            .with_signal(Label::cut("SIGKILL"))
+            .with_rss_peak_mb(300);
+        let entry = SessionEntry::new(
+            "e5".parse().unwrap(),
+            Label::cut("user"),
+            EntryText::cut("What did the sensor read?"),
+        );
+
+        assert_eq!(
+            (usage.input(), usage.output(), usage.cache_read()),
+            (1200, 80, 300)
+        );
+        assert_eq!(usage.cache_write(), 40);
+        assert_eq!(usage.cost_usd().get().to_bits(), 0.25_f64.to_bits());
+
+        assert_eq!(versions.supervisor().as_str(), "agent-supervisor/0.1.0");
+        assert_eq!(versions.pi().as_str(), "0.99.1");
+        assert_eq!(versions.node().as_str(), "24.1.0");
+
+        assert_eq!(entries.user_entry_id(), entry_id("a1b2c3d4").as_ref());
+        assert_eq!(entries.leaf_id(), entry_id("e5f6a7b8").as_ref());
+        assert_eq!(entries.entry_count(), Some(4));
+
+        assert_eq!((status.pid(), status.code()), (Some(7), Some(-9)));
+        assert_eq!(status.signal().map(Label::as_str), Some("SIGKILL"));
+        assert_eq!(status.rss_peak_mb(), Some(300));
+
+        assert_eq!(entry.id().as_str(), "e5");
+        assert_eq!(entry.role().as_str(), "user");
+        assert_eq!(entry.text().as_str(), "What did the sensor read?");
+    }
+
+    #[test]
+    fn a_parameter_value_with_no_optional_part_is_the_default() {
+        let entries = TurnEntries::new();
+        let status = ExitStatus::new();
+
+        assert_eq!(entries, TurnEntries::default());
+        assert_eq!(
+            (
+                entries.user_entry_id(),
+                entries.leaf_id(),
+                entries.entry_count()
+            ),
+            (None, None, None)
+        );
+        assert_eq!(status, ExitStatus::default());
+        assert_eq!((status.pid(), status.code()), (None, None));
+        assert_eq!((status.signal(), status.rss_peak_mb()), (None, None));
     }
 
     #[test]
@@ -1463,11 +1828,11 @@ mod tests {
 
     #[test]
     fn an_answer_holds_64_entries_at_most() {
-        let entry = SessionEntry {
-            id: "e1".parse().unwrap(),
-            role: Label::cut("user"),
-            text: EntryText::cut(""),
-        };
+        let entry = SessionEntry::new(
+            "e1".parse().unwrap(),
+            Label::cut("user"),
+            EntryText::cut(""),
+        );
         let answer = |count: usize| {
             Entries::read(
                 TURN.parse().unwrap(),
@@ -1490,11 +1855,11 @@ mod tests {
 
     #[test]
     fn a_line_over_the_limit_is_not_written() {
-        let entry = SessionEntry {
-            id: "e1".parse().unwrap(),
-            role: Label::cut("user"),
-            text: EntryText::cut(&"a".repeat(MAX_ENTRY_BYTES)),
-        };
+        let entry = SessionEntry::new(
+            "e1".parse().unwrap(),
+            Label::cut("user"),
+            EntryText::cut(&"a".repeat(MAX_ENTRY_BYTES)),
+        );
         let answer = Entries::read(
             TURN.parse().unwrap(),
             session(),
