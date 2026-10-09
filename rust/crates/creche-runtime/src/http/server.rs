@@ -64,8 +64,9 @@ use tokio_util::task::task_tracker::TaskTrackerToken;
 use crate::readfile::os_text;
 use crate::tasks::{Drained, Tasks};
 
-/// The target of each line that this module writes to the log.
-const LOG_TARGET: &str = "http";
+/// The target of each line that this module and the edge layer write to the
+/// log.
+pub(super) const LOG_TARGET: &str = "http";
 
 /// The mode of a new socket: the owner and the group read and write. A
 /// client needs the write bit to connect. The Python origin is

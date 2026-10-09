@@ -56,8 +56,7 @@ use tower::ServiceExt;
 use crate::readfile::ByteCap;
 use crate::tasks::{TaskLost, Tasks};
 
-/// The target of each line that this module writes to the log.
-const LOG_TARGET: &str = "http";
+use super::server::LOG_TARGET;
 
 /// The name of the task of each request, in the line that [`Tasks`] writes
 /// for a panic.
