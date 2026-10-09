@@ -211,8 +211,9 @@ reason. The packet that writes the three bodies obeys these rules:
   request. A `HeaderValue` holds no such byte, so no request gives that
   header to `bearer_of`. The test gives the bytes to the private function
   `bearer_in`: the vector proves that function and no service. This
-  difference on an HTTP surface is open. No test of this crate shows what a
-  Rust service answers, because the HTTP server is a stub.
+  difference on an HTTP surface is open. A Rust service answers such a
+  request with status 400, and no handler runs. `hyper` refuses a header
+  value with that byte. A test of `src/http/server.rs` holds that answer.
 - `token::CachedToken` reads the file again only when one of four facts of
   the file moved. The facts are the device, the inode, the size and the time
   of the last change. It does not see a new token that has each fact of the

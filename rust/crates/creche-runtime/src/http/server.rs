@@ -1311,6 +1311,11 @@ fn limited<F: Future>(limit: Duration, closed: F) -> Option<tokio::time::Timeout
 ///   (`h11/_connection.py:69`). A listener here has the limits of `hyper`: a
 ///   head of 100 headers and of 417,792 bytes. It answers status 431 past a
 ///   limit.
+/// - `uvicorn` gives an app a header value with a control byte of ASCII, for
+///   each such byte but NUL and white space (`h11/_abnf.py:55-56`). A
+///   listener here takes only the tab: it answers status 400 to each other
+///   control byte, and no handler runs. The vector `byte-1c-at-the-end` of
+///   the surfaces `runtime.bearer.*` holds such a header.
 ///
 /// # Errors
 ///
@@ -1382,7 +1387,7 @@ mod tests {
     use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream};
     use std::path::PathBuf;
     use std::process::{Command, Output, Stdio};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Instant;
@@ -2690,6 +2695,63 @@ mod tests {
 
             assert_eq!(status_of(&answer), 400);
             assert!(body_of(&answer).is_empty());
+            assert_eq!(served.stop().await, Ok(Drained::Clean));
+        });
+    }
+
+    /// `h11` gives an app each control byte of a header value but NUL and
+    /// white space (`h11/_abnf.py:55-56`). The vector `byte-1c-at-the-end`
+    /// of the surfaces `runtime.bearer.*` holds the first header of the
+    /// table, and three Python services take that request.
+    #[test]
+    fn a_header_value_with_a_control_byte_gets_status_400_and_no_handler() {
+        let table: [(&[u8], u16); 6] = [
+            (b"Bearer vectors-bearer-token\x1c", 400),
+            (b"Bearer vectors-bearer-token\x1f", 400),
+            (b"Bearer \x01vectors-bearer-token", 400),
+            (b"Bearer vectors-bearer-token\x7f", 400),
+            // The tab, and a byte above 127, are no control byte of ASCII.
+            (b"Bearer vectors\tbearer-token", 200),
+            (b"Bearer vectors-bearer-token\xa0", 200),
+        ];
+
+        runtime().block_on(async {
+            let root = TempRoot::new().unwrap();
+            let path = socket_in(&root);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let app = Router::new().route(
+                "/healthz",
+                get({
+                    let calls = Arc::clone(&calls);
+
+                    move || async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+
+                        HEALTH_BODY
+                    }
+                }),
+            );
+            let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+            let served = Served::start(vec![bound], app, LONG_DRAIN);
+            let mut answered = 0;
+
+            for (value, status) in table {
+                let mut request =
+                    b"GET /healthz HTTP/1.1\r\nHost: test\r\nConnection: close\r\nAuthorization: "
+                        .to_vec();
+                request.extend_from_slice(value);
+                request.extend_from_slice(b"\r\n\r\n");
+
+                let answer = within(RawHttp::unix(&path, &request)).await.unwrap();
+
+                assert_eq!(status_of(&answer), status, "{value:?}");
+                if status == 200 {
+                    answered += 1;
+                } else {
+                    assert!(body_of(&answer).is_empty(), "{value:?}");
+                }
+                assert_eq!(calls.load(Ordering::SeqCst), answered, "{value:?}");
+            }
             assert_eq!(served.stop().await, Ok(Drained::Clean));
         });
     }
