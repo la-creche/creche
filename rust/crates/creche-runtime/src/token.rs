@@ -77,8 +77,9 @@ const GROUP_READ: u32 = 0o040;
 // the scheme in another case of letters. A change costs one more value of
 // `BearerTrim`, or the same rule in each Python copy.
 /// The start of the header value that holds a bearer: the scheme and one
-/// space.
-const BEARER: &[u8] = b"Bearer ";
+/// space. [`bearer_of`] reads it, and the client of `http::client` writes
+/// it. The value has this one home.
+pub(crate) const BEARER: &[u8] = b"Bearer ";
 
 /// Who can read a token file, by its mode.
 ///

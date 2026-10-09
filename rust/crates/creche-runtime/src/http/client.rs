@@ -73,6 +73,7 @@ use tokio::time::Sleep;
 
 use crate::readfile::{ByteCap, os_text};
 use crate::tasks::Shutdown;
+use crate::token::BEARER;
 
 /// The host of the `Host` header for `attendance` behind its socket. Each
 /// Python client gives the socket the base URL `http://sessiond`, for example
@@ -88,10 +89,6 @@ const HTTPS_SCHEME: &str = "https://";
 /// The port of an `http` URL that names none. The `Host` header of such a
 /// target holds no port.
 const DEFAULT_PORT: u16 = 80;
-
-/// The start of the value of an `Authorization` header (contract 02 §3
-/// rule 4).
-const BEARER: &[u8] = b"Bearer ";
 
 /// The content type of a [`Body::Json`].
 const JSON: &str = "application/json";
