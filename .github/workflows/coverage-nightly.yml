@@ -27,18 +27,18 @@
 # that pull request. To measure a branch before its merge, run the script on
 # a development machine (rust/AGENTS.md has the steps).
 #
-# A RED RUN REACHES A PERSON THROUGH GITHUB ONLY. GitHub sends the notice of
-# a failed scheduled run to one account: the account that last changed the
-# `cron` line below, or that turned this workflow on again. The Actions page
-# of the repository lists each run. No job of this repository reads the
-# result.
+# A RED RUN REACHES A PERSON THROUGH GITHUB ONLY. GitHub sends the
+# notification of a failed scheduled run to one account: the account that
+# last changed the `cron` line below, or that turned this workflow on again.
+# The Actions page of the repository lists each run. No job of this
+# repository reads the result.
 #
 # CONTRACT-QUESTION: rust/AGENTS.md, "The coverage rule". No rule says how a
 # red run of this workflow must reach a person, and no rule names that
 # person. The reading here: the workflow holds the read-only token and sends
-# nothing by itself, so the notice of GitHub is the one path. A change costs
-# one step with a token that can write, for example a step that opens an
-# issue.
+# nothing by itself, so the notification of GitHub is the one path. A change
+# costs one step with a token that can write, for example a step that opens
+# an issue.
 #
 # GITHUB CAN SKIP A RUN. It can delay or drop a scheduled run when its load
 # is high. It turns the schedule of a public repository off after 60 days
@@ -89,10 +89,13 @@ jobs:
       # from the week in which the compiler 1.92.0 of that file came out, and
       # both use LLVM 21. It is the compiler 1.94 before its release, so it
       # writes some regions in other places (rust/AGENTS.md has the facts).
-      # To take another date, select a nightly that is near the release of
-      # the compiler of that file. Run the script with `--branch` on a
-      # machine with that nightly, and measure the facts about a branch in
-      # rust/AGENTS.md again. Then change the value here and in
+      # To take another date, select the last nightly for which
+      # `rustc --version` prints the version number of that file. That
+      # nightly is near the point where the compiler of that file left the
+      # main line. No run proved yet that the two write each region in the
+      # same place. Run the script with `--branch` on a machine with that
+      # nightly, and measure the facts about a branch in rust/AGENTS.md
+      # again. Then change the value here and in
       # bin/tests/test_gate_workflow.py.
       RUSTUP_TOOLCHAIN: nightly-2025-12-13
     steps:
