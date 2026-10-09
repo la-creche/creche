@@ -45,6 +45,10 @@ missing. A silent pass would be worse than a skip. The same applies to
 needs `node` and `git` on `PATH`. Every test is marked `slow` in
 `conftest.py`.
 
+Two scenarios of `test_proc_library_reader.py` run a Node program that
+imports `node:sqlite`. Each one skips itself when the `node` on `PATH` has
+no such module.
+
 Set `CRECHE_PROC_KEEP=1` to keep the root of each test on disk after the run.
 
 Set `CRECHE_PROC_NO_SKIP=1` to make each skip a failure. A run in which
@@ -62,6 +66,8 @@ the variable.
 | topology | The services that one fixture starts together. |
 | terminal | A pseudo-terminal. A test holds the master side. A program holds the other side as its controlling terminal. |
 | listener | A service that listens for HTTP requests: `attendance`, the Open WebUI door, the chaperone, the noticeboard, and the `serve` command of the trigger door. |
+| judged command | The command that a run starts for a service: the default command, or the value of the variable of the service. |
+| reference | The default command of a service, when a scenario runs it beside the judged command. |
 
 ## The service table
 
@@ -117,7 +123,8 @@ else.
 A variable that is set and empty is an error. A value with an open quote is
 an error. A variable that names no program is an error. The suite never
 returns to the default command. A run that judged the default would look
-like a run that judged the binary.
+like a run that judged the binary. One exception exists, and "The
+reference" below has its rules.
 
 Every variable of the suite starts with `CRECHE_PROC_`. A variable with that
 start that the suite does not read stops the run before the first test. A
@@ -129,6 +136,43 @@ the variable of its service and the scenarios that the run selects. The
 `proc-rust` job of `gate.yml` and of `release.yml` runs the script, and a
 test that skips is a failure there too. `rust/AGENTS.md`, "The judge of a
 program", has the rules for such a file.
+
+### The reference
+
+Two programs can write one file. Each one must then read what the other
+one wrote. A scenario for such a file runs two commands:
+
+- The judged command. It is the default command of the row, or the value
+  of the variable.
+- The reference. It is the default command of the row, also when the
+  variable is set. `reference_of` of `proc_services.py` gives it, and that
+  function reads no variable.
+
+The store of an index is such a file. A host can go from the default
+program to another binary, and it can go back. One index directory then
+gets both writers.
+
+With no variable set, the judged command is the reference. A scenario then
+compares one program with itself. That run judges no binary. It proves that
+the comparison gives one result for one corpus.
+
+1. Only the scenarios of `test_proc_library_cross.py` and of
+   `test_proc_library_reader.py` run the reference. `test_proc_table.py`
+   has a test for this rule.
+2. A scenario that runs the reference has both commands in its name. The
+   name says `the reference` beside `the program`, or it says
+   `the two writers`, `the two programs` or `both writers`.
+3. Run the reference only through `run_reference` of `proc_library.py`.
+   The reference then gets what `run_index` gives the default command.
+   One scenario of `test_proc_library_cross.py` sets the variable of the
+   row. It holds that a run of the reference does not start the program
+   of the variable.
+4. Assert that the judged command and the reference give the same result.
+   The scenarios of `test_proc_library_build.py` hold each fixed text and
+   each fixed row, for the judged command.
+
+The header of a run prints the judged command of each row and its origin.
+It does not print the reference.
 
 ## What runs
 
@@ -199,6 +243,14 @@ library ---- GET /info, POST /embed, loopback port ---> the TEI stand-in
 a test reads store.db with SQLite
 ```
 
+Two files of the seventh topology run two more programs. A test starts
+each one, and each one runs to its end.
+
+| Program | A test starts it through | What it does |
+|---|---|---|
+| the reference | `run_reference` | It writes or updates a store, as the program does. |
+| `reader_store.mjs` | `read_as_bridge` | It reads one store with the statements of the bridge of the playpen, through `node:sqlite`. |
+
 | File | Topology | What the scenarios check |
 |---|---|---|
 | `test_proc_owui_turns.py` | door and `attendance` | the thirteen stage 1 scenarios, with the numbers of the old suite |
@@ -224,6 +276,8 @@ a test reads store.db with SQLite
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_library_build.py` | library and the TEI stand-in | a build, an update, the hash rule, a removed file, a new model, the two profiles, the store schema, the columns of a row of `files`, the order of the files, how a text file is read, the publish of the store |
 | `test_proc_library_start.py` | library and the TEI stand-in | a refused command line, the address of TEI, the preflight, `SIGTERM`, `SIGKILL`, a store that the program cannot read |
+| `test_proc_library_cross.py` | library, the reference and the TEI stand-in | one store under two writers: equal content after a build, after an update by the other writer, after three runs in turns, after a backfill of `chunks_emb`, after a killed run and after a new model. Equal embed calls. An equal first line of the report. The reference with the variable of the row set. The comparison itself: one changed copy of a store for each part, the tolerance of a rank, a store that the comparison refuses |
+| `test_proc_library_reader.py` | library, the reference, the TEI stand-in and the reader program | a store as the bridge reads it, with the SQLite of Node: the model, the count of values, the rows of an FTS5 query, the vectors. Equal rows for both writers. A store that is not alone in its directory. The statements of the reader program and the limit of a query, held against the text of the bridge |
 | `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a JSON body with no `Content-Type` header, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
@@ -247,6 +301,10 @@ a test reads store.db with SQLite
    - the git repository of the registry, through `git`
    - what a program wrote on its terminal
    - what a command wrote on its stdout or its stderr
+
+   Two tests of `test_proc_library_reader.py` start no program. Each one
+   reads files of the bridge as text. `test_proc_table.py` reads the unit
+   files in the same way.
 4. Nothing under test may be faked. The five stand-ins are not under test.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
@@ -389,7 +447,44 @@ while it runs. Neither fixture needs the playpen bundle.
    through `Store.matches`.
 10. To act during a run, use `start_held_update`. It returns while the
     stand-in holds the last embed call of the run. `release_hold` ends the
-    hold.
+    hold. For a corpus of your own, put `HELD_TEXT` into the last file in
+    path order. Then use `start_held`.
+11. To compare two writers, give one corpus two index directories. Only
+    the reference writes the first one. The program writes or updates the
+    second one.
+12. In such a scenario, do each step for both index directories before you
+    change the corpus. A row of `files` holds the mtime of its file.
+13. Compare two stores with `store_content`. Its `differences` gives one
+    line for each part that differs. The content holds no time of a run
+    and no form of `chunks_vec`. When you add a part to `StoreContent`, add
+    a change of that part to
+    `test_the_comparison_sees_a_change_in_each_part`.
+14. Write no PDF with text into a corpus of two writers. Rule 9 gives the
+    reason. `write_mixed` writes one PDF that no program can read, so each
+    writer reports it.
+15. Read a store as the bridge reads it with `read_as_bridge`. Call it
+    before any other reader opens the store. It refuses a store that is
+    not alone in its directory. The reader program then runs with no write
+    permission for the store and for its directory, as on the mount of a
+    sandbox.
+16. Change a store only through `copy_store` and `change_store`. The first
+    one makes a copy in a new index directory, and the second one changes
+    that copy. One function is the exception: `drop_plain_vectors` changes
+    the store of a run.
+
+`reader_store.mjs` is not a stand-in. No service starts it or dials it. It
+holds the five statements that `playpen/bridge/index-store.ts` runs on a
+store. Change the two files together.
+`test_the_reader_statements_are_those_of_the_bridge` compares four things
+of the two files:
+
+- each SQL string literal in double quotes or in template marks that
+  starts with `SELECT`, `FROM` or `WHERE`
+- the line that gives `VECTOR_TABLE` its value
+- the count of `.prepare(` calls. Neither file can hold an `.exec(` call.
+- the options of the connection
+
+The test does not compare a whole statement.
 
 The two index units give the command. `test_proc_table.py` holds the words
 of `index_words` against the shell text of each unit. No scenario runs
@@ -518,6 +613,10 @@ the text of the failure. Work down this list.
    its own session. The teardown sends no signal to that pid.
 6. `a test left a process behind`: a test started a process outside the
    `supervisor` fixture. This is a defect of the test.
+7. A scenario of `test_proc_library_cross.py` fails with a list of lines:
+   the two stores differ. Each line names one table or one FTS5 query, and
+   the first row that differs. `here` is the store of the reference, and
+   `there` is the store of the program.
 
 ## Known gaps
 
@@ -1151,6 +1250,58 @@ the text of the failure. Work down this list.
 - **No scenario for a time limit of the TEI client.** A call that TEI never
   answers ends only at the limit of the client. A scenario would wait that
   long.
+- **The reference is the Python program.** Each scenario of
+  `test_proc_library_cross.py` needs the default command of the `library`
+  row. One scenario of `test_proc_library_reader.py` needs it too. The pull
+  request that removes the Python package `library` removes that command.
+  That pull request first records what the reference gives in each of
+  those scenarios, as data in this directory. Each scenario then compares
+  the program with the recorded data.
+- **CONTRACT-QUESTION, a store under two writers.** `library/AGENTS.md`
+  gives the schema and six rules for one writer. No contract names a second
+  writer of one store. The suite holds the strict reading. For one corpus,
+  the program and the reference give:
+  - equal rows in `meta`, `files`, `chunks`, `chunks_fts` and `chunks_emb`,
+    with equal chunk ids
+  - an equal statement for each of those five tables
+  - equal rows for one `SELECT` on `chunks_vec`
+  - an equal order of the rows of three FTS5 queries, and equal ranks
+  - equal embed calls
+  - an equal first line of the report
+
+  The suite does not compare `updated_at`, `indexed_at`, the form of
+  `chunks_vec` or the sentence of an error line. A change costs one part
+  of `StoreContent` in `proc_library.py`.
+- **CONTRACT-QUESTION, what a killed run leaves.** No contract names the
+  files of an index directory. The suite holds one thing. After a kill of
+  the program, the next run of the reference leaves `store.db` alone in
+  that directory. A program that leaves a file that the reference does not
+  remove fails one scenario of `test_proc_library_cross.py`. A change costs
+  one assertion there.
+- **CONTRACT-QUESTION, the form of a time of a run.** `library/AGENTS.md`
+  names `updated_at` and `indexed_at` and gives neither one a form.
+  `store_content` holds the program as it is. `updated_at` is a text of
+  digits, one period and digits. `indexed_at` is a REAL value. Each one is
+  a finite count of seconds. A change costs one check in `proc_library.py`.
+- **What the comparison of two stores does not see.** `store_content`
+  reads the statement of five tables. It reads no index, no trigger and no
+  view that a writer adds. No scenario compares the mode of `store.db`. The
+  report scenario compares the first line of stdout. It reads a later line
+  only when that line names a file with an error.
+- **The reader program is not the bridge.** `reader_store.mjs` holds the
+  statements of the bridge, and one test holds them against the text of
+  the bridge. The reader program runs no code of the bridge: not the
+  ranking, not the check of a row, not the search for the nearest vectors.
+  `playpen/test/index-search.test.ts` holds that code, with stores that
+  the test builds itself.
+- **The reader program runs on the Node of the test machine.** The bridge
+  runs on the Node of the sandbox image. The two can have different
+  versions of SQLite.
+  No scenario runs the reader program on the image.
+- **A directory with no write permission takes the place of a mount.** The
+  reader program runs while the store and its directory have no write bit.
+  A run as root can write both. Such a run does not prove that the reader
+  needs no file beside the store.
 
 ## Layout
 
@@ -1165,6 +1316,7 @@ the text of the failure. Work down this list.
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |
 | `standin_sbx.py`, `standin_systemctl.py`, `standin_litellm.py`, `standin_tei.py` | the four stand-in programs of this directory |
+| `reader_store.mjs` | the Node program that reads one index store with the statements of the bridge |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
 | `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py` | one topology each |
 | `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |

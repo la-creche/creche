@@ -6,6 +6,7 @@ test of this suite starts a service through.
 
 from __future__ import annotations
 
+import ast
 import shlex
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from proc_services import (
     Service,
     command_of,
     env_of,
+    reference_of,
     unknown_variables,
     venv_bin,
 )
@@ -48,6 +50,13 @@ INDEX_UNITS = {"index@.service": None, "index-code@.service": Profile.CODE}
 #: The words of an `ExecStart` that give a shell its command text.
 SHELL = ("sh", "-c")
 END_OF_COMMAND = ";"
+
+#: The directory of this suite.
+SUITE_DIR = Path(__file__).resolve().parent
+
+#: The two files whose scenarios run the reference beside the judged
+#: command (`AGENTS.md`, "The reference").
+REFERENCE_FILES = {"test_proc_library_cross.py", "test_proc_library_reader.py"}
 
 
 def test_each_default_is_what_its_unit_runs() -> None:
@@ -148,6 +157,39 @@ def test_an_override_reaches_one_service_only(tmp_path: Path) -> None:
     assert command_of(Service.DOOR_OWUI, environ).origin is Origin.DEFAULT
 
 
+def test_the_reference_is_the_default_with_the_variable_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reference of a row reads no variable: it stays the default command.
+
+    The variable of the row names another program here. The judged command
+    is that program, and the reference is the default command of the row,
+    with what only the default command gets.
+    """
+    entry = SERVICES[Service.LIBRARY]
+    monkeypatch.setenv(entry.override, str(_program(tmp_path / "other-library")))
+
+    judged = command_of(Service.LIBRARY)
+    reference = reference_of(Service.LIBRARY)
+
+    assert judged.origin is Origin.OVERRIDE
+    assert reference.origin is Origin.DEFAULT
+    assert reference.words == (str(venv_bin() / entry.program), *entry.selector)
+    assert reference == command_of(Service.LIBRARY, {})
+    assert env_of(reference) == DEFAULT_ONLY_ENV
+
+
+def test_only_two_files_run_the_reference() -> None:
+    """The suite runs a default command beside the judged command in two files, and in no other.
+
+    A scenario of another file that ran the default command would look like
+    a scenario that judged the binary of the run. One function of the
+    `library` topology starts the reference, and only the two files call it.
+    """
+    assert _callers_of("reference_of") == {"proc_library.py", Path(__file__).name}
+    assert _callers_of("run_reference") == REFERENCE_FILES
+
+
 def test_an_empty_override_is_an_error() -> None:
     """Fail closed. An empty value never means the default."""
     with pytest.raises(CommandError, match="CRECHE_PROC_CHAPERONE is set and empty"):
@@ -232,6 +274,26 @@ def _index_after(words: list[str], run: tuple[str, ...]) -> int:
     starts = range(len(words) - len(run))
 
     return next(at for at in starts if tuple(words[at : at + len(run)]) == run) + len(run)
+
+
+def _callers_of(function: str) -> set[str]:
+    """The name of each Python file of this suite that calls a function of one name."""
+    found: set[str] = set()
+
+    for path in SUITE_DIR.glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call) and _called_name(node.func) == function:
+                found.add(path.name)
+
+    return found
+
+
+def _called_name(func: ast.expr) -> str | None:
+    """The last name of what one call names: `f` of `f()`, and `f` of `x.f()`."""
+    if isinstance(func, ast.Name):
+        return func.id
+
+    return func.attr if isinstance(func, ast.Attribute) else None
 
 
 def _program(path: Path) -> Path:
