@@ -61,14 +61,91 @@
 //! and `1.5.2`. A literal has no such run: `truex` is `true` and then
 //! `TrailingData`.
 //!
-//! This module holds the check only. It has no typed read and no writer
-//! yet.
+//! # How a module reads a JSON text
+//!
+//! The reader does steps 1 and 3. The module writes steps 2 and 4.
+//!
+//! 1. [`check`] reads the bytes, with the cap of the surface.
+//! 2. The module compares [`StrictText::top`] with the kind that it takes.
+//! 3. [`StrictText::parse`] fills the raw type. A raw type of this crate has
+//!    a `Slot` at each field, so a value of a wrong kind does not fail this
+//!    step.
+//! 4. One conversion makes the valid type from the raw type.
+//!
+//! Each module has an error type of its own. It turns a [`NotStrict`] and a
+//! [`Shape`] into that type. A module can tell three rules apart for its
+//! caller, for example with a status for each: [`Rule::TooLarge`],
+//! [`Rule::NotUtf8`] and [`Rule::TooDeep`].
+//!
+//! A peer does not learn which rule a text broke. Only the operator does,
+//! from a notice. For that notice, the error of a module must not drop the
+//! [`NotStrict`]. The error stores the value and returns it from a method
+//! `not_strict(&self) -> Option<&NotStrict>`. The service calls the method
+//! when it records the notice.
+//!
+//! ```
+//! use creche_contracts::json::{self, ByteCap, Found, NotStrict, Number, Shape};
+//! use serde::Deserialize;
+//!
+//! const CAP: ByteCap = ByteCap::new(4096);
+//!
+//! #[derive(Deserialize)]
+//! struct RawQuota {
+//!     #[serde(default)]
+//!     turns: Option<Number>,
+//! }
+//!
+//! struct Quota(u64);
+//!
+//! enum QuotaError {
+//!     NotJson(NotStrict),
+//!     NotObject,
+//!     Shape(Shape),
+//!     NoTurns,
+//! }
+//!
+//! impl QuotaError {
+//!     fn not_strict(&self) -> Option<&NotStrict> {
+//!         match self {
+//!             Self::NotJson(refusal) => Some(refusal),
+//!             Self::NotObject | Self::Shape(_) | Self::NoTurns => None,
+//!         }
+//!     }
+//! }
+//!
+//! fn quota(bytes: &[u8]) -> Result<Quota, QuotaError> {
+//!     let text = json::check(bytes, CAP).map_err(QuotaError::NotJson)?;
+//!     if text.top() != Found::Table {
+//!         return Err(QuotaError::NotObject);
+//!     }
+//!     let raw: RawQuota = text.parse().map_err(QuotaError::Shape)?;
+//!
+//!     match raw.turns {
+//!         Some(Number::Integer(turns)) => turns.to_u64().map(Quota).ok_or(QuotaError::NoTurns),
+//!         Some(Number::Float(_)) | None => Err(QuotaError::NoTurns),
+//!     }
+//! }
+//!
+//! assert!(matches!(quota(br#"{"turns": 40}"#), Ok(Quota(40))));
+//! assert!(matches!(quota(b"[40]"), Err(QuotaError::NotObject)));
+//! assert!(matches!(quota(br#"{"turns": 4e1}"#), Err(QuotaError::NoTurns)));
+//!
+//! let twice = quota(br#"{"turns": 40, "turns": 41}"#).err();
+//! let refusal = twice.as_ref().and_then(QuotaError::not_strict);
+//! assert_eq!(refusal.map(NotStrict::rule), Some(json::Rule::DuplicateKey));
+//! ```
+//!
+//! This module holds the reader only. It has no writer yet.
 
+mod read;
 mod scan;
 
 use std::error::Error;
 use std::fmt;
 
+use serde::Deserialize;
+
+pub use self::read::{Integer, Number, ReadError, Shape, read};
 /// The kind of a JSON value. The module `slot` of this crate defines it, and
 /// this module adds no second enum for a kind.
 pub use crate::slot::Found;
@@ -276,7 +353,8 @@ impl Error for NotStrict {}
 ///
 /// assert_eq!(text.as_str(), " [1, 2]\n");
 /// assert_eq!(text.top(), Found::List);
-/// # Ok::<(), json::NotStrict>(())
+/// assert_eq!(text.parse::<Vec<u8>>()?, [1, 2]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Code outside this module cannot give a text that proof:
@@ -305,6 +383,18 @@ impl<'a> StrictText<'a> {
     #[must_use]
     pub const fn top(&self) -> Found {
         self.top
+    }
+
+    /// The text as a `T`, through `serde_json`.
+    ///
+    /// The read of a strict text fails only when `T` refuses the value. A
+    /// raw type with a `Slot` at each field refuses no object.
+    ///
+    /// # Errors
+    ///
+    /// [`Shape`] when `T` does not take the value of the text.
+    pub fn parse<T: Deserialize<'a>>(&self) -> Result<T, Shape> {
+        serde_json::from_str(self.text).map_err(|error| Shape::of(&error))
     }
 }
 
@@ -566,5 +656,18 @@ mod tests {
             "NotStrict { rule: LoneSurrogate, at: 13 }"
         );
         assert_eq!(refused.clone(), refused);
+    }
+
+    #[test]
+    fn a_strict_text_parses_into_a_type_that_borrows() {
+        #[derive(Debug, PartialEq, Deserialize)]
+        struct Named<'a> {
+            name: &'a str,
+        }
+
+        let bytes = br#"{"name": "thin"}"#.to_vec();
+        let strict = check(&bytes, ROOMY).unwrap();
+
+        assert_eq!(strict.parse::<Named<'_>>(), Ok(Named { name: "thin" }));
     }
 }

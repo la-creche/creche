@@ -14,7 +14,8 @@
 //!
 //! Four rules have one function each: `depth`, `duplicate_key`,
 //! `integer_range` and `float_range`. The module also holds what a number
-//! token is: [`is_integer`], [`integer_value`] and [`float_value`].
+//! token is: [`is_integer`], [`integer_value`] and [`float_value`]. The
+//! number types of `json` read a token with the same three functions.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -154,13 +155,13 @@ fn float_range(token: &str, at: usize) -> Result<(), NotStrict> {
 }
 
 /// Whether a number token is an integer: it has no `.`, no `e` and no `E`.
-fn is_integer(token: &str) -> bool {
+pub(super) fn is_integer(token: &str) -> bool {
     !token.bytes().any(|byte| matches!(byte, b'.' | b'e' | b'E'))
 }
 
 /// The value of an integer token. `None` for a value outside the range of
 /// rule 7. The token `-0` is 0.
-fn integer_value(token: &str) -> Option<i128> {
+pub(super) fn integer_value(token: &str) -> Option<i128> {
     let value: i128 = token.parse().ok()?;
     let in_range = i64::try_from(value).is_ok() || u64::try_from(value).is_ok();
 
@@ -169,7 +170,7 @@ fn integer_value(token: &str) -> Option<i128> {
 
 /// The value of a number token with a fraction or an exponent, after the
 /// rounding to a float of 64 bits. `None` for a value that is not finite.
-fn float_value(token: &str) -> Option<f64> {
+pub(super) fn float_value(token: &str) -> Option<f64> {
     token.parse().ok().filter(|float: &f64| float.is_finite())
 }
 
