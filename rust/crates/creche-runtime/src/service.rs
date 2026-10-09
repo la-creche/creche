@@ -61,12 +61,14 @@
 //!
 //! const NAME: &str = "example-service";
 //!
-//! /// Less than `TimeoutStopSec=` of the unit of the service.
-//! const DRAIN: Duration = Duration::from_secs(18);
-//!
 //! /// How long the listeners wait for an open request after the stop
-//! /// signal. A handler that runs longer has the rest of `DRAIN`.
-//! const OPEN_REQUESTS: Duration = Duration::from_secs(15);
+//! /// signal.
+//! const OPEN_REQUESTS: Duration = Duration::from_secs(10);
+//!
+//! /// How long the program waits for a task after its `main` returned. A
+//! /// handler that still runs then has this time. `OPEN_REQUESTS` plus
+//! /// `DRAIN` is less than `TimeoutStopSec=` of the unit of the service.
+//! const DRAIN: Duration = Duration::from_secs(8);
 //!
 //! // The whole `main` of the program.
 //! fn main() -> ExitCode {
@@ -274,7 +276,7 @@
 //! - A Python service writes the errors of its config as one line. [`load`]
 //!   writes one line for each error.
 //! - `uvicorn` waits with no limit for its open requests at a stop. [`run`]
-//!   waits for the drain limit of the program.
+//!   waits for the drain limit of the program after its `main` returned.
 //! - A Python service that `uvicorn.run` starts ends by the signal itself
 //!   after a stop signal. A program here ends with the status of its `main`.
 //! - An exception that no code handles ends a Python program with a trace
@@ -347,23 +349,20 @@ pub enum Threads {
 /// A program names three values: its name, its count of threads and its
 /// drain limit. A program with a reload also names [`OnHangup::Reload`].
 ///
-/// The drain limit is the longest time that the program runs after the stop
-/// signal, when its `main` returns in that time. The limit starts at the
-/// first SIGTERM or SIGINT. Without such a signal, it starts when `main`
-/// returns. One limit thus holds the time that `main` uses after the signal,
-/// the wait for the tracked tasks and the stop of the runtime.
+/// The drain limit is the longest time that the program runs after its
+/// `main` returned. The limit starts at that return, also when a stop signal
+/// came before it. It holds the wait for the tracked tasks and the stop of
+/// the runtime.
 ///
-/// systemd kills the process at `TimeoutStopSec=` of its unit, so the drain
-/// limit must be less than that value. The units of `systemd/` have these
-/// values: 60 seconds for `attendance`, 30 seconds for the Open WebUI door
-/// and for the trigger listener, 20 seconds for the noticeboard and 360
-/// seconds for `caregiver`.
+/// systemd kills the process at `TimeoutStopSec=` of its unit. The time that
+/// `main` uses after the stop signal plus the drain limit must thus be less
+/// than that value. The unit files are in `systemd/`. A service names its
+/// own unit beside its drain constant.
 ///
 /// A `main` that serves gives [`serve`](crate::http::server::serve) a limit
-/// of its own. Make that limit shorter than the drain limit when a handler
-/// must end after the listeners closed its connection. With the same value
-/// for the two, [`run`] waits for no task that still runs when `serve`
-/// reached its limit.
+/// of its own for the open requests. That limit is a part of the time that
+/// `main` uses after the stop signal. A handler that still runs at that
+/// limit is a tracked task, and it has the drain limit.
 ///
 /// The type has no Python origin. A Python service gives the same facts to
 /// `uvicorn` and to its signal calls, for example
@@ -408,7 +407,7 @@ pub struct Program {
     threads: Threads,
     /// What the program does at SIGHUP.
     on_hangup: OnHangup,
-    /// How long the program runs after the stop signal, at most.
+    /// How long the program runs after its `main` returned, at most.
     drain: Duration,
 }
 
@@ -453,7 +452,7 @@ impl Program {
         self.on_hangup
     }
 
-    /// How long the program runs after the stop signal, at most.
+    /// How long the program runs after its `main` returned, at most.
     #[must_use]
     pub const fn drain(&self) -> Duration {
         self.drain
@@ -709,16 +708,16 @@ impl Steps for Host {
 /// 4. It calls `main` with the [`Context`] and runs it to its end. The
 ///    function does not stop a `main` that continues after the stop signal.
 /// 5. It triggers the stop signal and waits for the tracked tasks, for the
-///    rest of the drain limit of the program at most. Tasks that still run
-///    at the limit are one `ERROR` line with their count.
+///    drain limit of the program at most. Tasks that still run at the limit
+///    are one `ERROR` line with their count.
 /// 6. It gives the runtime the rest of the drain limit for its stop. Then
 ///    the function returns, also when a blocking call still runs. The
 ///    process ends without that call when the program returns from its
 ///    `main`.
 ///
-/// The drain limit starts at the first SIGTERM or SIGINT. Without such a
-/// signal, it starts when `main` returns. A `main` that uses the whole limit
-/// after a signal leaves no time for step 5.
+/// The drain limit starts when `main` returns, also when a stop signal came
+/// before that. The time that `main` uses after the signal is thus no part
+/// of the limit ([`Program`]).
 ///
 /// The exit status is the status that `main` returns, with two exceptions:
 ///
@@ -739,7 +738,6 @@ impl Steps for Host {
 ///
 /// - `uvicorn` waits with no limit for an open request at a stop
 ///   (`uvicorn/server.py:288-291`). The function waits for the drain limit.
-///   No Python service has one limit for its whole stop.
 /// - A Python service continues with no handler on a system that gives it
 ///   none (`attendance/src/attendance/__main__.py:205`). The function does
 ///   not run `main` then.
@@ -790,9 +788,8 @@ where
     let tasks = Tasks::new(shutdown.clone());
 
     let (status, stopped_at) = runtime.block_on(async {
-        let (status, signal_at) = match steps.signals(trigger.clone(), program.on_hangup) {
+        let status = match steps.signals(trigger.clone(), program.on_hangup) {
             Ok(hangups) => {
-                let stop = shutdown.clone();
                 let context = Context {
                     tasks: tasks.clone(),
                     shutdown,
@@ -801,9 +798,9 @@ where
                     entropy: Arc::new(OsEntropy::new()),
                 };
 
-                match with_stop_time(to_its_end(main, context), &stop).await {
-                    (Ok(status), signal_at) => (status, signal_at),
-                    (Err(Panicked), signal_at) => (ended_by_panic(name), signal_at),
+                match to_its_end(main, context).await {
+                    Ok(status) => status,
+                    Err(Panicked) => ended_by_panic(name),
                 }
             }
             Err(error) => {
@@ -812,13 +809,13 @@ where
                     "the signal handlers of the program {name} are not in place: {error}"
                 );
 
-                (ExitCode::from(EX_OSERR), None)
+                ExitCode::from(EX_OSERR)
             }
         };
 
-        // For a program that no signal stopped, the return of `main` is the
-        // stop.
-        let stopped_at = signal_at.unwrap_or_else(Instant::now);
+        // The drain limit starts here, at the return of `main`. The time
+        // that `main` used after a stop signal is no part of it.
+        let stopped_at = Instant::now();
         trigger.trigger();
 
         if let Drained::TimedOut { left } = tasks.drain(rest_of(program.drain, stopped_at)).await {
@@ -838,27 +835,10 @@ where
     status
 }
 
-/// The part of the drain limit that is left, for a stop at `stopped_at`.
+/// The part of the drain limit that is left, for a `main` that returned at
+/// `stopped_at`.
 fn rest_of(drain: Duration, stopped_at: Instant) -> Duration {
     drain.saturating_sub(stopped_at.elapsed())
-}
-
-/// Runs `work` to its end. The function also gives the time of the stop
-/// signal, when that signal came before the end of the work. The signal does
-/// not stop the work.
-async fn with_stop_time<W: Future>(work: W, shutdown: &Shutdown) -> (W::Output, Option<Instant>) {
-    let stop = shutdown.cancelled();
-    tokio::pin!(work);
-    tokio::pin!(stop);
-    let mut signal_at = None;
-
-    loop {
-        tokio::select! {
-            biased;
-            output = &mut work => return (output, signal_at),
-            () = &mut stop, if signal_at.is_none() => signal_at = Some(Instant::now()),
-        }
-    }
 }
 
 /// The errors of one parse, as one line of text for each error.
@@ -1304,54 +1284,7 @@ pub(crate) mod tests {
         }
     }
 
-    // --- the time of the stop ---
-
-    #[test]
-    fn work_that_ends_with_no_stop_signal_has_no_stop_time() {
-        let (_trigger, shutdown) = shutdown_pair();
-        let runtime = Host.runtime(Threads::One).unwrap();
-
-        let (value, signal_at) = runtime.block_on(with_stop_time(
-            async {
-                tokio::task::yield_now().await;
-
-                7
-            },
-            &shutdown,
-        ));
-
-        assert_eq!(value, 7);
-        assert_eq!(signal_at, None);
-        runtime.shutdown_timeout(LIMIT);
-    }
-
-    #[test]
-    fn the_stop_time_is_the_time_of_the_signal_and_not_of_the_end_of_the_work() {
-        for threads in [Threads::One, two_workers()] {
-            let (trigger, shutdown) = shutdown_pair();
-            let runtime = Host.runtime(threads).unwrap();
-            let in_work = shutdown.clone();
-
-            let (ended_at, signal_at) = runtime.block_on(with_stop_time(
-                async move {
-                    // The work continues after the signal, as a `main` that
-                    // waits for its open requests does.
-                    trigger.trigger();
-                    in_work.cancelled().await;
-                    tokio::time::sleep(TASK_TIME).await;
-
-                    Instant::now()
-                },
-                &shutdown,
-            ));
-
-            // The stop time is the time of the signal, so the work ended a
-            // clear time after it.
-            let after_the_signal = ended_at.duration_since(signal_at.unwrap());
-            assert!(after_the_signal >= TASK_TIME / 2, "{threads:?}");
-            runtime.shutdown_timeout(LIMIT);
-        }
-    }
+    // --- the stop ---
 
     #[test]
     fn the_rest_of_a_drain_limit_is_never_less_than_no_time() {
@@ -1817,15 +1750,11 @@ pub(crate) mod tests {
             },
         },
         Scenario {
-            name: "one-limit",
-            run: the_drain_limit_starts_at_the_stop_signal,
+            name: "limit-after-main",
+            run: the_drain_limit_starts_at_the_return_of_main,
             panics: 0,
-            check: |lines| {
-                assert_eq!(
-                    lines,
-                    ["ERROR the drain limit of the program child passed, and tasks still run: 1"]
-                );
-            },
+            // A limit that passed is one line. This limit does not pass.
+            check: no_line,
         },
         Scenario {
             name: "sigterm",
@@ -2021,36 +1950,38 @@ pub(crate) mod tests {
         }
     }
 
-    /// The drain limit starts at the stop signal. A `main` that continues
-    /// after the signal uses a part of the limit, and the wait for the tasks
-    /// gets only the rest.
-    fn the_drain_limit_starts_at_the_stop_signal() {
+    /// The drain limit starts at the return of `main`. A `main` that
+    /// continues after the stop signal for longer than the limit leaves a
+    /// task the whole limit.
+    fn the_drain_limit_starts_at_the_return_of_main() {
         const DRAIN: Duration = Duration::from_secs(3);
-        const MAIN_AFTER_THE_SIGNAL: Duration = Duration::from_secs(2);
+        const MAIN_AFTER_THE_SIGNAL: Duration = Duration::from_millis(3500);
         let program = Program::new(CHILD_PROGRAM, Threads::One, DRAIN);
-        let (release, released) = mpsc::channel::<()>();
-        let (to_test, from_main) = mpsc::channel();
+        let written = Arc::new(AtomicBool::new(false));
+        let in_task = Arc::clone(&written);
 
         let status = run(program, |context| async move {
-            drop(context.tasks().spawn_blocking("stuck-call", move || {
-                // The call ends only when the test drops its end.
-                let _ = released.recv();
-            }));
-            to_test.send(Instant::now()).unwrap();
             kill_process(getpid(), Signal::TERM).unwrap();
             within(context.shutdown().cancelled()).await;
+            // `main` continues after the signal, as a `main` that waits for
+            // its open requests does.
             tokio::time::sleep(MAIN_AFTER_THE_SIGNAL).await;
+            drop(
+                context
+                    .tasks()
+                    .spawn_must_complete("late-write", async move {
+                        tokio::time::sleep(TASK_TIME).await;
+                        in_task.store(true, Ordering::SeqCst);
+                    }),
+            );
 
             ExitCode::from(STATUS_OF_MAIN)
         });
-        let waited = from_main.recv().unwrap().elapsed();
 
         assert!(same_status(status, STATUS_OF_MAIN));
-        assert!(waited >= DRAIN, "{waited:?}");
-        // A limit that starts at the return of `main` gives the sum of the
-        // two times.
-        assert!(waited < DRAIN + MAIN_AFTER_THE_SIGNAL / 2, "{waited:?}");
-        drop(release);
+        // A limit that starts at the signal passed before `main` returned,
+        // and the task then gets no time.
+        assert!(written.load(Ordering::SeqCst));
     }
 
     fn sigterm_stops_a_program() {

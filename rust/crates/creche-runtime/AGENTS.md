@@ -372,8 +372,9 @@ reason. The packet that writes the three bodies obeys these rules:
   in its own `main`. The owner of the crate decides if the runtime gets one
   constant for it.
 - `service::run` does not stop a `main` that continues after the stop
-  signal. The drain limit of the program starts at that signal. When `main`
-  uses the whole limit, `service::run` waits for no tracked task. A `main`
+  signal. The drain limit of the program starts when `main` returns. The
+  time that `main` uses after the signal plus the drain limit must thus be
+  less than `TimeoutStopSec=` of the unit. No check holds that sum. A `main`
   that never returns holds the process until systemd kills it.
 - `service` differs from the `main` of each Python service, and `args`
   differs from `argparse` of Python. The doc comment of each of the two
