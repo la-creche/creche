@@ -901,8 +901,59 @@ fn outcome_of(decision: &str, reason: &str) -> AuditOutcome {
     outcome.unwrap_or_else(|| panic!("{decision} {reason}: no outcome"))
 }
 
+/// The advisory headers of a vector: each text of `claims` is the value of
+/// one header.
+fn raw_claimed(claims: &Json) -> RawClaimed<'_> {
+    let mut raw = RawClaimed::new();
+    if let Some(value) = claims["session_id"].as_str() {
+        raw = raw.with_session_id(value);
+    }
+
+    if let Some(value) = claims["turn_id"].as_str() {
+        raw = raw.with_turn_id(value);
+    }
+
+    if let Some(value) = claims["delegation_id"].as_str() {
+        raw = raw.with_delegation_id(value);
+    }
+
+    raw
+}
+
+/// The revision of the held call of [`gated`] for a record that names no
+/// revision of a grant file.
+const STAND_IN_REV: &str = "reg-9f21c4";
+
+/// `record` with the gate and the wait of a vector. A record takes its gate
+/// from a held call, so the function makes the held call of that gate first.
+/// A vector with a wait and no gate has no record: the function stops the
+/// test there.
+///
+/// The held call is a stand-in. A record reads only its gate, so the executor
+/// is fixed, and a record with no revision of a grant file gets a fixed one.
+fn gated(record: AuditRecord, args: &serde_json::Map<String, Json>) -> AuditRecord {
+    let waited_ms = args["waited_ms"].as_u64().unwrap();
+    let Some(gate) = args["gate"].as_str() else {
+        assert_eq!(waited_ms, 0, "a wait with no gate");
+
+        return record;
+    };
+    let grants_rev = record
+        .grants_rev()
+        .cloned()
+        .unwrap_or_else(|| STAND_IN_REV.parse().unwrap());
+    let held = Held::in_test(
+        record.family().clone(),
+        grants_rev,
+        Executor::Delegate,
+        record.args().clone(),
+        gate.parse().unwrap(),
+    );
+
+    record.with_gate(&held, waited_ms)
+}
+
 fn audit_record(args: &serde_json::Map<String, Json>) -> AuditRecord {
-    let parsed = |key: &str| args[key].as_str().map(|text| text.parse().unwrap());
     let family: FamilyName = args["family"].as_str().unwrap().parse().unwrap();
     let (action, arguments) = action_of(args);
     let sandbox = args["sandbox_id"]
@@ -914,12 +965,7 @@ fn audit_record(args: &serde_json::Map<String, Json>) -> AuditRecord {
         (Some(_), false) => panic!("a sandbox name with no proof"),
         (None, true) => panic!("a trusted sandbox with no name"),
     };
-    let claims = &args["claimed"];
-    let (claimed, dropped) = Claimed::read(&RawClaimed {
-        session_id: claims["session_id"].as_str(),
-        turn_id: claims["turn_id"].as_str(),
-        delegation_id: claims["delegation_id"].as_str(),
-    });
+    let (claimed, dropped) = Claimed::read(&raw_claimed(&args["claimed"]));
     let mut callers: Vec<FamilyName> = strings(&args["chain"])
         .iter()
         .map(|name| name.parse().unwrap())
@@ -930,23 +976,22 @@ fn audit_record(args: &serde_json::Map<String, Json>) -> AuditRecord {
     assert!(dropped.is_empty());
     assert!(callers.pop().is_none_or(|last| last == family));
 
-    AuditRecord {
-        at: time_of(args),
-        family,
-        sandbox,
-        grants_rev: parsed("grants_rev"),
-        action,
-        args: arguments,
-        outcome: outcome_of(
-            args["decision"].as_str().unwrap(),
-            args["reason"].as_str().unwrap(),
-        ),
-        latency_ms: args["latency_ms"].as_u64(),
-        waited_ms: args["waited_ms"].as_u64().unwrap(),
-        gate: args["gate"].as_str().map(|gate| gate.parse().unwrap()),
-        claimed,
-        callers,
+    let outcome = outcome_of(
+        args["decision"].as_str().unwrap(),
+        args["reason"].as_str().unwrap(),
+    );
+    let mut record = AuditRecord::new(time_of(args), family, action, arguments, outcome, claimed)
+        .with_sandbox(sandbox)
+        .with_callers(callers);
+    if let Some(grants_rev) = args["grants_rev"].as_str() {
+        record = record.with_grants_rev(grants_rev.parse().unwrap());
     }
+
+    if let Some(latency_ms) = args["latency_ms"].as_u64() {
+        record = record.with_latency_ms(latency_ms);
+    }
+
+    gated(record, args)
 }
 
 #[test]
@@ -955,7 +1000,7 @@ fn an_audit_record_is_the_line_that_the_python_chaperone_writes() {
     let outcomes: HashSet<AuditOutcome> = walk_lines(&surface, |args| {
         let record = audit_record(args);
 
-        (record.to_line(), record.at, record.outcome)
+        (record.to_line(), record.at(), record.outcome())
     });
     let each_outcome = 3 + 2 + Reason::ALL.len();
 
@@ -1009,17 +1054,14 @@ fn unidentified_record(args: &serde_json::Map<String, Json>) -> UnidentifiedReco
             } else {
                 Unidentified::UnknownToken
             },
-            args: ArgsDigest {
-                bytes: u64::try_from(input.len()).unwrap(),
-                sha256: sha256_hex(&input).parse::<Sha256Hex>().unwrap(),
-            },
+            args: ArgsDigest::new(
+                u64::try_from(input.len()).unwrap(),
+                sha256_hex(&input).parse::<Sha256Hex>().unwrap(),
+            ),
         }
     };
 
-    UnidentifiedRecord {
-        at: time_of(args),
-        request,
-    }
+    UnidentifiedRecord::new(time_of(args), request)
 }
 
 #[test]
@@ -1027,12 +1069,12 @@ fn an_unidentified_record_is_the_line_that_the_python_chaperone_writes() {
     let surface = vectors::surface(UNIDENTIFIED_LINE);
     let kinds = walk_lines(&surface, |args| {
         let record = unidentified_record(args);
-        let kind = match &record.request {
+        let kind = match record.request() {
             UnidentifiedRequest::NoFamily { refusal, .. } => Some(*refusal),
             UnidentifiedRequest::Oversized { .. } => None,
         };
 
-        (record.to_line(), record.at, kind)
+        (record.to_line(), record.at(), kind)
     });
 
     assert_eq!(surfaces_of("UnidentifiedRecord"), [UNIDENTIFIED_LINE]);
@@ -1123,10 +1165,7 @@ fn a_verb_is_an_entry_of_the_python_catalog() {
 fn an_advisory_header_is_kept_when_the_python_chaperone_keeps_it() {
     for vector in vectors::surface("id.session_id.chaperone").vectors {
         let value = vector.input.text().unwrap();
-        let (claimed, dropped) = Claimed::read(&RawClaimed {
-            session_id: Some(&value),
-            ..RawClaimed::default()
-        });
+        let (claimed, dropped) = Claimed::read(&RawClaimed::new().with_session_id(&value));
         let kept = vector.result == Outcome::Accepted;
 
         assert_eq!(claimed.session_id().is_some(), kept, "{}", vector.id);
@@ -1135,11 +1174,10 @@ fn an_advisory_header_is_kept_when_the_python_chaperone_keeps_it() {
 
     for vector in vectors::surface("id.ulid.chaperone").vectors {
         let value = vector.input.text().unwrap();
-        let (claimed, dropped) = Claimed::read(&RawClaimed {
-            session_id: None,
-            turn_id: Some(&value),
-            delegation_id: Some(&value),
-        });
+        let raw = RawClaimed::new()
+            .with_turn_id(&value)
+            .with_delegation_id(&value);
+        let (claimed, dropped) = Claimed::read(&raw);
         let kept = vector.result == Outcome::Accepted;
 
         assert_eq!(claimed.turn_id().is_some(), kept, "{}", vector.id);
