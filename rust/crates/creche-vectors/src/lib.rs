@@ -27,8 +27,9 @@
 //! 3. The file or a vector of it is no JSON object.
 //! 4. The name or the entry point of the file differs from its index row.
 //! 5. A count of the file differs from its index row.
-//! 6. Two vectors of the file have the same id.
-//! 7. An input, an `output` or a marker object has a form that the format
+//! 6. The file holds no vector.
+//! 7. Two vectors of the file have the same id.
+//! 8. An input, an `output` or a marker object has a form that the format
 //!    does not name.
 //!
 //! The reader refuses the index in each of these cases:
@@ -1066,8 +1067,9 @@ pub fn index() -> Result<Vec<IndexRow>, VectorsError> {
 /// # Errors
 ///
 /// [`VectorsError`] for a surface that the index does not hold, for a format
-/// that is not 1, and for a count of vectors that differs from the index.
-/// The doc comment of this crate lists each other case.
+/// that is not 1, for a count of vectors that differs from the index and for
+/// a file with no vector. The doc comment of this crate lists each other
+/// case.
 pub fn surface(name: &str) -> Result<Surface, VectorsError> {
     let Some(row) = index()?.into_iter().find(|row| row.surface == name) else {
         return Err(VectorsError::new(
@@ -1162,6 +1164,9 @@ fn surface_of(row: &IndexRow, text: &str) -> Result<Surface, VectorsError> {
             raw.vectors.len(),
             row.vectors
         )));
+    }
+    if raw.vectors.is_empty() {
+        return Err(refused(String::from("the file holds no vector")));
     }
     for outcome in Outcome::EACH {
         let found = raw
@@ -1971,6 +1976,19 @@ mod tests {
             "the file holds 0 refused vectors, and the index says 1"
         );
         assert!(surface_of(&row(0, 0, 1), &raised).is_ok());
+    }
+
+    /// A test that walks such a file compares nothing. The count of the
+    /// index row is the count of the file here, so only this rule fails.
+    #[test]
+    fn a_file_with_no_vector_is_refused() {
+        let text = file(&json!([]));
+
+        assert_eq!(refused(&row(0, 0, 0), &text), "the file holds no vector");
+        assert_eq!(
+            refused(&row(1, 0, 0), &text),
+            "the file holds 0 vectors, and the index says 1"
+        );
     }
 
     #[test]
