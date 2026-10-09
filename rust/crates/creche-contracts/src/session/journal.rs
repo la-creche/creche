@@ -967,6 +967,18 @@ impl From<Map<String, Value>> for Note {
 /// Each field of each body is a valid type, so each value of this enum is a
 /// body that `attendance` can write.
 ///
+/// The set of kinds is closed, so this enum has no variant for an unknown
+/// kind. A reader refuses a line of another kind before it reads a body:
+/// [`StoredLine::parse`] gives [`LineError::BadKind`]. [`JournalBody::read`]
+/// refuses a body that is not the body of its kind. A newer writer can send
+/// three values that the reader accepts:
+///
+/// - A member that a typed body does not have. The reader ignores it.
+/// - A note word that [`ServiceNote`] does not have. The body is a
+///   [`Note::Other`].
+/// - A gate word that [`GateReason`] does not know. The word is a
+///   [`GateReason::Other`].
+///
 /// The body of a `pi_event` is the event of pi. The contract says that the
 /// host does not change it, so it stays a JSON object. The writer sorts the
 /// keys of that object. The Python writer keeps the order of pi.
@@ -1236,6 +1248,12 @@ struct OverrunBody {
 /// A journal line has a sequence number. The two records that the stream makes
 /// itself have none: they are not in a journal file, and they hold the newest
 /// sequence number that the reader got.
+///
+/// The set of kinds is closed, so this enum has no variant for an unknown
+/// record. A reader refuses a record of a kind that [`LineKind`] does not
+/// have. This crate has the writer of a record and no reader that makes this
+/// enum. [`StoredLine::parse`] reads a line of a journal file. It gives
+/// [`LineError::BadSeq`] for the two records with no sequence number.
 ///
 /// ```
 /// use creche_contracts::session::{StreamRecord, Timestamp};
@@ -1918,6 +1936,52 @@ mod tests {
                 "\n"
             )
         );
+    }
+
+    #[test]
+    fn a_stored_line_is_no_record_that_the_stream_makes() {
+        let ts = at("2026-10-05T19:22:31.070Z");
+        let records = [
+            StreamRecord::Heartbeat { ts, last_seq: 77 },
+            StreamRecord::Overrun { ts, last_seq: 77 },
+        ];
+
+        for record in records {
+            assert_eq!(
+                StoredLine::parse(&record.encode().unwrap()).unwrap_err(),
+                LineError::BadSeq
+            );
+        }
+    }
+
+    #[test]
+    fn a_reader_takes_three_values_of_a_newer_writer() {
+        let extra = object(json!({"title": "A", "colour": "red"}));
+        let word = object(json!({"decision": "approval_escalated", "waited_s": 3}));
+        let note = object(json!({"note": "written_by_hand"}));
+        let holder = object(json!({"holder": "kiosk", "reason": "granted"}));
+        let kind = br#"{"journal_seq":1,"kind":"turn_paused"}"#;
+
+        assert_eq!(
+            JournalBody::read(LineKind::SessionTitled, extra).unwrap(),
+            JournalBody::SessionTitled(SessionTitled::new("A".parse().unwrap()))
+        );
+        assert!(matches!(
+            JournalBody::read(LineKind::ApprovalResolved, word).unwrap(),
+            JournalBody::ApprovalResolved(resolved)
+                if resolved.decision().as_str() == "approval_escalated" && resolved.waited_s() == 3
+        ));
+        assert!(matches!(
+            JournalBody::read(LineKind::Note, note).unwrap(),
+            JournalBody::Note(Note::Other(_))
+        ));
+        assert_eq!(
+            JournalBody::read(LineKind::WriterChanged, holder)
+                .unwrap_err()
+                .kind(),
+            LineKind::WriterChanged
+        );
+        assert_eq!(StoredLine::parse(kind).unwrap_err(), LineError::BadKind);
     }
 
     #[test]
