@@ -879,6 +879,12 @@ def _paragraph(number: int) -> str:
 #: A text of one chunk more than one call of the embedder takes.
 _MANY_CHUNKS: Final = "\n\n".join(_paragraph(number) for number in range(EMBED_MAX_BATCH + 1))
 
+#: A text whose chunks show the size and the overlap that `index_scope` cuts
+#: a text with. The first two paragraphs and their break fill one chunk of
+#: 1000 code points. The third paragraph is one code point longer than a
+#: chunk. A size or an overlap that differs by one gives other chunks.
+_SHOWS_THE_CUT: Final = "\n\n".join(("a" * 499, "b" * 499, "c" * 1001))
+
 #: Five names whose order as paths differs from their order as texts. `B.md`
 #: sorts before `a.md` by code point.
 _FIVE: Final = (
@@ -923,6 +929,7 @@ SCENARIOS: Final[tuple[Scenario, ...]] = (
         (("a.md", _MANY_CHUNKS), ("B.md", "The file before the long file.")),
         (_run(), _remove("a.md"), _run()),
     ),
+    Scenario("default-size-and-overlap", (("a.md", _SHOWS_THE_CUT),), (_run(),)),
     Scenario(
         "files-with-no-chunk",
         (("a.md", ""), ("B.md", " \n\n\t\n"), ("a b.md", "The one file with a chunk.")),

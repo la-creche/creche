@@ -188,6 +188,6 @@
   {"accepted":20,"entry":"library.__main__.tei_url","path":"library/tei_url.json","raised":0,"refused":6,"surface":"library.tei_url","vectors":26},
   {"accepted":22,"entry":"library.library.index_scope","path":"library/embedding.json","raised":0,"refused":5,"surface":"library.embedding","vectors":27},
   {"accepted":4,"entry":"library.library.index_scope","path":"library/schema.json","raised":0,"refused":0,"surface":"library.schema","vectors":4},
-  {"accepted":11,"entry":"library.library.index_scope","path":"library/index_scope.json","raised":0,"refused":0,"surface":"library.index_scope","vectors":11}
+  {"accepted":12,"entry":"library.library.index_scope","path":"library/index_scope.json","raised":0,"refused":0,"surface":"library.index_scope","vectors":12}
  ]
 }
