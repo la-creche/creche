@@ -36,7 +36,8 @@
 //! |---|---|
 //! | 0 | A stop signal ended the program, or `--check` passed. |
 //! | 78 | The program refused its start: a config that is not valid, a key file that it cannot use, or a wrong word of the command line. |
-//! | 1 | A listener did not bind or stopped with an error, or a panic ended the program. |
+//! | 3 | The listener did not bind. The Python noticeboard ends with the same status. |
+//! | 1 | The listener stopped with an error, or a panic ended the program. |
 //!
 //! SIGHUP ends the program with the default action of the signal: the program
 //! has no reload.
@@ -133,11 +134,19 @@ const OPEN_REQUESTS: Duration = Duration::from_secs(5);
 /// each service that time. `OPEN_REQUESTS` plus this limit is less.
 pub const DRAIN: Duration = Duration::from_secs(10);
 
-/// The exit status of a program whose listener did not bind, or stopped with
-/// an error. A restart can repair that cause, so the status is not
-/// `EX_CONFIG`. `creche_runtime::service` has the open question about this
-/// status.
-pub const NO_LISTENER: u8 = 1;
+// CONTRACT-QUESTION: no contract and no answer of the owner names the exit
+// status of a program whose listener does not bind. `rust/AGENTS.md`, "The
+// rules for a service", rule 17 lists the causes of a refused start, and
+// this cause is not one of them. `creche_runtime::service` has the same
+// question, and each service states the status in its own `main`. The
+// reading here is the status of the Python noticeboard, which is 3: the
+// status of `uvicorn` for a start that failed. A restart can repair the
+// cause, so the status is not `EX_CONFIG`. A change costs this constant.
+/// The exit status of a program whose listener did not bind. The Python
+/// origin is `STARTUP_FAILURE` of `uvicorn/config.py:80`. `uvicorn.run` ends
+/// the Python noticeboard with it for an address that is in use
+/// (`uvicorn/main.py:628-629`).
+pub const NO_LISTENER: u8 = 3;
 
 /// The count of worker threads. Two handlers then run at one time, as two
 /// handlers of the Python noticeboard do.
@@ -372,7 +381,9 @@ fn report(config: &NoticeboardConfig, key: KeyState) -> Vec<String> {
 /// config and serves the routes until the stop signal.
 ///
 /// A bind that fails is no refused start: the address can be free at the
-/// next start. The status is then [`NO_LISTENER`].
+/// next start. The status is then [`NO_LISTENER`]. A listener that stops
+/// with an error after the bind ends the program with status 1. The Python
+/// server has no such end: it writes the error of an accept and continues.
 async fn serve_until_the_stop(context: Context, config: NoticeboardConfig) -> ExitCode {
     let address = BindAddress::on(config.bind().clone(), config.port());
     let bound = match bind(Listen::Tcp(address)).await {
@@ -409,7 +420,7 @@ async fn serve_until_the_stop(context: Context, config: NoticeboardConfig) -> Ex
         Err(failure) => {
             error!(NAME, "{failure}");
 
-            ExitCode::from(NO_LISTENER)
+            ExitCode::FAILURE
         }
     }
 }
