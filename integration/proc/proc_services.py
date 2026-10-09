@@ -40,6 +40,7 @@ class Service(StrEnum):
     CAREGIVER = "caregiver"
     CHAPERONE = "chaperone"
     NOTICEBOARD = "noticeboard"
+    NOTICEBOARD_VERIFY = "noticeboard-verify"
 
 
 class Origin(StrEnum):
@@ -60,7 +61,8 @@ class StartEntry:
     #: The one environment variable that replaces `program` and `selector`.
     override: str
     #: The unit files under `systemd/` whose `ExecStart` is this command.
-    #: Empty for a command the operator runs by hand.
+    #: Empty for a command that no unit runs: the operator runs it by hand,
+    #: or the release executor runs it as a verify hook (contract 06 §4).
     units: tuple[str, ...]
 
 
@@ -114,6 +116,12 @@ SERVICES: Final[dict[Service, StartEntry]] = {
         selector=(),
         override="CRECHE_PROC_NOTICEBOARD",
         units=("creche-noticeboard.service",),
+    ),
+    Service.NOTICEBOARD_VERIFY: StartEntry(
+        program="noticeboard-verify",
+        selector=(),
+        override="CRECHE_PROC_NOTICEBOARD_VERIFY",
+        units=(),
     ),
 }
 
