@@ -59,7 +59,7 @@ use ::http::header::{
 use ::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use bytes::Bytes;
 use creche_contracts::config::{
-    AttendanceTarget, BindAddress, BindHost, HttpUrl, Port, SocketPath,
+    AttendanceTarget, BindAddress, BindHost, HttpUrl, Port, SocketPath, UrlScheme,
 };
 use creche_contracts::secret::Secret;
 use http_body_util::{BodyExt, Full};
@@ -79,12 +79,6 @@ use crate::token::BEARER;
 /// Python client gives the socket the base URL `http://sessiond`, for example
 /// `UDS_BASE_URL` of `door-owui/src/agent_door_owui/config.py:30`.
 const ATTENDANCE_HOST: &str = "sessiond";
-
-/// The scheme of a URL that the client can call.
-const HTTP_SCHEME: &str = "http://";
-
-/// The scheme of a URL that needs TLS.
-const HTTPS_SCHEME: &str = "https://";
 
 /// The port of an `http` URL that names none. The `Host` header of such a
 /// target holds no port.
@@ -278,14 +272,12 @@ impl TryFrom<&HttpUrl> for Target {
     /// [`TargetError::NotAnAddress`] for a URL with a query or a fragment,
     /// and for a URL whose host or port the client cannot connect to.
     fn try_from(url: &HttpUrl) -> Result<Self, Self::Error> {
-        let text = url.as_str();
-        if text.starts_with(HTTPS_SCHEME) {
-            return Err(TargetError::TlsNotSupported);
-        }
-
-        let rest = text
-            .strip_prefix(HTTP_SCHEME)
-            .ok_or(TargetError::NotAnAddress)?;
+        // `HttpUrl` is the one home of the scheme texts. A new scheme there
+        // is a build error here.
+        let rest = match url.scheme() {
+            UrlScheme::Http => url.after_scheme(),
+            UrlScheme::Https => return Err(TargetError::TlsNotSupported),
+        };
         // CONTRACT-QUESTION: no contract gives the base URL of a service a
         // grammar (contract 02 §3 rules 1 and 2 name only the socket and the
         // LAN address). `HttpUrl` checks only the scheme, the user part and

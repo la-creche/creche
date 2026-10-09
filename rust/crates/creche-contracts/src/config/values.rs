@@ -929,8 +929,53 @@ impl Error for SecondsError {}
 /// The scheme of a URL that a client reaches with no TLS.
 pub(super) const HTTP_SCHEME: &str = "http://";
 
-/// The two schemes that a URL of a config can have.
-const URL_SCHEMES: [&str; 2] = [HTTP_SCHEME, "https://"];
+/// The scheme of a URL that a client reaches only with TLS.
+const HTTPS_SCHEME: &str = "https://";
+
+/// The scheme of an [`HttpUrl`].
+///
+/// The set is closed. A text with another scheme is no [`HttpUrl`], so no
+/// reader gets a third value. A client that has no TLS reads the scheme and
+/// refuses [`UrlScheme::Https`].
+///
+/// ```
+/// use creche_contracts::config::{HttpUrl, UrlScheme};
+///
+/// let plain: HttpUrl = "http://192.0.2.10:8300/api".parse()?;
+/// let tls: HttpUrl = "https://192.0.2.10".parse()?;
+///
+/// assert_eq!(plain.scheme(), UrlScheme::Http);
+/// assert_eq!(tls.scheme(), UrlScheme::Https);
+/// # Ok::<(), creche_contracts::config::HttpUrlError>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UrlScheme {
+    /// `http://`: a client reaches the service with no TLS.
+    Http,
+    /// `https://`: a client reaches the service only with TLS.
+    Https,
+}
+
+impl UrlScheme {
+    /// The two schemes that a URL of a config can have.
+    const EACH: [Self; 2] = [Self::Http, Self::Https];
+
+    /// The text of the scheme at the start of a URL.
+    const fn prefix(self) -> &'static str {
+        match self {
+            Self::Http => HTTP_SCHEME,
+            Self::Https => HTTPS_SCHEME,
+        }
+    }
+
+    /// The scheme at the start of `text`, and the text after it. `None` for a
+    /// text that starts with neither scheme.
+    fn split(text: &str) -> Option<(Self, &str)> {
+        Self::EACH
+            .into_iter()
+            .find_map(|scheme| Some((scheme, text.strip_prefix(scheme.prefix())?)))
+    }
+}
 
 /// The characters that end the authority of a URL.
 pub(super) const AUTHORITY_END: [char; 3] = ['/', '?', '#'];
@@ -985,6 +1030,35 @@ impl HttpUrl {
         self.0.trim_end_matches('/')
     }
 
+    /// The scheme of the URL.
+    #[must_use]
+    pub fn scheme(&self) -> UrlScheme {
+        self.parts().0
+    }
+
+    /// The URL with no scheme: the host, and then each part that the config
+    /// gives after it. A client reads its host, its port and its base path
+    /// from this text. It reads the scheme only with [`HttpUrl::scheme`].
+    ///
+    /// ```
+    /// use creche_contracts::config::HttpUrl;
+    ///
+    /// let url: HttpUrl = "http://192.0.2.10:8300/api/".parse()?;
+    /// assert_eq!(url.after_scheme(), "192.0.2.10:8300/api/");
+    /// # Ok::<(), creche_contracts::config::HttpUrlError>(())
+    /// ```
+    #[must_use]
+    pub fn after_scheme(&self) -> &str {
+        self.parts().1
+    }
+
+    /// The scheme of the URL, and the text after it.
+    fn parts(&self) -> (UrlScheme, &str) {
+        // Each constructor of the type gives a text that starts with one of
+        // the two schemes. The second value thus stands for no URL.
+        UrlScheme::split(&self.0).unwrap_or((UrlScheme::Http, ""))
+    }
+
     /// The URL of a service on the LAN address: `http://<address>:<port>`.
     #[must_use]
     pub fn on_lan(address: &LanAddress, port: Port) -> Self {
@@ -996,10 +1070,7 @@ impl FromStr for HttpUrl {
     type Err = HttpUrlError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let rest = URL_SCHEMES
-            .iter()
-            .find_map(|scheme| text.strip_prefix(scheme))
-            .ok_or(HttpUrlError::NoScheme)?;
+        let (_, rest) = UrlScheme::split(text).ok_or(HttpUrlError::NoScheme)?;
         if text
             .chars()
             .any(|character| character.is_control() || pytext::is_space(character))
@@ -1492,6 +1563,36 @@ mod tests {
             HttpUrl::on_lan(&address, Port::fixed(8300).unwrap()).as_str(),
             "http://192.0.2.10:8300"
         );
+    }
+
+    #[test]
+    fn a_url_gives_its_scheme_and_the_text_after_it() {
+        for (text, scheme, rest) in [
+            ("http://192.0.2.10:8300", UrlScheme::Http, "192.0.2.10:8300"),
+            (
+                "http://192.0.2.10:8300/api/",
+                UrlScheme::Http,
+                "192.0.2.10:8300/api/",
+            ),
+            ("https://host.example//", UrlScheme::Https, "host.example//"),
+            ("https://[::1]:8350", UrlScheme::Https, "[::1]:8350"),
+            ("http://host/a?b=c#d", UrlScheme::Http, "host/a?b=c#d"),
+            // The scheme is the start of the text only. A later copy of
+            // either scheme text is a part of the rest.
+            ("http://https://host", UrlScheme::Http, "https://host"),
+            ("https://http://host", UrlScheme::Https, "http://host"),
+        ] {
+            let url: HttpUrl = text.parse().unwrap();
+
+            assert_eq!(url.scheme(), scheme, "{text:?}");
+            assert_eq!(url.after_scheme(), rest, "{text:?}");
+        }
+
+        let address: LanAddress = "192.0.2.10".parse().unwrap();
+        let on_lan = HttpUrl::on_lan(&address, Port::fixed(8300).unwrap());
+
+        assert_eq!(on_lan.scheme(), UrlScheme::Http);
+        assert_eq!(on_lan.after_scheme(), "192.0.2.10:8300");
     }
 
     #[test]

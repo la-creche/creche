@@ -291,13 +291,6 @@ reason. The packet that writes the three bodies obeys these rules:
 - `http::client::Target::unix` returns no error. A host text that a header
   cannot hold gives an empty `Host` header. Each caller gives a constant of
   its code as that text.
-- `http::client` holds a second copy of the two scheme texts of a URL,
-  `http://` and `https://`. `creche_contracts::config` holds the first copy,
-  and that copy is private. `HttpUrl` gives its whole text and no part of
-  it, so the client reads the scheme from that text. Rule 13 of
-  `rust/AGENTS.md` permits one source for a value. An accessor of `HttpUrl`
-  for the scheme and for the authority removes the second copy. That change
-  is in `creche-contracts`, and the owner of that crate decides it.
 - The connect limit of `http::client` does not stop the lookup of a host
   name. `tokio` runs the lookup on a blocking thread. That thread continues
   until the resolver of the host answers. A target with an IP address or
