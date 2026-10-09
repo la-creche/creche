@@ -385,8 +385,9 @@ to record a notice for the operator. Packet `decisions-notice` adds the
 notice. A peer does not learn which rule a text broke. Only the notice
 names the rule.
 
-No module calls the reader yet. "Known gaps" names the packet that moves
-each module to it.
+No module of a contract calls the reader yet. "Known gaps" names the packet
+that moves each module to it. The two readers of `vectors/data` call `check`
+for the index file only.
 
 ## Time
 

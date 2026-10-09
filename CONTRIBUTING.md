@@ -255,9 +255,10 @@ The pull request makes these six changes:
 3. It writes `uv.lock` again with `uv lock`.
 4. In each module under `vectors/surfaces/`, it removes each surface whose
    entry point is in the package. It then removes each module there that no
-   surface needs. It keeps each file under `vectors/data`. It pins each
-   data file that has no generator after the change by its SHA-256. A pin
-   shows an edit that a person made by hand.
+   surface needs. It keeps each file under `vectors/data`. It freezes each
+   data file that has no generator after the change. `vectors/README.md`,
+   "A frozen file", has the steps. The index then holds the SHA-256 of each
+   frozen file, and a test fails for an edit that a person made by hand.
 5. Outside the directory of the package, it removes each test that imports
    the package. It removes each stand-in that only the Python service
    needed.

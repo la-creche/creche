@@ -34,13 +34,24 @@ directory is not a workspace package, so a change here does not change
     result. The one exception is resolution (c) in `rust/AGENTS.md`, section
     "The differential test". The pull request then explains why resolutions
     (d), (b) and (a) do not fit. A plain Rust test holds the removed input.
+11. Do not change a frozen file. A frozen file is a data file whose Python
+    origin left this repository. `README.md`, "A frozen file", has the
+    steps and the checks.
+    - The index holds the SHA-256 of each frozen file. A test fails when
+      the bytes of a file do not have that digest. Restore the file with
+      git.
+    - Freeze a file only with `--freeze`. Do not write a line of the map
+      `frozen` by hand. Do not change a digest.
+    - The Rust test of a frozen surface is the one reader of its file.
+    - Add no vector to a frozen file. Write each new case as a plain Rust
+      test, with the input in the test.
 
 ## Module map
 
 | Module | Owns |
 |---|---|
 | `core.py` | `normalize`, the markers, the input forms, `attempt`, `Vector`, `Surface`, `render` |
-| `generate.py` | the list of groups, the index, `write`, `--check`, `--counts` |
+| `generate.py` | the list of groups, the index, the frozen files, `write`, `--check`, `--counts`, `--freeze` |
 | `surfaces/ids.py` | the id grammars and `ids/disagreements.json` |
 | `surfaces/family_cases.py` | the written `family.yaml` inputs |
 | `surfaces/family_file.py` | `family_file`, `family_file.host` and `family_file.registries.json` |
@@ -70,6 +81,26 @@ directory is not a workspace package, so a change here does not change
 - Rule 10 depends on resolution (c) of `rust/AGENTS.md`. That text waits
   for a confirmation of the owner. "Known gaps" of `rust/AGENTS.md` has the
   open point.
+- No file is frozen yet. The pull request that removes the first Python
+  package freezes the first files.
+- No Rust code compares the bytes of a frozen file with its digest. The
+  readers of `creche-testkit` and of `creche-contracts` check only the form
+  of the map `frozen`. `vectors/tests` holds each digest.
+- The test of `agent-family` reads the index as a JSON tree. It checks no
+  part of the map `frozen`.
+- The generator does not read the value of `surfaces` in the committed
+  index. The two Rust readers refuse an index with a wrong row.
+- The generator reads a byte of the index that is not UTF-8 as U+FFFD. The
+  two Rust readers refuse an index with such a byte.
+- The committed index is the one home of the map `frozen`. A merge can
+  take an index that lacks a line of the map. `--check` then reports that
+  file as `left over`. A run of the generator with no flag removes the file
+  and prints its path. After that run, no test under `vectors/tests` fails.
+  The Rust test of that surface fails.
+- No command removes a file from the map `frozen`.
+- `ids/disagreements.json` holds only the copies of a grammar that a group
+  builds. When the file of a copy becomes a frozen file, the results of that
+  copy leave `ids/disagreements.json`.
 - No vector covers a scalar of `component.yaml` that PyYAML cannot build,
   such as a word with the tag `!!int`. The Python code refuses it and names
   no line. The Rust reader refuses it and names a line. Such a vector first

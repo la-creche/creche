@@ -10,8 +10,9 @@
 //! The five readers do not agree on each document. The test of this module
 //! holds a table of the documents on which two readers differ.
 //!
-//! A view is a record of what a reader took. Its fields are public: no code
-//! takes a view as an input that it trusts.
+//! A view is a record of what a reader took. Only a reader function of this
+//! module builds one. Each field of a view is private, and an accessor with
+//! the name of the field gives its value.
 
 use std::collections::BTreeSet;
 
@@ -60,53 +61,180 @@ fn not_negative(slot: &Slot<Integer>) -> Option<Integer> {
 /// The epoch that `attendance` uses when a document has none.
 const FIRST_EPOCH: u64 = 1;
 
-/// One sandbox that `attendance` takes from a document.
+/// One sandbox that `attendance` takes from a document. Only [`attendance`]
+/// builds a value.
+///
+/// ```
+/// use creche_contracts::status::views::{AttendanceSandbox, read_attendance};
+///
+/// let bytes = br#"{"sandboxes": [{"id": "chat-s1", "state": "ready"}]}"#;
+/// let status = read_attendance(bytes, &"chat".parse().unwrap()).unwrap();
+/// let sandbox: &AttendanceSandbox = &status.sandboxes()[0];
+/// assert_eq!(sandbox.id().as_str(), "chat-s1");
+/// assert_eq!(sandbox.supervisor_env(), "");
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{AttendanceSandbox, read_attendance};
+///
+/// let bytes = br#"{"sandboxes": [{"id": "chat-s1", "state": "ready"}]}"#;
+/// let status = read_attendance(bytes, &"chat".parse().unwrap()).unwrap();
+/// let sandbox: &AttendanceSandbox = &status.sandboxes()[0];
+/// let with_path = AttendanceSandbox { supervisor_env: String::from("/env"), ..sandbox.clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttendanceSandbox {
-    /// The name of the sandbox.
-    pub id: SandboxName,
-    /// The lifecycle state.
-    pub state: SandboxLifecycle,
-    /// The path of the `supervisor.env`. Empty when the row has none.
-    pub supervisor_env: String,
+    id: SandboxName,
+    state: SandboxLifecycle,
+    supervisor_env: String,
 }
 
-/// What `attendance` takes from one status document.
+impl AttendanceSandbox {
+    /// The name of the sandbox.
+    #[must_use]
+    pub fn id(&self) -> &SandboxName {
+        &self.id
+    }
+
+    /// The lifecycle state.
+    #[must_use]
+    pub fn state(&self) -> SandboxLifecycle {
+        self.state
+    }
+
+    /// The path of the `supervisor.env`. Empty when the row has none.
+    #[must_use]
+    pub fn supervisor_env(&self) -> &str {
+        &self.supervisor_env
+    }
+}
+
+/// What `attendance` takes from one status document. Only [`attendance`]
+/// builds a value.
+///
+/// ```
+/// use creche_contracts::status::views::{AttendanceStatus, read_attendance};
+///
+/// let bytes = br#"{"kind": "attended", "triggers": {"enqueue": true}}"#;
+/// let status: AttendanceStatus = read_attendance(bytes, &"chat".parse().unwrap()).unwrap();
+/// assert_eq!(status.family().as_str(), "chat");
+/// assert_eq!(status.state(), None);
+/// assert!(status.accepts_dispatch());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{AttendanceStatus, read_attendance};
+///
+/// let bytes = br#"{"kind": "attended", "triggers": {"enqueue": true}}"#;
+/// let status: AttendanceStatus = read_attendance(bytes, &"chat".parse().unwrap()).unwrap();
+/// let status = AttendanceStatus { accepts_dispatch: false, ..status };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttendanceStatus {
+    family: FamilyName,
+    kind: Option<Kind>,
+    state: Option<FamilyState>,
+    written_at: Option<Timestamp>,
+    config_rev: String,
+    epoch: Integer,
+    never_valid: bool,
+    blocking_fault: Option<String>,
+    fault_codes: BTreeSet<String>,
+    sandboxes: Vec<AttendanceSandbox>,
+    max_running_turns: Option<Integer>,
+    job_timeout_s: Option<Integer>,
+    accepts_dispatch: bool,
+}
+
+impl AttendanceStatus {
     /// The family that the caller asked for. The reader does not read the
     /// `family` field of the document.
-    pub family: FamilyName,
+    #[must_use]
+    pub fn family(&self) -> &FamilyName {
+        &self.family
+    }
+
     /// The kind. `None` when the document has no kind, or has an unknown
     /// word. The reader has no default kind: a default opens the family to
     /// the doors of that kind.
-    pub kind: Option<Kind>,
+    #[must_use]
+    pub fn kind(&self) -> Option<Kind> {
+        self.kind
+    }
+
     /// The state. `None` when the document has no state, or has an unknown
     /// word.
-    pub state: Option<FamilyState>,
+    #[must_use]
+    pub fn state(&self) -> Option<FamilyState> {
+        self.state
+    }
+
     /// When `caregiver` wrote the document. `None` when the reader cannot
     /// read the field.
-    pub written_at: Option<Timestamp>,
+    #[must_use]
+    pub fn written_at(&self) -> Option<Timestamp> {
+        self.written_at
+    }
+
     /// The revision of the family config mount. Empty when the document has
     /// none.
-    pub config_rev: String,
+    #[must_use]
+    pub fn config_rev(&self) -> &str {
+        &self.config_rev
+    }
+
     /// The epoch of the credentials. An epoch that is missing, negative or
     /// not an integer reads as 1.
-    pub epoch: Integer,
+    #[must_use]
+    pub fn epoch(&self) -> &Integer {
+        &self.epoch
+    }
+
     /// Whether `validation.never_valid` is `true`.
-    pub never_valid: bool,
+    #[must_use]
+    pub fn never_valid(&self) -> bool {
+        self.never_valid
+    }
+
     /// The code of the first fault with `blocks_turns: true` and a code.
-    pub blocking_fault: Option<String>,
+    #[must_use]
+    pub fn blocking_fault(&self) -> Option<&str> {
+        self.blocking_fault.as_deref()
+    }
+
     /// The code of each fault that has one.
-    pub fault_codes: BTreeSet<String>,
+    #[must_use]
+    pub fn fault_codes(&self) -> &BTreeSet<String> {
+        &self.fault_codes
+    }
+
     /// Each sandbox row with a sandbox name and a known state.
-    pub sandboxes: Vec<AttendanceSandbox>,
+    #[must_use]
+    pub fn sandboxes(&self) -> &[AttendanceSandbox] {
+        &self.sandboxes
+    }
+
     /// `limits.max_running_turns`, when it is an integer of zero or more.
-    pub max_running_turns: Option<Integer>,
+    #[must_use]
+    pub fn max_running_turns(&self) -> Option<&Integer> {
+        self.max_running_turns.as_ref()
+    }
+
     /// `limits.job_timeout_s`, when it is an integer of zero or more.
-    pub job_timeout_s: Option<Integer>,
+    #[must_use]
+    pub fn job_timeout_s(&self) -> Option<&Integer> {
+        self.job_timeout_s.as_ref()
+    }
+
     /// Whether `triggers.enqueue` is `true`.
-    pub accepts_dispatch: bool,
+    #[must_use]
+    pub fn accepts_dispatch(&self) -> bool {
+        self.accepts_dispatch
+    }
 }
 
 /// The view of `attendance`: `attendance.family_status.StatusReader.read`.
@@ -195,117 +323,476 @@ fn any_integer(slot: &Slot<Integer>) -> Integer {
     slot.value().cloned().unwrap_or(Integer::from(0))
 }
 
-/// One row of `sandboxes` on the noticeboard.
+/// One row of `sandboxes` on the noticeboard. Only [`noticeboard`] builds a
+/// value.
+///
+/// ```
+/// use creche_contracts::status::views::{SandboxRow, read_noticeboard};
+///
+/// let bytes = br#"{"sandboxes": [{"id": "chat-s1", "image": "sha256:0123456789abcdef"}]}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let row: &SandboxRow = &family.sandboxes()[0];
+/// assert_eq!(row.id(), "chat-s1");
+/// assert_eq!(row.image(), "sha256:0123456789ab");
+/// assert!(!row.has_supervisor_env());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{SandboxRow, read_noticeboard};
+///
+/// let bytes = br#"{"sandboxes": [{"id": "chat-s1", "image": "sha256:0123456789abcdef"}]}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let row: &SandboxRow = &family.sandboxes()[0];
+/// let with_path = SandboxRow { has_supervisor_env: true, ..row.clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxRow {
-    /// The `id` text. The noticeboard does not check it.
-    pub id: String,
-    /// The `state` text.
-    pub state: String,
-    /// The `power` text.
-    pub power: String,
-    /// The first 19 characters of the image.
-    pub image: String,
-    /// The count of CPUs. 0 when the row has none.
-    pub cpus: Integer,
-    /// The `memory` text.
-    pub memory: String,
-    /// The `created_at` text.
-    pub created_at: String,
-    /// The `ready_at` text.
-    pub ready_at: String,
-    /// The `channel` text.
-    pub channel: String,
-    /// Whether the row has a `supervisor_env` text that is not empty.
-    pub has_supervisor_env: bool,
+    id: String,
+    state: String,
+    power: String,
+    image: String,
+    cpus: Integer,
+    memory: String,
+    created_at: String,
+    ready_at: String,
+    channel: String,
+    has_supervisor_env: bool,
 }
 
-/// One fault on the noticeboard.
+impl SandboxRow {
+    /// The `id` text. The noticeboard does not check it.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The `state` text.
+    #[must_use]
+    pub fn state(&self) -> &str {
+        &self.state
+    }
+
+    /// The `power` text.
+    #[must_use]
+    pub fn power(&self) -> &str {
+        &self.power
+    }
+
+    /// The first 19 characters of the image.
+    #[must_use]
+    pub fn image(&self) -> &str {
+        &self.image
+    }
+
+    /// The count of CPUs. 0 when the row has none.
+    #[must_use]
+    pub fn cpus(&self) -> &Integer {
+        &self.cpus
+    }
+
+    /// The `memory` text.
+    #[must_use]
+    pub fn memory(&self) -> &str {
+        &self.memory
+    }
+
+    /// The `created_at` text.
+    #[must_use]
+    pub fn created_at(&self) -> &str {
+        &self.created_at
+    }
+
+    /// The `ready_at` text.
+    #[must_use]
+    pub fn ready_at(&self) -> &str {
+        &self.ready_at
+    }
+
+    /// The `channel` text.
+    #[must_use]
+    pub fn channel(&self) -> &str {
+        &self.channel
+    }
+
+    /// Whether the row has a `supervisor_env` text that is not empty.
+    #[must_use]
+    pub fn has_supervisor_env(&self) -> bool {
+        self.has_supervisor_env
+    }
+}
+
+/// One fault on the noticeboard. Only [`noticeboard`] builds a value.
+///
+/// ```
+/// use creche_contracts::status::views::{FaultRow, read_noticeboard};
+///
+/// let bytes = br#"{"faults": [{"code": "grants_stale", "message": "no grant file"}]}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let fault: &FaultRow = &family.faults()[0];
+/// assert_eq!(fault.code(), "grants_stale");
+/// assert_eq!(fault.message(), "no grant file");
+/// assert!(!fault.blocks_turns());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{FaultRow, read_noticeboard};
+///
+/// let bytes = br#"{"faults": [{"code": "grants_stale", "message": "no grant file"}]}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let fault: &FaultRow = &family.faults()[0];
+/// let blocking = FaultRow { blocks_turns: true, ..fault.clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FaultRow {
-    /// The `code` text.
-    pub code: String,
-    /// Whether `blocks_turns` is `true`.
-    pub blocks_turns: bool,
-    /// The `since` text.
-    pub since: String,
-    /// The `source` text.
-    pub source: String,
-    /// Whether `stale` is `true`.
-    pub stale: bool,
-    /// The `message` text of the detail.
-    pub message: String,
-    /// The `sandbox` text of the detail.
-    pub sandbox: String,
+    code: String,
+    blocks_turns: bool,
+    since: String,
+    source: String,
+    stale: bool,
+    message: String,
+    sandbox: String,
 }
 
-/// The `spend` block on the noticeboard.
+impl FaultRow {
+    /// The `code` text.
+    #[must_use]
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    /// Whether `blocks_turns` is `true`.
+    #[must_use]
+    pub fn blocks_turns(&self) -> bool {
+        self.blocks_turns
+    }
+
+    /// The `since` text.
+    #[must_use]
+    pub fn since(&self) -> &str {
+        &self.since
+    }
+
+    /// The `source` text.
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Whether `stale` is `true`.
+    #[must_use]
+    pub fn stale(&self) -> bool {
+        self.stale
+    }
+
+    /// The `message` text of the detail.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// The `sandbox` text of the detail.
+    #[must_use]
+    pub fn sandbox(&self) -> &str {
+        &self.sandbox
+    }
+}
+
+/// The `spend` block on the noticeboard. Only [`noticeboard`] builds a value.
+///
+/// ```
+/// use creche_contracts::status::views::{SpendRow, read_noticeboard};
+///
+/// let bytes = br#"{"spend": {"spend_usd": 1.5, "window": "day"}}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let spend: &SpendRow = family.spend().unwrap();
+/// assert_eq!(spend.spend_usd(), Some(1.5));
+/// assert_eq!(spend.budget_usd(), None);
+/// assert!(spend.stale());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{SpendRow, read_noticeboard};
+///
+/// let bytes = br#"{"spend": {"spend_usd": 1.5, "window": "day"}}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let spend: &SpendRow = family.spend().unwrap();
+/// let fresh = SpendRow { stale: false, ..spend.clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpendRow {
+    spend_usd: Option<f64>,
+    budget_usd: Option<f64>,
+    window: String,
+    source: String,
+    as_of: String,
+    stale: bool,
+}
+
+impl SpendRow {
     /// What the family spent. `None` when the field is not a number. The
     /// number can be `NaN` or an infinity.
-    pub spend_usd: Option<f64>,
+    #[must_use]
+    pub fn spend_usd(&self) -> Option<f64> {
+        self.spend_usd
+    }
+
     /// The budget. `None` when the field is not a number.
-    pub budget_usd: Option<f64>,
+    #[must_use]
+    pub fn budget_usd(&self) -> Option<f64> {
+        self.budget_usd
+    }
+
     /// The `window` text.
-    pub window: String,
+    #[must_use]
+    pub fn window(&self) -> &str {
+        &self.window
+    }
+
     /// The `source` text.
-    pub source: String,
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
     /// The `as_of` text.
-    pub as_of: String,
+    #[must_use]
+    pub fn as_of(&self) -> &str {
+        &self.as_of
+    }
+
     /// Whether `as_of` is more than 90 seconds before `written_at`, or before
     /// the time now when the document has no `written_at` (§7 rule 4).
-    pub stale: bool,
+    #[must_use]
+    pub fn stale(&self) -> bool {
+        self.stale
+    }
 }
 
-/// The `validation` block on the noticeboard.
+/// The `validation` block on the noticeboard. Only [`noticeboard`] builds a
+/// value.
+///
+/// ```
+/// use creche_contracts::status::views::{ValidationRow, read_noticeboard};
+///
+/// let bytes = br#"{"validation": {"rev": "4f2a", "ok": true, "error_count": 0}}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let validation: &ValidationRow = family.validation().unwrap();
+/// assert_eq!(validation.rev(), "4f2a");
+/// assert!(validation.ok());
+/// assert!(!validation.never_valid());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{ValidationRow, read_noticeboard};
+///
+/// let bytes = br#"{"validation": {"rev": "4f2a", "ok": true, "error_count": 0}}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let validation: &ValidationRow = family.validation().unwrap();
+/// let failed = ValidationRow { ok: false, ..validation.clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationRow {
-    /// The `rev` text.
-    pub rev: String,
-    /// The `checked_at` text.
-    pub checked_at: String,
-    /// Whether `ok` is `true`.
-    pub ok: bool,
-    /// Whether `never_valid` is `true`.
-    pub never_valid: bool,
-    /// The count of errors. 0 when the block has none.
-    pub error_count: Integer,
-    /// The count of warnings. 0 when the block has none.
-    pub warning_count: Integer,
-    /// The `report_path` text.
-    pub report_path: String,
-    /// The `first_error` text.
-    pub first_error: String,
+    rev: String,
+    checked_at: String,
+    ok: bool,
+    never_valid: bool,
+    error_count: Integer,
+    warning_count: Integer,
+    report_path: String,
+    first_error: String,
 }
 
-/// The `reconcile` block on the noticeboard.
+impl ValidationRow {
+    /// The `rev` text.
+    #[must_use]
+    pub fn rev(&self) -> &str {
+        &self.rev
+    }
+
+    /// The `checked_at` text.
+    #[must_use]
+    pub fn checked_at(&self) -> &str {
+        &self.checked_at
+    }
+
+    /// Whether `ok` is `true`.
+    #[must_use]
+    pub fn ok(&self) -> bool {
+        self.ok
+    }
+
+    /// Whether `never_valid` is `true`.
+    #[must_use]
+    pub fn never_valid(&self) -> bool {
+        self.never_valid
+    }
+
+    /// The count of errors. 0 when the block has none.
+    #[must_use]
+    pub fn error_count(&self) -> &Integer {
+        &self.error_count
+    }
+
+    /// The count of warnings. 0 when the block has none.
+    #[must_use]
+    pub fn warning_count(&self) -> &Integer {
+        &self.warning_count
+    }
+
+    /// The `report_path` text.
+    #[must_use]
+    pub fn report_path(&self) -> &str {
+        &self.report_path
+    }
+
+    /// The `first_error` text.
+    #[must_use]
+    pub fn first_error(&self) -> &str {
+        &self.first_error
+    }
+}
+
+/// The `reconcile` block on the noticeboard. Only [`noticeboard`] builds a
+/// value.
+///
+/// ```
+/// use creche_contracts::status::views::{ReconcileRow, read_noticeboard};
+///
+/// let bytes = br#"{"reconcile": {"step": "write_grants", "needs_switch": true}}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let reconcile: &ReconcileRow = family.reconcile().unwrap();
+/// assert_eq!(reconcile.step(), "write_grants");
+/// assert_eq!(reconcile.attempts().as_u64(), Some(0));
+/// assert!(reconcile.needs_switch());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{ReconcileRow, read_noticeboard};
+///
+/// let bytes = br#"{"reconcile": {"step": "write_grants", "needs_switch": true}}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let reconcile: &ReconcileRow = family.reconcile().unwrap();
+/// let in_place = ReconcileRow { needs_switch: false, ..reconcile.clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReconcileRow {
+    since: String,
+    from_rev: String,
+    to_rev: String,
+    step: String,
+    attempts: Integer,
+    needs_switch: bool,
+}
+
+impl ReconcileRow {
     /// The `since` text.
-    pub since: String,
+    #[must_use]
+    pub fn since(&self) -> &str {
+        &self.since
+    }
+
     /// The `from_rev` text.
-    pub from_rev: String,
+    #[must_use]
+    pub fn from_rev(&self) -> &str {
+        &self.from_rev
+    }
+
     /// The `to_rev` text.
-    pub to_rev: String,
+    #[must_use]
+    pub fn to_rev(&self) -> &str {
+        &self.to_rev
+    }
+
     /// The `step` text.
-    pub step: String,
+    #[must_use]
+    pub fn step(&self) -> &str {
+        &self.step
+    }
+
     /// The count of attempts. 0 when the block has none.
-    pub attempts: Integer,
+    #[must_use]
+    pub fn attempts(&self) -> &Integer {
+        &self.attempts
+    }
+
     /// Whether `needs_switch` is `true`.
-    pub needs_switch: bool,
+    #[must_use]
+    pub fn needs_switch(&self) -> bool {
+        self.needs_switch
+    }
 }
 
 /// The `limits` block on the noticeboard. A limit is each integer, also a
-/// negative one.
+/// negative one. Only [`noticeboard`] and [`noticeboard_unreadable`] build a
+/// value.
+///
+/// ```
+/// use creche_contracts::status::views::{LimitsRow, read_noticeboard};
+///
+/// let bytes = br#"{"limits": {"max_running_turns": 2}}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let limits: &LimitsRow = family.limits();
+/// assert_eq!(limits.max_running_turns().and_then(|limit| limit.as_u64()), Some(2));
+/// assert_eq!(limits.max_queued_turns(), None);
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{LimitsRow, read_noticeboard};
+///
+/// let bytes = br#"{"limits": {"max_running_turns": 2}}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family = read_noticeboard(bytes, "chat", now);
+/// let limits: &LimitsRow = family.limits();
+/// let no_limit = LimitsRow { max_running_turns: None, ..limits.clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LimitsRow {
+    max_running_turns: Option<Integer>,
+    max_queued_turns: Option<Integer>,
+    job_timeout_s: Option<Integer>,
+}
+
+impl LimitsRow {
     /// `max_running_turns`.
-    pub max_running_turns: Option<Integer>,
+    #[must_use]
+    pub fn max_running_turns(&self) -> Option<&Integer> {
+        self.max_running_turns.as_ref()
+    }
+
     /// `max_queued_turns`.
-    pub max_queued_turns: Option<Integer>,
+    #[must_use]
+    pub fn max_queued_turns(&self) -> Option<&Integer> {
+        self.max_queued_turns.as_ref()
+    }
+
     /// `job_timeout_s`.
-    pub job_timeout_s: Option<Integer>,
+    #[must_use]
+    pub fn job_timeout_s(&self) -> Option<&Integer> {
+        self.job_timeout_s.as_ref()
+    }
 }
 
 /// Why a family is not `in_sync` on the noticeboard.
@@ -344,48 +831,161 @@ pub enum Reason {
     Unreadable(ReadError),
 }
 
-/// One family on the noticeboard: `noticeboard.statusdocs.read_family`.
+/// One family on the noticeboard: `noticeboard.statusdocs.read_family`. Only
+/// [`noticeboard`] and [`noticeboard_unreadable`] build a value.
+///
+/// ```
+/// use creche_contracts::status::views::{FamilyRow, read_noticeboard};
+/// use creche_contracts::status::words::Health;
+///
+/// let bytes = br#"{"state": "in_sync", "written_at": "2031-04-18T10:20:00Z"}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family: FamilyRow = read_noticeboard(bytes, "chat", now);
+/// assert_eq!(family.name(), "chat");
+/// assert_eq!(family.health(), Health::InSync);
+/// assert_eq!(family.reason(), None);
+/// assert_eq!(family.problem(), None);
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{FamilyRow, read_noticeboard};
+/// use creche_contracts::status::words::Health;
+///
+/// let bytes = br#"{"state": "in_sync", "written_at": "2031-04-18T10:20:00Z"}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let family: FamilyRow = read_noticeboard(bytes, "chat", now);
+/// let family = FamilyRow { health: Health::Degraded, ..family };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct FamilyRow {
+    name: String,
+    kind: String,
+    health: Health,
+    reason: Option<Reason>,
+    written_at: String,
+    age: Option<Age>,
+    registry_rev: String,
+    applied_rev: String,
+    config_rev: String,
+    epoch: Integer,
+    sandboxes: Vec<SandboxRow>,
+    faults: Vec<FaultRow>,
+    spend: Option<SpendRow>,
+    validation: Option<ValidationRow>,
+    reconcile: Option<ReconcileRow>,
+    limits: LimitsRow,
+    problem: Option<ReadError>,
+}
+
+impl FamilyRow {
     /// The `family` text of the document. The name of the directory when the
     /// document has none.
-    pub name: String,
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// The `kind` text. The noticeboard does not check it.
-    pub kind: String,
+    #[must_use]
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
     /// What the noticeboard shows as the state.
-    pub health: Health,
+    #[must_use]
+    pub fn health(&self) -> Health {
+        self.health
+    }
+
     /// Why the family is not `in_sync`. `None` when the noticeboard has
     /// nothing to say.
-    pub reason: Option<Reason>,
+    #[must_use]
+    pub fn reason(&self) -> Option<&Reason> {
+        self.reason.as_ref()
+    }
+
     /// The `written_at` text.
-    pub written_at: String,
+    #[must_use]
+    pub fn written_at(&self) -> &str {
+        &self.written_at
+    }
+
     /// The age of the document. `None` when the noticeboard cannot read
     /// `written_at`.
-    pub age: Option<Age>,
+    #[must_use]
+    pub fn age(&self) -> Option<Age> {
+        self.age
+    }
+
     /// The `registry_rev` text.
-    pub registry_rev: String,
+    #[must_use]
+    pub fn registry_rev(&self) -> &str {
+        &self.registry_rev
+    }
+
     /// The `applied_rev` text.
-    pub applied_rev: String,
+    #[must_use]
+    pub fn applied_rev(&self) -> &str {
+        &self.applied_rev
+    }
+
     /// The `config_rev` text.
-    pub config_rev: String,
+    #[must_use]
+    pub fn config_rev(&self) -> &str {
+        &self.config_rev
+    }
+
     /// The epoch of the credentials: each integer. 0 when the document has
     /// none.
-    pub epoch: Integer,
+    #[must_use]
+    pub fn epoch(&self) -> &Integer {
+        &self.epoch
+    }
+
     /// The first 20 items of `sandboxes` that are objects.
-    pub sandboxes: Vec<SandboxRow>,
+    #[must_use]
+    pub fn sandboxes(&self) -> &[SandboxRow] {
+        &self.sandboxes
+    }
+
     /// The first 20 items of `faults` that are objects.
-    pub faults: Vec<FaultRow>,
+    #[must_use]
+    pub fn faults(&self) -> &[FaultRow] {
+        &self.faults
+    }
+
     /// The `spend` block. `None` when the document has none.
-    pub spend: Option<SpendRow>,
+    #[must_use]
+    pub fn spend(&self) -> Option<&SpendRow> {
+        self.spend.as_ref()
+    }
+
     /// The `validation` block. `None` when the document has none.
-    pub validation: Option<ValidationRow>,
+    #[must_use]
+    pub fn validation(&self) -> Option<&ValidationRow> {
+        self.validation.as_ref()
+    }
+
     /// The `reconcile` block. `None` when the document has none.
-    pub reconcile: Option<ReconcileRow>,
+    #[must_use]
+    pub fn reconcile(&self) -> Option<&ReconcileRow> {
+        self.reconcile.as_ref()
+    }
+
     /// The `limits` block.
-    pub limits: LimitsRow,
+    #[must_use]
+    pub fn limits(&self) -> &LimitsRow {
+        &self.limits
+    }
+
     /// Why the noticeboard cannot read the file. `None` for a file that is
     /// one JSON object.
-    pub problem: Option<ReadError>,
+    #[must_use]
+    pub fn problem(&self) -> Option<ReadError> {
+        self.problem
+    }
 }
 
 /// The view of the noticeboard for a file that is one JSON object. `name` is
@@ -603,18 +1203,67 @@ pub fn read_noticeboard(bytes: &[u8], name: &str, now: Timestamp) -> FamilyRow {
 // --- the terminal door ---
 
 /// The sandbox that the terminal door attaches to:
-/// `agent_door_tui.status.StatusFiles.serving`.
+/// `agent_door_tui.status.StatusFiles.serving`. Only [`door_tui`] builds a
+/// value.
+///
+/// ```
+/// use creche_contracts::status::views::{Serving, read_door_tui};
+///
+/// let bytes = br#"{"kind": "attended", "sandboxes": [
+///     {"id": "chat-s1", "state": "ready", "supervisor_env": "/env"}
+/// ]}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let serving: Serving = read_door_tui(bytes, now).unwrap();
+/// assert_eq!(serving.sandbox().as_str(), "chat-s1");
+/// assert_eq!(serving.supervisor_env(), "/env");
+/// assert!(serving.blocking().is_empty());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{Serving, read_door_tui};
+///
+/// let bytes = br#"{"kind": "attended", "sandboxes": [
+///     {"id": "chat-s1", "state": "ready", "supervisor_env": "/env"}
+/// ]}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let serving: Serving = read_door_tui(bytes, now).unwrap();
+/// let serving = Serving { supervisor_env: String::new(), ..serving };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Serving {
+    sandbox: SandboxName,
+    supervisor_env: String,
+    blocking: Vec<String>,
+    freshness: Freshness,
+}
+
+impl Serving {
     /// The newest sandbox in the state `ready`.
-    pub sandbox: SandboxName,
+    #[must_use]
+    pub fn sandbox(&self) -> &SandboxName {
+        &self.sandbox
+    }
+
     /// The path of its `supervisor.env`. It is not empty.
-    pub supervisor_env: String,
+    #[must_use]
+    pub fn supervisor_env(&self) -> &str {
+        &self.supervisor_env
+    }
+
     /// The `code` text of each fault with `blocks_turns: true`. A fault with
     /// no code gives an empty text. The door warns and opens the terminal.
-    pub blocking: Vec<String>,
+    #[must_use]
+    pub fn blocking(&self) -> &[String] {
+        &self.blocking
+    }
+
     /// Whether the document is stale. The door warns and opens the terminal.
-    pub freshness: Freshness,
+    #[must_use]
+    pub fn freshness(&self) -> Freshness {
+        self.freshness
+    }
 }
 
 /// The exit code of the terminal door for a refusal.
@@ -897,12 +1546,12 @@ mod tests {
         let row = noticeboard(&read, "chat", now());
         let serving = door_tui(&read, now()).unwrap();
 
-        assert_eq!(attendance(&read, &chat()).sandboxes.len(), 1);
-        assert_eq!(row.health, Health::InSync);
-        assert_eq!(row.reason, None);
-        assert_eq!(row.age.unwrap().whole_seconds(), 30);
-        assert_eq!(serving.sandbox.as_str(), "chat-s1");
-        assert_eq!(serving.freshness, Freshness::Fresh);
+        assert_eq!(attendance(&read, &chat()).sandboxes().len(), 1);
+        assert_eq!(row.health(), Health::InSync);
+        assert_eq!(row.reason(), None);
+        assert_eq!(row.age().unwrap().whole_seconds(), 30);
+        assert_eq!(serving.sandbox().as_str(), "chat-s1");
+        assert_eq!(serving.freshness(), Freshness::Fresh);
         assert_eq!(door_owui(&read), Ok(()));
         assert_eq!(door_trigger(&read), Err(ListingRefusal::WrongKind));
     }
@@ -913,10 +1562,10 @@ mod tests {
         let unknown = attendance(&raw(r#"{"kind": "robot", "state": "in sync"}"#), &chat());
         let empty = attendance(&raw("{}"), &chat());
 
-        assert_eq!(served.kind, Some(Kind::Attended));
-        assert_eq!(served.state, Some(FamilyState::InSync));
-        assert_eq!((unknown.kind, unknown.state), (None, None));
-        assert_eq!((empty.kind, empty.state), (None, None));
+        assert_eq!(served.kind(), Some(Kind::Attended));
+        assert_eq!(served.state(), Some(FamilyState::InSync));
+        assert_eq!((unknown.kind(), unknown.state()), (None, None));
+        assert_eq!((empty.kind(), empty.state()), (None, None));
     }
 
     #[test]
@@ -932,7 +1581,7 @@ mod tests {
                 rows.join(",")
             ))
         };
-        let newest = |ids: &[&str]| door_tui(&rows(ids), now()).unwrap().sandbox;
+        let newest = |ids: &[&str]| door_tui(&rows(ids), now()).unwrap().sandbox().clone();
 
         assert_eq!(
             newest(&["chat-s2", "chat-s10", "chat-s9"]).as_str(),
@@ -948,11 +1597,14 @@ mod tests {
         let read = raw(&text);
         let row = noticeboard(&read, "chat", now());
 
-        assert_eq!(attendance(&read, &chat()).written_at, None);
-        assert_eq!(row.health, Health::Unknown);
-        assert_eq!(row.reason, Some(Reason::NoWrittenAt));
-        assert_eq!(row.age, None);
-        assert_eq!(door_tui(&read, now()).unwrap().freshness, Freshness::Stale);
+        assert_eq!(attendance(&read, &chat()).written_at(), None);
+        assert_eq!(row.health(), Health::Unknown);
+        assert_eq!(row.reason(), Some(&Reason::NoWrittenAt));
+        assert_eq!(row.age(), None);
+        assert_eq!(
+            door_tui(&read, now()).unwrap().freshness(),
+            Freshness::Stale
+        );
     }
 
     #[test]
@@ -961,10 +1613,10 @@ mod tests {
         let unreadable = raw(&document("").replace("in_sync", "unreadable"));
         let row = noticeboard(&unknown, "chat", now());
 
-        assert_eq!(row.health, Health::Unknown);
-        assert!(matches!(row.reason, Some(Reason::Stale { age }) if age.whole_seconds() == 30));
+        assert_eq!(row.health(), Health::Unknown);
+        assert!(matches!(row.reason(), Some(Reason::Stale { age }) if age.whole_seconds() == 30));
         assert_eq!(
-            noticeboard(&unreadable, "chat", now()).health,
+            noticeboard(&unreadable, "chat", now()).health(),
             Health::Unreadable
         );
     }
@@ -977,9 +1629,9 @@ mod tests {
         ));
         let row = noticeboard(&read, "chat", now());
 
-        assert_eq!(row.kind.chars().count(), TEXT_CHARS_MAX);
-        assert_eq!(row.written_at.chars().count(), TEXT_CHARS_MAX);
-        assert_eq!(row.age, None);
+        assert_eq!(row.kind().chars().count(), TEXT_CHARS_MAX);
+        assert_eq!(row.written_at().chars().count(), TEXT_CHARS_MAX);
+        assert_eq!(row.age(), None);
     }
 
     #[test]
@@ -989,11 +1641,11 @@ mod tests {
             "0".repeat(400)
         );
         let row = noticeboard(&raw(&document(&spend)), "chat", now());
-        let spend = row.spend.unwrap();
+        let spend = row.spend().unwrap();
 
-        assert_eq!(spend.spend_usd, None);
-        assert_eq!(spend.budget_usd, Some(2.0));
-        assert!(spend.stale);
+        assert_eq!(spend.spend_usd(), None);
+        assert_eq!(spend.budget_usd(), Some(2.0));
+        assert!(spend.stale());
     }
 
     #[test]
@@ -1017,7 +1669,7 @@ mod tests {
         assert_eq!(of_tui.unwrap_err().exit(), TuiExit::NoSandbox);
         assert!(read_attendance(text.as_bytes(), &chat()).is_ok());
         assert_eq!(
-            read_noticeboard(text.as_bytes(), "chat", now()).problem,
+            read_noticeboard(text.as_bytes(), "chat", now()).problem(),
             None
         );
     }
@@ -1029,9 +1681,9 @@ mod tests {
         let row = read_noticeboard(bytes, "chat", now());
 
         assert_eq!(read_attendance(bytes, &chat()), Err(not_utf8));
-        assert_eq!(row.problem, Some(not_utf8));
-        assert_eq!(row.health, Health::Unreadable);
-        assert_eq!(row.reason, Some(Reason::Unreadable(not_utf8)));
+        assert_eq!(row.problem(), Some(not_utf8));
+        assert_eq!(row.health(), Health::Unreadable);
+        assert_eq!(row.reason(), Some(&Reason::Unreadable(not_utf8)));
         assert_eq!(
             read_door_tui(bytes, now()),
             Err(TuiRefusal::Unreadable(not_utf8))
@@ -1044,6 +1696,26 @@ mod tests {
             read_door_owui(bytes),
             Err(ListingRefusal::Unreadable(not_utf8))
         );
+    }
+
+    #[test]
+    fn each_text_of_a_noticeboard_row_comes_from_its_own_field() {
+        let read = raw(r#"{"registry_rev": "reg-1", "applied_rev": "reg-2",
+                "sandboxes": [{"id": "chat-s1", "created_at": "created", "ready_at": "ready"}],
+                "faults": [{"code": "grants_stale", "since": "since", "source": "source",
+                    "stale": true, "message": "message", "sandbox": "sandbox"}]}"#);
+        let row = noticeboard(&read, "chat", now());
+        let sandbox = &row.sandboxes()[0];
+        let fault = &row.faults()[0];
+
+        assert_eq!((row.registry_rev(), row.applied_rev()), ("reg-1", "reg-2"));
+        assert_eq!(
+            (sandbox.created_at(), sandbox.ready_at()),
+            ("created", "ready")
+        );
+        assert_eq!((fault.since(), fault.source()), ("since", "source"));
+        assert_eq!((fault.message(), fault.sandbox()), ("message", "sandbox"));
+        assert!(fault.stale());
     }
 
     #[test]

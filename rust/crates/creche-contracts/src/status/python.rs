@@ -198,31 +198,31 @@ fn replay_attendance(_: &Surface, vector: &Vector) -> Replay {
         return Err(None);
     };
     let sandboxes: Vec<Value> = status
-        .sandboxes
+        .sandboxes()
         .iter()
         .map(|sandbox| {
             json!({
-                "id": sandbox.id.as_str(),
-                "state": sandbox.state.as_str(),
-                "playpen_env": sandbox.supervisor_env,
+                "id": sandbox.id().as_str(),
+                "state": sandbox.state().as_str(),
+                "playpen_env": sandbox.supervisor_env(),
             })
         })
         .collect();
 
     Ok(Some(json!({
-        "family": status.family.as_str(),
-        "kind": status.kind.map(|kind| kind.as_str()),
-        "state": status.state.map(|state| state.as_str()),
-        "written_at": status.written_at.map(isoformat),
-        "config_rev": status.config_rev,
-        "epoch": integer_value(&status.epoch),
-        "never_valid": status.never_valid,
-        "blocking_fault": status.blocking_fault,
-        "fault_codes": status.fault_codes,
+        "family": status.family().as_str(),
+        "kind": status.kind().map(|kind| kind.as_str()),
+        "state": status.state().map(|state| state.as_str()),
+        "written_at": status.written_at().map(isoformat),
+        "config_rev": status.config_rev(),
+        "epoch": integer_value(status.epoch()),
+        "never_valid": status.never_valid(),
+        "blocking_fault": status.blocking_fault(),
+        "fault_codes": status.fault_codes(),
         "sandboxes": sandboxes,
-        "max_running_turns": optional_integer(status.max_running_turns.as_ref()),
-        "job_timeout_s": optional_integer(status.job_timeout_s.as_ref()),
-        "accepts_dispatch": status.accepts_dispatch,
+        "max_running_turns": optional_integer(status.max_running_turns()),
+        "job_timeout_s": optional_integer(status.job_timeout_s()),
+        "accepts_dispatch": status.accepts_dispatch(),
     })))
 }
 
@@ -263,93 +263,93 @@ fn reason_text(reason: Option<&Reason>) -> String {
 
 fn family_row_value(row: &FamilyRow) -> Value {
     let sandboxes: Vec<Value> = row
-        .sandboxes
+        .sandboxes()
         .iter()
         .map(|one| {
             json!({
-                "id": one.id,
-                "state": one.state,
-                "power": one.power,
-                "image": one.image,
-                "cpus": integer_value(&one.cpus),
-                "memory": one.memory,
-                "created_at": one.created_at,
-                "ready_at": one.ready_at,
-                "channel": one.channel,
-                "has_playpen_env": one.has_supervisor_env,
+                "id": one.id(),
+                "state": one.state(),
+                "power": one.power(),
+                "image": one.image(),
+                "cpus": integer_value(one.cpus()),
+                "memory": one.memory(),
+                "created_at": one.created_at(),
+                "ready_at": one.ready_at(),
+                "channel": one.channel(),
+                "has_playpen_env": one.has_supervisor_env(),
             })
         })
         .collect();
     let faults: Vec<Value> = row
-        .faults
+        .faults()
         .iter()
         .map(|one| {
             json!({
-                "code": one.code,
-                "blocks_turns": one.blocks_turns,
-                "since": one.since,
-                "source": one.source,
-                "stale": one.stale,
-                "message": one.message,
-                "sandbox": one.sandbox,
+                "code": one.code(),
+                "blocks_turns": one.blocks_turns(),
+                "since": one.since(),
+                "source": one.source(),
+                "stale": one.stale(),
+                "message": one.message(),
+                "sandbox": one.sandbox(),
             })
         })
         .collect();
-    let spend = row.spend.as_ref().map(|one| {
+    let spend = row.spend().map(|one| {
         json!({
-            "spend_usd": one.spend_usd.map(float_value),
-            "budget_usd": one.budget_usd.map(float_value),
-            "window": one.window,
-            "source": one.source,
-            "as_of": one.as_of,
-            "stale": one.stale,
+            "spend_usd": one.spend_usd().map(float_value),
+            "budget_usd": one.budget_usd().map(float_value),
+            "window": one.window(),
+            "source": one.source(),
+            "as_of": one.as_of(),
+            "stale": one.stale(),
         })
     });
-    let validation = row.validation.as_ref().map(|one| {
+    let validation = row.validation().map(|one| {
         json!({
-            "rev": one.rev,
-            "checked_at": one.checked_at,
-            "ok": one.ok,
-            "never_valid": one.never_valid,
-            "error_count": integer_value(&one.error_count),
-            "warning_count": integer_value(&one.warning_count),
-            "report_path": one.report_path,
-            "first_error": one.first_error,
+            "rev": one.rev(),
+            "checked_at": one.checked_at(),
+            "ok": one.ok(),
+            "never_valid": one.never_valid(),
+            "error_count": integer_value(one.error_count()),
+            "warning_count": integer_value(one.warning_count()),
+            "report_path": one.report_path(),
+            "first_error": one.first_error(),
         })
     });
-    let reconcile = row.reconcile.as_ref().map(|one| {
+    let reconcile = row.reconcile().map(|one| {
         json!({
-            "since": one.since,
-            "from_rev": one.from_rev,
-            "to_rev": one.to_rev,
-            "step": one.step,
-            "attempts": integer_value(&one.attempts),
-            "needs_switch": one.needs_switch,
+            "since": one.since(),
+            "from_rev": one.from_rev(),
+            "to_rev": one.to_rev(),
+            "step": one.step(),
+            "attempts": integer_value(one.attempts()),
+            "needs_switch": one.needs_switch(),
         })
     });
 
     json!({
-        "name": row.name,
-        "kind": row.kind,
-        "health": row.health.as_str(),
-        "reason": reason_text(row.reason.as_ref()),
-        "written_at": row.written_at,
-        "age_s": row.age.map(|age| age.seconds()),
-        "registry_rev": row.registry_rev,
-        "applied_rev": row.applied_rev,
-        "config_rev": row.config_rev,
-        "epoch": integer_value(&row.epoch),
+        "name": row.name(),
+        "kind": row.kind(),
+        "health": row.health().as_str(),
+        "reason": reason_text(row.reason()),
+        "written_at": row.written_at(),
+        "age_s": row.age().map(|age| age.seconds()),
+        "registry_rev": row.registry_rev(),
+        "applied_rev": row.applied_rev(),
+        "config_rev": row.config_rev(),
+        "epoch": integer_value(row.epoch()),
         "sandboxes": sandboxes,
         "faults": faults,
         "spend": spend,
         "validation": validation,
         "reconcile": reconcile,
         "limits": {
-            "max_running_turns": optional_integer(row.limits.max_running_turns.as_ref()),
-            "max_queued_turns": optional_integer(row.limits.max_queued_turns.as_ref()),
-            "job_timeout_s": optional_integer(row.limits.job_timeout_s.as_ref()),
+            "max_running_turns": optional_integer(row.limits().max_running_turns()),
+            "max_queued_turns": optional_integer(row.limits().max_queued_turns()),
+            "job_timeout_s": optional_integer(row.limits().job_timeout_s()),
         },
-        "problem": row.problem.map(problem_class).unwrap_or_default(),
+        "problem": row.problem().map(problem_class).unwrap_or_default(),
     })
 }
 
@@ -357,7 +357,7 @@ fn replay_noticeboard(_: &Surface, vector: &Vector) -> Replay {
     let row = views::read_noticeboard(&vector.input.bytes().unwrap(), FAMILY, now());
     let value = Some(family_row_value(&row));
 
-    if row.problem.is_some() {
+    if row.problem().is_some() {
         Err(value)
     } else {
         Ok(value)
@@ -419,14 +419,14 @@ fn tui_message(refusal: &TuiRefusal) -> String {
 /// The warning that the terminal door of Python prints.
 fn tui_warning(serving: &views::Serving) -> String {
     let mut parts = Vec::new();
-    if !serving.blocking.is_empty() {
+    if !serving.blocking().is_empty() {
         parts.push(format!(
             "turns are blocked by {}",
-            serving.blocking.join(", ")
+            serving.blocking().join(", ")
         ));
     }
 
-    if serving.freshness == Freshness::Stale {
+    if serving.freshness() == Freshness::Stale {
         parts.push("the status document is stale (over 90s old)".to_owned());
     }
 
@@ -436,8 +436,8 @@ fn tui_warning(serving: &views::Serving) -> String {
 fn replay_door_tui(_: &Surface, vector: &Vector) -> Replay {
     match views::read_door_tui(&vector.input.bytes().unwrap(), now()) {
         Ok(serving) => Ok(Some(json!({
-            "sandbox": serving.sandbox.as_str(),
-            "playpen_env": serving.supervisor_env,
+            "sandbox": serving.sandbox().as_str(),
+            "playpen_env": serving.supervisor_env(),
             "warning": tui_warning(&serving),
         }))),
         Err(refusal) => {
