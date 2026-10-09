@@ -366,9 +366,16 @@ In the raw type of a JSON text, give a number field the type
 as the integer 0. `Number` and `Integer` decide from the characters of the
 number.
 
-Do not put `Number` or `Integer` below `#[serde(flatten)]`. The read fails
-there, because `serde` keeps no text of a token for such a field. A named
-field beside a flattened field works.
+`Number` and `Integer` read the text of a token. `serde` reads some values
+from a buffer of its own, and that buffer keeps no such text. The read of
+`Number` or of `Integer` fails there. Put neither type in one of these four
+places:
+
+1. Below `#[serde(flatten)]`. A named field beside a flattened field works.
+2. In an enum with `#[serde(untagged)]`.
+3. In an enum with `#[serde(tag = "...")]` and no `content`.
+4. In an enum with `#[serde(tag = "...", content = "...")]`. The read fails
+   there only when the content key is before the tag key in the text.
 
 When the reader refuses a text, apply the failure action that rule 8
 demands. The module error keeps the `NotStrict` of the refusal. It gives

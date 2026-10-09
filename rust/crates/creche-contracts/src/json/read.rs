@@ -301,9 +301,9 @@ impl<'de> Deserialize<'de> for Integer {
 
 /// A number of a JSON text, with the kind of its token.
 ///
-/// A token with no `.`, no `e` and no `E` is an integer. Each other token is
-/// a float. Thus `-0` is the integer 0, `-0.0` is a float and `1e3` is a
-/// float.
+/// The characters of the token decide the kind. A float has a `.`, an `e` or
+/// an `E` in its token, and an integer has none of the three. Thus `-0` is
+/// the integer 0, `-0.0` is a float and `1e3` is a float.
 ///
 /// The type is a part of a raw type. It has no check of its own: the
 /// conversion to the valid type checks the value.
@@ -317,11 +317,22 @@ impl<'de> Deserialize<'de> for Integer {
 /// - The type works as a named field of a struct, as an item of a list and
 ///   as the value that a map visitor reads.
 /// - The type works as a named field beside a field with `#[serde(flatten)]`.
-/// - The type fails under `#[serde(flatten)]` and inside an enum with
-///   `#[serde(untagged)]`. `serde` reads such a value from a buffer of its
-///   own, and that buffer keeps no text of a token. A raw type that keeps
-///   the value of an unknown key writes its `Deserialize` by hand, with a
-///   map visitor.
+/// - The type fails where `serde` reads a value from a buffer of its own.
+///   That buffer keeps no text of a token. The list below names each such
+///   place.
+///
+/// 1. A field with `#[serde(flatten)]`.
+/// 2. An enum with `#[serde(untagged)]`.
+/// 3. An enum with `#[serde(tag = "...")]` only. The read fails for each
+///    order of the keys.
+/// 4. An enum with `#[serde(tag = "...", content = "...")]`. The read fails
+///    when the content key is before the tag key in the text, and not in
+///    the other order. Such an enum thus refuses an object for its key
+///    order.
+///
+/// A raw type can need the members that it gives no name. Write the
+/// `Deserialize` of that raw type as a map visitor, and use no
+/// `#[serde(flatten)]`.
 ///
 /// Without [`check`], the reader refuses an integer outside 64 bits and a
 /// float that is not finite.
@@ -938,6 +949,55 @@ mod tests {
         // The same value reads where `serde` uses no buffer.
         assert!(read::<BTreeMap<String, IgnoredAny>>(document, CAP).is_ok());
         assert_eq!(number("7"), Number::Integer(Integer::from(7_i64)));
+    }
+
+    #[test]
+    fn a_number_in_an_enum_with_a_tag_fails_the_read() {
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "type")]
+        enum TagInside {
+            #[expect(dead_code, reason = "the test reads only whether the read fails")]
+            Limit { count: Number },
+        }
+
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "type", content = "body")]
+        enum TagBeside {
+            #[expect(dead_code, reason = "the test reads only whether the read fails")]
+            Limit { count: Number },
+        }
+
+        /// `TagInside` with a field that needs no text of a token.
+        #[derive(Debug, PartialEq, Deserialize)]
+        #[serde(tag = "type")]
+        enum Plain {
+            Limit { count: u8 },
+        }
+
+        // With the tag among the members of the variant, `serde` reads each
+        // member from a buffer. The order of the keys changes nothing.
+        let tag_inside: [&[u8]; 2] = [
+            br#"{"type": "Limit", "count": 7}"#,
+            br#"{"count": 7, "type": "Limit"}"#,
+        ];
+        for document in tag_inside {
+            assert!(matches!(
+                read::<TagInside>(document, CAP),
+                Err(ReadError::Shape(_))
+            ));
+            assert_eq!(read::<Plain>(document, CAP), Ok(Plain::Limit { count: 7 }));
+        }
+
+        // With the tag beside the content, `serde` uses a buffer only for a
+        // content that comes before its tag.
+        let tag_first = br#"{"type": "Limit", "body": {"count": 7}}"#;
+        let content_first = br#"{"body": {"count": 7}, "type": "Limit"}"#;
+
+        assert!(read::<TagBeside>(tag_first, CAP).is_ok());
+        assert!(matches!(
+            read::<TagBeside>(content_first, CAP),
+            Err(ReadError::Shape(_))
+        ));
     }
 
     /// A raw type with a `Deserialize` by hand: it keeps the number of each
