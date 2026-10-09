@@ -383,8 +383,10 @@ reason. The packet that writes the three bodies obeys these rules:
 - No vector covers `args`. A command line is a contract surface where a unit
   file, a component manifest, a hook or a script of this repository writes
   it. None of them writes a command line on which `args` and `argparse`
-  differ. A program with vectors for its command line holds its own parser
-  equal to those vectors.
+  differ. One other file does: `library/Dockerfile` gives its program the
+  flag `--help`, and `argparse` answers that flag itself. The port of that
+  program matches the flag. A program with vectors for its command line
+  holds its own parser equal to those vectors.
 - `service::Loaded` has the variant `RefuseEachCall` for each config type. A
   program whose config type says `AtStart::ExitConfig` thus writes an arm
   that never runs. The skeleton fixed the type. The owner of the crate

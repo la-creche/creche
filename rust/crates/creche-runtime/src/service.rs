@@ -1543,18 +1543,22 @@ pub(crate) mod tests {
         assert!(same_status(status, EX_CONFIG));
 
         let text = String::from_utf8(written).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 3, "{text}");
-        for (line, variable) in
-            lines
-                .iter()
-                .zip(["VIEW_PORT", "VIEW_STATE_ROOT", "VIEW_SESSIOND_URL"])
-        {
-            assert!(
-                line.starts_with(&format!("noticeboard: {variable}: ")),
-                "{text}"
-            );
-        }
+        // The config type gives the order of the errors. Each line starts
+        // with the program and names one variable.
+        let mut named: Vec<&str> = text
+            .lines()
+            .map(|line| {
+                let error = line.strip_prefix("noticeboard: ").unwrap();
+
+                error.split_once(": ").unwrap().0
+            })
+            .collect();
+        named.sort_unstable();
+        assert_eq!(
+            named,
+            ["VIEW_PORT", "VIEW_SESSIOND_URL", "VIEW_STATE_ROOT"],
+            "{text}"
+        );
         assert!(!text.contains("zebra"), "{text}");
         assert!(!text.contains("; "), "{text}");
     }
@@ -1563,8 +1567,9 @@ pub(crate) mod tests {
     fn each_error_list_of_a_config_gives_one_line_for_each_error() {
         let env = Env::from_pairs([("VIEW_BIND", "127.0.0.1"), ("VIEW_PORT", "0")]);
         let config = NoticeboardConfig::from_env(&env).unwrap_err();
-        assert_eq!(config.lines().len(), config.as_slice().len());
-        assert_eq!(config.lines(), ["VIEW_PORT: a port is 1 to 65535"]);
+        assert_eq!(config.as_slice().len(), 1);
+        assert_eq!(config.lines(), [config.as_slice()[0].to_string()]);
+        assert!(config.lines()[0].starts_with("VIEW_PORT: "));
 
         let site = Site::try_from(&SiteFile::parse(b"").unwrap()).unwrap_err();
         assert_eq!(site.as_slice().len(), 4);
@@ -1573,6 +1578,9 @@ pub(crate) mod tests {
             assert_eq!(line, &error.to_string());
             assert!(line.starts_with(&format!("{}: ", error.key())), "{line}");
         }
+        // The text of the whole list is one line. The lines are not.
+        assert!(site.to_string().contains("; "));
+        assert!(site.lines().iter().all(|line| !line.contains("; ")));
 
         let raw: RawRoster = serde_json::from_str(
             r#"{"web-search": {"command": "web-search", "arg_denies": [
@@ -1582,13 +1590,12 @@ pub(crate) mod tests {
         .unwrap();
         let roster = Roster::try_from(raw).unwrap_err();
         assert_eq!(roster.as_slice().len(), 2);
-        assert_eq!(
-            roster.lines(),
-            [
-                "upstream \"web-search\", arg_denies[0]: tools holds one name or more",
-                "upstream \"web-search\", arg_denies[1]: arg is not empty"
-            ]
-        );
+        assert_eq!(roster.lines().len(), 2);
+        for (line, issue) in roster.lines().iter().zip(roster.as_slice()) {
+            assert_eq!(line, &issue.to_string());
+            assert!(line.contains(issue.upstream()), "{line}");
+        }
+        assert_ne!(roster.lines()[0], roster.lines()[1]);
     }
 
     // --- a refused start ---

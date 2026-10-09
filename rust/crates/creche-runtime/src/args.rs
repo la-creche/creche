@@ -66,8 +66,7 @@
 //! No Python service has a flag of another form.
 //!
 //! The reader differs from `argparse` in these ways. A plain test holds each
-//! one. No unit file, no component manifest, no hook and no script of this
-//! repository writes a command line that shows a difference.
+//! one.
 //!
 //! - `argparse` takes a unique start of a flag name: `--che` for `--check`
 //!   (`argparse.py:1805`, `allow_abbrev`). The reader gives the word as it
@@ -89,6 +88,11 @@
 //!   does not take the word `--check=yes`. `argparse` names each word that
 //!   it does not take in one message. [`UsageError::Unexpected`] names one
 //!   word.
+//!
+//! No unit file, no component manifest, no hook and no script of this
+//! repository writes a command line on which the reader and `argparse`
+//! differ, with one exception. `library/Dockerfile` gives its program the
+//! flag `--help`. The port of that program matches the flag.
 //!
 //! Python 3.14 reads more forms of a negative number as a value, for example
 //! `-1e5`. The reader follows Python 3.13 (`rust/AGENTS.md`, "When two
