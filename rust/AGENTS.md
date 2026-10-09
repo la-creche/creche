@@ -1571,6 +1571,9 @@ To make the fifth check on your machine, for example before a merge:
   4. `RawLine`, JSON-RPC 2.0 sections 4, 5 and 5.1. The specification does
      not say what a receiver does with a member that it does not name. The
      reader refuses the message.
+- The owner still has to confirm that the words of the MCP wire live in
+  this crate. With a no, the `mcp` module leaves, and each user of those
+  words keeps a copy.
 - The `mcp` module has no type for the parameters of a request. A `Line`
   keeps them as an `Object`, and a client or a server reads them with a raw
   type of its own. `Slot` is not public, so a raw type of another crate has
