@@ -49,16 +49,18 @@
 //! origin in these ways. A plain test holds each one, in this file or in
 //! `tests/process.rs`.
 //!
-//! - The Python service ends a refused start with status 2. The program ends
-//!   it with status 78 (`rust/AGENTS.md`, "The rules for a service", rule 17).
+//! - The program ends a refused start with status 78 (`rust/AGENTS.md`, "The
+//!   rules for a service", rule 17). "Known gaps" of
+//!   `integration/proc/AGENTS.md` has the difference from the Python service.
 //! - The Python service writes the errors of its config as one line, and that
 //!   line can hold the path of the key file. The program writes one line for
 //!   each error. A line names the variable and never its value.
-//! - The Python service reads a key file of each size. The program refuses a
-//!   key file of more than 1 MiB.
-//! - `--check` of the Python service ends with an error text and with status
-//!   1 or 120 when the reader of its stdout left. The program drops the
-//!   report and ends with status 0.
+//! - The Python service reads a key file of each size, and it reads a device
+//!   or a FIFO. The program refuses a key file of more than 1 MiB and a path
+//!   that is not a regular file.
+//! - `--check` of the program drops its report and ends with status 0 when
+//!   the reader of its stdout left. The Python service does not end with
+//!   status 0 there.
 //! - The report of `--check` holds the first three lines of the eleven lines
 //!   of the Python report. Its third line says only `set` or `empty`.
 //! - A stop signal ends the Python service by the signal itself. The program
@@ -175,6 +177,13 @@ const SLOW_WRITE: Write = Write {
     dir_sync: DirSync::Sync,
 };
 
+/// What `service::run` must know about the program: its name, two worker
+/// threads and the drain limit [`DRAIN`]. The program names no action at
+/// SIGHUP, so the signal ends it.
+const fn program() -> Program {
+    Program::new(NAME, Threads::Workers(WORKERS), DRAIN)
+}
+
 /// The entry function of the program. The `main` of `creche-probe` calls it
 /// with the words of its command line and the variables of its environment.
 ///
@@ -260,6 +269,12 @@ where
     };
 
     match asked {
+        // CONTRACT-QUESTION: no contract names the exit status of `--check`
+        // when the reader of its stdout left. `log::out_line` drops the error
+        // of such a write (`rust/AGENTS.md`, "The rules for a service", rule
+        // 14). The reading here is status 0 with the report dropped: the
+        // config is valid, and the status says only that. A change costs a
+        // writer that gives its error, and one status for that error.
         Asked::Check => {
             for line in report(&config, key) {
                 log::out_line(&line);
@@ -267,11 +282,7 @@ where
 
             ExitCode::SUCCESS
         }
-        Asked::Serve => {
-            let program = Program::new(NAME, Threads::Workers(WORKERS), DRAIN);
-
-            service::run(program, |context| serve_until_the_stop(context, config))
-        }
+        Asked::Serve => service::run(program(), |context| serve_until_the_stop(context, config)),
     }
 }
 
@@ -336,7 +347,9 @@ fn key_state(config: &NoticeboardConfig) -> Result<KeyState, KeyFileError> {
 ///
 /// The Python origin is `_access_key` of
 /// `noticeboard/src/noticeboard/config.py:178-196`. That reader takes a file
-/// of each size. This function refuses a file of more than 1 MiB.
+/// of each size. This function refuses a file of more than 1 MiB. That
+/// reader also reads a device or a FIFO. This function refuses a path that
+/// is not a regular file.
 fn key_in_file(config: &NoticeboardConfig, path: &Path) -> Result<KeyState, KeyFileError> {
     let bytes = match read_capped(path, KEY_FILE_CAP, Follow::Follow) {
         FileRead::Bytes { bytes, .. } => bytes,
@@ -398,7 +411,7 @@ async fn serve_until_the_stop(context: Context, config: NoticeboardConfig) -> Ex
 
     let probe = Probe {
         tasks: context.tasks().clone(),
-        slow_file: Arc::from(config.state_root().as_path().join(SLOW_FILE)),
+        slow_file: slow_file_of(&config),
     };
     let app = edge(
         routes(probe),
@@ -423,6 +436,12 @@ async fn serve_until_the_stop(context: Context, config: NoticeboardConfig) -> Ex
             ExitCode::FAILURE
         }
     }
+}
+
+/// The path of the file that the handler of [`SLOW_PATH`] writes:
+/// [`SLOW_FILE`] in the state root of `config`.
+fn slow_file_of(config: &NoticeboardConfig) -> Arc<Path> {
+    Arc::from(config.state_root().as_path().join(SLOW_FILE))
 }
 
 /// What each handler of the program can use.
@@ -525,6 +544,7 @@ mod tests {
         ACCESS_KEY, BIND, NoticeboardConfig, PORT, STATE_ROOT,
     };
     use creche_runtime::http::layers::{EdgeFailure, ErrorBodies};
+    use creche_runtime::signals::OnHangup;
     use creche_runtime::tasks::shutdown_pair;
     use http::header::ALLOW;
     use http::{Method, Request};
@@ -546,8 +566,17 @@ mod tests {
     const LOOPBACK: &str = "127.0.0.1";
     const ON_LAN: &str = "192.0.2.10";
 
+    /// A device whose read gives no byte.
+    const NULL_DEVICE: &str = "/dev/null";
+
     /// The most bytes that a test reads from the body of an answer.
     const BODY_MAX: usize = 4096;
+
+    /// How long the unit of the noticeboard and the process-level suite give
+    /// a service for its stop. A Rust test reads no file outside `rust/`, so
+    /// this test holds the value of `TimeoutStopSec=` of
+    /// `systemd/creche-noticeboard.service` as a number.
+    const STOP_LIMIT: Duration = Duration::from_secs(20);
 
     /// A config with the given variables, on the loopback address.
     fn config_of(pairs: &[(&str, &str)]) -> NoticeboardConfig {
@@ -737,13 +766,20 @@ mod tests {
         }
     }
 
+    /// The Python reader gives an error for a directory too. It reads a
+    /// device or a FIFO, and this reader refuses each path that is not a
+    /// regular file.
     #[test]
-    fn a_key_file_that_is_a_directory_is_refused() {
+    fn a_key_file_that_is_no_regular_file_is_refused() {
         let root = TempRoot::new().unwrap();
         fs::create_dir(key_file(&root)).unwrap();
 
         assert_eq!(
             key_state(&config_with_file(&root, LOOPBACK)),
+            Err(KeyFileError::Refused(ReadRefusal::NotAFile))
+        );
+        assert_eq!(
+            key_state(&config_of(&[(ACCESS_KEY_FILE, NULL_DEVICE)])),
             Err(KeyFileError::Refused(ReadRefusal::NotAFile))
         );
     }
@@ -935,8 +971,26 @@ mod tests {
     }
 
     #[test]
-    fn the_program_has_two_worker_threads() {
-        assert_eq!(WORKERS.get(), 2);
+    fn the_program_has_two_workers_a_drain_of_10_seconds_and_no_reload() {
+        let program = program();
+
+        assert_eq!(program.name(), NAME);
+        assert_eq!(
+            program.threads(),
+            Threads::Workers(NonZeroUsize::new(2).unwrap())
+        );
+        assert_eq!(program.drain(), Duration::from_secs(10));
+        assert_eq!(program.on_hangup(), OnHangup::DefaultAction);
+    }
+
+    #[test]
+    fn the_stop_of_the_program_is_inside_the_stop_limit_of_the_unit() {
+        assert!(OPEN_REQUESTS + DRAIN < STOP_LIMIT);
+    }
+
+    #[test]
+    fn a_bind_that_fails_has_the_status_of_the_python_server() {
+        assert_eq!(NO_LISTENER, 3);
     }
 
     #[test]
@@ -949,9 +1003,6 @@ mod tests {
         let root = TempRoot::new().unwrap();
         let config = config_of(&[(STATE_ROOT, root.path().to_str().unwrap())]);
 
-        assert_eq!(
-            config.state_root().as_path().join(SLOW_FILE),
-            root.path().join(SLOW_FILE)
-        );
+        assert_eq!(*slow_file_of(&config), *root.path().join(SLOW_FILE));
     }
 }
