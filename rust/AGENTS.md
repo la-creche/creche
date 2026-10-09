@@ -42,6 +42,7 @@ defect that a test finds late.
 | `grants` | The grant file, the call body, the approval body, the audit record and the words of a decision: contract 04. |
 | `status` | The status document, the fault files and one view for each reader: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
+| `mcp` | The words of the MCP wire. JSON-RPC 2.0 and the Model Context Protocol (MCP) state them. The module holds the message, the id of a request, the method names, the error codes and the protocol revisions. No contract owns these words. A client and each server take them from this module. |
 | `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
 | `untrusted` | Readers for an answer of another service. A field of a wrong type reads as empty. The raw type of an answer uses them. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
@@ -455,9 +456,9 @@ fault, the event of a channel line and the arguments of a tool call.
 - The order of the keys is a part of an `Opaque`. Two objects with the same
   members in another order are not equal.
 
-Only `session` calls the writer today. No module of a contract calls the
-reader yet. The two readers of `vectors/data` call `check` for the index
-file only. "Known gaps" names the packet that moves each module to the two.
+Only `session` and `mcp` call the writer today. Only `mcp` calls the
+reader. The two readers of `vectors/data` call `check` for the index file
+only. "Known gaps" names the packet that moves each module to the two.
 Until then, these parts stay:
 
 - Five older functions format a float: `float_text` of `channel`, of
@@ -1439,6 +1440,10 @@ To make the fifth check on your machine, for example before a merge:
   - Rule 10. The `json` module has no differential test. No Python reader
     has its rules today. Packet `strict-noticeboard-json-1` adds that
     reader, its vectors and the test.
+  - Rule 10. The `mcp` module has no differential test. The Python
+    chaperone reads the MCP wire with a third-party package, and no vector
+    records a message. The tests of the module hold each type against lines
+    in the form of the two specifications. No packet has that part yet.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
   - Shared helpers. Base64 has more than one copy. Packet
@@ -1550,6 +1555,31 @@ To make the fifth check on your machine, for example before a merge:
   - The other reading writes each value, and the reader then refuses the
     text. A change costs the check of `deeper` for the levels and the key
     sets of `Table` for the keys.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/mcp.rs`:
+  1. `RequestId`, JSON-RPC 2.0 section 4 and the base protocol of MCP. The
+     two say that an id and an error code are an integer. They do not say
+     which tokens are an integer. The reader takes a token with no fraction
+     and no exponent. It thus refuses `1.0`.
+  2. `Line`, the base protocol of MCP. The revision 2025-03-26 has a batch,
+     which is a list of messages. Each other revision of `ProtocolVersion`
+     has none. The reader refuses a batch.
+  3. The `Serialize` of `Line`, JSON-RPC 2.0 section 5. JSON-RPC gives the
+     id `null` to an error with no known request. The schema of MCP
+     2025-11-25 gives such an error no id. The reader takes both forms,
+     and the writer writes `null`.
+  4. `RawLine`, JSON-RPC 2.0 sections 4, 5 and 5.1. The specification does
+     not say what a receiver does with a member that it does not name. The
+     reader refuses the message.
+- The `mcp` module has no type for the parameters of a request. A `Line`
+  keeps them as an `Object`, and a client or a server reads them with a raw
+  type of its own. `Slot` is not public, so a raw type of another crate has
+  no lenient field. No packet has that part yet.
+- The error of `mcp::Line::parse` holds no id. A server that answers a
+  request which the reader refuses thus writes an error with the id `null`.
+- `mcp::Line::Error` keeps no `data` member with the value `null`. The
+  reader gives the same value for that member and for no member, and the
+  writer then writes no `data`.
 - Two texts of "When the two results differ" wait for a confirmation of the
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
