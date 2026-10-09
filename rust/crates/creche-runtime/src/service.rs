@@ -413,7 +413,8 @@ pub struct Program {
 }
 
 impl Program {
-    /// A program with no SIGHUP handler: [`OnHangup::DefaultAction`]. SIGHUP
+    /// The program with this name, this count of threads and this drain
+    /// limit. It has no SIGHUP handler: [`OnHangup::DefaultAction`]. SIGHUP
     /// then ends the process, as it ends a Python service that installs no
     /// handler.
     #[must_use]
@@ -527,6 +528,7 @@ impl Context {
     ///
     /// `None` for a program with [`OnHangup::DefaultAction`], and for each
     /// call after the first one.
+    #[must_use]
     pub const fn take_hangups(&mut self) -> Option<Hangups> {
         self.hangups.take()
     }
