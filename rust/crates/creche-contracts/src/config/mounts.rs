@@ -252,6 +252,29 @@ struct RuntimeFields {
 
 /// The raw form of `runtime.json`: one mapping with the keys of contract 01
 /// §6.1 rule 2 and `system_prompt`, and no other key.
+///
+/// Only `serde` makes a value, from the text of a file.
+///
+/// ```
+/// use creche_contracts::config::mounts::{RawRuntimeConfig, RuntimeConfig, Shell};
+///
+/// let raw: RawRuntimeConfig = serde_json::from_str(
+///     r#"{"shell": true, "sandbox_tools": ["read"], "model_alias": "agent-router"}"#,
+/// )?;
+/// let config = RuntimeConfig::try_from(raw)?;
+/// assert_eq!(config.shell(), Shell::On);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build a value, and cannot read its field:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::config::mounts::{RawRuntimeConfig, RuntimeConfig, Shell};
+///
+/// fn copy_of(raw: RawRuntimeConfig) -> RawRuntimeConfig {
+///     RawRuntimeConfig(raw.0)
+/// }
+/// ```
 #[derive(Debug, Deserialize)]
 #[serde(transparent)]
 pub struct RawRuntimeConfig(MapOnly<RuntimeFields>);
@@ -487,6 +510,24 @@ impl fmt::Display for RuntimeIssue {
 impl Error for RuntimeIssue {}
 
 /// Each issue of one `runtime.json`: one issue or more.
+///
+/// Only the parse of a [`RuntimeConfig`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::mounts::{RuntimeConfig, RuntimeConfigErrors, RuntimeIssue};
+///
+/// let errors: RuntimeConfigErrors = RuntimeConfig::parse(b"[]").unwrap_err();
+/// assert_eq!(errors.as_slice(), [RuntimeIssue::BadShape]);
+/// ```
+///
+/// Code outside this module cannot build a value from a raw list. A list
+/// with no issue is not an error:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::config::mounts::{RuntimeConfig, RuntimeConfigErrors, RuntimeIssue};
+///
+/// let errors = RuntimeConfigErrors(Vec::<RuntimeIssue>::new());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfigErrors(Vec<RuntimeIssue>);
 
@@ -1202,6 +1243,32 @@ impl fmt::Display for PlaypenEnvError {
 impl Error for PlaypenEnvError {}
 
 /// Each error of one env file of the playpen: one error or more.
+///
+/// Only the conversion from a [`RawPlaypenEnv`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::mounts::{
+///     PlaypenEnv, PlaypenEnvError, PlaypenEnvErrors, RawPlaypenEnv,
+/// };
+///
+/// let raw = RawPlaypenEnv::parse(
+///     "AGENT_CRED_DIR=/a\nAGENT_FAMILY_CONFIG_DIR=/b\nAGENT_CONTROL_DIR=/c\n",
+/// );
+/// let errors: PlaypenEnvErrors = PlaypenEnv::try_from(&raw).unwrap_err();
+/// let unset = PlaypenEnvError::Unset { variable: "AGENT_SANDBOX" };
+/// assert_eq!(errors.as_slice(), [unset]);
+/// ```
+///
+/// Code outside this module cannot build a value from a raw list. A list
+/// with no error is not an error:
+///
+/// ```compile_fail,E0423
+/// use creche_contracts::config::mounts::{
+///     PlaypenEnv, PlaypenEnvError, PlaypenEnvErrors, RawPlaypenEnv,
+/// };
+///
+/// let errors = PlaypenEnvErrors(Vec::<PlaypenEnvError>::new());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlaypenEnvErrors(Vec<PlaypenEnvError>);
 
