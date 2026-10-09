@@ -167,6 +167,9 @@ pub enum AccessLog {
 ///   `/healthz` for `/healthz/`. Such a request gets status 307 with no
 ///   body, for each method. The `Location` header names the path of the
 ///   route and keeps the query. The path `/` gets no such answer.
+/// - **A target with a scheme.** A target with a scheme and a host,
+///   `http://host/path`, gets the answer for [`EdgeFailure::NoRoute`], for
+///   each path. `axum` alone routes the path of such a target.
 /// - **The `Allow` header.** The answer for a wrong method names one method:
 ///   the first method that the service gave to the path. `axum` alone names
 ///   each method of the path, and `HEAD` for `GET`. The Python framework
@@ -322,12 +325,10 @@ async fn answered<E: ErrorBodies>(front: Arc<Front<E>>, mut request: Request) ->
     // The guard fires the signal when this future drops before the answer.
     let leaves = left.drop_guard();
 
-    let routed = front.routes.clone().oneshot(request);
     let ended = front
         .tasks
-        .spawn_must_complete(HANDLER_TASK, routed)
-        .await
-        .map(|answer| answer.unwrap_or_else(|never| match never {}));
+        .spawn_must_complete(HANDLER_TASK, routed(Arc::clone(&front), request))
+        .await;
     let mut answer = settled(&front.errors, &sent, &path, ended);
     // The client stayed until the answer.
     drop(leaves.disarm());
@@ -338,6 +339,27 @@ async fn answered<E: ErrorBodies>(front: Arc<Front<E>>, mut request: Request) ->
     }
 
     answer
+}
+
+/// Gives `request` to the router of the service. This is the work of the
+/// task of one request.
+///
+/// A target with a scheme and a host, `http://host/path`, gets the answer
+/// for [`EdgeFailure::NoRoute`]. The Python framework looks for a route with
+/// the whole target as its path, and no route has such a path
+/// (`uvicorn/protocols/http/h11_impl.py:201-203`). `axum` alone routes the
+/// path of such a target.
+async fn routed<E: ErrorBodies>(front: Arc<Front<E>>, request: Request) -> Response {
+    if request.uri().scheme().is_some() {
+        return front.errors.answer(EdgeFailure::NoRoute);
+    }
+
+    front
+        .routes
+        .clone()
+        .oneshot(request)
+        .await
+        .unwrap_or_else(|never| match never {})
 }
 
 /// The answer of a request whose task ended.
@@ -662,12 +684,10 @@ pub mod starlette {
     use http::{HeaderValue, StatusCode};
 
     use super::{EdgeFailure, ErrorBodies};
+    use crate::http::server::PLAIN_TEXT;
 
     /// The content type of a JSON answer of the framework.
     const JSON: &str = "application/json";
-
-    /// The content type of a text answer of the framework.
-    const PLAIN_TEXT: &str = "text/plain; charset=utf-8";
 
     /// The body of the answer to a path that no route has. Each surface
     /// `runtime.edge.*` holds it in the vector `unknown-path`.
@@ -1040,11 +1060,17 @@ mod tests {
             .into_bytes()
     }
 
-    /// A `GET` request with the `Host` header `host`, or with no such header.
+    /// A `GET` request of HTTP/1.1 with the `Host` header `host`. With no
+    /// host, a request of HTTP/1.0: only that version permits a request
+    /// with no `Host` header.
     fn request_of(host: Option<&str>, target: &str) -> Vec<u8> {
-        let host = host.map_or_else(String::new, |host| format!("Host: {host}\r\n"));
-
-        format!("GET {target} HTTP/1.1\r\n{host}Connection: close\r\n\r\n").into_bytes()
+        match host {
+            Some(host) => {
+                format!("GET {target} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")
+            }
+            None => format!("GET {target} HTTP/1.0\r\n\r\n"),
+        }
+        .into_bytes()
     }
 
     /// A route for `GET` that counts its calls.
@@ -1777,8 +1803,7 @@ mod tests {
 
     /// The Python framework decodes the target of a request first
     /// (`uvicorn/protocols/http/h11_impl.py:201-202`): it serves
-    /// `/%68ealthz` as `/healthz`, and it has no route for a target with a
-    /// scheme and a host.
+    /// `/%68ealthz` as `/healthz`.
     #[test]
     fn a_router_matches_the_path_as_the_client_sent_it() {
         runtime().block_on(async {
@@ -1793,11 +1818,52 @@ mod tests {
             assert_eq!(escaped_slash.status, 404);
             assert_eq!(escaped_slash.header("location"), None);
             assert_eq!(calls.load(Ordering::SeqCst), 0);
+            service.stop().await;
+        });
+    }
 
-            let absolute = service.ask(&request("GET", "http://test/healthz")).await;
+    /// The Python framework looks for a route with the whole target as its
+    /// path (`uvicorn/protocols/http/h11_impl.py:201-203`), so it has no
+    /// route for a target with a scheme and a host.
+    #[test]
+    fn a_target_with_a_scheme_and_a_host_has_no_route() {
+        let table = [
+            ("GET", "http://test/healthz"),
+            ("GET", "http://other.example/healthz"),
+            ("GET", "http://test/healthz?x=1"),
+            // No answer with status 307 either.
+            ("GET", "http://test/healthz/"),
+            ("GET", "http://test/dir"),
+            ("POST", "http://test/healthz"),
+            ("GET", "https://test/healthz"),
+        ];
 
-            assert_eq!(absolute.status, 200);
-            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        runtime().block_on(async {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let routes = Router::new()
+                .route("/healthz", counted(&calls))
+                .route("/dir/", counted(&calls));
+            let service = Service::starlette(routes).await;
+
+            for (method, target) in table {
+                let answer = service.ask(&request(method, target)).await;
+
+                assert_eq!(answer.status, 404, "{method} {target}");
+                assert_eq!(answer.header("location"), None, "{method} {target}");
+                assert_eq!(answer.header("allow"), None, "{method} {target}");
+                assert_eq!(
+                    answer.text(),
+                    "{\"detail\":\"Not Found\"}",
+                    "{method} {target}"
+                );
+            }
+
+            let head = service.ask(&request("HEAD", "http://test/healthz")).await;
+
+            assert_eq!(head.status, 404);
+            assert_eq!(head.header("content-length"), Some("22"));
+            assert!(head.body.is_empty(), "{head:?}");
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
             service.stop().await;
         });
     }

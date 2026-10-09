@@ -47,8 +47,13 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::Router;
+use axum::body::Body;
+use axum::extract::Request;
+use axum::response::Response;
 use axum::serve::Listener;
 use creche_contracts::config::{BindAddress, SocketPath};
+use http::header::{CONNECTION, CONTENT_TYPE, HOST};
+use http::{HeaderValue, StatusCode, Version};
 use rustix::io::Errno;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpSocket, TcpStream, UnixListener, UnixSocket, UnixStream};
@@ -58,6 +63,7 @@ use tokio::task::{Id, JoinSet};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tokio_util::task::TaskTracker;
 use tokio_util::task::task_tracker::TaskTrackerToken;
+use tower::ServiceExt;
 
 use crate::readfile::{FileFacts, os_text};
 use crate::tasks::{Drained, Tasks};
@@ -113,6 +119,18 @@ const MAPPED_ADDRESS: &str = "an IPv6 listener does not bind an IPv4 address";
 
 /// The text of the error that a cut connection gives to its reader.
 const CUT: &str = "the service ended the connection at its stop";
+
+/// The content type of a text answer of the Python server and of the Python
+/// web framework.
+pub(super) const PLAIN_TEXT: &str = "text/plain; charset=utf-8";
+
+/// The body of the answer to a request that the Python server refuses. The
+/// Python origin is `uvicorn/protocols/http/h11_impl.py:183`.
+const INVALID_REQUEST: &str = "Invalid HTTP request received.";
+
+/// The value of the `Connection` header of that answer. The server closes
+/// the connection after an answer with this value.
+const CLOSE: &str = "close";
 
 /// Where a service listens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1216,6 +1234,50 @@ impl Listener for Accepting {
     }
 }
 
+/// Whether `request` is one that `hyper` reads and that `h11` refuses. `h11`
+/// is the reader of the Python server.
+///
+/// - A request of HTTP/1.1 with no `Host` header, and a request of each
+///   version with more than one (`h11/_events.py:112-119`).
+/// - A target with a byte past `0x7E` (`h11/_abnf.py:54` and `:83`).
+fn refused_by_python(request: &Request) -> bool {
+    let hosts = request.headers().get_all(HOST).iter().count();
+    if hosts > 1 || (hosts == 0 && request.version() == Version::HTTP_11) {
+        return true;
+    }
+
+    request
+        .uri()
+        .path_and_query()
+        .is_some_and(|target| !target.as_str().is_ascii())
+}
+
+/// The answer of the Python server to a request that it refuses: status
+/// 400, a text, and a connection that closes.
+///
+/// The Python origin is `send_400_response` of
+/// `uvicorn/protocols/http/h11_impl.py:304-320`.
+fn invalid_request() -> Response {
+    let mut answer = Response::new(Body::from(INVALID_REQUEST));
+    *answer.status_mut() = StatusCode::BAD_REQUEST;
+    let headers = answer.headers_mut();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static(PLAIN_TEXT));
+    headers.insert(CONNECTION, HeaderValue::from_static(CLOSE));
+
+    answer
+}
+
+/// Gives `request` to `app`, unless the Python server refuses it.
+async fn checked(app: Router, request: Request) -> Response {
+    if refused_by_python(&request) {
+        return invalid_request();
+    }
+
+    app.oneshot(request)
+        .await
+        .unwrap_or_else(|never| match never {})
+}
+
 /// Why [`serve`] stopped before the stop signal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServeError {
@@ -1417,6 +1479,16 @@ fn limited<F: Future>(limit: Duration, closed: F) -> Option<tokio::time::Timeout
 /// own. A caller that drops the future closes each listener and ends each
 /// connection.
 ///
+/// A listener refuses three kinds of request before `app` gets them, as the
+/// Python server does. The answer is status 400 with the text
+/// `Invalid HTTP request received.`, and the connection closes
+/// (`uvicorn/protocols/http/h11_impl.py:182-185` and `:304-320`):
+///
+/// - A request of HTTP/1.1 with no `Host` header.
+/// - A request with more than one `Host` header.
+/// - A target with a byte past `0x7E`, for example a letter that is not
+///   ASCII.
+///
 /// The function removes the file of a Unix socket only while the path has
 /// the inode that [`bind`] read. A path that another process took thus
 /// stays, as `asyncio` of CPython 3.13 leaves it
@@ -1460,9 +1532,8 @@ fn limited<F: Future>(limit: Duration, closed: F) -> Option<tokio::time::Timeout
 ///   (`h11/_connection.py:69`). A listener here has the limits of `hyper`: a
 ///   head of 100 headers and of 417,792 bytes. It answers status 431 past a
 ///   limit.
-/// - `uvicorn` answers status 400 to a request of HTTP/1.1 with no `Host`
-///   header, and to a request with two (`h11/_events.py:112-119`). A
-///   listener here gives each one to the router.
+/// - `uvicorn` sends the text of its status 400 also to a client that sent
+///   `HEAD`. A listener here sends the headers of that answer and no body.
 /// - `uvicorn` gives an app a header value with a control byte of ASCII, for
 ///   each such byte but NUL and white space (`h11/_abnf.py:55-56`). A
 ///   listener here takes only the tab: it answers status 400 to each other
@@ -1499,6 +1570,7 @@ where
     let _close_at_end = closing.clone().drop_guard();
     let _cut_at_end = cut.clone().drop_guard();
     let open = TaskTracker::new();
+    let app = Router::new().fallback(move |request: Request| checked(app.clone(), request));
     let mut listeners = start(bound, &app, &closing, &cut, &open)?;
 
     let failure = tokio::select! {
@@ -3042,31 +3114,85 @@ pub(super) mod tests {
         });
     }
 
-    /// `h11` refuses a request of HTTP/1.1 with no `Host` header, and a
-    /// request with two (`h11/_events.py:112-119`). `uvicorn` then answers
-    /// status 400.
+    /// `h11` refuses a request of HTTP/1.1 with no `Host` header, a request
+    /// with two, and a target with a byte past `0x7E`
+    /// (`h11/_events.py:112-119`, `h11/_abnf.py:83`). `uvicorn` then answers
+    /// status 400 with a text (`uvicorn/protocols/http/h11_impl.py:304-320`).
     #[test]
-    fn a_request_with_no_host_header_or_with_two_goes_to_the_router() {
-        let table: [&[u8]; 3] = [
-            b"GET /healthz HTTP/1.1\r\nConnection: close\r\n\r\n",
-            b"GET /healthz HTTP/1.1\r\nHost: one\r\nHost: two\r\nConnection: close\r\n\r\n",
-            // `uvicorn` takes this one too: HTTP/1.0 has no such rule.
+    fn a_request_that_the_python_server_refuses_gets_its_answer() {
+        let refused: [&[u8]; 6] = [
+            b"GET /healthz HTTP/1.1\r\nConnection: keep-alive\r\n\r\n",
+            b"GET /healthz HTTP/1.1\r\nHost: one\r\nHost: two\r\n\r\n",
+            b"GET /healthz HTTP/1.0\r\nHost: one\r\nHost: two\r\n\r\n",
+            b"GET /caf\xc3\xa9 HTTP/1.1\r\nHost: test\r\n\r\n",
+            b"GET /healthz?b=\xc3\xa9 HTTP/1.1\r\nHost: test\r\n\r\n",
+            b"POST /healthz HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+        ];
+        let served: [&[u8]; 2] = [
+            // HTTP/1.0 has no rule for a request with no `Host` header.
             b"GET /healthz HTTP/1.0\r\n\r\n",
+            // `0x7E` is the last byte that a target can hold.
+            b"GET /healthz?b=~ HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n",
         ];
 
         runtime().block_on(async {
             let root = TempRoot::new().unwrap();
             let path = socket_in(&root);
-            let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
-            let served = Served::start(vec![bound], health_app(), LONG_DRAIN);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let app = Router::new().fallback({
+                let calls = Arc::clone(&calls);
 
-            for request in table {
+                move || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+
+                    HEALTH_BODY
+                }
+            });
+            let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+            let served_app = Served::start(vec![bound], app, LONG_DRAIN);
+
+            for request in refused {
+                // No request of the table asks for a close: the answer
+                // closes the connection.
+                let answer = within(RawHttp::unix(&path, request)).await.unwrap();
+
+                assert_eq!(status_of(&answer), 400, "{request:?}");
+                assert_eq!(
+                    header_of(&answer, "content-type").as_deref(),
+                    Some("text/plain; charset=utf-8"),
+                    "{request:?}"
+                );
+                assert_eq!(
+                    header_of(&answer, "connection").as_deref(),
+                    Some("close"),
+                    "{request:?}"
+                );
+                assert_eq!(
+                    body_of(&answer),
+                    b"Invalid HTTP request received.",
+                    "{request:?}"
+                );
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+            // `uvicorn` sends the text to this client too.
+            let head = within(RawHttp::unix(&path, b"HEAD /healthz HTTP/1.1\r\n\r\n"))
+                .await
+                .unwrap();
+
+            assert_eq!(status_of(&head), 400);
+            assert_eq!(header_of(&head, "content-length").as_deref(), Some("30"));
+            assert!(body_of(&head).is_empty());
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+            for request in served {
                 let answer = within(RawHttp::unix(&path, request)).await.unwrap();
 
                 assert_eq!(status_of(&answer), 200, "{request:?}");
                 assert_eq!(body_of(&answer), HEALTH_BODY.as_bytes(), "{request:?}");
             }
-            assert_eq!(served.stop().await, Ok(Drained::Clean));
+            assert_eq!(calls.load(Ordering::SeqCst), served.len());
+            assert_eq!(served_app.stop().await, Ok(Drained::Clean));
         });
     }
 
