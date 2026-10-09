@@ -1081,15 +1081,22 @@ counts of each crate and passes.
 The first check already finds most sides that no test took, because the code
 of a side is a region. The false side of an `if` with no `else` is such a
 region: it is at the `}` of the block. The fifth check adds the sides that
-are not a region of their own. The measurements found two kinds of such a
+are not a region of their own. The measurements found three kinds of such a
 side:
 
-1. An operand of `&&` or of `||` in a condition, also in a let chain. For
-   `if a && b`, a test with a false `a` runs the `else` block. The first
-   check then passes when `b` was never false.
-2. The guard of a `match` arm. A value that does not match the pattern of
-   the arm runs the next arm. The first check then passes when the guard was
-   never false.
+1. An operand of `&&` or of `||`. The operand can be in a condition, in a
+   let chain or in a value.
+   - For `if a && b`, a test with a false `a` runs the `else` block. The
+     first check then passes when `b` was never false.
+   - For the value `a && b`, a test with a true `a` runs `b`. The first
+     check then passes when `a` was never false.
+2. The guard of a `match` arm, also in `matches!`. A value that does not
+   match the pattern of the arm runs the next arm. The first check then
+   passes when the guard was never false.
+3. The condition of a `while` and the pattern of a `while let`, when the
+   loop also ends at a `break`. A test that ends the loop at the `break`
+   runs the code after the loop. The first check then passes when the
+   condition was never false.
 
 The compiler of the job writes a branch for these forms:
 
