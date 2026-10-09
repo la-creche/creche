@@ -56,8 +56,23 @@ NO_DATABASE = b"this file is no database\n" * 64
 #: limit of each unit of this repository.
 STOP_DEADLINE_S = 30.0
 
+#: What the program gets beside `PATH` in the two runs of one refused
+#: command line. None gives the address of the TEI stand-in. The empty
+#: mapping gives no address.
+ADDRESS_AND_NONE: tuple[dict[str, str] | None, ...] = (None, {})
+
 
 # ------------------------------------------------------------ the command line
+#
+# The program checks its command line before it reads its environment. Each
+# scenario of this part runs each command line two times: with the address of
+# TEI, and with no address. Both runs end with the status of a refused
+# command line, and TEI gets no call.
+#
+# CONTRACT-QUESTION: no contract gives the order of the two checks. Reading
+# taken: the program as it is. A program that reads its environment first
+# gives another status for a wrong command line on a host with no address.
+# A change costs one assertion in each scenario of this part.
 
 
 def test_a_wrong_count_of_arguments_is_refused(library: LibraryStack) -> None:
@@ -65,10 +80,12 @@ def test_a_wrong_count_of_arguments_is_refused(library: LibraryStack) -> None:
     scope = library.vault()
     write_vault(scope)
     whole = index_words(scope, library.index_dir(), Profile.VAULT)
+    lines = ([], whole[:1], [*whole, "more"])
 
-    codes = [library.run_words(words).exit_code for words in ([], whole[:1], [*whole, "more"])]
+    codes = [library.run_words(words, env).exit_code for env in ADDRESS_AND_NONE for words in lines]
 
-    assert codes == [EXIT_USAGE, EXIT_USAGE, EXIT_USAGE]
+    assert codes == [EXIT_USAGE] * len(ADDRESS_AND_NONE) * len(lines)
+    assert tei_calls(library.tree) == []
     assert not library.store().path.exists()
 
 
@@ -77,10 +94,16 @@ def test_an_unknown_profile_is_refused(library: LibraryStack) -> None:
     scope = library.vault()
     write_vault(scope)
     words = index_words(scope, library.index_dir())
+    profiles = ("prose", "VAULT")
 
-    codes = [library.run_words([*words, profile]).exit_code for profile in ("prose", "VAULT")]
+    codes = [
+        library.run_words([*words, profile], env).exit_code
+        for env in ADDRESS_AND_NONE
+        for profile in profiles
+    ]
 
-    assert codes == [EXIT_USAGE, EXIT_USAGE]
+    assert codes == [EXIT_USAGE] * len(ADDRESS_AND_NONE) * len(profiles)
+    assert tei_calls(library.tree) == []
     assert not library.store().path.exists()
 
 
@@ -88,14 +111,16 @@ def test_a_scope_that_is_no_directory_is_refused(library: LibraryStack) -> None:
     """A corpus path with no directory behind it: no such path, and a file."""
     scope = library.vault()
     write_vault(scope)
-    absent = library.vault("absent")
+    corpora = (library.vault("absent"), scope / MEETING)
 
     codes = [
-        library.run_index(corpus, library.index_dir()).exit_code
-        for corpus in (absent, scope / MEETING)
+        library.run_index(corpus, library.index_dir(), env=env).exit_code
+        for env in ADDRESS_AND_NONE
+        for corpus in corpora
     ]
 
-    assert codes == [EXIT_USAGE, EXIT_USAGE]
+    assert codes == [EXIT_USAGE] * len(ADDRESS_AND_NONE) * len(corpora)
+    assert tei_calls(library.tree) == []
     assert not library.store().path.exists()
 
 

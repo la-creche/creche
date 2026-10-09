@@ -1043,11 +1043,12 @@ the text of the failure. Work down this list.
   venv component.
 - **CONTRACT-QUESTION, the exit status of `index-scope`.** No contract names
   one. The suite holds status 2 for a command line that the program
-  refuses, as the program returns today. It accepts each status that is not
-  0 in four cases. The cases are a start with no TEI address, a failed
-  preflight, a signal, and a store that the program cannot read. A change
-  to one fixed status costs one assertion per scenario in
-  `test_proc_library_start.py`.
+  refuses, as the program returns today. It holds that status with a TEI
+  address and with none, because the program checks the command line
+  first. It accepts each status that is not 0 in four cases. The cases are
+  a start with no TEI address, a failed preflight, a signal, and a store
+  that the program cannot read. A change to one fixed status costs one
+  assertion per scenario in `test_proc_library_start.py`.
 - **CONTRACT-QUESTION, the report of `index-scope`.** No contract gives the
   text that the program writes on stdout. The suite holds the first line as
   the program writes it today, and the path at the start of each error
