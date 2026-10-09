@@ -9,13 +9,11 @@
 //! `creche-contracts` refuses each text that means each interface. [`bind`]
 //! also refuses a host name that has such an address.
 //!
-//! [`serve`] does not remove the file of a Unix socket at a stop. The next
-//! start removes it, as `attendance` does today.
-//!
 //! The stop of [`serve`] has three steps:
 //!
 //! 1. At the stop signal, each listener closes. No address takes a new
-//!    connection.
+//!    connection. [`serve`] removes the file of each Unix socket, when the
+//!    path still names the socket that [`bind`] made.
 //! 2. A connection with no request closes at once. A connection with a
 //!    request closes after its answer.
 //! 3. At the drain limit, [`serve`] ends each connection that is still open
@@ -43,7 +41,7 @@ use std::io::{self, IoSlice};
 use std::net::SocketAddr;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::panic::{self, AssertUnwindSafe};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -283,7 +281,9 @@ fn failed_at(step: BindStep) -> impl Fn(io::Error) -> Failed {
 /// 2. It removes the path, only when the path is a socket. A socket file
 ///    there is the file of an earlier process.
 /// 3. It binds the path and sets the new socket to mode `0660`.
-/// 4. It starts to listen. A client cannot connect before this step, so no
+/// 4. It reads the inode of the new file. [`serve`] removes the file at its
+///    stop only while the path has that inode.
+/// 5. It starts to listen. A client cannot connect before this step, so no
 ///    client connects to a socket with another mode.
 ///
 /// For a TCP address the function binds each address of the host, as
@@ -300,7 +300,9 @@ fn failed_at(step: BindStep) -> impl Fn(io::Error) -> Failed {
 /// The Python origins are `_prepare_socket_dir`, `_clear_stale_socket` and
 /// `_publish_socket_mode` of
 /// `attendance/src/attendance/__main__.py:120-160`, and the `startup` of
-/// `:179-186`. For a TCP address the origin is `uvicorn.run`, for example
+/// `:179-186`. The origin of step 4 is `create_unix_server` of
+/// `asyncio/unix_events.py:345-352` (CPython 3.13). For a TCP address the
+/// origin is `uvicorn.run`, for example
 /// `door-owui/src/agent_door_owui/__main__.py:61`.
 ///
 /// The function differs from those origins in three ways:
@@ -350,8 +352,8 @@ fn failed_at(step: BindStep) -> impl Fn(io::Error) -> Failed {
 /// })?;
 ///
 /// assert_eq!(drained, Drained::Clean);
-/// // The file of the socket stays. The next bind removes it.
-/// assert!(socket.exists());
+/// // The stop removed the file of the socket.
+/// assert!(!socket.exists());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
@@ -387,8 +389,8 @@ where
     // Each step before the listen is a call of the file system, so it runs
     // on the pool for blocking calls.
     let prepared = runtime.spawn_blocking(move || bound_socket(&steps, path.as_path(), dir));
-    let socket = match prepared.await {
-        Ok(Ok(socket)) => socket,
+    let (socket, file) = match prepared.await {
+        Ok(Ok(bound)) => bound,
         Ok(Err(failed)) => return Err(failed.at(&address)),
         // The text of a join error can hold the message of a panic.
         Err(_) => {
@@ -407,12 +409,20 @@ where
         address,
         port: None,
         sockets: vec![Socket::Unix(listener)],
+        file,
     })
 }
 
 /// The steps of a Unix socket before it listens: the directory, the old
-/// file, the bind and the mode.
-fn bound_socket(steps: &impl Steps, path: &Path, dir: SocketDir) -> Result<UnixSocket, Failed> {
+/// file, the bind, the mode and the inode of the new file.
+///
+/// The file is `None` when the path names no file after the bind: another
+/// process removed it. [`serve`] then removes no file at its stop.
+fn bound_socket(
+    steps: &impl Steps,
+    path: &Path,
+    dir: SocketDir,
+) -> Result<(UnixSocket, Option<SocketFile>), Failed> {
     if dir == SocketDir::PrepareSetgid {
         prepare_dir(steps, path).map_err(failed_at(BindStep::PrepareDir))?;
     }
@@ -424,8 +434,76 @@ fn bound_socket(steps: &impl Steps, path: &Path, dir: SocketDir) -> Result<UnixS
     steps
         .set_mode(path, SOCKET_MODE)
         .map_err(failed_at(BindStep::SetMode))?;
+    let file = steps
+        .inode_of(path)
+        .map_err(failed_at(BindStep::Bind))?
+        .map(|inode| SocketFile {
+            path: path.to_owned(),
+            inode,
+        });
 
-    Ok(socket)
+    Ok((socket, file))
+}
+
+/// The file of a Unix socket that [`bind`] made.
+#[derive(Debug)]
+struct SocketFile {
+    path: PathBuf,
+    /// The inode of the file after the bind. A process that takes the path
+    /// later makes a file with another inode.
+    inode: u64,
+}
+
+/// Removes `file` when its path still names the socket that [`bind`] made.
+///
+/// A path that names no file, and a path that another process took, are no
+/// error. Each other error is one `ERROR` line: the stop continues, and the
+/// next [`bind`] removes the file.
+///
+/// The Python origin is `_stop_serving` of
+/// `asyncio/unix_events.py:474-493` (CPython 3.13).
+fn remove_own(steps: &impl Steps, file: &SocketFile) {
+    let removed = match steps.inode_of(&file.path) {
+        Ok(Some(inode)) if inode == file.inode => steps.remove_file(&file.path),
+        Ok(_) => return,
+        Err(error) => Err(error),
+    };
+
+    match removed {
+        Ok(()) => {}
+        // Another process removed the file between the two calls.
+        Err(error) if is_absent(&error) => {}
+        Err(error) => crate::error!(
+            LOG_TARGET,
+            "could not remove the socket file {}: {}",
+            file.path.display(),
+            os_text(&error)
+        ),
+    }
+}
+
+/// Removes each file of `files` that this process still owns, on the pool
+/// for blocking calls.
+///
+/// The pool runs the step to its end when the caller drops this future.
+async fn remove_files<S>(steps: S, files: Vec<SocketFile>)
+where
+    S: Steps + Send + 'static,
+{
+    if files.is_empty() {
+        return;
+    }
+    let Ok(runtime) = Handle::try_current() else {
+        return;
+    };
+    let removed = runtime.spawn_blocking(move || {
+        for file in &files {
+            remove_own(&steps, file);
+        }
+    });
+
+    // The step gives no value. A runtime that stops can end the wait.
+    let _ = removed.await;
 }
 
 /// Makes the directory of the socket `path` and gives it the mode `2750`.
@@ -533,6 +611,10 @@ trait Steps {
     /// Whether `path` is a socket. A path that does not exist is no socket.
     fn is_socket(&self, path: &Path) -> io::Result<bool>;
 
+    /// The inode of the file that `path` names. `None` for a path that names
+    /// no file.
+    fn inode_of(&self, path: &Path) -> io::Result<Option<u64>>;
+
     /// Removes one file.
     fn remove_file(&self, path: &Path) -> io::Result<()>;
 }
@@ -559,6 +641,14 @@ impl Steps for Host {
         match fs::metadata(path) {
             Ok(facts) => Ok(facts.file_type().is_socket()),
             Err(error) if is_absent(&error) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn inode_of(&self, path: &Path) -> io::Result<Option<u64>> {
+        match fs::metadata(path) {
+            Ok(facts) => Ok(Some(FileFacts::from(&facts).ino())),
+            Err(error) if is_absent(&error) => Ok(None),
             Err(error) => Err(error),
         }
     }
@@ -618,6 +708,7 @@ async fn bind_tcp(address: &BindAddress) -> Result<Bound, BindError> {
         address: tcp_text(host, port),
         port: Some(port),
         sockets,
+        file: None,
     })
 }
 
@@ -733,7 +824,8 @@ fn tcp_text(host: &str, port: u16) -> String {
 ///
 /// A value holds each listener of the address. A client can connect, and the
 /// connection waits until [`serve`] takes it. A dropped value closes each
-/// listener. The file of a Unix socket stays.
+/// listener. The file of a Unix socket then stays, and the next [`bind`]
+/// removes it.
 ///
 /// Only [`bind`] gives a value:
 ///
@@ -771,6 +863,8 @@ pub struct Bound {
     port: Option<u16>,
     /// Each listener of the address.
     sockets: Vec<Socket>,
+    /// The file of a Unix socket. `None` for a TCP address.
+    file: Option<SocketFile>,
 }
 
 impl Bound {
@@ -1163,6 +1257,8 @@ struct Listeners {
     tasks: JoinSet<Option<ServeError>>,
     /// The address of each task, for the error of a task that panicked.
     addresses: Vec<(Id, String)>,
+    /// The file of each Unix socket. [`serve`] takes them at its stop.
+    files: Vec<SocketFile>,
 }
 
 impl Listeners {
@@ -1232,12 +1328,17 @@ fn start(
     let mut listeners = Listeners {
         tasks: JoinSet::new(),
         addresses: Vec::new(),
+        files: Vec::new(),
     };
 
     for one in bound {
         let Bound {
-            address, sockets, ..
+            address,
+            sockets,
+            file,
+            ..
         } = one;
+        listeners.files.extend(file);
 
         for socket in sockets {
             let Ok(runtime) = Handle::try_current() else {
@@ -1297,9 +1398,10 @@ fn limited<F: Future>(limit: Duration, closed: F) -> Option<tokio::time::Timeout
 
 /// Serves `app` on each listener of `bound` until the stop signal of `tasks`.
 ///
-/// After the stop signal the listeners take no new connection. The function
-/// then waits for the open requests, for `drain` at most, and returns. A
-/// stream that is still open ends there.
+/// After the stop signal the listeners take no new connection, and the
+/// function removes the file of each Unix socket. It then waits for the open
+/// requests, for `drain` at most, and returns. A stream that is still open
+/// ends there.
 ///
 /// [`Drained::TimedOut`] holds the count of the connections that were open
 /// at the limit. The function ends each one: the next read and the next
@@ -1315,8 +1417,14 @@ fn limited<F: Future>(limit: Duration, closed: F) -> Option<tokio::time::Timeout
 /// own. A caller that drops the future closes each listener and ends each
 /// connection.
 ///
-/// The file of a Unix socket stays after the function returns. The next
-/// [`bind`] removes it.
+/// The function removes the file of a Unix socket only while the path has
+/// the inode that [`bind`] read. A path that another process took thus
+/// stays, as `asyncio` of CPython 3.13 leaves it
+/// (`asyncio/unix_events.py:474-493`). `asyncio` of CPython 3.12 removes no
+/// file, and the function follows CPython 3.13. A file that the function
+/// cannot remove is one `ERROR` line and no error of the stop. The file also
+/// stays when the caller drops the future before the stop signal, and after
+/// a process that the system killed. The next [`bind`] removes such a file.
 ///
 /// The limit needs the timer of the runtime. In a runtime with no timer the
 /// function does not wait: it writes one `ERROR` line and ends each
@@ -1370,6 +1478,20 @@ pub async fn serve(
     tasks: &Tasks,
     drain: Duration,
 ) -> Result<Drained, ServeError> {
+    serve_through(Host, bound, app, tasks, drain).await
+}
+
+/// [`serve`] on the given [`Steps`].
+async fn serve_through<S>(
+    steps: S,
+    bound: Vec<Bound>,
+    app: Router,
+    tasks: &Tasks,
+    drain: Duration,
+) -> Result<Drained, ServeError>
+where
+    S: Steps + Send + 'static,
+{
     let closing = CancellationToken::new();
     let cut = CancellationToken::new();
     // Each way out of this function closes the listeners and ends the open
@@ -1385,6 +1507,7 @@ pub async fn serve(
     };
     closing.cancel();
     open.close();
+    remove_files(steps, std::mem::take(&mut listeners.files)).await;
 
     let waited = match limited(drain, listeners.all_closed(&open)) {
         Some(wait) => wait.await.ok(),
@@ -1524,7 +1647,7 @@ pub(super) mod tests {
         check: fn(&[String]),
     }
 
-    const SCENARIOS: [Scenario; 10] = [
+    const SCENARIOS: [Scenario; 11] = [
         Scenario {
             name: "dir-mode",
             run: the_mode_of_the_directory_cannot_change,
@@ -1548,9 +1671,24 @@ pub(super) mod tests {
             },
         },
         Scenario {
-            name: "socket-stays",
-            run: the_socket_file_stays_after_serve_and_the_next_bind_takes_the_path,
+            name: "socket-goes",
+            run: the_socket_file_is_gone_after_serve_and_the_next_bind_takes_the_path,
             check: no_line,
+        },
+        Scenario {
+            name: "socket-kept",
+            run: a_socket_file_that_serve_cannot_remove_stays,
+            check: |lines| {
+                // One line for each of the two calls that fail.
+                assert_eq!(lines.len(), 2, "{lines:?}");
+                for line in lines {
+                    assert!(
+                        line.starts_with("ERROR could not remove the socket file /"),
+                        "{lines:?}"
+                    );
+                    assert!(line.ends_with("/s.sock: read-only"), "{lines:?}");
+                }
+            },
         },
         Scenario {
             name: "restart",
@@ -1693,9 +1831,18 @@ pub(super) mod tests {
 
     impl Served {
         fn start(bound: Vec<Bound>, app: Router, drain: Duration) -> Self {
+            Self::start_through(Host, bound, app, drain)
+        }
+
+        /// Starts `serve` with the steps of a test.
+        fn start_through<S>(steps: S, bound: Vec<Bound>, app: Router, drain: Duration) -> Self
+        where
+            S: Steps + Send + 'static,
+        {
             let (trigger, shutdown) = shutdown_pair();
             let tasks = Tasks::new(shutdown);
-            let serving = tokio::spawn(async move { serve(bound, app, &tasks, drain).await });
+            let serving =
+                tokio::spawn(async move { serve_through(steps, bound, app, &tasks, drain).await });
 
             Self { trigger, serving }
         }
@@ -1764,6 +1911,7 @@ pub(super) mod tests {
             address: String::from(SCRIPTED),
             port: None,
             sockets: vec![Socket::Scripted(VecDeque::from(errors))],
+            file: None,
         }
     }
 
@@ -1775,6 +1923,7 @@ pub(super) mod tests {
         SetDirMode,
         SetSocketMode,
         IsSocket,
+        InodeOf,
         RemoveFile,
     }
 
@@ -1846,6 +1995,12 @@ pub(super) mod tests {
             self.check(Call::IsSocket)?;
 
             Host.is_socket(path)
+        }
+
+        fn inode_of(&self, path: &Path) -> io::Result<Option<u64>> {
+            self.check(Call::InodeOf)?;
+
+            Host.inode_of(path)
         }
 
         fn remove_file(&self, path: &Path) -> io::Result<()> {
@@ -2387,6 +2542,7 @@ pub(super) mod tests {
             (Call::IsSocket, BindStep::RemoveStale),
             (Call::RemoveFile, BindStep::RemoveStale),
             (Call::SetSocketMode, BindStep::SetMode),
+            (Call::InodeOf, BindStep::Bind),
         ];
 
         runtime().block_on(async {
@@ -2677,8 +2833,90 @@ pub(super) mod tests {
                     }
                 })
                 .await;
+                // No stop signal came, so the file of the socket stays.
+                assert!(fs::metadata(&path).unwrap().file_type().is_socket());
             });
         }
+    }
+
+    #[test]
+    fn a_socket_file_that_another_process_took_stays_at_the_stop() {
+        runtime().block_on(async {
+            let root = TempRoot::new().unwrap();
+            let path = socket_in(&root);
+            let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+            let served = Served::start(vec![bound], health_app(), LONG_DRAIN);
+            // The second socket exists beside the first one, so the two
+            // files have two inodes. The rename then puts the second file
+            // at the path of the first.
+            let other = path.with_file_name("other.sock");
+            let taker = StdUnixListener::bind(&other).unwrap();
+            let taken = Host.inode_of(&other).unwrap();
+            fs::rename(&other, &path).unwrap();
+
+            assert_eq!(served.stop().await, Ok(Drained::Clean));
+
+            assert_eq!(Host.inode_of(&path).unwrap(), taken);
+            // The other process still takes a connection at the path.
+            StdUnixStream::connect(&path).unwrap();
+            drop(taker);
+        });
+    }
+
+    #[test]
+    fn a_socket_file_that_another_process_removed_is_no_error_at_the_stop() {
+        runtime().block_on(async {
+            let root = TempRoot::new().unwrap();
+            let path = socket_in(&root);
+            let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+            let served = Served::start(vec![bound], health_app(), LONG_DRAIN);
+            fs::remove_file(&path).unwrap();
+
+            assert_eq!(served.stop().await, Ok(Drained::Clean));
+            assert!(!path.exists());
+        });
+    }
+
+    #[test]
+    fn an_address_that_no_serve_takes_leaves_its_socket_file() {
+        runtime().block_on(async {
+            let root = TempRoot::new().unwrap();
+            let path = socket_in(&root);
+            let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+
+            assert_eq!(
+                bound.file.as_ref().map(|file| Some(file.inode)),
+                Some(Host.inode_of(&path).unwrap())
+            );
+            drop(bound);
+
+            // The next bind removes the file.
+            assert!(fs::metadata(&path).unwrap().file_type().is_socket());
+            drop(bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap());
+        });
+    }
+
+    #[test]
+    fn the_file_of_a_socket_is_removed_only_while_it_has_its_inode() {
+        let root = TempRoot::new().unwrap();
+        let path = root.path().join("s.sock");
+        let holder = StdUnixListener::bind(&path).unwrap();
+        let inode = Host.inode_of(&path).unwrap().unwrap();
+        let file = |inode| SocketFile {
+            path: path.clone(),
+            inode,
+        };
+
+        remove_own(&Host, &file(inode.wrapping_add(1)));
+        assert!(path.exists());
+
+        remove_own(&Host, &file(inode));
+        assert!(!path.exists());
+
+        // The path names no file now.
+        remove_own(&Host, &file(inode));
+        assert_eq!(Host.inode_of(&path).unwrap(), None);
+        drop(holder);
     }
 
     #[test]
@@ -2952,9 +3190,10 @@ pub(super) mod tests {
         }
     }
 
-    /// The file of a socket stays after `serve`, nothing listens there, and
-    /// the next bind takes the path.
-    fn the_socket_file_stays_after_serve_and_the_next_bind_takes_the_path() {
+    /// The file of a socket is gone after the stop of `serve`, and the next
+    /// bind takes the path. `asyncio` of CPython 3.13 removes the file in
+    /// the same way (`asyncio/unix_events.py:474-493`).
+    fn the_socket_file_is_gone_after_serve_and_the_next_bind_takes_the_path() {
         runtime().block_on(async {
             let root = TempRoot::new().unwrap();
             let path = socket_in(&root);
@@ -2966,11 +3205,34 @@ pub(super) mod tests {
 
                 assert_eq!(status_of(&answer), 200);
                 assert_eq!(served.stop().await, Ok(Drained::Clean));
-                // `serve` leaves the file, and nothing listens there.
-                assert!(fs::metadata(&path).unwrap().file_type().is_socket());
+                assert_eq!(
+                    fs::symlink_metadata(&path).unwrap_err().kind(),
+                    io::ErrorKind::NotFound
+                );
                 assert_eq!(
                     StdUnixStream::connect(&path).unwrap_err().kind(),
-                    io::ErrorKind::ConnectionRefused
+                    io::ErrorKind::NotFound
+                );
+            }
+        });
+    }
+
+    /// The removal of the file fails, at the read of its inode and at the
+    /// removal itself. The stop is clean, the file stays, and one line names
+    /// it.
+    fn a_socket_file_that_serve_cannot_remove_stays() {
+        runtime().block_on(async {
+            for call in [Call::InodeOf, Call::RemoveFile] {
+                let root = TempRoot::new().unwrap();
+                let path = socket_in(&root);
+                let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+                let steps = Staged::failing(call, io::ErrorKind::PermissionDenied);
+                let served = Served::start_through(steps, vec![bound], health_app(), LONG_DRAIN);
+
+                assert_eq!(served.stop().await, Ok(Drained::Clean), "{call:?}");
+                assert!(
+                    fs::metadata(&path).unwrap().file_type().is_socket(),
+                    "{call:?}"
                 );
             }
         });
@@ -3023,10 +3285,10 @@ pub(super) mod tests {
                     os_text: os_text(&expected),
                 })
             );
-            // The other listener is closed too.
+            // The other listener is closed too, and its file is gone.
             assert_eq!(
                 StdUnixStream::connect(&path).unwrap_err().kind(),
-                io::ErrorKind::ConnectionRefused
+                io::ErrorKind::NotFound
             );
             // The other listener closed at the error. No request was open, so
             // `serve` did not wait for the drain limit.
