@@ -32,8 +32,9 @@ SESSION = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 TURN = "01JBQ7WZ0X4T9V6K2H8M3N5PQR"
 
 #: Contract 01 §3.8 rule 6. The fixture grants `read` and `grep`, so the
-#: other five of pi's seven built-ins are denied by name.
-DENIED_BUILTINS = "bash,edit,write,find,ls"
+#: other six of pi's eight built-ins are denied by name. `powershell` is in
+#: no grant, so each family denies it.
+DENIED_BUILTINS = "bash,powershell,edit,write,find,ls"
 
 #: pi's name for the one provider a sandbox may reach
 #: (`playpen/src/constants.ts`).

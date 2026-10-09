@@ -175,12 +175,74 @@ reason. The packet that writes the three bodies obeys these rules:
   write five forms. Three stamp the local time, and two have no time. This
   crate writes one form with the time in UTC. A change of the form costs one
   function, `format_line`.
-- This `CONTRACT-QUESTION` comment is open in `src/token.rs`:
-  `TokenRule::DOOR` and `TokenRule::NOT_EMPTY` check no mode. Contract 02 §3
-  rule 5 gives each token file a mode, and `attendance` checks it. The Python
-  readers of a door, of the chaperone and of `caregiver` check none. The two
-  rules keep the reading of those readers. The owner decides if a rule gets
-  a mode check.
+- These `CONTRACT-QUESTION` comments are open in `src/token.rs`:
+  1. `TokenRule::DOOR` and `TokenRule::NOT_EMPTY` check no mode. Contract 02
+     §3 rule 5 gives each token file a mode, and `attendance` checks it. The
+     Python readers of a door, of the chaperone and of `caregiver` check
+     none. The two rules keep the reading of those readers. The owner
+     decides if a rule gets a mode check.
+  2. `FILE_CAP`: contract 02 §3 rule 7 gives a token a least count of bytes
+     and no largest count. Each Python reader reads a token file of each
+     size. `read` refuses a file of more than 1 MiB. A larger cap costs one
+     constant.
+  3. `BEARER`: contract 02 §3 rule 4 does not say if a service takes the
+     scheme `Bearer` in another case of letters. `attendance`, the Open
+     WebUI door and the trigger listener take only `Bearer`. The chaperone
+     takes each case. `bearer_of` takes only `Bearer`. `BearerTrim` thus has
+     no value for the rule of the chaperone. The port of the chaperone needs
+     the answer first.
+  4. `same_content`: contract 04 §7.3 names three facts that the reader of
+     the delegate token file compares. They are the time of the last change,
+     the size and the inode. `CachedToken` also compares the device, because
+     an inode number is an id only on one device. The Python cache compares
+     the three facts. A change costs one line.
+- The test of `token` walks no vector of `runtime.bearer.chaperone`. The
+  Python chaperone accepts the scheme in each case of letters, and
+  `bearer_of` gives no bearer for the vectors `scheme-lower-case` and
+  `scheme-upper-case`. The constant `NO_PORT_HERE` names the surface. This
+  difference on an HTTP surface is open. No Rust service reads a bearer
+  yet.
+- The test `no_trim_gives_each_result_of_the_surface_with_no_walk` holds the
+  reason for `NO_PORT_HERE`. It fails when one value of `BearerTrim` gives
+  each result of the surface. Remove the constant then. Name the surface in
+  the table `COPIES`.
+- The vector `byte-1c-at-the-end` of the `runtime.bearer` surfaces holds a
+  header that ends with the byte `0x1c`. Three Python services accept that
+  request. A `HeaderValue` holds no such byte, so no request gives that
+  header to `bearer_of`. The test gives the bytes to the private function
+  `bearer_in`: the vector proves that function and no service. This
+  difference on an HTTP surface is open. No test of this crate shows what a
+  Rust service answers, because the HTTP server is a stub.
+- `token::CachedToken` reads the file again only when one of four facts of
+  the file moved. The facts are the device, the inode, the size and the time
+  of the last change. It does not see a new token that has each fact of the
+  old one. The Python cache has the same limit. A writer that replaces the
+  file with a rename gives it a new inode.
+- `token::CachedToken` checks the mode of its rule only when it reads the
+  file. A wider mode alone starts no read, so the token stays in use. The
+  Python cache checks no mode, as `TokenRule::DOOR` checks none. The owner
+  of the crate decides this case before a cached token gets a rule with a
+  mode check.
+- `token::CachedToken::current` blocks for one `stat`, and for one read
+  after a change. It gives a borrow of the token. A caller thus cannot run
+  it in `Tasks::spawn_blocking` and keep the token after the call. Rule 7 of
+  "The rules for a service" in `rust/AGENTS.md` has no exception for that
+  `stat`. The owner of the crate decides: an exception, or one more reader
+  of the type. The port of the chaperone needs the answer.
+- `token::bearer_of` gives the bearer of a request as a `Vec<u8>`. Those
+  bytes can be a token, and the `Debug` of a `Vec<u8>` prints each byte.
+  Rule 16 of "Rules for a change here" asks for a `Debug` that prints no
+  byte. A service gives the bytes to `Secret::matches`. It writes them to no
+  log line. The owner of the crate decides if the result gets a type of its
+  own.
+- `token::universal_newlines` holds the text mode rule of Python: one LF for
+  each CR LF and for each other CR. `command::python_text` is a stub for the
+  same rule. When that stub has its body, make `token` call it. Then delete
+  `universal_newlines`. `agent-family` holds one more copy of the rule in
+  `registry.rs`, and no packet has that copy yet.
+- No test gives `faults::publish` a fault file whose source is `caregiver`.
+  `FaultFile::new` refuses that source, so no code can build such a file. A
+  test gives the private function `publish_as` no writer in its place.
 - This `CONTRACT-QUESTION` comment is open in `src/entropy.rs`: contract 02
   §2 gives the length and the alphabet of a ULID and no layout of its bits.
   It gives a mint no rule for two times of the clock. One is a time before

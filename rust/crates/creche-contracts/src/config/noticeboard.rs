@@ -4,7 +4,10 @@
 //! of `view.env` and of the site file. The Python reader is
 //! `noticeboard.config.from_env`.
 
-use super::values::{BindHost, DirPath, LanAddress, Port, TokenFilePath};
+use super::values::{
+    BindHost, DEFAULT_ATTENDANCE_SOCKET, DEFAULT_REGISTRY_ROOT, DEFAULT_STATE_ROOT, DirPath,
+    LanAddress, Port, TokenFilePath,
+};
 use super::{
     AtReload, AtStart, AttendanceTarget, Checked, ConfigError, ConfigErrors, Env, FailureAction,
     KeyError, LAN_ADDRESS, MIN_KEY_BYTES, Parsed, ProcessConfig, all2, all3, all4, key_of_file,
@@ -36,9 +39,6 @@ pub const ACCESS_KEY: &str = "VIEW_ACCESS_KEY";
 pub const ACCESS_KEY_FILE: &str = "VIEW_ACCESS_KEY_FILE";
 
 const DEFAULT_PORT: &str = "8370";
-const DEFAULT_STATE_ROOT: &str = "/srv/agents/state/rework";
-const DEFAULT_REGISTRY_DIR: &str = "/srv/agents/registry";
-const DEFAULT_ATTENDANCE_SOCKET: &str = "/srv/agents/state/rework/sock/sessiond.sock";
 
 /// The count of rows on one page when the variable is not set.
 const DEFAULT_PAGE_SIZE: u16 = 50;
@@ -206,7 +206,7 @@ impl NoticeboardConfig {
         );
         let roots = all2(
             env.parse_or(STATE_ROOT, || DEFAULT_STATE_ROOT.parse()),
-            env.parse_or(REGISTRY_DIR, || DEFAULT_REGISTRY_DIR.parse()),
+            env.parse_or(REGISTRY_DIR, || DEFAULT_REGISTRY_ROOT.parse()),
         );
         let (listen, roots, attendance, (page_size, cookie_secure)) = all4(
             listen,
