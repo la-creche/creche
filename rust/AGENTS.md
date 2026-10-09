@@ -1433,11 +1433,16 @@ rule 4).
   2. A fence key that its verb does not read.
   3. `NaN` and an integer past 64 bits in the arguments of a call.
   4. A request body in UTF-16 or in UTF-32.
-- `grants::AuditRecord` has public fields and holds no rule between two
-  fields. Contract 04 §6.4 has one: the two records of a gated call name the
-  same gate. The writer of the port holds that rule. The vectors of
-  `chaperone.audit_line` hold records that break the rule, because the Python
+- `grants::AuditRecord` holds no rule between its outcome and its gate.
+  Contract 04 §6.4 gives each record of a gated call the gate of that call.
+  The type permits a record with the outcome `Pending` and no gate. The
+  writer of the port holds that rule. The vectors of `chaperone.audit_line`
+  hold a denial with an approval reason and no gate, because the Python
   writer checks no field.
+- `AuditRecord::with_gate` takes the gate from a `grants::Held`, and `Held`
+  is a sketch. Only a test build has a constructor of `Held`:
+  `Held::in_test`. No program can write a record with a gate until the port
+  of the chaperone adds the decision function.
 - `GrantFile::to_bytes` refuses a file of more than 256 KiB (contract 04
   §1.2). The Python caregiver writes such a file, and the Python chaperone
   then refuses it. No vector holds such a file.
@@ -1447,9 +1452,10 @@ rule 4).
   functions read the JSON of a file and check no field. So `same_grants`
   differs: a file with no `limits` block is equal to a file with the three
   defaults.
-- `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
-  The port of the chaperone adds the decision function and the function that
-  approves a held call. No other code builds a value.
+- `grants::Allowed` and `grants::Held` are a sketch. No program builds a
+  value. The port of the chaperone adds the decision function and the
+  function that approves a held call. A program then builds a value only in
+  those two functions.
 - No vector covers a request body with a content type that is not JSON. The
   HTTP layer of the port holds that rule.
 - These `CONTRACT-QUESTION` comments are open in
@@ -1555,6 +1561,12 @@ rule 4).
       contract names the note for a refused move of a turn. The Python
       `attendance` writes that note only for a move that its state table
       refuses. The type takes each pair of turn states.
+  16. `StreamRecord`, contract 02 §8.1. The contract says that the set of
+      kinds is closed. It does not say what a reader of the stream does
+      with a record of another kind. The type has no variant for such a
+      record, so a reader that makes the type refuses it. The Python
+      readers of the stream give no output for such a line. The crate has
+      no reader of a stream record yet.
 - The `session` module differs from the Python code on purpose in four
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
@@ -1612,10 +1624,12 @@ rule 4).
 - `session::JournalLine::new` does not check the turn against the kind of
   the body. A `turn_queued` line with no turn is a value of the type. The
   Python writer has no such check.
-- The body types of a journal line, for example `session::TurnStarted`, and
-  `session::ServiceNote` have public fields. Some fields are a plain
-  `String`: the contract gives them no grammar. Code can build such a body
-  with each text.
+- Some fields of the body types of a journal line and of
+  `session::ServiceNote` are a plain `String`: the contract gives them no
+  grammar. Code can build such a body with each text.
+- Only `serde` makes a `session::Lease`, a `session::SessionView` and a
+  `session::TurnView`, through the raw type of each one. No constructor
+  takes typed parts.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/untrusted.rs`:
   1. `parse_object`, contract 02 §3 rule 3. The contract says that a body is
