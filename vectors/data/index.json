@@ -169,7 +169,7 @@
   {"accepted":24,"entry":"attendance.auth.TokenBook.load, the token file of door-owui","path":"runtime/token.attendance.json","raised":0,"refused":27,"surface":"runtime.token.attendance","vectors":51},
   {"accepted":26,"entry":"attendance.auth.TokenBook.load, the token file of door-delegate","path":"runtime/token.attendance_pep_read.json","raised":0,"refused":25,"surface":"runtime.token.attendance_pep_read","vectors":51},
   {"accepted":20,"entry":"agent_door_owui.config.from_env, the file of DOOR_OWUI_KEY_FILE","path":"runtime/token.door.json","raised":0,"refused":31,"surface":"runtime.token.door","vectors":51},
-  {"accepted":20,"entry":"chaperone.delegate.read_door_token","path":"runtime/token.delegate.json","raised":0,"refused":28,"surface":"runtime.token.delegate","vectors":48},
+  {"accepted":20,"entry":"chaperone.delegate.read_door_token","path":"runtime/token.delegate.json","raised":0,"refused":31,"surface":"runtime.token.delegate","vectors":51},
   {"accepted":22,"entry":"agent_door_trigger.tokens.read_webhook_token","path":"runtime/token.webhook.json","raised":0,"refused":29,"surface":"runtime.token.webhook","vectors":51},
   {"accepted":41,"entry":"caregiver.switch.read_token","path":"runtime/token.caregiver.json","raised":0,"refused":10,"surface":"runtime.token.caregiver","vectors":51},
   {"accepted":10,"entry":"attendance.auth.TokenBook.identify, through the route GET /v1/sessions of attendance.api.build_app","path":"runtime/bearer.attendance.json","raised":0,"refused":17,"surface":"runtime.bearer.attendance","vectors":27},
