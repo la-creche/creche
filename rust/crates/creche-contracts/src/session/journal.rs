@@ -28,6 +28,7 @@ use super::state::TurnState;
 use super::time::Timestamp;
 use super::view::{SessionView, Usage};
 use crate::ids::{GateId, SandboxName, Sha256Hex, Ulid};
+use crate::status::time::Freshness;
 
 words! {
     /// The kind of one line of the event stream (contract 02 §8.1).
@@ -338,29 +339,16 @@ impl TurnQueued {
     }
 }
 
-/// Whether the status document of a family was stale when a turn started: the
-/// `status_stale` of a `turn_started` line (contract 02 §5.1, §8.1).
-///
-/// No wire holds the two names. The line holds a JSON bool, and
-/// [`TurnStarted::status_stale`] gives it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatusAge {
-    /// The document was 90 seconds old or less at the start of the turn.
-    Fresh,
-    /// The document was more than 90 seconds old at the start of the turn. A
-    /// document with no time that `attendance` can read is stale too.
-    Stale,
-}
-
 /// The body of a `turn_started` line.
 ///
 /// ```
 /// use creche_contracts::ids::SandboxName;
-/// use creche_contracts::session::{DeadlineS, Prompt, StatusAge, TurnStarted};
+/// use creche_contracts::session::{DeadlineS, Prompt, TurnStarted};
+/// use creche_contracts::status::time::Freshness;
 ///
 /// let prompt: Prompt = "Is the boiler on?".parse()?;
 /// let sandbox: SandboxName = "chat-s2".parse()?;
-/// let started = TurnStarted::new(prompt, sandbox, DeadlineS::TURN, StatusAge::Fresh);
+/// let started = TurnStarted::new(prompt, sandbox, DeadlineS::TURN, Freshness::Fresh);
 /// assert_eq!(started.sandbox().as_str(), "chat-s2");
 /// assert_eq!(started.persona_hash(), None);
 /// assert!(!started.status_stale());
@@ -371,10 +359,11 @@ pub enum StatusAge {
 ///
 /// ```compile_fail,E0451
 /// use creche_contracts::ids::SandboxName;
-/// use creche_contracts::session::{DeadlineS, Prompt, StatusAge, TurnStarted};
+/// use creche_contracts::session::{DeadlineS, Prompt, TurnStarted};
+/// use creche_contracts::status::time::Freshness;
 ///
 /// fn started(prompt: Prompt, sandbox: SandboxName) -> TurnStarted {
-///     let status_stale = StatusAge::Fresh == StatusAge::Stale;
+///     let status_stale = Freshness::Fresh == Freshness::Stale;
 ///     let deadline_s = DeadlineS::TURN;
 ///     TurnStarted { prompt, sandbox, deadline_s, persona_hash: None, status_stale }
 /// }
@@ -397,14 +386,14 @@ impl TurnStarted {
         prompt: Prompt,
         sandbox: SandboxName,
         deadline_s: DeadlineS,
-        status: StatusAge,
+        status: Freshness,
     ) -> Self {
         Self {
             prompt,
             sandbox,
             deadline_s,
             persona_hash: None,
-            status_stale: status == StatusAge::Stale,
+            status_stale: status == Freshness::Stale,
         }
     }
 
@@ -1667,13 +1656,13 @@ mod tests {
             prompt(),
             "chat-s2".parse().unwrap(),
             DeadlineS::TURN,
-            StatusAge::Fresh,
+            Freshness::Fresh,
         );
         let stale = TurnStarted::new(
             prompt(),
             "chat-s2".parse().unwrap(),
             DeadlineS::SWITCH,
-            StatusAge::Stale,
+            Freshness::Stale,
         );
         let settled = TurnSettled::new(usage);
         let fallback = BranchFallback::new("unmapped_parent".to_owned());
@@ -1790,7 +1779,7 @@ mod tests {
             "hi".parse().unwrap(),
             "chat-s2".parse().unwrap(),
             DeadlineS::SWITCH,
-            StatusAge::Stale,
+            Freshness::Stale,
         );
 
         assert_eq!(
