@@ -331,9 +331,10 @@ directory is not a workspace package, so a change here does not change
   that text. No vector covers the key check or the check of a form post
   through a request. No vector covers a form body of more than 1 MiB.
 - A noticeboard surface that needs a request gives the app a scope that the
-  generator makes: the raw path, and the path with each percent escape
-  decoded as UTF-8. The server of the noticeboard makes that scope in a
-  deployment. A query and a path segment of such a surface are ASCII.
+  generator makes. The scope holds the raw path, and the path with each
+  percent escape decoded as UTF-8. The server of the noticeboard makes that
+  scope in a deployment. A query and a path segment of such a surface are
+  ASCII.
 - No noticeboard surface holds a JSON text that `json.loads` takes and a
   strict reader refuses. The Python readers of the noticeboard take each
   of these texts:
@@ -348,7 +349,7 @@ directory is not a workspace package, so a change here does not change
   file. `vectors/tests/test_vectors_noticeboard.py` holds this rule for the
   written inputs.
 - A token that the service keeps in a vector of `noticeboard.security.cookie`
-  has 1 to 512 bytes, and each byte of it is a `cookie-octet` of RFC 6265.
+  has 1 to 512 bytes. Each byte of it is a `cookie-octet` of RFC 6265.
   No vector covers a longer token. No vector covers a token with a space, a
   comma, a semicolon, a backslash, a double quote or a byte above 127. The
   Python service keeps such a token.
@@ -357,6 +358,8 @@ directory is not a workspace package, so a change here does not change
 - `noticeboard.security.cookie` covers the cookie of the edit page. No
   vector covers the cookie of another answer. `runtime.edge.noticeboard`
   holds the names of the cookies of five answers.
+- No vector covers a request with two `Cookie` headers. The service reads
+  each one, and the last value of the name stays.
 - Four noticeboard surfaces go through the app: `noticeboard.security.cookie`,
   `noticeboard.app.query`, `noticeboard.route.family` and
   `noticeboard.static.css`. Their vectors come from the versions of
