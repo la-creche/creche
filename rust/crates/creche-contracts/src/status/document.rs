@@ -1156,8 +1156,11 @@ impl FaultParts {
     }
 
     /// The same parts for a fault that does not stop new turns.
-    /// [`Fault::new`] says for which code a fault can differ from the table
-    /// in this way.
+    ///
+    /// Only the code [`FaultCode::SandboxStartFailed`] can differ from the
+    /// table in this way. For each other code that stops turns in the table,
+    /// [`Fault::new`] refuses these parts with
+    /// [`FaultError::BlocksTurnsAgainstTable`].
     #[must_use]
     pub fn with_turns_unblocked(mut self) -> Self {
         self.blocks_turns = false;
