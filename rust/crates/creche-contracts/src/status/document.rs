@@ -15,10 +15,13 @@
 //!
 //! No struct has a public field. A writer builds a record in two steps:
 //!
-//! 1. `new` takes each field that has no start value.
-//! 2. One `with_` method sets each other field. Such a field starts as `None`,
-//!    as an empty list, as an empty block or as `false`. The doc comment of
-//!    `new` names each other start value.
+//! 1. `new` takes each required field. A flag whose key is required in the
+//!    file is a required field, and `new` takes it as an enum.
+//! 2. One `with_` method sets each optional field. Such a field starts as
+//!    `None`, as `false`, as an empty list or as an empty object.
+//!
+//! One required field has a start value: [`FaultParts::new`] takes
+//! `blocks_turns` from the table of the fault code.
 //!
 //! No `new` and no `with_` method of a record checks a value. Code reads a
 //! field through the accessor with the name of the field.
@@ -242,25 +245,60 @@ impl Error for UsdError {}
 
 // --- the blocks of the document ---
 
+/// Whether the family file passed: the `ok` of the `validation` block
+/// (contract 05 §3.2).
+///
+/// No file holds the two names. The block holds a JSON bool, and
+/// [`Validation::ok`] gives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// The family file passed.
+    Passed,
+    /// The family file did not pass.
+    Failed,
+}
+
+/// Whether a revision of the family passed at some time: the `never_valid` of
+/// the `validation` block (contract 05 §3.1).
+///
+/// No file holds the two names. The block holds a JSON bool, and
+/// [`Validation::never_valid`] gives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidHistory {
+    /// One revision of the family or more passed.
+    OnceValid,
+    /// No revision of the family passed, ever.
+    NeverValid,
+}
+
 /// The `validation` block (contract 05 §3.2).
 ///
 /// ```
-/// use creche_contracts::status::document::Validation;
+/// use creche_contracts::status::document::{ValidHistory, Validation, Verdict};
 ///
-/// let checked_at = "2031-04-18T10:20:29Z".parse().unwrap();
-/// let report_path = "/state/families/chat/validation.json".parse().unwrap();
-/// let validation = Validation::new(String::from("reg-2"), checked_at, 0, 1, report_path);
-/// assert!(!validation.ok());
-/// assert!(validation.with_ok().ok());
+/// let validation = Validation::new(
+///     String::from("reg-2"),
+///     "2031-04-18T10:20:29Z".parse().unwrap(),
+///     Verdict::Passed,
+///     ValidHistory::OnceValid,
+///     0,
+///     1,
+///     "/state/families/chat/validation.json".parse().unwrap(),
+/// );
+/// assert!(validation.ok());
+/// assert!(!validation.never_valid());
+/// assert_eq!(validation.first_error(), None);
 /// ```
 ///
 /// Code outside this module cannot set a field:
 ///
 /// ```compile_fail,E0451
-/// use creche_contracts::status::document::Validation;
+/// use creche_contracts::status::document::{ValidHistory, Validation, Verdict};
 ///
 /// fn passed(validation: Validation) -> Validation {
-///     Validation { ok: true, ..validation }
+///     let ok = Verdict::Passed != Verdict::Failed;
+///     let never_valid = ValidHistory::NeverValid == ValidHistory::OnceValid;
+///     Validation { ok, never_valid, ..validation }
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,12 +315,16 @@ pub struct Validation {
 
 impl Validation {
     /// The block of the report at `report_path`, with the counts of that
-    /// report. `ok` and `never_valid` start as `false`, and the block has no
-    /// first error.
+    /// report and no first error.
+    ///
+    /// - `verdict` says if the family file passed.
+    /// - `history` says if a revision of the family passed at some time.
     #[must_use]
     pub fn new(
         rev: String,
         checked_at: Timestamp,
+        verdict: Verdict,
+        history: ValidHistory,
         error_count: u64,
         warning_count: u64,
         report_path: HostPath,
@@ -290,29 +332,13 @@ impl Validation {
         Self {
             rev,
             checked_at,
-            ok: false,
-            never_valid: false,
+            ok: verdict == Verdict::Passed,
+            never_valid: history == ValidHistory::NeverValid,
             error_count,
             warning_count,
             report_path,
             first_error: None,
         }
-    }
-
-    /// The same block for a family file that passed.
-    #[must_use]
-    pub fn with_ok(mut self) -> Self {
-        self.ok = true;
-
-        self
-    }
-
-    /// The same block for a family of which no revision passed, ever (§3.1).
-    #[must_use]
-    pub fn with_never_valid(mut self) -> Self {
-        self.never_valid = true;
-
-        self
     }
 
     /// The same block with this first error.
@@ -376,29 +402,37 @@ impl Validation {
 ///
 /// ```
 /// use creche_contracts::status::document::Sandbox;
-/// use creche_contracts::status::words::{SandboxLifecycle, SandboxPower};
+/// use creche_contracts::status::words::{ChannelState, SandboxLifecycle, SandboxPower};
 ///
 /// let sandbox = Sandbox::new(
 ///     "chat-s1".parse().unwrap(),
 ///     SandboxLifecycle::Ready,
+///     SandboxPower::Running,
 ///     String::from("registry.example/playpen@sha256:aa"),
 ///     String::from("aa"),
 ///     2,
 ///     String::from("2g"),
 ///     "2031-04-11T08:00:00Z".parse().unwrap(),
+///     ChannelState::Open,
 /// );
-/// assert_eq!(sandbox.power(), SandboxPower::Stopped);
-/// assert_eq!(sandbox.with_power(SandboxPower::Running).power(), SandboxPower::Running);
+/// assert_eq!(sandbox.power(), SandboxPower::Running);
+/// assert_eq!(sandbox.channel(), ChannelState::Open);
+/// assert_eq!(sandbox.ready_at(), None);
 /// ```
 ///
 /// Code outside this module cannot set a field:
 ///
 /// ```compile_fail,E0451
 /// use creche_contracts::status::document::Sandbox;
-/// use creche_contracts::status::words::{SandboxLifecycle, SandboxPower};
+/// use creche_contracts::status::words::{ChannelState, SandboxLifecycle, SandboxPower};
 ///
 /// fn serving(sandbox: Sandbox) -> Sandbox {
-///     Sandbox { state: SandboxLifecycle::Ready, power: SandboxPower::Running, ..sandbox }
+///     Sandbox {
+///         state: SandboxLifecycle::Ready,
+///         power: SandboxPower::Running,
+///         channel: ChannelState::Open,
+///         ..sandbox
+///     }
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -424,56 +458,46 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    /// The row of the sandbox `id` in the lifecycle state `state`.
+    /// The row of the sandbox `id`, with no time of a handshake and no path.
     ///
-    /// The row starts as the row of a sandbox whose VM does not run: the
-    /// power is `stopped` and the channel is `closed`. It holds no time of a
-    /// handshake and no path.
+    /// - `state` is the lifecycle state.
+    /// - `power` says if the VM runs.
+    /// - `channel` is the state of the channel.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "nine fields of a row have no empty value: a start value states a fact that the writer did not give"
+    )]
     #[must_use]
     pub fn new(
         id: SandboxName,
         state: SandboxLifecycle,
+        power: SandboxPower,
         image: String,
         spec_hash: String,
         cpus: u64,
         memory: String,
         created_at: Timestamp,
+        channel: ChannelState,
     ) -> Self {
         Self {
             id,
             state,
-            power: SandboxPower::Stopped,
+            power,
             image,
             spec_hash,
             cpus,
             memory,
             created_at,
             ready_at: None,
-            channel: ChannelState::Closed,
+            channel,
             supervisor_env: None,
         }
-    }
-
-    /// The same row with this power state.
-    #[must_use]
-    pub fn with_power(mut self, power: SandboxPower) -> Self {
-        self.power = power;
-
-        self
     }
 
     /// The same row with this time of the first handshake.
     #[must_use]
     pub fn with_ready_at(mut self, ready_at: Timestamp) -> Self {
         self.ready_at = Some(ready_at);
-
-        self
-    }
-
-    /// The same row with this state of the channel.
-    #[must_use]
-    pub fn with_channel(mut self, channel: ChannelState) -> Self {
-        self.channel = channel;
 
         self
     }
@@ -943,10 +967,23 @@ impl Triggers {
     }
 }
 
+/// Whether a reconcile pass needs a sandbox switch: the `needs_switch` of the
+/// `reconcile` block (contract 05 §3.4).
+///
+/// No file holds the two names. The block holds a JSON bool, and
+/// [`Reconcile::needs_switch`] gives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxSwitch {
+    /// The pass needs a sandbox switch.
+    Needed,
+    /// The pass needs no sandbox switch.
+    NotNeeded,
+}
+
 /// The `reconcile` block (contract 05 §3.4).
 ///
 /// ```
-/// use creche_contracts::status::document::Reconcile;
+/// use creche_contracts::status::document::{Reconcile, SandboxSwitch};
 /// use creche_contracts::status::words::ReconcileStep;
 ///
 /// let reconcile = Reconcile::new(
@@ -955,19 +992,21 @@ impl Triggers {
 ///     String::from("reg-2"),
 ///     ReconcileStep::SwitchSandbox,
 ///     1,
+///     SandboxSwitch::Needed,
 /// );
-/// assert!(!reconcile.needs_switch());
-/// assert!(reconcile.with_needs_switch().needs_switch());
+/// assert_eq!(reconcile.step(), ReconcileStep::SwitchSandbox);
+/// assert!(reconcile.needs_switch());
 /// ```
 ///
 /// Code outside this module cannot set a field:
 ///
 /// ```compile_fail,E0451
-/// use creche_contracts::status::document::Reconcile;
+/// use creche_contracts::status::document::{Reconcile, SandboxSwitch};
 /// use creche_contracts::status::words::ReconcileStep;
 ///
 /// fn at_switch(reconcile: Reconcile) -> Reconcile {
-///     Reconcile { step: ReconcileStep::SwitchSandbox, ..reconcile }
+///     let needs_switch = SandboxSwitch::Needed != SandboxSwitch::NotNeeded;
+///     Reconcile { step: ReconcileStep::SwitchSandbox, needs_switch, ..reconcile }
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -981,8 +1020,8 @@ pub struct Reconcile {
 }
 
 impl Reconcile {
-    /// The block of a pass from `from_rev` to `to_rev` that needs no sandbox
-    /// switch.
+    /// The block of a pass from `from_rev` to `to_rev`. `switch` says if the
+    /// pass needs a sandbox switch.
     #[must_use]
     pub fn new(
         since: Timestamp,
@@ -990,6 +1029,7 @@ impl Reconcile {
         to_rev: String,
         step: ReconcileStep,
         attempts: u64,
+        switch: SandboxSwitch,
     ) -> Self {
         Self {
             since,
@@ -997,16 +1037,8 @@ impl Reconcile {
             to_rev,
             step,
             attempts,
-            needs_switch: false,
+            needs_switch: switch == SandboxSwitch::Needed,
         }
-    }
-
-    /// The same block for a pass that needs a sandbox switch.
-    #[must_use]
-    pub fn with_needs_switch(mut self) -> Self {
-        self.needs_switch = true;
-
-        self
     }
 
     /// When the pass started.
@@ -1368,12 +1400,15 @@ pub struct DocumentParts {
 }
 
 impl DocumentParts {
-    /// The parts of the document of `family`.
+    /// The parts of the document of `family`, with each block that a
+    /// document always holds.
     ///
     /// The parts start with no kind, no fault, no reconcile block, no
-    /// sandbox, no credentials and no spend. The limits block starts with no
-    /// limit and the triggers block with no trigger. The `pep` block starts
-    /// as [`Pep::Off`].
+    /// sandbox, no credentials and no spend.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "ten fields of a document have no empty value: a start value states a fact that the writer did not give"
+    )]
     #[must_use]
     pub fn new(
         family: FamilyName,
@@ -1383,6 +1418,9 @@ impl DocumentParts {
         applied_rev: String,
         config_rev: String,
         validation: Validation,
+        limits: Limits,
+        triggers: Triggers,
+        pep: Pep,
     ) -> Self {
         Self {
             family,
@@ -1398,9 +1436,9 @@ impl DocumentParts {
             sandboxes: Vec::new(),
             credentials: None,
             spend: None,
-            limits: Limits::new(),
-            triggers: Triggers::new(),
-            pep: Pep::Off,
+            limits,
+            triggers,
+            pep,
         }
     }
 
@@ -1448,30 +1486,6 @@ impl DocumentParts {
     #[must_use]
     pub fn with_spend(mut self, spend: Spend) -> Self {
         self.spend = Some(spend);
-
-        self
-    }
-
-    /// The same parts with this limits block.
-    #[must_use]
-    pub fn with_limits(mut self, limits: Limits) -> Self {
-        self.limits = limits;
-
-        self
-    }
-
-    /// The same parts with this triggers block.
-    #[must_use]
-    pub fn with_triggers(mut self, triggers: Triggers) -> Self {
-        self.triggers = triggers;
-
-        self
-    }
-
-    /// The same parts with this `pep` block.
-    #[must_use]
-    pub fn with_pep(mut self, pep: Pep) -> Self {
-        self.pep = pep;
 
         self
     }
@@ -3134,17 +3148,24 @@ mod tests {
         StatusDocument::try_from(&RawStatus::from_object(&object)).unwrap()
     }
 
-    /// One row of `sandboxes` of `FULL`, with each start value of
-    /// [`Sandbox::new`].
-    fn sandbox(id: &str, state: SandboxLifecycle, hash: &str, created_at: &str) -> Sandbox {
+    /// One row of `sandboxes` of `FULL`, with no time of a handshake and no
+    /// path.
+    fn sandbox(
+        id: &str,
+        (state, power, channel): (SandboxLifecycle, SandboxPower, ChannelState),
+        hash: &str,
+        created_at: &str,
+    ) -> Sandbox {
         Sandbox::new(
             id.parse().unwrap(),
             state,
+            power,
             format!("registry.example/playpen@sha256:{hash}"),
             hash.to_owned(),
             2,
             "2g".to_owned(),
             time(created_at),
+            channel,
         )
     }
 
@@ -3153,11 +3174,12 @@ mod tests {
         let validation = Validation::new(
             "reg-2".to_owned(),
             time("2031-04-18T10:20:29Z"),
+            Verdict::Passed,
+            ValidHistory::OnceValid,
             0,
             1,
             path("/state/families/chat/validation.json"),
-        )
-        .with_ok();
+        );
         let mut detail = Object::new();
         detail.insert("sandbox", json(r#""chat-s1""#));
         let since = time("2031-04-18T10:00:00Z");
@@ -3170,15 +3192,21 @@ mod tests {
             "reg-2".to_owned(),
             ReconcileStep::SwitchSandbox,
             1,
-        )
-        .with_needs_switch();
-        let draining = SandboxLifecycle::Draining;
+            SandboxSwitch::Needed,
+        );
+        let draining = (
+            SandboxLifecycle::Draining,
+            SandboxPower::Running,
+            ChannelState::Open,
+        );
         let serving = sandbox("chat-s1", draining, "aa", "2031-04-11T08:00:00Z")
-            .with_power(SandboxPower::Running)
             .with_ready_at(time("2031-04-11T08:00:20Z"))
-            .with_channel(ChannelState::Open)
             .with_supervisor_env(path("/state/families/chat/supervisor-chat-s1.env"));
-        let planned = SandboxLifecycle::Planned;
+        let planned = (
+            SandboxLifecycle::Planned,
+            SandboxPower::Stopped,
+            ChannelState::Closed,
+        );
         let planned = sandbox("chat-s2", planned, "bb", "2031-04-18T10:20:10Z");
         let credentials = Credentials::new(
             NonZeroU64::new(3).unwrap(),
@@ -3209,6 +3237,9 @@ mod tests {
             "reg-1".to_owned(),
             "cfg-7".to_owned(),
             validation,
+            limits,
+            Triggers::new().with_webhooks(vec![webhook]),
+            pep,
         )
         .with_kind(Kind::Attended)
         .with_faults(vec![Fault::new(orphans).unwrap()])
@@ -3216,9 +3247,6 @@ mod tests {
         .with_sandboxes(vec![serving, planned])
         .with_credentials(credentials)
         .with_spend(spend)
-        .with_limits(limits)
-        .with_triggers(Triggers::new().with_webhooks(vec![webhook]))
-        .with_pep(pep)
     }
 
     fn usd(amount: f64) -> Usd {
@@ -3310,11 +3338,39 @@ mod tests {
         );
     }
 
+    /// A validation block of a report with two errors.
+    fn validation(verdict: Verdict, history: ValidHistory) -> Validation {
+        let at = time("2031-04-18T10:20:29Z");
+
+        Validation::new(String::new(), at, verdict, history, 2, 0, path("/report"))
+    }
+
+    #[test]
+    fn each_flag_enum_gives_the_bool_of_its_field() {
+        let reconcile = |switch| {
+            let at = time("2031-04-18T10:20:00Z");
+            let step = ReconcileStep::Validate;
+
+            Reconcile::new(at, String::new(), String::new(), step, 0, switch)
+        };
+        // The block holds no rule between its two flags.
+        let both = validation(Verdict::Passed, ValidHistory::NeverValid);
+
+        assert!(validation(Verdict::Passed, ValidHistory::OnceValid).ok());
+        assert!(!validation(Verdict::Failed, ValidHistory::OnceValid).ok());
+        assert!(validation(Verdict::Failed, ValidHistory::NeverValid).never_valid());
+        assert!(!validation(Verdict::Failed, ValidHistory::OnceValid).never_valid());
+        assert!(both.ok());
+        assert!(both.never_valid());
+        assert!(reconcile(SandboxSwitch::Needed).needs_switch());
+        assert!(!reconcile(SandboxSwitch::NotNeeded).needs_switch());
+    }
+
     #[test]
     fn a_record_starts_with_no_value_in_each_optional_field() {
         let built = built();
         let at = built.written_at();
-        let validation = Validation::new(String::new(), at, 2, 0, path("/report"));
+        let validation = validation(Verdict::Failed, ValidHistory::OnceValid);
         let credentials = built.credentials().unwrap().clone();
         let empty = DocumentParts::new(
             built.family().clone(),
@@ -3324,14 +3380,14 @@ mod tests {
             String::new(),
             String::new(),
             validation.clone(),
+            Limits::new(),
+            Triggers::new(),
+            Pep::Off,
         );
         let first_error: FirstError = "boom".parse().unwrap();
         let failed = validation.clone().with_first_error(first_error.clone());
 
-        assert!(!validation.ok());
-        assert!(!validation.never_valid());
         assert_eq!(validation.first_error(), None);
-        assert!(validation.with_never_valid().never_valid());
         assert_eq!(failed.first_error(), Some(&first_error));
         assert_eq!(built.sandboxes()[1].power(), SandboxPower::Stopped);
         assert_eq!(built.sandboxes()[1].channel(), ChannelState::Closed);
