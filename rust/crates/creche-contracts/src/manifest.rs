@@ -846,7 +846,7 @@ mod tests {
     use serde_json::{Map, Value, json};
 
     use super::*;
-    use crate::ids::{ComponentName, ContractVersion, GateId, Ulid};
+    use crate::ids::{ComponentName, ContractVersion, FamilyNameError, GateId, Ulid};
     use crate::vectors::{self, Input, Outcome, Vector};
 
     /// Each surface of this module, and the type or the function that the
@@ -1281,6 +1281,37 @@ mod tests {
             Err(ManifestFault::Yaml(YamlFault::Deep)),
             "a nesting past the limit"
         );
+    }
+
+    #[test]
+    fn a_manifest_error_gives_the_scope_of_its_fault() {
+        let scope_of = |field: &str, line: &str| {
+            ComponentManifest::parse(&manifest_with(field, line), None)
+                .unwrap_err()
+                .scope()
+        };
+        let scopes = [
+            ("kind", "kind: []", Scope::Top),
+            (
+                "install",
+                "install: {to: /opt/x, prev: /opt/x.prev, bogus: 1}",
+                Scope::Install,
+            ),
+            (
+                "verify",
+                "verify: {command: [/bin/true], user: root, timeout_s: 5, bogus: 1}",
+                Scope::Verify,
+            ),
+            (
+                "restore",
+                "restore: {mode: automatic, keep: 1, bogus: 1}",
+                Scope::Restore,
+            ),
+        ];
+
+        for (field, line, scope) in scopes {
+            assert_eq!(scope_of(field, line), scope, "{line}");
+        }
     }
 
     #[test]
@@ -2267,5 +2298,19 @@ mod tests {
         assert!("human".parse::<Requester>().is_ok());
         assert!("Human".parse::<Requester>().is_err());
         assert!("human\n".parse::<Requester>().is_err());
+    }
+
+    #[test]
+    fn a_requester_error_gives_the_rule_that_the_text_breaks() {
+        let fault_of = |text: &str| text.parse::<Requester>().unwrap_err().fault();
+        let faults = [
+            ("", FamilyNameError::TooShort),
+            ("Human", FamilyNameError::BadFirstByte),
+            ("hu man", FamilyNameError::BadByte { at: 2 }),
+        ];
+
+        for (text, fault) in faults {
+            assert_eq!(fault_of(text), fault, "{text:?}");
+        }
     }
 }
