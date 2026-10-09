@@ -104,6 +104,25 @@ fn param<'a>(args: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
     args.get(name).and_then(Value::as_str)
 }
 
+/// The method of a raw query that sets one parameter.
+type Setter<'a, Raw> = fn(Raw, &'a str) -> Raw;
+
+/// A raw query with each parameter that a query sends. `setters` names each
+/// parameter and the method that sets it.
+fn with_params<'a, Raw>(
+    mut raw: Raw,
+    args: &'a Map<String, Value>,
+    setters: &[(&str, Setter<'a, Raw>)],
+) -> Raw {
+    for (name, set) in setters {
+        if let Some(text) = param(args, name) {
+            raw = set(raw, text);
+        }
+    }
+
+    raw
+}
+
 fn time(text: &str) -> Timestamp {
     text.parse().unwrap()
 }
@@ -399,14 +418,17 @@ fn switch(vector: &Vector, _: &Context) -> Did {
 // --- the queries ---
 
 fn list(vector: &Vector, _: &Context) -> Did {
-    let args = args(vector);
-    let raw = RawListQuery {
-        family: param(args, "family"),
-        state: param(args, "state"),
-        kind: param(args, "kind"),
-        limit: param(args, "limit"),
-        cursor: param(args, "cursor"),
-    };
+    let raw = with_params(
+        RawListQuery::new(),
+        args(vector),
+        &[
+            ("family", RawListQuery::with_family),
+            ("state", RawListQuery::with_state),
+            ("kind", RawListQuery::with_kind),
+            ("limit", RawListQuery::with_limit),
+            ("cursor", RawListQuery::with_cursor),
+        ],
+    );
 
     parsed(ListQuery::try_from(raw), |query| {
         json!({
@@ -426,12 +448,15 @@ fn get(vector: &Vector, _: &Context) -> Did {
 }
 
 fn events(vector: &Vector, _: &Context) -> Did {
-    let args = args(vector);
-    let raw = RawEventsQuery {
-        from_seq: param(args, "from_seq"),
-        turn: param(args, "turn"),
-        follow: param(args, "follow"),
-    };
+    let raw = with_params(
+        RawEventsQuery::new(),
+        args(vector),
+        &[
+            ("from_seq", RawEventsQuery::with_from_seq),
+            ("turn", RawEventsQuery::with_turn),
+            ("follow", RawEventsQuery::with_follow),
+        ],
+    );
 
     parsed(EventsQuery::try_from(raw), |query| {
         json!({
