@@ -534,7 +534,12 @@ def _csrf_surface() -> Surface:
             "slashes and the next slash, question mark or hash. It takes the whole text when "
             "that part is empty. It compares the result with args.host, character for "
             "character.",
-            "The URL reader of Python removes each tab from a URL before it reads the URL.",
+            "Before it reads a URL, the URL reader of Python removes each tab, each CR and "
+            "each LF. It also removes each character from U+0000 to U+0020 at the start. It "
+            "removes none at the end.",
+            "The URL reader takes the two slashes only at the start of that text, or "
+            "directly after a scheme and its colon. A scheme is an ASCII letter and then "
+            "ASCII letters, ASCII digits and the characters plus, hyphen and period.",
         ),
         tuple(_csrf_vector(case) for case in cases.CSRF),
     )
@@ -628,11 +633,15 @@ def _cookie_surface(scratch: Path) -> Surface:
             f"text {MINTED} stands for a token that the service minted.",
             f"{_NOTE_LATIN} The service reads the last cookie of the name. It removes the "
             "whitespace of Python str.strip from the two ends of a name and of a value. It "
-            "removes one pair of double quotes around a value, and it reads an escape of a "
-            "backslash and three octal digits between them.",
+            "removes one pair of double quotes around a value.",
+            "Between the two quotes, the service reads two escape forms. A backslash and "
+            "three octal digits, the first of them 0 to 3, are the character of that number. "
+            "A backslash and one other character are that character.",
             "The cookie writer of Python puts a value between double quotes when the value "
             "holds a character that is no letter, no digit and none of "
             f"{cases.PLAIN_MARKS}",
+            f"The vector each-quoted-mark holds each other character of a cookie-octet: "
+            f"{cases.QUOTED_MARKS}",
             "The generator sends each request two times. A token that differs between the "
             "two answers is a minted token.",
             _NOTE_APP,
@@ -729,6 +738,9 @@ def _query_surface(scratch: Path) -> Surface:
             "The service reads the offset with int of Python and reads a negative number as "
             f"0. It reads a text that int refuses as 0. int refuses a text of more than "
             f"{INT_DIGITS_MAX} digits.",
+            "int removes each White_Space character of Unicode from the two ends of the "
+            "text. It does not remove U+001C to U+001F there, which str.strip removes from a "
+            "filter value.",
             "The filters family and decision take a record whose field equals the value. The "
             "filters tool and session take a record whose field holds the value.",
             _NOTE_APP,
@@ -1045,7 +1057,9 @@ def _events_surface(token_file: Path) -> Surface:
             "value.lines is each line of the stream that is one JSON object, in the order of "
             "the stream. The reader checks no field of a line.",
             "The reader ends a line at LF only. It skips a line that holds only the six "
-            "bytes of ASCII whitespace: space, tab, LF, CR, VT and FF.",
+            "bytes of ASCII whitespace: space, tab, LF, CR, VT and FF. It gives each other "
+            "line to the JSON reader with each of its bytes. A VT or an FF beside an object "
+            "thus makes a line that is no JSON.",
             "value.problems has one problem for each line that is no JSON object and one for "
             "each limit that the reader stopped at. value.truncated is true when the reader "
             "stopped at a limit.",
@@ -1296,8 +1310,12 @@ def _audit_surface(scratch: Path) -> Surface:
             "the day files in the reversed order of their names, and the lines of one file "
             "from the last one to the first one.",
             "The reader ends a line at LF only. It skips a line that holds only the six "
-            "bytes of ASCII whitespace. A line that is no JSON object makes a row with a "
-            "problem, and each filter takes that row.",
+            "bytes of ASCII whitespace. It gives each other line to the JSON reader with "
+            "each of its bytes. A line that is no JSON object makes a row with a problem, "
+            "and each filter takes that row.",
+            "The reader reads a file only when its whole name has the form of a day: four "
+            "ASCII digits, a hyphen, two ASCII digits, a hyphen, two ASCII digits and the "
+            "suffix .jsonl. A line feed after the suffix makes another name.",
             "args of a row is the arguments of the record as text: JSON with sorted keys, an "
             "indent of 2 spaces and each character outside ASCII as it is. A record with no "
             "arguments and a record whose arguments are null have an empty text. "

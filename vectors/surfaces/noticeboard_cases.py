@@ -16,6 +16,7 @@ Two rules bound the inputs:
 from __future__ import annotations
 
 import json
+import string
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -207,6 +208,8 @@ CSRF: Final[tuple[CsrfCase, ...]] = (
     CsrfCase("scheme-and-three-slashes", origin=f"https:///{HOST}"),
     CsrfCase("scheme-alone", origin="https://"),
     CsrfCase("scheme-that-starts-with-a-digit", origin=f"1https://{HOST}"),
+    CsrfCase("scheme-with-a-mark", origin=f"ht!tp://{HOST}"),
+    CsrfCase("scheme-empty", origin=f"://{HOST}"),
     CsrfCase("user-before-the-host", origin=f"https://user@{HOST}"),
     CsrfCase("host-as-the-user", origin=f"https://{HOST}@other.example"),
     CsrfCase("origin-with-a-path", origin=f"{ORIGIN}/audit"),
@@ -218,7 +221,13 @@ CSRF: Final[tuple[CsrfCase, ...]] = (
         origin=None,
         referer=f"{ORIGIN}/audit?family=chat&offset=50#top",
     ),
+    # --- what the URL reader removes ---
     CsrfCase("origin-with-a-tab-inside", origin="https://view\t.example"),
+    CsrfCase("origin-with-a-cr-inside", origin="https://view\r.example"),
+    CsrfCase("origin-with-a-line-feed-inside", origin="https://view\n.example"),
+    CsrfCase("origin-u0001-at-the-start", origin="\x01" + ORIGIN),
+    CsrfCase("origin-space-at-the-start", origin=" " + ORIGIN),
+    CsrfCase("origin-u0001-at-the-end", origin=ORIGIN + "\x01"),
 )
 
 # --- the paths that need no key (spec.md §8.3 rule 1) -----------------------------------
@@ -271,6 +280,12 @@ COOKIE_BYTES: Final = 512
 #: double quote, no comma, no semicolon and no backslash.
 COOKIE_OCTETS: Final = frozenset(chr(code) for code in range(0x21, 0x7F)) - frozenset('",;\\')
 
+#: Each other mark of a `cookie-octet`. The cookie writer of Python puts a
+#: value that holds one of them between double quotes.
+QUOTED_MARKS: Final = "".join(
+    sorted(COOKIE_OCTETS - frozenset(string.ascii_letters + string.digits + PLAIN_MARKS))
+)
+
 
 @dataclass(frozen=True)
 class CookieCase:
@@ -319,11 +334,13 @@ COOKIES: Final[tuple[CookieCase, ...]] = (
     CookieCase("each-plain-mark", COOKIE_NAME + PLAIN_MARKS.encode("ascii")),
     CookieCase("equals-inside", COOKIE_NAME + b"a=b"),
     CookieCase("slash-inside", COOKIE_NAME + b"a/b"),
+    CookieCase("each-quoted-mark", COOKIE_NAME + QUOTED_MARKS.encode("ascii")),
     CookieCase("512-bytes", COOKIE_NAME + b"a" * COOKIE_BYTES),
     # --- quotes around the value ---
     CookieCase("quoted", COOKIE_NAME + b'"' + _T + b'"'),
     CookieCase("quoted-equals-inside", COOKIE_NAME + b'"a=b"'),
     CookieCase("quoted-octal-escape", COOKIE_NAME + b'"\\141bc"'),
+    CookieCase("quoted-backslash-letter", COOKIE_NAME + b'"\\abc"'),
 )
 
 # --- the form body ----------------------------------------------------------------------
@@ -502,6 +519,9 @@ QUERIES: Final[tuple[Body, ...]] = (
     Body("offset-negative", b"offset=-1"),
     Body("offset-plus-sign", b"offset=%2B1"),
     Body("offset-in-spaces", b"offset=+1+"),
+    Body("offset-u00a0-before", b"offset=%C2%A01"),
+    Body("offset-form-feed-after", b"offset=1%0C"),
+    Body("offset-u001f-before", b"offset=%1F1"),
     Body("offset-zeros-at-the-start", b"offset=001"),
     Body("offset-underscore", b"offset=1_0"),
     Body("offset-underscore-at-the-end", b"offset=1_"),
@@ -983,6 +1003,7 @@ STREAMS: Final[tuple[Answer, ...]] = (
     _stream("line-in-spaces", b"  " + _NOTE[:-1] + b"  \n"),
     _stream("line-of-ascii-whitespace", _STARTED + b" \t\r\x0b\x0c\n" + _SETTLED),
     _stream("line-of-u00a0", _STARTED + "\u00a0\n".encode() + _SETTLED),
+    _stream("form-feed-before-the-object", b"\x0c{}\n"),
     _stream("line-separator-inside-a-text", line(1, "note", {"note": "a\u2028b\u2029c\u0085d"})),
     _stream("two-objects-on-one-line", _NOTE[:-1] + _NOTE),
     # --- a line that the reader does not keep ---
@@ -1366,6 +1387,7 @@ AUDITS: Final[tuple[AuditCase, ...]] = (
         "blank-lines", (Body(DAY, b"\n\n" + _RECORD + b"\n  \n\t\n" + _OTHER_RECORD + b"\n\n"),)
     ),
     AuditCase("cr-lf", (Body(DAY, _RECORD + b"\r\n" + _OTHER_RECORD + b"\r\n"),)),
+    AuditCase("form-feed-before-the-record", (Body(DAY, b"\x0c" + _RECORD + b"\n"),)),
     _one("line-separator-inside-a-text", reason="a\u2028b\u2029c"),
     # --- a line that the reader does not parse ---
     AuditCase("line-not-json", (Body(DAY, _RECORD + b"\nnot json\n" + _OTHER_RECORD + b"\n"),)),
@@ -1473,6 +1495,13 @@ AUDITS: Final[tuple[AuditCase, ...]] = (
             _day("20260925.jsonl", _audit(tool="no-hyphen")),
             _day(f"2026-09-2{ARABIC_ONE}.jsonl", _audit(tool="arabic-digit")),
             _day("audit.jsonl", _audit(tool="a-word")),
+        ),
+    ),
+    AuditCase(
+        "name-with-a-final-line-feed",
+        (
+            _day(DAY, _audit()),
+            _day("2026-09-26.jsonl\n", _audit(tool="line-feed-at-the-end")),
         ),
     ),
     AuditCase(
