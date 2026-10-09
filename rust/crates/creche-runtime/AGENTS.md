@@ -211,8 +211,9 @@ reason. The packet that writes the three bodies obeys these rules:
   request. A `HeaderValue` holds no such byte, so no request gives that
   header to `bearer_of`. The test gives the bytes to the private function
   `bearer_in`: the vector proves that function and no service. This
-  difference on an HTTP surface is open. No test of this crate shows what a
-  Rust service answers, because the HTTP server is a stub.
+  difference on an HTTP surface is open. A Rust service answers such a
+  request with status 400, and no handler runs. `hyper` refuses a header
+  value with that byte. A test of `src/http/server.rs` holds that answer.
 - `token::CachedToken` reads the file again only when one of four facts of
   the file moved. The facts are the device, the inode, the size and the time
   of the last change. It does not see a new token that has each fact of the
@@ -235,11 +236,41 @@ reason. The packet that writes the three bodies obeys these rules:
   byte. A service gives the bytes to `Secret::matches`. It writes them to no
   log line. The owner of the crate decides if the result gets a type of its
   own.
-- `token::universal_newlines` holds the text mode rule of Python: one LF for
-  each CR LF and for each other CR. `command::python_text` is a stub for the
-  same rule. When that stub has its body, make `token` call it. Then delete
-  `universal_newlines`. `agent-family` holds one more copy of the rule in
-  `registry.rs`, and no packet has that copy yet.
+- `command` sets no limit on the size of a file that a child writes. The
+  Python `handover` sets one in the child before the program starts
+  (`handover/src/handover/executor/host.py:359-376` and `:407`). In Rust
+  that step needs `unsafe` code, and the lint gate forbids it. The port of
+  `handover` needs another design.
+- An owner task of `command` kills only the child. A program that the child
+  started continues to run, and it can hold an output stream of the child
+  open. `subprocess.run` of Python has the same limit. With
+  `TimeLimit::None`, a run that captures such a stream waits until that
+  program closes the stream.
+- `command::ChildGuard::wait` gives the exit status 255 when the wait call
+  of the operating system fails. The skeleton fixed the signature of the
+  function, and that signature has no error. The owner of the crate decides
+  if the function gets one.
+- `command` does not refuse each program file that CPython refuses. Such a
+  file has no `#!` line and is no binary program, and CPython gives the
+  error "Exec format error" for it. For a program name with no `/`, the
+  runner gives the file to `/bin/sh` when the command clears the environment
+  or sets `PATH`. For a path with a `/`, Linux refuses the file and macOS
+  gives it to `/bin/sh`. A service that names each program by its absolute
+  path gets the refusal on Linux.
+- A child of `command` gets each descriptor of the process that has no
+  close-on-exec flag. CPython closes each descriptor past 2 in the child.
+  Open each descriptor of a service with the flag. `rustix` sets the flag
+  only when the call asks for it. Give `OFlags::CLOEXEC` to each open call
+  of `rustix`.
+- `tokio` starts a program first and gives its pipes to the I/O driver after
+  that. When the driver refuses a pipe, `command` gives
+  `RunError::NotStarted`, and the program runs with no owner. This process
+  then closes its ends of the pipes of that program.
+- After a wait call that failed, the drop of the child sends SIGKILL to the
+  id of the child, because `tokio` holds that flag. The operating system can
+  give that id to another process before the drop. This applies to a run
+  that gave `RunError::OwnerLost` for a failed wait call. It also applies to
+  the drop of a `ChildGuard` after such a call.
 - No test gives `faults::publish` a fault file whose source is `caregiver`.
   `FaultFile::new` refuses that source, so no code can build such a file. A
   test gives the private function `publish_as` no writer in its place.
@@ -268,6 +299,66 @@ reason. The packet that writes the three bodies obeys these rules:
   The Python chaperone has the same rule. The Python `attendance` and the
   Python trigger door run one reload for each SIGHUP that their loop takes.
   A change costs one function, `Hangups::next`.
+- This `CONTRACT-QUESTION` comment is open in `src/http/layers.rs`: no
+  contract and no Python framework gives an answer for three failures of the
+  edge. The failures are a handler that the runtime stopped, a body past a
+  cap and a body that stops early. `StarletteBodies` answers the first as
+  the framework answers an exception. It answers the two others with the
+  status only: 413 and 400. A change costs one arm of `answer`.
+- No vector holds the answer of `StarletteBodies` for a panic. Each Python
+  service has a handler of its own for an exception, so no surface
+  `runtime.edge.*` holds the answer of the framework. The constant is the
+  text of `starlette/middleware/errors.py:259`. A plain test holds it.
+- No route behind `http::layers::edge` answers `HEAD`. The edge gives each
+  `HEAD` request another method before the router gets it, so a route that
+  names `HEAD` gets no request. The Python noticeboard answers `HEAD` on a
+  file of its static mount with status 200 and no body. A router behind
+  `edge` answers status 405 for that route. The port of the noticeboard
+  needs an answer first: a change to `edge`, or a route outside it.
+- A layer that a router has before `edge` gets only the answer of a handler.
+  The Python noticeboard adds a cookie to an answer of its framework too,
+  for example to an answer with status 404. A layer on the result of `edge`
+  gets each answer. It runs outside the task of the request and outside the
+  panic boundary. The port of the noticeboard needs that answer too.
+- `http::server` and `http::layers` differ from the server and from the
+  framework of the Python services in more ways. The doc comments of `bind`,
+  `serve`, `edge` and `read_body` name each one, and a plain test holds each
+  one. Two examples: a listener sets no time limit on a connection, and a
+  router matches the path as the client sent it.
+- These `CONTRACT-QUESTION` comments are open in `src/http/client.rs`:
+  1. `Target::try_from` for an `HttpUrl`: no contract gives the base URL of
+     a service a grammar. `creche_contracts::config::HttpUrl` checks only
+     the scheme, the user part and that a host is there. `httpx` takes most
+     of the URLs that pass that check. The function refuses a URL with a
+     query or with a fragment. It refuses a port that is not 1 to 65535 in
+     ASCII digits, and a host that is no `BindHost`. A laxer reading costs
+     one check and two functions, `host_and_port` and `port_of`.
+  2. `bearer_value`: contract 02 §3 rules 4 and 7 give a token a least count
+     of bytes and no set of bytes. The function refuses a token with a
+     control character that is not a tab, and a token with the byte 0x7F.
+     `httpx` sends such a token when the character is not one of these:
+     NUL, line feed, vertical tab, form feed and carriage return. The `http`
+     crate takes no header value with such a byte. A laxer reading thus
+     needs another header type.
+- `http::client::ClientError` has no variant for a request that the client
+  cannot write. A request target of more than 65,534 bytes gives
+  `ClientError::Protocol`. `TargetError::NotAnAddress` also stands for a base
+  URL with a query or with a fragment. A variant for each case changes a
+  type that the skeleton fixed. The owner of the crate decides.
+- `http::client::Target::unix` returns no error. A host text that a header
+  cannot hold gives an empty `Host` header. Each caller gives a constant of
+  its code as that text.
+- The connect limit of `http::client` does not stop the lookup of a host
+  name. `tokio` runs the lookup on a blocking thread. That thread continues
+  until the resolver of the host answers. A target with an IP address or
+  with a Unix socket has no lookup.
+- The write limit of `http::client` ends when hyper flushes the socket.
+  hyper 1.11.1 flushes one time for a request, after the last byte. A
+  version that flushes each part of a request gives the limit to each part.
+  No test shows that change.
+- No test of `http::client` makes a real connect wait, because no listener
+  holds a connect open on each operating system. The test of
+  `Phase::Connect` uses a private target that completes no connect.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same

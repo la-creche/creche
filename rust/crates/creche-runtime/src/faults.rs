@@ -211,11 +211,7 @@ mod tests {
             Json::String(String::from("grants/chat.json: absent")),
         );
 
-        OpenFault {
-            code,
-            since: "2031-04-18T06:42:58Z".parse().unwrap(),
-            detail,
-        }
+        OpenFault::new(code, "2031-04-18T06:42:58Z".parse().unwrap()).with_detail(detail)
     }
 
     fn fault_file(writer: FaultWriter, faults: Vec<OpenFault>) -> FaultFile {

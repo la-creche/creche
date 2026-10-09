@@ -59,6 +59,9 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/session_cases.py` | the written inputs of the session API surfaces |
 | `surfaces/session.py` | the session API: `session.request.*`, `session.query.*`, `session.error_body`, `session.answer.*`, `session.journal.*`, `session.stream.*`, `session.turn.move`, `session.state.derive`, `session.outcome.*` |
 | `surfaces/runtime.py` | the helper code that each service copies: `runtime.untrusted.<copy>.<helper>`, `runtime.parse_object.noticeboard`, `runtime.token.<reader>`, `runtime.bearer.<copy>`, `runtime.edge.<service>` |
+| `surfaces/noticeboard_cases.py` | the written inputs of the noticeboard surfaces |
+| `surfaces/noticeboard.py` | the noticeboard: `noticeboard.security.*`, `noticeboard.urlform`, `noticeboard.app.query`, `noticeboard.route.*`, `noticeboard.sessions.*`, `noticeboard.transcript.fold`, `noticeboard.audit.page`, `noticeboard.statusdocs.report`, `noticeboard.verify.envfile`, `noticeboard.cli.check`, `noticeboard.static.css` |
+| `surfaces/library.py` | the index builder: `library.chunk_text`, `library.file_hash`, `library.read_document`, `library.report`, `library.tei_url`, `library.embedding`, `library.schema`, `library.index_scope` |
 
 ## Known gaps
 
@@ -129,10 +132,10 @@ directory is not a workspace package, so a change here does not change
   unit name, the path segment, the image reference and the age recipient.
   `family_file` covers the grammars that `agent_family` applies to a family
   file.
-- `noticeboard.sessions.is_session` is a copy of the session id grammar
-  with no id surface. A new `id.` surface needs a row in the `ids` module of
-  the Rust crate. Rule 5 of "Where a new type goes" in `rust/AGENTS.md`
-  applies to that change.
+- `noticeboard.sessions.is_session` is a copy of the session id grammar.
+  `noticeboard.route.session` covers it. The copy has no `id.` surface: a
+  new `id.` surface needs a row in the `ids` module of the Rust crate. Rule
+  5 of "Where a new type goes" in `rust/AGENTS.md` applies to that change.
 - `host_reason` of `attendance.wire` has no vector. `cap_event` and
   `read_usage` have vectors only through `channel.parse`.
 - No vector covers the playpen side of contract 03: what the playpen accepts
@@ -164,7 +167,8 @@ directory is not a workspace package, so a change here does not change
   digit limit of Python `int`. With `PYTHONINTMAXSTRDIGITS=0`, Python reads
   such an integer, and the vector can move. `integer-4301-digits` of
   `runtime.parse_object.noticeboard` then moves from `refused` to
-  `accepted`.
+  `accepted`. `offset-4301-digits` of `noticeboard.app.query` moves too: the
+  page then shows no record.
 - The session surfaces go through the routes of `attendance.api`. The
   service behind the routes is a stand-in. No vector covers a refusal that
   the real service makes after the parse: a token, a family kind, a lease.
@@ -228,7 +232,7 @@ directory is not a workspace package, so a change here does not change
 - `config.site_file` has no vector for a file that another account owns. The
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
-  reads that file.
+  reads that file. `noticeboard.cli.check` holds the vectors of a key file.
 - The group `runtime` covers the lenient readers, the token files, the
   bearer of a request and the answers of the web framework. No vector
   covers an atomic write, a read with a size cap or a path under the state
@@ -253,12 +257,17 @@ directory is not a workspace package, so a change here does not change
 - No vector covers `_read_token` of `agent_door_tui.config` or of
   `agent_door_trigger.config`. Each one is a copy of the reader that
   `runtime.token.door` covers.
-- No surface covers two more readers of a token file or of a key file.
-  `read_api` of `attendance.owui_copy` reads the key of Open WebUI. `_bearer`
-  of `noticeboard.sessions.SessionReader` reads the token that the
-  noticeboard sends to `attendance`, and it has no public entry point. Each
-  one reads UTF-8 text, removes the whitespace of Python `str.strip` from
-  the two ends and has no least count of bytes.
+- No surface covers `read_api` of `attendance.owui_copy`, which reads the
+  key of Open WebUI. It reads UTF-8 text, removes the whitespace of Python
+  `str.strip` from the two ends and has no least count of bytes.
+- `_bearer` of `noticeboard.sessions.SessionReader` reads the token that the
+  noticeboard sends to `attendance`. It has no public entry point.
+  `noticeboard.sessions.token` covers it through one call of the reader. It
+  has the two rules of `read_api`. That surface holds files of mode 0600.
+  A token there has 43 ASCII characters, with nothing before it and with
+  one line feed or nothing after it. No vector covers another mode, a
+  shorter token, a token between spaces or a token with a character
+  outside ASCII.
 - `runtime.token.attendance` and `runtime.token.attendance_pep_read` hold no
   token. `TokenBook.load` returns nothing, and the tokens that it keeps are
   private.
@@ -300,3 +309,155 @@ directory is not a workspace package, so a change here does not change
   a query. The web framework answers the first with status 307, before it
   checks the method. It keeps the query in the `Location` header of the
   second. A vector holds only the path of that header.
+- Five helpers of `noticeboard.app` are private. A noticeboard surface
+  covers each one through another entry point:
+  1. `_form_of` reads a form body. `noticeboard.urlform` calls
+     `urllib.parse.parse_qsl` with the two steps of that helper. A change to
+     the helper does not move a vector.
+  2. `_one` and `_offset_of` read the query of the audit page.
+     `noticeboard.app.query` covers them through that page.
+  3. `_require_family` checks a route parameter. `noticeboard.route.family`
+     covers it through three routes.
+  4. `_require_session` calls `sessions.is_session`.
+     `noticeboard.route.session` covers that function. No vector covers the
+     session route with a text that is no session id.
+- `_parse_env_file` of `noticeboard.verify` is private.
+  `noticeboard.verify.envfile` covers it through `main`. A vector shows a
+  variable of the file only through the bind and the port of the config.
+- `_refusal` and `_stream` of `noticeboard.sessions` are private.
+  `noticeboard.sessions.refusal` and `noticeboard.sessions.events` cover them
+  through the calls of `SessionReader`.
+- `noticeboard.security.key` gives `check_key` a text that the generator
+  makes from the bytes of a header. In the service, the web framework makes
+  that text. No vector covers the key check or the check of a form post
+  through a request. No vector covers a form body of more than 1 MiB.
+- A noticeboard surface that needs a request gives the app a scope that the
+  generator makes. The scope holds the raw path, and the path with each
+  percent escape decoded as UTF-8. The server of the noticeboard makes that
+  scope in a deployment. A query and a path segment of such a surface are
+  ASCII.
+- No noticeboard surface holds a JSON text that `json.loads` takes and a
+  strict reader refuses. The Python readers of the noticeboard take each
+  of these texts:
+  1. A text with `NaN` or `Infinity`.
+  2. A text with an integer outside 64 bits.
+  3. A text with a key two times in one object.
+  4. A text with a byte order mark, or a text in UTF-16.
+  5. A text with more than 64 levels.
+  6. A text with one half of a surrogate pair.
+
+  `runtime.parse_object.noticeboard` holds such texts for the reader of one
+  file. `vectors/tests/test_vectors_noticeboard.py` holds this rule for the
+  written inputs.
+- A token that the service keeps in a vector of `noticeboard.security.cookie`
+  has 1 to 512 bytes. Each byte of it is a `cookie-octet` of RFC 6265.
+  No vector covers a longer token. No vector covers a token with a space, a
+  comma, a semicolon, a backslash, a double quote or a byte above 127. The
+  Python service keeps such a token.
+  `vectors/tests/test_vectors_noticeboard.py` holds this rule for the
+  committed vectors.
+- `noticeboard.security.cookie` covers the cookie of the edit page. No
+  vector covers the cookie of another answer. `runtime.edge.noticeboard`
+  holds the names of the cookies of five answers.
+- No vector covers a request with two `Cookie` headers. The service reads
+  each one, and the last value of the name stays.
+- Four noticeboard surfaces go through the app: `noticeboard.security.cookie`,
+  `noticeboard.app.query`, `noticeboard.route.family` and
+  `noticeboard.static.css`. Their vectors come from the versions of
+  Starlette and of FastAPI that `uv.lock` pins. A vector can move when
+  `uv.lock` takes a newer version.
+- `noticeboard.app.query` holds no offset with a decimal digit outside
+  ASCII. Python `int` reads such a digit.
+- No answer of `attendance`, no line of an event stream and no audit record
+  of a noticeboard surface holds a count below zero. The Python readers of
+  the noticeboard take an integer of each sign.
+- `noticeboard.statusdocs.report` gives the entry point the absolute path of
+  a file that the generator makes. No vector covers a relative path or a
+  path with a NUL character.
+- `noticeboard.route.family` holds no segment with an escaped slash that
+  makes the path of another route, for example `chat%2Fedit`. The web
+  framework decodes the path before it finds the route. The segment of the
+  example thus gets the edit page.
+- `noticeboard.cli.check` and `noticeboard.verify.envfile` hold no relative
+  path and no URL with no scheme. `config.noticeboard.env` holds those
+  inputs.
+- Each vector of `noticeboard.cli.check` names the state root, the registry
+  and the socket or the URL of `attendance`. The program says if a path
+  exists, and a default path can exist on a machine. No vector thus covers
+  the lines of a default path.
+- A refused vector of `noticeboard.cli.check` holds the exit status of the
+  Python program today. The vector moves when that status changes.
+- The generator replaces `logging.basicConfig` while
+  `noticeboard.__main__.main` runs, and `httpx.get` while
+  `noticeboard.verify.main` runs. The first call changes the log setup of
+  the process. The second call opens a socket.
+- `noticeboard.verify.envfile` holds the first check of the hook only. No
+  vector covers the exit status or another check: each one reads a path or
+  a socket of the machine.
+- A problem of the noticeboard can end with a message of the JSON reader of
+  Python. A noticeboard vector holds the class of such a problem and the
+  start of its sentence, and no message.
+- The sentence for a token file or an audit directory that does not exist
+  ends with the text that the system gives for the error. The vectors hold
+  the text `No such file or directory`, which macOS and Linux give.
+- No vector covers a day file of more than 32 MiB. The audit reader reads
+  the end of such a file. No vector covers a day file or a report that the
+  reader cannot open.
+- No vector covers the edit form, the text that a save writes or the save
+  itself: `noticeboard.familyform`, `noticeboard.yamlout`,
+  `noticeboard.yamlkeep` and `noticeboard.registrywrite`. No vector covers
+  the markup of a page.
+- Three surfaces of the index builder go through `index_scope`:
+  `library.embedding`, `library.schema` and `library.index_scope`. The
+  function that packs a vector, `_float32`, and the function that walks a
+  corpus, `_walk`, are private. No vector calls one of the two directly.
+- Each vector of `library.chunk_text` has an overlap that is less than its
+  size. No vector covers an overlap that is equal to the size or larger.
+- No vector holds text from a PDF file. `library.read_document` holds text
+  files only. No corpus of `library.index_scope` holds a file that the PDF
+  reader reads.
+- A corpus of `library.index_scope` holds no two names of one directory
+  that differ only in letter case. It holds no name with a character that
+  is not ASCII and no name that ends in a dot. A file system can change such
+  a name, and the output then differs between two machines (rule 7).
+- No vector of the index builder holds a time: `mtime` and `indexed_at` of
+  a row of `files`, and `updated_at` of `meta`.
+- `library.schema` holds no statement of `chunks_vec`, and none of a table
+  that a virtual table makes for itself. `library.index_scope` holds no row
+  of `chunks_vec`. No reader outside the index builder reads `chunks_vec`.
+- `library.index_scope` holds the `rowid` of each row of `chunks_fts`. It
+  holds no text of such a row, and no vector holds the answer to a search.
+- `library.tei_url` holds only a text that the Rust index builder will
+  take at its start. The entry point returns each text that is not empty.
+  Four examples of a text with no vector:
+  1. A URL with the scheme `https`. The HTTP client of the Rust runtime has
+     no TLS.
+  2. A URL with no scheme.
+  3. A URL with a user part.
+  4. The LAN address `0.0.0.0`.
+
+  The strict config types of the Rust crate refuse examples 2, 3 and 4.
+
+  A text with no vector stays out under resolution (c) of `rust/AGENTS.md`:
+  the program reads the value at its start. That document states the case
+  for a daemon. The index builder is a command that a timer starts. The
+  reading here is that the case holds for such a command too. The Rust
+  config type of the index builder does not exist yet. The pull request of
+  that type adds a plain Rust test for each such text.
+- `library.embedding` holds no value that is not finite, no boolean and no
+  vector with a wrong count of values.
+- No vector of `library.index_scope` holds a file that `index_scope`
+  reports as an error. `library.embedding` holds such a file. It records
+  only that the report names the file.
+- A vector of `library.index_scope` holds the counts of each report. It
+  does not hold the paths that a report lists.
+- No vector covers the cut of an error text at 200 code points.
+  `index_scope` makes the cut. An error text there comes from the
+  interpreter or from a library.
+- No vector covers a symbolic link in a corpus, a scope behind a symbolic
+  link or a directory that the program cannot read.
+- No vector covers a store with no table `chunks_emb`, or a store file that
+  SQLite cannot read.
+- No vector covers `main` of `library.__main__` or its TEI client: the
+  command line, the exit status, the preflight and the calls of the
+  embedder. The embedder of each vector is a stub of the generator.
