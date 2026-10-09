@@ -23,6 +23,7 @@ from proc_services import (
     Service,
     command_of,
     env_of,
+    reference_of,
     unknown_variables,
     venv_bin,
 )
@@ -146,6 +147,28 @@ def test_an_override_reaches_one_service_only(tmp_path: Path) -> None:
     environ = {"CRECHE_PROC_ATTENDANCE": str(program)}
 
     assert command_of(Service.DOOR_OWUI, environ).origin is Origin.DEFAULT
+
+
+def test_the_reference_is_the_default_with_the_variable_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reference of a row reads no variable: it stays the default command.
+
+    The variable of the row names another program here. The judged command
+    is that program, and the reference is the default command of the row,
+    with what only the default command gets.
+    """
+    entry = SERVICES[Service.LIBRARY]
+    monkeypatch.setenv(entry.override, str(_program(tmp_path / "other-library")))
+
+    judged = command_of(Service.LIBRARY)
+    reference = reference_of(Service.LIBRARY)
+
+    assert judged.origin is Origin.OVERRIDE
+    assert reference.origin is Origin.DEFAULT
+    assert reference.words == (str(venv_bin() / entry.program), *entry.selector)
+    assert reference == command_of(Service.LIBRARY, {})
+    assert env_of(reference) == DEFAULT_ONLY_ENV
 
 
 def test_an_empty_override_is_an_error() -> None:

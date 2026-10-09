@@ -11,6 +11,10 @@ A test names a `Service`. It never names a program, a module or a language.
 `test_proc_table.py` holds each default against the unit file, so the table
 cannot drift from what the host starts.
 
+`reference_of` gives the default of a row and reads no variable. Two
+programs can write one file, and a scenario then runs the default beside
+the judged command to compare what each one writes.
+
 Every variable of this suite starts with `CRECHE_PROC_`. `unknown_variables`
 finds a name with that start that the suite does not read. A misspelled
 override would leave the default in place, and the run would look like a
@@ -202,6 +206,30 @@ def command_of(service: Service, environ: Mapping[str, str] | None = None) -> St
     return StartCommand(words=(os.path.abspath(program), *words[1:]), origin=Origin.OVERRIDE)
 
 
+def reference_of(service: Service) -> StartCommand:
+    """The default command of `service`, also when its variable names another program.
+
+    It is the reference: the second writer of a store that two programs must
+    write alike. Only a scenario that compares the judged command with the
+    reference runs it. `integration/proc/AGENTS.md`, "The reference", names
+    the two files that do.
+
+    This function reads no variable. A run with the variable of the row set
+    then has two commands for one row, and the reference is never the
+    judged one.
+    """
+    entry = SERVICES[service]
+    program = venv_bin() / entry.program
+
+    if not program.is_file():
+        raise CommandError(
+            f"{service.value} has no reference: {program} is missing. "
+            "Run `uv sync`. No variable replaces the reference."
+        )
+
+    return _default_words(program, entry)
+
+
 def env_of(command: StartCommand) -> dict[str, str]:
     """The variables a command gets beside the ones its test gives it."""
     if command.origin is Origin.OVERRIDE:
@@ -243,4 +271,8 @@ def _default_command(service: Service, entry: StartEntry) -> StartCommand:
             f"Run `uv sync`, or set {entry.override}."
         )
 
+    return _default_words(program, entry)
+
+
+def _default_words(program: Path, entry: StartEntry) -> StartCommand:
     return StartCommand(words=(str(program), *entry.selector), origin=Origin.DEFAULT)
