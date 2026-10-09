@@ -524,6 +524,13 @@ def _env(env_id: str, **variables: str) -> Environment:
 #: Each URL and each LAN address below is a text that the strict config
 #: types of the Rust crate take too. The entry point returns each text that is
 #: not empty (`vectors/AGENTS.md`, "Known gaps").
+#:
+#: CONTRACT-QUESTION: `rust/AGENTS.md`, "When the two results differ", states
+#: case 2 of resolution (c) for a reader that a daemon calls at its start.
+#: The index builder is a command that a timer starts. The reading here: the
+#: case holds for each program that reads a config value at its start. The
+#: other reading costs a refusal in the entry point for each text that this
+#: list leaves out, and then a refused vector for each one.
 ENVIRONMENTS: Final[tuple[Environment, ...]] = (
     # --- the cases of library/tests/test_library_tei_url.py ---
     _env("lan-address", AGENT_LAN_ADDRESS=LAN),

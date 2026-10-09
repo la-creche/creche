@@ -333,9 +333,11 @@ directory is not a workspace package, so a change here does not change
   The strict config types of the Rust crate refuse examples 2, 3 and 4.
 
   A text with no vector stays out under resolution (c) of `rust/AGENTS.md`:
-  the program reads the value at its start. The Rust config type of the
-  index builder does not exist yet. The pull request of that type adds a
-  plain Rust test for each such text.
+  the program reads the value at its start. That document states the case
+  for a daemon. The index builder is a command that a timer starts. The
+  reading here is that the case holds for such a command too. The Rust
+  config type of the index builder does not exist yet. The pull request of
+  that type adds a plain Rust test for each such text.
 - `library.embedding` holds no value that is not finite, no boolean and no
   vector with a wrong count of values.
 - No vector of `library.index_scope` holds a file that `index_scope`
