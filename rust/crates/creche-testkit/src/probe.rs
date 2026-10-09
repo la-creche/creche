@@ -46,7 +46,8 @@
 //!
 //! The program has no Python origin. Its start has the steps of
 //! `noticeboard/src/noticeboard/__main__.py:32-61`, and it differs from that
-//! origin in these ways. A test of `tests/process.rs` holds each one.
+//! origin in these ways. A plain test holds each one, in this file or in
+//! `tests/process.rs`.
 //!
 //! - The Python service ends a refused start with status 2. The program ends
 //!   it with status 78 (`rust/AGENTS.md`, "The rules for a service", rule 17).
@@ -159,11 +160,9 @@ const KEY_FILE_CAP: ByteCap = ByteCap::ONE_MIB;
 /// The content type of the answer of [`HEALTH_PATH`].
 const JSON: &str = "application/json";
 
-/// The body of the answer of [`SLOW_PATH`] after the write.
+/// The body of the answer of [`SLOW_PATH`] after the write. The file of the
+/// route holds the same bytes.
 const SLOW_DONE: &str = "done\n";
-
-/// The bytes of the file of [`SLOW_PATH`].
-const SLOW_BYTES: &[u8] = b"done\n";
 
 /// The name of the task that writes the file of [`SLOW_PATH`].
 const SLOW_TASK: &str = "probe-slow-file";
@@ -191,7 +190,8 @@ const SLOW_WRITE: Write = Write {
 /// 5. It runs the listeners inside `service::run` until a stop signal.
 ///
 /// Each refused start ends with status 78. A panic of these steps ends the
-/// program with status 1 and one `ERROR` line.
+/// program with status 1. The log then holds the place of the panic and
+/// never its message.
 ///
 /// The function sets the panic hook of the process. A test thus does not
 /// call it: the tests of `tests/process.rs` start the program as a process.
@@ -490,7 +490,7 @@ async fn slow(State(probe): State<Probe>) -> Response {
     let written = probe
         .tasks
         .spawn_blocking(SLOW_TASK, move || {
-            atomic::write(&file, SLOW_BYTES, SLOW_WRITE)
+            atomic::write(&file, SLOW_DONE.as_bytes(), SLOW_WRITE)
         })
         .await;
 
@@ -907,7 +907,7 @@ mod tests {
         let (status, _content_type, body) = block_on(async {
             let answer = call(app(root.path()), request(Method::GET, SLOW_PATH)).await;
             // The file is there when the answer is.
-            assert_eq!(fs::read(&file).unwrap(), SLOW_BYTES);
+            assert_eq!(fs::read(&file).unwrap(), SLOW_DONE.as_bytes());
 
             parts_of(answer).await
         });
@@ -931,7 +931,7 @@ mod tests {
             assert_eq!(answer.status(), StatusCode::OK);
         });
 
-        assert_eq!(fs::read(&file).unwrap(), SLOW_BYTES);
+        assert_eq!(fs::read(&file).unwrap(), SLOW_DONE.as_bytes());
     }
 
     #[test]
