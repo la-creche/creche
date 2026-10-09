@@ -309,8 +309,9 @@ fn within_limits(bytes: &[u8]) -> bool {
 
 /// Why a value has no JSON form.
 ///
-/// A type of this module always has a JSON form. The error exists because a
-/// writer of bytes can fail.
+/// A type of this module always has a JSON form. The error exists because
+/// the writer of `crate::json` returns a `Result`. That writer gives an
+/// error for `NaN`, for an infinity and for a value with no JSON form.
 ///
 /// ```
 /// use creche_contracts::session::EncodeError;

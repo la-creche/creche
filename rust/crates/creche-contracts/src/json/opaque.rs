@@ -6,11 +6,10 @@
 //! arguments of a tool call. `rust/AGENTS.md`, rule 7, calls such a field
 //! opaque.
 //!
-//! The value holds its text. The writer of this module reads that text when
-//! it writes the value, so the text goes out in the style of the whole
-//! document.
+//! The value holds one text: its compact form. The writer of this module
+//! reads that text when it writes the value, so the value goes out in the
+//! style of the whole document.
 
-use std::borrow::Cow;
 use std::cell::Cell;
 use std::fmt;
 
@@ -18,9 +17,10 @@ use serde::de::{self, Deserialize, Deserializer};
 use serde::ser::{self, Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::value::RawValue;
 
-use super::scan::{float_value, integer_value, is_integer, pass};
-use super::write::compact_len;
-use super::{ByteCap, Found, ReadError, read};
+use super::scan::{
+    FALSE, NULL, TRUE, float_value, in_number, integer_value, is_integer, is_space, pass, string_at,
+};
+use super::{ByteCap, Charset, Found, KeyOrder, Layout, ReadError, Style, read, write};
 use crate::slot::Slot;
 
 /// What the error of `serde` says for a member that is not strict JSON. The
@@ -34,19 +34,20 @@ const BROKEN: &str = "an opaque value with a text that is not strict JSON";
 /// What the error of a serializer says when the serializer wrote no item.
 const NOT_WRITTEN: &str = "a serializer that wrote no item of an opaque value";
 
-/// The three words of JSON.
-const TRUE: &str = "true";
-const FALSE: &str = "false";
-const NULL: &str = "null";
+/// The style of the one text that a value holds: no white space, each
+/// character as it is, and the keys in the order of the value.
+const COMPACT: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGiven);
 
 /// The value of a field that a contract calls opaque: strict JSON of each
 /// kind, which the code keeps whole.
 ///
-/// The value holds the text that the reader checked. It keeps each key of
-/// an object in the order of that text. A value exists only through
-/// [`Opaque::read`] or through its `Deserialize`, and each of the two checks
-/// the text against each rule of the module doc. Code that holds a value
-/// needs no second check.
+/// A value exists only through [`Opaque::read`] or through its
+/// `Deserialize`. Each of the two checks the text against each rule of the
+/// module doc, so code that holds a value needs no second check. The value
+/// then keeps its compact form and not the text that it came from. The
+/// compact form is the text that [`write`](super::write) gives with
+/// [`Layout::Compact`], [`Charset::Utf8`] and [`KeyOrder::AsGiven`]. It has
+/// each key of an object in the order of the first text.
 ///
 /// # How the value reads
 ///
@@ -54,20 +55,22 @@ const NULL: &str = "null";
 /// `RawValue`. [`Number`](super::Number) reads in the same way and has the
 /// same limits:
 ///
-/// - The type works as a named field of a struct, as an item of a list and
-///   as the value that a map visitor reads.
-/// - The type does not work below `#[serde(flatten)]`. `serde` reads a
-///   flattened value from a buffer of its own, and that buffer keeps no
-///   text. The read then fails with `invalid type: newtype struct`.
+/// - A named field of a struct can have the type. So can an item of a list
+///   and a value that a map visitor reads.
+/// - A field below `#[serde(flatten)]` cannot have the type. The derive
+///   gives such a field a value from a buffer of `serde`, and that buffer
+///   has no text of the value. `serde_json` then reports an invalid type,
+///   and the read of the whole struct fails.
 /// - A named `Opaque` field works beside a flattened field. For example,
 ///   the flattened field can be a map that ignores the value of each other
 ///   key.
-/// - A raw type can keep the value of each key that it gives no name. Give
-///   such a raw type a `Deserialize` by hand: a map visitor reads each named
-///   key by its name, and each other value with `next_value::<Opaque>()`.
+/// - Some raw types must keep each member that they have no field for. Such
+///   a raw type needs a `Deserialize` that a person writes. Its `visit_map`
+///   matches the keys that the type names, and it calls
+///   `next_value::<Opaque>()` for each key that is left.
 ///
-/// In a raw type, the field is a `Slot<Opaque>`: `null` reads as
-/// `Slot::Null`, and each other value reads as `Slot::Value`.
+/// In a raw type, the field is a `Slot<Opaque>`. The slot is `Slot::Null`
+/// for the word `null` and `Slot::Value` for a value of each other kind.
 ///
 /// The `Deserialize` does the check again for its own text. It thus refuses
 /// a member that is not strict JSON, also when no [`check`](super::check)
@@ -77,28 +80,36 @@ const NULL: &str = "null";
 ///
 /// The `Serialize` gives each part of the value to the serializer.
 /// [`write`](super::write) then forms the value as it forms each other
-/// value, so the text is the text of `json.dumps` in the given
-/// [`Style`](super::Style):
+/// value, so the text is the text of `json.dumps` in the given [`Style`]:
 ///
-/// - A number goes out in the form of Python and not in the form of its
-///   token. `1.50` goes out as `1.5` and `1e21` as `1e+21`.
+/// - A number has the form that Python gives it, and the form of its token
+///   is lost. The writer gives `1.5` for the token `1.50`, and `1e+21` for
+///   the token `1e21`.
 /// - The characters of a token decide its kind, as for
-///   [`Number`](super::Number). `-0` is the integer 0 and goes out as `0`.
-///   `-0.0` is a float and goes out as `-0.0`.
+///   [`Number`](super::Number). The token `-0` is the integer 0, and its
+///   text is `0`. The token `-0.0` is a float, and its text stays `-0.0`.
 /// - An integer keeps each digit.
 /// - A string goes out with the escapes of the charset of the style.
 /// - The keys of an object go out in the order of the text. With
-///   [`KeyOrder::Sorted`](super::KeyOrder::Sorted), the writer sorts the
-///   keys of each object. A digest over the arguments of a call takes that
-///   sorted form as its input.
+///   [`KeyOrder::Sorted`], the writer sorts the keys of each object. A
+///   digest over the arguments of a call takes that sorted form as its
+///   input.
 ///
 /// [`Opaque::compact_len`] gives the size of the value for a size rule.
 ///
 /// # When two values are equal
 ///
-/// Two values are equal when their texts are equal. The comparison reads no
-/// part of a value: `[1, 2]` and `[1,2]` are two values, and `1.50` and
-/// `1.5` are two values.
+/// Two values are equal when their compact forms are equal. Equal values
+/// thus write the same bytes in each style, and values that are not equal
+/// do not.
+///
+/// - White space is no part of a value: `[1, 2]` and `[1,2]` are equal.
+/// - The form of a token is no part of a value: `1.50` and `1.5` are equal,
+///   and so are `"A"` and `"A"`.
+/// - The order of the keys is a part of a value: `{"a":1,"b":2}` and
+///   `{"b":2,"a":1}` are not equal.
+/// - The kind of a number is a part of a value: `1` and `1.0` are not
+///   equal.
 ///
 /// ```
 /// use creche_contracts::json::{self, ByteCap, Charset, Found, KeyOrder, Layout, Opaque, Style};
@@ -108,6 +119,7 @@ const NULL: &str = "null";
 /// let event = Opaque::read(br#" {"type": "usage", "cost": 1.50, "at": -0} "#, CAP)?;
 /// assert_eq!(event.kind(), Found::Table);
 /// assert_eq!(event.compact_len(), 34);
+/// assert_eq!(event, Opaque::read(br#"{"type":"usage","cost":1.5,"at":0}"#, CAP)?);
 ///
 /// let line = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGiven);
 /// assert_eq!(json::write(&event, line)?, br#"{"type":"usage","cost":1.5,"at":0}"#);
@@ -122,15 +134,14 @@ const NULL: &str = "null";
 /// ```compile_fail,E0451
 /// use creche_contracts::json::{self, ByteCap, Charset, Found, KeyOrder, Layout, Opaque, Style};
 ///
-/// let event = Opaque { text: "[1,]".into(), kind: Found::List, compact_len: 4 };
+/// let event = Opaque { text: "[1,]".into(), kind: Found::List };
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct Opaque {
-    /// The text of the value, with no white space around it. It is strict
-    /// JSON.
+    /// The compact form of the value. It is strict JSON: the writer gives
+    /// it for a text that passed each rule.
     text: Box<str>,
     kind: Found,
-    compact_len: usize,
 }
 
 impl Opaque {
@@ -149,12 +160,11 @@ impl Opaque {
     /// JSON.
     fn of_text(text: &str) -> Option<Self> {
         let kind = pass(text).ok()?;
-        let compact_len = compact_len(&Walk::from(text, 0)).ok()?;
+        let compact = write(&Walk::from(text, 0), COMPACT).ok()?;
 
         Some(Self {
-            text: text.into(),
+            text: String::from_utf8(compact).ok()?.into(),
             kind,
-            compact_len,
         })
     }
 
@@ -165,30 +175,26 @@ impl Opaque {
         self.kind
     }
 
-    /// How many bytes the compact form of the value has in UTF-8. That form
-    /// is the text that [`write`](super::write) gives with
-    /// [`Layout::Compact`](super::Layout::Compact),
-    /// [`Charset::Utf8`](super::Charset::Utf8) and
-    /// [`KeyOrder::AsGiven`](super::KeyOrder::AsGiven). A host holds the
-    /// event of a channel line against its size limit with this count.
+    /// How many bytes the compact form of the value has in UTF-8. A host
+    /// holds the event of a channel line against its size limit with this
+    /// count.
     ///
     /// The count is not the length of the text that the value came from.
     /// That text can hold white space, an escape for a character that needs
     /// none, or a number in another form.
     #[must_use]
-    pub const fn compact_len(&self) -> usize {
-        self.compact_len
+    pub fn compact_len(&self) -> usize {
+        self.text.len()
     }
 }
 
-/// The length, the kind and the size of the compact form. The form shows no
-/// character of the text, because an opaque value can hold a secret.
+/// The kind and the size of the compact form. The form shows no character
+/// of the text, because an opaque value can hold a secret.
 impl fmt::Debug for Opaque {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Opaque")
-            .field("bytes", &self.text.len())
             .field("kind", &self.kind)
-            .field("compact_len", &self.compact_len)
+            .field("compact_len", &self.text.len())
             .finish()
     }
 }
@@ -201,8 +207,9 @@ impl<'de> Deserialize<'de> for Opaque {
     }
 }
 
-/// An opaque field of a raw type. `null` is `Null`, and each other value is
-/// `Value`: the field takes a value of each kind, so no value is `Other`.
+/// An opaque field of a raw type. The field takes a value of each kind, so
+/// no value reads as `Other`: the word `null` reads as `Null`, and a value
+/// of another kind reads as `Value`.
 ///
 /// The read fails for a value that is not strict JSON. No such value is in
 /// a text that [`check`](super::check) accepted.
@@ -231,11 +238,13 @@ impl Serialize for Opaque {
     }
 }
 
-/// One value inside the text of an [`Opaque`]: the value that starts at
-/// `start`, after optional white space.
+/// One value inside a strict text: the value that starts at `start`, after
+/// optional white space.
 ///
 /// The text is strict JSON, so the walk checks no rule again. For a text
-/// that is not strict JSON, the walk gives an error and no panic.
+/// that is not strict JSON, the walk gives an error and no panic. The walk
+/// holds no copy of the grammar: the `scan` module gives it each byte set,
+/// each word and the decode of a string.
 ///
 /// `serde` gives a serializer a reference to a value, so the walk tells its
 /// caller through a `Cell` where the value ends. The caller then finds the
@@ -267,49 +276,18 @@ impl<'a> Walk<'a> {
 
     /// The first offset from `at` that holds no white space.
     fn past_space(&self, mut at: usize) -> usize {
-        while matches!(self.byte(at), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+        while self.byte(at).is_some_and(is_space) {
             at += 1;
         }
 
         at
     }
 
-    /// The text of the string whose first quote is at `at`, and the offset
-    /// after its last quote. A string with no escape borrows from the text.
-    fn string(&self, at: usize) -> Option<(Cow<'a, str>, usize)> {
-        let mut last = at + 1;
-        let mut escaped = false;
-        loop {
-            match self.byte(last)? {
-                b'"' => break,
-                b'\\' => {
-                    escaped = true;
-                    // The byte after `\` is a part of the escape.
-                    last += 2;
-                }
-                _ => last += 1,
-            }
-        }
-
-        let end = last + 1;
-        if !escaped {
-            return Some((Cow::Borrowed(self.text.get(at + 1..last)?), end));
-        }
-
-        let token = self.text.get(at..end)?;
-        let decoded: String = serde_json::from_str(token).ok()?;
-
-        Some((Cow::Owned(decoded), end))
-    }
-
     /// Gives the number that starts at `at` to `serializer`. The token is
     /// the run of the bytes that a number of JSON can hold.
     fn number<S: Serializer>(&self, at: usize, serializer: S) -> Result<S::Ok, S::Error> {
         let mut end = at;
-        while matches!(
-            self.byte(end),
-            Some(b'0'..=b'9' | b'+' | b'-' | b'.' | b'e' | b'E')
-        ) {
+        while self.byte(end).is_some_and(in_number) {
             end += 1;
         }
         self.end.set(Some(end));
@@ -361,7 +339,7 @@ impl<'a> Walk<'a> {
                 Some(b'}') => break,
                 Some(b',') => at += 1,
                 Some(b'"') => {
-                    let (key, after_key) = self.string(at).ok_or_else(broken)?;
+                    let (key, after_key) = string_at(self.text, at).ok_or_else(broken)?;
                     let colon = self.past_space(after_key);
                     if self.byte(colon) != Some(b':') {
                         return Err(broken());
@@ -411,7 +389,7 @@ impl Serialize for Walk<'_> {
             Some(b'{') => self.table(at, serializer),
             Some(b'[') => self.list(at, serializer),
             Some(b'"') => {
-                let (text, end) = self.string(at).ok_or_else(broken)?;
+                let (text, end) = string_at(self.text, at).ok_or_else(broken)?;
                 self.end.set(Some(end));
 
                 serializer.serialize_str(&text)
@@ -433,13 +411,12 @@ mod tests {
     use serde::de::{IgnoredAny, MapAccess, Visitor};
 
     use super::super::write::tests::SAMPLE_TEXTS;
-    use super::super::{Charset, DEPTH_MAX, KeyOrder, Layout, Rule, Style, WriteError, write};
+    use super::super::{DEPTH_MAX, Rule, WriteError};
     use super::*;
     use crate::slot::tests::reads_empty_table;
 
     const CAP: ByteCap = ByteCap::new(4096);
 
-    const COMPACT: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGiven);
     const COMPACT_ASCII: Style = Style::new(Layout::Compact, Charset::Ascii, KeyOrder::AsGiven);
     const SORTED: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::Sorted);
     const SPACED: Style = Style::new(Layout::Spaced, Charset::Ascii, KeyOrder::AsGiven);
@@ -631,13 +608,53 @@ mod tests {
     }
 
     #[test]
-    fn white_space_around_a_value_is_no_part_of_it() {
-        assert_eq!(opaque(" \t\r\n[1, 2] \t\r\n"), opaque("[1, 2]"));
-        assert_eq!(opaque(" 7 "), opaque("7"));
-        // Two values are equal when their texts are equal.
-        assert_ne!(opaque("[1, 2]"), opaque("[1,2]"));
-        assert_ne!(opaque("1.50"), opaque("1.5"));
+    fn two_values_are_equal_when_their_compact_forms_are_equal() {
+        let equal = [
+            (" \t\r\n[1, 2] \t\r\n", "[1,2]"),
+            (" 7 ", "7"),
+            ("1.50", "1.5"),
+            ("1e2", "100.0"),
+            ("-0", "0"),
+            ("\"\\u0041\\/\"", "\"A/\""),
+            ("{ \"\\u0061\" : [ ] }", "{\"a\":[]}"),
+            (SAMPLE, SAMPLE_TEXTS[2].3),
+        ];
+        let not_equal = [
+            // The order of the keys is a part of a value.
+            (r#"{"a":1,"b":2}"#, r#"{"b":2,"a":1}"#),
+            // An integer and a float are two kinds.
+            ("1", "1.0"),
+            ("0", "-0.0"),
+            ("\"1\"", "1"),
+            ("[]", "{}"),
+            ("null", "false"),
+        ];
+
+        for (one, other) in equal {
+            assert_eq!(opaque(one), opaque(other), "{one}");
+            for (layout, charset, key_order, _) in SAMPLE_TEXTS {
+                let style = Style::new(layout, charset, key_order);
+
+                assert_eq!(text_of(&opaque(one), style), text_of(&opaque(other), style));
+            }
+        }
+        for (one, other) in not_equal {
+            assert_ne!(opaque(one), opaque(other), "{one}");
+            assert_ne!(compact(one), compact(other), "{one}");
+        }
         assert_eq!(opaque(KEYED).clone(), opaque(KEYED));
+    }
+
+    #[test]
+    fn a_value_holds_its_compact_form_and_no_other_text() {
+        for text in [SAMPLE, KEYED, " [1.50, -0, 1e21] ", "\"\\u00e9\""] {
+            let value = opaque(text);
+
+            assert_eq!(&*value.text, compact(text));
+            assert_eq!(value.compact_len(), compact(text).len());
+            // The compact form passes the check of the reader by itself.
+            assert_eq!(Opaque::read(value.text.as_bytes(), CAP), Ok(value));
+        }
     }
 
     #[test]
@@ -717,12 +734,40 @@ mod tests {
     }
 
     #[test]
+    fn a_value_that_makes_a_text_too_deep_has_no_json_form() {
+        let deepest = opaque(&format!(
+            "{}{}",
+            "[".repeat(DEPTH_MAX),
+            "]".repeat(DEPTH_MAX)
+        ));
+        let one_less = opaque(&format!(
+            "{}{}",
+            "[".repeat(DEPTH_MAX - 1),
+            "]".repeat(DEPTH_MAX - 1)
+        ));
+
+        for style in [COMPACT, SORTED, INDENT2] {
+            // One array or one object around the deepest value is level 65.
+            assert_eq!(write(&[&deepest], style), Err(WriteError::NoJsonForm));
+            assert_eq!(
+                write(&BTreeMap::from([("event", &deepest)]), style),
+                Err(WriteError::NoJsonForm)
+            );
+
+            // A text with one item on each line has more bytes than `CAP`.
+            let written = write(&BTreeMap::from([("event", &one_less)]), style).unwrap();
+            let again: BTreeMap<String, Opaque> = read(&written, ByteCap::new(65_536)).unwrap();
+            assert_eq!(again.get("event"), Some(&one_less));
+        }
+    }
+
+    #[test]
     fn the_debug_form_holds_no_byte_of_the_text() {
         let value = opaque(r#" {"token": "hunter2"} "#);
 
         assert_eq!(
             format!("{value:?}"),
-            "Opaque { bytes: 20, kind: Table, compact_len: 19 }"
+            "Opaque { kind: Table, compact_len: 19 }"
         );
     }
 
@@ -811,7 +856,7 @@ mod tests {
         );
     }
 
-    /// A raw type that keeps the value of each key that it gives no name.
+    /// A raw type with one named field. It keeps each other member too.
     /// Its `Deserialize` is a map visitor, because an `Opaque` does not read
     /// below `#[serde(flatten)]`.
     #[derive(Debug, PartialEq)]

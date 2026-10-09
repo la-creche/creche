@@ -143,9 +143,14 @@
 //! value. A [`Style`] names the arguments of that call: a [`Layout`], a
 //! [`Charset`] and a [`KeyOrder`].
 //!
-//! The writer holds the rules of the reader. It gives a [`WriteError`] for
-//! a float that is not finite and for an integer outside the range of rule
-//! 7. It never writes `null` in the place of such a value.
+//! The writer holds the rules of the reader, so [`check`] accepts each text
+//! of [`write()`]. The writer gives a [`WriteError`] for each of these
+//! values, and it never writes `null` in the place of one:
+//!
+//! - A float that is not finite.
+//! - An integer outside the range of rule 7.
+//! - A value that nests more than [`DEPTH_MAX`] arrays and objects.
+//! - An object that gets one key two times.
 //!
 //! ```
 //! use creche_contracts::json::{self, Charset, KeyOrder, Layout, Style, WriteError};
@@ -171,9 +176,9 @@
 //! # A value that the code does not read
 //!
 //! A contract calls some values opaque, for example the event of a channel
-//! line. [`Opaque`] holds one such value as the text that the reader
-//! checked. [`write()`] forms that text again in the style of the document
-//! around it.
+//! line. [`Opaque`] holds one such value as its compact form, after the
+//! reader checked its text. [`write()`] forms the value again in the style
+//! of the document around it.
 
 mod opaque;
 mod read;

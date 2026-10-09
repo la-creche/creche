@@ -16,9 +16,16 @@
 //! The writer keeps the entries of an object in a buffer only when the style
 //! sorts the keys. In each other case, the bytes go out as the value gives
 //! them.
+//!
+//! A text of [`write()`] is strict JSON. It passes each rule of
+//! [`check`](super::check) but the size rule, because the writer has no cap.
+//! The writer thus refuses a value whose text the reader refuses.
 
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::io::Write as _;
 
 use serde::Serialize;
 use serde::ser::{
@@ -27,7 +34,8 @@ use serde::ser::{
 };
 use serde_json::ser::{CompactFormatter, Formatter};
 
-use super::scan::integer_value;
+use super::DEPTH_MAX;
+use super::scan::{FIRST_PLAIN, HEX, HEX_DIGITS, integer_value};
 
 /// Where `json.dumps` puts white space.
 ///
@@ -80,11 +88,11 @@ impl Layout {
 /// boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Charset {
-    /// `ensure_ascii=True`, the default of `json.dumps`. Each character
-    /// outside printable ASCII is a `\u` escape with four hex digits in
-    /// lower case. U+007F is such a character. A character outside the
-    /// Basic Multilingual Plane is two escapes, one for each half of its
-    /// surrogate pair.
+    /// `ensure_ascii=True`, the default of `json.dumps`. A character that
+    /// is not printable ASCII goes out as a `\u` escape with four hex
+    /// digits in lower case. U+007F is such a character. A character
+    /// outside the Basic Multilingual Plane is two escapes, one for each
+    /// half of its surrogate pair.
     Ascii,
     /// `ensure_ascii=False`: each other character goes out as it is, in
     /// UTF-8.
@@ -99,8 +107,8 @@ pub enum KeyOrder {
     /// The order in which the value gives its keys. A struct gives its
     /// fields in the order of its definition.
     AsGiven,
-    /// `sort_keys=True`: the order of the code points of the keys. The
-    /// writer sorts each object of the value, at each level.
+    /// `sort_keys=True`: the keys go out by their code points, the lowest
+    /// one first. The writer sorts each object of the value, at each level.
     Sorted,
 }
 
@@ -205,19 +213,19 @@ impl ser::Error for WriteError {
 /// The JSON text of `value`, as `json.dumps` of Python writes it with the
 /// arguments of `style`.
 ///
-/// The writer holds the number rules of the reader: it refuses a float that
-/// is not finite and an integer outside the range of rule 7 of the module
-/// doc. A `str` of Rust is UTF-8 with no half of a surrogate pair, so the
-/// encoding rule and the surrogate rule hold too.
+/// The writer holds each rule of the reader that a value can break. The
+/// text thus passes [`check`](super::check) with a cap of its size:
 ///
-/// The writer does not hold two rules of the reader. It counts no level,
-/// and it does not compare the keys of an object. [`check`](super::check)
-/// thus refuses the text of each of these two values:
+/// - Numbers. A float that is `NaN` or an infinity has no text. Neither has
+///   an integer outside the range of rule 7 of the module doc.
+/// - Depth. The writer refuses a value that nests more than
+///   [`DEPTH_MAX`](super::DEPTH_MAX) arrays and objects. The object of a
+///   variant with a value is one level.
+/// - Keys. The writer refuses an object that gets one key two times. A map
+///   can give such a key, and so can a struct with a flattened field.
 ///
-/// - A value that nests more than [`DEPTH_MAX`](super::DEPTH_MAX) arrays and
-///   objects. An [`Opaque`](super::Opaque) can nest that many levels by
-///   itself, and each object around it adds one level.
-/// - A map whose `Serialize` impl gives one key two times.
+/// A `str` of Rust is UTF-8 with no half of a surrogate pair, so the
+/// encoding rule and the surrogate rule hold for each value.
 ///
 /// | Value | Text |
 /// |---|---|
@@ -259,23 +267,28 @@ impl ser::Error for WriteError {
 /// - A value whose `Serialize` impl gives an error of its own.
 /// - A map whose `Serialize` impl gives a value with no key, or a key with
 ///   no value.
+/// - A value that nests more than [`DEPTH_MAX`](super::DEPTH_MAX) arrays and
+///   objects.
+/// - An object that gets one key two times.
 //
 // CONTRACT-QUESTION: `rust/AGENTS.md`, "JSON", gives the reader a nesting
 // limit and a rule against a key that an object holds two times. No rule
 // and no contract says what the writer does with a value that breaks one of
-// the two. Each Python writer writes such a value. The reading here is the
-// same: the writer counts no level and compares no key, so its bytes stay
-// the bytes of `json.dumps`. The other reading refuses such a value with a
-// `WriteError`. That change costs one check of the level in `Frame::open`
-// and one set of keys in `Table`. It also makes a Rust service refuse a
-// value that the Python service writes.
+// the two. The reading here is the strict one: the writer refuses the
+// value, so the reader accepts each text of the writer. `json.dumps` of
+// Python writes a value of each depth. A Rust service thus refuses a deep
+// value that the Python service writes. The other reading writes such a
+// value, and the reader then refuses its text. A change costs the check of
+// `deeper` for the levels, and the key sets of `Table` for the keys.
 pub fn write<T: Serialize + ?Sized>(value: &T, style: Style) -> Result<Vec<u8>, WriteError> {
     render(value, style, RawText::Refused)
 }
 
 /// The same text as [`write()`] gives, with one difference: a `RawValue` of
 /// `serde_json` goes out as its own text, byte for byte. The style does not
-/// apply to that text, and no check reads it.
+/// apply to that text, and no check reads it. The writer does not count the
+/// levels of that text, and it does not compare its keys. The caller answers
+/// for the text of each `RawValue`.
 ///
 /// Only a caller that must repeat the text of a file uses this function.
 /// The `session` module is the one caller: it writes the body of a stored
@@ -285,23 +298,6 @@ pub(crate) fn write_raw_kept<T: Serialize + ?Sized>(
     style: Style,
 ) -> Result<Vec<u8>, WriteError> {
     render(value, style, RawText::Kept)
-}
-
-/// The count of bytes that [`write()`] gives for `value` in the compact
-/// layout, with [`Charset::Utf8`] and the keys in their own order. The
-/// function keeps no byte.
-pub(super) fn compact_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, WriteError> {
-    let mut count = Count(0);
-    value.serialize(Value {
-        sink: &mut count,
-        rules: Rules {
-            style: Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGiven),
-            raw: RawText::Refused,
-        },
-        level: 0,
-    })?;
-
-    Ok(count.0)
 }
 
 fn render<T: Serialize + ?Sized>(
@@ -335,26 +331,6 @@ struct Rules {
     raw: RawText,
 }
 
-/// Where the bytes of a text go.
-trait Sink {
-    fn put(&mut self, bytes: &[u8]);
-}
-
-impl Sink for Vec<u8> {
-    fn put(&mut self, bytes: &[u8]) {
-        self.extend_from_slice(bytes);
-    }
-}
-
-/// A sink that counts the bytes and keeps none.
-struct Count(usize);
-
-impl Sink for Count {
-    fn put(&mut self, bytes: &[u8]) {
-        self.0 += bytes.len();
-    }
-}
-
 /// The name of each struct that `serde_json` uses to give a text of its own
 /// to its own serializer starts with this prefix. Another serializer gets
 /// such a value as a struct with one field. The writer refuses each of them,
@@ -373,60 +349,92 @@ fn broken<E>(_: E) -> WriteError {
 }
 
 /// Starts a new line at `level`, in a layout that has lines.
-fn new_line(sink: &mut dyn Sink, layout: Layout, level: usize) {
+fn new_line(sink: &mut Vec<u8>, layout: Layout, level: usize) {
     let Some(indent) = layout.indent() else {
         return;
     };
 
-    sink.put(b"\n");
-    for _ in 0..level * indent {
-        sink.put(b" ");
-    }
+    sink.push(b'\n');
+    sink.resize(sink.len() + level * indent, b' ');
 }
 
 /// The last character that [`Charset::Ascii`] writes as it is.
-const LAST_PRINTABLE: char = '~';
+const LAST_PRINTABLE: u8 = b'~';
 
-/// The first character that a string holds with no escape.
-const FIRST_PLAIN: char = ' ';
+/// Whether a string holds `byte` with no escape in `charset`.
+///
+/// Each byte of a character outside ASCII is 0x80 or more. [`Charset::Utf8`]
+/// thus keeps such a character, and [`Charset::Ascii`] does not.
+const fn is_plain(byte: u8, charset: Charset) -> bool {
+    if byte < FIRST_PLAIN || byte == b'"' || byte == b'\\' {
+        return false;
+    }
+
+    match charset {
+        Charset::Ascii => byte <= LAST_PRINTABLE,
+        Charset::Utf8 => true,
+    }
+}
+
+/// Writes the `\u` escape of one code unit of UTF-16. Its hex digits have
+/// lower-case letters.
+fn write_unit(sink: &mut Vec<u8>, unit: u16) {
+    let mut digits = [b'0'; HEX_DIGITS];
+    let mut rest = u32::from(unit);
+    for digit in digits.iter_mut().rev() {
+        let letter = char::from_digit(rest % HEX, HEX).and_then(|letter| u8::try_from(letter).ok());
+        *digit = letter.unwrap_or(*digit);
+        rest /= HEX;
+    }
+
+    sink.extend_from_slice(b"\\u");
+    sink.extend_from_slice(&digits);
+}
 
 /// Writes one string with its quotes.
-fn write_text(sink: &mut dyn Sink, charset: Charset, text: &str) {
-    sink.put(b"\"");
+fn write_text(sink: &mut Vec<u8>, charset: Charset, text: &str) {
+    let bytes = text.as_bytes();
+    sink.push(b'"');
 
     // The first byte of the run of characters that need no escape.
     let mut run = 0;
-    for (at, character) in text.char_indices() {
-        // The escape of two characters, or `None` for a `\u` escape.
-        let short: Option<&[u8]> = match character {
-            '"' => Some(b"\\\""),
-            '\\' => Some(b"\\\\"),
-            '\n' => Some(b"\\n"),
-            '\r' => Some(b"\\r"),
-            '\t' => Some(b"\\t"),
-            '\u{8}' => Some(b"\\b"),
-            '\u{c}' => Some(b"\\f"),
-            _ if character < FIRST_PLAIN => None,
-            _ if charset == Charset::Ascii && character > LAST_PRINTABLE => None,
-            _ => continue,
-        };
-
-        sink.put(text.as_bytes().get(run..at).unwrap_or_default());
-        run = at + character.len_utf8();
-        if let Some(escape) = short {
-            sink.put(escape);
+    let mut at = 0;
+    while let Some(byte) = bytes.get(at) {
+        if is_plain(*byte, charset) {
+            at += 1;
             continue;
         }
 
-        // One escape for each code unit of UTF-16: a character outside the
-        // Basic Multilingual Plane has two.
-        for unit in character.encode_utf16(&mut [0; 2]) {
-            sink.put(format!("\\u{unit:04x}").as_bytes());
+        // The scan stops only at the first byte of a character. With
+        // `Charset::Ascii`, it passes each character outside ASCII whole.
+        // With `Charset::Utf8`, each byte that is not plain is ASCII.
+        let Some(character) = text.get(at..).and_then(|rest| rest.chars().next()) else {
+            break;
+        };
+        sink.extend_from_slice(bytes.get(run..at).unwrap_or_default());
+        at += character.len_utf8();
+        run = at;
+
+        match character {
+            '"' => sink.extend_from_slice(b"\\\""),
+            '\\' => sink.extend_from_slice(b"\\\\"),
+            '\n' => sink.extend_from_slice(b"\\n"),
+            '\r' => sink.extend_from_slice(b"\\r"),
+            '\t' => sink.extend_from_slice(b"\\t"),
+            '\u{8}' => sink.extend_from_slice(b"\\b"),
+            '\u{c}' => sink.extend_from_slice(b"\\f"),
+            // One escape for each code unit of UTF-16: a character outside
+            // the Basic Multilingual Plane has two.
+            _ => {
+                for unit in character.encode_utf16(&mut [0; 2]) {
+                    write_unit(sink, *unit);
+                }
+            }
         }
     }
 
-    sink.put(text.as_bytes().get(run..).unwrap_or_default());
-    sink.put(b"\"");
+    sink.extend_from_slice(bytes.get(run..).unwrap_or_default());
+    sink.push(b'"');
 }
 
 /// The least exponent of ten that Python writes with no exponent.
@@ -507,17 +515,29 @@ fn float_repr(value: f64) -> Result<String, WriteError> {
     })
 }
 
+/// The level of each value inside an array or an object that opens at
+/// `level`: one more. The writer refuses an array or an object that makes the
+/// text nest more than `DEPTH_MAX` levels, as rule 6 of the module doc of
+/// `json` does.
+fn deeper(level: usize) -> Result<usize, WriteError> {
+    if level >= DEPTH_MAX {
+        return Err(WriteError::NoJsonForm);
+    }
+
+    Ok(level + 1)
+}
+
 /// The serializer of one value. `level` is the count of arrays and objects
 /// that are open around the value.
 struct Value<'a> {
-    sink: &'a mut dyn Sink,
+    sink: &'a mut Vec<u8>,
     rules: Rules,
     level: usize,
 }
 
 impl<'a> Value<'a> {
     fn word(self, word: &[u8]) -> Result<(), WriteError> {
-        self.sink.put(word);
+        self.sink.extend_from_slice(word);
 
         Ok(())
     }
@@ -535,24 +555,25 @@ impl<'a> Value<'a> {
 
     /// Opens the object of a variant with a value and writes its one key.
     /// The result holds the serializer of that value.
-    fn variant(self, name: &str) -> InVariant<Value<'a>> {
+    fn variant(self, name: &str) -> Result<InVariant<Value<'a>>, WriteError> {
         let Self { sink, rules, level } = self;
         let layout = rules.style.layout;
+        let inside = deeper(level)?;
 
-        sink.put(b"{");
-        new_line(sink, layout, level + 1);
+        sink.push(b'{');
+        new_line(sink, layout, inside);
         write_text(sink, rules.style.charset, name);
-        sink.put(layout.colon());
+        sink.extend_from_slice(layout.colon());
 
-        InVariant {
+        Ok(InVariant {
             inner: Value {
                 sink,
                 rules,
-                level: level + 1,
+                level: inside,
             },
             layout,
             level,
-        }
+        })
     }
 }
 
@@ -561,7 +582,7 @@ macro_rules! digits {
     ($($method:ident($integer:ty))*) => {
         $(
             fn $method(self, value: $integer) -> Result<(), WriteError> {
-                self.word(value.to_string().as_bytes())
+                write!(self.sink, "{value}").map_err(broken)
             }
         )*
     };
@@ -657,11 +678,11 @@ impl<'a> Serializer for Value<'a> {
         variant: &'static str,
         value: &T,
     ) -> Result<(), WriteError> {
-        self.variant(variant).only(value)
+        self.variant(variant)?.only(value)
     }
 
     fn serialize_seq(self, _: Option<usize>) -> Result<List<'a>, WriteError> {
-        Ok(List::open(self))
+        List::open(self)
     }
 
     fn serialize_tuple(self, _: usize) -> Result<List<'a>, WriteError> {
@@ -679,16 +700,16 @@ impl<'a> Serializer for Value<'a> {
         variant: &'static str,
         _: usize,
     ) -> Result<InVariant<List<'a>>, WriteError> {
-        Ok(self.variant(variant).around(List::open))
+        self.variant(variant)?.around(List::open)
     }
 
     fn serialize_map(self, _: Option<usize>) -> Result<Table<'a>, WriteError> {
-        Ok(Table::open(self))
+        Table::open(self)
     }
 
     fn serialize_struct(self, name: &'static str, _: usize) -> Result<Record<'a>, WriteError> {
         if !name.starts_with(SERDE_JSON_PRIVATE) {
-            return Ok(Record::Table(Table::open(self)));
+            return Table::open(self).map(Record::Table);
         }
 
         match (name, self.rules.raw) {
@@ -704,30 +725,36 @@ impl<'a> Serializer for Value<'a> {
         variant: &'static str,
         _: usize,
     ) -> Result<InVariant<Table<'a>>, WriteError> {
-        Ok(self.variant(variant).around(Table::open))
+        self.variant(variant)?.around(Table::open)
     }
 }
 
 /// One open array or object: where its bytes go, and the count of its items.
+/// `level` is the level of the array or of the object itself, and `inside`
+/// is the level of each of its values.
 struct Frame<'a> {
-    sink: &'a mut dyn Sink,
+    sink: &'a mut Vec<u8>,
     rules: Rules,
     level: usize,
+    inside: usize,
     count: usize,
 }
 
 impl<'a> Frame<'a> {
     /// Writes the bracket that opens the array or the object of `value`.
-    fn open(value: Value<'a>, bracket: &[u8]) -> Self {
+    /// The frame refuses a bracket that opens level 65.
+    fn open(value: Value<'a>, bracket: u8) -> Result<Self, WriteError> {
         let Value { sink, rules, level } = value;
-        sink.put(bracket);
+        let inside = deeper(level)?;
+        sink.push(bracket);
 
-        Self {
+        Ok(Self {
             sink,
             rules,
             level,
+            inside,
             count: 0,
-        }
+        })
     }
 
     /// Writes what stands before the next item: a comma after an item, and
@@ -735,10 +762,10 @@ impl<'a> Frame<'a> {
     fn next_item(&mut self) {
         let layout = self.rules.style.layout;
         if self.count > 0 {
-            self.sink.put(layout.comma());
+            self.sink.extend_from_slice(layout.comma());
         }
 
-        new_line(self.sink, layout, self.level + 1);
+        new_line(self.sink, layout, self.inside);
         self.count += 1;
     }
 
@@ -747,7 +774,7 @@ impl<'a> Frame<'a> {
         Value {
             sink: &mut *self.sink,
             rules: self.rules,
-            level: self.level + 1,
+            level: self.inside,
         }
     }
 
@@ -755,16 +782,16 @@ impl<'a> Frame<'a> {
     fn key(&mut self, key: &str) {
         self.next_item();
         write_text(self.sink, self.rules.style.charset, key);
-        self.sink.put(self.rules.style.layout.colon());
+        self.sink.extend_from_slice(self.rules.style.layout.colon());
     }
 
     /// Writes the bracket that closes the array or the object. An empty one
     /// has no white space between its two brackets.
-    fn close(self, bracket: &[u8]) -> &'a mut dyn Sink {
+    fn close(self, bracket: u8) -> &'a mut Vec<u8> {
         if self.count > 0 {
             new_line(self.sink, self.rules.style.layout, self.level);
         }
-        self.sink.put(bracket);
+        self.sink.push(bracket);
 
         self.sink
     }
@@ -774,15 +801,15 @@ impl<'a> Frame<'a> {
 trait Closes<'a> {
     /// Writes the last bracket. The result is the sink, for the bytes that
     /// follow.
-    fn close(self) -> Result<&'a mut dyn Sink, WriteError>;
+    fn close(self) -> Result<&'a mut Vec<u8>, WriteError>;
 }
 
 /// An open array.
 struct List<'a>(Frame<'a>);
 
 impl<'a> List<'a> {
-    fn open(value: Value<'a>) -> Self {
-        Self(Frame::open(value, b"["))
+    fn open(value: Value<'a>) -> Result<Self, WriteError> {
+        Frame::open(value, b'[').map(Self)
     }
 
     fn item<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), WriteError> {
@@ -793,8 +820,8 @@ impl<'a> List<'a> {
 }
 
 impl<'a> Closes<'a> for List<'a> {
-    fn close(self) -> Result<&'a mut dyn Sink, WriteError> {
-        Ok(self.0.close(b"]"))
+    fn close(self) -> Result<&'a mut Vec<u8>, WriteError> {
+        Ok(self.0.close(b']'))
     }
 }
 
@@ -825,6 +852,10 @@ array! {
     SerializeTupleStruct::serialize_field
 }
 
+/// One key of an object. The name of a struct field is a static text, and
+/// the writer copies only the key of a map.
+type Key = Cow<'static, str>;
+
 /// What an open object waits for.
 enum Next {
     /// A key, or the end of the object.
@@ -834,48 +865,72 @@ enum Next {
 }
 
 /// An open object.
+///
+/// Each variant holds the keys that the object has. The object refuses a
+/// key that it has already, as rule 5 of the module doc of `json` does. It
+/// compares two keys as `str` does: code point by code point.
 enum Table<'a> {
     /// The entries go out in the order of the value.
-    AsGiven { frame: Frame<'a>, next: Next },
+    AsGiven {
+        frame: Frame<'a>,
+        keys: BTreeSet<Key>,
+        next: Next,
+    },
     /// The object keeps each entry until its end, and then writes them in
-    /// the order of their keys. `key` is a key that has no value yet.
+    /// the order of their keys. `key` is a key that has no value yet. The
+    /// order of the map is the order of `str`: the order of the code points.
     Sorted {
         frame: Frame<'a>,
-        entries: Vec<(String, Vec<u8>)>,
-        key: Option<String>,
+        entries: BTreeMap<Key, Vec<u8>>,
+        key: Option<Key>,
     },
 }
 
 impl<'a> Table<'a> {
-    fn open(value: Value<'a>) -> Self {
-        let frame = Frame::open(value, b"{");
-        match frame.rules.style.key_order {
+    fn open(value: Value<'a>) -> Result<Self, WriteError> {
+        let frame = Frame::open(value, b'{')?;
+
+        Ok(match frame.rules.style.key_order {
             KeyOrder::AsGiven => Self::AsGiven {
                 frame,
+                keys: BTreeSet::new(),
                 next: Next::Key,
             },
             KeyOrder::Sorted => Self::Sorted {
                 frame,
-                entries: Vec::new(),
+                entries: BTreeMap::new(),
                 key: None,
             },
-        }
+        })
     }
 
     /// Takes the next key. The object refuses a key that follows a key with
-    /// no value.
-    fn key(&mut self, name: &str) -> Result<(), WriteError> {
+    /// no value, and a key that it has already.
+    fn key(&mut self, name: Key) -> Result<(), WriteError> {
         match self {
             Self::AsGiven {
                 frame,
+                keys,
                 next: next @ Next::Key,
             } => {
-                frame.key(name);
+                // A refusal drops each byte of the text, so the key can go
+                // out before the set takes it.
+                frame.key(&name);
                 *next = Next::Value;
+                if !keys.insert(name) {
+                    return Err(WriteError::NoJsonForm);
+                }
             }
             Self::Sorted {
-                key: key @ None, ..
-            } => *key = Some(name.to_owned()),
+                entries,
+                key: key @ None,
+                ..
+            } => {
+                if entries.contains_key(&name) {
+                    return Err(WriteError::NoJsonForm);
+                }
+                *key = Some(name);
+            }
             Self::AsGiven {
                 next: Next::Value, ..
             }
@@ -892,6 +947,7 @@ impl<'a> Table<'a> {
             Self::AsGiven {
                 frame,
                 next: next @ Next::Value,
+                ..
             } => {
                 *next = Next::Key;
 
@@ -907,9 +963,9 @@ impl<'a> Table<'a> {
                 value.serialize(Value {
                     sink: &mut bytes,
                     rules: frame.rules,
-                    level: frame.level + 1,
+                    level: frame.inside,
                 })?;
-                entries.push((key, bytes));
+                entries.insert(key, bytes);
 
                 Ok(())
             }
@@ -919,8 +975,13 @@ impl<'a> Table<'a> {
         }
     }
 
-    fn entry<T: Serialize + ?Sized>(&mut self, key: &str, value: &T) -> Result<(), WriteError> {
-        self.key(key)?;
+    /// Takes one field of a struct: its name and its value.
+    fn field<T: Serialize + ?Sized>(
+        &mut self,
+        name: &'static str,
+        value: &T,
+    ) -> Result<(), WriteError> {
+        self.key(Cow::Borrowed(name))?;
 
         self.value(value)
     }
@@ -928,26 +989,24 @@ impl<'a> Table<'a> {
 
 impl<'a> Closes<'a> for Table<'a> {
     /// The object refuses its end after a key with no value.
-    fn close(self) -> Result<&'a mut dyn Sink, WriteError> {
+    fn close(self) -> Result<&'a mut Vec<u8>, WriteError> {
         match self {
             Self::AsGiven {
                 frame,
                 next: Next::Key,
-            } => Ok(frame.close(b"}")),
+                ..
+            } => Ok(frame.close(b'}')),
             Self::Sorted {
                 mut frame,
-                mut entries,
+                entries,
                 key: None,
             } => {
-                // The order of `str` is the order of the code points. The
-                // sort keeps two equal keys in the order of the value.
-                entries.sort_by(|one, other| one.0.cmp(&other.0));
                 for (key, bytes) in entries {
                     frame.key(&key);
-                    frame.sink.put(&bytes);
+                    frame.sink.extend_from_slice(&bytes);
                 }
 
-                Ok(frame.close(b"}"))
+                Ok(frame.close(b'}'))
             }
             Self::AsGiven {
                 next: Next::Value, ..
@@ -962,7 +1021,7 @@ impl SerializeMap for Table<'_> {
     type Error = WriteError;
 
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), WriteError> {
-        key.serialize(TextOnly(|name: &str| self.key(name)))?
+        key.serialize(TextOnly(|name: &str| self.key(Cow::Owned(name.to_owned()))))?
     }
 
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), WriteError> {
@@ -980,7 +1039,7 @@ enum Record<'a> {
     Table(Table<'a>),
     /// A `RawValue` of `serde_json`. Its one field is its text, and the
     /// sink is here until that field comes.
-    Raw(Option<&'a mut dyn Sink>),
+    Raw(Option<&'a mut Vec<u8>>),
 }
 
 impl SerializeStruct for Record<'_> {
@@ -993,14 +1052,16 @@ impl SerializeStruct for Record<'_> {
         value: &T,
     ) -> Result<(), WriteError> {
         match self {
-            Self::Table(table) => table.entry(key, value),
+            Self::Table(table) => table.field(key, value),
             Self::Raw(sink) => {
                 let sink = sink
                     .take()
                     .filter(|_| key == RAW_VALUE)
                     .ok_or(WriteError::NoJsonForm)?;
 
-                value.serialize(TextOnly(|text: &str| sink.put(text.as_bytes())))
+                value.serialize(TextOnly(|text: &str| {
+                    sink.extend_from_slice(text.as_bytes())
+                }))
             }
         }
     }
@@ -1025,18 +1086,21 @@ struct InVariant<Inner> {
 
 impl<Inner> InVariant<Inner> {
     /// The same place in the object, with `open` around the value.
-    fn around<Opened>(self, open: impl FnOnce(Inner) -> Opened) -> InVariant<Opened> {
-        InVariant {
-            inner: open(self.inner),
+    fn around<Opened>(
+        self,
+        open: impl FnOnce(Inner) -> Result<Opened, WriteError>,
+    ) -> Result<InVariant<Opened>, WriteError> {
+        Ok(InVariant {
+            inner: open(self.inner)?,
             layout: self.layout,
             level: self.level,
-        }
+        })
     }
 
     /// Closes the object around the value.
-    fn end(sink: &mut dyn Sink, layout: Layout, level: usize) {
+    fn end(sink: &mut Vec<u8>, layout: Layout, level: usize) {
         new_line(sink, layout, level);
-        sink.put(b"}");
+        sink.push(b'}');
     }
 }
 
@@ -1086,7 +1150,7 @@ impl SerializeStructVariant for InVariant<Table<'_>> {
         key: &'static str,
         value: &T,
     ) -> Result<(), WriteError> {
-        self.inner.entry(key, value)
+        self.inner.field(key, value)
     }
 
     fn end(self) -> Result<(), WriteError> {
@@ -1194,10 +1258,9 @@ impl<F: FnOnce(&str) -> Taken, Taken> Serializer for TextOnly<F> {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use std::collections::BTreeMap;
-
     use serde_json::value::RawValue;
 
+    use super::super::{ByteCap, Rule, check};
     use super::*;
 
     const LAYOUTS: [Layout; 4] = [
@@ -1507,7 +1570,7 @@ pub(super) mod tests {
             // `serde_json` alone writes `null` for the same float.
             assert_eq!(serde_json::to_string(&float).unwrap(), "null");
 
-            // The float inside a list inside a map.
+            // The float two levels down: an item of a list that a map holds.
             let nested = Node::Table(vec![
                 ("first", Node::Float(1.5)),
                 (
@@ -1524,7 +1587,6 @@ pub(super) mod tests {
                 assert_eq!(write(&in_a_map, style), Err(WriteError::NotFinite));
                 assert_eq!(write(&Some(float), style), Err(WriteError::NotFinite));
             }
-            assert_eq!(compact_len(&nested), Err(WriteError::NotFinite));
         }
 
         for float in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
@@ -1659,41 +1721,230 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn two_equal_keys_keep_the_order_of_the_value() {
-        let twice = Node::Table(vec![
+    fn an_object_with_one_key_two_times_has_no_json_form() {
+        let last = Node::Table(vec![
             ("b", Node::Int(1)),
             ("a", Node::Int(2)),
             ("b", Node::Int(3)),
-            ("a", Node::Int(4)),
         ]);
+        let neighbours = Node::Table(vec![("a", Node::Int(1)), ("a", Node::Int(2))]);
+        let inside = Node::List(vec![Node::Table(vec![
+            ("a", Node::Null),
+            ("\u{e9}", Node::Null),
+            ("\u{e9}", Node::Null),
+        ])]);
+        // Two keys of a map with one text: two variants with one name.
+        let renamed = BTreeMap::from([(Door::Owui, 1), (Door::Side, 2)]);
 
-        assert_eq!(text_of(&twice, SORTED), r#"{"a":2,"a":4,"b":1,"b":3}"#);
-        assert_eq!(text_of(&twice, COMPACT), r#"{"b":1,"a":2,"b":3,"a":4}"#);
+        for style in styles() {
+            assert_eq!(write(&last, style), Err(WriteError::NoJsonForm));
+            assert_eq!(write(&neighbours, style), Err(WriteError::NoJsonForm));
+            assert_eq!(write(&inside, style), Err(WriteError::NoJsonForm));
+            assert_eq!(write(&renamed, style), Err(WriteError::NoJsonForm));
+        }
+
+        // One key in two objects is one time in each object. Two keys that
+        // differ in one code point are two keys.
+        let apart = Node::Table(vec![
+            ("a", Node::Table(vec![("a", Node::Int(1))])),
+            (
+                "A",
+                Node::List(vec![Node::Table(vec![("a", Node::Int(2))])]),
+            ),
+            ("a ", Node::Null),
+        ]);
+        assert_eq!(
+            text_of(&apart, COMPACT),
+            r#"{"a":{"a":1},"A":[{"a":2}],"a ":null}"#
+        );
+        assert_eq!(
+            text_of(&apart, SORTED),
+            r#"{"A":[{"a":2}],"a":{"a":1},"a ":null}"#
+        );
+    }
+
+    /// A struct that gives the key `code` two times when its map holds that
+    /// key: one time as a field, and one time from the flattened map.
+    #[derive(Serialize)]
+    struct Fault {
+        code: &'static str,
+        #[serde(flatten)]
+        detail: BTreeMap<&'static str, u8>,
     }
 
     #[test]
-    fn the_writer_counts_no_level_and_compares_no_key() {
-        use super::super::{ByteCap, DEPTH_MAX, Rule, check};
-
-        const CAP: ByteCap = ByteCap::new(4096);
-
-        let rule = |text: &[u8]| check(text, CAP).err().map(|refusal| refusal.rule());
-        let nested = |levels: usize| {
-            let mut value = Node::List(Vec::new());
-            for _ in 1..levels {
-                value = Node::List(vec![value]);
-            }
-
-            write(&value, COMPACT).unwrap()
+    fn a_flattened_field_that_repeats_a_key_has_no_json_form() {
+        let fault = |key| Fault {
+            code: "disk_full",
+            detail: BTreeMap::from([(key, 7)]),
         };
-        let twice = Node::Table(vec![("a", Node::Int(1)), ("a", Node::Int(2))]);
 
-        assert_eq!(rule(&nested(DEPTH_MAX)), None);
-        assert_eq!(rule(&nested(DEPTH_MAX + 1)), Some(Rule::TooDeep));
+        for style in styles() {
+            assert_eq!(write(&fault("code"), style), Err(WriteError::NoJsonForm));
+            assert!(write(&fault("path"), style).is_ok());
+        }
         assert_eq!(
-            rule(&write(&twice, COMPACT).unwrap()),
-            Some(Rule::DuplicateKey)
+            text_of(&fault("path"), COMPACT),
+            r#"{"code":"disk_full","path":7}"#
         );
+
+        // The same holds for a struct that names one field two times.
+        #[derive(Serialize)]
+        struct Twice {
+            first: u8,
+            #[serde(rename = "first")]
+            second: u8,
+        }
+        #[derive(Serialize)]
+        enum Wrapped {
+            Twice {
+                first: u8,
+                #[serde(rename = "first")]
+                second: u8,
+            },
+        }
+        let twice = Twice {
+            first: 1,
+            second: 2,
+        };
+        let wrapped = Wrapped::Twice {
+            first: 1,
+            second: 2,
+        };
+
+        for style in styles() {
+            assert_eq!(write(&twice, style), Err(WriteError::NoJsonForm));
+            assert_eq!(write(&wrapped, style), Err(WriteError::NoJsonForm));
+        }
+    }
+
+    /// What stands around the value of a [`Nested`].
+    #[derive(Clone, Copy)]
+    enum Around {
+        /// One array for each level.
+        Lists,
+        /// One object with the key `a` for each level.
+        Tables,
+    }
+
+    /// One value inside a count of arrays or of objects.
+    struct Nested<'a, T>(Around, usize, &'a T);
+
+    impl<T: Serialize> Serialize for Nested<'_, T> {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let Self(around, levels, value) = *self;
+            let Some(less) = levels.checked_sub(1) else {
+                return value.serialize(serializer);
+            };
+
+            let inner = Nested(around, less, value);
+            match around {
+                Around::Lists => serializer.collect_seq([inner]),
+                Around::Tables => serializer.collect_map([("a", inner)]),
+            }
+        }
+    }
+
+    const CHECK_CAP: ByteCap = ByteCap::new(65_536);
+
+    /// The rule that `check` gives for a text. `None` for a strict text.
+    fn broken_rule(text: &[u8]) -> Option<Rule> {
+        check(text, CHECK_CAP).err().map(|refusal| refusal.rule())
+    }
+
+    /// Asserts that `value` nests `own` levels by itself: the writer takes
+    /// it at the deepest place that leaves those levels, and it refuses the
+    /// value one level deeper.
+    fn assert_levels<T: Serialize>(value: &T, own: usize) {
+        for around in [Around::Lists, Around::Tables] {
+            for style in styles() {
+                let deepest = write(&Nested(around, DEPTH_MAX - own, value), style).unwrap();
+                assert_eq!(broken_rule(&deepest), None, "{style:?}");
+
+                assert_eq!(
+                    write(&Nested(around, DEPTH_MAX - own + 1, value), style),
+                    Err(WriteError::NoJsonForm),
+                    "{style:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_value_of_more_than_64_levels_has_no_json_form() {
+        let no_items: [u8; 0] = [];
+        let no_entries: BTreeMap<String, u8> = BTreeMap::new();
+
+        // A scalar is no level. An array and an object are one level each,
+        // an empty one too.
+        assert_levels(&7, 0);
+        assert_levels(&(), 0);
+        assert_levels(&"text", 0);
+        assert_levels(&no_items, 1);
+        assert_levels(&no_entries, 1);
+        assert_levels(&(1, 2), 1);
+        assert_levels(&Pair(1, 'a'), 1);
+        assert_levels(&Inner { y: [], x: 0.5 }, 2);
+        assert_levels(&sample(), 3);
+
+        // The object of a variant with a value is one level, and a variant
+        // with no value is a string.
+        assert_levels(&Shape::Unit, 0);
+        assert_levels(&Shape::Wrap(7), 1);
+        assert_levels(&Shape::Pair(1, 2), 2);
+        assert_levels(&Shape::Named { z: 1, a: None }, 2);
+
+        // The deepest text of the writer is the deepest text of the reader.
+        let lists = |count: usize| format!("{}{}", "[".repeat(count), "]".repeat(count));
+        assert_eq!(
+            text_of(&Nested(Around::Lists, DEPTH_MAX - 1, &no_items), COMPACT),
+            lists(DEPTH_MAX)
+        );
+        assert_eq!(broken_rule(lists(DEPTH_MAX).as_bytes()), None);
+        assert_eq!(
+            broken_rule(lists(DEPTH_MAX + 1).as_bytes()),
+            Some(Rule::TooDeep)
+        );
+    }
+
+    #[test]
+    fn the_reader_accepts_each_text_of_the_writer() {
+        let texts =
+            "caf\u{e9} \"q\" \\ / \u{2028} \u{1f600} \u{7f}\u{0}\u{1f}\n\r\t\u{8}\u{c}\u{ffff}";
+        let numbers = (
+            (u64::MAX, i64::MIN, i128::from(u64::MAX), 0_u8),
+            (f64::MAX, f64::MIN_POSITIVE, 5e-324, -0.0, 1e21, 0.1_f32),
+        );
+        let value = (
+            sample(),
+            keyed(),
+            sample_with_no_float(),
+            shapes(),
+            Outer {
+                zone: "b",
+                at: 1.0,
+                absent: None,
+                more: Inner { y: [], x: 0.1 },
+            },
+            (texts, BTreeMap::from([(texts, texts)]), '\u{1f600}'),
+            numbers,
+            (None::<u8>, Some(false), (), Marker),
+        );
+
+        // Each style holds one value: a style changes no member.
+        let first: serde_json::Value =
+            serde_json::from_slice(&write(&value, COMPACT).unwrap()).unwrap();
+
+        for style in styles() {
+            let written = write(&value, style).unwrap();
+
+            assert_eq!(broken_rule(&written), None, "{style:?}");
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&written).unwrap(),
+                first,
+                "{style:?}"
+            );
+        }
     }
 
     #[derive(Serialize)]
@@ -1875,6 +2126,9 @@ pub(super) mod tests {
         Tui,
         #[serde(rename = "owui")]
         Owui,
+        /// A second variant with the text of `Owui`.
+        #[serde(rename = "owui")]
+        Side,
     }
 
     #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -2112,7 +2366,6 @@ pub(super) mod tests {
             assert_eq!(write(&stored, style), Err(WriteError::NoJsonForm));
             assert_eq!(write_raw_kept(&body, style).unwrap(), text.as_bytes());
         }
-        assert_eq!(compact_len(&body), Err(WriteError::NoJsonForm));
         assert_eq!(
             String::from_utf8(write_raw_kept(&stored, COMPACT).unwrap()).unwrap(),
             format!("{{\"seq\":7,\"body\":{text}}}")
@@ -2126,6 +2379,18 @@ pub(super) mod tests {
             write_raw_kept(&stored, COMPACT).unwrap(),
             serde_json::to_vec(&stored).unwrap()
         );
+    }
+
+    #[test]
+    fn the_writer_reads_no_level_and_no_key_of_a_raw_text() {
+        let deep = format!("{}{}", "[".repeat(DEPTH_MAX), "]".repeat(DEPTH_MAX));
+        let deep: Box<RawValue> = serde_json::from_str(&deep).unwrap();
+        let twice: Box<RawValue> = serde_json::from_str(r#"{"a":1,"a":2}"#).unwrap();
+        let line = |body| write_raw_kept(&Stored { seq: 7, body }, COMPACT).unwrap();
+
+        // The caller of `write_raw_kept` answers for the raw text.
+        assert_eq!(broken_rule(&line(&deep)), Some(Rule::TooDeep));
+        assert_eq!(broken_rule(&line(&twice)), Some(Rule::DuplicateKey));
     }
 
     /// A struct with a name of its own and a given count of fields with the
@@ -2210,7 +2475,7 @@ pub(super) mod tests {
     /// What a map gives to its serializer, step by step.
     #[derive(Clone, Copy)]
     enum Step {
-        Key,
+        Key(&'static str),
         Value,
     }
 
@@ -2221,7 +2486,7 @@ pub(super) mod tests {
             let mut map = serializer.serialize_map(None)?;
             for step in self.0 {
                 match step {
-                    Step::Key => map.serialize_key("k")?,
+                    Step::Key(key) => map.serialize_key(key)?,
                     Step::Value => map.serialize_value(&1)?,
                 }
             }
@@ -2232,24 +2497,32 @@ pub(super) mod tests {
 
     #[test]
     fn a_map_gives_one_value_after_each_key() {
-        let refused: [&[Step]; 5] = [
+        let refused: [&[Step]; 7] = [
             &[Step::Value],
-            &[Step::Key],
-            &[Step::Key, Step::Key],
-            &[Step::Key, Step::Value, Step::Value],
-            &[Step::Key, Step::Value, Step::Key],
+            &[Step::Key("k")],
+            &[Step::Key("k"), Step::Key("l")],
+            // The second key has a value, and the first key has none.
+            &[Step::Key("k"), Step::Key("l"), Step::Value],
+            &[Step::Key("k"), Step::Value, Step::Value],
+            &[Step::Key("k"), Step::Value, Step::Key("l")],
+            // Each key has a value, and the object has one key two times.
+            &[Step::Key("k"), Step::Value, Step::Key("k"), Step::Value],
         ];
 
         for style in [COMPACT, SORTED] {
             assert_eq!(text_of(&Steps(&[]), style), "{}");
             assert_eq!(
-                text_of(&Steps(&[Step::Key, Step::Value]), style),
+                text_of(&Steps(&[Step::Key("k"), Step::Value]), style),
                 r#"{"k":1}"#
             );
             for steps in refused {
                 assert_eq!(write(&Steps(steps), style), Err(WriteError::NoJsonForm));
             }
         }
+
+        let two = Steps(&[Step::Key("l"), Step::Value, Step::Key("k"), Step::Value]);
+        assert_eq!(text_of(&two, COMPACT), r#"{"l":1,"k":1}"#);
+        assert_eq!(text_of(&two, SORTED), r#"{"k":1,"l":1}"#);
     }
 
     /// A value whose `Serialize` gives an error of its own.
@@ -2272,19 +2545,5 @@ pub(super) mod tests {
             WriteError::NotFinite.to_string(),
             "a float that is not finite"
         );
-    }
-
-    #[test]
-    fn the_compact_length_is_the_count_of_the_bytes_of_the_compact_form() {
-        assert_eq!(
-            compact_len(&sample()),
-            Ok(write(&sample(), COMPACT).unwrap().len())
-        );
-        assert_eq!(
-            compact_len(&keyed()),
-            Ok(write(&keyed(), COMPACT).unwrap().len())
-        );
-        assert_eq!(compact_len(&()), Ok(4));
-        assert_eq!(compact_len("\u{e9}\n"), Ok(6));
     }
 }
