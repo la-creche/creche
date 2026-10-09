@@ -110,20 +110,28 @@ tests of the program. `bin/proc-rust.sh` runs the scenarios of
   program ends with status 3 there, as the Python noticeboard does.
   `crates/creche-runtime/AGENTS.md` has the same question for each service. A
   change costs one constant, `NO_LISTENER`.
-- `creche-probe` fails the three cases of one scenario of the noticeboard.
-  Each case holds exit status 2 for a LAN bind with no full key, and the
-  program ends that start with status 78. `rust/proc/probe.run` does not
-  select the scenario. "Known gaps" of `integration/proc/AGENTS.md` has the
-  entry. The test `a_lan_bind_with_no_full_key_ends_with_78_and_shows_no_key`
-  of `tests/process.rs` holds the status of the program for the three cases.
-- `--check` of the program ends with status 0 when the reader of its stdout
-  left. The Python noticeboard ends with status 1 or with status 120 there,
-  and it writes an error text. No unit and no scenario gives `--check` such
-  a stdout. The port of the noticeboard decides what its own `--check` does.
-- A test of `tests/process.rs` selects a free port and then starts the
-  program. Another process of the host can take the port between the two
-  steps. The program then ends with the status of a bind that failed. The
-  test starts it again with a new port, five times at most.
+- This `CONTRACT-QUESTION` comment is open in `src/probe.rs`: no contract
+  names the exit status of `--check` when the reader of its stdout left. The
+  program drops the report and ends with status 0. The Python noticeboard
+  does not end with status 0 there. No unit and no scenario gives `--check`
+  such a stdout. The port of the noticeboard decides what its own `--check`
+  does.
+- A test of `tests/process.rs` that needs a listener selects a free port,
+  releases it and then starts the program. Another process of the host can
+  take the port between the two steps. The program then ends with the
+  status of a bind that failed. The test starts it again with a new port,
+  five times at most. A test of a start that must bind nothing holds its
+  port itself, so it has no such gap.
+- One test of `tests/process.rs` leaves a request open and then sends the
+  stop signal. The signal can come before the program read the request. The
+  program then writes no line, and the test starts it again, five times at
+  most.
+- The drop of a test of `tests/process.rs` ends its program. A test program
+  that SIGKILL ends runs no drop, for example at a command time limit. Each
+  `creche-probe` of that run then serves on its port until a signal ends it.
+  `pkill -TERM -f creche-probe` ends each one, and also the programs of a
+  test run that still goes. The owner of the crate decides if the program
+  gets a time limit of its own for a test.
 - The SIGHUP test of `tests/process.rs` cannot judge a run that ignores
   SIGHUP, for example a run under `nohup`. A child takes that from the
   process that started it. The test fails at its first line in such a run,

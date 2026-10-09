@@ -7,18 +7,15 @@
 //! and reads only what crossed the process boundary: an exit status, a
 //! port, an answer, a file and the two output streams.
 //!
-//! Each test has a directory of its own and a port of its own. The program
-//! gets its whole environment from the test. One variable of the test
+//! Each test has a directory of its own and a port of its own. A test of a
+//! start that must bind nothing holds that port itself. The program gets its
+//! whole environment from the test. One variable of the test
 //! program itself goes with it: the file of a coverage measurement, in a run
 //! that measures. The test sends a signal with the `kill` program. No test
 //! waits for a fixed time to know that a step ended.
 //!
 //! The process-level suite under `integration/proc` judges the same program
-//! with the scenarios of the noticeboard (`bin/proc-rust.sh`). Three of
-//! those scenarios hold exit status 2 for a refused start, and the program
-//! ends with 78. The test
-//! `a_lan_bind_with_no_full_key_ends_with_78_and_shows_no_key` holds the
-//! status of the program for the three.
+//! with the scenarios of the noticeboard (`bin/proc-rust.sh`).
 
 #[cfg(test)]
 mod tests {
@@ -61,8 +58,8 @@ mod tests {
     const LOOK: Duration = Duration::from_millis(10);
 
     /// How many times a test starts the program again after a bind that
-    /// failed. Another process of the host can take the port between the
-    /// moment in which the test selects it and the bind of the program.
+    /// failed. Another process of the host can take a port that the test
+    /// released, before the bind of the program.
     const STARTS: usize = 5;
 
     /// How long the probe of [`sighup_ends_a_plain_program`] waits.
@@ -118,6 +115,39 @@ mod tests {
         File,
         /// To a pipe whose reader left before the program started.
         ReaderLeft,
+    }
+
+    /// The loopback port of one start of the program.
+    enum Port {
+        /// The test holds the port until the start is dropped. No process of
+        /// the host can take the port in that time. A program that binds its
+        /// address gets an error and ends with `NO_LISTENER`. The exit status
+        /// thus proves that a start bound nothing.
+        Held(TcpListener),
+        /// The test released the port before the start, so the program can
+        /// bind it.
+        Released(u16),
+    }
+
+    impl Port {
+        /// A port that the operating system selects, and that the test
+        /// holds.
+        fn held() -> Self {
+            Self::Held(TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap())
+        }
+
+        /// A port that no listener has at this moment. The test does not
+        /// hold it.
+        fn released() -> Self {
+            Self::Released(Self::held().number())
+        }
+
+        fn number(&self) -> u16 {
+            match self {
+                Self::Held(holder) => holder.local_addr().unwrap().port(),
+                Self::Released(number) => *number,
+            }
+        }
     }
 
     /// What one test gives the program: a directory, the variables and the
@@ -225,16 +255,15 @@ mod tests {
             command.spawn().unwrap()
         }
 
-        /// Starts the program with a port that no listener has.
+        /// Starts a program that must bind nothing, with a port that the
+        /// test holds.
         fn start(self) -> Started {
-            let port = free_port();
-
-            self.start_on(port)
+            self.start_on(Port::held())
         }
 
         /// Starts the program with the port `port`.
-        fn start_on(self, port: u16) -> Started {
-            let child = Running(self.spawn(port));
+        fn start_on(self, port: Port) -> Started {
+            let child = Running(self.spawn(port.number()));
 
             Started {
                 setup: self,
@@ -249,7 +278,7 @@ mod tests {
             let mut setup = self;
 
             for _ in 0..STARTS {
-                let mut started = setup.start();
+                let mut started = setup.start_on(Port::released());
 
                 match started.wait_ready() {
                     Start::Ready => return started,
@@ -291,7 +320,7 @@ mod tests {
     /// One process of the program, and what its test gave it.
     struct Started {
         setup: Setup,
-        port: u16,
+        port: Port,
         child: Running,
     }
 
@@ -316,7 +345,7 @@ mod tests {
         /// Waits for the readiness line of the listener, or for the end of a
         /// program that wrote no such line.
         fn wait_ready(&mut self) -> Start {
-            let line = format!("{READY}{LOOPBACK}:{}", self.port);
+            let line = format!("{READY}{LOOPBACK}:{}", self.port.number());
             let deadline = Instant::now() + LIMIT;
 
             loop {
@@ -357,15 +386,12 @@ mod tests {
             send(self.child.0.id(), name);
         }
 
-        /// Whether a listener takes a connection on the port of the test.
-        fn port_is_open(&self) -> bool {
-            TcpStream::connect((Ipv4Addr::LOCALHOST, self.port)).is_ok()
-        }
-
         /// Sends one `GET` request with the client of `creche-runtime` and
         /// gives the status, the content type and the body of the answer.
         fn get(&self, path: &str, query: &[(&str, &str)]) -> Answer {
-            let address: BindAddress = format!("{LOOPBACK}:{}", self.port).parse().unwrap();
+            let address: BindAddress = format!("{LOOPBACK}:{}", self.port.number())
+                .parse()
+                .unwrap();
             let client = Client::new(Target::from(&address));
             let segments: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
             let target = PathAndQuery::from_segments(&segments).with_query(query);
@@ -434,15 +460,6 @@ mod tests {
         }
     }
 
-    /// A port of the loopback address that no listener has at this moment.
-    fn free_port() -> u16 {
-        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
-    }
-
     /// Sends the signal `name` to the process `pid` with the `kill` program.
     fn send(pid: u32, name: &str) {
         let status = Command::new("kill")
@@ -498,8 +515,10 @@ mod tests {
         text.lines().filter(|line| !line.is_empty()).collect()
     }
 
-    /// The program refused its start: status 78, nothing on stdout and no
-    /// listener on the port.
+    /// The program refused its start: status 78 and nothing on stdout.
+    ///
+    /// The test holds the port of such a start (`Port::Held`). The status
+    /// thus also says that the program did not bind its address.
     fn refused(started: &mut Started) {
         let status = started.wait();
 
@@ -510,7 +529,6 @@ mod tests {
             started.output()
         );
         assert_eq!(started.stdout(), "");
-        assert!(!started.port_is_open());
     }
 
     #[test]
@@ -519,8 +537,9 @@ mod tests {
             .with(BIND, "0.0.0.0")
             .with(PAGE_SIZE, "0")
             .with(STATE_ROOT, "state");
-        let port = free_port();
-        let errors = NoticeboardConfig::from_env(&Env::from_pairs(setup.env_on(port))).unwrap_err();
+        let port = Port::held();
+        let errors =
+            NoticeboardConfig::from_env(&Env::from_pairs(setup.env_on(port.number()))).unwrap_err();
         let expected: Vec<String> = errors
             .as_slice()
             .iter()
@@ -609,14 +628,15 @@ mod tests {
         assert_eq!(
             lines_of(&started.stdout()),
             [
-                format!("bind          {LOOPBACK}:{}", started.port),
+                format!("bind          {LOOPBACK}:{}", started.port.number()),
                 String::from("loopback      yes"),
                 String::from("access key    set"),
             ]
         );
+        // The test holds the port. A program that binds its address writes
+        // an error line and does not end with status 0.
         assert_eq!(started.stderr(), "");
         assert!(!started.output().contains(KEY));
-        assert!(!started.port_is_open());
     }
 
     #[test]
@@ -702,7 +722,7 @@ mod tests {
 
         // The client sends the whole request and leaves. The handler waits
         // before its write, so the client is gone at the write.
-        let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, started.port)).unwrap();
+        let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, started.port.number())).unwrap();
         client.write_all(request.as_bytes()).unwrap();
         drop(client);
 
@@ -765,12 +785,49 @@ mod tests {
                 panic!("the program still runs. {}", started.output());
             };
 
+            // The process ended, and the test took its status. No process
+            // of the program is left.
             assert_eq!(status.code(), Some(0), "{name}: {status}");
             assert_eq!(status.signal(), None, "{name}");
-            // The process ended, and the test took its status. No process
-            // of the program is left, and nothing listens on its port.
-            assert!(!started.port_is_open(), "{name}");
         }
+    }
+
+    /// A request with no last line stays open. The listeners wait for it
+    /// until their limit, and the program then ends it.
+    ///
+    /// The stop signal can come before the program read the bytes of the
+    /// client. The program then has no open request and writes no line, and
+    /// the test starts it again.
+    #[test]
+    fn a_stop_with_an_open_request_ends_the_probe_with_status_0_and_one_warning() {
+        let partial = format!("GET {HEALTH_PATH} HTTP/1.1\r\nHost: {LOOPBACK}\r\n");
+
+        for _ in 0..STARTS {
+            let mut started = Setup::new().serve();
+            let mut client =
+                TcpStream::connect((Ipv4Addr::LOCALHOST, started.port.number())).unwrap();
+            client.write_all(partial.as_bytes()).unwrap();
+            // The program serves a second client while the request is open.
+            assert_eq!(started.get(HEALTH_PATH, &[]).status, StatusCode::OK);
+
+            started.send("TERM");
+            let status = started.wait();
+            drop(client);
+
+            assert_eq!(status.code(), Some(0), "{status}. {}", started.output());
+            let stderr = started.stderr();
+            let warnings = lines_of(&stderr)
+                .into_iter()
+                .filter(|line| line.contains(&format!(" WARNING {NAME} ")))
+                .count();
+            if warnings == 1 {
+                return;
+            }
+
+            assert_eq!(warnings, 0, "{stderr}");
+        }
+
+        panic!("no start of {STARTS} had an open request at its stop");
     }
 
     #[test]
@@ -784,15 +841,11 @@ mod tests {
 
         // The signal ended the program. No code of the program ran after it.
         assert_eq!(status.signal(), Some(SIGHUP), "{}", started.output());
-        assert!(!started.port_is_open());
     }
 
     #[test]
     fn a_port_that_another_listener_has_ends_the_probe_with_the_status_of_no_listener() {
-        let holder = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = holder.local_addr().unwrap().port();
-
-        let mut started = Setup::new().start_on(port);
+        let mut started = Setup::new().start_on(Port::held());
         let status = started.wait();
 
         assert_eq!(
