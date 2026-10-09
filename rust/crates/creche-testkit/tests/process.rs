@@ -8,9 +8,10 @@
 //! port, an answer, a file and the two output streams.
 //!
 //! Each test has a directory of its own and a port of its own. The program
-//! gets its whole environment from the test. The test sends a signal with
-//! the `kill` program. No test waits for a fixed time to know that a step
-//! ended.
+//! gets its whole environment from the test. One variable of the test
+//! program itself goes with it: the file of a coverage measurement, in a run
+//! that measures. The test sends a signal with the `kill` program. No test
+//! waits for a fixed time to know that a step ended.
 //!
 //! The process-level suite under `integration/proc` judges the same program
 //! with the scenarios of the noticeboard (`bin/proc-rust.sh`). Three of
@@ -97,8 +98,14 @@ mod tests {
     const STDOUT: &str = "stdout";
     const STDERR: &str = "stderr";
 
-    /// The numbers of two signals. POSIX gives each one its number.
+    /// The number of the signal. POSIX gives it.
     const SIGHUP: i32 = 1;
+
+    /// The variable that names the file of a coverage measurement. The tool
+    /// of the `rust-coverage` job sets it for this test program, and the
+    /// program under test needs it too: without it, a measured program
+    /// writes its file into the directory of the crate.
+    const PROFILE_FILE: &str = "LLVM_PROFILE_FILE";
 
     /// What the SIGHUP test says in a run that cannot judge it.
     const RUN_IGNORES_SIGHUP: &str = "this run of the tests ignores SIGHUP, and each child takes \
@@ -200,6 +207,9 @@ mod tests {
                 .envs(self.env_on(port))
                 .stdin(Stdio::null())
                 .stderr(File::create(self.file(STDERR)).unwrap());
+            if let Some(file) = std::env::var_os(PROFILE_FILE) {
+                command.env(PROFILE_FILE, file);
+            }
 
             match self.stdout {
                 Stdout::File => {
