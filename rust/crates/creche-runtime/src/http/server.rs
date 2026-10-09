@@ -604,34 +604,11 @@ async fn bind_tcp(address: &BindAddress) -> Result<Bound, BindError> {
     let found = tokio::net::lookup_host((host, address.port().get()))
         .await
         .map_err(failed)?;
-    let mut places: Vec<SocketAddr> = Vec::new();
-    for place in found {
-        if !places.contains(&place) {
-            places.push(place);
-        }
-    }
+    let listeners = listeners_on(found).map_err(failed)?;
 
-    // Each socket binds first. The listen comes second, as in `asyncio`.
-    let mut bound = Vec::with_capacity(places.len());
-    let mut skipped = None;
-    for place in places {
-        match bound_tcp(place) {
-            Ok(socket) => bound.push(socket),
-            Err(Unbound::Skip(error)) => skipped = Some(error),
-            Err(Unbound::Stop(error)) => return Err(failed(error)),
-        }
-    }
-    if bound.is_empty() {
-        let error =
-            skipped.unwrap_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, NO_ADDRESS));
-
-        return Err(failed(error));
-    }
-
-    let mut sockets = Vec::with_capacity(bound.len());
+    let mut sockets = Vec::with_capacity(listeners.len());
     let mut port = address.port().get();
-    for socket in bound {
-        let listener = registered(|| socket.listen(BACKLOG)).map_err(failed)?;
+    for listener in listeners {
         if let Ok(place) = listener.local_addr() {
             port = place.port();
         }
@@ -643,6 +620,44 @@ async fn bind_tcp(address: &BindAddress) -> Result<Bound, BindError> {
         port: Some(port),
         sockets,
     })
+}
+
+/// One listener for each address of `places` that this host has.
+///
+/// An address that this host does not have gets no listener, and the bind
+/// continues with the next address. Each other error of a bind stops the
+/// whole call. The call fails when no address is left.
+///
+/// The Python origin is the loop over the addresses of a host in
+/// `create_server` (`asyncio/base_events.py:1611-1645` of CPython 3.13).
+fn listeners_on(places: impl IntoIterator<Item = SocketAddr>) -> io::Result<Vec<TcpListener>> {
+    let mut distinct: Vec<SocketAddr> = Vec::new();
+    for place in places {
+        if !distinct.contains(&place) {
+            distinct.push(place);
+        }
+    }
+
+    // Each socket binds first. The listen comes second, as in `asyncio`.
+    let mut bound = Vec::with_capacity(distinct.len());
+    let mut skipped = None;
+    for place in distinct {
+        match bound_tcp(place) {
+            Ok(socket) => bound.push(socket),
+            Err(Unbound::Skip(error)) => skipped = Some(error),
+            Err(Unbound::Stop(error)) => return Err(error),
+        }
+    }
+    if bound.is_empty() {
+        return Err(
+            skipped.unwrap_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, NO_ADDRESS))
+        );
+    }
+
+    bound
+        .into_iter()
+        .map(|socket| registered(|| socket.listen(BACKLOG)))
+        .collect()
 }
 
 /// A new TCP socket that holds `place` and does not listen.
@@ -2094,6 +2109,61 @@ mod tests {
             assert_eq!(error.step(), BindStep::Bind);
             assert_eq!(error.kind(), io::ErrorKind::AddrNotAvailable);
             assert_eq!(error.address(), format!("192.0.2.10:{port}"));
+        });
+    }
+
+    /// The addresses of a host name can hold one that this host does not
+    /// have, for example the IPv6 address of `localhost` on a host with no
+    /// IPv6.
+    #[test]
+    fn an_address_that_the_host_does_not_have_gets_no_listener() {
+        runtime().block_on(async {
+            let mut bound = None;
+            for _ in 0..PORT_TRIES {
+                let port = free_port();
+                let absent: SocketAddr = format!("192.0.2.10:{port}").parse().unwrap();
+                let present: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+
+                match listeners_on([absent, present, present]) {
+                    Ok(listeners) => {
+                        bound = Some((listeners, present));
+                        break;
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::AddrInUse => {}
+                    Err(error) => panic!("{error}"),
+                }
+            }
+            let (listeners, present) = bound.unwrap();
+
+            // One listener: the host does not have the first address, and
+            // the third address is the second one again.
+            assert_eq!(listeners.len(), 1);
+            assert_eq!(listeners[0].local_addr().unwrap(), present);
+
+            let absent: SocketAddr = "192.0.2.10:8340".parse().unwrap();
+            let none_left = listeners_on([absent]).unwrap_err();
+            let no_address = listeners_on([]).unwrap_err();
+
+            assert_eq!(none_left.kind(), io::ErrorKind::AddrNotAvailable);
+            assert_ne!(none_left.to_string(), NO_ADDRESS);
+            assert_eq!(no_address.kind(), io::ErrorKind::AddrNotAvailable);
+            assert_eq!(no_address.to_string(), NO_ADDRESS);
+        });
+    }
+
+    #[test]
+    fn an_address_that_another_listener_holds_stops_the_bind_of_its_host() {
+        runtime().block_on(async {
+            let holder = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let held = holder.local_addr().unwrap();
+            let absent: SocketAddr = "192.0.2.10:8340".parse().unwrap();
+            let free: SocketAddr = format!("127.0.0.1:{}", free_port()).parse().unwrap();
+
+            let error = listeners_on([absent, held, free]).unwrap_err();
+
+            assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+            // The bind stopped at the second address: nothing holds the third.
+            drop(std::net::TcpListener::bind(free).unwrap());
         });
     }
 
