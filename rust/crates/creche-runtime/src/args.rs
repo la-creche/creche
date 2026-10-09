@@ -83,6 +83,12 @@
 //! - `sys.argv` of Python holds a word that is not UTF-8 as a text with
 //!   escapes, and a Python program can take it. The reader refuses the
 //!   command line.
+//! - `argparse` takes the word `--` only together with a positional word of
+//!   its parser. It refuses a `--` that comes when the parser has no such
+//!   word left to take: `unrecognized arguments: --`. A parser with no
+//!   positional word thus refuses each `--`. A parser with one such word
+//!   refuses `fam --check --`. The reader drops the first `--` in each
+//!   place, so a program accepts such a command line.
 //! - The text of an error can differ. For `--check=yes`, `argparse` says
 //!   that the flag ignores the value. A program on this reader says that it
 //!   does not take the word `--check=yes`. `argparse` names each word that
@@ -624,6 +630,17 @@ mod tests {
                 &["--unknown=a b"],
                 refused("unrecognized arguments: --unknown"),
             ),
+            // An error: `unrecognized arguments: --`. The parser took its
+            // one word before the flag, so no word is left to take the `--`.
+            (
+                &["fam", "--check", "--"],
+                Ok(asked(true, None, Some("fam"))),
+            ),
+            // The same error.
+            (
+                &["fam", "--bind", "a", "--"],
+                Ok(asked(false, Some("a"), Some("fam"))),
+            ),
             // An error with another text: the flag ignores the value `yes`.
             (
                 &["--check=yes"],
@@ -637,6 +654,11 @@ mod tests {
         for (words, result) in table {
             assert_eq!(result_of(words), result, "{words:?}");
         }
+
+        // A parser of `argparse` with no positional word refuses `--`:
+        // `unrecognized arguments: --`. The reader gives a program no word
+        // for it, so such a program cannot refuse it.
+        assert_eq!(reader(&["--"]).next(), None);
     }
 
     #[test]

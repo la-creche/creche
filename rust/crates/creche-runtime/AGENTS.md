@@ -388,6 +388,12 @@ reason. The packet that writes the three bodies obeys these rules:
   flag `--help`, and `argparse` answers that flag itself. The port of that
   program matches the flag. A program with vectors for its command line
   holds its own parser equal to those vectors.
+- A program on `args` accepts one kind of command line that the `argparse`
+  parser of its Python origin refuses. That kind has a `--` at a place where
+  the parser has no positional word left to take. `args` gives a program no
+  word for `--`, so the program cannot refuse it. No unit file, no component
+  manifest, no hook and no script of this repository writes such a command
+  line.
 - `service::Loaded` has the variant `RefuseEachCall` for each config type. A
   program whose config type says `AtStart::ExitConfig` thus writes an arm
   that never runs. The skeleton fixed the type. The owner of the crate
