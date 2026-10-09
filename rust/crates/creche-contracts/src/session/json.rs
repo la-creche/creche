@@ -7,17 +7,22 @@
 //!
 //! The writer makes the bytes that Python's `json.dumps` makes with the
 //! separators `,` and `:`. `attendance` writes each journal line, each record
-//! of the event stream and each answer in that form.
+//! of the event stream and each answer in that form. The writer of
+//! `crate::json` makes the bytes. This module gives it the style.
 
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::io;
 
 use serde::Serialize;
 use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
-use serde_json::ser::{CompactFormatter, Formatter, Serializer};
 use serde_json::value::RawValue;
+
+/// Which characters the writer keeps as they are. `Charset::Ascii` is
+/// `json.dumps` with its defaults: a journal line and a state file.
+/// `Charset::Utf8` is the answer of a route: `ensure_ascii=False`.
+pub(super) use crate::json::Charset;
+use crate::json::{self, KeyOrder, Layout, Style, WriteError};
 
 /// The deepest nesting of a JSON text that this module reads.
 ///
@@ -302,17 +307,6 @@ fn within_limits(bytes: &[u8]) -> bool {
     fraction || digits <= INT_DIGITS_MAX
 }
 
-/// Which characters the writer keeps as they are.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Charset {
-    /// Each character outside printable ASCII is a `\u` escape. That is
-    /// `json.dumps` with its defaults: a journal line and a state file.
-    Ascii,
-    /// Each character that JSON permits is itself. That is the answer of a
-    /// route: `ensure_ascii=False`.
-    Utf8,
-}
-
 /// Why a value has no JSON form.
 ///
 /// A type of this module always has a JSON form. The error exists because a
@@ -336,7 +330,7 @@ pub(super) enum Charset {
 /// }
 /// ```
 #[derive(Debug)]
-pub struct EncodeError(serde_json::Error);
+pub struct EncodeError(WriteError);
 
 impl fmt::Display for EncodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -351,12 +345,14 @@ impl Error for EncodeError {
 }
 
 /// The JSON text of a value, as Python writes it.
+///
+/// A `RawValue` inside the value goes out as its own text. Only the body of
+/// a stored journal line is one: a reader of the event stream gets the text
+/// that the journal file holds.
 pub(super) fn encode<T: Serialize>(value: &T, charset: Charset) -> Result<Vec<u8>, EncodeError> {
-    let mut bytes = Vec::new();
-    let mut serializer = Serializer::with_formatter(&mut bytes, Python { charset });
-    value.serialize(&mut serializer).map_err(EncodeError)?;
+    let style = Style::new(Layout::Compact, charset, KeyOrder::AsGiven);
 
-    Ok(bytes)
+    json::write_raw_kept(value, style).map_err(EncodeError)
 }
 
 /// The JSON text of a value and one LF: one line of a journal or of a stream.
@@ -365,108 +361,6 @@ pub(super) fn encode_line<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodeErro
     bytes.push(LF);
 
     Ok(bytes)
-}
-
-/// The last character of ASCII, DEL. Python writes it as an escape.
-const DEL: char = '\u{7f}';
-
-/// The format of `json.dumps` with the separators `,` and `:`.
-struct Python {
-    charset: Charset,
-}
-
-impl Formatter for Python {
-    fn write_f64<W: ?Sized + io::Write>(&mut self, writer: &mut W, value: f64) -> io::Result<()> {
-        writer.write_all(float_repr(value)?.as_bytes())
-    }
-
-    fn write_string_fragment<W: ?Sized + io::Write>(
-        &mut self,
-        writer: &mut W,
-        fragment: &str,
-    ) -> io::Result<()> {
-        if self.charset == Charset::Utf8 {
-            return writer.write_all(fragment.as_bytes());
-        }
-
-        for character in fragment.chars() {
-            if character.is_ascii() && character != DEL {
-                writer.write_all(character.encode_utf8(&mut [0; 4]).as_bytes())?;
-                continue;
-            }
-
-            for unit in character.encode_utf16(&mut [0; 2]) {
-                write!(writer, "\\u{unit:04x}")?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-/// The least exponent of ten that Python writes with no exponent.
-const FIXED_EXPONENT_MIN: i64 = -4;
-
-/// The least exponent of ten that Python writes with an exponent.
-const FIXED_EXPONENT_END: i64 = 16;
-
-/// The text of a finite float, as Python's `repr` writes it: the shortest
-/// digits that read back as the same float, `1.0` for a whole number, and an
-/// exponent with a sign and two digits or more.
-///
-/// The digits are the digits of `serde_json`. Like Python, it gives the
-/// shortest digits and takes the even digit when two are equally near. The
-/// `{:e}` format of the standard library takes the other digit there.
-fn float_repr(value: f64) -> io::Result<String> {
-    let mut shortest = Vec::new();
-    CompactFormatter.write_f64(&mut shortest, value)?;
-    let shortest = String::from_utf8(shortest).map_err(io::Error::other)?;
-    let (sign, unsigned) = match shortest.strip_prefix('-') {
-        Some(unsigned) => ("-", unsigned),
-        None => ("", shortest.as_str()),
-    };
-    let (mantissa, exponent) = unsigned.split_once(['e', 'E']).unwrap_or((unsigned, "0"));
-    let exponent: i64 = exponent.parse().map_err(io::Error::other)?;
-    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let all = format!("{whole}{fraction}");
-    let significant = all.trim_start_matches('0');
-    let digits = significant.trim_end_matches('0');
-    if digits.is_empty() {
-        return Ok(format!("{sign}0.0"));
-    }
-
-    // The exponent of ten of the first digit.
-    let width = |text: &str| i64::try_from(text.len()).map_err(io::Error::other);
-    let exponent = exponent + width(whole)? - 1 - (width(&all)? - width(significant)?);
-    if !(FIXED_EXPONENT_MIN..FIXED_EXPONENT_END).contains(&exponent) {
-        let (first, rest) = digits.split_at_checked(1).unwrap_or((digits, ""));
-        let point = if rest.is_empty() { "" } else { "." };
-        let exponent_sign = if exponent < 0 { '-' } else { '+' };
-        let exponent = exponent.unsigned_abs();
-
-        return Ok(format!(
-            "{sign}{first}{point}{rest}e{exponent_sign}{exponent:02}"
-        ));
-    }
-
-    let Ok(whole_digits) = usize::try_from(exponent + 1) else {
-        let zeros = "0".repeat(usize::try_from(-exponent - 1).map_err(io::Error::other)?);
-
-        return Ok(format!("{sign}0.{zeros}{digits}"));
-    };
-    if whole_digits == 0 {
-        return Ok(format!("{sign}0.{digits}"));
-    }
-
-    Ok(match digits.split_at_checked(whole_digits) {
-        Some((whole, "")) => format!("{sign}{whole}.0"),
-        Some((whole, rest)) => format!("{sign}{whole}.{rest}"),
-        None => {
-            let zeros = "0".repeat(whole_digits.saturating_sub(digits.len()));
-
-            format!("{sign}{digits}{zeros}.0")
-        }
-    })
 }
 
 #[cfg(test)]
@@ -615,40 +509,6 @@ mod tests {
         assert!(within_limits(format!("{}.5", digits(5000)).as_bytes()));
         assert!(within_limits(format!("1e{}", digits(5000)).as_bytes()));
         assert!(within_limits(format!("\"{}\"", digits(5000)).as_bytes()));
-    }
-
-    #[test]
-    fn a_float_is_written_as_python_writes_it() {
-        let floats = [
-            (0.0, "0.0"),
-            (-0.0, "-0.0"),
-            (1.0, "1.0"),
-            (-1.5, "-1.5"),
-            (100.0, "100.0"),
-            (0.014, "0.014"),
-            (0.1 + 0.2, "0.30000000000000004"),
-            (0.0001, "0.0001"),
-            (0.00001, "1e-05"),
-            (1.5e-7, "1.5e-07"),
-            (1_234_567_890_123_456.0, "1234567890123456.0"),
-            (9_999_999_999_999_998.0, "9999999999999998.0"),
-            (1e16, "1e+16"),
-            (1.234_567_890_123_456_8e16, "1.2345678901234568e+16"),
-            (1e22, "1e+22"),
-            (1e100, "1e+100"),
-            (f64::MAX, "1.7976931348623157e+308"),
-            (5e-324, "5e-324"),
-            (123_456.789_012_345, "123456.789012345"),
-            (1.0 / 3.0, "0.3333333333333333"),
-            // The exact value ends in .25, or in .890625. The two shortest
-            // texts are equally near, and Python takes the even digit.
-            (5_261_963_047_596_905.0 / 4.0, "1315490761899226.2"),
-            (16_842_045_457_081.0 / 64.0, "263156960266.89062"),
-        ];
-
-        for (value, text) in floats {
-            assert_eq!(float_repr(value).unwrap(), text);
-        }
     }
 
     #[test]

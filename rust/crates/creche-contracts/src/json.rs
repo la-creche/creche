@@ -1,4 +1,5 @@
-//! Strict JSON: the one reader of a JSON text of a contract.
+//! Strict JSON: the one reader and the one writer of a JSON text of a
+//! contract.
 //!
 //! `rust/AGENTS.md`, "JSON", says why a text of a contract is strict JSON.
 //! This doc comment is the full text of the rules. [`check`] accepts a byte
@@ -135,10 +136,41 @@
 //! assert_eq!(refusal.map(NotStrict::rule), Some(json::Rule::DuplicateKey));
 //! ```
 //!
-//! This module holds the reader only. It has no writer yet.
+//! # How a module writes a JSON text
+//!
+//! [`write()`] gives the bytes of a value that implements `Serialize`. The
+//! bytes are the bytes that `json.dumps` of Python gives for the same
+//! value. A [`Style`] names the arguments of that call: a [`Layout`], a
+//! [`Charset`] and a [`KeyOrder`].
+//!
+//! The writer holds the rules of the reader. It gives a [`WriteError`] for
+//! a float that is not finite and for an integer outside the range of rule
+//! 7. It never writes `null` in the place of such a value.
+//!
+//! ```
+//! use creche_contracts::json::{self, Charset, KeyOrder, Layout, Style, WriteError};
+//! use serde::Serialize;
+//!
+//! /// The style of `json.dumps(value, indent=2, sort_keys=True)`.
+//! const FILE: Style = Style::new(Layout::Indent2, Charset::Ascii, KeyOrder::Sorted);
+//!
+//! #[derive(Serialize)]
+//! struct Spend {
+//!     usd: f64,
+//!     calls: u64,
+//! }
+//!
+//! let spend = Spend { usd: 12.5, calls: 40 };
+//! assert_eq!(json::write(&spend, FILE)?, b"{\n  \"calls\": 40,\n  \"usd\": 12.5\n}");
+//!
+//! let broken = Spend { usd: f64::NAN, calls: 40 };
+//! assert_eq!(json::write(&broken, FILE), Err(WriteError::NotFinite));
+//! # Ok::<(), WriteError>(())
+//! ```
 
 mod read;
 mod scan;
+mod write;
 
 use std::error::Error;
 use std::fmt;
@@ -146,6 +178,8 @@ use std::fmt;
 use serde::Deserialize;
 
 pub use self::read::{Integer, Number, ReadError, Shape, read};
+pub(crate) use self::write::write_raw_kept;
+pub use self::write::{Charset, KeyOrder, Layout, Style, WriteError, write};
 /// The kind of a JSON value. The module `slot` of this crate defines it, and
 /// this module adds no second enum for a kind.
 pub use crate::slot::Found;
