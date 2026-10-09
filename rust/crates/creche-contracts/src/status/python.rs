@@ -263,93 +263,93 @@ fn reason_text(reason: Option<&Reason>) -> String {
 
 fn family_row_value(row: &FamilyRow) -> Value {
     let sandboxes: Vec<Value> = row
-        .sandboxes
+        .sandboxes()
         .iter()
         .map(|one| {
             json!({
-                "id": one.id,
-                "state": one.state,
-                "power": one.power,
-                "image": one.image,
-                "cpus": integer_value(&one.cpus),
-                "memory": one.memory,
-                "created_at": one.created_at,
-                "ready_at": one.ready_at,
-                "channel": one.channel,
-                "has_playpen_env": one.has_supervisor_env,
+                "id": one.id(),
+                "state": one.state(),
+                "power": one.power(),
+                "image": one.image(),
+                "cpus": integer_value(one.cpus()),
+                "memory": one.memory(),
+                "created_at": one.created_at(),
+                "ready_at": one.ready_at(),
+                "channel": one.channel(),
+                "has_playpen_env": one.has_supervisor_env(),
             })
         })
         .collect();
     let faults: Vec<Value> = row
-        .faults
+        .faults()
         .iter()
         .map(|one| {
             json!({
-                "code": one.code,
-                "blocks_turns": one.blocks_turns,
-                "since": one.since,
-                "source": one.source,
-                "stale": one.stale,
-                "message": one.message,
-                "sandbox": one.sandbox,
+                "code": one.code(),
+                "blocks_turns": one.blocks_turns(),
+                "since": one.since(),
+                "source": one.source(),
+                "stale": one.stale(),
+                "message": one.message(),
+                "sandbox": one.sandbox(),
             })
         })
         .collect();
-    let spend = row.spend.as_ref().map(|one| {
+    let spend = row.spend().map(|one| {
         json!({
-            "spend_usd": one.spend_usd.map(float_value),
-            "budget_usd": one.budget_usd.map(float_value),
-            "window": one.window,
-            "source": one.source,
-            "as_of": one.as_of,
-            "stale": one.stale,
+            "spend_usd": one.spend_usd().map(float_value),
+            "budget_usd": one.budget_usd().map(float_value),
+            "window": one.window(),
+            "source": one.source(),
+            "as_of": one.as_of(),
+            "stale": one.stale(),
         })
     });
-    let validation = row.validation.as_ref().map(|one| {
+    let validation = row.validation().map(|one| {
         json!({
-            "rev": one.rev,
-            "checked_at": one.checked_at,
-            "ok": one.ok,
-            "never_valid": one.never_valid,
-            "error_count": integer_value(&one.error_count),
-            "warning_count": integer_value(&one.warning_count),
-            "report_path": one.report_path,
-            "first_error": one.first_error,
+            "rev": one.rev(),
+            "checked_at": one.checked_at(),
+            "ok": one.ok(),
+            "never_valid": one.never_valid(),
+            "error_count": integer_value(one.error_count()),
+            "warning_count": integer_value(one.warning_count()),
+            "report_path": one.report_path(),
+            "first_error": one.first_error(),
         })
     });
-    let reconcile = row.reconcile.as_ref().map(|one| {
+    let reconcile = row.reconcile().map(|one| {
         json!({
-            "since": one.since,
-            "from_rev": one.from_rev,
-            "to_rev": one.to_rev,
-            "step": one.step,
-            "attempts": integer_value(&one.attempts),
-            "needs_switch": one.needs_switch,
+            "since": one.since(),
+            "from_rev": one.from_rev(),
+            "to_rev": one.to_rev(),
+            "step": one.step(),
+            "attempts": integer_value(one.attempts()),
+            "needs_switch": one.needs_switch(),
         })
     });
 
     json!({
-        "name": row.name,
-        "kind": row.kind,
-        "health": row.health.as_str(),
-        "reason": reason_text(row.reason.as_ref()),
-        "written_at": row.written_at,
-        "age_s": row.age.map(|age| age.seconds()),
-        "registry_rev": row.registry_rev,
-        "applied_rev": row.applied_rev,
-        "config_rev": row.config_rev,
-        "epoch": integer_value(&row.epoch),
+        "name": row.name(),
+        "kind": row.kind(),
+        "health": row.health().as_str(),
+        "reason": reason_text(row.reason()),
+        "written_at": row.written_at(),
+        "age_s": row.age().map(|age| age.seconds()),
+        "registry_rev": row.registry_rev(),
+        "applied_rev": row.applied_rev(),
+        "config_rev": row.config_rev(),
+        "epoch": integer_value(row.epoch()),
         "sandboxes": sandboxes,
         "faults": faults,
         "spend": spend,
         "validation": validation,
         "reconcile": reconcile,
         "limits": {
-            "max_running_turns": optional_integer(row.limits.max_running_turns.as_ref()),
-            "max_queued_turns": optional_integer(row.limits.max_queued_turns.as_ref()),
-            "job_timeout_s": optional_integer(row.limits.job_timeout_s.as_ref()),
+            "max_running_turns": optional_integer(row.limits().max_running_turns()),
+            "max_queued_turns": optional_integer(row.limits().max_queued_turns()),
+            "job_timeout_s": optional_integer(row.limits().job_timeout_s()),
         },
-        "problem": row.problem.map(problem_class).unwrap_or_default(),
+        "problem": row.problem().map(problem_class).unwrap_or_default(),
     })
 }
 
@@ -357,7 +357,7 @@ fn replay_noticeboard(_: &Surface, vector: &Vector) -> Replay {
     let row = views::read_noticeboard(&vector.input.bytes().unwrap(), FAMILY, now());
     let value = Some(family_row_value(&row));
 
-    if row.problem.is_some() {
+    if row.problem().is_some() {
         Err(value)
     } else {
         Ok(value)
