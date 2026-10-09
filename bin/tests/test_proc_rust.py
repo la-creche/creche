@@ -772,19 +772,32 @@ def test_each_file_names_the_variable_of_a_row_of_the_service_table(
         assert variable not in services.SWITCHES, name
 
 
+def _programs_of(crate: Path) -> tuple[str, set[str]]:
+    """The name of the package of one crate, and each program that cargo
+    builds for it: each `[[bin]]` table, each file and each directory of
+    `src/bin`, and `src/main.rs` under the name of the package."""
+    manifest = tomllib.loads((crate / "Cargo.toml").read_text(encoding="utf-8"))
+    package = manifest["package"]["name"]
+    programs = {one["name"] for one in manifest.get("bin", [])}
+    programs |= {path.stem for path in (crate / "src" / "bin").glob("*.rs")}
+    programs |= {path.parent.name for path in (crate / "src" / "bin").glob("*/main.rs")}
+    if (crate / "src" / "main.rs").is_file():
+        programs.add(package)
+
+    return package, programs
+
+
 def test_each_file_names_a_program_of_a_crate_of_the_workspace(
     real: dict[str, dict[str, list[str]]],
 ) -> None:
-    manifests = [
-        tomllib.loads(path.read_text(encoding="utf-8")) for path in CRATES.glob("*/Cargo.toml")
-    ]
+    programs = dict(_programs_of(path.parent) for path in CRATES.glob("*/Cargo.toml"))
 
     for name, facts in real.items():
         (package,) = facts["package"]
         (program,) = facts["program"]
-        (manifest,) = [one for one in manifests if one["package"]["name"] == package]
 
-        assert program in {one["name"] for one in manifest.get("bin", [])}, name
+        assert package in programs, f"{name} names the package {package}"
+        assert program in programs[package], f"{name} names the program {program}"
 
 
 def test_each_file_selects_tests_that_the_suite_has(
