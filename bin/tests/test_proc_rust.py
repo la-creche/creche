@@ -2,7 +2,7 @@
 
 The process-level suite is the judge of a port (`integration/proc/AGENTS.md`).
 `bin/proc-rust.sh` gives the suite one Rust program for each file
-`rust/proc/*.run`, through the variable of one service. Five things could go
+`rust/proc/*.run`, through the variable of one service. Six things could go
 wrong without one red line, and each gets a check here:
 
 1. **A run that judged the Python service.** The suite starts the default
@@ -20,6 +20,9 @@ wrong without one red line, and each gets a check here:
 5. **A scenario that a file leaves out in silence.** `probe.run` selects
    each scenario of `test_proc_board_start.py` but the one that `NOT_YET`
    names. That table goes with packet `strict-exit-78`.
+6. **A path that the suite reads as two words.** The suite splits the value
+   of a variable as a shell does. The script gives the path of the program
+   as one word, also from a tree whose path holds a space or a quote.
 
 The tests of the script run the real script in a throwaway tree. `cargo` and
 `uv` are fakes that write their argv, their directory and their variables to
@@ -32,6 +35,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -46,6 +50,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 #: The file under test, as git names it.
 SCRIPT = "bin/proc-rust.sh"
+
+#: The file that the script sources for the name of the Rust directory.
+RUST_RULE = "bin/lib/rustrule.sh"
 
 #: The directory of the files, and the end of the name of a file.
 RUN_DIR = "rust/proc"
@@ -135,10 +142,11 @@ fi
 """
 
 #: Writes where it ran, its argv and each variable of the suite that it got.
-#: Fails when its argv holds the word that UV_FAIL names.
+#: A tab ends each variable, because a value can hold a space. Fails when its
+#: argv holds the word that UV_FAIL names.
 FAKE_UV = """#!/usr/bin/env bash
 printf '%s\\t%s\\n' "$PWD" "$*" >> "$UV_LOG"
-env | grep '^CRECHE_PROC_' | LC_ALL=C sort | tr '\\n' ' ' >> "$UV_ENV_LOG"
+env | grep '^CRECHE_PROC_' | LC_ALL=C sort | tr '\\n' '\\t' >> "$UV_ENV_LOG"
 printf '\\n' >> "$UV_ENV_LOG"
 if [[ -n "${UV_FAIL:-}" && " $* " == *" $UV_FAIL "* ]]; then
   exit 1
@@ -224,7 +232,7 @@ class Tree:
             uv=[argv for _where, argv in uv],
             uv_dirs={Path(where).resolve() for where, _argv in uv},
             uv_env=[
-                dict(pair.split("=", 1) for pair in line.split())
+                dict(pair.split("=", 1) for pair in line.split("\t") if pair)
                 for line in _lines(logs / "uv-env")
             ],
         )
@@ -242,16 +250,25 @@ def _fake(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
-@pytest.fixture
-def tree(tmp_path: Path) -> Tree:
-    """A tree with the real script and no file under `rust/proc`. The fake
-    `cargo` of this tree names a program after its package:
-    `built-of-<package>`. So the files of a test name such a program."""
-    root = tmp_path / "repo"
+def _program_of(value: str) -> Path:
+    """The program that the suite starts for the value `value` of a variable.
+    The suite splits the value as a shell does, and the script gives it one
+    word."""
+    (program,) = shlex.split(value)
+
+    return Path(program)
+
+
+def _tree(tmp_path: Path, name: str) -> Tree:
+    """A tree with the real script and no file under `rust/proc`, in the
+    directory `name`. The fake `cargo` of this tree names a program after its
+    package: `built-of-<package>`. So the files of a test name such a
+    program."""
+    root = tmp_path / name
     tools = tmp_path / "tools"
     rusty = tmp_path / "rusty"
     synced = tmp_path / "synced"
-    for one in (root / "bin", root / "rust", tools, rusty, synced):
+    for one in (root / "bin" / "lib", root / "rust", tools, rusty, synced):
         one.mkdir(parents=True)
 
     for name in TOOLS:
@@ -262,6 +279,7 @@ def tree(tmp_path: Path) -> Tree:
     _fake(rusty / "cargo", FAKE_CARGO)
     _fake(synced / "uv", FAKE_UV)
     shutil.copy2(REPO / SCRIPT, root / SCRIPT)
+    shutil.copy2(REPO / RUST_RULE, root / RUST_RULE)
 
     return Tree(
         root=root,
@@ -269,6 +287,11 @@ def tree(tmp_path: Path) -> Tree:
         without_cargo=f"{synced}:{tools}",
         without_uv=f"{rusty}:{tools}",
     )
+
+
+@pytest.fixture
+def tree(tmp_path: Path) -> Tree:
+    return _tree(tmp_path, "repo")
 
 
 def _file(package: str, variable: str = "CRECHE_PROC_NOTICEBOARD", test: str = "test_one") -> str:
@@ -305,10 +328,30 @@ def test_the_suite_gets_the_built_program_in_the_variable_of_the_file(tree: Tree
     done = tree.run()
 
     (env,) = done.uv_env
-    program = Path(env["CRECHE_PROC_NOTICEBOARD"])
+    program = _program_of(env["CRECHE_PROC_NOTICEBOARD"])
     assert program.is_absolute()
     assert program.resolve() == tree.built("built-of-one-crate").resolve()
     assert os.access(program, os.X_OK)
+
+
+@pytest.mark.parametrize("name", ["the repo", "the tree's repo", "a  'b' $HOME \"c\" \\d"])
+def test_the_suite_reads_the_program_of_each_tree_as_one_word(tmp_path: Path, name: str) -> None:
+    """The suite splits the value of a variable as a shell does
+    (`integration/proc/AGENTS.md`, "Replace a service with another binary").
+    A tree whose path holds a space or a quote must still give one program.
+    `command_of` of the suite is the judge: it reads the value of the run."""
+    tree = _tree(tmp_path, name)
+    tree.write("one", _file("one-crate"))
+
+    done = tree.run()
+
+    assert done.code == 0, done.out + done.err
+    (env,) = done.uv_env
+    services = _services()
+    command = services.command_of(services.Service.NOTICEBOARD, env)
+    (program,) = command.words
+    assert command.origin is services.Origin.OVERRIDE
+    assert Path(program).resolve() == tree.built("built-of-one-crate").resolve()
 
 
 def test_a_skip_is_a_failure_and_no_other_variable_of_the_suite_is_set(tree: Tree) -> None:
@@ -362,7 +405,7 @@ def test_a_variable_of_the_caller_reaches_the_suite(tree: Tree) -> None:
 
     (env,) = done.uv_env
     assert env["CRECHE_PROC_KEEP"] == "1"
-    assert Path(env["CRECHE_PROC_NOTICEBOARD"]).resolve() == (
+    assert _program_of(env["CRECHE_PROC_NOTICEBOARD"]).resolve() == (
         tree.built("built-of-one-crate").resolve()
     )
 
@@ -843,6 +886,17 @@ def test_the_two_names_of_the_suite_in_the_script_are_names_of_the_suite() -> No
     assert services.VARIABLE_PREFIX == PREFIX
     assert services.NO_SKIP_ENV == NO_SKIP
     assert NO_SKIP in services.SWITCHES
+
+
+def test_the_script_takes_the_rust_directory_from_the_rust_rule() -> None:
+    """`bin/lib/rustrule.sh` is the one home of the name of that directory
+    (`bin/AGENTS.md`, Library). The script defines no second copy."""
+    text = (REPO / SCRIPT).read_text(encoding="utf-8")
+    code = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+
+    assert f". {RUST_RULE}" in code
+    assert [line for line in code if line.lstrip().startswith("RUST_DIR=")] == []
+    assert 'RUST_DIR="rust"' in (REPO / RUST_RULE).read_text(encoding="utf-8").splitlines()
 
 
 def test_the_text_of_the_script_holds_the_prefix_of_the_suite_one_time() -> None:

@@ -29,7 +29,8 @@
 #   2. it runs `cargo build --release --locked -p <package>` inside rust/
 #   3. it runs `uv run pytest <each selected test> -m slow` at the root of the
 #      repository, with the variable set to the path of the built program
-#      and with CRECHE_PROC_NO_SKIP=1
+#      and with CRECHE_PROC_NO_SKIP=1. The suite splits the value of the
+#      variable as a shell does, so the script gives the path as one word
 # Step 1 is the reason that the suite never judges an old program: a build
 # that wrote its program to another place leaves no file, and the script
 # stops. A test that skips is a failure, as in the `proc` job. The first
@@ -45,13 +46,14 @@
 set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
+# RUST_DIR: the one directory that holds every Cargo file.
+. bin/lib/rustrule.sh
+
 #: The root of the repository. The suite starts a service in the directory
 #: of its test, so the path of a program is absolute.
 ROOT="$PWD"
 
-#: The directory of the Cargo workspace, and where a release build of it
-#: writes a program.
-RUST_DIR="rust"
+#: Where a release build of the Cargo workspace writes a program.
 BUILD_DIR="$RUST_DIR/target/release"
 
 #: The directory of the files, and the end of the name of a file.
@@ -85,6 +87,9 @@ VARIABLE_FORM="^${PROC_PREFIX}[A-Z][A-Z0-9_]*\$"
 #: One selected test: a file below PROC_DIR, then for one test of that file
 #: `::`, the name of the test and the id of one case in brackets.
 SELECT_FORM="^${PROC_DIR}/[A-Za-z0-9_/.-]+\\.py(::[A-Za-z0-9_]+(\\[[A-Za-z0-9_.-]+\\])?)?\$"
+
+#: The single quote. A text between two of them is one word of a shell.
+QUOTE="'"
 
 #: What read_run found in one file.
 RUN_PACKAGE=""
@@ -232,10 +237,24 @@ print_run() {
   done
 }
 
+# shell_word TEXT: prints TEXT as one word of a shell, between two single
+# quotes. A single quote of TEXT ends the word, stands alone after a
+# backslash, and starts the word again.
+shell_word() {
+  local rest="$1" word="$QUOTE"
+
+  while [[ "$rest" == *"$QUOTE"* ]]; do
+    word+="${rest%%"$QUOTE"*}$QUOTE\\$QUOTE$QUOTE"
+    rest="${rest#*"$QUOTE"}"
+  done
+
+  printf '%s' "$word$rest$QUOTE"
+}
+
 # judge NAME: builds the program of the file that read_run read last, and
 # runs the selected tests against it.
 judge() {
-  local name="$1" built="$BUILD_DIR/$RUN_PROGRAM"
+  local name="$1" built="$BUILD_DIR/$RUN_PROGRAM" command
 
   echo "proc-rust: $name: cargo build --release --locked -p $RUN_PACKAGE"
   # A program of an earlier build must not stand in for a build that wrote
@@ -248,8 +267,11 @@ judge() {
     return 1
   fi
 
-  echo "proc-rust: $name: $RUN_VARIABLE=$ROOT/$built, ${#RUN_SELECT[@]} selected"
-  env "$RUN_VARIABLE=$ROOT/$built" "$PROC_NO_SKIP=1" \
+  # The suite splits the value as a shell does. A path with a space is two
+  # words there, unless the value holds it as one word.
+  command="$(shell_word "$ROOT/$built")"
+  echo "proc-rust: $name: $RUN_VARIABLE=$command, ${#RUN_SELECT[@]} selected"
+  env "$RUN_VARIABLE=$command" "$PROC_NO_SKIP=1" \
     uv run pytest "${RUN_SELECT[@]}" -m slow
 }
 

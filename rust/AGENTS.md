@@ -1124,8 +1124,9 @@ does these steps:
 1. It removes the program that an earlier build left.
 2. It runs `cargo build --release --locked -p <package>` in `rust/`.
 3. It runs `uv run pytest <each selected test> -m slow` at the root of the
-   repository. The variable of the file holds the path of the built program.
-   `CRECHE_PROC_NO_SKIP` is `1`, so a test that skips is a failure.
+   repository. The variable of the file holds the path of the built program,
+   as one word of a shell. `CRECHE_PROC_NO_SKIP` is `1`, so a test that
+   skips is a failure.
 
 The first step that fails stops the run. `bin/proc-rust.sh --dry-run` prints
 the lines of each file and starts nothing.
