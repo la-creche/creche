@@ -514,6 +514,28 @@ impl Held {
 }
 
 #[cfg(test)]
+impl Held {
+    /// A held call for a test of the `grants` module. Only a test build has
+    /// this function, so the type has no constructor in a program. The test
+    /// of an audit record needs a value: a record takes its gate from one.
+    pub(super) fn in_test(
+        family: FamilyName,
+        grants_rev: GrantsRev,
+        executor: Executor,
+        args: Arguments,
+        gate: GateId,
+    ) -> Self {
+        Self {
+            family,
+            grants_rev,
+            executor,
+            args,
+            gate,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -623,5 +645,22 @@ mod tests {
         assert_eq!(held.executor(), &Executor::Delegate);
         assert!(held.args().as_map().is_empty());
         assert_eq!(held.gate().as_str(), "0123456789abcdef");
+    }
+
+    #[test]
+    fn the_test_constructor_of_a_held_call_keeps_each_part() {
+        let held = Held::in_test(
+            "vault-oracle".parse().unwrap(),
+            "reg-0a1b2c".parse().unwrap(),
+            Executor::Verb(Verb::Embed),
+            Arguments::empty(),
+            "fedcba9876543210".parse().unwrap(),
+        );
+
+        assert_eq!(held.family().as_str(), "vault-oracle");
+        assert_eq!(held.grants_rev().as_str(), "reg-0a1b2c");
+        assert_eq!(held.executor(), &Executor::Verb(Verb::Embed));
+        assert!(held.args().as_map().is_empty());
+        assert_eq!(held.gate().as_str(), "fedcba9876543210");
     }
 }

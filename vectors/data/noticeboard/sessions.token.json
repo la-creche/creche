@@ -1,0 +1,17 @@
+{
+ "context": {"mode":"0600"},
+ "contract": "contract 02 \u00a73 rules 4 and 5",
+ "entry": "noticeboard.sessions.SessionReader.sessions, the token file of the reader",
+ "format": 1,
+ "notes": ["The input is the bytes of the token file of the reader. The file has mode context.mode. args.file of null stands for a path with no file.","The generator makes one call of the entry point over that file. An accepted vector is a file that the reader takes a token from. value.bearer is the token that the reader gives its transport.","A refused vector is a file that the reader takes no token from. The reader then makes no call. refusal is the problem that a page shows.","The reader reads the file as UTF-8 text, in the text mode of Python. That mode gives LF for each CR and for each CR LF. Then the reader removes the whitespace of Python str.strip from the two ends.","The sentence for a path with no file ends with the text that the system gives for the error.","A problem is an object. class is one of none, missing, unreadable, too large, not JSON, not an object, refused, unreachable and capped. capped is a notice: the reader stopped at a limit and kept what it read before."],
+ "surface": "noticeboard.sessions.token",
+ "vectors": [
+  {"id":"token","input":{"text":"vectors-view-token-0123456789abcdefghijklmn"},"result":"accepted","value":{"bearer":"vectors-view-token-0123456789abcdefghijklmn"}},
+  {"id":"final-line-feed","input":{"text":"vectors-view-token-0123456789abcdefghijklmn\n"},"result":"accepted","value":{"bearer":"vectors-view-token-0123456789abcdefghijklmn"}},
+  {"id":"empty","input":{"text":""},"refusal":{"class":"unreadable","text":"the noticeboard-ro token file is empty"},"result":"refused"},
+  {"id":"spaces-only","input":{"text":"   "},"refusal":{"class":"unreadable","text":"the noticeboard-ro token file is empty"},"result":"refused"},
+  {"id":"line-feed-only","input":{"text":"\n"},"refusal":{"class":"unreadable","text":"the noticeboard-ro token file is empty"},"result":"refused"},
+  {"id":"not-utf8","input":{"base64":"/3ZlY3RvcnMtdmlldy10b2tlbi0wMTIzNDU2Nzg5YWJjZGVmZ2hpamtsbW4="},"refusal":{"class":"unreadable","text":"the noticeboard-ro token file is not UTF-8 text"},"result":"refused"},
+  {"id":"absent","input":{"args":{"file":null}},"refusal":{"class":"unreadable","text":"cannot read the noticeboard-ro token: No such file or directory"},"result":"refused"}
+ ]
+}

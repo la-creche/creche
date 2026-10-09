@@ -1031,6 +1031,10 @@ These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
 - The report counts the test code of a listed file too. The message of an
   assertion is a region that runs only when the assertion fails. An example
   is `assert!(ok, "text")`. An assertion with no message has no such region.
+- `assert!(matches!(...))` in a listed file fails check 1. The arm of
+  `matches!` that does not match is a region. That arm does not run while
+  the assertion holds. Use `assert_eq!` in its place, or put the test under
+  `tests/`.
 - The report holds no file of the `tests/` directory of a crate. Put a test
   that needs a message there.
 - A `const fn` that only the compiler evaluates counts as code that no test
@@ -1055,13 +1059,80 @@ The script has two flags:
   `bin/tests/test_rust_coverage.py` gives the script its reports with this
   flag.
 - `--branch` adds a fifth check: a test took each side of each branch of a
-  listed file. No job uses the flag today. Packet `decisions-ci-coverage`
-  adds a job that does.
+  listed file. A branch is a condition with two sides, true and false. Only
+  the nightly job uses the flag.
 
-Facts about the flag `--branch`:
+The coverage rule of the Python package stays as it is (`chaperone/AGENTS.md`,
+rule 4).
 
-- Only a nightly toolchain measures a branch. With the flag, the script
-  stops when the report holds no branch.
+### The nightly job
+
+`.github/workflows/coverage-nightly.yml` runs `bin/rust-coverage.sh --branch`
+one time a day, on the newest commit of `main`. The run makes the five
+checks. Only a nightly compiler measures a branch, so the job installs one
+nightly toolchain. The variable `RUSTUP_TOOLCHAIN` of the workflow names that
+toolchain by its date. Do not name a nightly in `rust-toolchain.toml`.
+
+The job takes `cargo-llvm-cov` with the two constants of the `rust-coverage`
+job. `bin/tests/test_gate_workflow.py` pins the date. It also holds the two
+constants equal in the three workflow files.
+
+The job blocks no merge and no release, because the check `gate` does not
+need it. A pull request that breaks the fifth check can thus merge. The next
+run of the job is then red. While the list holds no path, a run prints the
+counts of each crate and passes.
+
+The first check already finds most sides that no test took, because the code
+of a side is a region. The false side of an `if` with no `else` is such a
+region: it is at the `}` of the block. The fifth check adds the sides that
+are not a region of their own. The measurements found three kinds of such a
+side:
+
+1. An operand of `&&` or of `||`. The operand can be in a condition, in a
+   let chain or in a value.
+   - For `if a && b`, a test with a false `a` runs the `else` block. The
+     first check then passes when `b` was never false.
+   - For the value `a && b`, a test with a true `a` runs `b`. The first
+     check then passes when `a` was never false.
+2. The guard of a `match` arm, also in `matches!`. A value that does not
+   match the pattern of the arm runs the next arm. The first check then
+   passes when the guard was never false.
+3. The condition of a `while` and the pattern of a `while let`, when the
+   loop also ends at a `break`. A test that ends the loop at the `break`
+   runs the code after the loop. The first check then passes when the
+   condition was never false.
+
+The compiler of the job writes a branch for these forms:
+
+- The condition of an `if` and of a `while`, also in a closure.
+- Each operand of `&&` and of `||` in such a condition. In each other place,
+  the last operand is no branch, for example the `b` of `let c = a && b`.
+- The pattern of `if let`, of `while let` and of `let ... else`.
+- The guard of a `match` arm.
+
+It writes no branch for these forms. The first check holds each one, because
+each path is a region:
+
+- An arm of a `match`.
+- The error path of `?`.
+- The body of a `for` loop.
+
+It writes no branch and no region for these forms. No check finds a side of
+them that no test took ("Known gaps"):
+
+- An `if` in the body of a macro of the file, with its two blocks.
+- The arm of `matches!` that matches. The other arm is a region.
+
+How the fifth check counts:
+
+- With the flag, the script stops when the report holds no branch. The
+  compiler of `rust-toolchain.toml` measures none. It refuses the option of
+  the flag, so the cargo step fails.
+- The flag changes no region and no line of the report.
+- The compiler of the job does not write a region in each place where the
+  compiler of `rust-toolchain.toml` writes one. One example is the message
+  of an assertion: it is no region for the compiler of the job. The first
+  check of the nightly job thus does not replace the `rust-coverage` job.
 - The report holds a branch one time for each copy of its code. The script
   adds the counts of the copies, as it does for a region.
 - A failure line names each side that no test took, for example
@@ -1069,9 +1140,53 @@ Facts about the flag `--branch`:
 - The report does not mark a side that cannot run, for example the second
   side of `if true`. The check fails for such a side. Write no constant
   condition in a listed file.
+- The report counts the test code of a listed file too. A condition in a test
+  module of such a file needs its two sides.
+- The condition that `assert!` or `assert_eq!` tests is no branch by itself.
+- An operand of `&&` or of `||` in an `assert!` is a branch. While the
+  assertion holds, the run never takes the false side of the last operand.
+  Write no `&&` and no `||` in an `assert!` of a listed file. For `&&`,
+  write one `assert!` for each operand. For `||`, write `|`.
+- The run sets neither `cfg(coverage)` nor `cfg(coverage_nightly)`, as the run
+  of the `rust-coverage` job.
+- The compiler of the job also refuses the attribute `#[coverage(off)]`. It
+  takes the attribute only in a crate with the line
+  `#![feature(coverage_attribute)]`. The compiler of `rust-toolchain.toml`
+  refuses that line.
 
-The coverage rule of the Python package stays as it is (`chaperone/AGENTS.md`,
-rule 4).
+Each fact of this section about a branch or a region is a measurement with
+`cargo-llvm-cov` 0.9.1 on the toolchain of the job. The measurements ran on
+a development machine and not on a runner. Measure again after a change of
+the date or of the tool version.
+
+A red run reaches a person through GitHub only:
+
+- GitHub sends the notification of a failed scheduled run to one account. It
+  is the account that last changed the `cron` line of the workflow file, or
+  that turned the workflow on again. That account gets the notification only
+  while its settings have it on.
+- The Actions page of the repository lists each run of the workflow.
+
+When a run is red:
+
+1. Read the failure lines of the run. Each line names a file of the list and
+   the places.
+2. Add the tests that take those sides, in a pull request. For an operand in
+   an `assert!`, change the assertion as the list of the fifth check says.
+3. After the merge, start the workflow by hand on `main`.
+
+Start the workflow by hand on `main` only. The release executor reads each
+workflow run on the head of a merged pull request, and each one must be a
+success. On another ref, the workflow thus skips the job that measures, and
+the run is a success. Do not cancel such a run.
+
+To make the fifth check on your machine, for example before a merge:
+
+1. Install the toolchain that `RUSTUP_TOOLCHAIN` names in the workflow file,
+   with the component `llvm-tools-preview`.
+2. Install `cargo-llvm-cov`, as for the script with no flag.
+3. Set the variable `RUSTUP_TOOLCHAIN` to the name of that toolchain.
+4. Run `bin/rust-coverage.sh --branch`.
 
 ## Dependencies
 
@@ -1204,12 +1319,19 @@ rule 4).
 - "The coverage rule" binds only code that the run compiles. Code of a
   listed file behind a `cfg` that no build of the run sets is in no report.
   No check finds such code.
-- No job runs the branch check of "The coverage rule". The flag `--branch`
-  needs a nightly toolchain. Packet `decisions-ci-coverage` adds the job.
-- The facts about the flag `--branch` are measurements with a nightly
-  toolchain of December 2025 and `llvm-cov` 21, with no `cargo-llvm-cov`.
-  Packet `decisions-ci-coverage` measures them again with the tools of its
-  job.
+- "The coverage rule" finds no side of an `if` in the body of a macro. The
+  report holds no region and no branch for the two blocks of such an `if`.
+  The same applies to the arm of `matches!` that matches. A listed file
+  passes each check although no test ran such code.
+- This `CONTRACT-QUESTION` comment is open in
+  `.github/workflows/coverage-nightly.yml`: no rule says how a red run of
+  the nightly job must reach a person. No rule names that person. The
+  workflow holds the read-only token and sends nothing by itself. A red run
+  thus reaches a person only through the notification of GitHub and through
+  the Actions page. No job of this repository reads the result. A change
+  costs one step with a token that can write.
+- GitHub can delay or drop a run of the nightly job. It turns the schedule of
+  a public repository off after 60 days with no activity in the repository.
 - Two checks do not read four crates yet: `agent-family`,
   `creche-contracts`, `creche-runtime` and `creche-testkit`. Each check has
   a list of its own with the four names. No list names a new crate, so both
@@ -1340,6 +1462,20 @@ rule 4).
   for all the signals that arrive while a reload runs. Two Python services
   run one reload for each SIGHUP that their loop takes. A change costs one
   function, `Hangups::next`.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-runtime/src/http/client.rs`:
+  1. `Target::try_from` for an `HttpUrl`. No contract gives the base URL of
+     a service a grammar. `config::HttpUrl` checks only the scheme, the user
+     part and that a host is there. The Python client takes most of the URLs
+     that pass that check. The function refuses a query and a fragment. It
+     refuses a port that is not 1 to 65535 in ASCII digits, and a host that
+     is no `config::BindHost`.
+  2. `bearer_value`, contract 02 §3 rules 4 and 7. The contract gives a
+     token a least count of bytes and no set of bytes. The client refuses a
+     token with a control character that is not a tab, and a token with the
+     byte 0x7F. The Python client sends such a token when the character is
+     not one of these: NUL, line feed, vertical tab, form feed and carriage
+     return.
 - No check holds the rules of "The rules for a service", except a part of
   rule 2 and a part of rule 13. A service crate that breaks one of the
   other rules builds and passes the lint gate.
@@ -1419,11 +1555,16 @@ rule 4).
   2. A fence key that its verb does not read.
   3. `NaN` and an integer past 64 bits in the arguments of a call.
   4. A request body in UTF-16 or in UTF-32.
-- `grants::AuditRecord` has public fields and holds no rule between two
-  fields. Contract 04 §6.4 has one: the two records of a gated call name the
-  same gate. The writer of the port holds that rule. The vectors of
-  `chaperone.audit_line` hold records that break the rule, because the Python
+- `grants::AuditRecord` holds no rule between its outcome and its gate.
+  Contract 04 §6.4 gives each record of a gated call the gate of that call.
+  The type permits a record with the outcome `Pending` and no gate. The
+  writer of the port holds that rule. The vectors of `chaperone.audit_line`
+  hold a denial with an approval reason and no gate, because the Python
   writer checks no field.
+- `AuditRecord::with_gate` takes the gate from a `grants::Held`, and `Held`
+  is a sketch. Only a test build has a constructor of `Held`:
+  `Held::in_test`. No program can write a record with a gate until the port
+  of the chaperone adds the decision function.
 - `GrantFile::to_bytes` refuses a file of more than 256 KiB (contract 04
   §1.2). The Python caregiver writes such a file, and the Python chaperone
   then refuses it. No vector holds such a file.
@@ -1433,9 +1574,10 @@ rule 4).
   functions read the JSON of a file and check no field. So `same_grants`
   differs: a file with no `limits` block is equal to a file with the three
   defaults.
-- `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
-  The port of the chaperone adds the decision function and the function that
-  approves a held call. No other code builds a value.
+- `grants::Allowed` and `grants::Held` are a sketch. No program builds a
+  value. The port of the chaperone adds the decision function and the
+  function that approves a held call. A program then builds a value only in
+  those two functions.
 - No vector covers a request body with a content type that is not JSON. The
   HTTP layer of the port holds that rule.
 - These `CONTRACT-QUESTION` comments are open in
@@ -1541,6 +1683,12 @@ rule 4).
       contract names the note for a refused move of a turn. The Python
       `attendance` writes that note only for a move that its state table
       refuses. The type takes each pair of turn states.
+  16. `StreamRecord`, contract 02 §8.1. The contract says that the set of
+      kinds is closed. It does not say what a reader of the stream does
+      with a record of another kind. The type has no variant for such a
+      record, so a reader that makes the type refuses it. The Python
+      readers of the stream give no output for such a line. The crate has
+      no reader of a stream record yet.
 - The `session` module differs from the Python code on purpose in four
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
@@ -1598,10 +1746,12 @@ rule 4).
 - `session::JournalLine::new` does not check the turn against the kind of
   the body. A `turn_queued` line with no turn is a value of the type. The
   Python writer has no such check.
-- The body types of a journal line, for example `session::TurnStarted`, and
-  `session::ServiceNote` have public fields. Some fields are a plain
-  `String`: the contract gives them no grammar. Code can build such a body
-  with each text.
+- Some fields of the body types of a journal line and of
+  `session::ServiceNote` are a plain `String`: the contract gives them no
+  grammar. Code can build such a body with each text.
+- Only `serde` makes a `session::Lease`, a `session::SessionView` and a
+  `session::TurnView`, through the raw type of each one. No constructor
+  takes typed parts.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/untrusted.rs`:
   1. `parse_object`, contract 02 §3 rule 3. The contract says that a body is

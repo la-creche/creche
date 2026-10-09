@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # CI and OPERATOR: the coverage rule of the Rust workspace under rust/
 # (rust/AGENTS.md, "The coverage rule"). The `rust-coverage` job of gate.yml
-# and release.yml runs it. No hook runs it.
+# and release.yml runs it. coverage-nightly.yml runs it with --branch, one
+# time a day. No hook runs it.
 #   bin/rust-coverage.sh                 runs the tests of the workspace with
 #                                        cargo-llvm-cov, then checks the report
 #   bin/rust-coverage.sh --branch        the same, and each branch of a listed
@@ -12,7 +13,10 @@
 # Needs python3 on PATH. A run with no --report also needs cargo,
 # cargo-llvm-cov and the component llvm-tools-preview of the toolchain.
 # rustup takes the toolchain from rust/rust-toolchain.toml, so the cargo step
-# runs inside rust/.
+# runs inside rust/. A run with --branch needs another toolchain: the caller
+# names the nightly in RUSTUP_TOOLCHAIN, which outranks that file.
+# .github/workflows/coverage-nightly.yml holds the name. With the toolchain
+# of the file, the cargo step of --branch fails.
 #
 # rust/coverage-files.txt is the list. The check fails in four cases:
 #   1. a region or a line of a listed file ran in no test

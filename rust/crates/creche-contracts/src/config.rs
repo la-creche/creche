@@ -49,7 +49,7 @@ pub mod site;
 pub use values::{
     BindAddress, BindAddressError, BindHost, BindHostError, DirPath, FilePath, HttpUrl,
     HttpUrlError, LanAddress, LanAddressError, PathError, Port, PortError, Seconds, SecondsError,
-    SocketPath, TokenFilePath,
+    SocketPath, TokenFilePath, UrlScheme,
 };
 
 use crate::secret::{Secret, SecretError};
