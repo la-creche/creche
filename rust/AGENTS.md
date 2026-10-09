@@ -1584,6 +1584,22 @@ To make the fifth check on your machine, for example before a merge:
   `mcp::Tool` drops the title that is a member of the tool itself.
 - `mcp::Tool` keeps the input schema as an `Object`. MCP gives that schema
   the `type` `object`, and the module does not check that member.
+- `mcp::WireError` is the one error type of the message, of `Object` and of
+  the three results. A signature thus names a failure that its function
+  cannot give. The variant `Member` holds three reasons. Item 8 of "Where a
+  new type goes" asks for an error type for each type. No packet has that
+  part yet.
+- Against rule 13, `mcp` holds a second copy of one value of `json`. That
+  value is the compact style, `COMPACT`. `json::Opaque` gives no member of
+  its value and takes no typed value. The functions `reread` and
+  `opaque_of` of `mcp` thus write a value in that style and read the text
+  again. A packet that can change `json` gives `Opaque` those two
+  conversions, and then deletes the copy and the two functions. No packet
+  has that part yet.
+- An `mcp::Object` can nest 64 levels, the limit of the reader. An
+  `mcp::Line` adds one level to its object. The writer thus refuses a
+  message that holds the deepest object. The `CONTRACT-QUESTION` comment of
+  `json/write.rs` above has the cause.
 - Two texts of "When the two results differ" wait for a confirmation of the
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`

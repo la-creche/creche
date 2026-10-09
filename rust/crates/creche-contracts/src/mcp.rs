@@ -387,6 +387,10 @@ fn opaque_of<T: Serialize + ?Sized>(value: &T) -> Result<Opaque, WireError> {
 /// `TryFrom<Opaque>`. Each one refuses a JSON value of another kind.
 /// [`Object::parse`] gives the members to a raw type of the caller.
 ///
+/// An object can nest as deep as the strict reader permits. A [`Line`] adds
+/// one level to its object. The writer thus refuses a line that holds the
+/// deepest object.
+///
 /// ```
 /// use creche_contracts::json::{ByteCap, Opaque};
 /// use creche_contracts::mcp::{Object, WireError};
@@ -2164,6 +2168,16 @@ mod tests {
         assert_eq!(line(null_text), null);
         assert_eq!(line(none_text), none);
 
+        // A notification has its method before its parameters.
+        assert_eq!(
+            written(&note("m", Some(r#"{"n":1}"#))),
+            r#"{"jsonrpc":"2.0","method":"m","params":{"n":1}}"#
+        );
+        assert_eq!(
+            written(&note("m", None)),
+            r#"{"jsonrpc":"2.0","method":"m"}"#
+        );
+
         // The style of the caller applies to each part of a line.
         let spaced = Style::new(Layout::Spaced, Charset::Ascii, KeyOrder::AsGiven);
         let asked = request("caf\u{e9}".into(), "tools/list", Some(r#"{"cursor":"p2"}"#));
@@ -2243,6 +2257,30 @@ mod tests {
             params.parse::<Vec<u8>>(),
             Err(WireError::Shape(_))
         ));
+    }
+
+    #[test]
+    fn a_line_with_the_deepest_object_has_no_json_form() {
+        // An object nests as deep as the reader permits. A line adds one
+        // level to it, and the writer refuses the level past the limit.
+        let nested = |levels: usize| {
+            let lists = levels - 1;
+            object(&format!(
+                r#"{{"n":{}1{}}}"#,
+                "[".repeat(lists),
+                "]".repeat(lists)
+            ))
+        };
+        let asked = |params: Object| Line::Notification {
+            method: "m".to_owned(),
+            params: Some(params),
+        };
+
+        assert!(json::write(&asked(nested(json::DEPTH_MAX - 1)), COMPACT).is_ok());
+        assert_eq!(
+            json::write(&asked(nested(json::DEPTH_MAX)), COMPACT),
+            Err(WriteError::NoJsonForm)
+        );
     }
 
     #[test]
