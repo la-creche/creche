@@ -253,6 +253,13 @@ reason. The packet that writes the three bodies obeys these rules:
   of the operating system fails. The skeleton fixed the signature of the
   function, and that signature has no error. The owner of the crate decides
   if the function gets one.
+- `command` does not refuse each program file that CPython refuses. Such a
+  file has no `#!` line and is no binary program, and CPython gives the
+  error "Exec format error" for it. For a program name with no `/`, the
+  runner gives the file to `/bin/sh` when the command clears the environment
+  or sets `PATH`. For a path with a `/`, Linux refuses the file and macOS
+  gives it to `/bin/sh`. A service that names each program by its absolute
+  path gets the refusal on Linux.
 - No test gives `faults::publish` a fault file whose source is `caregiver`.
   `FaultFile::new` refuses that source, so no code can build such a file. A
   test gives the private function `publish_as` no writer in its place.

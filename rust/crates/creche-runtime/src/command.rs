@@ -1150,6 +1150,16 @@ fn not_started(text: &str) -> RunError {
 /// open each descriptor with the flag, and `readfile` of this crate does the
 /// same.
 ///
+/// A program file can have no `#!` line and be no binary program. CPython
+/// refuses such a file with the error "Exec format error"
+/// (`subprocess.py:1912-1921`, version 3.13). This function does not refuse
+/// each such file. For a program name with no `/`, the standard library
+/// calls `execvp` when the command clears the environment or sets `PATH`,
+/// and `execvp` gives the file to `/bin/sh`. Those commands have
+/// [`EnvPolicy::InheritOnly`], [`EnvPolicy::Exactly`] or a `PATH` pair of
+/// [`EnvPolicy::InheritAnd`]. For a path with a `/`, Linux refuses the file
+/// as CPython does, and macOS gives it to `/bin/sh`.
+///
 /// One error leaves a program with no owner. `tokio` starts the program
 /// first and gives its pipes to the I/O driver after that. When the driver
 /// refuses a pipe, the program runs and this function gives
@@ -3196,6 +3206,67 @@ mod tests {
                 os_text: String::from("No such file or directory"),
             })
         );
+    }
+
+    /// Writes `text` as the file `name` of the bench, with mode `0700` and
+    /// with no `#!` line.
+    ///
+    /// A shell writes the file, as `write_program` does. This process never
+    /// holds the file open for a write, so no start of the file fails with
+    /// "Text file busy".
+    fn plain_program(bench: &Bench, name: &str, text: &str) -> PathBuf {
+        let path = bench.file(name);
+        let written = std::process::Command::new(SHELL)
+            .args([
+                "-c",
+                "printf '%s' \"$2\" > \"$1\" && chmod 700 \"$1\"",
+                SHELL,
+            ])
+            .arg(&path)
+            .arg(text)
+            .status()
+            .unwrap();
+
+        assert!(written.success(), "no file {}", path.display());
+
+        path
+    }
+
+    /// CPython refuses a program file with no `#!` line that is no binary
+    /// program: "Exec format error" (`subprocess.py:1912-1921`, version
+    /// 3.13). The runner does not refuse each such file.
+    #[test]
+    fn a_program_file_with_no_script_line_goes_to_the_shell_by_its_name() {
+        let bench = Bench::new();
+        let file = plain_program(&bench, "creche-test-plain", "echo \"ran $1\"\n");
+
+        // A name with no `/`, and an environment that gives the `PATH`: the
+        // standard library calls `execvp`, which gives the file to the
+        // shell. The words of the command stay the words of the program.
+        let path = vec![(String::from("PATH"), bench.dir())];
+        let by_name = Command::new("creche-test-plain", limit(), AtShutdown::Kill)
+            .arg("two words")
+            .env(EnvPolicy::Exactly(path));
+        let finished = bench.run(by_name).unwrap();
+
+        assert_eq!(finished.ended(), Ended::Code(0));
+        assert_eq!(finished.stdout(), b"ran two words\n");
+
+        // A path with a `/`: Linux refuses the file, as CPython does. macOS
+        // gives it to the shell.
+        let by_path = Command::new(file.to_str().unwrap(), limit(), AtShutdown::Kill).arg("whole");
+        let result = bench.run(by_path);
+
+        if cfg!(target_os = "linux") {
+            assert_eq!(
+                result,
+                Err(RunError::NotStarted {
+                    os_text: String::from("Exec format error"),
+                })
+            );
+        } else {
+            assert_eq!(result.unwrap().stdout(), b"ran whole\n");
+        }
     }
 
     #[test]
