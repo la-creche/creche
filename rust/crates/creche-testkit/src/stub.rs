@@ -2184,6 +2184,36 @@ mod tests {
         });
     }
 
+    /// Connects to `socket` until the operating system refuses the connect,
+    /// and returns the error of that connect. The function does not end
+    /// while a listener is open on `socket`.
+    ///
+    /// A child program of another test can hold a listener open after its
+    /// drop, as `refused_socket` says. The backlog of that listener takes a
+    /// connect, and no code accepts it. The operating system refuses a
+    /// connect only after the child closes the listener. A connect that
+    /// starts before that close has one of two results. The function
+    /// connects again after each one:
+    ///
+    /// - `Ok`: the connection is in the backlog. The close of the listener
+    ///   ends it. The function waits for that end, and not for a time that
+    ///   it guesses.
+    /// - `ConnectionReset`: Linux resets each connection of the backlog when
+    ///   the listener closes. `tokio` reads the error of the socket after
+    ///   its connect call, so a reset in that time is the error of the
+    ///   connect. macOS sets no error, and the connect is `Ok` there.
+    async fn refusal(socket: &Path) -> io::Error {
+        loop {
+            match UnixStream::connect(socket).await {
+                Ok(mut taken) => {
+                    let _ = taken.read_to_end(&mut Vec::new()).await;
+                }
+                Err(error) if error.kind() == io::ErrorKind::ConnectionReset => {}
+                Err(error) => return error,
+            }
+        }
+    }
+
     #[test]
     fn a_dropped_stub_closes_its_listener_and_its_connections() {
         block_on(async {
@@ -2200,35 +2230,9 @@ mod tests {
             let closed = soon(held.read_to_end(&mut rest)).await;
             // The path of the socket is the path of this test only, so the
             // connect reaches no stub of another test.
-            //
-            // A child program of another test can hold the listener open
-            // after the drop, as `refused_socket` says. The backlog of that
-            // listener takes a connect, and no code accepts it. The
-            // operating system refuses a connect only after the child
-            // closes the listener. A connect that starts before that close
-            // has one of two results. The test connects again after each
-            // one:
-            //
-            // - `Ok`: the connection is in the backlog. The close of the
-            //   listener ends it. The test waits for that end, and not for
-            //   a time that it guesses.
-            // - `ConnectionReset`: Linux resets each connection of the
-            //   backlog when the listener closes. `tokio` reads the error
-            //   of the socket after its connect call, so a reset in that
-            //   time is the error of the connect. macOS sets no error, and
-            //   the connect is `Ok` there.
-            let refused = soon(async {
-                loop {
-                    match UnixStream::connect(&socket).await {
-                        Ok(mut taken) => {
-                            let _ = taken.read_to_end(&mut Vec::new()).await;
-                        }
-                        Err(error) if error.kind() == io::ErrorKind::ConnectionReset => {}
-                        Err(error) => return error,
-                    }
-                }
-            })
-            .await;
+            let refused = timeout(LONG, refusal(&socket))
+                .await
+                .expect("the listener of the dropped stub still takes a connect");
 
             assert!(matches!(closed, Ok(0) | Err(_)), "{closed:?}");
             assert_eq!(rest, b"");
@@ -2803,10 +2807,9 @@ mod tests {
         assert_eq!(while_held, None);
     }
 
-    /// Why the test of a dropped stub waits on a connection that the
-    /// backlog took: the close of a listener ends each connection of its
-    /// backlog. Linux resets that connection, and macOS gives the end of
-    /// its bytes.
+    /// Why `refusal` waits on a connection that the backlog took: the close
+    /// of a listener ends each connection of its backlog. Linux resets that
+    /// connection, and macOS gives the end of its bytes.
     ///
     /// A child program of another test can hold the listener for a short
     /// time after the drop. The read then ends when that child closes it.
@@ -2826,6 +2829,57 @@ mod tests {
                 matches!(end, Ok(0) | Err(io::ErrorKind::ConnectionReset)),
                 "{end:?}"
             );
+        });
+    }
+
+    /// A listener that closes in the middle of a connect: the connect call
+    /// is complete, and `tokio` did not yet read the error of the socket.
+    /// Linux gives `ConnectionReset` to that connect, and macOS gives `Ok`.
+    /// The wait for a refusal connects again after each one.
+    ///
+    /// The test makes two such connects. `plain` shows the result of the
+    /// operating system, and thus the arm that `wait` took. On Linux, this
+    /// order of events failed the test of a dropped stub in some runs.
+    #[test]
+    fn the_wait_for_a_refusal_passes_a_listener_that_closes_in_a_connect() {
+        use std::task::Poll;
+
+        block_on(async {
+            let root = TempRoot::new().unwrap();
+            let path = root.path().join("mid.sock");
+            let listener = UnixListener::bind(&path).unwrap();
+            let mut plain = std::pin::pin!(UnixStream::connect(&path));
+            let mut wait = std::pin::pin!(refusal(&path));
+            // The first poll makes the connect call. The backlog takes the
+            // connection, and the future does not end.
+            let in_a_connect = std::future::poll_fn(|cx| {
+                let first = plain.as_mut().poll(cx).is_pending();
+                let second = wait.as_mut().poll(cx).is_pending();
+
+                Poll::Ready(first && second)
+            })
+            .await;
+            // A child program of another test can hold the listener after
+            // the drop. The wait below then ends when that child closes it.
+            // Linux ends the connections of a backlog in the order of their
+            // connects, and this connection is the last one. Its end thus
+            // shows that the two connects above have the result of the
+            // close.
+            let mut last = UnixStream::connect(&path).await.unwrap();
+
+            drop(listener);
+            let _ = soon(last.read_to_end(&mut Vec::new())).await;
+            let plain = soon(plain).await.map(drop);
+            let refused = soon(wait).await;
+
+            let of_the_system = if cfg!(target_os = "linux") {
+                Err(io::ErrorKind::ConnectionReset)
+            } else {
+                Ok(())
+            };
+            assert!(in_a_connect);
+            assert_eq!(plain.map_err(|error| error.kind()), of_the_system);
+            assert_eq!(refused.kind(), io::ErrorKind::ConnectionRefused);
         });
     }
 }
