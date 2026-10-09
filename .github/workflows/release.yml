@@ -409,10 +409,13 @@ jobs:
       # before the unpack, so an archive that changed stops the job. The
       # archive holds the program and no directory.
       #
-      # To take another version, change the two constants together. Compute
-      # the SHA-256 of the new archive, and compare it with the digest that
-      # the release page shows for that archive.
-      # bin/tests/test_gate_workflow.py pins both.
+      # To take another version, change the two constants together. Three
+      # workflow files hold this step: gate.yml, release.yml and
+      # coverage-nightly.yml. Change each one. Compute the SHA-256 of the new
+      # archive, and compare it with the digest that the release page shows
+      # for that archive.
+      # bin/tests/test_gate_workflow.py pins both, and holds the three files
+      # equal.
       - name: cargo-llvm-cov
         if: needs.scope.outputs.rust != 'false'
         working-directory: rust
