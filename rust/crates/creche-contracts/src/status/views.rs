@@ -60,53 +60,180 @@ fn not_negative(slot: &Slot<Integer>) -> Option<Integer> {
 /// The epoch that `attendance` uses when a document has none.
 const FIRST_EPOCH: u64 = 1;
 
-/// One sandbox that `attendance` takes from a document.
+/// One sandbox that `attendance` takes from a document. Only [`attendance`]
+/// builds a value.
+///
+/// ```
+/// use creche_contracts::status::views::{AttendanceSandbox, read_attendance};
+///
+/// let bytes = br#"{"sandboxes": [{"id": "chat-s1", "state": "ready"}]}"#;
+/// let status = read_attendance(bytes, &"chat".parse().unwrap()).unwrap();
+/// let sandbox: &AttendanceSandbox = &status.sandboxes()[0];
+/// assert_eq!(sandbox.id().as_str(), "chat-s1");
+/// assert_eq!(sandbox.supervisor_env(), "");
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{AttendanceSandbox, read_attendance};
+///
+/// let bytes = br#"{"sandboxes": [{"id": "chat-s1", "state": "ready"}]}"#;
+/// let status = read_attendance(bytes, &"chat".parse().unwrap()).unwrap();
+/// let sandbox: &AttendanceSandbox = &status.sandboxes()[0];
+/// let with_path = AttendanceSandbox { supervisor_env: String::from("/env"), ..sandbox.clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttendanceSandbox {
-    /// The name of the sandbox.
-    pub id: SandboxName,
-    /// The lifecycle state.
-    pub state: SandboxLifecycle,
-    /// The path of the `supervisor.env`. Empty when the row has none.
-    pub supervisor_env: String,
+    id: SandboxName,
+    state: SandboxLifecycle,
+    supervisor_env: String,
 }
 
-/// What `attendance` takes from one status document.
+impl AttendanceSandbox {
+    /// The name of the sandbox.
+    #[must_use]
+    pub fn id(&self) -> &SandboxName {
+        &self.id
+    }
+
+    /// The lifecycle state.
+    #[must_use]
+    pub fn state(&self) -> SandboxLifecycle {
+        self.state
+    }
+
+    /// The path of the `supervisor.env`. Empty when the row has none.
+    #[must_use]
+    pub fn supervisor_env(&self) -> &str {
+        &self.supervisor_env
+    }
+}
+
+/// What `attendance` takes from one status document. Only [`attendance`]
+/// builds a value.
+///
+/// ```
+/// use creche_contracts::status::views::{AttendanceStatus, read_attendance};
+///
+/// let bytes = br#"{"kind": "attended", "triggers": {"enqueue": true}}"#;
+/// let status: AttendanceStatus = read_attendance(bytes, &"chat".parse().unwrap()).unwrap();
+/// assert_eq!(status.family().as_str(), "chat");
+/// assert_eq!(status.state(), None);
+/// assert!(status.accepts_dispatch());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{AttendanceStatus, read_attendance};
+///
+/// let bytes = br#"{"kind": "attended", "triggers": {"enqueue": true}}"#;
+/// let status: AttendanceStatus = read_attendance(bytes, &"chat".parse().unwrap()).unwrap();
+/// let status = AttendanceStatus { accepts_dispatch: false, ..status };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttendanceStatus {
+    family: FamilyName,
+    kind: Option<Kind>,
+    state: Option<FamilyState>,
+    written_at: Option<Timestamp>,
+    config_rev: String,
+    epoch: Integer,
+    never_valid: bool,
+    blocking_fault: Option<String>,
+    fault_codes: BTreeSet<String>,
+    sandboxes: Vec<AttendanceSandbox>,
+    max_running_turns: Option<Integer>,
+    job_timeout_s: Option<Integer>,
+    accepts_dispatch: bool,
+}
+
+impl AttendanceStatus {
     /// The family that the caller asked for. The reader does not read the
     /// `family` field of the document.
-    pub family: FamilyName,
+    #[must_use]
+    pub fn family(&self) -> &FamilyName {
+        &self.family
+    }
+
     /// The kind. `None` when the document has no kind, or has an unknown
     /// word. The reader has no default kind: a default opens the family to
     /// the doors of that kind.
-    pub kind: Option<Kind>,
+    #[must_use]
+    pub fn kind(&self) -> Option<Kind> {
+        self.kind
+    }
+
     /// The state. `None` when the document has no state, or has an unknown
     /// word.
-    pub state: Option<FamilyState>,
+    #[must_use]
+    pub fn state(&self) -> Option<FamilyState> {
+        self.state
+    }
+
     /// When `caregiver` wrote the document. `None` when the reader cannot
     /// read the field.
-    pub written_at: Option<Timestamp>,
+    #[must_use]
+    pub fn written_at(&self) -> Option<Timestamp> {
+        self.written_at
+    }
+
     /// The revision of the family config mount. Empty when the document has
     /// none.
-    pub config_rev: String,
+    #[must_use]
+    pub fn config_rev(&self) -> &str {
+        &self.config_rev
+    }
+
     /// The epoch of the credentials. An epoch that is missing, negative or
     /// not an integer reads as 1.
-    pub epoch: Integer,
+    #[must_use]
+    pub fn epoch(&self) -> &Integer {
+        &self.epoch
+    }
+
     /// Whether `validation.never_valid` is `true`.
-    pub never_valid: bool,
+    #[must_use]
+    pub fn never_valid(&self) -> bool {
+        self.never_valid
+    }
+
     /// The code of the first fault with `blocks_turns: true` and a code.
-    pub blocking_fault: Option<String>,
+    #[must_use]
+    pub fn blocking_fault(&self) -> Option<&str> {
+        self.blocking_fault.as_deref()
+    }
+
     /// The code of each fault that has one.
-    pub fault_codes: BTreeSet<String>,
+    #[must_use]
+    pub fn fault_codes(&self) -> &BTreeSet<String> {
+        &self.fault_codes
+    }
+
     /// Each sandbox row with a sandbox name and a known state.
-    pub sandboxes: Vec<AttendanceSandbox>,
+    #[must_use]
+    pub fn sandboxes(&self) -> &[AttendanceSandbox] {
+        &self.sandboxes
+    }
+
     /// `limits.max_running_turns`, when it is an integer of zero or more.
-    pub max_running_turns: Option<Integer>,
+    #[must_use]
+    pub fn max_running_turns(&self) -> Option<&Integer> {
+        self.max_running_turns.as_ref()
+    }
+
     /// `limits.job_timeout_s`, when it is an integer of zero or more.
-    pub job_timeout_s: Option<Integer>,
+    #[must_use]
+    pub fn job_timeout_s(&self) -> Option<&Integer> {
+        self.job_timeout_s.as_ref()
+    }
+
     /// Whether `triggers.enqueue` is `true`.
-    pub accepts_dispatch: bool,
+    #[must_use]
+    pub fn accepts_dispatch(&self) -> bool {
+        self.accepts_dispatch
+    }
 }
 
 /// The view of `attendance`: `attendance.family_status.StatusReader.read`.
@@ -897,7 +1024,7 @@ mod tests {
         let row = noticeboard(&read, "chat", now());
         let serving = door_tui(&read, now()).unwrap();
 
-        assert_eq!(attendance(&read, &chat()).sandboxes.len(), 1);
+        assert_eq!(attendance(&read, &chat()).sandboxes().len(), 1);
         assert_eq!(row.health, Health::InSync);
         assert_eq!(row.reason, None);
         assert_eq!(row.age.unwrap().whole_seconds(), 30);
@@ -913,10 +1040,10 @@ mod tests {
         let unknown = attendance(&raw(r#"{"kind": "robot", "state": "in sync"}"#), &chat());
         let empty = attendance(&raw("{}"), &chat());
 
-        assert_eq!(served.kind, Some(Kind::Attended));
-        assert_eq!(served.state, Some(FamilyState::InSync));
-        assert_eq!((unknown.kind, unknown.state), (None, None));
-        assert_eq!((empty.kind, empty.state), (None, None));
+        assert_eq!(served.kind(), Some(Kind::Attended));
+        assert_eq!(served.state(), Some(FamilyState::InSync));
+        assert_eq!((unknown.kind(), unknown.state()), (None, None));
+        assert_eq!((empty.kind(), empty.state()), (None, None));
     }
 
     #[test]
@@ -948,7 +1075,7 @@ mod tests {
         let read = raw(&text);
         let row = noticeboard(&read, "chat", now());
 
-        assert_eq!(attendance(&read, &chat()).written_at, None);
+        assert_eq!(attendance(&read, &chat()).written_at(), None);
         assert_eq!(row.health, Health::Unknown);
         assert_eq!(row.reason, Some(Reason::NoWrittenAt));
         assert_eq!(row.age, None);

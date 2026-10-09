@@ -198,31 +198,31 @@ fn replay_attendance(_: &Surface, vector: &Vector) -> Replay {
         return Err(None);
     };
     let sandboxes: Vec<Value> = status
-        .sandboxes
+        .sandboxes()
         .iter()
         .map(|sandbox| {
             json!({
-                "id": sandbox.id.as_str(),
-                "state": sandbox.state.as_str(),
-                "playpen_env": sandbox.supervisor_env,
+                "id": sandbox.id().as_str(),
+                "state": sandbox.state().as_str(),
+                "playpen_env": sandbox.supervisor_env(),
             })
         })
         .collect();
 
     Ok(Some(json!({
-        "family": status.family.as_str(),
-        "kind": status.kind.map(|kind| kind.as_str()),
-        "state": status.state.map(|state| state.as_str()),
-        "written_at": status.written_at.map(isoformat),
-        "config_rev": status.config_rev,
-        "epoch": integer_value(&status.epoch),
-        "never_valid": status.never_valid,
-        "blocking_fault": status.blocking_fault,
-        "fault_codes": status.fault_codes,
+        "family": status.family().as_str(),
+        "kind": status.kind().map(|kind| kind.as_str()),
+        "state": status.state().map(|state| state.as_str()),
+        "written_at": status.written_at().map(isoformat),
+        "config_rev": status.config_rev(),
+        "epoch": integer_value(status.epoch()),
+        "never_valid": status.never_valid(),
+        "blocking_fault": status.blocking_fault(),
+        "fault_codes": status.fault_codes(),
         "sandboxes": sandboxes,
-        "max_running_turns": optional_integer(status.max_running_turns.as_ref()),
-        "job_timeout_s": optional_integer(status.job_timeout_s.as_ref()),
-        "accepts_dispatch": status.accepts_dispatch,
+        "max_running_turns": optional_integer(status.max_running_turns()),
+        "job_timeout_s": optional_integer(status.job_timeout_s()),
+        "accepts_dispatch": status.accepts_dispatch(),
     })))
 }
 
