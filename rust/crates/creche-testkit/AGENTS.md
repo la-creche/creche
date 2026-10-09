@@ -42,31 +42,27 @@ No stub is left: each function of this crate has its body.
    `unwrap`.
 3. Edit only the files of your packet. `lib.rs`, `Cargo.toml` and this file
    belong to the skeleton packet.
-4. A stub has the form that `crates/creche-runtime/AGENTS.md` gives, in
-   "Rules for a change here". Remove its attribute when you write the body.
-5. An opaque type of the skeleton has one private field of the type `()`.
-   Replace that field when you write the body of the type.
-6. Do not use the client or the server of `creche-runtime` in `stub.rs`. The
+4. Do not use the client or the server of `creche-runtime` in `stub.rs`. The
    tests of that client and of that server use the stub.
-7. `HttpStub` binds a loopback port that the operating system selects, or a
+5. `HttpStub` binds a loopback port that the operating system selects, or a
    Unix socket under a `TempRoot`. Never bind `0.0.0.0`.
-8. Give each type that records a request a `Debug` that prints no header
+6. Give each type that records a request a `Debug` that prints no header
    value.
-9. A helper reads no file outside `rust/` and `vectors/data`
+7. A helper reads no file outside `rust/` and `vectors/data`
    (`rust/AGENTS.md`, "Tests").
-10. Keep the name of a `TempRoot` short. The path of a Unix socket has 104
-    bytes at most on macOS.
-11. A build of this crate turns on the feature `test-util` of `tokio`. A
-    program of this crate must not pause the time of `tokio`.
-12. Give each type with a private field its `compile_fail` doc test
+8. Keep the name of a `TempRoot` short. The path of a Unix socket has 104
+   bytes at most on macOS.
+9. A build of this crate turns on the feature `test-util` of `tokio`. A
+   program of this crate must not pause the time of `tokio`.
+10. Give each type with a private field its `compile_fail` doc test
     (`rust/AGENTS.md`, "Tests"). The packet that writes the body of the type
     writes that test.
-13. Some differences of a helper from its Python origin are in no vector.
+11. Some differences of a helper from its Python origin are in no vector.
     Describe such a difference in the doc comment of the helper. Pin it
     with one plain test.
-14. Name the Python origin of a helper in its doc comment, with the file and
+12. Name the Python origin of a helper in its doc comment, with the file and
     the line. Some helpers have no Python origin. Say so there.
-15. Write no `println!` and no `eprintln!` in code that is not a test.
+13. Write no `println!` and no `eprintln!` in code that is not a test.
 
 ## The program `creche-probe`
 

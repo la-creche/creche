@@ -53,51 +53,40 @@ The answer types of contract 02 need the readers, and they are in
    this file belong to the skeleton packet.
 2. Change no signature that the skeleton fixed. A module packet writes a
    body. Ask the owner of the crate before you change a signature.
-3. No stub is left in this crate. A new stub is `todo!()` below this
-   attribute:
-   `#[expect(clippy::todo, reason = "skeleton: packet <key> writes this body")]`.
-   A stub with a named parameter also names `unused_variables` there.
-4. Remove the attribute when you write the body. The build fails on an
-   attribute that stays.
-5. Write the stub of a trait method that returns `impl Future` as `async fn`
-   in the implementation.
-6. Mark each doc example that calls a stub `no_run`.
-7. An opaque type of the skeleton has one private field of the type `()`.
-   Replace that field when you write the body of the type.
-8. This crate has `creche-testkit` as a dev dependency, and `creche-testkit`
+3. This crate has `creche-testkit` as a dev dependency, and `creche-testkit`
    depends on this crate. A test inside `src/` thus sees other types than the
    testkit sees.
    - Put a test that uses `FixedClock`, `PausedClock`, `CountingEntropy` or
      `FakeRunner` under `tests/`, inside a `#[cfg(test)]` module.
    - A test inside `src/` uses only `TempRoot`, `HttpStub`, `RawHttp`,
      `write_program` and the vectors reader.
-9. Give each type with a private field its `compile_fail` doc test
+4. Give each type with a private field its `compile_fail` doc test
    (`rust/AGENTS.md`, "Tests"). The packet that writes the body of the type
    writes that test.
-10. Where a surface `runtime.*` of `vectors/data` covers a function, the test
-    of that function walks each vector. Read the vectors through
-    `creche_testkit::vectors`. Name each surface in a table of the test.
-11. Some differences from the Python origin are in no vector. Describe such
-    a difference in the doc comment of the Rust function. Pin it with one
-    plain test. Packet `decisions-runtime-tables` removes the `DEVIATIONS`
-    tables of this crate. Until then, add no row to one.
-    - A new `Command` has an empty standard input and an output cap of 1 MiB.
-      `subprocess.run` of Python gives the child the standard input of the
-      process and has no cap.
-    - A port of such a call can keep one of the two defaults. The doc
-      comment of its function then names that default.
-12. Name the Python origin of each function in its doc comment, with the file
-    and the line.
-13. Write no `println!` and no `eprintln!` in code that is not a test. Use
-    `log::out_line`, `log::err_line` and the log macros.
-14. An error holds the kind and the text of the operating system error. It
-    never holds a secret, the content of a file or the body of a request.
-15. Implement `Display` and `Error` for each error type yourself. The
+5. Where a surface `runtime.*` of `vectors/data` covers a function, the test
+   of that function walks each vector. Read the vectors through
+   `creche_testkit::vectors`. Name each surface in a table of the test.
+6. Some differences from the Python origin are in no vector. Describe such
+   a difference in the doc comment of the Rust function. Pin it with one
+   plain test. Packet `decisions-runtime-tables` removes the `DEVIATIONS`
+   tables of this crate. Until then, add no row to one.
+   - A new `Command` has an empty standard input and an output cap of 1 MiB.
+     `subprocess.run` of Python gives the child the standard input of the
+     process and has no cap.
+   - A port of such a call can keep one of the two defaults. The doc
+     comment of its function then names that default.
+7. Name the Python origin of each function in its doc comment, with the file
+   and the line.
+8. Write no `println!` and no `eprintln!` in code that is not a test. Use
+   `log::out_line`, `log::err_line` and the log macros.
+9. An error holds the kind and the text of the operating system error. It
+   never holds a secret, the content of a file or the body of a request.
+10. Implement `Display` and `Error` for each error type yourself. The
     workspace takes neither `anyhow` nor `thiserror`.
-16. Give each type that can hold a token a `Debug` that prints no byte and no
+11. Give each type that can hold a token a `Debug` that prints no byte and no
     count of the bytes. The size of a token file is such a count. Contract 02
     §3 rule 6 keeps the length of a token out of each log line.
-17. Four functions of `src/service.rs` set the panic hook of the process:
+12. Four functions of `src/service.rs` set the panic hook of the process:
     `enter`, `run`, `load` and `refuse_start`. Each one calls `log::init`
     with the name of the program. Rule 16 of "The rules for a service" in
     `rust/AGENTS.md` gives the reason.
@@ -180,7 +169,7 @@ The answer types of contract 02 need the readers, and they are in
   of the type. The port of the chaperone needs the answer.
 - `token::bearer_of` gives the bearer of a request as a `Vec<u8>`. Those
   bytes can be a token, and the `Debug` of a `Vec<u8>` prints each byte.
-  Rule 16 of "Rules for a change here" asks for a `Debug` that prints no
+  Rule 11 of "Rules for a change here" asks for a `Debug` that prints no
   byte. A service gives the bytes to `Secret::matches`. It writes them to no
   log line. The owner of the crate decides if the result gets a type of its
   own.
