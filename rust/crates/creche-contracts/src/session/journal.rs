@@ -1540,6 +1540,8 @@ mod tests {
         text.parse().unwrap()
     }
 
+    const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
     #[test]
     fn a_gate_reason_that_is_not_known_is_kept() {
         for (word, reason) in &GATE_REASONS {
@@ -1647,7 +1649,6 @@ mod tests {
 
     #[test]
     fn a_body_from_its_constructor_is_the_body_that_a_reader_gets() {
-        const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let prompt = || "hi".parse::<Prompt>().unwrap();
         let depth = QueueDepth::try_from(2_u64).unwrap();
         let usage = Usage::new(1, 2, 3, 4, 0.5).unwrap();
@@ -1780,7 +1781,13 @@ mod tests {
             "chat-s2".parse().unwrap(),
             DeadlineS::SWITCH,
             Freshness::Stale,
-        );
+        )
+        .with_persona_hash(HASH.parse().unwrap());
+        let queued = TurnQueued::new("hi".parse().unwrap(), QueueDepth::try_from(2_u64).unwrap())
+            .with_idempotency_key("k-1".parse().unwrap());
+        let settled = TurnSettled::new(Usage::new(1, 2, 3, 4, 0.5).unwrap())
+            .with_leaf_id("e6".to_owned())
+            .with_user_entry_id("e5".to_owned());
 
         assert_eq!(
             [
@@ -1799,7 +1806,16 @@ mod tests {
         assert_eq!(started.prompt().as_str(), "hi");
         assert_eq!(started.sandbox().as_str(), "chat-s2");
         assert_eq!(started.deadline_s(), DeadlineS::SWITCH);
+        assert_eq!(started.persona_hash().map(Sha256Hex::as_str), Some(HASH));
         assert!(started.status_stale());
+        assert_eq!(
+            queued.idempotency_key().map(IdempotencyKey::as_str),
+            Some("k-1")
+        );
+        assert_eq!(
+            (settled.leaf_id(), settled.user_entry_id()),
+            (Some("e6"), Some("e5"))
+        );
     }
 
     #[test]
