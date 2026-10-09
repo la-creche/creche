@@ -26,28 +26,43 @@ TEI stand-in.
 
 The store schema is the one of `library/AGENTS.md`, section "Store schema".
 A reader here opens the store read-only, so no reader changes a byte of it.
+
+Two programs can write one store: the judged command and the reference,
+which is the default command of the row. A run of the first one must leave
+a store that the second one updates, and the reverse. `run_reference` runs
+the reference, and `store_content` gives what one store holds, so a test
+compares the stores of two index directories for one corpus.
+
+A third program reads a store: the bridge of the playpen, with the SQLite
+of Node. `read_as_bridge` runs `reader_store.mjs`, which holds the
+statements of the bridge.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
+import math
 import os
 import re
+import shutil
 import sqlite3
+import stat
 import struct
+import subprocess
 import unicodedata
 from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, cast
+from typing import Any, Final, cast
 from urllib.parse import quote
 
 import sqlite_vec
 import standin_tei
 from proc_caregiver import wait_until
 from proc_harness import LOOPBACK, Child, Finished, ProcError, Supervisor
-from proc_services import Service, command_of, env_of
+from proc_services import Service, StartCommand, command_of, env_of, reference_of
 from proc_standins import TEI, TEI_HOLD_EMBED, start_tei, tei_calls, tune, untune
 from proc_tree import Tree
 
@@ -148,6 +163,92 @@ _ERROR_START: Final = "  ERROR "
 
 #: What a text of `write_pdf` may hold: no character that a PDF string escapes.
 _PDF_TEXT: Final = re.compile(r"[A-Za-z0-9 .]+")
+
+#: The name of a run of the reference in the report of a failed test.
+REFERENCE: Final = "library-reference"
+
+#: The two index directories of a scenario with two writers. Only the
+#: reference writes the first one. The program writes the second one, or
+#: updates it.
+BY_REFERENCE: Final = "reference"
+JUDGED: Final = "judged"
+
+#: The program that reads a store as the bridge reads it, and its name in
+#: the report of a failed test.
+READER_SCRIPT: Final = "reader_store.mjs"
+READER: Final = "store-reader"
+
+#: How long the question to `node` about its SQLite module may take.
+_NODE_PROBE_S: Final = 30.0
+
+#: The mode bits that let a program write a file, or make a file in a directory.
+_WRITE_BITS: Final = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+
+#: The tables whose statement `store_content` holds. `chunks_vec` is not one
+#: of them: contract 03 §7.3 rule 6 forbids a reader to use that table, so
+#: no reader depends on its form.
+CONTENT_TABLES: Final = ("meta", "files", "chunks", "chunks_fts", "chunks_emb")
+
+#: The three queries of `store_content`, in the form that the bridge gives
+#: FTS5: each word in quotes, and `OR` between two words. The first one
+#: holds a word of each paragraph of `write_corpus_of`. The second one holds
+#: two numbers that some of those paragraphs hold one time and some two
+#: times. The third one adds a word of each note of `write_vault`.
+CONTENT_QUERIES: Final = ('"paragraph"', '"0001" OR "0002"', '"doc" OR "meeting" OR "bicycle"')
+
+#: How far the rank of one row may differ between two stores. One reader
+#: computes both ranks, from counts that each writer keeps in its FTS5
+#: tables. The order of the rows has no tolerance.
+RANK_TOLERANCE: Final = 1e-9
+
+#: How many characters of one row a line of `StoreContent.differences` shows.
+_SHOWN_CHARS: Final = 160
+
+#: The text of `updated_at` in `meta`: digits, one period and digits.
+#:
+#: CONTRACT-QUESTION: `library/AGENTS.md` names `updated_at` and gives it no
+#: form. Reading taken: the program as it is, the text that Python gives
+#: for a float of the clock. No reader of this repository reads the value.
+#: A change costs this one pattern.
+_SECONDS_TEXT: Final = re.compile(r"[0-9]+\.[0-9]+")
+
+#: How many chunks the two files of `write_corpus_of` in `write_mixed` give.
+#: The first file is full, so it needs two embed calls.
+MIXED_PARAGRAPHS: Final = FILE_PARAGRAPHS + 5
+
+#: The file of `write_mixed` that no program can read: one error line of
+#: the report, and no row of the store.
+BROKEN_PDF: Final = "broken.pdf"
+
+#: The link of `write_mixed` to a file outside the scope, the link to a
+#: directory outside the scope, and the directory that holds both targets.
+LINKED_NOTE: Final = "linked.md"
+LINKED_DIR: Final = "linked"
+_OUTSIDE_SUFFIX: Final = "-outside"
+
+#: The files of `write_mixed` beside those of the other writers, as bytes.
+#: The first six names are in the order of their paths, which is not the
+#: order of their texts. Then: two forms of a line end, a byte order mark
+#: with a bad UTF-8 sequence, the second suffix of the `vault` profile, a
+#: suffix in upper case, a file with no text, and the broken PDF.
+_MIXED_FILES: Final[dict[str, bytes]] = {
+    "B.md": b"A note whose name starts in upper case.",
+    "a/b.md": b"A note in a directory.",
+    "a b.md": b"A note with a space in its name.",
+    "a-b/c.md": b"A note in a directory with a hyphen.",
+    "a.md": b"A note with a short name.",
+    "é.md": "A note with an accent in its name, and one in its téxt.".encode(),
+    "crlf.md": b"alpha\r\nbravo\r\n\r\ncharlie\rdelta\r\rfoxtrot",
+    "bad.md": b"\xef\xbb\xbfmarked text, bad \xff byte, cut \xe2\x82 sequence\x1c\n\nsecond part",
+    "plain.txt": b"A note with the suffix of a text file.",
+    "UPPER.MD": b"A note with its suffix in upper case.",
+    "empty.md": b"",
+    BROKEN_PDF: b"not a real pdf",
+}
+
+#: The one paragraph of `long.md` in `write_mixed`: 2500 characters, so the
+#: program cuts it into pieces. Each fifth character takes two bytes.
+_LONG_PARAGRAPH: Final = "".join(f"{index:04d}é" for index in range(500))
 
 
 class Profile(StrEnum):
@@ -299,6 +400,228 @@ def _reader(path: Path, vec: Vec = Vec.ABSENT) -> Generator[sqlite3.Connection]:
         conn.close()
 
 
+@contextlib.contextmanager
+def _read_only(store: Path) -> Generator[None]:
+    """Take the write permission from one store and from its directory, for one reader.
+
+    The bridge reads an index over a mount that it cannot write. SQLite can
+    then make no file beside the store. A store that needs such a file
+    reads well in a directory of a test and fails on a host. A store in
+    WAL mode is one: its reader makes two files. The permission comes back
+    when the reader ends, so the teardown can remove the root.
+    """
+    modes = [(path, stat.S_IMODE(path.stat().st_mode)) for path in (store, store.parent)]
+
+    try:
+        for path, mode in modes:
+            path.chmod(mode & ~_WRITE_BITS)
+
+        yield
+    finally:
+        for path, mode in modes:
+            path.chmod(mode)
+
+
+@dataclass(frozen=True, slots=True)
+class Hit:
+    """One row that a query of `CONTENT_QUERIES` gives: a chunk and its rank."""
+
+    rowid: int
+    rank: float
+
+
+@dataclass(frozen=True, slots=True)
+class StoreContent:
+    """What one store holds for a reader and for the next run of a writer.
+
+    It holds no time of a run: not `updated_at` of `meta`, and not the
+    column `indexed_at` of `files`. Two writers that read one corpus then
+    give equal content. Each list is in the order of its key. A scan with
+    no order depends on the writer of the store and on its SQLite, and no
+    reader depends on the order of a scan.
+
+    It holds no statement of `chunks_vec`. It holds the rows that one
+    `SELECT` gives for that table on a connection with `sqlite-vec`.
+    """
+
+    #: The statement of each table of `CONTENT_TABLES`, as SQLite keeps it.
+    sql: tuple[tuple[str, str], ...]
+    #: Each row of `meta` but `updated_at`: the key and the value.
+    meta: tuple[tuple[str, str], ...]
+    #: Each row of `files`: the path, the hash and the mtime, not rounded.
+    files: tuple[tuple[str, str, float], ...]
+    #: Each row of `chunks`.
+    chunks: tuple[ChunkRow, ...]
+    #: Each row of `chunks_fts`: the rowid and the text.
+    words: tuple[tuple[int, str], ...]
+    #: The rows of each query of `CONTENT_QUERIES`, the best rank first.
+    hits: tuple[tuple[Hit, ...], ...]
+    #: Each row of `chunks_emb`: the id and the blob.
+    plain_vectors: tuple[tuple[int, bytes], ...]
+    #: Each row of `chunks_vec`: the rowid and the blob.
+    vec_vectors: tuple[tuple[int, bytes], ...]
+
+    def differences(self, other: StoreContent) -> list[str]:
+        """One line for each part that `other` holds in another way. Empty for equal content.
+
+        Each part but the ranks must be equal. Two ranks of one row may
+        differ by `RANK_TOLERANCE`.
+        """
+        parts: tuple[tuple[str, Sequence[object], Sequence[object]], ...] = (
+            ("the table statements", self.sql, other.sql),
+            ("meta", self.meta, other.meta),
+            ("files", self.files, other.files),
+            ("chunks", self.chunks, other.chunks),
+            ("chunks_fts", self.words, other.words),
+            ("chunks_emb", self.plain_vectors, other.plain_vectors),
+            ("chunks_vec", self.vec_vectors, other.vec_vectors),
+        )
+        found = [_difference(name, here, there) for name, here, there in parts]
+        ranked = zip(CONTENT_QUERIES, self.hits, other.hits, strict=True)
+        found.extend(_rank_difference(query, here, there) for query, here, there in ranked)
+
+        return [line for line in found if line is not None]
+
+
+def store_content(path: Path) -> StoreContent:
+    """What one store file holds. One read-only connection reads each part.
+
+    A store that one statement here cannot read is an error, and so is a
+    store with no table of `CONTENT_TABLES`. A store with no `updated_at`
+    that reads as a count of seconds is an error. So is a row of `files`
+    whose `indexed_at` is no such count, and a vector that is no blob. The
+    content holds none of the two times, so this function is the one place
+    that looks at them.
+    """
+    try:
+        with _reader(path, Vec.LOADED) as conn:
+            made = dict(conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'"))
+            meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+            files = conn.execute(
+                "SELECT path, hash, mtime, indexed_at FROM files ORDER BY path"
+            ).fetchall()
+            chunks = conn.execute("SELECT id, path, ord, text FROM chunks ORDER BY id").fetchall()
+            words = conn.execute("SELECT rowid, text FROM chunks_fts ORDER BY rowid").fetchall()
+            plain = conn.execute("SELECT id, embedding FROM chunks_emb ORDER BY id").fetchall()
+            vec = conn.execute("SELECT rowid, embedding FROM chunks_vec").fetchall()
+            hits = tuple(_hits_of(conn, query) for query in CONTENT_QUERIES)
+    except sqlite3.Error as error:
+        raise ProcError(f"{path} does not read as a store: {error}") from error
+
+    _need_seconds_text(meta.pop(META_UPDATED, None), f"`{META_UPDATED}` of `meta` in {path}")
+
+    for row in files:
+        _need_seconds(row[3], f"`indexed_at` of {row[0]} in {path}")
+
+    return StoreContent(
+        sql=tuple((name, _statement_of(made, name, path)) for name in CONTENT_TABLES),
+        meta=tuple(sorted(meta.items())),
+        files=tuple((row[0], row[1], row[2]) for row in files),
+        chunks=tuple(ChunkRow(*row) for row in chunks),
+        words=tuple((row[0], row[1]) for row in words),
+        hits=hits,
+        plain_vectors=_blobs(plain, f"`chunks_emb` of {path}"),
+        vec_vectors=_blobs(sorted(vec), f"`chunks_vec` of {path}"),
+    )
+
+
+def _statement_of(made: Mapping[str, object], name: str, path: Path) -> str:
+    """The statement of one table of a store. A store with no such table is an error."""
+    statement = made.get(name)
+
+    if not isinstance(statement, str):
+        raise ProcError(f"{path} has no table `{name}`")
+
+    return statement
+
+
+def _hits_of(conn: sqlite3.Connection, query: str) -> tuple[Hit, ...]:
+    """The rows of one FTS5 query, the best rank first. The rowid orders two equal ranks."""
+    rows = conn.execute(
+        "SELECT rowid, rank FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank, rowid",
+        (query,),
+    ).fetchall()
+
+    return tuple(Hit(*row) for row in rows)
+
+
+def _need_seconds_text(value: object, what: str) -> None:
+    """Refuse an `updated_at` that is no text of a count of seconds.
+
+    `float` of Python reads more than such a text: bytes, an underscore
+    between two digits, a space at an end. So the type and the pattern
+    come first.
+    """
+    if isinstance(value, str) and _SECONDS_TEXT.fullmatch(value) and math.isfinite(float(value)):
+        return
+
+    raise ProcError(f"{what} is {_shown(value)}, which is no text of a count of seconds")
+
+
+def _need_seconds(value: object, what: str) -> None:
+    """Refuse an `indexed_at` that is no count of seconds: a REAL value that is finite."""
+    if isinstance(value, float) and math.isfinite(value):
+        return
+
+    raise ProcError(f"{what} is {_shown(value)}, which is no count of seconds")
+
+
+def _blobs(rows: Sequence[tuple[int, object]], what: str) -> tuple[tuple[int, bytes], ...]:
+    """The rows of one vector table. A vector that is no blob is an error."""
+    blobs: list[tuple[int, bytes]] = []
+
+    for key, value in rows:
+        if not isinstance(value, bytes):
+            raise ProcError(f"row {key} of {what} holds {_shown(value)}, which is no blob")
+
+        blobs.append((key, value))
+
+    return tuple(blobs)
+
+
+def _difference(name: str, here: Sequence[object], there: Sequence[object]) -> str | None:
+    """One line that says where two lists of rows differ, or None for equal lists."""
+    if here == there:
+        return None
+
+    if len(here) != len(there):
+        return f"{name}: {len(here)} rows here, {len(there)} rows there"
+
+    pairs = enumerate(zip(here, there, strict=True))
+    at = next(index for index, (mine, theirs) in pairs if mine != theirs)
+
+    return f"{name}: row {at} is {_shown(here[at])} here and {_shown(there[at])} there"
+
+
+def _rank_difference(query: str, here: Sequence[Hit], there: Sequence[Hit]) -> str | None:
+    """One line for a query that two stores answer in another way, or None.
+
+    The order of the rowids must be equal. The rank of each row must be
+    equal inside `RANK_TOLERANCE`.
+    """
+    name = f"the rows of MATCH {query}"
+    order = _difference(name, [hit.rowid for hit in here], [hit.rowid for hit in there])
+
+    if order is not None:
+        return order
+
+    for mine, theirs in zip(here, there, strict=True):
+        if not math.isclose(mine.rank, theirs.rank, rel_tol=0.0, abs_tol=RANK_TOLERANCE):
+            return f"{name}: row {mine.rowid} has rank {mine.rank!r} here and {theirs.rank!r} there"
+
+    return None
+
+
+def _shown(row: object) -> str:
+    """One row for a line of a report, cut to a length that a person can read."""
+    text = repr(row)
+
+    if len(text) <= _SHOWN_CHARS:
+        return text
+
+    return f"{text[:_SHOWN_CHARS]}... ({len(text)} characters)"
+
+
 @dataclass(slots=True)
 class LibraryStack:
     """The TEI stand-in and the directories of one test. A test runs the program itself."""
@@ -372,6 +695,25 @@ class LibraryStack:
         """
         return self.run_words(index_words(scope, index_dir, profile), env)
 
+    def run_reference(
+        self,
+        scope: Path,
+        index_dir: Path,
+        profile: Profile | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> Finished:
+        """Run the reference on one corpus to its end: the default command of the row.
+
+        The variable of the row does not change this command. The run gets
+        what a run of `run_index` gets with the default command. Only a
+        scenario that compares the two writers of a store calls this
+        function (`integration/proc/AGENTS.md`, "The reference").
+        """
+        args = index_words(scope, index_dir, profile)
+        words, whole = self._command(reference_of(Service.LIBRARY), args, env)
+
+        return self.supervisor.run(REFERENCE, words, whole, self.tree.root, INDEX_DEADLINE_S)
+
     def start_index(
         self,
         scope: Path,
@@ -380,13 +722,14 @@ class LibraryStack:
         env: Mapping[str, str] | None = None,
     ) -> Child:
         """Start the program on one corpus, for a scenario that acts during the run."""
-        words, whole = self._command(index_words(scope, index_dir, profile), env)
+        args = index_words(scope, index_dir, profile)
+        words, whole = self._command(command_of(Service.LIBRARY), args, env)
 
         return self.supervisor.spawn(Service.LIBRARY.value, words, whole, self.tree.root)
 
     def run_words(self, args: Sequence[str], env: Mapping[str, str] | None = None) -> Finished:
         """Run the program with the words of a test to its end."""
-        words, whole = self._command(args, env)
+        words, whole = self._command(command_of(Service.LIBRARY), args, env)
 
         return self.supervisor.run(
             Service.LIBRARY.value, words, whole, self.tree.root, INDEX_DEADLINE_S
@@ -403,6 +746,16 @@ class LibraryStack:
         """
         write_note(scope / BIKES, f"The {FIRST_WORD} has new bicycle racks.")
         write_note(scope / MEETING, f"Please {HELD_TEXT}. The {SECOND_WORD} is in the lobby.")
+
+        return self.start_held(scope, index_dir)
+
+    def start_held(self, scope: Path, index_dir: Path) -> Child:
+        """Start the program on a corpus with `HELD_TEXT` in one file. Return when TEI holds.
+
+        The program then has the vectors of each changed file before that
+        file in path order, and it waits for the answer of one embed call.
+        `release_hold` lets the call go.
+        """
         tune(self.tree, TEI, TEI_HOLD_EMBED, HELD_TEXT)
         child = self.start_index(scope, index_dir)
 
@@ -420,10 +773,42 @@ class LibraryStack:
         """Let the stand-in answer the call that it holds."""
         untune(self.tree, TEI, TEI_HOLD_EMBED)
 
+    def read_as_bridge(self, store: Path, match: str, limit: int) -> dict[str, Any]:
+        """What the statements of the bridge give for one store, through the SQLite of Node.
+
+        `match` is an FTS5 query, and `limit` is the most rows that the
+        query gives. The docstring of `reader_store.mjs` has the keys of the
+        answer. The reader runs on a store that no program can write, in a
+        directory that no program can write: `_read_only` says why.
+
+        The store must be alone in its directory. A reader before this one
+        can leave a file there, and the reader of the bridge then finds a
+        file that a mount of a sandbox does not have. So another file is an
+        error, before the reader runs.
+        """
+        beside = sorted(name for name in os.listdir(store.parent) if name != STORE_FILE)
+
+        if beside:
+            raise ProcError(
+                f"{store.parent} also holds {beside}. Another reader opened the store first, "
+                "or the store needs a file beside it"
+            )
+
+        words = ["node", str(reader_script()), str(store), match, str(limit)]
+
+        with _read_only(store):
+            done = self.supervisor.run(READER, words, _path_env(), self.tree.root, INDEX_DEADLINE_S)
+
+        if done.exit_code != 0:
+            raise ProcError(f"the reader of {store} exited {done.exit_code}\n{done.stderr}")
+
+        answer: dict[str, Any] = json.loads(done.stdout)
+
+        return answer
+
     def _command(
-        self, args: Sequence[str], env: Mapping[str, str] | None
+        self, command: StartCommand, args: Sequence[str], env: Mapping[str, str] | None
     ) -> tuple[list[str], dict[str, str]]:
-        command = command_of(Service.LIBRARY)
         given = self.tei_env() if env is None else dict(env)
 
         return [*command.words, *args], _path_env() | env_of(command) | given
@@ -461,6 +846,61 @@ def _inputs_of(body: object) -> list[str]:
             return cast("list[str]", inputs)
 
     raise ProcError(f"an embed call of {TEI} has the body {body!r}")
+
+
+def reader_script() -> Path:
+    """The program that reads a store with the statements of the bridge."""
+    return Path(__file__).resolve().parent / READER_SCRIPT
+
+
+def node_has_sqlite() -> bool:
+    """Whether the `node` of the run has the module `node:sqlite`. The reader needs it."""
+    words = ["node", "--eval", "require('node:sqlite')"]
+
+    try:
+        probe = subprocess.run(
+            words,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            env=_path_env(),
+            timeout=_NODE_PROBE_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+    return probe.returncode == 0
+
+
+def copy_store(store: Path, index_dir: Path) -> Path:
+    """A copy of one store file in an index directory that is new. Returns the copy.
+
+    A test that changes a store changes such a copy. The store of a run
+    stays as the program left it.
+    """
+    index_dir.mkdir(parents=True)
+    copy = index_dir / STORE_FILE
+    shutil.copyfile(store, copy)
+
+    return copy
+
+
+def change_store(store: Path, statement: str, values: Sequence[object] = ()) -> None:
+    """Run one statement that changes a copy of a store.
+
+    The connection has `sqlite-vec`, so the statement can change a `vec0`
+    table. Give this function only a file of `copy_store`.
+    """
+    conn = sqlite3.connect(store)
+
+    try:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        conn.execute(statement, tuple(values))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def index_words(scope: Path, index_dir: Path, profile: Profile | None = None) -> list[str]:
@@ -556,6 +996,34 @@ def write_corpus_of(scope: Path, chunks: int) -> Path:
         write_note(last, _PARAGRAPH_GAP.join(paragraph(last.stem, index) for index in range(count)))
 
     return last
+
+
+def write_mixed(scope: Path) -> None:
+    """A vault scope with each kind of file that two writers of one store must read alike.
+
+    It holds the files of `write_vault`, the files of `_MIXED_FILES`, one
+    paragraph that is too long for one chunk, and two files of
+    `write_corpus_of`. It holds a link to a file and a link to a directory,
+    and both targets are outside the scope. A writer reads the file behind
+    the first link and does not follow the second one.
+
+    It holds no PDF with text. Two PDF readers can give the text of one
+    page with other spaces, and two stores then differ for no fault of a
+    writer. The one PDF here is broken, so each writer reports it.
+    """
+    outside = scope.with_name(f"{scope.name}{_OUTSIDE_SUFFIX}")
+    write_vault(scope)
+    write_corpus_of(scope, MIXED_PARAGRAPHS)
+    write_note(scope / "long.md", _LONG_PARAGRAPH)
+
+    for name, raw in _MIXED_FILES.items():
+        (scope / name).parent.mkdir(parents=True, exist_ok=True)
+        (scope / name).write_bytes(raw)
+
+    write_note(outside / "target.md", "A note outside the scope, behind a link to a file.")
+    write_note(outside / "inner" / "unseen.md", "A note behind a link to a directory.")
+    (scope / LINKED_NOTE).symlink_to(outside / "target.md")
+    (scope / LINKED_DIR).symlink_to(outside / "inner", target_is_directory=True)
 
 
 def paragraph(stem: str, index: int) -> str:
