@@ -19,10 +19,15 @@ another checkout cannot send a command to that checkout.
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Final
+from pathlib import Path
+from typing import Any, Final, cast
 
+import yaml
 from proc_tree import (
     ATTENDED,
     AUTONOMOUS,
@@ -49,6 +54,26 @@ _BRANCH: Final = "main"
 _GIT: Final = "git"
 _GIT_TIMEOUT_S: Final = 30.0
 _NO_FILE: Final = os.devnull
+
+#: The file that `git` makes while a command writes the index. A second
+#: command that finds the file writes nothing and fails.
+_INDEX_LOCK: Final = ".git/index.lock"
+
+#: A file of the checkout that no commit holds, outside each family. A save
+#: of the noticeboard must leave it as it is.
+UNTRACKED_PATH: Final = "notes/draft.md"
+_UNTRACKED_TEXT: Final = "A note of the fixture. No commit holds it.\n"
+
+#: What a person types into the instructions of a family before a commit of
+#: their own. A save of the noticeboard for another family must leave it.
+_EDITED_PROSE: Final = "Be helpful, and answer in one sentence.\n"
+
+#: The name of the file that a save of the noticeboard writes before the
+#: rename: a dot, the name of the family file, a dot, 16 lower-case hex
+#: digits and this end.
+_TEMP_DIGITS: Final = "0123456789abcdef"
+_TEMP_END: Final = ".noticeboard-tmp"
+_TEMP_TEXT: Final = "The text of a save that did not end.\n"
 
 
 class RegistryError(Exception):
@@ -168,6 +193,106 @@ def read_family(tree: Tree, name: str) -> str:
     return tree.family_file(name).read_text(encoding="utf-8")
 
 
+def family_bytes(tree: Tree, name: str) -> bytes:
+    """One family file as it is on the disk.
+
+    `read_family` gives each line end as LF. Only the bytes show a CR.
+    """
+    return tree.family_file(name).read_bytes()
+
+
+def load_family(tree: Tree, name: str) -> dict[str, Any]:
+    """One family file of the checkout, as the mapping of contract 01 §2.
+
+    This is the one reader of a family file in the suite. A scenario asserts
+    on a field of the mapping, and no test names the markup of the file.
+    """
+    loaded: object = yaml.safe_load(read_family(tree, name))
+
+    if not isinstance(loaded, dict):
+        raise RegistryError(f"{family_path(tree, name)} holds no mapping at the top level")
+
+    return cast("dict[str, Any]", loaded)
+
+
+def block_text(key: str, value: object) -> str:
+    """One field as the edit form of the noticeboard takes it in a block.
+
+    A block control holds the key line and the value, in the markup of the
+    family file.
+    """
+    return yaml.safe_dump({key: value}, sort_keys=False)
+
+
+def family_mode(tree: Tree, name: str) -> int:
+    """The permission bits of one family file."""
+    return stat.S_IMODE(tree.family_file(name).stat().st_mode)
+
+
+def set_family_mode(tree: Tree, name: str, mode: int) -> None:
+    tree.family_file(name).chmod(mode)
+
+
+def leave_temp_file(tree: Tree, name: str) -> Path:
+    """Put the temporary file of a save that did not end beside one family file.
+
+    A save writes its text to a file in the directory of the family, then
+    renames the file. A process that ends between the two steps leaves the
+    file. No commit holds it. Returns its path.
+    """
+    target = tree.family_file(name)
+    left = target.with_name(f".{target.name}.{_TEMP_DIGITS}{_TEMP_END}")
+    left.write_text(_TEMP_TEXT, encoding="utf-8")
+
+    return left
+
+
+def write_untracked(tree: Tree) -> str:
+    """Put one file in the checkout that no commit holds. Returns its path, as `git` prints it."""
+    write_registry_file(tree, tree.registry_root / UNTRACKED_PATH, _UNTRACKED_TEXT)
+
+    return UNTRACKED_PATH
+
+
+def edit_family_prose(tree: Tree, name: str) -> str:
+    """Change the instructions of one family in the checkout, with no commit.
+
+    A person with an editor does this. A commit holds the file, so `git`
+    lists it as changed. Returns its path, as `git` prints it.
+    """
+    write_family_prose(tree, name, _EDITED_PROSE)
+
+    return tree.family_prose_file(name).relative_to(tree.registry_root).as_posix()
+
+
+def stage_family_prose(tree: Tree, name: str) -> str:
+    """Change the instructions of one family, then put the change in the index.
+
+    A person does this with `git add`, before a commit of their own. Returns
+    the path of the file, as `git` prints it.
+    """
+    path = edit_family_prose(tree, name)
+    _git(tree, "add", "--", path)
+
+    return path
+
+
+@contextmanager
+def index_locked(tree: Tree) -> Generator[None]:
+    """Hold the lock of the index, as a `git` command of another program does.
+
+    While the lock is there, no `git` command can write the index, so no
+    commit is possible. The lock goes at the end of the block.
+    """
+    lock = tree.registry_root / _INDEX_LOCK
+    lock.touch(exist_ok=False)
+
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
 def commit_all(tree: Tree, subject: str = _FIRST_SUBJECT) -> None:
     """Make the checkout a git repository, and commit every file in it.
 
@@ -210,9 +335,34 @@ def head(tree: Tree) -> Commit:
     )
 
 
+def trailers(tree: Tree) -> tuple[str, ...]:
+    """Each trailer line of the newest commit, as `git` reads the message."""
+    return _lines(_git(tree, "log", "-1", "--format=%(trailers:only,unfold)"))
+
+
 def uncommitted(tree: Tree) -> str:
     """What `git status` lists: a change that no commit holds. Empty when none."""
     return _git(tree, "status", "--porcelain")
+
+
+def untracked(tree: Tree) -> tuple[str, ...]:
+    """Each file of the checkout that no commit holds and that `git` does not ignore."""
+    return _lines(_git(tree, "ls-files", "--others", "--exclude-standard"))
+
+
+def changed(tree: Tree) -> tuple[str, ...]:
+    """Each file of a commit whose text in the checkout is not its text in the index."""
+    return _lines(_git(tree, "diff", "--name-only"))
+
+
+def staged(tree: Tree) -> tuple[str, ...]:
+    """Each file whose text in the index is not its text in the newest commit."""
+    return _lines(_git(tree, "diff", "--cached", "--name-only"))
+
+
+def _lines(output: str) -> tuple[str, ...]:
+    """The lines of one `git` output that hold a text."""
+    return tuple(line for line in output.split("\n") if line)
 
 
 def _git(tree: Tree, *args: str) -> str:
