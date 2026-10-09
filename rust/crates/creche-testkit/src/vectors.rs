@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 
 use creche_contracts::ids::Sha256Hex;
 use serde::Deserialize;
@@ -247,26 +247,22 @@ impl IndexRow {
     }
 }
 
-/// Whether `path` names a file below the directory that it is relative to:
-/// it has one name or more, and no part goes up or starts at the root.
+/// Whether `path` names a file below the directory that it is relative to,
+/// in the one form that the generator writes: one name or more with `/`
+/// between them, and no part that is empty, `.` or `..`.
+///
+/// The check reads the text and not the parts of a [`std::path::Path`]: such
+/// a path also reads `a//b.json` and `a/./b.json` as `a/b.json`.
 fn is_data_path(path: &str) -> bool {
-    let mut parts = Path::new(path).components().peekable();
-
-    parts.peek().is_some() && parts.all(|part| matches!(part, Component::Normal(_)))
+    !path.is_empty() && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
 }
 
-/// Whether `path` can name a frozen file, in the one form that the generator
-/// writes: a file below `vectors/data` with a name that ends in `.json`. The
-/// path has no part that is empty, `.` or `..`. The index itself is no such
-/// file.
+/// Whether `path` can name a frozen file: a file below `vectors/data` with a
+/// name that ends in `.json`. The index itself is no such file.
 ///
-/// The check reads the text and not the parts of a [`Path`]: a [`Path`] also
-/// reads `a//b.json` and `a/./b.json` as `a/b.json`. `_frozen_map` of
-/// `vectors/generate.py` holds the same rule.
+/// `_frozen_map` of `vectors/generate.py` holds the same rule.
 fn is_frozen_path(path: &str) -> bool {
-    path != INDEX_FILE
-        && path.ends_with(JSON_SUFFIX)
-        && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
+    path != INDEX_FILE && path.ends_with(JSON_SUFFIX) && is_data_path(path)
 }
 
 /// One vector file: each vector of one surface.
@@ -1515,6 +1511,9 @@ mod tests {
             "a/../b.json",
             "/a.json",
             "./a.json",
+            "a//b.json",
+            "a/./b.json",
+            "a.json/",
         ] {
             assert!(!is_data_path(path), "{path}");
         }
