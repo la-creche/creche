@@ -1273,11 +1273,16 @@ test.
   2. A fence key that its verb does not read.
   3. `NaN` and an integer past 64 bits in the arguments of a call.
   4. A request body in UTF-16 or in UTF-32.
-- `grants::AuditRecord` has public fields and holds no rule between two
-  fields. Contract 04 §6.4 has one: the two records of a gated call name the
-  same gate. The writer of the port holds that rule. The vectors of
-  `chaperone.audit_line` hold records that break the rule, because the Python
-  writer checks no field.
+- `grants::AuditRecord` holds no rule between its outcome and its gate.
+  Contract 04 §6.4 gives each record of a gated call the gate of that call.
+  A record with the outcome `Pending` can have no gate. The writer of the
+  port holds that rule. The vectors of `chaperone.audit_line` hold a denial
+  with an approval reason and no gate, because the Python writer checks no
+  field.
+- `AuditRecord::with_gate` takes the gate from a `grants::Held`, and `Held`
+  is a sketch. Only a test build has a constructor of `Held`:
+  `Held::in_test`. No program can write a record with a gate until the port
+  of the chaperone adds the decision function.
 - `GrantFile::to_bytes` refuses a file of more than 256 KiB (contract 04
   §1.2). The Python caregiver writes such a file, and the Python chaperone
   then refuses it. No vector holds such a file.
