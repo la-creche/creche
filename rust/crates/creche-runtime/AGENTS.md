@@ -239,6 +239,20 @@ reason. The packet that writes the three bodies obeys these rules:
   CR LF and for each other CR. `token` reads a token file with that
   function. `agent-family` holds a second copy of the rule in `registry.rs`.
   That crate does not depend on this crate. No packet has that copy yet.
+- `command` sets no limit on the size of a file that a child writes. The
+  Python `handover` sets one in the child before the program starts
+  (`handover/src/handover/executor/host.py:359-376` and `:407`). In Rust
+  that step needs `unsafe` code, and the lint gate forbids it. The port of
+  `handover` needs another design.
+- An owner task of `command` kills only the child. A program that the child
+  started continues to run, and it can hold an output stream of the child
+  open. `subprocess.run` of Python has the same limit. With
+  `TimeLimit::None`, a run that captures such a stream waits until that
+  program closes the stream.
+- `command::ChildGuard::wait` gives the exit status 255 when the wait call
+  of the operating system fails. The skeleton fixed the signature of the
+  function, and that signature has no error. The owner of the crate decides
+  if the function gets one.
 - No test gives `faults::publish` a fault file whose source is `caregiver`.
   `FaultFile::new` refuses that source, so no code can build such a file. A
   test gives the private function `publish_as` no writer in its place.
