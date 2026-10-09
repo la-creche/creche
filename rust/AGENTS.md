@@ -1309,12 +1309,11 @@ To make the fifth check on your machine, for example before a merge:
   passes each check although no test ran such code.
 - This `CONTRACT-QUESTION` comment is open in
   `.github/workflows/coverage-nightly.yml`: no rule says how a red run of
-  the nightly job must reach a person, and no rule names that person. The
+  the nightly job must reach a person. No rule names that person. The
   workflow holds the read-only token and sends nothing by itself. A red run
   thus reaches a person only through the notification of GitHub and through
-  the Actions page. GitHub sends that notification to one account. No job of
-  this repository reads the result. A change costs one step with a token
-  that can write.
+  the Actions page. No job of this repository reads the result. A change
+  costs one step with a token that can write.
 - GitHub can delay or drop a run of the nightly job. It turns the schedule of
   a public repository off after 60 days with no activity in the repository.
 - Two checks do not read four crates yet: `agent-family`,
