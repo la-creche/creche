@@ -73,12 +73,19 @@ command and the name of one environment variable.
 | `caregiver` | `caregiver` | `CRECHE_PROC_CAREGIVER` |
 | `chaperone` | `chaperone` | `CRECHE_PROC_CHAPERONE` |
 | `noticeboard` | `noticeboard` | `CRECHE_PROC_NOTICEBOARD` |
+| `noticeboard-verify` | `noticeboard-verify` | `CRECHE_PROC_NOTICEBOARD_VERIFY` |
 | `library` | `index-scope` | `CRECHE_PROC_LIBRARY` |
 
 The default command is the program and the first words of the unit's
 `ExecStart`. The program comes from the `bin` directory of the workspace
 venv, which is in the place of the component tree. `test_proc_table.py`
 compares each row with the unit file.
+
+No unit runs `noticeboard-verify`. It is the verify hook of the noticeboard
+(contract 06 §4), and the release executor runs it to its end. Its default
+command is the program of `verify.command` in `noticeboard/component.yaml`.
+`test_proc_table.py` compares the row and the words of the suite with that
+manifest.
 
 The row of `library` names no unit. The two index units run `index-scope`
 in a sandbox, through `sbx exec` and a shell. `test_proc_table.py` reads the
@@ -162,6 +169,11 @@ starts `attendance` with the two stand-ins of the first picture. None starts
 | The fifth, `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
 | The sixth, `proc_tui.py`: the terminal door, the Open WebUI door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Runs `sbx exec -it` with the real launcher bundle, which starts the pi stand-in on the terminal. |
 
+The fifth topology has a second program: the verify hook of the
+noticeboard. A test plays the release executor. It writes the env file of
+the unit and runs the hook to its end. The hook reads that file and asks the
+noticeboard for `/healthz`.
+
 The seventh topology starts no `attendance` and no sandbox. It runs the
 index builder, `index-scope`, beside the TEI stand-in.
 
@@ -191,8 +203,12 @@ a test reads store.db with SQLite
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
 | `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
+| `test_proc_board_reports.py` | noticeboard | a status document that a reader cannot use, the fault, the spend and the step of a family, the audit page with more than one page, its filters and a line that is no record, the perimeter of `docs/rework/spec.md` §8.3, a config that refuses a start, the JSON check of `proc_board_reports.py` |
 | `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, a save after a preview, the one commit, saves at one time, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
+| `test_proc_board_form.py` | noticeboard | each kind of control of the edit form, a locked field, a save that changes nothing, a save that `git` refuses, the marks of the commit, what a save leaves in the checkout |
+| `test_proc_board_restart.py` | noticeboard | two starts on one root and one port: a saved family, and a form that stays open across the restart |
+| `test_proc_board_verify.py` | noticeboard and its verify hook | the hook of contract 06 §4: a pass, a failure, the env file, no secret in the output |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_library_build.py` | library and the TEI stand-in | a build, an update, a removed file, a new model, the two profiles, the store schema, the order of the files, how a text file is read, the publish of the store |
@@ -267,6 +283,9 @@ a test reads store.db with SQLite
 20. A scenario that needs pi on a terminal starts on a session that ran a
     turn and that no terminal held before. The first four Known gaps of the
     terminal door say why.
+21. Read a value of a family file through `load_family` of
+    `proc_registry.py`. Write the text of a block of the edit form with
+    `block_text` of that module. No test reads the markup of a family file.
 
 ## The `caregiver` topology
 
@@ -690,16 +709,119 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the markup of a page of the noticeboard.**
   `docs/rework/spec.md` §8.1 says what each page shows. No contract gives
   the markup. The suite reads the markup of the templates as the interface.
-  A change of the markup costs the names in `test_proc_board_pages.py` and
-  `test_proc_board_edit.py`.
+  A change of the markup costs the names in `test_proc_board_pages.py`,
+  `test_proc_board_edit.py`, `test_proc_board_reports.py` and
+  `proc_board_reports.py`.
 - **The names that the suite reads in the markup.** The suite finds a table
   by its class, and a cell by the text of its column head. It finds a report
-  by the classes `problem`, `problems` and `issues`.
+  by the classes `problem`, `problems` and `issues`. It finds a mark beside
+  a value by the class `flag`. It finds a link between two pages of the
+  audit page by its text: `older` or `newer`.
 - **CONTRACT-QUESTION, the answer to a route parameter that is no id.**
   `docs/rework/spec.md` §8.1 lists the routes. No section gives the answer
   for a parameter that is not a family name or a session id. The suite holds
   the answer of the noticeboard as it is: 404. A change costs one scenario
   in `test_proc_board_pages.py`.
+- **CONTRACT-QUESTION, a status document that a reader cannot use.**
+  Contract 05 §2 rule 2 gives a reader a whole document. No contract says
+  what a page shows for a file that is not JSON, or for a family directory
+  with no document. The suite holds three things for the home page:
+  - The family has a row.
+  - The row does not read `in sync`.
+  - Each other row is as before.
+
+  The noticeboard shows the status `unreadable` and one sentence. A change
+  costs two scenarios in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a state root with no families directory.**
+  Contract 05 §2 rule 6 has a reader list that directory. No contract says
+  what the home page shows when the directory is not there. The suite holds
+  that the page answers 200 with an element of the class `problem`. It also
+  holds that the table has no row of a family. A change costs one scenario
+  in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a spend that is not current.** Contract 05 §7 rule 4
+  has a reader compare `as_of` with `written_at`. The rule gives no age and
+  no form of the mark. The suite holds one case: an `as_of` one hour before
+  `written_at`. The spend cell then holds an element with the class `flag`.
+  The noticeboard takes 90 seconds as the limit. A change costs one name in
+  `proc_board_reports.py`.
+- **CONTRACT-QUESTION, the order and the links of the audit page.**
+  `docs/rework/spec.md` §8.1 says that the page shows the day files, paged.
+  No contract gives the order of the records or the links between two
+  pages. The suite holds the page of the noticeboard as it is:
+  - The newest record is first, across the day files and in one file.
+  - A link with the text `older` leads to the next records.
+  - A link with the text `newer` leads one page back.
+
+  A change costs one scenario in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, an audit line that is no record.** Contract 04 §6
+  gives one record for each line. No contract says what the audit page
+  shows for a line that is not JSON. The suite holds that the line takes
+  one row, and that the row or a cell of it has the class `problem`. Each
+  record beside the line keeps its row. A change costs one scenario in
+  `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, the filters of the audit page.** No contract names a
+  filter. The suite holds the four query names of the form on the page:
+  `family`, `session`, `tool` and `decision`. Each scenario gives the whole
+  value of a field of contract 04 §6.1 or §6.2. The noticeboard keeps a
+  record whose family or decision is equal to the value. For a tool or a
+  session, it keeps a record whose field holds the value as a part. No
+  scenario holds that difference. A change costs one scenario in
+  `test_proc_board_pages.py` and one in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a state root with no audit directory.**
+  `docs/rework/spec.md` §8.3 gives the audit page a banner for audit files
+  that the service cannot read. No contract names a state root with no
+  audit directory. The suite holds that the page then has the same report:
+  a list with the class `problems`, and the table. The noticeboard shows
+  `cannot list the audit directory` and the reason. A change costs one
+  scenario in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, the body of a refusal of the noticeboard.**
+  `docs/rework/spec.md` §8.3 rule 4 permits a word for the fault in a
+  refusal, and no value. No contract gives the form of the body or a word.
+  The suite holds that the body is a strict JSON text in UTF-8 and that it
+  holds no key. The docstring of `is_json` in `proc_board_reports.py` lists
+  what the check refuses. The check has no rule for the nesting, for the
+  size of an integer or for a key that an object holds two times. For a
+  missing key, the noticeboard answers `{"ok":false,"error":"no_key"}`. A
+  change costs one assertion in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, the attributes of the cookie of the noticeboard.**
+  `docs/rework/spec.md` §8.3 rule 3 gives `SameSite=Strict` and `HttpOnly`.
+  No contract gives `Secure`, `Path` or a variable for one of the two. The
+  suite holds the cookie of the noticeboard as it is. The cookie has
+  `Secure` unless `VIEW_COOKIE_SECURE` is `0`, and it has `Path=/`. A change
+  costs three scenarios in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a post to the noticeboard that is too long.** No
+  contract gives a limit for the body of a post, or the answer to a longer
+  body. The suite holds the noticeboard as it is:
+  - A body of 1 MiB and one byte gets 403, and the registry stays as it was.
+  - A body of exactly 1 MiB is a save.
+
+  One field that no form has fills each body to its size. The noticeboard
+  ignores such a field, and the save of the second scenario depends on
+  that. Each scenario sends the whole body before it reads the answer. A
+  service that closes the connection before it read the body can fail the
+  first scenario with a write error. A change costs two scenarios in
+  `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, where the noticeboard reads its key.**
+  `docs/rework/spec.md` §8.3 names the key and no source of it. The suite
+  holds the two variables that `noticeboard/AGENTS.md` names:
+  - `VIEW_ACCESS_KEY` holds the key when no variable names a key file.
+  - `VIEW_ACCESS_KEY_FILE` names a file that holds the key. A final newline
+    of the file is no part of the key.
+
+  A change costs two scenarios in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a loopback bind of the noticeboard with no key.**
+  `docs/rework/spec.md` §8.3 rule 2 refuses a LAN bind with no key. Rule 1
+  has no branch that skips the check. No section says what a loopback bind
+  with no key serves. The suite holds rule 1 of the perimeter rules in
+  `noticeboard/AGENTS.md`: an empty key is legal on a loopback bind. A page
+  then needs no key. A change costs one scenario in
+  `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a port or a page size that is not valid.** No
+  contract names `VIEW_PORT` or `VIEW_PAGE_SIZE`, or a range for one. The
+  suite holds that `VIEW_PORT=abc` and `VIEW_PAGE_SIZE=0` each refuse to
+  start, with a code that is not 0. The noticeboard exits with the code of
+  each other start that its config refuses. A change to one fixed code
+  costs one assertion in `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, the answer to a save of the noticeboard.**
   `docs/rework/spec.md` §8.2 says what a save writes. No section gives the
   answer to the browser. The suite holds the answer of the noticeboard as it
@@ -715,6 +837,98 @@ the text of the failure. Work down this list.
 - **A save of the noticeboard ends at the commit.** No `caregiver` runs
   beside the noticeboard, so no scenario proves that a saved family file
   converges.
+- **CONTRACT-QUESTION, the controls of the edit form of the noticeboard.**
+  `docs/rework/spec.md` §8.1 says that the form comes from the family
+  schema. No contract gives the control of a field. The suite holds the form
+  of the noticeboard as it is:
+  - A boolean is a box.
+  - A list of names is one name on each line.
+  - A number is a text.
+  - Each other shape is a block that starts with the key line of its field.
+  - A field that the kind forbids is a disabled control with its rule
+    beside it.
+
+  A change costs the scenario of that control in `test_proc_board_form.py`.
+- **The names that the form scenarios read in the markup.**
+  `test_proc_board_form.py` finds a control by its `name`, in an element
+  with the class `field`. It finds the rule of a locked control by the class
+  `rule`. It finds the sentence about a new sandbox by the class `flag`.
+- **CONTRACT-QUESTION, a save of the noticeboard that makes no commit.**
+  `docs/rework/spec.md` §8.2 says what a save writes. No section gives the
+  answer when a save writes nothing. The suite holds the answers of the
+  noticeboard as they are:
+  - A save that changes nothing gets the 303 of a save.
+  - A post that names a locked field gets the same 303. The noticeboard
+    drops the value.
+  - A save that `git` refuses gets the edit page with status 200 and a
+    report.
+
+  A change costs two assertions in each of two scenarios of
+  `test_proc_board_form.py`, and one assertion in a third scenario.
+- **CONTRACT-QUESTION, a save of the noticeboard beside a change of a
+  person.** `docs/rework/spec.md` §8.2 says that a save writes one commit. No
+  section says what a save does with a change that a person left in the
+  checkout. The suite holds the noticeboard as it is:
+  - The commit holds the family file alone.
+  - A file that no commit holds stays as it was.
+  - A changed file of another family stays changed.
+  - A staged file of another family stays staged.
+
+  A change costs the last assertions of three scenarios in
+  `test_proc_board_form.py`. No scenario changes a second file of the
+  family that the save writes.
+- **CONTRACT-QUESTION, the line end of a family file after a save.** No
+  contract gives it. A browser posts each line end of a control as CR LF.
+  The suite holds that the file holds no CR after a save of a block or of a
+  list of lines. A change costs one assertion in each of two scenarios of
+  `test_proc_board_form.py`.
+- **CONTRACT-QUESTION, the marks of a commit of the noticeboard.**
+  `docs/rework/spec.md` §8.2 gives the commit. No contract gives its author
+  or a trailer. The suite holds the author name `noticeboard` and the
+  trailer `Via: noticeboard`. `noticeboard/AGENTS.md` lists the trailer
+  under its own "Known gaps". A change costs two assertions in
+  `test_proc_board_form.py`.
+- **CONTRACT-QUESTION, the temporary file of a save of the noticeboard.** No
+  contract gives the name of the file that a save writes before the rename.
+  No contract says who removes such a file after a save that did not end.
+  The suite holds the noticeboard as it is:
+  - The name is a dot, the name of the family file, a dot, 16 lower-case
+    hex digits and `.noticeboard-tmp`.
+  - The next save of the family removes the file, and its commit holds the
+    family file alone.
+
+  A second program that saves must use the same name form. With another
+  form, neither program removes the file of the other. A change costs the
+  name in `proc_registry.py` and one scenario in `test_proc_board_form.py`.
+- **CONTRACT-QUESTION, the mode of a family file after a save.** No contract
+  gives it. The suite holds that a save of the noticeboard keeps the mode of
+  the file. The scenario runs with mode 0640 and with mode 0600. A change
+  costs one assertion in `test_proc_board_form.py`.
+- **CONTRACT-QUESTION, the end of a CSRF token of the noticeboard.**
+  `docs/rework/spec.md` §8.3 rule 3 puts the token in a cookie and in a
+  hidden field. No section says when a token ends. The suite holds that a
+  restart of the service ends no token. A form that was open before a
+  restart then saves after it. A change costs one scenario in
+  `test_proc_board_restart.py`.
+- **CONTRACT-QUESTION, the output of the verify hook of the noticeboard.**
+  Contract 06 §4 rule 3 gives the exit code. No contract gives what a hook
+  prints. The suite holds that the stdout of the hook with `--json` is one
+  JSON object. The boolean `ok` of that object says what the exit code says.
+  A change costs two assertions in `test_proc_board_verify.py`.
+- **No fixture makes the audit directory for the verify hook of the
+  noticeboard.** The hook looks for that directory. The host has it before a
+  service starts (`systemd/creche-chaperone.service`). No fixture of this
+  topology makes it, so each scenario that runs the hook writes one audit
+  record first.
+- **The markup of a family file has more than one writer.** Rule 21 gives
+  the markup one reader. These places write the markup, or name it:
+  - `family_text` and `block_text` of `proc_registry.py`
+  - `write_family_file` and `Tree.family_file` of `proc_tree.py`
+  - the two `quiet` texts of `test_proc_trigger_quiet.py`
+  - one family text in `test_proc_caregiver_stage2.py`
+
+  `test_proc_table.py` reads the component manifest, which has the same
+  markup. A change of the markup costs each of those places.
 - **CONTRACT-QUESTION, the answers that no handler of a service makes.** No
   contract names the answer of a listener to four requests. The requests are
   an unknown path, a wrong method, a path with a final slash, and `HEAD` on
@@ -874,13 +1088,14 @@ the text of the failure. Work down this list.
 | `proc_harness.py` | a child in its own process group, the wait for an address, the teardown, the check at session end |
 | `proc_terminal.py`, `proc_login.py` | the test side of a pseudo-terminal, and the program that gives a command its controlling terminal |
 | `proc_tree.py` | the root, and one writer for each file a service reads |
-| `proc_registry.py` | the registry of the root: the text of a family file, the git repository, and what `git` reports |
+| `proc_registry.py` | the registry of the root: the text of a family file, the one reader of a family file, the git repository, and what `git` reports |
 | `proc_ids.py` | the ids that a door mints |
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |
 | `standin_sbx.py`, `standin_systemctl.py`, `standin_litellm.py`, `standin_tei.py` | the four stand-in programs of this directory |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
 | `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py` | one topology each |
+| `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |

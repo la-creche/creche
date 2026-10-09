@@ -6,6 +6,14 @@
 //!
 //! No error type here holds the text. A config value can be a secret, and a
 //! caller writes the error to a log.
+//!
+//! The module also holds each default path that more than one daemon reads:
+//! the state root, the socket of `attendance`, the directory of the status
+//! documents and the registry checkout. The module of a daemon reads them
+//! from here and holds no copy of the text. A default path of one daemon
+//! below the state root takes the text of the state root from
+//! `default_state_root!`. A default token file takes the text of its
+//! directory from `default_tokens_dir!`.
 
 use std::error::Error;
 use std::fmt;
@@ -404,7 +412,7 @@ impl Error for PortError {}
 // --- a host and a port ---
 
 /// What separates the host from the port.
-const PORT_SEPARATOR: char = ':';
+pub(super) const PORT_SEPARATOR: char = ':';
 
 /// The host and the port that a service binds: `host:port`.
 ///
@@ -757,6 +765,55 @@ path_type! {
     None
 }
 
+// --- the default paths that more than one daemon reads ---
+
+/// The text of the default state root, for the `concat!` of a path below it.
+macro_rules! default_state_root {
+    () => {
+        "/srv/agents/state/rework"
+    };
+}
+pub(super) use default_state_root;
+
+/// The text of the default token directory, for the `concat!` of a file in
+/// it. A service keeps its token files and its key files there.
+macro_rules! default_tokens_dir {
+    () => {
+        concat!($crate::config::values::default_state_root!(), "/tokens")
+    };
+}
+pub(super) use default_tokens_dir;
+
+/// The text of the name that `FAMILIES_DIR_NAME` holds, for the `concat!`
+/// of a path.
+macro_rules! families_dir_name {
+    () => {
+        "families"
+    };
+}
+
+/// The state root when no variable and no flag names one. The platform keeps
+/// its state below this directory.
+pub(super) const DEFAULT_STATE_ROOT: &str = default_state_root!();
+
+/// The name of the directory below a state root that holds one directory
+/// for each family.
+pub(super) const FAMILIES_DIR_NAME: &str = families_dir_name!();
+
+/// The Unix socket of `attendance` below the default state root. A client
+/// calls this socket when no variable and no flag names a target (contract
+/// 02 §3 rule 1).
+pub(super) const DEFAULT_ATTENDANCE_SOCKET: &str =
+    concat!(default_state_root!(), "/sock/sessiond.sock");
+
+/// The directory of the status documents below the default state root. A
+/// door reads the status document of each family there.
+pub(super) const DEFAULT_FAMILIES_DIR: &str =
+    concat!(default_state_root!(), "/", families_dir_name!());
+
+/// The registry checkout when no variable names one.
+pub(super) const DEFAULT_REGISTRY_ROOT: &str = "/srv/agents/registry";
+
 // --- a duration ---
 
 // CONTRACT-QUESTION: contract 03 §11.4 rule 4 and the other sections that
@@ -869,14 +926,17 @@ impl Error for SecondsError {}
 
 // --- a URL ---
 
+/// The scheme of a URL that a client reaches with no TLS.
+pub(super) const HTTP_SCHEME: &str = "http://";
+
 /// The two schemes that a URL of a config can have.
-const URL_SCHEMES: [&str; 2] = ["http://", "https://"];
+const URL_SCHEMES: [&str; 2] = [HTTP_SCHEME, "https://"];
 
 /// The characters that end the authority of a URL.
-const AUTHORITY_END: [char; 3] = ['/', '?', '#'];
+pub(super) const AUTHORITY_END: [char; 3] = ['/', '?', '#'];
 
 /// What separates the user of a URL from its host.
-const USER_SEPARATOR: char = '@';
+pub(super) const USER_SEPARATOR: char = '@';
 
 // CONTRACT-QUESTION: no contract gives a config URL a grammar. The three
 // doors check only the scheme, so `http://` alone passes there. `attendance`,
@@ -928,7 +988,7 @@ impl HttpUrl {
     /// The URL of a service on the LAN address: `http://<address>:<port>`.
     #[must_use]
     pub fn on_lan(address: &LanAddress, port: Port) -> Self {
-        Self(format!("http://{address}:{port}"))
+        Self(format!("{HTTP_SCHEME}{address}{PORT_SEPARATOR}{port}"))
     }
 }
 
@@ -1336,6 +1396,34 @@ mod tests {
         for name in ["", ".", "..", "a/b", "/a", "a\0"] {
             assert_eq!(root.join(name), None, "{name:?}");
         }
+    }
+
+    #[test]
+    fn the_socket_of_attendance_is_below_the_default_state_root() {
+        let root: DirPath = DEFAULT_STATE_ROOT.parse().unwrap();
+        let socket: SocketPath = DEFAULT_ATTENDANCE_SOCKET.parse().unwrap();
+
+        assert_eq!(root.as_str(), "/srv/agents/state/rework");
+        assert_eq!(
+            socket.as_str(),
+            "/srv/agents/state/rework/sock/sessiond.sock"
+        );
+        assert_eq!(
+            socket.as_str(),
+            root.child("sock").child("sessiond.sock").as_str()
+        );
+    }
+
+    #[test]
+    fn a_default_path_of_two_daemons_keeps_its_text() {
+        let families: DirPath = DEFAULT_FAMILIES_DIR.parse().unwrap();
+        let registry: DirPath = DEFAULT_REGISTRY_ROOT.parse().unwrap();
+        let root: DirPath = DEFAULT_STATE_ROOT.parse().unwrap();
+
+        assert_eq!(FAMILIES_DIR_NAME, "families");
+        assert_eq!(families.as_str(), "/srv/agents/state/rework/families");
+        assert_eq!(families, root.child(FAMILIES_DIR_NAME));
+        assert_eq!(registry.as_str(), "/srv/agents/registry");
     }
 
     #[test]

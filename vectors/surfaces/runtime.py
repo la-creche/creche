@@ -808,13 +808,18 @@ TOKEN_READERS: Final[tuple[TokenReader, ...]] = (
         contract="contract 04 §7.3, contract 02 §3 rule 7",
         prepare=_one_file(read_door_token),
         returns=Returns.TOKEN,
-        files=TEXT_FILES,
+        files=(*TEXT_FILES, *OTHER_FILES),
         refusal=DoorTokenError,
-        kinds=(("cannot read", "unreadable"), ("holds fewer than", "short")),
+        kinds=(
+            ("cannot read", "unreadable"),
+            ("is not UTF-8 text", "not_utf8"),
+            ("holds fewer than", "short"),
+        ),
         notes=(
             _NOTE_TEXT,
-            "refusal is the kind of the refusal: unreadable or short. The reader counts "
-            "the UTF-8 bytes of the text. An empty file is short. The reader checks no mode.",
+            "refusal is the kind of the refusal: unreadable, not_utf8 or short. The reader "
+            "counts the UTF-8 bytes of the text. An empty file is short. The reader checks "
+            "no mode.",
         ),
     ),
     TokenReader(

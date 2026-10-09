@@ -94,6 +94,30 @@ async def test_an_override_starts_the_noticeboard(
     assert ran.read_text(encoding="utf-8").split() == ["noticeboard"]
 
 
+def test_an_override_starts_the_verify_hook_of_the_noticeboard(
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hook is a program of its own, with a variable of its own. It runs to its end.
+
+    The hook looks for the audit directory, which the host has before a
+    service starts. One audit record makes it here.
+    """
+    ran = tree.root / "override-ran"
+    monkeypatch.setenv(
+        SERVICES[Service.NOTICEBOARD_VERIFY].override,
+        str(_other_program(tree, Service.NOTICEBOARD_VERIFY, ran)),
+    )
+    stack = BoardStack(tree, supervisor)
+    stack.prepare()
+    stack.write_audit_record()
+    stack.start_board()
+
+    checked = stack.verify(stack.write_view_env())
+
+    assert checked.exit_code == 0, checked.stdout + checked.stderr
+    assert ran.read_text(encoding="utf-8").split() == ["noticeboard-verify"]
+
+
 def test_an_override_starts_the_terminal_door_on_a_terminal(
     tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
 ) -> None:

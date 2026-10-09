@@ -5,7 +5,10 @@
 //! reader is `agent_door_owui.config.from_env`. That function also reads the
 //! two key files, so no vector covers it.
 
-use super::values::{BindAddress, DirPath, TokenFilePath};
+use super::values::{
+    BindAddress, DEFAULT_ATTENDANCE_SOCKET, DEFAULT_FAMILIES_DIR, DirPath, TokenFilePath,
+    default_tokens_dir,
+};
 use super::{
     AtReload, AtStart, AttendanceTarget, Checked, ConfigError, ConfigErrors, Env, FailureAction,
     Parsed, ProcessConfig, all2, all3, door_target,
@@ -29,9 +32,7 @@ pub const FAMILIES_DIR: &str = "DOOR_OWUI_FAMILIES_DIR";
 /// The bind of the door when the variable is not set (contract 02 §3 rule
 /// 9 gives the port).
 const DEFAULT_BIND: &str = "127.0.0.1:8340";
-const DEFAULT_ATTENDANCE_SOCKET: &str = "/srv/agents/state/rework/sock/sessiond.sock";
-const DEFAULT_TOKEN_FILE: &str = "/srv/agents/state/rework/tokens/door-owui.token";
-const DEFAULT_FAMILIES_DIR: &str = "/srv/agents/state/rework/families";
+const DEFAULT_TOKEN_FILE: &str = concat!(default_tokens_dir!(), "/door-owui.token");
 
 /// The config of the Open WebUI door: each value that the door reads from
 /// its environment.
@@ -235,12 +236,18 @@ mod tests {
 
         assert_eq!(config.bind().to_string(), "192.0.2.10:8340");
         assert!(config.key_file().as_str().ends_with("door-owui.key"));
-        assert_eq!(config.token_file().as_str(), DEFAULT_TOKEN_FILE);
+        assert_eq!(
+            config.token_file().as_str(),
+            "/srv/agents/state/rework/tokens/door-owui.token"
+        );
         assert_eq!(
             config.attendance(),
             &AttendanceTarget::Socket(DEFAULT_ATTENDANCE_SOCKET.parse().unwrap())
         );
-        assert_eq!(config.families_dir().as_str(), DEFAULT_FAMILIES_DIR);
+        assert_eq!(
+            config.families_dir().as_str(),
+            "/srv/agents/state/rework/families"
+        );
     }
 
     #[test]

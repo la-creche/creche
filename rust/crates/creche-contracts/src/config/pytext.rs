@@ -5,22 +5,15 @@
 //! does not share. This module holds those rules one time, so a reader here
 //! accepts and refuses what the Python reader does.
 //!
+//! The white space rule of `str` has users outside `config`, so its one copy
+//! is in `creche_util::pytext`. This module gives [`is_space`] and [`strip`]
+//! from there to the readers of a config.
+//!
 //! One difference stays on purpose: a decimal digit that is not ASCII. Python
 //! reads it as a digit. The functions here refuse it (`rust/AGENTS.md`, rule
 //! 9).
 
-/// Whether Python's `str.isspace` holds for the character.
-///
-/// The set is `White_Space` of Unicode and the four separators U+001C to
-/// U+001F. `char::is_whitespace` does not hold for the four separators.
-pub(super) fn is_space(character: char) -> bool {
-    character.is_whitespace() || matches!(character, '\u{1c}'..='\u{1f}')
-}
-
-/// The text without the space at its two ends, as Python's `str.strip`.
-pub(super) fn strip(text: &str) -> &str {
-    text.trim_matches(is_space)
-}
+pub(super) use creche_util::pytext::{is_space, strip};
 
 /// Whether Python's `str.splitlines` ends a line at the character.
 fn is_line_break(character: char) -> bool {
@@ -179,27 +172,19 @@ pub(super) fn float(text: &str) -> Option<f64> {
 mod tests {
     use super::*;
 
-    /// Each character for which Python's `str.isspace` holds, from Python
-    /// 3.13: `[c for c in range(0x110000) if chr(c).isspace()]`.
-    const PYTHON_SPACES: [u32; 29] = [
-        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x85, 0xa0, 0x1680, 0x2000,
-        0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028,
-        0x2029, 0x202f, 0x205f, 0x3000,
-    ];
+    /// Each character for which Python's `str.isspace` holds. A test of
+    /// `creche_util::pytext` holds [`is_space`] to the table of Python.
+    fn python_spaces() -> Vec<char> {
+        (0..=u32::from(char::MAX))
+            .filter_map(char::from_u32)
+            .filter(|character| is_space(*character))
+            .collect()
+    }
 
     /// Each character at which Python's `str.splitlines` ends a line.
     const PYTHON_LINE_BREAKS: [u32; 10] = [
         0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1d, 0x1e, 0x85, 0x2028, 0x2029,
     ];
-
-    #[test]
-    fn the_space_set_is_the_set_of_python() {
-        let found: Vec<u32> = (0..=u32::from(char::MAX))
-            .filter(|code| char::from_u32(*code).is_some_and(is_space))
-            .collect();
-
-        assert_eq!(found, PYTHON_SPACES);
-    }
 
     #[test]
     fn the_line_break_set_is_the_set_of_python() {
@@ -208,13 +193,6 @@ mod tests {
             .collect();
 
         assert_eq!(found, PYTHON_LINE_BREAKS);
-    }
-
-    #[test]
-    fn strip_removes_the_space_of_python_at_the_two_ends() {
-        assert_eq!(strip(" \t a b \u{1f}\u{a0}\n"), "a b");
-        assert_eq!(strip("\u{3000}"), "");
-        assert_eq!(strip("a"), "a");
     }
 
     #[test]
@@ -270,8 +248,9 @@ mod tests {
 
     #[test]
     fn a_number_keeps_the_four_separators_that_strip_removes() {
-        for code in PYTHON_SPACES {
-            let space = char::from_u32(code).unwrap();
+        let spaces = python_spaces();
+        for space in spaces.iter().copied() {
+            let code = u32::from(space);
             let removed = !matches!(space, '\u{1c}'..='\u{1f}');
             let whole = integer(&format!("{space}7{space}"));
             let fraction = float(&format!("{space}7.5{space}"));
@@ -279,6 +258,10 @@ mod tests {
             assert_eq!(whole.is_some(), removed, "integer {code:#x}");
             assert_eq!(fraction.is_some(), removed, "float {code:#x}");
         }
+
+        // The walk saw the four separators and a space that a number drops.
+        assert!(spaces.contains(&'\u{1c}') && spaces.contains(&'\u{1f}'));
+        assert!(spaces.contains(&' ') && spaces.contains(&'\u{3000}'));
 
         assert_eq!(integer("\u{1f}7"), None);
         assert_eq!(integer("7\u{1c}"), None);

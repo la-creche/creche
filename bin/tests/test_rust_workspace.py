@@ -1,6 +1,6 @@
 """The Cargo workspace stays where it is and keeps its lint gate.
 
-Five things about `rust/` could change without one red line, and each gets
+Six things about `rust/` could change without one red line, and each gets
 a check here:
 
 1. **A lint lifted for every crate at once.** `[workspace.lints]` in
@@ -20,20 +20,30 @@ a check here:
    `overflow-checks = true`. With `abort`, one panic in one request stops a
    service, and its edge layer cannot answer. Without the checks, a release
    build wraps a number and continues with a wrong value
-   (`rust/AGENTS.md`, "The rules for a service").
+   (`rust/AGENTS.md`, "The panic rule").
 5. **A license or a source that no person decided.** `rust/deny.toml` is the
    policy that `cargo deny` checks the locked crates against. One edit there
    allows each license or a crate from a git repository, and the check still
    passes. Each table of the file is pinned entry for entry
    (`rust/AGENTS.md`, "Dependencies"). The checks here read the file and
    need no `cargo`.
+6. **A table of differences in a test.** A differential test passes only
+   when the Rust result equals the Python result for each vector. A table
+   of the inputs on which the two differ is an exception that no type
+   holds (`rust/AGENTS.md`, "The differential test"). No Rust source file
+   holds such a table, in each crate that the list here does not name.
 
 A push that changes only `rust/` runs no pytest suite (`bin/lib/rustrule.sh`),
 so for such a change these checks run in CI.
+
+One more check holds one crate to a rule of its own. The crate file of
+`creche-util` names no dependency, because each other crate can depend on
+that crate (`rust/crates/creche-util/AGENTS.md`, rule 4).
 """
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -135,8 +145,28 @@ GRAPH = {
 #: A file that makes its directory a part of a Cargo build.
 CARGO_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchain")
 
+#: The crate of the shared helpers. Each other crate can depend on it.
+HELPER_CRATE = "creche-util"
+
+#: Each table of a crate file that can name a dependency. `target` holds the
+#: dependencies of one platform.
+DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies", "target")
+
 #: Paths a Rust commit changes: a manifest, a source file and a document.
 RUST_PATHS = ("rust/Cargo.lock", "rust/crates/creche-contracts/src/ids.rs", "rust/AGENTS.md")
+
+#: The directory of the crates, below `RUST_DIR`.
+CRATES_DIR = "crates"
+
+#: The crates whose tests still hold a table of differences. The test of
+#: check 6 reads each other crate. The change that removes the last table of
+#: a crate deletes its name here.
+TABLE_CRATES = ("agent-family", "creche-contracts", "creche-runtime", "creche-testkit")
+
+#: The name of a table of differences, and the start of the struct of one
+#: row. A longer name that holds one of the two counts too.
+TABLE_NAME = "DEVIATIONS"
+TABLE_ROW = re.compile(r"\bstruct\s+Deviation")
 
 
 def _toml(name: str) -> dict[str, Any]:
@@ -229,6 +259,18 @@ def test_no_crate_carries_a_version_to_bump() -> None:
         assert "version" not in package, f"{manifest.parent.name} carries a version"
 
 
+def test_the_helper_crate_has_no_dependency() -> None:
+    """A dependency of `creche-util` becomes a dependency of each crate that
+    uses a shared helper. The crate needs `std` only
+    (`rust/crates/creche-util/AGENTS.md`, rule 4)."""
+    manifest = tomllib.loads(
+        (REPO / RUST_DIR / "crates" / HELPER_CRATE / "Cargo.toml").read_text(encoding="utf-8")
+    )
+    named = [table for table in DEPENDENCY_TABLES if table in manifest]
+
+    assert named == [], f"{HELPER_CRATE} names a dependency: {named}"
+
+
 def test_every_cargo_file_is_under_rust() -> None:
     tracked = subprocess.run(
         ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
@@ -240,6 +282,30 @@ def test_every_cargo_file_is_under_rust() -> None:
     ]
 
     assert outside == [], f"a Cargo file outside {RUST_DIR}/: {outside}"
+
+
+def test_no_test_holds_a_table_of_differences() -> None:
+    """The test reads the text of each file, test code too: a table of
+    differences lives in a test. A comment that holds the name counts.
+
+    A wrong path of the crates reads no file, and a name of the list with
+    no crate skips nothing. The test fails for both."""
+    crates = REPO / RUST_DIR / CRATES_DIR
+    absent = [name for name in TABLE_CRATES if not (crates / name).is_dir()]
+
+    assert crates.is_dir(), f"no directory {RUST_DIR}/{CRATES_DIR}"
+    assert absent == [], f"the list names a crate that is not there: {absent}"
+
+    tables: list[str] = []
+    for source in sorted(crates.rglob("*.rs")):
+        if source.relative_to(crates).parts[0] in TABLE_CRATES:
+            continue
+
+        text = source.read_text(encoding="utf-8")
+        if TABLE_NAME in text or TABLE_ROW.search(text):
+            tables.append(str(source.relative_to(REPO)))
+
+    assert tables == [], f"a table of differences: {tables}"
 
 
 def test_a_change_under_rust_mints_no_tag() -> None:
