@@ -1699,6 +1699,26 @@ mod tests {
     }
 
     #[test]
+    fn each_text_of_a_noticeboard_row_comes_from_its_own_field() {
+        let read = raw(r#"{"registry_rev": "reg-1", "applied_rev": "reg-2",
+                "sandboxes": [{"id": "chat-s1", "created_at": "created", "ready_at": "ready"}],
+                "faults": [{"code": "grants_stale", "since": "since", "source": "source",
+                    "stale": true, "message": "message", "sandbox": "sandbox"}]}"#);
+        let row = noticeboard(&read, "chat", now());
+        let sandbox = &row.sandboxes()[0];
+        let fault = &row.faults()[0];
+
+        assert_eq!((row.registry_rev(), row.applied_rev()), ("reg-1", "reg-2"));
+        assert_eq!(
+            (sandbox.created_at(), sandbox.ready_at()),
+            ("created", "ready")
+        );
+        assert_eq!((fault.since(), fault.source()), ("since", "source"));
+        assert_eq!((fault.message(), fault.sandbox()), ("message", "sandbox"));
+        assert!(fault.stale());
+    }
+
+    #[test]
     fn the_terminal_door_has_two_exit_codes() {
         let wrong_kind = TuiRefusal::WrongKind {
             kind: "thin".to_owned(),
