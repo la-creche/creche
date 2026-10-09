@@ -2001,6 +2001,7 @@ impl Error for ClientError {}
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, TcpListener};
     use std::os::unix::net::UnixListener;
     use std::path::Path;
     use std::process::Stdio;
@@ -4032,22 +4033,40 @@ mod tests {
 
     // --- the connect ---
 
+    /// A loopback port with no listener. The system refuses each connect to
+    /// such a port at once.
+    ///
+    /// The function binds a port that the system selects, and closes it.
+    /// Another process can take the port before the connect of the test.
+    /// That time is short.
+    fn closed_port() -> u16 {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+
+        listener.local_addr().unwrap().port()
+    }
+
     #[test]
     fn a_connect_that_the_system_refuses_gives_its_text() {
         runtime().block_on(async {
             let root = TempRoot::new().unwrap();
-            // A socket file that refuses each connect, and a path with no
-            // file.
+            // A socket file that refuses each connect, a path with no file,
+            // and a loopback port with no listener.
             let closed = refused_socket(&root).unwrap();
             let absent = root.path().join("absent.sock");
+            let url: HttpUrl = format!("http://127.0.0.1:{}", closed_port())
+                .parse()
+                .unwrap();
 
-            for (path, os_text) in [
-                (closed, "Connection refused"),
-                (absent, "No such file or directory"),
+            for (client, os_text) in [
+                (client_of(&closed), "Connection refused"),
+                (client_of(&absent), "No such file or directory"),
+                (
+                    Client::new(Target::try_from(&url).unwrap()),
+                    "Connection refused",
+                ),
             ] {
-                let client = client_of(&path);
-                // The text has no path, no error number and no name of a
-                // type.
+                // The text has no path, no address, no error number and no
+                // name of a type.
                 let error = ClientError::Connect {
                     os_text: String::from(os_text),
                 };
@@ -4055,8 +4074,8 @@ mod tests {
                 let sent = client.send(get(), ByteCap::ONE_MIB, PATIENT).await;
                 let opened = client.open(get(), StreamLimit::Within(PATIENT)).await;
 
-                assert_eq!(sent, Err(error.clone()));
-                assert_eq!(opened.unwrap_err(), error);
+                assert_eq!(sent, Err(error.clone()), "{client:?}");
+                assert_eq!(opened.unwrap_err(), error, "{client:?}");
             }
         });
     }

@@ -302,10 +302,6 @@ reason. The packet that writes the three bodies obeys these rules:
 - No test of `http::client` makes a real connect wait, because no listener
   holds a connect open on each operating system. The test of
   `Phase::Connect` uses a private target that completes no connect.
-- No test of `http::client` gives a refused connect over TCP. The testkit
-  gives a refused connect only for a Unix socket. A TCP socket that has a
-  port and does not listen is no stand-in: macOS does not refuse a connect
-  to it, and the connect ends at a time limit of the system.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same
