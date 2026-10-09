@@ -13,7 +13,7 @@ the function.
 |---|---|
 | `src/sha256.rs` | `digest`: the SHA-256 of FIPS 180-4, as 32 bytes. |
 | `src/hex.rs` | `lower`: bytes as hex text in lower case. The text is the base 16 form of RFC 4648 section 8. |
-| `src/pytext.rs` | `is_space`, `strip` and `words`: the white space rules of `str.isspace`, `str.strip` and `str.split` of Python. |
+| `src/pytext.rs` | `is_space`, `strip` and `words`: the white space rules of `str.isspace`, `str.strip` and `str.split` of Python. `universal_newlines`: the line end rule of the text mode of Python. |
 
 ## What the crate takes
 
@@ -73,6 +73,10 @@ function of the caller.
 - `pytext` compares `is_space` with the full list of the characters that
   Python 3.13 calls space. The list has 29 characters. Four of them are the
   separators U+001C to U+001F, which Rust does not call white space.
+- `pytext` compares `universal_newlines` with the text that
+  `Path.read_text` of Python 3.13 gives for a file. The table holds a CR LF,
+  a CR alone and both in one text. It also holds line breaks that do not
+  change.
 - No vector surface records a helper, so this crate has no differential test.
   The differential tests of the callers walk each vector that holds a digest.
   Such a vector holds one of these four values:

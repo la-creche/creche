@@ -235,11 +235,41 @@ reason. The packet that writes the three bodies obeys these rules:
   byte. A service gives the bytes to `Secret::matches`. It writes them to no
   log line. The owner of the crate decides if the result gets a type of its
   own.
-- `token::universal_newlines` holds the text mode rule of Python: one LF for
-  each CR LF and for each other CR. `command::python_text` is a stub for the
-  same rule. When that stub has its body, make `token` call it. Then delete
-  `universal_newlines`. `agent-family` holds one more copy of the rule in
-  `registry.rs`, and no packet has that copy yet.
+- `command` sets no limit on the size of a file that a child writes. The
+  Python `handover` sets one in the child before the program starts
+  (`handover/src/handover/executor/host.py:359-376` and `:407`). In Rust
+  that step needs `unsafe` code, and the lint gate forbids it. The port of
+  `handover` needs another design.
+- An owner task of `command` kills only the child. A program that the child
+  started continues to run, and it can hold an output stream of the child
+  open. `subprocess.run` of Python has the same limit. With
+  `TimeLimit::None`, a run that captures such a stream waits until that
+  program closes the stream.
+- `command::ChildGuard::wait` gives the exit status 255 when the wait call
+  of the operating system fails. The skeleton fixed the signature of the
+  function, and that signature has no error. The owner of the crate decides
+  if the function gets one.
+- `command` does not refuse each program file that CPython refuses. Such a
+  file has no `#!` line and is no binary program, and CPython gives the
+  error "Exec format error" for it. For a program name with no `/`, the
+  runner gives the file to `/bin/sh` when the command clears the environment
+  or sets `PATH`. For a path with a `/`, Linux refuses the file and macOS
+  gives it to `/bin/sh`. A service that names each program by its absolute
+  path gets the refusal on Linux.
+- A child of `command` gets each descriptor of the process that has no
+  close-on-exec flag. CPython closes each descriptor past 2 in the child.
+  Open each descriptor of a service with the flag. `rustix` sets the flag
+  only when the call asks for it. Give `OFlags::CLOEXEC` to each open call
+  of `rustix`.
+- `tokio` starts a program first and gives its pipes to the I/O driver after
+  that. When the driver refuses a pipe, `command` gives
+  `RunError::NotStarted`, and the program runs with no owner. This process
+  then closes its ends of the pipes of that program.
+- After a wait call that failed, the drop of the child sends SIGKILL to the
+  id of the child, because `tokio` holds that flag. The operating system can
+  give that id to another process before the drop. This applies to a run
+  that gave `RunError::OwnerLost` for a failed wait call. It also applies to
+  the drop of a `ChildGuard` after such a call.
 - No test gives `faults::publish` a fault file whose source is `caregiver`.
   `FaultFile::new` refuses that source, so no code can build such a file. A
   test gives the private function `publish_as` no writer in its place.

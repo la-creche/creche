@@ -1,6 +1,6 @@
 [package]
 name = "creche-util"
-description = "The shared helpers of the creche workspace: SHA-256, hex text and the white space rules of Python"
+description = "The shared helpers of the creche workspace: SHA-256, hex text, and the white space and line end rules of Python"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

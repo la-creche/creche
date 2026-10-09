@@ -22,7 +22,7 @@ defect that a test finds late.
 
 | Crate | What it holds |
 |---|---|
-| `creche-util` | Each shared helper: SHA-256, the hex text of bytes and the white space rules of Python `str`. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
+| `creche-util` | Each shared helper: SHA-256, the hex text of bytes, the white space rules of Python `str` and the line end rule of the Python text mode. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
@@ -95,8 +95,8 @@ read.
 
 A shared helper is a pure function with two users. The users are two crates,
 or two modules that hold two contracts. `creche-util` holds each shared
-helper. Today it holds SHA-256, the hex text of bytes and the white space
-rules of Python `str`.
+helper. Today it holds SHA-256, the hex text of bytes, the white space
+rules of Python `str` and the line end rule of the Python text mode.
 
 1. Put a shared helper in `creche-util`.
 2. Write no second copy of a helper that `creche-util` holds. Call the

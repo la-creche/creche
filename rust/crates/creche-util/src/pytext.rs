@@ -10,6 +10,12 @@
 //! `str` only. `int` and `float` of Python remove another set around a
 //! number, and they keep the four separators. Such a set stays with its
 //! reader.
+//!
+//! The module also holds the line end rule of the text mode of Python:
+//! [`universal_newlines`]. The Python code reads a file and the output of a
+//! child program in that mode.
+
+use std::borrow::Cow;
 
 /// Whether `str.isspace` of Python holds for the character.
 ///
@@ -56,6 +62,36 @@ pub fn strip(text: &str) -> &str {
 /// ```
 pub fn words(text: &str) -> impl Iterator<Item = &str> {
     text.split(is_space).filter(|word| !word.is_empty())
+}
+
+/// The text with each line end as one LF, as the text mode of Python gives
+/// it: one LF for each CR LF and for each other CR.
+///
+/// Python reads a file in that mode with `open` and with `Path.read_text`,
+/// when the call names no `newline`. `subprocess.run` gives the output of a
+/// child program in the same form with `text=True`
+/// (`subprocess.py:1098-1100` of CPython, version 3.13). No other line break
+/// changes: U+0085, U+2028 and the four separators stay.
+///
+/// A text with no CR comes back as it is, with no copy.
+///
+/// ```
+/// use creche_util::pytext;
+///
+/// assert_eq!(
+///     pytext::universal_newlines("one\r\ntwo\rthree\n"),
+///     "one\ntwo\nthree\n"
+/// );
+/// assert_eq!(pytext::universal_newlines("a\r\r\nb"), "a\n\nb");
+/// assert_eq!(pytext::universal_newlines("a\u{2028}b"), "a\u{2028}b");
+/// ```
+#[must_use]
+pub fn universal_newlines(text: &str) -> Cow<'_, str> {
+    if !text.contains('\r') {
+        return Cow::Borrowed(text);
+    }
+
+    Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
 #[cfg(test)]
@@ -145,5 +181,44 @@ mod tests {
 
             assert_eq!(words(&text).collect::<Vec<_>>(), ["a", "b"], "{code:#x}");
         }
+    }
+
+    /// Each answer is what `Path.read_text` of Python 3.13 gives for a file
+    /// with the text. The two `replace` calls of `subprocess.py:1098-1100`
+    /// give the same answer.
+    #[test]
+    fn the_text_mode_of_python_reads_each_cr_as_one_line_feed() {
+        let table = [
+            ("", ""),
+            ("token", "token"),
+            ("a\nb", "a\nb"),
+            ("a\rb", "a\nb"),
+            ("a\r\nb", "a\nb"),
+            ("a\r\r\nb", "a\n\nb"),
+            ("a\n\rb", "a\n\nb"),
+            ("\r", "\n"),
+            ("\r\n", "\n"),
+            ("token\r\n", "token\n"),
+            ("\n\r", "\n\n"),
+            ("\r\r\n", "\n\n"),
+            ("\r\n\r\n", "\n\n"),
+            ("\r\n\n\r", "\n\n\n"),
+            ("a\rb\r\nc\nd\r", "a\nb\nc\nd\n"),
+            ("caf\u{e9}\r\n", "caf\u{e9}\n"),
+            // No other line break changes.
+            (
+                "\u{b}\u{c}\u{1c}\u{1d}\u{1e}\u{1f}",
+                "\u{b}\u{c}\u{1c}\u{1d}\u{1e}\u{1f}",
+            ),
+            ("\u{85}", "\u{85}"),
+            ("\u{2028}\u{2029}", "\u{2028}\u{2029}"),
+        ];
+
+        for (file, text) in table {
+            assert_eq!(universal_newlines(file), text, "{file:?}");
+        }
+
+        assert!(matches!(universal_newlines("a\nb"), Cow::Borrowed(_)));
+        assert!(matches!(universal_newlines("a\rb"), Cow::Owned(_)));
     }
 }
