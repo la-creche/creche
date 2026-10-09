@@ -1444,8 +1444,9 @@ impl Watched {
 
         self.write.stop();
         // The wait for the answer starts here. hyper does not read again
-        // before the next wake, so this code starts the timer. A limit of
-        // zero passes at once and gives no wake.
+        // before the next wake, so this code starts the timer. A timer that
+        // is past its time at its first poll gives no wake. The code then
+        // wakes the task, and the read of that wake ends the connection.
         if self.read_waits && self.read.passed(cx) {
             cx.waker().wake_by_ref();
         }
@@ -2005,7 +2006,8 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::path::Path;
     use std::process::Stdio;
-    use std::task::Waker;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Wake, Waker};
     use std::time::Instant;
 
     use creche_testkit::root::TempRoot;
@@ -3723,6 +3725,85 @@ mod tests {
                 .unwrap();
             assert!(!watched.write.runs());
             assert!(watched.read.runs());
+        });
+    }
+
+    /// A task that counts its wakes.
+    #[derive(Debug, Default)]
+    struct Wakes(AtomicUsize);
+
+    impl Wakes {
+        fn count(&self) -> usize {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Wake for Wakes {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_read_limit_that_is_past_at_the_end_of_the_write_wakes_the_task() {
+        // The clock of this runtime does not move. A timer with a limit of
+        // zero is then past its time at its first poll, and it gives no
+        // wake. With a clock that moves, a timer is seldom in that state,
+        // and no test can put it there.
+        let paused = Builder::new_current_thread()
+            .enable_all()
+            .start_paused(true)
+            .build()
+            .unwrap();
+
+        paused.block_on(async {
+            for (read_idle, wakes_at_flush, stalled) in [
+                (Duration::ZERO, 1, Some(Phase::ReadIdle)),
+                (PATIENT, 0, None),
+            ] {
+                let (near, _far) = UnixStream::pair().unwrap();
+                // No step below waits, so the clock stays where it is. The
+                // socket takes the write of the first poll.
+                near.writable().await.unwrap();
+                let stall = Arc::new(OnceLock::new());
+                let mut watched = Watched::new(
+                    Stream::Unix(near),
+                    Timeouts::each(PATIENT).with_read_idle(Some(read_idle)),
+                    Arc::clone(&stall),
+                );
+                let wakes = Arc::new(Wakes::default());
+                let waker = Waker::from(Arc::clone(&wakes));
+                let mut context = Context::from_waker(&waker);
+                let mut found = [0_u8; 8];
+
+                // The request is on its way, and a read finds no byte. The
+                // wait of the read does not run.
+                let wrote =
+                    Pin::new(&mut watched).poll_write(&mut context, b"GET / HTTP/1.1\r\n\r\n");
+                assert!(matches!(wrote, Poll::Ready(Ok(18))), "{read_idle:?}");
+                let read =
+                    Pin::new(&mut watched).poll_read(&mut context, &mut ReadBuf::new(&mut found));
+                assert!(read.is_pending(), "{read_idle:?}");
+                assert!(!watched.read.runs(), "{read_idle:?}");
+                assert_eq!(wakes.count(), 0, "{read_idle:?}");
+
+                // The flush ends the write and starts the wait of the read.
+                // hyper reads again only after a wake. A wait that is past
+                // its limit gets no wake from its timer, so the flush gives
+                // one.
+                let flushed = Pin::new(&mut watched).poll_flush(&mut context);
+                assert!(matches!(flushed, Poll::Ready(Ok(()))), "{read_idle:?}");
+                assert!(watched.read.runs(), "{read_idle:?}");
+                assert_eq!(wakes.count(), wakes_at_flush, "{read_idle:?}");
+                assert_eq!(stall.get(), None, "{read_idle:?}");
+
+                // The read of that wake ends the connection at the read
+                // limit. A wait inside its limit continues.
+                let read =
+                    Pin::new(&mut watched).poll_read(&mut context, &mut ReadBuf::new(&mut found));
+                assert_eq!(read.is_ready(), stalled.is_some(), "{read_idle:?}");
+                assert_eq!(stall.get(), stalled.as_ref(), "{read_idle:?}");
+            }
         });
     }
 
