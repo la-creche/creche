@@ -33,6 +33,13 @@
 # of the repository lists each run. No job of this repository reads the
 # result.
 #
+# CONTRACT-QUESTION: rust/AGENTS.md, "The coverage rule". No rule says how a
+# red run of this workflow must reach a person, and no rule names that
+# person. The reading here: the workflow holds the read-only token and sends
+# nothing by itself, so the notice of GitHub is the one path. A change costs
+# one step with a token that can write, for example a step that opens an
+# issue.
+#
 # GITHUB CAN SKIP A RUN. It can delay or drop a scheduled run when its load
 # is high. It turns the schedule of a public repository off after 60 days
 # with no activity in the repository.
