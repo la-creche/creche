@@ -1346,6 +1346,40 @@ impl Error for FaultError {}
 /// The fields of one status document, for [`StatusDocument::new`].
 ///
 /// ```
+/// use creche_contracts::status::document::{
+///     DocumentParts, Limits, Pep, StatusDocument, Triggers, ValidHistory, Validation, Verdict,
+/// };
+/// use creche_contracts::status::words::FamilyState;
+///
+/// let at = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let validation = Validation::new(
+///     String::from("reg-2"),
+///     at,
+///     Verdict::Passed,
+///     ValidHistory::OnceValid,
+///     0,
+///     0,
+///     "/state/families/chat/validation.json".parse().unwrap(),
+/// );
+/// let parts = DocumentParts::new(
+///     "chat".parse().unwrap(),
+///     FamilyState::InSync,
+///     at,
+///     String::from("reg-2"),
+///     String::from("reg-2"),
+///     String::from("cfg-1"),
+///     validation,
+///     Limits::new(),
+///     Triggers::new(),
+///     Pep::Off,
+/// );
+/// assert!(parts.sandboxes().is_empty());
+/// assert!(StatusDocument::new(parts).is_ok());
+/// ```
+///
+/// A `with_` method sets an optional field:
+///
+/// ```
 /// use creche_contracts::status::document::DocumentParts;
 /// use creche_contracts::status::words::Kind;
 ///
