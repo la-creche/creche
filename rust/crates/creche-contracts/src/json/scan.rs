@@ -116,7 +116,9 @@ pub(super) fn pass(text: &str) -> Result<Found, NotStrict> {
 // reading here refuses the text, because two readers can keep two values.
 // The owner did not confirm this reading yet (`rust/AGENTS.md`, "Known
 // gaps"). A change costs this function with the key set of `Open::Table`,
-// `Rule::DuplicateKey` and the rows of that rule in the tests.
+// `Rule::DuplicateKey` and the rows of that rule in the tests. Only this
+// rule needs the text of a key. `Keep::Text` then has no user, and the lint
+// gate refuses it. Delete it with the decode of a key in `string`.
 fn duplicate_key<'a>(keys: &mut Keys<'a>, key: Cow<'a, str>, at: usize) -> Result<(), NotStrict> {
     if !keys.insert(key) {
         return Err(NotStrict::new(Rule::DuplicateKey, at));

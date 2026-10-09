@@ -1310,9 +1310,14 @@ rule 4).
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. One function of `crates/creche-contracts/src/json/scan.rs`
   holds each line: `duplicate_key` and `integer_range`. Each function has a
-  `CONTRACT-QUESTION` comment. If the owner says no to a line, change that
-  line. Then delete its function, its `Rule` variant and its rows in the
-  tests.
+  `CONTRACT-QUESTION` comment. If the owner says no to a line, make these
+  changes:
+  1. Change that line of "JSON".
+  2. Delete its function, its `Rule` variant and its rows in the tests.
+  3. For the duplicate key line, also delete `Keep::Text` and the decode of
+     a key in `scan.rs`. Only `duplicate_key` needs the text of a key.
+  4. For the integer line, also give `Integer` a wider value.
+     `integer_value` and that type hold the range of the line.
 - Two texts of "When the two results differ" wait for a confirmation of the
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
