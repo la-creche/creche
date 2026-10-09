@@ -92,9 +92,9 @@ READ_AS = {
     "cr.md": (b"delta\recho\r\rfoxtrot", "delta\necho\n\nfoxtrot"),
     "bad.md": (
         b"bad \xff byte, cut \xe2\x82 sequence, lone \xed\xa0\x80 surrogate",
-        "bad � byte, cut � sequence, lone ��� surrogate",
+        "bad \ufffd byte, cut \ufffd sequence, lone \ufffd\ufffd\ufffd surrogate",
     ),
-    "bom.md": (b"\xef\xbb\xbfmarked text", "﻿marked text"),
+    "bom.md": (b"\xef\xbb\xbfmarked text", "\ufeffmarked text"),
     "separator.md": (b"first part\x1c\n\nsecond part", "first part\n\nsecond part"),
 }
 
