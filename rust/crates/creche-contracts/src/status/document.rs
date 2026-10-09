@@ -10,9 +10,18 @@
 //!
 //! A block of the document is a record, for example [`Sandbox`]. Each field of
 //! a record has a type that permits only valid values, and the record adds no
-//! rule of its own. Its fields are thus public: no check exists that a public
-//! field can skip. [`Fault`] and [`StatusDocument`] have a rule between two
-//! fields, so their fields are private.
+//! rule of its own. [`Fault`] and [`StatusDocument`] have a rule between two
+//! fields, so each one has a constructor that can fail.
+//!
+//! A writer builds a record in two steps:
+//!
+//! 1. `new` takes each field that has no start value.
+//! 2. One `with_` method sets each other field. Such a field starts as `None`,
+//!    as an empty list, as an empty block or as `false`. The doc comment of
+//!    `new` names each other start value.
+//!
+//! No `new` and no `with_` method of a record checks a value. Code reads a
+//! field through the accessor with the name of the field.
 //!
 //! The Python writer checks no field. Where it writes what contract 05 does
 //! not state, and a document on the host has that form, the type takes the
@@ -234,50 +243,176 @@ impl Error for UsdError {}
 // --- the blocks of the document ---
 
 /// The `validation` block (contract 05 §3.2).
+///
+/// ```
+/// use creche_contracts::status::document::Validation;
+///
+/// let checked_at = "2031-04-18T10:20:29Z".parse().unwrap();
+/// let report_path = "/state/families/chat/validation.json".parse().unwrap();
+/// let validation = Validation::new(String::from("reg-2"), checked_at, 0, 1, report_path);
+/// assert!(!validation.ok());
+/// assert!(validation.with_ok().ok());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::document::Validation;
+///
+/// fn passed(validation: Validation) -> Validation {
+///     Validation { ok: true, ..validation }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Validation {
+    rev: String,
+    checked_at: Timestamp,
+    ok: bool,
+    never_valid: bool,
+    error_count: u64,
+    warning_count: u64,
+    report_path: HostPath,
+    first_error: Option<FirstError>,
+}
+
+impl Validation {
+    /// The block of the report at `report_path`, with the counts of that
+    /// report. `ok` and `never_valid` start as `false`, and the block has no
+    /// first error.
+    #[must_use]
+    pub fn new(
+        rev: String,
+        checked_at: Timestamp,
+        error_count: u64,
+        warning_count: u64,
+        report_path: HostPath,
+    ) -> Self {
+        Self {
+            rev,
+            checked_at,
+            ok: false,
+            never_valid: false,
+            error_count,
+            warning_count,
+            report_path,
+            first_error: None,
+        }
+    }
+
+    /// The same block for a family file that passed.
+    #[must_use]
+    pub fn with_ok(mut self) -> Self {
+        self.ok = true;
+
+        self
+    }
+
+    /// The same block for a family of which no revision passed, ever (§3.1).
+    #[must_use]
+    pub fn with_never_valid(mut self) -> Self {
+        self.never_valid = true;
+
+        self
+    }
+
+    /// The same block with this first error.
+    #[must_use]
+    pub fn with_first_error(mut self, first_error: FirstError) -> Self {
+        self.first_error = Some(first_error);
+
+        self
+    }
+
     /// The registry revision that `caregiver` validated.
-    pub rev: String,
+    #[must_use]
+    pub fn rev(&self) -> &str {
+        &self.rev
+    }
+
     /// When `caregiver` validated it.
-    pub checked_at: Timestamp,
+    #[must_use]
+    pub fn checked_at(&self) -> Timestamp {
+        self.checked_at
+    }
+
     /// Whether the family file passed.
-    pub ok: bool,
+    #[must_use]
+    pub fn ok(&self) -> bool {
+        self.ok
+    }
+
     /// Whether no revision of the family passed, ever (§3.1).
-    pub never_valid: bool,
+    #[must_use]
+    pub fn never_valid(&self) -> bool {
+        self.never_valid
+    }
+
     /// The count of errors in the report.
-    pub error_count: u64,
+    #[must_use]
+    pub fn error_count(&self) -> u64 {
+        self.error_count
+    }
+
     /// The count of warnings in the report.
-    pub warning_count: u64,
+    #[must_use]
+    pub fn warning_count(&self) -> u64 {
+        self.warning_count
+    }
+
     /// Where the report is.
-    pub report_path: HostPath,
+    #[must_use]
+    pub fn report_path(&self) -> &HostPath {
+        &self.report_path
+    }
+
     /// The first error of the report. `None` when the report has no error.
-    pub first_error: Option<FirstError>,
+    #[must_use]
+    pub fn first_error(&self) -> Option<&FirstError> {
+        self.first_error.as_ref()
+    }
 }
 
 /// One row of `sandboxes` (contract 05 §4.1).
+///
+/// ```
+/// use creche_contracts::status::document::Sandbox;
+/// use creche_contracts::status::words::{SandboxLifecycle, SandboxPower};
+///
+/// let sandbox = Sandbox::new(
+///     "chat-s1".parse().unwrap(),
+///     SandboxLifecycle::Ready,
+///     String::from("registry.example/playpen@sha256:aa"),
+///     String::from("aa"),
+///     2,
+///     String::from("2g"),
+///     "2031-04-11T08:00:00Z".parse().unwrap(),
+/// );
+/// assert_eq!(sandbox.power(), SandboxPower::Stopped);
+/// assert_eq!(sandbox.with_power(SandboxPower::Running).power(), SandboxPower::Running);
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::document::Sandbox;
+/// use creche_contracts::status::words::{SandboxLifecycle, SandboxPower};
+///
+/// fn serving(sandbox: Sandbox) -> Sandbox {
+///     Sandbox { state: SandboxLifecycle::Ready, power: SandboxPower::Running, ..sandbox }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sandbox {
-    /// The name of the sandbox.
-    pub id: SandboxName,
-    /// The lifecycle state (§4.2).
-    pub state: SandboxLifecycle,
-    /// Whether the VM runs.
-    pub power: SandboxPower,
-    /// The image digest.
-    pub image: String,
-    /// The hash of the fields that force a replacement.
-    pub spec_hash: String,
-    /// The count of CPUs.
-    pub cpus: u64,
-    /// The memory, as the family file writes it.
-    pub memory: String,
-    /// The time of the `sbx create` call.
-    pub created_at: Timestamp,
-    /// The time of the first handshake with `attendance`. `None` when no
-    /// handshake passed.
-    pub ready_at: Option<Timestamp>,
-    /// The state of the channel.
-    pub channel: ChannelState,
+    id: SandboxName,
+    state: SandboxLifecycle,
+    power: SandboxPower,
+    image: String,
+    spec_hash: String,
+    cpus: u64,
+    memory: String,
+    created_at: Timestamp,
+    ready_at: Option<Timestamp>,
+    channel: ChannelState,
     // CONTRACT-QUESTION: contract 05 §4.1.1 rule 4 calls a row with no path
     // a fault. `caregiver.sandboxes` reads a row of its ledger with no
     // `supervisor_env` key as the empty text, and the Python writer writes
@@ -285,96 +420,629 @@ pub struct Sandbox {
     // form as `None`, in each lifecycle state too. To refuse it for a sandbox
     // that serves, `caregiver` must first write a path into each row of its
     // ledger.
+    supervisor_env: Option<HostPath>,
+}
+
+impl Sandbox {
+    /// The row of the sandbox `id` in the lifecycle state `state`.
+    ///
+    /// The row starts as the row of a sandbox whose VM does not run: the
+    /// power is `stopped` and the channel is `closed`. It holds no time of a
+    /// handshake and no path.
+    #[must_use]
+    pub fn new(
+        id: SandboxName,
+        state: SandboxLifecycle,
+        image: String,
+        spec_hash: String,
+        cpus: u64,
+        memory: String,
+        created_at: Timestamp,
+    ) -> Self {
+        Self {
+            id,
+            state,
+            power: SandboxPower::Stopped,
+            image,
+            spec_hash,
+            cpus,
+            memory,
+            created_at,
+            ready_at: None,
+            channel: ChannelState::Closed,
+            supervisor_env: None,
+        }
+    }
+
+    /// The same row with this power state.
+    #[must_use]
+    pub fn with_power(mut self, power: SandboxPower) -> Self {
+        self.power = power;
+
+        self
+    }
+
+    /// The same row with this time of the first handshake.
+    #[must_use]
+    pub fn with_ready_at(mut self, ready_at: Timestamp) -> Self {
+        self.ready_at = Some(ready_at);
+
+        self
+    }
+
+    /// The same row with this state of the channel.
+    #[must_use]
+    pub fn with_channel(mut self, channel: ChannelState) -> Self {
+        self.channel = channel;
+
+        self
+    }
+
+    /// The same row with this path of the `supervisor.env` of the sandbox.
+    #[must_use]
+    pub fn with_supervisor_env(mut self, supervisor_env: HostPath) -> Self {
+        self.supervisor_env = Some(supervisor_env);
+
+        self
+    }
+
+    /// The name of the sandbox.
+    #[must_use]
+    pub fn id(&self) -> &SandboxName {
+        &self.id
+    }
+
+    /// The lifecycle state (§4.2).
+    #[must_use]
+    pub fn state(&self) -> SandboxLifecycle {
+        self.state
+    }
+
+    /// Whether the VM runs.
+    #[must_use]
+    pub fn power(&self) -> SandboxPower {
+        self.power
+    }
+
+    /// The image digest.
+    #[must_use]
+    pub fn image(&self) -> &str {
+        &self.image
+    }
+
+    /// The hash of the fields that force a replacement.
+    #[must_use]
+    pub fn spec_hash(&self) -> &str {
+        &self.spec_hash
+    }
+
+    /// The count of CPUs.
+    #[must_use]
+    pub fn cpus(&self) -> u64 {
+        self.cpus
+    }
+
+    /// The memory, as the family file writes it.
+    #[must_use]
+    pub fn memory(&self) -> &str {
+        &self.memory
+    }
+
+    /// The time of the `sbx create` call.
+    #[must_use]
+    pub fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
+
+    /// The time of the first handshake with `attendance`. `None` when no
+    /// handshake passed.
+    #[must_use]
+    pub fn ready_at(&self) -> Option<Timestamp> {
+        self.ready_at
+    }
+
+    /// The state of the channel.
+    #[must_use]
+    pub fn channel(&self) -> ChannelState {
+        self.channel
+    }
+
     /// The path of the `supervisor.env` of the sandbox (§4.1.1). `None` is
     /// the empty text in the file: the ledger of `caregiver` holds no path
     /// for the sandbox.
-    pub supervisor_env: Option<HostPath>,
+    #[must_use]
+    pub fn supervisor_env(&self) -> Option<&HostPath> {
+        self.supervisor_env.as_ref()
+    }
 }
 
 /// The `credentials` block (contract 05 §6.1): ids and an epoch, and no
 /// value of a credential.
+///
+/// ```
+/// use std::num::NonZeroU64;
+///
+/// use creche_contracts::status::document::Credentials;
+/// use creche_contracts::status::words::RotationState;
+///
+/// let credentials = Credentials::new(
+///     NonZeroU64::MIN,
+///     String::from("family-chat"),
+///     String::from("family-chat"),
+///     "2031-04-01T00:00:00Z".parse().unwrap(),
+///     RotationState::Settled,
+/// );
+/// assert_eq!(credentials.epoch().get(), 1);
+/// assert_eq!(credentials.next_rotation_at(), None);
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use std::num::NonZeroU64;
+///
+/// use creche_contracts::status::document::Credentials;
+/// use creche_contracts::status::words::RotationState;
+///
+/// fn first(credentials: Credentials) -> Credentials {
+///     Credentials {
+///         epoch: NonZeroU64::MIN,
+///         rotation_state: RotationState::Settled,
+///         ..credentials
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Credentials {
     // CONTRACT-QUESTION: contract 05 §6.1 gives no range for the epoch. §6.2
     // starts it at 1 and §6.3 adds 1 at each rotation, so the type refuses 0
     // and a negative number. The Python reader of `attendance` takes 0. To
     // take 0, change the type of the field to `u64`.
+    epoch: NonZeroU64,
+    key_id: String,
+    token_id: String,
+    rotated_at: Timestamp,
+    next_rotation_at: Option<Timestamp>,
+    rotation_state: RotationState,
+}
+
+impl Credentials {
+    /// The block of the credentials of one epoch, with no planned rotation.
+    #[must_use]
+    pub fn new(
+        epoch: NonZeroU64,
+        key_id: String,
+        token_id: String,
+        rotated_at: Timestamp,
+        rotation_state: RotationState,
+    ) -> Self {
+        Self {
+            epoch,
+            key_id,
+            token_id,
+            rotated_at,
+            next_rotation_at: None,
+            rotation_state,
+        }
+    }
+
+    /// The same block with this time of the next rotation.
+    #[must_use]
+    pub fn with_next_rotation_at(mut self, next_rotation_at: Timestamp) -> Self {
+        self.next_rotation_at = Some(next_rotation_at);
+
+        self
+    }
+
     /// The epoch of the credentials: 1 at the first mint.
-    pub epoch: NonZeroU64,
+    #[must_use]
+    pub fn epoch(&self) -> NonZeroU64 {
+        self.epoch
+    }
+
     /// The id of the family key.
-    pub key_id: String,
+    #[must_use]
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
     /// The id of the family token.
-    pub token_id: String,
+    #[must_use]
+    pub fn token_id(&self) -> &str {
+        &self.token_id
+    }
+
     /// When the credentials last rotated.
-    pub rotated_at: Timestamp,
+    #[must_use]
+    pub fn rotated_at(&self) -> Timestamp {
+        self.rotated_at
+    }
+
     /// When the next rotation is due. `None` when none is planned.
-    pub next_rotation_at: Option<Timestamp>,
+    #[must_use]
+    pub fn next_rotation_at(&self) -> Option<Timestamp> {
+        self.next_rotation_at
+    }
+
     /// The state of the rotation.
-    pub rotation_state: RotationState,
+    #[must_use]
+    pub fn rotation_state(&self) -> RotationState {
+        self.rotation_state
+    }
 }
 
 /// The `spend` block (contract 05 §7).
+///
+/// ```
+/// use creche_contracts::status::document::{Spend, Usd};
+/// use creche_contracts::status::words::{SpendSource, SpendWindow};
+///
+/// let as_of = "2031-04-18T10:20:25Z".parse().unwrap();
+/// let spend = Spend::new(SpendWindow::Day, Usd::new(1.25).unwrap(), as_of, SpendSource::Litellm);
+/// assert_eq!(spend.budget_usd(), None);
+/// assert_eq!(spend.spend_usd().get(), 1.25);
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::document::{Spend, Usd};
+/// use creche_contracts::status::words::{SpendSource, SpendWindow};
+///
+/// fn of_day(spend: Spend, budget: Usd) -> Spend {
+///     Spend {
+///         window: SpendWindow::Day,
+///         budget_usd: Some(budget),
+///         source: SpendSource::Litellm,
+///         ..spend
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spend {
+    window: SpendWindow,
+    spend_usd: Usd,
+    budget_usd: Option<Usd>,
+    as_of: Timestamp,
+    source: SpendSource,
+}
+
+impl Spend {
+    /// The block of a family key with no budget.
+    #[must_use]
+    pub fn new(window: SpendWindow, spend_usd: Usd, as_of: Timestamp, source: SpendSource) -> Self {
+        Self {
+            window,
+            spend_usd,
+            budget_usd: None,
+            as_of,
+            source,
+        }
+    }
+
+    /// The same block with this budget of the window.
+    #[must_use]
+    pub fn with_budget_usd(mut self, budget_usd: Usd) -> Self {
+        self.budget_usd = Some(budget_usd);
+
+        self
+    }
+
     /// The window of the budget.
-    pub window: SpendWindow,
+    #[must_use]
+    pub fn window(&self) -> SpendWindow {
+        self.window
+    }
+
     /// What the family spent in the window.
-    pub spend_usd: Usd,
+    #[must_use]
+    pub fn spend_usd(&self) -> Usd {
+        self.spend_usd
+    }
+
     /// The budget of the window. `None` when the family key has none.
-    pub budget_usd: Option<Usd>,
+    #[must_use]
+    pub fn budget_usd(&self) -> Option<Usd> {
+        self.budget_usd
+    }
+
     /// When `caregiver` read the numbers.
-    pub as_of: Timestamp,
+    #[must_use]
+    pub fn as_of(&self) -> Timestamp {
+        self.as_of
+    }
+
     /// The authority of the numbers.
-    pub source: SpendSource,
+    #[must_use]
+    pub fn source(&self) -> SpendSource {
+        self.source
+    }
 }
 
 /// The `limits` block (contract 05 §2.1). `None` is `null` in the file: the
 /// kind of the family has no such limit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// ```
+/// use creche_contracts::status::document::Limits;
+///
+/// let limits = Limits::new().with_max_queued_turns(100);
+/// assert_eq!(limits.max_queued_turns(), Some(100));
+/// assert_eq!(limits.job_timeout_s(), None);
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::document::Limits;
+///
+/// let limits = Limits { max_queued_turns: Some(100), ..Limits::new() };
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Limits {
+    max_running_turns: Option<u64>,
+    max_queued_turns: Option<u64>,
+    job_timeout_s: Option<u64>,
+}
+
+impl Limits {
+    /// The block of a family with no limit.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The same block with this limit on the turns that run at one time.
+    #[must_use]
+    pub fn with_max_running_turns(mut self, max_running_turns: u64) -> Self {
+        self.max_running_turns = Some(max_running_turns);
+
+        self
+    }
+
+    /// The same block with this limit on the turns that wait in the queue.
+    #[must_use]
+    pub fn with_max_queued_turns(mut self, max_queued_turns: u64) -> Self {
+        self.max_queued_turns = Some(max_queued_turns);
+
+        self
+    }
+
+    /// The same block with this limit on the seconds of a thin job.
+    #[must_use]
+    pub fn with_job_timeout_s(mut self, job_timeout_s: u64) -> Self {
+        self.job_timeout_s = Some(job_timeout_s);
+
+        self
+    }
+
     /// The most turns that run at one time.
-    pub max_running_turns: Option<u64>,
+    #[must_use]
+    pub fn max_running_turns(&self) -> Option<u64> {
+        self.max_running_turns
+    }
+
     /// The most turns that wait in the queue.
-    pub max_queued_turns: Option<u64>,
+    #[must_use]
+    pub fn max_queued_turns(&self) -> Option<u64> {
+        self.max_queued_turns
+    }
+
     /// The seconds after which a thin job stops.
-    pub job_timeout_s: Option<u64>,
+    #[must_use]
+    pub fn job_timeout_s(&self) -> Option<u64> {
+        self.job_timeout_s
+    }
 }
 
 /// One declared webhook (contract 05 §6.4): its name and where its bearer
 /// is. The document holds no value of a bearer.
+///
+/// ```
+/// use creche_contracts::status::document::Webhook;
+///
+/// let token_path = "/state/triggers/chat/boiler-alert.token".parse().unwrap();
+/// let webhook = Webhook::new("boiler-alert".parse().unwrap(), token_path);
+/// assert_eq!(webhook.name().as_str(), "boiler-alert");
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::document::Webhook;
+///
+/// fn moved(webhook: Webhook, other: Webhook) -> Webhook {
+///     Webhook { token_path: other.token_path, ..webhook }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Webhook {
+    name: WebhookName,
+    token_path: HostPath,
+}
+
+impl Webhook {
+    /// The row of the webhook `name`, with the path of its token file.
+    #[must_use]
+    pub fn new(name: WebhookName, token_path: HostPath) -> Self {
+        Self { name, token_path }
+    }
+
     /// The name of the webhook.
-    pub name: WebhookName,
+    #[must_use]
+    pub fn name(&self) -> &WebhookName {
+        &self.name
+    }
+
     /// The path of the token file.
-    pub token_path: HostPath,
+    #[must_use]
+    pub fn token_path(&self) -> &HostPath {
+        &self.token_path
+    }
 }
 
 /// The `triggers` block (contract 05 §2.1, §6.4).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// ```
+/// use creche_contracts::status::document::Triggers;
+///
+/// let triggers = Triggers::new();
+/// assert!(triggers.webhooks().is_empty());
+/// assert!(!triggers.enqueue());
+/// assert!(triggers.with_enqueue().enqueue());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::document::Triggers;
+///
+/// let triggers = Triggers { enqueue: true, ..Triggers::new() };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Triggers {
+    webhooks: Vec<Webhook>,
+    enqueue: bool,
+}
+
+impl Triggers {
+    /// The block of a family with no webhook, where no other family can
+    /// start a job.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The same block with one row for each of these webhooks.
+    #[must_use]
+    pub fn with_webhooks(mut self, webhooks: Vec<Webhook>) -> Self {
+        self.webhooks = webhooks;
+
+        self
+    }
+
+    /// The same block for a family where another family can start a job.
+    #[must_use]
+    pub fn with_enqueue(mut self) -> Self {
+        self.enqueue = true;
+
+        self
+    }
+
     /// One row for each declared webhook.
-    pub webhooks: Vec<Webhook>,
+    #[must_use]
+    pub fn webhooks(&self) -> &[Webhook] {
+        &self.webhooks
+    }
+
     /// Whether another family can start a job here. A file with no such key
     /// reads as `false`.
-    pub enqueue: bool,
+    #[must_use]
+    pub fn enqueue(&self) -> bool {
+        self.enqueue
+    }
 }
 
 /// The `reconcile` block (contract 05 §3.4).
+///
+/// ```
+/// use creche_contracts::status::document::Reconcile;
+/// use creche_contracts::status::words::ReconcileStep;
+///
+/// let reconcile = Reconcile::new(
+///     "2031-04-18T10:20:00Z".parse().unwrap(),
+///     String::from("reg-1"),
+///     String::from("reg-2"),
+///     ReconcileStep::SwitchSandbox,
+///     1,
+/// );
+/// assert!(!reconcile.needs_switch());
+/// assert!(reconcile.with_needs_switch().needs_switch());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::document::Reconcile;
+/// use creche_contracts::status::words::ReconcileStep;
+///
+/// fn at_switch(reconcile: Reconcile) -> Reconcile {
+///     Reconcile { step: ReconcileStep::SwitchSandbox, ..reconcile }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reconcile {
+    since: Timestamp,
+    from_rev: String,
+    to_rev: String,
+    step: ReconcileStep,
+    attempts: u64,
+    needs_switch: bool,
+}
+
+impl Reconcile {
+    /// The block of a pass from `from_rev` to `to_rev` that needs no sandbox
+    /// switch.
+    #[must_use]
+    pub fn new(
+        since: Timestamp,
+        from_rev: String,
+        to_rev: String,
+        step: ReconcileStep,
+        attempts: u64,
+    ) -> Self {
+        Self {
+            since,
+            from_rev,
+            to_rev,
+            step,
+            attempts,
+            needs_switch: false,
+        }
+    }
+
+    /// The same block for a pass that needs a sandbox switch.
+    #[must_use]
+    pub fn with_needs_switch(mut self) -> Self {
+        self.needs_switch = true;
+
+        self
+    }
+
     /// When the pass started.
-    pub since: Timestamp,
+    #[must_use]
+    pub fn since(&self) -> Timestamp {
+        self.since
+    }
+
     /// The revision that is live.
-    pub from_rev: String,
+    #[must_use]
+    pub fn from_rev(&self) -> &str {
+        &self.from_rev
+    }
+
     /// The revision that the pass applies.
-    pub to_rev: String,
+    #[must_use]
+    pub fn to_rev(&self) -> &str {
+        &self.to_rev
+    }
+
     /// The step in flight.
-    pub step: ReconcileStep,
+    #[must_use]
+    pub fn step(&self) -> ReconcileStep {
+        self.step
+    }
+
     /// The count of attempts.
-    pub attempts: u64,
+    #[must_use]
+    pub fn attempts(&self) -> u64 {
+        self.attempts
+    }
+
     /// Whether the pass needs a sandbox switch.
-    pub needs_switch: bool,
+    #[must_use]
+    pub fn needs_switch(&self) -> bool {
+        self.needs_switch
+    }
 }
 
 /// The `pep` block (contract 05 §2.2): what the watch of the chaperone last
