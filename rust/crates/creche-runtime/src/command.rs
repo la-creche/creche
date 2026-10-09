@@ -1782,20 +1782,7 @@ impl ChildGuard {
             });
         };
 
-        match kill_process(pid, Signal::TERM) {
-            // No such process: the child ended, and the wait did not read
-            // its end yet. CPython ignores the same error
-            // (`subprocess.py:2244-2248`, version 3.13).
-            Ok(()) | Err(Errno::SRCH) => Ok(()),
-            Err(errno) => {
-                let error = io::Error::from(errno);
-
-                Err(SignalError {
-                    kind: error.kind(),
-                    os_text: os_text(&error),
-                })
-            }
-        }
+        signal_sent(kill_process(pid, Signal::TERM))
     }
 
     /// Sends SIGKILL to the child and does not wait. The call does nothing
@@ -1880,6 +1867,26 @@ impl ChildGuard {
         match tokio::time::timeout(grace, self.wait()).await {
             Ok(ended) => EndOutcome::Ended(ended),
             Err(_elapsed) => EndOutcome::LeftRunning,
+        }
+    }
+}
+
+/// What the result of a signal call means for a child that a guard holds.
+///
+/// The error "no such process" is no error: the child ended, and the wait
+/// did not read its end yet. CPython ignores the same error
+/// (`subprocess.py:2244-2248`, version 3.13). Each other error is a
+/// [`SignalError`] with the text of the operating system.
+fn signal_sent(result: Result<(), Errno>) -> Result<(), SignalError> {
+    match result {
+        Ok(()) | Err(Errno::SRCH) => Ok(()),
+        Err(errno) => {
+            let error = io::Error::from(errno);
+
+            Err(SignalError {
+                kind: error.kind(),
+                os_text: os_text(&error),
+            })
         }
     }
 }
@@ -2410,6 +2417,20 @@ mod tests {
         ps(pid, "ppid=") == Some(std::process::id().to_string())
     }
 
+    /// Whether some code of this process read the end of the child `pid`.
+    /// The operating system then holds no child with that id for this
+    /// process, and a wait call for the id fails with "no child processes".
+    ///
+    /// The call does not wait and starts no program, as [`is_child`] does.
+    /// A test thus reads the state at the moment that a run returned. A
+    /// child that the drop of its owner killed is still there at that
+    /// moment.
+    fn end_was_read(pid: u32) -> bool {
+        let id = Pid::from_raw(i32::try_from(pid).unwrap());
+
+        matches!(waitpid(id, WaitOptions::NOHANG), Err(Errno::CHILD))
+    }
+
     /// Waits until `ps` shows no child of this test program with the id
     /// `pid`: the child ended, and its owner read its end.
     async fn gone(pid: u32) {
@@ -2738,11 +2759,15 @@ mod tests {
 
     #[test]
     fn an_absent_input_and_an_input_that_the_child_takes_are_no_cut() {
-        let absent = block_on(feed::<Vec<u8>>("tool", None, b"input"));
-        let taken = block_on(feed("tool", Some(Vec::new()), b"input"));
+        // `within`: a write that does not end fails the test and does not
+        // hold the test program.
+        runtime().block_on(async {
+            let absent = within(feed::<Vec<u8>>("tool", None, b"input")).await;
+            let taken = within(feed("tool", Some(Vec::new()), b"input")).await;
 
-        assert_eq!(absent, Ok(()));
-        assert_eq!(taken, Ok(()));
+            assert_eq!(absent, Ok(()));
+            assert_eq!(taken, Ok(()));
+        });
     }
 
     /// An exchange that never ends and never waits. Each turn takes one step
@@ -3358,8 +3383,12 @@ mod tests {
             let result = within(bench.runner.run(command)).await;
 
             assert_eq!(result, Err(RunError::OutputTooLarge { cap }));
+
+            let pid = pid_of(bench.file("pid")).await;
+
             // The owner read the end of the child before it gave the error.
-            assert!(!is_child(pid_of(bench.file("pid")).await));
+            assert!(end_was_read(pid));
+            assert!(!is_child(pid));
 
             bench.drained().await;
         });
@@ -3386,6 +3415,7 @@ mod tests {
                 Err(RunError::TimedOut { after: HOUR })
             );
             // The owner read the end of the child before it gave the error.
+            assert!(end_was_read(pid));
             assert!(!is_child(pid));
 
             bench.drained().await;
@@ -3560,6 +3590,7 @@ mod tests {
 
             assert_eq!(within(&mut run).await, Err(RunError::Stopped));
             // The owner read the end of the child before it gave the error.
+            assert!(end_was_read(pid));
             assert!(!is_child(pid));
 
             bench.drained().await;
@@ -3586,6 +3617,7 @@ mod tests {
 
             assert_eq!(within(&mut run).await, Err(RunError::Stopped));
             // The owner read the end of the child before it gave the error.
+            assert!(end_was_read(pid));
             assert!(!is_child(pid));
 
             bench.drained().await;
@@ -3608,6 +3640,38 @@ mod tests {
         let command = Command::new(absent.to_str().unwrap(), limit(), AtShutdown::Kill);
 
         assert_eq!(bench.run(command), Err(RunError::Stopped));
+    }
+
+    #[test]
+    fn a_run_with_kill_whose_caller_left_starts_no_program() {
+        let bench = Bench::new();
+        // No stop signal came: only the caller left, before the first poll
+        // of the owner.
+        let (_trigger, shutdown) = shutdown_pair();
+        let caller = CancellationToken::new();
+        caller.cancel();
+
+        // The owner does not try the start. A try gives `NotStarted` for a
+        // program that is absent.
+        let absent = bench.file("no-such-program");
+        let program = absent.to_str().unwrap();
+        let kills = Command::new(program, limit(), AtShutdown::Kill);
+        let finishes = Command::new(program, limit(), AtShutdown::Finish);
+
+        runtime().block_on(async {
+            assert_eq!(
+                within(run_child(&kills, &shutdown, &caller)).await,
+                Err(RunError::Stopped)
+            );
+            // Under `Finish`, a caller that left changes nothing: the owner
+            // tries the start.
+            assert_eq!(
+                within(run_child(&finishes, &shutdown, &caller)).await,
+                Err(RunError::NotStarted {
+                    os_text: String::from("No such file or directory"),
+                })
+            );
+        });
     }
 
     #[test]
@@ -3848,6 +3912,24 @@ mod tests {
             assert_eq!(within(child.wait()).await, Ended::Signal(TERMINATED));
             assert!(!is_child(pid));
         });
+    }
+
+    #[test]
+    fn a_refused_signal_is_an_error_and_a_child_that_ended_is_none() {
+        let refused = SignalError {
+            kind: io::ErrorKind::PermissionDenied,
+            os_text: String::from("Operation not permitted"),
+        };
+        let table = [
+            (Ok(()), Ok(())),
+            // No such process: the child ended, and no wait read its end.
+            (Err(Errno::SRCH), Ok(())),
+            (Err(Errno::PERM), Err(refused)),
+        ];
+
+        for (result, wanted) in table {
+            assert_eq!(signal_sent(result), wanted, "{result:?}");
+        }
     }
 
     #[test]
