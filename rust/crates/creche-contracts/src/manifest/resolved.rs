@@ -608,22 +608,112 @@ pub fn release_action(id: &Ulid, gate: &GateId) -> String {
 
 /// The seven fields of an approval summary, as root writes them before the
 /// cut.
+///
+/// Code builds a value by hand: [`SummaryFields::new`] holds each field as
+/// the empty text, and a `with_` method sets one field. [`Summary::new`]
+/// makes the summary.
+///
+/// ```
+/// use creche_contracts::manifest::{Summary, SummaryFields};
+///
+/// let fields = SummaryFields::new()
+///     .with_review(String::from("safe: each manifest verified"))
+///     .with_restore(String::from("automatic"));
+/// let summary = Summary::new(fields);
+/// assert_eq!(summary.review(), "safe: each manifest verified");
+/// assert_eq!(summary.restore(), "automatic");
+/// assert_eq!(summary.contracts(), "");
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::manifest::{Summary, SummaryFields};
+///
+/// let fields = SummaryFields {
+///     review: String::from("safe: each manifest verified"),
+///     ..SummaryFields::new()
+/// };
+/// let summary = Summary::new(fields);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SummaryFields {
-    /// The verdict of the review, first: `safe: ...` or `suspect: ...`.
-    pub review: String,
-    /// One line for each component that changes.
-    pub components: String,
-    /// The result of the contract check.
-    pub contracts: String,
-    /// The units that the release restarts, in order.
-    pub restarts: String,
-    /// `automatic`, or `manual:` and the component.
-    pub restore: String,
-    /// Who asked.
-    pub requested_by: String,
-    /// The first 12 hex bytes of the manifest hash.
-    pub manifest: String,
+    review: String,
+    components: String,
+    contracts: String,
+    restarts: String,
+    restore: String,
+    requested_by: String,
+    manifest: String,
+}
+
+impl SummaryFields {
+    /// The fields of a summary, each one the empty text.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The same fields with this verdict of the review: `safe: ...` or
+    /// `suspect: ...`. The operator reads it first.
+    #[must_use]
+    pub fn with_review(mut self, review: String) -> Self {
+        self.review = review;
+
+        self
+    }
+
+    /// The same fields with this text for the components: one line for each
+    /// component that changes.
+    #[must_use]
+    pub fn with_components(mut self, components: String) -> Self {
+        self.components = components;
+
+        self
+    }
+
+    /// The same fields with this result of the contract check.
+    #[must_use]
+    pub fn with_contracts(mut self, contracts: String) -> Self {
+        self.contracts = contracts;
+
+        self
+    }
+
+    /// The same fields with these units that the release restarts, in
+    /// order.
+    #[must_use]
+    pub fn with_restarts(mut self, restarts: String) -> Self {
+        self.restarts = restarts;
+
+        self
+    }
+
+    /// The same fields with this restore rule: `automatic`, or `manual:` and
+    /// the component.
+    #[must_use]
+    pub fn with_restore(mut self, restore: String) -> Self {
+        self.restore = restore;
+
+        self
+    }
+
+    /// The same fields with this requester.
+    #[must_use]
+    pub fn with_requested_by(mut self, requested_by: String) -> Self {
+        self.requested_by = requested_by;
+
+        self
+    }
+
+    /// The same fields with this start of the manifest hash: its first 12
+    /// hex bytes.
+    #[must_use]
+    pub fn with_manifest(mut self, manifest: String) -> Self {
+        self.manifest = manifest;
+
+        self
+    }
 }
 
 /// The approval summary that the operator reads before the approval
@@ -635,11 +725,10 @@ pub struct SummaryFields {
 /// ```
 /// use creche_contracts::manifest::{Summary, SummaryFields};
 ///
-/// let summary = Summary::new(SummaryFields {
-///     review: "r".repeat(121),
-///     restore: String::from("automatic"),
-///     ..SummaryFields::default()
-/// });
+/// let fields = SummaryFields::new()
+///     .with_review("r".repeat(121))
+///     .with_restore(String::from("automatic"));
+/// let summary = Summary::new(fields);
 /// assert_eq!(summary.review().chars().count(), 120);
 /// assert!(summary.review().ends_with('\u{2026}'));
 /// assert_eq!(summary.restore(), "automatic");

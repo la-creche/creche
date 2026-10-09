@@ -2101,15 +2101,16 @@ mod tests {
         for vector in &surface.vectors {
             let args = vector.input.args().unwrap();
             let field = |key: &str| text_field(args, key).to_owned();
-            let summary = Summary::new(SummaryFields {
-                review: field("review"),
-                components: field("components"),
-                contracts: field("contracts"),
-                restarts: field("restarts"),
-                restore: field("restore"),
-                requested_by: field("requested_by"),
-                manifest: field("manifest"),
-            });
+            let summary = Summary::new(
+                SummaryFields::new()
+                    .with_review(field("review"))
+                    .with_components(field("components"))
+                    .with_contracts(field("contracts"))
+                    .with_restarts(field("restarts"))
+                    .with_restore(field("restore"))
+                    .with_requested_by(field("requested_by"))
+                    .with_manifest(field("manifest")),
+            );
             let value: Map<String, Value> = summary
                 .fields()
                 .into_iter()
