@@ -1067,8 +1067,9 @@ the text of the failure. Work down this list.
   - The chunk ids follow the order of the file paths, part by part.
   - A text file is UTF-8. Each bad sequence becomes U+FFFD, and each line
     end becomes one line feed.
-  - A chunk has 1000 characters at most. A piece of a long paragraph
-    starts with the last 200 characters of the piece before it.
+  - A paragraph of more than 1000 characters, alone in its file, gives
+    pieces of 1000 characters at most. Each piece starts with the last 200
+    characters of the piece before it.
   - A file with no text has a row in `files` and no chunk.
   - The program does not follow a link to a directory.
   - Each stored path starts with the resolved corpus directory.

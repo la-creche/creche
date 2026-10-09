@@ -113,8 +113,9 @@ SECOND_WORD: Final = "lantern"
 HELD_TEXT: Final = "hold this call"
 
 #: How many characters one paragraph of `write_corpus_of` has. The program
-#: cuts a text into chunks of 1000 characters at most, so two such
-#: paragraphs never share a chunk.
+#: starts a new chunk when a paragraph would take a chunk over 1000
+#: characters. Two such paragraphs are over that size, so each paragraph
+#: gives one chunk.
 PARAGRAPH_CHARS: Final = 600
 
 #: How many paragraphs one file of `write_corpus_of` has. More than one embed

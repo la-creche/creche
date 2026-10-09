@@ -74,9 +74,9 @@ SCHEMA = {
     "chunks_emb": "CREATE TABLE chunks_emb(id INTEGER PRIMARY KEY, embedding BLOB NOT NULL)",
 }
 
-#: The most characters of one chunk, and how many characters a piece of a
-#: long paragraph takes from the piece before it. Both are constants of
-#: `library/src/library/library.py`.
+#: The most characters of one piece of a paragraph that is too long for
+#: one chunk, and how many characters a piece takes from the piece before
+#: it. Both are constants of `library/src/library/library.py`.
 CHUNK_CHARS = 1000
 OVERLAP_CHARS = 200
 
