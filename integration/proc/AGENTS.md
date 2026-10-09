@@ -148,11 +148,14 @@ the comparison gives one result for one corpus.
 1. Only the scenarios of `test_proc_library_cross.py` and of
    `test_proc_library_reader.py` run the reference. `test_proc_table.py`
    has a test for this rule.
-2. The name of a scenario that runs the reference names both commands. It
-   says `the reference` beside `the program`, or it says `the two writers`,
-   `the two programs` or `both writers`.
+2. A scenario that runs the reference has both commands in its name. The
+   name says `the reference` beside `the program`, or it says
+   `the two writers`, `the two programs` or `both writers`.
 3. Run the reference only through `run_reference` of `proc_library.py`.
    The reference then gets what `run_index` gives the default command.
+   One scenario of `test_proc_library_cross.py` sets the variable of the
+   row. It holds that a run of the reference does not start the program
+   of the variable.
 4. Assert that the judged command and the reference give the same result.
    The scenarios of `test_proc_library_build.py` hold each fixed text and
    each fixed row, for the judged command.
@@ -262,8 +265,8 @@ each one, and each one runs to its end.
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_library_build.py` | library and the TEI stand-in | a build, an update, the hash rule, a removed file, a new model, the two profiles, the store schema, the columns of a row of `files`, the order of the files, how a text file is read, the publish of the store |
 | `test_proc_library_start.py` | library and the TEI stand-in | a refused command line, the address of TEI, the preflight, `SIGTERM`, `SIGKILL`, a store that the program cannot read |
-| `test_proc_library_cross.py` | library, the reference and the TEI stand-in | one store under two writers: equal content after a build, after an update by the other writer, after three runs in turns, after a backfill of `chunks_emb` and after a killed run. Equal embed calls. An equal first line of the report |
-| `test_proc_library_reader.py` | library, the reference, the TEI stand-in and the reader program | a store as the bridge reads it, with the SQLite of Node: the model, the count of values, the rows of an FTS5 query, the vectors. Equal rows for both writers. The statements of the reader program, held against the text of the bridge |
+| `test_proc_library_cross.py` | library, the reference and the TEI stand-in | one store under two writers: equal content after a build, after an update by the other writer, after three runs in turns, after a backfill of `chunks_emb`, after a killed run and after a new model. Equal embed calls. An equal first line of the report. The reference with the variable of the row set. The comparison itself: one changed copy of a store for each part, the tolerance of a rank, a store that the comparison refuses |
+| `test_proc_library_reader.py` | library, the reference, the TEI stand-in and the reader program | a store as the bridge reads it, with the SQLite of Node: the model, the count of values, the rows of an FTS5 query, the vectors. Equal rows for both writers. A store that is not alone in its directory. The statements of the reader program and the limit of a query, held against the text of the bridge |
 | `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a JSON body with no `Content-Type` header, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
@@ -287,6 +290,10 @@ each one, and each one runs to its end.
    - the git repository of the registry, through `git`
    - what a program wrote on its terminal
    - what a command wrote on its stdout or its stderr
+
+   Two tests of `test_proc_library_reader.py` start no program. Each one
+   reads files of the bridge as text, as `test_proc_table.py` reads the
+   unit files.
 4. Nothing under test may be faked. The five stand-ins are not under test.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
@@ -430,7 +437,7 @@ while it runs. Neither fixture needs the playpen bundle.
 10. To act during a run, use `start_held_update`. It returns while the
     stand-in holds the last embed call of the run. `release_hold` ends the
     hold. For a corpus of your own, put `HELD_TEXT` into the last file in
-    path order and use `start_held`.
+    path order. Then use `start_held`.
 11. To compare two writers, give one corpus two index directories. Only
     the reference writes the first one. The program writes or updates the
     second one.
@@ -438,20 +445,35 @@ while it runs. Neither fixture needs the playpen bundle.
     change the corpus. A row of `files` holds the mtime of its file.
 13. Compare two stores with `store_content`. Its `differences` gives one
     line for each part that differs. The content holds no time of a run
-    and no form of `chunks_vec`.
+    and no form of `chunks_vec`. When you add a part to `StoreContent`, add
+    a change of that part to
+    `test_the_comparison_sees_a_change_in_each_part`.
 14. Write no PDF with text into a corpus of two writers. Rule 9 gives the
     reason. `write_mixed` writes one PDF that no program can read, so each
     writer reports it.
 15. Read a store as the bridge reads it with `read_as_bridge`. Call it
-    before any other reader opens the store. The reader program then runs
-    with no write permission for the store and for its directory, as on
-    the mount of a sandbox.
+    before any other reader opens the store. It refuses a store that is
+    not alone in its directory. The reader program then runs with no write
+    permission for the store and for its directory, as on the mount of a
+    sandbox.
+16. Change a store only through `copy_store` and `change_store`. The first
+    one makes a copy in a new index directory, and the second one changes
+    that copy. One function is the exception: `drop_plain_vectors` changes
+    the store of a run.
 
 `reader_store.mjs` is not a stand-in. No service starts it or dials it. It
 holds the five statements that `playpen/bridge/index-store.ts` runs on a
-store. Change the two files together:
-`test_the_reader_statements_are_those_of_the_bridge` fails when their
-statements differ.
+store. Change the two files together.
+`test_the_reader_statements_are_those_of_the_bridge` compares four things
+of the two files:
+
+- each SQL string literal in double quotes or in template marks that
+  starts with `SELECT`, `FROM` or `WHERE`
+- the line that gives `VECTOR_TABLE` its value
+- the count of `.prepare(` calls. Neither file can hold an `.exec(` call.
+- the options of the connection
+
+The test does not compare a whole statement.
 
 The two index units give the command. `test_proc_table.py` holds the words
 of `index_words` against the shell text of each unit. No scenario runs
@@ -1233,13 +1255,25 @@ the text of the failure. Work down this list.
   that directory. A program that leaves a file that the reference does not
   remove fails one scenario of `test_proc_library_cross.py`. A change costs
   one assertion there.
+- **CONTRACT-QUESTION, the form of a time of a run.** `library/AGENTS.md`
+  names `updated_at` and `indexed_at` and gives neither one a form.
+  `store_content` holds the program as it is. `updated_at` is a text of
+  digits, one period and digits. `indexed_at` is a REAL value. Each one is
+  a finite count of seconds. A change costs one check in `proc_library.py`.
+- **What the comparison of two stores does not see.** `store_content`
+  reads the statement of five tables. It reads no index, no trigger and no
+  view that a writer adds. No scenario compares the mode of `store.db`. The
+  report scenario compares the first line of stdout. It reads a later line
+  only when that line names a file with an error.
 - **The reader program is not the bridge.** `reader_store.mjs` holds the
-  statements of the bridge, and one test holds the two texts equal. It runs
-  no code of the bridge: not the ranking, not the check of a row, not the
-  search for the nearest vectors. `playpen/test/index-search.test.ts` holds
-  that code, with stores that the test builds itself.
+  statements of the bridge, and one test holds them against the text of
+  the bridge. The reader program runs no code of the bridge: not the
+  ranking, not the check of a row, not the search for the nearest vectors.
+  `playpen/test/index-search.test.ts` holds that code, with stores that
+  the test builds itself.
 - **The reader program runs on the Node of the test machine.** The bridge
-  runs on the Node of the sandbox image. The two can have another SQLite.
+  runs on the Node of the sandbox image. The two can have different
+  versions of SQLite.
   No scenario runs the reader program on the image.
 - **A directory with no write permission takes the place of a mount.** The
   reader program runs while the store and its directory have no write bit.
