@@ -170,6 +170,7 @@ with the two stand-ins of the first picture. None starts `caregiver`.
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
 | `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
+| `test_proc_board_reports.py` | noticeboard | a status document that a reader cannot use, the fault, the spend and the step of a family, the audit page with more than one page, its filters and a line that is no record, the perimeter of `docs/rework/spec.md` §8.3, a config that refuses a start, the JSON check of `proc_board_reports.py` |
 | `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, a save after a preview, the one commit, saves at one time, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
@@ -603,16 +604,119 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the markup of a page of the noticeboard.**
   `docs/rework/spec.md` §8.1 says what each page shows. No contract gives
   the markup. The suite reads the markup of the templates as the interface.
-  A change of the markup costs the names in `test_proc_board_pages.py` and
-  `test_proc_board_edit.py`.
+  A change of the markup costs the names in `test_proc_board_pages.py`,
+  `test_proc_board_edit.py`, `test_proc_board_reports.py` and
+  `proc_board_reports.py`.
 - **The names that the suite reads in the markup.** The suite finds a table
   by its class, and a cell by the text of its column head. It finds a report
-  by the classes `problem`, `problems` and `issues`.
+  by the classes `problem`, `problems` and `issues`. It finds a mark beside
+  a value by the class `flag`. It finds a link between two pages of the
+  audit page by its text: `older` or `newer`.
 - **CONTRACT-QUESTION, the answer to a route parameter that is no id.**
   `docs/rework/spec.md` §8.1 lists the routes. No section gives the answer
   for a parameter that is not a family name or a session id. The suite holds
   the answer of the noticeboard as it is: 404. A change costs one scenario
   in `test_proc_board_pages.py`.
+- **CONTRACT-QUESTION, a status document that a reader cannot use.**
+  Contract 05 §2 rule 2 gives a reader a whole document. No contract says
+  what a page shows for a file that is not JSON, or for a family directory
+  with no document. The suite holds three things for the home page:
+  - The family has a row.
+  - The row does not read `in sync`.
+  - Each other row is as before.
+
+  The noticeboard shows the status `unreadable` and one sentence. A change
+  costs two scenarios in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a state root with no families directory.**
+  Contract 05 §2 rule 6 has a reader list that directory. No contract says
+  what the home page shows when the directory is not there. The suite holds
+  that the page answers 200 with an element of the class `problem`. It also
+  holds that the table has no row of a family. A change costs one scenario
+  in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a spend that is not current.** Contract 05 §7 rule 4
+  has a reader compare `as_of` with `written_at`. The rule gives no age and
+  no form of the mark. The suite holds one case: an `as_of` one hour before
+  `written_at`. The spend cell then holds an element with the class `flag`.
+  The noticeboard takes 90 seconds as the limit. A change costs one name in
+  `proc_board_reports.py`.
+- **CONTRACT-QUESTION, the order and the links of the audit page.**
+  `docs/rework/spec.md` §8.1 says that the page shows the day files, paged.
+  No contract gives the order of the records or the links between two
+  pages. The suite holds the page of the noticeboard as it is:
+  - The newest record is first, across the day files and in one file.
+  - A link with the text `older` leads to the next records.
+  - A link with the text `newer` leads one page back.
+
+  A change costs one scenario in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, an audit line that is no record.** Contract 04 §6
+  gives one record for each line. No contract says what the audit page
+  shows for a line that is not JSON. The suite holds that the line takes
+  one row, and that the row or a cell of it has the class `problem`. Each
+  record beside the line keeps its row. A change costs one scenario in
+  `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, the filters of the audit page.** No contract names a
+  filter. The suite holds the four query names of the form on the page:
+  `family`, `session`, `tool` and `decision`. Each scenario gives the whole
+  value of a field of contract 04 §6.1 or §6.2. The noticeboard keeps a
+  record whose family or decision is equal to the value. For a tool or a
+  session, it keeps a record whose field holds the value as a part. No
+  scenario holds that difference. A change costs one scenario in
+  `test_proc_board_pages.py` and one in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a state root with no audit directory.**
+  `docs/rework/spec.md` §8.3 gives the audit page a banner for audit files
+  that the service cannot read. No contract names a state root with no
+  audit directory. The suite holds that the page then has the same report:
+  a list with the class `problems`, and the table. The noticeboard shows
+  `cannot list the audit directory` and the reason. A change costs one
+  scenario in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, the body of a refusal of the noticeboard.**
+  `docs/rework/spec.md` §8.3 rule 4 permits a word for the fault in a
+  refusal, and no value. No contract gives the form of the body or a word.
+  The suite holds that the body is a strict JSON text in UTF-8 and that it
+  holds no key. The docstring of `is_json` in `proc_board_reports.py` lists
+  what the check refuses. The check has no rule for the nesting, for the
+  size of an integer or for a key that an object holds two times. For a
+  missing key, the noticeboard answers `{"ok":false,"error":"no_key"}`. A
+  change costs one assertion in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, the attributes of the cookie of the noticeboard.**
+  `docs/rework/spec.md` §8.3 rule 3 gives `SameSite=Strict` and `HttpOnly`.
+  No contract gives `Secure`, `Path` or a variable for one of the two. The
+  suite holds the cookie of the noticeboard as it is. The cookie has
+  `Secure` unless `VIEW_COOKIE_SECURE` is `0`, and it has `Path=/`. A change
+  costs three scenarios in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a post to the noticeboard that is too long.** No
+  contract gives a limit for the body of a post, or the answer to a longer
+  body. The suite holds the noticeboard as it is:
+  - A body of 1 MiB and one byte gets 403, and the registry stays as it was.
+  - A body of exactly 1 MiB is a save.
+
+  One field that no form has fills each body to its size. The noticeboard
+  ignores such a field, and the save of the second scenario depends on
+  that. Each scenario sends the whole body before it reads the answer. A
+  service that closes the connection before it read the body can fail the
+  first scenario with a write error. A change costs two scenarios in
+  `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, where the noticeboard reads its key.**
+  `docs/rework/spec.md` §8.3 names the key and no source of it. The suite
+  holds the two variables that `noticeboard/AGENTS.md` names:
+  - `VIEW_ACCESS_KEY` holds the key when no variable names a key file.
+  - `VIEW_ACCESS_KEY_FILE` names a file that holds the key. A final newline
+    of the file is no part of the key.
+
+  A change costs two scenarios in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a loopback bind of the noticeboard with no key.**
+  `docs/rework/spec.md` §8.3 rule 2 refuses a LAN bind with no key. Rule 1
+  has no branch that skips the check. No section says what a loopback bind
+  with no key serves. The suite holds rule 1 of the perimeter rules in
+  `noticeboard/AGENTS.md`: an empty key is legal on a loopback bind. A page
+  then needs no key. A change costs one scenario in
+  `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a port or a page size that is not valid.** No
+  contract names `VIEW_PORT` or `VIEW_PAGE_SIZE`, or a range for one. The
+  suite holds that `VIEW_PORT=abc` and `VIEW_PAGE_SIZE=0` each refuse to
+  start, with a code that is not 0. The noticeboard exits with the code of
+  each other start that its config refuses. A change to one fixed code
+  costs one assertion in `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, the answer to a save of the noticeboard.**
   `docs/rework/spec.md` §8.2 says what a save writes. No section gives the
   answer to the browser. The suite holds the answer of the noticeboard as it
@@ -755,6 +859,7 @@ the text of the failure. Work down this list.
 | `standin_sbx.py`, `standin_systemctl.py`, `standin_litellm.py` | the three stand-in programs of this directory |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
 | `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py` | one topology each |
+| `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |
