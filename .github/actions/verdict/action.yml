@@ -26,7 +26,16 @@ runs:
 
         # What a docs change leaves out. A code change leaves out nothing.
         LEFT_OUT = {
-            "docs": ["tests", "playpen", "proc", "suites", "rust", "rust-coverage", "systemd-proof"]
+            "docs": [
+                "tests",
+                "playpen",
+                "proc",
+                "proc-rust",
+                "suites",
+                "rust",
+                "rust-coverage",
+                "systemd-proof",
+            ]
         }
 
         needs = json.loads(os.environ["NEEDS"])

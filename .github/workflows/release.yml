@@ -7,6 +7,9 @@
 #           ├── playpen     code   the TypeScript suite and its build
 #           ├── proc        code   the process-level suite, each service
 #           │                      as a process, on the built playpen
+#           ├── proc-rust   code   the scenarios that each file of rust/proc
+#           │                      selects, against the Rust program of
+#           │                      that file
 #           ├── rust        code   cargo fmt, clippy, deny and test, for a
 #           │                      push that touches rust/ or vectors/
 #           ├── rust-coverage  code   the tests with cargo llvm-cov and the
@@ -51,7 +54,7 @@
 # A docs-only push onto a commit whose own run passed runs only the tests
 # marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
 # runs.
-# The `tests`, `playpen`, `proc`, `rust`, `rust-coverage` and
+# The `tests`, `playpen`, `proc`, `proc-rust`, `rust`, `rust-coverage` and
 # `systemd-proof` jobs are gate.yml's, and bin/tests/test_gate_workflow.py
 # holds the two files to the same shard command — diff the two when changing
 # either.
@@ -275,6 +278,60 @@ jobs:
         env:
           CRECHE_PROC_NO_SKIP: "1"
 
+  # The process-level suite as the judge of a Rust program: bin/proc-rust.sh
+  # (rust/AGENTS.md, "The judge of a program"). The script reads each file
+  # rust/proc/*.run. For one file it builds one program of the Cargo
+  # workspace with the release profile. It then runs the scenarios that the
+  # file selects, with that program in the place of one service.
+  #
+  # The job runs its steps on every code change, as the `proc` job does. A
+  # change to a scenario, to the harness or to a crate can each change the
+  # result, so no rule of the scope skips a step here.
+  #
+  # The job has the toolchain of the `rust` job and the venv of the `proc`
+  # job. It has no node and no playpen build: no selected scenario needs the
+  # bundle today. A file that selects such a scenario fails here, because a
+  # test that skips is a failure. The script sets CRECHE_PROC_NO_SKIP. The
+  # pull request that adds such a file adds the build steps of the `proc`
+  # job.
+  #
+  # The cache holds the release build. Its key has a start of its own: the
+  # `rust` job saves a debug build, and a saved cache does not change.
+  #
+  # The time limit: a teardown waits 20 s for each process group, as in the
+  # `proc` job. A job has 6 hours by default.
+  proc-rust:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # As in the `rust` job: no build here starts from the last one.
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: toolchain
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust/target
+          key: proc-rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
+
+      - uses: ./.github/actions/uv-sync
+
+      - run: bin/proc-rust.sh
+
   # The Cargo workspace under rust/: bin/rust-gate.sh, the checks the hooks
   # run. The job runs on every code change, and on a change that touches
   # nothing under rust/ every step but the checkout is skipped
@@ -471,12 +528,12 @@ jobs:
       - run: bin/systemd-proof.sh
         if: needs.scope.outputs.systemd != 'false'
 
-  # `always()`: on a docs push `tests`, `playpen`, `proc`, `rust`,
-  # `rust-coverage` and `systemd-proof` are skipped, and a job that needs a
-  # skipped job is skipped by default. The verdict step is what holds the tags
-  # back when a job failed.
+  # `always()`: on a docs push `tests`, `playpen`, `proc`, `proc-rust`,
+  # `rust`, `rust-coverage` and `systemd-proof` are skipped, and a job that
+  # needs a skipped job is skipped by default. The verdict step is what holds
+  # the tags back when a job failed.
   release:
-    needs: [scope, lint, tests, playpen, proc, rust, rust-coverage, systemd-proof]
+    needs: [scope, lint, tests, playpen, proc, proc-rust, rust, rust-coverage, systemd-proof]
     if: always()
     runs-on: ubuntu-latest
     permissions:

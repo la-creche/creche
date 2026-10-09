@@ -53,6 +53,11 @@ in no shard: `testpaths` does not hold it. The job builds the playpen first,
 and a test that skips is a failure there. A run in which every test skips
 because the bundle is missing would be green and would judge nothing.
 
+The `proc-rust` job runs `bin/proc-rust.sh`: the same suite as the judge of
+each Rust program that a file of `rust/proc` names. The job runs its steps on
+each code change, with the toolchain of the `rust` job and the venv of the
+`proc` job. It keeps the release build in a cache with a key of its own.
+
 The `suites` job runs the two old suites of `integration/`, each one in a
 pytest run of its own. It has the setup of the `proc` job. Its last step reads
 the JUnit report of each run, and it fails for a test that skipped. Only
@@ -402,6 +407,46 @@ PROC_RUN = "uv run pytest integration/proc -m slow"
 PROC_ENV = {"CRECHE_PROC_NO_SKIP": "1"}
 PROC_SWITCHES = REPO / "integration" / "proc" / "proc_services.py"
 
+#: The job that gives the process-level suite each Rust program of
+#: `rust/proc`, and the whole of that work: one script, with no flag. The
+#: flag `--dry-run` would start no build and no test.
+PROC_RUST_JOB = "proc-rust"
+PROC_RUST_RUN = "bin/proc-rust.sh"
+
+#: Each key of the job. One more key can make a red step green, for example
+#: `continue-on-error`. A step has no `if`: the job runs each step on each
+#: code change.
+PROC_RUST_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
+
+#: The steps of the job, in order, each with its keys: the checkout, the
+#: toolchain, the cache, the venv and the script.
+PROC_RUST_STEP_KEYS = [
+    {"uses", "with"},
+    {"name", "working-directory", "run"},
+    {"uses", "with"},
+    {"uses"},
+    {"run"},
+]
+
+#: The whole text of the toolchain step of the job. The first line installs
+#: the toolchain that `rust/rust-toolchain.toml` names. The job runs no lint,
+#: so the step asks for no version of `rustfmt` and of `clippy`.
+PROC_RUST_TOOLCHAIN_RUN = """\
+rustup toolchain install --no-self-update
+cargo --version
+"""
+
+#: The whole key of the cache of the job. The start differs from the key of
+#: the `rust` job: that job saves a debug build, and a saved cache does not
+#: change. With one key for the two jobs, one of the two builds would start
+#: from nothing in each run.
+PROC_RUST_CACHE_KEY = (
+    "proc-rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}"
+)
+
+#: The directory of the builds of the workspace, as the cache names it.
+RUST_TARGET = "rust/target"
+
 #: The build that the suite needs, and where it runs. No vitest and no
 #: typecheck: the `playpen` job runs those.
 PLAYPEN_BUILD = "pnpm install --frozen-lockfile && pnpm run build"
@@ -607,7 +652,7 @@ def test_the_docs_scope_runs_no_shard_no_playpen_and_no_rust(
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
     only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
 
-    code_jobs = {"tests", "playpen", "proc", "rust", COVERAGE_JOB, SYSTEMD_JOB}
+    code_jobs = {"tests", "playpen", "proc", PROC_RUST_JOB, "rust", COVERAGE_JOB, SYSTEMD_JOB}
     elsewhere = set().union(*(names for name, names in ONLY_IN.items() if name != last))
 
     assert only_code == code_jobs | ONLY_IN[last]
@@ -626,9 +671,9 @@ def test_lint_runs_the_docs_tests_on_a_docs_change_and_no_test_beside_the_shards
 
 def test_the_release_runs_the_gates_test_jobs() -> None:
     """A change to one file's shards, playpen steps, process suite, Rust
-    steps, coverage steps or systemd proof that misses the other would let a
-    merge pass a release its PR could not, or the reverse."""
-    for name in ("tests", "playpen", "proc", "rust", COVERAGE_JOB, SYSTEMD_JOB):
+    judge, Rust steps, coverage steps or systemd proof that misses the other
+    would let a merge pass a release its PR could not, or the reverse."""
+    for name in ("tests", "playpen", "proc", PROC_RUST_JOB, "rust", COVERAGE_JOB, SYSTEMD_JOB):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
 
 
@@ -699,6 +744,87 @@ def test_the_proc_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: st
     """A teardown waits for each process group. A fault in the harness can
     cost every test that wait, and a job with no limit has six hours."""
     assert 0 < jobs["proc"]["timeout-minutes"] <= 30
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_proc_rust_job_runs_each_step_on_each_code_change(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """A scenario, the harness and a crate can each change the result, so no
+    step asks the scope. The job has no key and no step key that hides a red
+    step."""
+    job = jobs[PROC_RUST_JOB]
+
+    assert set(job) == PROC_RUST_KEYS
+    assert job["needs"] == "scope"
+    assert job["if"] == ONLY_CODE
+    assert job["runs-on"] == jobs["proc"]["runs-on"]
+    assert job["env"] == COVERAGE_JOB_ENV
+    assert [set(step) for step in job["steps"]] == PROC_RUST_STEP_KEYS
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_proc_rust_job_runs_the_script_after_the_toolchain_and_the_venv(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """One copy of the cargo line and of the pytest line: `bin/proc-rust.sh`.
+    The step gives the script no flag. rustup takes the toolchain from
+    `rust/rust-toolchain.toml`, so the toolchain step runs inside `rust/` and
+    names no toolchain. The script starts `uv run pytest`, so the venv comes
+    before it."""
+    checkout, toolchain, _cache, venv, script = jobs[PROC_RUST_JOB]["steps"]
+
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert toolchain["working-directory"] == RUST_DIR
+    assert toolchain["run"] == PROC_RUST_TOOLCHAIN_RUN
+    assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
+    assert venv == {"uses": UV_SYNC}
+    assert script == {"run": PROC_RUST_RUN}
+    assert (REPO / PROC_RUST_RUN).is_file()
+    for step in jobs[PROC_RUST_JOB]["steps"]:
+        assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_proc_rust_job_builds_no_playpen(jobs: dict[str, dict[str, Any]], last: str) -> None:
+    """No scenario that a file of `rust/proc` selects needs the bundle today.
+    A file that selects such a scenario fails in the job: the script makes a
+    skip a failure. The pull request that adds such a file gives the job the
+    node steps and the build of the `proc` job, and changes this test."""
+    job = jobs[PROC_RUST_JOB]
+
+    assert _node_steps(job) == []
+    assert PLAYPEN_BUILD not in [step.get("run") for step in job["steps"]]
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_proc_rust_job_keeps_its_release_build_under_a_key_of_its_own(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    (cache,) = [
+        step
+        for step in jobs[PROC_RUST_JOB]["steps"]
+        if step.get("uses", "").startswith("actions/cache@")
+    ]
+    (of_rust,) = [
+        step for step in jobs["rust"]["steps"] if step.get("uses", "").startswith("actions/cache@")
+    ]
+
+    assert set(cache["with"]) == {"path", "key"}
+    assert cache["with"]["key"] == PROC_RUST_CACHE_KEY
+    assert cache["with"]["key"] != of_rust["with"]["key"]
+    assert cache["uses"] == of_rust["uses"]
+    assert RUST_TARGET in cache["with"]["path"].split()
+    for name in CACHE_FILES:
+        assert f"'{name}'" in cache["with"]["key"]
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_proc_rust_job_has_the_time_limit_of_the_proc_job(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """A teardown waits for each process group, as in the `proc` job."""
+    assert jobs[PROC_RUST_JOB]["timeout-minutes"] == jobs["proc"]["timeout-minutes"]
 
 
 def _report_of(name: str) -> str:
@@ -1316,6 +1442,7 @@ DOCS = {
     "tests": "skipped",
     "playpen": "skipped",
     "proc": "skipped",
+    PROC_RUST_JOB: "skipped",
     SUITES_JOB: "skipped",
     "rust": "skipped",
     COVERAGE_JOB: "skipped",
@@ -1348,6 +1475,10 @@ VERDICTS = [
     # The process suite is in no shard. A code PR on which it did not run
     # is red.
     (_needs("code", {"proc": "skipped"}), False),
+    # The judge of the Rust programs runs on every code PR too.
+    (_needs("code", {PROC_RUST_JOB: "failure"}), False),
+    (_needs("code", {PROC_RUST_JOB: "cancelled"}), False),
+    (_needs("code", {PROC_RUST_JOB: "skipped"}), False),
     # The two old suites of integration/ are in no shard either.
     (_needs("code", {SUITES_JOB: "failure"}), False),
     (_needs("code", {SUITES_JOB: "skipped"}), False),
@@ -1358,6 +1489,7 @@ VERDICTS = [
     (_needs("docs", DOCS | {"rust": "success"}), False),
     (_needs("docs", DOCS | {COVERAGE_JOB: "success"}), False),
     (_needs("docs", DOCS | {"proc": "success"}), False),
+    (_needs("docs", DOCS | {PROC_RUST_JOB: "success"}), False),
     (_needs("docs", DOCS | {SUITES_JOB: "success"}), False),
     (_needs("docs", DOCS | {SYSTEMD_JOB: "success"}), False),
     # The release has no `suites` job yet (`ONLY_IN`), and its verdict asks
@@ -1365,6 +1497,7 @@ VERDICTS = [
     (_needs("code", {}, RELEASE_JOBS, RELEASE_NAME), True),
     (_needs("docs", DOCS, RELEASE_JOBS, RELEASE_NAME), True),
     (_needs("code", {"proc": "failure"}, RELEASE_JOBS, RELEASE_NAME), False),
+    (_needs("code", {PROC_RUST_JOB: "failure"}, RELEASE_JOBS, RELEASE_NAME), False),
     (_needs("docs", DOCS | {"proc": "success"}, RELEASE_JOBS, RELEASE_NAME), False),
     # No scope: the scope job failed and everything behind it was skipped.
     (_needs(None, DOCS | {"scope": "failure"}), False),
