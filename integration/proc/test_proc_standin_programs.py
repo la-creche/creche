@@ -13,7 +13,9 @@ The last test holds one rule of the pi wrapper, which each topology uses.
 
 from __future__ import annotations
 
+import json
 import socket
+import struct
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -97,6 +99,9 @@ NO_LENGTH_REQUEST = (
     b"POST /embed HTTP/1.1\r\nHost: tei\r\nContent-Type: application/json\r\n"
     b"Transfer-Encoding: chunked\r\n\r\n"
 )
+
+#: The value of `SO_LINGER` that makes a close send a reset: linger for 0 seconds.
+RESET_AT_CLOSE = struct.pack("ii", 1, 0)
 
 TEI_TIMEOUT_S = 30.0
 ANSWER_BYTES = 65_536
@@ -655,21 +660,32 @@ def test_tei_holds_a_call_that_holds_a_text(tei: Tei) -> None:
 
 
 def test_tei_stays_up_when_a_held_caller_is_gone(tei: Tei, supervisor: Supervisor) -> None:
-    """A scenario kills the program inside a held call. The stand-in must serve the next run."""
+    """A scenario kills the program inside a held call. The stand-in must serve the next run.
+
+    The caller of this test leaves as a killed program can: its connection
+    ends with a reset. The stand-in then cannot write the answer of the held
+    call. It answers the next call, and it writes no traceback. The wait
+    after the next call gives the held call the time to fail.
+    """
+    held_body = {"inputs": [MARK]}
     tune(tei.tree, TEI, TEI_HOLD_EMBED, MARK)
 
-    with pytest.raises(httpx.ReadTimeout), _tei_client(tei) as client:
-        client.post(EMBED_ROUTE, json={"inputs": [MARK]}, timeout=HOLD_CHECK_S)
+    with socket.create_connection((LOOPBACK, tei.port), timeout=TEI_TIMEOUT_S) as conn:
+        conn.sendall(_embed_request(held_body))
+        wait_until(lambda: _embed_bodies(tei) == [held_body], "the held call", TEI_TIMEOUT_S)
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, RESET_AT_CLOSE)
 
     untune(tei.tree, TEI, TEI_HOLD_EMBED)
 
     with _tei_client(tei) as client:
-        answered = client.post(EMBED_ROUTE, json={"inputs": [MARK]})
+        answered = client.post(EMBED_ROUTE, json=held_body)
 
     [child] = supervisor.children
 
+    with pytest.raises(ProcError, match="did not exit"):
+        child.wait(HOLD_CHECK_S)
+
     assert answered.status_code == HTTP_OK
-    assert child.exit_code() is None
     assert child.stderr_path.read_bytes() == b""
 
 
@@ -842,6 +858,17 @@ def _post_embed(tei: Tei, body: dict[str, list[str]]) -> int:
     """One embed call on a connection of its own. Returns the status."""
     with _tei_client(tei) as client:
         return client.post(EMBED_ROUTE, json=body).status_code
+
+
+def _embed_request(body: dict[str, list[str]]) -> bytes:
+    """One embed call as the bytes of an HTTP request, for a test that holds the socket."""
+    raw = json.dumps(body).encode("utf-8")
+    head = (
+        f"POST {EMBED_ROUTE} HTTP/1.1\r\nHost: tei\r\nContent-Type: application/json\r\n"
+        f"Content-Length: {len(raw)}\r\n\r\n"
+    )
+
+    return head.encode("ascii") + raw
 
 
 def _embed_bodies(tei: Tei) -> list[object]:

@@ -233,16 +233,11 @@ def _handler_for(embedder: Embedder) -> type[BaseHTTPRequestHandler]:
             status, value = answer
             raw = json.dumps(value).encode("utf-8")
 
-            # A caller that a test killed has no socket for the answer of a
-            # held call. That is no fault of this program.
-            try:
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(raw)))
-                self.end_headers()
-                self.wfile.write(raw)
-            except OSError:
-                self.close_connection = True
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
 
     return Handler
 
@@ -263,7 +258,13 @@ class Server(ThreadingHTTPServer):
     request_queue_size = 128
 
     def handle_error(self, request: Any, client_address: Any) -> None:
-        """Write no traceback for a caller that closed its connection."""
+        """Write no traceback for a caller that is gone.
+
+        A caller that a test killed has no socket for the answer of a held
+        call. That is no fault of this program. This function is the one
+        place that holds the rule: the write of an answer has no guard of
+        its own.
+        """
         if isinstance(sys.exception(), OSError):
             return
 
