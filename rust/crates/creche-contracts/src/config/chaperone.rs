@@ -64,6 +64,42 @@ const DEFAULT_FAULT_SWEEP_S: &str = "5.0";
 
 /// The two files of the roster that a reload reads again
 /// (`stage7-releases.md` §4.4).
+///
+/// Only the parse of a [`ChaperoneConfig`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::chaperone::{ChaperoneConfig, RosterFiles};
+/// use creche_contracts::config::Env;
+///
+/// let env = Env::from_pairs([
+///     ("AGENT_LAN_ADDRESS", "192.0.2.10"),
+///     ("PEP_REWORK_DIR", "/srv/agents/state/rework"),
+///     ("PEP_AUDIT_DIR", "/srv/agents/state/pep/audit"),
+///     ("PEP_UPSTREAMS", "/opt/creche/chaperone/upstreams.yaml"),
+/// ]);
+/// let config = ChaperoneConfig::from_env(&env)?;
+/// let roster: &RosterFiles = config.roster().ok_or("the variable names a roster")?;
+/// assert_eq!(roster.base().as_str(), "/opt/creche/chaperone/upstreams.yaml");
+/// assert_eq!(roster.generated(), None);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::chaperone::{ChaperoneConfig, RosterFiles};
+/// use creche_contracts::config::Env;
+///
+/// let env = Env::from_pairs([
+///     ("AGENT_LAN_ADDRESS", "192.0.2.10"),
+///     ("PEP_REWORK_DIR", "/srv/agents/state/rework"),
+///     ("PEP_AUDIT_DIR", "/srv/agents/state/pep/audit"),
+///     ("PEP_UPSTREAMS", "/opt/creche/chaperone/upstreams.yaml"),
+/// ]);
+/// let config = ChaperoneConfig::from_env(&env).unwrap();
+/// let roster = config.roster().unwrap();
+/// let other = RosterFiles { generated: None, ..roster.clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RosterFiles {
     base: FilePath,
@@ -87,6 +123,42 @@ impl RosterFiles {
 
 /// The door of `attendance` that the chaperone calls for a delegation and
 /// for a dispatch (contract 04 §7, contract 02 §13.4).
+///
+/// Only the parse of a [`ChaperoneConfig`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::chaperone::{ChaperoneConfig, Doors};
+/// use creche_contracts::config::Env;
+///
+/// let env = Env::from_pairs([
+///     ("AGENT_LAN_ADDRESS", "192.0.2.10"),
+///     ("PEP_REWORK_DIR", "/srv/agents/state/rework"),
+///     ("PEP_AUDIT_DIR", "/srv/agents/state/pep/audit"),
+///     ("PEP_SESSIOND_SOCKET", "/srv/agents/state/rework/sock/sessiond.sock"),
+/// ]);
+/// let config = ChaperoneConfig::from_env(&env)?;
+/// let doors: &Doors = config.doors();
+/// let socket = doors.socket().ok_or("the variable names a socket")?;
+/// assert_eq!(socket.as_str(), "/srv/agents/state/rework/sock/sessiond.sock");
+/// assert_eq!(doors.delegate_token_file(), None);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::chaperone::{ChaperoneConfig, Doors};
+/// use creche_contracts::config::Env;
+///
+/// let env = Env::from_pairs([
+///     ("AGENT_LAN_ADDRESS", "192.0.2.10"),
+///     ("PEP_REWORK_DIR", "/srv/agents/state/rework"),
+///     ("PEP_AUDIT_DIR", "/srv/agents/state/pep/audit"),
+///     ("PEP_SESSIOND_SOCKET", "/srv/agents/state/rework/sock/sessiond.sock"),
+/// ]);
+/// let config = ChaperoneConfig::from_env(&env).unwrap();
+/// let doors = Doors { socket: None, ..config.doors().clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Doors {
     socket: Option<SocketPath>,

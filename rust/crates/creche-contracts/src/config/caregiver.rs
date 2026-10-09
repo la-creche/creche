@@ -365,6 +365,35 @@ pub enum PepWatch {
 
 /// The images that the caregiver creates a sandbox from, by flavor
 /// (contract 01 §3.9).
+///
+/// Only the parse of a [`CaregiverConfig`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::caregiver::{CaregiverConfig, Images, RawServe};
+/// use creche_contracts::config::Env;
+///
+/// let image = format!("registry.example/playpen@sha256:{}", "0123456789abcdef".repeat(4));
+/// let raw = RawServe::new(String::from("/srv/agents/registry"), image.clone());
+/// let env = Env::from_pairs([("AGENT_LAN_ADDRESS", "192.0.2.10")]);
+/// let config = CaregiverConfig::from_parts(&raw, &env)?;
+/// let images: &Images = config.images();
+/// assert_eq!(images.base().as_str(), image);
+/// assert_eq!(images.python(), None);
+/// # Ok::<(), creche_contracts::config::ConfigErrors>(())
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::caregiver::{CaregiverConfig, Images, RawServe};
+/// use creche_contracts::config::Env;
+///
+/// let image = format!("registry.example/playpen@sha256:{}", "0123456789abcdef".repeat(4));
+/// let raw = RawServe::new(String::from("/srv/agents/registry"), image.clone());
+/// let env = Env::from_pairs([("AGENT_LAN_ADDRESS", "192.0.2.10")]);
+/// let config = CaregiverConfig::from_parts(&raw, &env).unwrap();
+/// let images = Images { released: None, ..config.images().clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Images {
     base: ImageRef,

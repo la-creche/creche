@@ -249,6 +249,37 @@ impl fmt::Display for ChannelCommandError {
 impl Error for ChannelCommandError {}
 
 /// The Open WebUI copy of a session (contract 02 §10.4).
+///
+/// Only the parse of an [`AttendanceConfig`] makes a value.
+///
+/// ```
+/// use creche_contracts::config::attendance::{AttendanceConfig, OwuiCopy};
+/// use creche_contracts::config::Env;
+///
+/// let env = Env::from_pairs([
+///     ("AGENT_LAN_ADDRESS", "192.0.2.10"),
+///     ("SESSIOND_OWUI_FOLDER_ID", "folder-1"),
+/// ]);
+/// let config = AttendanceConfig::from_env(&env)?;
+/// let owui: &OwuiCopy = config.owui();
+/// assert_eq!(owui.url(), None);
+/// assert_eq!(owui.folder_id(), Some("folder-1"));
+/// # Ok::<(), creche_contracts::config::ConfigErrors>(())
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::config::attendance::{AttendanceConfig, OwuiCopy};
+/// use creche_contracts::config::Env;
+///
+/// let env = Env::from_pairs([
+///     ("AGENT_LAN_ADDRESS", "192.0.2.10"),
+///     ("SESSIOND_OWUI_FOLDER_ID", "folder-1"),
+/// ]);
+/// let config = AttendanceConfig::from_env(&env).unwrap();
+/// let owui = OwuiCopy { folder_id: None, ..config.owui().clone() };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwuiCopy {
     url: Option<HttpUrl>,
