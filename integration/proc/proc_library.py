@@ -45,6 +45,7 @@ import json
 import math
 import os
 import re
+import shutil
 import sqlite3
 import stat
 import struct
@@ -166,6 +167,12 @@ _PDF_TEXT: Final = re.compile(r"[A-Za-z0-9 .]+")
 #: The name of a run of the reference in the report of a failed test.
 REFERENCE: Final = "library-reference"
 
+#: The two index directories of a scenario with two writers. Only the
+#: reference writes the first one. The program writes the second one, or
+#: updates it.
+BY_REFERENCE: Final = "reference"
+JUDGED: Final = "judged"
+
 #: The program that reads a store as the bridge reads it, and its name in
 #: the report of a failed test.
 READER_SCRIPT: Final = "reader_store.mjs"
@@ -196,6 +203,14 @@ RANK_TOLERANCE: Final = 1e-9
 
 #: How many characters of one row a line of `StoreContent.differences` shows.
 _SHOWN_CHARS: Final = 160
+
+#: The text of `updated_at` in `meta`: digits, one period and digits.
+#:
+#: CONTRACT-QUESTION: `library/AGENTS.md` names `updated_at` and gives it no
+#: form. Reading taken: the program as it is, the text that Python gives
+#: for a float of the clock. No reader of this repository reads the value.
+#: A change costs this one pattern.
+_SECONDS_TEXT: Final = re.compile(r"[0-9]+\.[0-9]+")
 
 #: How many chunks the two files of `write_corpus_of` in `write_mixed` give.
 #: The first file is full, so it needs two embed calls.
@@ -430,8 +445,7 @@ class StoreContent:
     """
 
     #: The statement of each table of `CONTENT_TABLES`, as SQLite keeps it.
-    #: None for a table that the store does not have.
-    sql: tuple[tuple[str, str | None], ...]
+    sql: tuple[tuple[str, str], ...]
     #: Each row of `meta` but `updated_at`: the key and the value.
     meta: tuple[tuple[str, str], ...]
     #: Each row of `files`: the path, the hash and the mtime, not rounded.
@@ -472,30 +486,35 @@ class StoreContent:
 def store_content(path: Path) -> StoreContent:
     """What one store file holds. One read-only connection reads each part.
 
-    A store with no `updated_at` that reads as a count of seconds is an
-    error. So is a row of `files` whose `indexed_at` is no such count, and a
-    vector that is no blob. The content holds none of the two times, so
-    this function is the one place that looks at them.
+    A store that one statement here cannot read is an error, and so is a
+    store with no table of `CONTENT_TABLES`. A store with no `updated_at`
+    that reads as a count of seconds is an error. So is a row of `files`
+    whose `indexed_at` is no such count, and a vector that is no blob. The
+    content holds none of the two times, so this function is the one place
+    that looks at them.
     """
-    with _reader(path, Vec.LOADED) as conn:
-        made = dict(conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'"))
-        meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-        files = conn.execute(
-            "SELECT path, hash, mtime, indexed_at FROM files ORDER BY path"
-        ).fetchall()
-        chunks = conn.execute("SELECT id, path, ord, text FROM chunks ORDER BY id").fetchall()
-        words = conn.execute("SELECT rowid, text FROM chunks_fts ORDER BY rowid").fetchall()
-        plain = conn.execute("SELECT id, embedding FROM chunks_emb ORDER BY id").fetchall()
-        vec = conn.execute("SELECT rowid, embedding FROM chunks_vec").fetchall()
-        hits = tuple(_hits_of(conn, query) for query in CONTENT_QUERIES)
+    try:
+        with _reader(path, Vec.LOADED) as conn:
+            made = dict(conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'"))
+            meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+            files = conn.execute(
+                "SELECT path, hash, mtime, indexed_at FROM files ORDER BY path"
+            ).fetchall()
+            chunks = conn.execute("SELECT id, path, ord, text FROM chunks ORDER BY id").fetchall()
+            words = conn.execute("SELECT rowid, text FROM chunks_fts ORDER BY rowid").fetchall()
+            plain = conn.execute("SELECT id, embedding FROM chunks_emb ORDER BY id").fetchall()
+            vec = conn.execute("SELECT rowid, embedding FROM chunks_vec").fetchall()
+            hits = tuple(_hits_of(conn, query) for query in CONTENT_QUERIES)
+    except sqlite3.Error as error:
+        raise ProcError(f"{path} does not read as a store: {error}") from error
 
-    _need_seconds(meta.pop(META_UPDATED, None), f"`{META_UPDATED}` of `meta` in {path}")
+    _need_seconds_text(meta.pop(META_UPDATED, None), f"`{META_UPDATED}` of `meta` in {path}")
 
     for row in files:
         _need_seconds(row[3], f"`indexed_at` of {row[0]} in {path}")
 
     return StoreContent(
-        sql=tuple((name, made.get(name)) for name in CONTENT_TABLES),
+        sql=tuple((name, _statement_of(made, name, path)) for name in CONTENT_TABLES),
         meta=tuple(sorted(meta.items())),
         files=tuple((row[0], row[1], row[2]) for row in files),
         chunks=tuple(ChunkRow(*row) for row in chunks),
@@ -504,6 +523,16 @@ def store_content(path: Path) -> StoreContent:
         plain_vectors=_blobs(plain, f"`chunks_emb` of {path}"),
         vec_vectors=_blobs(sorted(vec), f"`chunks_vec` of {path}"),
     )
+
+
+def _statement_of(made: Mapping[str, object], name: str, path: Path) -> str:
+    """The statement of one table of a store. A store with no such table is an error."""
+    statement = made.get(name)
+
+    if not isinstance(statement, str):
+        raise ProcError(f"{path} has no table `{name}`")
+
+    return statement
 
 
 def _hits_of(conn: sqlite3.Connection, query: str) -> tuple[Hit, ...]:
@@ -516,15 +545,25 @@ def _hits_of(conn: sqlite3.Connection, query: str) -> tuple[Hit, ...]:
     return tuple(Hit(*row) for row in rows)
 
 
-def _need_seconds(value: object, what: str) -> None:
-    """Refuse a time of a store that does not read as a count of seconds."""
-    try:
-        seconds = float(cast("float | str", value))
-    except (TypeError, ValueError):
-        seconds = math.nan
+def _need_seconds_text(value: object, what: str) -> None:
+    """Refuse an `updated_at` that is no text of a count of seconds.
 
-    if not math.isfinite(seconds):
-        raise ProcError(f"{what} is {value!r}, which is no count of seconds")
+    `float` of Python reads more than such a text: bytes, an underscore
+    between two digits, a space at an end. So the type and the pattern
+    come first.
+    """
+    if isinstance(value, str) and _SECONDS_TEXT.fullmatch(value) and math.isfinite(float(value)):
+        return
+
+    raise ProcError(f"{what} is {_shown(value)}, which is no text of a count of seconds")
+
+
+def _need_seconds(value: object, what: str) -> None:
+    """Refuse an `indexed_at` that is no count of seconds: a REAL value that is finite."""
+    if isinstance(value, float) and math.isfinite(value):
+        return
+
+    raise ProcError(f"{what} is {_shown(value)}, which is no count of seconds")
 
 
 def _blobs(rows: Sequence[tuple[int, object]], what: str) -> tuple[tuple[int, bytes], ...]:
@@ -818,6 +857,37 @@ def node_has_sqlite() -> bool:
         return False
 
     return probe.returncode == 0
+
+
+def copy_store(store: Path, index_dir: Path) -> Path:
+    """A copy of one store file in an index directory that is new. Returns the copy.
+
+    A test that changes a store changes such a copy. The store of a run
+    stays as the program left it.
+    """
+    index_dir.mkdir(parents=True)
+    copy = index_dir / STORE_FILE
+    shutil.copyfile(store, copy)
+
+    return copy
+
+
+def change_store(store: Path, statement: str, values: Sequence[object] = ()) -> None:
+    """Run one statement that changes a copy of a store.
+
+    The connection has `sqlite-vec`, so the statement can change a `vec0`
+    table. Give this function only a file of `copy_store`.
+    """
+    conn = sqlite3.connect(store)
+
+    try:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        conn.execute(statement, tuple(values))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def index_words(scope: Path, index_dir: Path, profile: Profile | None = None) -> list[str]:

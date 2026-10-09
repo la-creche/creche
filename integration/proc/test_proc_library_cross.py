@@ -24,6 +24,11 @@ for one corpus.
 `integration/proc/AGENTS.md`, "The reference", has the rules for the one
 place where this suite runs a default command beside the judged command.
 
+The last three scenarios hold the comparison itself, and they run no
+reference. With no variable set, a comparison that sees nothing passes
+each scenario above. So one scenario changes a copy of a store in each
+part and reads the line that the comparison gives for it.
+
 CONTRACT-QUESTION: `library/AGENTS.md` gives the schema and six rules for
 one writer. No contract names a second writer of one store. Reading taken,
 the strict one: for one corpus, both writers give equal rows in each table,
@@ -35,33 +40,42 @@ A change costs one part of `StoreContent` in `proc_library.py`.
 
 from __future__ import annotations
 
+import math
 import os
 import signal
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import pytest
 from proc_harness import Finished, ProcError
 from proc_library import (
     BIKES,
     BROKEN_PDF,
+    BY_REFERENCE,
     CANARY,
+    CONTENT_QUERIES,
     EXIT_OK,
     FILE_PARAGRAPHS,
     HELD_TEXT,
+    JUDGED,
+    META_UPDATED,
+    RANK_TOLERANCE,
     STORE_FILE,
+    Hit,
     LibraryStack,
+    StoreContent,
+    change_store,
+    copy_store,
     report_of,
     store_content,
+    vector_blob,
     write_corpus_of,
     write_mixed,
     write_note,
+    write_vault,
 )
 from proc_standins import TEI, TEI_MODEL, tune
-
-#: The two index directories of each scenario. Only the reference writes the
-#: first one. The program writes the second one, or updates it.
-BY_REFERENCE = "reference"
-JUDGED = "judged"
 
 #: A model id that the stand-in gives after a change of model.
 NEW_MODEL = "new-model"
@@ -99,6 +113,18 @@ KILLED_CHUNKS = 600
 
 #: How long the program has to end after a kill.
 STOP_DEADLINE_S = 30.0
+
+#: The start of the line that the comparison gives for each query of
+#: `CONTENT_QUERIES`.
+ROWS_OF_EACH_QUERY = [f"the rows of MATCH {query}" for query in CONTENT_QUERIES]
+
+#: The chunk that the comparison scenario changes: the second chunk of the
+#: full file. Its text holds a word of each query of `CONTENT_QUERIES`.
+SECOND_CHUNK = (FULL_DOC, 1)
+
+#: The start of what `store_content` says of a time that it refuses.
+UPDATED_REFUSED = "`updated_at` of `meta`"
+INDEXED_REFUSED = "`indexed_at` of "
 
 
 def test_the_program_and_the_reference_build_the_same_store(library: LibraryStack) -> None:
@@ -277,6 +303,124 @@ def test_the_two_programs_print_the_same_report_line(library: LibraryStack) -> N
     assert _differences(library) == []
 
 
+def test_the_comparison_sees_a_change_in_each_part(library: LibraryStack) -> None:
+    """A copy of a store with one change gives one line for the part that holds the change.
+
+    Each change here is in one part of `StoreContent`, in a copy of one
+    store of the program. The comparison names that part and no other
+    table. A copy with no change gives no line.
+
+    The next mtime is the nearest float above the mtime of one file, so a
+    comparison that rounds a time does not see it. FTS5 reads a word in
+    upper case as the same word, so that change moves no rank.
+
+    Two changes move the rows of the three queries. The row that leaves
+    `chunks_fts` is a row of each query. Another weight of the rank changes
+    each rank and no table.
+    """
+    scope = library.vault()
+    write_mixed(scope)
+    _by_program(library, scope, JUDGED)
+    content = store_content(library.store(JUDGED).path)
+    first = content.files[0]
+    listed = next(row for row in content.chunks if (Path(row.path).name, row.ord) == SECOND_CHUNK)
+    upper = (listed.text.upper(), listed.id)
+    changes: dict[str, tuple[str, Sequence[object]]] = {
+        "no change": ("SELECT 1", ()),
+        "a row more in meta": ("INSERT INTO meta (key, value) VALUES ('writer', 'another')", ()),
+        "another hash": ("UPDATE files SET hash = 'another' WHERE path = ?", (first[0],)),
+        "the next mtime": (
+            "UPDATE files SET mtime = ? WHERE path = ?",
+            (math.nextafter(first[2], math.inf), first[0]),
+        ),
+        "another text": ("UPDATE chunks SET text = 'another' WHERE id = ?", (listed.id,)),
+        "another ord": ("UPDATE chunks SET ord = ord + 1 WHERE id = ?", (listed.id,)),
+        "the words in upper case": ("UPDATE chunks_fts SET text = ? WHERE rowid = ?", upper),
+        "a row less in chunks_fts": ("DELETE FROM chunks_fts WHERE rowid = ?", (listed.id,)),
+        "another vector": (
+            "UPDATE chunks_emb SET embedding = ? WHERE id = ?",
+            (vector_blob("another"), listed.id),
+        ),
+        "a row less in chunks_vec": ("DELETE FROM chunks_vec WHERE rowid = ?", (listed.id,)),
+        "a column more": ("ALTER TABLE files ADD COLUMN note TEXT", ()),
+        "another weight of the rank": (
+            "INSERT INTO chunks_fts (chunks_fts, rank) VALUES ('rank', 'bm25(10.0)')",
+            (),
+        ),
+    }
+
+    seen = {
+        name: _parts_of(content, library, serial, statement, values)
+        for serial, (name, (statement, values)) in enumerate(changes.items())
+    }
+
+    assert seen == {
+        "no change": [],
+        "a row more in meta": ["meta"],
+        "another hash": ["files"],
+        "the next mtime": ["files"],
+        "another text": ["chunks"],
+        "another ord": ["chunks"],
+        "the words in upper case": ["chunks_fts"],
+        "a row less in chunks_fts": ["chunks_fts", *ROWS_OF_EACH_QUERY],
+        "another vector": ["chunks_emb"],
+        "a row less in chunks_vec": ["chunks_vec"],
+        "a column more": ["the table statements"],
+        "another weight of the rank": ROWS_OF_EACH_QUERY,
+    }
+
+
+def test_the_comparison_allows_a_rank_inside_the_tolerance() -> None:
+    """Two ranks of one row can differ by `RANK_TOLERANCE`, and by no more.
+
+    The order of the rows has no tolerance: two rows in the other order
+    give a line, with equal ranks too.
+    """
+    rows = (Hit(rowid=1, rank=-2.0), Hit(rowid=2, rank=-1.0))
+    content = _content_with(rows)
+    inside = _content_with((Hit(rowid=1, rank=-2.0 + RANK_TOLERANCE / 2), rows[1]))
+    outside = _content_with((Hit(rowid=1, rank=-2.0 + RANK_TOLERANCE * 2), rows[1]))
+    turned = _content_with((replace(rows[1], rank=-2.0), replace(rows[0], rank=-1.0)))
+
+    assert content.differences(inside) == []
+    assert _parts(content.differences(outside)) == ROWS_OF_EACH_QUERY[:1]
+    assert _parts(content.differences(turned)) == ROWS_OF_EACH_QUERY[:1]
+
+
+def test_the_content_refuses_a_store_that_it_cannot_compare(library: LibraryStack) -> None:
+    """`store_content` raises for a time or a vector of another kind, and for an absent table.
+
+    The content holds no time of a run, so no comparison finds a time of
+    another kind. The read of the store is the one place that can refuse it.
+    """
+    scope = library.vault()
+    write_vault(scope)
+    _by_program(library, scope, JUDGED)
+    store = library.store(JUDGED).path
+    set_updated = "UPDATE meta SET value = ? WHERE key = ?"
+    refused: tuple[tuple[str, Sequence[object], str], ...] = (
+        (set_updated, ("soon", META_UPDATED), UPDATED_REFUSED),
+        (set_updated, ("1_0.5", META_UPDATED), UPDATED_REFUSED),
+        (set_updated, (" 12.5", META_UPDATED), UPDATED_REFUSED),
+        (set_updated, ("12", META_UPDATED), UPDATED_REFUSED),
+        (set_updated, (b"12.5", META_UPDATED), UPDATED_REFUSED),
+        ("DELETE FROM meta WHERE key = ?", (META_UPDATED,), UPDATED_REFUSED),
+        ("UPDATE files SET indexed_at = ?", (None,), INDEXED_REFUSED),
+        ("UPDATE files SET indexed_at = ?", ("soon",), INDEXED_REFUSED),
+        ("UPDATE chunks_emb SET embedding = ?", ("text",), "`chunks_emb` of "),
+        ("DROP TABLE chunks_emb", (), "does not read as a store"),
+    )
+
+    for serial, (statement, values, text) in enumerate(refused):
+        copy = copy_store(store, library.index_dir(f"refused-{serial}"))
+        change_store(copy, statement, values)
+
+        with pytest.raises(ProcError, match=text):
+            store_content(copy)
+
+    assert store_content(store).chunks != ()
+
+
 # -------------------------------------------------------------------- helpers
 
 
@@ -349,6 +493,41 @@ def _differences(library: LibraryStack) -> list[str]:
 def _first_line(done: Finished) -> str:
     """The first line of what one run wrote on its stdout."""
     return done.stdout.split("\n")[0]
+
+
+def _parts_of(
+    content: StoreContent,
+    library: LibraryStack,
+    serial: int,
+    statement: str,
+    values: Sequence[object],
+) -> list[str]:
+    """The part that each line of the comparison names, for a copy of a store after one change."""
+    copy = copy_store(library.store(JUDGED).path, library.index_dir(f"changed-{serial}"))
+    change_store(copy, statement, values)
+
+    return _parts(content.differences(store_content(copy)))
+
+
+def _parts(lines: Sequence[str]) -> list[str]:
+    """The start of each line of a comparison: the part that the line names."""
+    return [line.partition(": ")[0] for line in lines]
+
+
+def _content_with(rows: tuple[Hit, ...]) -> StoreContent:
+    """The content of a store with no row, but the rows of the first query."""
+    rest = tuple(() for _ in CONTENT_QUERIES[1:])
+
+    return StoreContent(
+        sql=(),
+        meta=(),
+        files=(),
+        chunks=(),
+        words=(),
+        hits=(rows, *rest),
+        plain_vectors=(),
+        vec_vectors=(),
+    )
 
 
 def _change(scope: Path) -> None:
