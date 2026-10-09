@@ -85,13 +85,15 @@ jobs:
       # outranks rust/rust-toolchain.toml. That file does not change: it
       # moves the tag of each binary component.
       #
-      # A nightly gets no later fix, so the date is the pin. The compiler of
-      # this nightly is four days newer than the compiler 1.92.0 of that
-      # file, and both use LLVM 21. To take another date, select a nightly
-      # that is near the compiler of that file. Run the script with
-      # `--branch` on a machine with that nightly, and measure the facts
-      # about a branch in rust/AGENTS.md again. Then change the value here
-      # and in bin/tests/test_gate_workflow.py.
+      # A nightly gets no later fix, so the date is the pin. This nightly is
+      # from the week in which the compiler 1.92.0 of that file came out, and
+      # both use LLVM 21. It is the compiler 1.94 before its release, so it
+      # writes some regions in other places (rust/AGENTS.md has the facts).
+      # To take another date, select a nightly that is near the release of
+      # the compiler of that file. Run the script with `--branch` on a
+      # machine with that nightly, and measure the facts about a branch in
+      # rust/AGENTS.md again. Then change the value here and in
+      # bin/tests/test_gate_workflow.py.
       RUSTUP_TOOLCHAIN: nightly-2025-12-13
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
