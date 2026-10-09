@@ -19,7 +19,7 @@ wrong without one red line, and each gets a check here:
    that the suite no longer has fails here, before the job runs.
 5. **A scenario that a file leaves out in silence.** `probe.run` selects
    each scenario of `test_proc_board_start.py` but the one that `NOT_YET`
-   names, with its reason.
+   names. That table goes with packet `strict-exit-78`.
 
 The tests of the script run the real script in a throwaway tree. `cargo` and
 `uv` are fakes that write their argv, their directory and their variables to
@@ -85,16 +85,13 @@ CRATES = REPO / "rust" / "crates"
 PROBE = "probe"
 BOARD_START = "integration/proc/test_proc_board_start.py"
 
-#: The scenarios of `BOARD_START` that `probe.run` does not select yet, each
-#: with its reason. The Python noticeboard ends a refused start with status
-#: 2, and the scenario holds that status. The probe ends a refused start with
-#: status 78, as each Rust daemon does (`rust/AGENTS.md`, "The rules for a
-#: service", rule 17). "Known gaps" of `integration/proc/AGENTS.md` has the
-#: entry. The pull request that makes the scenario hold status 78 empties
-#: this table and adds the scenario to `probe.run`.
-NOT_YET = {
-    "test_a_lan_bind_with_no_full_key_refuses_to_start": "the scenario holds exit status 2",
-}
+#: The one scenario of `BOARD_START` that `probe.run` does not select yet.
+#: "Known gaps" of `integration/proc/AGENTS.md` has the reason. The pull
+#: request of packet `strict-exit-78` adds the scenario to `probe.run` and
+#: deletes this table. The test of the selection then demands each scenario
+#: of the file. No other file under `rust/proc` gets such a table
+#: (`rust/AGENTS.md`, "The judge of a program").
+NOT_YET = frozenset({"test_a_lan_bind_with_no_full_key_refuses_to_start"})
 
 #: A file that the script takes, and the name of its program.
 GOOD = (
@@ -827,15 +824,15 @@ def test_the_probe_stands_in_for_the_noticeboard(
 def test_the_probe_selects_each_scenario_of_the_board_start_but_the_named_ones(
     real: dict[str, dict[str, list[str]]],
 ) -> None:
-    """A new scenario of the test file must go to `probe.run`, or to
-    `NOT_YET` with its reason. No scenario leaves the selection in silence."""
+    """A new scenario of the test file must go to `probe.run`. `NOT_YET`
+    takes no new name. No scenario leaves the selection in silence."""
     selected = real[PROBE]["select"]
     prefix = f"{BOARD_START}::"
     scenarios = _tests_of(REPO / BOARD_START)
 
     assert all(one.startswith(prefix) for one in selected)
-    assert set(NOT_YET) <= scenarios, "NOT_YET names a scenario that the file no longer has"
-    assert {one.removeprefix(prefix) for one in selected} == scenarios - set(NOT_YET)
+    assert scenarios >= NOT_YET, "NOT_YET names a scenario that the file no longer has"
+    assert {one.removeprefix(prefix) for one in selected} == scenarios - NOT_YET
 
 
 def test_the_two_names_of_the_suite_in_the_script_are_names_of_the_suite() -> None:

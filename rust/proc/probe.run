@@ -2,11 +2,8 @@
 # noticeboard. bin/proc-rust.sh reads this file, and rust/AGENTS.md, "The
 # judge of a program", has the rules.
 #
-# The file selects the five scenarios of test_proc_board_start.py that hold
-# no exit status of the Python noticeboard. It leaves out the three cases of
-# test_a_lan_bind_with_no_full_key_refuses_to_start: they hold status 2, and
-# the program ends a refused start with status 78. "Known gaps" of
-# integration/proc/AGENTS.md has the entry.
+# The file leaves one scenario of test_proc_board_start.py out. "Known gaps"
+# of integration/proc/AGENTS.md has the entry, and the packet that ends it.
 package creche-testkit
 program creche-probe
 variable CRECHE_PROC_NOTICEBOARD

@@ -828,10 +828,24 @@ the text of the failure. Work down this list.
   (`rust/AGENTS.md`, "The rules for a service", rule 17). The Rust program
   `creche-probe` stands for the noticeboard in the `proc-rust` job, and it
   fails the three cases. `rust/proc/probe.run` thus does not select that
-  scenario. In each of the three cases the program refuses its start, binds
-  nothing and shows no key. Only the status differs. After packet
-  `strict-exit-78`, the scenario holds status 78. A pull request then adds
-  the scenario to `rust/proc/probe.run` and deletes this entry.
+  scenario.
+
+  In each of the three cases the program refuses its start, binds nothing
+  and shows no key. Only the status differs. No other file under `rust/proc`
+  leaves a scenario out (`rust/AGENTS.md`, "The judge of a program").
+
+  After packet `strict-exit-78`, the scenario holds status 78. The pull
+  request of that packet makes these changes:
+
+  1. It adds the scenario to `rust/proc/probe.run`, and it changes the
+     comment at the top of that file.
+  2. It deletes the table `NOT_YET` of `bin/tests/test_proc_rust.py`. The
+     test of the selection then demands each scenario of the file.
+  3. It deletes the exception for `proc/probe.run` in `rust/AGENTS.md`, "The
+     judge of a program".
+  4. It deletes the first item of the list "The Python origin" in the module
+     doc of `rust/crates/creche-testkit/src/probe.rs`.
+  5. It deletes this entry.
 - **CONTRACT-QUESTION, the markup of a page of the noticeboard.**
   `docs/rework/spec.md` §8.1 says what each page shows. No contract gives
   the markup. The suite reads the markup of the templates as the interface.

@@ -1145,10 +1145,18 @@ To give the suite the program of a unit:
    job the build steps of the `proc` job, in `gate.yml` and in `release.yml`.
    Change the pin in `bin/tests/test_gate_workflow.py` in the same commit.
 
-When the program fails a scenario, the two programs differ. Name the
-difference in the pull request. Do not leave the scenario out in silence. A
-scenario that a file leaves out has an entry under "Known gaps" of
-`integration/proc/AGENTS.md`, with its reason.
+When the program fails a scenario, the two programs differ. Stop at that
+scenario and resolve the difference. "When the two results differ" above has
+the procedure. Each resolution ends in one of two changes:
+
+- A change of the Rust program. The scenario then passes.
+- A change of the Python service and of its scenario, in a pull request of
+  that package.
+
+Do not leave a scenario of the service out of a file. Do not record the
+difference in a table or in a list. `proc/probe.run` is the one exception,
+until packet `strict-exit-78` merges. "Known gaps" of
+`integration/proc/AGENTS.md` has its entry.
 
 `bin/tests/test_proc_rust.py` holds each file against three things:
 
@@ -1159,10 +1167,8 @@ scenario that a file leaves out has an entry under "Known gaps" of
 `proc/probe.run` is the first file. It gives the program `creche-probe` of
 `creche-testkit` to the suite, in the place of the noticeboard. The program
 is no service. It proves that the modules of `creche-runtime` work together
-in one process. The file selects five scenarios of
-`integration/proc/test_proc_board_start.py`. The table `NOT_YET` of
-`bin/tests/test_proc_rust.py` names the scenario that the file leaves out.
-"Known gaps" has the reason.
+in one process. The file selects scenarios of
+`integration/proc/test_proc_board_start.py`.
 
 ## The coverage rule
 
@@ -1662,13 +1668,7 @@ To make the fifth check on your machine, for example before a merge:
   flag.
 - No release uses Rust code.
 - The process-level suite judges one Rust program today: `creche-probe`,
-  which is no service. `proc/probe.run` leaves out the three cases of the
-  scenario `test_a_lan_bind_with_no_full_key_refuses_to_start`. Each case
-  holds exit status 2, and the program ends a refused start with status 78
-  (rule 17 of "The rules for a service"). "Known gaps" of
-  `integration/proc/AGENTS.md` has the entry. After packet `strict-exit-78`,
-  the scenario holds status 78. A pull request then adds the scenario to the
-  file and deletes this line.
+  which is no service.
 - No check holds that a selected scenario of a `.run` file starts the
   service of that file. The suite starts the default command of each service
   whose variable is not set. A file can name the variable of one service and
