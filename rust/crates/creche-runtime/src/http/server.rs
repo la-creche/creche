@@ -61,7 +61,7 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tokio_util::task::TaskTracker;
 use tokio_util::task::task_tracker::TaskTrackerToken;
 
-use crate::readfile::os_text;
+use crate::readfile::{FileFacts, os_text};
 use crate::tasks::{Drained, Tasks};
 
 /// The target of each line that this module and the edge layer write to the
@@ -80,9 +80,6 @@ const SOCKET_DIR_MODE: u32 = 0o2750;
 
 /// The setgid bit of a mode.
 const SETGID: u32 = 0o2000;
-
-/// The permission bits of a mode, as `stat.S_IMODE` of Python gives them.
-const MODE_BITS: u32 = 0o7777;
 
 /// How many connections wait for an accept. The Python origin is the
 /// `backlog` default of `uvicorn` (`uvicorn/config.py:228`).
@@ -549,7 +546,9 @@ impl Steps for Host {
     }
 
     fn mode_of(&self, path: &Path) -> io::Result<u32> {
-        Ok(fs::metadata(path)?.permissions().mode() & MODE_BITS)
+        // `FileFacts` holds the permission bits, as `stat.S_IMODE` of Python
+        // gives them.
+        Ok(FileFacts::from(&fs::metadata(path)?).mode())
     }
 
     fn set_mode(&self, path: &Path, mode: u32) -> io::Result<()> {
@@ -1383,7 +1382,7 @@ pub async fn serve(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::collections::VecDeque;
     use std::convert::Infallible;
     use std::net::Ipv4Addr;
@@ -1411,15 +1410,18 @@ mod tests {
 
     use super::*;
 
+    // The test module of the edge layer uses each item below that has
+    // `pub(in crate::http)`. This module is their one home.
+
     /// The longest time that a test waits for a step. The time is real, and
     /// a host with much load is slow.
-    const LIMIT: Duration = Duration::from_secs(60);
+    pub(in crate::http) const LIMIT: Duration = Duration::from_secs(60);
 
     /// A drain limit that no test of a clean stop reaches.
-    const LONG_DRAIN: Duration = Duration::from_secs(45);
+    pub(in crate::http) const LONG_DRAIN: Duration = Duration::from_secs(45);
 
-    /// A drain limit that passes, in a test with one stream open.
-    const SHORT_DRAIN: Duration = Duration::from_millis(300);
+    /// A drain limit that passes, in a test with one request open.
+    pub(in crate::http) const SHORT_DRAIN: Duration = Duration::from_millis(300);
 
     /// One second more than the time after which `uvicorn` closes a
     /// connection that sends no request.
@@ -1453,7 +1455,7 @@ mod tests {
     const CHILD_TEST: &str = "http::server::tests::the_child_runs_one_scenario";
 
     /// The target of the panic hook of the child.
-    const CHILD_PROGRAM: &str = "child";
+    pub(in crate::http) const CHILD_PROGRAM: &str = "child";
 
     /// The line of a stop in a runtime with no timer.
     const NO_TIMER_LINE: &str = "ERROR the listeners did not wait for the open requests: the \
@@ -1567,14 +1569,14 @@ mod tests {
         assert!(lines.is_empty(), "{lines:?}");
     }
 
-    fn runtime() -> Runtime {
+    pub(in crate::http) fn runtime() -> Runtime {
         Builder::new_current_thread().enable_all().build().unwrap()
     }
 
     /// A runtime with one thread, and a runtime with two worker threads. A
     /// test of a stop or of a client that left runs on the two: a service
     /// selects its own count of threads.
-    fn each_runtime() -> [Runtime; 2] {
+    pub(in crate::http) fn each_runtime() -> [Runtime; 2] {
         let workers = Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -1585,14 +1587,14 @@ mod tests {
     }
 
     /// Waits for `step`, for [`LIMIT`] at most.
-    async fn within<F: Future>(step: F) -> F::Output {
+    pub(in crate::http) async fn within<F: Future>(step: F) -> F::Output {
         tokio::time::timeout(LIMIT, step)
             .await
             .expect("the step did not end inside the limit")
     }
 
     fn mode_of(path: &Path) -> u32 {
-        fs::metadata(path).unwrap().permissions().mode() & MODE_BITS
+        Host.mode_of(path).unwrap()
     }
 
     /// The path of a socket in the directory `sock` of `root`. The directory
@@ -1889,11 +1891,12 @@ mod tests {
     const GET_STREAM: &[u8] = b"GET /stream HTTP/1.1\r\nHost: test\r\n\r\n";
 
     /// Runs one scenario in a child: this test program again, with only the
-    /// child test. The child must end inside [`LIMIT`].
-    fn run_child(scenario: &str) -> Output {
+    /// test `child_test`. The variable `variable` gives the child the name of
+    /// the scenario. The child must end inside [`LIMIT`].
+    pub(in crate::http) fn run_child(child_test: &str, variable: &str, scenario: &str) -> Output {
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([CHILD_TEST, "--exact", "--nocapture", "--test-threads=1"])
-            .env(CHILD_VARIABLE, scenario)
+            .args([child_test, "--exact", "--nocapture", "--test-threads=1"])
+            .env(variable, scenario)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2884,7 +2887,7 @@ mod tests {
     fn each_scenario_writes_its_lines() {
         for scenario in SCENARIOS {
             let name = scenario.name;
-            let child = run_child(name);
+            let child = run_child(CHILD_TEST, CHILD_VARIABLE, name);
             let stdout = String::from_utf8(child.stdout).unwrap();
             let stderr = String::from_utf8(child.stderr).unwrap();
 

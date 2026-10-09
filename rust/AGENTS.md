@@ -1158,8 +1158,10 @@ rule 4).
     `zone` of `quiet.daily` in the family file: the host has a time zone.
     A second example is the name of each directory below the state root,
     for example `families`. `creche_contracts::config` holds such a name,
-    and `creche_runtime::layout` holds a copy. No packet has that change
-    yet.
+    and `creche_runtime::layout` holds a copy. A third example is the mode
+    `2750` of the directory of a socket. `atomic::DirMode` of
+    `creche-runtime` holds it, and `http::server` holds a copy. No packet
+    has that change yet.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
     program of the workspace today. Its `main` sets no panic hook and
     parses the command line itself. Its library has no entry function that

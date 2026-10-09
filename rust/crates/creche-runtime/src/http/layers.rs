@@ -771,12 +771,10 @@ mod tests {
     use std::io;
     use std::path::PathBuf;
     use std::pin::Pin;
-    use std::process::{Command, Output, Stdio};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll};
-    use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use axum::Extension;
     use axum::middleware::{self, Next};
@@ -789,10 +787,12 @@ mod tests {
     use hyper::body::{Frame, SizeHint};
     use tokio::io::AsyncWriteExt;
     use tokio::net::UnixStream;
-    use tokio::runtime::{Builder, Runtime};
     use tokio::sync::{Notify, mpsc};
     use tokio::task::JoinHandle;
 
+    use crate::http::server::tests::{
+        CHILD_PROGRAM, LIMIT, LONG_DRAIN, SHORT_DRAIN, each_runtime, run_child, runtime, within,
+    };
     use crate::http::server::{Listen, ServeError, SocketDir, bind, serve};
     use crate::tasks::{Drained, ShutdownTrigger, locked, shutdown_pair};
 
@@ -857,16 +857,6 @@ mod tests {
     /// The scheme and the `Host` header of each request of a test.
     const ORIGIN: &str = "http://test";
 
-    /// The longest time that a test waits for a step. The time is real, and
-    /// a host with much load is slow.
-    const LIMIT: Duration = Duration::from_secs(60);
-
-    /// A drain limit that no test here reaches.
-    const LONG_DRAIN: Duration = Duration::from_secs(45);
-
-    /// A drain limit that passes, in a test with one request open.
-    const SHORT_DRAIN: Duration = Duration::from_millis(300);
-
     /// A time in which a signal that must not fire does not fire.
     const QUIET: Duration = Duration::from_millis(100);
 
@@ -889,9 +879,6 @@ mod tests {
 
     /// The name of the child test, as the test program takes it.
     const CHILD_TEST: &str = "http::layers::tests::the_child_runs_one_scenario";
-
-    /// The target of the panic hook of the child.
-    const CHILD_PROGRAM: &str = "child";
 
     /// The line that [`Tasks`] writes for a handler that panicked.
     const TASK_LINE: &str = "ERROR tasks the task http-request stopped with a panic";
@@ -988,30 +975,6 @@ mod tests {
     fn assert_panic_place(line: &str) {
         assert!(line.starts_with("ERROR child panic at "), "{line}");
         assert!(line.contains("layers.rs:"), "{line}");
-    }
-
-    fn runtime() -> Runtime {
-        Builder::new_current_thread().enable_all().build().unwrap()
-    }
-
-    /// A runtime with one thread, and a runtime with two worker threads. A
-    /// test of a stop or of a client that left runs on the two: a service
-    /// selects its own count of threads.
-    fn each_runtime() -> [Runtime; 2] {
-        let workers = Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .unwrap();
-
-        [runtime(), workers]
-    }
-
-    /// Waits for `step`, for [`LIMIT`] at most.
-    async fn within<F: Future>(step: F) -> F::Output {
-        tokio::time::timeout(LIMIT, step)
-            .await
-            .expect("the step did not end inside the limit")
     }
 
     /// The answer of a server, from its raw bytes.
@@ -1231,34 +1194,6 @@ mod tests {
 
     fn cap(bytes: usize) -> ByteCap {
         ByteCap::new(bytes).unwrap()
-    }
-
-    /// Runs one scenario in a child: this test program again, with only the
-    /// child test. The child must end inside [`LIMIT`].
-    fn run_child(scenario: &str) -> Output {
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([CHILD_TEST, "--exact", "--nocapture", "--test-threads=1"])
-            .env(CHILD_VARIABLE, scenario)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let deadline = Instant::now() + LIMIT;
-
-        // A scenario writes a few lines, so a pipe never fills.
-        while child.try_wait().unwrap().is_none() {
-            if Instant::now() > deadline {
-                child.kill().unwrap();
-                child.wait().unwrap();
-
-                panic!("the scenario {scenario} did not end");
-            }
-
-            thread::sleep(Duration::from_millis(10));
-        }
-
-        child.wait_with_output().unwrap()
     }
 
     #[test]
@@ -2469,7 +2404,7 @@ mod tests {
     fn each_scenario_writes_its_lines_and_no_request_data() {
         for scenario in SCENARIOS {
             let name = scenario.name;
-            let child = run_child(name);
+            let child = run_child(CHILD_TEST, CHILD_VARIABLE, name);
             let stdout = String::from_utf8(child.stdout).unwrap();
             let stderr = String::from_utf8(child.stderr).unwrap();
 
