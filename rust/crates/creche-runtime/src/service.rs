@@ -352,7 +352,7 @@ pub enum Threads {
 /// The drain limit is the longest time that the program runs after its
 /// `main` returned. The limit starts at that return, also when a stop signal
 /// came before it. It holds the wait for the tracked tasks and the stop of
-/// the runtime.
+/// the runtime. [`run`] waits for one day at most, also for a longer limit.
 ///
 /// systemd kills the process at `TimeoutStopSec=` of its unit. The time that
 /// `main` uses after the stop signal plus the drain limit must thus be less
@@ -835,10 +835,17 @@ where
     status
 }
 
+/// The longest wait of [`run`] after the return of `main`: one day.
+///
+/// The runtime adds its wait to the time of the clock, and that sum has an
+/// upper limit. A drain limit of [`Duration::MAX`] passes it, and the stop
+/// of the runtime then panics. No program has a stop of one day.
+const LONGEST_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// The part of the drain limit that is left, for a `main` that returned at
-/// `stopped_at`.
+/// `stopped_at`. The result is [`LONGEST_WAIT`] at most.
 fn rest_of(drain: Duration, stopped_at: Instant) -> Duration {
-    drain.saturating_sub(stopped_at.elapsed())
+    drain.saturating_sub(stopped_at.elapsed()).min(LONGEST_WAIT)
 }
 
 /// The errors of one parse, as one line of text for each error.
@@ -1331,6 +1338,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_drain_limit_past_the_range_of_the_clock_returns_the_status_of_main() {
+        // The runtime adds its wait to the time of the clock. Without the
+        // cap, that sum panics, and the status is the status of a panic.
+        for program in each_program(Duration::MAX) {
+            let status = run_through(&NoHandlers, program, |_context| async {
+                ExitCode::from(STATUS_OF_MAIN)
+            });
+
+            assert!(same_status(status, STATUS_OF_MAIN), "{program:?}");
+        }
+    }
+
+    #[test]
     fn the_rest_of_a_drain_limit_is_never_less_than_no_time() {
         let stopped_at = Instant::now();
 
@@ -1342,6 +1362,18 @@ pub(crate) mod tests {
             Duration::ZERO
         );
         assert_eq!(rest_of(Duration::ZERO, stopped_at), Duration::ZERO);
+    }
+
+    #[test]
+    fn the_rest_of_a_drain_limit_is_one_day_at_most() {
+        let stopped_at = Instant::now();
+        let one_day = Duration::from_secs(86_400);
+
+        assert_eq!(LONGEST_WAIT, one_day);
+        assert_eq!(rest_of(Duration::MAX, stopped_at), one_day);
+        assert_eq!(rest_of(one_day * 2, stopped_at), one_day);
+        assert!(rest_of(one_day, stopped_at) <= one_day);
+        assert!(rest_of(one_day, stopped_at) > one_day / 2);
     }
 
     // --- the boundary ---
