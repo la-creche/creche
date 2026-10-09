@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn a_number_reads_no_value_of_another_kind() {
-        for text in ["null", "true", "\"7\"", "[7]", "{\"count\": 7}"] {
+        for text in ["null", "true", "false", "\"7\"", "[7]", "{\"count\": 7}"] {
             assert!(matches!(
                 read::<Number>(text.as_bytes(), CAP),
                 Err(ReadError::Shape(_))
@@ -691,8 +691,9 @@ mod tests {
     }
 
     /// One JSON text of each kind, with the kind.
-    const KINDS: [(&str, Found); 6] = [
+    const KINDS: [(&str, Found); 7] = [
         ("true", Found::Boolean),
+        ("false", Found::Boolean),
         ("7", Found::Integer),
         ("2.5", Found::Float),
         (r#""7""#, Found::Text),
@@ -1088,10 +1089,19 @@ mod tests {
     #[test]
     fn the_error_of_a_number_reader_holds_no_byte_of_the_text() {
         let errors = [
-            serde_json::from_str::<Integer>(r#""hunter2""#).unwrap_err(),
+            serde_json::from_str::<Integer>("null").unwrap_err(),
+            serde_json::from_str::<Integer>("true").unwrap_err(),
+            serde_json::from_str::<Integer>("false").unwrap_err(),
             serde_json::from_str::<Integer>("1.5").unwrap_err(),
+            serde_json::from_str::<Integer>(r#""hunter2""#).unwrap_err(),
+            serde_json::from_str::<Integer>(r#"["hunter2"]"#).unwrap_err(),
+            serde_json::from_str::<Integer>(r#"{"token": "hunter2"}"#).unwrap_err(),
             serde_json::from_str::<Integer>("18446744073709551616").unwrap_err(),
+            serde_json::from_str::<Number>("null").unwrap_err(),
+            serde_json::from_str::<Number>("false").unwrap_err(),
+            serde_json::from_str::<Number>(r#""hunter2""#).unwrap_err(),
             serde_json::from_str::<Number>(r#"["hunter2"]"#).unwrap_err(),
+            serde_json::from_str::<Number>(r#"{"token": "hunter2"}"#).unwrap_err(),
             serde_json::from_str::<Number>("1e999").unwrap_err(),
         ];
         let messages: Vec<String> = errors.iter().map(ToString::to_string).collect();
@@ -1099,12 +1109,24 @@ mod tests {
         assert_eq!(
             messages,
             [
-                "invalid type: a text, expected an integer",
+                "invalid type: null, expected an integer",
+                "invalid type: a boolean, expected an integer",
+                "invalid type: a boolean, expected an integer",
                 "invalid type: a float, expected an integer",
+                "invalid type: a text, expected an integer",
+                "invalid type: a list, expected an integer",
+                "invalid type: a table, expected an integer",
                 "an integer outside the range of 64 bits",
+                "invalid type: null, expected a number",
+                "invalid type: a boolean, expected a number",
+                "invalid type: a text, expected a number",
                 "invalid type: a list, expected a number",
+                "invalid type: a table, expected a number",
                 "a float that is not finite",
             ]
         );
+        // Each reader takes an integer, so no error of a reader has the
+        // word of that kind.
+        assert_eq!(unexpected(Found::Integer), Unexpected::Other("an integer"));
     }
 }
