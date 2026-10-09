@@ -37,11 +37,7 @@ type Script = (Vec<String>, Result<Finished, RunError>);
 /// let runner = FakeRunner::new();
 /// runner.script(
 ///     &["sbx", "ls"],
-///     Ok(Finished {
-///         ended: Ended::Code(0),
-///         stdout: b"chat-s1\n".to_vec(),
-///         stderr: Vec::new(),
-///     }),
+///     Ok(Finished::new(Ended::Code(0)).with_stdout("chat-s1\n")),
 /// );
 ///
 /// let limit = TimeLimit::After(Duration::from_secs(30));
@@ -52,7 +48,10 @@ type Script = (Vec<String>, Result<Finished, RunError>);
 /// let first = runtime.block_on(runner.run(listed.clone()));
 /// let second = runtime.block_on(runner.run(removed.clone()));
 ///
-/// assert_eq!(first.map(|finished| finished.stdout), Ok(b"chat-s1\n".to_vec()));
+/// assert_eq!(
+///     first.map(|finished| finished.stdout().to_vec()),
+///     Ok(b"chat-s1\n".to_vec())
+/// );
 /// assert_eq!(
 ///     second,
 ///     Err(RunError::NotStarted {
@@ -229,11 +228,7 @@ mod tests {
     }
 
     fn exited(status: u8, stdout: &str) -> Result<Finished, RunError> {
-        Ok(Finished {
-            ended: Ended::Code(status),
-            stdout: stdout.as_bytes().to_vec(),
-            stderr: Vec::new(),
-        })
+        Ok(Finished::new(Ended::Code(status)).with_stdout(stdout))
     }
 
     fn no_script() -> Result<Finished, RunError> {

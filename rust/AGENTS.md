@@ -22,7 +22,7 @@ defect that a test finds late.
 
 | Crate | What it holds |
 |---|---|
-| `creche-util` | Each shared helper: SHA-256, the hex text of bytes and the white space rules of Python `str`. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
+| `creche-util` | Each shared helper: SHA-256, the hex text of bytes, the white space rules of Python `str` and the line end rule of the Python text mode. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
@@ -31,6 +31,7 @@ defect that a test finds late.
 | Module of `creche-contracts` | What it holds |
 |---|---|
 | `ids` | Each id grammar that `vectors/data/ids` covers. One type for each grammar. |
+| `json` | The strict reader of a JSON text: `check`, `StrictText`, `read` and the number types `Number` and `Integer`. "JSON" below holds its rules. |
 | `secret` | `Secret`, the type of a token or a key. |
 | `slot` | `Slot` is the one lenient field type for a raw type: a value of a wrong kind does not fail the read. `MapOnly` wraps a nested table in a raw type whose read can fail: it refuses a value that is not a table. |
 | `time` | `Timestamp`, the one type of a time in a file or in a wire message. "Time" below holds its rules. |
@@ -95,8 +96,8 @@ read.
 
 A shared helper is a pure function with two users. The users are two crates,
 or two modules that hold two contracts. `creche-util` holds each shared
-helper. Today it holds SHA-256, the hex text of bytes and the white space
-rules of Python `str`.
+helper. Today it holds SHA-256, the hex text of bytes, the white space
+rules of Python `str` and the line end rule of the Python text mode.
 
 1. Put a shared helper in `creche-util`.
 2. Write no second copy of a helper that `creche-util` holds. Call the
@@ -319,14 +320,73 @@ that does not meet each line of this list:
 Reason: for a text outside these rules, two readers can return two values.
 
 `creche-contracts` must have one JSON reader and one JSON writer, in its
-`json` module. Packets `decisions-json-check` and `decisions-json-reader`
-add that module. Write no JSON parser, no JSON value tree and no code that
+`json` module. The module holds the reader. Packet `decisions-json-reader`
+adds the writer. Write no JSON parser, no JSON value tree and no code that
 formats a float in another module.
 
+The doc comment of the `json` module holds the full text of each rule. It
+also names the byte offset of each refusal. `src/json.rs` holds the types,
+`src/json/scan.rs` holds the pass over a text, and `src/json/read.rs` holds
+the typed read and the number types.
+
+| Item of `json` | What it is |
+|---|---|
+| `check` | The function that reads the bytes against each rule. It gives a `StrictText` or a `NotStrict`. |
+| `ByteCap` | The size limit of one surface. The caller gives it. The module has no default limit. |
+| `StrictText` | A text that passed `check`. Only `check` makes one. `top` gives the kind of the top-level value. `parse` fills a raw type. |
+| `NotStrict` | The refusal of `check`: a `Rule` and a byte offset. It holds no byte of the text. |
+| `Rule` | The closed set of the rules. `word` gives the name of a rule for a log line and for a notice. `from_word` reads that name. |
+| `Shape` | The error of `parse`: a line and a column. It holds no byte of the text. |
+| `read` | `check` and `parse` in one call. Its error is `ReadError`. |
+| `Number`, `Integer` | A number of a raw type. Each one keeps the kind of its token: an integer or a float. |
+| `Found` | The kind of a JSON value. The `slot` module defines it, and `json` exports it. |
+| `DEPTH_MAX` | The nesting limit: 64. |
+
+`check` applies the rules in this sequence:
+
+1. The size. A text has the bytes of its `ByteCap` at most.
+2. The encoding, for the whole text. The UTF-8 check comes before the
+   check of the byte order mark.
+3. Each other rule, in one pass from the start of the text. The pass ends
+   at the lowest byte offset where a rule fails.
+
+Each rule applies to each byte of a text. A raw type can skip a member of
+an object, and the check does not.
+
+A module reads a JSON text in these steps:
+
+1. Call `check` with the cap of the surface.
+2. Compare `StrictText::top` with the kind that the surface needs.
+3. Call `StrictText::parse` to fill the raw type.
+4. Convert the raw type to the valid type.
+
+In the raw type of a JSON text, give a number field the type
+`Slot<Number>` or `Slot<Integer>`. Do not use `Slot<i64>`, `Slot<u64>` or
+`Slot<f64>` there. With `Slot<i64>`, the text `-0` reads as a float and not
+as the integer 0. `Number` and `Integer` decide from the characters of the
+number.
+
+`Number` and `Integer` read the text of a token. `serde` reads some values
+from a buffer of its own, and that buffer keeps no such text. The read of
+`Number` or of `Integer` fails there. Put neither type in one of these four
+places:
+
+1. Below `#[serde(flatten)]`. A named field beside a flattened field works.
+2. In an enum with `#[serde(untagged)]`.
+3. In an enum with `#[serde(tag = "...")]` and no `content`.
+4. In an enum with `#[serde(tag = "...", content = "...")]`. The read fails
+   there only when the content key is before the tag key in the text.
+
 When the reader refuses a text, apply the failure action that rule 8
-demands. The module error keeps the name of the broken rule. The service
-uses that name to record a notice for the operator. Packet
-`decisions-notice` adds the notice.
+demands. The module error keeps the `NotStrict` of the refusal. It gives
+that value through the accessor
+`not_strict(&self) -> Option<&json::NotStrict>`. The service uses the value
+to record a notice for the operator. Packet `decisions-notice` adds the
+notice. A peer does not learn which rule a text broke. Only the notice
+names the rule.
+
+No module calls the reader yet. "Known gaps" names the packet that moves
+each module to it.
 
 ## Time
 
@@ -1273,8 +1333,10 @@ To make the fifth check on your machine, for example before a merge:
     `zone` of `quiet.daily` in the family file: the host has a time zone.
     A second example is the name of each directory below the state root,
     for example `families`. `creche_contracts::config` holds such a name,
-    and `creche_runtime::layout` holds a copy. No packet has that change
-    yet.
+    and `creche_runtime::layout` holds a copy. A third example is the mode
+    `2750` of the directory of a socket. `atomic::DirMode` of
+    `creche-runtime` holds it, and `http::server` holds a copy. No packet
+    has that change yet.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
     program of the workspace today. Its `main` sets no panic hook and
     parses the command line itself. Its library has no entry function that
@@ -1288,6 +1350,9 @@ To make the fifth check on your machine, for example before a merge:
     makes a service read a variable deletes the constant of that service.
   - Rule 10. `time::Timestamp` has no differential test. No Python reader
     has its grammar today. Packet `strict-noticeboard-time` adds that
+    reader, its vectors and the test.
+  - Rule 10. The `json` module has no differential test. No Python reader
+    has its rules today. Packet `strict-noticeboard-json-1` adds that
     reader, its vectors and the test.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
@@ -1367,7 +1432,16 @@ To make the fifth check on your machine, for example before a merge:
     also changes it.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
-  of text today. If the owner says no, change those two lines.
+  of text today. One function of `crates/creche-contracts/src/json/scan.rs`
+  holds each line: `duplicate_key` and `integer_range`. Each function has a
+  `CONTRACT-QUESTION` comment. If the owner says no to a line, make these
+  changes:
+  1. Change that line of "JSON".
+  2. Delete its function, its `Rule` variant and its rows in the tests.
+  3. For the duplicate key line, also delete `Keep::Text` and the decode of
+     a key in `scan.rs`. Only `duplicate_key` needs the text of a key.
+  4. For the integer line, also give `Integer` a wider value.
+     `integer_value` and that type hold the range of the line.
 - Two texts of "When the two results differ" wait for a confirmation of the
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
@@ -1462,6 +1536,13 @@ To make the fifth check on your machine, for example before a merge:
   for all the signals that arrive while a reload runs. Two Python services
   run one reload for each SIGHUP that their loop takes. A change costs one
   function, `Hangups::next`.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/http/layers.rs`: no contract and no Python
+  framework gives an answer for three failures of the edge of a router. The
+  failures are a handler that the runtime stopped, a body past a cap and a
+  body that stops early. `StarletteBodies` answers the first as the
+  framework answers an exception. It answers the two others with the status
+  only.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-runtime/src/http/client.rs`:
   1. `Target::try_from` for an `HttpUrl`. No contract gives the base URL of
