@@ -2871,6 +2871,7 @@ mod tests {
             let path = socket_in(&root);
             let healthy = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
             let broken = scripted(vec![os_error(Errno::CONNABORTED), os_error(Errno::NOTSOCK)]);
+            let started_at = Instant::now();
 
             let served = Served::start(vec![healthy, broken], health_app(), LONG_DRAIN);
             let stopped = within(served.serving).await.unwrap();
@@ -2889,6 +2890,9 @@ mod tests {
                 StdUnixStream::connect(&path).unwrap_err().kind(),
                 io::ErrorKind::ConnectionRefused
             );
+            // The other listener closed at the error. No request was open, so
+            // `serve` did not wait for the drain limit.
+            assert!(started_at.elapsed() < LONG_DRAIN);
         });
     }
 
