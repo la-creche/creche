@@ -1131,7 +1131,11 @@ How the fifth check counts:
   condition in a listed file.
 - The report counts the test code of a listed file too. A condition in a test
   module of such a file needs its two sides.
-- `assert!` and `assert_eq!` are no branch.
+- The condition that `assert!` or `assert_eq!` tests is no branch by itself.
+- An operand of `&&` or of `||` in an `assert!` is a branch. While the
+  assertion holds, the run never takes the false side of the last operand.
+  Write no `&&` and no `||` in an `assert!` of a listed file. For `&&`,
+  write one `assert!` for each operand. For `||`, write `|`.
 - The run sets neither `cfg(coverage)` nor `cfg(coverage_nightly)`, as the run
   of the `rust-coverage` job.
 - The compiler of the job also refuses the attribute `#[coverage(off)]`. It
@@ -1156,7 +1160,8 @@ When a run is red:
 
 1. Read the failure lines of the run. Each line names a file of the list and
    the places.
-2. Add the tests that take those sides, in a pull request.
+2. Add the tests that take those sides, in a pull request. For an operand in
+   an `assert!`, change the assertion as the list of the fifth check says.
 3. After the merge, start the workflow by hand on `main`.
 
 Start the workflow by hand on `main` only. The release executor reads each
