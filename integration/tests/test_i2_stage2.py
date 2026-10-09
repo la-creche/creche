@@ -66,6 +66,10 @@ TURN_ABORTED = "turn_aborted"
 TERMINAL_KINDS = (TURN_SETTLED, TURN_FAILED, TURN_ABORTED)
 NOTE = "note"
 
+#: The note that `attendance` writes into the journal of a session when the
+#: family moves to another sandbox.
+SWITCHED = "sandbox_switched"
+
 SETTLE_TIMEOUT_S = 60.0
 LONG_TURN_EVENTS = 200
 LONG_TURN_GAP_MS = 25
@@ -181,9 +185,10 @@ async def test_more_cpus_drains_onto_a_second_sandbox(stack: Stack, tmp_path: Pa
     chat = chat_id()
     session = session_of(chat)
 
+    stack.set_pi_env(events=LONG_TURN_EVENTS, delay_ms=LONG_TURN_GAP_MS)
+
     assert await _one_turn(stack, chat) == []
 
-    stack.set_pi_env(events=LONG_TURN_EVENTS, delay_ms=LONG_TURN_GAP_MS)
     running = asyncio.create_task(_one_turn(stack, chat))
     await _started(stack, session, 2)
 
@@ -201,7 +206,14 @@ async def test_more_cpus_drains_onto_a_second_sandbox(stack: Stack, tmp_path: Pa
     assert await _one_turn(stack, chat) == []
     assert _sandboxes_of(stack, session) == [SANDBOX, SANDBOX, NEXT_SANDBOX]
     assert _kinds(stack, session).count(TURN_SETTLED) == 3
-    assert _notes(stack, session) == ["sandbox_switched"]
+    assert _notes(stack, session) == [SWITCHED]
+
+    # The switch came while the second turn ran. The journal holds its note
+    # before the line that settles that turn.
+    marks = _marks(stack, session)
+    settled = [at for at, mark in enumerate(marks) if mark == TURN_SETTLED]
+
+    assert marks.index(SWITCHED) < settled[1]
 
 
 # --- 5. a replace-class removal ---------------------------------------------
@@ -551,6 +563,15 @@ def _notes(stack: Stack, session: str) -> list[str]:
         str(_body(line).get("note", ""))
         for line in stack.journal_lines(session)
         if line.get("kind") == NOTE
+    ]
+
+
+def _marks(stack: Stack, session: str) -> list[str]:
+    """One word for each journal line, in order: the name of a note, and the
+    kind of each other line."""
+    return [
+        str(_body(line).get("note", "")) if line.get("kind") == NOTE else str(line.get("kind", ""))
+        for line in stack.journal_lines(session)
     ]
 
 

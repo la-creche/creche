@@ -21,6 +21,7 @@ defect that a test finds late.
 
 | Crate | What it holds |
 |---|---|
+| `creche-util` | Each shared helper: SHA-256, the hex text of bytes and the white space rules of Python `str`. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
@@ -30,6 +31,8 @@ defect that a test finds late.
 |---|---|
 | `ids` | Each id grammar that `vectors/data/ids` covers. One type for each grammar. |
 | `secret` | `Secret`, the type of a token or a key. |
+| `slot` | `Slot` is the one lenient field type for a raw type: a value of a wrong kind does not fail the read. `MapOnly` wraps a nested table in a raw type whose read can fail: it refuses a value that is not a table. |
+| `time` | `Timestamp`, the one type of a time in a file or in a wire message. "Time" below holds its rules. |
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
 | `session` | The session API: contract 02. `session.rs` declares the files under `session/`. |
@@ -42,7 +45,7 @@ defect that a test finds late.
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
 `src/manifest.rs` holds the closed sets, the catalog and the differential
-test of `manifest`. Its other files are in `src/manifest/`. Three of them are
+test of `manifest`. Its other files are in `src/manifest/`. Two of them are
 private readers and writers. Each one gives what a Python library of the
 release tool gives:
 
@@ -54,7 +57,6 @@ release tool gives:
 | `resolved.rs` | The resolved manifest, its hash, the gate id and the approval summary. |
 | `yaml.rs` | Private. A port of `yaml.safe_load` of PyYAML: YAML 1.1, with each tag and each anchor. |
 | `json.rs` | Private. A reader that takes what Python `json.loads` takes, and writers for the text of `json.dumps`. |
-| `sha256.rs` | Private. SHA-256, because the crate has no dependency that gives a hash. |
 
 No type of `manifest` implements a `serde` trait. The module does not hold
 rule 1 yet ("Known gaps"). The raw type of `manifest` is the private
@@ -88,6 +90,25 @@ read.
 8. Give each type its own doc comment and its own error type. The doc
    comment names the contract section.
 
+## Where a helper goes
+
+A shared helper is a pure function with two users. The users are two crates,
+or two modules that hold two contracts. `creche-util` holds each shared
+helper. Today it holds SHA-256, the hex text of bytes and the white space
+rules of Python `str`.
+
+1. Put a shared helper in `creche-util`.
+2. Write no second copy of a helper that `creche-util` holds. Call the
+   function of that crate.
+3. Keep a helper with one user in the module of that user.
+4. Keep a step that adds a prefix to a result, or cuts it, in the caller.
+5. Read `crates/creche-util/AGENTS.md` before you add a helper. It holds the
+   six rules for what the crate takes.
+
+Reason: two copies of a helper drift, as two copies of a value do (rule 13).
+The revision of a registry and the id of an approval gate each come from a
+digest. A copy that drifts gives another revision and another gate id.
+
 ## Checks
 
 You need rustup. It installs the toolchain at the first cargo command under
@@ -100,11 +121,65 @@ You need rustup. It installs the toolchain at the first cargo command under
 `bin/rust-gate.sh` runs these steps in this order:
 
 1. The `[lints]` check. Each crate must take the lint gate.
-2. The include check. No Rust source file includes a Markdown file.
+2. Three text checks. Each one reads the source text and runs no cargo
+   command.
+   - The include check. No Rust source file includes a Markdown file.
+   - The panic check. The word `catch_unwind` is only in the three
+     places of clause 8 of "The panic rule".
+   - The public-field check. No field of a struct has `pub`. Rule 12
+     names the two forms that pass.
 3. `cargo fmt --all --check`.
 4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
 5. `cargo deny --locked check`, where `cargo-deny` is on `PATH`.
 6. `cargo test --workspace --locked`, with `--tests` only.
+
+The panic check and the public-field check read each `.rs` file under
+`crates/`. Both checks use one definition of test code:
+
+- A file below `crates/<name>/tests/` is test code. cargo builds the files
+  of that directory as test targets.
+- A directory `tests` in another place does not count. `crates/tests` is a
+  crate, and `crates/<name>/src/tests/` is a module of its crate.
+- In each other file, test code is each module with a body that has the
+  line `#[cfg(test)]` directly above its first line.
+- Such a module ends at the first line that starts with its `}`, at the
+  indent of its first line. Only a comment can follow the `}` on that
+  line. `cargo fmt` writes a module in that form. Each check reads the
+  code after that line again.
+- Each check fails for a file that ends inside a test module. The check
+  found no last line of that module, so it read no code below the first
+  line.
+- A `#[cfg(test)]` line above another item starts no test code, for
+  example above `mod python;`. Each check reads that item and the code
+  after it. Each check also reads the file `python.rs` of that module,
+  unless the file is below `crates/<name>/tests/`.
+- A string of more than one line can hold a line that has the form of the
+  last line of its test module. Each check then reads the rest of that
+  module as code that is not test code. Give such a line an indent in the
+  string.
+- Each check reads a line that ends with CR LF as a line that ends with
+  LF.
+
+More rules of the panic check:
+
+- The check prints one line for each file with the word in a fourth
+  place, and fails.
+- The word in a comment counts too.
+- Place 2 of clause 8 is `src/entry.rs` in a crate with no dependency on
+  `creche-runtime`. For the check, a crate has that dependency when its
+  `Cargo.toml` holds the name. A comment that holds the name counts too.
+
+More rules of the public-field check:
+
+- The check reads the field list of each struct. A tuple struct has one
+  too. The check prints one line for each field with `pub`, and fails.
+- Only `pub(crate)` and `pub(super)` pass. The check refuses each other
+  form of `pub` on a field, for example `pub(in crate::wire)`.
+- The check reads no test code.
+- The check also fails when the scan cannot read a file, and when it does
+  not find the end of a struct.
+- The script has a list of the crates that the check does not read yet.
+  "Known gaps" has the names.
 
 Step 5 needs the program `cargo-deny`. rustup does not install it.
 
@@ -247,6 +322,65 @@ When the reader refuses a text, apply the failure action that rule 8
 demands. The module error keeps the name of the broken rule. The service
 uses that name to record a notice for the operator. Packet
 `decisions-notice` adds the notice.
+
+## Time
+
+A time in a file or in a wire message is a `date-time` of RFC 3339,
+section 5.6. A writer writes each time in UTC, with `Z` as the offset. A
+text with no UTC offset is not a time. The root `AGENTS.md` holds the same
+rule for each language.
+
+`creche_contracts::time::Timestamp` is the one type for such a time. It
+holds one instant in UTC, to the microsecond, in the years 0001 to 9999.
+
+- Read a time text only with the `FromStr` of `Timestamp`.
+- Write a time only with a writer of `Timestamp`. `to_rfc3339` writes whole
+  seconds, and `to_rfc3339_millis` writes milliseconds.
+- Define no second type for a time text.
+- Write no date arithmetic in another module. The `time` module holds the
+  copy that stays.
+- The caller of the reader decides what a refused text means. For example,
+  a view reads the file as stale, and a request gets a refusal.
+
+Reason: with two grammars, one text is a time for one reader and no time
+for another reader. Two copies of the date arithmetic drift.
+
+The reader takes these parts, in this sequence. It refuses each other
+text.
+
+1. The date, `YYYY-MM-DD`.
+2. `T` or `t`.
+3. The time of the day, `HH:MM:SS`.
+4. An optional fraction: `.` and 1 to 9 digits. The type keeps the first
+   six digits.
+5. The offset: `Z`, `z`, `+HH:MM` or `-HH:MM`.
+
+Thus the reader refuses a space in place of the `T`. It also refuses second
+60 and the year 0000. "Known gaps" has the question about the limits of the
+reader.
+
+`to_rfc3339_millis_plus_00_00` is a third writer. It writes milliseconds
+and the offset `+00:00`. The chaperone keeps a log of each request that
+names no family, and the lines of that log have this offset today. Use the
+writer for that log only. Delete the writer when that log writes `Z`.
+
+`manifest::Timestamp` is a count of seconds and not a time text. This
+section does not apply to it.
+
+Six older parts of the workspace still hold a time type or date arithmetic
+of their own. Add no user of them. One packet moves each part to
+`Timestamp` or deletes the part. The pull request of that packet deletes
+the row of the part. The pull request that deletes the last row also
+deletes this paragraph and the table.
+
+| Part | Packet |
+|---|---|
+| `status::time` | `decisions-time` |
+| `AuditTime` of `grants` | `decisions-time` |
+| `session::Timestamp` | `strict-attendance-time` |
+| The stamp of a log line in `creche-runtime` | `decisions-runtime-time` |
+| The `!!timestamp` value of the YAML reader of `agent-family` | `toml-drop-yaml-validator` |
+| The `!!timestamp` check of `manifest::yaml` | `toml-drop-yaml-manifest` |
 
 ## When two Python copies of a grammar disagree
 
@@ -396,6 +530,7 @@ and never a raw text.
 |---|---|
 | `site` | The site file: `SiteFile` is the raw form, and `Site` is the valid form. |
 | `attendance`, `caregiver`, `chaperone`, `door_owui`, `door_trigger`, `noticeboard`, `intake` | The config of one daemon. |
+| `endpoints` | The names of some variables that hold the address of another service. A daemon module reads such a name from this module. `PlaneUrl` is the URL of a plane. A plane is a service of the host that each sandbox calls: the chaperone and LiteLLM. |
 | `roster` | The roster of the chaperone. `RawRoster` takes its tree through `serde`. |
 | `mounts` | `runtime.json`, `creds.json` and the env file of the playpen. |
 
@@ -443,8 +578,15 @@ The rule against a crash loop:
   systemd then starts the unit again, also when the unit file holds the line.
 - In the pull request that moves such a unit to a Rust binary, remove its
   `ExecStartPre=` line. The main process does the same parse.
-- Then prove on a Linux host that the unit stays stopped after exit status
-  78. No test in this repository runs systemd.
+- The `systemd-proof` job of CI proves both facts about the line on the
+  systemd of a Linux runner. After the main process exits with 78, systemd
+  does not start a unit that holds the line again. After a process of
+  `ExecStartPre=` exits with 78, systemd starts the unit again.
+- `bin/systemd-proof.sh` is that proof. It uses transient units of its own
+  and starts no daemon. `bin/AGENTS.md` has its three cases.
+- The proof runs for each code change that touches `systemd/`. It thus runs
+  for the pull request that adds the line to a unit. It also gives each unit
+  file to `systemd-analyze verify`.
 - `AtReload::KeepLastGood` never exits. A reload that fails keeps the last
   good value.
 - `config::reload` takes only a type that says `AtReload::KeepLastGood`. A
@@ -875,17 +1017,16 @@ test.
     them to the `json` module.
   - Rule 12. A count at the time of this line found 101 structs with a
     public field. The packets `decisions-private-*` and
-    `decisions-runtime-private` make the fields private. The gate has no
-    check for this rule yet. `decisions-gate-early` starts the check on
-    each new crate, and `decisions-private-fields-gate` extends it to each
+    `decisions-runtime-private` make the fields private. The public-field
+    check of `bin/rust-gate.sh` does not read the crates of those structs
+    yet. Packet `decisions-private-fields-gate` extends the check to each
     crate.
-  - Rule 13. Some values have two sources today. One example is the default
-    state root, which more than one module of `config` defines. Packet
-    `decisions-config-endpoints` gives it one home. A second example is the
-    field `zone` of `quiet.daily` in the family file: the host has a time
-    zone.
-  - "The panic rule", clause 8. The gate has no check for this clause yet.
-    Packet `decisions-gate-early` adds one.
+  - Rule 13. Some values have two sources today. One example is the field
+    `zone` of `quiet.daily` in the family file: the host has a time zone.
+    A second example is the name of each directory below the state root,
+    for example `families`. `creche_contracts::config` holds such a name,
+    and `creche_runtime::layout` holds a copy. No packet has that change
+    yet.
   - "The panic rule", clauses 2, 3 and 7. `agent-family` is the only
     program of the workspace today. Its `main` sets no panic hook and
     parses the command line itself. Its library has no entry function that
@@ -895,18 +1036,17 @@ test.
     deletes the parameter.
   - The address of another service. `config::chaperone` and
     `config::caregiver` define the port of another service as a constant.
-    Packet `decisions-config-endpoints` adds the names of the variables.
-    The packet that makes a service read a variable deletes the constant
-    of that service.
-  - Time. The crate needs a single type for each time that a file or a
-    wire message holds, in the RFC 3339 `date-time` form. Today `session`
-    and `status` each define one. Packet `decisions-time-type` adds the
-    single type.
+    `config::endpoints` holds the names of the variables. The packet that
+    makes a service read a variable deletes the constant of that service.
+  - Rule 10. `time::Timestamp` has no differential test. No Python reader
+    has its grammar today. Packet `strict-noticeboard-time` adds that
+    reader, its vectors and the test.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
-  - Shared helpers. A helper with users in two crates belongs in one helper
-    crate: SHA-256, hex, base64 and the Python white space rule. Do not add
-    a copy. Packet `decisions-util` creates the crate.
+  - Shared helpers. Base64 has more than one copy. Packet
+    `decisions-util-runtime` moves it to `creche-util`. "Known gaps" of
+    `crates/creche-util/AGENTS.md` names each other function that is
+    still open. No packet has that part yet.
   - Vector reader. `vectors/data` needs a single reader. The owner still
     has to confirm this. Three readers exist today. Packet
     `decisions-vectors-crate` reduces them to one.
@@ -917,6 +1057,46 @@ test.
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
+  - "The differential test". Two parts of the test of `token` in
+    `creche-runtime` do not hold the rule. The test walks no vector of
+    `runtime.bearer.chaperone`, and the constant `NO_PORT_HERE` names that
+    surface. The test gives the header of the vector `byte-1c-at-the-end`
+    to a private function, because no request holds that header. Packet
+    `attendance-one-bearer` gives each Python copy one rule for the
+    bearer. It deletes the constant and the private path.
+- Two checks do not read four crates yet: `agent-family`,
+  `creche-contracts`, `creche-runtime` and `creche-testkit`. Each check has
+  a list of its own with the four names. No list names a new crate, so both
+  checks read a new crate from its first commit. Add no name to a list.
+  - The public-field check of `bin/rust-gate.sh`. Packet
+    `decisions-runtime-private` deletes `creche-runtime` and
+    `creche-testkit` from the list of the script. Packet
+    `decisions-private-fields-gate` deletes that list.
+  - The table test of `bin/tests/test_rust_workspace.py`. In each `.rs`
+    file, it looks for the name `DEVIATIONS` and for a struct whose name
+    starts with `Deviation`. Packet `decisions-runtime-tables` deletes
+    `creche-runtime` from the list of the test. Packet
+    `decisions-tables-guard` deletes that list.
+  - The public-field check reads the source text and expands no macro. It
+    does not find a field that a macro adds to a struct. It finds a struct
+    only at a line whose first word, after a visibility, is `struct`.
+    `cargo fmt` writes each struct in that form.
+  - The panic check and the public-field check read the form that
+    `cargo fmt` writes. `cargo fmt` does not format an item below
+    `#[rustfmt::skip]` and does not format the text of a macro call. Text
+    in another form can hide code from both checks. These are two
+    examples:
+    - The last line of a test module has another indent than its first
+      line. Both checks then read no code up to the next line with `}` at
+      the indent of the first line.
+    - A struct starts after another word on its line, for example after
+      an attribute. The public-field check does not find that struct.
+  - This `CONTRACT-QUESTION` comment is open in `bin/rust-gate.sh`: rule
+    12 does not name `pub(self)` and `pub(in <path>)`. The public-field
+    check refuses both forms. The owner did not confirm that reading. A
+    change costs one condition in the scan. The same condition holds the
+    two forms that pass, so a change to the third sentence of rule 12
+    also changes it.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. If the owner says no, change those two lines.
@@ -973,11 +1153,24 @@ test.
   `crates/creche-runtime/src/log.rs`: no contract gives the form of a log
   line. The Python services write five forms. Three stamp the local time,
   and two have no time. The runtime writes one form, with the time in UTC.
-- This `CONTRACT-QUESTION` comment is open in
-  `crates/creche-runtime/src/token.rs`: two rules of a token file check no
-  mode, `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`. Contract 02 §3 rule 5
-  gives each token file a mode. The Python readers behind the two rules
-  check none, and the rules do the same.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-runtime/src/token.rs`:
+  1. `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`, contract 02 §3 rule 5.
+     The contract gives each token file a mode. The Python readers behind
+     the two rules check none, and the rules do the same.
+  2. `FILE_CAP`, contract 02 §3 rule 7. The contract gives a token a least
+     count of bytes and no largest count. Each Python reader reads a token
+     file of each size. `token::read` refuses a file of more than 1 MiB.
+  3. `BEARER`, contract 02 §3 rule 4. The contract does not say if a service
+     takes the scheme `Bearer` in another case of letters. Three Python
+     copies take only `Bearer`. The chaperone takes each case.
+     `token::bearer_of` takes only `Bearer`, so `BearerTrim` has no value
+     for the rule of the chaperone. The test of `token` thus walks no vector
+     of `runtime.bearer.chaperone`.
+  4. `same_content`, contract 04 §7.3. The contract names three facts that
+     the reader of the delegate token file compares: the time of the last
+     change, the size and the inode. `token::CachedToken` also compares the
+     device.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/entropy.rs`: contract 02 §2 gives a mint of a
   ULID no rule for two times of the clock. One is a time before 1970. The
@@ -1012,6 +1205,16 @@ test.
   3. A package version with `+`, with `-` or of more than 64 bytes.
 - `crates/agent-family/AGENTS.md` lists the `CONTRACT-QUESTION` comments
   and the known gaps of the family file and of the server file.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-contracts/src/time.rs`: the contracts name RFC 3339 for a
+  time and say no more about its grammar. `time::Timestamp` refuses three
+  texts that section 5.6 of RFC 3339 permits. A change costs one check of
+  the reader and the rows of that text in the two test tables.
+  1. A fraction of more than 9 digits.
+  2. Second 60, the form of a leap second.
+  3. The year 0000. One day of that year can name an instant of the year
+     0001 through its offset, for example `0000-12-31T23:30:00-01:00`. No
+     Python reader of the platform takes such a text.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/ids.rs`:
   1. `Ulid`, contract 02 §2. The contract writes the pattern with `$`. In
@@ -1051,11 +1254,6 @@ test.
   5. `UnidentifiedRecord`, contract 04 §6. The contract does not describe the
      log of a request that names no family. The type writes what the Python
      chaperone writes.
-  6. `SandboxEvidence::Claimed`, contract 04 §3.2 and §6.2. The contract moves
-     a sandbox id with no proof into `claimed`, and `claimed` has no key for
-     it. The variant writes the id into `sandbox_id` with
-     `sandbox_id_trusted: false`, as the writer of the Python chaperone can.
-     The Python chaperone itself writes `null` in each record.
 - The module `grants` has its own JSON reader and writer, and `serde_json`
   does not read a grant file or a request body. The Python code takes JSON
   that is not strict, and it reports each issue of a document. `grants::Value`
@@ -1092,8 +1290,6 @@ test.
 - `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
   The port of the chaperone adds the decision function and the function that
   approves a held call. No other code builds a value.
-- The crate has no public SHA-256. The chaperone gives `grants::ArgsDigest`
-  the digest of `Arguments::digest_input`. The test has a SHA-256 of its own.
 - No vector covers a request body with a content type that is not JSON. The
   HTTP layer of the port holds that rule.
 - These `CONTRACT-QUESTION` comments are open in
@@ -1152,8 +1348,6 @@ test.
 - No other module uses the private `yaml` and `json` readers of `manifest`.
   The `family` module needs the same YAML reader. The owner of the crate
   moves that reader when a second module uses it.
-- `manifest` has its own SHA-256, which is private. A crate for the hash
-  replaces it when the workspace takes one.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/session/`:
   1. The JSON reader, contract 02 §3 rule 3. The contract gives a body no
@@ -1197,6 +1391,10 @@ test.
   14. `TurnView`, contract 02 §4.4. The Python code writes the empty text
       as the sandbox of a turn that no sandbox served. The type does the
       same.
+  15. `ServiceNote::IllegalTransition`, contract 02 §4.3 and §8.1. No
+      contract names the note for a refused move of a turn. The Python
+      `attendance` writes that note only for a move that its state table
+      refuses. The type takes each pair of turn states.
 - The `session` module differs from the Python code on purpose in four
   ways. Each one is a row of `DEVIATIONS` in `session/python.rs`.
   1. A JSON text is UTF-8 with no byte order mark. It holds no `NaN` and
@@ -1498,6 +1696,14 @@ test.
   13. `mounts::Credentials`, contract 03 §12. The contract does not say what
       a reader does with a secret that is not a JSON string. The type refuses
       it, and an empty secret. The Python reader makes text of each value.
+  14. `endpoints::PlaneUrl`, contract 01 §3.7 rule 4 and contract 03 §7. The
+      first section names the two plane endpoints as `host:port`. The second
+      section gives the two URLs as fixed values of the form
+      `http://<host>:<port>`. No contract gives the URL of a plane a
+      grammar. The type takes `http://`, a host and a port, and no other
+      byte. The port has no sign and no zero at its start. A host name
+      keeps its letter case. No Python reader holds this grammar, so no
+      vector covers the type.
 - No type reads the text of a roster file, and no type writes it. PyYAML
   reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
   the crate selects one. `roster::RawRoster` then takes its tree.
@@ -1546,6 +1752,8 @@ test.
 - No unit file holds `RestartPreventExitStatus=78`, and no service exits
   with 78 for each config error. The failure action of each config type
   states what the port of its service must do.
-- No test runs systemd. The rule about `RestartPreventExitStatus` and
-  `ExecStartPre=` comes from the manual page `systemd.service(5)`. No run on
-  a host proves it.
+- The `systemd-proof` job proves the rule about `RestartPreventExitStatus`
+  and `ExecStartPre=` on the systemd of a CI runner. It uses transient units
+  of its own. No test starts a daemon unit of this repository under systemd.
+  The host can have another version of systemd, and no run on the host
+  proves the rule there.

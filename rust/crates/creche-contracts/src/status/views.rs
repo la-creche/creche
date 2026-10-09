@@ -16,10 +16,11 @@
 use std::collections::BTreeSet;
 
 use super::json::Integer;
-use super::raw::{RawFault, RawSandbox, RawStatus, ReadError, Reader, Slot};
+use super::raw::{RawFault, RawSandbox, RawStatus, ReadError, Reader};
 use super::time::{Age, Freshness, STALE_AFTER_SECONDS, Timestamp, freshness};
 use super::words::{FamilyState, Health, Kind, SandboxLifecycle};
 use crate::ids::{FamilyName, SandboxName};
+use crate::slot::Slot;
 
 /// The word of the state `invalid` in a file.
 const STATE_INVALID: &str = "invalid";
