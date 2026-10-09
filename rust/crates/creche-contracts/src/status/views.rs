@@ -10,8 +10,9 @@
 //! The five readers do not agree on each document. The test of this module
 //! holds a table of the documents on which two readers differ.
 //!
-//! A view is a record of what a reader took. Its fields are public: no code
-//! takes a view as an input that it trusts.
+//! A view is a record of what a reader took. Only a reader function of this
+//! module builds one. Each field of a view is private, and an accessor with
+//! the name of the field gives its value.
 
 use std::collections::BTreeSet;
 
@@ -1202,18 +1203,67 @@ pub fn read_noticeboard(bytes: &[u8], name: &str, now: Timestamp) -> FamilyRow {
 // --- the terminal door ---
 
 /// The sandbox that the terminal door attaches to:
-/// `agent_door_tui.status.StatusFiles.serving`.
+/// `agent_door_tui.status.StatusFiles.serving`. Only [`door_tui`] builds a
+/// value.
+///
+/// ```
+/// use creche_contracts::status::views::{Serving, read_door_tui};
+///
+/// let bytes = br#"{"kind": "attended", "sandboxes": [
+///     {"id": "chat-s1", "state": "ready", "supervisor_env": "/env"}
+/// ]}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let serving: Serving = read_door_tui(bytes, now).unwrap();
+/// assert_eq!(serving.sandbox().as_str(), "chat-s1");
+/// assert_eq!(serving.supervisor_env(), "/env");
+/// assert!(serving.blocking().is_empty());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{Serving, read_door_tui};
+///
+/// let bytes = br#"{"kind": "attended", "sandboxes": [
+///     {"id": "chat-s1", "state": "ready", "supervisor_env": "/env"}
+/// ]}"#;
+/// let now = "2031-04-18T10:20:30Z".parse().unwrap();
+/// let serving: Serving = read_door_tui(bytes, now).unwrap();
+/// let serving = Serving { supervisor_env: String::new(), ..serving };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Serving {
+    sandbox: SandboxName,
+    supervisor_env: String,
+    blocking: Vec<String>,
+    freshness: Freshness,
+}
+
+impl Serving {
     /// The newest sandbox in the state `ready`.
-    pub sandbox: SandboxName,
+    #[must_use]
+    pub fn sandbox(&self) -> &SandboxName {
+        &self.sandbox
+    }
+
     /// The path of its `supervisor.env`. It is not empty.
-    pub supervisor_env: String,
+    #[must_use]
+    pub fn supervisor_env(&self) -> &str {
+        &self.supervisor_env
+    }
+
     /// The `code` text of each fault with `blocks_turns: true`. A fault with
     /// no code gives an empty text. The door warns and opens the terminal.
-    pub blocking: Vec<String>,
+    #[must_use]
+    pub fn blocking(&self) -> &[String] {
+        &self.blocking
+    }
+
     /// Whether the document is stale. The door warns and opens the terminal.
-    pub freshness: Freshness,
+    #[must_use]
+    pub fn freshness(&self) -> Freshness {
+        self.freshness
+    }
 }
 
 /// The exit code of the terminal door for a refusal.
@@ -1500,8 +1550,8 @@ mod tests {
         assert_eq!(row.health(), Health::InSync);
         assert_eq!(row.reason(), None);
         assert_eq!(row.age().unwrap().whole_seconds(), 30);
-        assert_eq!(serving.sandbox.as_str(), "chat-s1");
-        assert_eq!(serving.freshness, Freshness::Fresh);
+        assert_eq!(serving.sandbox().as_str(), "chat-s1");
+        assert_eq!(serving.freshness(), Freshness::Fresh);
         assert_eq!(door_owui(&read), Ok(()));
         assert_eq!(door_trigger(&read), Err(ListingRefusal::WrongKind));
     }
@@ -1531,7 +1581,7 @@ mod tests {
                 rows.join(",")
             ))
         };
-        let newest = |ids: &[&str]| door_tui(&rows(ids), now()).unwrap().sandbox;
+        let newest = |ids: &[&str]| door_tui(&rows(ids), now()).unwrap().sandbox().clone();
 
         assert_eq!(
             newest(&["chat-s2", "chat-s10", "chat-s9"]).as_str(),
@@ -1551,7 +1601,10 @@ mod tests {
         assert_eq!(row.health(), Health::Unknown);
         assert_eq!(row.reason(), Some(&Reason::NoWrittenAt));
         assert_eq!(row.age(), None);
-        assert_eq!(door_tui(&read, now()).unwrap().freshness, Freshness::Stale);
+        assert_eq!(
+            door_tui(&read, now()).unwrap().freshness(),
+            Freshness::Stale
+        );
     }
 
     #[test]

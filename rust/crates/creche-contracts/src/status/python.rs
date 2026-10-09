@@ -419,14 +419,14 @@ fn tui_message(refusal: &TuiRefusal) -> String {
 /// The warning that the terminal door of Python prints.
 fn tui_warning(serving: &views::Serving) -> String {
     let mut parts = Vec::new();
-    if !serving.blocking.is_empty() {
+    if !serving.blocking().is_empty() {
         parts.push(format!(
             "turns are blocked by {}",
-            serving.blocking.join(", ")
+            serving.blocking().join(", ")
         ));
     }
 
-    if serving.freshness == Freshness::Stale {
+    if serving.freshness() == Freshness::Stale {
         parts.push("the status document is stale (over 90s old)".to_owned());
     }
 
@@ -436,8 +436,8 @@ fn tui_warning(serving: &views::Serving) -> String {
 fn replay_door_tui(_: &Surface, vector: &Vector) -> Replay {
     match views::read_door_tui(&vector.input.bytes().unwrap(), now()) {
         Ok(serving) => Ok(Some(json!({
-            "sandbox": serving.sandbox.as_str(),
-            "playpen_env": serving.supervisor_env,
+            "sandbox": serving.sandbox().as_str(),
+            "playpen_env": serving.supervisor_env(),
             "warning": tui_warning(&serving),
         }))),
         Err(refusal) => {
