@@ -359,6 +359,36 @@ reason. The packet that writes the three bodies obeys these rules:
 - No test of `http::client` makes a real connect wait, because no listener
   holds a connect open on each operating system. The test of
   `Phase::Connect` uses a private target that completes no connect.
+- This `CONTRACT-QUESTION` comment is open in `src/service.rs`: no contract
+  and no rule names the exit status of a program that the operating system
+  gives no runtime or no signal handler. `rust/AGENTS.md`, "The rules for a
+  service", rule 17 does not list that cause. `service::run` returns status
+  71, `EX_OSERR` of `sysexits.h`. A restart can repair the cause, so systemd
+  must start the unit again. A change costs one constant.
+- The same question is open for a listener that does not bind. A Python
+  service ends with status 3 there, which is the status of `uvicorn` for a
+  start that failed. The first example of `src/service.rs` returns the
+  failure status of the standard library. Each service states that status
+  in its own `main`. The owner of the crate decides if the runtime gets one
+  constant for it.
+- `service::run` does not stop a `main` that continues after the stop
+  signal. The drain limit of the program starts at that signal. When `main`
+  uses the whole limit, `service::run` waits for no tracked task. A `main`
+  that never returns holds the process until systemd kills it.
+- `service` differs from the `main` of each Python service, and `args`
+  differs from `argparse` of Python. The doc comment of each of the two
+  modules names each difference, and a plain test holds each one. Two
+  examples: a program takes a flag only with its full name, and
+  `service::load` writes one line for each error of a config.
+- No vector covers `args`. A command line is a contract surface where a unit
+  file, a component manifest, a hook or a script of this repository writes
+  it. None of them writes a command line on which `args` and `argparse`
+  differ. A program with vectors for its command line holds its own parser
+  equal to those vectors.
+- `service::Loaded` has the variant `RefuseEachCall` for each config type. A
+  program whose config type says `AtStart::ExitConfig` thus writes an arm
+  that never runs. The skeleton fixed the type. The owner of the crate
+  decides if `service::load` gets one form for each failure action.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same

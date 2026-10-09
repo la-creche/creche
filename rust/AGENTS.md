@@ -612,9 +612,10 @@ A binary crate loads its config in this sequence:
    the first one.
 4. Give the result to `config::start`. It applies the failure action of the
    type.
-5. For `Start::Exit`, write each error to the log. Then return the status
+5. For `Start::Exit`, write each error to the log. Then return `EX_CONFIG`
    from `main` as an `ExitCode`. Do not call `std::process::exit`. The lint
-   gate refuses it.
+   gate refuses it. A service on `creche-runtime` gets step 4 and this step
+   from `service::load`.
 6. For `Start::RefuseEachCall`, start the listener, refuse each call and
    publish the errors as a fault.
 7. At a reload, give the last good value and the new result to
@@ -765,10 +766,10 @@ to 5 give a Rust service the Python behavior on purpose.
 16. **Call `log::init` first in `main`.**
     Reason: the standard panic hook of Rust writes the message of a panic
     to stderr. That message can hold a part of a request or of a file. The
-    hook of `log::init` writes only the place of the panic. `service::run`,
-    `service::load` and `service::refuse_start` set the same hook. Without
-    the call in `main`, the code before the first of the three runs with
-    the standard hook.
+    hook of `log::init` writes only the place of the panic.
+    `service::enter`, `service::run`, `service::load` and
+    `service::refuse_start` set the same hook. Without the call in `main`,
+    the code before the first of the four runs with the standard hook.
 17. **A daemon that refuses its start exits with `EX_CONFIG`, status 78.**
     This applies to each cause of the list below. A command that runs to
     its end can keep another status for a usage error, when no unit
@@ -840,6 +841,10 @@ one panic can stop and what it can damage.
    entry function catches that panic and logs one `ERROR` line. The exit
    status is then 1. The exit status of a panic is never 78.
    Reason: status 78 means a config fault, and a panic is not one.
+   - In a service on `creche-runtime`, the body of the entry function is
+     one call of `service::enter`. That function catches the panic.
+   - `service::run` catches a panic of the `main` that it runs. It then
+     waits for the tracked tasks before it returns status 1.
 8. **Only three places can call `catch_unwind`.**
    Reason: the reviewer then knows where each boundary is.
    1. Code of the crate `creche-runtime`.
@@ -1341,9 +1346,6 @@ To make the fifth check on your machine, for example before a merge:
     program of the workspace today. Its `main` sets no panic hook and
     parses the command line itself. Its library has no entry function that
     catches a panic. No packet has this change yet.
-  - The exit status of a refused start. `service::refuse_start` has a
-    parameter for a second exit status. Packet `decisions-runtime-exit`
-    deletes the parameter.
   - The address of another service. `config::chaperone` and
     `config::caregiver` define the port of another service as a constant.
     `config::endpoints` holds the names of the variables. The packet that
@@ -1557,6 +1559,14 @@ To make the fifth check on your machine, for example before a merge:
      byte 0x7F. The Python client sends such a token when the character is
      not one of these: NUL, line feed, vertical tab, form feed and carriage
      return.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-runtime/src/service.rs`: no contract and no rule names the
+  exit status of a program that the operating system gives no runtime or no
+  signal handler. Rule 17 of "The rules for a service" does not list that
+  cause. `service::run` returns status 71, `EX_OSERR` of `sysexits.h`, so
+  systemd starts the unit again. The same question is open for a listener
+  that does not bind. A Python service ends with status 3 there. Each Rust
+  service states that status in its own `main`.
 - No check holds the rules of "The rules for a service", except a part of
   rule 2 and a part of rule 13. A service crate that breaks one of the
   other rules builds and passes the lint gate.
