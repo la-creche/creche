@@ -94,6 +94,7 @@ The other directories:
 | Change what a deploy does | `bin/creche-deploy` |
 | Change the quality gate or the docs rule | `bin/quality-gate.sh`, `bin/lib/docsrule.sh` |
 | Change the Rust checks, or the rule that starts them | `bin/rust-gate.sh`, `bin/lib/rustrule.sh` |
+| Change the coverage rule of the Rust code | `bin/rust-coverage.sh`, `rust/coverage-files.txt` |
 | Add a Rust type for a contract | `rust/crates/creche-contracts/`. Read `rust/AGENTS.md` first. |
 | Change the index schema | `library/src/library/library.py` and `playpen/bridge/index-store.ts`, together |
 
