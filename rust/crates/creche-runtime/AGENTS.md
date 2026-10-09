@@ -359,6 +359,45 @@ reason. The packet that writes the three bodies obeys these rules:
 - No test of `http::client` makes a real connect wait, because no listener
   holds a connect open on each operating system. The test of
   `Phase::Connect` uses a private target that completes no connect.
+- This `CONTRACT-QUESTION` comment is open in `src/service.rs`. No contract
+  and no rule names the exit status of a program that gets no runtime or no
+  signal handler from the operating system. `rust/AGENTS.md`, "The rules for
+  a service", rule 17 does not list that cause. `service::run` returns
+  status 71, `EX_OSERR` of `sysexits.h`. A restart can repair the cause, so
+  systemd must start the unit again. A change costs one constant.
+- The same question is open for a listener that does not bind. A Python
+  service ends with status 3 there, which is the status of `uvicorn` for a
+  start that failed. The first example of `src/service.rs` returns the
+  failure status of the standard library. Each service states that status
+  in its own `main`. The owner of the crate decides if the runtime gets one
+  constant for it.
+- `service::run` does not stop a `main` that continues after the stop
+  signal. The drain limit of the program starts when `main` returns. The
+  time that `main` uses after the signal plus the drain limit must thus be
+  less than `TimeoutStopSec=` of the unit. No check holds that sum. A `main`
+  that never returns holds the process until systemd kills it.
+- `service` differs from the `main` of each Python service, and `args`
+  differs from `argparse` of Python. The doc comment of each of the two
+  modules names each difference, and a plain test holds each one. Two
+  examples: a program takes a flag only with its full name, and
+  `service::load` writes one line for each error of a config.
+- No vector covers `args`. A command line is a contract surface where a unit
+  file, a component manifest, a hook or a script of this repository writes
+  it. None of them writes a command line on which `args` and `argparse`
+  differ. One other file does: `library/Dockerfile` gives its program the
+  flag `--help`, and `argparse` answers that flag itself. The port of that
+  program matches the flag. A program with vectors for its command line
+  holds its own parser equal to those vectors.
+- A program on `args` accepts one kind of command line that the `argparse`
+  parser of its Python origin refuses. That kind has a `--` at a place where
+  the parser has no positional word left to take. `args` gives a program no
+  word for `--`, so the program cannot refuse it. No unit file, no component
+  manifest, no hook and no script of this repository writes such a command
+  line.
+- `service::Loaded` has the variant `RefuseEachCall` for each config type. A
+  program whose config type says `AtStart::ExitConfig` thus writes an arm
+  that never runs. The skeleton fixed the type. The owner of the crate
+  decides if `service::load` gets one form for each failure action.
 - Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same

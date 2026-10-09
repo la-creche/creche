@@ -159,10 +159,9 @@ pub enum Start<C, E = ConfigErrors> {
     /// The config is valid. The daemon runs with it.
     Run(C),
     /// The config is not valid. The daemon writes the errors to its log and
-    /// returns this exit status from `main`.
+    /// returns [`EX_CONFIG`] from `main`. The variant holds no status: a
+    /// start that the config refuses has that one status.
     Exit {
-        /// The exit status: [`EX_CONFIG`].
-        status: u8,
         /// Each error of the parse.
         errors: E,
     },
@@ -178,12 +177,11 @@ pub enum Start<C, E = ConfigErrors> {
 ///
 /// ```
 /// use creche_contracts::config::noticeboard::NoticeboardConfig;
-/// use creche_contracts::config::{EX_CONFIG, Env, Start, start};
+/// use creche_contracts::config::{Env, Start, start};
 ///
 /// let env = Env::from_pairs([("VIEW_BIND", "0.0.0.0")]);
 /// match start(NoticeboardConfig::from_env(&env)) {
-///     Start::Exit { status, errors } => {
-///         assert_eq!(status, EX_CONFIG);
+///     Start::Exit { errors } => {
 ///         assert_eq!(errors.as_slice().len(), 1);
 ///     }
 ///     Start::Run(_) | Start::RefuseEachCall { .. } => unreachable!(),
@@ -192,10 +190,7 @@ pub enum Start<C, E = ConfigErrors> {
 pub fn start<C: Checked, E>(parsed: Result<C, E>) -> Start<C, E> {
     match (parsed, C::FAILURE.at_start()) {
         (Ok(config), _) => Start::Run(config),
-        (Err(errors), AtStart::ExitConfig) => Start::Exit {
-            status: EX_CONFIG,
-            errors,
-        },
+        (Err(errors), AtStart::ExitConfig) => Start::Exit { errors },
         (Err(errors), AtStart::RefuseEachCall) => Start::RefuseEachCall { errors },
     }
 }
@@ -939,14 +934,14 @@ mod tests {
 
     #[test]
     fn a_config_that_is_not_valid_exits_with_78_when_the_type_says_so() {
-        let Start::Exit { status, errors } = start(port(&env("0")).map(Exits)) else {
+        let Start::Exit { errors } = start(port(&env("0")).map(Exits)) else {
             panic!("the config is not valid");
         };
 
-        assert_eq!(status, 78);
+        assert_eq!(EX_CONFIG, 78);
         assert_eq!(
             NO_RESTART_LINE,
-            format!("RestartPreventExitStatus={status}")
+            format!("RestartPreventExitStatus={EX_CONFIG}")
         );
         assert_eq!(
             errors.as_slice(),

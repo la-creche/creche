@@ -1641,7 +1641,7 @@ where
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use std::collections::VecDeque;
     use std::convert::Infallible;
     use std::net::Ipv4Addr;
@@ -1670,17 +1670,18 @@ pub(super) mod tests {
     use super::*;
 
     // The test module of the edge layer uses each item below that has
-    // `pub(in crate::http)`. This module is their one home.
+    // `pub(in crate::http)` or `pub(crate)`. The test module of `service`
+    // uses the six that have `pub(crate)`. This module is their one home.
 
     /// The longest time that a test waits for a step. The time is real, and
     /// a host with much load is slow.
-    pub(in crate::http) const LIMIT: Duration = Duration::from_secs(60);
+    pub(crate) const LIMIT: Duration = Duration::from_secs(60);
 
     /// A drain limit that no test of a clean stop reaches.
-    pub(in crate::http) const LONG_DRAIN: Duration = Duration::from_secs(45);
+    pub(crate) const LONG_DRAIN: Duration = Duration::from_secs(45);
 
     /// A drain limit that passes, in a test with one request open.
-    pub(in crate::http) const SHORT_DRAIN: Duration = Duration::from_millis(300);
+    pub(crate) const SHORT_DRAIN: Duration = Duration::from_millis(300);
 
     /// One second more than the time after which `uvicorn` closes a
     /// connection that sends no request.
@@ -1714,7 +1715,7 @@ pub(super) mod tests {
     const CHILD_TEST: &str = "http::server::tests::the_child_runs_one_scenario";
 
     /// The target of the panic hook of the child.
-    pub(in crate::http) const CHILD_PROGRAM: &str = "child";
+    pub(crate) const CHILD_PROGRAM: &str = "child";
 
     /// The line of a stop in a runtime with no timer.
     const NO_TIMER_LINE: &str = "ERROR the listeners did not wait for the open requests: the \
@@ -1861,7 +1862,7 @@ pub(super) mod tests {
     }
 
     /// Waits for `step`, for [`LIMIT`] at most.
-    pub(in crate::http) async fn within<F: Future>(step: F) -> F::Output {
+    pub(crate) async fn within<F: Future>(step: F) -> F::Output {
         tokio::time::timeout(LIMIT, step)
             .await
             .expect("the step did not end inside the limit")
@@ -2184,7 +2185,7 @@ pub(super) mod tests {
     /// Runs one scenario in a child: this test program again, with only the
     /// test `child_test`. The variable `variable` gives the child the name of
     /// the scenario. The child must end inside [`LIMIT`].
-    pub(in crate::http) fn run_child(child_test: &str, variable: &str, scenario: &str) -> Output {
+    pub(crate) fn run_child(child_test: &str, variable: &str, scenario: &str) -> Output {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([child_test, "--exact", "--nocapture", "--test-threads=1"])
             .env(variable, scenario)
