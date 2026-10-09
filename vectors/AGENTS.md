@@ -307,13 +307,13 @@ directory is not a workspace package, so a change here does not change
   corpus, `_walk`, are private. No vector calls one of the two directly.
 - Each vector of `library.chunk_text` has an overlap that is less than its
   size. No vector covers an overlap that is equal to the size or larger.
-- No vector holds the text of a PDF. `library.read_document` holds text
+- No vector holds text from a PDF file. `library.read_document` holds text
   files only. No corpus of `library.index_scope` holds a file that the PDF
   reader reads.
 - A corpus of `library.index_scope` holds no two names of one directory
   that differ only in letter case. It holds no name with a character that
   is not ASCII and no name that ends in a dot. A file system can change such
-  a name, and rule 7 demands the same output on each machine.
+  a name, and the output then differs between two machines (rule 7).
 - No vector of the index builder holds a time: `mtime` and `indexed_at` of
   a row of `files`, and `updated_at` of `meta`.
 - `library.schema` holds no statement of `chunks_vec`, and none of a table
@@ -321,18 +321,21 @@ directory is not a workspace package, so a change here does not change
   of `chunks_vec`. No reader outside the index builder reads `chunks_vec`.
 - `library.index_scope` holds the `rowid` of each row of `chunks_fts`. It
   holds no text of such a row, and no vector holds the answer to a search.
-- `library.tei_url` holds only a URL and a LAN address that the strict
-  config types of the Rust crate take. The entry point returns each text
-  that is not empty. Four examples of a text with no vector:
-  1. A URL with the scheme `https`.
+- `library.tei_url` holds only a text that the Rust index builder will
+  take at its start. The entry point returns each text that is not empty.
+  Four examples of a text with no vector:
+  1. A URL with the scheme `https`. The HTTP client of the Rust runtime has
+     no TLS.
   2. A URL with no scheme.
   3. A URL with a user part.
   4. The LAN address `0.0.0.0`.
 
-  Such a text stays out under resolution (c) of `rust/AGENTS.md`: the
-  program reads the value at its start. The Rust config type of the index
-  builder does not exist yet. The pull request of that type adds a plain
-  Rust test for each such text.
+  The strict config types of the Rust crate refuse examples 2, 3 and 4.
+
+  A text with no vector stays out under resolution (c) of `rust/AGENTS.md`:
+  the program reads the value at its start. The Rust config type of the
+  index builder does not exist yet. The pull request of that type adds a
+  plain Rust test for each such text.
 - `library.embedding` holds no value that is not finite, no boolean and no
   vector with a wrong count of values.
 - No vector of `library.index_scope` holds a file that `index_scope`
