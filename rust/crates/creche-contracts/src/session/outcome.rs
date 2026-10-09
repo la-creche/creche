@@ -104,9 +104,8 @@ pub struct Approvals {
 }
 
 impl Approvals {
-    /// The four counts of one job, in the order of the contract: the gates
-    /// that opened, then the gates that the phone approved, the gates that it
-    /// denied and the gates with no decision in time.
+    /// The four counts of one job, in the order of the contract. Each
+    /// parameter is the count that the accessor of the same name gives.
     #[must_use]
     pub fn new(requested: u64, approved: u64, denied: u64, timed_out: u64) -> Self {
         Self {
