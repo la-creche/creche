@@ -266,6 +266,11 @@ NIGHTLY = yaml.safe_load(NIGHTLY_TEXT)
 NIGHTLY_JOBS: dict[str, dict[str, Any]] = NIGHTLY["jobs"]
 NIGHTLY_NAME = "coverage-nightly"
 
+#: Each key of the workflow file. PyYAML reads the key `on` as the boolean.
+#: One more key can change each job, for example `defaults` with a shell
+#: that runs no line of a step, `env` or `concurrency`.
+NIGHTLY_FILE_KEYS = {"name", True, "permissions", "jobs"}
+
 #: When the workflow starts: at one minute of one hour of each day, and when
 #: a person starts it. The minute is not 0. GitHub delays a schedule most at
 #: the start of an hour.
@@ -279,6 +284,13 @@ READ_ONLY = {"contents": "read"}
 #: run on another ref a success.
 NIGHTLY_GUARD = "guard"
 NIGHTLY_JOB = "branch-coverage"
+
+#: The one step of `guard`, as a whole. It prints the ref and cannot fail.
+#: A step that fails makes a run on another ref red.
+NIGHTLY_GUARD_STEP = {
+    "name": "ref",
+    "run": 'echo "coverage-nightly: the ref of this run is $GITHUB_REF"',
+}
 
 #: The one ref that the workflow measures on, as `jobs.<job>.if` spells it.
 #: The release executor reads each workflow run on the head of a merged pull
@@ -1006,10 +1018,10 @@ def test_the_nightly_workflow_starts_one_time_a_day_and_by_hand() -> None:
 def test_the_nightly_workflow_holds_the_read_only_token() -> None:
     """The job runs the code of `main`, so no job holds a token that writes.
     The file has no `concurrency` key: a group can cancel a run, and a
-    cancelled run on the head of a pull request blocks its release."""
+    cancelled run on the head of a pull request blocks its release. It has no
+    `defaults` and no `env` key: each one changes what a step runs."""
+    assert set(NIGHTLY) == NIGHTLY_FILE_KEYS
     assert NIGHTLY["permissions"] == READ_ONLY
-    assert "concurrency" not in NIGHTLY
-    assert "env" not in NIGHTLY
     for name, job in NIGHTLY_JOBS.items():
         assert "permissions" not in job, f"{name} sets its own permissions"
         assert "concurrency" not in job, f"{name} can cancel a run"
@@ -1019,13 +1031,15 @@ def test_the_nightly_workflow_measures_on_main_only() -> None:
     """A person can start the workflow on each ref. On another ref than
     `main`, `guard` passes and the job that measures is skipped, so the run
     is a success. `guard` has no rule, no checkout and no action: it runs no
-    code of the ref."""
+    code of the ref. Its one step prints a line, on a runner that exists: a
+    `guard` that fails or waits makes that run block a release."""
     guard = NIGHTLY_JOBS[NIGHTLY_GUARD]
     job = NIGHTLY_JOBS[NIGHTLY_JOB]
 
     assert list(NIGHTLY_JOBS) == [NIGHTLY_GUARD, NIGHTLY_JOB]
     assert {name: set(one) for name, one in NIGHTLY_JOBS.items()} == NIGHTLY_KEYS
-    assert [set(step) for step in guard["steps"]] == [{"name", "run"}]
+    assert guard["runs-on"] == COVERAGE_RUNNER
+    assert guard["steps"] == [NIGHTLY_GUARD_STEP]
     assert job["needs"] == NIGHTLY_GUARD
     assert job["if"] == ON_MAIN
 
