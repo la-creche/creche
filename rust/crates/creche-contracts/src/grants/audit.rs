@@ -515,9 +515,9 @@ struct Gated {
 /// [`Held`] of the call. The two records of a gated call then name the same
 /// gate (contract 04 §6.4).
 ///
-/// The type holds no rule between the outcome and the gate. A record with the
-/// outcome [`AuditOutcome::Pending`] can have no gate. The writer of the port
-/// holds that rule.
+/// The type holds no rule between the outcome and the gate. The type permits a
+/// record with the outcome [`AuditOutcome::Pending`] and no gate. The writer of
+/// the port holds that rule.
 ///
 /// A record keeps the trusted fields apart from the claimed fields. The claimed
 /// fields come only from a [`Claimed`].
@@ -688,8 +688,8 @@ impl AuditRecord {
     /// ```
     /// use creche_contracts::grants::{AuditRecord, Held};
     ///
-    /// fn second_record(first: AuditRecord, call: &Held, waited_ms: u64) -> AuditRecord {
-    ///     first.with_gate(call, waited_ms)
+    /// fn with_the_gate_of(record: AuditRecord, call: &Held, waited_ms: u64) -> AuditRecord {
+    ///     record.with_gate(call, waited_ms)
     /// }
     /// ```
     #[must_use]

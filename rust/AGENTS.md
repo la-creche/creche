@@ -1275,10 +1275,10 @@ test.
   4. A request body in UTF-16 or in UTF-32.
 - `grants::AuditRecord` holds no rule between its outcome and its gate.
   Contract 04 §6.4 gives each record of a gated call the gate of that call.
-  A record with the outcome `Pending` can have no gate. The writer of the
-  port holds that rule. The vectors of `chaperone.audit_line` hold a denial
-  with an approval reason and no gate, because the Python writer checks no
-  field.
+  The type permits a record with the outcome `Pending` and no gate. The
+  writer of the port holds that rule. The vectors of `chaperone.audit_line`
+  hold a denial with an approval reason and no gate, because the Python
+  writer checks no field.
 - `AuditRecord::with_gate` takes the gate from a `grants::Held`, and `Held`
   is a sketch. Only a test build has a constructor of `Held`:
   `Held::in_test`. No program can write a record with a gate until the port
@@ -1292,9 +1292,10 @@ test.
   functions read the JSON of a file and check no field. So `same_grants`
   differs: a file with no `limits` block is equal to a file with the three
   defaults.
-- `grants::Allowed` and `grants::Held` are a sketch. No code builds a value.
-  The port of the chaperone adds the decision function and the function that
-  approves a held call. No other code builds a value.
+- `grants::Allowed` and `grants::Held` are a sketch. No program builds a
+  value. The port of the chaperone adds the decision function and the
+  function that approves a held call. A program then builds a value only in
+  those two functions.
 - No vector covers a request body with a content type that is not JSON. The
   HTTP layer of the port holds that rule.
 - These `CONTRACT-QUESTION` comments are open in
