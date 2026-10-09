@@ -2200,11 +2200,31 @@ mod tests {
             let closed = soon(held.read_to_end(&mut rest)).await;
             // The path of the socket is the path of this test only, so the
             // connect reaches no stub of another test.
+            //
+            // A child program of another test can hold the listener open
+            // after the drop, as `refused_socket` says. The backlog of that
+            // listener takes a connect, and no code accepts it. The
+            // operating system refuses a connect only after the child
+            // closes the listener. A connect that starts before that close
+            // has one of two results. The test connects again after each
+            // one:
+            //
+            // - `Ok`: the connection is in the backlog. The close of the
+            //   listener ends it. The test waits for that end, and not for
+            //   a time that it guesses.
+            // - `ConnectionReset`: Linux resets each connection of the
+            //   backlog when the listener closes. `tokio` reads the error
+            //   of the socket after its connect call, so a reset in that
+            //   time is the error of the connect. macOS sets no error, and
+            //   the connect is `Ok` there.
             let refused = soon(async {
                 loop {
                     match UnixStream::connect(&socket).await {
+                        Ok(mut taken) => {
+                            let _ = taken.read_to_end(&mut Vec::new()).await;
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::ConnectionReset => {}
                         Err(error) => return error,
-                        Ok(_) => tokio::time::sleep(Duration::from_millis(5)).await,
                     }
                 }
             })
@@ -2781,5 +2801,31 @@ mod tests {
         drop(second_holder);
 
         assert_eq!(while_held, None);
+    }
+
+    /// Why the test of a dropped stub waits on a connection that the
+    /// backlog took: the close of a listener ends each connection of its
+    /// backlog. Linux resets that connection, and macOS gives the end of
+    /// its bytes.
+    ///
+    /// A child program of another test can hold the listener for a short
+    /// time after the drop. The read then ends when that child closes it.
+    #[test]
+    fn the_close_of_a_listener_ends_a_connection_of_its_backlog() {
+        block_on(async {
+            let root = TempRoot::new().unwrap();
+            let path = root.path().join("backlog.sock");
+            let listener = UnixListener::bind(&path).unwrap();
+            let mut taken = UnixStream::connect(&path).await.unwrap();
+
+            drop(listener);
+            let end = soon(taken.read_to_end(&mut Vec::new())).await;
+            let end = end.map_err(|error| error.kind());
+
+            assert!(
+                matches!(end, Ok(0) | Err(io::ErrorKind::ConnectionReset)),
+                "{end:?}"
+            );
+        });
     }
 }
