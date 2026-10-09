@@ -1246,7 +1246,8 @@ mod tests {
             ),
         ];
         let fault_of = |field: &str, line: &str| {
-            ComponentManifest::parse(&manifest_with(field, line), None).map_err(|error| error.fault)
+            ComponentManifest::parse(&manifest_with(field, line), None)
+                .map_err(|error| error.fault().clone())
         };
 
         for (field, line) in &taken {

@@ -1430,15 +1430,47 @@ impl fmt::Display for ManifestFault {
 
 /// Why a text is not a component manifest: where the fault is and which rule
 /// it breaks.
+///
+/// Only [`ComponentManifest::parse`] makes a value. The scope and the fault
+/// are thus the scope and the fault of one refused text.
+///
+/// ```
+/// use creche_contracts::manifest::{ComponentManifest, ManifestError, ManifestFault, Scope};
+///
+/// let error: ManifestError = ComponentManifest::parse("[]", None).unwrap_err();
+/// assert_eq!(error.scope(), Scope::Top);
+/// assert_eq!(error.fault(), &ManifestFault::NotMapping);
+/// ```
+///
+/// Code outside this module cannot build an error from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::manifest::{ComponentManifest, ManifestError, ManifestFault, Scope};
+///
+/// let error = ManifestError {
+///     scope: Scope::Site,
+///     fault: ManifestFault::NotMapping,
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestError {
-    /// Where in the manifest the fault is.
-    pub scope: Scope,
-    /// The rule that the manifest breaks.
-    pub fault: ManifestFault,
+    scope: Scope,
+    fault: ManifestFault,
 }
 
 impl ManifestError {
+    /// Where in the manifest the fault is.
+    #[must_use]
+    pub const fn scope(&self) -> Scope {
+        self.scope
+    }
+
+    /// The rule that the manifest breaks.
+    #[must_use]
+    pub const fn fault(&self) -> &ManifestFault {
+        &self.fault
+    }
+
     /// The check that the ledger names: `manifest`, or `site` for a manifest
     /// that needs the site file.
     #[must_use]
