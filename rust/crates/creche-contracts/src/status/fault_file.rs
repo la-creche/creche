@@ -18,16 +18,73 @@ use crate::ids::FamilyName;
 
 /// One open fault of a fault file: a record of valid values. [`FaultFile`]
 /// holds the rules between a fault and its file.
+///
+/// ```
+/// use creche_contracts::status::fault_file::OpenFault;
+/// use creche_contracts::status::words::FaultCode;
+///
+/// let since = "2031-04-18T06:42:58Z".parse().unwrap();
+/// let fault = OpenFault::new(FaultCode::GrantsStale, since);
+/// assert_eq!(fault.code(), FaultCode::GrantsStale);
+/// assert_eq!(fault.since(), since);
+/// assert!(fault.detail().is_empty());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::fault_file::OpenFault;
+/// use creche_contracts::status::words::FaultCode;
+///
+/// fn stale_grants(fault: OpenFault) -> OpenFault {
+///     OpenFault { code: FaultCode::GrantsStale, ..fault }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenFault {
+    code: FaultCode,
+    since: Timestamp,
+    detail: Object,
+}
+
+impl OpenFault {
+    /// The open fault with the code `code` and no extra key.
+    #[must_use]
+    pub fn new(code: FaultCode, since: Timestamp) -> Self {
+        Self {
+            code,
+            since,
+            detail: Object::new(),
+        }
+    }
+
+    /// The same fault with these extra keys.
+    #[must_use]
+    pub fn with_detail(mut self, detail: Object) -> Self {
+        self.detail = detail;
+
+        self
+    }
+
     /// The code.
-    pub code: FaultCode,
+    #[must_use]
+    pub fn code(&self) -> FaultCode {
+        self.code
+    }
+
     /// When the writer first saw the fault.
-    pub since: Timestamp,
+    #[must_use]
+    pub fn since(&self) -> Timestamp {
+        self.since
+    }
+
     /// Each extra key of the fault, in the order that the writer writes.
     /// `attendance` writes `message` and `sandbox`. The chaperone writes
     /// `message` and `rev`.
-    pub detail: Object,
+    #[must_use]
+    pub fn detail(&self) -> &Object {
+        &self.detail
+    }
 }
 
 /// The open faults of one family, as one service writes them (contract 05
@@ -46,11 +103,8 @@ pub struct OpenFault {
 /// use creche_contracts::status::json::Object;
 /// use creche_contracts::status::words::{FaultCode, FaultSource};
 ///
-/// let fault = OpenFault {
-///     code: FaultCode::GrantsStale,
-///     since: "2031-04-18T06:42:58Z".parse()?,
-///     detail: Object::new(),
-/// };
+/// let fault = OpenFault::new(FaultCode::GrantsStale, "2031-04-18T06:42:58Z".parse()?)
+///     .with_detail(Object::new());
 /// let written_at = "2031-04-18T06:43:10Z".parse()?;
 /// let family = "chat".parse().unwrap();
 /// let file = FaultFile::new(family, FaultSource::Pep, written_at, vec![fault]);
@@ -361,14 +415,12 @@ mod tests {
     }
 
     fn fault(code: FaultCode, detail: &[(&str, Json)]) -> OpenFault {
-        OpenFault {
-            code,
-            since: time("2031-04-18T06:42:58Z"),
-            detail: detail
-                .iter()
-                .map(|(key, value)| ((*key).to_owned(), value.clone()))
-                .collect(),
-        }
+        let detail = detail
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), value.clone()))
+            .collect();
+
+        OpenFault::new(code, time("2031-04-18T06:42:58Z")).with_detail(detail)
     }
 
     fn chat() -> FamilyName {
@@ -424,7 +476,7 @@ mod tests {
         let codes: Vec<&str> = sorted
             .faults()
             .iter()
-            .map(|fault| fault.code.as_str())
+            .map(|fault| fault.code().as_str())
             .collect();
 
         assert_eq!(
@@ -509,7 +561,8 @@ mod tests {
         assert!(read.faults[0].blocks_turns);
         assert!(!read.faults[0].stale);
         assert_eq!(read.faults[0].since, "2031-04-18T06:42:58Z");
-        assert_eq!(read.faults[0].detail, written.faults()[0].detail);
+        assert_eq!(&read.faults[0].detail, written.faults()[0].detail());
+        assert_eq!(written.faults()[0].since(), time("2031-04-18T06:42:58Z"));
     }
 
     #[test]
