@@ -12,7 +12,8 @@ are the authority until a release of a service uses a Rust binary.
 
 ## Layout
 
-Each module is one file. One packet of the port owns each file.
+Each module is one file. One packet of the port owns each file. No stub is
+left: each function of this crate has its body.
 
 | File | What it holds | Packet |
 |---|---|---|
@@ -46,30 +47,14 @@ The module is in `creche-contracts` because this crate depends on that crate.
 The answer types of contract 02 need the readers, and they are in
 `creche_contracts::session`.
 
-## What is complete
-
-The skeleton packet wrote these parts in full. A later packet does not write
-them again.
-
-- `log`: each function and each macro.
-- `readfile::ByteCap` and `readfile::FileFacts`.
-- `clock::Monotonic` and `clock::SystemClock::new`.
-- `entropy::OsEntropy::new`.
-- `layout::FaultWriter`.
-- The builders and the readers of `command::Command` and of
-  `command::PipedCommand`.
-- `CommandRunner` for `Arc<R>` and for `&R`.
-- `http::client::Timeouts`.
-- The five constants of `token::TokenRule`, and its four readers.
-- Each `Display` and each `Error` of an error type.
-
 ## Rules for a change here
 
 1. Edit only the files of your packet. `lib.rs`, `http.rs`, `Cargo.toml` and
    this file belong to the skeleton packet.
 2. Change no signature that the skeleton fixed. A module packet writes a
    body. Ask the owner of the crate before you change a signature.
-3. A stub is `todo!()` below this attribute:
+3. No stub is left in this crate. A new stub is `todo!()` below this
+   attribute:
    `#[expect(clippy::todo, reason = "skeleton: packet <key> writes this body")]`.
    A stub with a named parameter also names `unused_variables` there.
 4. Remove the attribute when you write the body. The build fails on an
@@ -112,55 +97,18 @@ them again.
 16. Give each type that can hold a token a `Debug` that prints no byte and no
     count of the bytes. The size of a token file is such a count. Contract 02
     §3 rule 6 keeps the length of a token out of each log line.
-
-## The stubs
-
-This list is the state of the skeleton. A module packet does not edit this
-file when it writes a body. The integration packet removes the list when no
-stub is left.
-
-A stub panics when code calls it. Start a packet only after each packet that
-it needs merged.
-
-The list holds 98 stubs: 88 in this crate and 10 in
-`creche_contracts::untrusted`. Each stub is one `clippy::todo` attribute.
-
-| File | Packet | Stubs | The stubs |
-|---|---|---|---|
-| `src/atomic.rs` | `foundation-files` | 4 | `write`, `write_new`, `replace_dir`, `ensure_dir` |
-| `src/readfile.rs` | `foundation-files` | 3 | `read_capped`, `facts`, `os_text` |
-| `src/layout.rs` | `foundation-files` | 15 | `StateRoot::new`, `families_dir`, `family_dir`, `status_file`, `validation_file`, `creds_dir`, `config_dir`, `control_dir`, `grant_file`, `fault_dir`, `fault_file`, `outcomes_dir`, `audit_dir`, `tokens_dir`, `webhook_token_file` |
-| `src/clock.rs` | `foundation-clock-entropy` | 4 | `SystemClock::now`, `SystemClock::monotonic`, `unix_micros`, `unix_seconds` |
-| `src/entropy.rs` | `foundation-clock-entropy` | 3 | `OsEntropy::fill`, `new_ulid`, `url_token` |
-| `src/tasks.rs` | `foundation-tasks-signals` | 12 | `shutdown_pair`, `Shutdown::cancelled`, `Shutdown::is_cancelled`, `ShutdownTrigger::trigger`, `Tasks::new`, `Tasks::shutdown`, `Tasks::spawn_must_complete`, `Tasks::spawn_blocking`, `Tasks::spawn_loop`, `Tasks::drain`, `Completion::poll`, `locked` |
-| `src/signals.rs` | `foundation-tasks-signals` | 2 | `install`, `Hangups::next` |
-| `src/token.rs` | `foundation-token-faults` | 4 | `read`, `CachedToken::new`, `CachedToken::current`, `bearer_of` |
-| `src/faults.rs` | `foundation-token-faults` | 1 | `publish` |
-| `src/command.rs` | `foundation-command` | 9 | `Ended::python_returncode`, `TokioRunner::new`, `TokioRunner::run`, `python_text`, `spawn_piped`, `ChildGuard::terminate`, `ChildGuard::start_kill`, `ChildGuard::wait`, `ChildGuard::end` |
-| `src/http/client.rs` | `foundation-http-client` | 12 | `Target::unix`, `Target::from` for `&BindAddress`, `Target::try_from` for `&HttpUrl`, `Target::try_from` for `&AttendanceTarget`, `PathAndQuery::from_segments`, `PathAndQuery::with_query`, `Client::new`, `Client::send`, `Client::open`, `ReplyStream::status`, `ReplyStream::headers`, `ReplyStream::chunk` |
-| `src/http/server.rs` | `foundation-http-server` | 4 | `bind`, `Bound::describe`, `Bound::local_port`, `serve` |
-| `src/http/layers.rs` | `foundation-http-server` | 4 | `edge`, `ClientGone::gone`, `read_body`, `StarletteBodies::answer` |
-| `src/service.rs` | `foundation-service` | 7 | `run`, `ErrorLines::lines` for `ConfigErrors`, `ErrorLines::lines` for `SiteErrors`, `ErrorLines::lines` for `RosterErrors`, `load`, `refuse_start`, `ready` |
-| `src/args.rs` | `foundation-service` | 4 | `Args::from_os`, `Args::value`, `Args::next`, `usage_exit` |
-| `creche-contracts/src/untrusted.rs` | `foundation-untrusted` | 10 | `text`, `int`, `number`, `flag`, `object`, `block`, `list`, `list_first`, `parse_object`, `cut` |
-
-One more attribute waits for a body. The field `start` of
-`clock::SystemClock` has `#[expect(dead_code)]`. Packet
-`foundation-clock-entropy` removes it when `monotonic` reads the field.
-
-Three stubs of `src/service.rs` hold one statement before `todo!()`: `run`,
-`load` and `refuse_start`. Each one calls `log::init` with the name of the
-program. Rule 16 of "The rules for a service" in `rust/AGENTS.md` gives the
-reason. The packet that writes the three bodies obeys these rules:
-
-1. Keep that call as the first statement of the body.
-2. Keep the test `service::tests::each_entry_sets_the_panic_hook`. It runs
-   each of the three in a child process.
-3. Do not call one of the three from a test in the test process. Such a call
-   replaces the panic hook of the test program. A later test that fails then
-   prints no message.
-4. Put the rest of each body in a private function that sets no hook. Give
-   a test that function.
+17. Four functions of `src/service.rs` set the panic hook of the process:
+    `enter`, `run`, `load` and `refuse_start`. Each one calls `log::init`
+    with the name of the program. Rule 16 of "The rules for a service" in
+    `rust/AGENTS.md` gives the reason.
+    - Keep that call as the first statement of each body.
+    - Keep the test `service::tests::each_entry_sets_the_panic_hook`. It
+      runs each of the four in a child process.
+    - Do not call one of the four from a test in the test process. Such a
+      call replaces the panic hook of the test program. A later test that
+      fails then prints no message.
+    - Keep the rest of each body in a private function that sets no hook.
+      Give a test that function.
 
 ## Known gaps
 
@@ -398,7 +346,6 @@ reason. The packet that writes the three bodies obeys these rules:
   program whose config type says `AtStart::ExitConfig` thus writes an arm
   that never runs. The skeleton fixed the type. The owner of the crate
   decides if `service::load` gets one form for each failure action.
-- Most bodies are stubs. "The stubs" lists them.
 - `log::line` blocks its thread until stderr takes the line. The service
   waits when the journal does not read. A Python service waits in the same
   way.

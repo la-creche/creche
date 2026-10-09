@@ -20,6 +20,10 @@ full suite does not run it. CI runs it in the `proc` job of `gate.yml` and of
 this directory, with `CRECHE_PROC_NO_SKIP=1`. A Markdown document of this
 directory does not start it.
 
+A second job of CI, `proc-rust`, runs scenarios of the suite against a Rust
+program. "Replace a service with another binary" below names the script of
+that job.
+
 ## Run it
 
 ```bash
@@ -118,6 +122,13 @@ like a run that judged the binary.
 Every variable of the suite starts with `CRECHE_PROC_`. A variable with that
 start that the suite does not read stops the run before the first test. A
 misspelled name would start the default command.
+
+`bin/proc-rust.sh` does the three steps for each Rust program of this
+repository that has a file under `rust/proc`. The file names the program,
+the variable of its service and the scenarios that the run selects. The
+`proc-rust` job of `gate.yml` and of `release.yml` runs the script, and a
+test that skips is a failure there too. `rust/AGENTS.md`, "The judge of a
+program", has the rules for such a file.
 
 ## What runs
 
@@ -710,6 +721,18 @@ the text of the failure. Work down this list.
   key. No section names a code for a wildcard bind or for a key file that
   cannot be read. The suite accepts each code that is not 0 there. A change
   costs one assertion per scenario in `test_proc_board_start.py`.
+- **Three cases hold exit status 2, and a Rust daemon ends with status 78.**
+  `test_a_lan_bind_with_no_full_key_refuses_to_start` of
+  `test_proc_board_start.py` holds exit status 2 in its three cases:
+  `missing`, `empty` and `short`. The Python noticeboard ends with that
+  status. Each Rust daemon ends a refused start with status 78
+  (`rust/AGENTS.md`, "The rules for a service", rule 17). The Rust program
+  `creche-probe` stands for the noticeboard in the `proc-rust` job, and it
+  fails the three cases. `rust/proc/probe.run` thus does not select that
+  scenario. In each of the three cases the program refuses its start, binds
+  nothing and shows no key. Only the status differs. After packet
+  `strict-exit-78`, the scenario holds status 78. A pull request then adds
+  the scenario to `rust/proc/probe.run` and deletes this entry.
 - **CONTRACT-QUESTION, the markup of a page of the noticeboard.**
   `docs/rework/spec.md` §8.1 says what each page shows. No contract gives
   the markup. The suite reads the markup of the templates as the interface.

@@ -1,10 +1,14 @@
 # creche-testkit
 
-Test helpers for each crate of the Rust workspace. `rust/AGENTS.md` and the
-root `AGENTS.md` apply here too.
+Test helpers for each crate of the Rust workspace, and the program
+`creche-probe`. `rust/AGENTS.md` and the root `AGENTS.md` apply here too.
 
 A test of a service must not start a real program, wait for a real clock or
-call a real service. Each module of this crate gives one stand-in.
+call a real service. Each helper module of this crate gives one stand-in.
+
+`creche-probe` is no stand-in. It is one program on each module of
+`creche-runtime`. The process-level suite under `integration/proc` judges it
+as a process, before a service has its Rust binary.
 
 No release holds this crate. Add it to a crate only under
 `[dev-dependencies]`.
@@ -22,12 +26,18 @@ No release holds this crate. Add it to a crate only under
 | `src/stub.rs` | `HttpStub` and `RawHttp`: a server and a client that a test scripts. | `foundation-testkit` |
 | `src/router.rs` | `call`: one request through a router, with no socket. | `foundation-testkit` |
 | `src/vectors.rs` | A public reader of the vector files under `vectors/data`. | `foundation-testkit` |
+| `src/probe.rs` | The program `creche-probe`: its entry function, its start steps and its three routes. | `foundation-integration` |
+| `src/bin/creche-probe.rs` | The `main` of the program: three steps and no other code. | `foundation-integration` |
+| `tests/process.rs` | The tests that start the built program as a process. | `foundation-integration` |
 
-`TempRoot` is complete. Each other body is a stub.
+No stub is left: each function of this crate has its body.
 
 ## Rules for a change here
 
-1. The lint gate holds for this crate. No code of the testkit panics.
+1. The lint gate holds for this crate. No code of the testkit panics. The
+   one exception is the handler of the route `/probe/panic` in
+   `src/probe.rs`. It panics on purpose, behind the panic boundary of the
+   edge layer, and it holds the one `#[expect(clippy::panic)]` of the crate.
 2. Return `Result` from each function that can fail. The test calls
    `unwrap`.
 3. Edit only the files of your packet. `lib.rs`, `Cargo.toml` and this file
@@ -58,39 +68,67 @@ No release holds this crate. Add it to a crate only under
     the line. Some helpers have no Python origin. Say so there.
 15. Write no `println!` and no `eprintln!` in code that is not a test.
 
-## The stubs
+## The program `creche-probe`
 
-This list is the state of the skeleton. The packet `foundation-testkit` does
-not edit this file when it writes a body. The integration packet removes the
-list when no stub is left.
+The program starts with the steps of `creche_runtime::service`. It serves
+three routes behind the edge layer: `/healthz`, a route whose handler panics
+and a route whose handler writes a file after a wait. The module doc of
+`src/probe.rs` has the command line, the routes and each exit status.
 
-A stub panics when a test calls it. A packet that needs a helper of this list
-starts only after `foundation-testkit` merged.
+The config type of the program is the config type of the noticeboard. Only
+`creche-contracts` can read an `Env`, so the program has no variable of its
+own. The suite gives the program the variables of the noticeboard
+(`rust/proc/probe.run`).
 
-The list holds 22 stubs. Each stub is one `clippy::todo` attribute.
+These rules apply to a change of the program:
 
-| File | Stubs | The stubs |
-|---|---|---|
-| `src/clock.rs` | 8 | `FixedClock::new`, `FixedClock::set`, `FixedClock::advance`, `FixedClock::now`, `FixedClock::monotonic`, `PausedClock::new`, `PausedClock::now`, `PausedClock::monotonic` |
-| `src/entropy.rs` | 2 | `CountingEntropy::new`, `CountingEntropy::fill` |
-| `src/runner.rs` | 4 | `FakeRunner::new`, `FakeRunner::script`, `FakeRunner::calls`, `FakeRunner::run` |
-| `src/program.rs` | 1 | `write_program` |
-| `src/stub.rs` | 4 | `HttpStub::loopback`, `HttpStub::unix`, `RawHttp::tcp`, `RawHttp::unix` |
-| `src/router.rs` | 1 | `call` |
-| `src/vectors.rs` | 2 | `index`, `surface` |
+1. Keep the three steps of `main` in `src/bin/creche-probe.rs`, and add no
+   other code there (`rust/AGENTS.md`, "The panic rule", clause 2). Put each
+   other change in `src/probe.rs`.
+2. Do not call `probe::entry` from a test in the test process. The function
+   sets the panic hook of the process. Test a private function of the
+   module, or start the program in `tests/process.rs`.
+3. A test that makes the program write a line of the log goes to
+   `tests/process.rs`. A line of a test in the test process goes to the
+   output of the test program.
+4. A test of `tests/process.rs` gives the program a directory of its own, a
+   port of its own and its whole environment. It reads only what crossed the
+   process boundary.
+5. A test of `tests/process.rs` waits for a file, for a line or for the end
+   of the process. It does not wait for a fixed time.
+6. The program is no service. Do not add a route or a rule of a service to
+   it. The port of a service proves that service with its own crate and its
+   own file under `rust/proc`.
 
-The skeleton fixed only the names of the types and the signatures above. The
-packet `foundation-testkit` adds what a helper also needs:
-
-- The type of a scripted answer and the type of a recorded request of
-  `HttpStub`, and the functions that use them.
-- The fields of `IndexRow`, `Surface`, `Vector`, `Input` and `Marker` in
-  `vectors.rs`. `crates/creche-contracts/src/vectors.rs` holds the same
-  forms as private test code.
+The proof of a change has two parts. `cargo test -p creche-testkit` runs the
+tests of the program. `bin/proc-rust.sh` runs the scenarios of
+`rust/proc/probe.run` against the built program.
 
 ## Known gaps
 
-- Most bodies are stubs. "The stubs" lists them.
 - The workspace holds two readers of the vector files: this one and the
   private one of `creche-contracts`. `agent-family` holds a third in its
   test. The owner of the crates decides if the two others move to this one.
+- This `CONTRACT-QUESTION` comment is open in `src/probe.rs`: no contract
+  names the exit status of a program whose listener does not bind. The
+  program ends with status 3 there, as the Python noticeboard does.
+  `crates/creche-runtime/AGENTS.md` has the same question for each service. A
+  change costs one constant, `NO_LISTENER`.
+- `creche-probe` fails the three cases of one scenario of the noticeboard.
+  Each case holds exit status 2 for a LAN bind with no full key, and the
+  program ends that start with status 78. `rust/proc/probe.run` does not
+  select the scenario. "Known gaps" of `integration/proc/AGENTS.md` has the
+  entry. The test `a_lan_bind_with_no_full_key_ends_with_78_and_shows_no_key`
+  of `tests/process.rs` holds the status of the program for the three cases.
+- `--check` of the program ends with status 0 when the reader of its stdout
+  left. The Python noticeboard ends with status 1 or with status 120 there,
+  and it writes an error text. No unit and no scenario gives `--check` such
+  a stdout. The port of the noticeboard decides what its own `--check` does.
+- A test of `tests/process.rs` selects a free port and then starts the
+  program. Another process of the host can take the port between the two
+  steps. The program then ends with the status of a bind that failed. The
+  test starts it again with a new port, five times at most.
+- The SIGHUP test of `tests/process.rs` cannot judge a run that ignores
+  SIGHUP, for example a run under `nohup`. A child takes that from the
+  process that started it. The test fails at its first line in such a run,
+  and the failure names the cause.
