@@ -57,13 +57,14 @@ vectors_path() {
 }
 
 # rust_gate_path PATH: whether PATH is a file of the Rust checks themselves:
-# the script, this rule, and the CI files that hold the `rust` job and ask
-# this rule. bin/tests/test_rust_gate.py runs the script with a fake cargo,
-# so a wrong cargo flag passes every test. Only a run with the real cargo
-# proves a change to one of these files.
+# the two scripts, this rule, and the CI files that hold the `rust` job and
+# the `rust-coverage` job and ask this rule. bin/tests/test_rust_gate.py and
+# bin/tests/test_rust_coverage.py run the scripts with a fake cargo, so a
+# wrong cargo flag passes every test. Only a run with the real cargo proves a
+# change to one of these files.
 rust_gate_path() {
   case "$1" in
-    bin/rust-gate.sh | bin/lib/rustrule.sh | \
+    bin/rust-gate.sh | bin/rust-coverage.sh | bin/lib/rustrule.sh | \
       .github/workflows/gate.yml | .github/workflows/release.yml | \
       .github/actions/scope/*)
       return 0
