@@ -19,7 +19,7 @@ wrong without one red line, and each gets a check here:
    that the suite no longer has fails here, before the job runs.
 5. **A scenario that a file leaves out in silence.** `probe.run` selects
    each scenario of `test_proc_board_start.py` but the one that `NOT_YET`
-   names. That table goes with packet `strict-exit-78`.
+   names. That set goes with packet `strict-exit-78`.
 6. **A path that the suite reads as two words.** The suite splits the value
    of a variable as a shell does. The script gives the path of the program
    as one word, also from a tree whose path holds a space or a quote.
@@ -95,8 +95,8 @@ BOARD_START = "integration/proc/test_proc_board_start.py"
 #: The one scenario of `BOARD_START` that `probe.run` does not select yet.
 #: "Known gaps" of `integration/proc/AGENTS.md` has the reason. The pull
 #: request of packet `strict-exit-78` adds the scenario to `probe.run` and
-#: deletes this table. The test of the selection then demands each scenario
-#: of the file. No other file under `rust/proc` gets such a table
+#: deletes this set. The test of the selection then demands each scenario
+#: of the file. No other file under `rust/proc` gets such a set
 #: (`rust/AGENTS.md`, "The judge of a program").
 NOT_YET = frozenset({"test_a_lan_bind_with_no_full_key_refuses_to_start"})
 

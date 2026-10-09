@@ -839,7 +839,7 @@ the text of the failure. Work down this list.
 
   1. It adds the scenario to `rust/proc/probe.run`, and it changes the
      comment at the top of that file.
-  2. It deletes the table `NOT_YET` of `bin/tests/test_proc_rust.py`. The
+  2. It deletes the set `NOT_YET` of `bin/tests/test_proc_rust.py`. The
      test of the selection then demands each scenario of the file.
   3. It deletes the exception for `proc/probe.run` in `rust/AGENTS.md`, "The
      judge of a program".
