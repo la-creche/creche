@@ -6,7 +6,7 @@ sandbox image names, or by an address in an argument. So a stand-in here is
 an executable file under the test's root, and the only thing a test reads
 back is what that program left on disk.
 
-Four stand-ins exist, and none is under test:
+Five stand-ins exist, and none is under test:
 
 `sbx`
     Two forms. The first is `integration/tests/fake_sbx.py`, unchanged,
@@ -28,6 +28,9 @@ Four stand-ins exist, and none is under test:
 the LiteLLM key API
     `standin_litellm.py`. It listens on a loopback port, so the supervisor
     of the test starts it, and no wrapper exists for it.
+the embedding service
+    `standin_tei.py`. It listens on a loopback port too, and the index
+    builder finds it through an address in a variable.
 
 Each wrapper ends in `exec`. The stand-in stays one process, so stdin, stdout
 and every signal reach it unchanged, and the recorded pid is the pid of the
@@ -55,6 +58,7 @@ from pathlib import Path
 from typing import Any, Final
 from urllib.parse import quote, unquote
 
+import standin_tei
 from proc_harness import (
     Child,
     ProcError,
@@ -71,6 +75,7 @@ SBX: Final = "sbx"
 PI: Final = "pi"
 SYSTEMCTL: Final = "systemctl"
 LITELLM: Final = "litellm"
+TEI: Final = "tei"
 
 #: Each stand-in that a wrapper starts. The teardown waits for each recorded
 #: process of these.
@@ -79,6 +84,15 @@ _WRAPPED: Final = (SBX, PI, SYSTEMCTL)
 #: The two kinds of policy row that the `sbx` stand-in keeps.
 ALLOW: Final = "allow"
 DENY: Final = "deny"
+
+#: The tunings of the TEI stand-in. The program holds each name, and its
+#: docstring says what each one changes.
+TEI_MODEL: Final = standin_tei.TUNE_MODEL
+TEI_NO_MODEL_ID: Final = standin_tei.TUNE_NO_MODEL_ID
+TEI_DIMS: Final = standin_tei.TUNE_DIMS
+TEI_FAIL_INFO: Final = standin_tei.TUNE_FAIL_INFO
+TEI_FAIL_EMBED: Final = standin_tei.TUNE_FAIL_EMBED
+TEI_HOLD_EMBED: Final = standin_tei.TUNE_HOLD_EMBED
 
 #: An obvious fixture, never a credential. The LiteLLM stand-in takes it as
 #: the master key, and `caregiver` gets it in `LITELLM_MASTER_KEY`.
@@ -245,6 +259,33 @@ def start_litellm(tree: Tree, supervisor: Supervisor, env: Mapping[str, str]) ->
     raise ProcError(f"the LiteLLM stand-in found no free port in {_BIND_ATTEMPTS} attempts")
 
 
+def start_tei(tree: Tree, supervisor: Supervisor, env: Mapping[str, str]) -> tuple[Child, int]:
+    """Start the TEI stand-in on a free loopback port, and wait for it.
+
+    A start that fails because another program took the port first is tried
+    again on another port. Any other failed start is an error.
+    """
+    state = state_dir(tree, TEI)
+    state.mkdir(parents=True, exist_ok=True)
+    program = [sys.executable, str(standin_script(TEI)), str(state)]
+
+    for _ in range(_BIND_ATTEMPTS):
+        port = supervisor.free_port()
+        child = supervisor.spawn(TEI, [*program, str(port)], env, tree.root)
+
+        try:
+            supervisor.wait_ready(child, TcpAddress(port))
+        except ProcError:
+            if child.exit_code() is None or port_is_free(port):
+                raise
+
+            continue
+
+        return child, port
+
+    raise ProcError(f"the TEI stand-in found no free port in {_BIND_ATTEMPTS} attempts")
+
+
 def install_pi(tree: Tree) -> None:
     """Write the program `AGENT_PI_BIN` names.
 
@@ -360,6 +401,16 @@ def litellm_keys(tree: Tree) -> dict[str, dict[str, Any]]:
         return {}
 
     return keys
+
+
+def tei_calls(tree: Tree) -> list[dict[str, Any]]:
+    """Each request that the TEI stand-in got, in arrival order."""
+    try:
+        raw = (state_dir(tree, TEI) / standin_tei.CALLS_FILE).read_bytes()
+    except FileNotFoundError:
+        return []
+
+    return [json.loads(line) for line in raw.split(b"\n")[:-1] if line.strip()]
 
 
 def enabled_units(tree: Tree) -> list[str]:
