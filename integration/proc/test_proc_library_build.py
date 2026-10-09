@@ -16,6 +16,7 @@ The rules are the six rules and the store schema of `library/AGENTS.md`.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -120,6 +121,10 @@ MEETING_OTHER_DAY = MEETING_TEXT.replace("Tuesday", "Mondays")
 
 #: How far a scenario moves the mtime of a file: ten seconds, in nanoseconds.
 MTIME_STEP_NS = 10_000_000_000
+
+#: How many bytes the digest in the column `hash` of `files` has. The
+#: program writes a BLAKE2b digest of that size, as hex text in lower case.
+HASH_BYTES = 16
 
 
 # --------------------------------------- the scenarios of `library/tests`
@@ -303,10 +308,11 @@ def test_vault_profile_ignores_source_files(library: LibraryStack) -> None:
 # ------------------------------------------------------ what a process shows
 #
 # CONTRACT-QUESTION: `library/AGENTS.md` gives the schema and six rules. No
-# contract gives the order of the chunk ids, the text of a chunk or the path
-# of a file. Reading taken: the program as it is, because a second writer
-# of one store must give the same rows. `integration/proc/AGENTS.md` lists
-# each point under "Known gaps". A change costs the scenario of that point.
+# contract gives the order of the chunk ids, the text or the `ord` of a
+# chunk, or the values of a row of `files`. Reading taken: the program as it
+# is, because a second writer of one store must give the same rows.
+# `integration/proc/AGENTS.md` lists each point under "Known gaps". A change
+# costs the scenario of that point.
 
 
 def test_the_chunk_ids_follow_the_path_order(library: LibraryStack) -> None:
@@ -351,7 +357,8 @@ def test_a_long_paragraph_is_cut_with_overlap(library: LibraryStack) -> None:
 
     Each piece starts with the last characters of the piece before it. The
     sizes are counts of characters: each fifth character of this text takes
-    two bytes.
+    two bytes. The column `ord` gives each piece its place in the file, and
+    the first place is 0. The bridge gives that number to the model.
     """
     scope = library.vault()
     text = "".join(f"{index:04d}é" for index in range(500))
@@ -360,9 +367,10 @@ def test_a_long_paragraph_is_cut_with_overlap(library: LibraryStack) -> None:
     write_note(scope / "long.md", text)
 
     report = _run(library, scope)
+    stored = [(chunk.path, chunk.ord, chunk.text) for chunk in library.store().chunks()]
 
     assert report.chunks == len(pieces)
-    assert library.store().texts_of(scope.resolve() / "long.md") == pieces
+    assert stored == [(_note(scope, "long.md"), place, piece) for place, piece in enumerate(pieces)]
     assert library.embedded()[1:] == [pieces]
 
 
@@ -434,6 +442,32 @@ def test_the_store_has_the_schema_of_the_contract(library: LibraryStack) -> None
     assert meta[META_DIMS] == str(DIMS)
     assert started <= float(meta[META_UPDATED]) <= ended
     assert set(store.vec_vectors()) == {chunk.id for chunk in store.chunks()}
+
+
+def test_a_files_row_holds_the_hash_and_two_times(library: LibraryStack) -> None:
+    """A row of `files` holds the hash of the bytes, the mtime of the file and the time of the run.
+
+    The next run compares the hash with the bytes on disk (rule 1). That run
+    can be a run of another program on the same store.
+
+    CONTRACT-QUESTION: `library/AGENTS.md` names the column `hash` and gives
+    it no form. Reading taken: the program as it is, a BLAKE2b digest of 16
+    bytes as hex text in lower case. With another form, the next run of the
+    first writer embeds each file again. A change costs this scenario.
+    """
+    scope = library.vault()
+    write_vault(scope)
+    notes = [scope.resolve() / BIKES, scope.resolve() / MEETING]
+    started = time.time()
+
+    _run(library, scope)
+    ended = time.time()
+    rows = library.store().files()
+
+    assert {path: (row.hash, row.mtime) for path, row in rows.items()} == {
+        str(note): (_digest(note), note.stat().st_mtime) for note in notes
+    }
+    assert all(started <= row.indexed_at <= ended for row in rows.values())
 
 
 def test_the_index_directory_holds_only_the_store(library: LibraryStack) -> None:
@@ -599,6 +633,11 @@ def _run(
 def _note(scope: Path, name: str) -> str:
     """The path that the store holds for one file of a corpus."""
     return str(scope.resolve() / name)
+
+
+def _digest(path: Path) -> str:
+    """What the column `hash` of `files` holds for the bytes of one file."""
+    return hashlib.blake2b(path.read_bytes(), digest_size=HASH_BYTES).hexdigest()
 
 
 def _names(library: LibraryStack, scope: Path, index: str = NOTES) -> set[str]:

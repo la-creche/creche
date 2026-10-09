@@ -1062,9 +1062,10 @@ the text of the failure. Work down this list.
   assertion in `test_proc_library_build.py`.
 - **CONTRACT-QUESTION, what a store holds for a corpus.**
   `library/AGENTS.md` gives the schema and six rules. No contract gives the
-  order of the chunk ids, the text of a chunk or the path of a file. The
-  suite holds the program as it is:
+  order of the chunk ids, the text or the `ord` of a chunk, or the values of
+  a row of `files`. The suite holds the program as it is:
   - The chunk ids follow the order of the file paths, part by part.
+  - The `ord` of a chunk is its place in its file, and the first place is 0.
   - A text file is UTF-8. Each bad sequence becomes U+FFFD, and each line
     end becomes one line feed.
   - A paragraph of more than 1000 characters, alone in its file, gives
@@ -1073,6 +1074,10 @@ the text of the failure. Work down this list.
   - A file with no text has a row in `files` and no chunk.
   - The program does not follow a link to a directory.
   - Each stored path starts with the resolved corpus directory.
+  - The `hash` of a file is a BLAKE2b digest of 16 bytes, as hex text in
+    lower case.
+  - The `mtime` of a row is the mtime of its file, and `indexed_at` is the
+    time of the run. Each one is a count of seconds.
 
   A change costs the scenario of that point in
   `test_proc_library_build.py`.
