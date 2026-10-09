@@ -152,8 +152,9 @@ def _completed(done: Finished) -> None:
 def _rows_of(library: LibraryStack, index: str) -> dict[str, Any]:
     """What the bridge statements give for one store, without the time of its last run.
 
-    The rows of `meta` are in the order of their keys, because two SQLite
-    versions can scan one table in another order.
+    The rows of `meta` are in the order of their keys here. A scan gives
+    them in the order in which a writer added them, and no reader depends
+    on that order.
     """
     read = library.read_as_bridge(library.store(index).path, SOME_NOTES, LIMIT)
     meta = sorted((row["key"], row["value"]) for row in read["meta"] if row["key"] != META_UPDATED)

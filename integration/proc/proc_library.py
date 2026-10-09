@@ -421,8 +421,9 @@ class StoreContent:
 
     It holds no time of a run: not `updated_at` of `meta`, and not the
     column `indexed_at` of `files`. Two writers that read one corpus then
-    give equal content. Each list is in the order of its key, because two
-    SQLite versions can scan one table in another order.
+    give equal content. Each list is in the order of its key. A scan with
+    no order depends on the writer of the store and on its SQLite, and no
+    reader depends on the order of a scan.
 
     It holds no statement of `chunks_vec`. It holds the rows that one
     `SELECT` gives for that table on a connection with `sqlite-vec`.
