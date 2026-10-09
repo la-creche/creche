@@ -880,11 +880,7 @@ fn open_faults(
     let faults = args["faults"].as_array().unwrap().iter().map(|one| {
         let (code, detail) = fault(one);
 
-        OpenFault {
-            code,
-            since: time_of(&one["since"]),
-            detail,
-        }
+        OpenFault::new(code, time_of(&one["since"])).with_detail(detail)
     });
 
     faults.collect()

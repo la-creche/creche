@@ -1,9 +1,9 @@
 //! The objects of an answer: a session, a turn and a lease (contract 02 §4.2,
 //! §4.4, §7.1), and the small objects inside them.
 //!
-//! Each object has a raw type with public fields. A conversion that can fail
-//! makes the valid type. The valid type writes the fields in the order that
-//! `attendance` writes them.
+//! Each object has a raw type that `serde` reads. Only that read makes a raw
+//! value. A conversion that can fail makes the valid type. The valid type
+//! writes the fields in the order that `attendance` writes them.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -105,16 +105,11 @@ const USAGE: &str = "a usage";
 /// are advisory.
 ///
 /// ```
-/// use creche_contracts::session::{RawUsage, Usage};
+/// use creche_contracts::session::Usage;
 ///
-/// let usage = Usage::try_from(RawUsage {
-///     input: 4120,
-///     output: 188,
-///     cache_read: 0,
-///     cache_write: 0,
-///     cost_usd: 0.014,
-/// })?;
+/// let usage = Usage::new(4120, 188, 0, 0, 0.014)?;
 /// assert_eq!(usage.input(), 4120);
+/// assert!(Usage::new(4120, 188, 0, 0, f64::NAN).is_err());
 /// # Ok::<(), creche_contracts::session::FieldError>(())
 /// ```
 ///
@@ -137,41 +132,72 @@ pub struct Usage {
     cost_usd: f64,
 }
 
-/// The fields of a [`Usage`], before the check.
+/// The fields of a [`Usage`], before the check. Only `serde` makes a value:
+/// the type has no other constructor. The read checks the JSON type of each
+/// member and no other rule.
+///
+/// ```
+/// use creche_contracts::session::RawUsage;
+///
+/// let text =
+///     r#"{"input": 4120, "output": 188, "cache_read": 0, "cache_write": 0, "cost_usd": 0.014}"#;
+/// assert!(serde_json::from_str::<RawUsage>(text).is_ok());
+/// assert!(serde_json::from_str::<RawUsage>(r#"{"input": 4120}"#).is_err());
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::RawUsage;
+///
+/// let raw = RawUsage { input: 4120, output: 188, cache_read: 0, cache_write: 0, cost_usd: 0.014 };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub struct RawUsage {
-    /// The count of input tokens.
-    pub input: u64,
-    /// The count of output tokens.
-    pub output: u64,
-    /// The count of tokens that the model read from its cache.
-    pub cache_read: u64,
-    /// The count of tokens that the model wrote to its cache.
-    pub cache_write: u64,
-    /// The cost in US dollars.
-    pub cost_usd: f64,
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+    cost_usd: f64,
 }
 
 impl TryFrom<RawUsage> for Usage {
     type Error = FieldError;
 
-    /// The cost is a finite number that is zero or more.
     fn try_from(raw: RawUsage) -> Result<Self, Self::Error> {
-        if !raw.cost_usd.is_finite() || raw.cost_usd < 0.0 {
-            return Err(FieldError::new(USAGE, "cost_usd"));
-        }
-
-        Ok(Self {
-            input: raw.input,
-            output: raw.output,
-            cache_read: raw.cache_read,
-            cache_write: raw.cache_write,
-            cost_usd: raw.cost_usd,
-        })
+        Self::new(
+            raw.input,
+            raw.output,
+            raw.cache_read,
+            raw.cache_write,
+            raw.cost_usd,
+        )
     }
 }
 
 impl Usage {
+    /// The four token counts and the cost of one turn, in the order of the
+    /// accessors below. The cost is a finite number that is zero or more.
+    pub fn new(
+        input: u64,
+        output: u64,
+        cache_read: u64,
+        cache_write: u64,
+        cost_usd: f64,
+    ) -> Result<Self, FieldError> {
+        if !cost_usd.is_finite() || cost_usd < 0.0 {
+            return Err(FieldError::new(USAGE, "cost_usd"));
+        }
+
+        Ok(Self {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            cost_usd,
+        })
+    }
+
     /// The count of input tokens.
     #[must_use]
     pub fn input(&self) -> u64 {
@@ -241,17 +267,34 @@ pub struct OwuiRefs {
     parent_id: Option<String>,
 }
 
-/// The fields of an [`OwuiRefs`], before the check.
+/// The fields of an [`OwuiRefs`], before the check. Only `serde` makes a
+/// value: the type has no other constructor. The read checks the JSON type of
+/// each member and no other rule.
+///
+/// ```
+/// use creche_contracts::session::RawOwuiRefs;
+///
+/// let text = r#"{"chat_id": "3f2a9c41", "message_id": "b7c1e2d0", "user_message_id": null,
+///                "parent_id": null}"#;
+/// assert!(serde_json::from_str::<RawOwuiRefs>(text).is_ok());
+/// assert!(serde_json::from_str::<RawOwuiRefs>(r#"{"chat_id": 7}"#).is_err());
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::RawOwuiRefs;
+///
+/// fn no_parent(raw: RawOwuiRefs) -> RawOwuiRefs {
+///     RawOwuiRefs { parent_id: None, ..raw }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RawOwuiRefs {
-    /// The id of the chat.
-    pub chat_id: String,
-    /// The id of the assistant message that Open WebUI makes.
-    pub message_id: String,
-    /// The id of the user message that started the turn.
-    pub user_message_id: Option<String>,
-    /// The id of the message that the user message follows.
-    pub parent_id: Option<String>,
+    chat_id: String,
+    message_id: String,
+    user_message_id: Option<String>,
+    parent_id: Option<String>,
 }
 
 impl TryFrom<RawOwuiRefs> for OwuiRefs {
@@ -423,15 +466,13 @@ const LEASE: &str = "a lease";
 /// ```
 /// use creche_contracts::session::{Lease, RawLease};
 ///
-/// let lease = Lease::try_from(RawLease {
-///     holder: "tui".to_owned(),
-///     door_instance: "tui.4242".to_owned(),
-///     since: "2026-10-06T08:15:20Z".to_owned(),
-///     expires_at: "2026-10-06T08:16:20Z".to_owned(),
-///     turn: None,
-/// })?;
+/// let raw: RawLease = serde_json::from_str(
+///     r#"{"holder": "tui", "door_instance": "tui.4242", "since": "2026-10-06T08:15:20Z",
+///         "expires_at": "2026-10-06T08:16:20Z", "turn": null}"#,
+/// )?;
+/// let lease = Lease::try_from(raw)?;
 /// assert_eq!(lease.door_instance(), "tui.4242");
-/// # Ok::<(), creche_contracts::session::FieldError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Code outside this module cannot build a value from raw fields:
@@ -455,19 +496,35 @@ pub struct Lease {
     turn: Option<Ulid>,
 }
 
-/// The fields of a [`Lease`], before the check.
+/// The fields of a [`Lease`], before the check. Only `serde` makes a value:
+/// the type has no other constructor. The read checks the JSON type of each
+/// member and no other rule.
+///
+/// ```
+/// use creche_contracts::session::RawLease;
+///
+/// let text = r#"{"holder": "tui", "door_instance": "tui.4242", "since": "2026-10-06T08:15:20Z",
+///                "expires_at": "2026-10-06T08:16:20Z", "turn": null}"#;
+/// assert!(serde_json::from_str::<RawLease>(text).is_ok());
+/// assert!(serde_json::from_str::<RawLease>(r#"{"holder": "tui"}"#).is_err());
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::RawLease;
+///
+/// fn no_turn(raw: RawLease) -> RawLease {
+///     RawLease { turn: None, ..raw }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RawLease {
-    /// The door that holds the lease.
-    pub holder: String,
-    /// The process of that door. `attendance` does not parse the text.
-    pub door_instance: String,
-    /// When the holder took the lease.
-    pub since: String,
-    /// When the lease ends.
-    pub expires_at: String,
-    /// The turn that runs under the lease.
-    pub turn: Option<String>,
+    holder: String,
+    door_instance: String,
+    since: String,
+    expires_at: String,
+    turn: Option<String>,
 }
 
 impl TryFrom<RawLease> for Lease {
@@ -574,39 +631,48 @@ pub struct SessionView {
     labels: Labels,
 }
 
-/// The fields of a [`SessionView`], before the check.
+/// The fields of a [`SessionView`], before the check. Only `serde` makes a
+/// value: the type has no other constructor. The read checks the JSON type of
+/// each member and no other rule.
+///
+/// ```
+/// use creche_contracts::session::RawSession;
+///
+/// let text = r#"{"family": "chat", "session": "owui-8f1c2e", "kind": "attended", "title": "",
+///                "state": "idle", "created_at": "2026-10-05T19:21:47Z",
+///                "updated_at": "2026-10-05T19:21:47Z", "journal_seq": 0, "writer": null,
+///                "turns_total": 0, "terminal_total": 0, "turns_running": 0, "sandbox": null,
+///                "persona_hash": null, "labels": {}}"#;
+/// assert!(serde_json::from_str::<RawSession>(text).is_ok());
+/// assert!(serde_json::from_str::<RawSession>(r#"{"family": "chat"}"#).is_err());
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::RawSession;
+///
+/// fn renumber(raw: RawSession) -> RawSession {
+///     RawSession { journal_seq: 0, ..raw }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RawSession {
-    /// The name of the family.
-    pub family: String,
-    /// The id of the session.
-    pub session: String,
-    /// The kind of the family.
-    pub kind: String,
-    /// The display title.
-    pub title: String,
-    /// The state of the session.
-    pub state: String,
-    /// When the session was made.
-    pub created_at: String,
-    /// When `attendance` wrote the newest journal line.
-    pub updated_at: String,
-    /// The sequence number of the newest journal line. 0 for no line.
-    pub journal_seq: u64,
-    /// The writer lease.
-    pub writer: Option<RawLease>,
-    /// The count of turns and of terminal exchanges.
-    pub turns_total: u64,
-    /// The count of terminal exchanges in `turns_total`.
-    pub terminal_total: u64,
-    /// The count of turns that run or wait for an approval.
-    pub turns_running: u64,
-    /// The sandbox that served the last turn.
-    pub sandbox: Option<String>,
-    /// The SHA-256 digest of the persona text of the last turn.
-    pub persona_hash: Option<String>,
-    /// The labels.
-    pub labels: BTreeMap<String, String>,
+    family: String,
+    session: String,
+    kind: String,
+    title: String,
+    state: String,
+    created_at: String,
+    updated_at: String,
+    journal_seq: u64,
+    writer: Option<RawLease>,
+    turns_total: u64,
+    terminal_total: u64,
+    turns_running: u64,
+    sandbox: Option<String>,
+    persona_hash: Option<String>,
+    labels: BTreeMap<String, String>,
 }
 
 impl TryFrom<RawSession> for SessionView {
@@ -804,33 +870,47 @@ pub struct TurnView {
     persona_truncated: bool,
 }
 
-/// The fields of a [`TurnView`], before the check.
+/// The fields of a [`TurnView`], before the check. Only `serde` makes a
+/// value: the type has no other constructor. The read checks the JSON type of
+/// each member and no other rule. The sandbox of a turn that no sandbox
+/// served is the empty text.
+///
+/// ```
+/// use creche_contracts::session::RawTurn;
+///
+/// let text = r#"{"turn": "01JBQ7WZ0X4T9V6K2H8M3N5PQR", "state": "queued", "reason": null,
+///                "started_at": "2026-10-05T19:22:05Z", "ended_at": null, "deadline_s": 3600,
+///                "idempotency_key": null, "sandbox": "",
+///                "usage": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
+///                          "cost_usd": 0.0},
+///                "approvals": 0, "owui": null, "persona_truncated": false}"#;
+/// assert!(serde_json::from_str::<RawTurn>(text).is_ok());
+/// assert!(serde_json::from_str::<RawTurn>(r#"{"turn": 7}"#).is_err());
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::RawTurn;
+///
+/// fn recount(raw: RawTurn) -> RawTurn {
+///     RawTurn { approvals: 0, ..raw }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct RawTurn {
-    /// The id of the turn.
-    pub turn: String,
-    /// The state of the turn.
-    pub state: String,
-    /// Why the turn failed or stopped.
-    pub reason: Option<String>,
-    /// When `attendance` sent `start_turn`.
-    pub started_at: String,
-    /// When the turn ended.
-    pub ended_at: Option<String>,
-    /// The limit of the turn in seconds.
-    pub deadline_s: u64,
-    /// The idempotency key.
-    pub idempotency_key: Option<String>,
-    /// The sandbox that served the turn. The empty text for none.
-    pub sandbox: String,
-    /// The token counts and the cost.
-    pub usage: RawUsage,
-    /// The count of tool calls that the chaperone held for a person.
-    pub approvals: u64,
-    /// The Open WebUI ids.
-    pub owui: Option<RawOwuiRefs>,
-    /// Whether `attendance` cut the persona text at its cap.
-    pub persona_truncated: bool,
+    turn: String,
+    state: String,
+    reason: Option<String>,
+    started_at: String,
+    ended_at: Option<String>,
+    deadline_s: u64,
+    idempotency_key: Option<String>,
+    sandbox: String,
+    usage: RawUsage,
+    approvals: u64,
+    owui: Option<RawOwuiRefs>,
+    persona_truncated: bool,
 }
 
 impl TryFrom<RawTurn> for TurnView {
@@ -948,25 +1028,39 @@ mod tests {
 
     #[test]
     fn a_cost_is_a_finite_number_that_is_not_negative() {
-        let usage = |cost_usd: f64| RawUsage {
-            input: 1,
-            output: 2,
-            cache_read: 3,
-            cache_write: 4,
-            cost_usd,
+        let usage = |cost_usd: f64| Usage::new(1, 2, 3, 4, cost_usd);
+
+        assert_eq!(usage(0.0).map(|usage| usage.cost_usd()), Ok(0.0));
+        for cost in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01] {
+            assert_eq!(usage(cost).unwrap_err().field(), "cost_usd");
+        }
+    }
+
+    #[test]
+    fn a_raw_usage_goes_through_the_check_of_a_usage() {
+        let raw = |cost_usd: &str| {
+            let text = format!(
+                r#"{{"input":1,"output":2,"cache_read":3,"cache_write":4,"cost_usd":{cost_usd}}}"#
+            );
+
+            serde_json::from_str::<RawUsage>(&text).unwrap()
         };
+        let usage = Usage::try_from(raw("0.5")).unwrap();
 
         assert_eq!(
-            Usage::try_from(usage(0.0)).map(|usage| usage.cost_usd()),
-            Ok(0.0)
+            [
+                usage.input(),
+                usage.output(),
+                usage.cache_read(),
+                usage.cache_write()
+            ],
+            [1, 2, 3, 4]
         );
-        for cost in [f64::NAN, f64::INFINITY, -0.01] {
-            assert_eq!(
-                Usage::try_from(usage(cost)).unwrap_err().field(),
-                "cost_usd"
-            );
-        }
-
+        assert_eq!(usage.cost_usd(), 0.5);
+        assert_eq!(
+            Usage::try_from(raw("-0.01")).unwrap_err().field(),
+            "cost_usd"
+        );
         assert!(serde_json::from_value::<Usage>(json!({"input": -1})).is_err());
     }
 
@@ -1028,37 +1122,28 @@ mod tests {
 
     #[test]
     fn a_raw_object_with_a_bad_field_names_the_field() {
-        let lease = RawLease {
-            holder: "view".to_owned(),
-            door_instance: String::new(),
-            since: "2026-10-06T08:15:20Z".to_owned(),
-            expires_at: "soon".to_owned(),
-            turn: Some("not a turn".to_owned()),
+        let lease = |holder: &str, expires_at: &str| {
+            let raw: RawLease = serde_json::from_value(json!({
+                "holder": holder,
+                "door_instance": "",
+                "since": "2026-10-06T08:15:20Z",
+                "expires_at": expires_at,
+                "turn": "not a turn",
+            }))
+            .unwrap();
+
+            Lease::try_from(raw)
         };
-        let error = Lease::try_from(lease.clone()).unwrap_err();
+        let error = lease("view", "soon").unwrap_err();
 
         assert_eq!(error.field(), "holder");
         assert_eq!(
             error.to_string(),
             "the field holder of a lease is not valid"
         );
+        assert_eq!(lease("tui", "soon").unwrap_err().field(), "expires_at");
         assert_eq!(
-            Lease::try_from(RawLease {
-                holder: "tui".to_owned(),
-                ..lease.clone()
-            })
-            .unwrap_err()
-            .field(),
-            "expires_at"
-        );
-        assert_eq!(
-            Lease::try_from(RawLease {
-                holder: "tui".to_owned(),
-                expires_at: "2026-10-06T08:16:20Z".to_owned(),
-                ..lease
-            })
-            .unwrap_err()
-            .field(),
+            lease("tui", "2026-10-06T08:16:20Z").unwrap_err().field(),
             "turn"
         );
     }
