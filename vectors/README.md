@@ -26,7 +26,7 @@ release replaces that surface.
 
 | Path | Holds |
 |---|---|
-| `generate.py` | the program that writes every file under `data/` |
+| `generate.py` | the program that writes each file under `data/` that is not frozen |
 | `core.py` | the file format: the normalizer and the renderer |
 | `surfaces/` | one module per group of surfaces, with the written inputs |
 | `data/index.json` | one row per surface: name, path, entry point, counts. One line per frozen file: path and digest |
@@ -111,8 +111,9 @@ package. Do these steps in this order:
    each of those files by its path from `vectors/data/`.
 4. Run `--check` again. It exits with status 0. It prints one `frozen:`
    line for each file.
-5. Commit the index. The map `frozen` holds one new line for each file.
-   The diff holds no frozen file.
+5. Commit the index and each other file under `data/` that the diff shows.
+   The map `frozen` holds one new line for each file. The diff holds no
+   frozen file.
 
 Between step 1 and step 3, do not run the generator with no flag. That run
 removes each JSON file that no group writes and that is not frozen. It

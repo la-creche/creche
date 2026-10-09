@@ -44,7 +44,7 @@ Each of the six checks holds for each component of the table:
 - [ ] Change 1: the source of the package, its tests and its `pyproject.toml`
 - [ ] Change 2: the entries of the package in each config file
 - [ ] Change 3: `uv.lock`
-- [ ] Change 4: the vectors and the SHA-256 pins
+- [ ] Change 4: the vectors and the frozen files
 - [ ] Change 5: the tests and the stand-ins
 - [ ] Change 6: the rule files and the unit comments
 
