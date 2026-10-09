@@ -920,10 +920,17 @@ fn raw_claimed(claims: &Json) -> RawClaimed<'_> {
     raw
 }
 
+/// The revision of the held call of [`gated`] for a record that names no
+/// revision of a grant file.
+const STAND_IN_REV: &str = "reg-9f21c4";
+
 /// `record` with the gate and the wait of a vector. A record takes its gate
 /// from a held call, so the function makes the held call of that gate first.
 /// A vector with a wait and no gate has no record: the function stops the
 /// test there.
+///
+/// The held call is a stand-in. A record reads only its gate, so the executor
+/// is fixed, and a record with no revision of a grant file gets a fixed one.
 fn gated(record: AuditRecord, args: &serde_json::Map<String, Json>) -> AuditRecord {
     let waited_ms = args["waited_ms"].as_u64().unwrap();
     let Some(gate) = args["gate"].as_str() else {
@@ -931,10 +938,13 @@ fn gated(record: AuditRecord, args: &serde_json::Map<String, Json>) -> AuditReco
 
         return record;
     };
-    let grants_rev = record.grants_rev().expect("a gate with no grant file");
+    let grants_rev = record
+        .grants_rev()
+        .cloned()
+        .unwrap_or_else(|| STAND_IN_REV.parse().unwrap());
     let held = Held::in_test(
         record.family().clone(),
-        grants_rev.clone(),
+        grants_rev,
         Executor::Delegate,
         record.args().clone(),
         gate.parse().unwrap(),
