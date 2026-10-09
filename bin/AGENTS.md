@@ -1,19 +1,23 @@
 # bin
 
-Every script that runs on the host, plus the three shell libraries and the
-tests behind them. One house style across every file. The root `AGENTS.md`
-applies here too.
+Every script that runs on the host, plus the three shell libraries, one tool
+for a development machine and the tests behind them. One house style across
+every file. The root `AGENTS.md` applies here too.
 
 Bash only: `#!/usr/bin/env bash`. A script that may run on a development
 machine stays bash 3.2-clean: no associative arrays, no `mapfile`, no
 `${var,,}`, no `&>>`.
 
-One script is an exception: `journal-scan.py` is Python, with the first line
-`#!/usr/bin/env python3`. Reason: it reads JSON, and the standard library of
-Python has a JSON reader. It needs only the standard library, so the Python
-of the host starts it without the venv. It refuses a Python version that is
-older than the version in its header. The gate checks it with ruff and not
-with pyright: `pyrightconfig.json` names no path under `bin/`.
+Two scripts are exceptions. Each one is Python, with the first line
+`#!/usr/bin/env python3`. The gate checks each one with ruff and not with
+pyright: `pyrightconfig.json` names no path under `bin/`.
+
+- `journal-scan.py`. Reason: it reads JSON, and the standard library of
+  Python has a JSON reader. It needs only the standard library, so the Python
+  of the host starts it without the venv. It refuses a Python version that is
+  older than the version in its header.
+- `yaml-to-toml.py`. Reason: it reads YAML with PyYAML. The workspace venv
+  holds PyYAML, so start the script with `uv run`.
 
 ## Every script's header says who runs it
 
@@ -27,6 +31,7 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 | Operations | `creche-deploy`, `creche-handover`, `creche-handover-intake`, `rework-watchdog.sh`, `rework-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh` | Run unattended from units and timers. Fail loudly into the journal. |
 | Checks | `quality-gate.sh`, `rust-gate.sh`, `rust-coverage.sh`, `systemd-proof.sh` | Run from the hooks and from CI. `rust-coverage.sh` and `systemd-proof.sh` run in CI only. No unit runs them. They use `set -euo pipefail`. In `quality-gate.sh`, in `rust-gate.sh` and in `systemd-proof.sh`, the first failed check stops the run. `rust-coverage.sh` stops when its cargo step fails. It then reports each failure of its checks. |
 | Library | `lib/envfile.sh`, `lib/docsrule.sh`, `lib/rustrule.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
+| Tools | `yaml-to-toml.py` | Run by hand on a development machine, and from a test in CI. No unit runs a tool, and the host does not need one. A tool reads the files that its command names and changes no file. |
 | Tests | `tests/test_*.py`, `tests/test_*.sh` | pytest collects the `.py` files. The `.sh` files run by hand: `bash bin/tests/<name>.sh`. None needs a host. |
 
 ## Secrets
@@ -82,9 +87,10 @@ through a file or a health endpoint, and give a short in-VM command a
 | `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh` and from the `rust` job | The `[lints]` check, three text checks, `cargo fmt`, `cargo clippy` and `cargo deny` on the workspace under `rust/`. The text checks are the include check, the panic check and the public-field check. The script has a list of the crates that the public-field check does not read yet. `--tests` adds `cargo test`. `cargo deny` runs where `cargo-deny` is on `PATH`. |
 | `rust-coverage.sh` | CI and OPERATOR, from the `rust-coverage` job | The coverage rule of the workspace under `rust/`. Runs the tests with `cargo llvm-cov`, then checks the report against `rust/coverage-files.txt`. Fails when a region or a line of a listed file ran in no test. Takes each count from the segments of the report, and none from a summary. Prints one line with the counts of each crate, and one line for each failure. `--report FILE` checks a report of an earlier run and starts no cargo. `--branch` adds the branches, on a nightly toolchain. Needs `python3`, `cargo-llvm-cov` and the component `llvm-tools-preview`. Sources `lib/rustrule.sh` for the name of the Rust directory. `rust/AGENTS.md` has the rule. |
 | `systemd-proof.sh` | CI, from the `systemd-proof` job and from the scope of each workflow | Proves the restart rule of the daemon units on the systemd of the runner, with three transient units. Then gives each unit file under `systemd/` to `systemd-analyze verify`. `--unchanged FROM TO` says if a change needs no proof. |
+| `yaml-to-toml.py` | OPERATOR on a development machine, and CI | Converts one YAML file of the four kinds to TOML and prints the text. The four kinds are the family file, the server file, the component manifest and the roster. `--check` proves one converted pair: the values are equal, and the count of comments is equal. Status 1 means a pair that differs. Each other fault gives status 2. The header of the script holds the layout and each refusal. The script is temporary. Packet `toml-converter-leave` deletes the script when the tree holds no YAML file of the four kinds. |
 
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
-only after `sudo creche-deploy`.
+only after `sudo creche-deploy`. The host does not run `yaml-to-toml.py`.
 
 ## Quality gate
 
@@ -254,6 +260,7 @@ scope of `release.yml` ask it.
 |---|---|
 | `test_bin_modes.py` | Every tracked file under `bin/` with a `#!` line is mode 100755 in the index. `creche-deploy` copies modes as they are. |
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
+| `test_yaml_to_toml.py` | The layout that `yaml-to-toml.py` writes, each refusal, the proof of `--check` and each exit status. The test holds its own YAML texts. It also converts each tracked YAML file of the four kinds and checks each pair. A tree with no such file passes. The values of each TOML text equal what `yaml.safe_load` gives for the YAML text. |
 | `test_bin_hook_env.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
 | `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. The `cargo deny` step: it runs where `cargo-deny` is on `PATH`, a machine without it passes with one line, and CI without it fails. The panic check: each of the three places passes, and a file in another place fails. The public-field check: what fails, what passes, and each name of its list. Both checks: what test code is, and a file that ends inside a test module fails. |
@@ -287,3 +294,11 @@ scope of `release.yml` ask it.
 
 Delete a script in the same pass that retires what it drove. Its history
 stays in the git log.
+
+## Known gaps
+
+- `yaml-to-toml.py`, a null value in a list. TOML has no null. The script
+  drops a null value of a mapping key and names it on stderr. No rule says
+  what a null item of a list becomes, and no tracked file holds one. The
+  script refuses such a file, because a dropped item moves each later item.
+  A change costs one branch in the reader of a list.

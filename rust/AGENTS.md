@@ -1186,6 +1186,13 @@ rule 4).
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
+  - "The differential test". Two parts of the test of `token` in
+    `creche-runtime` do not hold the rule. The test walks no vector of
+    `runtime.bearer.chaperone`, and the constant `NO_PORT_HERE` names that
+    surface. The test gives the header of the vector `byte-1c-at-the-end`
+    to a private function, because no request holds that header. Packet
+    `attendance-one-bearer` gives each Python copy one rule for the
+    bearer. It deletes the constant and the private path.
 - This `CONTRACT-QUESTION` comment is open in `bin/rust-coverage.sh`: check
   2 of "The coverage rule" does not say what a listed file with no function
   is. No report holds such a file, so the script fails for it. With check 4,
@@ -1292,11 +1299,24 @@ rule 4).
   `crates/creche-runtime/src/log.rs`: no contract gives the form of a log
   line. The Python services write five forms. Three stamp the local time,
   and two have no time. The runtime writes one form, with the time in UTC.
-- This `CONTRACT-QUESTION` comment is open in
-  `crates/creche-runtime/src/token.rs`: two rules of a token file check no
-  mode, `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`. Contract 02 §3 rule 5
-  gives each token file a mode. The Python readers behind the two rules
-  check none, and the rules do the same.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-runtime/src/token.rs`:
+  1. `TokenRule::DOOR` and `TokenRule::NOT_EMPTY`, contract 02 §3 rule 5.
+     The contract gives each token file a mode. The Python readers behind
+     the two rules check none, and the rules do the same.
+  2. `FILE_CAP`, contract 02 §3 rule 7. The contract gives a token a least
+     count of bytes and no largest count. Each Python reader reads a token
+     file of each size. `token::read` refuses a file of more than 1 MiB.
+  3. `BEARER`, contract 02 §3 rule 4. The contract does not say if a service
+     takes the scheme `Bearer` in another case of letters. Three Python
+     copies take only `Bearer`. The chaperone takes each case.
+     `token::bearer_of` takes only `Bearer`, so `BearerTrim` has no value
+     for the rule of the chaperone. The test of `token` thus walks no vector
+     of `runtime.bearer.chaperone`.
+  4. `same_content`, contract 04 §7.3. The contract names three facts that
+     the reader of the delegate token file compares: the time of the last
+     change, the size and the inode. `token::CachedToken` also compares the
+     device.
 - This `CONTRACT-QUESTION` comment is open in
   `crates/creche-runtime/src/entropy.rs`: contract 02 §2 gives a mint of a
   ULID no rule for two times of the clock. One is a time before 1970. The
