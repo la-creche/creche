@@ -10,6 +10,8 @@ import shlex
 from pathlib import Path
 
 import pytest
+import yaml
+from proc_board import verify_words
 from proc_caregiver import serve_words
 from proc_services import (
     DEFAULT_ONLY_ENV,
@@ -27,6 +29,9 @@ from proc_tree import Tree
 
 #: `integration/proc/test_proc_table.py` is 3 deep in the checkout.
 UNIT_DIR = Path(__file__).resolve().parents[2] / "systemd"
+
+#: The manifest of the component whose verify hook has a row in the table.
+HOOK_MANIFEST = UNIT_DIR.parent / "noticeboard" / "component.yaml"
 EXEC_START = "ExecStart="
 CONTINUES = "\\"
 OVERRIDE_PREFIX = "CRECHE_PROC_"
@@ -62,6 +67,23 @@ def test_the_arguments_of_caregiver_are_those_of_its_unit() -> None:
     assert suite[0] == unit[0] == "serve"
     assert [flag for flag in suite_flags if flag in unit_flags] == unit_flags
     assert set(suite_flags) - set(unit_flags) == NOT_IN_THE_UNIT
+
+
+def test_the_verify_hook_is_what_its_manifest_runs() -> None:
+    """No unit runs the hook. The release executor runs `verify.command` of the manifest.
+
+    The program of the row is the program of that command. The suite gives
+    the hook the words of that command, with an env file of the test in the
+    place of the env file of the host.
+    """
+    command = _verify_command(HOOK_MANIFEST)
+    entry = SERVICES[Service.NOTICEBOARD_VERIFY]
+    env_file = Path(command[-1])
+
+    assert entry.units == ()
+    assert Path(command[0]).name == entry.program
+    assert entry.selector == ()
+    assert verify_words(env_file) == command[1:]
 
 
 def test_every_service_has_a_row_and_its_own_variable() -> None:
@@ -169,6 +191,13 @@ def _exec_start(unit: str) -> str:
             break
 
     return " ".join(parts)
+
+
+def _verify_command(manifest: Path) -> tuple[str, ...]:
+    """`verify.command` of one component manifest (contract 06 §4)."""
+    document = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+
+    return tuple(str(word) for word in document["verify"]["command"])
 
 
 def _program(path: Path) -> Path:
