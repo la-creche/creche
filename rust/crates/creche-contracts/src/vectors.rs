@@ -5,12 +5,16 @@
 //! uses this module. The module is test code: it stops the test on a file
 //! that it cannot read.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
+
+use crate::ids::Sha256Hex;
+use crate::json::{self, ByteCap};
 
 /// The version of the file format that this reader takes.
 const FORMAT: u64 = 1;
@@ -27,6 +31,14 @@ const DISAGREEMENTS_FILE: &str = "ids/disagreements.json";
 
 /// The `kind` of the index file.
 const INDEX_KIND: &str = "index";
+
+/// The size limit of the index for the strict reader: none. The index is a
+/// file of this repository.
+const INDEX_CAP: ByteCap = ByteCap::new(usize::MAX);
+
+/// The end of the name of each file under `vectors/data` that the generator
+/// reads.
+const JSON_SUFFIX: &str = ".json";
 
 /// The `kind` of the disagreements file.
 const DISAGREEMENTS_KIND: &str = "disagreements";
@@ -77,6 +89,9 @@ pub(crate) struct IndexRow {
 #[serde(deny_unknown_fields)]
 struct Index {
     format: u64,
+    /// The frozen files: the path of each one under `vectors/data`, and the
+    /// SHA-256 of its bytes. `vectors/README.md` says what a frozen file is.
+    frozen: BTreeMap<String, String>,
     kind: String,
     surfaces: Vec<IndexRow>,
 }
@@ -315,12 +330,52 @@ struct Disagreements {
 
 /// Every row of `vectors/data/index.json`, in the order of the file.
 pub(crate) fn index() -> Vec<IndexRow> {
-    let index: Index = read(INDEX_FILE);
+    index_of(&text_of(INDEX_FILE))
+}
+
+/// The rows of the index whose JSON text is `text`.
+///
+/// The function stops the test on a text that is no index of format 1, and
+/// on a map `frozen` in a form that the generator does not write. It also
+/// stops on a text that is not strict JSON, for example an index with two
+/// `frozen` maps. The generator refuses that index too. A vector file can
+/// nest deeper than a strict text, so `surface` does not call that reader.
+fn index_of(text: &str) -> Vec<IndexRow> {
+    let strict = match json::check(text.as_bytes(), INDEX_CAP) {
+        Ok(strict) => strict,
+        Err(error) => panic!("{INDEX_FILE}: the text is not strict JSON: {error}"),
+    };
+    // `StrictText::parse` drops the message of `serde`. The index holds no
+    // secret, and the message names the field.
+    let index: Index = parsed(INDEX_FILE, strict.as_str());
 
     assert_eq!(index.format, FORMAT, "{INDEX_FILE}: the format");
     assert_eq!(index.kind, INDEX_KIND, "{INDEX_FILE}: the kind");
+    check_frozen(&index.frozen);
 
     index.surfaces
+}
+
+/// Stops the test on a line of the map `frozen` in a form that the generator
+/// does not write. The reader of `creche-testkit` refuses the same lines, and
+/// `vectors/generate.py` does too.
+///
+/// A path names a file below `vectors/data` with a name that ends in
+/// `.json`. It has no part that is empty, `.` or `..`, and it is not the
+/// index. A digest is an [`Sha256Hex`]. The function compares no digest with
+/// a file: `vectors/tests` holds each digest.
+fn check_frozen(frozen: &BTreeMap<String, String>) {
+    for (path, digest) in frozen {
+        let names_only = path.split('/').all(|part| !matches!(part, "" | "." | ".."));
+
+        assert!(
+            path != INDEX_FILE && path.ends_with(JSON_SUFFIX) && names_only,
+            "{INDEX_FILE}: {path:?} is no path of a frozen file"
+        );
+        if let Err(error) = digest.parse::<Sha256Hex>() {
+            panic!("{INDEX_FILE}: the digest of the frozen file {path}: {error}");
+        }
+    }
 }
 
 /// The vector file of one surface. The index gives the path.
@@ -373,15 +428,25 @@ pub(crate) fn disagreements() -> Vec<Disagreement> {
 
 /// Reads one JSON file under `vectors/data`.
 fn read<T: DeserializeOwned>(path: &str) -> T {
+    parsed(path, &text_of(path))
+}
+
+/// The text of the file `path` under `vectors/data`.
+fn text_of(path: &str) -> String {
     let file = PathBuf::from(DATA_DIR).join(path);
-    let text = match fs::read_to_string(&file) {
+
+    match fs::read_to_string(&file) {
         Ok(text) => text,
         Err(error) => panic!("{}: {error}", file.display()),
-    };
+    }
+}
 
-    match serde_json::from_str(&text) {
+/// The value that `serde` reads from `text`, the JSON text of the file
+/// `path`.
+fn parsed<T: DeserializeOwned>(path: &str, text: &str) -> T {
+    match serde_json::from_str(text) {
         Ok(value) => value,
-        Err(error) => panic!("{}: {error}", file.display()),
+        Err(error) => panic!("{path}: {error}"),
     }
 }
 
@@ -619,6 +684,127 @@ mod tests {
         ] {
             assert_eq!(Marker::of(&value), None, "{value}");
         }
+    }
+
+    /// A text in the form of a digest of the index.
+    const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    /// The JSON text of an index with one member replaced.
+    fn index_with(key: &str, member: Value) -> String {
+        let mut index = json!({"format": 1, "frozen": {}, "kind": "index", "surfaces": []});
+        index[key] = member;
+
+        index.to_string()
+    }
+
+    /// The JSON text of an index with one frozen file.
+    fn index_frozen(path: &str, digest: &str) -> String {
+        index_with("frozen", json!({path: digest}))
+    }
+
+    #[test]
+    fn an_index_in_the_form_of_the_generator_reads() {
+        let row = json!({
+            "surface": "runtime.test",
+            "path": "runtime/test.json",
+            "entry": "package.entry",
+            "vectors": 0,
+            "accepted": 0,
+            "refused": 0,
+            "raised": 0,
+        });
+
+        assert_eq!(index_of(&index_with("surfaces", json!([row]))).len(), 1);
+
+        for path in ["old.json", "runtime/old.json", "runtime/index.json"] {
+            assert!(index_of(&index_frozen(path, DIGEST)).is_empty(), "{path}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: the format")]
+    fn an_index_of_another_format_stops_the_test() {
+        let _ = index_of(&index_with("format", json!(2)));
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: the kind")]
+    fn an_index_of_another_kind_stops_the_test() {
+        let _ = index_of(&index_with("kind", json!("registries")));
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: missing field `frozen`")]
+    fn an_index_with_no_map_of_frozen_files_stops_the_test() {
+        let _ = index_of(r#"{"format": 1, "kind": "index", "surfaces": []}"#);
+    }
+
+    /// The JSON text of an index with `frozen` as the text of its map of
+    /// frozen files. The `json!` macro writes no key two times.
+    fn index_text(frozen: &str) -> String {
+        format!(r#"{{"format": 1, {frozen}, "kind": "index", "surfaces": []}}"#)
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: the text is not strict JSON: duplicate_key at byte 28")]
+    fn an_index_with_two_maps_of_frozen_files_stops_the_test() {
+        let _ = index_of(&index_text(r#""frozen": {}, "frozen": {}"#));
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: the text is not strict JSON: duplicate_key at byte 103")]
+    fn a_frozen_path_with_two_lines_stops_the_test() {
+        let _ = index_of(&index_text(&format!(
+            r#""frozen": {{"a.json": "{DIGEST}", "a.json": "{DIGEST}"}}"#
+        )));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"runtime/../old.json\" is no path of a frozen file")]
+    fn a_frozen_path_that_goes_up_stops_the_test() {
+        let _ = index_of(&index_frozen("runtime/../old.json", DIGEST));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"runtime//old.json\" is no path of a frozen file")]
+    fn a_frozen_path_with_an_empty_part_stops_the_test() {
+        let _ = index_of(&index_frozen("runtime//old.json", DIGEST));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"runtime/./old.json\" is no path of a frozen file")]
+    fn a_frozen_path_with_a_dot_part_stops_the_test() {
+        let _ = index_of(&index_frozen("runtime/./old.json", DIGEST));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"index.json\" is no path of a frozen file")]
+    fn the_index_as_a_frozen_file_stops_the_test() {
+        let _ = index_of(&index_frozen("index.json", DIGEST));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"runtime/old.txt\" is no path of a frozen file")]
+    fn a_frozen_path_with_another_suffix_stops_the_test() {
+        let _ = index_of(&index_frozen("runtime/old.txt", DIGEST));
+    }
+
+    /// `ids::Sha256Hex` holds the grammar of a digest and its tests. The two
+    /// tests below hold that the reader gives each digest to that type.
+    #[test]
+    #[should_panic(
+        expected = "the digest of the frozen file runtime/old.json: byte 10 of a SHA-256 digest"
+    )]
+    fn a_frozen_digest_in_upper_case_stops_the_test() {
+        let _ = index_of(&index_frozen("runtime/old.json", &DIGEST.to_uppercase()));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "the digest of the frozen file runtime/old.json: a SHA-256 digest has 64 bytes"
+    )]
+    fn a_frozen_digest_of_63_digits_stops_the_test() {
+        let _ = index_of(&index_frozen("runtime/old.json", &"0".repeat(63)));
     }
 
     #[test]

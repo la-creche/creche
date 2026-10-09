@@ -447,9 +447,10 @@ fault, the event of a channel line and the arguments of a tool call.
 - Two `Opaque` values are equal when their texts are equal. `[1, 2]` and
   `[1,2]` are thus two values.
 
-Only `session` calls the writer today, and no module calls the reader.
-"Known gaps" names the packet that moves each module to the two. Until
-then, these parts stay:
+Only `session` calls the writer today. No module of a contract calls the
+reader yet. The two readers of `vectors/data` call `check` for the index
+file only. "Known gaps" names the packet that moves each module to the two.
+Until then, these parts stay:
 
 - Five older functions format a float: `float_text` of `channel`, of
   `status` and of `manifest`, `float_repr` of `grants`, and

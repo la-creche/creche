@@ -19,15 +19,17 @@ release replaces that surface.
    holds such a vector. Rule 5 of `vectors/AGENTS.md` states why.
 3. When a Rust release replaces a surface, the Rust code becomes the
    authority. Change the generator in the same pull request.
+4. When the Python origin of a surface leaves this repository, the file of
+   that surface becomes a frozen file. "A frozen file" below has the steps.
 
 ## Layout
 
 | Path | Holds |
 |---|---|
-| `generate.py` | the program that writes every file under `data/` |
+| `generate.py` | the program that writes each file under `data/` that is not frozen |
 | `core.py` | the file format: the normalizer and the renderer |
 | `surfaces/` | one module per group of surfaces, with the written inputs |
-| `data/index.json` | one row per surface: name, path, entry point, counts |
+| `data/index.json` | one row per surface: name, path, entry point, counts. One line per frozen file: path and digest |
 | `data/ids/` | the id grammars, one file per copy of a grammar |
 | `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
@@ -51,10 +53,13 @@ release replaces that surface.
 Run every command from the repository root.
 
 ```bash
-uv run python -m vectors.generate            # write vectors/data/
-uv run python -m vectors.generate --check    # write nothing, exit 1 when a file differs
-uv run python -m vectors.generate --counts   # print the vectors of each surface
+uv run python -m vectors.generate                    # write vectors/data/
+uv run python -m vectors.generate --check            # write nothing, exit 1 when a file differs
+uv run python -m vectors.generate --counts           # print the vectors of each surface
+uv run python -m vectors.generate --freeze <path>    # freeze a file that no group writes
 ```
+
+The generator takes one of the three flags, or no flag.
 
 The generator reads and writes only `*.json` files under `data/`. `--check`
 reports each other file there as `left over`. Remove that file. The generator
@@ -77,6 +82,118 @@ When a change to a product package moves behavior:
 2. Read the diff of `vectors/data/`. Each changed line is a change in what
    the platform accepts.
 3. Commit the changed vectors in the commit that changes the behavior.
+
+## A frozen file
+
+A frozen file is a file under `data/` whose Python origin left this
+repository. No group of the generator writes it again. The index holds the
+SHA-256 of its bytes in the map `frozen`. "The index file" below has the
+form of that map.
+
+- The generator does not write a frozen file and does not remove one.
+- The generator makes the index row of a frozen surface from its file.
+- `--check` compares the bytes of each frozen file with its digest. It
+  prints the line `frozen: <path>` for each one.
+- `--check` reports a frozen file with other bytes as `differs`. It reports
+  an absent frozen file as `missing`. Restore that file with git. Until
+  then, the generator writes no file.
+- `vectors/tests/test_vectors_current.py` fails for each of the two
+  problems.
+
+A pull request that removes a Python package freezes each data file of that
+package. Do these steps in this order:
+
+1. Remove each surface of the package from the generator: its module, or
+   its part of a shared module. Change no file under `data/`.
+2. Run `uv run python -m vectors.generate --check`. It reports each file
+   that no group writes as `left over`.
+3. Run `uv run python -m vectors.generate --freeze <path> <path>`. Name
+   each of those files by its path from `vectors/data/`.
+4. Run `--check` again. It exits with status 0. It prints one `frozen:`
+   line for each file.
+5. Commit the index and each other file under `data/` that the diff shows.
+   The map `frozen` holds one new line for each file. The diff holds no
+   frozen file.
+
+Between step 1 and step 3, do not run the generator with no flag. That run
+removes each JSON file that no group writes and that is not frozen. It
+prints the line `removed: <path>` for each one. If it removed a file of the
+package, restore the file with `git checkout -- vectors/data`.
+
+In step 3, name each file that step 2 reports. `--freeze` writes nothing
+while a JSON file that no group writes has no name in the call. It reports
+that file as `left over` and exits with status 1. It removes no file.
+
+`--freeze` writes each other file of the generator too. Read the diff of
+`vectors/data/`. A file that a group still writes can change in that run,
+for example `ids/disagreements.json`.
+
+`--freeze` refuses these files:
+
+- A file that a group writes.
+- A file that is frozen already. A frozen file thus keeps its first digest.
+- A file that is absent.
+- A file that is not ASCII, and a file that is no JSON object.
+- A file with an object that holds one key two times.
+- A file with a name that is not UTF-8.
+- A file with no `kind` that is not a vector file of format 1.
+
+The index is the one home of the map. The generator reads the map from the
+committed index and writes it again. It stops when `index.json` is absent
+or does not give the map. A directory with no JSON file has no frozen file.
+When `index.json` has a merge conflict:
+
+1. Take the `index.json` of the base branch.
+2. Run the generator. If your branch froze a file, give each such file to
+   `--freeze` in this run. A run with no flag removes those files.
+3. Run `--check`. It prints one `frozen:` line for each frozen file of the
+   two branches.
+
+An index that lacks a line of the map makes that file a `left over` file.
+Do not run the generator with no flag then. Do the three steps above.
+
+## The index file
+
+The index is one JSON object. It is ASCII. Its keys are in sorted order.
+
+| Key | Meaning |
+|---|---|
+| `format` | the version of this format. It is `1`. |
+| `frozen` | one line for each frozen file. The key is the path of the file from `data/`. The value is the SHA-256 of its bytes: 64 hexadecimal digits in lower case. The paths are in sorted order. The map is empty when no file is frozen. |
+| `kind` | `index` |
+| `surfaces` | one row for each surface. The built surfaces come first, in build order. The frozen surfaces follow, in the order of their paths. |
+
+One row has seven keys:
+
+| Key | Meaning |
+|---|---|
+| `surface` | the name of the surface |
+| `path` | the vector file, as a path from `data/` |
+| `entry` | the Python entry point that the generator called |
+| `vectors` | the count of the vectors in the file |
+| `accepted`, `refused`, `raised` | the count of the vectors with each result |
+
+A path of the map `frozen` has one form:
+
+- The parts of the path have `/` between them.
+- No part is empty, `.` or `..`.
+- The name of the file ends with `.json`.
+- The path is not `index.json`.
+- The path holds no lone surrogate. Python reads a file name that is not
+  UTF-8 as a text with one.
+
+A reader refuses an index in each of these cases:
+
+- The index has no `frozen` key, or it has a key outside the four keys.
+- The `format` is not the integer `1`, or the `kind` is not `index`.
+- An object of the index holds one key two times. A merge by hand can
+  leave two `frozen` maps.
+- A path or a digest has another form.
+
+The generator and the Rust readers of `creche-testkit` and of
+`creche-contracts` hold these rules. Each Rust reader first gives the index
+to the strict JSON reader of `creche-contracts`. `rust/AGENTS.md`, "JSON",
+has the rules of that reader.
 
 ## The vector file
 
