@@ -1037,6 +1037,7 @@ def _run_value(report: IndexReport, batches: list[int], store: Path, scope: Path
     files = _select(store, "SELECT path, hash FROM files ORDER BY path")
     chunks = _select(store, "SELECT id, path, ord, text FROM chunks ORDER BY id")
     vectors = _select(store, "SELECT id, embedding FROM chunks_emb ORDER BY id")
+    fts = _select(store, "SELECT rowid FROM chunks_fts ORDER BY rowid")
 
     return {
         "report": {
@@ -1055,6 +1056,7 @@ def _run_value(report: IndexReport, batches: list[int], store: Path, scope: Path
             for chunk_id, path, place, text in chunks
         ],
         "chunks_emb": [list(row) for row in vectors],
+        "chunks_fts": [rowid for (rowid,) in fts],
     }
 
 
@@ -1123,7 +1125,9 @@ def _index_surface(scratch: Path) -> Surface:
             f"each row of meta but {_UPDATED_AT}, as pairs in the order of the keys. files "
             "holds the path and the hash of each row, in the order of the paths as bytes. "
             "chunks holds id, path, ord and text of each row, in the order of the ids. "
-            "chunks_emb holds id and embedding of each row, in the order of the ids.",
+            "chunks_emb holds id and embedding of each row, in the order of the ids. "
+            "chunks_fts holds the rowid of each row, in the order of the rowids. It holds "
+            "no text of a row.",
             "A path of a row is a path from the scope. The store holds the full path of the "
             "scope before it. No vector holds a time of a row.",
         ),

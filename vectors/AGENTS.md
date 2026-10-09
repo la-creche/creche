@@ -318,8 +318,9 @@ directory is not a workspace package, so a change here does not change
   a row of `files`, and `updated_at` of `meta`.
 - `library.schema` holds no statement of `chunks_vec`, and none of a table
   that a virtual table makes for itself. `library.index_scope` holds no row
-  of `chunks_vec` and no row of `chunks_fts`. No reader outside the index
-  builder reads `chunks_vec`.
+  of `chunks_vec`. No reader outside the index builder reads `chunks_vec`.
+- `library.index_scope` holds the `rowid` of each row of `chunks_fts`. It
+  holds no text of such a row, and no vector holds the answer to a search.
 - `library.tei_url` holds only a URL and a LAN address that the strict
   config types of the Rust crate take. The entry point returns each text
   that is not empty. Four examples of a text with no vector:
