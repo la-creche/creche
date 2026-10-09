@@ -1582,9 +1582,11 @@ To make the fifth check on your machine, for example before a merge:
   writer then writes no `data`.
 - Each result type of `mcp` keeps a part of what MCP names. The doc comment
   of a type lists that part. The reader drops each other member, for
-  example the title and the output schema of a tool. `mcp::Tool` keeps the
-  input schema as an `Object`. MCP gives that schema the `type` `object`,
-  and the module does not check that member.
+  example the output schema of a tool. MCP gives a tool a title in two
+  places. `mcp::Annotations` keeps the title of the annotations.
+  `mcp::Tool` drops the title that is a member of the tool itself.
+- `mcp::Tool` keeps the input schema as an `Object`. MCP gives that schema
+  the `type` `object`, and the module does not check that member.
 - Two texts of "When the two results differ" wait for a confirmation of the
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`

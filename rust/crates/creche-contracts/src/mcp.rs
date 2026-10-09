@@ -96,11 +96,12 @@ const ERROR: &str = "error";
 const CODE: &str = "code";
 const MESSAGE: &str = "message";
 
-// The members of a result that an error names in more than one place.
+// The members of a result that the code names in more than one place.
 const PROTOCOL_VERSION: &str = "protocolVersion";
 const CAPABILITIES: &str = "capabilities";
 const INPUT_SCHEMA: &str = "inputSchema";
 const TOOLS: &str = "tools";
+const TITLE: &str = "title";
 const CONTENT: &str = "content";
 
 /// An error code that JSON-RPC 2.0 defines (section 5.1).
@@ -1007,26 +1008,117 @@ pub enum Hint {
     OpenWorld,
 }
 
-/// What a server says with each [`Hint`]. `None` is an absent hint.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Hints {
-    #[serde(skip_serializing_if = "Option::is_none")]
+impl Hint {
+    /// Each hint, in the order of the specification. The writer gives the
+    /// hints in this order.
+    const ALL: [Self; 4] = [
+        Self::ReadOnly,
+        Self::Destructive,
+        Self::Idempotent,
+        Self::OpenWorld,
+    ];
+
+    /// The name of the hint on the wire: its member of `annotations`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "readOnlyHint",
+            Self::Destructive => "destructiveHint",
+            Self::Idempotent => "idempotentHint",
+            Self::OpenWorld => "openWorldHint",
+        }
+    }
+}
+
+/// The `annotations` of a tool: what a server says about the tool.
+///
+/// MCP names five members: a title for a person, and the four hints. The
+/// type keeps each one, and the reader drops a member with another name.
+/// Each member is a claim of the server and no proof.
+///
+/// Annotations with no member are a value too. A tool that has them is not
+/// a tool with no annotations: [`Tool::annotations`] gives `Some` for the
+/// first tool and `None` for the second one. The writer gives each tool
+/// back as it came.
+///
+/// ```
+/// use creche_contracts::mcp::{Annotations, Hint};
+///
+/// let said = Annotations::new()
+///     .with_title("Delete a file".to_owned())
+///     .with_hint(Hint::Destructive)
+///     .with_hint_denied(Hint::ReadOnly);
+///
+/// assert_eq!(said.title(), Some("Delete a file"));
+/// assert_eq!(said.hint(Hint::Destructive), Some(true));
+/// assert_eq!(said.hint(Hint::ReadOnly), Some(false));
+/// assert_eq!(said.hint(Hint::OpenWorld), None);
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::mcp::{Annotations, Hint};
+///
+/// let said = Annotations::new().with_hint(Hint::Destructive);
+/// let other = Annotations { title: None, ..said };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Annotations {
+    title: Option<String>,
     read_only_hint: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     destructive_hint: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     idempotent_hint: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     open_world_hint: Option<bool>,
 }
 
-impl Hints {
-    fn is_empty(&self) -> bool {
-        *self == Self::default()
+impl Annotations {
+    /// Annotations with no member.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    fn of(&mut self, hint: Hint) -> &mut Option<bool> {
+    /// The same annotations with a title of the tool for a person.
+    #[must_use]
+    pub fn with_title(mut self, title: String) -> Self {
+        self.title = Some(title);
+        self
+    }
+
+    /// The same annotations with a hint that says `true`.
+    #[must_use]
+    pub fn with_hint(mut self, hint: Hint) -> Self {
+        *self.said_mut(hint) = Some(true);
+        self
+    }
+
+    /// The same annotations with a hint that says `false`.
+    #[must_use]
+    pub fn with_hint_denied(mut self, hint: Hint) -> Self {
+        *self.said_mut(hint) = Some(false);
+        self
+    }
+
+    /// The title of the tool for a person, if the server gives one.
+    #[must_use]
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    /// What the server says with this hint. `None` for an absent hint: the
+    /// doc of each [`Hint`] gives the value that MCP then assumes.
+    #[must_use]
+    pub const fn hint(&self, hint: Hint) -> Option<bool> {
+        match hint {
+            Hint::ReadOnly => self.read_only_hint,
+            Hint::Destructive => self.destructive_hint,
+            Hint::Idempotent => self.idempotent_hint,
+            Hint::OpenWorld => self.open_world_hint,
+        }
+    }
+
+    fn said_mut(&mut self, hint: Hint) -> &mut Option<bool> {
         match hint {
             Hint::ReadOnly => &mut self.read_only_hint,
             Hint::Destructive => &mut self.destructive_hint,
@@ -1034,21 +1126,65 @@ impl Hints {
             Hint::OpenWorld => &mut self.open_world_hint,
         }
     }
+
+    /// The annotations that the member of a tool holds.
+    fn of_raw(raw: RawAnnotations) -> Result<Self, WireError> {
+        Ok(Self {
+            title: optional(raw.title, TITLE)?,
+            read_only_hint: optional(raw.read_only_hint, Hint::ReadOnly.name())?,
+            destructive_hint: optional(raw.destructive_hint, Hint::Destructive.name())?,
+            idempotent_hint: optional(raw.idempotent_hint, Hint::Idempotent.name())?,
+            open_world_hint: optional(raw.open_world_hint, Hint::OpenWorld.name())?,
+        })
+    }
 }
+
+/// The members that the value holds: the title first, and then each hint
+/// with its name of [`Hint::name`]. Annotations with no member write an
+/// empty object.
+impl Serialize for Annotations {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut members = serializer.serialize_map(None)?;
+        if let Some(title) = &self.title {
+            members.serialize_entry(TITLE, title)?;
+        }
+        for hint in Hint::ALL {
+            if let Some(said) = self.hint(hint) {
+                members.serialize_entry(hint.name(), &said)?;
+            }
+        }
+
+        members.end()
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawAnnotations {
+    title: Slot<String>,
+    read_only_hint: Slot<bool>,
+    destructive_hint: Slot<bool>,
+    idempotent_hint: Slot<bool>,
+    open_world_hint: Slot<bool>,
+}
+
+impl Nested for RawAnnotations {}
 
 /// One tool of a `tools/list` result.
 ///
-/// The type keeps the name, the description, the input schema and the four
-/// hints. The reader drops each other member, for example the title and the
-/// output schema. The module reads no member of the schema: it checks only
-/// that the schema is an object.
+/// The type keeps the name, the description, the input schema and the
+/// annotations. The reader drops each other member, for example the output
+/// schema and the title that is a member of the tool itself. The module
+/// reads no member of the schema: it checks only that the schema is an
+/// object.
 ///
 /// ```
 /// use creche_contracts::json::ByteCap;
-/// use creche_contracts::mcp::{Hint, Object, Tool, WireError};
+/// use creche_contracts::mcp::{Annotations, Hint, Object, Tool, WireError};
 ///
 /// let schema = Object::read(br#"{"type":"object"}"#, ByteCap::new(64))?;
-/// let tool = Tool::new("add".to_owned(), schema).with_hint(Hint::ReadOnly);
+/// let said = Annotations::new().with_hint(Hint::ReadOnly);
+/// let tool = Tool::new("add".to_owned(), schema).with_annotations(said);
 ///
 /// assert_eq!(tool.name(), "add");
 /// assert_eq!(tool.hint(Hint::ReadOnly), Some(true));
@@ -1060,7 +1196,7 @@ impl Hints {
 ///
 /// ```compile_fail,E0451
 /// use creche_contracts::json::ByteCap;
-/// use creche_contracts::mcp::{Hint, Object, Tool, WireError};
+/// use creche_contracts::mcp::{Annotations, Hint, Object, Tool, WireError};
 ///
 /// let schema = Object::read(br#"{"type":"object"}"#, ByteCap::new(64)).unwrap();
 /// let tool = Tool::new("add".to_owned(), schema);
@@ -1073,19 +1209,19 @@ pub struct Tool {
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     input_schema: Object,
-    #[serde(skip_serializing_if = "Hints::is_empty")]
-    annotations: Hints,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    annotations: Option<Annotations>,
 }
 
 impl Tool {
-    /// A tool with no description and no hint.
+    /// A tool with no description and no annotations.
     #[must_use]
-    pub fn new(name: String, input_schema: Object) -> Self {
+    pub const fn new(name: String, input_schema: Object) -> Self {
         Self {
             name,
             description: None,
             input_schema,
-            annotations: Hints::default(),
+            annotations: None,
         }
     }
 
@@ -1096,17 +1232,11 @@ impl Tool {
         self
     }
 
-    /// The same tool with a hint that says `true`.
+    /// The same tool with these annotations. Annotations with no member
+    /// give the tool an `annotations` member that is an empty object.
     #[must_use]
-    pub fn with_hint(mut self, hint: Hint) -> Self {
-        *self.annotations.of(hint) = Some(true);
-        self
-    }
-
-    /// The same tool with a hint that says `false`.
-    #[must_use]
-    pub fn with_hint_denied(mut self, hint: Hint) -> Self {
-        *self.annotations.of(hint) = Some(false);
+    pub fn with_annotations(mut self, annotations: Annotations) -> Self {
+        self.annotations = Some(annotations);
         self
     }
 
@@ -1128,15 +1258,20 @@ impl Tool {
         &self.input_schema
     }
 
-    /// What the server says with this hint. `None` for an absent hint: the
-    /// doc of each [`Hint`] gives the value that MCP then assumes.
+    /// The annotations, if the tool has the member. `None` is a tool with
+    /// no `annotations` member, and annotations with no member are `Some`.
+    #[must_use]
+    pub const fn annotations(&self) -> Option<&Annotations> {
+        self.annotations.as_ref()
+    }
+
+    /// What the server says with this hint. `None` for an absent hint, and
+    /// for each hint of a tool with no annotations.
     #[must_use]
     pub const fn hint(&self, hint: Hint) -> Option<bool> {
-        match hint {
-            Hint::ReadOnly => self.annotations.read_only_hint,
-            Hint::Destructive => self.annotations.destructive_hint,
-            Hint::Idempotent => self.annotations.idempotent_hint,
-            Hint::OpenWorld => self.annotations.open_world_hint,
+        match &self.annotations {
+            Some(annotations) => annotations.hint(hint),
+            None => None,
         }
     }
 }
@@ -1144,18 +1279,13 @@ impl Tool {
 impl Tool {
     /// The tool that an item of `tools` holds.
     fn of_raw(raw: RawTool) -> Result<Self, WireError> {
-        let hints = optional(raw.annotations, "annotations")?.unwrap_or_default();
-
         Ok(Self {
             name: required(raw.name, "name")?,
             description: optional(raw.description, "description")?,
             input_schema: object(required(raw.input_schema, INPUT_SCHEMA)?, INPUT_SCHEMA)?,
-            annotations: Hints {
-                read_only_hint: optional(hints.read_only_hint, "readOnlyHint")?,
-                destructive_hint: optional(hints.destructive_hint, "destructiveHint")?,
-                idempotent_hint: optional(hints.idempotent_hint, "idempotentHint")?,
-                open_world_hint: optional(hints.open_world_hint, "openWorldHint")?,
-            },
+            annotations: optional(raw.annotations, "annotations")?
+                .map(Annotations::of_raw)
+                .transpose()?,
         })
     }
 }
@@ -1166,21 +1296,10 @@ struct RawTool {
     name: Slot<String>,
     description: Slot<String>,
     input_schema: Slot<Opaque>,
-    annotations: Slot<RawHints>,
+    annotations: Slot<RawAnnotations>,
 }
 
 impl Nested for RawTool {}
-
-#[derive(Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct RawHints {
-    read_only_hint: Slot<bool>,
-    destructive_hint: Slot<bool>,
-    idempotent_hint: Slot<bool>,
-    open_world_hint: Slot<bool>,
-}
-
-impl Nested for RawHints {}
 
 /// The result of `tools/list`: one page of the tools of a server.
 ///
@@ -2210,19 +2329,25 @@ mod tests {
             guided
         );
 
-        let hinted = tool("delete")
-            .with_description("Deletes a file.".to_owned())
+        let said = Annotations::new()
+            .with_title("Delete".to_owned())
             .with_hint(Hint::Destructive)
             .with_hint(Hint::Idempotent)
             .with_hint_denied(Hint::ReadOnly)
             .with_hint_denied(Hint::OpenWorld);
+        let hinted = tool("delete")
+            .with_description("Deletes a file.".to_owned())
+            .with_annotations(said.clone());
         assert_eq!(tool("add").description(), None);
+        assert_eq!(tool("add").annotations(), None);
+        assert_eq!(hinted.annotations(), Some(&said));
+        assert_eq!(said.title(), Some("Delete"));
         assert_eq!(hinted.hint(Hint::ReadOnly), Some(false));
         assert_eq!(hinted.hint(Hint::Destructive), Some(true));
         assert_eq!(hinted.hint(Hint::Idempotent), Some(true));
         assert_eq!(hinted.hint(Hint::OpenWorld), Some(false));
         let page = ListToolsResult::new(vec![tool("add"), hinted]);
-        let text = r#"{"tools":[{"name":"add","inputSchema":{"type":"object"}},{"name":"delete","description":"Deletes a file.","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false}}]}"#;
+        let text = r#"{"tools":[{"name":"add","inputSchema":{"type":"object"}},{"name":"delete","description":"Deletes a file.","inputSchema":{"type":"object"},"annotations":{"title":"Delete","readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false}}]}"#;
         assert_eq!(written(&page), text);
         assert_eq!(ListToolsResult::try_from(&object(text)).unwrap(), page);
         assert_eq!(page.next_cursor(), None);
@@ -2263,9 +2388,13 @@ mod tests {
                {"name":"b","inputSchema":{},"annotations":{"title":"B","laterHint":7}}]}"#,
         ))
         .unwrap();
+        let titled = Annotations::new().with_title("B".to_owned());
         assert_eq!(
             page.tools(),
-            [tool("a"), Tool::new("b".to_owned(), object("{}"))]
+            [
+                tool("a").with_annotations(Annotations::new()),
+                Tool::new("b".to_owned(), object("{}")).with_annotations(titled)
+            ]
         );
         let none = ListToolsResult::try_from(&object(r#"{"tools":[]}"#)).unwrap();
         assert_eq!(none, ListToolsResult::new(Vec::new()));
@@ -2279,6 +2408,120 @@ mod tests {
             assert_eq!(said, CallToolResult::new(Vec::new()), "{text}");
             assert_eq!(written(&said), r#"{"content":[]}"#, "{text}");
         }
+    }
+
+    /// Each hint, and the annotations that hold only that hint: one text
+    /// with the value `true` and one with the value `false`.
+    const ONE_HINT: [(Hint, &str, &str); 4] = [
+        (
+            Hint::ReadOnly,
+            r#"{"readOnlyHint":true}"#,
+            r#"{"readOnlyHint":false}"#,
+        ),
+        (
+            Hint::Destructive,
+            r#"{"destructiveHint":true}"#,
+            r#"{"destructiveHint":false}"#,
+        ),
+        (
+            Hint::Idempotent,
+            r#"{"idempotentHint":true}"#,
+            r#"{"idempotentHint":false}"#,
+        ),
+        (
+            Hint::OpenWorld,
+            r#"{"openWorldHint":true}"#,
+            r#"{"openWorldHint":false}"#,
+        ),
+    ];
+
+    /// The one tool of a page. `members` is the text after the schema of
+    /// that tool: nothing, or a comma and more members.
+    fn listed(members: &str) -> Tool {
+        let text = format!(r#"{{"tools":[{{"name":"a","inputSchema":{{}}{members}}}]}}"#);
+        let page = ListToolsResult::try_from(&object(&text)).unwrap();
+        let [tool] = page.tools() else {
+            panic!("{text} holds one tool");
+        };
+
+        tool.clone()
+    }
+
+    #[test]
+    fn each_hint_has_one_name_on_the_wire() {
+        for (hint, yes, no) in ONE_HINT {
+            let cases = [
+                (yes, true, Annotations::new().with_hint(hint)),
+                (no, false, Annotations::new().with_hint_denied(hint)),
+            ];
+            for (text, said, built) in cases {
+                // The writer gives the one name of the hint.
+                assert_eq!(written(&built), text);
+                assert!(text.contains(&format!("\"{}\"", hint.name())), "{text}");
+
+                // The reader gives the value to that hint and to no other.
+                let tool = listed(&format!(r#","annotations":{text}"#));
+                assert_eq!(tool.annotations(), Some(&built), "{text}");
+                for other in Hint::ALL {
+                    let expected = (other == hint).then_some(said);
+
+                    assert_eq!(tool.hint(other), expected, "{text}: {other:?}");
+                    assert_eq!(built.hint(other), expected, "{text}: {other:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn annotations_with_no_member_are_not_absent_annotations() {
+        let bare = listed("");
+        let empty = listed(r#","annotations":{}"#);
+
+        assert_eq!(bare.annotations(), None);
+        assert_eq!(empty.annotations(), Some(&Annotations::new()));
+        assert_ne!(bare, empty);
+        // Neither tool has a hint. Only `annotations` tells the two apart.
+        for hint in Hint::ALL {
+            assert_eq!((bare.hint(hint), empty.hint(hint)), (None, None));
+        }
+
+        // The writer gives each tool back as it came.
+        assert_eq!(written(&bare), r#"{"name":"a","inputSchema":{}}"#);
+        assert_eq!(
+            written(&empty),
+            r#"{"name":"a","inputSchema":{},"annotations":{}}"#
+        );
+        assert_eq!(
+            Tool::new("a".to_owned(), object("{}")).with_annotations(Annotations::new()),
+            empty
+        );
+    }
+
+    #[test]
+    fn the_title_of_the_annotations_survives_a_read_and_a_write() {
+        let alone = listed(r#","annotations":{"title":"Sum"}"#);
+        let said = Annotations::new().with_title("Sum".to_owned());
+        assert_eq!(alone.annotations(), Some(&said));
+        assert_eq!(said.title(), Some("Sum"));
+        assert_eq!(Annotations::new().title(), None);
+        assert_eq!(
+            written(&alone),
+            r#"{"name":"a","inputSchema":{},"annotations":{"title":"Sum"}}"#
+        );
+
+        // The reader takes the members in each order. The writer gives the
+        // title first.
+        let hinted = listed(r#","annotations":{"readOnlyHint":true,"title":""}"#);
+        let said = Annotations::new()
+            .with_title(String::new())
+            .with_hint(Hint::ReadOnly);
+        assert_eq!(hinted.annotations(), Some(&said));
+        assert_eq!(written(&said), r#"{"title":"","readOnlyHint":true}"#);
+
+        // The title that is a member of the tool itself is no title of the
+        // annotations.
+        let outside = listed(r#","title":"Sum","annotations":{}"#);
+        assert_eq!(outside.annotations(), Some(&Annotations::new()));
     }
 
     #[test]
@@ -2425,9 +2668,13 @@ mod tests {
         ),
     ];
 
-    /// The annotations of a tool with a hint that is not `true` or `false`,
-    /// and the hint that the reader names.
+    /// The annotations of a tool with one member that MCP does not permit,
+    /// and the member that the reader names. A hint is `true` or `false`,
+    /// and the title is a text.
     const NOT_HINTS: &[(&str, &str)] = &[
+        (r#"{"title":null}"#, "title"),
+        (r#"{"title":7}"#, "title"),
+        (r#"{"title":["T"]}"#, "title"),
         (r#"{"readOnlyHint":"true"}"#, "readOnlyHint"),
         (r#"{"readOnlyHint":1}"#, "readOnlyHint"),
         (r#"{"destructiveHint":null}"#, "destructiveHint"),
@@ -2500,7 +2747,7 @@ mod tests {
         assert!(reads_empty_table::<RawImplementation>());
         assert!(reads_empty_table::<RawListTools>());
         assert!(reads_empty_table::<RawTool>());
-        assert!(reads_empty_table::<RawHints>());
+        assert!(reads_empty_table::<RawAnnotations>());
         assert!(reads_empty_table::<RawCallTool>());
         assert!(reads_empty_table::<RawBlock>());
     }
