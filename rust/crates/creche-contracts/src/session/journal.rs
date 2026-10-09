@@ -345,9 +345,10 @@ impl TurnQueued {
 /// [`TurnStarted::status_stale`] gives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusAge {
-    /// The document was 90 seconds old or less.
+    /// The document was 90 seconds old or less at the start of the turn.
     Fresh,
-    /// The document was more than 90 seconds old.
+    /// The document was more than 90 seconds old at the start of the turn. A
+    /// document with no time that `attendance` can read is stale too.
     Stale,
 }
 
@@ -389,7 +390,8 @@ pub struct TurnStarted {
 
 impl TurnStarted {
     /// The body for a turn with this user text, in this sandbox, with this
-    /// limit. The turn has no persona digest.
+    /// limit. `status` says if the status document of the family was stale.
+    /// The turn has no persona digest.
     #[must_use]
     pub fn new(
         prompt: Prompt,
