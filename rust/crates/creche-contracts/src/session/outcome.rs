@@ -77,16 +77,69 @@ impl JobStatus {
 ///
 /// `approved`, `denied` and `timed_out` can sum to less than `requested`: a
 /// gate that ended with no decision is in `requested` only.
+///
+/// ```
+/// use creche_contracts::session::Approvals;
+///
+/// let approvals = Approvals::new(7, 3, 2, 1);
+/// assert_eq!(approvals.requested(), 7);
+/// assert_eq!(approvals.approved(), 3);
+/// assert_eq!(approvals.denied(), 2);
+/// assert_eq!(approvals.timed_out(), 1);
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::Approvals;
+///
+/// let approvals = Approvals { requested: 7, approved: 3, denied: 2, timed_out: 1 };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Approvals {
+    requested: u64,
+    approved: u64,
+    denied: u64,
+    timed_out: u64,
+}
+
+impl Approvals {
+    /// The four counts of one job, in the order of the contract: the gates
+    /// that opened, then the gates that the phone approved, the gates that it
+    /// denied and the gates with no decision in time.
+    #[must_use]
+    pub fn new(requested: u64, approved: u64, denied: u64, timed_out: u64) -> Self {
+        Self {
+            requested,
+            approved,
+            denied,
+            timed_out,
+        }
+    }
+
     /// The count of gates that opened.
-    pub requested: u64,
+    #[must_use]
+    pub fn requested(&self) -> u64 {
+        self.requested
+    }
+
     /// The count of gates that the phone approved.
-    pub approved: u64,
+    #[must_use]
+    pub fn approved(&self) -> u64 {
+        self.approved
+    }
+
     /// The count of gates that the phone denied, or that no phone saw.
-    pub denied: u64,
+    #[must_use]
+    pub fn denied(&self) -> u64 {
+        self.denied
+    }
+
     /// The count of gates with no phone decision in time.
-    pub timed_out: u64,
+    #[must_use]
+    pub fn timed_out(&self) -> u64 {
+        self.timed_out
+    }
 }
 
 /// What the turns of one job cost (contract 02 §13.1).
@@ -105,33 +158,109 @@ const ERROR_MAX_BYTES: usize = 4_096;
 
 const OUTCOME: &str = "an outcome record";
 
-/// The fields of an [`OutcomeRecord`], before the check.
+/// The fields of an [`OutcomeRecord`], before the check. Code builds a value
+/// by hand: [`RawOutcome::new`] takes each field that a record always has, and
+/// a `with_` method sets each other field.
+///
+/// ```
+/// use creche_contracts::session::RawOutcome;
+///
+/// fn failed(raw: RawOutcome, error: &str) -> RawOutcome {
+///     raw.with_error(error.to_owned())
+/// }
+/// ```
+///
+/// Code outside this module cannot name a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::RawOutcome;
+///
+/// fn failed(raw: RawOutcome, error: &str) -> RawOutcome {
+///     RawOutcome { error: Some(error.to_owned()), ..raw }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawOutcome {
-    /// The id of the record, and the name of its file.
-    pub id: Ulid,
-    /// The family of the job.
-    pub family: FamilyName,
-    /// The session of the job. `attendance` deleted it.
-    pub session: SessionId,
-    /// The firing that started the job.
-    pub trigger: Option<Trigger>,
-    /// When the first turn started.
-    pub started_at: Timestamp,
-    /// When the job ended.
-    pub ended_at: Timestamp,
-    /// How the job ended.
-    pub status: JobStatus,
-    /// The error text.
-    pub error: Option<String>,
-    /// The count of turns.
-    pub turns: u64,
-    /// How the gates resolved.
-    pub approvals: Approvals,
-    /// What the turns cost.
-    pub spend: Spend,
-    /// The sandbox that served the job.
-    pub sandbox: Option<SandboxName>,
+    id: Ulid,
+    family: FamilyName,
+    session: SessionId,
+    trigger: Option<Trigger>,
+    started_at: Timestamp,
+    ended_at: Timestamp,
+    status: JobStatus,
+    error: Option<String>,
+    turns: u64,
+    approvals: Approvals,
+    spend: Spend,
+    sandbox: Option<SandboxName>,
+}
+
+impl RawOutcome {
+    /// The fields of the record `id` for one job of `family`, with no
+    /// trigger, no error text and no sandbox.
+    ///
+    /// - `session` is the session of the job. `attendance` deleted it.
+    /// - `started_at` is the start of the first turn, and `ended_at` is the
+    ///   end of the job.
+    /// - `status` says how the job ended.
+    /// - `turns` is the count of turns.
+    /// - `approvals` says how the gates resolved.
+    /// - `spend` is what the turns cost.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "nine fields have no default: a default hides a fact that the writer did not give"
+    )]
+    #[must_use]
+    pub fn new(
+        id: Ulid,
+        family: FamilyName,
+        session: SessionId,
+        started_at: Timestamp,
+        ended_at: Timestamp,
+        status: JobStatus,
+        turns: u64,
+        approvals: Approvals,
+        spend: Spend,
+    ) -> Self {
+        Self {
+            id,
+            family,
+            session,
+            trigger: None,
+            started_at,
+            ended_at,
+            status,
+            error: None,
+            turns,
+            approvals,
+            spend,
+            sandbox: None,
+        }
+    }
+
+    /// The same fields with this firing as the start of the job.
+    #[must_use]
+    pub fn with_trigger(mut self, trigger: Trigger) -> Self {
+        self.trigger = Some(trigger);
+
+        self
+    }
+
+    /// The same fields with this error text.
+    #[must_use]
+    pub fn with_error(mut self, error: String) -> Self {
+        self.error = Some(error);
+
+        self
+    }
+
+    /// The same fields with this sandbox as the one that served the job.
+    #[must_use]
+    pub fn with_sandbox(mut self, sandbox: SandboxName) -> Self {
+        self.sandbox = Some(sandbox);
+
+        self
+    }
 }
 
 /// One finished autonomous job (contract 02 §13.1).
@@ -142,20 +271,19 @@ pub struct RawOutcome {
 /// ```
 /// use creche_contracts::session::{Approvals, JobStatus, OutcomeRecord, RawOutcome, Spend};
 ///
-/// let record = OutcomeRecord::try_from(RawOutcome {
-///     id: "01JBQ80M4F7S2YQ1VZK6W3TDEN".parse()?,
-///     family: "scrum-lead".parse()?,
-///     session: "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK".parse()?,
-///     trigger: None,
-///     started_at: "2026-10-06T06:00:01Z".parse()?,
-///     ended_at: "2026-10-06T06:05:12Z".parse()?,
-///     status: JobStatus::Ok,
-///     error: None,
-///     turns: 3,
-///     approvals: Approvals { requested: 0, approved: 0, denied: 0, timed_out: 0 },
-///     spend: Spend::Known(0.21),
-///     sandbox: Some("scrum-lead-s2".parse()?),
-/// })?;
+/// let raw = RawOutcome::new(
+///     "01JBQ80M4F7S2YQ1VZK6W3TDEN".parse()?,
+///     "scrum-lead".parse()?,
+///     "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK".parse()?,
+///     "2026-10-06T06:00:01Z".parse()?,
+///     "2026-10-06T06:05:12Z".parse()?,
+///     JobStatus::Ok,
+///     3,
+///     Approvals::new(0, 0, 0, 0),
+///     Spend::Known(0.21),
+/// )
+/// .with_sandbox("scrum-lead-s2".parse()?);
+/// let record = OutcomeRecord::try_from(raw)?;
 /// assert_eq!(record.status(), JobStatus::Ok);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -293,32 +421,28 @@ pub fn cut_error(error: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{Run, Step};
+    use crate::session::{Run, Step, TriggerKind};
 
     fn at(text: &str) -> Timestamp {
         text.parse().unwrap()
     }
 
+    fn raw_with(spend: Spend) -> RawOutcome {
+        RawOutcome::new(
+            "01JBQ80M4F7S2YQ1VZK6W3TDEN".parse().unwrap(),
+            "scrum-lead".parse().unwrap(),
+            "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK".parse().unwrap(),
+            at("2026-10-06T06:00:01Z"),
+            at("2026-10-06T06:05:12Z"),
+            JobStatus::Ok,
+            3,
+            Approvals::new(1, 1, 0, 0),
+            spend,
+        )
+    }
+
     fn raw() -> RawOutcome {
-        RawOutcome {
-            id: "01JBQ80M4F7S2YQ1VZK6W3TDEN".parse().unwrap(),
-            family: "scrum-lead".parse().unwrap(),
-            session: "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK".parse().unwrap(),
-            trigger: None,
-            started_at: at("2026-10-06T06:00:01Z"),
-            ended_at: at("2026-10-06T06:05:12Z"),
-            status: JobStatus::Ok,
-            error: None,
-            turns: 3,
-            approvals: Approvals {
-                requested: 1,
-                approved: 1,
-                denied: 0,
-                timed_out: 0,
-            },
-            spend: Spend::Known(0.21),
-            sandbox: None,
-        }
+        raw_with(Spend::Known(0.21))
     }
 
     #[test]
@@ -341,26 +465,41 @@ mod tests {
     }
 
     #[test]
+    fn the_counts_of_the_gates_keep_the_order_of_the_contract() {
+        let approvals = Approvals::new(7, 3, 2, 1);
+        let text = r#"{"requested":7,"approved":3,"denied":2,"timed_out":1}"#;
+
+        assert_eq!(serde_json::to_string(&approvals).unwrap(), text);
+        assert_eq!(serde_json::from_str::<Approvals>(text).unwrap(), approvals);
+    }
+
+    #[test]
+    fn each_optional_field_of_a_record_has_its_own_method() {
+        let trigger = Trigger::new(TriggerKind::Timer, None, None, vec![]).unwrap();
+        let record = raw()
+            .with_trigger(trigger)
+            .with_error("no answer".to_owned())
+            .with_sandbox("scrum-lead-s2".parse().unwrap());
+        let record = OutcomeRecord::try_from(record).unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&record.encode().unwrap()).unwrap();
+
+        assert_eq!(written["trigger"]["kind"], "timer");
+        assert_eq!(written["error"], "no answer");
+        assert_eq!(written["sandbox"], "scrum-lead-s2");
+    }
+
+    #[test]
     fn a_long_error_and_a_bad_cost_are_refused() {
-        let long = RawOutcome {
-            error: Some("e".repeat(ERROR_MAX_BYTES + 1)),
-            ..raw()
-        };
-        let at_the_cap = RawOutcome {
-            error: Some("e".repeat(ERROR_MAX_BYTES)),
-            ..raw()
-        };
+        let long = raw().with_error("e".repeat(ERROR_MAX_BYTES + 1));
+        let at_the_cap = raw().with_error("e".repeat(ERROR_MAX_BYTES));
 
         assert_eq!(OutcomeRecord::try_from(long).unwrap_err().field(), "error");
         assert!(OutcomeRecord::try_from(at_the_cap).is_ok());
         for usd in [f64::NAN, f64::INFINITY, -1.0] {
-            let bad = RawOutcome {
-                spend: Spend::Known(usd),
-                ..raw()
-            };
-
             assert_eq!(
-                OutcomeRecord::try_from(bad).unwrap_err().field(),
+                OutcomeRecord::try_from(raw_with(Spend::Known(usd)))
+                    .unwrap_err()
+                    .field(),
                 "spend_usd"
             );
         }
@@ -374,13 +513,7 @@ mod tests {
         assert_eq!(cut_error("short"), "short");
         assert_eq!(cut_error(&wide).len(), ERROR_MAX_BYTES);
         assert_eq!(cut_error(&odd).len(), ERROR_MAX_BYTES - 1);
-        assert!(
-            OutcomeRecord::try_from(RawOutcome {
-                error: Some(cut_error(&odd).to_owned()),
-                ..raw()
-            })
-            .is_ok()
-        );
+        assert!(OutcomeRecord::try_from(raw().with_error(cut_error(&odd).to_owned())).is_ok());
     }
 
     #[test]

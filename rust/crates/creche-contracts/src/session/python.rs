@@ -616,20 +616,26 @@ fn outcome_write(vector: &Vector, _: &Context) -> Did {
         None => Spend::Unknown(args["spend_reason"].as_str().unwrap().to_owned()),
     };
     let sandbox = Some(args["sandbox"].as_str().unwrap()).filter(|sandbox| !sandbox.is_empty());
-    let raw = RawOutcome {
-        id: args["id"].as_str().unwrap().parse().unwrap(),
-        family: args["family"].as_str().unwrap().parse().unwrap(),
-        session: args["session"].as_str().unwrap().parse().unwrap(),
-        trigger,
-        started_at: time(args["started_at"].as_str().unwrap()),
-        ended_at: time(args["ended_at"].as_str().unwrap()),
-        status: args["status"].as_str().unwrap().parse().unwrap(),
-        error: text(args, "error").map(str::to_owned),
-        turns: args["turns"].as_u64().unwrap(),
-        approvals: serde_json::from_value(args["approvals"].clone()).unwrap(),
+    let mut raw = RawOutcome::new(
+        args["id"].as_str().unwrap().parse().unwrap(),
+        args["family"].as_str().unwrap().parse().unwrap(),
+        args["session"].as_str().unwrap().parse().unwrap(),
+        time(args["started_at"].as_str().unwrap()),
+        time(args["ended_at"].as_str().unwrap()),
+        args["status"].as_str().unwrap().parse().unwrap(),
+        args["turns"].as_u64().unwrap(),
+        serde_json::from_value(args["approvals"].clone()).unwrap(),
         spend,
-        sandbox: sandbox.map(|sandbox| sandbox.parse::<SandboxName>().unwrap()),
-    };
+    );
+    if let Some(trigger) = trigger {
+        raw = raw.with_trigger(trigger);
+    }
+    if let Some(error) = text(args, "error") {
+        raw = raw.with_error(error.to_owned());
+    }
+    if let Some(sandbox) = sandbox {
+        raw = raw.with_sandbox(sandbox.parse::<SandboxName>().unwrap());
+    }
 
     written(OutcomeRecord::try_from(raw).unwrap().encode())
 }
