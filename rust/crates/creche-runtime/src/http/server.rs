@@ -1311,6 +1311,9 @@ fn limited<F: Future>(limit: Duration, closed: F) -> Option<tokio::time::Timeout
 ///   (`h11/_connection.py:69`). A listener here has the limits of `hyper`: a
 ///   head of 100 headers and of 417,792 bytes. It answers status 431 past a
 ///   limit.
+/// - `uvicorn` answers status 400 to a request of HTTP/1.1 with no `Host`
+///   header, and to a request with two (`h11/_events.py:112-119`). A
+///   listener here gives each one to the router.
 /// - `uvicorn` gives an app a header value with a control byte of ASCII, for
 ///   each such byte but NUL and white space (`h11/_abnf.py:55-56`). A
 ///   listener here takes only the tab: it answers status 400 to each other
@@ -2751,6 +2754,34 @@ mod tests {
                     assert!(body_of(&answer).is_empty(), "{value:?}");
                 }
                 assert_eq!(calls.load(Ordering::SeqCst), answered, "{value:?}");
+            }
+            assert_eq!(served.stop().await, Ok(Drained::Clean));
+        });
+    }
+
+    /// `h11` refuses a request of HTTP/1.1 with no `Host` header, and a
+    /// request with two (`h11/_events.py:112-119`). `uvicorn` then answers
+    /// status 400.
+    #[test]
+    fn a_request_with_no_host_header_or_with_two_goes_to_the_router() {
+        let table: [&[u8]; 3] = [
+            b"GET /healthz HTTP/1.1\r\nConnection: close\r\n\r\n",
+            b"GET /healthz HTTP/1.1\r\nHost: one\r\nHost: two\r\nConnection: close\r\n\r\n",
+            // `uvicorn` takes this one too: HTTP/1.0 has no such rule.
+            b"GET /healthz HTTP/1.0\r\n\r\n",
+        ];
+
+        runtime().block_on(async {
+            let root = TempRoot::new().unwrap();
+            let path = socket_in(&root);
+            let bound = bind(unix(&path, SocketDir::PrepareSetgid)).await.unwrap();
+            let served = Served::start(vec![bound], health_app(), LONG_DRAIN);
+
+            for request in table {
+                let answer = within(RawHttp::unix(&path, request)).await.unwrap();
+
+                assert_eq!(status_of(&answer), 200, "{request:?}");
+                assert_eq!(body_of(&answer), HEALTH_BODY.as_bytes(), "{request:?}");
             }
             assert_eq!(served.stop().await, Ok(Drained::Clean));
         });
