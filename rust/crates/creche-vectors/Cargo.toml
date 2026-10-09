@@ -1,0 +1,18 @@
+[package]
+name = "creche-vectors"
+description = "The reader of the vector files under vectors/data, for each differential test of the creche workspace"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# A leaf crate: each crate of the workspace can take it for its tests,
+# creche-contracts too. It thus names no crate that holds contract types. The
+# list below is closed (AGENTS.md of this crate, rule 1).
+# bin/tests/test_rust_workspace.py fails for each other dependency here.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
