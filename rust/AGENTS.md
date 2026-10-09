@@ -1561,13 +1561,13 @@ To make the fifth check on your machine, for example before a merge:
      not one of these: NUL, line feed, vertical tab, form feed and carriage
      return.
 - This `CONTRACT-QUESTION` comment is open in
-  `crates/creche-runtime/src/service.rs`: no contract and no rule names the
-  exit status of a program that the operating system gives no runtime or no
-  signal handler. Rule 17 of "The rules for a service" does not list that
-  cause. `service::run` returns status 71, `EX_OSERR` of `sysexits.h`, so
-  systemd starts the unit again. The same question is open for a listener
-  that does not bind. A Python service ends with status 3 there. Each Rust
-  service states that status in its own `main`.
+  `crates/creche-runtime/src/service.rs`. No contract and no rule names the
+  exit status of a program that gets no runtime or no signal handler from
+  the operating system. Rule 17 of "The rules for a service" does not list
+  that cause. `service::run` returns status 71, `EX_OSERR` of `sysexits.h`,
+  so systemd starts the unit again. The same question is open for a
+  listener that does not bind. A Python service ends with status 3 there.
+  Each Rust service states that status in its own `main`.
 - No check holds the rules of "The rules for a service", except a part of
   rule 2 and a part of rule 13. A service crate that breaks one of the
   other rules builds and passes the lint gate.

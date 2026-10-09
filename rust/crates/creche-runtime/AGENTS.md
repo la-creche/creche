@@ -359,12 +359,12 @@ reason. The packet that writes the three bodies obeys these rules:
 - No test of `http::client` makes a real connect wait, because no listener
   holds a connect open on each operating system. The test of
   `Phase::Connect` uses a private target that completes no connect.
-- This `CONTRACT-QUESTION` comment is open in `src/service.rs`: no contract
-  and no rule names the exit status of a program that the operating system
-  gives no runtime or no signal handler. `rust/AGENTS.md`, "The rules for a
-  service", rule 17 does not list that cause. `service::run` returns status
-  71, `EX_OSERR` of `sysexits.h`. A restart can repair the cause, so systemd
-  must start the unit again. A change costs one constant.
+- This `CONTRACT-QUESTION` comment is open in `src/service.rs`. No contract
+  and no rule names the exit status of a program that gets no runtime or no
+  signal handler from the operating system. `rust/AGENTS.md`, "The rules for
+  a service", rule 17 does not list that cause. `service::run` returns
+  status 71, `EX_OSERR` of `sysexits.h`. A restart can repair the cause, so
+  systemd must start the unit again. A change costs one constant.
 - The same question is open for a listener that does not bind. A Python
   service ends with status 3 there, which is the status of `uvicorn` for a
   start that failed. The first example of `src/service.rs` returns the
