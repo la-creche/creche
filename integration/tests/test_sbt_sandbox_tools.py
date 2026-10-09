@@ -36,8 +36,9 @@ HTTP_OK = 200
 #: shell. It is `vault-oracle`'s shape, and the one the fault was found on.
 GRANTED_BUILTINS = ["read", "grep", "find", "ls"]
 
-#: The other half, as `--exclude-tools` spells it.
-DENIED_BUILTINS = "bash,edit,write"
+#: The other half, as `--exclude-tools` spells it. `powershell` is in no
+#: grant, so each family denies it.
+DENIED_BUILTINS = "bash,powershell,edit,write"
 
 #: A `settings.json` a previous session could have left in its own store. Each
 #: key runs code at the next session start or redirects what it talks to.

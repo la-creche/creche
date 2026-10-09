@@ -4,6 +4,8 @@
 //! A raw query holds each parameter as the text of the URL, after the HTTP
 //! layer decoded it. A conversion that can fail makes the valid query.
 
+use creche_util::pytext;
+
 use super::error::{ApiError, ErrorCode};
 use super::fields::{Follow, PageLimit, TurnRef, TurnsWanted};
 use super::json::INT_DIGITS_MAX;
@@ -12,12 +14,6 @@ use crate::ids::FamilyName;
 
 fn bad(message: impl Into<String>) -> ApiError {
     ApiError::new(ErrorCode::BadRequest, message)
-}
-
-/// The white space of Python's `str`: the `White_Space` property of Unicode
-/// and the four information separators. `str.strip` drops it.
-fn is_python_space(character: char) -> bool {
-    character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
 }
 
 /// The white space that Python's `int` drops around a number: the white space
@@ -295,7 +291,7 @@ impl TryFrom<RawEventsQuery<'_>> for EventsQuery {
         let from_seq = u64::try_from(from_seq)
             .map_err(|_| bad(format!("from_seq is outside 0 to {}", u64::MAX)))?;
         let follow = raw.follow.map_or(Follow::KeepOpen, |follow| {
-            let word = follow.trim_matches(is_python_space);
+            let word = pytext::strip(follow);
             let stop = DO_NOT_FOLLOW.iter().any(|no| word.eq_ignore_ascii_case(no));
 
             if stop {

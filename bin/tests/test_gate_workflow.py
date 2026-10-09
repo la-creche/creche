@@ -38,6 +38,19 @@ The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the playpen first,
 and a test that skips is a failure there. A run in which every test skips
 because the bundle is missing would be green and would judge nothing.
+
+The `suites` job runs the two old suites of `integration/`, each one in a
+pytest run of its own. It has the setup of the `proc` job. Its last step reads
+the JUnit report of each run, and it fails for a test that skipped. Only
+`gate.yml` has the job: `ONLY_IN` names that one difference between the two
+files.
+
+The `systemd-proof` job runs `bin/systemd-proof.sh` for a change that touches
+a file of the proof: `systemd/` or the script.
+On any other code change it skips its one step after the checkout and is
+still a success. The job runs on the runner itself, with no container: only
+there is systemd process 1. The script answers which change needs the proof,
+and the scope runs the proof when the script gives no answer.
 """
 
 from __future__ import annotations
@@ -171,6 +184,40 @@ CACHE_KEY = "rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'ru
 #: version that its author removed, `cargo deny` reads only this copy.
 INDEX_COPY = "~/.cargo/registry/index"
 
+#: The job that proves the restart rule of the daemon units, and the whole
+#: of the proof: one script.
+SYSTEMD_JOB = "systemd-proof"
+SYSTEMD_RUN = "bin/systemd-proof.sh"
+
+#: The step of that job that a change with no file of the proof skips. As
+#: for `rust`, only the answer `false` skips it.
+ONLY_SYSTEMD = "needs.scope.outputs.systemd != 'false'"
+
+#: How the scope job hands that answer to the job.
+SYSTEMD_OUTPUT = "${{ steps.scope.outputs.systemd }}"
+
+#: The machine of the job: the hosted runner, with its own systemd.
+SYSTEMD_RUNNER = "ubuntu-latest"
+
+#: Each key of the job. One more key can move the proof off the systemd of
+#: the runner, for example `container`. One more key can also let a failed
+#: proof pass, for example `continue-on-error`.
+SYSTEMD_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "steps"}
+
+#: Each key of the step that runs the proof.
+SYSTEMD_STEP_KEYS = {"run", "if"}
+
+#: How each scope asks the script. The answer starts as `true`, and only a
+#: call that succeeds makes it `false`. A script that is absent, or that
+#: fails, thus runs the proof.
+SYSTEMD_ASKED = {
+    GATE_NAME: 'if bin/systemd-proof.sh --unchanged "$base" HEAD; then\n  systemd=false\nfi\n',
+    RELEASE_NAME: (
+        'if [[ "$passed" == 1 ]] && bin/systemd-proof.sh --unchanged "$BEFORE" "$GITHUB_SHA";'
+        " then\n  systemd=false\nfi\n"
+    ),
+}
+
 #: The whole test command of the `proc` job, as `integration/proc/AGENTS.md`
 #: gives it.
 PROC_RUN = "uv run pytest integration/proc -m slow"
@@ -187,6 +234,68 @@ PLAYPEN_DIR = "playpen"
 #: The build refuses to run without a LAN address (playpen/build.mjs). The
 #: example site's TEST-NET-1 address is the one the suite writes too.
 BUILD_ENV = {"AGENT_LAN_ADDRESS": "192.0.2.10"}
+
+#: The job that runs the two old suites of `integration/`.
+SUITES_JOB = "suites"
+
+#: The jobs that one workflow has and the other one lacks. This is the one
+#: named exception to "the release runs the jobs of the gate". The `suites`
+#: job is new to CI, and one red run of it in `release.yml` stops the tags of
+#: that merge. So the release gets the job after it passed 20 runs of the
+#: merge queue in a row. The pull request that adds the job to `release.yml`
+#: empties this table.
+ONLY_IN: dict[str, set[str]] = {GATE_NAME: {SUITES_JOB}, RELEASE_NAME: set()}
+
+#: The whole test command of each suite, as `integration/AGENTS.md` gives it,
+#: by the name of its report. The job runs each command as it is, in a step of
+#: its own.
+SUITE_RUNS = {
+    "tests": "uv run pytest integration/tests -m slow",
+    "tests_manager": "uv run pytest integration/tests_manager -m slow",
+}
+
+#: Where the runs of the job write their JUnit reports, and the option that
+#: names one report. The option travels in a variable, so the command stays
+#: as it is.
+REPORT_DIR = "${{ runner.temp }}/suites"
+REPORT_OPTION = "--junitxml="
+REPORT_VARIABLE = "PYTEST_ADDOPTS"
+
+#: The last step of the job, and the variable that gives it the reports. These
+#: suites read no switch that makes a skip a failure, so this step reads the
+#: report of each run.
+NO_SKIP_STEP = "no test skipped"
+NO_SKIP_KEYS = {"name", "shell", "env", "run"}
+NO_SKIP_SHELL = "python3 {0}"
+REPORTS_VARIABLE = "REPORTS"
+
+#: Each key of the job. One more key can change what a failure of the job
+#: does, for example `continue-on-error`.
+SUITES_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "steps"}
+
+#: The time limit of the job in minutes: the limit of the `proc` job.
+SUITES_MINUTES = 20
+
+#: One small test file for each kind of pytest run that the last step judges.
+SMALL_RUNS = {
+    "ran": "def test_one():\n    pass\n",
+    "one_skipped": (
+        "import pytest\n\n\n"
+        "def test_one():\n    pass\n\n\n"
+        "def test_two():\n    pytest.skip('the bundle is absent')\n"
+    ),
+    "each_skipped": (
+        "import pytest\n\n"
+        "pytestmark = pytest.mark.skipif(True, reason='the bundle is absent')\n\n\n"
+        "def test_one():\n    pass\n\n\n"
+        "def test_two():\n    pass\n"
+    ),
+    "no_test": "ONE = 1\n",
+}
+
+#: A report that no run wrote, and a report that is no XML text.
+ABSENT_REPORT = "absent"
+BROKEN_REPORT = "broken"
 
 #: The steps that give a job node and pnpm, by the start of `uses`.
 NODE_ACTIONS = ("pnpm/action-setup@", "actions/setup-node@")
@@ -322,7 +431,7 @@ def test_the_docs_scope_runs_no_shard_no_playpen_and_no_rust(
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
     only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
 
-    assert only_code == {"tests", "playpen", "proc", "rust"}
+    assert only_code == {"tests", "playpen", "proc", "rust", SYSTEMD_JOB} | ONLY_IN[last]
     assert {name for name, rule in by_scope.items() if rule is None} == {"scope", "lint"}
 
 
@@ -336,11 +445,21 @@ def test_lint_runs_the_docs_tests_on_a_docs_change_and_no_test_beside_the_shards
 
 
 def test_the_release_runs_the_gates_test_jobs() -> None:
-    """A change to one file's shards, playpen steps, process suite or Rust
-    steps that misses the other would let a merge pass a release its PR could
-    not, or the reverse."""
-    for name in ("tests", "playpen", "proc", "rust"):
+    """A change to one file's shards, playpen steps, process suite, Rust
+    steps or systemd proof that misses the other would let a merge pass a
+    release its PR could not, or the reverse."""
+    for name in ("tests", "playpen", "proc", "rust", SYSTEMD_JOB):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
+
+
+def test_the_two_workflows_differ_only_by_the_jobs_of_the_exception() -> None:
+    """`ONLY_IN` is the whole difference. A job that enters one file alone
+    fails here, and so does a job of the table that both files have."""
+    gate = set(JOBS) - {GATE_NAME}
+    release = set(RELEASE_JOBS) - {RELEASE_NAME}
+
+    assert gate - release == ONLY_IN[GATE_NAME]
+    assert release - gate == ONLY_IN[RELEASE_NAME]
 
 
 def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
@@ -400,6 +519,162 @@ def test_the_proc_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: st
     """A teardown waits for each process group. A fault in the harness can
     cost every test that wait, and a job with no limit has six hours."""
     assert 0 < jobs["proc"]["timeout-minutes"] <= 30
+
+
+def _report_of(name: str) -> str:
+    """The path of the JUnit report of one suite, as the workflow spells it."""
+    return f"{REPORT_DIR}/{name}.xml"
+
+
+def _setup_of(job: dict[str, Any], run: str) -> list[dict[str, Any]]:
+    """The steps of a job before the step whose command is `run`."""
+    runs = [step.get("run") for step in job["steps"]]
+
+    return job["steps"][: runs.index(run)]
+
+
+def _suite_steps() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The steps of the `suites` job after its setup: one for each suite, and
+    the last one."""
+    suites = JOBS[SUITES_JOB]
+    first = next(iter(SUITE_RUNS.values()))
+    *runs, last = suites["steps"][len(_setup_of(suites, first)) :]
+
+    return runs, last
+
+
+def test_the_suites_job_has_the_setup_of_the_proc_job() -> None:
+    """Each step before the first suite is a step of the `proc` job, in the
+    same order: the checkout, node and pnpm, the build of the playpen, then
+    the venv. The two jobs then judge the bundle of one build command."""
+    suites = JOBS[SUITES_JOB]
+    setup = _setup_of(suites, next(iter(SUITE_RUNS.values())))
+
+    assert set(suites) == SUITES_KEYS
+    assert suites["needs"] == "scope"
+    assert suites["if"] == ONLY_CODE
+    assert suites["runs-on"] == JOBS["proc"]["runs-on"]
+    assert setup == _setup_of(JOBS["proc"], PROC_RUN)
+    assert [step.get("uses") or step["run"] for step in setup][-2:] == [PLAYPEN_BUILD, UV_SYNC]
+
+
+def test_the_suites_job_runs_each_suite_in_a_pytest_run_of_its_own() -> None:
+    """After the setup the job has one step for each suite, then the last
+    step. A suite step holds the whole command of `integration/AGENTS.md`,
+    with no path of one test and no `-k`. Its one other key is the variable
+    that names its report."""
+    runs, last = _suite_steps()
+
+    assert len(runs) == len(SUITE_RUNS)
+    for step, (name, run) in zip(runs, SUITE_RUNS.items(), strict=True):
+        assert step == {"run": run, "env": {REPORT_VARIABLE: REPORT_OPTION + _report_of(name)}}
+    assert last["name"] == NO_SKIP_STEP
+
+
+def test_the_last_step_of_the_suites_job_reads_the_report_of_each_suite() -> None:
+    """The step gets one path for each suite, on a line of its own. A path
+    that differs from the path of a run would judge a report that no run
+    wrote. No `if` and no `continue-on-error` can hold the step back."""
+    _, last = _suite_steps()
+
+    assert set(last) == NO_SKIP_KEYS
+    assert last["shell"] == NO_SKIP_SHELL
+    assert last["env"] == {REPORTS_VARIABLE: "\n".join(_report_of(name) for name in SUITE_RUNS)}
+
+
+def test_the_suites_job_has_the_time_limit_of_the_proc_job() -> None:
+    """The stack of a test waits for each listener and for each child at its
+    teardown. A fault there can cost each test that wait."""
+    assert JOBS[SUITES_JOB]["timeout-minutes"] == SUITES_MINUTES
+    assert JOBS["proc"]["timeout-minutes"] == SUITES_MINUTES
+
+
+@pytest.fixture(scope="module")
+def reports(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """A JUnit report for each kind of run in `SMALL_RUNS`, from the pytest of
+    this workspace, plus the two reports that are not one. The last step must
+    read the form that this pytest writes."""
+    root = tmp_path_factory.mktemp("reports")
+    env = {name: value for name, value in os.environ.items() if name != REPORT_VARIABLE}
+    found = {ABSENT_REPORT: root / "absent.xml", BROKEN_REPORT: root / "broken.xml"}
+    found[BROKEN_REPORT].write_text("<testsuites>", encoding="utf-8")
+
+    for name, body in SMALL_RUNS.items():
+        home = root / name
+        home.mkdir()
+        (home / "test_small.py").write_text(body, encoding="utf-8")
+        found[name] = root / f"{name}.xml"
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "no:cacheprovider",
+                f"--rootdir={home}",
+                f"--confcutdir={home}",
+                f"{REPORT_OPTION}{found[name]}",
+                "test_small.py",
+            ],
+            cwd=home,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert found[name].is_file(), f"the run `{name}` wrote no report"
+
+    return found
+
+
+def _no_skip(paths: list[Path]) -> subprocess.CompletedProcess[str]:
+    """Runs the last step of the `suites` job over `paths`."""
+    _, last = _suite_steps()
+
+    return subprocess.run(
+        [sys.executable, "-c", last["run"]],
+        env={REPORTS_VARIABLE: "\n".join(str(path) for path in paths)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+#: (the report of each suite, whether the last step is green)
+NO_SKIP_VERDICTS: list[tuple[list[str], bool]] = [
+    (["ran", "ran"], True),
+    # One test that skips is red, in each of the two places.
+    (["ran", "one_skipped"], False),
+    (["one_skipped", "ran"], False),
+    # A suite in which each test skips is the run that judged nothing.
+    (["ran", "each_skipped"], False),
+    (["ran", "no_test"], False),
+    # A suite with no report did not run, or it wrote to another path.
+    (["ran", ABSENT_REPORT], False),
+    (["ran", BROKEN_REPORT], False),
+    ([], False),
+]
+
+
+@pytest.mark.parametrize(("kinds", "green"), NO_SKIP_VERDICTS, ids=str)
+def test_the_suites_job_is_green_only_when_no_test_skipped(
+    reports: dict[str, Path], kinds: list[str], green: bool
+) -> None:
+    done = _no_skip([reports[kind] for kind in kinds])
+
+    assert (done.returncode == 0) == green, done.stdout + done.stderr
+
+
+def test_the_last_step_prints_the_counts_of_each_suite(reports: dict[str, Path]) -> None:
+    """The log of a run shows how many tests ran and how many skipped, for
+    each suite. A reader counts the green runs of the job from those lines."""
+    done = _no_skip([reports["ran"], reports["one_skipped"], reports["each_skipped"]])
+
+    assert "ran: 1 of 1 tests ran, 0 skipped" in done.stdout
+    assert "one_skipped: 1 of 2 tests ran, 1 skipped" in done.stdout
+    assert "each_skipped: 0 of 2 tests ran, 2 skipped" in done.stdout
+    assert "::error::one_skipped: 1 of 2 tests skipped" in done.stdout
+    assert "::error::each_skipped: the suite ran no test" in done.stdout
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -493,6 +768,71 @@ def test_the_release_skips_rust_only_over_a_commit_whose_run_passed() -> None:
     assert "rust=true\n" in step["run"]
     assert 'if [[ "$passed" == 1 ]] && ! rust_touched "$BEFORE" "$GITHUB_SHA"; then' in step["run"]
     assert 'echo "rust=$rust" >> "$GITHUB_OUTPUT"' in step["run"]
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_a_change_outside_systemd_skips_the_proof_step_and_not_the_job(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """As for `rust`: a job skipped as a whole on a code change is red in
+    the verdict. So the job runs, and each step after the checkout carries
+    the rule."""
+    checkout, *steps = jobs[SYSTEMD_JOB]["steps"]
+
+    assert jobs["scope"]["outputs"]["systemd"] == SYSTEMD_OUTPUT
+    assert jobs[SYSTEMD_JOB]["needs"] == "scope"
+    assert jobs[SYSTEMD_JOB]["if"] == ONLY_CODE
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert "if" not in checkout
+    assert steps, "the systemd-proof job has no step but the checkout"
+    for step in steps:
+        assert step.get("if") == ONLY_SYSTEMD, f"{step.get('name') or step.get('run')} always runs"
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_systemd_job_runs_the_proof_on_the_runner_itself(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """One copy of the proof: `bin/systemd-proof.sh`. The job has no
+    container, because a container has no systemd as process 1. The test
+    holds each key of the job and each key of the step."""
+    job = jobs[SYSTEMD_JOB]
+    _checkout, proof = job["steps"]
+
+    assert set(job) == SYSTEMD_KEYS
+    assert job["runs-on"] == SYSTEMD_RUNNER
+    assert 0 < job["timeout-minutes"] <= 15
+    assert set(proof) == SYSTEMD_STEP_KEYS
+    assert proof["run"] == SYSTEMD_RUN
+    assert (REPO / SYSTEMD_RUN).is_file()
+
+
+def _scope_run(name: str) -> str:
+    """The script of the step that answers the scope of a workflow."""
+    if name == GATE_NAME:
+        (step,) = SCOPE_ACTION["runs"]["steps"]
+    else:
+        (step,) = [one for one in RELEASE_JOBS["scope"]["steps"] if one.get("id") == "scope"]
+
+    return step["run"]
+
+
+@pytest.mark.parametrize("name", BY_NAME)
+def test_a_scope_skips_the_proof_only_when_the_script_says_unchanged(name: str) -> None:
+    """The release also asks for a commit whose own run passed, as it does
+    for `rust`: a push never skips the proof over a tree whose proof failed,
+    or is still in, its run."""
+    run = _scope_run(name)
+
+    assert run.count("systemd=true\n") == 1
+    assert run.count("systemd=false\n") == 1
+    assert SYSTEMD_ASKED[name] in run
+    assert run.index("systemd=true\n") < run.index(SYSTEMD_ASKED[name])
+    assert 'echo "systemd=$systemd" >> "$GITHUB_OUTPUT"' in run
+
+
+def test_the_scope_action_gives_the_systemd_answer_as_an_output() -> None:
+    assert SCOPE_ACTION["outputs"]["systemd"]["value"] == SYSTEMD_OUTPUT
 
 
 def test_the_tag_step_runs_only_after_the_verdict() -> None:
@@ -592,11 +932,17 @@ def test_a_shard_outside_one_to_n_is_refused(text: str) -> None:
         _root_conftest().parse_shard(text)
 
 
-def _needs(scope: str | None, results: dict[str, str]) -> str:
-    """`toJSON(needs)` as the last job sees it: every job a success but for
-    the ones `results` names. Both workflows need the same six jobs."""
-    names = sorted(set(JOBS) - {GATE_NAME})
-    assert names == sorted(set(RELEASE_JOBS) - {RELEASE_NAME})
+def _needs(
+    scope: str | None,
+    results: dict[str, str],
+    jobs: dict[str, dict[str, Any]] = JOBS,
+    last: str = GATE_NAME,
+) -> str:
+    """`toJSON(needs)` as the last job of a workflow sees it: every job a
+    success but for the ones `results` names. The gate needs each job of the
+    release and the jobs of `ONLY_IN`. A name in `results` that the workflow
+    lacks is left out."""
+    names = sorted(set(jobs) - {last})
     needs = {name: {"result": results.get(name, "success"), "outputs": {}} for name in names}
     if scope is not None:
         needs["scope"]["outputs"] = {"scope": scope}
@@ -605,7 +951,14 @@ def _needs(scope: str | None, results: dict[str, str]) -> str:
 
 
 #: What a docs PR skips. A code PR skips nothing.
-DOCS = {"tests": "skipped", "playpen": "skipped", "proc": "skipped", "rust": "skipped"}
+DOCS = {
+    "tests": "skipped",
+    "playpen": "skipped",
+    "proc": "skipped",
+    SUITES_JOB: "skipped",
+    "rust": "skipped",
+    SYSTEMD_JOB: "skipped",
+}
 
 #: (what the jobs did, whether `gate` is green)
 VERDICTS = [
@@ -616,6 +969,8 @@ VERDICTS = [
     (_needs("code", {"playpen": "cancelled"}), False),
     (_needs("code", {"rust": "failure"}), False),
     (_needs("code", {"proc": "failure"}), False),
+    (_needs("code", {SYSTEMD_JOB: "failure"}), False),
+    (_needs("code", {SYSTEMD_JOB: "cancelled"}), False),
     (_needs("code", {"lint": "failure"}), False),
     (_needs("docs", DOCS | {"lint": "failure"}), False),
     # A suite that did not run on a code PR is red, not skipped.
@@ -627,9 +982,23 @@ VERDICTS = [
     # The process suite is in no shard. A code PR on which it did not run
     # is red.
     (_needs("code", {"proc": "skipped"}), False),
+    # The two old suites of integration/ are in no shard either.
+    (_needs("code", {SUITES_JOB: "failure"}), False),
+    (_needs("code", {SUITES_JOB: "skipped"}), False),
+    # The systemd proof runs on every code PR, as the Rust checks do. The
+    # job skips its own step when the PR touches no file of the proof.
+    (_needs("code", {SYSTEMD_JOB: "skipped"}), False),
     # A job that ran on a docs PR is not what the scope asks for.
     (_needs("docs", DOCS | {"rust": "success"}), False),
     (_needs("docs", DOCS | {"proc": "success"}), False),
+    (_needs("docs", DOCS | {SUITES_JOB: "success"}), False),
+    (_needs("docs", DOCS | {SYSTEMD_JOB: "success"}), False),
+    # The release has no `suites` job yet (`ONLY_IN`), and its verdict asks
+    # for none.
+    (_needs("code", {}, RELEASE_JOBS, RELEASE_NAME), True),
+    (_needs("docs", DOCS, RELEASE_JOBS, RELEASE_NAME), True),
+    (_needs("code", {"proc": "failure"}, RELEASE_JOBS, RELEASE_NAME), False),
+    (_needs("docs", DOCS | {"proc": "success"}, RELEASE_JOBS, RELEASE_NAME), False),
     # No scope: the scope job failed and everything behind it was skipped.
     (_needs(None, DOCS | {"scope": "failure"}), False),
 ]
@@ -653,29 +1022,46 @@ def test_the_verdict_is_green_only_when_every_job_its_scope_asks_for_passed(
     assert (done.returncode == 0) == green, done.stdout + done.stderr
 
 
-#: What the scope action answers for a change, as (docs or code, rust).
+#: What the scope action answers for a change, as (docs or code, rust,
+#: systemd).
 SCOPES = [
-    (["chaperone/src/chaperone/app.py"], ("code", "false")),
-    (["rust/crates/one/src/lib.rs"], ("code", "true")),
-    (["chaperone/src/chaperone/app.py", "rust/Cargo.lock"], ("code", "true")),
-    (["docs/later.md"], ("docs", "false")),
+    (["chaperone/src/chaperone/app.py"], ("code", "false", "false")),
+    (["rust/crates/one/src/lib.rs"], ("code", "true", "false")),
+    (["chaperone/src/chaperone/app.py", "rust/Cargo.lock"], ("code", "true", "false")),
+    (["docs/later.md"], ("docs", "false", "false")),
     # The `rust` job is left out of a docs PR, whatever this answer is.
-    (["rust/AGENTS.md"], ("docs", "true")),
+    (["rust/AGENTS.md"], ("docs", "true", "false")),
     # A file of the Rust checks themselves. The tests of the gate use a fake
     # cargo, so only this run proves the change with the real one.
-    (["bin/rust-gate.sh"], ("code", "true")),
-    (["bin/lib/rustrule.sh"], ("code", "true")),
-    ([".github/workflows/gate.yml"], ("code", "true")),
-    ([".github/workflows/release.yml"], ("code", "true")),
-    ([".github/actions/scope/action.yml"], ("code", "true")),
+    (["bin/rust-gate.sh"], ("code", "true", "false")),
+    (["bin/lib/rustrule.sh"], ("code", "true", "false")),
+    # The three CI files are files of the Rust checks. They are no files of
+    # the systemd proof: the tests of this file hold the `systemd-proof` job.
+    ([".github/workflows/gate.yml"], ("code", "true", "false")),
+    ([".github/workflows/release.yml"], ("code", "true", "false")),
+    ([".github/actions/scope/action.yml"], ("code", "true", "false")),
     # The Rust tests read vectors/data, so a vector that moves runs them.
-    (["vectors/data/index.json"], ("code", "true")),
-    (["vectors/generate.py"], ("code", "true")),
-    (["chaperone/src/chaperone/app.py", "vectors/data/ids/family.json"], ("code", "true")),
-    (["vectors/README.md"], ("docs", "true")),
+    (["vectors/data/index.json"], ("code", "true", "false")),
+    (["vectors/generate.py"], ("code", "true", "false")),
+    (["chaperone/src/chaperone/app.py", "vectors/data/ids/family.json"], ("code", "true", "false")),
+    (["vectors/README.md"], ("docs", "true", "false")),
     # The Python half of the gate starts no cargo step of its own in CI.
-    (["bin/quality-gate.sh"], ("code", "false")),
-    ([".github/actions/verdict/action.yml"], ("code", "false")),
+    (["bin/quality-gate.sh"], ("code", "false", "false")),
+    ([".github/actions/verdict/action.yml"], ("code", "false", "false")),
+    # A unit file, and the proof script itself. The tests of the script use
+    # a fake systemd, so only this run proves the change with the real one.
+    (["systemd/creche-attendance.service"], ("code", "false", "true")),
+    (["chaperone/src/chaperone/app.py", "systemd/creche-follow.timer"], ("code", "false", "true")),
+    (["bin/systemd-proof.sh"], ("code", "false", "true")),
+    (["systemd/creche-new@.timer"], ("code", "false", "true")),
+    # git writes this path inside double quotes.
+    (['systemd/creche-"one".service'], ("code", "false", "true")),
+    # Every path under systemd/ counts, a Markdown file too. The
+    # `systemd-proof` job is left out of a docs PR, whatever this answer is.
+    (["systemd/AGENTS.md"], ("docs", "false", "true")),
+    # Only the directory at the root holds the unit files.
+    (["docs/systemd/notes.md"], ("docs", "false", "false")),
+    (["systemd-notes.txt"], ("code", "false", "false")),
 ]
 
 
@@ -700,9 +1086,9 @@ def _git(repo: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def _scope_of(repo: Path, base: str) -> tuple[str, str]:
+def _scope_of(repo: Path, base: str) -> tuple[str, str, str]:
     """Runs the scope action's own script in `repo`, as a merge group on
-    `base` would. Returns its two outputs."""
+    `base` would. Returns its three outputs."""
     (step,) = SCOPE_ACTION["runs"]["steps"]
     output = repo.parent / "output"
     output.write_text("", encoding="utf-8")
@@ -724,17 +1110,17 @@ def _scope_of(repo: Path, base: str) -> tuple[str, str]:
     assert done.returncode == 0, done.stdout + done.stderr
     outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
 
-    return outputs["scope"], outputs["rust"]
+    return outputs["scope"], outputs["rust"], outputs["systemd"]
 
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
-    """A repository with one commit and the two rules the scope action
-    sources."""
+    """A repository with one commit, the two rules the scope action sources
+    and the script that it asks."""
     repo = tmp_path / "repo"
     (repo / "bin" / "lib").mkdir(parents=True)
-    for name in ("docsrule.sh", "rustrule.sh"):
-        shutil.copy2(REPO / "bin" / "lib" / name, repo / "bin" / "lib" / name)
+    for name in ("lib/docsrule.sh", "lib/rustrule.sh", "systemd-proof.sh"):
+        shutil.copy2(REPO / "bin" / name, repo / "bin" / name)
 
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "add", "-A")
@@ -745,12 +1131,13 @@ def checkout(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize(("paths", "scope"), SCOPES, ids=lambda one: " ".join(one))
 def test_the_scope_says_whether_a_change_touches_rust(
-    checkout: Path, paths: list[str], scope: tuple[str, str]
+    checkout: Path, paths: list[str], scope: tuple[str, str, str]
 ) -> None:
     base = _git(checkout, "rev-parse", "HEAD")
     for name in paths:
         (checkout / name).parent.mkdir(parents=True, exist_ok=True)
-        # One more line, not a new body: the scope sources the two rules.
+        # One more line, not a new body: the scope sources the two rules and
+        # runs the script.
         with (checkout / name).open("a", encoding="utf-8") as file:
             file.write("# changed\n")
     _git(checkout, "add", "-A")
@@ -759,10 +1146,58 @@ def test_the_scope_says_whether_a_change_touches_rust(
     assert _scope_of(checkout, base) == scope
 
 
+def test_a_unit_file_that_moves_out_of_systemd_runs_the_proof(checkout: Path) -> None:
+    """git can report a move as one change with the new path only. The scope
+    must see the old path too: the proof then reads one unit file less."""
+    (checkout / "systemd").mkdir()
+    (checkout / "systemd" / "creche-one.service").write_text(
+        "[Service]\nExecStart=/bin/true\n", encoding="utf-8"
+    )
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "a unit")
+    base = _git(checkout, "rev-parse", "HEAD")
+    (checkout / "units").mkdir()
+    _git(checkout, "mv", "systemd/creche-one.service", "units/creche-one.service")
+    _git(checkout, "commit", "-q", "-m", "the move")
+
+    assert _scope_of(checkout, base) == ("code", "false", "true")
+
+
 def test_a_change_the_scope_cannot_read_is_code_and_rust(checkout: Path) -> None:
     """No merge group, and no `origin/main` to take a merge-base with: the
-    full suite and the cargo checks are the safe answer."""
-    assert _scope_of(checkout, "") == ("code", "true")
+    full suite, the cargo checks and the systemd proof are the safe answer."""
+    assert _scope_of(checkout, "") == ("code", "true", "true")
+
+
+def test_a_base_that_the_clone_lacks_is_code_rust_and_systemd(checkout: Path) -> None:
+    """A merge group names its base. A clone that lacks that commit reads no
+    change, and each check is then the safe answer."""
+    assert _scope_of(checkout, "0" * 40) == ("code", "true", "true")
+
+
+@pytest.mark.parametrize("fault", ["absent", "not executable", "fails"])
+def test_a_scope_that_gets_no_answer_from_the_script_runs_the_proof(
+    checkout: Path, fault: str
+) -> None:
+    """The change touches no file of the proof, so the script of the commit
+    says `unchanged`. A script that gives no answer must not read as that
+    answer. The fault is in the work tree only: the change stays the same."""
+    base = _git(checkout, "rev-parse", "HEAD")
+    (checkout / "later.py").write_text("", encoding="utf-8")
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "the change")
+
+    assert _scope_of(checkout, base) == ("code", "false", "false")
+
+    script = checkout / SYSTEMD_RUN
+    if fault == "absent":
+        script.unlink()
+    elif fault == "not executable":
+        script.chmod(0o644)
+    else:
+        script.write_text("#!/usr/bin/env bash\nexit 3\n", encoding="utf-8")
+
+    assert _scope_of(checkout, base) == ("code", "false", "true")
 
 
 def test_every_checkout_takes_full_history() -> None:

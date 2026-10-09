@@ -26,7 +26,7 @@ use std::str::FromStr;
 use super::json::{Charset, Integer, Json, JsonKind, Layout, Object};
 use super::raw::{
     FAULT_KEYS, Number, RawCredentials, RawFault, RawLimits, RawPep, RawReconcile, RawSandbox,
-    RawSpend, RawStatus, RawTriggers, RawValidation, RawWebhook, ReadError, Reader, Slot,
+    RawSpend, RawStatus, RawTriggers, RawValidation, RawWebhook, ReadError, Reader, json_kind,
 };
 use super::time::{Timestamp, TimestampError};
 use super::words::{
@@ -36,6 +36,7 @@ use super::words::{
 use crate::ids::{
     FamilyName, FamilyNameError, SandboxName, SandboxNameError, WebhookName, WebhookNameError,
 };
+use crate::slot::Slot;
 
 // --- three small types ---
 
@@ -1135,7 +1136,10 @@ fn optional<'a, T>(slot: &'a Slot<T>, field: &'static str) -> Field<Option<&'a T
         Slot::Value(value) => Ok(Some(value)),
         Slot::Null => Ok(None),
         Slot::Missing => Err(StatusError::field(field, FieldFault::Missing)),
-        Slot::Other(kind) => Err(StatusError::field(field, FieldFault::WrongType(*kind))),
+        Slot::Other(kind) => Err(StatusError::field(
+            field,
+            FieldFault::WrongType(json_kind(*kind)),
+        )),
     }
 }
 
