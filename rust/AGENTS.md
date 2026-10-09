@@ -42,7 +42,7 @@ defect that a test finds late.
 | `grants` | The grant file, the call body, the approval body, the audit record and the words of a decision: contract 04. |
 | `status` | The status document, the fault files and one view for each reader: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
-| `mcp` | The words of the MCP wire. JSON-RPC 2.0 and the Model Context Protocol (MCP) state them. The module holds the message, the id of a request, the method names, the error codes and the protocol revisions. No contract owns these words. A client and each server take them from this module. |
+| `mcp` | The words of the MCP wire. JSON-RPC 2.0 and the Model Context Protocol (MCP) state them. The module holds the message, the id of a request, the method names, the error codes, the protocol revisions and three results. No contract owns these words. A client and each server take them from this module. |
 | `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
 | `untrusted` | Readers for an answer of another service. A field of a wrong type reads as empty. The raw type of an answer uses them. |
 | `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
@@ -1580,6 +1580,11 @@ To make the fifth check on your machine, for example before a merge:
 - `mcp::Line::Error` keeps no `data` member with the value `null`. The
   reader gives the same value for that member and for no member, and the
   writer then writes no `data`.
+- Each result type of `mcp` keeps a part of what MCP names. The doc comment
+  of a type lists that part. The reader drops each other member, for
+  example the title and the output schema of a tool. `mcp::Tool` keeps the
+  input schema as an `Object`. MCP gives that schema the `type` `object`,
+  and the module does not check that member.
 - Two texts of "When the two results differ" wait for a confirmation of the
   owner. One is resolution (c). The other is the paragraph on a Python
   reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`

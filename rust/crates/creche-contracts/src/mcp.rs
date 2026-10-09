@@ -20,9 +20,12 @@
 //! arguments of a call. Such a member is an [`Object`]: the module keeps it
 //! whole and reads no member of it.
 //!
-//! A result is an [`Object`] too, because only its request says what a
-//! result holds. The caller finds the request of the id. It then reads the
-//! members of the result.
+//! A result reads in a second step, because only its request says what a
+//! result holds. The caller finds the request of the id. It then makes an
+//! [`InitializeResult`], a [`ListToolsResult`] or a [`CallToolResult`] from
+//! the [`Object`] of the line. MCP lets a result hold more members than it
+//! names. The reader of a result thus skips a member that its type does not
+//! keep.
 //!
 //! # How a message writes
 //!
@@ -34,27 +37,29 @@
 //!
 //! ```
 //! use creche_contracts::json::{self, ByteCap, Charset, KeyOrder, Layout, Style};
-//! use creche_contracts::mcp::{Line, Method, Object, RequestId};
+//! use creche_contracts::mcp::{CallToolResult, Content, Line, Method, Object, RequestId};
 //!
 //! const CAP: ByteCap = ByteCap::new(4096);
 //! const STYLE: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGiven);
 //!
 //! // A server reads a request and answers it with the same id.
-//! let asked = br#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
+//! let asked = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"add"}}"#;
 //! let Line::Request { id, method, .. } = Line::parse(asked, CAP)? else {
 //!     panic!("the text is a request");
 //! };
-//! assert_eq!(Method::of_name(&method), Some(Method::ToolsList));
+//! assert_eq!(Method::of_name(&method), Some(Method::ToolsCall));
 //!
-//! let result = Object::read(br#"{"tools":[]}"#, CAP)?;
-//! let text = json::write(&Line::Result { id, result }, STYLE)?;
-//! assert_eq!(text, br#"{"jsonrpc":"2.0","id":7,"result":{"tools":[]}}"#);
+//! let result = CallToolResult::new(vec![Content::Text("3".to_owned())]);
+//! let answer = Line::Result { id, result: Object::of(&result)? };
+//! let text = json::write(&answer, STYLE)?;
+//! assert_eq!(text, br#"{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"3"}]}}"#);
 //!
-//! // The client reads the answer and finds its request by the id.
-//! let Line::Result { id, .. } = Line::parse(&text, CAP)? else {
+//! // The client reads the answer and then the result of its request.
+//! let Line::Result { id, result } = Line::parse(&text, CAP)? else {
 //!     panic!("the text is a result");
 //! };
 //! assert_eq!(id, RequestId::from(7));
+//! assert!(!CallToolResult::try_from(&result)?.is_error());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -78,6 +83,9 @@ pub const JSONRPC_VERSION: &str = "2.0";
 /// The style of the text that the module writes to read a value again.
 const COMPACT: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGiven);
 
+/// The `type` of a content block that holds a text.
+const TEXT_BLOCK: &str = "text";
+
 // The members of a message. The writer and the errors name each one.
 const JSONRPC: &str = "jsonrpc";
 const ID: &str = "id";
@@ -87,6 +95,13 @@ const RESULT: &str = "result";
 const ERROR: &str = "error";
 const CODE: &str = "code";
 const MESSAGE: &str = "message";
+
+// The members of a result that an error names in more than one place.
+const PROTOCOL_VERSION: &str = "protocolVersion";
+const CAPABILITIES: &str = "capabilities";
+const INPUT_SCHEMA: &str = "inputSchema";
+const TOOLS: &str = "tools";
+const CONTENT: &str = "content";
 
 /// An error code that JSON-RPC 2.0 defines (section 5.1).
 ///
@@ -209,7 +224,8 @@ impl Method {
 ///   the set, it answers with [`ProtocolVersion::OFFERED`].
 ///   [`ProtocolVersion::agreed`] holds that rule.
 /// - A client reads the revision that the server answers with. For a text
-///   outside the set, the client refuses the result and ends the session.
+///   outside the set, [`InitializeResult`] refuses the result. The client
+///   then ends the session.
 ///
 /// ```
 /// use creche_contracts::mcp::ProtocolVersion;
@@ -808,6 +824,670 @@ fn optional<T>(slot: Slot<T>, name: &'static str) -> Result<Option<T>, WireError
 /// An opaque member as an object. Each other kind is a fault of the member.
 fn object(value: Opaque, name: &'static str) -> Result<Object, WireError> {
     Object::try_from(value).map_err(|_| WireError::Member(name))
+}
+
+/// The result of `initialize`: what the server says in the handshake.
+///
+/// The type keeps the members that MCP requires, and `instructions`. Of the
+/// server it keeps the name and the version. The reader drops each other
+/// member. The capabilities stay an [`Object`], because their members
+/// differ from revision to revision.
+///
+/// A value holds a revision of [`ProtocolVersion`] only. A client thus
+/// cannot continue a session in a revision that the platform does not
+/// accept.
+///
+/// ```
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{InitializeResult, Object, ProtocolVersion, WireError};
+///
+/// let result = Object::read(
+///     br#"{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},
+///          "serverInfo":{"name":"example","version":"1.2.0"}}"#,
+///     ByteCap::new(256),
+/// )?;
+/// let said = InitializeResult::try_from(&result)?;
+///
+/// assert_eq!(said.protocol_version(), ProtocolVersion::V2025_06_18);
+/// assert_eq!((said.server_name(), said.server_version()), ("example", "1.2.0"));
+/// assert_eq!(said.instructions(), None);
+/// # Ok::<(), WireError>(())
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{InitializeResult, Object, ProtocolVersion, WireError};
+///
+/// let said = InitializeResult::new(
+///     ProtocolVersion::OFFERED,
+///     Object::read(b"{}", ByteCap::new(2)).unwrap(),
+///     "example".to_owned(),
+///     "1.2.0".to_owned(),
+/// );
+/// let other = InitializeResult { instructions: None, ..said };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitializeResult {
+    protocol_version: ProtocolVersion,
+    capabilities: Object,
+    server_info: Implementation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instructions: Option<String>,
+}
+
+/// The name and the version of a program, as `serverInfo` holds them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct Implementation {
+    name: String,
+    version: String,
+}
+
+impl InitializeResult {
+    /// A result with no instructions.
+    #[must_use]
+    pub const fn new(
+        protocol_version: ProtocolVersion,
+        capabilities: Object,
+        server_name: String,
+        server_version: String,
+    ) -> Self {
+        Self {
+            protocol_version,
+            capabilities,
+            server_info: Implementation {
+                name: server_name,
+                version: server_version,
+            },
+            instructions: None,
+        }
+    }
+
+    /// The same result with a text that tells a model how to use the server.
+    #[must_use]
+    pub fn with_instructions(mut self, instructions: String) -> Self {
+        self.instructions = Some(instructions);
+        self
+    }
+
+    /// The revision that the session uses.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+
+    /// What the server can do, as the object of the wire.
+    #[must_use]
+    pub const fn capabilities(&self) -> &Object {
+        &self.capabilities
+    }
+
+    /// The name of the server program.
+    #[must_use]
+    pub fn server_name(&self) -> &str {
+        &self.server_info.name
+    }
+
+    /// The version of the server program.
+    #[must_use]
+    pub fn server_version(&self) -> &str {
+        &self.server_info.version
+    }
+
+    /// The text that tells a model how to use the server, if the result has
+    /// one.
+    #[must_use]
+    pub fn instructions(&self) -> Option<&str> {
+        self.instructions.as_deref()
+    }
+}
+
+impl TryFrom<&Object> for InitializeResult {
+    type Error = WireError;
+
+    fn try_from(result: &Object) -> Result<Self, WireError> {
+        let raw: RawInitialize = result.parse()?;
+        let answered = required(raw.protocol_version, PROTOCOL_VERSION)?;
+        let protocol_version =
+            ProtocolVersion::of_text(&answered).ok_or(WireError::Member(PROTOCOL_VERSION))?;
+        let capabilities = object(required(raw.capabilities, CAPABILITIES)?, CAPABILITIES)?;
+        let server = required(raw.server_info, "serverInfo")?;
+
+        Ok(Self {
+            protocol_version,
+            capabilities,
+            server_info: Implementation {
+                name: required(server.name, "name")?,
+                version: required(server.version, "version")?,
+            },
+            instructions: optional(raw.instructions, "instructions")?,
+        })
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawInitialize {
+    protocol_version: Slot<String>,
+    capabilities: Slot<Opaque>,
+    server_info: Slot<RawImplementation>,
+    instructions: Slot<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct RawImplementation {
+    name: Slot<String>,
+    version: Slot<String>,
+}
+
+impl Nested for RawImplementation {}
+
+/// A hint about a tool: one member of the `annotations` of MCP.
+///
+/// The set is closed, and a hint crosses a process boundary. A reader drops
+/// an annotation with another name. A hint is a claim of the server and no
+/// proof: MCP tells a client not to trust the hint of a server that it does
+/// not trust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Hint {
+    /// `readOnlyHint`: the tool changes nothing. MCP reads an absent hint
+    /// as `false`.
+    ReadOnly,
+    /// `destructiveHint`: the tool can destroy data. MCP reads an absent
+    /// hint as `true`.
+    Destructive,
+    /// `idempotentHint`: a second call with the same arguments changes
+    /// nothing more. MCP reads an absent hint as `false`.
+    Idempotent,
+    /// `openWorldHint`: the tool reaches systems outside the server. MCP
+    /// reads an absent hint as `true`.
+    OpenWorld,
+}
+
+/// What a server says with each [`Hint`]. `None` is an absent hint.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Hints {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    read_only_hint: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    destructive_hint: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idempotent_hint: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    open_world_hint: Option<bool>,
+}
+
+impl Hints {
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn of(&mut self, hint: Hint) -> &mut Option<bool> {
+        match hint {
+            Hint::ReadOnly => &mut self.read_only_hint,
+            Hint::Destructive => &mut self.destructive_hint,
+            Hint::Idempotent => &mut self.idempotent_hint,
+            Hint::OpenWorld => &mut self.open_world_hint,
+        }
+    }
+}
+
+/// One tool of a `tools/list` result.
+///
+/// The type keeps the name, the description, the input schema and the four
+/// hints. The reader drops each other member, for example the title and the
+/// output schema. The module reads no member of the schema: it checks only
+/// that the schema is an object.
+///
+/// ```
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{Hint, Object, Tool, WireError};
+///
+/// let schema = Object::read(br#"{"type":"object"}"#, ByteCap::new(64))?;
+/// let tool = Tool::new("add".to_owned(), schema).with_hint(Hint::ReadOnly);
+///
+/// assert_eq!(tool.name(), "add");
+/// assert_eq!(tool.hint(Hint::ReadOnly), Some(true));
+/// assert_eq!(tool.hint(Hint::Destructive), None);
+/// # Ok::<(), WireError>(())
+/// ```
+///
+/// Code outside this module cannot build a tool from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{Hint, Object, Tool, WireError};
+///
+/// let schema = Object::read(br#"{"type":"object"}"#, ByteCap::new(64)).unwrap();
+/// let tool = Tool::new("add".to_owned(), schema);
+/// let other = Tool { name: String::new(), ..tool };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tool {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    input_schema: Object,
+    #[serde(skip_serializing_if = "Hints::is_empty")]
+    annotations: Hints,
+}
+
+impl Tool {
+    /// A tool with no description and no hint.
+    #[must_use]
+    pub fn new(name: String, input_schema: Object) -> Self {
+        Self {
+            name,
+            description: None,
+            input_schema,
+            annotations: Hints::default(),
+        }
+    }
+
+    /// The same tool with a description for a model.
+    #[must_use]
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
+    }
+
+    /// The same tool with a hint that says `true`.
+    #[must_use]
+    pub fn with_hint(mut self, hint: Hint) -> Self {
+        *self.annotations.of(hint) = Some(true);
+        self
+    }
+
+    /// The same tool with a hint that says `false`.
+    #[must_use]
+    pub fn with_hint_denied(mut self, hint: Hint) -> Self {
+        *self.annotations.of(hint) = Some(false);
+        self
+    }
+
+    /// The name that a call gives.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The description for a model, if the tool has one.
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// The JSON Schema of the arguments, as the object of the wire.
+    #[must_use]
+    pub const fn input_schema(&self) -> &Object {
+        &self.input_schema
+    }
+
+    /// What the server says with this hint. `None` for an absent hint: the
+    /// doc of each [`Hint`] gives the value that MCP then assumes.
+    #[must_use]
+    pub const fn hint(&self, hint: Hint) -> Option<bool> {
+        match hint {
+            Hint::ReadOnly => self.annotations.read_only_hint,
+            Hint::Destructive => self.annotations.destructive_hint,
+            Hint::Idempotent => self.annotations.idempotent_hint,
+            Hint::OpenWorld => self.annotations.open_world_hint,
+        }
+    }
+}
+
+impl Tool {
+    /// The tool that an item of `tools` holds.
+    fn of_raw(raw: RawTool) -> Result<Self, WireError> {
+        let hints = optional(raw.annotations, "annotations")?.unwrap_or_default();
+
+        Ok(Self {
+            name: required(raw.name, "name")?,
+            description: optional(raw.description, "description")?,
+            input_schema: object(required(raw.input_schema, INPUT_SCHEMA)?, INPUT_SCHEMA)?,
+            annotations: Hints {
+                read_only_hint: optional(hints.read_only_hint, "readOnlyHint")?,
+                destructive_hint: optional(hints.destructive_hint, "destructiveHint")?,
+                idempotent_hint: optional(hints.idempotent_hint, "idempotentHint")?,
+                open_world_hint: optional(hints.open_world_hint, "openWorldHint")?,
+            },
+        })
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawTool {
+    name: Slot<String>,
+    description: Slot<String>,
+    input_schema: Slot<Opaque>,
+    annotations: Slot<RawHints>,
+}
+
+impl Nested for RawTool {}
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawHints {
+    read_only_hint: Slot<bool>,
+    destructive_hint: Slot<bool>,
+    idempotent_hint: Slot<bool>,
+    open_world_hint: Slot<bool>,
+}
+
+impl Nested for RawHints {}
+
+/// The result of `tools/list`: one page of the tools of a server.
+///
+/// ```
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{ListToolsResult, Object, WireError};
+///
+/// let result = Object::read(
+///     br#"{"tools":[{"name":"add","inputSchema":{"type":"object"}}],"nextCursor":"p2"}"#,
+///     ByteCap::new(256),
+/// )?;
+/// let page = ListToolsResult::try_from(&result)?;
+///
+/// assert_eq!(page.tools().len(), 1);
+/// assert_eq!(page.next_cursor(), Some("p2"));
+/// # Ok::<(), WireError>(())
+/// ```
+///
+/// Code outside this module cannot build a page from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{ListToolsResult, Object, WireError};
+///
+/// let page = ListToolsResult { tools: Vec::new(), next_cursor: None };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListToolsResult {
+    tools: Vec<Tool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
+}
+
+impl ListToolsResult {
+    /// A page that is the last one.
+    #[must_use]
+    pub const fn new(tools: Vec<Tool>) -> Self {
+        Self {
+            tools,
+            next_cursor: None,
+        }
+    }
+
+    /// The same page with the cursor of the next page. A client gives the
+    /// cursor back in its next `tools/list` request and reads no part of
+    /// it.
+    #[must_use]
+    pub fn with_next_cursor(mut self, next_cursor: String) -> Self {
+        self.next_cursor = Some(next_cursor);
+        self
+    }
+
+    /// The tools of this page.
+    #[must_use]
+    pub fn tools(&self) -> &[Tool] {
+        &self.tools
+    }
+
+    /// The cursor of the next page. `None` on the last page.
+    #[must_use]
+    pub fn next_cursor(&self) -> Option<&str> {
+        self.next_cursor.as_deref()
+    }
+}
+
+impl TryFrom<&Object> for ListToolsResult {
+    type Error = WireError;
+
+    fn try_from(result: &Object) -> Result<Self, WireError> {
+        let raw: RawListTools = result.parse()?;
+        let tools = required(raw.tools, TOOLS)?
+            .into_iter()
+            .map(|tool| required(tool, TOOLS).and_then(Tool::of_raw))
+            .collect::<Result<_, _>>()?;
+
+        Ok(Self {
+            tools,
+            next_cursor: optional(raw.next_cursor, "nextCursor")?,
+        })
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawListTools {
+    tools: Slot<Vec<Slot<RawTool>>>,
+    next_cursor: Slot<String>,
+}
+
+/// One block of the content of a tool result.
+///
+/// MCP gives each block a `type`. The set of the types is closed in each
+/// revision, and a newer revision can add a type. The module reads the
+/// block of the type `text`. A reader keeps a block of each other type
+/// whole, as [`Content::Other`], and does not refuse it.
+///
+/// The `Debug` form shows the length of a text and no character of it: the
+/// output of a tool can hold a secret.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Content {
+    /// A block of the type `text`: its text. The reader drops each other
+    /// member of such a block.
+    Text(String),
+    /// A block of another type, for example `image`.
+    Other(OtherContent),
+}
+
+impl Content {
+    /// The block that an item of `content` holds.
+    fn of_block(block: Opaque) -> Result<Self, WireError> {
+        let block = object(block, CONTENT)?;
+        let raw: RawBlock = block.parse()?;
+        let kind = required(raw.kind, "type")?;
+        if kind == TEXT_BLOCK {
+            return required(raw.text, "text").map(Self::Text);
+        }
+
+        Ok(Self::Other(OtherContent { kind, block }))
+    }
+}
+
+impl fmt::Debug for Content {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(text) => f.debug_struct("Text").field("bytes", &text.len()).finish(),
+            Self::Other(other) => f.debug_tuple("Other").field(other).finish(),
+        }
+    }
+}
+
+impl Serialize for Content {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Text(text) => TextBlock {
+                kind: TEXT_BLOCK,
+                text,
+            }
+            .serialize(serializer),
+            Self::Other(other) => other.block.serialize(serializer),
+        }
+    }
+}
+
+/// A block of the type `text`, as the writer gives it.
+#[derive(Serialize)]
+struct TextBlock<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: &'a str,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct RawBlock {
+    #[serde(rename = "type")]
+    kind: Slot<String>,
+    text: Slot<String>,
+}
+
+/// A content block that the module does not read: an object whose `type` is
+/// a text other than `text`.
+///
+/// Only the read of a [`CallToolResult`] makes a value, so each value holds
+/// that rule. The writer gives the block back as it came.
+///
+/// ```
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{CallToolResult, Content, Object, OtherContent, WireError};
+///
+/// let result = Object::read(
+///     br#"{"content":[{"type":"image","data":"AA==","mimeType":"image/png"}]}"#,
+///     ByteCap::new(256),
+/// )?;
+/// let said = CallToolResult::try_from(&result)?;
+/// let [Content::Other(block)] = said.content() else {
+///     panic!("the result holds one block that is no text");
+/// };
+/// let block: &OtherContent = block;
+///
+/// assert_eq!(block.kind(), "image");
+/// assert_eq!(Object::of(&said)?, result);
+/// # Ok::<(), WireError>(())
+/// ```
+///
+/// Code outside this module cannot give an object that proof:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{CallToolResult, Content, Object, OtherContent, WireError};
+///
+/// let block = Object::read(b"{}", ByteCap::new(2)).unwrap();
+/// let other = OtherContent { kind: String::new(), block };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtherContent {
+    kind: String,
+    block: Object,
+}
+
+impl OtherContent {
+    /// The `type` of the block.
+    #[must_use]
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// The whole block.
+    #[must_use]
+    pub const fn block(&self) -> &Object {
+        &self.block
+    }
+}
+
+/// The result of `tools/call`: what a tool gives back.
+///
+/// The type keeps the content and the mark of a failed call. The reader
+/// drops each other member, for example `structuredContent`.
+///
+/// A tool that fails at its work gives a result with the mark, so the model
+/// can read why the call failed. An error of JSON-RPC is for a fault of the
+/// protocol, for example a tool that the server does not have. A result
+/// with no `isError` member is the result of a call that did not fail.
+///
+/// ```
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{CallToolResult, Content, Object, WireError};
+///
+/// let result = Object::read(
+///     br#"{"content":[{"type":"text","text":"no such file"}],"isError":true}"#,
+///     ByteCap::new(256),
+/// )?;
+/// let said = CallToolResult::try_from(&result)?;
+///
+/// assert_eq!(said.content(), [Content::Text("no such file".to_owned())]);
+/// assert!(said.is_error());
+/// # Ok::<(), WireError>(())
+/// ```
+///
+/// Code outside this module cannot build a result from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::json::ByteCap;
+/// use creche_contracts::mcp::{CallToolResult, Content, Object, WireError};
+///
+/// let said = CallToolResult { content: Vec::new(), is_error: false };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallToolResult {
+    content: Vec<Content>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    is_error: bool,
+}
+
+impl CallToolResult {
+    /// The result of a call that did not fail.
+    #[must_use]
+    pub const fn new(content: Vec<Content>) -> Self {
+        Self {
+            content,
+            is_error: false,
+        }
+    }
+
+    /// The same result with the mark of a failed call.
+    #[must_use]
+    pub fn with_error(mut self) -> Self {
+        self.is_error = true;
+        self
+    }
+
+    /// The blocks, in the order of the wire.
+    #[must_use]
+    pub fn content(&self) -> &[Content] {
+        &self.content
+    }
+
+    /// Whether the tool says that the call failed.
+    #[must_use]
+    pub const fn is_error(&self) -> bool {
+        self.is_error
+    }
+}
+
+impl TryFrom<&Object> for CallToolResult {
+    type Error = WireError;
+
+    fn try_from(result: &Object) -> Result<Self, WireError> {
+        let raw: RawCallTool = result.parse()?;
+        let content = required(raw.content, CONTENT)?
+            .into_iter()
+            .map(|block| required(block, CONTENT).and_then(Content::of_block))
+            .collect::<Result<_, _>>()?;
+
+        Ok(Self {
+            content,
+            is_error: optional(raw.is_error, "isError")?.unwrap_or(false),
+        })
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawCallTool {
+    content: Slot<Vec<Slot<Opaque>>>,
+    is_error: Slot<bool>,
 }
 
 #[cfg(test)]
@@ -1440,5 +2120,388 @@ mod tests {
             assert_eq!(error.to_string(), text);
             assert_eq!(error.source().is_some(), has_source, "{text}");
         }
+    }
+
+    // --- the three results ---
+
+    /// The result of each method, in the form that MCP gives it.
+    const INITIALIZED: &str = r#"{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"example-server","version":"1.0.0"},"instructions":"Call add for a sum."}"#;
+    const LISTED: &str = r#"{"tools":[{"name":"add","description":"Adds two numbers.","inputSchema":{"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"]},"annotations":{"readOnlyHint":true,"openWorldHint":false}}],"nextCursor":"page-2"}"#;
+    const CALLED: &str = r#"{"content":[{"type":"text","text":"3"}]}"#;
+    const FAILED: &str = r#"{"content":[{"type":"text","text":"no such tool"}],"isError":true}"#;
+
+    /// The member `type` of a schema or of a content block.
+    #[derive(Deserialize)]
+    struct Kind {
+        #[serde(rename = "type")]
+        kind: String,
+    }
+
+    fn tool(name: &str) -> Tool {
+        Tool::new(name.to_owned(), object(r#"{"type":"object"}"#))
+    }
+
+    #[test]
+    fn each_result_of_the_specification_reads_and_writes() {
+        // A result comes in a line, and the line gives its object.
+        let Line::Result { result, .. } =
+            line(&message(&format!(r#""id":1,"result":{INITIALIZED}"#)))
+        else {
+            panic!("the text is a result");
+        };
+        let said = InitializeResult::try_from(&result).unwrap();
+        assert_eq!(said.protocol_version(), ProtocolVersion::OFFERED);
+        assert_eq!(
+            said.capabilities(),
+            &object(r#"{"tools":{"listChanged":false}}"#)
+        );
+        assert_eq!(said.server_name(), "example-server");
+        assert_eq!(said.server_version(), "1.0.0");
+        assert_eq!(said.instructions(), Some("Call add for a sum."));
+        assert_eq!(written(&said), INITIALIZED);
+
+        let page = ListToolsResult::try_from(&object(LISTED)).unwrap();
+        let [add] = page.tools() else {
+            panic!("the page holds one tool");
+        };
+        assert_eq!(add.name(), "add");
+        assert_eq!(add.description(), Some("Adds two numbers."));
+        assert_eq!(add.input_schema().parse::<Kind>().unwrap().kind, "object");
+        let hints = [
+            Hint::ReadOnly,
+            Hint::Destructive,
+            Hint::Idempotent,
+            Hint::OpenWorld,
+        ];
+        assert_eq!(
+            hints.map(|hint| add.hint(hint)),
+            [Some(true), None, None, Some(false)]
+        );
+        assert_eq!(page.next_cursor(), Some("page-2"));
+        assert_eq!(written(&page), LISTED);
+
+        let done = CallToolResult::try_from(&object(CALLED)).unwrap();
+        assert_eq!(done.content(), [Content::Text("3".to_owned())]);
+        assert!(!done.is_error());
+        assert_eq!(written(&done), CALLED);
+
+        let failed = CallToolResult::try_from(&object(FAILED)).unwrap();
+        assert_eq!(failed.content(), [Content::Text("no such tool".to_owned())]);
+        assert!(failed.is_error());
+        assert_eq!(written(&failed), FAILED);
+    }
+
+    #[test]
+    fn a_result_from_typed_parts_equals_the_result_of_its_text() {
+        let said = InitializeResult::new(
+            ProtocolVersion::V2025_03_26,
+            object("{}"),
+            "example-server".to_owned(),
+            "2".to_owned(),
+        );
+        let text = r#"{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"example-server","version":"2"}}"#;
+        assert_eq!(written(&said), text);
+        assert_eq!(InitializeResult::try_from(&object(text)).unwrap(), said);
+        assert_eq!(said.instructions(), None);
+        let guided = said.with_instructions("Call add.".to_owned());
+        assert_eq!(guided.instructions(), Some("Call add."));
+        assert_eq!(
+            InitializeResult::try_from(&Object::of(&guided).unwrap()).unwrap(),
+            guided
+        );
+
+        let hinted = tool("delete")
+            .with_description("Deletes a file.".to_owned())
+            .with_hint(Hint::Destructive)
+            .with_hint(Hint::Idempotent)
+            .with_hint_denied(Hint::ReadOnly)
+            .with_hint_denied(Hint::OpenWorld);
+        assert_eq!(tool("add").description(), None);
+        assert_eq!(hinted.hint(Hint::ReadOnly), Some(false));
+        assert_eq!(hinted.hint(Hint::Destructive), Some(true));
+        assert_eq!(hinted.hint(Hint::Idempotent), Some(true));
+        assert_eq!(hinted.hint(Hint::OpenWorld), Some(false));
+        let page = ListToolsResult::new(vec![tool("add"), hinted]);
+        let text = r#"{"tools":[{"name":"add","inputSchema":{"type":"object"}},{"name":"delete","description":"Deletes a file.","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false}}]}"#;
+        assert_eq!(written(&page), text);
+        assert_eq!(ListToolsResult::try_from(&object(text)).unwrap(), page);
+        assert_eq!(page.next_cursor(), None);
+        let more = page.with_next_cursor("p2".to_owned());
+        assert_eq!(more.next_cursor(), Some("p2"));
+        assert_eq!(
+            ListToolsResult::try_from(&Object::of(&more).unwrap()).unwrap(),
+            more
+        );
+
+        let texts = vec![Content::Text("a".to_owned()), Content::Text(String::new())];
+        let done = CallToolResult::new(texts);
+        let text = r#"{"content":[{"type":"text","text":"a"},{"type":"text","text":""}]}"#;
+        assert_eq!(written(&done), text);
+        assert_eq!(CallToolResult::try_from(&object(text)).unwrap(), done);
+        let failed = done.with_error();
+        assert!(failed.is_error());
+        assert_eq!(
+            CallToolResult::try_from(&Object::of(&failed).unwrap()).unwrap(),
+            failed
+        );
+    }
+
+    #[test]
+    fn a_result_reads_with_no_optional_member_and_with_more_members() {
+        // The reader drops a member that the type does not keep.
+        let said = InitializeResult::try_from(&object(
+            r#"{"protocolVersion":"2024-11-05","capabilities":{"logging":{}},"_meta":{"k":1},
+                "serverInfo":{"name":"s","version":"0","title":"S","icons":[]}}"#,
+        ))
+        .unwrap();
+        assert_eq!(said.protocol_version(), ProtocolVersion::V2024_11_05);
+        assert_eq!((said.server_name(), said.server_version()), ("s", "0"));
+
+        let page = ListToolsResult::try_from(&object(
+            r#"{"tools":[{"name":"a","title":"A","inputSchema":{"type":"object"},
+                "outputSchema":{"type":"object"},"annotations":{}},
+               {"name":"b","inputSchema":{},"annotations":{"title":"B","laterHint":7}}]}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            page.tools(),
+            [tool("a"), Tool::new("b".to_owned(), object("{}"))]
+        );
+        let none = ListToolsResult::try_from(&object(r#"{"tools":[]}"#)).unwrap();
+        assert_eq!(none, ListToolsResult::new(Vec::new()));
+
+        // An `isError` of `false` is the same as no member.
+        for text in [
+            r#"{"content":[],"structuredContent":{"n":1}}"#,
+            r#"{"content":[],"isError":false}"#,
+        ] {
+            let said = CallToolResult::try_from(&object(text)).unwrap();
+            assert_eq!(said, CallToolResult::new(Vec::new()), "{text}");
+            assert_eq!(written(&said), r#"{"content":[]}"#, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_block_of_another_type_stays_whole() {
+        let blocks = [
+            r#"{"type":"image","data":"AA==","mimeType":"image/png"}"#,
+            r#"{"type":"audio","data":"AA==","mimeType":"audio/wav"}"#,
+            r#"{"type":"resource_link","uri":"file:///a","name":"a"}"#,
+            r#"{"type":"resource","resource":{"uri":"file:///a","text":"t"}}"#,
+            // A type of a later revision, a type in another letter case and
+            // the empty type.
+            r#"{"type":"video","text":"no text of a text block"}"#,
+            r#"{"type":"Text","text":"t"}"#,
+            r#"{"type":""}"#,
+        ];
+        for block in blocks {
+            let text = format!(r#"{{"content":[{{"type":"text","text":"t"}},{block}]}}"#);
+            let said = CallToolResult::try_from(&object(&text)).unwrap();
+            let [Content::Text(first), Content::Other(other)] = said.content() else {
+                panic!("{block} is a block of another type");
+            };
+
+            assert_eq!(first, "t");
+            assert_eq!(other.block(), &object(block), "{block}");
+            assert_eq!(
+                other.kind(),
+                other.block().parse::<Kind>().unwrap().kind,
+                "{block}"
+            );
+            assert_eq!(written(&said), text);
+        }
+    }
+
+    #[test]
+    fn the_debug_form_of_a_content_block_shows_no_text() {
+        let output = Content::Text("the output of a tool".to_owned());
+        assert_eq!(format!("{output:?}"), "Text { bytes: 20 }");
+
+        let image = object(r#"{"content":[{"type":"image","data":"QUJD"}]}"#);
+        let shown = format!("{:?}", CallToolResult::try_from(&image).unwrap());
+        assert!(shown.contains(r#"kind: "image""#), "{shown}");
+        assert!(!shown.contains("QUJD"), "{shown}");
+    }
+
+    /// A result of `initialize` with one member replaced. `None` removes the
+    /// member.
+    fn initialized(member: &str, value: Option<&str>) -> Object {
+        let mut members = vec![
+            ("protocolVersion", r#""2025-11-25""#),
+            ("capabilities", "{}"),
+            ("serverInfo", r#"{"name":"s","version":"0"}"#),
+        ];
+        members.retain(|(name, _)| *name != member);
+        members.extend(value.map(|value| (member, value)));
+        let texts: Vec<String> = members
+            .iter()
+            .map(|(name, value)| format!(r#""{name}":{value}"#))
+            .collect();
+
+        object(&format!("{{{}}}", texts.join(",")))
+    }
+
+    /// A member of a result of `initialize`, a value for it, and the member
+    /// that the reader then names. No value removes the member.
+    const NOT_INITIALIZED: &[(&str, Option<&str>, &str)] = &[
+        ("protocolVersion", None, "protocolVersion"),
+        ("protocolVersion", Some("20251125"), "protocolVersion"),
+        ("protocolVersion", Some("null"), "protocolVersion"),
+        // A revision outside the set, and a text that only starts with one.
+        (
+            "protocolVersion",
+            Some(r#""2099-01-01""#),
+            "protocolVersion",
+        ),
+        (
+            "protocolVersion",
+            Some(r#""2025-11-25\n""#),
+            "protocolVersion",
+        ),
+        ("capabilities", None, "capabilities"),
+        ("capabilities", Some("null"), "capabilities"),
+        ("capabilities", Some("[]"), "capabilities"),
+        ("capabilities", Some(r#""tools""#), "capabilities"),
+        ("serverInfo", None, "serverInfo"),
+        ("serverInfo", Some("null"), "serverInfo"),
+        ("serverInfo", Some(r#""s 0""#), "serverInfo"),
+        // A list is no object: the reader takes no member by its place.
+        ("serverInfo", Some(r#"["s","0"]"#), "serverInfo"),
+        ("serverInfo", Some(r#"{"version":"0"}"#), "name"),
+        ("serverInfo", Some(r#"{"name":7,"version":"0"}"#), "name"),
+        ("serverInfo", Some(r#"{"name":null,"version":"0"}"#), "name"),
+        ("serverInfo", Some(r#"{"name":"s"}"#), "version"),
+        (
+            "serverInfo",
+            Some(r#"{"name":"s","version":1.0}"#),
+            "version",
+        ),
+        ("instructions", Some("null"), "instructions"),
+        ("instructions", Some(r#"["a"]"#), "instructions"),
+    ];
+
+    /// An object that is no result of `tools/list`, with the member that the
+    /// reader names.
+    const NOT_LISTED: &[(&str, &str)] = &[
+        ("{}", "tools"),
+        (r#"{"tools":null}"#, "tools"),
+        (r#"{"tools":{"add":{}}}"#, "tools"),
+        (r#"{"tools":["add"]}"#, "tools"),
+        (r#"{"tools":[null]}"#, "tools"),
+        (r#"{"tools":[["add",{}]]}"#, "tools"),
+        (r#"{"tools":[],"nextCursor":null}"#, "nextCursor"),
+        (r#"{"tools":[],"nextCursor":2}"#, "nextCursor"),
+        // The second tool is at fault.
+        (
+            r#"{"tools":[{"name":"a","inputSchema":{}},{"name":"b"}]}"#,
+            "inputSchema",
+        ),
+    ];
+
+    /// An object that is no tool, with the member that the reader names.
+    const NOT_A_TOOL: &[(&str, &str)] = &[
+        (r#"{"inputSchema":{}}"#, "name"),
+        (r#"{"name":7,"inputSchema":{}}"#, "name"),
+        (r#"{"name":null,"inputSchema":{}}"#, "name"),
+        (
+            r#"{"name":"a","description":null,"inputSchema":{}}"#,
+            "description",
+        ),
+        (
+            r#"{"name":"a","description":["d"],"inputSchema":{}}"#,
+            "description",
+        ),
+        (r#"{"name":"a"}"#, "inputSchema"),
+        (r#"{"name":"a","inputSchema":null}"#, "inputSchema"),
+        (r#"{"name":"a","inputSchema":[]}"#, "inputSchema"),
+        (r#"{"name":"a","inputSchema":"object"}"#, "inputSchema"),
+        (
+            r#"{"name":"a","inputSchema":{},"annotations":null}"#,
+            "annotations",
+        ),
+        (
+            r#"{"name":"a","inputSchema":{},"annotations":[true]}"#,
+            "annotations",
+        ),
+    ];
+
+    /// The annotations of a tool with a hint that is not `true` or `false`,
+    /// and the hint that the reader names.
+    const NOT_HINTS: &[(&str, &str)] = &[
+        (r#"{"readOnlyHint":"true"}"#, "readOnlyHint"),
+        (r#"{"readOnlyHint":1}"#, "readOnlyHint"),
+        (r#"{"destructiveHint":null}"#, "destructiveHint"),
+        (r#"{"idempotentHint":0}"#, "idempotentHint"),
+        (r#"{"openWorldHint":[]}"#, "openWorldHint"),
+    ];
+
+    /// An object that is no result of `tools/call`, with the member that the
+    /// reader names.
+    const NOT_CALLED: &[(&str, &str)] = &[
+        ("{}", "content"),
+        (r#"{"content":null}"#, "content"),
+        (r#"{"content":{"type":"text","text":"t"}}"#, "content"),
+        (r#"{"content":"t"}"#, "content"),
+        (r#"{"content":["t"]}"#, "content"),
+        (r#"{"content":[null]}"#, "content"),
+        (r#"{"content":[["text","t"]]}"#, "content"),
+        (r#"{"content":[{"text":"t"}]}"#, "type"),
+        (r#"{"content":[{"type":7,"text":"t"}]}"#, "type"),
+        (r#"{"content":[{"type":null,"text":"t"}]}"#, "type"),
+        (r#"{"content":[{"type":"text"}]}"#, "text"),
+        (r#"{"content":[{"type":"text","text":7}]}"#, "text"),
+        (r#"{"content":[{"type":"text","text":null}]}"#, "text"),
+        (
+            r#"{"content":[{"type":"text","text":"t"},{"type":"text"}]}"#,
+            "text",
+        ),
+        (r#"{"content":[],"isError":"true"}"#, "isError"),
+        (r#"{"content":[],"isError":1}"#, "isError"),
+        (r#"{"content":[],"isError":null}"#, "isError"),
+    ];
+
+    #[test]
+    fn each_result_refuses_an_object_that_breaks_the_specification() {
+        for (member, value, named) in NOT_INITIALIZED {
+            let refused = InitializeResult::try_from(&initialized(member, *value));
+            assert_eq!(
+                refused,
+                Err(WireError::Member(named)),
+                "{member}: {value:?}"
+            );
+        }
+        // The same object with no change is a result.
+        assert!(InitializeResult::try_from(&initialized("instructions", None)).is_ok());
+
+        let whole = NOT_LISTED
+            .iter()
+            .map(|(text, named)| ((*text).to_owned(), named));
+        let tools = NOT_A_TOOL
+            .iter()
+            .map(|(tool, named)| (format!(r#"{{"tools":[{tool}]}}"#), named));
+        let hints = NOT_HINTS.iter().map(|(hints, named)| {
+            let tool = format!(r#"{{"name":"a","inputSchema":{{}},"annotations":{hints}}}"#);
+            (format!(r#"{{"tools":[{tool}]}}"#), named)
+        });
+        for (text, named) in whole.chain(tools).chain(hints) {
+            let refused = ListToolsResult::try_from(&object(&text));
+            assert_eq!(refused, Err(WireError::Member(named)), "{text}");
+        }
+
+        for (text, named) in NOT_CALLED {
+            let refused = CallToolResult::try_from(&object(text));
+            assert_eq!(refused, Err(WireError::Member(named)), "{text}");
+        }
+    }
+
+    #[test]
+    fn each_raw_type_of_a_result_reads_an_object_with_no_member() {
+        assert!(reads_empty_table::<RawInitialize>());
+        assert!(reads_empty_table::<RawImplementation>());
+        assert!(reads_empty_table::<RawListTools>());
+        assert!(reads_empty_table::<RawTool>());
+        assert!(reads_empty_table::<RawHints>());
+        assert!(reads_empty_table::<RawCallTool>());
+        assert!(reads_empty_table::<RawBlock>());
     }
 }
