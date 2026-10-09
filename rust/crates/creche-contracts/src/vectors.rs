@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use crate::ids::Sha256Hex;
+use crate::json::{self, ByteCap};
 
 /// The version of the file format that this reader takes.
 const FORMAT: u64 = 1;
@@ -30,6 +31,10 @@ const DISAGREEMENTS_FILE: &str = "ids/disagreements.json";
 
 /// The `kind` of the index file.
 const INDEX_KIND: &str = "index";
+
+/// The size limit of the index for the strict reader: none. The index is a
+/// file of this repository.
+const INDEX_CAP: ByteCap = ByteCap::new(usize::MAX);
 
 /// The end of the name of each file under `vectors/data` that the generator
 /// reads.
@@ -331,9 +336,18 @@ pub(crate) fn index() -> Vec<IndexRow> {
 /// The rows of the index whose JSON text is `text`.
 ///
 /// The function stops the test on a text that is no index of format 1, and
-/// on a map `frozen` in a form that the generator does not write.
+/// on a map `frozen` in a form that the generator does not write. It also
+/// stops on a text that is not strict JSON, for example an index with two
+/// `frozen` maps. The generator refuses that index too. A vector file can
+/// nest deeper than a strict text, so `surface` does not call that reader.
 fn index_of(text: &str) -> Vec<IndexRow> {
-    let index: Index = parsed(INDEX_FILE, text);
+    let strict = match json::check(text.as_bytes(), INDEX_CAP) {
+        Ok(strict) => strict,
+        Err(error) => panic!("{INDEX_FILE}: the text is not strict JSON: {error}"),
+    };
+    // `StrictText::parse` drops the message of `serde`. The index holds no
+    // secret, and the message names the field.
+    let index: Index = parsed(INDEX_FILE, strict.as_str());
 
     assert_eq!(index.format, FORMAT, "{INDEX_FILE}: the format");
     assert_eq!(index.kind, INDEX_KIND, "{INDEX_FILE}: the kind");
@@ -723,6 +737,26 @@ mod tests {
     #[should_panic(expected = "index.json: missing field `frozen`")]
     fn an_index_with_no_map_of_frozen_files_stops_the_test() {
         let _ = index_of(r#"{"format": 1, "kind": "index", "surfaces": []}"#);
+    }
+
+    /// The JSON text of an index with `frozen` as the text of its map of
+    /// frozen files. The `json!` macro writes no key two times.
+    fn index_text(frozen: &str) -> String {
+        format!(r#"{{"format": 1, {frozen}, "kind": "index", "surfaces": []}}"#)
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: the text is not strict JSON: duplicate_key at byte 28")]
+    fn an_index_with_two_maps_of_frozen_files_stops_the_test() {
+        let _ = index_of(&index_text(r#""frozen": {}, "frozen": {}"#));
+    }
+
+    #[test]
+    #[should_panic(expected = "index.json: the text is not strict JSON: duplicate_key at byte 103")]
+    fn a_frozen_path_with_two_lines_stops_the_test() {
+        let _ = index_of(&index_text(&format!(
+            r#""frozen": {{"a.json": "{DIGEST}", "a.json": "{DIGEST}"}}"#
+        )));
     }
 
     #[test]

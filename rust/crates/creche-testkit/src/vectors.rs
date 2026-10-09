@@ -22,6 +22,8 @@
 //!    does not name.
 //! 7. The index names a frozen file with a path or with a digest that the
 //!    generator does not write in that form.
+//! 8. The index is not strict JSON, for example with one key two times in
+//!    an object. `creche_contracts::json` holds the rules of a strict text.
 //!
 //! A frozen file is a data file whose Python origin left the repository. The
 //! index holds the SHA-256 of each one. The reader reads the form of that map
@@ -38,6 +40,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use creche_contracts::ids::Sha256Hex;
+use creche_contracts::json::{self, ByteCap};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -53,6 +56,10 @@ const INDEX_FILE: &str = "index.json";
 
 /// The `kind` of the index file.
 const INDEX_KIND: &str = "index";
+
+/// The size limit of the index for the strict reader: none. The index is a
+/// file of this repository.
+const INDEX_CAP: ByteCap = ByteCap::new(usize::MAX);
 
 /// The end of the name of each file under `vectors/data` that the generator
 /// reads.
@@ -867,9 +874,19 @@ pub fn surface(name: &str) -> Result<Surface, VectorsError> {
 }
 
 /// The rows of the index whose JSON text is `text`.
+///
+/// The index is a strict text: the strict reader refuses a text that the
+/// generator also refuses, for example an index with two `frozen` maps. A
+/// vector file can nest deeper than a strict text, so `surface_of` does not
+/// call that reader.
 fn index_of(text: &str) -> Result<Vec<IndexRow>, VectorsError> {
     let refused = |reason: String| VectorsError::new(INDEX_FILE, reason);
-    let raw: RawIndex = serde_json::from_str(text).map_err(|error| refused(error.to_string()))?;
+    let strict = json::check(text.as_bytes(), INDEX_CAP)
+        .map_err(|error| refused(format!("the text is not strict JSON: {error}")))?;
+    // `StrictText::parse` drops the message of `serde`. The index holds no
+    // secret, and the message names the field.
+    let raw: RawIndex =
+        serde_json::from_str(strict.as_str()).map_err(|error| refused(error.to_string()))?;
 
     if raw.format != FORMAT {
         return Err(refused(wrong_format(raw.format)));
@@ -1371,6 +1388,13 @@ mod tests {
         index.to_string()
     }
 
+    /// The JSON text of an index with no surface, with `frozen` as the text
+    /// of its map of frozen files. The `json!` macro writes no key two times
+    /// and no lone surrogate.
+    fn index_text(frozen: &str) -> String {
+        format!(r#"{{"format": 1, {frozen}, "kind": "index", "surfaces": []}}"#)
+    }
+
     /// `vectors/tests/test_vectors_frozen.py` gives the generator the paths
     /// of this test and of the next one. The two programs must agree on each
     /// path.
@@ -1426,11 +1450,13 @@ mod tests {
 
     #[test]
     fn an_index_that_breaks_a_rule_is_refused() {
-        let refused: [(String, &str); 15] = [
+        let refused: [(String, &str); 21] = [
             (
                 index_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
             ),
+            (index_with("format", json!(true)), "invalid type"),
+            (index_with("format", json!(1.0)), "invalid type"),
             (
                 index_with("kind", json!("registries")),
                 "the kind is \"registries\", and the kind of the index is \"index\"",
@@ -1465,7 +1491,10 @@ mod tests {
             ),
             (index_with("extra", json!(1)), "unknown field `extra`"),
             (index_with("vectors", json!(-1)), "invalid value"),
-            (String::from("{"), "EOF while parsing"),
+            (
+                String::from("{"),
+                "the text is not strict JSON: syntax at byte 1",
+            ),
             (
                 String::from(r#"{"format": 1, "kind": "index", "surfaces": []}"#),
                 "missing field `frozen`",
@@ -1474,6 +1503,24 @@ mod tests {
             (
                 index_with("frozen", json!({"runtime/old.json": 7})),
                 "invalid type",
+            ),
+            (
+                index_text(r#""frozen": {}, "frozen": {}"#),
+                "the text is not strict JSON: duplicate_key at byte 28",
+            ),
+            (
+                index_text(&format!(
+                    r#""frozen": {{"a.json": "{DIGEST}", "a.json": "{DIGEST}"}}"#
+                )),
+                "the text is not strict JSON: duplicate_key at byte 103",
+            ),
+            (
+                index_text(&format!(r#""frozen": {{"\ud800.json": "{DIGEST}"}}"#)),
+                "the text is not strict JSON: lone_surrogate at byte 26",
+            ),
+            (
+                index_text(&format!(r#""frozen": {{"\udcff.json": "{DIGEST}"}}"#)),
+                "the text is not strict JSON: lone_surrogate at byte 26",
             ),
         ];
 

@@ -133,6 +133,8 @@ for example `ids/disagreements.json`.
 - A file that is frozen already. A frozen file thus keeps its first digest.
 - A file that is absent.
 - A file that is not ASCII, and a file that is no JSON object.
+- A file with an object that holds one key two times.
+- A file with a name that is not UTF-8.
 - A file with no `kind` that is not a vector file of format 1.
 
 The index is the one home of the map. The generator reads the map from the
@@ -176,10 +178,21 @@ A path of the map `frozen` has one form:
 - No part is empty, `.` or `..`.
 - The name of the file ends with `.json`.
 - The path is not `index.json`.
+- The path holds no lone surrogate. Python reads a file name that is not
+  UTF-8 as a text with one.
 
-A reader refuses an index with no `frozen` key. It also refuses a path or a
-digest in another form. The generator and the Rust readers of `creche-testkit`
-and of `creche-contracts` hold these rules.
+A reader refuses an index in each of these cases:
+
+- The index has no `frozen` key, or it has a key outside the four keys.
+- The `format` is not the integer `1`, or the `kind` is not `index`.
+- An object of the index holds one key two times. A merge by hand can
+  leave two `frozen` maps.
+- A path or a digest has another form.
+
+The generator and the Rust readers of `creche-testkit` and of
+`creche-contracts` hold these rules. Each Rust reader first gives the index
+to the strict JSON reader of `creche-contracts`. `rust/AGENTS.md`, "JSON",
+has the rules of that reader.
 
 ## The vector file
 

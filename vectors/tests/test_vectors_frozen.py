@@ -206,8 +206,22 @@ def test_a_frozen_surface_with_the_name_of_a_built_surface_stops_the_build() -> 
         generate.index_rows((twin,), {twin.path: render(twin)}, frozen, {LEAVES.path: text})
 
 
+def _index_with(**members: object) -> str:
+    """The JSON text of an index with no surface, with some members replaced."""
+    return json.dumps({"format": 1, "frozen": {}, "kind": "index", "surfaces": []} | members)
+
+
 def _index_text(frozen: object) -> str:
-    return json.dumps({"format": 1, "frozen": frozen, "kind": "index", "surfaces": []})
+    return _index_with(frozen=frozen)
+
+
+#: An index with two maps of frozen files, as a merge by hand can leave it.
+TWO_MAPS = '{"format": 1, "frozen": {}, "frozen": {}, "kind": "index", "surfaces": []}'
+#: An index whose map names one path two times.
+TWO_LINES = (
+    f'{{"format": 1, "frozen": {{"a.json": "{WRONG_DIGEST}", "a.json": "{WRONG_DIGEST}"}},'
+    ' "kind": "index", "surfaces": []}'
+)
 
 
 #: Each path that the map can hold, by its form. The Rust reader of
@@ -260,6 +274,17 @@ def test_the_map_refuses_a_path_in_another_form() -> None:
         )
 
 
+def test_the_map_refuses_a_path_with_a_lone_surrogate() -> None:
+    """A strict JSON reader refuses the text of such an index. The Rust readers are strict."""
+    for path in ("\ud800.json", "made/\udcff.json"):
+        text = _index_text({path: WRONG_DIGEST})
+
+        assert text.isascii()
+
+        with pytest.raises(ValueError, match="is no path of a frozen file"):
+            generate.frozen_of({"index.json": text})
+
+
 @pytest.mark.parametrize(
     ("on_disk", "reason"),
     [
@@ -267,6 +292,20 @@ def test_the_map_refuses_a_path_in_another_form() -> None:
         ({"index.json": "{"}, "index.json is no JSON"),
         ({"index.json": "[]"}, "index.json is no JSON object"),
         ({"index.json": '{"format": 1, "kind": "index", "surfaces": []}'}, "has no `frozen` map"),
+        ({"index.json": TWO_MAPS}, "index.json holds the key 'frozen' two times"),
+        ({"index.json": TWO_LINES}, "index.json holds the key 'a.json' two times"),
+        ({"index.json": _index_with(format=2)}, "index.json is no index of format 1"),
+        ({"index.json": _index_with(format=True)}, "index.json is no index of format 1"),
+        ({"index.json": _index_with(format=1.0)}, "index.json is no index of format 1"),
+        ({"index.json": '{"frozen": {}, "kind": "index"}'}, "index.json is no index of format 1"),
+        ({"index.json": _index_with(kind="registries")}, "index.json is no index of format 1"),
+        ({"index.json": '{"format": 1, "frozen": {}}'}, "index.json is no index of format 1"),
+        ({"index.json": _index_with(FROZEN={})}, "index.json holds another set of keys"),
+        ({"index.json": _index_with(extra=1)}, "index.json holds another set of keys"),
+        (
+            {"index.json": '{"format": 1, "frozen": {}, "kind": "index"}'},
+            "index.json holds another set of keys",
+        ),
         ({"index.json": _index_text([])}, "`frozen` of index.json is no JSON object"),
         ({"index.json": _index_text({"a.json": "0" * 63})}, "is not 64 hexadecimal digits"),
         ({"index.json": _index_text({"a.json": "0" * 65})}, "is not 64 hexadecimal digits"),
@@ -473,6 +512,25 @@ def test_the_map_can_name_each_json_file_that_the_generator_reads(tree: Path, na
     assert (tree / path).read_text(encoding="utf-8") == OTHER_KIND
 
 
+def test_freeze_refuses_a_file_with_a_name_that_is_not_utf8(
+    tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Python reads such a name as a text with a lone surrogate. No index can hold that path."""
+    path = "made/\udcff.json"
+    on_disk = {**generate.committed(tree), path: OTHER_KIND}
+    index = (tree / generate.INDEX_FILE).read_bytes()
+
+    def with_that_file(_root: Path) -> dict[str, str]:
+        return on_disk
+
+    monkeypatch.setattr(generate, "committed", with_that_file)
+
+    with pytest.raises(ValueError, match="is no path of a frozen file"):
+        generate.main(["--freeze", path], tree)
+
+    assert (tree / generate.INDEX_FILE).read_bytes() == index
+
+
 @pytest.mark.parametrize(
     ("paths", "reason"),
     [
@@ -486,6 +544,8 @@ def test_the_map_can_name_each_json_file_that_the_generator_reads(tree: Path, na
         (["made/text.json"], "made/text.json is no JSON"),
         (["made/no-vectors.json"], "made/no-vectors.json is no vector file of format 1"),
         (["made/format-2.json"], "made/format-2.json is no vector file of format 1"),
+        (["made/format-true.json"], "made/format-true.json is no vector file of format 1"),
+        (["made/key-twice.json"], "made/key-twice.json holds the key 'kind' two times"),
         (["made/result.json"], "made/result.json: 'passed' is no result of a vector"),
     ],
 )
@@ -500,6 +560,8 @@ def test_freeze_refuses_a_file_that_cannot_freeze(
         "made/text.json": "frozen\n",
         "made/no-vectors.json": '{"format": 1, "surface": "made.x", "entry": "made.entry"}\n',
         "made/format-2.json": json.dumps({**vector_file, "format": 2}),
+        "made/format-true.json": json.dumps({**vector_file, "format": True}),
+        "made/key-twice.json": '{"format": 1, "kind": "registries", "kind": "registries"}\n',
         "made/result.json": json.dumps({**vector_file, "vectors": [{"result": "passed"}]}),
     }
     for path, text in made.items():

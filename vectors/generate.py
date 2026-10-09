@@ -26,7 +26,17 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Final, cast
 
-from vectors.core import ACCEPTED, FORMAT, RAISED, REFUSED, Json, Surface, compact, render
+from vectors.core import (
+    ACCEPTED,
+    FORMAT,
+    RAISED,
+    REFUSED,
+    Json,
+    Surface,
+    compact,
+    has_surrogate,
+    render,
+)
 from vectors.surfaces import (
     audit,
     channel,
@@ -53,10 +63,14 @@ INDEX_FILE: Final = "index.json"
 #: The suffix of every file that the generator writes.
 JSON_SUFFIX: Final = ".json"
 DISAGREEMENTS_FILE: Final = "ids/disagreements.json"
+#: The `kind` of the index.
+_INDEX_KIND: Final = "index"
 
 #: The key of the index that holds the frozen files: each path under
 #: `vectors/data/`, with the SHA-256 of the bytes of that file.
 _FROZEN_KEY: Final = "frozen"
+#: The four keys of the index. A reader refuses an index with another key.
+_INDEX_KEYS: Final = frozenset({"format", _FROZEN_KEY, "kind", "surfaces"})
 #: A digest in the index: 64 hexadecimal digits in lower case.
 _DIGEST: Final = re.compile(r"[0-9a-f]{64}")
 #: A tree with no frozen file.
@@ -130,11 +144,14 @@ def _digest(text: str) -> str:
 
 
 def _is_data_path(path: str) -> bool:
-    """Whether `committed` can give `path`: a JSON file below the root.
+    """Whether a line of the map can name `path`: a JSON file below the root.
 
     The name ends with the suffix, as the name of each file that `committed`
     reads. `PurePosixPath.suffix` is not the test: for a name of dots and
     the suffix, it differs between two supported Python versions.
+
+    The path holds no lone surrogate. Python reads a file name that is not
+    UTF-8 as a text with one, and a strict JSON reader refuses that text.
     """
     pure = PurePosixPath(path)
 
@@ -143,6 +160,7 @@ def _is_data_path(path: str) -> bool:
         and not pure.is_absolute()
         and ".." not in pure.parts
         and pure.name.endswith(JSON_SUFFIX)
+        and not has_surrogate(path)
     )
 
 
@@ -154,10 +172,45 @@ def _members(value: object, name: str) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
+class _KeyTwice(ValueError):
+    """An object of a JSON text holds one key two times."""
+
+
+def _each_key_once(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """The members of one JSON object, for `json.loads`.
+
+    Without this hook, `json.loads` keeps the last value of a key that an
+    object holds two times, and the first value is lost.
+    """
+    members: dict[str, object] = {}
+    for key, value in pairs:
+        if key in members:
+            raise _KeyTwice(f"the key {key!r}")
+
+        members[key] = value
+
+    return members
+
+
+def _has_format(document: Mapping[str, object]) -> bool:
+    """Whether `document` holds the format number of this generator.
+
+    The number is an integer. In Python, `True` and `1.0` are equal to 1.
+    """
+    held = document.get("format")
+
+    return type(held) is int and held == FORMAT
+
+
 def _document(text: str, path: str) -> dict[str, object]:
-    """The members of the JSON object that is the text of the file `path`."""
+    """The members of the JSON object that is the text of the file `path`.
+
+    No object of the text holds a key two times.
+    """
     try:
-        value: object = json.loads(text)
+        value: object = json.loads(text, object_pairs_hook=_each_key_once)
+    except _KeyTwice as error:
+        raise ValueError(f"{path} holds {error} two times") from error
     except ValueError as error:
         raise ValueError(f"{path} is no JSON") from error
 
@@ -188,8 +241,15 @@ def frozen_of(on_disk: Mapping[str, str]) -> dict[str, str]:
 
 def _frozen_map(index: Mapping[str, object]) -> dict[str, str]:
     """The map of the frozen files in the members of an index, checked."""
+    if not _has_format(index) or index.get("kind") != _INDEX_KIND:
+        raise ValueError(f"{INDEX_FILE} is no index of format {FORMAT}")
+
     if _FROZEN_KEY not in index:
         raise ValueError(f"{INDEX_FILE} has no `{_FROZEN_KEY}` map")
+
+    # A key that this reader does not know can hold lines of a second map.
+    if frozenset(index) != _INDEX_KEYS:
+        raise ValueError(f"{INDEX_FILE} holds another set of keys than {sorted(_INDEX_KEYS)}")
 
     frozen: dict[str, str] = {}
     for path, digest in _members(index[_FROZEN_KEY], f"`{_FROZEN_KEY}` of {INDEX_FILE}").items():
@@ -228,6 +288,11 @@ def _freeze(
         if text is None:
             raise ValueError(f"no JSON file {path}; give the path from vectors/data/")
 
+        # The next run must read the index of this run. Only a file name that
+        # is not UTF-8 is on disk and is no path of the map.
+        if not _is_data_path(path):
+            raise ValueError(f"{path!r} is no path of a frozen file")
+
         if not text.isascii():
             raise ValueError(f"{path} is not ASCII, so the generator did not write it")
 
@@ -259,7 +324,7 @@ def _frozen_row(path: str, text: str) -> dict[str, Json] | None:
 
     name, entry, held = document.get("surface"), document.get("entry"), document.get("vectors")
     if (
-        document.get("format") != FORMAT
+        not _has_format(document)
         or not isinstance(name, str)
         or not isinstance(entry, str)
         or not isinstance(held, list)
@@ -318,7 +383,7 @@ def render_index(rows: Sequence[dict[str, Json]], frozen: Mapping[str, str]) -> 
 
     return (
         f'{{\n "format": {FORMAT},\n "{_FROZEN_KEY}": {held},\n'
-        f' "kind": "index",\n "surfaces": {body}\n}}\n'
+        f' "kind": "{_INDEX_KIND}",\n "surfaces": {body}\n}}\n'
     )
 
 
