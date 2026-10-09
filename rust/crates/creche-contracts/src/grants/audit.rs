@@ -1029,6 +1029,7 @@ mod tests {
     use super::*;
 
     const GATE: &str = "0123456789abcdef";
+    const OTHER_GATE: &str = "fedcba9876543210";
 
     fn at(unix_ms: u64) -> AuditTime {
         AuditTime::from_unix_ms(unix_ms).unwrap()
@@ -1052,15 +1053,20 @@ mod tests {
         record_of(Arguments::empty())
     }
 
-    /// A call of `chat` that waits for the operator at [`GATE`].
-    fn held() -> Held {
+    /// A call of `chat` that waits for the operator at the gate `gate`.
+    fn held_at(gate: &str) -> Held {
         Held::in_test(
             "chat".parse().unwrap(),
             "reg-9f21c4".parse().unwrap(),
             Executor::Delegate,
             Arguments::empty(),
-            GATE.parse().unwrap(),
+            gate.parse().unwrap(),
         )
+    }
+
+    /// A call of `chat` that waits for the operator at [`GATE`].
+    fn held() -> Held {
+        held_at(GATE)
     }
 
     fn line_of(record: &AuditRecord) -> String {
@@ -1314,9 +1320,14 @@ mod tests {
         );
 
         // A second call of the method replaces the gate and the wait together.
-        let again = second.clone().with_gate(&held, 7);
+        let other = held_at(OTHER_GATE);
+        let again = second.clone().with_gate(&other, 7);
 
-        assert_eq!((again.gate(), again.waited_ms()), (second.gate(), 7));
+        assert_ne!(other.gate(), held.gate());
+        assert_eq!((again.gate(), again.waited_ms()), (Some(other.gate()), 7));
+        assert!(
+            line_of(&again).contains(&format!("\"waited_ms\": 7, \"gate\": \"{OTHER_GATE}\", "))
+        );
     }
 
     #[test]
