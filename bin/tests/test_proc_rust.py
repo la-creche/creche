@@ -825,6 +825,16 @@ def test_the_probe_selects_each_scenario_of_the_board_start_but_the_named_ones(
     assert {one.removeprefix(prefix) for one in selected} == scenarios - set(NOT_YET)
 
 
+def test_the_two_names_of_the_suite_in_the_script_are_names_of_the_suite() -> None:
+    """The script holds a copy of the prefix and of the name of one switch.
+    The service module of the suite is the source of both."""
+    services = _services()
+
+    assert services.VARIABLE_PREFIX == PREFIX
+    assert services.NO_SKIP_ENV == NO_SKIP
+    assert NO_SKIP in services.SWITCHES
+
+
 def test_the_text_of_the_script_holds_the_prefix_of_the_suite_one_time() -> None:
     """The suite stops the run on a variable with its prefix that it does
     not read (`integration/proc/AGENTS.md`). The code of the script holds
