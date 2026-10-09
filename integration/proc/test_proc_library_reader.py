@@ -7,10 +7,15 @@ another SQLite. So the first two scenarios here run `reader_store.mjs`: a
 Node program that opens one store as the bridge opens it and that runs the
 statements of the bridge.
 
-The third scenario starts no program. It reads `reader_store.mjs` and
-`playpen/bridge/index-store.ts` as text, as `test_proc_table.py` reads the
-unit files. It holds the statements of the first file against those of the
-second one, so the reader cannot drift from the bridge.
+The third scenario holds the rule that the reader is the first program to
+open a store: `read_as_bridge` refuses a store that is not alone in its
+directory.
+
+The last two scenarios start no program. Each one compares source text, as
+`test_proc_table.py` does with the unit files. One holds the statements of
+`reader_store.mjs` against those of `playpen/bridge/index-store.ts`, so the
+reader cannot drift from the bridge. One holds the limit of a query here
+against the constant of `playpen/bridge/search.ts`.
 
 The second scenario runs the reference beside the program of the run.
 `integration/proc/AGENTS.md`, "The reference", has the rule.
@@ -24,12 +29,14 @@ from typing import Any
 
 import pytest
 import standin_tei
-from proc_harness import Finished
+from proc_harness import Finished, ProcError
 from proc_library import (
     BIKES,
     BIKES_TEXT,
+    BY_REFERENCE,
     DIMS,
     EXIT_OK,
+    JUDGED,
     META_DIMS,
     META_MODEL,
     META_UPDATED,
@@ -41,11 +48,13 @@ from proc_library import (
 )
 from proc_tree import repo_root
 
-#: The file of the bridge that reads a store.
+#: The file of the bridge that reads a store, and the file that gives a
+#: query its limit.
 BRIDGE = repo_root() / "playpen" / "bridge" / "index-store.ts"
+BRIDGE_SEARCH = repo_root() / "playpen" / "bridge" / "search.ts"
 
 #: The most rows that the bridge asks of one FTS5 query: `CANDIDATES` of
-#: `playpen/bridge/search.ts`.
+#: `playpen/bridge/search.ts`. One test holds the two values equal.
 LIMIT = 20
 
 #: A query that one note of `write_vault` answers, in the form that the
@@ -55,21 +64,33 @@ ONE_NOTE = '"bicycle"'
 #: A query that some notes of `write_mixed` answer, and fewer than `LIMIT`.
 SOME_NOTES = '"note" OR "meeting" OR "bicycle"'
 
-#: The two index directories of the scenario with two writers.
-BY_REFERENCE = "reference"
-JUDGED = "judged"
-
 #: How many bytes one stored vector has: one float32 for each value.
 VECTOR_BYTES = DIMS * 4
 
+#: A file that a reader leaves beside a store in WAL mode.
+LEFT_FILE = "store.db-shm"
+
 #: A string literal of a JavaScript or TypeScript file that starts a clause
 #: of an SQL statement. The quote is a double quote, or the mark of a
-#: template.
+#: template. The pattern does not find a literal in single quotes, and it
+#: does not find a statement that starts with another word. The count of
+#: `PREPARE` covers both: each statement of the two files goes through it.
 _SQL_LITERAL = re.compile(r'(["`])((?:SELECT|FROM|WHERE) [^"`\n]*)\1')
 
-#: The line that gives the plain vector table its name. The bridge puts the
-#: name into one statement through a template.
-_VECTOR_TABLE = re.compile(r'^const VECTOR_TABLE = "([a-z_]+)";$', re.MULTILINE)
+#: The call that makes one statement, and the call that runs a text with
+#: no statement object. Neither file can use the second one.
+PREPARE = ".prepare("
+EXEC = ".exec("
+
+#: The whole line that gives the plain vector table its name. The bridge
+#: puts the name into one statement through a template.
+_VECTOR_TABLE = re.compile(r'const VECTOR_TABLE = "([a-z_]+)";')
+
+#: The options that a file gives the connection to a store.
+_OPEN_OPTIONS = re.compile(r"new DatabaseSync\([A-Za-z.]+, (\{[^{}\n]*\})\)")
+
+#: The whole line of `playpen/bridge/search.ts` that gives a query its limit.
+_CANDIDATES = re.compile(r"const CANDIDATES = ([0-9]+);")
 
 
 @pytest.mark.usefixtures("node_sqlite")
@@ -125,20 +146,54 @@ def test_the_bridge_statements_give_the_same_rows_for_both_writers(library: Libr
     assert judged == reference
 
 
+def test_the_reader_refuses_a_store_that_is_not_alone(library: LibraryStack) -> None:
+    """`read_as_bridge` raises when the index directory holds a file beside the store.
+
+    A reader before the reader of the bridge can leave such a file. The
+    reader of the bridge then finds what a mount of a sandbox does not
+    have, and it can read a store that needs the file. The refusal comes
+    before the reader program starts, so this scenario needs no Node.
+    """
+    scope = library.vault()
+    write_vault(scope)
+    _completed(library.run_index(scope, library.index_dir()))
+    (library.index_dir() / LEFT_FILE).write_bytes(b"")
+
+    with pytest.raises(ProcError, match=LEFT_FILE):
+        library.read_as_bridge(library.store().path, ONE_NOTE, LIMIT)
+
+
 def test_the_reader_statements_are_those_of_the_bridge() -> None:
     """Each statement of `reader_store.mjs` is a statement of the bridge, and the reverse.
 
-    The bridge builds one statement from three string literals, and one
-    from a template with the constant `VECTOR_TABLE`. So this test compares
-    the literals and the constant, and no whole statement.
+    Two statements of the bridge are not one literal. One is the sum of
+    three literals. One is a template that takes the name of a table from
+    `VECTOR_TABLE`. So this test compares each literal and that constant,
+    and it compares no whole statement.
+
+    The pattern of a literal does not find each statement that a file can
+    hold. So the two files also make the same count of statements, neither
+    one runs a text with no statement, and both open the store with the
+    same options.
     """
     reader = reader_script().read_text(encoding="utf-8")
     bridge = BRIDGE.read_text(encoding="utf-8")
 
     assert _sql_literals(reader) != set()
     assert _sql_literals(reader) == _sql_literals(bridge)
-    assert len(_VECTOR_TABLE.findall(reader)) == 1
-    assert _VECTOR_TABLE.findall(reader) == _VECTOR_TABLE.findall(bridge)
+    assert len(_whole_lines(_VECTOR_TABLE, reader)) == 1
+    assert _whole_lines(_VECTOR_TABLE, reader) == _whole_lines(_VECTOR_TABLE, bridge)
+    assert reader.count(PREPARE) == bridge.count(PREPARE) > 0
+    assert (reader.count(EXEC), bridge.count(EXEC)) == (0, 0)
+    assert len(_OPEN_OPTIONS.findall(reader)) == 1
+    assert _OPEN_OPTIONS.findall(reader) == _OPEN_OPTIONS.findall(bridge)
+
+
+def test_the_limit_of_a_query_is_that_of_the_bridge() -> None:
+    """`LIMIT` of this file is the count of rows that the bridge asks of one query."""
+    search = BRIDGE_SEARCH.read_text(encoding="utf-8")
+
+    assert _whole_lines(_CANDIDATES, search) == [str(LIMIT)]
 
 
 # -------------------------------------------------------------------- helpers
@@ -165,3 +220,10 @@ def _rows_of(library: LibraryStack, index: str) -> dict[str, Any]:
 def _sql_literals(source: str) -> set[str]:
     """Each string literal of one source text that starts a clause of an SQL statement."""
     return {found[1] for found in _SQL_LITERAL.findall(source)}
+
+
+def _whole_lines(pattern: re.Pattern[str], source: str) -> list[str]:
+    """The first group of one pattern, for each line of a source text that the pattern is."""
+    lines = (pattern.fullmatch(line) for line in source.splitlines())
+
+    return [found[1] for found in lines if found is not None]

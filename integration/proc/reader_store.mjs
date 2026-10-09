@@ -10,10 +10,12 @@
 //
 // The bridge is `playpen/bridge/index-store.ts`. The comment above each
 // statement here names the lines of that file. Each statement here has the
-// string literals of the bridge. The bridge builds one statement from three
-// literals, and one from a template with the constant `VECTOR_TABLE`.
-// `test_proc_library_reader.py` holds the literals and the constant of this
-// file against the text of the bridge. Change the two files together.
+// string literals of the bridge. Two statements there are not one literal:
+// one is the sum of three literals, and one is a template that takes the
+// name of a table from `VECTOR_TABLE`. `test_proc_library_reader.py` holds
+// each literal, that constant, the count of statements and the options of
+// the connection against the text of the bridge. Change the two files
+// together.
 //
 // This program does not rank a row and it does not check a row. It prints
 // what each statement gives, as one JSON object on stdout:
@@ -36,10 +38,11 @@
 
 import { DatabaseSync } from "node:sqlite";
 
-const [storePath, match, limitText] = process.argv.slice(2);
+const words = process.argv.slice(2);
+const [storePath, match, limitText] = words;
 const limit = Number(limitText);
 
-if (storePath === undefined || match === undefined || !Number.isInteger(limit) || limit < 1) {
+if (words.length !== 3 || !Number.isInteger(limit) || limit < 1) {
   process.stderr.write("usage: reader_store.mjs <store.db> <match> <limit>\n");
   process.exit(2);
 }

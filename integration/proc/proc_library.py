@@ -780,7 +780,20 @@ class LibraryStack:
         query gives. The docstring of `reader_store.mjs` has the keys of the
         answer. The reader runs on a store that no program can write, in a
         directory that no program can write: `_read_only` says why.
+
+        The store must be alone in its directory. A reader before this one
+        can leave a file there, and the reader of the bridge then finds a
+        file that a mount of a sandbox does not have. So another file is an
+        error, before the reader runs.
         """
+        beside = sorted(name for name in os.listdir(store.parent) if name != STORE_FILE)
+
+        if beside:
+            raise ProcError(
+                f"{store.parent} also holds {beside}. Another reader opened the store first, "
+                "or the store needs a file beside it"
+            )
+
         words = ["node", str(reader_script()), str(store), match, str(limit)]
 
         with _read_only(store):
