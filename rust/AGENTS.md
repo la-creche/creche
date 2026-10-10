@@ -2131,9 +2131,6 @@ To make the fifth check on your machine, for example before a merge:
      limit. `parse_object` reads 127 levels, the limit of `serde_json`. The
      tree of the module stops at 128 levels, for a deserializer with no
      limit.
-  3. `int`, contracts 02, 04 and 05. No contract gives a count a range. The
-     Python readers keep an integer of each size. The reader gives an `i64`,
-     and it reads a larger integer as 0.
 - The module `untrusted` differs from the Python helpers on purpose in six
   ways. Each one is a row of `DEVIATIONS` in the test of the module.
   1. An answer is strict JSON in UTF-8, with no byte order mark. It holds no
@@ -2145,7 +2142,7 @@ To make the fifth check on your machine, for example before a merge:
      a half. The three doors give `json.loads` the text of `httpx`, and they
      refuse the first three.
   2. An answer nests 127 levels at most.
-  3. `int` reads an integer that no `i64` holds as 0.
+  3. `int` reads an integer outside the range of 64 bits as 0.
   4. `number` reads the integer `-0` as `-0.0`. Python reads it as `0.0`.
   5. `text` reads a field that is no text as the empty text. `_text` of the
      delegate client of the chaperone reads it as `None`.

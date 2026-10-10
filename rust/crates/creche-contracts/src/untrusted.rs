@@ -5,22 +5,22 @@
 //! type. Each field of that type names one function of this module:
 //!
 //! ```
-//! use creche_contracts::untrusted;
+//! use creche_contracts::{json, untrusted};
 //! use serde::Deserialize;
 //!
 //! #[derive(Deserialize)]
 //! struct RawTurn {
 //!     #[serde(default, deserialize_with = "untrusted::text")]
 //!     state: String,
-//!     #[serde(default, deserialize_with = "untrusted::int")]
-//!     turn_seq: i64,
+//!     #[serde(default = "untrusted::zero", deserialize_with = "untrusted::int")]
+//!     turn_seq: json::Integer,
 //!     #[serde(default, deserialize_with = "untrusted::list_first::<8, _, _>")]
 //!     notes: Vec<String>,
 //! }
 //!
 //! let turn: RawTurn = untrusted::parse_object(br#"{"state": 7, "turn_seq": "x"}"#)?;
 //! assert_eq!(turn.state, "");
-//! assert_eq!(turn.turn_seq, 0);
+//! assert_eq!(turn.turn_seq, untrusted::zero());
 //! assert!(turn.notes.is_empty());
 //! # Ok::<(), untrusted::NotAnObject>(())
 //! ```
@@ -118,6 +118,8 @@ use serde::de::{
 };
 use serde::{Deserialize, Deserializer};
 
+use crate::json;
+
 /// A text. A value that is not a JSON string reads as the empty text.
 ///
 /// Use it with `#[serde(default, deserialize_with = "untrusted::text")]`. The
@@ -151,7 +153,18 @@ where
 /// number with a fraction or an exponent is not an integer, so `2.0` reads
 /// as 0.
 ///
-/// An integer that does not fit an `i64` reads as 0 too.
+/// The result holds each integer of a strict JSON text: a value from the
+/// smallest `i64` to the largest `u64`. The Python copies keep such a value
+/// too. The conversion to the valid type gives a count its range.
+///
+/// Use it with
+/// `#[serde(default = "untrusted::zero", deserialize_with = "untrusted::int")]`.
+/// [`json::Integer`] has no `Default`, so [`zero`] gives the value of a field
+/// that is absent.
+///
+/// An integer outside that range is not strict JSON (`rust/AGENTS.md`,
+/// "JSON"). [`parse_object`] still reads such an integer, as a float, and
+/// this function then gives 0. The Python copies keep each digit of it.
 ///
 /// The Python origin is `field_int` of
 /// `door-tui/src/agent_door_tui/untrusted.py:45-52` and `integer` of
@@ -160,21 +173,35 @@ where
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-//
-// CONTRACT-QUESTION: contracts 02, 04 and 05 give a count no range. The
-// Python readers keep an integer of each size. This reader holds 64 bits with
-// a sign, and it reads a larger integer as 0, the value of a field of a wrong
-// type. A reader that keeps each size costs a type for a large integer in
-// each raw type.
-pub fn int<'de, D>(deserializer: D) -> Result<i64, D::Error>
+pub fn int<'de, D>(deserializer: D) -> Result<json::Integer, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let Json::Int(whole) = read(deserializer)? else {
-        return Ok(0);
-    };
+    Ok(match read(deserializer)? {
+        Json::Int(whole) => json::Integer::from(whole),
+        Json::Large(whole) => json::Integer::from(whole),
+        Json::Null
+        | Json::Bool(_)
+        | Json::Float(_)
+        | Json::Text(_)
+        | Json::List(_)
+        | Json::Object(_) => zero(),
+    })
+}
 
-    Ok(whole)
+/// The whole number 0: what [`int`] gives for a value that is no integer.
+///
+/// Name it as the default of a field that [`int`] reads. The field is then 0
+/// when the object does not hold its key.
+///
+/// ```
+/// use creche_contracts::{json, untrusted};
+///
+/// assert_eq!(untrusted::zero(), json::Integer::from(0_u64));
+/// ```
+#[must_use]
+pub fn zero() -> json::Integer {
+    json::Integer::from(0_i64)
 }
 
 /// A number: an integer or a float. A value of another type, `true` and
@@ -879,19 +906,30 @@ mod tests {
 
     /// The raw type of a small object. Each field names a function of this
     /// module and has `default`, so the type refuses no object.
-    #[derive(Debug, Default, PartialEq, Deserialize)]
+    #[derive(Debug, PartialEq, Deserialize)]
     struct Part {
         #[serde(default, deserialize_with = "text")]
         name: String,
-        #[serde(default, deserialize_with = "int")]
-        count: i64,
+        #[serde(default = "zero", deserialize_with = "int")]
+        count: json::Integer,
+    }
+
+    impl Default for Part {
+        fn default() -> Self {
+            part("", 0)
+        }
     }
 
     fn part(name: &str, count: i64) -> Part {
         Part {
             name: name.to_owned(),
-            count,
+            count: whole(count),
         }
+    }
+
+    /// The value that `int` gives for the digits of `value`.
+    fn whole(value: i64) -> json::Integer {
+        json::Integer::from(value)
     }
 
     /// A raw type with a field that names no function. It refuses an object
@@ -957,20 +995,29 @@ mod tests {
     #[test]
     fn an_integer_reads_as_its_value() {
         let integers = [
-            ("7", 7),
-            ("0", 0),
-            ("-3", -3),
-            ("9223372036854775807", i64::MAX),
-            ("-9223372036854775808", i64::MIN),
+            ("7", whole(7)),
+            ("0", whole(0)),
+            ("-3", whole(-3)),
+            ("9223372036854775807", whole(i64::MAX)),
+            ("-9223372036854775808", whole(i64::MIN)),
+            ("9223372036854775808", json::Integer::from(1_u64 << 63)),
+            ("18446744073709551615", json::Integer::from(u64::MAX)),
         ];
 
         for (input, wanted) in integers {
-            assert_eq!(
-                direct(input, |reader| int(reader)).unwrap(),
-                wanted,
-                "{input}"
-            );
+            let read = direct(input, |reader| int(reader)).unwrap();
+
+            assert_eq!(read, wanted, "{input}");
+            // The value has the digits of the text.
+            assert_eq!(read.to_string(), input);
         }
+    }
+
+    /// `serde_json` gives the text `-0` as a float. The result is still the
+    /// value of that integer.
+    #[test]
+    fn the_integer_zero_with_a_minus_sign_reads_as_zero() {
+        assert_eq!(direct("-0", |reader| int(reader)).unwrap(), zero());
     }
 
     #[test]
@@ -989,23 +1036,38 @@ mod tests {
         ];
 
         for input in others {
-            assert_eq!(direct(input, |reader| int(reader)).unwrap(), 0, "{input}");
+            assert_eq!(
+                direct(input, |reader| int(reader)).unwrap(),
+                zero(),
+                "{input}"
+            );
         }
     }
 
+    /// The difference that the doc comment of `int` names. `serde_json`
+    /// gives an integer outside 64 bits as a float, and a float is no
+    /// integer.
     #[test]
-    fn an_integer_that_no_i64_holds_reads_as_zero() {
-        let large = [
-            "9223372036854775808",
-            "18446744073709551615",
+    fn an_integer_outside_64_bits_reads_as_zero() {
+        let outside = [
             "18446744073709551616",
             "-9223372036854775809",
             "123456789012345678901234567890",
         ];
 
-        for input in large {
-            assert_eq!(direct(input, |reader| int(reader)).unwrap(), 0, "{input}");
+        for input in outside {
+            assert_eq!(
+                direct(input, |reader| int(reader)).unwrap(),
+                zero(),
+                "{input}"
+            );
         }
+    }
+
+    #[test]
+    fn the_default_of_an_integer_field_is_zero() {
+        assert_eq!(zero().to_i64(), Some(0));
+        assert_eq!(zero().to_string(), "0");
     }
 
     // --- number ---
@@ -1445,12 +1507,12 @@ mod tests {
     // --- parse_object ---
 
     /// A raw type with each field reader of this module.
-    #[derive(Debug, Default, PartialEq, Deserialize)]
+    #[derive(Debug, PartialEq, Deserialize)]
     struct Each {
         #[serde(default, deserialize_with = "text")]
         text: String,
-        #[serde(default, deserialize_with = "int")]
-        int: i64,
+        #[serde(default = "zero", deserialize_with = "int")]
+        int: json::Integer,
         #[serde(default, deserialize_with = "number")]
         number: Option<f64>,
         #[serde(default, deserialize_with = "flag")]
@@ -1463,6 +1525,21 @@ mod tests {
         list: Vec<String>,
         #[serde(default, deserialize_with = "list_first::<2, _, _>")]
         first: Vec<String>,
+    }
+
+    impl Default for Each {
+        fn default() -> Self {
+            Self {
+                text: String::new(),
+                int: zero(),
+                number: None,
+                flag: false,
+                object: Part::default(),
+                block: None,
+                list: Vec::new(),
+                first: Vec::new(),
+            }
+        }
     }
 
     /// The names of the fields of `Each`.
@@ -1494,7 +1571,7 @@ mod tests {
         }"#;
         let wanted = Each {
             text: "family".to_owned(),
-            int: -3,
+            int: whole(-3),
             number: Some(1.5),
             flag: true,
             object: part("o", 1),
@@ -1534,7 +1611,7 @@ mod tests {
         assert_eq!(
             read("7"),
             Each {
-                int: 7,
+                int: whole(7),
                 number: Some(7.0),
                 ..Each::default()
             }
@@ -1669,7 +1746,7 @@ mod tests {
         let document = br#"{"text": "first", "int": 1, "text": 7, "int": 2, "text": "last"}"#;
         let wanted = Each {
             text: "last".to_owned(),
-            int: 2,
+            int: whole(2),
             ..Each::default()
         };
 
@@ -2572,7 +2649,6 @@ mod tests {
         }
 
         probe!(TextField, "text", String);
-        probe!(IntField, "int", i64);
         probe!(NumberField, "number", Option<f64>);
         probe!(FlagField, "flag", bool);
         probe!(ObjectField, "object", AnyObject);
@@ -2581,6 +2657,14 @@ mod tests {
         probe!(FiftyObjects, "list_first::<50, _, _>", Vec<AnyObject>);
         probe!(TwoTexts, "list_first::<2, _, _>", Vec<String>);
         probe!(FiftyTexts, "list_first::<50, _, _>", Vec<String>);
+
+        /// The raw type for `int`. Its default is a function of the module:
+        /// `json::Integer` has no `Default`.
+        #[derive(Deserialize)]
+        struct IntField {
+            #[serde(default = "zero", deserialize_with = "int")]
+            field: json::Integer,
+        }
 
         /// What a raw type gives for a vector whose input is one object. The
         /// raw type reads through `parse_object`.
@@ -2797,8 +2881,8 @@ mod tests {
             serde_json stops at 128 levels.";
 
         const FITS_64_BITS: &str = "No contract gives a count a range. The Python helper keeps \
-            an integer of each size. The Rust reader gives an i64, and it reads an integer that \
-            no i64 holds as 0, the value of a field of a wrong type.";
+            an integer of each size. serde_json gives an integer outside 64 bits as a float, \
+            and the Rust reader reads a float as 0, the value of a field of a wrong type.";
 
         const PAST_64_BITS_IS_A_FLOAT: &str = "No difference in what the reader accepts. \
             Python keeps each digit of an integer. serde_json gives an integer past 64 bits as \
@@ -2859,9 +2943,7 @@ mod tests {
                 at: At::Vectors(
                     Surfaces::Named(INTEGERS),
                     &[
-                        "integer-i64-max-plus-one",
                         "integer-i64-min-minus-one",
-                        "integer-u64-max",
                         "integer-u64-max-plus-one",
                         "integer-30-digits",
                     ],
