@@ -514,12 +514,27 @@ reader.
 `to_rfc3339_millis_plus_00_00` is a third writer. It writes milliseconds
 and the offset `+00:00`. The chaperone keeps a log of each request that
 names no family, and the lines of that log have this offset today. Use the
-writer for that log only. Delete the writer when that log writes `Z`.
+writer for that log only. `grants::UnidentifiedRecord` is the record of
+that log. Delete the writer when that log writes `Z`.
 
 `manifest::Timestamp` is a count of seconds and not a time text. This
 section does not apply to it.
 
-Six older parts of the workspace still hold a time type or date arithmetic
+`grants::AuditTime` is the time of an audit record. It holds a `Timestamp`
+of whole milliseconds that is not before 1970. It reads no time text. A
+writer of `Timestamp` writes each text of a record, and the name of a day
+file comes from such a text.
+
+The `status` module has no time type. Each time of contract 05 is a
+`Timestamp`. The staleness rule of that contract is in `status::views`:
+`STALE_AFTER_SECONDS`, `Age` and `Freshness`.
+
+`status::time` is an older path. It holds no type. It gives `Timestamp` and
+`status::views::Freshness` to code that still names them there. Add no user
+of that path. Packet `decisions-runtime-time` changes each user and deletes
+the path.
+
+Four older parts of the workspace still hold a time type or date arithmetic
 of their own. Add no user of them. One packet moves each part to
 `Timestamp` or deletes the part. The pull request of that packet deletes
 the row of the part. The pull request that deletes the last row also
@@ -527,8 +542,6 @@ deletes this paragraph and the table.
 
 | Part | Packet |
 |---|---|
-| `status::time` | `decisions-time` |
-| `AuditTime` of `grants` | `decisions-time` |
 | `session::Timestamp` | `strict-attendance-time` |
 | The stamp of a log line in `creche-runtime` | `decisions-runtime-time` |
 | The `!!timestamp` value of the YAML reader of `agent-family` | `toml-drop-yaml-validator` |
@@ -2263,10 +2276,12 @@ To make the fifth check on your machine, for example before a merge:
      noticeboard also takes UTF-16 and UTF-32.
   3. `JsonError::LoneSurrogate`, contract 05 §2. The Python reader keeps an
      escape of one half of a surrogate pair. The reader refuses the file.
-  4. `time::Timestamp`, contract 05 §2.1. The contract names RFC 3339. The
-     Python readers take each text that `datetime.fromisoformat` takes, and
-     three of them read a time with no offset as UTC. The type takes RFC 3339
-     with an offset.
+  4. `views::freshness`, contract 05 §2.1. The contract names RFC 3339 for
+     a time and gives no grammar. The Python readers take each text that
+     `datetime.fromisoformat` takes, and three of them read a time with no
+     offset as UTC. Each view reads a time with `time::Timestamp` of the
+     crate, which takes the `date-time` of RFC 3339, section 5.6. A view
+     reads each other text as no time.
   5. `document::HostPath`, contract 05 §3.2, §4.1.1 and §6.4. The contract
      gives no grammar for a host path. The type takes an absolute path with
      no control character.
@@ -2314,6 +2329,22 @@ To make the fifth check on your machine, for example before a merge:
   years 1 to 9999 as no time. It reads a number above the range of a float as
   no number. The document is then stale, or it shows no spend. A unit test
   covers each value, and no vector holds one.
+- Three inputs left the vectors of contract 05 under resolution (c) of "When
+  the two results differ". For each one, the Python code of today and
+  `time::Timestamp` give two results. A plain test of `status::views` or of
+  `status::document` holds each input, and the test table of `time` holds
+  each text. Packet `decisions-time-vectors` writes the inputs of the
+  readers again. It waits for the packets that give the Python readers the
+  grammar of `Timestamp`.
+  1. The vector `written-space` of each of the five reader surfaces. Its
+     `written_at` is `2999-01-01 00:00:00Z`. The Python readers read a time.
+     A view reads no time.
+  2. The vector `written-lower-z` of the same surfaces. Its `written_at` is
+     `2999-01-01T00:00:00z`. The Python readers read no time. A view reads a
+     time.
+  3. The vector `lax-written-at-no-offset` of `status.write`. Its
+     `written_at` is `2999-01-01T00:00:00`. The Python writer writes the
+     document. The valid type refuses it.
 - `status::outcome` holds the view of the noticeboard and no valid type.
   Contract 02 §13.1 owns the outcome record and its writer.
 - `status` holds no code for `rescope_by_fleet` and `drop_superseded` of
