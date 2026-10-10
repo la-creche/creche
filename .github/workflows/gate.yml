@@ -421,15 +421,21 @@ jobs:
 
       # cargo-deny: the program behind the `cargo deny` step of
       # bin/rust-gate.sh, which checks the locked crates against
-      # rust/deny.toml. rustup does not install it, and no action does here.
+      # rust/deny.toml. That step makes three checks: the bans, the licenses
+      # and the sources. It does not read the advisories:
+      # advisories-daily.yml makes that check one time a day. rustup does
+      # not install the program, and no action does here.
       # The step takes the archive from a release of the cargo-deny
       # repository. It checks the SHA-256 of the archive against the
       # constant before the unpack, so an archive that changed stops the job.
       # bin/rust-gate.sh fails in CI when cargo-deny is not on PATH.
       #
-      # To take another version, change the two constants together. Compute
-      # the SHA-256 of the new archive, and compare it with the `.sha256`
-      # file of that release. bin/tests/test_gate_workflow.py pins both.
+      # To take another version, change the two constants together. Three
+      # workflow files hold this step: gate.yml, release.yml and
+      # advisories-daily.yml. Change each one. Compute the SHA-256 of the
+      # new archive, and compare it with the `.sha256` file of that release.
+      # bin/tests/test_gate_workflow.py pins both, and holds the three files
+      # equal.
       - name: cargo-deny
         if: needs.scope.outputs.rust != 'false'
         working-directory: rust

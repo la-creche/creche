@@ -1,0 +1,137 @@
+# The advisory check of the locked crates, one time a day (rust/AGENTS.md,
+# "The check of the locked crates").
+#
+#   guard ── advisories
+#
+# `cargo deny` holds the crates of rust/Cargo.lock to rust/deny.toml with
+# four checks. gate.yml makes three of them for each change: the bans, the
+# licenses and the sources. The fourth check reads the advisory database
+# from the network, and that database changes while the tree stays the same.
+# In the gate, a new advisory would fail a change that touches no dependency.
+# So the gate does not make the fourth check. This workflow makes it, on the
+# newest commit of `main`.
+#
+#   guard        prints the ref. It always runs.
+#   advisories   installs the toolchain and cargo-deny, then runs
+#                `bin/rust-gate.sh --advisories`.
+#
+# THE RUN BLOCKS NO MERGE AND NO RELEASE. The check `gate` does not need it,
+# and release.yml does not read it. A schedule runs on the newest commit of
+# `main`. That commit is the merge of a pull request and never the head of
+# one, so the release executor does not read the run
+# (handover/src/handover/executor/provenance.py, P5). A pull request can thus
+# add a crate that has an advisory. The next run here is then red.
+#
+# START IT BY HAND ON `main` ONLY. The release executor reads each workflow
+# run on the head of a merged pull request, and each one must be a success.
+# So a run on another ref checks nothing: `guard` passes, the job
+# `advisories` is skipped, and the run is a success. Do not cancel such a
+# run. A cancelled run on the head of a pull request blocks the release of
+# that pull request. To check a branch before its merge, run
+# `bin/rust-gate.sh --advisories` on a development machine (rust/AGENTS.md
+# has the steps).
+#
+# A RED RUN REACHES A PERSON THROUGH GITHUB ONLY. GitHub sends the
+# notification of a failed scheduled run to one account: the account that
+# last changed the `cron` line below, or that turned this workflow on again.
+# The Actions page of the repository lists each run. No job of this
+# repository reads the result.
+#
+# CONTRACT-QUESTION: rust/AGENTS.md, "The check of the locked crates". No
+# rule says how a red run of this workflow must reach a person, and no rule
+# names that person. The reading here: the workflow holds the read-only token
+# and sends nothing by itself, so the notification of GitHub is the one path.
+# A change costs one step with a token that can write, for example a step
+# that opens an issue.
+#
+# CONTRACT-QUESTION: rust/AGENTS.md, "The check of the locked crates". The
+# decision for this check names a schedule and no period. The reading here:
+# one run a day. A crate of `main` with a new advisory then stays unreported
+# for one day at most, unless GitHub skips a run. A change costs the `cron`
+# line below and its pin in bin/tests/test_gate_workflow.py.
+#
+# GITHUB CAN SKIP A RUN. It can delay or drop a scheduled run when its load
+# is high. It turns the schedule of a public repository off after 60 days
+# with no activity in the repository.
+#
+# The job runs the code of `main` with the read-only token. It writes no
+# cache and no artifact.
+#
+# bin/tests/test_gate_workflow.py pins this file.
+name: advisories-daily
+
+on:
+  schedule:
+    # One time a day, at 05:23 UTC. Not at minute 0: the start of an hour is
+    # when GitHub delays a schedule most.
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # No `if`: this job is what makes a run on another ref a success.
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ref
+        run: 'echo "advisories-daily: the ref of this run is $GITHUB_REF"'
+
+  # The job builds no crate. `cargo deny` asks cargo for the crates of the
+  # lock file, and cargo takes each one from crates.io.
+  #
+  # The job keeps no cache. The check for a version that its author removed
+  # reads only the copy of the crates.io index that cargo keeps on the
+  # machine (rust/AGENTS.md, "Known gaps"). A runner with no cache holds no
+  # such copy before the run, so cargo writes the copy in the run itself.
+  #
+  # The time limit: a download that does not end holds the job, and a job
+  # has 6 hours by default.
+  advisories:
+    needs: guard
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The runner has rustup, so no action installs the toolchain. With no
+      # name, rustup installs the toolchain that rust/rust-toolchain.toml
+      # names. `cargo deny` starts the cargo of that toolchain.
+      - name: toolchain
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
+
+      # cargo-deny: the step of the `rust` job of gate.yml, word for word,
+      # with the same two constants. bin/tests/test_gate_workflow.py holds
+      # the three copies equal: gate.yml, release.yml and this file. To take
+      # another version, change the two constants in the three files
+      # together.
+      - name: cargo-deny
+        working-directory: rust
+        env:
+          DENY_VERSION: "0.20.2"
+          DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+        run: |
+          set -euo pipefail
+          name="cargo-deny-$DENY_VERSION-x86_64-unknown-linux-musl"
+          archive="$RUNNER_TEMP/$name.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$DENY_VERSION/$name.tar.gz"
+          found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          if [[ "$found" != "$DENY_SHA256" ]]; then
+            echo "cargo-deny: the archive has the SHA-256 $found, not $DENY_SHA256" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/cargo-deny"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-deny" --strip-components 1 "$name/cargo-deny"
+          echo "$RUNNER_TEMP/cargo-deny" >> "$GITHUB_PATH"
+          PATH="$RUNNER_TEMP/cargo-deny:$PATH" cargo deny --version
+
+      - run: bin/rust-gate.sh --advisories

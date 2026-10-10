@@ -48,6 +48,14 @@ constants of the `rust-coverage` job, and the tests hold the three copies
 equal. The job that measures runs on `main` only. A run that a person starts
 on another ref is then a success, and it cannot block a release.
 
+`.github/workflows/advisories-daily.yml` is a workflow of its own too. One
+time a day it runs `bin/rust-gate.sh --advisories`: the advisory check of
+`cargo deny`, which the gate does not make. No job of the two other files
+needs it, so a new advisory blocks no merge. It takes `cargo-deny` with the
+step and the two constants of the `rust` job, and the tests hold the three
+copies equal. The job that checks runs on `main` only, as the job that
+measures does. It keeps no cache.
+
 The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the playpen first,
 and a test that skips is a failure there. A run in which every test skips
@@ -159,7 +167,7 @@ DENY_STEP = "cargo-deny"
 #: `cargo-deny-<version>-x86_64-unknown-linux-musl.tar.gz`. To take another
 #: version, compute the SHA-256 of the new archive and compare it with the
 #: `.sha256` file of that release. Then change the two values here and in the
-#: two workflow files.
+#: three workflow files: the gate, the release and the advisory run.
 DENY_ENV = {
     "DENY_VERSION": "0.20.2",
     "DENY_SHA256": "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f",
@@ -354,16 +362,57 @@ NIGHTLY_STEP_KEYS = [
 #: steps after it run the code of the repository.
 NIGHTLY_CHECKOUT = {"persist-credentials": False}
 
+#: The workflow that makes the advisory check of the locked crates one time a
+#: day, as data. It is a file of its own: the check `gate` does not need it,
+#: so a new advisory blocks no merge.
+ADVISORIES = yaml.safe_load((WORKFLOWS / "advisories-daily.yml").read_text(encoding="utf-8"))
+ADVISORIES_JOBS: dict[str, dict[str, Any]] = ADVISORIES["jobs"]
+ADVISORIES_NAME = "advisories-daily"
+
+#: When that workflow starts: at one minute of one hour of each day, and when
+#: a person starts it. The minute is not 0, as for the nightly run.
+ADVISORIES_CRON = "23 5 * * *"
+ADVISORIES_EVENTS = {"schedule": [{"cron": ADVISORIES_CRON}], "workflow_dispatch": None}
+
+#: The job with no rule, and the job that checks. As in the nightly workflow,
+#: `guard` is what makes a run on another ref a success.
+ADVISORIES_GUARD = "guard"
+ADVISORIES_JOB = "advisories"
+
+#: The one step of `guard`, as a whole. It prints the ref and cannot fail.
+ADVISORIES_GUARD_STEP = {
+    "name": "ref",
+    "run": 'echo "advisories-daily: the ref of this run is $GITHUB_REF"',
+}
+
+#: The flag of `bin/rust-gate.sh` that runs the advisory check and no other
+#: step, and the whole of the advisory run: the script with that flag.
+#: `bin/tests/test_rust_gate.py` holds the cargo line behind the flag.
+ADVISORIES_FLAG = "--advisories"
+ADVISORIES_RUN = "bin/rust-gate.sh --advisories"
+
+#: Each key of the two jobs, and each key of the steps of the second one: the
+#: checkout, the toolchain, the tool and the script. One more key can make a
+#: red step green, for example `continue-on-error`. A step has no `if`: no
+#: step can leave the check out. No step is a cache: the runner then holds no
+#: copy of the crates.io index of an earlier run.
+ADVISORIES_KEYS = {
+    ADVISORIES_GUARD: {"runs-on", "steps"},
+    ADVISORIES_JOB: {"needs", "if", "runs-on", "timeout-minutes", "steps"},
+}
+ADVISORIES_STEP_KEYS = [
+    {"uses", "with"},
+    {"name", "working-directory", "run"},
+    {"name", "working-directory", "env", "run"},
+    {"run"},
+]
+
 #: The two files the cargo cache is good for.
 CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
 
 #: The whole key of the cargo cache: the system of the runner, then one hash
 #: of the two files.
 CACHE_KEY = "rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}"
-
-#: The copy of the crates.io index that cargo keeps on the runner. For a
-#: version that its author removed, `cargo deny` reads only this copy.
-INDEX_COPY = "~/.cargo/registry/index"
 
 #: The job that proves the restart rule of the daemon units, and the whole
 #: of the proof: one script.
@@ -1046,24 +1095,8 @@ def test_the_cargo_cache_is_keyed_by_the_toolchain_and_the_lock(
     for name in CACHE_FILES:
         assert f"'{name}'" in cache["with"]["key"]
         assert (REPO / name).is_file(), f"the cache key names {name}"
-    assert "restore-keys" not in cache["with"]
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_cargo_cache_keeps_the_index_copy_until_a_keyed_file_changes(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """The cache holds the copy of the crates.io index, and its key changes
-    only with the two files. A run can thus read the copy that an earlier
-    run saved, and `cargo deny` reads only that copy for a removed version.
-    "Known gaps" of `rust/AGENTS.md` lists that limit and names both facts.
-    Change that entry in the commit that changes the path or the key."""
-    (cache,) = [
-        step for step in jobs["rust"]["steps"] if step.get("uses", "").startswith("actions/cache@")
-    ]
-
-    assert INDEX_COPY in cache["with"]["path"].split()
     assert cache["with"]["key"] == CACHE_KEY
+    assert "restore-keys" not in cache["with"]
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -1245,6 +1278,135 @@ def test_the_nightly_job_runs_the_script_with_the_branch_flag() -> None:
     assert (REPO / COVERAGE_RUN).is_file()
     for jobs, _last in WORKFLOW_JOBS:
         assert jobs[COVERAGE_JOB]["steps"][-1]["run"] == COVERAGE_RUN
+
+
+def test_the_advisory_workflow_starts_one_time_a_day_and_by_hand() -> None:
+    """One schedule with one minute and one hour, and `workflow_dispatch`.
+    No pull request and no push starts the file, so no run of it is on the
+    head of a pull request by itself. The two scheduled workflows do not
+    start in the same minute."""
+    minute, hour, *rest = ADVISORIES_CRON.split(" ")
+
+    assert ADVISORIES["name"] == ADVISORIES_NAME
+    assert ADVISORIES[True] == ADVISORIES_EVENTS
+    assert minute.isdigit() and 0 < int(minute) < 60, "the schedule is at the start of an hour"
+    assert hour.isdigit() and int(hour) < 24
+    assert rest == ["*", "*", "*"], "the schedule is not one time a day"
+    assert ADVISORIES_CRON != NIGHTLY_CRON
+
+
+def test_the_advisory_workflow_holds_the_read_only_token() -> None:
+    """The job runs the code of `main`, so no job holds a token that writes.
+    As for the nightly workflow, the file has no `concurrency` key, no
+    `defaults` key and no `env` key."""
+    assert set(ADVISORIES) == NIGHTLY_FILE_KEYS
+    assert ADVISORIES["permissions"] == READ_ONLY
+    for name, job in ADVISORIES_JOBS.items():
+        assert "permissions" not in job, f"{name} sets its own permissions"
+        assert "concurrency" not in job, f"{name} can cancel a run"
+
+
+def test_the_advisory_workflow_checks_on_main_only() -> None:
+    """A person can start the workflow on each ref. On another ref than
+    `main`, `guard` passes and the job that checks is skipped, so the run is
+    a success. A red run on the head of a pull request would block the
+    release of that pull request. `guard` has no rule, no checkout and no
+    action. Its one step prints a line."""
+    guard = ADVISORIES_JOBS[ADVISORIES_GUARD]
+    job = ADVISORIES_JOBS[ADVISORIES_JOB]
+
+    assert list(ADVISORIES_JOBS) == [ADVISORIES_GUARD, ADVISORIES_JOB]
+    assert {name: set(one) for name, one in ADVISORIES_JOBS.items()} == ADVISORIES_KEYS
+    assert guard["runs-on"] == COVERAGE_RUNNER
+    assert guard["steps"] == [ADVISORIES_GUARD_STEP]
+    assert job["needs"] == ADVISORIES_GUARD
+    assert job["if"] == ON_MAIN
+
+
+def test_the_advisory_job_has_no_cache_and_no_key_that_hides_a_red_step() -> None:
+    """No step has an `if` or a `continue-on-error`: a step that fails makes
+    the run red. The checkout is the one action of the job, so the job has no
+    cache. For a version that its author removed, `cargo deny` reads only the
+    copy of the crates.io index that cargo keeps on the machine. A runner
+    with no cache holds no copy of an earlier run. "Known gaps" of
+    `rust/AGENTS.md` names that fact. Change that entry in the commit that
+    gives the job a cache."""
+    job = ADVISORIES_JOBS[ADVISORIES_JOB]
+    checkout, *later = job["steps"]
+
+    assert job["runs-on"] == COVERAGE_RUNNER
+    assert 0 < job["timeout-minutes"] <= 15
+    assert [set(step) for step in job["steps"]] == ADVISORIES_STEP_KEYS
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"] == NIGHTLY_CHECKOUT
+    for step in later:
+        assert "uses" not in step, "a step after the checkout is an action"
+
+
+def test_the_advisory_job_takes_the_toolchain_of_the_workspace() -> None:
+    """`cargo deny` starts cargo for the crates of the lock file. rustup
+    takes the toolchain from `rust/rust-toolchain.toml`, so the toolchain
+    step runs inside `rust/` and names no toolchain. No variable of the file
+    outranks the toolchain file."""
+    _checkout, toolchain, _install, _script = ADVISORIES_JOBS[ADVISORIES_JOB]["steps"]
+
+    assert toolchain["working-directory"] == RUST_DIR
+    assert toolchain["run"] == PROC_RUST_TOOLCHAIN_RUN
+    assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
+    for name, job in ADVISORIES_JOBS.items():
+        assert TOOLCHAIN_VARIABLE not in job.get("env", {}), f"{name} names a toolchain"
+        for step in job["steps"]:
+            assert TOOLCHAIN_VARIABLE not in step.get("env", {}), f"{name} names a toolchain"
+            assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
+
+
+def test_the_three_workflows_take_the_same_cargo_deny() -> None:
+    """The gate and the advisory run must read `rust/deny.toml` with one
+    version of the tool: another version can read the file in another way.
+    The step of the advisory job is the step of the `rust` job of each other
+    file, without the rule of that job. So the two constants and the whole
+    text are equal in the three files."""
+    _checkout, _toolchain, install, _script = ADVISORIES_JOBS[ADVISORIES_JOB]["steps"]
+
+    assert install["name"] == DENY_STEP
+    assert install["env"] == DENY_ENV
+    assert install["working-directory"] == RUST_DIR
+    assert install["run"] == DENY_RUN
+    for jobs, last in WORKFLOW_JOBS:
+        (gated,) = [step for step in jobs["rust"]["steps"] if step.get("name") == DENY_STEP]
+
+        assert install == {key: value for key, value in gated.items() if key != "if"}, last
+
+
+def test_the_advisory_job_runs_the_gate_script_with_the_advisory_flag() -> None:
+    """One copy of the cargo line: `bin/rust-gate.sh`. The flag is the whole
+    difference from the script step of the `rust` job. The script is the last
+    step, after the toolchain and the tool."""
+    *_setup, script = ADVISORIES_JOBS[ADVISORIES_JOB]["steps"]
+    gate_script, _tests = RUST_RUN.split()
+
+    assert script == {"run": ADVISORIES_RUN}
+    assert script["run"].split() == [gate_script, ADVISORIES_FLAG]
+    assert (REPO / gate_script).is_file()
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_no_job_of_the_gate_makes_the_advisory_check(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """A new advisory changes the result of that check while the tree stays
+    the same. In a job of the gate it would fail a pull request that touches
+    no dependency. In a job of the release it would stop the tags of a merge.
+    So no step of the two files gives a script the flag, and no step holds a
+    `cargo deny` line of its own."""
+    for name, job in jobs.items():
+        for step in job["steps"]:
+            run = step.get("run", "")
+
+            assert ADVISORIES_FLAG not in run, f"{name} makes the advisory check"
+            assert "cargo deny" not in run.replace("cargo deny --version", ""), (
+                f"{name} holds a `cargo deny` line of its own"
+            )
 
 
 def test_the_release_skips_rust_only_over_a_commit_whose_run_passed() -> None:
