@@ -19,6 +19,8 @@
 //! |---|---|
 //! | [`index`] | Each row of the index. |
 //! | [`surface`] | The vector file of one surface. |
+//! | [`disagreements`] | Each input on which two Python copies of one id grammar differ. |
+//! | [`registries`] | Each file of each registry that a vector names. |
 //!
 //! The reader refuses a vector file in each of these cases:
 //!
@@ -81,6 +83,12 @@ use serde::de::value::MapAccessDeserializer;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
+
+mod disagreements;
+mod registries;
+
+pub use disagreements::{Disagreement, disagreements};
+pub use registries::{RegistryFile, registries};
 
 /// The version of the file format that this reader takes.
 const FORMAT: u64 = 1;
@@ -891,7 +899,7 @@ fn check_markers(value: &Value) -> Result<(), String> {
 /// The derive of `serde` also reads a struct from an array that holds the
 /// values of its fields in order. The format of each file names an object.
 /// Each raw struct of this crate thus reads through this type: [`object_of`]
-/// for the text of a file, and [`objects`] for a field.
+/// for the text of a file, and [`object`] and [`objects`] for a field.
 struct ObjectOnly<T>(T);
 
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for ObjectOnly<T> {
@@ -919,6 +927,12 @@ impl<'de, T: Deserialize<'de>> Visitor<'de> for Members<T> {
 /// object.
 fn object_of<'de, T: Deserialize<'de>>(text: &'de str) -> Result<T, serde_json::Error> {
     serde_json::from_str::<ObjectOnly<T>>(text).map(|object| object.0)
+}
+
+/// Reads a field that is one JSON object. A raw struct names this function
+/// in `deserialize_with`.
+fn object<'de, D: Deserializer<'de>, T: Deserialize<'de>>(deserializer: D) -> Result<T, D::Error> {
+    ObjectOnly::deserialize(deserializer).map(|object| object.0)
 }
 
 /// Reads a field that is a list of JSON objects. A raw struct names this
