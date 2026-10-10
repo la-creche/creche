@@ -392,84 +392,44 @@ mod tests {
     ///
     /// The last part of a row is for the sum of the seconds and of the
     /// fraction, the rule that `unix_seconds` does not use. On each row with
-    /// `PartsSum::OtherFloat`, that sum is another float than the float of
-    /// CPython. The whole milliseconds of the two floats then differ by one.
+    /// `Sum::Other`, that sum is another float than the float of CPython.
+    /// The whole milliseconds of the two floats then differ by one.
     ///
     /// The three rows after the year 2116 are whole seconds. For each one,
     /// `float(ns) / 1e9` is another float than the count of seconds.
-    const PYTHON_SECONDS: [(u64, u32, f64, PartsSum); 18] = [
-        (0, 0, 0.0, PartsSum::SameFloat),
-        (0, 1, 1e-09, PartsSum::SameFloat),
-        (0, 999_999_999, 0.999999999, PartsSum::SameFloat),
-        (1, 0, 1.0, PartsSum::SameFloat),
-        (1, 500_000_000, 1.5, PartsSum::SameFloat),
-        (1_758_153_590, 0, 1758153590.0, PartsSum::SameFloat),
-        (
-            1_758_153_590,
-            500_000_000,
-            1758153590.5,
-            PartsSum::SameFloat,
-        ),
-        (
-            1_758_153_590,
-            123_456_789,
-            1758153590.1234567,
-            PartsSum::SameFloat,
-        ),
-        (
-            1_934_347_390,
-            123_456_789,
-            1934347390.1234567,
-            PartsSum::SameFloat,
-        ),
-        (4_611_686_019, 0, 4611686019.0, PartsSum::SameFloat),
-        (6_340_888_753, 0, 6340888753.0, PartsSum::SameFloat),
-        (8_251_055_967, 0, 8251055967.0, PartsSum::SameFloat),
-        (
-            1_790_869_849,
-            637_000_000,
-            1790869849.6369998,
-            PartsSum::OtherFloat,
-        ),
-        (
-            1_799_740_127,
-            453_000_000,
-            1799740127.4529998,
-            PartsSum::OtherFloat,
-        ),
-        (
-            1_791_856_483,
-            210_000_000,
-            1791856483.2099998,
-            PartsSum::OtherFloat,
-        ),
-        (
-            281_474_976_710,
-            655_000_000,
-            281474976710.65497,
-            PartsSum::OtherFloat,
-        ),
-        (
-            253_402_300_799,
-            999_999_999,
-            253402300800.0,
-            PartsSum::SameFloat,
-        ),
+    const PYTHON_SECONDS: [(u64, u32, f64, Sum); 18] = [
+        (0, 0, 0.0, Sum::Same),
+        (0, 1, 1e-09, Sum::Same),
+        (0, 999_999_999, 0.999999999, Sum::Same),
+        (1, 0, 1.0, Sum::Same),
+        (1, 500_000_000, 1.5, Sum::Same),
+        (1_758_153_590, 0, 1758153590.0, Sum::Same),
+        (1_758_153_590, 500_000_000, 1758153590.5, Sum::Same),
+        (1_758_153_590, 123_456_789, 1758153590.1234567, Sum::Same),
+        (1_934_347_390, 123_456_789, 1934347390.1234567, Sum::Same),
+        (4_611_686_019, 0, 4611686019.0, Sum::Same),
+        (6_340_888_753, 0, 6340888753.0, Sum::Same),
+        (8_251_055_967, 0, 8251055967.0, Sum::Same),
+        (1_790_869_849, 637_000_000, 1790869849.6369998, Sum::Other),
+        (1_799_740_127, 453_000_000, 1799740127.4529998, Sum::Other),
+        (1_791_856_483, 210_000_000, 1791856483.2099998, Sum::Other),
+        (281_474_976_710, 655_000_000, 281474976710.65497, Sum::Other),
+        (253_402_300_799, 999_999_999, 253402300800.0, Sum::Same),
         (
             LAST_PYTHON_SECONDS,
             LAST_PYTHON_NANOS,
             9223372036.854776,
-            PartsSum::SameFloat,
+            Sum::Same,
         ),
     ];
 
     /// What the sum of the seconds and of the fraction gives for one time.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum PartsSum {
+    enum Sum {
         /// The float that CPython gives.
-        SameFloat,
+        Same,
         /// Another float than CPython gives.
-        OtherFloat,
+        Other,
     }
 
     /// The seconds of a time as the sum of the whole seconds and of the
@@ -480,12 +440,12 @@ mod tests {
 
     #[test]
     fn a_time_from_1970_is_the_float_of_python() {
-        for (seconds, nanos, float, parts_sum) in PYTHON_SECONDS {
+        for (seconds, nanos, float, sum) in PYTHON_SECONDS {
             let found = unix_seconds(after_1970(seconds, nanos)).unwrap();
             let sum_found = if sum_of_parts(seconds, nanos).to_bits() == float.to_bits() {
-                PartsSum::SameFloat
+                Sum::Same
             } else {
-                PartsSum::OtherFloat
+                Sum::Other
             };
 
             assert_eq!(
@@ -493,7 +453,7 @@ mod tests {
                 float.to_bits(),
                 "{seconds} s and {nanos} ns"
             );
-            assert_eq!(sum_found, parts_sum, "{seconds} s and {nanos} ns");
+            assert_eq!(sum_found, sum, "{seconds} s and {nanos} ns");
         }
     }
 
