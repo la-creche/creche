@@ -105,6 +105,15 @@ RELEASE_NAME = "release"
 WORKFLOW_JOBS = [(JOBS, GATE_NAME), (RELEASE_JOBS, RELEASE_NAME)]
 BY_NAME = [GATE_NAME, RELEASE_NAME]
 
+#: Each key of each of the two files, by the name of its workflow. PyYAML
+#: reads the key `on` as the boolean. One more key can change each job of one
+#: file, for example `defaults` with a shell that runs no line of a step, or
+#: `env`. The tests that hold a job equal in the two files read `jobs` only.
+FILE_KEYS = {
+    GATE_NAME: {"name", True, "permissions", "concurrency", "jobs"},
+    RELEASE_NAME: {"name", True, "permissions", "jobs"},
+}
+
 #: What starts the gate: a pull request, and a merge queue's group.
 GATE_EVENTS = ["pull_request", "merge_group"]
 
@@ -689,6 +698,19 @@ def test_the_two_workflows_have_the_same_jobs() -> None:
     """The release runs each job of the gate before its last job, and no
     other job. A job that enters one file alone fails here."""
     assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME}
+
+
+@pytest.mark.parametrize(
+    ("workflow", "name"), [(GATE, GATE_NAME), (RELEASE, RELEASE_NAME)], ids=BY_NAME
+)
+def test_a_workflow_file_has_no_key_that_changes_each_job(
+    workflow: dict[Any, Any], name: str
+) -> None:
+    """A job that is equal in the two files runs the same steps only when no
+    key beside `jobs` changes them. A `defaults` key of one file gives each
+    `run` step another shell, and an `env` key gives each step a variable.
+    Only the gate has a `concurrency` key."""
+    assert set(workflow) == FILE_KEYS[name]
 
 
 def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
