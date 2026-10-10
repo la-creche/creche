@@ -262,6 +262,22 @@ directory is not a workspace package, so a change here does not change
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
   reads that file. `noticeboard.cli.check` holds the vectors of a key file.
+- Some surfaces hold no input of a kind that the Python code accepts and the
+  Rust type refuses. Each such input left its surface under resolution (c)
+  of `rust/AGENTS.md`. A plain Rust test holds each one, with the input in
+  the test. The table names the file of that test, below
+  `rust/crates/creche-contracts/src/`.
+
+  | Surface | Inputs with no vector | File of the test |
+  |---|---|---|
+  | `config.site_file` | A LAN address that ends in a number and is not one IPv4 address. The address `0.0.0.0`. | `config/site.rs` |
+  | `config.runtime_json.write` | A field that the family file check refuses. | `config/mounts.rs` |
+  | `config.creds_json.read` | A key, a token or a time of the write that is no JSON string. An empty key or token. An epoch outside 64 bits with a sign. An epoch text with a digit that is not ASCII. | `config/mounts.rs` |
+  | `config.creds_json.write` | An epoch outside 64 bits with a sign. An empty key or token. | `config/mounts.rs` |
+  | `config.playpen_env.write` | A relative state root. The sandbox of another family. A sandbox name with no number. | `config/mounts.rs` |
+  | `config.attendance.env` | A bind host that is no host. An IPv6 address as the LAN address of the site. A relative path. A socket path of 108 bytes. A digit that is not ASCII. A count of seconds that is no duration. A command that does not split into words. A URL with no scheme or with a password. | `config/attendance.rs` |
+  | `config.noticeboard.env` | A bind that is no host. The bind `0`. The long form of the bind `::`. A relative path. A URL with no scheme. | `config/noticeboard.rs` |
+  | `config.chaperone.site` | A call of a reader that accepts one of these values: a LAN address that is no IPv4 address and no host name, the LAN address `0.0.0.0`, the port 0, a URL with no scheme. | `config/chaperone.rs` |
 - The group `runtime` covers the lenient readers, the token files, the
   bearer of a request and the answers of the web framework. No vector
   covers an atomic write, a read with a size cap or a path under the state

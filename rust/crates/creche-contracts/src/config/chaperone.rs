@@ -522,7 +522,9 @@ impl ChaperoneConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BindAddressError, BindHostError, PortError, SecondsError};
+    use crate::config::{
+        BindAddressError, BindHostError, HttpUrlError, LanAddressError, PortError, SecondsError,
+    };
 
     /// The variables that `systemd/creche-chaperone.service` gives the
     /// daemon: each `Environment=` line and the site file.
@@ -814,6 +816,92 @@ mod tests {
             .collect();
 
         assert_eq!(variables, [REWORK_DIR, BIND, SECRETS, APPROVAL_URL]);
+    }
+
+    /// Ten calls of a site reader that the type refuses. The Python reader
+    /// of the same name in `chaperone.site` gives a text for each one.
+    ///
+    /// Each call was a vector of the surface `config.chaperone.site`. The
+    /// id of a row is the id of its environment, a dot and the name of the
+    /// reader. The input left that surface under resolution (c) of
+    /// `rust/AGENTS.md`, "When the two results differ": the daemon calls the
+    /// Python readers at its start, so those readers get no new refusal.
+    /// This test holds the ten inputs. Each one gives one error.
+    #[test]
+    fn the_site_readers_refuse_ten_calls_that_the_python_readers_take() {
+        type Reader = fn(&Env) -> Option<ConfigErrors>;
+
+        let bind_of: Reader = |env| bind(env).err();
+        let lan_address_of: Reader = |env| env.require::<LanAddress>(LAN_ADDRESS).err();
+        let tei_url_of: Reader = |env| tei_url(env).err();
+        let ha_url_of: Reader = |env| ha_url(env).err();
+        let address = |error| ConfigError::Address {
+            variable: LAN_ADDRESS,
+            error,
+        };
+        let each_interface = [(LAN_ADDRESS, "0.0.0.0")];
+        let ipv6 = [(LAN_ADDRESS, "::1")];
+        let not_a_host = [(LAN_ADDRESS, "not a host")];
+        let no_label = address(LanAddressError::BadLabel { at: 0 });
+        let refused = [
+            (
+                "lan-address-each-interface.lan_address",
+                each_interface,
+                lan_address_of,
+                address(LanAddressError::EachInterface),
+            ),
+            (
+                "lan-address-each-interface.tei_url",
+                each_interface,
+                tei_url_of,
+                address(LanAddressError::EachInterface),
+            ),
+            ("lan-address-ipv6.bind", ipv6, bind_of, no_label),
+            (
+                "lan-address-ipv6.lan_address",
+                ipv6,
+                lan_address_of,
+                no_label,
+            ),
+            ("lan-address-ipv6.tei_url", ipv6, tei_url_of, no_label),
+            ("lan-address-not-a-host.bind", not_a_host, bind_of, no_label),
+            (
+                "lan-address-not-a-host.lan_address",
+                not_a_host,
+                lan_address_of,
+                no_label,
+            ),
+            (
+                "lan-address-not-a-host.tei_url",
+                not_a_host,
+                tei_url_of,
+                no_label,
+            ),
+            (
+                "bind-port-zero.bind",
+                [(BIND, "127.0.0.1:0")],
+                bind_of,
+                ConfigError::Bind {
+                    variable: BIND,
+                    error: BindAddressError::Port(PortError::OutOfRange),
+                },
+            ),
+            (
+                "home-assistant-no-scheme.ha_url",
+                [(HA_URL, "192.0.2.21:8123")],
+                ha_url_of,
+                ConfigError::Url {
+                    variable: HA_URL,
+                    error: HttpUrlError::NoScheme,
+                },
+            ),
+        ];
+
+        for (id, pairs, reader, error) in refused {
+            let errors = reader(&Env::from_pairs(pairs)).unwrap();
+
+            assert_eq!(errors.as_slice(), [error], "{id}");
+        }
     }
 
     #[test]

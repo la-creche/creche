@@ -1108,6 +1108,47 @@ mod tests {
         assert_eq!(bad.github_repo(&name), Err(RepoNameError::BadByte));
     }
 
+    /// Seven site files with a LAN address that no service can bind. The
+    /// Python reader `handover.site.lan_address` gives the text of each one
+    /// as the address. The file reads, and each other key gives its value.
+    ///
+    /// Each file was a vector of the surface `config.site_file`. The input
+    /// left that surface under resolution (c) of `rust/AGENTS.md`, "When the
+    /// two results differ". No contract gives the LAN address a grammar, and
+    /// a daemon calls the Python reader at its start. This test holds the
+    /// seven inputs.
+    #[test]
+    fn a_site_file_gives_no_lan_address_for_a_text_that_no_service_can_bind() {
+        for (id, address, error) in [
+            (
+                "lan-each-interface",
+                "0.0.0.0",
+                LanAddressError::EachInterface,
+            ),
+            ("lan-one-number", "0", LanAddressError::NotIpv4),
+            ("lan-three-numbers", "192.0.2", LanAddressError::NotIpv4),
+            (
+                "lan-number-over-255",
+                "192.0.2.256",
+                LanAddressError::NotIpv4,
+            ),
+            ("lan-leading-zero", "192.0.2.010", LanAddressError::NotIpv4),
+            ("lan-hex-number", "0x7f.0.0.1", LanAddressError::NotIpv4),
+            ("lan-name-then-number", "host.123", LanAddressError::NotIpv4),
+        ] {
+            // The last line of a key wins, as in the file of the vector.
+            let read = file(&format!("{COMPLETE}AGENT_LAN_ADDRESS={address}\n"));
+            let refused = read.lan_address().unwrap_err();
+
+            assert_eq!(read.get("AGENT_LAN_ADDRESS"), Some(address), "{id}");
+            assert_eq!(refused.key(), SiteKey::LanAddress, "{id}");
+            assert_eq!(refused.fault(), SiteFault::LanAddress(error), "{id}");
+            assert_eq!(read.github_owner().unwrap().as_str(), "example-owner");
+            assert_eq!(read.operator_user().unwrap().as_str(), "operator");
+            assert_eq!(read.operator_home().unwrap().as_str(), "/home/operator");
+        }
+    }
+
     #[test]
     fn a_site_holds_the_four_values() {
         let site = Site::try_from(&file(COMPLETE)).unwrap();

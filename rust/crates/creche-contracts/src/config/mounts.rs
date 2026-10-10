@@ -1351,6 +1351,16 @@ impl TryFrom<&RawPlaypenEnv> for PlaypenEnv {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secret::SecretError;
+
+    /// A LiteLLM key of a test. No LiteLLM takes it.
+    const TEST_KEY: &str = "sk-test-key";
+
+    /// A PEP token of a test. No chaperone takes it.
+    const TEST_TOKEN: &str = "TESTTOKENTESTTOKENTESTTOKENTESTTOKENTESTTOKENTESTTOKEN22";
+
+    /// The time of the write in a `creds.json` of a test.
+    const TEST_WRITTEN_AT: &str = "2030-01-02T03:04:05Z";
 
     fn secret(text: &str) -> Secret {
         Secret::try_from(text.to_owned()).unwrap()
@@ -1513,6 +1523,74 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// Seven sets of fields that the type refuses. The Python writer
+    /// `caregiver.config_mount.write_config_mount` checks no field and
+    /// writes a `runtime.json` for each set.
+    ///
+    /// Each set was a vector of the surface `config.runtime_json.write`. The
+    /// input left that surface under resolution (c) of `rust/AGENTS.md`,
+    /// "When the two results differ". No contract says what the writer does
+    /// with such a field. The caregiver gives the writer the fields of a
+    /// family file that passed the family file check, so no caller of the
+    /// platform sends one. This test holds the seven inputs.
+    #[test]
+    fn the_writer_refuses_seven_sets_of_fields_that_the_python_writer_takes() {
+        let fields = |tools: &str, alias: &str, prompt: &str| {
+            format!(
+                r#"{{"model_alias": "{alias}", "sandbox_tools": [{tools}], "shell": false, "system_prompt": "{prompt}"}}"#
+            )
+        };
+        let default_tools = r#""read", "grep", "find", "ls""#;
+        let alias = |alias: &str| fields(default_tools, alias, "append");
+        let tools = |tools: &str| fields(tools, "agent-router", "append");
+        let refused = [
+            (
+                "tool-bash",
+                tools(r#""read", "bash""#),
+                RuntimeIssue::UnknownTool { at: 1 },
+            ),
+            (
+                "tool-unknown",
+                tools(r#""teleport""#),
+                RuntimeIssue::UnknownTool { at: 0 },
+            ),
+            (
+                "tool-two-times",
+                tools(r#""read", "read""#),
+                RuntimeIssue::DuplicateTool { at: 1 },
+            ),
+            (
+                "alias-upper",
+                alias("Agent-Router"),
+                RuntimeIssue::ModelAlias(ModelAliasError::BadByte),
+            ),
+            (
+                "alias-not-ascii",
+                alias("mod\u{e8}le"),
+                RuntimeIssue::ModelAlias(ModelAliasError::BadByte),
+            ),
+            (
+                "alias-empty",
+                alias(""),
+                RuntimeIssue::ModelAlias(ModelAliasError::Empty),
+            ),
+            (
+                "system-prompt-unknown",
+                fields(default_tools, "agent-router", "prepend"),
+                RuntimeIssue::UnknownSystemPrompt,
+            ),
+        ];
+
+        for (id, text, issue) in refused {
+            let errors = RuntimeConfig::parse(text.as_bytes()).unwrap_err();
+
+            assert_eq!(errors.as_slice(), [issue], "{id}");
+        }
+
+        // The same fields with values of the family file check give a file.
+        assert!(RuntimeConfig::parse(alias("agent-router").as_bytes()).is_ok());
     }
 
     #[test]
@@ -1894,6 +1972,184 @@ mod tests {
         );
     }
 
+    /// The text of a `creds.json` with the epoch 7, in which the JSON text
+    /// `value` stands for one field.
+    fn creds_with(field: CredsField, value: &str) -> String {
+        let key = format!("\"{TEST_KEY}\"");
+        let token = format!("\"{TEST_TOKEN}\"");
+        let written_at = format!("\"{TEST_WRITTEN_AT}\"");
+        let pairs = [
+            (CredsField::Epoch, "7"),
+            (CredsField::LitellmKey, key.as_str()),
+            (CredsField::PepToken, token.as_str()),
+            (CredsField::WrittenAt, written_at.as_str()),
+        ]
+        .map(|(name, own)| {
+            let value = if name == field { value } else { own };
+
+            format!("\"{}\": {value}", name.as_str())
+        });
+
+        format!("{{{}}}", pairs.join(", "))
+    }
+
+    /// Seventeen files that the type refuses. The Python reader
+    /// `caregiver.credentials.read_creds` gives the credentials of each one.
+    ///
+    /// Each file was a vector of the surface `config.creds_json.read`. The
+    /// input left that surface under resolution (c) of `rust/AGENTS.md`,
+    /// "When the two results differ". Contract 03 §12 has no rule for a
+    /// field of another JSON type, and gives the epoch no range. The one
+    /// writer of the file gives it a key that starts with `sk-`, a token
+    /// that it mints, a time as text and an integer epoch that starts at 1
+    /// and increases by one. No writer of the platform thus writes one of
+    /// these files. This test holds the seventeen inputs.
+    #[test]
+    fn the_reader_refuses_seventeen_files_that_the_python_reader_takes() {
+        let thirty_digits = format!("1{}", "0".repeat(30));
+        let refused = [
+            // A secret or a time that is no text, and an empty secret.
+            ("key-null", CredsField::LitellmKey, "null"),
+            ("key-number", CredsField::LitellmKey, "7"),
+            ("key-true", CredsField::LitellmKey, "true"),
+            ("key-list", CredsField::LitellmKey, r#"["a", 1.0, null]"#),
+            ("key-empty", CredsField::LitellmKey, r#""""#),
+            ("token-null", CredsField::PepToken, "null"),
+            ("token-empty", CredsField::PepToken, r#""""#),
+            ("written-null", CredsField::WrittenAt, "null"),
+            ("written-number", CredsField::WrittenAt, "7"),
+            // An epoch outside 64 bits with a sign.
+            (
+                "epoch-past-64-bit-signed",
+                CredsField::Epoch,
+                "9223372036854775808",
+            ),
+            (
+                "epoch-max-64-bit",
+                CredsField::Epoch,
+                "18446744073709551615",
+            ),
+            ("epoch-30-digits", CredsField::Epoch, thirty_digits.as_str()),
+            (
+                "epoch-below-64-bit-signed",
+                CredsField::Epoch,
+                "-9223372036854775809",
+            ),
+            ("epoch-large-float", CredsField::Epoch, "1e30"),
+            (
+                "epoch-float-2-to-63",
+                CredsField::Epoch,
+                "9223372036854775807.0",
+            ),
+            // Python reads this float as -2^63, which fits 64 bits. The
+            // reader gets each integer below -2^63 as the same float, so it
+            // refuses the float.
+            (
+                "epoch-float-minus-2-to-63",
+                CredsField::Epoch,
+                "-9223372036854775808.0",
+            ),
+            // The JSON escape of one decimal digit that is not ASCII.
+            (
+                "epoch-text-digit-not-ascii",
+                CredsField::Epoch,
+                r#""\u0667""#,
+            ),
+        ];
+
+        for (id, field, value) in refused {
+            let text = creds_with(field, value);
+
+            assert_eq!(
+                Credentials::parse(text.as_bytes()).unwrap_err(),
+                CredentialsError::BadValue(field),
+                "{id}: {text}"
+            );
+        }
+
+        // The same file with the value of each field as the writer gives it.
+        let valid = creds_with(CredsField::Epoch, "7");
+
+        assert_eq!(Credentials::parse(valid.as_bytes()).unwrap().epoch(), 7);
+    }
+
+    /// Three sets of arguments that the writer cannot take. The Python
+    /// writer `caregiver.credentials.write_creds` checks no field and writes
+    /// a `creds.json` for each set.
+    ///
+    /// Each set was a vector of the surface `config.creds_json.write`. The
+    /// input left that surface under resolution (c) of `rust/AGENTS.md`,
+    /// "When the two results differ". No contract says what the writer does
+    /// with such an argument. The caregiver gives the writer a key that
+    /// starts with `sk-`, a token that it mints and an epoch that starts at
+    /// 1 and increases by one, so no caller of the platform sends one of
+    /// these sets. This test holds the three inputs.
+    #[test]
+    fn the_writer_has_no_value_for_three_sets_of_arguments() {
+        // `epoch-past-64-bit-signed` gives the epoch 2^63. The writer takes
+        // an integer of 64 bits with a sign.
+        assert!(i64::try_from(9_223_372_036_854_775_808_u64).is_err());
+        assert_eq!(
+            Credentials::new(
+                i64::MAX,
+                secret(TEST_KEY),
+                secret(TEST_TOKEN),
+                String::new()
+            )
+            .epoch(),
+            9_223_372_036_854_775_807
+        );
+
+        // `key-empty` and `token-empty` give the empty text. The writer
+        // takes a `Secret`, and no secret is empty.
+        assert_eq!(
+            Secret::try_from(String::new()).unwrap_err(),
+            SecretError::Empty
+        );
+
+        // The file that the Python writer gives for each set differs from a
+        // file of this writer in one value. The reader refuses that file.
+        let written = Credentials::new(
+            7,
+            secret(TEST_KEY),
+            secret(TEST_TOKEN),
+            String::from(TEST_WRITTEN_AT),
+        )
+        .to_json()
+        .unwrap();
+        let key = format!("\"litellm_key\": \"{TEST_KEY}\"");
+        let token = format!("\"pep_token\": \"{TEST_TOKEN}\"");
+        for (id, field, own, python) in [
+            (
+                "epoch-past-64-bit-signed",
+                CredsField::Epoch,
+                "\"epoch\": 7",
+                "\"epoch\": 9223372036854775808",
+            ),
+            (
+                "key-empty",
+                CredsField::LitellmKey,
+                key.as_str(),
+                "\"litellm_key\": \"\"",
+            ),
+            (
+                "token-empty",
+                CredsField::PepToken,
+                token.as_str(),
+                "\"pep_token\": \"\"",
+            ),
+        ] {
+            let file = written.replace(own, python);
+
+            assert_ne!(file, written, "{id}");
+            assert_eq!(
+                Credentials::parse(file.as_bytes()).unwrap_err(),
+                CredentialsError::BadValue(field),
+                "{id}"
+            );
+        }
+    }
+
     #[test]
     fn a_previous_field_that_is_not_a_text_reads_as_absent() {
         for value in ["null", "7", "\"\"", "[\"old\"]", "true"] {
@@ -1940,6 +2196,53 @@ mod tests {
 
             assert_eq!(PlaypenEnv::try_from(&raw), Ok(env), "{root}");
         }
+    }
+
+    /// Three sets of arguments that the writer cannot take. The Python
+    /// writer `caregiver.playpen_env.write_playpen_env` checks no argument
+    /// and writes an env file for each set.
+    ///
+    /// Each set was a vector of the surface `config.playpen_env.write`. The
+    /// input left that surface under resolution (c) of `rust/AGENTS.md`,
+    /// "When the two results differ". No contract says what the writer does
+    /// with such an argument. The caregiver gives the writer the state root
+    /// of its command line and a sandbox name that it makes from the name
+    /// of the family and a number. Its unit file gives an absolute state
+    /// root, so no caller of the platform sends one of these sets. This
+    /// test holds the three inputs.
+    #[test]
+    fn the_writer_of_the_env_file_has_no_value_for_three_sets_of_arguments() {
+        let root: DirPath = "/srv/agents/state/rework".parse().unwrap();
+        let family = "/srv/agents/state/rework/families/code";
+
+        // `state-root-relative`: the state root `state`, the family `chat`
+        // and the sandbox `chat-s3`.
+        assert_eq!(
+            "state".parse::<DirPath>().unwrap_err(),
+            PathError::NotAbsolute
+        );
+
+        // `sandbox-with-no-number`: the family `chat` and the sandbox `chat`.
+        assert_eq!(
+            "chat".parse::<SandboxName>().unwrap_err(),
+            SandboxNameError::NoNumber
+        );
+
+        // `sandbox-of-another-family`: the family `chat` and the sandbox
+        // `code-s1`. The Python writer gives the paths of `chat` and the
+        // sandbox `code-s1`. This writer has no argument for a family. It
+        // takes the family from the name of the sandbox.
+        let sandbox: SandboxName = "code-s1".parse().unwrap();
+        let env = PlaypenEnv::for_sandbox(&root, &sandbox);
+
+        assert_eq!(sandbox.family().as_str(), "code");
+        assert_eq!(env.cred_dir().as_str(), format!("{family}/creds"));
+        assert_eq!(env.config_dir().as_str(), format!("{family}/config"));
+        assert_eq!(
+            env.control_dir().as_str(),
+            format!("{family}/control/code-s1")
+        );
+        assert_eq!(env.sandbox(), &sandbox);
     }
 
     #[test]

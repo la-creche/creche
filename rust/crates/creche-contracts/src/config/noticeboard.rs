@@ -317,7 +317,7 @@ impl NoticeboardConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BindHostError;
+    use crate::config::{BindHostError, HttpUrlError, PathError};
 
     /// A key of 32 bytes that no deployment uses.
     const KEY: &str = "0123456789abcdef0123456789abcdef";
@@ -548,6 +548,70 @@ mod tests {
                 max: 500
             }
         );
+    }
+
+    /// Six environments that the type refuses. The Python reader
+    /// `noticeboard.config.from_env` gives a config for each one.
+    ///
+    /// Each environment was a vector of the surface `config.noticeboard.env`.
+    /// The input left that surface under resolution (c) of `rust/AGENTS.md`,
+    /// "When the two results differ": the daemon calls the Python reader at
+    /// its start, so that reader gets no new refusal. This test holds the six
+    /// inputs. Each one gives one error, for the variable that the row names.
+    #[test]
+    fn the_type_refuses_six_environments_that_the_python_reader_takes() {
+        let on_lan = |bind| vec![(LAN_ADDRESS, "192.0.2.10"), (ACCESS_KEY, KEY), (BIND, bind)];
+        let on_loopback = |variable, value| vec![(BIND, "127.0.0.1"), (variable, value)];
+        let host = |error| ConfigError::Host {
+            variable: BIND,
+            error,
+        };
+        let relative = |variable| ConfigError::Path {
+            variable,
+            error: PathError::NotAbsolute,
+        };
+        let refused = [
+            (
+                "bind-each-interface-long-form",
+                on_lan("0:0:0:0:0:0:0:0"),
+                host(BindHostError::EachInterface),
+            ),
+            // The C resolver reads the text `0` as the address `0.0.0.0`.
+            (
+                "bind-one-number",
+                on_lan("0"),
+                host(BindHostError::NotAHost),
+            ),
+            (
+                "bind-not-a-host",
+                on_lan("not a host"),
+                host(BindHostError::NotAHost),
+            ),
+            (
+                "socket-relative",
+                on_loopback(SESSIOND_SOCKET, "sessiond.sock"),
+                relative(SESSIOND_SOCKET),
+            ),
+            (
+                "state-root-relative",
+                on_loopback(STATE_ROOT, "state"),
+                relative(STATE_ROOT),
+            ),
+            (
+                "url-no-scheme",
+                on_loopback(SESSIOND_URL, "192.0.2.10:8350"),
+                ConfigError::Url {
+                    variable: SESSIOND_URL,
+                    error: HttpUrlError::NoScheme,
+                },
+            ),
+        ];
+
+        for (id, pairs, error) in refused {
+            let errors = NoticeboardConfig::from_env(&Env::from_pairs(pairs)).unwrap_err();
+
+            assert_eq!(errors.as_slice(), [error], "{id}");
+        }
     }
 
     #[test]

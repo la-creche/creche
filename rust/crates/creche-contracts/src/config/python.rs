@@ -100,9 +100,6 @@ const SURFACE_PREFIX: &str = "config.";
 enum Differs {
     /// The Python code accepts the input. The Rust code refuses it.
     Refuses,
-    /// The Python code gives a value for this field of a site file. The
-    /// Rust code refuses the field, and each other field is equal.
-    RefusesField(&'static str),
 }
 
 struct Deviation {
@@ -115,272 +112,23 @@ struct Deviation {
     decision: &'static str,
 }
 
-const NOT_AN_ADDRESS: &str = "A service binds the LAN address and never each interface. The \
-    Python reader takes each text. The Rust type takes an IPv4 address or a host name, and \
-    refuses a text that the C resolver reads as 0.0.0.0.";
-
-const NOT_A_HOST: &str = "A service binds the LAN address or loopback and never each interface. \
-    The Python reader refuses a small set of texts, or none. The Rust type takes an IP address \
-    or a host name, and refuses each spelling of each interface.";
-
-const PATH_RULE: &str = "The contract gives an absolute path. The Python reader takes each text, \
-    and the reader of attendance refuses a NUL byte. The Rust type refuses a relative path, and \
-    a socket path that the kernel cannot bind.";
-
-const SECONDS_RULE: &str = "The contract gives a count of seconds. Python reads each finite \
-    number that is more than zero. The Rust type refuses a count that is no duration: \
-    Duration::from_secs_f64 stops the process on a count past its range, and a count below one \
-    nanosecond is a duration of zero.";
-
-const ASCII_DIGITS_ONLY: &str = "Python reads each decimal digit of Unicode as a digit. The \
-    Rust code reads 0 to 9 (rust/AGENTS.md, rule 9).";
-
-const URL_RULE: &str = "The contract gives the URL of an HTTP service. The Python reader takes \
-    each text. The Rust type demands http:// or https:// and a host, and refuses a user part: \
-    no secret is in a URL (invariant 13).";
-
-const COMMAND_RULE: &str = "The contract gives one command. The Python service splits the text \
-    at each dial, so a text that does not split fails the first turn. The Rust type splits it \
-    at the parse.";
-
-const SECRET_RULE: &str = "The contract gives a key and a token as text. The Python reader \
-    makes the text of each JSON value with str(), so null is the token `None`. The Rust type \
-    takes a JSON string that is not empty: a secret is never empty (rust/AGENTS.md, rule 6).";
-
-const EPOCH_RANGE: &str = "The contract gives an integer that increases by one at each write. \
-    Python holds an integer of each size. The Rust type holds 64 bits with a sign.";
-
-const EPOCH_FLOAT: &str = "The contract gives an integer. Python reads the float -2^63 as the \
-    integer -2^63, which fits 64 bits. serde_json gives each integer below -2^63 as that float, \
-    so the Rust code cannot tell the two apart. It refuses each float of the size 2^63 or more.";
-
 const STRICT_JSON: &str = "The contract gives a JSON file. Python's json reads NaN, a lone \
     surrogate escape and each depth of nesting that its stack permits. serde_json reads RFC 8259 \
     and Unicode text, and stops at 128 levels of nesting. It refuses the three.";
 
-const WRITER_TYPES: &str = "The Python writer checks no field: the family file check runs before \
-    it. The Rust writer takes typed values, so it cannot write a value that the contract does \
-    not name.";
-
 /// Each vector on which the Rust code differs from the Python code on
 /// purpose. Each other vector must be equal.
-const DEVIATIONS: &[Deviation] = &[
-    Deviation {
-        surface: "config.site_file",
-        vectors: &[
-            "lan-each-interface",
-            "lan-one-number",
-            "lan-three-numbers",
-            "lan-number-over-255",
-            "lan-leading-zero",
-            "lan-hex-number",
-            "lan-name-then-number",
-        ],
-        differs: Differs::RefusesField("lan_address"),
-        contract: "contract 02 §3 rule 2",
-        decision: NOT_AN_ADDRESS,
-    },
-    Deviation {
-        surface: "config.runtime_json.write",
-        vectors: &[
-            "tool-bash",
-            "tool-unknown",
-            "tool-two-times",
-            "alias-upper",
-            "alias-not-ascii",
-            "alias-empty",
-            "system-prompt-unknown",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 01 §3.8 and §3.2",
-        decision: WRITER_TYPES,
-    },
-    Deviation {
-        surface: "config.creds_json.read",
-        vectors: &[
-            "key-null",
-            "key-number",
-            "key-true",
-            "key-list",
-            "key-empty",
-            "token-null",
-            "token-empty",
-            "written-null",
-            "written-number",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 03 §12",
-        decision: SECRET_RULE,
-    },
-    Deviation {
-        surface: "config.creds_json.read",
-        vectors: &[
-            "epoch-past-64-bit-signed",
-            "epoch-max-64-bit",
-            "epoch-30-digits",
-            "epoch-below-64-bit-signed",
-            "epoch-large-float",
-            "epoch-float-2-to-63",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 03 §12 rule 3",
-        decision: EPOCH_RANGE,
-    },
-    Deviation {
-        surface: "config.creds_json.read",
-        vectors: &["epoch-float-minus-2-to-63"],
-        differs: Differs::Refuses,
-        contract: "contract 03 §12 rule 3",
-        decision: EPOCH_FLOAT,
-    },
-    Deviation {
-        surface: "config.creds_json.read",
-        vectors: &["epoch-text-digit-not-ascii"],
-        differs: Differs::Refuses,
-        contract: "contract 03 §12 rule 3",
-        decision: ASCII_DIGITS_ONLY,
-    },
-    Deviation {
-        surface: "config.creds_json.read",
-        vectors: &[
-            "nan-in-unknown-key",
-            "unknown-key-130-levels",
-            "key-lone-surrogate",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 03 §12",
-        decision: STRICT_JSON,
-    },
-    Deviation {
-        surface: "config.creds_json.write",
-        vectors: &["epoch-past-64-bit-signed"],
-        differs: Differs::Refuses,
-        contract: "contract 03 §12 rule 3",
-        decision: EPOCH_RANGE,
-    },
-    Deviation {
-        surface: "config.creds_json.write",
-        vectors: &["key-empty", "token-empty"],
-        differs: Differs::Refuses,
-        contract: "contract 03 §12",
-        decision: SECRET_RULE,
-    },
-    Deviation {
-        surface: "config.playpen_env.write",
-        vectors: &[
-            "state-root-relative",
-            "sandbox-of-another-family",
-            "sandbox-with-no-number",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 03 §7.1",
-        decision: "The contract gives three absolute paths and the sandbox `<family>-s<N>` of \
-            that family. The Python writer checks no argument. The Rust writer takes a \
-            directory and a sandbox name, and takes the family from the sandbox name.",
-    },
-    Deviation {
-        surface: "config.attendance.env",
-        vectors: &["lan-not-a-host", "site-lan-ipv6"],
-        differs: Differs::Refuses,
-        contract: "contract 02 §3 rule 2",
-        decision: NOT_A_HOST,
-    },
-    Deviation {
-        surface: "config.attendance.env",
-        vectors: &[
-            "path-relative",
-            "socket-108-bytes",
-            "owui-key-file-relative",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 02 §3 rule 1",
-        decision: PATH_RULE,
-    },
-    Deviation {
-        surface: "config.attendance.env",
-        vectors: &["port-digits-not-ascii", "seconds-digits-not-ascii"],
-        differs: Differs::Refuses,
-        contract: "contract 02 §3 rule 9",
-        decision: ASCII_DIGITS_ONLY,
-    },
-    Deviation {
-        surface: "config.attendance.env",
-        vectors: &["seconds-past-a-duration", "seconds-below-a-nanosecond"],
-        differs: Differs::Refuses,
-        contract: "contract 03 §11.4 rule 4",
-        decision: SECONDS_RULE,
-    },
-    Deviation {
-        surface: "config.attendance.env",
-        vectors: &["command-quote-with-no-end", "command-final-backslash"],
-        differs: Differs::Refuses,
-        contract: "contract 03 §1",
-        decision: COMMAND_RULE,
-    },
-    Deviation {
-        surface: "config.attendance.env",
-        vectors: &["owui-url-no-scheme", "owui-url-with-password"],
-        differs: Differs::Refuses,
-        contract: "contract 02 §10.4",
-        decision: URL_RULE,
-    },
-    Deviation {
-        surface: "config.noticeboard.env",
-        vectors: &[
-            "bind-each-interface-long-form",
-            "bind-one-number",
-            "bind-not-a-host",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 02 §3 rule 2",
-        decision: NOT_A_HOST,
-    },
-    Deviation {
-        surface: "config.noticeboard.env",
-        vectors: &["socket-relative", "state-root-relative"],
-        differs: Differs::Refuses,
-        contract: "contract 02 §3 rule 1",
-        decision: PATH_RULE,
-    },
-    Deviation {
-        surface: "config.noticeboard.env",
-        vectors: &["url-no-scheme"],
-        differs: Differs::Refuses,
-        contract: "contract 02 §3 rule 2",
-        decision: URL_RULE,
-    },
-    Deviation {
-        surface: "config.chaperone.site",
-        vectors: &[
-            "lan-address-each-interface.lan_address",
-            "lan-address-each-interface.tei_url",
-            "lan-address-ipv6.bind",
-            "lan-address-ipv6.lan_address",
-            "lan-address-ipv6.tei_url",
-            "lan-address-not-a-host.bind",
-            "lan-address-not-a-host.lan_address",
-            "lan-address-not-a-host.tei_url",
-        ],
-        differs: Differs::Refuses,
-        contract: "contract 02 §3 rule 2",
-        decision: NOT_AN_ADDRESS,
-    },
-    Deviation {
-        surface: "config.chaperone.site",
-        vectors: &["bind-port-zero.bind"],
-        differs: Differs::Refuses,
-        contract: "contract 02 §3 rule 2",
-        decision: "The Python reader takes port 0: the system then selects a port. The Rust \
-            type takes a port from 1 to 65535.",
-    },
-    Deviation {
-        surface: "config.chaperone.site",
-        vectors: &["home-assistant-no-scheme.ha_url"],
-        differs: Differs::Refuses,
-        contract: "contract 04 §4.1",
-        decision: URL_RULE,
-    },
-];
+const DEVIATIONS: &[Deviation] = &[Deviation {
+    surface: "config.creds_json.read",
+    vectors: &[
+        "nan-in-unknown-key",
+        "unknown-key-130-levels",
+        "key-lone-surrogate",
+    ],
+    differs: Differs::Refuses,
+    contract: "contract 03 §12",
+    decision: STRICT_JSON,
+}];
 
 /// The decision that covers one vector of one surface.
 fn deviation_of(surface: &str, vector: &str) -> Option<&'static Deviation> {
@@ -416,16 +164,6 @@ fn differs_as_decided(differs: Differs, vector: &Vector, rust: &Did, at: &str) {
                 matches!(rust, Did::Refused(_)),
                 "{at}: the Rust code accepts"
             );
-        }
-        Differs::RefusesField(field) => {
-            let mut expected = vector.value().cloned().unwrap();
-
-            assert!(
-                expected[field]["value"].is_string(),
-                "{at}: the Python field"
-            );
-            expected[field] = json!({"refused": "shape"});
-            assert_eq!(rust, &Did::Took(Some(expected)), "{at}");
         }
     }
 }

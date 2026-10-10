@@ -556,7 +556,9 @@ impl AttendanceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BindHostError, PathError, PortError, SecondsError};
+    use crate::config::{
+        BindHostError, HttpUrlError, LanAddressError, PathError, PortError, SecondsError,
+    };
 
     /// The variables that `systemd/creche-attendance.service` gives the
     /// daemon: the site file, and no line of `sessiond.env`.
@@ -786,6 +788,113 @@ mod tests {
             one_error(&[(OWUI_URL, "192.0.2.10:8181")]).variable(),
             OWUI_URL
         );
+    }
+
+    /// Thirteen environments that the type refuses. The Python reader
+    /// `attendance.config.from_env` gives a config for each one.
+    ///
+    /// Each environment was a vector of the surface `config.attendance.env`.
+    /// The input left that surface under resolution (c) of `rust/AGENTS.md`,
+    /// "When the two results differ": the daemon calls the Python reader at
+    /// its start, so that reader gets no new refusal. This test holds the
+    /// thirteen inputs. Each one gives one error, for the variable that the
+    /// row names.
+    #[test]
+    fn the_type_refuses_thirteen_environments_that_the_python_reader_takes() {
+        let site = (LAN_ADDRESS, "192.0.2.10");
+        let socket_of_108_bytes = format!("/{}", "a".repeat(107));
+        let path = |variable, error| ConfigError::Path { variable, error };
+        let seconds = |variable, error| ConfigError::Seconds { variable, error };
+        let url = |error| ConfigError::Url {
+            variable: OWUI_URL,
+            error,
+        };
+        let no_words = ConfigError::BadForm {
+            variable: CHANNEL_COMMAND,
+            form: "a command that splits into words",
+        };
+        let refused = [
+            (
+                "lan-not-a-host",
+                vec![site, (BIND_ADDRESS, "not a host")],
+                ConfigError::Host {
+                    variable: BIND_ADDRESS,
+                    error: BindHostError::NotAHost,
+                },
+            ),
+            (
+                "site-lan-ipv6",
+                vec![(LAN_ADDRESS, "::1")],
+                ConfigError::Address {
+                    variable: LAN_ADDRESS,
+                    error: LanAddressError::BadLabel { at: 0 },
+                },
+            ),
+            (
+                "path-relative",
+                vec![site, (STATE_ROOT, "state")],
+                path(STATE_ROOT, PathError::NotAbsolute),
+            ),
+            (
+                "socket-108-bytes",
+                vec![site, (SOCKET, socket_of_108_bytes.as_str())],
+                path(SOCKET, PathError::TooLong),
+            ),
+            (
+                "owui-key-file-relative",
+                vec![site, (OWUI_KEY_FILE, "owui-api.key")],
+                path(OWUI_KEY_FILE, PathError::NotAbsolute),
+            ),
+            (
+                "port-digits-not-ascii",
+                vec![site, (LAN_PORT, "\u{ff18}\u{ff13}\u{ff15}\u{ff10}")],
+                ConfigError::Port {
+                    variable: LAN_PORT,
+                    error: PortError::NotANumber,
+                },
+            ),
+            (
+                "seconds-digits-not-ascii",
+                vec![site, (LOCK_STALE_S, "\u{662}\u{660}")],
+                seconds(LOCK_STALE_S, SecondsError::NotANumber),
+            ),
+            (
+                "seconds-past-a-duration",
+                vec![site, (LOCK_STALE_S, "1e30")],
+                seconds(LOCK_STALE_S, SecondsError::TooLong),
+            ),
+            (
+                "seconds-below-a-nanosecond",
+                vec![site, (LOCK_POLL_S, "1e-12")],
+                seconds(LOCK_POLL_S, SecondsError::NotPositive),
+            ),
+            (
+                "command-quote-with-no-end",
+                vec![site, (CHANNEL_COMMAND, "sbx 'exec {sandbox}")],
+                no_words,
+            ),
+            (
+                "command-final-backslash",
+                vec![site, (CHANNEL_COMMAND, "sbx exec \\")],
+                no_words,
+            ),
+            (
+                "owui-url-no-scheme",
+                vec![site, (OWUI_URL, "192.0.2.10:8181")],
+                url(HttpUrlError::NoScheme),
+            ),
+            (
+                "owui-url-with-password",
+                vec![site, (OWUI_URL, "http://user:password@192.0.2.10:8181")],
+                url(HttpUrlError::UserPart),
+            ),
+        ];
+
+        for (id, pairs, error) in refused {
+            let errors = AttendanceConfig::from_env(&Env::from_pairs(pairs)).unwrap_err();
+
+            assert_eq!(errors.as_slice(), [error], "{id}");
+        }
     }
 
     #[test]

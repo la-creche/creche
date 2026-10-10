@@ -199,13 +199,10 @@ SITE_DOCUMENTS: Final[tuple[SiteDocument, ...]] = (
     _with("lan-with-scheme", "AGENT_LAN_ADDRESS", "http://192.0.2.10"),
     _with("lan-ipv6", "AGENT_LAN_ADDRESS", "::1"),
     _with("lan-digit-not-ascii", "AGENT_LAN_ADDRESS", "\uff11\uff19\uff12.0.2.10"),
-    _with("lan-each-interface", "AGENT_LAN_ADDRESS", "0.0.0.0"),
-    _with("lan-one-number", "AGENT_LAN_ADDRESS", "0"),
-    _with("lan-three-numbers", "AGENT_LAN_ADDRESS", "192.0.2"),
-    _with("lan-number-over-255", "AGENT_LAN_ADDRESS", "192.0.2.256"),
-    _with("lan-leading-zero", "AGENT_LAN_ADDRESS", "192.0.2.010"),
-    _with("lan-hex-number", "AGENT_LAN_ADDRESS", "0x7f.0.0.1"),
-    _with("lan-name-then-number", "AGENT_LAN_ADDRESS", "host.123"),
+    # No file here gives an address that ends in a number and is not one
+    # IPv4 address, or the address of each interface. The reader takes such
+    # a text, and the Rust type refuses it. `vectors/AGENTS.md`, "Known
+    # gaps", names the Rust test that holds those inputs.
     # --- the name of a repository ---
     _with("repo-renamed", "AGENT_GITHUB_REPO_AGENT_CONTROL", "creche"),
     _with("repo-plain-bytes", "AGENT_GITHUB_REPO_AGENT_CONTROL", "_a.b-c"),
@@ -496,15 +493,11 @@ RUNTIMES: Final[tuple[Runtime, ...]] = (
     Runtime("tools-in-file-order", sandbox_tools=("ls", "codemode", "read")),
     Runtime("replace", system_prompt="replace"),
     Runtime("alias-each-byte-class", model_alias="0a.b_c/d-e"),
-    # A value below is one that the family file check refuses. The writer
-    # takes each text.
-    Runtime("tool-bash", sandbox_tools=("read", "bash")),
-    Runtime("tool-unknown", sandbox_tools=("teleport",)),
-    Runtime("tool-two-times", sandbox_tools=("read", "read")),
-    Runtime("alias-upper", model_alias="Agent-Router"),
-    Runtime("alias-not-ascii", model_alias="mod\u00e8le"),
-    Runtime("alias-empty", model_alias=""),
-    Runtime("system-prompt-unknown", system_prompt="prepend"),
+    # No set here holds a value that the family file check refuses: a tool
+    # that is not in the set, a tool two times, an alias with another byte
+    # or an unknown system prompt. The writer takes each text, and the Rust
+    # type refuses it. `vectors/AGENTS.md`, "Known gaps", names the Rust
+    # test that holds those inputs.
 )
 
 
@@ -619,25 +612,23 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     ),
     _creds("unknown-key-4301-digits", extra="9" * (INT_DIGITS_MAX + 1)),
     # --- the epoch ---
+    # No document here gives an epoch outside 64 bits with a sign, as an
+    # integer or as a float, or a text with a digit that is not ASCII. The
+    # reader takes such an epoch, and the Rust type refuses it.
+    # `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds
+    # those inputs.
     _creds("epoch-zero", epoch="0"),
     _creds("epoch-negative", epoch="-3"),
     _creds("epoch-max-64-bit-signed", epoch="9223372036854775807"),
-    _creds("epoch-past-64-bit-signed", epoch="9223372036854775808"),
-    _creds("epoch-max-64-bit", epoch="18446744073709551615"),
-    _creds("epoch-30-digits", epoch="1" + "0" * 30),
     _creds("epoch-min-64-bit-signed", epoch="-9223372036854775808"),
-    _creds("epoch-below-64-bit-signed", epoch="-9223372036854775809"),
     _creds("epoch-true", epoch="true"),
     _creds("epoch-false", epoch="false"),
     _creds("epoch-fraction", epoch="7.9"),
     _creds("epoch-negative-fraction", epoch="-7.9"),
     _creds("epoch-whole-float", epoch="7.0"),
     _creds("epoch-exponent", epoch="1e2"),
-    _creds("epoch-large-float", epoch="1e30"),
     _creds("epoch-float-16-digits", epoch="8848919470643385.0"),
     _creds("epoch-float-below-2-to-63", epoch="9.223372036854775e18"),
-    _creds("epoch-float-2-to-63", epoch="9223372036854775807.0"),
-    _creds("epoch-float-minus-2-to-63", epoch="-9223372036854775808.0"),
     _creds("epoch-nan", epoch="NaN"),
     _creds("epoch-infinity", epoch="Infinity"),
     _creds("epoch-negative-infinity", epoch="-Infinity"),
@@ -650,7 +641,6 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     _creds("epoch-text-fraction", epoch='"7.0"'),
     _creds("epoch-text-word", epoch='"seven"'),
     _creds("epoch-text-empty", epoch='""'),
-    _creds("epoch-text-digit-not-ascii", epoch='"\\u0667"'),
     _creds("epoch-text-unit-separator", epoch='"\\u001f7"'),
     _creds("epoch-text-next-line", epoch='"\\u00857"'),
     _creds("epoch-text-4300-digits", epoch='"' + "0" * (INT_DIGITS_MAX - 1) + '7"'),
@@ -660,21 +650,16 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     _creds("epoch-object", epoch='{"n": 7}'),
     _creds("epoch-missing", epoch=""),
     # --- the two secrets ---
+    # No document here gives a key, a token or a time of the write that is
+    # no JSON string, or an empty key or token. The reader makes text of
+    # each value, and the Rust type refuses it. `vectors/AGENTS.md`, "Known
+    # gaps", names the Rust test that holds those inputs.
     _creds("key-missing", litellm_key=""),
-    _creds("key-null", litellm_key="null"),
-    _creds("key-number", litellm_key="7"),
-    _creds("key-true", litellm_key="true"),
-    _creds("key-list", litellm_key='["a", 1.0, null]'),
-    _creds("key-empty", litellm_key='""'),
     _creds("key-not-ascii", litellm_key='"cl\\u00e9"'),
     _creds("key-lone-surrogate", litellm_key='"\\ud800"'),
     _creds("token-missing", pep_token=""),
-    _creds("token-null", pep_token="null"),
-    _creds("token-empty", pep_token='""'),
     # --- the time of the write ---
     _creds("written-missing", written_at=""),
-    _creds("written-null", written_at="null"),
-    _creds("written-number", written_at="7"),
     _creds("written-empty", written_at='""'),
     _creds("written-not-a-time", written_at='"yesterday"'),
     # --- the previous token ---
@@ -737,10 +722,10 @@ CREDS_WRITES: Final[tuple[CredsWrite, ...]] = (
         written_at='quote " backslash \\ tab \t newline \n nul \x00 del \x7f',
     ),
     CredsWrite("text-not-ascii", written_at="\u00e9 \u2028 \U0001f600", litellm_key="cl\u00e9"),
-    # A value below is one that the type of the port cannot hold.
-    CredsWrite("epoch-past-64-bit-signed", epoch=2**63),
-    CredsWrite("key-empty", litellm_key=""),
-    CredsWrite("token-empty", pep_token=""),
+    # No set here holds an epoch outside 64 bits with a sign, or an empty
+    # key or token. The writer takes each value, and the Rust writer has no
+    # argument for it. `vectors/AGENTS.md`, "Known gaps", names the Rust
+    # test that holds those inputs.
 )
 
 
@@ -809,10 +794,10 @@ ENV_WRITES: Final[tuple[EnvWrite, ...]] = (
     EnvWrite("state-root-final-slash", state_root="/tmp/state/"),
     EnvWrite("state-root-two-slashes", state_root="//net/state"),
     EnvWrite("state-root-dot-segment", state_root="/tmp/./state"),
-    # A value below is one that the type of the port cannot hold.
-    EnvWrite("state-root-relative", state_root="state"),
-    EnvWrite("sandbox-of-another-family", sandbox="code-s1"),
-    EnvWrite("sandbox-with-no-number", sandbox="chat"),
+    # No set here holds a relative state root, the sandbox of another family
+    # or a sandbox with no number. The writer takes each value, and the Rust
+    # writer has no argument for it. `vectors/AGENTS.md`, "Known gaps",
+    # names the Rust test that holds those inputs.
 )
 
 
@@ -940,6 +925,13 @@ def _attendance(env_id: str, **variables: str) -> Environment:
     return Environment(env_id, {"AGENT_LAN_ADDRESS": LAN, **prefixed})
 
 
+# No environment here holds a value that the reader takes and the Rust type
+# refuses: a bind host that is no host, an IPv6 address as the LAN address
+# of the site, a relative path, a socket path of 108 bytes, a digit that is
+# not ASCII, a count of seconds that is no duration, a command that does
+# not split into words, or a URL with no scheme or with a password.
+# `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds those
+# inputs.
 ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("site-only"),
     Environment("no-variable", {}),
@@ -974,11 +966,9 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("path-two-slashes", STATE_ROOT="/tmp//root/state"),
     _attendance("path-double-root", STATE_ROOT="//tmp/root"),
     _attendance("path-dot-segments", STATE_ROOT="/tmp/./root/../state"),
-    _attendance("path-relative", STATE_ROOT="state"),
     _attendance("path-nul-byte", STATE_ROOT="/tmp/root\x00/state"),
     _attendance("socket-nul-byte", SOCKET="/tmp/root/sessiond.sock\x00"),
     _attendance("socket-107-bytes", SOCKET="/" + "a" * 106),
-    _attendance("socket-108-bytes", SOCKET="/" + "a" * 107),
     # --- the bind ---
     _attendance("bind-true", BIND_LAN="true"),
     _attendance("bind-one", BIND_LAN="1"),
@@ -998,9 +988,7 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("lan-each-interface-digits-not-ascii", LAN_ADDRESS="\uff10.\uff10.\uff10.\uff10"),
     _attendance("lan-each-interface-word", LAN_ADDRESS="*"),
     _attendance("lan-first-address", LAN_ADDRESS="0.0.0.1"),
-    _attendance("lan-not-a-host", LAN_ADDRESS="not a host"),
     Environment("site-lan-each-interface", {"AGENT_LAN_ADDRESS": "0.0.0.0"}),
-    Environment("site-lan-ipv6", {"AGENT_LAN_ADDRESS": "::1"}),
     # --- the port ---
     _attendance("port-one", LAN_PORT="1"),
     _attendance("port-65535", LAN_PORT="65535"),
@@ -1013,7 +1001,6 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("port-word", LAN_PORT="http"),
     _attendance("port-fraction", LAN_PORT="8350.0"),
     _attendance("port-hex", LAN_PORT="0x209e"),
-    _attendance("port-digits-not-ascii", LAN_PORT="\uff18\uff13\uff15\uff10"),
     _attendance("port-5000-digits", LAN_PORT="9" * 5000),
     _attendance("port-4300-digits", LAN_PORT="0" * (INT_DIGITS_MAX - 2) + "80"),
     _attendance("port-4301-digits", LAN_PORT="0" * (INT_DIGITS_MAX - 1) + "80"),
@@ -1033,18 +1020,10 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("seconds-nan", LOCK_STALE_S="nan"),
     _attendance("seconds-infinity", LOCK_STALE_S="inf"),
     _attendance("seconds-overflow", LOCK_STALE_S="1e999"),
-    _attendance("seconds-past-a-duration", LOCK_STALE_S="1e30"),
-    _attendance("seconds-below-a-nanosecond", LOCK_POLL_S="1e-12"),
-    _attendance("seconds-digits-not-ascii", LOCK_STALE_S="\u0662\u0660"),
     # --- the channel command and Open WebUI ---
     _attendance("command-quoted-words", CHANNEL_COMMAND="sh -c 'exec node \"$0\"' {sandbox}"),
     _attendance("command-space-around", CHANNEL_COMMAND="  node playpen.js  "),
-    _attendance("command-quote-with-no-end", CHANNEL_COMMAND="sbx 'exec {sandbox}"),
-    _attendance("command-final-backslash", CHANNEL_COMMAND="sbx exec \\"),
     _attendance("owui-url-final-slash", OWUI_URL="http://192.0.2.10:8181/"),
-    _attendance("owui-url-no-scheme", OWUI_URL="192.0.2.10:8181"),
-    _attendance("owui-url-with-password", OWUI_URL="http://user:password@192.0.2.10:8181"),
-    _attendance("owui-key-file-relative", OWUI_KEY_FILE="owui-api.key"),
 )
 
 
@@ -1081,6 +1060,10 @@ def _lan_board(env_id: str, **variables: str) -> Environment:
     return Environment(env_id, {"AGENT_LAN_ADDRESS": LAN, "VIEW_ACCESS_KEY": VIEW_KEY, **prefixed})
 
 
+# No environment here holds a value that the reader takes and the Rust type
+# refuses: a bind that is no host, the bind `0`, the long form of the bind
+# `::`, a relative path, or a URL with no scheme. `vectors/AGENTS.md`,
+# "Known gaps", names the Rust test that holds those inputs.
 NOTICEBOARD_ENVS: Final[tuple[Environment, ...]] = (
     _noticeboard("loopback-no-key"),
     _lan_board("lan-with-key"),
@@ -1118,9 +1101,6 @@ NOTICEBOARD_ENVS: Final[tuple[Environment, ...]] = (
     _lan_board("bind-each-interface", BIND="0.0.0.0"),
     _lan_board("bind-each-interface-ipv6", BIND="::"),
     _lan_board("bind-star", BIND="*"),
-    _lan_board("bind-each-interface-long-form", BIND="0:0:0:0:0:0:0:0"),
-    _lan_board("bind-one-number", BIND="0"),
-    _lan_board("bind-not-a-host", BIND="not a host"),
     Environment(
         "site-each-interface", {"AGENT_LAN_ADDRESS": "0.0.0.0", "VIEW_ACCESS_KEY": VIEW_KEY}
     ),
@@ -1153,9 +1133,6 @@ NOTICEBOARD_ENVS: Final[tuple[Environment, ...]] = (
         "url-and-socket", SESSIOND_URL="http://192.0.2.10:8350", SESSIOND_SOCKET="/tmp/s.sock"
     ),
     _noticeboard("url-final-slash", SESSIOND_URL="http://192.0.2.10:8350/"),
-    _noticeboard("url-no-scheme", SESSIOND_URL="192.0.2.10:8350"),
-    _noticeboard("socket-relative", SESSIOND_SOCKET="sessiond.sock"),
-    _noticeboard("state-root-relative", STATE_ROOT="state"),
     _noticeboard("registry-final-slash", REGISTRY_DIR="/tmp/root/registry/"),
 )
 
@@ -1175,19 +1152,44 @@ def _noticeboard_vector(env: Environment) -> Vector:
     return raised(env.id, env.given(), outcome.exc)
 
 
-def _pep(env_id: str, **variables: str) -> Environment:
-    return Environment(env_id, variables)
+#: The four readers of `chaperone.site`, by the name a vector gives one.
+_CHAPERONE_READERS: Final[dict[str, Callable[[Mapping[str, str]], str]]] = {
+    "bind": chaperone_site.bind,
+    "lan_address": chaperone_site.lan_address,
+    "tei_url": chaperone_site.tei_url,
+    "ha_url": chaperone_site.ha_url,
+}
 
 
-CHAPERONE_ENVS: Final[tuple[Environment, ...]] = (
+@dataclass(frozen=True)
+class SiteCalls:
+    """One environment of the chaperone, and each reader that gets it."""
+
+    env: Environment
+    readers: tuple[str, ...]
+
+
+def _pep(
+    env_id: str, *, readers: tuple[str, ...] = tuple(_CHAPERONE_READERS), **variables: str
+) -> SiteCalls:
+    """An environment of the chaperone. It goes to each reader, or to `readers`."""
+    return SiteCalls(Environment(env_id, variables), readers)
+
+
+# Five environments here go to less than the four readers. Each call that
+# is left out is one that the reader takes and the Rust type refuses: a LAN
+# address that is no IPv4 address and no host name, the LAN address
+# `0.0.0.0`, the port 0, and a URL with no scheme. `vectors/AGENTS.md`,
+# "Known gaps", names the Rust test that holds those inputs.
+CHAPERONE_ENVS: Final[tuple[SiteCalls, ...]] = (
     _pep("site-only", AGENT_LAN_ADDRESS=LAN),
     _pep("no-variable"),
     _pep("lan-address-empty", AGENT_LAN_ADDRESS="  "),
     _pep("lan-address-space", AGENT_LAN_ADDRESS=f" {LAN}\n"),
     _pep("lan-address-host-name", AGENT_LAN_ADDRESS="host-1.example"),
-    _pep("lan-address-each-interface", AGENT_LAN_ADDRESS="0.0.0.0"),
-    _pep("lan-address-ipv6", AGENT_LAN_ADDRESS="::1"),
-    _pep("lan-address-not-a-host", AGENT_LAN_ADDRESS="not a host"),
+    _pep("lan-address-each-interface", readers=("bind", "ha_url"), AGENT_LAN_ADDRESS="0.0.0.0"),
+    _pep("lan-address-ipv6", readers=("ha_url",), AGENT_LAN_ADDRESS="::1"),
+    _pep("lan-address-not-a-host", readers=("ha_url",), AGENT_LAN_ADDRESS="not a host"),
     _pep("bind-wins", AGENT_LAN_ADDRESS=LAN, PEP_BIND="127.0.0.1:18300"),
     _pep("bind-and-no-site", PEP_BIND="127.0.0.1:18300"),
     _pep("bind-empty", AGENT_LAN_ADDRESS=LAN, PEP_BIND=" "),
@@ -1213,7 +1215,7 @@ CHAPERONE_ENVS: Final[tuple[Environment, ...]] = (
     _pep("bind-host-empty-label", PEP_BIND="a..b:8300"),
     _pep("bind-host-label-of-64", PEP_BIND=f"{'x' * 64}.example:8300"),
     _pep("bind-port-word", PEP_BIND="127.0.0.1:http"),
-    _pep("bind-port-zero", PEP_BIND="127.0.0.1:0"),
+    _pep("bind-port-zero", readers=("lan_address", "tei_url", "ha_url"), PEP_BIND="127.0.0.1:0"),
     _pep("bind-port-empty", PEP_BIND="127.0.0.1:"),
     _pep("bind-port-minus", PEP_BIND="127.0.0.1:-1"),
     _pep("bind-port-65535", PEP_BIND="127.0.0.1:65535"),
@@ -1231,16 +1233,12 @@ CHAPERONE_ENVS: Final[tuple[Environment, ...]] = (
     ),
     _pep("home-assistant-final-slash", HA_URL="http://192.0.2.21:8123/"),
     _pep("home-assistant-space", HA_URL=" https://ha.example\n"),
-    _pep("home-assistant-no-scheme", HA_URL="192.0.2.21:8123"),
+    _pep(
+        "home-assistant-no-scheme",
+        readers=("bind", "lan_address", "tei_url"),
+        HA_URL="192.0.2.21:8123",
+    ),
 )
-
-#: The four readers of `chaperone.site`, by the name a vector gives one.
-_CHAPERONE_READERS: Final[dict[str, Callable[[Mapping[str, str]], str]]] = {
-    "bind": chaperone_site.bind,
-    "lan_address": chaperone_site.lan_address,
-    "tei_url": chaperone_site.tei_url,
-    "ha_url": chaperone_site.ha_url,
-}
 
 
 def _chaperone_vector(env: Environment, function: str) -> Vector:
@@ -1303,16 +1301,17 @@ def _env_surfaces() -> tuple[Surface, ...]:
                 notes=(
                     _NOTE_ENV,
                     "params.function names the reader: bind, lan_address, tei_url or ha_url. "
-                    "Each environment has one vector for each reader. The id of a vector is "
+                    "An environment has one vector for each reader that gets it. Five "
+                    "environments go to less than the four readers. The id of a vector is "
                     "the id of the environment, a dot and the name of the reader.",
                     "value.text is the text that the reader returns. tei_url and ha_url "
                     "return the empty text for a site with no such service.",
                     _NOTE_VARIABLE,
                 ),
                 vectors=tuple(
-                    _chaperone_vector(env, function)
-                    for env in CHAPERONE_ENVS
-                    for function in _CHAPERONE_READERS
+                    _chaperone_vector(calls.env, function)
+                    for calls in CHAPERONE_ENVS
+                    for function in calls.readers
                 ),
             ),
         )
