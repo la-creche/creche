@@ -25,7 +25,7 @@ No release holds this crate. Add it to a crate only under
 | `src/program.rs` | `write_program`: a script that stands in for a child program. | `foundation-testkit` |
 | `src/stub.rs` | `HttpStub` and `RawHttp`: a server and a client that a test scripts. | `foundation-testkit` |
 | `src/router.rs` | `call`: one request through a router, with no socket. | `foundation-testkit` |
-| `src/vectors.rs` | A public reader of the vector files under `vectors/data`. | `foundation-testkit` |
+| `src/vectors.rs` | Each item of the crate `creche-vectors`, under the path `creche_testkit::vectors`. That crate is the one reader of the vector files under `vectors/data`. | `decisions-vectors-leaf` |
 | `src/probe.rs` | The program `creche-probe`: its entry function, its start steps and its three routes. | `foundation-integration` |
 | `src/bin/creche-probe.rs` | The `main` of the program: three steps and no other code. | `foundation-integration` |
 | `tests/process.rs` | The tests that start the built program as a process. | `foundation-integration` |
@@ -102,9 +102,6 @@ tests of the program. `bin/proc-rust.sh` runs the scenarios of
 
 ## Known gaps
 
-- The workspace holds two readers of the vector files: this one and the
-  private one of `creche-contracts`. `agent-family` holds a third in its
-  test. The owner of the crates decides if the two others move to this one.
 - This `CONTRACT-QUESTION` comment is open in `src/probe.rs`: no contract
   names the exit status of a program whose listener does not bind. The
   program ends with status 3 there, as the Python noticeboard does.

@@ -27,7 +27,7 @@ defect that a test finds late.
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
-| `creche-vectors` | The reader of the vector files under `vectors/data`, for each differential test. It uses `serde` and `serde_json` only, so each other crate can take it for its tests. `creche-testkit` gives it to its users as `creche_testkit::vectors`. No release holds it. `crates/creche-vectors/AGENTS.md` holds its rules. |
+| `creche-vectors` | The one reader of the files under `vectors/data`, for each differential test. It uses `serde` and `serde_json` only, so each other crate can take it for its tests. `creche-testkit` gives it to its users as `creche_testkit::vectors`. No release holds it. `crates/creche-vectors/AGENTS.md` holds its rules. |
 | `creche-testkit` | Test helpers for each crate, and the program `creche-probe`. No release holds it. `crates/creche-testkit/AGENTS.md` holds its rules. |
 
 | Module of `creche-contracts` | What it holds |
@@ -47,7 +47,6 @@ defect that a test finds late.
 | `mcp` | The words of the MCP wire. JSON-RPC 2.0 and the Model Context Protocol (MCP) state them. The module holds the message, the id of a request, the method names, the error codes, the protocol revisions and three results. No contract owns these words. A client and each server take them from this module. |
 | `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
 | `untrusted` | Readers for an answer of another service. A field of a wrong type reads as empty. The raw type of an answer uses them. |
-| `vectors` | Test code only. It reads the vector files under `vectors/data/`. |
 
 `src/manifest.rs` holds the closed sets, the catalog and the differential
 test of `manifest`. Its other files are in `src/manifest/`. Two of them are
@@ -84,8 +83,8 @@ read.
    to `ids` when a second contract needs it. Give the vectors of that type a
    surface name that starts with the name of your module, not with `id.`. A
    test of `ids` fails on an `id.` surface that no table of `ids` names.
-5. Ask the owner of the crate before you change `ids`, `secret` or
-   `vectors`. A change there reaches each module.
+5. Ask the owner of the crate before you change `ids` or `secret`. A change
+   there reaches each module.
 6. In `ids`, for an id that is one run of ASCII bytes, write a `Run`
    constant. Then call `run_id!`. The macro makes the type and its error
    type in the form of `FamilyName`. `Run` and `run_id!` are private to
@@ -459,10 +458,10 @@ fault, the event of a channel line and the arguments of a tool call.
   members in another order are not equal.
 
 Only `session` and `mcp` call the writer today. Only `mcp` calls the
-reader. The private reader of `vectors/data` in `creche-contracts` calls
-`check` for the index file only. The crate `creche-vectors` does not use
-`creche-contracts`, so its raw types hold the rules for the index. "Known
-gaps" names the packet that moves each module to the two.
+reader. The index of the vector files is a strict text too. The crate
+`creche-vectors` reads it and does not use `creche-contracts`, so its raw
+types hold the rules for the index. "Known gaps" names the packet that moves
+each module to the two.
 Until then, these parts stay:
 
 - Five older functions format a float: `float_text` of `channel`, of
@@ -1026,24 +1025,40 @@ commit message.
 
 ### The differential test
 
-`crates/creche-contracts/src/vectors.rs` reads the vector files under
-`vectors/data/`. It is test code. `vectors/README.md` holds the file format.
+The crate `creche-vectors` reads the files under `vectors/data/`. It is the
+one reader of that directory. `vectors/README.md` holds the file format.
 
-1. Call `vectors::surface` with the name of a surface. The function finds
-   the file in `vectors/data/index.json`. It stops the test on a format that
-   is not 1 and on a count that differs from the index.
+A crate takes the reader under `[dev-dependencies]`. `creche-testkit` is the
+one exception: it gives each item of the reader to its users under the path
+`creche_testkit::vectors`. A crate that has `creche-testkit` uses that path.
+
+1. Call `surface` with the name of a surface. The function finds the file in
+   `vectors/data/index.json`. It returns an error for a format that is not 1
+   and for a count that differs from the index. The test calls `unwrap`.
 2. Read the input of each vector with `Input::text`, `Input::bytes` or
    `Input::args`.
 3. Call the Rust code with the input.
-4. Compare the result with the `result` of the vector. Compare the value with
+4. Compare the result with `Vector::result`. Compare the value with
    `Vector::value` and the refusal with `Vector::refusal`, as parsed JSON.
 5. For the result `raised`, make sure that the Rust code refuses the input.
 
 A value, a refusal and an argument of a vector can hold a marker object.
-`vectors::Marker::of` reads one. `vectors/README.md` lists the six markers.
+`Marker::of` reads one. `vectors/README.md` lists the six markers.
+
+The reader has three more functions:
+
+| Function | What it gives |
+|---|---|
+| `index` | Each row of the index: a surface, its file and its counts. |
+| `disagreements` | Each row of `ids/disagreements.json`. |
+| `registries` | Each file of `family_file.registries.json`. |
 
 Rules for the test:
 
+- Read `vectors/data` only through `creche-vectors`. Write no second reader
+  of a file there. Build no path to that directory in another crate.
+  Reason: two readers of one file drift, as two copies of a value do
+  (rule 13). One reader then refuses a file that the other reader takes.
 - Write one test for each type. The test walks each vector of each surface
   that the type implements.
 - Put a table in the test that names each surface. Make the test fail when
@@ -1532,12 +1547,10 @@ To make the fifth check on your machine, for example before a merge:
     `decisions-util-runtime` moves it to `creche-util`. "Known gaps" of
     `crates/creche-util/AGENTS.md` names each other function that is
     still open. No packet has that part yet.
-  - Vector reader. `vectors/data` needs a single reader. The owner still
-    has to confirm this. Three readers exist today. Packet
-    `decisions-vectors-crate` reduces them to one. Against rule 13, the
-    crate `creche-vectors` holds a second copy of the digest grammar of
-    `ids`. "Known gaps" of `crates/creche-vectors/AGENTS.md` has the cause
-    and the change that removes the copy. No packet has that part yet.
+  - Vector reader. Against rule 13, the crate `creche-vectors` holds a
+    second copy of the digest grammar of `ids`. "Known gaps" of
+    `crates/creche-vectors/AGENTS.md` has the cause and the change that
+    removes the copy. No packet has that part yet.
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
@@ -1548,6 +1561,15 @@ To make the fifth check on your machine, for example before a merge:
     to a private function, because no request holds that header. Packet
     `attendance-one-bearer` gives each Python copy one rule for the
     bearer. It deletes the constant and the private path.
+- The owner still has to confirm that `creche-vectors` is the one reader of
+  `vectors/data`. That crate replaced two other readers: a private module of
+  `creche-contracts` and a reader in the test of `agent-family`. If the
+  owner says no, revert the pull request that deleted the two readers.
+- No check holds the rule that only `creche-vectors` reads `vectors/data`.
+  The reviewer searches each `.rs` file under `crates/` for the text
+  `vectors/data`. Today that search gives lines of `creche-vectors` only. In
+  a comment of another crate, name the surfaces of the vectors and not the
+  directory. The search then finds only a reader.
 - This `CONTRACT-QUESTION` comment is open in `bin/rust-coverage.sh`: check
   2 of "The coverage rule" does not say what a listed file with no function
   is. No report holds such a file, so the script fails for it. With check 4,

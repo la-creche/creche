@@ -1,17 +1,17 @@
 # creche-vectors
 
-The reader of the vector files under `vectors/data`, for each differential
-test of the Rust workspace. `rust/AGENTS.md` and the root `AGENTS.md` apply
-here too.
+The one reader of the files under `vectors/data`, for each differential test
+of the Rust workspace. `rust/AGENTS.md` and the root `AGENTS.md` apply here
+too.
 
 A vector is one input and what the Python implementation did with it.
 `vectors/README.md` holds the file format. `rust/AGENTS.md`, "The
 differential test", says how a test uses the reader.
 
 No release holds this crate. A crate that a release holds takes this crate
-only under `[dev-dependencies]`. `creche-testkit` takes it under
-`[dependencies]`, because it gives each item of this crate to its users as
-`creche_testkit::vectors`.
+only under `[dev-dependencies]`. `creche-contracts` and `agent-family` take
+it in that way. `creche-testkit` takes it under `[dependencies]`, because it
+gives each item of this crate to its users as `creche_testkit::vectors`.
 
 ## Layout
 
@@ -81,6 +81,13 @@ Each rule has its reason.
     rules of `rust/AGENTS.md`, "JSON", for the index. A field of another
     kind can take a text that is not strict. For example, a `Value` and a
     plain map keep the last value of a key that an object holds two times.
+11. **Put the reader of each file under `vectors/data` in this crate.** When
+    a test of another crate needs a file of another kind, add its reader
+    here. Give that reader a raw type, a public type and a table of
+    refusals.
+    Reason: no other crate reads that directory (`rust/AGENTS.md`, "The
+    differential test"). A second reader in a test holds none of the rules
+    above.
 
 The reader has no Python origin. `vectors/core.py`, `vectors/generate.py` and
 two modules under `vectors/surfaces/` write the files that it reads. The doc
@@ -97,11 +104,9 @@ comment of each reader function names its writer.
 
 ## Known gaps
 
-- The workspace holds three readers of the vector files: this crate, the
-  private reader of `creche-contracts` and the reader in the test of
-  `agent-family`. Packet `decisions-vectors-crate` moves the two others to
-  this crate. Until then, no crate calls `disagreements` or `registries`.
-  The owner still has to confirm that one reader replaces the three.
+- The owner still has to confirm that this crate is the one reader of
+  `vectors/data`. "Known gaps" of `rust/AGENTS.md` has the entry, and what
+  to do if the owner says no.
 - This `CONTRACT-QUESTION` comment is open in `src/lib.rs`: `rust/AGENTS.md`
   gives each value one source, in rule 13. `creche-contracts` holds the
   strict JSON reader and `ids::Sha256Hex`, and rule 1 above keeps that crate
