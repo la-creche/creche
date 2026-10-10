@@ -91,8 +91,8 @@
 #     and no notice.
 #   - The script sends one notice for a token that it did not send, and one
 #     for a token with a newer `<seconds>`. The summary is
-#     `json_not_strict <service> <surface> <rule>`. The first run sends a
-#     notice for each token that a file holds on that day.
+#     `json_not_strict <service> <surface> <rule>`. A token from before
+#     the first run of this step counts too: that run sends it.
 #   - Two limits hold a notice for a later run. One notice for one service,
 #     surface and rule in 24 hours. 6 notices of this kind in one hour, for
 #     all services together.
@@ -760,7 +760,7 @@ remember_sent() {
 # One notice file. Each byte of it comes from another program. The tokens
 # of a line in the exact form go to TOKENS.
 notice_file() {  # notice_file <service> <file>
-  local service file broken blob lines line value token rest
+  local service file broken blob lines line value tokens token rest
   service="$1"
   file="$2"
   broken="json notice: the push line of $file breaks its pattern (no notice)"
@@ -787,15 +787,16 @@ notice_file() {  # notice_file <service> <file>
   [[ -n "$value" ]] || return 0
 
   # The pattern held the whole line, so the value holds only the characters
-  # of a token and single spaces. No word of it is a pattern of a file name.
-  set -- $value
-  if [[ $# -gt "$NOTICE_TOKENS_MAX" ]]; then
+  # of a token and single spaces. `read -a` makes one word of each token,
+  # and it expands no word as a pattern of a file name.
+  IFS=' ' read -r -a tokens <<< "$value"
+  if [[ ${#tokens[@]} -gt "$NOTICE_TOKENS_MAX" ]]; then
     say "$broken"
     return 0
   fi
 
   # `10#` reads `<seconds>` as a decimal number, also behind a zero.
-  for token in "$@"; do
+  for token in "${tokens[@]}"; do
     rest="${token#*:}"
     TOKENS="$TOKENS$service ${token%%:*} ${rest%%:*} $(( 10#${rest#*:} ))$NL"
   done
@@ -874,9 +875,10 @@ send_json_notices() {
 
     # The script reads SENT_READ_CAP bytes of its record at most, so it
     # writes no record that is larger. A record line holds only ASCII, so
-    # a count of characters is a count of bytes.
+    # a count of characters is a count of bytes. The new line has five
+    # words, four spaces and one line feed.
     room=$(( SENT_READ_CAP - ${#SENT_LINES} - ${#service} - ${#surface} - ${#rule} ))
-    if (( room - ${#seconds} - ${#NOW} - 5 < 0 )); then
+    if (( room - ${#seconds} - ${#NOW} - 4 - 1 < 0 )); then
       say "json notices: $SENT_FILE has no room under $SENT_READ_CAP bytes, so this run sends no more of this kind"
       break
     fi

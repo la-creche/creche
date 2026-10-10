@@ -1386,6 +1386,20 @@ def test_a_file_name_that_is_no_service_name_is_not_read(rig: Rig, name: str) ->
     assert done.stdout.count("is no service name") == 1, done.stdout
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a file of each mode")
+def test_a_notice_file_that_the_run_cannot_read_is_one_line(rig: Rig) -> None:
+    """One line in the journal names the file. The other files are read."""
+    closed = rig.notice("caregiver", token("status.document:syntax"))
+    closed.chmod(0)
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert done.stdout.count(f"cannot read {closed}") == 1
+
+
 def test_a_push_line_past_the_byte_cap_is_not_read(rig: Rig) -> None:
     """The script reads the first 65,536 bytes of a file and no more."""
     whole = notice_document("caregiver", [token("status.document:syntax")])
