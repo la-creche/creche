@@ -829,11 +829,6 @@ def _frame_vector(stream: Stream) -> Vector:
 
 # --- the host-side builders ----------------------------------------------------
 
-#: Every object inside the arguments has its keys in sorted order. A vector
-#: file sorts keys, and a builder keeps the order it is given, so any other
-#: order would be lost on the way to a reader.
-_WORKSPACE: Final = {"ref": "main", "repo": "example/project"}
-
 
 @dataclass(frozen=True)
 class Build:
@@ -875,6 +870,15 @@ _HOST_BRANCH: Final = Decision(Branch.FORK, fork_from="e-4").wire_branch
 _HOST_DELEGATION: Final = Delegation(_DELEGATION_ID, "chat", _OWNER).to_channel()
 _HOST_DELEGATION_NO_CALLER: Final = Delegation(_DELEGATION_ID, "chat").to_channel()
 
+# Each object in an argument here is one of the objects above. A builder
+# writes each other object as it is, and it writes an epoch of each size.
+# The Rust types hold no such object and no epoch past 64 bits.
+# `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds those
+# inputs.
+#
+# A vector file sorts the keys of an object, and a builder keeps the order
+# that it gets. Each object above has its keys in sorted order, but the
+# delegation.
 BUILDS: Final[tuple[Build, ...]] = (
     Build(
         "hello-attended",
@@ -895,23 +899,12 @@ BUILDS: Final[tuple[Build, ...]] = (
     ),
     Build("open-session-minimal", "open_session", dict(_OPEN)),
     Build(
-        "open-session-every-argument",
-        "open_session",
-        {**_OPEN, "model": "code-router", "workspace": _WORKSPACE},
-    ),
-    Build("open-session-empty-model", "open_session", {**_OPEN, "model": "", "workspace": {}}),
-    Build(
         "open-session-host-shapes",
         "open_session",
         {**_OPEN, "model": "code-router", "workspace": _HOST_WORKSPACE},
     ),
     Build("open-session-empty-model-only", "open_session", {**_OPEN, "model": ""}),
     Build("get-entries-minimal", "get_entries", {"request": TURN, **_OPEN}),
-    Build(
-        "get-entries-every-argument",
-        "get_entries",
-        {"request": TURN, **_OPEN, "since": "e-7", "workspace": _WORKSPACE},
-    ),
     Build("get-entries-empty-since", "get_entries", {"request": TURN, **_OPEN, "since": ""}),
     Build(
         "get-entries-host-shapes",
@@ -920,34 +913,12 @@ BUILDS: Final[tuple[Build, ...]] = (
     ),
     Build("start-turn-minimal", "start_turn", dict(_START)),
     Build(
-        "start-turn-every-argument",
-        "start_turn",
-        {
-            **_START,
-            "persona": "Answer in one sentence.",
-            "attachments": ["notes.txt", "plan-2.pdf"],
-            "workspace": _WORKSPACE,
-            "branch": {"from_entry": "e-4"},
-            "delegation": {"caller": "chat", "id": "01JBQ7WZ0X4T9V6K2H8M3N5PQS"},
-        },
-    ),
-    Build(
-        "start-turn-empty-optionals",
-        "start_turn",
-        {**_START, "persona": "", "attachments": [], "workspace": {}, "branch": {}},
-    ),
-    Build(
         "start-turn-text-forms",
         "start_turn",
         {
             **_START,
             "prompt": 'caf\u00e9 "quoted" \\ / \u2028 \u2029 \U0001f600 \x7f\x00\x1f\n\t</script>',
         },
-    ),
-    Build(
-        "start-turn-numbers",
-        "start_turn",
-        {**_START, "deadline_s": 0, "epoch": 2**64, "workspace": {"f": 1.0, "g": 1e100, "h": 0.1}},
     ),
     Build("start-turn-lone-surrogate", "start_turn", {**_START, "prompt": "a\ud800b"}),
     Build(
@@ -1072,6 +1043,9 @@ def surfaces() -> tuple[Surface, ...]:
                 "In a vector whose id holds host-shapes, workspace, branch and delegation "
                 "are the objects that the host makes: attendance.workspace.workspace_of, "
                 "attendance.branching.Decision.wire_branch and to_channel.",
+                "The entry point writes each other object that it gets, and an epoch of each "
+                "size. No vector holds another object for workspace, branch or delegation, or "
+                "an epoch of 2^64 or more.",
                 "output is the exact line the host writes, with its LF.",
                 "A refused vector is an input for which the entry point raises ValueError. "
                 "Each caller of the entry point catches that type.",

@@ -270,6 +270,7 @@ directory is not a workspace package, so a change here does not change
 
   | Surface | Inputs with no vector | File of the test |
   |---|---|---|
+  | `channel.build` | A `workspace`, a `branch` or a `delegation` that is not the object that the host makes. An epoch of 2^64 or more. | `channel/host.rs` |
   | `config.site_file` | A LAN address that ends in a number and is not one IPv4 address. The address `0.0.0.0`. | `config/site.rs` |
   | `config.runtime_json.write` | A field that the family file check refuses. | `config/mounts.rs` |
   | `config.creds_json.read` | A key, a token or a time of the write that is no JSON string. An empty key or token. An epoch outside 64 bits with a sign. An epoch text with a digit that is not ASCII. | `config/mounts.rs` |

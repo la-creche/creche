@@ -2427,51 +2427,6 @@ mod tests {
     const TURN: &str = "01JBQ7WZ0X4T9V6K2H8M3N5PQR";
     const OWNER: &str = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33";
 
-    /// One vector on which the types differ from the Python host on purpose.
-    struct Deviation {
-        vector: &'static str,
-        /// The section of contract 03 that the types hold.
-        section: &'static str,
-        difference: &'static str,
-    }
-
-    /// The Python builders write each object and each integer that a caller
-    /// gives them. The types hold the form that the contract names, so they
-    /// cannot hold the arguments of these vectors. A vector with `host` in its
-    /// id holds the same message with the objects that the host makes.
-    const DEVIATIONS: &[Deviation] = &[
-        Deviation {
-            vector: "open-session-every-argument",
-            section: "§7.2",
-            difference: "workspace has no kind and no owner_session",
-        },
-        Deviation {
-            vector: "open-session-empty-model",
-            section: "§7.2",
-            difference: "workspace is the empty object",
-        },
-        Deviation {
-            vector: "get-entries-every-argument",
-            section: "§7.2",
-            difference: "workspace has no kind and no owner_session",
-        },
-        Deviation {
-            vector: "start-turn-every-argument",
-            section: "§4.1, §7.2, §7.4",
-            difference: "workspace, branch and delegation have other keys",
-        },
-        Deviation {
-            vector: "start-turn-empty-optionals",
-            section: "§4.1, §7.2",
-            difference: "workspace and branch are the empty object",
-        },
-        Deviation {
-            vector: "start-turn-numbers",
-            section: "§4.1, §7.2",
-            difference: "env_epoch is 2^64 and workspace holds floats",
-        },
-    ];
-
     /// Why the arguments of a vector are no value of the types.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Unbuildable {
@@ -2692,7 +2647,6 @@ mod tests {
     fn each_host_line_has_the_bytes_of_the_python_host() {
         let surface = vectors::surface(SURFACE).unwrap();
         let mut equal = 0;
-        let mut differed = Vec::new();
 
         for vector in surface.vectors() {
             let id = vector.id();
@@ -2708,7 +2662,6 @@ mod tests {
                     assert_eq!(output["text"].as_str(), Some(line.as_str()), "{id}");
                     equal += 1;
                 }
-                (Outcome::Accepted, Err(Unbuildable::NotInType)) => differed.push(id),
                 (Outcome::Refused, Ok(Err(error))) => {
                     let refusal = vector.refusal().unwrap();
 
@@ -2725,17 +2678,117 @@ mod tests {
                 }
                 // The Python host raised. The types refuse.
                 (Outcome::Raised, Ok(Err(_)) | Err(_)) => {}
+                // Each other pair is a difference. One example is a line of
+                // the Python host for arguments that no constructor takes.
                 (result, line) => panic!("{id}: the Python host {result:?}, the types {line:?}"),
             }
         }
 
-        let listed: Vec<&str> = DEVIATIONS.iter().map(|row| row.vector).collect();
-
-        assert_eq!(differed, listed, "the vectors that differ and the rows");
         assert!(equal > 0, "{SURFACE} holds no accepted vector");
-        for row in DEVIATIONS {
-            assert!(row.section.starts_with('§'), "{}", row.vector);
-            assert!(!row.difference.is_empty(), "{}", row.vector);
+    }
+
+    /// The arguments of one JSON text, with each pair of `more` in the place
+    /// of the argument of the same name.
+    fn arguments(text: &str, more: &[(&str, &str)]) -> Map<String, Value> {
+        let mut args: Map<String, Value> = serde_json::from_str(text).unwrap();
+        for (name, value) in more {
+            args.insert((*name).to_owned(), serde_json::from_str(value).unwrap());
+        }
+
+        args
+    }
+
+    /// Six sets of arguments that no constructor takes. A Python builder
+    /// writes each object and each integer that it gets, so it writes a line
+    /// for each set.
+    ///
+    /// Each set was a vector of the surface `channel.build`. The input left
+    /// that surface under resolution (c) of `rust/AGENTS.md`, "When the two
+    /// results differ". Contract 03 gives `workspace`, `branch` and
+    /// `delegation` one form each, and has no rule for a builder that gets
+    /// another object. The host gives the builders only the objects that it
+    /// makes itself, and the epoch of a status document. This test holds the
+    /// six inputs.
+    ///
+    /// A row holds the arguments that the types take, then each argument that
+    /// they do not take. The constructors give a message for the first part.
+    /// They give none when one argument of the second part is added.
+    #[test]
+    fn no_constructor_takes_six_sets_of_arguments_that_the_python_builders_take() {
+        let open = format!(
+            r#"{{"config_rev": "reg-9f21c4", "cwd": "/workspace", "epoch": 3,
+                "session": "{SESSION}", "session_dir": "/sessions/{SESSION}""#
+        );
+        let start = format!(
+            r#"{open}, "deadline_s": 600, "prompt": "Is the door locked?", "turn": "{TURN}""#
+        );
+        let other_workspace = r#"{"ref": "main", "repo": "example/project"}"#;
+        let refused = [
+            (
+                "open-session-every-argument",
+                "open_session",
+                format!(r#"{open}, "model": "code-router"}}"#),
+                vec![("workspace", other_workspace)],
+            ),
+            (
+                "open-session-empty-model",
+                "open_session",
+                format!(r#"{open}, "model": ""}}"#),
+                vec![("workspace", "{}")],
+            ),
+            (
+                "get-entries-every-argument",
+                "get_entries",
+                format!(r#"{open}, "request": "{TURN}", "since": "e-7"}}"#),
+                vec![("workspace", other_workspace)],
+            ),
+            (
+                "start-turn-every-argument",
+                "start_turn",
+                format!(
+                    r#"{start}, "attachments": ["notes.txt", "plan-2.pdf"],
+                        "persona": "Answer in one sentence."}}"#
+                ),
+                vec![
+                    ("workspace", other_workspace),
+                    ("branch", r#"{"from_entry": "e-4"}"#),
+                    (
+                        "delegation",
+                        r#"{"caller": "chat", "id": "01JBQ7WZ0X4T9V6K2H8M3N5PQS"}"#,
+                    ),
+                ],
+            ),
+            (
+                "start-turn-empty-optionals",
+                "start_turn",
+                format!(r#"{start}, "attachments": [], "persona": ""}}"#),
+                vec![("workspace", "{}"), ("branch", "{}")],
+            ),
+            // The epoch is 2^64. An `EnvEpoch` holds 64 bits.
+            (
+                "start-turn-numbers",
+                "start_turn",
+                format!(r#"{start}, "deadline_s": 0}}"#),
+                vec![
+                    ("epoch", "18446744073709551616"),
+                    ("workspace", r#"{"f": 1.0, "g": 1e+100, "h": 0.1}"#),
+                ],
+            ),
+        ];
+
+        for (id, builder, taken, not_taken) in refused {
+            let built = |more: &[(&str, &str)]| build(builder, &Args(&arguments(&taken, more)));
+
+            assert!(built(&[]).is_ok(), "{id}");
+            assert_eq!(built(&not_taken), Err(Unbuildable::NotInType), "{id}");
+            for one in &not_taken {
+                assert_eq!(
+                    built(std::slice::from_ref(one)),
+                    Err(Unbuildable::NotInType),
+                    "{id}: {}",
+                    one.0
+                );
+            }
         }
     }
 
