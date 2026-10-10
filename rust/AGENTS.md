@@ -1847,12 +1847,6 @@ To make the fifth check on your machine, for example before a merge:
 - No check holds the rules of "The rules for a service", except a part of
   rule 2 and a part of rule 13. A service crate that breaks one of the
   other rules builds and passes the lint gate.
-- `family` and `server` use the id types of `ids`. They refuse three texts
-  that the Python package `agent_family` accepts. Each vector with such a
-  text is a row of `DEVIATIONS` in `crates/agent-family/tests/vectors.rs`.
-  1. A tool name of more than 64 bytes.
-  2. The name of an environment variable of more than 64 bytes.
-  3. A package version with `+`, with `-` or of more than 64 bytes.
 - `crates/agent-family/AGENTS.md` lists the `CONTRACT-QUESTION` comments
   and the known gaps of the family file and of the server file.
 - This `CONTRACT-QUESTION` comment is open in
@@ -1871,13 +1865,13 @@ To make the fifth check on your machine, for example before a merge:
      Python, `$` also matches before a final newline. Each Python copy
      refuses a final newline, and the type refuses it.
   2. `ToolName`, contract 01 §3.4 and contract 01b §5. The contracts give no
-     cap. The three Python copies have no cap, a cap of 128 and a cap of 64.
-     The type has the cap of 64.
-  3. `EnvName`, contract 01b §4.1. The contract gives no grammar. One Python
-     copy has no cap, and one has a cap of 64. The type has the cap of 64.
-  4. `PackageVersion`, contract 01b §3.1. The contract gives no grammar. One
-     Python copy permits `+` and `-` and has no cap. The type takes the other
-     copy: no `+`, no `-` and a cap of 64.
+     cap. Two Python copies have a cap of 64, and one has a cap of 128. The
+     type has the cap of 64.
+  3. `EnvName`, contract 01b §4.1. The contract gives no grammar. Each of
+     the two Python copies has a cap of 64. The type has that cap.
+  4. `PackageVersion`, contract 01b §3.1. The contract gives no grammar.
+     Each of the two Python copies permits no `+` and no `-` and has a cap
+     of 64. The type has that grammar.
   5. `OwuiChatId`, contract 02 §2. The contract gives no cap for a chat id.
      The Python door refuses a chat id of more than 123 bytes, because the
      session id `owui-<chat id>` has 128 bytes or less. The type has that

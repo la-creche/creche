@@ -299,7 +299,7 @@ run:
         "rule-env-password-literal",
         _run("{ entrypoint: example-mcp, env: { DB_PASSWORD: literal } }"),
     ),
-    # --- a version, a variable name and a tool name with no limit ---
+    # --- a version with a sign, and three texts past the limit of 64 characters ---
     _case("long-version-hyphen", _pypi(version="1.0.0-rc1")),
     _case("long-version-plus", _pypi(version="1.0.0+local")),
     _case("long-version", _pypi(version='"' + "1" * 65 + '"')),

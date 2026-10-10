@@ -57,6 +57,9 @@ instead of the first.
 | `name` | `[a-z][a-z0-9-]{1,30}`, equal to the directory name |
 | Mounts | absolute, no glob, under an allowed root. The platform root is fenced to one family. |
 | `tools` | the server is declared, and each tool is in its catalog |
+| Tool name | `[A-Za-z][A-Za-z0-9_-]{0,63}`, in a family file and in a server file |
+| `run.env` name | `[A-Z][A-Z0-9_]{0,63}` |
+| `install.version` | `[0-9][0-9A-Za-z.]{0,63}`: no `+`, no `-` and no range sign |
 | `tools: all` on `autonomous` | refused |
 | `delegates` | each target exists and is `kind: thin` |
 | `max_inflight_delegations` | 1 to 8, default 2 |
@@ -106,11 +109,14 @@ uv run pytest family/tests
      The contract does not decide these differences:
      - The count of an identity and of a description. This validator counts
        after the collapse of whitespace. Root counts each character.
-     - The grammar of `package`, `version`, `repo`, `asset`, `python`,
-       `entrypoint` and `state_dir_env`.
-     - The grammar of a variable name, of a value and of a secret key.
+     - The grammar of `package`, `repo`, `asset`, `python`, `entrypoint`
+       and `state_dir_env`.
+     - The grammar of a value and of a secret key.
      - A fence with an empty list of tools.
-     - Each cap on a length and on a count.
+     - Each other cap on a length and on a count.
+
+     The two readers have one form for a tool name, for the name of a
+     variable and for a version. `grammar.py` holds the three forms.
   4. `parse.py`, `_MERGE_DEPTH_MAX` and `_MERGED_ENTRIES_MAX`, contract 01
      §1 and contract 01b §1. The contracts give no limit for merge keys. The
      reader follows a chain of 400 merge keys at most. It makes 100,000
