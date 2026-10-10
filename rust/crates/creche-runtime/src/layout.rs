@@ -213,7 +213,9 @@ impl StateRoot {
     ///
     /// The Python origins are `attendance/src/attendance/paths.py:100-105`
     /// and `caregiver/src/caregiver/paths.py:95-100`. Each one takes the
-    /// family and the sandbox as two texts.
+    /// family and the sandbox as two texts, so its caller can give the
+    /// sandbox of another family. This function takes one `SandboxName` and
+    /// reads the family from it.
     #[must_use]
     pub fn control_dir(&self, sandbox: &SandboxName) -> PathBuf {
         self.family_dir(sandbox.family())
@@ -232,7 +234,10 @@ impl StateRoot {
     /// The directory that holds each fault file of one writer.
     ///
     /// The Python origins are `attendance/src/attendance/paths.py:137-138`
-    /// and the directory of `caregiver/src/caregiver/paths.py:189-193`.
+    /// and the directory of `caregiver/src/caregiver/paths.py:189-193`. The
+    /// copy of `caregiver` takes each text as the source of a fault file,
+    /// also the name of `caregiver`, which writes no fault file. This
+    /// function takes a [`FaultWriter`], which has the two writers only.
     #[must_use]
     pub fn fault_dir(&self, writer: FaultWriter) -> PathBuf {
         self.entry(FAULTS).join(FaultSource::from(writer).as_str())
@@ -241,7 +246,9 @@ impl StateRoot {
     /// The fault file of one writer for one family (contract 05 §3.3.1).
     ///
     /// The Python origins are `attendance/src/attendance/paths.py:132-134`
-    /// and `caregiver/src/caregiver/paths.py:189-193`.
+    /// and `caregiver/src/caregiver/paths.py:189-193`. The copy of
+    /// `caregiver` takes each text as the source. This function takes a
+    /// [`FaultWriter`], as [`StateRoot::fault_dir`] does.
     #[must_use]
     pub fn fault_file(&self, writer: FaultWriter, family: &FamilyName) -> PathBuf {
         self.fault_dir(writer).join(json_name(family))
@@ -562,46 +569,9 @@ mod tests {
         );
     }
 
-    /// One difference between [`StateRoot`] and a Python copy of the paths.
-    struct Deviation {
-        /// The Python file and the lines of the copy.
-        python: &'static str,
-        /// What the copy does.
-        copy: &'static str,
-        /// What this module does.
-        here: &'static str,
-        /// The check that this module does what the row says.
-        holds: fn(),
-    }
-
-    const TWO_TEXTS: &str = "The copy takes the family and the sandbox as two texts. A caller \
-        can give the sandbox of another family.";
-
-    /// Each difference on purpose between [`StateRoot`] and a Python copy.
-    /// No vector covers a path, so a row names the Python lines.
-    const DEVIATIONS: &[Deviation] = &[
-        Deviation {
-            python: "attendance/src/attendance/paths.py:100-105",
-            copy: TWO_TEXTS,
-            here: "control_dir takes one SandboxName and reads the family from it.",
-            holds: the_control_dir_is_in_the_family_of_the_sandbox,
-        },
-        Deviation {
-            python: "caregiver/src/caregiver/paths.py:95-100",
-            copy: TWO_TEXTS,
-            here: "control_dir takes one SandboxName and reads the family from it.",
-            holds: the_control_dir_is_in_the_family_of_the_sandbox,
-        },
-        Deviation {
-            python: "caregiver/src/caregiver/paths.py:189-193",
-            copy: "The copy takes each text as the source of a fault file, also the name of \
-                   caregiver, which writes no fault file.",
-            here: "fault_dir and fault_file take a FaultWriter, which has the two writers \
-                   only.",
-            holds: only_two_sources_have_a_fault_dir,
-        },
-    ];
-
+    /// [`StateRoot::control_dir`] takes one sandbox name. Each Python copy
+    /// takes the family and the sandbox as two texts.
+    #[test]
     fn the_control_dir_is_in_the_family_of_the_sandbox() {
         let root = root_at(ROOT);
 
@@ -620,6 +590,9 @@ mod tests {
         }
     }
 
+    /// [`StateRoot::fault_dir`] takes a [`FaultWriter`]. The Python copy of
+    /// `caregiver` takes each text as the source of a fault file.
+    #[test]
     fn only_two_sources_have_a_fault_dir() {
         let root = root_at(ROOT);
         let dirs: Vec<PathBuf> = [FaultWriter::Sessiond, FaultWriter::Pep]
@@ -639,30 +612,6 @@ mod tests {
                 .iter()
                 .any(|dir| dir.ends_with(FaultSource::Managerd.as_str()))
         );
-    }
-
-    #[test]
-    fn each_deviation_names_its_python_lines_and_holds() {
-        for row in DEVIATIONS {
-            let (file, lines) = row.python.rsplit_once(':').unwrap();
-
-            assert!(file.ends_with(".py"), "{}", row.python);
-            assert!(
-                lines
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || byte == b'-'),
-                "{}",
-                row.python
-            );
-            assert!(
-                !row.copy.is_empty() && !row.here.is_empty(),
-                "{}",
-                row.python
-            );
-            assert_ne!(row.copy, row.here, "{}", row.python);
-
-            (row.holds)();
-        }
     }
 
     fn fault_file(source: FaultSource) -> FaultFile {
