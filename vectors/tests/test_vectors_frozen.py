@@ -225,7 +225,7 @@ TWO_LINES = (
 
 
 #: Each path that the map can hold, by its form. The Rust reader of
-#: `creche-testkit` has the same two tables in its tests.
+#: `creche-vectors` has the same two tables in its tests.
 FROZEN_PATHS = (
     "old.json",
     "runtime/old.json",

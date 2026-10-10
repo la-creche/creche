@@ -36,9 +36,14 @@ a check here:
 A push that changes only `rust/` runs no pytest suite (`bin/lib/rustrule.sh`),
 so for such a change these checks run in CI.
 
-One more check holds one crate to a rule of its own. The crate file of
-`creche-util` names no dependency, because each other crate can depend on
-that crate (`rust/crates/creche-util/AGENTS.md`, rule 4).
+Two more checks hold one crate each to a rule of its own:
+
+- The crate file of `creche-util` names no dependency, because each other
+  crate can depend on that crate (`rust/crates/creche-util/AGENTS.md`,
+  rule 4).
+- The crate file of `creche-vectors` names no crate outside a closed list,
+  because each other crate can take that crate for its tests
+  (`rust/crates/creche-vectors/AGENTS.md`, rule 1).
 """
 
 from __future__ import annotations
@@ -151,6 +156,16 @@ HELPER_CRATE = "creche-util"
 #: Each table of a crate file that can name a dependency. `target` holds the
 #: dependencies of one platform.
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies", "target")
+
+#: The crate of the vector reader. Each other crate can take it for its tests.
+READER_CRATE = "creche-vectors"
+
+#: Each crate that the vector reader can name. `creche-util` has no
+#: dependency, so it is below each crate of the workspace.
+READER_DEPENDENCIES = {"serde", "serde_json", "creche-util"}
+
+#: The two tables in which the vector reader can name a crate.
+READER_TABLES = ("dependencies", "dev-dependencies")
 
 #: Paths a Rust commit changes: a manifest, a source file and a document.
 RUST_PATHS = ("rust/Cargo.lock", "rust/crates/creche-contracts/src/ids.rs", "rust/AGENTS.md")
@@ -269,6 +284,31 @@ def test_the_helper_crate_has_no_dependency() -> None:
     named = [table for table in DEPENDENCY_TABLES if table in manifest]
 
     assert named == [], f"{HELPER_CRATE} names a dependency: {named}"
+
+
+def test_the_vector_reader_names_no_other_crate() -> None:
+    """`creche-contracts` can take `creche-vectors` for its tests, and so can
+    each crate above it. A dependency of the reader on one of them makes a
+    circle (`rust/crates/creche-vectors/AGENTS.md`, rule 1).
+
+    An entry can give its crate another name with `package`. The test reads
+    the name of the crate."""
+    manifest = tomllib.loads(
+        (REPO / RUST_DIR / "crates" / READER_CRATE / "Cargo.toml").read_text(encoding="utf-8")
+    )
+    elsewhere = [
+        table for table in DEPENDENCY_TABLES if table in manifest and table not in READER_TABLES
+    ]
+    named = {
+        entry.get("package", name) if isinstance(entry, dict) else name
+        for table in READER_TABLES
+        for name, entry in manifest.get(table, {}).items()
+    }
+
+    assert elsewhere == [], f"{READER_CRATE} names a dependency in {elsewhere}"
+    assert named <= READER_DEPENDENCIES, (
+        f"{READER_CRATE} names {sorted(named - READER_DEPENDENCIES)}"
+    )
 
 
 def test_every_cargo_file_is_under_rust() -> None:

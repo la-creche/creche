@@ -27,6 +27,7 @@ defect that a test finds late.
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
+| `creche-vectors` | The reader of the vector files under `vectors/data`, for each differential test. It uses `serde` and `serde_json` only, so each other crate can take it for its tests. `creche-testkit` gives it to its users as `creche_testkit::vectors`. No release holds it. `crates/creche-vectors/AGENTS.md` holds its rules. |
 | `creche-testkit` | Test helpers for each crate, and the program `creche-probe`. No release holds it. `crates/creche-testkit/AGENTS.md` holds its rules. |
 
 | Module of `creche-contracts` | What it holds |
@@ -458,8 +459,10 @@ fault, the event of a channel line and the arguments of a tool call.
   members in another order are not equal.
 
 Only `session` and `mcp` call the writer today. Only `mcp` calls the
-reader. The two readers of `vectors/data` call `check` for the index file
-only. "Known gaps" names the packet that moves each module to the two.
+reader. The private reader of `vectors/data` in `creche-contracts` calls
+`check` for the index file only. The crate `creche-vectors` does not use
+`creche-contracts`, so its raw types hold the rules for the index. "Known
+gaps" names the packet that moves each module to the two.
 Until then, these parts stay:
 
 - Five older functions format a float: `float_text` of `channel`, of
@@ -1531,7 +1534,10 @@ To make the fifth check on your machine, for example before a merge:
     still open. No packet has that part yet.
   - Vector reader. `vectors/data` needs a single reader. The owner still
     has to confirm this. Three readers exist today. Packet
-    `decisions-vectors-crate` reduces them to one.
+    `decisions-vectors-crate` reduces them to one. Against rule 13, the
+    crate `creche-vectors` holds a second copy of the digest grammar of
+    `ids`. "Known gaps" of `crates/creche-vectors/AGENTS.md` has the cause
+    and the change that removes the copy. No packet has that part yet.
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
