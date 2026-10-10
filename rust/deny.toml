@@ -1,6 +1,8 @@
-# The supply-chain policy of the workspace. `cargo deny --locked check` reads
-# this file from rust/, and bin/rust-gate.sh runs that command after clippy.
-# rust/AGENTS.md, "Dependencies", holds the rules.
+# The supply-chain policy of the workspace. `cargo deny` reads this file from
+# rust/. bin/rust-gate.sh makes three of its checks after clippy: the bans,
+# the licenses and the sources. The mode `--advisories` of that script makes
+# the fourth check, and .github/workflows/advisories-daily.yml runs that mode
+# one time a day. rust/AGENTS.md, "Dependencies", holds the rules.
 #
 # bin/tests/test_rust_workspace.py pins each table of this file, entry for
 # entry. To change an entry, change the pin in the same commit. Give the
@@ -29,7 +31,8 @@ all-features = true
 # `unsound` advisory.
 #
 # The check reads the advisory database from the network at each run. A new
-# advisory can thus fail a change that touches no dependency.
+# advisory can thus fail a tree that did not change. So the gate does not
+# make this check, and the workflow with the schedule does.
 [advisories]
 yanked = "deny"
 

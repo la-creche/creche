@@ -134,8 +134,12 @@ You need rustup. It installs the toolchain at the first cargo command under
      names the two forms that pass.
 3. `cargo fmt --all --check`.
 4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
-5. `cargo deny --locked check`, where `cargo-deny` is on `PATH`.
+5. `cargo deny --locked check bans licenses sources`, where `cargo-deny` is
+   on `PATH`.
 6. `cargo test --workspace --locked`, with `--tests` only.
+
+With the flag `--advisories`, the script runs none of these steps. It runs
+`cargo deny --locked check advisories` and no other command.
 
 The panic check and the public-field check read each `.rs` file under
 `crates/`. Both checks use one definition of test code:
@@ -192,7 +196,9 @@ Step 5 needs the program `cargo-deny`. rustup does not install it.
 - In CI, the script fails without `cargo-deny`. The `rust` job installs it
   before the script runs. `.github/workflows/gate.yml` names the version.
 - To run step 5 on your machine, install that version of `cargo-deny`.
-- Step 5 reads the advisory database from the network.
+- Step 5 does not make the `advisories` check of `cargo deny`. A workflow
+  makes that check one time a day, with the flag `--advisories`. "The check
+  of the locked crates" below has the rule.
 
 `bin/quality-gate.sh` starts `bin/rust-gate.sh` only for a change that
 touches `rust/`. `bin/AGENTS.md` has the table. Every path under `rust/`
@@ -1465,15 +1471,30 @@ To make the fifth check on your machine, for example before a merge:
 
 ### The check of the locked crates
 
-`deny.toml` is the policy for the crates of `Cargo.lock`.
-`cargo deny --locked check` makes four checks against it:
+`deny.toml` is the policy for the crates of `Cargo.lock`. `cargo deny` makes
+four checks against it:
 
-| Check | What fails |
-|---|---|
-| `licenses` | A crate that needs a license outside this list: `MIT`, `Apache-2.0`, `BSD-3-Clause`, `Unicode-3.0`. |
-| `sources` | A crate from a registry that is not crates.io. A crate from a git repository. |
-| `bans` | Two versions of one crate. A dependency with the version `*`. |
-| `advisories` | A crate with a vulnerability advisory or with an `unmaintained` advisory. A direct dependency with an `unsound` advisory. A version that its author removed from crates.io. |
+| Check | What fails | Where it runs |
+|---|---|---|
+| `licenses` | A crate that needs a license outside this list: `MIT`, `Apache-2.0`, `BSD-3-Clause`, `Unicode-3.0`. | Step 5 of `bin/rust-gate.sh`, for each change. |
+| `sources` | A crate from a registry that is not crates.io. A crate from a git repository. | Step 5, for each change. |
+| `bans` | Two versions of one crate. A dependency with the version `*`. | Step 5, for each change. |
+| `advisories` | A crate with a vulnerability advisory or with an `unmaintained` advisory. A direct dependency with an `unsound` advisory. A version that its author removed from crates.io. | `bin/rust-gate.sh --advisories`, one time a day. |
+
+The gate makes three of the four checks: `bans`, `licenses` and `sources`.
+Each one reads the locked crates and `deny.toml`. Its result changes only
+when the tree changes. A pull request that fails one of the three does not
+merge.
+
+The gate does not make the `advisories` check. That check reads the advisory
+database, and the database changes while the tree stays the same. A gate
+with this check can fail a change that touches no dependency. The owner of
+the repository decided that a workflow with a schedule makes this check.
+"The advisory run" below has its rules.
+
+`bin/rust-gate.sh` names the checks in two lists: one for the gate and one
+for the flag `--advisories`. `bin/tests/test_rust_gate.py` fails when a check
+of `deny.toml` is in no list, and when a check is in both lists.
 
 - `bin/tests/test_rust_workspace.py` pins each table of `deny.toml`, entry
   for entry.
@@ -1494,8 +1515,55 @@ To make the fifth check on your machine, for example before a merge:
   each run. For a version that its author removed, it reads only the copy
   of the crates.io index that cargo keeps on the machine. "Known gaps" has
   the limits of that copy.
-- The check does not read the code of a crate. A crate that passes is not a
-  crate that a person here reviewed.
+- No check reads the code of a crate. A crate that passes is not a crate
+  that a person here reviewed.
+
+#### The advisory run
+
+`.github/workflows/advisories-daily.yml` runs `bin/rust-gate.sh --advisories`
+one time a day, on the newest commit of `main`. The run makes the
+`advisories` check and no other check.
+
+The job installs the toolchain that `rust-toolchain.toml` names. It takes
+`cargo-deny` with the two constants of the `rust` job.
+`bin/tests/test_gate_workflow.py` holds that step equal in the three workflow
+files.
+
+The job blocks no merge and no release, because the check `gate` does not
+need it. A pull request that adds a crate with an advisory can thus merge.
+The next run of the job is then red.
+
+The job keeps no cache. Its runner thus holds no copy of the crates.io index
+before the run, and cargo writes that copy in the run itself.
+
+A red run reaches a person through GitHub only. "The nightly job" above says
+which account gets the notification of a failed scheduled run. The same
+applies to this workflow.
+
+When a run is red:
+
+1. Read the log of the run. It names each crate that failed. It also names
+   the cause: an advisory, or a version that its author removed.
+2. Change the lock file in a pull request. Move the crate to a version that
+   passes: run `cargo update -p <crate>` in `rust/`. If no such version
+   exists, remove the dependency.
+3. If neither change is possible, ask the owner of the repository.
+   `deny.toml` ignores no advisory, and `bin/tests/test_rust_workspace.py`
+   pins that.
+4. After the merge, start the workflow by hand on `main`.
+
+Start the workflow by hand on `main` only. The release executor reads each
+workflow run on the head of a merged pull request, and each one must be a
+success. On another ref, the workflow thus skips the job that checks, and
+the run is a success. Do not cancel such a run.
+
+To make the check on your machine, for example before a pull request that
+adds a crate:
+
+1. Install the version of `cargo-deny` that `.github/workflows/gate.yml`
+   names.
+2. Run `bin/rust-gate.sh --advisories`. Without `cargo-deny` on `PATH`, the
+   script fails on each machine.
 
 ## Known gaps
 
@@ -1597,6 +1665,7 @@ To make the fifth check on your machine, for example before a merge:
   costs one step with a token that can write.
 - GitHub can delay or drop a run of the nightly job. It turns the schedule of
   a public repository off after 60 days with no activity in the repository.
+  The same applies to the advisory run.
 - Two checks do not read four crates yet: `agent-family`,
   `creche-contracts`, `creche-runtime` and `creche-testkit`. Each check has
   a list of its own with the four names. No list names a new crate, so both
@@ -1722,13 +1791,25 @@ To make the fifth check on your machine, for example before a merge:
   example the raw forms of `status`. The other reading makes each such
   field private too. If the owner selects it, change the third sentence of
   rule 12.
-- The owner did not decide if the advisory check blocks a merge. Today it
-  does: step 5 of `bin/rust-gate.sh` makes the four checks. A change with no
-  new dependency can thus fail on a new advisory. The other choice is an
-  advisory check on a schedule.
-- `release.yml` runs the same step after a merge that touches `rust/` or
-  `vectors/`. A new advisory there fails the `rust` job, and that push gets
-  no tag. The next push that passes gets the tags of both.
+- The `advisories` check blocks no merge and no release. A pull request can
+  add a crate that has an advisory, and a crate of the lock file can get a
+  new advisory. The next advisory run is the first check that finds either
+  one. Until then, `main` holds that crate, and a release can hold it too.
+- No job of the gate runs `bin/rust-gate.sh --advisories` with the real
+  `cargo-deny`. The tests of that mode use a fake `cargo`. Only a run of the
+  advisory workflow proves a change to the mode. After such a change merges,
+  start the workflow by hand on `main`.
+- This `CONTRACT-QUESTION` comment is open in
+  `.github/workflows/advisories-daily.yml`: no rule says how a red advisory
+  run must reach a person, and no rule names that person. The workflow holds
+  the read-only token and sends nothing by itself. A red run thus reaches a
+  person only through the notification of GitHub and through the Actions
+  page. No job of this repository reads the result. A change costs one step
+  with a token that can write.
+- This `CONTRACT-QUESTION` comment is open in the same file: the decision
+  for the `advisories` check names a schedule and no period. The workflow
+  starts one time a day. A change costs the `cron` line of the workflow and
+  its pin in `bin/tests/test_gate_workflow.py`.
 - The check of the locked crates reads four targets. A crate that only a
   build for another target uses gets no check, for example a build for Linux
   with musl or for Windows. `Cargo.lock` holds such crates.
@@ -1739,18 +1820,18 @@ To make the fifth check on your machine, for example before a merge:
   on the machine. With a complete `Cargo.lock`, cargo does not read
   crates.io again for a crate that the copy holds. A version that its
   author removes after cargo wrote the copy thus passes the check.
-- The `rust` job keeps that copy in its cache. The key of the cache holds a
-  hash of the toolchain file and of the lock file. A run can thus read the
-  copy that an earlier run saved, until one of the two files changes.
-  `bin/tests/test_gate_workflow.py` pins the path of the copy and the key.
-  The other choice is a `rust` job that keeps no copy of the index in its
-  cache. cargo then reads crates.io at each run.
+- The job of the advisory run keeps no cache, so its runner has no copy of
+  the index before the run. cargo then reads crates.io for each locked crate
+  in that run. `bin/tests/test_gate_workflow.py` fails when the job gets a
+  cache step. The limit of the copy thus applies to a run of
+  `bin/rust-gate.sh --advisories` on a development machine. No run on a
+  runner measured yet that the copy of the job is new.
 - `cargo-deny` prints the warning `index-failure` for a crate when it cannot
   read the index entry of that crate. The check then cannot find a removed
-  version of that crate. The warning does not fail step 5. An advisory for
-  that crate still fails the check. The flag `-D index-failure` of
-  `cargo deny check` makes the warning an error. Step 5 does not have the
-  flag.
+  version of that crate. The warning does not fail the `advisories` check.
+  An advisory for that crate still fails the check. The flag
+  `-D index-failure` of `cargo deny check` makes the warning an error. The
+  script does not give the flag.
 - No release uses Rust code.
 - The process-level suite judges one Rust program today: `creche-probe`,
   which is no service.

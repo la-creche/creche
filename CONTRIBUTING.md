@@ -89,8 +89,11 @@ The cargo steps are `bin/rust-gate.sh`. The rule that starts them is
 - The `cargo deny` step needs the program `cargo-deny`. rustup does not
   install it. Without it on `PATH`, the gate prints one line and runs each
   other step. In CI, the gate fails without it.
-- The `cargo deny` step reads the advisory database from the network.
-  `rust/AGENTS.md` has what the step checks.
+- The `cargo deny` step makes three checks: `bans`, `licenses` and
+  `sources`. It does not read the advisory database.
+  `.github/workflows/advisories-daily.yml` makes the `advisories` check one
+  time a day, and that run blocks no merge. `rust/AGENTS.md` has the rules of
+  both.
 
 No hook checks a commit message. Check the subject against the seven rules
 in `AGENTS.md` yourself.
