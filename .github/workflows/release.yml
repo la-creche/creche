@@ -10,6 +10,8 @@
 #           ├── proc-rust   code   the scenarios that each file of rust/proc
 #           │                      selects, against the Rust program of
 #           │                      that file
+#           ├── suites      code   the two old suites of integration/,
+#           │                      each one in a pytest run of its own
 #           ├── rust        code   cargo fmt, clippy, deny and test, for a
 #           │                      push that touches rust/ or vectors/
 #           ├── rust-coverage  code   the tests with cargo llvm-cov and the
@@ -54,10 +56,10 @@
 # A docs-only push onto a commit whose own run passed runs only the tests
 # marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
 # runs.
-# The `tests`, `playpen`, `proc`, `proc-rust`, `rust`, `rust-coverage` and
-# `systemd-proof` jobs are gate.yml's, and bin/tests/test_gate_workflow.py
-# holds the two files to the same shard command — diff the two when changing
-# either.
+# The `tests`, `playpen`, `proc`, `proc-rust`, `suites`, `rust`,
+# `rust-coverage` and `systemd-proof` jobs are gate.yml's, and
+# bin/tests/test_gate_workflow.py holds the two files to the same shard
+# command — diff the two when changing either.
 #
 # A push that touches nothing under rust/ and nothing under vectors/, onto a
 # commit whose own run passed, skips the steps of the `rust` job and of the
@@ -332,6 +334,106 @@ jobs:
 
       - run: bin/proc-rust.sh
 
+  # The two old suites of integration/ (integration/AGENTS.md):
+  # integration/tests and integration/tests_manager. They run the services
+  # inside the pytest process, on the built playpen. They are not in
+  # `testpaths`: no shard runs them. The job has the setup of the `proc`
+  # job: node, pnpm, the build with the same TEST-NET-1 address, then the
+  # venv.
+  #
+  # The job runs each suite with a pytest command of its own, as
+  # integration/AGENTS.md tells a person to run them.
+  #
+  # A test of these suites skips itself when the bundle is missing, and a
+  # run in which every test skips is green and judged nothing. These suites
+  # read no switch that makes a skip a failure. So each run writes a JUnit
+  # report, and the last step reads both. It fails for a test that skipped,
+  # for a suite that ran no test and for a report that is missing. It prints
+  # the counts and the time of each suite.
+  #
+  # The time limit is the limit of the `proc` job. On a laptop the two
+  # suites run in about 6 minutes.
+  suites:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: playpen/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: playpen/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile && pnpm run build
+        working-directory: playpen
+        env:
+          AGENT_LAN_ADDRESS: 192.0.2.10
+
+      - uses: ./.github/actions/uv-sync
+
+      # PYTEST_ADDOPTS: the report is the one addition to the command that
+      # integration/AGENTS.md gives.
+      - run: uv run pytest integration/tests -m slow
+        env:
+          PYTEST_ADDOPTS: --junitxml=${{ runner.temp }}/suites/tests.xml
+
+      - run: uv run pytest integration/tests_manager -m slow
+        env:
+          PYTEST_ADDOPTS: --junitxml=${{ runner.temp }}/suites/tests_manager.xml
+
+      # REPORTS: the report of each suite, one path on each line, in the
+      # order of the two runs. A run that fails stops the job before this
+      # step.
+      - name: no test skipped
+        shell: python3 {0}
+        env:
+          REPORTS: |-
+            ${{ runner.temp }}/suites/tests.xml
+            ${{ runner.temp }}/suites/tests_manager.xml
+        run: |
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          red = []
+          reports = [Path(one) for one in os.environ["REPORTS"].splitlines() if one]
+          if not reports:
+              red.append("REPORTS names no report")
+
+          for report in reports:
+              name = report.stem
+              try:
+                  suites = list(ET.parse(report).getroot().iter("testsuite"))
+              except (OSError, ET.ParseError) as error:
+                  red.append(f"{name}: no report to read: {error}")
+                  continue
+
+              tests = sum(int(one.get("tests", "0")) for one in suites)
+              skipped = sum(int(one.get("skipped", "0")) for one in suites)
+              seconds = sum(float(one.get("time", "0")) for one in suites)
+              ran = tests - skipped
+              print(f"{name}: {ran} of {tests} tests ran, {skipped} skipped, {seconds:.0f} s")
+
+              if ran == 0:
+                  red.append(f"{name}: the suite ran no test")
+              elif skipped:
+                  red.append(f"{name}: {skipped} of {tests} tests skipped")
+
+          for line in red:
+              print(f"::error::{line}")
+
+          sys.exit(1 if red else 0)
+
   # The Cargo workspace under rust/: bin/rust-gate.sh, the checks the hooks
   # run. The job runs on every code change, and on a change that touches
   # nothing under rust/ every step but the checkout is skipped
@@ -529,11 +631,11 @@ jobs:
         if: needs.scope.outputs.systemd != 'false'
 
   # `always()`: on a docs push `tests`, `playpen`, `proc`, `proc-rust`,
-  # `rust`, `rust-coverage` and `systemd-proof` are skipped, and a job that
-  # needs a skipped job is skipped by default. The verdict step is what holds
-  # the tags back when a job failed.
+  # `suites`, `rust`, `rust-coverage` and `systemd-proof` are skipped, and a
+  # job that needs a skipped job is skipped by default. The verdict step is
+  # what holds the tags back when a job failed.
   release:
-    needs: [scope, lint, tests, playpen, proc, proc-rust, rust, rust-coverage, systemd-proof]
+    needs: [scope, lint, tests, playpen, proc, proc-rust, suites, rust, rust-coverage, systemd-proof]
     if: always()
     runs-on: ubuntu-latest
     permissions:
