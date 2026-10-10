@@ -73,8 +73,8 @@ it on a development machine.
 ## Untrusted input
 
 13. Nothing is acted on before `validate.ts` has passed it. A pi line is
-    untrusted too. `pi-record.ts` limits its depth and checks every response
-    field before any code reads it.
+    untrusted too. `pi-record.ts` cuts a pi line whose channel line is not
+    strict JSON. It checks every response field before any code reads it.
 14. A refusal never deviates in silence. Record a contract gap as a
     `CONTRACT-QUESTION:` comment and under "Known gaps" below.
 
@@ -189,6 +189,19 @@ it on a development machine.
     a line with no session and no turn.
 57. Send the code of a launcher error, not its text. Node writes the refused
     value in that text, and the environment of pi holds the credentials.
+58. Each line of the channel is strict JSON. `rust/AGENTS.md`, "JSON", has
+    the rules. `Channel.send` writes each line with `stringifyStrict` of
+    `src/strict-json.ts`. Do not write a line of the channel with
+    `JSON.stringify`.
+    - `boundRecord` cuts a pi record that holds a lone surrogate, or that
+      nests deeper than 63 levels. The cut record keeps its place.
+    - `Channel.send` puts U+FFFD in the place of a lone surrogate in a
+      `message` text of the playpen.
+    - `stringifyStrict` writes an integer outside 64 bits with an exponent.
+      The value does not change.
+    - `Channel.send` does not send a record that is still not strict. It
+      writes one `log` line of level `error` in its place. The message is
+      `json_not_strict playpen.pi_line <rule>` and no other text.
 
 ## Environment the playpen expects
 
@@ -210,7 +223,7 @@ delivers them. Three test seams exist and nothing in the image sets them:
 | `src/index.ts`, `src/launch-main.ts` | the two composition roots |
 | `src/pi-launch.ts`, `src/pi-args.ts`, `src/process-record.ts` | the terminal plan, the one argv builder, the per-session record |
 | `src/playpen.ts`, `src/pool.ts`, `src/session.ts`, `src/pi-process.ts`, `src/pi-record.ts` | the handshake and dispatch, the hold and reap rules, one session, one pi child, every line that child writes |
-| `src/channel.ts`, `src/framing.ts`, `src/validate.ts`, `src/protocol.ts`, `src/constants.ts` | the one stdout, LF records, every inbound line, the wire types, every fixed number |
+| `src/channel.ts`, `src/framing.ts`, `src/validate.ts`, `src/protocol.ts`, `src/constants.ts`, `src/strict-json.ts` | the one stdout, LF records, every inbound line, the wire types, every fixed number, the strict JSON rule of a line |
 | `src/mounts.ts`, `src/creds.ts`, `src/runtime-config.ts`, `src/models-json.ts`, `src/pi-settings.ts`, `src/env.ts` | the three directories, `creds.json`, the config mount, the two files pi reads, the per-turn environment |
 | `src/lock.ts`, `src/turn-file.ts`, `src/tool-state.ts`, `src/workspace.ts`, `src/sandbox-facts.ts`, `src/launcher.ts` | the lock, the turn file, the tool state (read), the `code-sandbox` link, `ready`, the one spawn |
 | `bridge/index.ts`, `bridge/pep.ts`, `bridge/tools.ts`, `bridge/tool-set.ts` | the factory, `GET /manifest` and `POST /call`, one pi tool per entry |
@@ -227,8 +240,9 @@ delivers them. Three test seams exist and nothing in the image sets them:
   of (`src/pi-launch.ts`).
 - The playpen reads three shapes for an entry's text and answers `""` for any
   other (`src/entry-text.ts`).
-- Contract 03 §8 cuts an event by size and names no depth. The playpen cuts a
-  pi line that nests deeper than 256 levels to its scalar fields
+- Contract 03 §8 cuts an event by size. It names no depth and no lone
+  surrogate. The playpen cuts a pi line to its scalar fields in two cases:
+  the line nests deeper than 63 levels, or it holds a lone surrogate
   (`src/pi-record.ts`).
 - The verify hook does not start an image. The image build runs each bundle
   once and stops on a bundle that does not load (`bin/playpen-verify`).
