@@ -13,8 +13,10 @@
 //! 3. A row has an empty grammar or an empty id.
 //! 4. The input of a row is not a text.
 //! 5. A row names a surface that the index does not hold.
-//! 6. A row names the surfaces of less than two results. Such a row is no
+//! 6. A row names one surface two times, under one result or under two.
+//! 7. A row names the surfaces of less than two results. Such a row is no
 //!    disagreement.
+//! 8. Two rows have the same grammar and the same id.
 //!
 //! The reader has no Python origin. `render_disagreements` of
 //! `vectors/surfaces/ids.py` writes the file.
@@ -39,7 +41,8 @@ const DISAGREEMENTS_KIND: &str = "disagreements";
 const RESULTS_MIN: usize = 2;
 
 /// One input on which two Python copies of one id grammar give different
-/// results. A row thus names the surfaces of two results or more.
+/// results. A row thus names the surfaces of two results or more, and each
+/// surface one time.
 ///
 /// ```
 /// use creche_vectors::{Disagreement, Outcome};
@@ -116,6 +119,13 @@ impl Disagreement {
         }
     }
 
+    /// Each surface that the row names, in the order of the three results.
+    fn named(&self) -> impl Iterator<Item = &String> {
+        Outcome::EACH
+            .into_iter()
+            .flat_map(|outcome| self.surfaces(outcome))
+    }
+
     /// The row of a raw row. `known` holds each surface of the index. The
     /// error is the reason of a refusal.
     fn checked(raw: RawDisagreement, known: &HashSet<&str>) -> Result<Self, String> {
@@ -142,12 +152,20 @@ impl Disagreement {
             raised: raw.results.raised,
         };
 
-        let mut named = Outcome::EACH
-            .into_iter()
-            .flat_map(|outcome| row.surfaces(outcome));
-        if let Some(unknown) = named.find(|surface| !known.contains(surface.as_str())) {
+        if let Some(unknown) = row
+            .named()
+            .find(|surface| !known.contains(surface.as_str()))
+        {
             return Err(format!(
                 "the row {} {}: the index has no surface {unknown}",
+                row.grammar, row.id
+            ));
+        }
+
+        let mut seen = HashSet::new();
+        if let Some(twice) = row.named().find(|surface| !seen.insert(surface.as_str())) {
+            return Err(format!(
+                "the row {} {} names the surface {twice} two times",
                 row.grammar, row.id
             ));
         }
@@ -237,11 +255,24 @@ fn disagreements_of(text: &str, known: &HashSet<&str>) -> Result<Vec<Disagreemen
         )));
     }
 
-    raw.rows
+    let rows: Vec<Disagreement> = raw
+        .rows
         .into_iter()
         .map(|row| Disagreement::checked(row, known))
         .collect::<Result<_, _>>()
-        .map_err(refused)
+        .map_err(refused)?;
+    let mut inputs = HashSet::new();
+    if let Some(twice) = rows
+        .iter()
+        .find(|row| !inputs.insert((row.grammar.as_str(), row.id.as_str())))
+    {
+        return Err(refused(format!(
+            "two rows have the grammar {} and the id {}",
+            twice.grammar, twice.id
+        )));
+    }
+
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -262,6 +293,11 @@ mod tests {
             "input": {"text": "aaa"},
             "results": {"accepted": ["id.test.one", "id.test.three"], "refused": ["id.test.two"]},
         })
+    }
+
+    /// The JSON text of a file with these rows.
+    fn file(rows: &Value) -> String {
+        json!({"format": 1, "kind": "disagreements", "rows": rows}).to_string()
     }
 
     /// The JSON text of a file with one row, with one member of the file or
@@ -316,9 +352,27 @@ mod tests {
         );
     }
 
+    /// The grammar and the id name a row together. One of the two alone can
+    /// be in two rows: each grammar gives its own ids.
+    #[test]
+    fn two_rows_can_have_one_grammar_or_one_id() {
+        let mut other_grammar = row_json();
+        other_grammar["grammar"] = json!("other");
+        let mut other_id = row_json();
+        other_id["id"] = json!("len-66");
+        let text = file(&json!([row_json(), other_grammar, other_id]));
+        let rows = disagreements_of(&text, &known()).unwrap();
+        let named: Vec<(&str, &str)> = rows.iter().map(|row| (row.grammar(), row.id())).collect();
+
+        assert_eq!(
+            named,
+            [("test", "len-65"), ("other", "len-65"), ("test", "len-66")]
+        );
+    }
+
     #[test]
     fn a_file_that_breaks_a_rule_is_refused() {
-        let refused: [(String, &str); 23] = [
+        let refused: [(String, &str); 28] = [
             (
                 file_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
@@ -328,7 +382,12 @@ mod tests {
                 file_with("kind", json!("index")),
                 "the kind is \"index\", and the kind of the file is \"disagreements\"",
             ),
+            // A key of a row that the format does not name, then one of the file.
             (file_with("extra", json!(1)), "unknown field `extra`"),
+            (
+                String::from(r#"{"format": 1, "kind": "disagreements", "rows": [], "extra": 1}"#),
+                "unknown field `extra`",
+            ),
             (
                 String::from(r#"{"format": 1, "rows": []}"#),
                 "missing field `kind`",
@@ -418,6 +477,32 @@ mod tests {
                 file_with("results", json!({})),
                 "the row test len-65 is no disagreement: its surfaces have less than 2 results",
             ),
+            // One surface two times: under two results, then under one.
+            (
+                file_with(
+                    "results",
+                    json!({"accepted": ["id.test.one"], "refused": ["id.test.one"]}),
+                ),
+                "the row test len-65 names the surface id.test.one two times",
+            ),
+            (
+                file_with(
+                    "results",
+                    json!({"accepted": ["id.test.one", "id.test.one"], "refused": ["id.test.two"]}),
+                ),
+                "the row test len-65 names the surface id.test.one two times",
+            ),
+            (
+                file_with(
+                    "results",
+                    json!({"accepted": ["id.test.one"], "raised": ["id.test.two", "id.test.one"]}),
+                ),
+                "the row test len-65 names the surface id.test.one two times",
+            ),
+            (
+                file(&json!([row_json(), row_json()])),
+                "two rows have the grammar test and the id len-65",
+            ),
         ];
 
         for (text, reason) in refused {
@@ -439,10 +524,7 @@ mod tests {
         let index = crate::index().unwrap();
 
         for row in disagreements().unwrap() {
-            for surface in Outcome::EACH
-                .into_iter()
-                .flat_map(|outcome| row.surfaces(outcome))
-            {
+            for surface in row.named() {
                 assert!(
                     index.iter().any(|one| one.surface() == surface),
                     "{} {}: {surface}",
