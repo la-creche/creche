@@ -148,7 +148,9 @@ exec "$@"
 #: `list-units` and `show -p ExecMainStatus` are the firing units' half of
 #: check 4. `WD_FIRINGS` holds one word for each instance, in the form
 #: `<unit>=<status of its last run>`. `list-units` prints one line for each
-#: word, in the column form of `--plain --no-legend`.
+#: word, in the column form of `--plain --no-legend`. `WD_SHOW_EXIT` is the
+#: status of each `show -p ExecMainStatus` call: 124 is what `timeout` gives
+#: for a call that it stopped.
 SYSTEMCTL_BODY: Final = """case "$*" in
   *list-units*)
     for one in ${WD_FIRINGS:-}; do
@@ -157,7 +159,8 @@ SYSTEMCTL_BODY: Final = """case "$*" in
   *ExecMainStatus*)
     for one in ${WD_FIRINGS:-}; do
       case " $* " in *" ${one%%=*} "*) printf '%s\\n' "${one##*=}" ;; esac
-    done ;;
+    done
+    exit "${WD_SHOW_EXIT:-0}" ;;
   *is-failed*)
     for one in ${WD_FAILED_UNITS:-}; do
       case "$*" in *"$one"*) exit 0 ;; esac
@@ -972,6 +975,26 @@ def test_a_firing_with_another_status_is_no_failure(rig: Rig, status: str) -> No
     assert done.returncode == 0, done.stdout + done.stderr
     assert rig.posts() == []
     assert rig.stored() == "up"
+
+
+def test_a_show_call_with_no_answer_ends_the_read(rig: Rig) -> None:
+    """Each call has the time limit of the other checks. After one call that
+    the limit stopped, the run reads no other firing unit: a user manager
+    that does not answer costs the run one time limit, not one for each
+    instance. A call with no answer is no failure, as in the rest of check 4."""
+    units = ("creche-trigger@ops.service", FIRING, "creche-trigger@vault.service")
+
+    done = rig.run(WD_FIRINGS=" ".join(f"{one}=78" for one in units), WD_SHOW_EXIT="124")
+    calls = [
+        one
+        for one in rig.stub_log.read_text(encoding="utf-8").splitlines()
+        if one.startswith("systemctl ") and "ExecMainStatus" in one
+    ]
+
+    assert len(calls) == 1
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.count("no answer") == 1
+    assert rig.posts() == []
 
 
 def test_a_firing_and_a_failed_unit_are_one_units_failure(rig: Rig) -> None:

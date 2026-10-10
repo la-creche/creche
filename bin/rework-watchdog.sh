@@ -39,7 +39,8 @@
 #                counts as a failed unit. Each other status counts as no
 #                failure: a firing ends with status 1 when the session
 #                service refuses the job, and no config causes that.
-#                5 s for each call
+#                5 s for each call. One call with no answer in that time
+#                ends the read of the firing units for the run.
 #   5. registry  `registry-sync.service` must have ended well inside the
 #                last 5 minutes. It is what pulls /srv/agents/registry,
 #                and a fleet that ignores every merge looks exactly like a
@@ -191,6 +192,8 @@ FIRING_UNITS='creche-trigger@*.service'
 FIRING_UNIT_NAME='creche-trigger@[a-z][a-z0-9-]{1,30}\.service'
 # The exit status of a program whose config is not valid.
 CONFIG_REFUSED_STATUS=78
+# The exit status of `timeout` for a command that it stopped.
+TIMED_OUT_STATUS=124
 
 # Contract 05 §2 rule 5's 90 s, doubled. A document this old means nobody
 # who is running has looked.
@@ -495,6 +498,13 @@ check_units() {
 
     status="$(timeout "$CHECK_TIMEOUT_S" \
       systemctl --user show "$unit" -p ExecMainStatus --value 2>/dev/null < /dev/null)"
+    # One call with no answer ends the read. A user manager that does not
+    # answer then costs the run one time limit, not one for each instance.
+    if [[ $? == "$TIMED_OUT_STATUS" ]]; then
+      say "units: no answer on $unit in ${CHECK_TIMEOUT_S}s, so this run reads no other firing unit"
+      break
+    fi
+
     [[ "$status" == "$CONFIG_REFUSED_STATUS" ]] && refused="$refused $unit"
   done <<< "$listed"
 

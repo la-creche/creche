@@ -144,6 +144,8 @@ each instance.
 - The failure pushes after two runs in a row, as each other check does.
 - The script gives a unit name to `systemctl show` only when the name has
   the exact form `creche-trigger@<family>.service`.
+- Each `systemctl` call has the time limit of the other checks. One call
+  with no answer in that time ends the read of the firing units for the run.
 
 ## Quality gate
 
