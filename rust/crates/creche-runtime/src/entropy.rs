@@ -144,6 +144,11 @@ impl Entropy for OsEntropy {
     /// `secrets.token_bytes`, for example
     /// `caregiver/src/caregiver/webhook_tokens.py:66`.
     ///
+    /// On Linux, `os.urandom` asks the kernel with `getrandom` and opens no
+    /// file. This function opens the random device, and it gives an error
+    /// when the device does not open. `os.urandom` also waits until the
+    /// kernel has seeded its pool, and the read of the device does not wait.
+    ///
     /// # Errors
     ///
     /// [`EntropyError`] when the open or the read fails, and when the device
@@ -264,6 +269,15 @@ impl Error for MintError {
 /// milliseconds of `time.time()`, and [`clock::unix_seconds`] gives that
 /// float.
 ///
+/// The function differs from those copies in two ways. The line of the first
+/// copy is `door-trigger/src/agent_door_trigger/ulid.py:36`.
+///
+/// - For a time before 1970, a copy mints 26 characters from a count below
+///   zero. This function gives [`MintError::TimeOutOfRange`].
+/// - For a time past 48 bits of milliseconds, a copy mints 26 characters
+///   that hold more than 48 bits of time. This function gives
+///   [`MintError::TimeOutOfRange`].
+///
 /// ```
 /// use creche_runtime::clock::SystemClock;
 /// use creche_runtime::entropy::{OsEntropy, new_ulid};
@@ -295,6 +309,11 @@ pub fn new_ulid(clock: &dyn Clock, entropy: &dyn Entropy) -> Result<Ulid, MintEr
 /// `handover/src/handover/intake/token.py:101`.
 /// `caregiver/src/caregiver/webhook_tokens.py:64-67` writes the same text by
 /// hand.
+///
+/// `secrets.token_urlsafe` takes the count 0 and gives the empty text
+/// (`noticeboard/src/noticeboard/security.py:76`). This function takes no
+/// count of 0: the type of its argument has no such value. The smallest
+/// count gives a token of 2 characters.
 ///
 /// ```
 /// use std::num::NonZeroUsize;
@@ -850,66 +869,40 @@ mod tests {
 
     // --- the differences from the Python code ---
 
-    /// One difference from the Python code on purpose. No vector covers a
-    /// mint, so each row names a Python line.
-    struct Deviation {
-        /// The Python line.
-        python: &'static str,
-        /// What the Python line does, and what this module does.
-        difference: &'static str,
-        /// Whether this module does what `difference` says.
-        holds: fn() -> bool,
+    /// A Python copy mints 26 characters for this time, from a count below
+    /// zero.
+    #[test]
+    fn a_time_before_1970_gives_no_id() {
+        assert_eq!(
+            new_ulid(&before_1970(1, 0), &Counted),
+            Err(MintError::TimeOutOfRange)
+        );
     }
 
-    const DEVIATIONS: [Deviation; 4] = [
-        Deviation {
-            python: "door-trigger/src/agent_door_trigger/ulid.py:36",
-            difference: "For a time before 1970 the copy mints 26 characters from a count below \
-                         zero. `new_ulid` gives `MintError::TimeOutOfRange`.",
-            holds: || new_ulid(&before_1970(1, 0), &Counted) == Err(MintError::TimeOutOfRange),
-        },
-        Deviation {
-            python: "door-trigger/src/agent_door_trigger/ulid.py:36",
-            difference: "For a time past 48 bits of milliseconds the copy mints 26 characters \
-                         that hold more than 48 bits of time. `new_ulid` gives \
-                         `MintError::TimeOutOfRange`.",
-            holds: || {
-                new_ulid(&after_1970(281_474_976_710, 656_000_000), &Counted)
-                    == Err(MintError::TimeOutOfRange)
-            },
-        },
-        Deviation {
-            python: "door-trigger/src/agent_door_trigger/ulid.py:37",
-            difference: "On Linux, `os.urandom` asks the kernel with `getrandom` and opens no \
-                         file. `OsEntropy::fill` opens the random device. It gives an error \
-                         when the device does not open. `os.urandom` also waits until the \
-                         kernel has seeded its pool, and the read of the device does not wait.",
-            holds: || {
-                TempRoot::new()
-                    .is_ok_and(|root| fill_at(&root.path().join("absent"), &mut [0_u8; 1]).is_err())
-            },
-        },
-        Deviation {
-            python: "noticeboard/src/noticeboard/security.py:76",
-            difference: "`secrets.token_urlsafe` takes the count 0 and gives the empty text. \
-                         `url_token` takes no count of 0: the type of its argument has no such \
-                         value. The smallest count gives a token of 2 characters.",
-            holds: || {
-                url_token(&Counted, NonZeroUsize::MIN)
-                    .is_ok_and(|token| token.expose_secret().len() == 2)
-            },
-        },
-    ];
-
+    /// A Python copy mints 26 characters for this time. They hold more than
+    /// 48 bits of time.
     #[test]
-    fn each_deviation_names_a_python_line_and_holds() {
-        for row in &DEVIATIONS {
-            let (file, line) = row.python.rsplit_once(':').unwrap();
+    fn a_time_past_48_bits_of_milliseconds_gives_no_id() {
+        assert_eq!(
+            new_ulid(&after_1970(281_474_976_710, 656_000_000), &Counted),
+            Err(MintError::TimeOutOfRange)
+        );
+    }
 
-            assert!(file.ends_with(".py"), "{}", row.python);
-            assert!(line.parse::<u32>().is_ok(), "{}", row.python);
-            assert!(row.difference.ends_with('.'), "{}", row.python);
-            assert!((row.holds)(), "{}: {}", row.python, row.difference);
-        }
+    /// On Linux, `os.urandom` of Python opens no file.
+    #[test]
+    fn a_fill_opens_its_device_and_fails_when_no_file_is_there() {
+        let root = TempRoot::new().unwrap();
+
+        assert!(fill_at(&root.path().join("absent"), &mut [0_u8; 1]).is_err());
+    }
+
+    /// `secrets.token_urlsafe` of Python takes the count 0 and gives the
+    /// empty text. `NonZeroUsize` has no such count.
+    #[test]
+    fn the_smallest_count_of_bytes_gives_a_token_of_2_characters() {
+        let token = url_token(&Counted, NonZeroUsize::MIN).unwrap();
+
+        assert_eq!(token.expose_secret().len(), 2);
     }
 }
