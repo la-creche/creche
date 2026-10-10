@@ -152,99 +152,110 @@ mod tests {
     /// The most lists and inline tables of a text of the table below.
     const DEPTH: u32 = 8;
 
+    /// What the check says about a text.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Is {
+        /// The text is TOML 1.0: the check passes it.
+        Toml10,
+        /// The text holds a form that TOML 1.1 added: the check refuses it.
+        Newer,
+    }
+
     /// Each form that TOML 1.1 added, in three places: at the top level, in
     /// a nested inline table and in a list of inline tables. A key in `"` is
-    /// a fourth place of an escape.
-    const NEWER: [&str; 26] = [
+    /// a fourth place of an escape. Then TOML 1.0 texts. The first of them
+    /// hold the characters of a newer form in a place where they start no
+    /// form.
+    const TEXTS: [(Is, &str); 70] = [
         // A line end inside an inline table.
-        "a = {\n b = 1 }\n",
-        "a = {b = 1\n}\n",
-        "a = {b = 1,\n c = 2}\n",
-        "a = {b = 1 # a comment\n}\n",
-        "a = {b = 1\r\n}\n",
-        "t = {u = {b = 1\n}}\n",
-        "t = {u = {b = 1}\n}\n",
-        "t = [{b = 1\n}]\n",
-        "t = {u = [{b = 1\n}]}\n",
+        (Is::Newer, "a = {\n b = 1 }\n"),
+        (Is::Newer, "a = {b = 1\n}\n"),
+        (Is::Newer, "a = {b = 1,\n c = 2}\n"),
+        (Is::Newer, "a = {b = 1 # a comment\n}\n"),
+        (Is::Newer, "a = {b = 1\r\n}\n"),
+        (Is::Newer, "t = {u = {b = 1\n}}\n"),
+        (Is::Newer, "t = {u = {b = 1}\n}\n"),
+        (Is::Newer, "t = [{b = 1\n}]\n"),
+        (Is::Newer, "t = {u = [{b = 1\n}]}\n"),
         // A comma before the `}` of an inline table.
-        "a = {b = 1,}\n",
-        "a = {b = 1 , }\n",
-        "t = {u = {b = 1,}}\n",
-        "t = [{b = 1,}, {c = 2}]\n",
+        (Is::Newer, "a = {b = 1,}\n"),
+        (Is::Newer, "a = {b = 1 , }\n"),
+        (Is::Newer, "t = {u = {b = 1,}}\n"),
+        (Is::Newer, "t = [{b = 1,}, {c = 2}]\n"),
         // The escape `\e`.
-        "a = \"\\e\"\n",
-        "a = \"\"\"\\e\"\"\"\n",
-        "a = \"\\\\\\e\"\n",
-        "\"\\e\" = 1\n",
-        "t = {u = {a = \"\\e\"}}\n",
-        "t = [{a = \"\\e\"}]\n",
+        (Is::Newer, "a = \"\\e\"\n"),
+        (Is::Newer, "a = \"\"\"\\e\"\"\"\n"),
+        (Is::Newer, "a = \"\\\\\\e\"\n"),
+        (Is::Newer, "\"\\e\" = 1\n"),
+        (Is::Newer, "t = {u = {a = \"\\e\"}}\n"),
+        (Is::Newer, "t = [{a = \"\\e\"}]\n"),
         // The escape `\x`.
-        "a = \"\\x41\"\n",
-        "a = \"\"\"\\x41\"\"\"\n",
-        "\"\\x41\" = 1\n",
-        "t = {u = {a = \"\\x41\"}}\n",
-        "t = [{a = \"\\x41\"}]\n",
-        // A time with no seconds, and a date-time with no seconds.
-        "a = 07:32\n",
-        "a = 1979-05-27T07:32Z\n",
-    ];
-
-    /// More texts with no seconds: each form of a date-time, and the two
-    /// other places.
-    const NO_SECONDS: [&str; 9] = [
-        "a = 1979-05-27T07:32\n",
-        "a = 1979-05-27 07:32\n",
-        "a = 1979-05-27t07:32z\n",
-        "a = 1979-05-27T07:32+01:00\n",
-        "a = 1979-05-27T07:32-08:00\n",
-        "t = {u = {a = 07:32}}\n",
-        "t = [{a = 07:32}]\n",
-        "t = {u = {a = 1979-05-27T07:32Z}}\n",
-        "t = [{a = 1979-05-27T07:32Z}]\n",
-    ];
-
-    /// TOML 1.0 texts. The first rows hold the characters of a newer form in
-    /// a place where they start no form.
-    const TOML_10: [&str; 30] = [
-        // In a basic string.
-        "a = \"07:32 {b = 1,} 1979-05-27T07:32Z\"\n",
-        "a = \"\\\\e \\\\x41\"\n",
-        "\"07:32 {b = 1,}\" = 1\n",
+        (Is::Newer, "a = \"\\x41\"\n"),
+        (Is::Newer, "a = \"\"\"\\x41\"\"\"\n"),
+        (Is::Newer, "\"\\x41\" = 1\n"),
+        (Is::Newer, "t = {u = {a = \"\\x41\"}}\n"),
+        (Is::Newer, "t = [{a = \"\\x41\"}]\n"),
+        // A time with no seconds.
+        (Is::Newer, "a = 07:32\n"),
+        (Is::Newer, "t = {u = {a = 07:32}}\n"),
+        (Is::Newer, "t = [{a = 07:32}]\n"),
+        // A date-time with no seconds, in each form of a date-time.
+        (Is::Newer, "a = 1979-05-27T07:32Z\n"),
+        (Is::Newer, "a = 1979-05-27T07:32\n"),
+        (Is::Newer, "a = 1979-05-27 07:32\n"),
+        (Is::Newer, "a = 1979-05-27t07:32z\n"),
+        (Is::Newer, "a = 1979-05-27T07:32+01:00\n"),
+        (Is::Newer, "a = 1979-05-27T07:32-08:00\n"),
+        (Is::Newer, "t = {u = {a = 1979-05-27T07:32Z}}\n"),
+        (Is::Newer, "t = [{a = 1979-05-27T07:32Z}]\n"),
+        // The characters of a newer form in a basic string.
+        (Is::Toml10, "a = \"07:32 {b = 1,} 1979-05-27T07:32Z\"\n"),
+        (Is::Toml10, "a = \"\\\\e \\\\x41\"\n"),
+        (Is::Toml10, "\"07:32 {b = 1,}\" = 1\n"),
         // In a literal string, which holds no escape.
-        "a = '\\e \\x41 07:32 {b = 1,}'\n",
-        "'\\e \\x41' = 1\n",
+        (Is::Toml10, "a = '\\e \\x41 07:32 {b = 1,}'\n"),
+        (Is::Toml10, "'\\e \\x41' = 1\n"),
         // In a multi-line string.
-        "a = \"\"\"\n07:32\n{b = 1,\n}\n\"\"\"\n",
-        "a = '''\n\\e \\x41 07:32\n{b = 1,\n}\n'''\n",
-        "a = {b = \"\"\"\n\"\"\", c = '''\n'''}\n",
+        (Is::Toml10, "a = \"\"\"\n07:32\n{b = 1,\n}\n\"\"\"\n"),
+        (Is::Toml10, "a = '''\n\\e \\x41 07:32\n{b = 1,\n}\n'''\n"),
+        (Is::Toml10, "a = {b = \"\"\"\n\"\"\", c = '''\n'''}\n"),
         // In a comment.
-        "a = 1 # \\e \\x41 07:32 {b = 1,}\n",
-        "# {b = 1,\n# }\n",
+        (Is::Toml10, "a = 1 # \\e \\x41 07:32 {b = 1,}\n"),
+        (Is::Toml10, "# {b = 1,\n# }\n"),
         // A line end inside a list of an inline table.
-        "a = {b = [1,\n 2], c = 3}\n",
-        "a = {b = [\n], c = [ # a comment\n 1,\n]}\n",
-        "t = [{a = [\n 1,\n]}]\n",
+        (Is::Toml10, "a = {b = [1,\n 2], c = 3}\n"),
+        (Is::Toml10, "a = {b = [\n], c = [ # a comment\n 1,\n]}\n"),
+        (Is::Toml10, "t = [{a = [\n 1,\n]}]\n"),
         // A comma at the end of a list.
-        "a = [1, 2,]\n",
-        "a = [{b = 1}, {c = 2},]\n",
-        "a = [\n {b = 1},\n {c = 2},\n]\n",
+        (Is::Toml10, "a = [1, 2,]\n"),
+        (Is::Toml10, "a = [{b = 1}, {c = 2},]\n"),
+        (Is::Toml10, "a = [\n {b = 1},\n {c = 2},\n]\n"),
         // An inline table on one line.
-        "a = {}\n",
-        "a = { }\n",
-        "a = {b = 1, c = {d = 2}}\n",
-        "a = {b = 1} # a comment\n",
-        "a = {b = 1}\r\n",
+        (Is::Toml10, "a = {}\n"),
+        (Is::Toml10, "a = { }\n"),
+        (Is::Toml10, "a = {b = 1, c = {d = 2}}\n"),
+        (Is::Toml10, "a = {b = 1} # a comment\n"),
+        (Is::Toml10, "a = {b = 1}\r\n"),
         // Each escape of TOML 1.0.
-        "a = \"\\b\\t\\n\\f\\r\\\"\\\\\\u00e9\\U0001F600\"\n",
-        "a = \"\"\"one \\\n   two\"\"\"\n",
+        (
+            Is::Toml10,
+            "a = \"\\b\\t\\n\\f\\r\\\"\\\\\\u00e9\\U0001F600\"\n",
+        ),
+        (Is::Toml10, "a = \"\"\"one \\\n   two\"\"\"\n"),
         // A time with seconds.
-        "a = 07:32:00\n",
-        "a = 07:32:00.5\n",
-        "a = 1979-05-27\n",
-        "a = 1979-05-27T07:32:00\n",
-        "a = 1979-05-27 07:32:00.999999\n",
-        "a = 1979-05-27T07:32:00Z\n",
-        "a = 1979-05-27T07:32:00+01:00\n",
+        (Is::Toml10, "a = 07:32:00\n"),
+        (Is::Toml10, "a = 07:32:00.5\n"),
+        (Is::Toml10, "a = 1979-05-27\n"),
+        (Is::Toml10, "a = 1979-05-27T07:32:00\n"),
+        (Is::Toml10, "a = 1979-05-27 07:32:00.999999\n"),
+        (Is::Toml10, "a = 1979-05-27T07:32:00Z\n"),
+        (Is::Toml10, "a = 1979-05-27T07:32:00+01:00\n"),
+        // A text with none of the characters.
+        (Is::Toml10, ""),
+        (Is::Toml10, "\n"),
+        (Is::Toml10, "# a comment"),
+        (Is::Toml10, "a = 1"),
+        (Is::Toml10, "[t]\n[[u]]\na.b = [1, [2]]\n"),
     ];
 
     /// The crate reads `text`. A row that the crate refuses proves nothing
@@ -254,31 +265,53 @@ mod tests {
     }
 
     #[test]
-    fn each_form_of_toml_11_is_refused_in_each_place() {
-        for text in NEWER.iter().chain(&NO_SECONDS) {
+    fn the_check_passes_toml_10_and_refuses_each_newer_form() {
+        for (wanted, text) in TEXTS {
+            let found = if holds(text, DEPTH) {
+                Is::Toml10
+            } else {
+                Is::Newer
+            };
+
             assert!(crate_reads(text), "the crate reads {text:?}");
-            assert!(!holds(text, DEPTH), "{text:?}");
+            assert_eq!(found, wanted, "{text:?}");
         }
     }
 
     #[test]
-    fn a_text_of_toml_10_passes() {
-        for text in TOML_10 {
-            assert!(crate_reads(text), "the crate reads {text:?}");
-            assert!(holds(text, DEPTH), "{text:?}");
-        }
-    }
+    fn the_table_holds_each_form_in_each_place() {
+        // The six forms, each as the text after a key and its `=`.
+        let forms = [
+            "{b = 1\n}",
+            "{b = 1,}",
+            "\"\\e\"",
+            "\"\\x41\"",
+            "07:32",
+            "1979-05-27T07:32Z",
+        ];
+        // The three places, as the text before a scalar and before an inline
+        // table: the top level, a nested inline table and a list of inline
+        // tables.
+        let places = [
+            ("a = ", "a = "),
+            ("t = {u = {a = ", "t = {u = "),
+            ("t = [{a = ", "t = ["),
+        ];
 
-    #[test]
-    fn a_text_with_no_newer_form_passes() {
-        for text in [
-            "",
-            "\n",
-            "# a comment",
-            "a = 1",
-            "[t]\n[[u]]\na.b = [1, [2]]\n",
-        ] {
-            assert!(holds(text, DEPTH), "{text:?}");
+        for form in forms {
+            for (before_scalar, before_table) in places {
+                let before = if form.starts_with('{') {
+                    before_table
+                } else {
+                    before_scalar
+                };
+                let start = format!("{before}{form}");
+                let found = TEXTS
+                    .iter()
+                    .any(|(is, text)| *is == Is::Newer && text.starts_with(&start));
+
+                assert!(found, "no row starts with {start:?}");
+            }
         }
     }
 
