@@ -1182,6 +1182,13 @@ fn surface_of(row: &IndexRow, text: &str) -> Result<Surface, VectorsError> {
         }
     }
 
+    // `Surface::context` gives these values to a test, so `Marker::of` must
+    // have no error for one of them.
+    raw.context
+        .values()
+        .try_for_each(check_markers)
+        .map_err(|reason| refused(format!("the context: {reason}")))?;
+
     let vectors: Vec<Vector> = raw
         .vectors
         .into_iter()
@@ -2020,7 +2027,7 @@ mod tests {
             {"id": "one", "input": {"text": "a"}, "result": "accepted"},
             {"id": "one", "input": {"text": ""}, "result": "refused"},
         ]));
-        let rules: [(String, &str); 16] = [
+        let rules: [(String, &str); 17] = [
             (
                 file_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
@@ -2079,6 +2086,10 @@ mod tests {
                 ])),
                 "the vector one: the content of a $int marker: the text is no decimal integer",
             ),
+            (
+                file_with("context", json!({"caps": [{"$float": "1.5"}]})),
+                "the context: the content of a $float marker: the text is not NaN, Infinity or -Infinity",
+            ),
             // An array in the place of an object.
             (
                 String::from("[]"),
@@ -2122,6 +2133,19 @@ mod tests {
         assert_eq!(one.output(), Some(&Input::Text(String::from("{}\n"))));
         assert_eq!(one.field("output"), Some(&json!({"text": "{}\n"})));
         assert_eq!(two.output().unwrap().bytes().unwrap(), [0xff]);
+    }
+
+    #[test]
+    fn a_marker_in_the_context_of_a_file_reads() {
+        let digits = "18446744073709551616";
+        let text = file_with("context", json!({"cap": {"$int": digits}, "name": "a"}));
+        let surface = surface_of(&row(1, 1, 0), &text).unwrap();
+
+        assert_eq!(
+            Marker::of(&surface.context()["cap"]),
+            Ok(Some(Marker::Int(String::from(digits))))
+        );
+        assert_eq!(Marker::of(&surface.context()["name"]), Ok(None));
     }
 
     #[test]
