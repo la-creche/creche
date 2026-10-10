@@ -12,9 +12,10 @@ use std::fmt;
 
 use super::json::{ByteOrderMark, Charset, Json, Layout, Object};
 use super::raw::{FAULT_KEYS, RawFault, ReadError, list, read_object, text};
-use super::time::{Freshness, Timestamp, freshness};
+use super::views::{Freshness, freshness};
 use super::words::{FaultCode, FaultSource};
 use crate::ids::FamilyName;
+use crate::time::Timestamp;
 
 /// One open fault of a fault file: a record of valid values. [`FaultFile`]
 /// holds the rules between a fault and its file.
@@ -109,7 +110,7 @@ impl OpenFault {
 /// let family = "chat".parse().unwrap();
 /// let file = FaultFile::new(family, FaultSource::Pep, written_at, vec![fault]);
 /// assert!(file.is_ok());
-/// # Ok::<(), creche_contracts::status::time::TimestampError>(())
+/// # Ok::<(), creche_contracts::time::TimestampError>(())
 /// ```
 ///
 /// Code outside this module cannot build a value from raw parts:

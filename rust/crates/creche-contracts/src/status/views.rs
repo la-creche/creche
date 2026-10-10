@@ -13,15 +13,20 @@
 //! A view is a record of what a reader took. Only a reader function of this
 //! module builds one. Each field of a view is private, and an accessor with
 //! the name of the field gives its value.
+//!
+//! This module also holds the staleness rule of contract 05: [`Age`],
+//! [`Freshness`] and [`STALE_AFTER_SECONDS`]. A view reads a time text with
+//! the reader of [`Timestamp`]. A text that this reader refuses is no time,
+//! and a file with no time is stale.
 
 use std::collections::BTreeSet;
 
 use super::json::Integer;
 use super::raw::{RawFault, RawSandbox, RawStatus, ReadError, Reader};
-use super::time::{Age, Freshness, STALE_AFTER_SECONDS, Timestamp, freshness};
 use super::words::{FamilyState, Health, Kind, SandboxLifecycle};
 use crate::ids::{FamilyName, SandboxName};
 use crate::slot::Slot;
+use crate::time::Timestamp;
 
 /// The word of the state `invalid` in a file.
 const STATE_INVALID: &str = "invalid";
@@ -54,6 +59,118 @@ fn not_negative(slot: &Slot<Integer>) -> Option<Integer> {
     slot.value()
         .filter(|integer| !integer.is_negative())
         .cloned()
+}
+
+// --- the staleness rule ---
+
+/// A file whose `written_at` is older than this is stale: contract 05 §2
+/// rule 5 for a status document, and §3.3.1 rule 7 for a fault file.
+pub const STALE_AFTER_SECONDS: i64 = 90;
+
+const MICROS_PER_SECOND: i64 = 1_000_000;
+
+/// How old a file is: zero or more microseconds. Only [`age_at`] builds a
+/// value.
+///
+/// ```
+/// use creche_contracts::status::views::{Age, Freshness, age_at};
+/// use creche_contracts::time::Timestamp;
+///
+/// let written: Timestamp = "2031-04-18T06:42:35Z".parse()?;
+/// let now: Timestamp = "2031-04-18T06:44:06Z".parse()?;
+/// let age: Age = age_at(written, now);
+/// assert_eq!(age.whole_seconds(), 91);
+/// assert_eq!(age.freshness(), Freshness::Stale);
+/// # Ok::<(), creche_contracts::time::TimestampError>(())
+/// ```
+///
+/// Code outside this module cannot build a value from a raw number:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::views::{Age, Freshness, age_at};
+/// use creche_contracts::time::Timestamp;
+///
+/// let age = Age { micros: -1 };
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Age {
+    micros: i64,
+}
+
+impl Age {
+    /// The age in whole seconds. A part of a second is cut off.
+    #[must_use]
+    pub fn whole_seconds(self) -> i64 {
+        self.micros / MICROS_PER_SECOND
+    }
+
+    /// The age in seconds, as the nearest `f64`.
+    #[must_use]
+    pub fn seconds(self) -> f64 {
+        // The decimal text has the exact value, and `parse` gives the nearest
+        // float. Python divides two integers to the same result.
+        let text = format!(
+            "{}.{:06}",
+            self.whole_seconds(),
+            self.micros % MICROS_PER_SECOND
+        );
+
+        text.parse().unwrap_or(f64::INFINITY)
+    }
+
+    /// Whether a file of this age is stale: older than
+    /// [`STALE_AFTER_SECONDS`], and not equal to it.
+    #[must_use]
+    pub fn freshness(self) -> Freshness {
+        if self.micros > STALE_AFTER_SECONDS * MICROS_PER_SECOND {
+            Freshness::Stale
+        } else {
+            Freshness::Fresh
+        }
+    }
+}
+
+/// Whether a reader can take a file as the state now.
+///
+/// The set is closed. It does not cross a process boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Freshness {
+    /// The writer wrote the file 90 seconds ago or less.
+    Fresh,
+    /// The writer wrote the file more than 90 seconds ago, or the file has
+    /// no time that a reader can read. The writer is not running.
+    Stale,
+}
+
+/// How old a file with this `written_at` is at `now`. A time after `now` has
+/// the age zero: the clocks of two processes can differ.
+#[must_use]
+pub fn age_at(written_at: Timestamp, now: Timestamp) -> Age {
+    let micros = now.unix_micros().saturating_sub(written_at.unix_micros());
+
+    Age {
+        micros: micros.max(0),
+    }
+}
+
+/// Whether a file with this `written_at` is stale at `now`.
+#[must_use]
+pub fn freshness_at(written_at: Timestamp, now: Timestamp) -> Freshness {
+    age_at(written_at, now).freshness()
+}
+
+// CONTRACT-QUESTION: contract 05 §2.1 names RFC 3339 for each time of a file
+// and gives no grammar. The Python readers take each text that
+// `datetime.fromisoformat` takes, and three of them read a time with no UTC
+// offset as UTC. Each reader of the `status` module takes the grammar of
+// `Timestamp`: the `date-time` of RFC 3339, section 5.6. It reads each other
+// text as no time, and the file is then stale. To take a further form costs
+// the reader of `Timestamp`, which each module of the workspace uses.
+/// Whether a file with this `written_at` is stale at `now`. A file with no
+/// time that a reader can read is stale.
+#[must_use]
+pub fn freshness(written_at: Option<Timestamp>, now: Timestamp) -> Freshness {
+    written_at.map_or(Freshness::Stale, |written| freshness_at(written, now))
 }
 
 // --- attendance ---
@@ -993,7 +1110,7 @@ impl FamilyRow {
 #[must_use]
 pub fn noticeboard(raw: &RawStatus, name: &str, now: Timestamp) -> FamilyRow {
     let written = moment(&raw.written_at);
-    let age = written.map(|written| written.age_at(now));
+    let age = written.map(|written| age_at(written, now));
     let validation = raw.validation.value().map(|block| ValidationRow {
         rev: shown(&block.rev),
         checked_at: shown(&block.checked_at),
@@ -1150,7 +1267,7 @@ fn spend_row(raw: &RawStatus, reference: Timestamp) -> Option<SpendRow> {
     let block = raw.spend.value()?;
     let lag_micros = |as_of: Timestamp| reference.unix_micros() - as_of.unix_micros();
     let fresh = moment(&block.as_of)
-        .is_some_and(|as_of| lag_micros(as_of) <= STALE_AFTER_SECONDS * 1_000_000);
+        .is_some_and(|as_of| lag_micros(as_of) <= STALE_AFTER_SECONDS * MICROS_PER_SECOND);
 
     Some(SpendRow {
         spend_usd: block.spend_usd.value().and_then(|number| number.to_f64()),
@@ -1517,8 +1634,12 @@ mod tests {
     /// The largest file that a door reads, in bytes.
     const DOOR_CAP_BYTES: usize = 256 * 1024;
 
+    fn time(text: &str) -> Timestamp {
+        text.parse().unwrap()
+    }
+
     fn now() -> Timestamp {
-        "2031-04-18T10:20:30Z".parse().unwrap()
+        time("2031-04-18T10:20:30Z")
     }
 
     fn chat() -> FamilyName {
@@ -1605,6 +1726,118 @@ mod tests {
             door_tui(&read, now()).unwrap().freshness(),
             Freshness::Stale
         );
+    }
+
+    /// Three inputs that are in no vector. Each one is the `written_at` of a
+    /// document, 30 seconds before the time now of the test. The Python
+    /// readers of today give another answer for the first two. The third one
+    /// has no vector on a reader surface.
+    #[test]
+    fn each_view_reads_a_time_with_the_grammar_of_the_one_type() {
+        let at = time("2999-01-01T00:00:30Z");
+        let midnight = time("2999-01-01T00:00:00Z");
+        let inputs = [
+            // A space in place of the `T`: no time.
+            ("2999-01-01 00:00:00Z", None),
+            // A lower-case `z`: a time.
+            ("2999-01-01T00:00:00z", Some(midnight)),
+            // No UTC offset: no time.
+            ("2999-01-01T00:00:00", None),
+        ];
+
+        for (written_at, read_as) in inputs {
+            let text = document("").replace("2031-04-18T10:20:00Z", written_at);
+            let read = raw(&text);
+            let row = noticeboard(&read, "chat", at);
+            let fresh = freshness(read_as, at);
+
+            assert!(text.contains(written_at), "{written_at}");
+            assert_eq!(
+                attendance(&read, &chat()).written_at(),
+                read_as,
+                "{written_at}"
+            );
+            assert_eq!(row.written_at(), written_at);
+            assert_eq!(
+                row.age().map(Age::whole_seconds),
+                read_as.map(|_| 30),
+                "{written_at}"
+            );
+            assert_eq!(
+                row.health() == Health::InSync,
+                read_as.is_some(),
+                "{written_at}"
+            );
+            assert_eq!(
+                door_tui(&read, at).unwrap().freshness(),
+                fresh,
+                "{written_at}"
+            );
+            assert_eq!(fresh == Freshness::Fresh, read_as.is_some());
+            assert_eq!(door_owui(&read), Ok(()), "{written_at}");
+            assert_eq!(
+                door_trigger(&read),
+                Err(ListingRefusal::WrongKind),
+                "{written_at}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_is_stale_after_more_than_90_seconds() {
+        let now = time("2999-01-01T00:00:30Z");
+        let ages = [
+            ("2999-01-01T00:00:00Z", 30, Freshness::Fresh),
+            ("2998-12-31T23:59:00Z", 90, Freshness::Fresh),
+            ("2998-12-31T23:58:59.999999Z", 90, Freshness::Stale),
+            ("2998-12-31T23:58:59Z", 91, Freshness::Stale),
+            ("2020-01-01T00:00:00Z", 30_894_307_230, Freshness::Stale),
+            ("2999-01-01T00:00:30Z", 0, Freshness::Fresh),
+            ("2999-01-01T00:01:00Z", 0, Freshness::Fresh),
+        ];
+
+        for (written, seconds, expected) in ages {
+            let age = age_at(time(written), now);
+
+            assert_eq!(age.whole_seconds(), seconds, "{written}");
+            assert_eq!(age.freshness(), expected, "{written}");
+            assert_eq!(freshness_at(time(written), now), expected, "{written}");
+            assert_eq!(freshness(Some(time(written)), now), expected, "{written}");
+        }
+
+        assert_eq!(freshness(None, now), Freshness::Stale);
+    }
+
+    #[test]
+    fn the_age_of_a_file_from_the_first_instant_to_the_last_one_has_no_overflow() {
+        let whole_range = age_at(Timestamp::MIN, Timestamp::MAX);
+
+        assert_eq!(whole_range.whole_seconds(), 315_537_897_599);
+        assert_eq!(whole_range.freshness(), Freshness::Stale);
+        assert_eq!(age_at(Timestamp::MAX, Timestamp::MIN).whole_seconds(), 0);
+        assert_eq!(
+            freshness_at(Timestamp::MAX, Timestamp::MIN),
+            Freshness::Fresh
+        );
+    }
+
+    #[test]
+    fn an_age_in_seconds_is_the_nearest_float() {
+        let now = time("2999-01-01T00:00:30Z");
+        let ages = [
+            ("2999-01-01T00:00:00Z", 30.0),
+            ("2999-01-01T00:00:00.123456Z", 29.876_544),
+            ("2020-01-01T00:00:00Z", 30_894_307_230.0),
+            ("2999-01-01T00:00:30Z", 0.0),
+            ("2999-01-01T00:00:31Z", 0.0),
+        ];
+
+        for (written, seconds) in ages {
+            assert_eq!(
+                age_at(time(written), now).seconds().to_bits(),
+                f64::to_bits(seconds)
+            );
+        }
     }
 
     #[test]
