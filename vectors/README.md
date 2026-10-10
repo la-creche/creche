@@ -190,12 +190,14 @@ A reader refuses an index in each of these cases:
   leave two `frozen` maps.
 - A path or a digest has another form.
 
-The generator and the Rust readers of `creche-vectors` and of
-`creche-contracts` hold these rules. The reader of `creche-contracts` first
-gives the index to the strict JSON reader of that crate. `rust/AGENTS.md`,
-"JSON", has the rules of that reader. The crate `creche-vectors` does not
-use `creche-contracts`. Its raw types refuse each index that is not strict
-JSON.
+The generator and the Rust reader hold these rules. The Rust reader is the
+crate `creche-vectors` under `rust/crates`. No other Rust code reads a file
+under `data/`.
+
+The index is strict JSON: `rust/AGENTS.md`, "JSON", has the rules of such a
+text. The crate `creche-contracts` holds the strict JSON reader, and
+`creche-vectors` does not use that crate. The raw types of `creche-vectors`
+refuse each index that is not strict JSON.
 
 ## The vector file
 
@@ -283,6 +285,10 @@ surrogate. A reader that stops at 128 levels reads every file. `serde_json`
 with its default settings is such a reader.
 
 ## How a Rust test reads a vector
+
+A Rust test does steps 1 and 2 with one call of the crate `creche-vectors`.
+`rust/AGENTS.md`, "The differential test", names the functions of that
+crate.
 
 1. Read `vectors/data/index.json`. Find the row of the surface.
 2. Read the file that the `path` of the row names. Refuse a `format` that is
