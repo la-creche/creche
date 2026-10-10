@@ -275,7 +275,7 @@ def test_the_map_refuses_a_path_in_another_form() -> None:
 
 
 def test_the_map_refuses_a_path_with_a_lone_surrogate() -> None:
-    """A strict JSON reader refuses the text of such an index. The Rust readers are strict."""
+    """A strict JSON reader refuses the text of such an index. The Rust reader is strict."""
     for path in ("\ud800.json", "made/\udcff.json"):
         text = _index_text({path: WRONG_DIGEST})
 

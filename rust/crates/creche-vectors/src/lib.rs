@@ -19,8 +19,8 @@
 //! |---|---|
 //! | [`index`] | Each row of the index. |
 //! | [`surface`] | The vector file of one surface. |
-//! | [`disagreements`] | Each input on which two Python copies of one id grammar differ. |
-//! | [`registries`] | Each file of each registry that a vector names. |
+//! | [`disagreements()`] | Each input on which two Python copies of one id grammar differ. |
+//! | [`registries()`] | Each file of each registry that a vector names. |
 //!
 //! The reader refuses a vector file in each of these cases:
 //!
@@ -69,8 +69,8 @@
 //!
 //! A vector file can nest 100 levels, so no reader of a strict text reads it.
 //!
-//! The reader has no Python origin. `vectors/core.py` writes the files that
-//! it reads.
+//! The reader has no Python origin. `vectors/core.py`, `vectors/generate.py`
+//! and two modules under `vectors/surfaces/` write the files that it reads.
 
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
