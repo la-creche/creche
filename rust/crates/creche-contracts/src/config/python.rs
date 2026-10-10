@@ -8,6 +8,7 @@
 
 use std::collections::HashSet;
 
+use creche_vectors::{self as vectors, Marker, Outcome, Vector};
 use serde_json::{Map, Value, json};
 
 use super::attendance::{AttendanceConfig, Bind};
@@ -21,7 +22,6 @@ use super::{
 };
 use crate::ids::SandboxName;
 use crate::secret::Secret;
-use crate::vectors::{self, Marker, Outcome, Vector};
 
 /// What the code did with one input, as a vector file writes it. `None`
 /// stands for a key that the vector does not have.
@@ -400,7 +400,7 @@ fn deviations_in(surface: &str) -> usize {
 
 /// What the Python code did with one input.
 fn python_did(vector: &Vector) -> Did {
-    match vector.result {
+    match vector.result() {
         Outcome::Accepted => Did::Took(vector.value().or(vector.field("output")).cloned()),
         Outcome::Refused | Outcome::Raised => Did::Refused(vector.refusal().cloned()),
     }
@@ -409,7 +409,7 @@ fn python_did(vector: &Vector) -> Did {
 /// Makes sure that the Rust code differs from the vector as the decision
 /// says, and in no other way.
 fn differs_as_decided(differs: Differs, vector: &Vector, rust: &Did, at: &str) {
-    assert_eq!(vector.result, Outcome::Accepted, "{at}: the Python code");
+    assert_eq!(vector.result(), Outcome::Accepted, "{at}: the Python code");
     match differs {
         Differs::Refuses => {
             assert!(
@@ -437,17 +437,17 @@ fn walk(name: &str) {
         .iter()
         .find(|against| against.surface == name)
         .unwrap();
-    let surface = vectors::surface(against.surface);
+    let surface = vectors::surface(against.surface).unwrap();
     let mut equal = 0;
     let mut deviated = 0;
-    for vector in &surface.vectors {
-        let at = format!("{name} {}", vector.id);
+    for vector in surface.vectors() {
+        let at = format!("{name} {}", vector.id());
         let rust = (against.replay)(vector);
 
-        if let Some(deviation) = deviation_of(name, &vector.id) {
+        if let Some(deviation) = deviation_of(name, vector.id()) {
             differs_as_decided(deviation.differs, vector, &rust, &at);
             deviated += 1;
-        } else if vector.result == Outcome::Raised {
+        } else if vector.result() == Outcome::Raised {
             assert!(
                 matches!(rust, Did::Refused(_)),
                 "{at}: the Python code raises"
@@ -474,7 +474,7 @@ fn walk(name: &str) {
 
 /// The named arguments of a builder vector.
 fn args(vector: &Vector) -> &Map<String, Value> {
-    vector.input.args().unwrap()
+    vector.input().args().unwrap()
 }
 
 /// The variables of an environment vector.
@@ -552,7 +552,7 @@ fn site_file(vector: &Vector) -> Did {
         return site_file_refusal(error);
     }
 
-    let file = match SiteFile::parse(&vector.input.bytes().unwrap()) {
+    let file = match SiteFile::parse(&vector.input().bytes().unwrap()) {
         Ok(file) => file,
         Err(error) => return site_file_refusal(error),
     };
@@ -574,7 +574,7 @@ fn site_file(vector: &Vector) -> Did {
 /// Whether a tree holds a mapping with a key that is not a text. The raw
 /// form takes its keys as text, so it cannot hold such a mapping.
 fn holds_other_key(tree: &Value) -> bool {
-    if matches!(Marker::of(tree), Some(Marker::Entries(_))) {
+    if matches!(Marker::of(tree).unwrap(), Some(Marker::Entries(_))) {
         return true;
     }
 
@@ -642,7 +642,7 @@ fn runtime_write(vector: &Vector) -> Did {
 }
 
 fn creds_read(vector: &Vector) -> Did {
-    let Ok(creds) = Credentials::parse(&vector.input.bytes().unwrap()) else {
+    let Ok(creds) = Credentials::parse(&vector.input().bytes().unwrap()) else {
         return Did::Refused(None);
     };
 
@@ -690,7 +690,7 @@ fn playpen_env_write(vector: &Vector) -> Did {
 }
 
 fn playpen_env_read(vector: &Vector) -> Did {
-    let raw = RawPlaypenEnv::parse(&vector.input.text().unwrap());
+    let raw = RawPlaypenEnv::parse(vector.input().text().unwrap());
     let variables: Map<String, Value> = raw
         .iter()
         .map(|(name, value)| (name.to_owned(), json!(value)))
@@ -743,7 +743,7 @@ fn noticeboard_env(vector: &Vector) -> Did {
     let access_key = match config.access_key() {
         AccessKey::Key(key) => text_of(key),
         AccessKey::Open => String::new(),
-        AccessKey::File(_) => panic!("{}: no vector names a key file", vector.id),
+        AccessKey::File(_) => panic!("{}: no vector names a key file", vector.id()),
     };
 
     Did::Took(Some(json!({
@@ -800,7 +800,7 @@ fn chaperone_site(vector: &Vector) -> Did {
             .map(|address| address.to_string()),
         "tei_url" => chaperone::tei_url(&env).map(url_text),
         "ha_url" => chaperone::ha_url(&env).map(url_text),
-        other => panic!("{}: no reader has the name {other}", vector.id),
+        other => panic!("{}: no reader has the name {other}", vector.id()),
     };
 
     match text {
@@ -815,10 +815,10 @@ fn chaperone_site(vector: &Vector) -> Did {
 fn the_table_holds_each_config_surface_of_the_index_one_time() {
     let listed: Vec<&str> = SURFACES.iter().map(|against| against.surface).collect();
     let unique: HashSet<&str> = listed.iter().copied().collect();
-    let index = vectors::index();
+    let index = vectors::index().unwrap();
     let in_index: HashSet<&str> = index
         .iter()
-        .map(|row| row.surface.as_str())
+        .map(|row| row.surface())
         .filter(|surface| surface.starts_with(SURFACE_PREFIX))
         .collect();
 
@@ -834,12 +834,8 @@ fn the_table_holds_each_config_surface_of_the_index_one_time() {
 fn each_deviation_names_a_vector_of_a_surface_one_time() {
     let mut seen = HashSet::new();
     for deviation in DEVIATIONS {
-        let surface = vectors::surface(deviation.surface);
-        let ids: HashSet<&str> = surface
-            .vectors
-            .iter()
-            .map(|vector| vector.id.as_str())
-            .collect();
+        let surface = vectors::surface(deviation.surface).unwrap();
+        let ids: HashSet<&str> = surface.vectors().iter().map(|vector| vector.id()).collect();
 
         assert!(deviation.contract.contains('§'), "{}", deviation.surface);
         assert!(!deviation.decision.is_empty(), "{}", deviation.surface);
@@ -859,13 +855,13 @@ fn no_committed_vector_of_a_config_surface_is_raised() {
     // The walk refuses a raised vector. A committed one is also a defect of
     // the Python code that `vectors/AGENTS.md` keeps out of the files.
     for against in SURFACES {
-        let surface = vectors::surface(against.surface);
+        let surface = vectors::surface(against.surface).unwrap();
 
         assert!(
             surface
-                .vectors
+                .vectors()
                 .iter()
-                .all(|vector| vector.result != Outcome::Raised),
+                .all(|vector| vector.result() != Outcome::Raised),
             "{}",
             against.surface
         );

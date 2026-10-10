@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 
+use creche_vectors::{self as vectors, Outcome, Surface, Vector};
 use serde_json::{Map, Value, json};
 
 use super::document::{FaultError, FieldFault, StatusDocument, StatusError};
@@ -16,7 +17,6 @@ use super::time::{Freshness, Timestamp, TimestampError};
 use super::views::{self, FamilyRow, Reason, TuiExit, TuiRefusal};
 use super::words::{FaultCode, FaultSource};
 use crate::ids::FamilyName;
-use crate::vectors::{self, Input, Outcome, Surface, Vector};
 
 /// The family of each vector.
 const FAMILY: &str = "chat";
@@ -80,7 +80,7 @@ fn float_value(float: f64) -> Value {
 
 /// One value of a vector file as a value of this module.
 fn from_value(value: &Value) -> Json {
-    if let Some(marker) = vectors::Marker::of(value) {
+    if let Some(marker) = vectors::Marker::of(value).unwrap() {
         return match marker {
             vectors::Marker::Int(digits) => Json::Integer(digits.parse().unwrap()),
             vectors::Marker::Float(vectors::NotFinite::Nan) => Json::Float(f64::NAN),
@@ -194,7 +194,7 @@ fn with_sorted_sets(value: &Value, keys: &[&str]) -> Value {
 type Replay = Result<Option<Value>, Option<Value>>;
 
 fn replay_attendance(_: &Surface, vector: &Vector) -> Replay {
-    let Ok(status) = views::read_attendance(&vector.input.bytes().unwrap(), &chat()) else {
+    let Ok(status) = views::read_attendance(&vector.input().bytes().unwrap(), &chat()) else {
         return Err(None);
     };
     let sandboxes: Vec<Value> = status
@@ -354,7 +354,7 @@ fn family_row_value(row: &FamilyRow) -> Value {
 }
 
 fn replay_noticeboard(_: &Surface, vector: &Vector) -> Replay {
-    let row = views::read_noticeboard(&vector.input.bytes().unwrap(), FAMILY, now());
+    let row = views::read_noticeboard(&vector.input().bytes().unwrap(), FAMILY, now());
     let value = Some(family_row_value(&row));
 
     if row.problem().is_some() {
@@ -434,7 +434,7 @@ fn tui_warning(serving: &views::Serving) -> String {
 }
 
 fn replay_door_tui(_: &Surface, vector: &Vector) -> Replay {
-    match views::read_door_tui(&vector.input.bytes().unwrap(), now()) {
+    match views::read_door_tui(&vector.input().bytes().unwrap(), now()) {
         Ok(serving) => Ok(Some(json!({
             "sandbox": serving.sandbox().as_str(),
             "playpen_env": serving.supervisor_env(),
@@ -454,14 +454,14 @@ fn replay_door_tui(_: &Surface, vector: &Vector) -> Replay {
 }
 
 fn replay_door_trigger(_: &Surface, vector: &Vector) -> Replay {
-    match views::read_door_trigger(&vector.input.bytes().unwrap()) {
+    match views::read_door_trigger(&vector.input().bytes().unwrap()) {
         Ok(()) => Ok(None),
         Err(_) => Err(None),
     }
 }
 
 fn replay_door_owui(_: &Surface, vector: &Vector) -> Replay {
-    match views::read_door_owui(&vector.input.bytes().unwrap()) {
+    match views::read_door_owui(&vector.input().bytes().unwrap()) {
         Ok(()) => Ok(None),
         Err(_) => Err(None),
     }
@@ -478,7 +478,7 @@ fn source_of(vector: &Vector) -> FaultSource {
 
 fn replay_fault_reader(_: &Surface, vector: &Vector) -> Replay {
     let source = source_of(vector);
-    let Ok(read) = fault_file::caregiver(&vector.input.bytes().unwrap(), source, now()) else {
+    let Ok(read) = fault_file::caregiver(&vector.input().bytes().unwrap(), source, now()) else {
         return Err(None);
     };
     let faults: Vec<Value> = read
@@ -505,8 +505,8 @@ fn replay_fault_reader(_: &Surface, vector: &Vector) -> Replay {
 }
 
 fn replay_outcome(surface: &Surface, vector: &Vector) -> Replay {
-    let stem = surface.context["stem"].as_str().unwrap();
-    let row = outcome::noticeboard(&vector.input.bytes().unwrap(), stem);
+    let stem = surface.context()["stem"].as_str().unwrap();
+    let row = outcome::noticeboard(&vector.input().bytes().unwrap(), stem);
     let value = Some(json!({
         "id": row.id,
         "family": row.family,
@@ -578,11 +578,11 @@ const READERS: &[Reads] = &[
 #[test]
 fn each_reader_does_what_its_python_reader_does() {
     for reader in READERS {
-        let surface = vectors::surface(reader.surface);
-        for vector in &surface.vectors {
-            let at = format!("{} {}", reader.surface, vector.id);
+        let surface = vectors::surface(reader.surface).unwrap();
+        for vector in surface.vectors() {
+            let at = format!("{} {}", reader.surface, vector.id());
             let replayed = (reader.replay)(&surface, vector);
-            match (vector.result, replayed) {
+            match (vector.result(), replayed) {
                 (Outcome::Accepted, Ok(value)) => {
                     let sets = |value: &Value| with_sorted_sets(value, reader.set_keys);
 
@@ -634,9 +634,7 @@ fn document_of(args: &Map<String, Value>) -> Result<StatusDocument, StatusError>
 
 /// The bytes of the `output` of a vector.
 fn output_of(vector: &Vector) -> Vec<u8> {
-    let output: Input = serde_json::from_value(vector.field("output").unwrap().clone()).unwrap();
-
-    output.bytes().unwrap()
+    vector.output().unwrap().bytes().unwrap()
 }
 
 /// One vector of `status.write` on which the writer here differs from the
@@ -785,28 +783,30 @@ const DEVIATIONS: &[Deviation] = &[
 #[test]
 fn the_document_writer_makes_the_bytes_of_the_python_writer() {
     let mut deviated = HashSet::new();
-    for vector in vectors::surface("status.write").vectors {
-        let built = document_of(vector.input.args().unwrap());
-        let deviation = DEVIATIONS.iter().find(|row| row.vector == vector.id);
+    for vector in vectors::surface("status.write").unwrap().vectors() {
+        let built = document_of(vector.input().args().unwrap());
+        let deviation = DEVIATIONS.iter().find(|row| row.vector == vector.id());
 
-        assert_eq!(vector.result, Outcome::Accepted, "{}", vector.id);
+        assert_eq!(vector.result(), Outcome::Accepted, "{}", vector.id());
         match (built, deviation) {
             (Ok(document), None) => {
                 let written = String::from_utf8(document.encode()).unwrap();
-                let wanted = String::from_utf8(output_of(&vector)).unwrap();
+                let wanted = String::from_utf8(output_of(vector)).unwrap();
 
-                assert_eq!(written, wanted, "{}", vector.id);
+                assert_eq!(written, wanted, "{}", vector.id());
             }
             (Err(error), Some(row)) => {
                 assert_eq!(
-                    error, row.refusal,
+                    error,
+                    row.refusal,
                     "{} (contract 05 {})",
-                    vector.id, row.contract
+                    vector.id(),
+                    row.contract
                 );
                 deviated.insert(row.vector);
             }
             (Ok(_), Some(row)) => panic!("{}: the row names no difference", row.vector),
-            (Err(error), None) => panic!("{}: {error}", vector.id),
+            (Err(error), None) => panic!("{}: {error}", vector.id()),
         }
     }
 
@@ -822,8 +822,8 @@ fn the_document_writer_makes_the_bytes_of_the_python_writer() {
 
 #[test]
 fn a_document_that_the_writer_makes_reads_back_as_the_same_document() {
-    for vector in vectors::surface("status.write").vectors {
-        let Ok(document) = document_of(vector.input.args().unwrap()) else {
+    for vector in vectors::surface("status.write").unwrap().vectors() {
+        let Ok(document) = document_of(vector.input().args().unwrap()) else {
             continue;
         };
         let bytes = document.encode();
@@ -833,7 +833,7 @@ fn a_document_that_the_writer_makes_reads_back_as_the_same_document() {
             StatusDocument::read(&bytes).as_ref(),
             Ok(&document),
             "{}",
-            vector.id
+            vector.id()
         );
         assert_eq!(
             StatusDocument::try_from(&document.raw()).as_ref(),
@@ -843,13 +843,13 @@ fn a_document_that_the_writer_makes_reads_back_as_the_same_document() {
             views::attendance(&document.raw(), &chat()),
             views::attendance(&raw, &chat()),
             "{}",
-            vector.id
+            vector.id()
         );
         assert_eq!(
             views::noticeboard(&document.raw(), FAMILY, now()),
             views::read_noticeboard(&bytes, FAMILY, now()),
             "{}",
-            vector.id
+            vector.id()
         );
         assert_eq!(
             views::door_tui(&document.raw(), now()),
@@ -941,13 +941,13 @@ const FAULT_WRITERS: &[Writes] = &[
 #[test]
 fn each_fault_file_writer_makes_the_bytes_of_its_python_writer() {
     for writer in FAULT_WRITERS {
-        for vector in vectors::surface(writer.surface).vectors {
-            let at = format!("{} {}", writer.surface, vector.id);
-            let file = fault_file_of(vector.input.args().unwrap(), writer);
-            match (vector.result, file) {
+        for vector in vectors::surface(writer.surface).unwrap().vectors() {
+            let at = format!("{} {}", writer.surface, vector.id());
+            let file = fault_file_of(vector.input().args().unwrap(), writer);
+            match (vector.result(), file) {
                 (Outcome::Accepted, Some(file)) => {
                     let written = String::from_utf8(file.encode()).unwrap();
-                    let wanted = String::from_utf8(output_of(&vector)).unwrap();
+                    let wanted = String::from_utf8(output_of(vector)).unwrap();
 
                     assert_eq!(written, wanted, "{at}");
                 }
@@ -964,12 +964,9 @@ fn a_fault_file_has_the_order_of_the_python_writer_for_each_order_of_the_caller(
         .iter()
         .find(|writer| writer.source == FaultSource::Sessiond)
         .unwrap();
-    let vectors = vectors::surface(writer.surface).vectors;
-    let vector = vectors
-        .iter()
-        .find(|vector| vector.id == "each-code")
-        .unwrap();
-    let mut reversed = vector.input.args().unwrap().clone();
+    let surface = vectors::surface(writer.surface).unwrap();
+    let vector = surface.vector("each-code").unwrap();
+    let mut reversed = vector.input().args().unwrap().clone();
     let faults = reversed["faults"].as_array_mut().unwrap();
     let given = faults.clone();
     faults.reverse();
@@ -994,12 +991,12 @@ fn each_surface_of_contract_05_has_a_row_in_a_table() {
     let count = READERS.len() + FAULT_WRITERS.len() + 1;
 
     assert_eq!(named.len(), count, "two rows name one surface");
-    for row in vectors::index() {
-        if row.surface.starts_with("status.") {
+    for row in vectors::index().unwrap() {
+        if row.surface().starts_with("status.") {
             assert!(
-                named.contains(row.surface.as_str()),
+                named.contains(row.surface()),
                 "{}: no table names it",
-                row.surface
+                row.surface()
             );
         }
     }
@@ -1236,19 +1233,19 @@ const DISAGREEMENTS: &[Disagreement] = &[
 
 #[test]
 fn the_table_of_disagreements_says_what_each_python_reader_does() {
-    let surfaces = STATUS_READERS.map(vectors::surface);
+    let surfaces = STATUS_READERS.map(|name| vectors::surface(name).unwrap());
     for row in DISAGREEMENTS {
         assert!(row.contract.starts_with('\u{a7}'), "{}", row.vector);
         for (surface, took) in surfaces.iter().zip(row.took) {
-            let at = format!("{} {}", surface.surface, row.vector);
+            let at = format!("{} {}", surface.name(), row.vector);
             let vector = surface
-                .vectors
+                .vectors()
                 .iter()
-                .find(|vector| vector.id == row.vector)
+                .find(|vector| vector.id() == row.vector)
                 .unwrap_or_else(|| panic!("{at}: no such vector"));
             match took {
-                Refused => assert_eq!(vector.result, Outcome::Refused, "{at}"),
-                Accepted => assert_eq!(vector.result, Outcome::Accepted, "{at}"),
+                Refused => assert_eq!(vector.result(), Outcome::Refused, "{at}"),
+                Accepted => assert_eq!(vector.result(), Outcome::Accepted, "{at}"),
                 Field(pointer, text) => {
                     let wanted: Value = serde_json::from_str(text).unwrap();
 
