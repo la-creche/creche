@@ -1589,7 +1589,7 @@ mod tests {
             assert_eq!(errors.as_slice(), [issue], "{id}");
         }
 
-        // The same fields with values of the family file check give a file.
+        // The type takes the same set with the default alias of the vectors.
         assert!(RuntimeConfig::parse(alias("agent-router").as_bytes()).is_ok());
     }
 

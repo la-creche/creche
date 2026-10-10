@@ -269,7 +269,8 @@ directory is not a workspace package, so a change here does not change
   the Rust type refuses it. Each such input left its surface under
   resolution (c) of `rust/AGENTS.md`. A plain Rust test holds each one, with
   the input in the test. The table names each kind and the file of its
-  test, below `rust/crates/creche-contracts/src/`.
+  test, below `rust/crates/creche-contracts/src/`. A later change to the
+  Python code for such an input moves no vector, so no Rust test fails.
 
   | Surface | Inputs with no vector | File of the test |
   |---|---|---|
@@ -281,7 +282,7 @@ directory is not a workspace package, so a change here does not change
   | `config.playpen_env.write` | A relative state root. The sandbox of another family. A sandbox name with no number. | `config/mounts.rs` |
   | `config.attendance.env` | A bind host that is no host. An IPv6 address as the LAN address of the site. A relative path. A socket path of 108 bytes. A digit that is not ASCII. A count of seconds that is no duration. A command that does not split into words. A URL with no scheme or with a password. | `config/attendance.rs` |
   | `config.noticeboard.env` | A bind that is no host. The bind `0`. The long form of the bind `::`. A relative path. A URL with no scheme. | `config/noticeboard.rs` |
-  | `config.chaperone.site` | A call of a reader that accepts one of these values: a LAN address that is no IPv4 address and no host name, the LAN address `0.0.0.0`, the port 0, a URL with no scheme. | `config/chaperone.rs` |
+  | `config.chaperone.site` | A call that a reader accepts with one of these values. A LAN address that is no IPv4 address and no host name. The LAN address `0.0.0.0`. The port 0. A URL with no scheme. | `config/chaperone.rs` |
   | `manifest.component` | A nesting of more than 128 levels. A tagged integer with a digit or a space that is not ASCII. A word of a command or an install path with a lone surrogate. | `manifest.rs` |
   | `manifest.request.ulid` | A time below zero. A time past 48 bits of milliseconds. | `manifest.rs` |
   | `manifest.resolved` | A version with a digit that is not ASCII. | `manifest.rs` |
