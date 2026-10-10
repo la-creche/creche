@@ -61,7 +61,8 @@ each code change, with the toolchain of the `rust` job and the venv of the
 The `suites` job runs the two old suites of `integration/`, each one in a
 pytest run of its own. It has the setup of the `proc` job. Its last step reads
 the JUnit report of each run, and it fails for a test that skipped. Both
-workflows have the job, and the two files have the same jobs.
+workflows have the job. The last job of each file has a name of its own, and
+each other job name is in both files.
 
 The `systemd-proof` job runs `bin/systemd-proof.sh` for a change that touches
 a file of the proof: `systemd/` or the script.
