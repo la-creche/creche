@@ -319,6 +319,46 @@ and a vector disagree, follow "The differential test" in `rust/AGENTS.md`.
 6. Run `--check` under each Python version that the workspace supports. The
    files must be the same.
 
+## The disagreements file
+
+The Python code holds more than one copy of most id grammars. Each copy has
+a surface under `data/ids/`. `data/ids/disagreements.json` lists each input
+for which two copies of one grammar give different results.
+
+| Key | Meaning |
+|---|---|
+| `format` | the version of this format. It is `1`. |
+| `kind` | `disagreements` |
+| `rows` | one row for each such input, in a fixed order. The list is empty when the copies of each grammar agree on each input. |
+
+One row has four keys:
+
+| Key | Meaning |
+|---|---|
+| `grammar` | the name of the grammar, for example `tool_name` |
+| `id` | the id of the vector in the file of each copy |
+| `input` | the input, as an input form. The generator writes the `text` form. |
+| `results` | the surfaces of the copies, by their result |
+
+The object `results` has one key for each result that a copy gave:
+`accepted`, `refused` or `raised`. The value of a key is the list of the
+surfaces whose copy gave that result, in sorted order.
+
+A reader refuses the file in each of these cases:
+
+- The `format` is not the integer `1`, or the `kind` is not
+  `disagreements`.
+- The file, a row or `results` holds a key that this section does not name.
+- The file or a row lacks one of its keys.
+- A `grammar` or an `id` is empty.
+- The `input` is no `text` form and no `repeat` form.
+- A row names a surface that the index does not hold.
+- A row names one surface two times, under one result or under two.
+- A row names the surfaces of less than two results.
+- Two rows have the same `grammar` and the same `id`.
+
+The Rust reader, the crate `creche-vectors`, holds these rules.
+
 ## The registry file
 
 A vector of `family_file`, of `server_file` and of `family_file.cli` names a
@@ -339,6 +379,25 @@ One row has three keys:
 | `registry` | the path of the registry from the repository root |
 | `path` | the path of the file from the root of that registry |
 | `text` or `base64` | the bytes of the file, as an input form |
+
+The `registry` and the `path` of a row are each a path of names. The parts
+have `/` between them. No part is empty, `.` or `..`, and no part holds a
+NUL character.
+
+A reader refuses the file in each of these cases:
+
+- The `format` is not the integer `1`, or the `kind` is not `registries`.
+- The file or a row holds a key that this section does not name.
+- The file lacks a key, or a row lacks its `registry` or its `path`.
+- A row does not hold exactly one of the keys `text` and `base64`.
+- The `base64` text of a row is no base64 with padding.
+- A `registry` or a `path` has another form.
+- Two rows have the same `registry` and the same `path`.
+- The `path` of a row is a directory of another row of its registry. One
+  name is then a file and a directory.
+
+The Rust reader, the crate `creche-vectors`, holds these rules. The rows of
+one registry thus make one tree of files, and a test can write each one.
 
 The generator reads no file and no directory whose name starts with `.`.
 git does not track such a file in a registry of this repository. The file
