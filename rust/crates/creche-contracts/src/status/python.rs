@@ -689,11 +689,6 @@ const DEVIATIONS: &[Deviation] = &[
         field("written_at", FieldFault::NotATime(TimestampError::Form)),
     ),
     deviation(
-        "lax-written-at-no-offset",
-        "§2.1",
-        field("written_at", FieldFault::NotATime(TimestampError::NoOffset)),
-    ),
-    deviation(
         "lax-epoch-zero",
         "§6.2",
         field("credentials.epoch", FieldFault::OutOfRange),
