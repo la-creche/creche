@@ -278,6 +278,13 @@ pub fn zero() -> json::Integer {
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
+//
+// CONTRACT-QUESTION: contracts 02, 04 and 05 give a number no rule for the
+// sign of a zero. This reader keeps the sign that `serde_json` gives, so the
+// integer `-0` reads as `-0.0`. `number` of the noticeboard gives `0.0` for
+// that integer. A reader that gives `0.0` for each zero differs from that
+// helper on the float `-0.0`. A reader that tells the two texts apart costs a
+// read of the text of each number, as `json::Number` reads it.
 pub fn number<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where
     D: Deserializer<'de>,

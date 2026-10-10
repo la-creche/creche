@@ -2131,6 +2131,9 @@ To make the fifth check on your machine, for example before a merge:
      limit. `parse_object` reads 127 levels, the limit of `serde_json`. The
      tree of the module stops at 128 levels, for a deserializer with no
      limit.
+  3. `number`, contracts 02, 04 and 05. No contract gives a zero a sign. The
+     reader keeps the sign that `serde_json` gives. Difference 3 below says
+     what that sign is and what a change costs.
 - The module `untrusted` differs from the Python helpers on purpose in four
   ways. The test of the module holds each one. A row of `DEVIATIONS` holds
   each vector of `runtime.parse_object.noticeboard` on which the two sides
