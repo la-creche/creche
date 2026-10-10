@@ -49,9 +49,8 @@
 #
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
-# release.yml runs the same `tests`, `playpen`, `proc`, `proc-rust`, `rust`,
-# `rust-coverage` and `systemd-proof` jobs after the merge. It does not run
-# the `suites` job yet.
+# release.yml runs the same `tests`, `playpen`, `proc`, `proc-rust`, `suites`,
+# `rust`, `rust-coverage` and `systemd-proof` jobs after the merge.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -292,11 +291,6 @@ jobs:
   #
   # The time limit is the limit of the `proc` job. On a laptop the two
   # suites run in about 6 minutes.
-  #
-  # Only this file has the job. The job is new to CI, and one red run of it
-  # in release.yml stops the tags of that merge. release.yml gets the job
-  # after it passed 20 runs of the merge queue in a row.
-  # bin/tests/test_gate_workflow.py names that one exception.
   suites:
     needs: scope
     if: needs.scope.outputs.scope == 'code'

@@ -115,8 +115,7 @@ group. It has ten kinds of job:
 6. `suites`: the two suites `integration/tests` and
    `integration/tests_manager`. The job builds the playpen first. It runs
    each suite with a pytest command of its own. A test that skips is a
-   failure there. Only `gate.yml` has this job. `integration/AGENTS.md` has
-   its rules.
+   failure there. `integration/AGENTS.md` has its rules.
 7. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
    `rust/rust-toolchain.toml` names. The job installs `cargo-deny` before
    the script runs. When the pull request changes no path under `rust/` and
