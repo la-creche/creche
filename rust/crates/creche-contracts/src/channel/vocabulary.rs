@@ -249,6 +249,9 @@ words! {
         ControlMountUnwritable => "control_mount_unwritable",
         /// The environment does not name one of the three directories.
         MountDirUnset => "mount_dir_unset",
+        /// The environment gives no valid URL of a plane
+        /// ([`PlaneUrl`](crate::config::endpoints::PlaneUrl)).
+        PlaneUrlInvalid => "plane_url_invalid",
     }
 }
 
@@ -331,7 +334,11 @@ mod tests {
         round_trip::<LogLevel>(&["debug", "info", "warn", "error"]);
         round_trip::<Role>(&["user", "assistant"]);
         round_trip::<Cap>(&["steer", "coalesce", "workspace_link", "get_entries"]);
-        round_trip::<FatalReason>(&["control_mount_unwritable", "mount_dir_unset"]);
+        round_trip::<FatalReason>(&[
+            "control_mount_unwritable",
+            "mount_dir_unset",
+            "plane_url_invalid",
+        ]);
         round_trip::<WorkspaceKind>(&["code-sandbox"]);
     }
 

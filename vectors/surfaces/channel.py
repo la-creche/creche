@@ -582,6 +582,7 @@ LINES: Final[tuple[Line, ...]] = (
     _l("fatal-reason-number", _line(type="fatal", reason=5, message=5)),
     _l("fatal-message-4097", _line(type="fatal", message="m" * 4097)),
     _l("fatal-mount-dir-unset", _line(type="fatal", reason="mount_dir_unset")),
+    _l("fatal-plane-url-invalid", _line(type="fatal", reason="plane_url_invalid")),
     # --- the type field (§13 rule 2) ---
     _l("type-missing", "{}"),
     _l("type-missing-with-fields", _line(session=SESSION, nonce="x")),

@@ -167,6 +167,9 @@ pub enum FatalClaim {
     ControlMountUnwritable,
     /// The environment does not name one of the three directories.
     MountDirUnset,
+    /// The environment gives no valid URL of a plane
+    /// ([`PlaneUrl`](crate::config::endpoints::PlaneUrl)).
+    PlaneUrlInvalid,
     /// Each other value, and no value.
     Unknown,
 }
@@ -178,6 +181,7 @@ impl FatalClaim {
         match self {
             Self::ControlMountUnwritable => "control_mount_unwritable",
             Self::MountDirUnset => "mount_dir_unset",
+            Self::PlaneUrlInvalid => "plane_url_invalid",
             Self::Unknown => "unknown",
         }
     }
@@ -187,6 +191,7 @@ impl FatalClaim {
         match name {
             "control_mount_unwritable" => Self::ControlMountUnwritable,
             "mount_dir_unset" => Self::MountDirUnset,
+            "plane_url_invalid" => Self::PlaneUrlInvalid,
             _ => Self::Unknown,
         }
     }
@@ -1913,5 +1918,16 @@ pub(super) mod tests {
         assert_eq!(exit.reason().to_text(), "crashed");
         assert_eq!(fatal.reason(), FatalClaim::MountDirUnset);
         assert_eq!(other.reason(), FatalClaim::Unknown);
+    }
+
+    #[test]
+    fn a_fatal_line_names_a_plane_url_that_is_not_valid() {
+        let PlaypenLine::Fatal(fatal) = line(r#"{"type":"fatal","reason":"plane_url_invalid"}"#)
+        else {
+            panic!("no fatal line");
+        };
+
+        assert_eq!(fatal.reason(), FatalClaim::PlaneUrlInvalid);
+        assert_eq!(fatal.reason().as_str(), "plane_url_invalid");
     }
 }
