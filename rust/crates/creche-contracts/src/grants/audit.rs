@@ -10,6 +10,7 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ids::{FamilyName, GateId, SandboxName, SessionId, Sha256Hex, Ulid};
+use crate::time::Timestamp;
 
 use super::body::{Arguments, BODY_MAX_BYTES, CallTool};
 use super::decision::{AuditOutcome, Held};
@@ -47,125 +48,78 @@ pub const DELEGATION_ID_HEADER: &str = "x-delegation-id";
 
 // --- the time ---
 
-/// The last millisecond of the year 9999, in milliseconds after the epoch. A
-/// record writes its year with four digits.
-const UNIX_MS_MAX: u64 = 253_402_300_799_999;
-
-const MS_PER_SECOND: u64 = 1000;
-const SECONDS_PER_MINUTE: u64 = 60;
-const MINUTES_PER_HOUR: u64 = 60;
-const HOURS_PER_DAY: u64 = 24;
-const MS_PER_DAY: u64 = MS_PER_SECOND * SECONDS_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY;
+/// The microseconds of one millisecond.
+const MICROS_PER_MS: i64 = 1000;
 
 /// The time of one record: a UTC time in whole milliseconds, from 1970 to the
 /// end of the year 9999 (contract 04 §6.1).
 ///
+/// The type holds a [`Timestamp`], and that type writes each time text of a
+/// record. The last time of this type is the last millisecond of a
+/// [`Timestamp`].
+///
 /// ```
 /// use creche_contracts::grants::AuditTime;
+/// use creche_contracts::time::Timestamp;
 ///
 /// let time = AuditTime::from_unix_ms(1_789_760_467_412)?;
 /// assert_eq!(time.unix_ms(), 1_789_760_467_412);
 /// assert_eq!(time.file_name(), "2026-09-18.jsonl");
+///
+/// let last_ms = Timestamp::MAX.unix_micros().unsigned_abs() / 1000;
+/// assert_eq!(AuditTime::from_unix_ms(last_ms)?.file_name(), "9999-12-31.jsonl");
+/// assert!(AuditTime::from_unix_ms(last_ms + 1).is_err());
 /// # Ok::<(), creche_contracts::grants::AuditTimeError>(())
 /// ```
 ///
-/// Code outside this module cannot build a value from a raw number:
+/// Code outside this module cannot build a value from a raw instant:
 ///
 /// ```compile_fail,E0451
 /// use creche_contracts::grants::AuditTime;
+/// use creche_contracts::time::Timestamp;
 ///
-/// let time = AuditTime { unix_ms: u64::MAX };
+/// let time = AuditTime { instant: Timestamp::MIN };
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AuditTime {
-    unix_ms: u64,
-}
-
-/// The parts of a UTC time.
-struct Civil {
-    year: u64,
-    month: u64,
-    day: u64,
-    hour: u64,
-    minute: u64,
-    second: u64,
-    millisecond: u64,
+    /// An instant of whole milliseconds that is not before 1970.
+    instant: Timestamp,
 }
 
 impl AuditTime {
     /// The time that is `unix_ms` milliseconds after 1970-01-01T00:00:00Z.
+    ///
+    /// # Errors
+    ///
+    /// [`AuditTimeError::AfterYear9999`] for a time after the last
+    /// millisecond of the year 9999.
     pub fn from_unix_ms(unix_ms: u64) -> Result<Self, AuditTimeError> {
-        if unix_ms > UNIX_MS_MAX {
-            return Err(AuditTimeError::AfterYear9999);
-        }
+        let micros = i64::try_from(unix_ms)
+            .ok()
+            .and_then(|unix_ms| unix_ms.checked_mul(MICROS_PER_MS))
+            .ok_or(AuditTimeError::AfterYear9999)?;
+        let instant =
+            Timestamp::from_unix_micros(micros).map_err(|_| AuditTimeError::AfterYear9999)?;
 
-        Ok(Self { unix_ms })
+        Ok(Self { instant })
     }
 
     /// The milliseconds after 1970-01-01T00:00:00Z.
     #[must_use]
     pub fn unix_ms(&self) -> u64 {
-        self.unix_ms
+        // No time of this type is before 1970, so the count has no sign.
+        (self.instant.unix_micros() / MICROS_PER_MS).unsigned_abs()
     }
 
     /// The name of the file that takes a record of this time: the UTC day,
     /// `YYYY-MM-DD.jsonl` (contract 04 §6).
     #[must_use]
     pub fn file_name(&self) -> String {
-        let Civil {
-            year, month, day, ..
-        } = self.civil();
+        // The date of a time text ends at its `T`.
+        let text = self.instant.to_rfc3339();
+        let day = text.split_once('T').map_or(text.as_str(), |(day, _)| day);
 
-        format!("{year:04}-{month:02}-{day:02}.jsonl")
-    }
-
-    /// The date and the time of day. The algorithm is the `civil_from_days` of
-    /// Howard Hinnant, for a day that is not before 1970.
-    fn civil(&self) -> Civil {
-        let ms_of_day = self.unix_ms % MS_PER_DAY;
-        let seconds_of_day = ms_of_day / MS_PER_SECOND;
-        let minutes_of_day = seconds_of_day / SECONDS_PER_MINUTE;
-
-        // 719 468 days are between 0000-03-01 and 1970-01-01. An era is 400
-        // years, which is 146 097 days. The year starts on March 1, so a leap
-        // day is the last day of its year.
-        let days = self.unix_ms / MS_PER_DAY + 719_468;
-        let era = days / 146_097;
-        let day_of_era = days % 146_097;
-        let year_of_era =
-            (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-        let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-        let shifted_month = (5 * day_of_year + 2) / 153;
-        let month = if shifted_month < 10 {
-            shifted_month + 3
-        } else {
-            shifted_month - 9
-        };
-
-        Civil {
-            year: year_of_era + era * 400 + u64::from(month <= 2),
-            month,
-            day: day_of_year - (153 * shifted_month + 2) / 5 + 1,
-            hour: minutes_of_day / MINUTES_PER_HOUR,
-            minute: minutes_of_day % MINUTES_PER_HOUR,
-            second: seconds_of_day % SECONDS_PER_MINUTE,
-            millisecond: ms_of_day % MS_PER_SECOND,
-        }
-    }
-
-    /// `YYYY-MM-DDTHH:MM:SS.mmm`: the part that the two records share.
-    fn text(&self) -> String {
-        let Civil {
-            year,
-            month,
-            day,
-            hour,
-            minute,
-            second,
-            millisecond,
-        } = self.civil();
-
-        format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millisecond:03}")
+        format!("{day}.jsonl")
     }
 }
 
@@ -815,7 +769,7 @@ impl AuditRecord {
         let chain = self.chain().map(|family| text(family.as_str()));
 
         let mut record = Map::new();
-        record.insert("ts", text(&format!("{}Z", self.at.text())));
+        record.insert("ts", text(&self.at.instant.to_rfc3339_millis()));
         record.insert("family", text(self.family.as_str()));
         record.insert("sandbox_id", optional(sandbox, SandboxName::as_str));
         record.insert("sandbox_id_trusted", Value::Bool(trusted));
@@ -988,7 +942,7 @@ impl UnidentifiedRecord {
         // This log writes the time with an offset, and the audit record v2
         // writes it with `Z`. The Python chaperone does the same.
         let mut record = Map::new();
-        record.insert("ts", text(&format!("{}+00:00", self.at.text())));
+        record.insert("ts", text(&self.at.instant.to_rfc3339_millis_plus_00_00()));
         match &self.request {
             UnidentifiedRequest::NoFamily {
                 action,
@@ -1030,6 +984,11 @@ mod tests {
 
     const GATE: &str = "0123456789abcdef";
     const OTHER_GATE: &str = "fedcba9876543210";
+
+    /// The last millisecond of the year 9999, in milliseconds after the
+    /// epoch. The tests write the value as a number. A range of the one time
+    /// type that moves then fails a test.
+    const UNIX_MS_MAX: u64 = 253_402_300_799_999;
 
     fn at(unix_ms: u64) -> AuditTime {
         AuditTime::from_unix_ms(unix_ms).unwrap()
@@ -1127,7 +1086,13 @@ mod tests {
             ),
             (UNIX_MS_MAX, "9999-12-31T23:59:59.999", "9999-12-31.jsonl"),
         ] {
-            assert_eq!(at(unix_ms).text(), text);
+            let instant = at(unix_ms).instant;
+
+            assert_eq!(instant.to_rfc3339_millis(), format!("{text}Z"));
+            assert_eq!(
+                instant.to_rfc3339_millis_plus_00_00(),
+                format!("{text}+00:00")
+            );
             assert_eq!(at(unix_ms).file_name(), file);
             assert_eq!(at(unix_ms).unix_ms(), unix_ms);
         }
@@ -1149,9 +1114,17 @@ mod tests {
             AuditTime::try_from(late),
             Err(AuditTimeError::AfterYear9999)
         );
+        for after in [UNIX_MS_MAX + 1, i64::MAX.unsigned_abs(), u64::MAX] {
+            assert_eq!(
+                AuditTime::from_unix_ms(after),
+                Err(AuditTimeError::AfterYear9999),
+                "{after}"
+            );
+        }
+
         assert_eq!(
-            AuditTime::from_unix_ms(UNIX_MS_MAX + 1),
-            Err(AuditTimeError::AfterYear9999)
+            at(UNIX_MS_MAX).instant.to_rfc3339_millis(),
+            Timestamp::MAX.to_rfc3339_millis()
         );
         assert_eq!(
             AuditTimeError::BeforeEpoch.to_string(),

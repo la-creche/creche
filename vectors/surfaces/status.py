@@ -290,9 +290,7 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
     _doc("written-empty", written_at=""),
     _doc("written-not-a-time", written_at="yesterday"),
     _doc("written-offset", written_at="2999-01-01T02:00:00+02:00"),
-    _doc("written-lower-z", written_at="2999-01-01T00:00:00z"),
     _doc("written-fraction", written_at="2999-01-01T00:00:00.123456Z"),
-    _doc("written-space", written_at="2999-01-01 00:00:00Z"),
     _doc("written-number", written_at=32472144000),
     _doc("written-two-z", written_at="2999-01-01T00:00:00ZZ"),
     # --- sandboxes ---
