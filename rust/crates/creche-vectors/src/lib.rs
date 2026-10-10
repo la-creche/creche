@@ -1093,8 +1093,12 @@ pub fn surface(name: &str) -> Result<Surface, VectorsError> {
 // rules do not say what a crate below `creche-contracts` does. The reading
 // here: the raw types of the index hold the rules of a strict text,
 // `is_digest` holds the form of a digest, and `ObjectOnly` does what
-// `slot::MapOnly` does. A change costs one helper in `creche-util` for the
-// digest, and a `serde` dependency there for the adapter.
+// `slot::MapOnly` does. `is_digest` is thus a second copy of a grammar of
+// `ids`, against rule 13. One change removes it: `creche-util` gets a reader
+// of the hex text that its `hex::lower` writes, and `ids` and this crate
+// call that reader. That change needs the owner of `creche-contracts`, and
+// no packet has it yet. The adapter needs a `serde` dependency in
+// `creche-util`, and that crate takes none.
 fn index_of(text: &str) -> Result<Vec<IndexRow>, VectorsError> {
     let refused = |reason: String| VectorsError::new(INDEX_FILE, reason);
     // The index holds no secret, and the message of `serde` names the field.
@@ -1165,6 +1169,11 @@ fn surface_of(row: &IndexRow, text: &str) -> Result<Surface, VectorsError> {
             row.vectors
         )));
     }
+    // CONTRACT-QUESTION: `vectors/README.md`, "The vector file", gives the
+    // list `vectors` no least count, and the generator can write a file
+    // with no vector. The reading here: the reader refuses such a file,
+    // because a test that walks it compares nothing. A change costs this
+    // check and one test.
     if raw.vectors.is_empty() {
         return Err(refused(String::from("the file holds no vector")));
     }

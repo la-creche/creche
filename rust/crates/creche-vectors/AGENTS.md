@@ -8,9 +8,10 @@ A vector is one input and what the Python implementation did with it.
 `vectors/README.md` holds the file format. `rust/AGENTS.md`, "The
 differential test", says how a test uses the reader.
 
-No release holds this crate. Add it to a crate only under
-`[dev-dependencies]`. `creche-testkit` gives each item of this crate to its
-users as `creche_testkit::vectors`.
+No release holds this crate. A crate that a release holds takes this crate
+only under `[dev-dependencies]`. `creche-testkit` takes it under
+`[dependencies]`, because it gives each item of this crate to its users as
+`creche_testkit::vectors`.
 
 ## Layout
 
@@ -68,6 +69,16 @@ Each rule has its reason.
    repository root.
    Reason: the gate runs cargo only for a change under `rust/` or
    `vectors/` (`rust/AGENTS.md`, "Tests").
+10. **Give each raw type of the index fields of four kinds only.** The
+    kinds are a text, an integer with no sign, the map type `RawFrozen` and
+    a list of closed raw structs. Before you add a field of another kind,
+    add rows to the refusal table of the index. Add one row for each rule of
+    a strict text that the new field can break. Four such rules are a key
+    two times, a lone surrogate, the nesting depth and the integer range.
+    Reason: this crate calls no strict reader, so the raw types hold the
+    rules of `rust/AGENTS.md`, "JSON", for the index. A field of another
+    kind can take a text that is not strict. For example, a `Value` and a
+    plain map keep the last value of a key that an object holds two times.
 
 The reader has no Python origin. `vectors/core.py` and `vectors/generate.py`
 write the files that it reads. The doc comment of each reader function names
@@ -100,24 +111,38 @@ its writer.
   out of this one. The rules do not say what this crate does then. The
   reader takes this reading:
   1. The raw types of the index refuse each text that is not strict JSON.
-     The doc comment of the crate says how.
+     The doc comment of the crate says how. Rule 10 above keeps them so.
   2. `is_digest` holds the form of a digest of the index. It is a second
-     copy of the grammar of `ids::Sha256Hex`. A test holds `is_digest` equal
-     to each vector of the surfaces `id.sha256_hex.*`. The test of `ids`
-     holds that type equal to the same vectors.
+     copy of the grammar of `ids::Sha256Hex`, so it breaks rule 13 of
+     `rust/AGENTS.md`. A test holds `is_digest` equal to each vector of the
+     surfaces `id.sha256_hex.*`. The test of `ids` holds that type equal to
+     the same vectors.
   3. `ObjectOnly` does what `slot::MapOnly` of `creche-contracts` does. That
      type is private to its crate.
 
-  A change costs one helper in `creche-util` for the digest, and a `serde`
-  dependency there for the adapter. Rule 4 of `crates/creche-util/AGENTS.md`
-  permits no dependency today.
+  One change removes the copy of point 2. `creche-util` gets a reader of the
+  hex text that its `hex::lower` writes for a digest of `sha256`. `ids` and
+  this crate then call that reader. `rust/AGENTS.md`, "Where a new type
+  goes", asks for the owner of `creche-contracts` before a change to `ids`.
+  No packet has this change yet. The pull request of that change deletes
+  `is_digest`, its test and point 2. The adapter of point 3 needs `serde`,
+  and rule 4 of `crates/creche-util/AGENTS.md` permits no dependency there.
+- This `CONTRACT-QUESTION` comment is open in `src/lib.rs`:
+  `vectors/README.md`, "The vector file", gives the list `vectors` no least
+  count. The generator refuses no surface that has no case, so it can write
+  a file with no vector. `surface` refuses such a file, because a test that
+  walks it compares nothing. When a committed file holds no vector, the walk
+  of the committed files fails in the `rust` job. `vectors/README.md` does
+  not name the rule yet. No packet has that part yet. A change costs one
+  check and one test.
 - The reader holds a base64 decoder of its own. The workspace has more than
   one. Packet `decisions-util-runtime` moves them to `creche-util`.
 - In three places of a vector file, the reader does not refuse a key that
   an object holds two times. `serde_json` keeps the last value of such a
   key there. The reader refuses such a key in each other object of each
   file. The generator writes no such object, and `vectors/tests` holds each
-  committed file equal to the generator or to its digest. The three places
+  committed file equal to the generator or to its digest. No packet makes
+  the reader refuse such a key in the three places yet. The three places
   are:
   1. The `context` of a file, and each object below it.
   2. The named arguments of an `args` input, and each object below them.

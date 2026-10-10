@@ -1534,7 +1534,10 @@ To make the fifth check on your machine, for example before a merge:
     still open. No packet has that part yet.
   - Vector reader. `vectors/data` needs a single reader. The owner still
     has to confirm this. Three readers exist today. Packet
-    `decisions-vectors-crate` reduces them to one.
+    `decisions-vectors-crate` reduces them to one. Against rule 13, the
+    crate `creche-vectors` holds a second copy of the digest grammar of
+    `ids`. "Known gaps" of `crates/creche-vectors/AGENTS.md` has the cause
+    and the change that removes the copy. No packet has that part yet.
   - Tables of differences. Some tests still have one. Add no table and no
     row. The packets `decisions-tables-*`, `decisions-ids` and
     `decisions-runtime-tables` delete them.
