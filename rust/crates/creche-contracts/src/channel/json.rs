@@ -18,7 +18,7 @@ use std::fmt;
 use std::mem;
 
 use super::number::{Integer, IntegerError};
-use super::text::{Text, TextBuilder};
+use super::text::{LONE_SURROGATE_BYTES, Text, TextBuilder};
 
 /// The deepest nesting of objects and arrays that the reader accepts in one
 /// line.
@@ -927,10 +927,6 @@ pub(super) fn array_text<'a>(items: impl Iterator<Item = &'a str>) -> String {
 
 /// The count of bytes of the two quotes of one JSON string.
 const QUOTES_BYTES: usize = 2;
-
-/// The count of bytes of one lone surrogate, as the `surrogatepass` handler
-/// of Python encodes it.
-const LONE_SURROGATE_BYTES: usize = 3;
 
 /// The count of bytes that [`write_string`] writes for `character`.
 fn char_size(character: char) -> usize {

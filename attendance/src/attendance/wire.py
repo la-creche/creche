@@ -40,9 +40,9 @@ MAX_LOG_BYTES = 4_096
 MAX_EVENT_DEPTH = 64
 
 # Contract 03 §8. The playpen caps an entry's text at 64 KiB and an answer
-# at 64 entries. The host re-checks both, in characters for the text, because
-# a cap that only one side enforces is not a cap (invariant 12).
-MAX_ENTRY_CHARS = 65_536
+# at 64 entries. The host re-checks both, because a cap that only one side
+# enforces is not a cap (invariant 12).
+MAX_ENTRY_BYTES = 65_536
 MAX_ENTRIES_PER_READ = 64
 
 # A reason name from the sandbox is one word on the wire. The cap is here
@@ -80,6 +80,11 @@ _UNKNOWN_EVENT_TYPE = "unknown"
 # The error handler that encodes one half of a surrogate pair as its three
 # bytes. A count of bytes then has a value for each text.
 _KEEP_HALF_PAIRS = "surrogatepass"
+
+# A byte of UTF-8 with the bits `10xxxxxx` is not the first byte of a
+# character.
+_CONTINUATION_MASK = 0xC0
+_CONTINUATION_BITS = 0x80
 
 
 class HostType(StrEnum):
@@ -518,7 +523,7 @@ def _parse_opened(record: dict[str, Any]) -> OpenedLine | Refusal:
         session=session,
         resident=record.get("resident") is True,
         reason=_short_text(record.get("reason")),
-        message=(_text(record.get("message")) or "")[:MAX_LOG_BYTES],
+        message=cut_bytes(_text(record.get("message")) or "", MAX_LOG_BYTES),
     )
 
 
@@ -561,7 +566,11 @@ def _entry_list(raw: list[object]) -> list[PiEntry]:
 
         text = _text(record.get("text")) or ""
         found.append(
-            PiEntry(id=entry_id, role=_text(record.get("role")) or "", text=text[:MAX_ENTRY_CHARS])
+            PiEntry(
+                id=entry_id,
+                role=_text(record.get("role")) or "",
+                text=cut_bytes(text, MAX_ENTRY_BYTES),
+            )
         )
 
     return found
@@ -578,7 +587,7 @@ def _parse_fatal(record: dict[str, Any]) -> FatalLine:
 
     return FatalLine(
         reason=reason,
-        message=(_text(record.get("message")) or "")[:MAX_LOG_BYTES],
+        message=cut_bytes(_text(record.get("message")) or "", MAX_LOG_BYTES),
     )
 
 
@@ -606,7 +615,7 @@ def _parse_log(record: dict[str, Any]) -> LogLine:
 
     return LogLine(
         level=_text(record.get("level")) or "info",
-        message=message[:MAX_LOG_BYTES],
+        message=cut_bytes(message, MAX_LOG_BYTES),
         session=_text(record.get("session")),
     )
 
@@ -675,7 +684,7 @@ def _parse_turn_line(
         turn=turn,
         turn_seq=turn_seq,
         reason=reason,
-        message=(_text(record.get("message")) or "")[:MAX_LOG_BYTES],
+        message=cut_bytes(_text(record.get("message")) or "", MAX_LOG_BYTES),
     )
 
 
@@ -721,6 +730,32 @@ def _utf8_size(text: str) -> tuple[int, bool]:
         return len(text.encode("utf-8")), True
     except UnicodeEncodeError:
         return len(text.encode("utf-8", _KEEP_HALF_PAIRS)), False
+
+
+def cut_bytes(text: str, cap: int) -> str:
+    """The longest start of `text` that has at most `cap` bytes of UTF-8.
+
+    Contract 03 §8 gives each cap of a text in bytes. The cut is between two
+    characters, so the result holds no part of a character. A text that fits
+    is returned as it is.
+
+    CONTRACT-QUESTION: §8 counts bytes and does not say what one half of a
+    surrogate pair counts. Such a half has no UTF-8 form. It counts as three
+    bytes here, as in `_utf8_size`, and it stays in the text: the reading
+    that changes no character of a text. The other reading puts U+FFFD in
+    the place of the half. A change costs one step of this function.
+    """
+    data = text.encode("utf-8", _KEEP_HALF_PAIRS)
+
+    if len(data) <= cap:
+        return text
+
+    end = max(cap, 0)
+
+    while end > 0 and (data[end] & _CONTINUATION_MASK) == _CONTINUATION_BITS:
+        end -= 1
+
+    return data[:end].decode("utf-8", _KEEP_HALF_PAIRS)
 
 
 def _nests_past(event: dict[str, Any], limit: int) -> bool:
@@ -944,7 +979,7 @@ def _text(value: object) -> str | None:
 
 def _short_text(value: object, cap: int = MAX_REASON_BYTES) -> str | None:
     """A name from the sandbox. Capped, because it is untrusted (§13 rule 1)."""
-    return value[:cap] if isinstance(value, str) else None
+    return cut_bytes(value, cap) if isinstance(value, str) else None
 
 
 def _count(value: object, fallback: int) -> int:

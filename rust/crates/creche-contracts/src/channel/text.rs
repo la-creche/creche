@@ -7,6 +7,13 @@
 use std::borrow::Cow;
 use std::fmt;
 
+/// The count of bytes of one lone surrogate, as the `surrogatepass` handler
+/// of Python encodes it.
+pub(super) const LONE_SURROGATE_BYTES: usize = 3;
+
+/// The count of UTF-16 code units of one lone surrogate.
+const LONE_SURROGATE_UNITS: usize = 1;
+
 /// A text that the sandbox wrote. It is a claim, and it can hold a lone
 /// surrogate (contract 03 §13).
 ///
@@ -91,24 +98,39 @@ impl Text {
         }
     }
 
-    /// The first `count` code points of the text. A lone surrogate is one
-    /// code point, as in a Python `str`.
-    pub(super) fn truncated(&self, count: usize) -> Self {
-        match &self.0 {
-            Repr::Str(text) => Self(Repr::Str(text.chars().take(count).collect())),
-            Repr::Units(units) => {
-                let mut kept = Vec::new();
-                let mut buffer = [0_u16; 2];
-                for point in char::decode_utf16(units.iter().copied()).take(count) {
-                    match point {
-                        Ok(character) => {
-                            kept.extend_from_slice(character.encode_utf16(&mut buffer))
-                        }
-                        Err(lone) => kept.push(lone.unpaired_surrogate()),
+    /// The longest start of the text that has `max` bytes of UTF-8 at most
+    /// (contract 03 §8). The cut is between two characters, so the result
+    /// holds no part of a character.
+    // CONTRACT-QUESTION: contract 03 §8 gives each cap of a text in bytes and
+    // does not say what a lone surrogate counts. A lone surrogate has no
+    // UTF-8 form. It counts as `LONE_SURROGATE_BYTES` here and stays in the
+    // text, as in the Python host. A change costs one arm of this function.
+    pub(super) fn cut_bytes(self, max: usize) -> Self {
+        match self.0 {
+            Repr::Str(mut text) => {
+                text.truncate(text.floor_char_boundary(max));
+
+                Self(Repr::Str(text))
+            }
+            Repr::Units(mut units) => {
+                let mut bytes = 0_usize;
+                let mut end = 0_usize;
+                for point in char::decode_utf16(units.iter().copied()) {
+                    let (size, width) = match point {
+                        Ok(character) => (character.len_utf8(), character.len_utf16()),
+                        Err(_) => (LONE_SURROGATE_BYTES, LONE_SURROGATE_UNITS),
+                    };
+                    bytes = bytes.saturating_add(size);
+                    if bytes > max {
+                        break;
                     }
+
+                    end = end.saturating_add(width);
                 }
 
-                Self::from_units(kept)
+                units.truncate(end);
+
+                Self::from_units(units)
             }
         }
     }
@@ -250,22 +272,52 @@ mod tests {
     }
 
     #[test]
-    fn a_cut_counts_code_points() {
-        let text = Text::from("a\u{1f600}b");
+    fn a_cut_counts_bytes_and_ends_between_two_characters() {
+        let text = Text::from("a\u{e9}\u{20ac}\u{1f600}b");
+        let cuts = [
+            (0, ""),
+            (1, "a"),
+            (2, "a"),
+            (3, "a\u{e9}"),
+            (5, "a\u{e9}"),
+            (6, "a\u{e9}\u{20ac}"),
+            (9, "a\u{e9}\u{20ac}"),
+            (10, "a\u{e9}\u{20ac}\u{1f600}"),
+            (11, "a\u{e9}\u{20ac}\u{1f600}b"),
+            (usize::MAX, "a\u{e9}\u{20ac}\u{1f600}b"),
+        ];
 
-        assert_eq!(text.truncated(0), "");
-        assert_eq!(text.truncated(2), "a\u{1f600}");
-        assert_eq!(text.truncated(9), "a\u{1f600}b");
+        for (max, kept) in cuts {
+            assert_eq!(text.clone().cut_bytes(max), kept, "{max}");
+        }
     }
 
     #[test]
-    fn a_cut_counts_a_lone_surrogate_as_one_code_point() {
+    fn a_cut_counts_a_lone_surrogate_as_three_bytes() {
         let text = Text::from_units(vec![0x61, HIGH, HIGH, LOW, 0x62]);
+        let cuts = [
+            (0, vec![]),
+            (1, vec![0x61]),
+            (3, vec![0x61]),
+            (4, vec![0x61, HIGH]),
+            (7, vec![0x61, HIGH]),
+            (8, vec![0x61, HIGH, HIGH, LOW]),
+            (9, vec![0x61, HIGH, HIGH, LOW, 0x62]),
+            (usize::MAX, vec![0x61, HIGH, HIGH, LOW, 0x62]),
+        ];
 
-        assert_eq!(text.truncated(1), "a");
-        assert_eq!(text.truncated(2).to_utf16(), vec![0x61, HIGH]);
-        assert_eq!(text.truncated(3).to_utf16(), vec![0x61, HIGH, HIGH, LOW]);
-        assert_eq!(text.truncated(4), text);
+        for (max, kept) in cuts {
+            assert_eq!(text.clone().cut_bytes(max).to_utf16(), kept, "{max}");
+        }
+    }
+
+    #[test]
+    fn a_cut_that_drops_each_lone_surrogate_gives_a_str() {
+        let text = Text::from_units(vec![0x61, 0xe9, HIGH]);
+
+        assert_eq!(text.clone().cut_bytes(5).as_str(), Some("a\u{e9}"));
+        assert_eq!(text.clone().cut_bytes(6).as_str(), None);
+        assert_eq!(text.clone().cut_bytes(5), Text::from("a\u{e9}"));
     }
 
     #[test]

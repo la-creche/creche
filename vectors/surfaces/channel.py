@@ -555,7 +555,7 @@ LINES: Final[tuple[Line, ...]] = (
                 '"entries":[{"id":"e-1","role":"user","text":"',
                 1,
             ),
-            ("a", wire.MAX_ENTRY_CHARS - 1),
+            ("a", wire.MAX_ENTRY_BYTES - 1),
             ("\u00e9\u00e9", 1),
             ('"}]}', 1),
         ),

@@ -12,10 +12,12 @@
 use std::error::Error;
 use std::fmt;
 
+use super::MAX_LOG_BYTES;
 use super::frame::Refusal;
 use super::host::ProcessCap;
 use super::json::{self, Dialect, Json, JsonObject, ReadError};
 use super::number::{Cost, Count, Integer, TurnSeq};
+use super::playpen::MAX_ENTRY_BYTES;
 use super::text::Text;
 use super::vocabulary::{
     Cap, ExitReason, FailReason, LogLevel, OpenReason, PlaypenType, Role, Word,
@@ -34,25 +36,13 @@ pub const MAX_EVENT_BYTES: usize = 262_144;
 // refuse the line costs the turn: a refused line leaves a gap in `turn_seq`.
 pub const MAX_EVENT_DEPTH: usize = 64;
 
-/// The largest count of code points that the host keeps of one free text of
-/// a line: a `message`.
-// CONTRACT-QUESTION: contract 03 §8 caps a `log` message at 4 KiB, which is a
-// count of bytes. The Python host cuts at 4096 code points, which can be
-// 16 KiB of UTF-8. This reader cuts where the Python host cuts.
-pub const MAX_LOG_CHARS: usize = 4096;
-
-/// The largest count of code points that the host keeps of the text of one
-/// entry (contract 03 §8, `MAX_ENTRY_BYTES`). The Python host counts code
-/// points here too.
-pub const MAX_ENTRY_CHARS: usize = 65_536;
-
 /// The largest count of entries that the host reads from one `entries`
 /// answer (contract 03 §8).
 pub const MAX_ENTRIES_PER_READ: usize = 64;
 
-/// The largest count of code points that the host keeps of one reason name
-/// that it does not match against a table.
-pub const MAX_REASON_CHARS: usize = 64;
+/// The largest count of bytes of UTF-8 that the host keeps of one reason
+/// name that it does not match against a table.
+pub const MAX_REASON_BYTES: usize = 64;
 
 /// The count of resident processes that the host assumes when `ready` gives
 /// no valid one (contract 03 §6 rule 8).
@@ -561,13 +551,13 @@ impl OpenedLine {
         self.resident
     }
 
-    /// Why no process is resident. At most [`MAX_REASON_CHARS`] code points.
+    /// Why no process is resident. At most [`MAX_REASON_BYTES`] bytes.
     #[must_use]
     pub fn reason(&self) -> Option<&Claimed<OpenReason>> {
         self.reason.as_ref()
     }
 
-    /// Free text. At most [`MAX_LOG_CHARS`] code points.
+    /// Free text. At most [`MAX_LOG_BYTES`] bytes.
     #[must_use]
     pub fn message(&self) -> &Text {
         &self.message
@@ -756,7 +746,7 @@ impl FailedLine {
         self.reason
     }
 
-    /// Free text. At most [`MAX_LOG_CHARS`] code points.
+    /// Free text. At most [`MAX_LOG_BYTES`] bytes.
     #[must_use]
     pub fn message(&self) -> &Text {
         &self.message
@@ -884,7 +874,7 @@ impl LogLine {
         &self.level
     }
 
-    /// The text. At most [`MAX_LOG_CHARS`] code points.
+    /// The text. At most [`MAX_LOG_BYTES`] bytes.
     #[must_use]
     pub fn message(&self) -> &Text {
         &self.message
@@ -940,7 +930,7 @@ impl PiEntry {
         &self.role
     }
 
-    /// The text of the entry. At most [`MAX_ENTRY_CHARS`] code points.
+    /// The text of the entry. At most [`MAX_ENTRY_BYTES`] bytes.
     #[must_use]
     pub fn text(&self) -> &Text {
         &self.text
@@ -1022,8 +1012,7 @@ impl EntriesLine {
         self.leaf_id.as_ref()
     }
 
-    /// Why the playpen refused the read. At most [`MAX_REASON_CHARS`] code
-    /// points.
+    /// Why the playpen refused the read. At most [`MAX_REASON_BYTES`] bytes.
     #[must_use]
     pub fn reason(&self) -> Option<&Claimed<FailReason>> {
         self.reason.as_ref()
@@ -1063,7 +1052,7 @@ impl FatalLine {
         self.reason
     }
 
-    /// Free text. At most [`MAX_LOG_CHARS`] code points.
+    /// Free text. At most [`MAX_LOG_BYTES`] bytes.
     #[must_use]
     pub fn message(&self) -> &Text {
         &self.message
@@ -1163,14 +1152,14 @@ fn text_or_empty(record: &JsonObject, key: &str) -> Text {
     text_of(record, key).unwrap_or_else(Text::empty)
 }
 
-/// The free text of the field `message`, cut at [`MAX_LOG_CHARS`].
+/// The free text of the field `message`, cut at [`MAX_LOG_BYTES`].
 fn message_of(record: &JsonObject) -> Text {
-    text_or_empty(record, "message").truncated(MAX_LOG_CHARS)
+    text_or_empty(record, "message").cut_bytes(MAX_LOG_BYTES)
 }
 
-/// The field `key` when it is a text, cut at [`MAX_REASON_CHARS`].
+/// The field `key` when it is a text, cut at [`MAX_REASON_BYTES`].
 fn short_text(record: &JsonObject, key: &str) -> Option<Text> {
-    text_of(record, key).map(|text| text.truncated(MAX_REASON_CHARS))
+    text_of(record, key).map(|text| text.cut_bytes(MAX_REASON_BYTES))
 }
 
 /// Whether the field `key` is `true`. Each other value is not, also 1.
@@ -1326,7 +1315,7 @@ fn entry(item: &Json) -> Option<PiEntry> {
     Some(PiEntry {
         id: text_of(record, "id")?,
         role: Claimed::of(text_or_empty(record, "role")),
-        text: text_or_empty(record, "text").truncated(MAX_ENTRY_CHARS),
+        text: text_or_empty(record, "text").cut_bytes(MAX_ENTRY_BYTES),
     })
 }
 
@@ -1808,6 +1797,88 @@ pub(super) mod tests {
             Err(Refusal::UnknownType)
         );
         assert_eq!(event_refusal(r#"{"text":"\ud83d\ude00"}"#), None);
+    }
+
+    #[test]
+    fn each_cut_of_a_text_counts_bytes_of_utf8() {
+        let wide = |count: usize| Text::from("\u{e9}".repeat(count));
+        let long = "\u{e9}".repeat(MAX_LOG_BYTES);
+        let name = "\u{e9}".repeat(MAX_REASON_BYTES);
+        let entry_text = "\u{e9}".repeat(MAX_ENTRY_BYTES);
+
+        let PlaypenLine::Opened(opened) = line(&format!(
+            r#"{{"type":"session_opened","session":"s","reason":"{name}","message":"{long}"}}"#
+        )) else {
+            panic!("no opened line");
+        };
+        let PlaypenLine::Failed(failed) = line(&format!(
+            r#"{{"type":"turn_failed","session":"s","turn":"t","turn_seq":1,"reason":"internal","message":"{long}"}}"#
+        )) else {
+            panic!("no failed line");
+        };
+        let PlaypenLine::Log(log) = line(&format!(r#"{{"type":"log","message":"{long}"}}"#)) else {
+            panic!("no log line");
+        };
+        let PlaypenLine::Fatal(fatal) = line(&format!(r#"{{"type":"fatal","message":"{long}"}}"#))
+        else {
+            panic!("no fatal line");
+        };
+        let PlaypenLine::Entries(entries) = line(&format!(
+            r#"{{"type":"entries","request":"r","session":"s","reason":"{name}","entries":[{{"id":"e","text":"{entry_text}"}}]}}"#
+        )) else {
+            panic!("no entries line");
+        };
+
+        assert_eq!(opened.message(), &wide(MAX_LOG_BYTES / 2));
+        assert_eq!(failed.message(), &wide(MAX_LOG_BYTES / 2));
+        assert_eq!(log.message(), &wide(MAX_LOG_BYTES / 2));
+        assert_eq!(fatal.message(), &wide(MAX_LOG_BYTES / 2));
+        assert_eq!(
+            opened.reason().map(Claimed::to_text),
+            Some(wide(MAX_REASON_BYTES / 2))
+        );
+        assert_eq!(
+            entries.reason().map(Claimed::to_text),
+            Some(wide(MAX_REASON_BYTES / 2))
+        );
+        assert_eq!(entries.entries()[0].text(), &wide(MAX_ENTRY_BYTES / 2));
+    }
+
+    #[test]
+    fn a_cut_drops_the_character_that_passes_the_cap() {
+        let fill = "m".repeat(MAX_LOG_BYTES - 1);
+        let message = |tail: &str| {
+            let text = format!(r#"{{"type":"log","message":"{fill}{tail}"}}"#);
+            let PlaypenLine::Log(log) = line(&text) else {
+                panic!("no log line");
+            };
+
+            log.message().clone()
+        };
+
+        // One character of two, of three and of four bytes, and a lone
+        // surrogate, which counts as three bytes.
+        for tail in ["\u{e9}", "\u{20ac}", "\u{1f600}", r"\ud83d"] {
+            assert_eq!(message(tail), fill.as_str(), "{tail}");
+        }
+
+        assert_eq!(message("m"), format!("{fill}m").as_str());
+        assert_eq!(message("mm"), format!("{fill}m").as_str());
+    }
+
+    #[test]
+    fn a_lone_surrogate_under_the_cap_stays_in_a_cut_text() {
+        let fill = "m".repeat(MAX_LOG_BYTES - 3);
+        let PlaypenLine::Log(log) = line(&format!(
+            r#"{{"type":"log","message":"{fill}\ud83d\ud83d"}}"#
+        )) else {
+            panic!("no log line");
+        };
+        let mut kept: Vec<u16> = fill.encode_utf16().collect();
+        kept.push(0xd83d);
+
+        assert_eq!(log.message().as_str(), None);
+        assert_eq!(log.message().to_utf16(), kept);
     }
 
     #[test]
