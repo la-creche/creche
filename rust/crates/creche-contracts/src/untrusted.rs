@@ -1820,6 +1820,129 @@ mod tests {
         }
     }
 
+    // --- the inputs that left the vectors ---
+
+    /// A cap above the size of each input of the three tests below.
+    const SAMPLE_CAP: json::ByteCap = json::ByteCap::new(1024);
+
+    /// The rule of the strict reader of this crate that one text breaks.
+    fn rule_against(text: &str) -> json::Rule {
+        json::check(text.as_bytes(), SAMPLE_CAP).unwrap_err().rule()
+    }
+
+    /// Whether each field reader gives the error of the deserializer for
+    /// one JSON text.
+    fn each_reader_refuses(value: &str) -> bool {
+        direct(value, |reader| text(reader)).is_err()
+            && direct(value, |reader| int(reader)).is_err()
+            && direct(value, |reader| number(reader)).is_err()
+            && direct(value, |reader| flag(reader)).is_err()
+            && direct(value, |reader| object::<_, Part>(reader)).is_err()
+            && direct(value, |reader| block::<_, Part>(reader)).is_err()
+            && direct(value, |reader| list::<_, String>(reader)).is_err()
+            && direct(value, |reader| list_first::<2, _, String>(reader)).is_err()
+    }
+
+    /// Six inputs that left each surface `runtime.untrusted.*`, with the id
+    /// that each one had there. None is strict JSON: the strict reader of
+    /// this crate refuses each one for the rule of its row. A Python helper
+    /// got the value that `json.loads` reads from such a text, and it gave a
+    /// value for it. Each reader of this module refuses the text, alone and
+    /// as a member of an object.
+    #[test]
+    fn six_inputs_that_left_the_vectors_are_no_json_for_each_reader() {
+        let digits_400 = "9".repeat(400);
+        let inputs = [
+            ("float-nan", "NaN", json::Rule::Constant),
+            ("float-infinity", "Infinity", json::Rule::Constant),
+            ("float-negative-infinity", "-Infinity", json::Rule::Constant),
+            ("float-too-large", "1e400", json::Rule::FloatRange),
+            (
+                "integer-400-digits",
+                digits_400.as_str(),
+                json::Rule::IntegerRange,
+            ),
+            (
+                "string-lone-surrogate",
+                r#""\ud800""#,
+                json::Rule::LoneSurrogate,
+            ),
+        ];
+
+        for (id, value, rule) in inputs {
+            let document = each_field_is(value);
+
+            assert_eq!(rule_against(value), rule, "{id}");
+            assert!(each_reader_refuses(value), "{id}");
+            assert_eq!(
+                parse_object::<Each>(&document),
+                Err(NotAnObject::NotJson),
+                "{id}"
+            );
+        }
+    }
+
+    /// Three more inputs that left those surfaces: an integer outside the
+    /// range of 64 bits. The strict reader of this crate refuses each one.
+    /// `serde_json` reads such an integer as the nearest float. `number`
+    /// gives that float, as `number` of the noticeboard does. Each other
+    /// reader gives its empty value. `field_int` of the terminal door and
+    /// `integer` of the noticeboard keep each digit of the integer.
+    #[test]
+    fn three_integers_that_left_the_vectors_read_as_a_float() {
+        let inputs = [
+            (
+                "integer-i64-min-minus-one",
+                "-9223372036854775809",
+                -9_223_372_036_854_775_808.0_f64,
+            ),
+            (
+                "integer-u64-max-plus-one",
+                "18446744073709551616",
+                18_446_744_073_709_551_616.0_f64,
+            ),
+            (
+                "integer-30-digits",
+                "123456789012345678901234567890",
+                1.234_567_890_123_456_8e29_f64,
+            ),
+        ];
+
+        for (id, value, float) in inputs {
+            let wanted = Each {
+                number: Some(float),
+                ..Each::default()
+            };
+
+            assert_eq!(rule_against(value), json::Rule::IntegerRange, "{id}");
+            assert_eq!(
+                parse_object::<Each>(&each_field_is(value)),
+                Ok(wanted),
+                "{id}"
+            );
+        }
+    }
+
+    /// The tenth input that left those surfaces, `key-two-times`: an object
+    /// with its key two times. The strict reader of this crate refuses it.
+    /// `parse_object` keeps the last value of the key, as `json.loads` does,
+    /// so a reader of the field gets that value.
+    #[test]
+    fn a_key_two_times_left_the_vectors_and_reads_as_its_last_value() {
+        /// A raw type with the one field of the input.
+        #[derive(Deserialize)]
+        struct OneField {
+            #[serde(default, deserialize_with = "text")]
+            field: String,
+        }
+
+        let twice = r#"{"field":"first","field":"last"}"#;
+        let read: OneField = parse_object(twice.as_bytes()).unwrap();
+
+        assert_eq!(rule_against(twice), json::Rule::DuplicateKey);
+        assert_eq!(read.field, "last");
+    }
+
     // --- the tree of one value ---
 
     fn tree(input: &str) -> Json {
@@ -2783,19 +2906,15 @@ mod tests {
         /// The surfaces that a decision holds for.
         #[derive(Debug, Clone, Copy)]
         enum Surfaces {
-            /// Each surface of a field reader: each row of `SURFACES` with the
-            /// prefix `READERS`.
-            EachReader,
             /// These surfaces.
             Named(&'static [&'static str]),
         }
 
         impl Surfaces {
             fn hold(self, surface: &str) -> bool {
-                match self {
-                    Self::EachReader => surface.starts_with(READERS),
-                    Self::Named(names) => names.contains(&surface),
-                }
+                let Self::Named(names) = self;
+
+                names.contains(&surface)
             }
         }
 
@@ -2838,21 +2957,11 @@ mod tests {
         /// The surface of the reader of a whole document.
         const DOCUMENT: &[&str] = &["runtime.parse_object.noticeboard"];
 
-        /// The two surfaces of a reader of a whole number.
-        const INTEGERS: &[&str] = &[
-            "runtime.untrusted.door_tui.field_int",
-            "runtime.untrusted.noticeboard.integer",
-        ];
-
         const STRICT_JSON: &str = "contract 02 §3 rule 3";
 
         const NOT_FINITE: &str = "The contract says that a body is JSON. JSON has no word for a \
             number that is not finite. json.loads of Python reads NaN, Infinity and -Infinity. \
             The Rust reader is serde_json, which refuses the text.";
-
-        const PAST_A_FLOAT: &str = "The contract says that a body is JSON and gives a number no \
-            range. Python reads 1e400 as infinity and keeps an integer of 400 digits. serde_json \
-            refuses a text with a number outside the range of a float.";
 
         const LONE_SURROGATE: &str = "The contract says that a body is JSON. Python keeps one \
             half of a surrogate pair in a text, from an escape or from its bytes. A Rust text \
@@ -2879,10 +2988,6 @@ mod tests {
         const DEPTH_LIMIT: &str = "The contract gives no nesting limit. Python reads a text \
             until the recursion limit of the interpreter, which differs between two versions. \
             serde_json stops at 128 levels.";
-
-        const FITS_64_BITS: &str = "No contract gives a count a range. The Python helper keeps \
-            an integer of each size. serde_json gives an integer outside 64 bits as a float, \
-            and the Rust reader reads a float as 0, the value of a field of a wrong type.";
 
         const PAST_64_BITS_IS_A_FLOAT: &str = "No difference in what the reader accepts. \
             Python keeps each digit of an integer. serde_json gives an integer past 64 bits as \
@@ -2915,43 +3020,6 @@ mod tests {
         /// Each input on which the Rust code differs from the Python code on
         /// purpose. A vector outside this table must be equal.
         const DEVIATIONS: &[Deviation] = &[
-            Deviation {
-                at: At::Vectors(
-                    Surfaces::EachReader,
-                    &["float-nan", "float-infinity", "float-negative-infinity"],
-                ),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: NOT_FINITE,
-            },
-            Deviation {
-                at: At::Vectors(
-                    Surfaces::EachReader,
-                    &["float-too-large", "integer-400-digits"],
-                ),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: PAST_A_FLOAT,
-            },
-            Deviation {
-                at: At::Vectors(Surfaces::EachReader, &["string-lone-surrogate"]),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: LONE_SURROGATE,
-            },
-            Deviation {
-                at: At::Vectors(
-                    Surfaces::Named(INTEGERS),
-                    &[
-                        "integer-i64-min-minus-one",
-                        "integer-u64-max-plus-one",
-                        "integer-30-digits",
-                    ],
-                ),
-                differs: Differs::Gives("0"),
-                contract: "contracts 02, 04 and 05",
-                decision: FITS_64_BITS,
-            },
             Deviation {
                 at: At::Vectors(Surfaces::Named(DOCUMENT), &["nan", "infinity"]),
                 differs: Differs::Refuses,
@@ -3183,7 +3251,6 @@ mod tests {
                             assert!(listed.contains(surface), "{surface}");
                         }
                     }
-                    At::Vectors(Surfaces::EachReader, vectors) => assert!(!vectors.is_empty()),
                     At::Line(line) => {
                         assert!(line.python.contains(".py:"), "{}", line.python);
                     }
