@@ -101,7 +101,20 @@ exec "$@"
 #: `is-enabled` and `show -p Result` are the registry sync's half (check
 #: 5). The defaults are a host that took the cutover and whose last sync
 #: run ended well.
+#:
+#: `list-units` and `show -p ExecMainStatus` are the firing units' half of
+#: check 4. `WD_FIRINGS` holds one word for each instance, in the form
+#: `<unit>=<status of its last run>`. `list-units` prints one line for each
+#: word, in the column form of `--plain --no-legend`.
 SYSTEMCTL_BODY: Final = """case "$*" in
+  *list-units*)
+    for one in ${WD_FIRINGS:-}; do
+      printf '%s loaded failed failed Fire one cron trigger\\n' "${one%%=*}"
+    done ;;
+  *ExecMainStatus*)
+    for one in ${WD_FIRINGS:-}; do
+      case " $* " in *" ${one%%=*} "*) printf '%s\\n' "${one##*=}" ;; esac
+    done ;;
   *is-failed*)
     for one in ${WD_FAILED_UNITS:-}; do
       case "$*" in *"$one"*) exit 0 ;; esac
@@ -757,4 +770,90 @@ def test_an_unknown_argument_is_refused(rig: Rig) -> None:
     done = rig.run("--send-everything")
 
     assert done.returncode == 2
+    assert rig.posts() == []
+
+
+# --- check 4: a firing unit that ended with status 78 -------------------------
+
+FIRING: Final = "creche-trigger@standup.service"
+
+
+def test_check_4_reads_each_firing_unit(rig: Rig) -> None:
+    """The words of the two calls, and one `show` call for each instance."""
+    other = "creche-trigger@ops.service"
+
+    done = rig.run(WD_FIRINGS=f"{FIRING}=0 {other}=0")
+    lines = rig.stub_log.read_text(encoding="utf-8").splitlines()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    listing = "systemctl --user list-units --all --plain --no-legend creche-trigger@*.service"
+    assert lines.count(listing) == 1
+    for unit in (FIRING, other):
+        assert lines.count(f"systemctl --user show {unit} -p ExecMainStatus --value") == 1
+
+
+def test_a_firing_that_ended_with_78_is_a_failed_unit(rig: Rig) -> None:
+    """Status 78 is the status of a start that the config refuses. The rule
+    of two runs in a row holds for it as for each other check."""
+    first = rig.run(WD_FIRINGS=f"{FIRING}=78")
+
+    assert first.returncode == 1
+    assert "units: " in first.stdout
+    assert ", 1 of 2" in first.stdout
+    assert rig.posts() == []
+
+    second = rig.run(WD_FIRINGS=f"{FIRING}=78")
+
+    assert second.returncode == 1
+    assert rig.stored() == "units"
+    assert len(rig.posts()) == 1
+    assert "rework DOWN" in rig.posts()[0]
+    assert FIRING in rig.posts()[0]
+    assert "78" in rig.posts()[0]
+
+
+@pytest.mark.parametrize("status", ["0", "1", "2", "143", "780", "", "seventy-eight"])
+def test_a_firing_with_another_status_is_no_failure(rig: Rig, status: str) -> None:
+    """A firing ends with status 1 when the session service refuses the job.
+    Only status 78 names a config."""
+    rig.run(WD_FIRINGS=f"{FIRING}={status}")
+    done = rig.run(WD_FIRINGS=f"{FIRING}={status}")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert rig.stored() == "up"
+
+
+def test_a_firing_and_a_failed_unit_are_one_units_failure(rig: Rig) -> None:
+    states = {"WD_FIRINGS": f"{FIRING}=78", "WD_FAILED_UNITS": "creche-caregiver.service"}
+    rig.run(**states)
+    rig.run(**states)
+
+    assert rig.stored() == "units"
+    assert len(rig.posts()) == 1
+    assert FIRING in rig.posts()[0]
+    assert "creche-caregiver.service" in rig.posts()[0]
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "creche-trigger@Standup.service",
+        "creche-trigger@s.service",
+        "creche-trigger@-standup.service",
+        "creche-trigger@standup.timer",
+        "creche-trigger@stand.up.service",
+        "creche-trigger@" + "a" * 32 + ".service",
+        "creche-other@standup.service",
+        "--version",
+    ],
+)
+def test_a_listed_name_that_is_no_firing_unit_is_not_read(rig: Rig, unit: str) -> None:
+    """The instance of a firing unit is the name of a family. The script
+    gives no other listed word to `systemctl show`."""
+    done = rig.run(WD_FIRINGS=f"{unit}=78")
+    called = rig.stub_log.read_text(encoding="utf-8")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "ExecMainStatus" not in called
     assert rig.posts() == []

@@ -31,6 +31,15 @@
 #                token (invariant 13).  5 s
 #   4. units     `systemctl --user is-failed` must be false for each of the
 #                five rework user units.  5 s
+#                The check also reads each firing unit, an instance of
+#                `creche-trigger@`. `systemctl --user list-units` names the
+#                instances, and one `systemctl --user show` call for each
+#                instance gives the status of its last run. Status 78 is
+#                the status of a start that the config refuses, and it
+#                counts as a failed unit. Each other status counts as no
+#                failure: a firing ends with status 1 when the session
+#                service refuses the job, and no config causes that.
+#                5 s for each call
 #   5. registry  `registry-sync.service` must have ended well inside the
 #                last 5 minutes. It is what pulls /srv/agents/registry,
 #                and a fleet that ignores every merge looks exactly like a
@@ -142,6 +151,15 @@ HTTP_UNAUTHORIZED=401
 UNITS="creche-attendance.service creche-caregiver.service creche-door-owui.service \
 creche-trigger-webhooks.service creche-noticeboard.service"
 
+# The firing units: each instance of this template unit runs one cron
+# trigger of one family and ends. The pattern is what `list-units` gets. The
+# name of an instance is the name of a family, and FIRING_UNIT_NAME is the
+# exact form of a whole unit name, for `matches`.
+FIRING_UNITS='creche-trigger@*.service'
+FIRING_UNIT_NAME='creche-trigger@[a-z][a-z0-9-]{1,30}\.service'
+# The exit status of a program whose config is not valid.
+CONFIG_REFUSED_STATUS=78
+
 # Contract 05 §2 rule 5's 90 s, doubled. A document this old means nobody
 # who is running has looked.
 STALE_AFTER_S=180
@@ -176,7 +194,20 @@ NOTICE_JOB_ID=yyyyyyyyyyyyyyyyyyyyyyyyyy
 NOTICE_GATE_ID=0000000000000001
 NOTICE_AGENT=rework-watchdog
 
+NL=$'\n'
+
 say() { printf '%s\n' "$*"; }
+
+# Is the whole of <text> one match of <pattern>? `grep` reads the text on
+# its standard input, so no byte of the text is a word of a command. A text
+# with a line feed is no match: `grep` reads each line by itself.
+matches() {  # matches <pattern> <text>
+  case "$2" in
+    *"$NL"*) return 1 ;;
+  esac
+
+  printf '%s\n' "$2" | LC_ALL=C grep -a -q -x -E -e "$1"
+}
 
 # --- the last verdict, for `bin/rework-cutover.sh status` -------------------
 
@@ -364,7 +395,7 @@ check_attendance() {
 # --- 4. no rework unit is failed ------------------------------------------------
 
 check_units() {
-  local unit failed
+  local unit failed listed rest status refused detail
   failed=""
   for unit in $UNITS; do
     # `is-failed` exits 0 when the unit IS failed. Under `timeout`, because
@@ -374,12 +405,33 @@ check_units() {
     fi
   done
 
-  if [[ -z "$failed" ]]; then
+  # The firing units. The first word of a line of `list-units` is a unit
+  # name. Only a name in the exact form goes to `show`.
+  refused=""
+  listed="$(timeout "$CHECK_TIMEOUT_S" systemctl --user list-units --all --plain --no-legend \
+    "$FIRING_UNITS" 2>/dev/null)"
+  while read -r unit rest; do
+    [[ -n "$unit" ]] || continue
+    if ! matches "$FIRING_UNIT_NAME" "$unit"; then
+      say "units: systemd lists a name that is no firing unit (not read)"
+      continue
+    fi
+
+    status="$(timeout "$CHECK_TIMEOUT_S" \
+      systemctl --user show "$unit" -p ExecMainStatus --value 2>/dev/null < /dev/null)"
+    [[ "$status" == "$CONFIG_REFUSED_STATUS" ]] && refused="$refused $unit"
+  done <<< "$listed"
+
+  if [[ -z "$failed" && -z "$refused" ]]; then
     say "ok: no rework user unit is failed"
     return 0
   fi
 
-  note_down units "systemd reports failed:${failed}"
+  detail=""
+  [[ -n "$failed" ]] && detail="systemd reports failed:${failed}"
+  [[ -n "$refused" ]] \
+    && detail="${detail:+$detail, }the last firing ended with status $CONFIG_REFUSED_STATUS:${refused}"
+  note_down units "$detail"
 }
 
 # --- 5. the registry still reaches this host ----------------------------------
