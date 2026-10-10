@@ -1,6 +1,6 @@
 """The Cargo workspace stays where it is and keeps its lint gate.
 
-Seven things about `rust/` could change without one red line, and each gets
+Eight things about `rust/` could change without one red line, and each gets
 a check here:
 
 1. **A lint lifted for every crate at once.** `[workspace.lints]` in
@@ -37,6 +37,12 @@ a check here:
    of its checks, and two readers of one file drift (`rust/AGENTS.md`, "The
    differential test"). No Rust source file of another crate holds the name
    of that directory.
+8. **A second reader of a TOML text.** The module `tomlfile` of
+   `creche-contracts` is the one TOML reader of the workspace. It holds the
+   size limits, the TOML 1.0 check and the level limit. Code in another file
+   that calls the crate `toml` holds none of them (`rust/AGENTS.md`,
+   "TOML"). Only the two files of that module name the crate `toml` or the
+   crate `toml_parser`.
 
 A push that changes only `rust/` runs no pytest suite (`bin/lib/rustrule.sh`),
 so for such a change these checks run in CI.
@@ -175,6 +181,17 @@ READER_TABLES = ("dependencies", "dev-dependencies")
 #: The directory of the vector files, as a Rust source file names it. Only
 #: the source files of `READER_CRATE` hold this text.
 DATA_DIR_TEXT = "vectors/data"
+
+#: The two files of the one TOML reader, as paths below `CRATES_DIR`. Only
+#: these two files name a TOML crate.
+TOML_FILES = {
+    "creche-contracts/src/tomlfile.rs",
+    "creche-contracts/src/tomlfile/toml10.rs",
+}
+
+#: The start of the path of an item of a TOML crate, as a Rust source file
+#: names it.
+TOML_PATHS = ("toml::", "toml_parser::")
 
 #: Paths a Rust commit changes: a manifest, a source file and a document.
 RUST_PATHS = ("rust/Cargo.lock", "rust/crates/creche-contracts/src/ids.rs", "rust/AGENTS.md")
@@ -374,6 +391,24 @@ def test_only_the_vector_reader_names_the_vector_directory() -> None:
 
     assert len(named) > len(elsewhere), f"{READER_CRATE} does not name {DATA_DIR_TEXT}"
     assert elsewhere == [], f"a file outside {READER_CRATE} names {DATA_DIR_TEXT}: {elsewhere}"
+
+
+def test_only_the_toml_reader_names_a_toml_crate() -> None:
+    """The test reads the text of each file, test code too. A comment that
+    holds such a path counts.
+
+    A reader file that is absent, or that names no TOML crate, shows a wrong
+    path or a wrong text here, and the search then proves nothing. The test
+    fails for it."""
+    crates = REPO / RUST_DIR / CRATES_DIR
+    named: set[str] = set()
+    for source in crates.rglob("*.rs"):
+        text = source.read_text(encoding="utf-8")
+        if any(path in text for path in TOML_PATHS):
+            named.add(source.relative_to(crates).as_posix())
+
+    assert named >= TOML_FILES, f"a file of the reader names no TOML crate: {TOML_FILES - named}"
+    assert named == TOML_FILES, f"another file names a TOML crate: {named - TOML_FILES}"
 
 
 def test_a_change_under_rust_mints_no_tag() -> None:
