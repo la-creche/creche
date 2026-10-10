@@ -1059,6 +1059,10 @@ Rules for the test:
   of a file there. Build no path to that directory in another crate.
   Reason: two readers of one file drift, as two copies of a value do
   (rule 13). One reader then refuses a file that the other reader takes.
+  `bin/tests/test_rust_workspace.py` fails for a `.rs` file of another
+  crate that holds the text `vectors/data`. A comment counts too. In a
+  comment of another crate, name the surfaces of the vectors and not the
+  directory.
 - Write one test for each type. The test walks each vector of each surface
   that the type implements.
 - Put a table in the test that names each surface. Make the test fail when
@@ -1565,11 +1569,10 @@ To make the fifth check on your machine, for example before a merge:
   `vectors/data`. That crate replaced two other readers: a private module of
   `creche-contracts` and a reader in the test of `agent-family`. If the
   owner says no, revert the pull request that deleted the two readers.
-- No check holds the rule that only `creche-vectors` reads `vectors/data`.
-  The reviewer searches each `.rs` file under `crates/` for the text
-  `vectors/data`. Today that search gives lines of `creche-vectors` only. In
-  a comment of another crate, name the surfaces of the vectors and not the
-  directory. The search then finds only a reader.
+- The test for the one reader of `vectors/data` reads the text of each
+  `.rs` file under `crates/`. It finds the text `vectors/data` only. It does
+  not find a path that code builds from parts, for example from `vectors`
+  and `data`.
 - This `CONTRACT-QUESTION` comment is open in `bin/rust-coverage.sh`: check
   2 of "The coverage rule" does not say what a listed file with no function
   is. No report holds such a file, so the script fails for it. With check 4,

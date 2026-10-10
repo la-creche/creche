@@ -1,6 +1,6 @@
 """The Cargo workspace stays where it is and keeps its lint gate.
 
-Six things about `rust/` could change without one red line, and each gets
+Seven things about `rust/` could change without one red line, and each gets
 a check here:
 
 1. **A lint lifted for every crate at once.** `[workspace.lints]` in
@@ -32,6 +32,11 @@ a check here:
    of the inputs on which the two differ is an exception that no type
    holds (`rust/AGENTS.md`, "The differential test"). No Rust source file
    holds such a table, in each crate that the list here does not name.
+7. **A second reader of the vector files.** The crate `creche-vectors` is
+   the one reader of `vectors/data`. A reader in another crate holds none
+   of its checks, and two readers of one file drift (`rust/AGENTS.md`, "The
+   differential test"). No Rust source file of another crate holds the name
+   of that directory.
 
 A push that changes only `rust/` runs no pytest suite (`bin/lib/rustrule.sh`),
 so for such a change these checks run in CI.
@@ -166,6 +171,10 @@ READER_DEPENDENCIES = {"serde", "serde_json", "creche-util"}
 
 #: The two tables in which the vector reader can name a crate.
 READER_TABLES = ("dependencies", "dev-dependencies")
+
+#: The directory of the vector files, as a Rust source file names it. Only
+#: the source files of `READER_CRATE` hold this text.
+DATA_DIR_TEXT = "vectors/data"
 
 #: Paths a Rust commit changes: a manifest, a source file and a document.
 RUST_PATHS = ("rust/Cargo.lock", "rust/crates/creche-contracts/src/ids.rs", "rust/AGENTS.md")
@@ -346,6 +355,25 @@ def test_no_test_holds_a_table_of_differences() -> None:
             tables.append(str(source.relative_to(REPO)))
 
     assert tables == [], f"a table of differences: {tables}"
+
+
+def test_only_the_vector_reader_names_the_vector_directory() -> None:
+    """The test reads the text of each file, test code too: a reader of the
+    vectors lives in a test. A comment that holds the text counts. In a
+    comment of another crate, name the surfaces and not the directory.
+
+    A reader crate that does not hold the text shows a wrong text or a wrong
+    path here, and the search then proves nothing. The test fails for it."""
+    crates = REPO / RUST_DIR / CRATES_DIR
+    named = {
+        source.relative_to(crates)
+        for source in crates.rglob("*.rs")
+        if DATA_DIR_TEXT in source.read_text(encoding="utf-8")
+    }
+    elsewhere = sorted(str(path) for path in named if path.parts[0] != READER_CRATE)
+
+    assert len(named) > len(elsewhere), f"{READER_CRATE} does not name {DATA_DIR_TEXT}"
+    assert elsewhere == [], f"a file outside {READER_CRATE} names {DATA_DIR_TEXT}: {elsewhere}"
 
 
 def test_a_change_under_rust_mints_no_tag() -> None:

@@ -87,7 +87,8 @@ Each rule has its reason.
     refusals.
     Reason: no other crate reads that directory (`rust/AGENTS.md`, "The
     differential test"). A second reader in a test holds none of the rules
-    above.
+    above. `bin/tests/test_rust_workspace.py` fails for the text
+    `vectors/data` in a source file of another crate.
 
 The reader has no Python origin. `vectors/core.py`, `vectors/generate.py` and
 two modules under `vectors/surfaces/` write the files that it reads. The doc
