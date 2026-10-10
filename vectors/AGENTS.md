@@ -496,10 +496,10 @@ directory is not a workspace package, so a change here does not change
   product code reads TOML yet. Packet `toml-syntax-vectors` changes the
   entry point to the product reader.
 - `tomlfile.syntax` holds no text of four kinds. For such a text, `tomllib`
-  does not give the answer of a reader of a file kind, or its answer can
-  change with the Python version (rule 7). A plain Rust test of the module
-  `tomlfile` holds each kind. Packet `toml-syntax-vectors` adds the kinds
-  when the entry point is the product reader.
+  and a reader of a file kind give two answers. Or the answer of `tomllib`
+  can change with the Python version (rule 7). A plain Rust test of the
+  module `tomlfile` holds each kind. Packet `toml-syntax-vectors` adds the
+  kinds when the entry point is the product reader.
   1. A form that TOML 1.1 added. A reader of a file kind takes TOML 1.0.
      The documentation of Python 3.15 says that its `tomllib` reads TOML
      1.1.

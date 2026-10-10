@@ -121,9 +121,9 @@ impl FileKind {
 /// Why `read` refuses a file.
 ///
 /// The set is closed, and it does not cross a process boundary. The text of
-/// a fault holds no line, no column and no byte of the file. The Python
-/// reader of a file kind writes the same text for each of the first four
-/// faults.
+/// a fault holds no line, no column and no byte of the file. A Python reader
+/// of a file kind must write the same text for each of the first four
+/// faults: this file is the source of the four texts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TomlFault {
     /// The file has more bytes than the limit of its kind.
@@ -870,6 +870,14 @@ mod tests {
     }
 
     #[test]
+    fn the_crate_stops_at_80_levels_of_each_form() {
+        for form in [lists, inline_tables, header, dotted_key] {
+            assert!(form(80).parse::<toml::Table>().is_ok());
+            assert!(form(81).parse::<toml::Table>().is_err());
+        }
+    }
+
+    #[test]
     fn a_very_deep_text_is_a_refusal_on_a_small_stack() {
         const STACK_BYTES: usize = 2 * 1024 * 1024;
         const PARTS: usize = 30_000;
@@ -974,8 +982,11 @@ mod tests {
             Some(&MapOnly(run()))
         );
 
-        // The derived reader of `Row` takes a list by position. The reader
-        // of this module gives it none.
+        // The derived reader of `Row` takes a list by position, and the
+        // reader of the crate gives it one. The reader of this module does
+        // not.
+        let by_crate: BTreeMap<String, Row> = toml::from_str(as_list).unwrap();
+        assert_eq!(by_crate.get("a"), Some(&run()));
         assert_eq!(rows::<Row>(as_list), Err(TomlFault::Shape));
         assert_eq!(rows::<MapOnly<Row>>(as_list), Err(TomlFault::Shape));
         assert_eq!(
@@ -1019,6 +1030,19 @@ mod tests {
         assert_eq!(
             file.unknown.kinds(),
             &BTreeMap::from([("later".to_owned(), Found::Null)])
+        );
+
+        // The reader of the crate gives a date-time as a table with one key
+        // of its own.
+        let by_crate: BTreeMap<String, Slot<String>> = toml::from_str("a = 1979-05-27\n").unwrap();
+        let unknown_by_crate: BTreeMap<String, Unknown> =
+            toml::from_str("a = 1979-05-27\n").unwrap();
+        assert_eq!(by_crate.get("a"), Some(&Slot::Other(Found::Table)));
+        assert_eq!(
+            unknown_by_crate
+                .get("a")
+                .map(|unknown| unknown.kinds().len()),
+            Some(1)
         );
 
         // A plain text field refuses a date-time.
