@@ -52,6 +52,8 @@ playpen runs inside the sandbox image, which carries Node.
 6. A door's request body is untrusted input. `requests.py` parses it.
 7. The status document is a claim. A document with no known `kind` opens no
    door and starts no queued turn. Read the kind with `served_kind`.
+8. A cap of a text from the playpen is a count of bytes of UTF-8. Cut such
+   a text with `wire.cut_bytes`. The cut is between two characters.
 
 ## Security rules
 
@@ -195,6 +197,9 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 03 §13 rule 5 names no event that the host cannot record. An
   event with one half of a surrogate pair has no UTF-8 form. `cap_event`
   reads it as oversized (`wire.py`).
+- Contract 03 §8 gives each cap of a text in bytes. It does not say what
+  one half of a surrogate pair counts. Such a half has no UTF-8 form.
+  `cut_bytes` counts it as three bytes and keeps it in the text (`wire.py`).
 - Contract 05 §2.1 does not say what a reader does with a `kind` that is
   not one of its three words. `served_kind` refuses each door with
   `forbidden`. A family that never validated has an empty `kind` and gets

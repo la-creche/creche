@@ -592,6 +592,13 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
+`channel.rs` holds `MAX_LOG_BYTES`, the cap of the free text of a line.
+`claim` and `playpen` read that one constant.
+
+The host side cuts three kinds of text: a `message`, the text of an entry
+and a reason name. Each cut counts bytes of UTF-8, as the Python host does.
+Each cut is between two characters. `Text::cut_bytes` is that cut.
+
 Rule 1 names a raw `serde` type. The `channel` module does not hold rule 1
 yet ("Known gaps").
 Its raw type is `channel::json::Json`, from a reader of its own. The Python
@@ -2192,9 +2199,10 @@ To make the fifth check on your machine, for example before a merge:
   2. `claim::MAX_EVENT_DEPTH`, contract 03 §13 rule 6. The contract gives no
      nesting limit for an event. The Python host keeps only the type of an
      event that nests more than 64 levels. The reader does the same.
-  3. `claim::MAX_LOG_CHARS`, contract 03 §8. The contract caps a message at
-     4 KiB. The Python host cuts at 4096 code points. The reader does the
-     same.
+  3. `text::Text::cut_bytes`, contract 03 §8. The contract gives each cap
+     of a text in bytes. It does not say what a lone surrogate counts. The
+     reader counts three bytes for it and keeps it in the text, as the
+     Python host does.
   4. `host::ConfigRev` and `host::EntryId`, contract 03 §4.1. The contract
      gives no grammar. The types take the rule of the playpen: 1 to 200
      bytes.
