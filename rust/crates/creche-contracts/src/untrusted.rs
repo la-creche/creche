@@ -125,6 +125,9 @@ use crate::json;
 /// Use it with `#[serde(default, deserialize_with = "untrusted::text")]`. The
 /// `default` gives the empty text for a field that is absent.
 ///
+/// Use [`text_or_none`] when the reader must tell a value that is no text
+/// from an empty text.
+///
 /// The function keeps each character of the text. Give the result to [`cut`]
 /// where the Python reader has a cap.
 ///
@@ -139,11 +142,56 @@ pub fn text<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
+    Ok(text_or_none(deserializer)?.unwrap_or_default())
+}
+
+/// A text, or `None`. A value that is absent, `null` or not a JSON string
+/// reads as `None`.
+///
+/// `None` means that the field holds no text. `Some` with the empty text
+/// means that the field holds a text with no character. [`text`] reads the
+/// two cases as one.
+///
+/// Use it with
+/// `#[serde(default, deserialize_with = "untrusted::text_or_none")]`. The
+/// `default` gives `None` for a field that is absent.
+///
+/// The function keeps each character of the text. Give the text to [`cut`]
+/// where the Python reader has a cap.
+///
+/// ```
+/// use creche_contracts::untrusted;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct RawReply {
+///     #[serde(default, deserialize_with = "untrusted::text_or_none")]
+///     content: Option<String>,
+///     #[serde(default, deserialize_with = "untrusted::text_or_none")]
+///     error: Option<String>,
+/// }
+///
+/// let reply: RawReply = untrusted::parse_object(br#"{"content": "", "error": 7}"#)?;
+/// assert_eq!(reply.content.as_deref(), Some(""));
+/// assert_eq!(reply.error, None);
+/// # Ok::<(), untrusted::NotAnObject>(())
+/// ```
+///
+/// The Python origin is `_text` of
+/// `chaperone/src/chaperone/delegate.py:226-232`.
+///
+/// # Errors
+///
+/// Only the error of the deserializer itself, for a text that is not JSON.
+pub fn text_or_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
     let Json::Text(text) = read(deserializer)? else {
-        return Ok(String::new());
+        return Ok(None);
     };
 
-    Ok(text)
+    Ok(Some(text))
 }
 
 /// A whole number. A value that is not a JSON integer reads as 0.
@@ -990,6 +1038,94 @@ mod tests {
         assert_eq!(cut(&read, 500).len(), 500);
     }
 
+    // --- text_or_none ---
+
+    #[test]
+    fn a_text_reads_as_some_text_with_each_character() {
+        let texts = [
+            (r#""family""#, "family"),
+            (r#""""#, ""),
+            (r#""  a  ""#, "  a  "),
+            (r#""7""#, "7"),
+            (r#""null""#, "null"),
+            (r#""a\"b\\c\ndé""#, "a\"b\\c\nd\u{e9}"),
+        ];
+
+        for (input, wanted) in texts {
+            assert_eq!(
+                direct(input, |reader| text_or_none(reader)).unwrap(),
+                Some(wanted.to_owned()),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_that_is_no_text_reads_as_none() {
+        let others = [
+            "null",
+            "true",
+            "false",
+            "7",
+            "-3",
+            "1.5",
+            "[]",
+            r#"["a"]"#,
+            "{}",
+            r#"{"a":"b"}"#,
+        ];
+
+        for input in others {
+            assert_eq!(
+                direct(input, |reader| text_or_none(reader)).unwrap(),
+                None,
+                "{input}"
+            );
+        }
+    }
+
+    /// The raw type of a reply with one text field, as the delegate client
+    /// of the chaperone reads one.
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct Reply {
+        #[serde(default, deserialize_with = "text_or_none")]
+        field: Option<String>,
+    }
+
+    /// What `_text` of that client gives for one body, with a cap of 3
+    /// characters: the text of the field up to the cap, or `None`.
+    fn capped_at_3(body: &[u8]) -> Option<String> {
+        let reply: Reply = parse_object(body).unwrap();
+
+        reply.field.as_deref().map(|text| cut(text, 3).to_owned())
+    }
+
+    #[test]
+    fn a_field_that_is_no_text_is_none_and_an_empty_text_is_some() {
+        let family = capped_at_3(br#"{"field":"family"}"#);
+
+        assert_eq!(family.as_deref(), Some("fam"));
+        assert_eq!(capped_at_3(br#"{"field":"fa"}"#).as_deref(), Some("fa"));
+        assert_eq!(capped_at_3(br#"{"field":""}"#).as_deref(), Some(""));
+        assert_eq!(capped_at_3(br#"{"field":7}"#), None);
+        assert_eq!(capped_at_3(br#"{"field":null}"#), None);
+        assert_eq!(capped_at_3(br#"{"field":["family"]}"#), None);
+        assert_eq!(capped_at_3(br#"{"other":"family"}"#), None);
+        assert_eq!(capped_at_3(b"{}"), None);
+    }
+
+    /// `text` gives the empty text where `text_or_none` gives `None`, and
+    /// the same text for each other value.
+    #[test]
+    fn the_two_text_readers_differ_only_for_a_value_that_is_no_text() {
+        for input in EACH_KIND {
+            let held = direct(input, |reader| text_or_none(reader)).unwrap();
+            let read = direct(input, |reader| text(reader)).unwrap();
+
+            assert_eq!(read, held.unwrap_or_default(), "{input}");
+        }
+    }
+
     // --- int ---
 
     #[test]
@@ -1511,6 +1647,8 @@ mod tests {
     struct Each {
         #[serde(default, deserialize_with = "text")]
         text: String,
+        #[serde(default, deserialize_with = "text_or_none")]
+        text_or_none: Option<String>,
         #[serde(default = "zero", deserialize_with = "int")]
         int: json::Integer,
         #[serde(default, deserialize_with = "number")]
@@ -1531,6 +1669,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 text: String::new(),
+                text_or_none: None,
                 int: zero(),
                 number: None,
                 flag: false,
@@ -1543,8 +1682,16 @@ mod tests {
     }
 
     /// The names of the fields of `Each`.
-    const FIELDS: [&str; 8] = [
-        "text", "int", "number", "flag", "object", "block", "list", "first",
+    const FIELDS: [&str; 9] = [
+        "text",
+        "text_or_none",
+        "int",
+        "number",
+        "flag",
+        "object",
+        "block",
+        "list",
+        "first",
     ];
 
     /// A document that gives each field of `Each` the same JSON value.
@@ -1561,6 +1708,7 @@ mod tests {
     fn a_document_with_each_field_of_its_type_reads_each_value() {
         let document = br#"{
             "text": "family",
+            "text_or_none": "",
             "int": -3,
             "number": 1.5,
             "flag": true,
@@ -1571,6 +1719,7 @@ mod tests {
         }"#;
         let wanted = Each {
             text: "family".to_owned(),
+            text_or_none: Some(String::new()),
             int: whole(-3),
             number: Some(1.5),
             flag: true,
@@ -1627,6 +1776,7 @@ mod tests {
             read(r#""true""#),
             Each {
                 text: "true".to_owned(),
+                text_or_none: Some("true".to_owned()),
                 ..Each::default()
             }
         );
@@ -1834,6 +1984,7 @@ mod tests {
     /// one JSON text.
     fn each_reader_refuses(value: &str) -> bool {
         direct(value, |reader| text(reader)).is_err()
+            && direct(value, |reader| text_or_none(reader)).is_err()
             && direct(value, |reader| int(reader)).is_err()
             && direct(value, |reader| number(reader)).is_err()
             && direct(value, |reader| flag(reader)).is_err()
@@ -2494,6 +2645,7 @@ mod tests {
         for levels in [DEPTH_MAX + 1, DEPTH_MAX + 2, 1_000_000, usize::MAX] {
             let failed = [
                 text(Nest(levels)).unwrap_err(),
+                text_or_none(Nest(levels)).unwrap_err(),
                 int(Nest(levels)).unwrap_err(),
                 number(Nest(levels)).unwrap_err(),
                 flag(Nest(levels)).unwrap_err(),
@@ -2997,20 +3149,9 @@ mod tests {
             float(0) is 0.0. serde_json reads -0 as the float -0.0, so the reader cannot tell -0 \
             from -0.0 and gives -0.0 for both. The two floats are equal in each comparison.";
 
-        const ABSENT_IS_EMPTY: &str = "The Python helper gives None for a field that is no \
-            text, and its caller writes None into the reply. The reader `text` gives the empty \
-            text, so a raw type cannot tell a field that is no text from an empty text. The \
-            port of the delegate client decides what an empty text means.";
-
         /// `number` of the noticeboard, for the field `field` of an object.
         fn line_number(input: &[u8]) -> Did {
             parse_object::<NumberField>(input).map_or(Did::Refuses, |probe| gives(probe.field))
-        }
-
-        /// `_text` of the delegate client, with a cap of 3 characters.
-        fn line_text_cut(input: &[u8]) -> Did {
-            parse_object::<TextField>(input)
-                .map_or(Did::Refuses, |probe| gives(cut(&probe.field, 3)))
         }
 
         fn line_document(input: &[u8]) -> Did {
@@ -3100,17 +3241,6 @@ mod tests {
                 differs: Differs::Gives("-0.0"),
                 contract: "contracts 02, 04 and 05",
                 decision: ZERO_SIGN,
-            },
-            Deviation {
-                at: At::Line(Line {
-                    python: "chaperone/src/chaperone/delegate.py:226-232",
-                    input: br#"{"field":7}"#,
-                    python_gives: "null",
-                    replay: line_text_cut,
-                }),
-                differs: Differs::Gives(r#""""#),
-                contract: "contract 04 §7.3",
-                decision: ABSENT_IS_EMPTY,
             },
         ];
 
