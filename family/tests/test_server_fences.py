@@ -132,6 +132,26 @@ def test_version_must_be_exact() -> None:
     assert "is not an exact version" in messages(report)
 
 
+VERSION_REFUSED: tuple[str, ...] = ("1.0.0-rc1", "1.0.0+local", "1" * 65)
+
+
+@pytest.mark.parametrize("version", VERSION_REFUSED)
+def test_a_version_takes_no_sign_and_64_characters(version: str) -> None:
+    """The validator and root read one grammar for a version."""
+    report = check_server_rules(
+        "kagi", install={"source": "pypi", "package": "kagimcp", "version": version}
+    )
+    expect = f"'{version}' is not an exact version; use [0-9][0-9A-Za-z.]{{0,63}}"
+    assert expect in messages(report)
+
+
+def test_a_version_of_64_characters_is_exact() -> None:
+    report = check_server_rules(
+        "kagi", install={"source": "pypi", "package": "kagimcp", "version": "1" * 64}
+    )
+    assert "is not an exact version" not in messages(report)
+
+
 def test_sha256_must_be_64_hex_characters() -> None:
     report = check_server_rules(
         "github-code",
@@ -176,6 +196,17 @@ def test_entrypoint_may_not_be_empty() -> None:
 def test_env_var_name_must_match_the_shell_pattern() -> None:
     report = check_server_rules("kagi", run={"entrypoint": "kagimcp", "env": {"bad-name": "x"}})
     assert "is not an environment variable name" in messages(report)
+
+
+def test_an_env_var_name_has_64_characters_at_most() -> None:
+    """The validator and root read one grammar for the name of a variable."""
+    short, long = "A" * 64, "A" * 65
+    report = check_server_rules("kagi", run={"entrypoint": "kagimcp", "env": {short: "x"}})
+    assert "is not an environment variable name" not in messages(report)
+
+    report = check_server_rules("kagi", run={"entrypoint": "kagimcp", "env": {long: "x"}})
+    expect = f"'{long}' is not an environment variable name; use [A-Z][A-Z0-9_]{{0,63}}"
+    assert expect in messages(report)
 
 
 def test_a_secret_shaped_name_must_use_the_secret_prefix() -> None:
@@ -229,6 +260,16 @@ TOOLS_CASES: tuple[tuple[list[dict[str, Any]], str], ...] = (
 def test_tool_catalog_fences(tools: list[dict[str, Any]], expect: str) -> None:
     report = check_server_rules("kagi", tools=tools)
     assert expect in messages(report)
+
+
+def test_a_declared_tool_name_has_64_characters_at_most() -> None:
+    """The validator and root read one grammar for a tool name."""
+    short, long = "a" * 64, "a" * 65
+    report = check_server_rules("kagi", tools=[{"name": short, "description": "x"}])
+    assert "is not a tool name" not in messages(report)
+
+    report = check_server_rules("kagi", tools=[{"name": long, "description": "x"}])
+    assert f"'{long}' is not a tool name; use [A-Za-z][A-Za-z0-9_-]{{0,63}}" in messages(report)
 
 
 # --- fences: arg_allows and arg_denies (contract 01b §7) ---------------------

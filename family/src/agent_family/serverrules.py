@@ -12,7 +12,9 @@ from .grammar import (
     ALL_TOOLS,
     DESCRIPTION_MAX,
     ENV_VAR_NAME,
+    ENV_VAR_NAME_FORM,
     EXACT_VERSION,
+    EXACT_VERSION_FORM,
     GITHUB_REPO,
     IDENTITY_MAX,
     SECRET_NAME_MARKERS,
@@ -20,6 +22,7 @@ from .grammar import (
     SERVER_NAME,
     SHA256_HEX,
     TOOL_NAME,
+    TOOL_NAME_FORM,
     VERSION_RANGE_CHARS,
     InstallSource,
 )
@@ -120,11 +123,11 @@ def _check_install(server: McpServerFile, issues: Issues) -> None:
 
 def _check_pin_values(server: McpServerFile, issues: Issues) -> None:
     # CONTRACT-QUESTION: contract 01b §3 gives no grammar for `package`,
-    # `version`, `repo`, `asset` and `python`. This check takes a version
-    # that starts with a digit and holds no range sign, and a repo of two
-    # parts. It does not read `package`, `asset` or `python`. Root is
-    # stricter on all five: a letter or a digit at the start, no `+` and no
-    # `-` in a version, a cap on each length, and 3.12 or 3.13 for `python`.
+    # `version`, `repo`, `asset` and `python`. This check and root take one
+    # form for a version: `EXACT_VERSION_FORM`. This check takes a repo of
+    # two parts. It does not read `package`, `asset` or `python`. Root is
+    # stricter on those four: a letter or a digit at the start, a cap on
+    # each length, and 3.12 or 3.13 for `python`.
     install = server.install
     version = install.version
     if version is not None and (
@@ -133,7 +136,7 @@ def _check_pin_values(server: McpServerFile, issues: Issues) -> None:
     ):
         issues.error(
             "install.version",
-            f"'{version}' is not an exact version; a range makes a hash meaningless",
+            f"'{version}' is not an exact version; use {EXACT_VERSION_FORM}",
         )
 
     if install.sha256 is not None and SHA256_HEX.fullmatch(install.sha256) is None:
@@ -190,12 +193,13 @@ def _check_run(server: McpServerFile, issues: Issues) -> None:
 
 def _check_env_entry(name: str, value: str, issues: Issues) -> None:
     # CONTRACT-QUESTION: contract 01b §4.1 gives no grammar for the name of
-    # a variable, for a value or for the key after `secret:`. This check has
-    # no cap. Root caps a name at 64 characters and a value at 256, refuses
-    # a NUL and takes `[a-z][a-z0-9_]{1,62}` for a key.
+    # a variable, for a value or for the key after `secret:`. This check and
+    # root take one form for a name: `ENV_VAR_NAME_FORM`. This check has no
+    # cap for a value. Root caps a value at 256 characters, refuses a NUL
+    # and takes `[a-z][a-z0-9_]{1,62}` for a key.
     loc = f"run.env.{name}"
     if ENV_VAR_NAME.fullmatch(name) is None:
-        issues.error(loc, f"'{name}' is not an environment variable name; use [A-Z][A-Z0-9_]*")
+        issues.error(loc, f"'{name}' is not an environment variable name; use {ENV_VAR_NAME_FORM}")
 
     secret_shaped = any(marker in name for marker in SECRET_NAME_MARKERS)
     if secret_shaped and not value.startswith(SECRET_PREFIX):
@@ -247,14 +251,15 @@ def _check_tools(server: McpServerFile, issues: Issues) -> None:
     # CONTRACT-QUESTION: contract 01b §5 gives no cap for a tool name or for
     # the count of tools. It says "1 to 200 characters" for a description and
     # does not say whether the count comes before or after the collapse of
-    # whitespace. This check has no cap and counts after the collapse. Root
-    # caps a name at 64 characters and the list at 200 tools, and counts each
-    # character of a description.
+    # whitespace. This check and root take one form for a name:
+    # `TOOL_NAME_FORM`. This check has no cap for the count of tools and
+    # counts after the collapse. Root caps the list at 200 tools and counts
+    # each character of a description.
     seen: set[str] = set()
     for index, entry in enumerate(server.tools):
         loc = f"tools[{index}]"
         if TOOL_NAME.fullmatch(entry.name) is None:
-            issues.error(loc, f"'{entry.name}' is not a tool name; use [A-Za-z][A-Za-z0-9_-]*")
+            issues.error(loc, f"'{entry.name}' is not a tool name; use {TOOL_NAME_FORM}")
 
         if entry.name in seen:
             issues.error(loc, f"'{entry.name}' is declared twice in this file")

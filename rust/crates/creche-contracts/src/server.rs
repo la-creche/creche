@@ -71,6 +71,14 @@ const ARG_NAME_MAX: usize = 64;
 
 const DEFAULT_PYTHON: &str = "3.12";
 
+/// The form of the name of an environment variable, as the message of the
+/// Python validator shows it. `ids::EnvName` holds the grammar.
+const ENV_NAME_FORM: &str = "[A-Z][A-Z0-9_]{0,63}";
+
+/// The form of an exact version, as the message of the Python validator shows
+/// it. `ids::PackageVersion` holds the grammar.
+const VERSION_FORM: &str = "[0-9][0-9A-Za-z.]{0,63}";
+
 fn default_python() -> String {
     DEFAULT_PYTHON.to_owned()
 }
@@ -807,19 +815,12 @@ fn vet_version(install: &RawInstall, at: Slot, out: &mut Issues) -> Option<Packa
     let text = install.version.as_ref()?;
     match text.parse::<PackageVersion>() {
         Ok(version) => Some(version),
-        Err(error) => {
-            // The Python pattern of the family package permits `+` and `-`
-            // and has no size limit. `ids::PackageVersion` does not.
-            let python_accepts = text.as_bytes().first().is_some_and(u8::is_ascii_digit)
-                && text
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-'));
-            let msg = if python_accepts {
-                format!("'{text}' is not an exact version; {error}")
-            } else {
-                format!("'{text}' is not an exact version; a range makes a hash meaningless")
-            };
-            out.error(at, "install.version", msg);
+        Err(_) => {
+            out.error(
+                at,
+                "install.version",
+                format!("'{text}' is not an exact version; use {VERSION_FORM}"),
+            );
 
             None
         }
@@ -946,15 +947,6 @@ fn vet_install(raw: &RawServer, out: &mut Issues) -> Option<Install> {
     })
 }
 
-/// Whether the Python pattern for the name of an environment variable takes
-/// `text`. The pattern has no size limit, and `ids::EnvName` has one.
-fn python_env_name(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let tail = |byte: &u8| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'_';
-
-    bytes.first().is_some_and(u8::is_ascii_uppercase) && bytes.iter().all(tail)
-}
-
 fn vet_env_entry(
     name: &str,
     value: &str,
@@ -964,22 +956,11 @@ fn vet_env_entry(
     let loc = format!("run.env.{name}");
     let env_name = match name.parse::<EnvName>() {
         Ok(env_name) => Some(env_name),
-        Err(error) if python_env_name(name) => {
-            // The Python pattern of the family package has no size limit.
-            // `ids::EnvName` has one.
-            out.error(
-                at,
-                &loc,
-                format!("'{name}' is not an environment variable name; {error}"),
-            );
-
-            None
-        }
         Err(_) => {
             out.error(
                 at,
                 &loc,
-                format!("'{name}' is not an environment variable name; use [A-Z][A-Z0-9_]*"),
+                format!("'{name}' is not an environment variable name; use {ENV_NAME_FORM}"),
             );
 
             None
@@ -1081,8 +1062,8 @@ fn vet_tools(raw: &RawServer, out: &mut Issues) -> Option<Vec<Tool>> {
         let loc = format!("tools[{index}]");
         let name = match entry.name.parse::<ToolName>() {
             Ok(name) => Some(name),
-            Err(error) => {
-                out.error(at, &loc, tool_name_issue(&entry.name, error));
+            Err(_) => {
+                out.error(at, &loc, tool_name_issue(&entry.name));
 
                 None
             }
@@ -1438,7 +1419,7 @@ mod tests {
 
     use super::{
         Entrypoint, EnvValue, FenceArg, GithubRepo, Identity, InstallSource, LockPath,
-        LockPathError, Pin, RawInstall, RawRun, RawServer, Server, StateDir,
+        LockPathError, Pin, RawInstall, RawRun, RawServer, RawTool, Server, StateDir,
     };
 
     /// Each text of `accepted` parses, and each text of `refused` does not.
@@ -1608,32 +1589,67 @@ mod tests {
         );
     }
 
-    /// The vectors of `server_file` that the Python code accepts and that
-    /// this type refuses on purpose, with the contract section. Each row has
-    /// the stance `stricter` of `rust/AGENTS.md`: an id type of `ids`
-    /// refuses one text that `agent_family` accepts.
-    const DEVIATIONS: [(&str, &str); 5] = [
-        (
-            "long-version-hyphen",
-            "contract 01b §3.1: no grammar for a version",
-        ),
-        (
-            "long-version-plus",
-            "contract 01b §3.1: no grammar for a version",
-        ),
-        (
-            "long-version",
-            "contract 01b §3.1: no grammar for a version",
-        ),
-        (
-            "long-env-name",
-            "contract 01b §4.1: no grammar for the name of a variable",
-        ),
-        (
-            "long-tool-name",
-            "contract 01b §5: no limit for the size of a tool name",
-        ),
-    ];
+    /// The message of each issue of a file that the conversion refuses.
+    fn msgs_of(raw: RawServer) -> Vec<String> {
+        Server::try_from(raw)
+            .err()
+            .map(|refused| refused.into_issues())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|placed| placed.issue.msg)
+            .collect()
+    }
+
+    #[test]
+    fn a_version_of_65_bytes_or_with_a_sign_is_refused() {
+        let long = "1".repeat(65);
+        for version in ["1.0.0-rc1", "1.0.0+local", long.as_str()] {
+            let mut raw = minimal("example");
+            raw.install.version = Some(version.to_owned());
+            let wanted =
+                format!("'{version}' is not an exact version; use [0-9][0-9A-Za-z.]{{0,63}}");
+            assert!(msgs_of(raw).contains(&wanted), "{version}");
+        }
+    }
+
+    #[test]
+    fn a_variable_name_of_65_bytes_is_refused() {
+        let name = "A".repeat(65);
+        let mut raw = minimal("example");
+        raw.run.env.insert(name.clone(), "x".to_owned());
+        assert_eq!(
+            msgs_of(raw),
+            [format!(
+                "'{name}' is not an environment variable name; use [A-Z][A-Z0-9_]{{0,63}}"
+            )]
+        );
+
+        let mut raw = minimal("example");
+        raw.run.env.insert("A".repeat(64), "x".to_owned());
+        assert!(Server::try_from(raw).is_ok());
+    }
+
+    #[test]
+    fn a_tool_name_of_65_bytes_is_refused() {
+        let tool = |name: String| RawTool {
+            name,
+            description: "One tool.".to_owned(),
+            write: false,
+        };
+        let name = "a".repeat(65);
+        let mut raw = minimal("example");
+        raw.tools = vec![tool(name.clone())];
+        assert_eq!(
+            msgs_of(raw),
+            [format!(
+                "'{name}' is not a tool name; use [A-Za-z][A-Za-z0-9_-]{{0,63}}"
+            )]
+        );
+
+        let mut raw = minimal("example");
+        raw.tools = vec![tool("a".repeat(64))];
+        assert!(Server::try_from(raw).is_ok());
+    }
 
     /// Each server file that the Python validator accepts is a `Server`, and
     /// the `Server` holds each field as the Python model holds it. The crate
@@ -1641,7 +1657,6 @@ mod tests {
     #[test]
     fn each_accepted_vector_is_a_server_with_the_python_fields() {
         let surface = vectors::surface("server_file").unwrap();
-        let mut deviations = 0;
         for vector in surface.vectors() {
             let Some(value) = vector
                 .value()
@@ -1653,16 +1668,11 @@ mod tests {
             let id = vector.id();
             let raw: RawServer = serde_json::from_value(value.clone()).unwrap();
             assert_eq!(&serde_json::to_value(&raw).unwrap(), value, "{id}");
-            let deviates = DEVIATIONS.iter().any(|(vector, _)| *vector == id);
-            deviations += usize::from(deviates);
-            let server = Server::try_from(raw);
-            assert_eq!(server.is_err(), deviates, "{id}: {server:?}");
-            if let Ok(server) = server {
-                let back = serde_json::to_value(RawServer::from(&server)).unwrap();
-                assert_eq!(&back, value, "{id}");
-            }
+            let server = Server::try_from(raw).unwrap_or_else(|refused| {
+                panic!("{id}: {refused}");
+            });
+            let back = serde_json::to_value(RawServer::from(&server)).unwrap();
+            assert_eq!(&back, value, "{id}");
         }
-
-        assert_eq!(deviations, DEVIATIONS.len(), "a row names no vector");
     }
 }

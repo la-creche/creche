@@ -25,18 +25,24 @@ WEBHOOK_NAME: Final = FAMILY_NAME
 #: then revokes them, and the PEP raises a turn-blocking `grants_stale` on it.
 #: The grammar accepts it, so only a refusal here keeps the name free.
 PROBE_FAMILY: Final = "gate-probe"
-TOOL_NAME: Final = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*\Z")
+#: The form of a tool name, of the name of an environment variable and of an
+#: exact version. Each pattern and each message takes its form from here. Root
+#: reads the same three forms from a server file (`handover.mcpserver`).
+TOOL_NAME_FORM: Final = "[A-Za-z][A-Za-z0-9_-]{0,63}"
+ENV_VAR_NAME_FORM: Final = "[A-Z][A-Z0-9_]{0,63}"
+EXACT_VERSION_FORM: Final = "[0-9][0-9A-Za-z.]{0,63}"
+TOOL_NAME: Final = re.compile(rf"^{TOOL_NAME_FORM}\Z")
 SKILL_NAME: Final = FAMILY_NAME
 MODEL_ALIAS: Final = re.compile(r"^[a-z0-9][a-z0-9._/-]*\Z")
 MOUNT_PATH: Final = re.compile(r"^[A-Za-z0-9._/-]+\Z")
-ENV_VAR_NAME: Final = re.compile(r"^[A-Z][A-Z0-9_]*\Z")
+ENV_VAR_NAME: Final = re.compile(rf"^{ENV_VAR_NAME_FORM}\Z")
 HA_IDENTIFIER: Final = re.compile(r"^[a-z][a-z0-9_]*\Z")
 HA_ENTITY_ID: Final = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+\Z")
 SHA256_HEX: Final = re.compile(r"^[0-9a-f]{64}\Z")
 GITHUB_REPO: Final = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\Z")
 #: An exact version, never a range: a range makes a hash meaningless
 #: (contract 01b §3.1).
-EXACT_VERSION: Final = re.compile(r"^[0-9][0-9A-Za-z.+-]*\Z")
+EXACT_VERSION: Final = re.compile(rf"^{EXACT_VERSION_FORM}\Z")
 VERSION_RANGE_CHARS: Final = ("*", "^", "~", ">", "<", "=", ",", " ")
 
 # --- ranges (contract 01 §3) ---

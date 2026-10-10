@@ -47,7 +47,7 @@ use creche_util::pytext;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::ids::{FamilyName, ServerName, SkillName, ToolName, ToolNameError, WebhookName};
+use crate::ids::{FamilyName, ServerName, SkillName, ToolName, WebhookName};
 
 // --- constants of contract 01 ---
 
@@ -2322,23 +2322,13 @@ fn is_platform_mirror(raw: &RawFamily, path: &str) -> bool {
             .all(|mount| mount.mode == Mode::Ro.as_str())
 }
 
-/// Whether the Python pattern for a tool name takes `text`. The pattern has
-/// no size limit, and `ids::ToolName` has one.
-fn python_tool_name(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let tail = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-');
+/// The form of a tool name, as the message of the Python validator shows it.
+/// `ids::ToolName` holds the grammar.
+const TOOL_NAME_FORM: &str = "[A-Za-z][A-Za-z0-9_-]{0,63}";
 
-    bytes.first().is_some_and(u8::is_ascii_alphabetic) && bytes.iter().all(tail)
-}
-
-/// The message for a text that is no tool name. A text that only the size
-/// limit of `ids::ToolName` refuses gets the rule of that type.
-pub(crate) fn tool_name_issue(tool: &str, error: ToolNameError) -> String {
-    if python_tool_name(tool) {
-        return format!("'{tool}' is not a tool name; {error}");
-    }
-
-    format!("'{tool}' is not a tool name; use [A-Za-z][A-Za-z0-9_-]*")
+/// The message for a text that is no tool name.
+pub(crate) fn tool_name_issue(tool: &str) -> String {
+    format!("'{tool}' is not a tool name; use {TOOL_NAME_FORM}")
 }
 
 fn slot(section: Section) -> Slot {
@@ -2559,9 +2549,9 @@ fn vet_named_tools(
 
         match tool.parse::<ToolName>() {
             Ok(name) => names.push(name),
-            Err(error) => {
+            Err(_) => {
                 valid = false;
-                out.error(here, loc, tool_name_issue(tool, error));
+                out.error(here, loc, tool_name_issue(tool));
             }
         }
     }
@@ -4228,6 +4218,31 @@ mod tests {
         assert!(issues[0].2.starts_with("'gate-probe' is reserved"));
     }
 
+    #[test]
+    fn a_granted_tool_name_of_65_bytes_is_refused() {
+        let name = "a".repeat(65);
+        let mut raw = thin("oracle");
+        raw.tools
+            .insert("kagi".to_owned(), RawToolGrant::Named(vec![name.clone()]));
+        let errors: Vec<(String, String)> = issues_of(raw)
+            .into_iter()
+            .filter(|(severity, _, _)| *severity == Severity::Error)
+            .map(|(_, loc, msg)| (loc, msg))
+            .collect();
+        assert_eq!(
+            errors,
+            [(
+                "tools.kagi[0]".to_owned(),
+                format!("'{name}' is not a tool name; use [A-Za-z][A-Za-z0-9_-]{{0,63}}"),
+            )]
+        );
+
+        let mut raw = thin("oracle");
+        raw.tools
+            .insert("kagi".to_owned(), RawToolGrant::Named(vec!["a".repeat(64)]));
+        assert!(Family::try_from(raw).is_ok());
+    }
+
     /// The surfaces whose accepted vectors hold a parsed family file.
     const SURFACES: [&str; 2] = ["family_file", "family_file.host"];
 
@@ -4236,31 +4251,18 @@ mod tests {
     enum Stop {
         /// The raw type cannot hold the value of the vector.
         NoRawValue,
-        /// The stance `stricter` of `rust/AGENTS.md`: an id type of `ids`
-        /// refuses one text of the file, so the conversion refuses the file.
-        Stricter,
     }
 
     /// The vectors of [`SURFACES`] that the Python code accepts and that
     /// this type does not hold, with the contract section.
-    const DEVIATIONS: [(&str, &str, Stop, &str); 2] = [
-        (
-            "family_file",
-            "yaml-escape-surrogate",
-            // The Python model holds a string with one lone surrogate. A
-            // Rust `String` cannot hold that value.
-            Stop::NoRawValue,
-            "contract 01 §1: the file is UTF-8 text",
-        ),
-        (
-            "family_file",
-            "long-tool-name",
-            // `agent_family` has no limit for a tool name. `ids::ToolName`
-            // takes the limit of 64 bytes of the strictest Python copy.
-            Stop::Stricter,
-            "contract 01 §3.4: no limit for the size of a tool name",
-        ),
-    ];
+    const DEVIATIONS: [(&str, &str, Stop, &str); 1] = [(
+        "family_file",
+        "yaml-escape-surrogate",
+        // The Python model holds a string with one lone surrogate. A
+        // Rust `String` cannot hold that value.
+        Stop::NoRawValue,
+        "contract 01 §1: the file is UTF-8 text",
+    )];
 
     /// Each family file that the Python validator accepts is a `Family`, and
     /// the `Family` holds each field as the Python model holds it. The crate
@@ -4292,14 +4294,7 @@ mod tests {
 
                 let raw = raw.unwrap_or_else(|error| panic!("{name} {id}: {error}"));
                 assert_eq!(&serde_json::to_value(&raw).unwrap(), value, "{name} {id}");
-                let family = Family::try_from(raw);
-                if stop == Some(Stop::Stricter) {
-                    assert!(family.is_err(), "{name} {id}: the row names no difference");
-                    deviations += 1;
-                    continue;
-                }
-
-                let family = family.unwrap_or_else(|refused| {
+                let family = Family::try_from(raw).unwrap_or_else(|refused| {
                     panic!("{name} {id}: {refused}");
                 });
                 let back = serde_json::to_value(RawFamily::from(&family)).unwrap();

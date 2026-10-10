@@ -1034,9 +1034,9 @@ impl Error for McpUserError {}
 
 // CONTRACT-QUESTION: contract 01 §3.4 and contract 01b §5 give a tool name the
 // form `[A-Za-z][A-Za-z0-9_-]*` and no cap. The three Python copies disagree:
-// `agent_family.grammar.TOOL_NAME` has no cap, the grant file parser of the
-// chaperone caps a name at 128 characters, and `handover.mcpserver` caps it at
-// 64. This type takes the strictest copy: 64 bytes. A server file must pass
+// `agent_family.grammar.TOOL_NAME` and `handover.mcpserver` cap a name at 64
+// characters, and the grant file parser of the chaperone caps it at 128. This
+// type takes the strictest copy: 64 bytes. A server file must pass
 // `handover.mcpserver` before a tool exists, so no tool has a longer name. A
 // change to a larger cap costs the one number `max` here.
 const TOOL_NAME: Run = Run {
@@ -1078,11 +1078,10 @@ run_id! {
 }
 
 // CONTRACT-QUESTION: contract 01b §4.1 gives no grammar for the name of an
-// environment variable. The two Python copies disagree:
-// `agent_family.grammar.ENV_VAR_NAME` is `[A-Z][A-Z0-9_]*` with no cap, and
-// `handover.mcpserver.ENV_NAME_RE` caps the name at 64 characters. This type
-// takes the strictest copy: 64 bytes. A change to a larger cap costs the one
-// number `max` here.
+// environment variable. The two Python copies take one form,
+// `[A-Z][A-Z0-9_]{0,63}`: `agent_family.grammar.ENV_VAR_NAME` and
+// `handover.mcpserver.ENV_NAME_RE`. This type takes that form. A change to a
+// larger cap costs the one number `max` here.
 const ENV_NAME: Run = Run {
     noun: "an environment variable name",
     min: 1,
@@ -1154,12 +1153,12 @@ run_id! {
 }
 
 // CONTRACT-QUESTION: contract 01b §3.1 says that the version of a package is
-// exact and never a range. It gives no grammar. The two Python copies
-// disagree: `agent_family.grammar.EXACT_VERSION` is `[0-9][0-9A-Za-z.+-]*`
-// with no cap, and `handover.mcpserver.VERSION_RE` is `[0-9][0-9A-Za-z.]{0,63}`.
-// This type takes the strictest copy: no `+`, no `-`, 64 bytes. A server file
-// must pass both copies before a release installs the package. A change to
-// permit `+` or `-` costs the one byte class `PACKAGE_TAIL` here.
+// exact and never a range. It gives no grammar. The two Python copies take one
+// form, `[0-9][0-9A-Za-z.]{0,63}`: `agent_family.grammar.EXACT_VERSION` and
+// `handover.mcpserver.VERSION_RE`. This type takes that form: no `+`, no `-`,
+// 64 bytes. A server file must pass both copies before a release installs the
+// package. A change to permit `+` or `-` costs the one byte class
+// `PACKAGE_TAIL` here.
 const PACKAGE_VERSION: Run = Run {
     noun: "a package version",
     min: 1,
@@ -2721,12 +2720,12 @@ mod tests {
 
         const TOOL_NAME: &[Against] = &[
             stricter("id.tool_name.chaperone_grants", takes::<ToolName>),
-            stricter("id.tool_name.family_file", takes::<ToolName>),
+            equal("id.tool_name.family_file", takes::<ToolName>),
             equal("id.tool_name.handover_mcpserver", takes::<ToolName>),
         ];
 
         const ENV_NAME: &[Against] = &[
-            stricter("id.env_name.family_file", takes::<EnvName>),
+            equal("id.env_name.family_file", takes::<EnvName>),
             equal("id.env_name.handover_mcpserver", takes::<EnvName>),
         ];
 
@@ -2763,7 +2762,7 @@ mod tests {
         ];
 
         const PACKAGE_VERSION: &[Against] = &[
-            stricter("id.package_version.family_file", takes::<PackageVersion>),
+            equal("id.package_version.family_file", takes::<PackageVersion>),
             equal(
                 "id.package_version.handover_mcpserver",
                 takes::<PackageVersion>,
