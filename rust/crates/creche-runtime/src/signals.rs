@@ -82,6 +82,20 @@ const NO_SIGNAL_DRIVER: &str = "the runtime of this thread has no signal driver"
 /// of `caregiver/src/caregiver/loop.py:1217-1220` has the same three
 /// signals.
 ///
+/// The function differs from the Python services in two ways:
+///
+/// - A Python service starts with no handler when the system gives it
+///   none. `attendance` continues on a system that has no signal support
+///   (`attendance/src/attendance/__main__.py:205`). The chaperone and the
+///   trigger door write a line and serve with no SIGHUP handler
+///   (`chaperone/src/chaperone/reload_wiring.py:394-397` and
+///   `door-trigger/src/agent_door_trigger/webhooks.py:258-259`). This
+///   function returns an error, and `service::run` then does not run the
+///   `main` of the program.
+/// - The door for a terminal puts the old handlers back when its child
+///   program ended (`door-tui/src/agent_door_tui/signals.py:68-74`). A
+///   handler of this function stays for the life of the process.
+///
 /// # Errors
 ///
 /// [`SignalError`] when the operating system refuses a handler, and when the
@@ -224,7 +238,11 @@ impl Hangups {
     /// SIGHUP waits. Leave the loop at the first `None`.
     ///
     /// The Python origin is `signal_arrived` with `_run` of
-    /// `chaperone/src/chaperone/reload_wiring.py:357-372`.
+    /// `chaperone/src/chaperone/reload_wiring.py:357-372`. `attendance` and
+    /// the trigger door run one reload for each SIGHUP that their loop takes
+    /// (`attendance/src/attendance/__main__.py:206` and
+    /// `door-trigger/src/agent_door_trigger/webhooks.py:257`). This function
+    /// gives one item for all the signals that arrive while a reload runs.
     pub async fn next(&mut self) -> Option<()> {
         tokio::select! {
             biased;
@@ -240,41 +258,6 @@ mod tests {
 
     use super::*;
     use crate::tasks::shutdown_pair;
-
-    /// Each difference from a Python copy, on purpose. No vector covers this
-    /// module, so a row names the Python file and the line.
-    const DEVIATIONS: [(&str, &str); 6] = [
-        (
-            "attendance/src/attendance/__main__.py:205",
-            "Python continues with no handler on a system that has no signal support. \
-             `install` returns an error, and the program does not start.",
-        ),
-        (
-            "chaperone/src/chaperone/reload_wiring.py:394-397",
-            "Python writes a warning and serves with no SIGHUP handler. `install` returns an \
-             error.",
-        ),
-        (
-            "door-trigger/src/agent_door_trigger/webhooks.py:258-259",
-            "Python writes a line and serves with no SIGHUP handler. `install` returns an \
-             error.",
-        ),
-        (
-            "attendance/src/attendance/__main__.py:206",
-            "Python runs one reload for each SIGHUP that its loop takes. `Hangups` gives one \
-             item for all the signals that arrive while a reload runs.",
-        ),
-        (
-            "door-trigger/src/agent_door_trigger/webhooks.py:257",
-            "Python runs one reload for each SIGHUP that its loop takes. `Hangups` gives one \
-             item for all the signals that arrive while a reload runs.",
-        ),
-        (
-            "door-tui/src/agent_door_tui/signals.py:68-74",
-            "The Python door puts the old handlers back when the child program ended. A \
-             handler of `install` stays for the life of the process.",
-        ),
-    ];
 
     /// The number of the error `EINVAL`, on Linux and on macOS.
     const EINVAL: i32 = 22;
@@ -299,22 +282,6 @@ mod tests {
             error.to_string(),
             "the signal call failed: Invalid argument"
         );
-    }
-
-    #[test]
-    fn each_deviation_names_a_python_file_and_a_line() {
-        for (place, difference) in DEVIATIONS {
-            let (file, lines) = place.rsplit_once(':').unwrap();
-
-            assert!(file.ends_with(".py"), "{place}");
-            assert!(
-                lines
-                    .split('-')
-                    .all(|line| !line.is_empty() && line.bytes().all(|byte| byte.is_ascii_digit())),
-                "{place}"
-            );
-            assert!(difference.ends_with('.'), "{place}");
-        }
     }
 
     #[test]
