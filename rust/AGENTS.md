@@ -2125,14 +2125,16 @@ To make the fifth check on your machine, for example before a merge:
   1. `parse_object`, contract 02 §3 rule 3. The contract says that a body is
      JSON. It does not say if a reader takes what `json.loads` of Python
      takes past strict JSON in UTF-8. Each Python client takes a part of it.
-     Difference 1 and difference 6 below say which part. The reader is
+     Difference 1 and difference 4 below say which part. The reader is
      `serde_json`, which refuses each part.
   2. `DEPTH_MAX`, contract 02 §3 rule 3. The contract gives a body no nesting
      limit. `parse_object` reads 127 levels, the limit of `serde_json`. The
      tree of the module stops at 128 levels, for a deserializer with no
      limit.
-- The module `untrusted` differs from the Python helpers on purpose in six
-  ways. Each one is a row of `DEVIATIONS` in the test of the module.
+- The module `untrusted` differs from the Python helpers on purpose in four
+  ways. The test of the module holds each one. A row of `DEVIATIONS` holds
+  each vector of `runtime.parse_object.noticeboard` on which the two sides
+  differ. A plain test holds each other input.
   1. An answer is strict JSON in UTF-8, with no byte order mark. It holds no
      `NaN`, no `Infinity`, no number outside the range of a float and no half
      of a surrogate pair. Each Python client reads `NaN`, `Infinity`, such a
@@ -2142,20 +2144,24 @@ To make the fifth check on your machine, for example before a merge:
      a half. The three doors give `json.loads` the text of `httpx`, and they
      refuse the first three.
   2. An answer nests 127 levels at most.
-  3. `int` reads an integer outside the range of 64 bits as 0.
-  4. `number` reads the integer `-0` as `-0.0`. Python reads it as `0.0`.
-  5. `text` reads a field that is no text as the empty text. `_text` of the
-     delegate client of the chaperone reads it as `None`.
-  6. An answer holds no byte that is not UTF-8. The three doors read such a
+  3. `number` reads the integer `-0` as `-0.0`. Python reads it as `0.0`.
+     `serde_json` gives the text `-0` and the text `-0.0` as one float, so
+     the reader cannot tell the two apart. No writer of the platform writes
+     the text `-0`. `json::Number` reads the text of a token and tells the
+     two apart. The reader can use that type after the module reads a text
+     through `json`. No packet has that change yet.
+  4. An answer holds no byte that is not UTF-8. The three doors read such a
      byte as U+FFFD, because `httpx` makes a text of the body first. The
      three other clients refuse the answer, and `parse_object` refuses it
      too. The port of a door gives `parse_object` the lossy text of the body,
      or it names the difference in its pull request.
 
   One more row is a vector on which the two sides accept the same document.
-  The raw type of the test keeps an integer past 64 bits as a float.
+  The raw type of the test keeps an integer past 64 bits as a float. `int`
+  reads such an integer as 0, and the Python helpers keep each digit of it.
+  Such an integer is not strict JSON. A plain test holds that result.
 - `untrusted::parse_object` refuses the whole answer for difference 1, for
-  difference 2 and for difference 6. The Python services write the JSON body
+  difference 2 and for difference 4. The Python services write the JSON body
   of an answer with the JSON response class of their web framework. That
   class writes no `NaN`, no `Infinity` and no half of a surrogate pair. It
   writes an integer of each size. The owner of the crate decides if the

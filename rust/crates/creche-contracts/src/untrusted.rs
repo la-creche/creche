@@ -104,9 +104,15 @@
 //!   times.
 //!
 //! The differential test at the end of this file walks the vectors of the
-//! surfaces `runtime.untrusted.*` and `runtime.parse_object.*`. Its table
-//! `DEVIATIONS` holds each of these differences, and each other difference
-//! from a Python copy.
+//! surfaces `runtime.untrusted.*` and `runtime.parse_object.*`. On each
+//! vector of a surface `runtime.untrusted.*`, a reader gives what the Python
+//! helper gives. Each input of those surfaces is strict JSON.
+//!
+//! The table `DEVIATIONS` of that test holds only vectors of
+//! `runtime.parse_object.noticeboard`: each text on which [`parse_object`]
+//! and the Python reader differ. A plain test holds each other difference
+//! from a Python copy, with its input in the test. The doc comment of the
+//! function, or this doc comment, names that difference.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -258,6 +264,13 @@ pub fn zero() -> json::Integer {
 /// An integer reads as the nearest float, as `float` of Python gives it. The
 /// result is always finite: the JSON reader refuses a text with a number
 /// outside the range of a float.
+///
+/// The integer `-0` reads as `-0.0`. `serde_json` gives that text as the
+/// float `-0.0`, so this function cannot tell it from the text `-0.0`.
+/// `number` of the noticeboard gives `0.0` for the integer and `-0.0` for
+/// the float. The two results are equal in each comparison of two floats.
+/// No writer of the platform writes the text `-0`: `json.dumps` of Python,
+/// `JSON.stringify` and `serde_json` each write the integer zero as `0`.
 ///
 /// The Python origin is `number` of
 /// `noticeboard/src/noticeboard/jsonfiles.py:126-137`.
@@ -1278,6 +1291,19 @@ mod tests {
         }
     }
 
+    /// The difference that the doc comment of `number` names: the integer
+    /// zero with a minus sign. `number` of the noticeboard gives `0.0` for
+    /// it.
+    #[test]
+    fn the_integer_zero_with_a_minus_sign_reads_as_the_float_with_that_sign() {
+        let negative_zero = Some((-0.0_f64).to_bits());
+        let alone = direct("-0", |reader| number(reader)).unwrap();
+        let field = parse_object::<Each>(br#"{"number":-0}"#).unwrap().number;
+
+        assert_eq!(alone.map(f64::to_bits), negative_zero);
+        assert_eq!(field.map(f64::to_bits), negative_zero);
+    }
+
     // --- flag ---
 
     #[test]
@@ -1855,7 +1881,7 @@ mod tests {
     fn a_document_is_strict_json_in_each_member() {
         let deep = format!(r#"{{"other":{}{}}}"#, "[".repeat(127), "]".repeat(127));
         let past_every_float = format!(r#"{{"other":{}}}"#, "9".repeat(400));
-        let refused: [&[u8]; 12] = [
+        let refused: [&[u8]; 14] = [
             br#"{"text": NaN}"#,
             br#"{"other": NaN}"#,
             br#"{"other": [Infinity, -Infinity]}"#,
@@ -1867,6 +1893,10 @@ mod tests {
             // The bytes of one half of a surrogate pair, which are no UTF-8.
             b"{\"other\": \"\xed\xa0\x80\"}",
             b"{\"other\": \"\xff\"}",
+            // The same bytes as the one member of a file.
+            b"{\"a\": \"\xed\xa0\x80\"}",
+            // One byte that is not UTF-8 between two letters of an answer.
+            b"{\"field\": \"a\xffb\"}",
             // A byte order mark.
             b"\xef\xbb\xbf{}",
             deep.as_bytes(),
@@ -3070,30 +3100,13 @@ mod tests {
             }
         }
 
-        /// Where the Python side of a decision is.
+        /// Where the Python side of a decision is. Each row that is left
+        /// names vectors.
         #[derive(Clone, Copy)]
         enum At {
             /// Each vector with one of these ids, in each of the surfaces. For
             /// a helper with a cap, an id stands for the vector of each cap.
             Vectors(Surfaces, &'static [&'static str]),
-            /// No vector covers the case. The row names the Python file and
-            /// the line, and it holds the case itself.
-            Line(Line),
-        }
-
-        /// One case that no vector covers.
-        #[derive(Clone, Copy)]
-        struct Line {
-            /// The Python file and the line.
-            python: &'static str,
-            /// The bytes that the Python line reads. For a door, they are the
-            /// body of the answer, and the line reads the text of `httpx`.
-            input: &'static [u8],
-            /// What the Python line gives for the bytes, as JSON text. A run
-            /// of the Python code gave this text. No test holds it.
-            python_gives: &'static str,
-            /// What the Rust code does with the bytes.
-            replay: fn(&[u8]) -> Did,
         }
 
         /// One decision to differ from the Python code.
@@ -3131,12 +3144,6 @@ mod tests {
             json.loads of Python finds UTF-32 from the first bytes, with a byte order mark and \
             without. serde_json reads UTF-8 only.";
 
-        const NOT_UTF_8: &str = "The contract says that a body is JSON and names no encoding. \
-            A Python door gives json.loads the text that httpx makes from the body, and httpx \
-            reads a byte that is not UTF-8 as U+FFFD. The noticeboard, the delegate client and \
-            caregiver give json.loads the bytes, and they refuse the byte. The Rust reader \
-            refuses it too.";
-
         const DEPTH_LIMIT: &str = "The contract gives no nesting limit. Python reads a text \
             until the recursion limit of the interpreter, which differs between two versions. \
             serde_json stops at 128 levels.";
@@ -3144,19 +3151,6 @@ mod tests {
         const PAST_64_BITS_IS_A_FLOAT: &str = "No difference in what the reader accepts. \
             Python keeps each digit of an integer. serde_json gives an integer past 64 bits as \
             the nearest float, and the raw type of this test keeps that float.";
-
-        const ZERO_SIGN: &str = "JSON has one number form. Python reads -0 as the int 0, and \
-            float(0) is 0.0. serde_json reads -0 as the float -0.0, so the reader cannot tell -0 \
-            from -0.0 and gives -0.0 for both. The two floats are equal in each comparison.";
-
-        /// `number` of the noticeboard, for the field `field` of an object.
-        fn line_number(input: &[u8]) -> Did {
-            parse_object::<NumberField>(input).map_or(Did::Refuses, |probe| gives(probe.field))
-        }
-
-        fn line_document(input: &[u8]) -> Did {
-            parse_object::<AnyObject>(input).map_or(Did::Refuses, gives)
-        }
 
         /// Each input on which the Rust code differs from the Python code on
         /// purpose. A vector outside this table must be equal.
@@ -3209,39 +3203,6 @@ mod tests {
                 contract: "contracts 02, 04 and 05",
                 decision: PAST_64_BITS_IS_A_FLOAT,
             },
-            Deviation {
-                at: At::Line(Line {
-                    python: "noticeboard/src/noticeboard/jsonfiles.py:77",
-                    input: b"{\"a\": \"\xed\xa0\x80\"}",
-                    python_gives: r#"{"a":{"$utf16":[55296]}}"#,
-                    replay: line_document,
-                }),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: LONE_SURROGATE,
-            },
-            Deviation {
-                at: At::Line(Line {
-                    python: "door-owui/src/agent_door_owui/attendance.py:315-323",
-                    input: b"{\"field\": \"a\xffb\"}",
-                    python_gives: r#"{"field":"a\ufffdb"}"#,
-                    replay: line_document,
-                }),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: NOT_UTF_8,
-            },
-            Deviation {
-                at: At::Line(Line {
-                    python: "noticeboard/src/noticeboard/jsonfiles.py:133",
-                    input: br#"{"field":-0}"#,
-                    python_gives: "0.0",
-                    replay: line_number,
-                }),
-                differs: Differs::Gives("-0.0"),
-                contract: "contracts 02, 04 and 05",
-                decision: ZERO_SIGN,
-            },
         ];
 
         /// The id of the input of a vector: the id with no cap.
@@ -3263,9 +3224,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .filter_map(|(place, deviation)| {
-                    let At::Vectors(surfaces, vectors) = deviation.at else {
-                        return None;
-                    };
+                    let At::Vectors(surfaces, vectors) = deviation.at;
                     let named = vectors.iter().find(|named| **named == input)?;
 
                     surfaces.hold(surface).then_some((place, *named, deviation))
@@ -3278,11 +3237,12 @@ mod tests {
             DEVIATIONS
                 .iter()
                 .enumerate()
-                .filter_map(|(place, deviation)| match deviation.at {
-                    At::Vectors(surfaces, vectors) if surfaces.hold(surface) => {
-                        Some(vectors.iter().map(move |vector| (place, *vector)))
-                    }
-                    At::Vectors(..) | At::Line(_) => None,
+                .filter_map(|(place, deviation)| {
+                    let At::Vectors(surfaces, vectors) = deviation.at;
+
+                    surfaces
+                        .hold(surface)
+                        .then(|| vectors.iter().map(move |vector| (place, *vector)))
                 })
                 .flatten()
                 .collect()
@@ -3372,18 +3332,13 @@ mod tests {
         fn each_deviation_names_a_surface_of_the_table_and_its_reason() {
             let listed: HashSet<&str> = SURFACES.iter().map(|against| against.surface).collect();
             for deviation in DEVIATIONS {
+                let At::Vectors(Surfaces::Named(surfaces), vectors) = deviation.at;
+
                 assert!(deviation.contract.starts_with("contract"));
                 assert!(!deviation.decision.is_empty());
-                match deviation.at {
-                    At::Vectors(Surfaces::Named(surfaces), vectors) => {
-                        assert!(!surfaces.is_empty() && !vectors.is_empty());
-                        for surface in surfaces {
-                            assert!(listed.contains(surface), "{surface}");
-                        }
-                    }
-                    At::Line(line) => {
-                        assert!(line.python.contains(".py:"), "{}", line.python);
-                    }
+                assert!(!surfaces.is_empty() && !vectors.is_empty());
+                for surface in surfaces {
+                    assert!(listed.contains(surface), "{surface}");
                 }
             }
         }
@@ -3394,26 +3349,6 @@ mod tests {
             for against in SURFACES {
                 walk(against);
             }
-        }
-
-        /// A row with no vector holds its case. The test makes sure that the
-        /// Rust code does what the row says, and that the row names a
-        /// difference.
-        #[test]
-        fn each_deviation_with_no_vector_is_a_difference() {
-            let mut lines = 0;
-            for deviation in DEVIATIONS {
-                let At::Line(line) = deviation.at else {
-                    continue;
-                };
-                let python = Did::Gives(json_of(line.python_gives));
-                let rust = (line.replay)(line.input);
-
-                differs_as_decided(deviation.differs, &python, &rust, line.python);
-                lines += 1;
-            }
-
-            assert!(lines > 0, "the table holds no row with no vector");
         }
 
         /// A test of the test: a row that names no difference fails.
