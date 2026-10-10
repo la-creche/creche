@@ -2337,14 +2337,28 @@ To make the fifth check on your machine, for example before a merge:
   readers again. It waits for the packets that give the Python readers the
   grammar of `Timestamp`.
   1. The vector `written-space` of each of the five reader surfaces. Its
-     `written_at` is `2999-01-01 00:00:00Z`. The Python readers read a time.
-     A view reads no time.
+     `written_at` is `2999-01-01 00:00:00Z`. Each Python reader that reads
+     the field reads a time. A view reads no time.
   2. The vector `written-lower-z` of the same surfaces. Its `written_at` is
-     `2999-01-01T00:00:00z`. The Python readers read no time. A view reads a
-     time.
+     `2999-01-01T00:00:00z`. Each Python reader that reads the field reads
+     no time. A view reads a time.
   3. The vector `lax-written-at-no-offset` of `status.write`. Its
      `written_at` is `2999-01-01T00:00:00`. The Python writer writes the
      document. The valid type refuses it.
+- The readers of `status.door_owui` and `status.door_trigger` do not read
+  `written_at`. Their vectors `written-space` and `written-lower-z` left
+  with equal results, because the five reader surfaces share one document
+  list.
+- The view `fault_file::caregiver` also reads `written_at` with
+  `time::Timestamp`. For three forms of that text, the Python reader of
+  today gives another result. No vector of `status.fault_file.caregiver`
+  holds one of them. A plain test of `status::fault_file` holds each one.
+  1. A space in place of the `T`. The Python reader reads a time. The view
+     reads no time, so the file is stale.
+  2. A lower-case `z`. The Python reader reads no time. The view reads a
+     time.
+  3. A fraction of more than 9 digits. The Python reader reads a time. The
+     view reads no time, so the file is stale.
 - `status::outcome` holds the view of the noticeboard and no valid type.
   Contract 02 §13.1 owns the outcome record and its writer.
 - `status` holds no code for `rescope_by_fleet` and `drop_superseded` of

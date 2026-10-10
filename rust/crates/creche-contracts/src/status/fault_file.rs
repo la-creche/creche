@@ -364,6 +364,12 @@ impl Error for FaultFileRefusal {}
 /// A file with a `written_at` that is more than 90 seconds before `now`, or
 /// that is not a time, is stale: each of its faults is then stale.
 ///
+/// The view reads `written_at` with [`Timestamp`]. For three forms of that
+/// text, the Python reader of today gives another result. The forms are a
+/// space in place of the `T`, a lower-case `z` and a fraction of more than
+/// 9 digits. No vector holds one of them, and a test of this module holds
+/// each one.
+///
 /// # Errors
 ///
 /// [`FaultFileRefusal`] when `caregiver` does not use the file. The source
@@ -574,6 +580,33 @@ mod tests {
         let read = caregiver(bytes, FaultSource::Sessiond, now).unwrap();
 
         assert!(read.faults[0].stale);
+    }
+
+    #[test]
+    fn a_file_reads_its_time_with_the_grammar_of_the_one_type() {
+        let now = time("2031-04-18T06:43:33Z");
+        let rows = [
+            // A space in place of the `T`: no time.
+            ("2031-04-18 06:43:10Z", true),
+            // A lower-case `z`: a time.
+            ("2031-04-18T06:43:10z", false),
+            // A fraction of 10 digits: no time.
+            ("2031-04-18T06:43:10.1234567890Z", true),
+            // The same time with a fraction of 9 digits and with none.
+            ("2031-04-18T06:43:10.123456789Z", false),
+            ("2031-04-18T06:43:10Z", false),
+        ];
+
+        for (written_at, stale) in rows {
+            let text = format!(
+                r#"{{"family": "chat", "written_at": "{written_at}",
+                "faults": [{{"code": "orphan_processes", "since": "2031-04-18T06:42:58Z"}}]}}"#
+            );
+            let read = caregiver(text.as_bytes(), FaultSource::Sessiond, now).unwrap();
+
+            assert_eq!(read.written_at, written_at);
+            assert_eq!(read.faults[0].stale, stale, "{written_at}");
+        }
     }
 
     #[test]
