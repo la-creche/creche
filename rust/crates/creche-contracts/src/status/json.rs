@@ -1,8 +1,8 @@
 //! The JSON text of the files of contract 05: one reader and one writer.
 //!
 //! The reader takes the texts that the Python reader of each component takes.
-//! `serde_json` refuses four forms that the Python reader accepts, and
-//! `vectors/data/status` holds a document of each form:
+//! `serde_json` refuses four forms that the Python reader accepts, and the
+//! vectors of the `status.` surfaces hold a document of each form:
 //!
 //! - the words `NaN`, `Infinity` and `-Infinity`,
 //! - an integer of more than 64 bits,
@@ -24,7 +24,7 @@ pub const INTEGER_DIGITS_MAX: usize = 4300;
 // The Python reader stops at a depth that depends on the interpreter: between
 // 5000 and 10000 levels under Python 3.12 and 3.13, and more under Python
 // 3.14. The reader here stops at 256 levels. A document of contract 05 nests
-// 4 levels, and the deepest document of `vectors/data/status` nests 201.
+// 4 levels, and the deepest document of the `status.` surfaces nests 201.
 //
 // A larger cap costs stack: `Drop`, `Clone`, `Debug` and the writer use one
 // frame for each level. A stack overflow stops the process, and no code can

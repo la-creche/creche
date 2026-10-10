@@ -14,9 +14,9 @@
 //! [`Tag`], holds its text and each part.
 //!
 //! The Python implementation holds more than one copy of most grammars.
-//! `vectors/data/ids` records what each copy does. Where two copies disagree,
-//! the type here takes the strictest copy, and a `CONTRACT-QUESTION` comment
-//! marks the type. `rust/AGENTS.md` holds the rule.
+//! The vectors of the `id.` surfaces record what each copy does. Where two
+//! copies disagree, the type here takes the strictest copy, and a
+//! `CONTRACT-QUESTION` comment marks the type. `rust/AGENTS.md` holds the rule.
 
 use std::error::Error;
 use std::fmt;
@@ -2566,10 +2566,10 @@ mod tests {
     mod python {
         use std::collections::HashSet;
 
+        use creche_vectors::{self as vectors, Disagreement, Outcome, Vector};
         use serde_json::{Value, json};
 
         use super::super::*;
-        use crate::vectors::{self, Disagreement, Outcome, Vector};
 
         /// What the code did with one input, as a vector file writes it: the
         /// `value` of an accepted input, or the `refusal` of a refused input.
@@ -2863,15 +2863,18 @@ mod tests {
         /// input that another copy of the grammar refuses.
         fn is_laxer(rows: &[Disagreement], surface: &str, vector: &str) -> bool {
             rows.iter().any(|row| {
-                row.id == vector
-                    && row.results.accepted.iter().any(|name| name == surface)
-                    && !row.results.refused.is_empty()
+                row.id() == vector
+                    && row
+                        .surfaces(Outcome::Accepted)
+                        .iter()
+                        .any(|name| name == surface)
+                    && !row.surfaces(Outcome::Refused).is_empty()
             })
         }
 
         /// What the Python code did with one input.
         fn python_did(vector: &Vector) -> Replay {
-            match vector.result {
+            match vector.result() {
                 Outcome::Accepted => Ok(vector.value().cloned()),
                 Outcome::Refused | Outcome::Raised => Err(vector.refusal().cloned()),
             }
@@ -2880,7 +2883,7 @@ mod tests {
         /// Makes sure that the Rust code differs from the vector as the decision
         /// says, and in no other way.
         fn differs_as_decided(differs: Differs, vector: &Vector, rust: &Replay, at: &str) {
-            assert_eq!(vector.result, Outcome::Accepted, "{at}: the Python code");
+            assert_eq!(vector.result(), Outcome::Accepted, "{at}: the Python code");
             match differs {
                 Differs::Refuses => assert!(rust.is_err(), "{at}: the Rust code accepts"),
             }
@@ -2897,7 +2900,7 @@ mod tests {
         /// and a run with `--nocapture` shows them.
         fn walk(name: &str) {
             let table = table_of(name);
-            let disagreements = vectors::disagreements();
+            let disagreements = vectors::disagreements().unwrap();
             let mut equal = 0;
             let mut stricter = 0;
             let mut deviated = 0;
@@ -2907,24 +2910,24 @@ mod tests {
                 "{name} is equal to no Python copy"
             );
             for against in table {
-                let surface = vectors::surface(against.surface);
+                let surface = vectors::surface(against.surface).unwrap();
                 let mut laxer_here = 0;
                 let mut deviated_here = 0;
-                for vector in &surface.vectors {
-                    let at = format!("{} {}", against.surface, vector.id);
-                    let rust = (against.replay)(&vector.input.text().unwrap());
+                for vector in surface.vectors() {
+                    let at = format!("{} {}", against.surface, vector.id());
+                    let rust = (against.replay)(vector.input().text().unwrap());
 
-                    if let Some(deviation) = deviation_of(against.surface, &vector.id) {
+                    if let Some(deviation) = deviation_of(against.surface, vector.id()) {
                         assert!(!deviation.contract.is_empty() && !deviation.decision.is_empty());
                         differs_as_decided(deviation.differs, vector, &rust, &at);
                         deviated_here += 1;
-                    } else if vector.result == Outcome::Raised {
+                    } else if vector.result() == Outcome::Raised {
                         assert!(rust.is_err(), "{at}: the Python code raises");
                         equal += 1;
                     } else if against.stance == Stance::Stricter
-                        && is_laxer(&disagreements, against.surface, &vector.id)
+                        && is_laxer(&disagreements, against.surface, vector.id())
                     {
-                        assert_eq!(vector.result, Outcome::Accepted, "{at}");
+                        assert_eq!(vector.result(), Outcome::Accepted, "{at}");
                         assert!(rust.is_err(), "{at}: a stricter copy refuses");
                         laxer_here += 1;
                     } else {
@@ -2964,10 +2967,10 @@ mod tests {
                 .flat_map(|(_, table)| table.iter().map(|against| against.surface))
                 .collect();
             let unique: HashSet<&str> = listed.iter().copied().collect();
-            let index = vectors::index();
+            let index = vectors::index().unwrap();
             let in_index: HashSet<&str> = index
                 .iter()
-                .map(|row| row.surface.as_str())
+                .map(|row| row.surface())
                 .filter(|surface| surface.starts_with("id."))
                 .collect();
 
@@ -2997,10 +3000,19 @@ mod tests {
                 .filter(|against| against.stance == Stance::Stricter)
                 .map(|against| against.surface)
                 .collect();
-            for row in vectors::disagreements() {
-                assert!(row.results.raised.is_empty(), "{} {}", row.grammar, row.id);
-                for surface in &row.results.accepted {
-                    assert!(stricter.contains(surface.as_str()), "{surface} {}", row.id);
+            for row in vectors::disagreements().unwrap() {
+                assert!(
+                    row.surfaces(Outcome::Raised).is_empty(),
+                    "{} {}",
+                    row.grammar(),
+                    row.id()
+                );
+                for surface in row.surfaces(Outcome::Accepted) {
+                    assert!(
+                        stricter.contains(surface.as_str()),
+                        "{surface} {}",
+                        row.id()
+                    );
                 }
             }
         }

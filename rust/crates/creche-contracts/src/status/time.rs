@@ -9,8 +9,8 @@
 //!
 //! Each writer of contract 05 writes `YYYY-MM-DDTHH:MM:SSZ`. A reader also
 //! takes a fraction of a second, an offset and a space in place of the `T`,
-//! because `vectors/data/status` holds such a text and each Python reader
-//! takes it.
+//! because the vectors of the `status.` surfaces hold such a text and each
+//! Python reader takes it.
 
 use std::error::Error;
 use std::fmt;

@@ -1,7 +1,7 @@
 //! One view of the status document for each of its five readers.
 //!
 //! A view is what one reader takes from a document. Each view here takes what
-//! its Python reader takes, on each document of `vectors/data/status`: the
+//! its Python reader takes, on each document of the `status.` surfaces: the
 //! port of a reader then keeps the behavior of that reader. A view reads a
 //! [`RawStatus`], because each Python reader also uses a document that the
 //! valid type refuses. `StatusDocument::raw` gives the raw form of a valid

@@ -2416,10 +2416,10 @@ impl Record<'_> {
 
 #[cfg(test)]
 mod tests {
+    use creche_vectors::{self as vectors, Marker, Outcome, Vector};
     use serde_json::{Map, Value};
 
     use super::*;
-    use crate::vectors::{self, Marker, Outcome, Vector};
 
     const SURFACE: &str = "channel.build";
 
@@ -2485,6 +2485,13 @@ mod tests {
 
     type Built<T> = Result<T, Unbuildable>;
 
+    /// The marker that an argument is. The reader refuses a file with a marker
+    /// object of a wrong form, so the read of an argument of a vector gives no
+    /// error.
+    fn marker_of(argument: &Value) -> Option<Marker> {
+        Marker::of(argument).unwrap()
+    }
+
     /// The named arguments of one builder.
     struct Args<'a>(&'a Map<String, Value>);
 
@@ -2493,7 +2500,7 @@ mod tests {
             match self.0.get(key) {
                 None | Some(Value::Null) => Ok(None),
                 Some(Value::String(text)) => Ok(Some(text.clone())),
-                Some(other) => match Marker::of(other) {
+                Some(other) => match marker_of(other) {
                     Some(Marker::Utf16(units)) => String::from_utf16(&units)
                         .map(Some)
                         .map_err(|_| Unbuildable::NoUtf8),
@@ -2667,14 +2674,14 @@ mod tests {
 
     /// What one vector gives: the built message and the limit of its line.
     fn replay(vector: &Vector) -> (Built<HostMessage>, usize) {
-        let id = &vector.id;
+        let id = vector.id();
         let params = vector
             .field("params")
             .unwrap_or_else(|| panic!("{id}: no params"));
         let builder = params["builder"].as_str().unwrap();
         let limit = usize::try_from(params["max_line_bytes"].as_u64().unwrap()).unwrap();
         let args = vector
-            .input
+            .input()
             .args()
             .unwrap_or_else(|| panic!("{id}: no args"));
 
@@ -2683,16 +2690,16 @@ mod tests {
 
     #[test]
     fn each_host_line_has_the_bytes_of_the_python_host() {
-        let surface = vectors::surface(SURFACE);
+        let surface = vectors::surface(SURFACE).unwrap();
         let mut equal = 0;
         let mut differed = Vec::new();
 
-        for vector in &surface.vectors {
-            let id = vector.id.as_str();
+        for vector in surface.vectors() {
+            let id = vector.id();
             let (built, limit) = replay(vector);
             let line = built.map(|message| message.encode_within(limit));
 
-            match (vector.result, line) {
+            match (vector.result(), line) {
                 (Outcome::Accepted, Ok(Ok(line))) => {
                     let output = vector
                         .field("output")

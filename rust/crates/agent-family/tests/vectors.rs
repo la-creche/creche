@@ -1,16 +1,16 @@
 //! The differential test against the Python package `agent_family`.
 //!
-//! The vector files under `vectors/data` hold what the Python code does with
-//! each input. Each test here walks one surface, gives each input to the
-//! Rust code and compares: the result, each issue with its order and its
-//! message, the parsed value field by field, and for the program each byte
-//! of its output.
+//! The vector files hold what the Python code does with each input. The crate
+//! `creche-vectors` reads them. Each test here walks one surface, gives each
+//! input to the Rust code and compares: the result, each issue with its order
+//! and its message, the parsed value field by field, and for the program each
+//! byte of its output.
 
 #[cfg(test)]
 mod walk {
     use std::collections::BTreeMap;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -19,17 +19,14 @@ mod walk {
     };
     use creche_contracts::family::RawFamily;
     use creche_contracts::server::RawServer;
-    use serde_json::{Value, json};
+    use creche_vectors::{self as vectors, Outcome, RegistryFile, Vector};
+    use serde_json::{Map, Value, json};
 
-    /// The directory of the vector files. The crate is three levels below
-    /// the repository root.
-    const DATA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../vectors/data");
+    /// The key of the issues of a report in a vector.
+    const ISSUES_KEY: &str = "issues";
 
-    /// The version of the file format that this reader takes.
-    const FORMAT: u64 = 1;
-
-    /// Each file of each registry that a vector names.
-    const REGISTRIES_FILE: &str = "family_file.registries.json";
+    /// The key of the state of a report in a vector.
+    const STATUS_KEY: &str = "status";
 
     /// The start of the name of each surface of this crate.
     const OWN_SURFACES: [&str; 2] = ["family_file", "server_file"];
@@ -215,71 +212,15 @@ mod walk {
             .find(|row| row.surface == surface && row.vector == vector)
     }
 
-    fn read_json(path: &str) -> Value {
-        let text = fs::read_to_string(Path::new(DATA_DIR).join(path)).unwrap();
-        let document: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(document["format"], FORMAT, "{path}");
-
-        document
-    }
-
-    /// The vectors of one surface, and the context of its file.
-    fn surface(name: &str) -> (Vec<Value>, Value) {
-        let index = read_json("index.json");
-        let row = index["surfaces"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["surface"] == name)
-            .unwrap_or_else(|| panic!("the index holds no surface {name}"));
-        let document = read_json(row["path"].as_str().unwrap());
-        let vectors = document["vectors"].as_array().unwrap().clone();
-        assert_eq!(document["surface"], name);
-        assert_eq!(
-            vectors.len(),
-            usize::try_from(row["vectors"].as_u64().unwrap()).unwrap()
-        );
-        assert!(!vectors.is_empty(), "{name} holds no vector");
-
-        (vectors, document["context"].clone())
-    }
-
-    fn base64_decode(text: &str) -> Vec<u8> {
-        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = Vec::new();
-        let mut buffer = 0_u32;
-        let mut bits = 0;
-        for byte in text.bytes().filter(|byte| *byte != b'=') {
-            let value = ALPHABET.iter().position(|one| *one == byte).unwrap();
-            buffer = (buffer << 6) | u32::try_from(value).unwrap();
-            bits += 6;
-            if bits >= 8 {
-                bits -= 8;
-                out.push(u8::try_from((buffer >> bits) & 0xff).unwrap());
-            }
-        }
-
-        out
-    }
-
-    /// The bytes of an input form: `text` or `base64`.
-    fn bytes_of(form: &Value) -> Vec<u8> {
-        if let Some(text) = form["text"].as_str() {
-            return text.as_bytes().to_vec();
-        }
-
-        base64_decode(form["base64"].as_str().unwrap())
-    }
-
-    /// Each file of each registry of the repository that a vector names.
-    fn registries() -> BTreeMap<String, Vec<(String, Vec<u8>)>> {
-        let document = read_json(REGISTRIES_FILE);
-        let mut found: BTreeMap<String, Vec<(String, Vec<u8>)>> = BTreeMap::new();
-        for row in document["files"].as_array().unwrap() {
+    /// Each file of each registry of the repository that a vector names, by
+    /// the path of its registry.
+    fn registries() -> BTreeMap<String, Vec<RegistryFile>> {
+        let mut found: BTreeMap<String, Vec<RegistryFile>> = BTreeMap::new();
+        for file in vectors::registries().unwrap() {
             found
-                .entry(row["registry"].as_str().unwrap().to_owned())
+                .entry(file.registry().to_owned())
                 .or_default()
-                .push((row["path"].as_str().unwrap().to_owned(), bytes_of(row)));
+                .push(file);
         }
 
         found
@@ -317,14 +258,14 @@ mod walk {
     /// A copy of the registry of a vector under `prefix` in a new directory,
     /// with each file of `params.files`.
     fn staged(
-        registries: &BTreeMap<String, Vec<(String, Vec<u8>)>>,
+        registries: &BTreeMap<String, Vec<RegistryFile>>,
         params: &Value,
         prefix: &str,
     ) -> Scratch {
         let scratch = Scratch::new();
         let registry = params["registry"].as_str().unwrap();
-        for (path, bytes) in &registries[registry] {
-            scratch.write(&format!("{prefix}{path}"), bytes);
+        for file in &registries[registry] {
+            scratch.write(&format!("{prefix}{}", file.path()), file.bytes());
         }
 
         for (path, text) in params["files"].as_object().into_iter().flatten() {
@@ -344,7 +285,7 @@ mod walk {
     }
 
     impl WrittenHost {
-        fn of(context: &Value) -> Option<Self> {
+        fn of(context: &Map<String, Value>) -> Option<Self> {
             let host = context.get("host")?;
             let aliases = host["model_aliases"]
                 .as_array()?
@@ -397,6 +338,11 @@ mod walk {
         json!({"severity": "error", "loc": loc, "msg": msg, "downgraded": false})
     }
 
+    /// The state of a report, as a vector holds it under the key `status`.
+    fn state_json(report: &Report) -> Value {
+        json!(report.state().as_str())
+    }
+
     /// `issues` with no issue `extra`. The row of `id` names no difference
     /// when the list does not hold that issue.
     fn without(issues: &mut Value, extra: &Value, id: &str, contract: &str) {
@@ -409,12 +355,12 @@ mod walk {
 
     /// Compares one report with one vector. For a vector with a deviation
     /// row, the report must hold the difference that the row names.
-    fn check_report(surface: &str, vector: &Value, report: &Report) {
-        let id = vector["id"].as_str().unwrap();
+    fn check_report(surface: &str, vector: &Vector, report: &Report) {
+        let id = vector.id();
         let mut issues = serde_json::to_value(report.issues()).unwrap();
         match deviation(surface, id).map(|row| (&row.difference, row.contract)) {
             Some((Difference::Refused(msg), contract)) => {
-                assert_eq!(vector["result"], "accepted", "{id}: {contract}");
+                assert_eq!(vector.result(), Outcome::Accepted, "{id}: {contract}");
                 assert_eq!(
                     issues,
                     json!([error_json("<document>", msg)]),
@@ -425,20 +371,21 @@ mod walk {
             }
             Some((Difference::OtherRefusal(msg), contract)) => {
                 let wanted = json!([error_json("<document>", msg)]);
-                assert_eq!(vector["result"], "refused", "{id}: {contract}");
+                assert_eq!(vector.result(), Outcome::Refused, "{id}: {contract}");
                 assert_ne!(
-                    vector["issues"], wanted,
+                    vector.field(ISSUES_KEY),
+                    Some(&wanted),
                     "{id}: the deviation row names no difference"
                 );
                 assert_eq!(issues, wanted, "{id}: {contract}");
-                assert_eq!(report.state().as_str(), vector["status"], "{id}");
+                assert_eq!(Some(&state_json(report)), vector.field(STATUS_KEY), "{id}");
 
                 return;
             }
             Some((Difference::Stricter(loc, msg), contract)) => {
-                assert_eq!(vector["result"], "accepted", "{id}: {contract}");
+                assert_eq!(vector.result(), Outcome::Accepted, "{id}: {contract}");
                 without(&mut issues, &error_json(loc, msg), id, contract);
-                assert_eq!(issues, vector["issues"], "{surface} {id}");
+                assert_eq!(Some(&issues), vector.field(ISSUES_KEY), "{surface} {id}");
                 assert!(!report.ok(), "{id}: {contract}");
 
                 return;
@@ -446,33 +393,42 @@ mod walk {
             None => {}
         }
 
-        assert_eq!(issues, vector["issues"], "{surface} {id}");
-        assert_eq!(report.state().as_str(), vector["status"], "{surface} {id}");
+        assert_eq!(Some(&issues), vector.field(ISSUES_KEY), "{surface} {id}");
         assert_eq!(
-            if report.ok() { "accepted" } else { "refused" },
-            vector["result"],
+            Some(&state_json(report)),
+            vector.field(STATUS_KEY),
+            "{surface} {id}"
+        );
+        assert_eq!(
+            if report.ok() {
+                Outcome::Accepted
+            } else {
+                Outcome::Refused
+            },
+            vector.result(),
             "{surface} {id}"
         );
     }
 
     fn walk_family_file(surface_name: &str) {
-        let (vectors, context) = surface(surface_name);
-        let host = WrittenHost::of(&context);
+        let surface = vectors::surface(surface_name).unwrap();
+        let host = WrittenHost::of(surface.context());
         let host: Option<&dyn HostFacts> = host.as_ref().map(|host| -> &dyn HostFacts { host });
         let registries = registries();
-        for vector in &vectors {
-            let id = vector["id"].as_str().unwrap();
-            let directory = vector["params"]["directory"].as_str().unwrap();
-            let scratch = staged(&registries, &vector["params"], "");
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let params = vector.params().unwrap();
+            let directory = params["directory"].as_str().unwrap();
+            let scratch = staged(&registries, params, "");
             scratch.write(
                 &format!("families/{directory}/family.yaml"),
-                &bytes_of(&vector["input"]),
+                &vector.input().bytes().unwrap(),
             );
             let loaded: Registry = load_registry(&scratch.0, host, &SystemZones::host());
             let report = &loaded.reports()[directory];
             check_report(surface_name, vector, report);
             let reach = reach(surface_name, id);
-            if vector["result"] != "accepted" || reach == Reach::Refused {
+            if vector.result() != Outcome::Accepted || reach == Reach::Refused {
                 assert!(!loaded.families().contains_key(directory), "{id}");
                 continue;
             }
@@ -481,8 +437,8 @@ mod walk {
             // Python model holds it.
             let parsed = &loaded.parsed_families()[directory];
             assert_eq!(
-                serde_json::to_value(parsed).unwrap(),
-                vector["value"],
+                Some(&serde_json::to_value(parsed).unwrap()),
+                vector.value(),
                 "{id}"
             );
             if reach == Reach::Parsed {
@@ -492,8 +448,8 @@ mod walk {
 
             let family = &loaded.families()[directory];
             assert_eq!(
-                serde_json::to_value(RawFamily::from(family)).unwrap(),
-                vector["value"],
+                Some(&serde_json::to_value(RawFamily::from(family)).unwrap()),
+                vector.value(),
                 "{id}"
             );
         }
@@ -511,28 +467,29 @@ mod walk {
 
     #[test]
     fn a_server_file_has_the_python_report() {
-        let (vectors, _) = surface("server_file");
+        let surface = vectors::surface("server_file").unwrap();
         let registries = registries();
-        for vector in &vectors {
-            let id = vector["id"].as_str().unwrap();
-            let directory = vector["params"]["directory"].as_str().unwrap();
-            let scratch = staged(&registries, &vector["params"], "");
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let params = vector.params().unwrap();
+            let directory = params["directory"].as_str().unwrap();
+            let scratch = staged(&registries, params, "");
             scratch.write(
                 &format!("mcp/{directory}/server.yaml"),
-                &bytes_of(&vector["input"]),
+                &vector.input().bytes().unwrap(),
             );
             let loaded = load_registry(&scratch.0, None, &SystemZones::host());
             let report = &loaded.server_reports()[directory];
             check_report("server_file", vector, report);
-            if vector["result"] != "accepted" {
+            if vector.result() != Outcome::Accepted {
                 assert!(!loaded.servers().contains_key(directory), "{id}");
                 continue;
             }
 
             let parsed = &loaded.parsed_servers()[directory];
             assert_eq!(
-                serde_json::to_value(parsed).unwrap(),
-                vector["value"],
+                Some(&serde_json::to_value(parsed).unwrap()),
+                vector.value(),
                 "{id}"
             );
             if reach("server_file", id) == Reach::Parsed {
@@ -542,8 +499,8 @@ mod walk {
 
             let server = &loaded.servers()[directory];
             assert_eq!(
-                serde_json::to_value(RawServer::from(server)).unwrap(),
-                vector["value"],
+                Some(&serde_json::to_value(RawServer::from(server)).unwrap()),
+                vector.value(),
                 "{id}"
             );
         }
@@ -580,29 +537,31 @@ mod walk {
 
     #[test]
     fn a_classified_change_is_the_python_diff() {
-        let (vectors, _) = surface("family_file.classify");
-        for vector in &vectors {
-            let id = vector["id"].as_str().unwrap();
+        let surface = vectors::surface("family_file.classify").unwrap();
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let args = vector.input().args().unwrap();
             let parse = |key: &str| {
-                let text = vector["input"]["args"][key].as_str().unwrap();
+                let text = args[key].as_str().unwrap();
                 let (raw, issues) = parse_family(text);
 
                 raw.unwrap_or_else(|| panic!("{id} {key}: {issues:?}"))
             };
             let diff = classify(&parse("old"), &parse("new"));
-            assert_eq!(vector["result"], "accepted", "{id}");
-            assert_eq!(diff_value(&diff), vector["value"], "{id}");
+            assert_eq!(vector.result(), Outcome::Accepted, "{id}");
+            assert_eq!(Some(&diff_value(&diff)), vector.value(), "{id}");
         }
     }
 
     #[test]
     fn the_program_writes_the_python_output() {
-        let (vectors, _) = surface("family_file.cli");
+        let surface = vectors::surface("family_file.cli").unwrap();
         let registries = registries();
-        for vector in &vectors {
-            let id = vector["id"].as_str().unwrap();
-            let scratch = staged(&registries, &vector["params"], "registry/");
-            let argv: Vec<&str> = vector["input"]["args"]["argv"]
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let accepted = vector.result() == Outcome::Accepted;
+            let scratch = staged(&registries, vector.params().unwrap(), "registry/");
+            let argv: Vec<&str> = vector.input().args().unwrap()["argv"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -613,17 +572,18 @@ mod walk {
                 .current_dir(&scratch.0)
                 .output()
                 .unwrap();
-            let wanted = if vector["result"] == "accepted" {
-                &vector["value"]
+            let wanted = if accepted {
+                vector.value()
             } else {
-                &vector["refusal"]
+                vector.refusal()
             };
+            let wanted = wanted.unwrap_or_else(|| panic!("{id}: no output of the program"));
             assert_eq!(
                 output.status.code().map(i64::from),
                 wanted["exit"].as_i64(),
                 "{id}"
             );
-            assert_eq!(wanted["exit"] == 0, vector["result"] == "accepted", "{id}");
+            assert_eq!(wanted["exit"] == 0, accepted, "{id}");
             // A vector holds no text that argparse writes: that text differs
             // between two Python versions.
             if let Some(stdout) = wanted["stdout"].as_str() {
@@ -640,12 +600,10 @@ mod walk {
 
     #[test]
     fn each_surface_of_this_crate_has_a_test() {
-        let index = read_json("index.json");
-        let own: Vec<&str> = index["surfaces"]
-            .as_array()
-            .unwrap()
+        let index = vectors::index().unwrap();
+        let own: Vec<&str> = index
             .iter()
-            .map(|row| row["surface"].as_str().unwrap())
+            .map(|row| row.surface())
             .filter(|name| OWN_SURFACES.iter().any(|start| name.starts_with(start)))
             .collect();
         for name in &own {
@@ -660,9 +618,12 @@ mod walk {
     #[test]
     fn each_deviation_names_a_vector() {
         for row in &DEVIATIONS {
-            let (vectors, _) = surface(row.surface);
+            let surface = vectors::surface(row.surface).unwrap();
             assert!(
-                vectors.iter().any(|vector| vector["id"] == row.vector),
+                surface
+                    .vectors()
+                    .iter()
+                    .any(|vector| vector.id() == row.vector),
                 "{} holds no vector {}",
                 row.surface,
                 row.vector

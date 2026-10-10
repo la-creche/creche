@@ -8,6 +8,7 @@ version = "0.0.0"
 dependencies = [
  "creche-contracts",
  "creche-util",
+ "creche-vectors",
  "serde_json",
 ]
 
@@ -80,6 +81,7 @@ name = "creche-contracts"
 version = "0.0.0"
 dependencies = [
  "creche-util",
+ "creche-vectors",
  "serde",
  "serde_json",
 ]

@@ -4,8 +4,8 @@
 //! The Python package `agent_family` is the authority until a release of
 //! `caregiver` uses this crate. Each function here gives the answer of its
 //! Python function: the same values, the same issues in the same order and
-//! the same messages. The vector files under `vectors/data` hold the Python
-//! answers, and the tests of this crate compare.
+//! the same messages. The vector files hold the Python answers, and the tests
+//! of this crate compare.
 //!
 //! | Module | Holds |
 //! |---|---|

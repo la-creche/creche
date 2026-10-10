@@ -103,10 +103,10 @@
 //!   clients that give bytes read the half. The doors read U+FFFD three
 //!   times.
 //!
-//! The differential test at the end of this file walks the vectors
-//! `runtime.untrusted.*` and `runtime.parse_object.*` of `vectors/data`. Its
-//! table `DEVIATIONS` holds each of these differences, and each other
-//! difference from a Python copy.
+//! The differential test at the end of this file walks the vectors of the
+//! surfaces `runtime.untrusted.*` and `runtime.parse_object.*`. Its table
+//! `DEVIATIONS` holds each of these differences, and each other difference
+//! from a Python copy.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -2368,8 +2368,8 @@ mod tests {
     // --- each reader against the Python implementation ---
 
     /// The differential test: each vector of each surface
-    /// `runtime.untrusted.*` and `runtime.parse_object.*` of `vectors/data`,
-    /// against the functions of this module.
+    /// `runtime.untrusted.*` and `runtime.parse_object.*`, against the
+    /// functions of this module.
     ///
     /// `SURFACES` names each surface and the function that replays one vector
     /// of it. A vector outside `DEVIATIONS` must be equal: the Rust reader
@@ -2378,12 +2378,12 @@ mod tests {
     mod python {
         use std::collections::{BTreeMap, HashSet};
 
+        use creche_vectors::{self as vectors, Outcome, Vector};
         use serde::Serialize;
         use serde_json::{Value, json};
 
         use super::super::*;
         use super::direct;
-        use crate::vectors::{self, Outcome, Vector};
 
         /// The count of characters that the noticeboard keeps of one text:
         /// `MAX_TEXT_CHARS` of `noticeboard/src/noticeboard/jsonfiles.py:33`.
@@ -2529,8 +2529,8 @@ mod tests {
         }
 
         /// The JSON text of the input of a vector.
-        fn source(vector: &Vector) -> String {
-            vector.input.text().unwrap()
+        fn source(vector: &Vector) -> &str {
+            vector.input().text().unwrap()
         }
 
         /// What a function gives for a vector whose input is one JSON value.
@@ -2540,23 +2540,23 @@ mod tests {
         }
 
         fn any_text(vector: &Vector) -> Did {
-            of_value(direct(&source(vector), |reader| text(reader)))
+            of_value(direct(source(vector), |reader| text(reader)))
         }
 
         fn any_object(vector: &Vector) -> Did {
-            of_value(direct(&source(vector), |reader| {
+            of_value(direct(source(vector), |reader| {
                 object::<_, AnyObject>(reader)
             }))
         }
 
         fn any_block(vector: &Vector) -> Did {
-            of_value(direct(&source(vector), |reader| {
+            of_value(direct(source(vector), |reader| {
                 block::<_, AnyObject>(reader)
             }))
         }
 
         fn any_list(vector: &Vector) -> Did {
-            of_value(direct(&source(vector), |reader| list::<_, Value>(reader)))
+            of_value(direct(source(vector), |reader| list::<_, Value>(reader)))
         }
 
         /// A raw type with the one field `field`, which names one reader. A
@@ -2585,10 +2585,10 @@ mod tests {
         /// What a raw type gives for a vector whose input is one object. The
         /// raw type reads through `parse_object`.
         fn of_field<P: DeserializeOwned, T: Serialize>(vector: &Vector, held: fn(P) -> T) -> Did {
-            match parse_object::<P>(&vector.input.bytes().unwrap()) {
+            match parse_object::<P>(&vector.input().bytes().unwrap()) {
                 Ok(probe) => gives(held(probe)),
                 Err(NotAnObject::NotJson) => Did::Refuses,
-                Err(NotAnObject::NotObject) => panic!("{}: the input is no object", vector.id),
+                Err(NotAnObject::NotObject) => panic!("{}: the input is no object", vector.id()),
             }
         }
 
@@ -2632,7 +2632,10 @@ mod tests {
             match cap_of(vector) {
                 2 => of_field(vector, |probe: TwoObjects| probe.field),
                 50 => of_field(vector, |probe: FiftyObjects| probe.field),
-                cap => panic!("{}: no raw type of this test has the cap {cap}", vector.id),
+                cap => panic!(
+                    "{}: no raw type of this test has the cap {cap}",
+                    vector.id()
+                ),
             }
         }
 
@@ -2649,19 +2652,22 @@ mod tests {
             match cap_of(vector) {
                 2 => of_field(vector, |probe: TwoTexts| cut_each(probe.field)),
                 50 => of_field(vector, |probe: FiftyTexts| cut_each(probe.field)),
-                cap => panic!("{}: no raw type of this test has the cap {cap}", vector.id),
+                cap => panic!(
+                    "{}: no raw type of this test has the cap {cap}",
+                    vector.id()
+                ),
             }
         }
 
         /// The object of a whole document, with each member as it is.
         fn document(vector: &Vector) -> Did {
-            parse_object::<AnyObject>(&vector.input.bytes().unwrap()).map_or(Did::Refuses, gives)
+            parse_object::<AnyObject>(&vector.input().bytes().unwrap()).map_or(Did::Refuses, gives)
         }
 
         /// What the Rust reader must give when the Python helper did what the
         /// vector holds.
         fn python_did(against: &Against, vector: &Vector, at: &str) -> Did {
-            if vector.result != Outcome::Accepted {
+            if vector.result() != Outcome::Accepted {
                 return Did::Refuses;
             }
 
@@ -2671,7 +2677,7 @@ mod tests {
 
             Did::Gives(match (against.stands, value) {
                 (Stands::Same, value) => value.clone(),
-                (Stands::Kind(_), Value::Bool(true)) => json_of(&source(vector)),
+                (Stands::Kind(_), Value::Bool(true)) => json_of(source(vector)),
                 (Stands::Kind(empty), Value::Bool(false)) => json_of(empty),
                 (Stands::Kind(_), other) => panic!("{at}: {other} is no answer of a check"),
                 (Stands::NoneIsNoMember, Value::Null) => json!([]),
@@ -3023,22 +3029,22 @@ mod tests {
         /// Walks each vector of one surface. It prints the counts, and a run
         /// with `--nocapture` shows them.
         fn walk(against: &Against) {
-            let surface = vectors::surface(against.surface);
+            let surface = vectors::surface(against.surface).unwrap();
             let mut equal = 0;
             let mut deviated = HashSet::new();
-            for vector in &surface.vectors {
-                let at = format!("{} {}", against.surface, vector.id);
+            for vector in surface.vectors() {
+                let at = format!("{} {}", against.surface, vector.id());
                 let rust = (against.replay)(vector);
-                let decisions = deviations_of(against.surface, &vector.id);
+                let decisions = deviations_of(against.surface, vector.id());
 
                 assert!(decisions.len() <= 1, "{at}: two rows name the vector");
                 if let Some((place, named, deviation)) = decisions.first() {
                     let python = Did::Gives(vector.value().cloned().unwrap_or(Value::Null));
 
-                    assert_eq!(vector.result, Outcome::Accepted, "{at}: the Python code");
+                    assert_eq!(vector.result(), Outcome::Accepted, "{at}: the Python code");
                     differs_as_decided(deviation.differs, &python, &rust, &at);
                     deviated.insert((*place, *named));
-                } else if vector.result == Outcome::Raised {
+                } else if vector.result() == Outcome::Raised {
                     assert_eq!(rust, Did::Refuses, "{at}: the Python code raises");
                     equal += 1;
                 } else {
@@ -3058,7 +3064,7 @@ mod tests {
             println!(
                 "{}: {} vectors: {equal} equal, {} inputs that differ on purpose",
                 against.surface,
-                surface.vectors.len(),
+                surface.vectors().len(),
                 deviated.len()
             );
         }
@@ -3067,10 +3073,10 @@ mod tests {
         fn the_table_holds_each_surface_of_the_readers_one_time() {
             let listed: Vec<&str> = SURFACES.iter().map(|against| against.surface).collect();
             let unique: HashSet<&str> = listed.iter().copied().collect();
-            let index = vectors::index();
+            let index = vectors::index().unwrap();
             let in_index: HashSet<&str> = index
                 .iter()
-                .map(|row| row.surface.as_str())
+                .map(|row| row.surface())
                 .filter(|surface| surface.starts_with(READERS) || surface.starts_with(DOCUMENTS))
                 .collect();
 

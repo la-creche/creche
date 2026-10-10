@@ -888,7 +888,7 @@ mod tests {
 
     /// One route of a Python service, as the notes of its surface give it.
     struct Surface {
-        /// The surface of `vectors/data/runtime`.
+        /// The name of the surface. Each one starts with `runtime.edge.`.
         name: &'static str,
         /// The path that has a route.
         path: &'static str,

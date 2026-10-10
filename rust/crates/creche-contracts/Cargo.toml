@@ -15,3 +15,9 @@ serde = { workspace = true }
 # `raw_value`: the session module reads a member of a body as its JSON text,
 # so a number of any size and an unknown member cost no parse.
 serde_json = { workspace = true, features = ["raw_value"] }
+
+# The one reader of the vector files. Each differential test of this crate
+# reads through it (rust/AGENTS.md, "The differential test"). The reader names
+# no crate that holds contract types, so this entry makes no circle.
+[dev-dependencies]
+creche-vectors = { path = "../creche-vectors" }

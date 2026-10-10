@@ -12,10 +12,10 @@
 //! | The outcome record | [`OutcomeRecord`], [`JobStatus`] |
 //!
 //! The Python implementation is the authority for each type here until a Rust
-//! release replaces it. `vectors/data/session` records what the Python code
-//! does, and the test module `python` walks each vector. Where the Python code
-//! is lax against the contract, the type is lax in the same way, and a
-//! `CONTRACT-QUESTION` comment marks it.
+//! release replaces it. The vectors of the `session.` surfaces record what the
+//! Python code does, and the test module `python` walks each vector. Where the
+//! Python code is lax against the contract, the type is lax in the same way,
+//! and a `CONTRACT-QUESTION` comment marks it.
 //!
 //! Four things differ from the Python code on purpose. The test holds each one
 //! as a row of its `DEVIATIONS` table, and `rust/AGENTS.md` lists them.

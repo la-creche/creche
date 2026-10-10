@@ -11,8 +11,9 @@
 //! | [`Allowed`], [`Held`] | The proof that a decision allowed a call: one for a call that runs now, one for a call that waits for the operator. A sketch for the port of the chaperone. |
 //!
 //! Each reader here does what the Python code does with the same bytes, and
-//! each writer writes the same bytes. `vectors/data/chaperone` records the
-//! Python behavior, and the test in `python.rs` walks each vector.
+//! each writer writes the same bytes. The vectors of the `grants.` surfaces and
+//! of the `chaperone.` surfaces record the Python behavior, and the test in
+//! `python.rs` walks each vector.
 //!
 //! The readers do not use `serde_json`. The Python code reads JSON that is not
 //! strict, and it reports each issue of a document, not only the first.

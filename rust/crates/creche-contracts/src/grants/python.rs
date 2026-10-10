@@ -1,18 +1,18 @@
 //! The differential test against the Python implementation.
 //!
-//! `vectors/data/chaperone` records what the Python code accepts, refuses and
-//! writes. Each test here walks each vector of each surface of one type. A
-//! vector on which the Rust code differs on purpose is a row of
-//! [`DEVIATIONS`].
+//! The vectors of the `grants.` surfaces and of the `chaperone.` surfaces
+//! record what the Python code accepts, refuses and writes. Each test here
+//! walks each vector of each surface of one type. A vector on which the Rust
+//! code differs on purpose is a row of [`DEVIATIONS`].
 
 use std::collections::{BTreeMap, HashSet};
 use std::time::{Duration, UNIX_EPOCH};
 
 use creche_util::{hex, sha256};
+use creche_vectors::{self as vectors, Outcome, Surface, Vector};
 use serde_json::Value as Json;
 
 use crate::ids::{FamilyName, SandboxName, Sha256Hex, ToolNameError};
-use crate::vectors::{self, Outcome, Surface, Vector};
 
 use super::json::{Sign, read_utf8};
 use super::*;
@@ -57,10 +57,10 @@ fn the_table_holds_each_surface_of_this_module_one_time() {
         .flat_map(|(_, surfaces)| surfaces.iter().copied())
         .collect();
     let unique: HashSet<&str> = listed.iter().copied().collect();
-    let index = vectors::index();
+    let index = vectors::index().unwrap();
     let in_index: HashSet<&str> = index
         .iter()
-        .map(|row| row.surface.as_str())
+        .map(|row| row.surface())
         .filter(|surface| PREFIXES.iter().any(|prefix| surface.starts_with(prefix)))
         .collect();
 
@@ -234,11 +234,11 @@ fn each_deviation_names_a_vector_of_a_surface_of_the_table() {
             deviation.vector
         );
 
-        let surface = vectors::surface(deviation.surface);
+        let surface = vectors::surface(deviation.surface).unwrap();
         let named = surface
-            .vectors
+            .vectors()
             .iter()
-            .any(|vector| vector.id == deviation.vector);
+            .any(|vector| vector.id() == deviation.vector);
 
         assert!(named, "{} {}", deviation.surface, deviation.vector);
     }
@@ -582,7 +582,7 @@ fn grant_differs_as_decided(
     };
 
     assert!(as_the_row_says, "{at}: another refusal: {error:?}");
-    match vector.result {
+    match vector.result() {
         Outcome::Accepted => {}
         Outcome::Refused => assert_ne!(
             vector.refusal().unwrap()["kind"],
@@ -594,23 +594,23 @@ fn grant_differs_as_decided(
 }
 
 fn walk_grant_reader() -> (usize, usize) {
-    let surface = vectors::surface(GRANT_READER);
+    let surface = vectors::surface(GRANT_READER).unwrap();
     let mut equal = 0;
     let mut deviated = 0;
-    for vector in &surface.vectors {
-        let at = format!("{GRANT_READER} {}", vector.id);
-        let bytes = vector.input.bytes().unwrap();
+    for vector in surface.vectors() {
+        let at = format!("{GRANT_READER} {}", vector.id());
+        let bytes = vector.input().bytes().unwrap();
         let stem = vector.field("params").unwrap()["family"].as_str().unwrap();
         let stem: FamilyName = stem.parse().unwrap();
         let rust = GrantFile::parse(&bytes, &stem);
-        if let Some(deviation) = deviation_of(GRANT_READER, &vector.id) {
+        if let Some(deviation) = deviation_of(GRANT_READER, vector.id()) {
             grant_differs_as_decided(deviation, vector, &rust, &at);
             deviated += 1;
 
             continue;
         }
 
-        match (vector.result, rust) {
+        match (vector.result(), rust) {
             (Outcome::Accepted, Ok(grants)) => {
                 assert_eq!(grant_value(&grants), value_of(vector, &at), "{at}");
 
@@ -694,14 +694,14 @@ fn raw_grant(args: &serde_json::Map<String, Json>) -> RawGrantFile {
 }
 
 fn walk_grant_writer() -> usize {
-    let surface = vectors::surface(GRANT_WRITER);
-    for vector in &surface.vectors {
-        let at = format!("{GRANT_WRITER} {}", vector.id);
-        let raw = raw_grant(vector.input.args().unwrap());
+    let surface = vectors::surface(GRANT_WRITER).unwrap();
+    for vector in surface.vectors() {
+        let at = format!("{GRANT_WRITER} {}", vector.id());
+        let raw = raw_grant(vector.input().args().unwrap());
         let grants = GrantFile::try_from(raw).unwrap_or_else(|error| panic!("{at}: {error}"));
         let written = output_of(vector);
 
-        assert_eq!(vector.result, Outcome::Accepted, "{at}");
+        assert_eq!(vector.result(), Outcome::Accepted, "{at}");
         assert_eq!(
             String::from_utf8(grants.to_bytes().unwrap()).unwrap(),
             written,
@@ -717,7 +717,7 @@ fn walk_grant_writer() -> usize {
 
     assert_eq!(deviations_in(GRANT_WRITER), 0);
 
-    surface.vectors.len()
+    surface.vectors().len()
 }
 
 #[test]
@@ -778,7 +778,7 @@ fn body_differs_as_decided(deviation: &Deviation, vector: &Vector, error: &BodyE
     };
 
     assert!(as_the_row_says, "{at}: another refusal: {error:?}");
-    match vector.result {
+    match vector.result() {
         Outcome::Accepted => {}
         Outcome::Refused => {
             let python = vector.refusal().unwrap()["http_status"].as_u64().unwrap();
@@ -799,13 +799,13 @@ fn walk_body<T: std::fmt::Debug>(
     parse: fn(&[u8]) -> Result<T, BodyError>,
     value: fn(&T) -> Value,
 ) -> (usize, usize) {
-    let surface = vectors::surface(name);
+    let surface = vectors::surface(name).unwrap();
     let mut equal = 0;
     let mut deviated = 0;
-    for vector in &surface.vectors {
-        let at = format!("{name} {}", vector.id);
-        let rust = parse(&vector.input.bytes().unwrap());
-        if let Some(deviation) = deviation_of(name, &vector.id) {
+    for vector in surface.vectors() {
+        let at = format!("{name} {}", vector.id());
+        let rust = parse(&vector.input().bytes().unwrap());
+        if let Some(deviation) = deviation_of(name, vector.id()) {
             let error = rust.expect_err(&at);
             body_differs_as_decided(deviation, vector, &error, &at);
             deviated += 1;
@@ -813,7 +813,7 @@ fn walk_body<T: std::fmt::Debug>(
             continue;
         }
 
-        match (vector.result, rust) {
+        match (vector.result(), rust) {
             (Outcome::Accepted, Ok(body)) => {
                 assert_eq!(vector.field("http_status"), Some(&Json::from(200)), "{at}");
                 assert_eq!(sorted(&value(&body)), value_of(vector, &at), "{at}");
@@ -996,7 +996,7 @@ fn audit_record(args: &serde_json::Map<String, Json>) -> AuditRecord {
 
 #[test]
 fn an_audit_record_is_the_line_that_the_python_chaperone_writes() {
-    let surface = vectors::surface(AUDIT_LINE);
+    let surface = vectors::surface(AUDIT_LINE).unwrap();
     let outcomes: HashSet<AuditOutcome> = walk_lines(&surface, |args| {
         let record = audit_record(args);
 
@@ -1008,7 +1008,7 @@ fn an_audit_record_is_the_line_that_the_python_chaperone_writes() {
     assert_eq!(outcomes.len(), each_outcome, "a vector for each outcome");
     println!(
         "AuditRecord: {} vectors: each one equal",
-        surface.vectors.len()
+        surface.vectors().len()
     );
 }
 
@@ -1019,11 +1019,11 @@ fn walk_lines<T: Eq + std::hash::Hash>(
     write: impl Fn(&serde_json::Map<String, Json>) -> (Vec<u8>, AuditTime, T),
 ) -> HashSet<T> {
     let mut facts = HashSet::new();
-    for vector in &surface.vectors {
-        let at = format!("{} {}", surface.surface, vector.id);
-        let (line, time, fact) = write(vector.input.args().unwrap());
+    for vector in surface.vectors() {
+        let at = format!("{} {}", surface.name(), vector.id());
+        let (line, time, fact) = write(vector.input().args().unwrap());
 
-        assert_eq!(vector.result, Outcome::Accepted, "{at}");
+        assert_eq!(vector.result(), Outcome::Accepted, "{at}");
         assert_eq!(String::from_utf8(line).unwrap(), output_of(vector), "{at}");
         assert_eq!(
             Some(&Json::from(time.file_name())),
@@ -1033,7 +1033,7 @@ fn walk_lines<T: Eq + std::hash::Hash>(
         facts.insert(fact);
     }
 
-    assert_eq!(deviations_in(&surface.surface), 0);
+    assert_eq!(deviations_in(surface.name()), 0);
 
     facts
 }
@@ -1066,7 +1066,7 @@ fn unidentified_record(args: &serde_json::Map<String, Json>) -> UnidentifiedReco
 
 #[test]
 fn an_unidentified_record_is_the_line_that_the_python_chaperone_writes() {
-    let surface = vectors::surface(UNIDENTIFIED_LINE);
+    let surface = vectors::surface(UNIDENTIFIED_LINE).unwrap();
     let kinds = walk_lines(&surface, |args| {
         let record = unidentified_record(args);
         let kind = match record.request() {
@@ -1081,7 +1081,7 @@ fn an_unidentified_record_is_the_line_that_the_python_chaperone_writes() {
     assert_eq!(kinds.len(), 3, "a vector for each kind of request");
     println!(
         "UnidentifiedRecord: {} vectors: each one equal",
-        surface.vectors.len()
+        surface.vectors().len()
     );
 }
 
@@ -1089,12 +1089,12 @@ fn an_unidentified_record_is_the_line_that_the_python_chaperone_writes() {
 
 #[test]
 fn a_reason_is_what_the_python_chaperone_answers_with() {
-    let surface = vectors::surface(REASON);
+    let surface = vectors::surface(REASON).unwrap();
     let mut accepted = HashSet::new();
-    for vector in &surface.vectors {
-        let at = format!("{REASON} {}", vector.id);
-        let rust = vector.input.text().unwrap().parse::<Reason>();
-        match (vector.result, rust) {
+    for vector in surface.vectors() {
+        let at = format!("{REASON} {}", vector.id());
+        let rust = vector.input().text().unwrap().parse::<Reason>();
+        match (vector.result(), rust) {
             (Outcome::Accepted, Ok(reason)) => {
                 let status = vector.field("http_status").unwrap().as_u64().unwrap();
 
@@ -1109,35 +1109,38 @@ fn a_reason_is_what_the_python_chaperone_answers_with() {
     assert_eq!(surfaces_of("Reason"), [REASON]);
     assert_eq!(deviations_in(REASON), 0);
     assert_eq!(accepted, HashSet::from(Reason::ALL));
-    println!("Reason: {} vectors: each one equal", surface.vectors.len());
+    println!(
+        "Reason: {} vectors: each one equal",
+        surface.vectors().len()
+    );
 }
 
 #[test]
 fn a_verb_is_an_entry_of_the_python_catalog() {
-    let surface = vectors::surface(VERB);
+    let surface = vectors::surface(VERB).unwrap();
     let mut accepted = Vec::new();
     let mut deviated = 0;
-    for vector in &surface.vectors {
-        let at = format!("{VERB} {}", vector.id);
-        let text = vector.input.text().unwrap();
+    for vector in surface.vectors() {
+        let at = format!("{VERB} {}", vector.id());
+        let text = vector.input().text().unwrap();
         let rust = text.parse::<VerbName>().ok().and_then(|name| name.verb());
 
         // The two readers of a verb agree: the name of a grant file and the
         // word on a wire.
         assert_eq!(
-            serde_json::from_value::<Verb>(Json::from(text.as_str())).ok(),
+            serde_json::from_value::<Verb>(Json::from(text)).ok(),
             rust,
             "{at}"
         );
-        if let Some(deviation) = deviation_of(VERB, &vector.id) {
+        if let Some(deviation) = deviation_of(VERB, vector.id()) {
             assert_eq!(deviation.rust, Refusal::NotInSet, "{at}");
-            assert_eq!((vector.result, rust), (Outcome::Accepted, None), "{at}");
+            assert_eq!((vector.result(), rust), (Outcome::Accepted, None), "{at}");
             deviated += 1;
 
             continue;
         }
 
-        match (vector.result, rust) {
+        match (vector.result(), rust) {
             (Outcome::Accepted, Some(verb)) => {
                 assert_eq!(verb.as_str(), text, "{at}");
                 accepted.push(verb);
@@ -1153,8 +1156,8 @@ fn a_verb_is_an_entry_of_the_python_catalog() {
     assert_eq!(accepted, Verb::ALL);
     println!(
         "Verb: {} vectors: {} equal, {deviated} deviations",
-        surface.vectors.len(),
-        surface.vectors.len() - deviated
+        surface.vectors().len(),
+        surface.vectors().len() - deviated
     );
 }
 
@@ -1163,26 +1166,29 @@ fn a_verb_is_an_entry_of_the_python_catalog() {
 /// sure that [`Claimed::read`] uses them as the Python code does.
 #[test]
 fn an_advisory_header_is_kept_when_the_python_chaperone_keeps_it() {
-    for vector in vectors::surface("id.session_id.chaperone").vectors {
-        let value = vector.input.text().unwrap();
-        let (claimed, dropped) = Claimed::read(&RawClaimed::new().with_session_id(&value));
-        let kept = vector.result == Outcome::Accepted;
+    for vector in vectors::surface("id.session_id.chaperone")
+        .unwrap()
+        .vectors()
+    {
+        let value = vector.input().text().unwrap();
+        let (claimed, dropped) = Claimed::read(&RawClaimed::new().with_session_id(value));
+        let kept = vector.result() == Outcome::Accepted;
 
-        assert_eq!(claimed.session_id().is_some(), kept, "{}", vector.id);
-        assert_eq!(dropped.is_empty(), kept, "{}", vector.id);
+        assert_eq!(claimed.session_id().is_some(), kept, "{}", vector.id());
+        assert_eq!(dropped.is_empty(), kept, "{}", vector.id());
     }
 
-    for vector in vectors::surface("id.ulid.chaperone").vectors {
-        let value = vector.input.text().unwrap();
+    for vector in vectors::surface("id.ulid.chaperone").unwrap().vectors() {
+        let value = vector.input().text().unwrap();
         let raw = RawClaimed::new()
-            .with_turn_id(&value)
-            .with_delegation_id(&value);
+            .with_turn_id(value)
+            .with_delegation_id(value);
         let (claimed, dropped) = Claimed::read(&raw);
-        let kept = vector.result == Outcome::Accepted;
+        let kept = vector.result() == Outcome::Accepted;
 
-        assert_eq!(claimed.turn_id().is_some(), kept, "{}", vector.id);
-        assert_eq!(claimed.delegation_id().is_some(), kept, "{}", vector.id);
-        assert_eq!(dropped.len(), if kept { 0 } else { 2 }, "{}", vector.id);
+        assert_eq!(claimed.turn_id().is_some(), kept, "{}", vector.id());
+        assert_eq!(claimed.delegation_id().is_some(), kept, "{}", vector.id());
+        assert_eq!(dropped.len(), if kept { 0 } else { 2 }, "{}", vector.id());
     }
 }
 

@@ -18,4 +18,7 @@ creche-contracts = { path = "../creche-contracts" }
 creche-util = { path = "../creche-util" }
 
 [dev-dependencies]
+# The one reader of the vector files. The differential test reads through it
+# (rust/AGENTS.md, "The differential test").
+creche-vectors = { path = "../creche-vectors" }
 serde_json = { workspace = true }
