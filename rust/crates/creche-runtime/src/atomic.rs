@@ -13,8 +13,8 @@
 //! and `chaperone/src/chaperone/faults.py`. The three differ in the name of
 //! the temporary file and in what they sync. [`Write`] names each choice.
 //! The trigger door and `handover` hold more copies, and the doc comment of
-//! each function names them. The table `DEVIATIONS` in the tests of this
-//! module names each difference from a Python copy.
+//! each function names them. That doc comment also says what the function
+//! does in another way than a Python copy.
 //!
 //! # The temporary file
 //!
@@ -265,6 +265,49 @@ impl Error for WriteError {}
 /// - `handover/src/handover/follow/__init__.py:308-325`.
 /// - `handover/src/handover/executor/roster.py:134-142`.
 ///
+/// The function differs from those origins in these ways:
+///
+/// - The name of the temporary file has one form,
+///   `.<name>.<pid>.<count>.tmp`, the form of
+///   `attendance/src/attendance/atomic.py:45`. Two origins give the file a
+///   random name: `caregiver/src/caregiver/atomic.py:30` and
+///   `door-trigger/src/agent_door_trigger/quiet/state.py:73`. The three
+///   others name it `<name>.tmp`, `.<name>.tmp` and `<name>.new`:
+///   `chaperone/src/chaperone/faults.py:71`,
+///   `handover/src/handover/follow/__init__.py:312` and
+///   `handover/src/handover/executor/roster.py:135`.
+/// - The open of three origins writes over a leftover temporary file:
+///   `attendance/src/attendance/atomic.py:48`,
+///   `chaperone/src/chaperone/faults.py:72` and
+///   `handover/src/handover/executor/roster.py:137`. The create here refuses
+///   a name that exists. The function removes the leftover file and creates
+///   its own file.
+/// - Two origins sync neither the temporary file nor the directory:
+///   `door-trigger/src/agent_door_trigger/quiet/state.py:74-78` and
+///   `handover/src/handover/executor/roster.py:137-142`. Each write here
+///   syncs the temporary file before the rename.
+/// - Two origins do not sync the directory after the rename:
+///   `attendance/src/attendance/atomic.py:42-61` and
+///   `handover/src/handover/follow/__init__.py:316-325`. [`DirSync`] names
+///   that choice here. A port takes [`DirSync::Sync`], and the write then
+///   syncs the directory.
+/// - A write of three origins that fails leaves its temporary file:
+///   `chaperone/src/chaperone/faults.py:68-89`,
+///   `handover/src/handover/follow/__init__.py:316-325` and
+///   `handover/src/handover/executor/roster.py:137-142`. The next write of
+///   the second one removes that file. A write here that fails before the
+///   rename removes its temporary file.
+/// - Four origins set the mode with a call on the path of the temporary
+///   file: `attendance/src/attendance/atomic.py:57`,
+///   `caregiver/src/caregiver/atomic.py:38`,
+///   `chaperone/src/chaperone/faults.py:80` and
+///   `handover/src/handover/executor/roster.py:138`. The call here is on the
+///   open file, so the mode goes to the file that the write made.
+/// - `handover/src/handover/follow/__init__.py:311` makes the directory of
+///   the file with a mode of its own. [`Parents::Create`] makes a directory
+///   with the mode that the umask gives. A port calls [`ensure_dir`] first
+///   and writes with [`Parents::MustExist`].
+///
 /// ```
 /// use creche_runtime::atomic::{self, DirSync, FileMode, Parents, Write};
 /// use creche_testkit::root::TempRoot;
@@ -308,6 +351,21 @@ pub fn write(path: &Path, bytes: &[u8], how: Write) -> Result<(), WriteError> {
 /// The Python origins are `handover/src/handover/executor/spool.py:358-385`
 /// and `handover/src/handover/requester/file.py:188-210`. The two open the
 /// file relative to a directory descriptor. This function takes a path.
+///
+/// The function differs from the Python code in three more ways:
+///
+/// - The temporary file of each origin is `.<name>.tmp`, and the origin
+///   removes a file with that name before the create (`spool.py:365-368`
+///   and `file.py:190-193`). The name here is `.<name>.<pid>.<count>.tmp`,
+///   and the function removes only a leftover file with that name.
+/// - A write of an origin that fails before the link leaves its temporary
+///   file, and the next write of that name removes it (`spool.py:372-378`
+///   and `file.py:197-203`). A write here that fails before the link
+///   removes its temporary file.
+/// - `handover/src/handover/intake/store.py:320-335` creates the name
+///   itself, with a create that refuses a name that exists. Then it writes
+///   the bytes. This function writes a temporary file and links it to the
+///   name, so the name gets a file that is whole.
 ///
 /// ```
 /// use std::io::ErrorKind;
@@ -371,7 +429,12 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 /// process cannot enter. The call is then an error at step 2, and no entry
 /// moves.
 ///
-/// The Python origin is `caregiver/src/caregiver/atomic.py:47-69`.
+/// The Python origin is `caregiver/src/caregiver/atomic.py:47-69`. On
+/// Python 3.14, that origin reads each error of a look at the target or at
+/// the old name as no entry (`:61-62`). On Python 3.12 and on Python 3.13,
+/// it raises for an error such as a directory that the process cannot
+/// enter. This function is an error for such a look, as the origin is on
+/// Python 3.12 and on Python 3.13.
 ///
 /// # Errors
 ///
@@ -2430,218 +2493,13 @@ mod tests {
 
     // --- the differences from the Python copies ---
 
-    /// One difference between this module and a Python copy of a write.
-    struct Deviation {
-        /// The Python file and the lines of the copy.
-        python: &'static str,
-        /// What the copy does.
-        copy: &'static str,
-        /// What this module does.
-        here: &'static str,
-        /// The check that this module does what the row says.
-        holds: fn(),
-    }
+    // No vector covers a write. The doc comment of `write`, of `write_new`
+    // and of `replace_dir` names the Python lines of each test below. The
+    // test for the look of `replace_dir` that the system refuses is
+    // `an_old_name_that_the_system_refuses_to_look_at_stops_the_swap`.
 
-    const ONE_NAME: &str = "The name is .<name>.<pid>.<count>.tmp, the form of \
-        attendance/src/attendance/atomic.py:45.";
-
-    const ALWAYS_SYNCED: &str = "Each write syncs the temporary file before the rename.";
-
-    const MODE_ON_THE_PATH: &str = "The copy sets the mode with a call on the path of the \
-        temporary file.";
-
-    const MODE_ON_THE_FILE: &str = "The write sets the mode with a call on the open file, so \
-        the mode goes to the file that the write made.";
-
-    const WRITTEN_OVER: &str = "The open writes over a leftover temporary file.";
-
-    const REMOVED_AND_CREATED: &str = "The create refuses a name that exists. The write removes \
-        the leftover file and creates its own file.";
-
-    const NO_DIRECTORY_SYNC: &str = "The copy does not sync the directory after the rename.";
-
-    const SYNC_HAS_A_NAME: &str = "DirSync names the choice. A port takes DirSync::Sync, and the \
-        write then syncs the directory.";
-
-    const LEFT_UNTIL_THE_NEXT_WRITE: &str = "A write that fails before the link leaves its \
-        temporary file. The next write of that name removes it.";
-
-    const REMOVED_BEFORE_THE_LINK: &str = "A write of a new file that fails before the link \
-        removes its temporary file.";
-
-    /// Each difference on purpose between this module and a Python copy. No
-    /// vector covers a write, so a row names the Python lines.
-    const DEVIATIONS: &[Deviation] = &[
-        Deviation {
-            python: "caregiver/src/caregiver/atomic.py:30",
-            copy: "mkstemp gives the temporary file a random name: .<name>.<random>.tmp.",
-            here: ONE_NAME,
-            holds: the_temporary_name_has_one_form,
-        },
-        Deviation {
-            python: "chaperone/src/chaperone/faults.py:71",
-            copy: "The temporary file is <name>.tmp.",
-            here: ONE_NAME,
-            holds: the_temporary_name_has_one_form,
-        },
-        Deviation {
-            python: "door-trigger/src/agent_door_trigger/quiet/state.py:73",
-            copy: "mkstemp gives the temporary file a random name: .<family>.<random>.tmp.",
-            here: ONE_NAME,
-            holds: the_temporary_name_has_one_form,
-        },
-        Deviation {
-            python: "handover/src/handover/follow/__init__.py:312",
-            copy: "The temporary file is .<name>.tmp.",
-            here: ONE_NAME,
-            holds: the_temporary_name_has_one_form,
-        },
-        Deviation {
-            python: "handover/src/handover/executor/roster.py:135",
-            copy: "The temporary file is <name>.new.",
-            here: ONE_NAME,
-            holds: the_temporary_name_has_one_form,
-        },
-        Deviation {
-            python: "attendance/src/attendance/atomic.py:48",
-            copy: WRITTEN_OVER,
-            here: REMOVED_AND_CREATED,
-            holds: a_leftover_is_removed_and_not_written,
-        },
-        Deviation {
-            python: "chaperone/src/chaperone/faults.py:72",
-            copy: WRITTEN_OVER,
-            here: REMOVED_AND_CREATED,
-            holds: a_leftover_is_removed_and_not_written,
-        },
-        Deviation {
-            python: "handover/src/handover/executor/roster.py:137",
-            copy: WRITTEN_OVER,
-            here: REMOVED_AND_CREATED,
-            holds: a_leftover_is_removed_and_not_written,
-        },
-        Deviation {
-            python: "attendance/src/attendance/atomic.py:42-61",
-            copy: NO_DIRECTORY_SYNC,
-            here: SYNC_HAS_A_NAME,
-            holds: the_caller_names_the_directory_sync,
-        },
-        Deviation {
-            python: "handover/src/handover/follow/__init__.py:316-325",
-            copy: NO_DIRECTORY_SYNC,
-            here: SYNC_HAS_A_NAME,
-            holds: the_caller_names_the_directory_sync,
-        },
-        Deviation {
-            python: "door-trigger/src/agent_door_trigger/quiet/state.py:74-78",
-            copy: "The copy syncs neither the temporary file nor the directory.",
-            here: ALWAYS_SYNCED,
-            holds: each_write_syncs_its_file,
-        },
-        Deviation {
-            python: "handover/src/handover/executor/roster.py:137-142",
-            copy: "The copy syncs neither the temporary file nor the directory.",
-            here: ALWAYS_SYNCED,
-            holds: each_write_syncs_its_file,
-        },
-        Deviation {
-            python: "chaperone/src/chaperone/faults.py:68-89",
-            copy: "A write that fails leaves its temporary file.",
-            here: "A write that fails before the rename removes its temporary file.",
-            holds: a_failed_write_leaves_no_file,
-        },
-        Deviation {
-            python: "handover/src/handover/follow/__init__.py:316-325",
-            copy: "A write that fails leaves its temporary file. The next write removes it.",
-            here: "A write that fails before the rename removes its temporary file.",
-            holds: a_failed_write_leaves_no_file,
-        },
-        Deviation {
-            python: "handover/src/handover/executor/roster.py:137-142",
-            copy: "A write that fails leaves its temporary file.",
-            here: "A write that fails before the rename removes its temporary file.",
-            holds: a_failed_write_leaves_no_file,
-        },
-        Deviation {
-            python: "attendance/src/attendance/atomic.py:57",
-            copy: MODE_ON_THE_PATH,
-            here: MODE_ON_THE_FILE,
-            holds: the_mode_goes_onto_the_open_file,
-        },
-        Deviation {
-            python: "caregiver/src/caregiver/atomic.py:38",
-            copy: MODE_ON_THE_PATH,
-            here: MODE_ON_THE_FILE,
-            holds: the_mode_goes_onto_the_open_file,
-        },
-        Deviation {
-            python: "chaperone/src/chaperone/faults.py:80",
-            copy: MODE_ON_THE_PATH,
-            here: MODE_ON_THE_FILE,
-            holds: the_mode_goes_onto_the_open_file,
-        },
-        Deviation {
-            python: "handover/src/handover/executor/roster.py:138",
-            copy: MODE_ON_THE_PATH,
-            here: MODE_ON_THE_FILE,
-            holds: the_mode_goes_onto_the_open_file,
-        },
-        Deviation {
-            python: "handover/src/handover/follow/__init__.py:311",
-            copy: "The copy makes the directory of the file with a mode of its own.",
-            here: "Parents::Create makes a directory with the mode that the umask gives. A \
-                   port calls ensure_dir first and writes with Parents::MustExist.",
-            holds: a_port_makes_the_directory_first,
-        },
-        Deviation {
-            python: "handover/src/handover/executor/spool.py:365-368",
-            copy: "The temporary file is .<name>.tmp. The copy removes a file with that name \
-                   before the create, and it opens each name relative to a directory \
-                   descriptor.",
-            here: "write_new takes a path. The name of the temporary file is \
-                   .<name>.<pid>.<count>.tmp, and the write removes only a leftover file.",
-            holds: a_new_file_uses_the_one_name,
-        },
-        Deviation {
-            python: "handover/src/handover/requester/file.py:190-193",
-            copy: "The temporary file is .<name>.tmp. The copy removes a file with that name \
-                   before the create, and it opens each name relative to a directory \
-                   descriptor.",
-            here: "write_new takes a path. The name of the temporary file is \
-                   .<name>.<pid>.<count>.tmp, and the write removes only a leftover file.",
-            holds: a_new_file_uses_the_one_name,
-        },
-        Deviation {
-            python: "handover/src/handover/executor/spool.py:372-378",
-            copy: LEFT_UNTIL_THE_NEXT_WRITE,
-            here: REMOVED_BEFORE_THE_LINK,
-            holds: a_failed_new_file_leaves_no_file,
-        },
-        Deviation {
-            python: "handover/src/handover/requester/file.py:197-203",
-            copy: LEFT_UNTIL_THE_NEXT_WRITE,
-            here: REMOVED_BEFORE_THE_LINK,
-            holds: a_failed_new_file_leaves_no_file,
-        },
-        Deviation {
-            python: "handover/src/handover/intake/store.py:320-335",
-            copy: "The copy creates the name itself, with a create that refuses a name that \
-                   exists. Then it writes the bytes.",
-            here: "write_new writes a temporary file and links it to the name. The name gets a \
-                   file that is whole.",
-            holds: a_new_file_is_whole_before_it_has_its_name,
-        },
-        Deviation {
-            python: "caregiver/src/caregiver/atomic.py:61-62",
-            copy: "On Python 3.14, the copy reads each error of a look at the target or at the \
-                   old name as no entry. On Python 3.12 and on Python 3.13, the copy raises \
-                   for an error such as a directory that the process cannot enter.",
-            here: "replace_dir is an error for such a look, as the copy is on Python 3.12 and \
-                   on Python 3.13.",
-            holds: an_old_name_that_the_system_refuses_to_look_at_stops_the_swap,
-        },
-    ];
-
+    /// The Python copies give the temporary file five other names.
+    #[test]
     fn the_temporary_name_has_one_form() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("chat.json");
@@ -2656,6 +2514,9 @@ mod tests {
         );
     }
 
+    /// The open of three Python copies writes over a leftover temporary
+    /// file.
+    #[test]
     fn a_leftover_is_removed_and_not_written() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("chat.json");
@@ -2671,6 +2532,8 @@ mod tests {
         assert_eq!(probe.count_of(WriteStep::RemoveOld), 1);
     }
 
+    /// Two Python copies do not sync the directory after the rename.
+    #[test]
     fn the_caller_names_the_directory_sync() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("chat.json");
@@ -2684,6 +2547,8 @@ mod tests {
         }
     }
 
+    /// Two Python copies sync neither the temporary file nor the directory.
+    #[test]
     fn each_write_syncs_its_file() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("chat.json");
@@ -2702,6 +2567,8 @@ mod tests {
         assert!(sync.is_some() && sync < rename, "{steps:?}");
     }
 
+    /// A write of three Python copies that fails leaves its temporary file.
+    #[test]
     fn a_failed_write_leaves_no_file() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("chat.json");
@@ -2717,6 +2584,9 @@ mod tests {
         symlink(temp.with_file_name("other.txt"), temp).unwrap();
     }
 
+    /// Four Python copies set the mode with a call on the path of the
+    /// temporary file.
+    #[test]
     fn the_mode_goes_onto_the_open_file() {
         let root = TempRoot::new().unwrap();
         let other = root.path().join("other.txt");
@@ -2734,6 +2604,9 @@ mod tests {
         assert_eq!(mode_of(&other), 0o600);
     }
 
+    /// One Python copy makes the directory of the file with a mode of its
+    /// own. `Parents::Create` gives a directory the mode of the umask.
+    #[test]
     fn a_port_makes_the_directory_first() {
         let root = TempRoot::new().unwrap();
         let dir = root.path().join("follow");
@@ -2750,6 +2623,9 @@ mod tests {
         assert_eq!(mode_of(&dir.join("marker.json")), 0o600);
     }
 
+    /// Two Python copies name the temporary file `.<name>.tmp` and remove a
+    /// file with that name before the create.
+    #[test]
     fn a_new_file_uses_the_one_name() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("entry.json");
@@ -2768,6 +2644,9 @@ mod tests {
         );
     }
 
+    /// A write of two Python copies that fails before the link leaves its
+    /// temporary file.
+    #[test]
     fn a_failed_new_file_leaves_no_file() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("entry.json");
@@ -2783,6 +2662,8 @@ mod tests {
         assert!(names_in(root.path()).is_empty());
     }
 
+    /// One Python copy creates the name itself and then writes the bytes.
+    #[test]
     fn a_new_file_is_whole_before_it_has_its_name() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("secret.enc");
@@ -2804,29 +2685,5 @@ mod tests {
         let sync = steps.iter().position(|step| *step == WriteStep::SyncTemp);
         let link = steps.iter().position(|step| *step == WriteStep::Link);
         assert!(sync.is_some() && sync < link, "{steps:?}");
-    }
-
-    #[test]
-    fn each_deviation_names_its_python_lines_and_holds() {
-        for row in DEVIATIONS {
-            let (file, lines) = row.python.rsplit_once(':').unwrap();
-
-            assert!(file.ends_with(".py"), "{}", row.python);
-            assert!(
-                lines
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || byte == b'-'),
-                "{}",
-                row.python
-            );
-            assert!(
-                !row.copy.is_empty() && !row.here.is_empty(),
-                "{}",
-                row.python
-            );
-            assert_ne!(row.copy, row.here, "{}", row.python);
-
-            (row.holds)();
-        }
     }
 }
