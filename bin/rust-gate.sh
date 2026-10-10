@@ -4,7 +4,7 @@
 # (bin/lib/rustrule.sh). The `rust` job of gate.yml and release.yml runs it.
 #   bin/rust-gate.sh           the [lints] check, the include check, the
 #                              panic check, the public-field check, cargo
-#                              fmt, cargo clippy and cargo deny
+#                              fmt, cargo clippy two times and cargo deny
 #   bin/rust-gate.sh --tests   the same, then cargo test
 # Needs cargo on PATH. rustup takes the toolchain from
 # rust/rust-toolchain.toml, so every cargo step runs inside rust/.
@@ -404,6 +404,12 @@ FIELD_SCAN_AWK='
   }
 '
 
+#: The crate with a cargo feature that is on by default: `tomlfile` of
+#: creche-contracts. A workspace that reads no TOML file builds the crate
+#: with no default feature. The second clippy step reads that build, which
+#: the first step does not.
+FEATURE_CRATE="creche-contracts"
+
 #: The program behind `cargo deny`. cargo finds a subcommand on PATH by this
 #: name.
 DENY_PROGRAM="cargo-deny"
@@ -611,6 +617,7 @@ no_stray_catch
 no_public_field
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy -p "$FEATURE_CRATE" --no-default-features --all-targets --locked -- -D warnings
 deny_checked
 
 if [[ "$MODE" == "$WITH_TESTS" ]]; then

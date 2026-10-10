@@ -1,8 +1,8 @@
 """When the quality gate runs cargo, and what it runs.
 
 `bin/quality-gate.sh` runs the Rust checks only for a change that touches
-`rust/` (`bin/lib/rustrule.sh`). Ten things could go wrong without one red
-line, and each gets a check here:
+`rust/` (`bin/lib/rustrule.sh`). Eleven things could go wrong without one
+red line, and each gets a check here:
 
 1. **A Python change that needs cargo.** Some sessions commit from a sandbox
    with no Rust toolchain. A commit or a push that touches nothing under
@@ -40,6 +40,10 @@ line, and each gets a check here:
     value of a field with `pub` (`rust/AGENTS.md`, rule 12).
     `bin/rust-gate.sh` refuses such a field in each crate that its list
     does not name.
+11. **A build of a crate that no check read.** `creche-contracts` has a
+    cargo feature that is on by default. `cargo clippy --workspace` builds
+    the crate with the feature only. A second clippy step builds the crate
+    with no default feature.
 
 Everything runs the real gate in a throwaway repository. `uv` and `cargo`
 are fakes that write their argv to a file. PATH holds only those fakes and
@@ -73,15 +77,20 @@ TOOLS = ("bash", "git", "awk", "grep", "tr", "dirname", "find", "sort")
 #: What the gate runs for a Rust change, word for word, in this order.
 FMT = "fmt --all --check"
 CLIPPY = "clippy --workspace --all-targets --locked -- -D warnings"
+#: The second clippy step: the one crate with a default cargo feature, with
+#: that feature off. The first step builds the crate only with the feature.
+CLIPPY_NO_FEATURE = (
+    "clippy -p creche-contracts --no-default-features --all-targets --locked -- -D warnings"
+)
 TEST = "test --workspace --locked"
-LINT_STEPS = [FMT, CLIPPY]
-TEST_STEPS = [FMT, CLIPPY, TEST]
+LINT_STEPS = [FMT, CLIPPY, CLIPPY_NO_FEATURE]
+TEST_STEPS = [FMT, CLIPPY, CLIPPY_NO_FEATURE, TEST]
 
 #: The supply-chain check. It runs after clippy, on a machine that has
 #: `cargo-deny` on PATH.
 DENY = "deny --locked check"
-DENY_LINT_STEPS = [FMT, CLIPPY, DENY]
-DENY_TEST_STEPS = [FMT, CLIPPY, DENY, TEST]
+DENY_LINT_STEPS = [FMT, CLIPPY, CLIPPY_NO_FEATURE, DENY]
+DENY_TEST_STEPS = [FMT, CLIPPY, CLIPPY_NO_FEATURE, DENY, TEST]
 
 #: The one line of a developer machine with no `cargo-deny`, on stdout.
 NO_DENY = "rust-gate: cargo-deny not on PATH: no `cargo deny` check. CI runs the check"
@@ -811,9 +820,18 @@ def test_only_a_path_under_vectors_is_a_vectors_path(tree: Tree, path: str, unde
 # --- bin/rust-gate.sh by itself, as CI runs it -------------------------------
 
 
-def test_the_rust_gate_runs_three_steps_with_tests_and_two_without(tree: Tree) -> None:
+def test_the_rust_gate_runs_four_steps_with_tests_and_three_without(tree: Tree) -> None:
     assert tree.run(RUST_GATE).cargo == LINT_STEPS
     assert tree.run(RUST_GATE, "--tests").cargo == TEST_STEPS
+
+
+def test_the_rust_gate_lints_the_feature_crate_with_its_feature_off(tree: Tree) -> None:
+    """`cargo clippy --workspace` builds creche-contracts with its default
+    feature only. A workspace that turns the feature off builds other code,
+    and no step of the first clippy reads it."""
+    steps = tree.run(RUST_GATE).cargo
+
+    assert steps.index(CLIPPY_NO_FEATURE) == steps.index(CLIPPY) + 1
 
 
 def test_the_rust_gate_refuses_an_unknown_flag(tree: Tree) -> None:

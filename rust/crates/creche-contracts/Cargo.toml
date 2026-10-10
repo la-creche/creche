@@ -9,12 +9,21 @@ publish.workspace = true
 [lints]
 workspace = true
 
+# `tomlfile`: the module of that name, the one TOML reader of the workspace.
+# It is on by default. A workspace that reads no TOML file turns the default
+# features off, and its lock file then gains no TOML crate.
+[features]
+default = ["tomlfile"]
+tomlfile = ["dep:toml", "dep:toml_parser"]
+
 [dependencies]
 creche-util = { path = "../creche-util" }
 serde = { workspace = true }
 # `raw_value`: the session module reads a member of a body as its JSON text,
 # so a number of any size and an unknown member cost no parse.
 serde_json = { workspace = true, features = ["raw_value"] }
+toml = { workspace = true, optional = true }
+toml_parser = { workspace = true, optional = true }
 
 # The one reader of the vector files. Each differential test of this crate
 # reads through it (rust/AGENTS.md, "The differential test"). The reader names

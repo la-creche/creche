@@ -21,4 +21,6 @@ pub mod session;
 mod slot;
 pub mod status;
 pub mod time;
+#[cfg(feature = "tomlfile")]
+pub mod tomlfile;
 pub mod untrusted;

@@ -37,6 +37,7 @@ defect that a test finds late.
 | `secret` | `Secret`, the type of a token or a key. |
 | `slot` | `Slot` is the one lenient field type for a raw type: a value of a wrong kind does not fail the read. `MapOnly` wraps a nested table in a raw type whose read can fail: it refuses a value that is not a table. |
 | `time` | `Timestamp`, the one type of a time in a file or in a wire message. "Time" below holds its rules. |
+| `tomlfile` | The one reader and the one writer of a TOML file. Its main items are `FileKind`, `read`, `TomlFault`, `write` and `Unknown`. The module is behind the cargo feature `tomlfile`, which is on by default. "TOML" below holds its rules. |
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
 | `session` | The session API: contract 02. `session.rs` declares the files under `session/`. |
@@ -133,7 +134,9 @@ You need rustup. It installs the toolchain at the first cargo command under
    - The public-field check. No field of a struct has `pub`. Rule 12
      names the two forms that pass.
 3. `cargo fmt --all --check`.
-4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+4. `cargo clippy --workspace --all-targets --locked -- -D warnings`. Then
+   the same command with `-p creche-contracts --no-default-features` in the
+   place of `--workspace`. "TOML" below has the reason.
 5. `cargo deny --locked check`, where `cargo-deny` is on `PATH`.
 6. `cargo test --workspace --locked`, with `--tests` only.
 
@@ -474,6 +477,141 @@ Until then, these parts stay:
   crate can call keeps such a text: `write_raw_kept`. The writer counts no
   level of that text and compares none of its keys. Add no second user of
   the function. No packet deletes `write_raw_kept` yet.
+
+## TOML
+
+Four file kinds are TOML texts: the family file, the server file, the
+component manifest and the roster. A text of a file kind must be TOML 1.0.
+
+`creche-contracts` must have one TOML reader and one TOML writer, in its
+`tomlfile` module. The module holds both. Write no TOML parser in another
+module. Do not name the crates `toml` and `toml_parser` in another file.
+
+- Only `src/tomlfile.rs` and `src/tomlfile/toml10.rs` name the two crates.
+- `bin/tests/test_rust_workspace.py` fails for another `.rs` file that
+  holds the text `toml::` or `toml_parser::`. A comment counts too.
+
+Reason: the module holds the size limits, the TOML 1.0 check and the level
+limit. Code that calls the crate `toml` directly holds none of the three.
+
+| Item of `tomlfile` | What it is |
+|---|---|
+| `FileKind` | The closed set of the four file kinds. Each kind has one size limit. A limit is no public number, so a caller cannot give another one. |
+| `read` | The function that reads the bytes of a file into a raw type. It gives the raw type or a `TomlFault`. |
+| `TomlFault` | The refusal of `read`. Its text holds no line, no column and no byte of the file. |
+| `write` | The function that writes a value as a TOML text. It gives the text or a `TomlWriteFault`. |
+| `TomlWriteFault` | The refusal of `write`. `NoTomlForm` is for a value that the crate cannot write. `NotReadable` is for a text that `read` refuses. |
+| `Unknown` | The target of `#[serde(flatten)]` in a raw type. It keeps each key that the raw type does not name, with the kind of its value. |
+
+`read`, `write` and `Unknown` are private to the crate. The module of a
+contract holds the raw type of its file kind, and that module calls `read`
+(rule 1).
+
+`read` applies the checks in this sequence:
+
+1. The size. A file has the bytes of its kind at most.
+2. The encoding. The bytes are UTF-8.
+3. The start. The text starts with no byte order mark.
+4. The parse of the crate `toml`.
+5. TOML 1.0. The child module `toml10` refuses each form that TOML 1.1
+   added.
+6. The levels. No table and no list has a level above 8. The walk uses no
+   recursion.
+7. The shape. `serde` fills the raw type.
+
+| `FileKind` | The limit in bytes |
+|---|---|
+| `Family` | 65536 |
+| `Server` | 65536 |
+| `Manifest` | 16384 |
+| `Roster` | 1048576 |
+
+| `TomlFault` | The check | The text |
+|---|---|---|
+| `TooLarge` | 1 | `the file has more than <limit> bytes` |
+| `NotUtf8` | 2 | `the file is not UTF-8 text` |
+| `ByteOrderMark` | 3 | `the file starts with a byte order mark` |
+| `NotToml` | 4, 5 and 6 | `the text is not TOML 1.0, or it nests deeper than 8 levels` |
+| `Shape` | 7 | `the text does not have the shape of the file` |
+
+- The top table has level 1. A table or a list inside a table or a list of
+  level n has level n + 1. The deepest file of the four kinds in this
+  repository has 5 levels.
+- No limit counts the values of a file. A TOML text has no alias, so the
+  size limit bounds the count. Each grammar holds its own caps.
+- Only a raw type that is not total can give `Shape`.
+- This module is the one source of the four limits, of the level limit and
+  of the first four texts (rule 13). A Python reader of a file kind copies
+  them.
+
+The crate `toml` reads TOML 1.1 and has no switch for TOML 1.0. `toml10`
+refuses these six forms. Its doc comment holds the rule of each one.
+
+1. A line end inside an inline table.
+2. A comma as the last sign before the `}` of an inline table.
+3. The escape `\e` in a basic string.
+4. The escape `\x` in a basic string.
+5. A time with no seconds.
+6. A date-time with no seconds.
+
+Reason: a text must not become valid because a parser is new. Each reader
+of a file kind refuses the six forms with a check of its own.
+
+A raw type of a TOML file gets its values in this form. Each line is a
+measurement with `toml` 1.1.8, and a test of the module holds it. Measure
+again after a change of the version.
+
+1. **The keys of a table come in sorted order.** The crate gives them so
+   without its feature `preserve_order`. Do not turn the feature on. Hold a
+   table with free keys in a `BTreeMap`. The conversion to the valid type
+   then reports the faults of one text in one sequence.
+2. **A struct reads a table only.** The derived reader of a struct also
+   takes a list, and gives the first item to the first field. `read` gives
+   a list to no struct, so that read fails with `Shape`. A raw type that is
+   total puts each nested table in a `Slot`. A list there is `Slot::Other`.
+3. **A date-time comes as the unit value.** The crate gives a date-time to
+   `serde` as a table with one private key. `read` does not. Under a `Slot`
+   a date-time is `Slot::Null`, and its kind in an `Unknown` is
+   `Found::Null`. TOML has no null, so no other value reads so. No file
+   kind has a field for a date-time. Report a wrong type for it.
+4. **A text with a byte order mark is refused.** The crate reads such a
+   text. Check 3 refuses it.
+5. **An integer outside 64 bits is `NotToml`.** The range is that of an
+   `i64`. The crate refuses the text in check 4.
+6. **A deep text is a refusal and no crash.** The crate stops at 80 levels
+   of a list, of an inline table, of a table header and of a dotted key. A
+   header of 30,000 parts is a refusal on a stack of 2 MiB.
+
+More rules for a raw type of a TOML file:
+
+- Give a closed set a text field. `read` gives no enum. The conversion to
+  the valid type makes the enum.
+- A float field takes an integer as the nearest float.
+- An `Option` field is `Some` for each value. TOML has no null.
+
+Rules for the writer:
+
+- `write` calls the crate and then reads its own text with the checks 4, 5
+  and 6. A text of `write` thus passes each check of `read` but the size
+  check. The writer has no file kind.
+- The crate writes an integer above the range of an `i64`. `write` gives
+  `TomlWriteFault::NotReadable` for it. Give an integer field of a written
+  type the type `i64`.
+- The crate writes the scalars of a table first. It then writes each nested
+  table under a header, and each list of tables as `[[header]]` blocks.
+- The crate writes no line for a `None` field of a struct.
+
+The module is behind the cargo feature `tomlfile` of `creche-contracts`.
+The feature is on by default.
+
+- A workspace that takes `creche-contracts` and reads no TOML file sets
+  `default-features = false` for it. Its lock file then gains no TOML
+  crate.
+- `cargo clippy --workspace` builds the crate with the feature only. Step 4
+  of `bin/rust-gate.sh` thus has a second clippy command, for the crate
+  with no default feature.
+- Code of another module that calls `read` or `write` must build with the
+  feature off. Put that code behind `#[cfg(feature = "tomlfile")]`.
 
 ## Time
 
@@ -1462,6 +1600,22 @@ To make the fifth check on your machine, for example before a merge:
   float as the nearest float, as Python does. Without the feature, a float of
   16 digits or more can differ from the Python value in its last bit. Do not
   remove the feature.
+- `toml` is the one TOML parser and writer. Its version is 1.1.8, with the
+  features `std`, `serde`, `parse` and `display`. Do not turn on its
+  feature `preserve_order`.
+- `toml_parser` gives the events of a TOML text to the TOML 1.0 check. Its
+  version is 1.1.5, with the feature `std`. `toml` brings this crate
+  already.
+- Only the `tomlfile` module of `creche-contracts` names the two crates
+  ("TOML"). They are optional dependencies of that crate, behind its cargo
+  feature `tomlfile`.
+- The two crates add 9 packages to `Cargo.lock`: `toml`, `toml_parser`,
+  `toml_datetime`, `toml_writer`, `serde_spanned`, `winnow`, `indexmap`,
+  `hashbrown` and `equivalent`.
+- A build uses 6 of the 9 packages. `cargo tree -e normal` shows no
+  `indexmap`, no `hashbrown` and no `equivalent`. The feature `std` of
+  `toml` names `indexmap?/std`, and cargo locks a package that such a
+  feature names.
 
 ### The check of the locked crates
 
@@ -1630,6 +1784,40 @@ To make the fifth check on your machine, for example before a merge:
     change costs one condition in the scan. The same condition holds the
     two forms that pass, so a change to the third sentence of rule 12
     also changes it.
+- No raw type calls `tomlfile::read` yet, and no type calls
+  `tomlfile::write`. `read`, `write` and the accessor of `Unknown` each
+  have an `expect(dead_code)` line for a build that is no test build. The
+  packet that adds the first caller of an item deletes the line of that
+  item. Three packets add a caller of `read`: `toml-family-read-rust`,
+  `toml-manifest-read-rust` and `toml-roster-read-chaperone`.
+- No Python reader of a file kind holds the limits and the fault texts of
+  `tomlfile` yet. Packet `toml-family-read-python` adds the first one, and
+  the test that holds its numbers and its texts equal to the Rust file.
+- The differential test of `tomlfile` walks the surface `tomlfile.syntax`.
+  The entry point of that surface is the TOML reader of the Python standard
+  library, because no product code reads TOML yet. The surface holds no
+  text of four kinds, and a plain test of the module holds each kind.
+  "Known gaps" of `vectors/AGENTS.md` lists them. Packet
+  `toml-syntax-vectors` changes the entry point and adds the four kinds.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/tomlfile.rs`:
+  1. `tree_of`, TOML 1.0. The specification gives a float 64 bits. It does
+     not say what a reader does with a text outside that range, for example
+     `1e999`. The crate `toml` refuses the text, and the reader keeps that
+     refusal, as "JSON" does for a float token. The TOML reader of the
+     Python standard library reads the text as an infinity. A Python reader
+     of a file kind thus needs a check of its own. No packet has that part
+     yet. The other reading costs a float parser in the module.
+  2. `both_take`, TOML 1.0. The specification takes the second 60 and the
+     year 0000 in a date-time. The crate reads both. The TOML reader of the
+     Python standard library refuses both. The reader refuses both, as
+     `time::Timestamp` does. No file kind holds a date-time. A change costs
+     one function and four vectors of `tomlfile.syntax`. A Python reader
+     then needs a date-time parser of its own.
+  3. `write`. No rule says what the writer does with a value whose text
+     `read` refuses. `write` takes the strict reading: it gives
+     `TomlWriteFault::NotReadable`. The other reading writes each value
+     that the crate writes. A change costs one call in `write`.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. One function of `crates/creche-contracts/src/json/scan.rs`
