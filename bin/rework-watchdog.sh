@@ -96,6 +96,11 @@
 #   - Two limits hold a notice for a later run. One notice for one service,
 #     surface and rule in 24 hours. 6 notices of this kind in one hour, for
 #     all services together.
+#   - A token whose `<seconds>` is more than one hour after the time of the
+#     run gets no notice. The journal gets one line with the count of them.
+#   - A run that is older than NOTICE_STEP_BUDGET_S seconds starts no send,
+#     so a hook that answers slowly does not hold the run. A later run
+#     sends the notices that are left.
 #   - /srv/agents/state/rework/watchdog/notices-sent is the record of the
 #     sent notices, one line for each service, surface and rule. Both limits
 #     come from it. A notice that the hook did not take leaves the record as
@@ -185,11 +190,17 @@ UNITS="creche-attendance.service creche-caregiver.service creche-door-owui.servi
 creche-trigger-webhooks.service creche-noticeboard.service"
 
 # The firing units: each instance of this template unit runs one cron
-# trigger of one family and ends. The pattern is what `list-units` gets. The
-# name of an instance is the name of a family, and FIRING_UNIT_NAME is the
-# exact form of a whole unit name, for `matches`.
-FIRING_UNITS='creche-trigger@*.service'
-FIRING_UNIT_NAME='creche-trigger@[a-z][a-z0-9-]{1,30}\.service'
+# trigger of one family and ends. The name of an instance is the name of a
+# family. FAMILY_NAME is the form of that name, and a test in
+# bin/tests/test_rework_watchdog.py holds it equal to the pattern of the
+# chaperone. FIRING_UNITS is what `list-units` gets. FIRING_UNIT_NAME is the
+# exact form of a whole unit name, for `matches`: the two backslashes put
+# one backslash before the dot of the tail.
+FIRING_UNIT_HEAD='creche-trigger@'
+FIRING_UNIT_TAIL='.service'
+FAMILY_NAME='[a-z][a-z0-9-]{1,30}'
+FIRING_UNITS="$FIRING_UNIT_HEAD*$FIRING_UNIT_TAIL"
+FIRING_UNIT_NAME="$FIRING_UNIT_HEAD$FAMILY_NAME\\$FIRING_UNIT_TAIL"
 # The exit status of a program whose config is not valid.
 CONFIG_REFUSED_STATUS=78
 # The exit status of `timeout` for a command that it stopped.
@@ -245,13 +256,14 @@ NOTICE_READ_CAP=65536
 # an indent of one space writes that line. The value holds tokens
 # `<surface>:<rule>:<seconds>` with one space between two tokens. A service
 # name has 64 characters at most, and a line has NOTICE_TOKENS_MAX tokens at
-# most. A change costs these patterns and their tests in
-# bin/tests/test_rework_watchdog.py.
+# most. A `<seconds>` that is more than HOUR_S after the time of the run
+# gets no notice. A change costs these patterns, NOTICE_PLAN and their tests
+# in bin/tests/test_rework_watchdog.py.
 SERVICE_NAME='[a-z0-9-]{1,64}'
 NOTICE_NAME='[a-z0-9_.]{1,64}'
 NOTICE_SECONDS='[0-9]{1,12}'
 PUSH_TOKEN="$NOTICE_NAME:$NOTICE_NAME:$NOTICE_SECONDS"
-PUSH_KEY_LINE='^[[:space:]]*"push"[[:space:]]*:'
+PUSH_KEY_LINE='"push"[[:space:]]*:'
 PUSH_LINE_HEAD=' "push": "'
 PUSH_LINE="$PUSH_LINE_HEAD($PUSH_TOKEN( $PUSH_TOKEN)*)?\",?"
 NOTICE_TOKENS_MAX=256
@@ -266,6 +278,10 @@ SENT_READ_CAP=262144
 SAME_NOTICE_EVERY_S=86400
 NOTICES_PER_HOUR=6
 HOUR_S=3600
+# The step starts no send in a run that is older than this count of
+# seconds. The unit of this script gives a run a start limit, and one notice
+# can take NOTICE_TIMEOUT_S.
+NOTICE_STEP_BUDGET_S=40
 
 # The first word of the summary, and the ids of this kind of notice. The
 # ids differ from the pair of the outage notice.
@@ -659,8 +675,11 @@ TOKENS=""
 # Which tokens get a notice in this run. The program reads the lines of the
 # record first, then the lines of TOKENS. A record line has five words and
 # a token line has four. It prints one line `send` for each notice, in the
-# order of the tokens, and one last line `held` with the count of the
-# tokens that a limit holds.
+# order of the tokens, and one last line `held` with two counts: the tokens
+# that a limit holds, and the tokens with a time after `now`.
+#   - A token whose `<seconds>` is more than `hour` seconds after `now` gets
+#     no notice. The clock of a host can jump, and the record must hold no
+#     `<seconds>` that is far after `now`.
 #   - A token is news when the record has no line for its service, surface
 #     and rule, or when its `<seconds>` is above the `<seconds>` of that
 #     line.
@@ -688,6 +707,7 @@ NF == 5 {
   next
 }
 NF == 4 {
+  if ($4 + 0 > now + hour) { ahead++; next }
   key = $1 " " $2 " " $3
   if (key in known) {
     if ($4 + 0 <= sent[key]) next
@@ -700,7 +720,7 @@ NF == 4 {
   at[key] = now + 0
   print "send", $1, $2, $3, $4
 }
-END { print "held", held + 0 }
+END { print "held", held + 0, ahead + 0 }
 '
 
 # At most <byte cap> bytes of a file. bash drops a NUL byte from a value, and
@@ -769,8 +789,9 @@ notice_file() {  # notice_file <service> <file>
     return 0
   fi
 
-  # A file with no line of the key asks for no notice. A file with one such
-  # line must hold it in the exact form.
+  # A file with no line that holds the key asks for no notice. PUSH_KEY_LINE
+  # finds the key at each place of a line, so a document on one line counts
+  # too. A file with the key must hold it on one line in the exact form.
   blob="$(read_capped "$file" "$NOTICE_READ_CAP")"
   lines="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -c -E -e "$PUSH_KEY_LINE")"
   [[ "$lines" == 0 ]] && return 0
@@ -805,7 +826,7 @@ notice_file() {  # notice_file <service> <file>
 # Sends one notice and puts it in the record. Status 1 stops the step for
 # this run.
 json_notice() {  # json_notice <service> <surface> <rule> <seconds>
-  local key
+  local key kept
   key="$1 $2 $3 "
 
   # A hook that takes no notice costs the time limit of one notice. The
@@ -813,9 +834,14 @@ json_notice() {  # json_notice <service> <surface> <rule> <seconds>
   send_notice "$JSON_NOTICE_WORD $1 $2 $3" "$JSON_NOTICE_JOB_ID" "$JSON_NOTICE_GATE_ID" || return 1
 
   # The new line takes the place of the line of the same service, surface
-  # and rule.
-  SENT_LINES="$(printf '%s' "$SENT_LINES" | awk -v key="$key" 'index($0, key) != 1'
-    printf '%s\n' "$key$4 $NOW")$NL"
+  # and rule. `pipefail` gives the status of `awk`. A call that fails must
+  # not empty the record, so the record stays as it is.
+  if ! kept="$(printf '%s' "$SENT_LINES" | awk -v key="$key" 'index($0, key) != 1')"; then
+    say "json notices: awk gave no answer after a send, so this run sends no more of this kind"
+    return 1
+  fi
+
+  SENT_LINES="${kept:+$kept$NL}$key$4 $NOW$NL"
   if ! remember_sent; then
     say "json notices: cannot write $SENT_FILE after a send, so this run sends no more of this kind"
     return 1
@@ -825,7 +851,7 @@ json_notice() {  # json_notice <service> <surface> <rule> <seconds>
 }
 
 send_json_notices() {
-  local path service plan held sent word surface rule seconds room
+  local path service plan held ahead sent word surface rule seconds room
   for path in "$NOTICES_DIR"/*"$NOTICE_SUFFIX" "$PEP_NOTICE_FILE"; do
     # A regular file only. A link, a directory and a name with no match are
     # not read.
@@ -857,14 +883,25 @@ send_json_notices() {
   plan="$({ printf '%s' "$SENT_LINES"; printf '%s' "$TOKENS"; } | awk -v now="$NOW" \
     -v same="$SAME_NOTICE_EVERY_S" -v hour="$HOUR_S" -v most="$NOTICES_PER_HOUR" "$NOTICE_PLAN")"
   held="${plan##*held }"
-  if [[ "$plan" != *"held "* ]] || ! matches '[0-9]{1,9}' "$held"; then
+  ahead="${held#* }"
+  held="${held% *}"
+  if [[ "$plan" != *"held "* ]] || ! matches '[0-9]{1,9} [0-9]{1,9}' "$held $ahead"; then
     say "json notices: awk gave no answer on the limits, so this run sends no notice of this kind"
     return 0
   fi
 
+  [[ "$ahead" == 0 ]] \
+    || say "json notices: tokens with a time more than ${HOUR_S}s after now (no notice): $ahead"
+
   sent=0
   while read -r word service surface rule seconds; do
     [[ "$word" == send ]] || continue
+
+    # `SECONDS` is the age of the run.
+    if (( SECONDS > NOTICE_STEP_BUDGET_S )); then
+      say "json notices: this run is ${SECONDS}s old, so it sends no more of this kind"
+      break
+    fi
 
     # A notice with no record line has no limit. So the run proves one time
     # that it can write the record, before it sends the first notice.

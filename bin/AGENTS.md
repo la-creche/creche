@@ -78,7 +78,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `creche-deploy` | ROOT, the single sudoers entry | Puts this repository at `/opt/creche` and the site at `/opt/private-docs`, fills the venv, restarts one unit: the chaperone. Then polls `is-active` and `NRestarts` for about 20 s. Origin is the operator's checkout, so root needs no GitHub credential. It installs no MCP server. |
 | `creche-handover` | ROOT, from `creche-handover.path` | Decrypts the site's sops file and execs `handover-exec` under it. Installed to `/usr/local/sbin` by hand, never by a release. Refuses a path another account can write. |
 | `creche-handover-intake` | ROOT, from `creche-handover-intake.service` | The same, for the secret intake. |
-| `rework-watchdog.sh` | OPERATOR, every minute | The outage alarm. Checks the chaperone's `/healthz`, `caregiver`'s freshness, `attendance`'s socket and `is-failed` for the units. Pushes once per change of verdict. `--last` prints the verdict. Shares no fate with what it watches. The unit check also reads each firing unit. After the checks, the script sends one notice for each JSON text that a notice file records. "The watchdog" has the two rules. |
+| `rework-watchdog.sh` | OPERATOR, every minute | The outage alarm. Checks the chaperone's `/healthz`, `caregiver`'s freshness, `attendance`'s socket and `is-failed` for the units. Pushes once per change of verdict. `--last` prints the verdict. Shares no fate with what it watches. The unit check also reads each firing unit. After the checks, the script sends one notice for each service, surface and rule that a notice file records. "The watchdog" has the two rules. |
 | `rework-registry-sync.sh` | OPERATOR, every minute | `git fetch --prune`, then `git merge --ff-only`, on the registry checkout. Never rebases, resets, cleans or pushes. |
 | `sbx-drift-check.sh` | OPERATOR, daily | Read-only. Alarms when the global sbx policy holds any network allow, or when a per-sandbox rule allows a host that is not the LAN address and not in the seeded allowlist. |
 | `journal-scan.py` | OPERATOR, by hand | Read-only. A person starts it, and the one argument is the sessions root. It counts the journal lines in which UTF-8 cannot encode a key or a value. It also counts the `pi_event` lines whose event the host cut for another cause than its size. It prints each count. The only text of a journal line that the output can show is a `kind` word. |
@@ -124,6 +124,10 @@ root, and `_notices.json` in the fault directory of the chaperone.
 - Two limits apply. The script sends one notice for one service, surface and
   rule in 24 hours. It sends 6 notices of this kind at most in one hour, for
   all services together. A later run sends a notice that a limit holds.
+- A token whose `<seconds>` is more than one hour after the time of the run
+  gets no notice. The journal gets one line with the count of such tokens.
+- A run that is older than `NOTICE_STEP_BUDGET_S` seconds starts no send. A
+  later run sends the notices that are left.
 - The file `watchdog/notices-sent` under the state root is the record of the
   sent notices. It has the modes of the verdict file. A notice that the hook
   did not take leaves the record as it was.
@@ -359,7 +363,8 @@ stays in the git log.
   of its own, behind one space, with one space after the colon. A JSON
   writer with sorted keys and an indent of one space writes that line. A
   service name has 64 characters at most, and one line has 256 tokens at
-  most. A change costs the patterns of the script and their tests.
+  most. A `<seconds>` that is more than one hour after the time of the run
+  gets no notice. A change costs the patterns of the script and their tests.
 - `yaml-to-toml.py`, a null value in a list. TOML has no null. The script
   drops a null value of a mapping key and names it on stderr. No rule says
   what a null item of a list becomes, and no tracked file holds one. The
