@@ -77,6 +77,38 @@
 # a lone unconfirmed failure still turns the unit red, it just does not
 # reach the operator's phone until it repeats.
 #
+# AFTER THE FIVE CHECKS, ONE MORE STEP: THE NOTICE OF A REFUSED JSON TEXT.
+# A notice file is the place where a service records each JSON text that it
+# refused. This script is the one sender of the notice, so no service holds
+# the bearer of the hook.
+#   - The notice files are /srv/agents/state/rework/notices/<service>.json
+#     and the file `_notices.json` in the fault directory of the chaperone.
+#   - The script reads 65,536 bytes of a file at most. It takes the one line
+#     of the key `push` and holds that line to an exact pattern. A token of
+#     the line is `<surface>:<rule>:<seconds>`. The script evaluates no byte
+#     of a file. A line that breaks the pattern gets one line in the journal
+#     and no notice.
+#   - The script sends one notice for a token that it did not send, and one
+#     for a token with a newer `<seconds>`. The summary is
+#     `json_not_strict <service> <surface> <rule>`. The first run sends a
+#     notice for each token that a file holds on that day.
+#   - Two limits hold a notice for a later run. One notice for one service,
+#     surface and rule in 24 hours. 6 notices of this kind in one hour, for
+#     all services together.
+#   - /srv/agents/state/rework/watchdog/notices-sent is the record of the
+#     sent notices, one line for each service, surface and rule. Both limits
+#     come from it. A notice that the hook did not take leaves the record as
+#     it was, so the next run sends it. A run stops this step at the first
+#     notice that the hook did not take.
+#   - The script reads 262,144 bytes of the record at most, and it writes no
+#     larger record. A record that it cannot read, or cannot write, stops
+#     the step for that run: a notice with no record line has no limit.
+#   - The notice has ids of its own, so its card and the card of an outage
+#     do not replace each other. One notice of this kind replaces the card
+#     of the notice of this kind before it.
+#   - The step changes no verdict and no exit status. It runs after the
+#     verdict is in its file, in a shell of its own.
+#
 # WHERE THE TWO BEARERS COME FROM. `APPROVAL_URL` and `APPROVAL_TOKEN` are
 # read from /srv/agents/state/rework/hooks.env, which `bin/rework-cutover.sh
 # up` writes and owns. The OLD system's /srv/agents/state/materializer/env
@@ -85,7 +117,7 @@
 # two values the same way.
 #
 # Prerequisites, copy-pasteable:
-#   command -v curl date grep find systemctl mktemp
+#   command -v curl date grep find systemctl mktemp timeout head tr awk mv rm mkdir
 #   [ -r /srv/agents/state/rework/hooks.env ]   # APPROVAL_URL/APPROVAL_TOKEN
 #   [ -r /etc/creche/site.env ]          # AGENT_LAN_ADDRESS
 #
@@ -193,6 +225,50 @@ ALL_WELL=up
 NOTICE_JOB_ID=yyyyyyyyyyyyyyyyyyyyyyyyyy
 NOTICE_GATE_ID=0000000000000001
 NOTICE_AGENT=rework-watchdog
+
+# The notice of a refused JSON text. A service has its notice file in
+# NOTICES_DIR, and the chaperone has one in its fault directory. A lock
+# file and a temporary file can be beside a notice file. Their names do not
+# end in `.json`.
+NOTICES_DIR="$STATE_ROOT/notices"
+NOTICE_SUFFIX=.json
+PEP_NOTICE_FILE="$STATE_ROOT/faults/pep/_notices.json"
+PEP_SERVICE=chaperone
+NOTICE_READ_CAP=65536
+
+# CONTRACT-QUESTION: no contract text gives the form of a notice file yet.
+# The reading here: the key `push` is on a line of its own, behind one
+# space, with one space after the colon. A JSON writer with sorted keys and
+# an indent of one space writes that line. The value holds tokens
+# `<surface>:<rule>:<seconds>` with one space between two tokens. A service
+# name has 64 characters at most, and a line has NOTICE_TOKENS_MAX tokens at
+# most. A change costs these patterns and their tests in
+# bin/tests/test_rework_watchdog.py.
+SERVICE_NAME='[a-z0-9-]{1,64}'
+NOTICE_NAME='[a-z0-9_.]{1,64}'
+NOTICE_SECONDS='[0-9]{1,12}'
+PUSH_TOKEN="$NOTICE_NAME:$NOTICE_NAME:$NOTICE_SECONDS"
+PUSH_KEY_LINE='^[[:space:]]*"push"[[:space:]]*:'
+PUSH_LINE_HEAD=' "push": "'
+PUSH_LINE="$PUSH_LINE_HEAD($PUSH_TOKEN( $PUSH_TOKEN)*)?\",?"
+NOTICE_TOKENS_MAX=256
+
+# The record of the sent notices, in the state directory of this script. It
+# has the mode rules of the verdict file. One line holds the service, the
+# surface, the rule, the `<seconds>` that the script sent and the time of
+# the send. Both limits come from this file.
+SENT_FILE="$WATCH_DIR/notices-sent"
+SENT_LINE="$SERVICE_NAME $NOTICE_NAME $NOTICE_NAME $NOTICE_SECONDS $NOTICE_SECONDS"
+SENT_READ_CAP=262144
+SAME_NOTICE_EVERY_S=86400
+NOTICES_PER_HOUR=6
+HOUR_S=3600
+
+# The first word of the summary, and the ids of this kind of notice. The
+# ids differ from the pair of the outage notice.
+JSON_NOTICE_WORD=json_not_strict
+JSON_NOTICE_JOB_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
+JSON_NOTICE_GATE_ID=0000000000000002
 
 NL=$'\n'
 
@@ -524,8 +600,10 @@ plain() {  # plain <text>
 # The phone push. `-H @file`, never the bearer on argv: /proc/<pid>/cmdline
 # is world readable for the life of the curl process on a host that sets no
 # hidepid (bin/AGENTS.md §Secrets).
-send_notice() {  # send_notice <summary>
-  local header status
+send_notice() {  # send_notice <summary> [<job id> <gate id>]
+  local header status job gate
+  job="${2:-$NOTICE_JOB_ID}"
+  gate="${3:-$NOTICE_GATE_ID}"
   if [[ -z "${APPROVAL_URL:-}" || -z "${APPROVAL_TOKEN:-}" ]]; then
     say "NOTICE NOT SENT (no APPROVAL_URL/APPROVAL_TOKEN in $HOOKS_ENV): $1"
     return 1
@@ -535,7 +613,7 @@ send_notice() {  # send_notice <summary>
   ( umask 077 && printf 'Authorization: Bearer %s\n' "$APPROVAL_TOKEN" > "$header" )
   curl -sS -f -o /dev/null -m "$NOTICE_TIMEOUT_S" -X POST "$APPROVAL_URL" \
     -H @"$header" -H 'Content-Type: application/json' \
-    -d "{\"kind\":\"notice\",\"job_id\":\"$NOTICE_JOB_ID\",\"gate_id\":\"$NOTICE_GATE_ID\",\
+    -d "{\"kind\":\"notice\",\"job_id\":\"$job\",\"gate_id\":\"$gate\",\
 \"agent\":\"$NOTICE_AGENT\",\"summary\":\"$(plain "$1")\"}"
   status=$?
   rm -f "$header"
@@ -555,6 +633,265 @@ send_notice() {  # send_notice <summary>
 APPROVAL_URL="$(envfile_hook_value "$HOOKS_ENV" "$DEPRECATED_ENV" APPROVAL_URL)"
 APPROVAL_TOKEN="$(envfile_hook_value "$HOOKS_ENV" "$DEPRECATED_ENV" APPROVAL_TOKEN)"
 
+# --- the notice of a refused JSON text -----------------------------------------
+
+# The step runs in a shell of its own (`finish`), so these values live for
+# one run of the step.
+#   NOW         the time of the run, in seconds from 1970
+#   SENT_LINES  the record of the sent notices: each line that holds the
+#               pattern, with a line feed after it
+#   TOKENS      one line for each token of each notice file: the service,
+#               the surface, the rule and the `<seconds>`
+NOW=""
+SENT_LINES=""
+TOKENS=""
+
+# Which tokens get a notice in this run. The program reads the lines of the
+# record first, then the lines of TOKENS. A record line has five words and
+# a token line has four. It prints one line `send` for each notice, in the
+# order of the tokens, and one last line `held` with the count of the
+# tokens that a limit holds.
+#   - A token is news when the record has no line for its service, surface
+#     and rule, or when its `<seconds>` is above the `<seconds>` of that
+#     line.
+#   - The limit of one service, surface and rule holds a token when the
+#     send time of that line is less than `same` seconds away from `now`.
+#   - The limit of all services holds a token when `most` notices have a
+#     send time that is less than `hour` seconds away from `now`.
+#   - A send time after `now` counts as a time before it. The clock of a
+#     host can jump, and a time that is far away in each direction must
+#     hold no notice.
+# The program prints only words that it read. It prints no number that it
+# computed, so each `<seconds>` keeps its digits.
+NOTICE_PLAN='
+function near(time, window,    away) {
+  away = now - time
+  if (away < 0) away = -away
+  return away < window
+}
+NF == 5 {
+  key = $1 " " $2 " " $3
+  known[key] = 1
+  sent[key] = $4 + 0
+  at[key] = $5 + 0
+  if (near($5 + 0, hour + 0)) recent++
+  next
+}
+NF == 4 {
+  key = $1 " " $2 " " $3
+  if (key in known) {
+    if ($4 + 0 <= sent[key]) next
+    if (near(at[key], same + 0)) { held++; next }
+  }
+  if (recent + 0 >= most + 0) { held++; next }
+  recent++
+  known[key] = 1
+  sent[key] = $4 + 0
+  at[key] = now + 0
+  print "send", $1, $2, $3, $4
+}
+END { print "held", held + 0 }
+'
+
+# At most <byte cap> bytes of a file. bash drops a NUL byte from a value, and
+# a line that breaks its pattern must not become a line that holds it. So
+# each NUL byte becomes a byte that no pattern takes.
+read_capped() {  # read_capped <file> <byte cap>
+  timeout "$CHECK_TIMEOUT_S" head -c "$2" "$1" 2>/dev/null | LC_ALL=C tr '\000' '\001'
+}
+
+# Reads the record into SENT_LINES. Status 1 means that the run must send
+# no notice of this kind: both limits come from the record.
+load_sent() {
+  local blob broken
+  SENT_LINES=""
+  [[ -e "$SENT_FILE" ]] || return 0
+
+  if [[ ! -f "$SENT_FILE" || ! -r "$SENT_FILE" ]]; then
+    say "json notices: this run cannot read $SENT_FILE as a file, so it sends no notice of this kind"
+    return 1
+  fi
+
+  if [[ -n "$(find "$SENT_FILE" -size "+${SENT_READ_CAP}c" 2>/dev/null)" ]]; then
+    say "json notices: $SENT_FILE is over $SENT_READ_CAP bytes, so this run sends no notice of this kind"
+    return 1
+  fi
+
+  blob="$(read_capped "$SENT_FILE" "$SENT_READ_CAP")"
+  [[ -n "$blob" ]] || return 0
+
+  broken="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -c -v -x -E -e "$SENT_LINE")"
+  [[ "$broken" == 0 ]] \
+    || say "json notices: not read from $SENT_FILE, lines that break the record pattern: $broken"
+
+  SENT_LINES="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -x -E -e "$SENT_LINE")"
+  [[ -z "$SENT_LINES" ]] || SENT_LINES="$SENT_LINES$NL"
+
+  return 0
+}
+
+# Writes SENT_LINES to the record: a new file under `umask 077`, then one
+# rename. A run that stops in the middle leaves the record of the run
+# before it.
+remember_sent() {
+  local draft
+  ( umask 077 && mkdir -p "$WATCH_DIR" ) 2>/dev/null || return 1
+  [[ ! -e "$SENT_FILE" || -f "$SENT_FILE" ]] || return 1
+  draft="$(umask 077 && mktemp "$SENT_FILE.XXXXXX" 2>/dev/null)" || return 1
+
+  if printf '%s' "$SENT_LINES" > "$draft" && mv -f "$draft" "$SENT_FILE"; then
+    return 0
+  fi
+
+  rm -f "$draft"
+  return 1
+}
+
+# One notice file. Each byte of it comes from another program. The tokens
+# of a line in the exact form go to TOKENS.
+notice_file() {  # notice_file <service> <file>
+  local service file broken blob lines line value token rest
+  service="$1"
+  file="$2"
+  broken="json notice: the push line of $file breaks its pattern (no notice)"
+  if [[ ! -r "$file" ]]; then
+    say "json notice: this run cannot read $file"
+    return 0
+  fi
+
+  # A file with no line of the key asks for no notice. A file with one such
+  # line must hold it in the exact form.
+  blob="$(read_capped "$file" "$NOTICE_READ_CAP")"
+  lines="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -c -E -e "$PUSH_KEY_LINE")"
+  [[ "$lines" == 0 ]] && return 0
+
+  line="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -x -E -e "$PUSH_LINE")"
+  if [[ "$lines" != 1 || -z "$line" ]]; then
+    say "$broken"
+    return 0
+  fi
+
+  value="${line#"$PUSH_LINE_HEAD"}"
+  value="${value%,}"
+  value="${value%\"}"
+  [[ -n "$value" ]] || return 0
+
+  # The pattern held the whole line, so the value holds only the characters
+  # of a token and single spaces. No word of it is a pattern of a file name.
+  set -- $value
+  if [[ $# -gt "$NOTICE_TOKENS_MAX" ]]; then
+    say "$broken"
+    return 0
+  fi
+
+  # `10#` reads `<seconds>` as a decimal number, also behind a zero.
+  for token in "$@"; do
+    rest="${token#*:}"
+    TOKENS="$TOKENS$service ${token%%:*} ${rest%%:*} $(( 10#${rest#*:} ))$NL"
+  done
+}
+
+# Sends one notice and puts it in the record. Status 1 stops the step for
+# this run.
+json_notice() {  # json_notice <service> <surface> <rule> <seconds>
+  local key
+  key="$1 $2 $3 "
+
+  # A hook that takes no notice costs the time limit of one notice. The
+  # record stays as it is, and the next run sends this notice again.
+  send_notice "$JSON_NOTICE_WORD $1 $2 $3" "$JSON_NOTICE_JOB_ID" "$JSON_NOTICE_GATE_ID" || return 1
+
+  # The new line takes the place of the line of the same service, surface
+  # and rule.
+  SENT_LINES="$(printf '%s' "$SENT_LINES" | awk -v key="$key" 'index($0, key) != 1'
+    printf '%s\n' "$key$4 $NOW")$NL"
+  if ! remember_sent; then
+    say "json notices: cannot write $SENT_FILE after a send, so this run sends no more of this kind"
+    return 1
+  fi
+
+  return 0
+}
+
+send_json_notices() {
+  local path service plan held sent word surface rule seconds room
+  for path in "$NOTICES_DIR"/*"$NOTICE_SUFFIX" "$PEP_NOTICE_FILE"; do
+    # A regular file only. A link, a directory and a name with no match are
+    # not read.
+    [[ -f "$path" && ! -L "$path" ]] || continue
+
+    service="$PEP_SERVICE"
+    if [[ "$path" != "$PEP_NOTICE_FILE" ]]; then
+      service="${path##*/}"
+      service="${service%"$NOTICE_SUFFIX"}"
+      if ! matches "$SERVICE_NAME" "$service"; then
+        say "json notice: a file name under $NOTICES_DIR is no service name (not read)"
+        continue
+      fi
+    fi
+
+    notice_file "$service" "$path"
+  done
+
+  [[ -n "$TOKENS" ]] || return 0
+
+  NOW="$(date -u +%s 2>/dev/null)"
+  if ! matches "$NOTICE_SECONDS" "$NOW"; then
+    say "json notices: date gave no time, so this run sends no notice of this kind"
+    return 0
+  fi
+
+  load_sent || return 0
+
+  plan="$({ printf '%s' "$SENT_LINES"; printf '%s' "$TOKENS"; } | awk -v now="$NOW" \
+    -v same="$SAME_NOTICE_EVERY_S" -v hour="$HOUR_S" -v most="$NOTICES_PER_HOUR" "$NOTICE_PLAN")"
+  held="${plan##*held }"
+  if [[ "$plan" != *"held "* ]] || ! matches '[0-9]{1,9}' "$held"; then
+    say "json notices: awk gave no answer on the limits, so this run sends no notice of this kind"
+    return 0
+  fi
+
+  sent=0
+  while read -r word service surface rule seconds; do
+    [[ "$word" == send ]] || continue
+
+    # A notice with no record line has no limit. So the run proves one time
+    # that it can write the record, before it sends the first notice.
+    if [[ "$sent" == 0 ]] && ! remember_sent; then
+      say "json notices: cannot write $SENT_FILE, so this run sends no notice of this kind"
+      return 0
+    fi
+
+    # The script reads SENT_READ_CAP bytes of its record at most, so it
+    # writes no record that is larger. A record line holds only ASCII, so
+    # a count of characters is a count of bytes.
+    room=$(( SENT_READ_CAP - ${#SENT_LINES} - ${#service} - ${#surface} - ${#rule} ))
+    if (( room - ${#seconds} - ${#NOW} - 5 < 0 )); then
+      say "json notices: $SENT_FILE has no room under $SENT_READ_CAP bytes, so this run sends no more of this kind"
+      break
+    fi
+
+    json_notice "$service" "$surface" "$rule" "$seconds" < /dev/null || break
+    sent=$(( sent + 1 ))
+  done <<< "$plan"
+
+  if (( sent + held > 0 )); then
+    say "json notices: $sent sent, $held held by a limit"
+  fi
+
+  return 0
+}
+
+# The end of each run that made the five checks. The notice step runs in a
+# shell of its own, after the verdict is in its file. So no fault of the
+# step changes the verdict or the exit status of the run.
+finish() {
+  ( send_json_notices )
+
+  [[ -z "$RAW_KEYS" ]] && exit 0
+  exit 1
+}
+
 if [[ "$VERDICT" == "$WAS" ]]; then
   say "verdict unchanged: $VERDICT (no push)"
   # Written every run, not only the first: RAW_KEYS moves even when VERDICT
@@ -563,9 +900,7 @@ if [[ "$VERDICT" == "$WAS" ]]; then
   # from "2 of 2". `bin/rework-cutover.sh status` asks for line 1 alone.
   remember "$WAS" "$RAW_KEYS" || say "WARNING: could not write $VERDICT_FILE"
 
-  [[ -z "$RAW_KEYS" ]] && exit 0
-
-  exit 1
+  finish
 fi
 
 if [[ "$VERDICT" == "$ALL_WELL" ]]; then
@@ -585,5 +920,4 @@ else
   remember "$WAS" "$RAW_KEYS" || say "WARNING: could not write $VERDICT_FILE; the next run pushes again"
 fi
 
-[[ -z "$RAW_KEYS" ]] && exit 0
-exit 1
+finish
