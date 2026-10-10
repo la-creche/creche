@@ -17,8 +17,10 @@ users as `creche_testkit::vectors`.
 | Path | What it holds |
 |---|---|
 | `src/lib.rs` | `index` and `surface`: the rows of the index, and the vector file of one surface. The input forms, the markers and the error type. |
+| `src/disagreements.rs` | `disagreements`: the rows of `ids/disagreements.json`. |
+| `src/registries.rs` | `registries`: the rows of `family_file.registries.json`. |
 
-The doc comment of the crate lists each case in which the reader refuses a
+The doc comment of each file lists each case in which its reader refuses a
 file.
 
 ## Rules for a change here
@@ -38,7 +40,7 @@ Each rule has its reason.
    Reason: one conversion holds each check of the file.
 3. **Give each raw struct a closed set of keys, with `deny_unknown_fields`.
    Read each raw struct through `ObjectOnly`.** `object_of` reads the text of
-   a file. `objects` reads a field that is a list of objects.
+   a file. `object` and `objects` read a field.
    Reason: the format of each file names an object and its keys. The derive
    of `serde` also reads a struct from an array that holds the values in
    order.
@@ -69,16 +71,17 @@ Each rule has its reason.
    Reason: the gate runs cargo only for a change under `rust/` or
    `vectors/` (`rust/AGENTS.md`, "Tests").
 
-The reader has no Python origin. `vectors/core.py` and `vectors/generate.py`
-write the files that it reads. The doc comment of each reader function names
-its writer.
+The reader has no Python origin. `vectors/core.py`, `vectors/generate.py` and
+two modules under `vectors/surfaces/` write the files that it reads. The doc
+comment of each reader function names its writer.
 
 ## Tests
 
-- The unit tests give the reader a text that a test writes. One table for
-  the index and one for a vector file hold each refusal with its reason.
-- One test walks the committed files. It reads each surface of the index, so
-  each count of each file is the count of its index row.
+- The unit tests give each reader a text that a test writes. One table for
+  each kind of file holds each refusal with its reason.
+- One test for each kind of file walks the committed file. The walk of the
+  index reads each surface, so each count of each file is the count of its
+  index row.
 - The doc test of a public struct reads the committed files too.
 
 ## Known gaps
@@ -86,14 +89,8 @@ its writer.
 - The workspace holds three readers of the vector files: this crate, the
   private reader of `creche-contracts` and the reader in the test of
   `agent-family`. Packet `decisions-vectors-crate` moves the two others to
-  this crate. The owner still has to confirm that one reader replaces the
-  three.
-- The crate reads the index and the vector files only. `vectors/data` holds
-  two more files: `ids/disagreements.json` and
-  `family_file.registries.json`. The private reader of `creche-contracts`
-  reads the first one, and the test of `agent-family` reads the second one.
-  This crate needs a reader for each of the two files before those crates
-  can move to it.
+  this crate. Until then, no crate calls `disagreements` or `registries`.
+  The owner still has to confirm that one reader replaces the three.
 - This `CONTRACT-QUESTION` comment is open in `src/lib.rs`: `rust/AGENTS.md`
   gives each value one source, in rule 13. `creche-contracts` holds the
   strict JSON reader and `ids::Sha256Hex`, and rule 1 above keeps that crate
