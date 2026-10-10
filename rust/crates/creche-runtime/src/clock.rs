@@ -152,6 +152,10 @@ impl Clock for SystemClock {
 /// `datetime` holds microseconds, and `attendance/src/attendance/clock.py:15-17`
 /// gives one for each time stamp.
 ///
+/// `datetime.now(UTC)` of that origin (`:17`) gives a time before 1970 when
+/// the clock of the host shows one. This function gives `None` for such a
+/// time.
+///
 /// The result is the input of
 /// `creche_contracts::session::time::Timestamp::from_unix_micros`.
 ///
@@ -185,6 +189,15 @@ pub fn unix_micros(at: SystemTime) -> Option<i64> {
 /// so it gives each bit of the Python float. `Duration::as_secs_f64` adds the
 /// seconds and the fraction, and its last bit differs from the Python float
 /// for about one time in four.
+///
+/// The function differs from `time.time()` of
+/// `door-trigger/src/agent_door_trigger/ulid.py:30` in two ways:
+///
+/// - `time.time()` gives a float below zero when the clock of the host shows
+///   a time before 1970. This function gives `None`.
+/// - CPython holds a time as 63 bits of nanoseconds, so `time.time()` gives
+///   no float after 2262-04-11. This function gives a float for each later
+///   time, by the same rule.
 ///
 /// The result is the input of `creche_contracts::manifest::Timestamp::new`.
 ///
@@ -377,49 +390,86 @@ mod tests {
     /// rule to the reading of the clock. CPython 3.12, 3.13 and 3.14 hold the
     /// same rule.
     ///
-    /// On each row with `Differs::Yes`, the sum of the seconds and of the
-    /// fraction is another float. The whole milliseconds of the two floats
-    /// then differ by one.
+    /// The last part of a row is for the sum of the seconds and of the
+    /// fraction, the rule that `unix_seconds` does not use. On each row with
+    /// `PartsSum::OtherFloat`, that sum is another float than the float of
+    /// CPython. The whole milliseconds of the two floats then differ by one.
     ///
     /// The three rows after the year 2116 are whole seconds. For each one,
     /// `float(ns) / 1e9` is another float than the count of seconds.
-    const PYTHON_SECONDS: [(u64, u32, f64, Differs); 18] = [
-        (0, 0, 0.0, Differs::No),
-        (0, 1, 1e-09, Differs::No),
-        (0, 999_999_999, 0.999999999, Differs::No),
-        (1, 0, 1.0, Differs::No),
-        (1, 500_000_000, 1.5, Differs::No),
-        (1_758_153_590, 0, 1758153590.0, Differs::No),
-        (1_758_153_590, 500_000_000, 1758153590.5, Differs::No),
-        (1_758_153_590, 123_456_789, 1758153590.1234567, Differs::No),
-        (1_934_347_390, 123_456_789, 1934347390.1234567, Differs::No),
-        (4_611_686_019, 0, 4611686019.0, Differs::No),
-        (6_340_888_753, 0, 6340888753.0, Differs::No),
-        (8_251_055_967, 0, 8251055967.0, Differs::No),
-        (1_790_869_849, 637_000_000, 1790869849.6369998, Differs::Yes),
-        (1_799_740_127, 453_000_000, 1799740127.4529998, Differs::Yes),
-        (1_791_856_483, 210_000_000, 1791856483.2099998, Differs::Yes),
+    const PYTHON_SECONDS: [(u64, u32, f64, PartsSum); 18] = [
+        (0, 0, 0.0, PartsSum::SameFloat),
+        (0, 1, 1e-09, PartsSum::SameFloat),
+        (0, 999_999_999, 0.999999999, PartsSum::SameFloat),
+        (1, 0, 1.0, PartsSum::SameFloat),
+        (1, 500_000_000, 1.5, PartsSum::SameFloat),
+        (1_758_153_590, 0, 1758153590.0, PartsSum::SameFloat),
+        (
+            1_758_153_590,
+            500_000_000,
+            1758153590.5,
+            PartsSum::SameFloat,
+        ),
+        (
+            1_758_153_590,
+            123_456_789,
+            1758153590.1234567,
+            PartsSum::SameFloat,
+        ),
+        (
+            1_934_347_390,
+            123_456_789,
+            1934347390.1234567,
+            PartsSum::SameFloat,
+        ),
+        (4_611_686_019, 0, 4611686019.0, PartsSum::SameFloat),
+        (6_340_888_753, 0, 6340888753.0, PartsSum::SameFloat),
+        (8_251_055_967, 0, 8251055967.0, PartsSum::SameFloat),
+        (
+            1_790_869_849,
+            637_000_000,
+            1790869849.6369998,
+            PartsSum::OtherFloat,
+        ),
+        (
+            1_799_740_127,
+            453_000_000,
+            1799740127.4529998,
+            PartsSum::OtherFloat,
+        ),
+        (
+            1_791_856_483,
+            210_000_000,
+            1791856483.2099998,
+            PartsSum::OtherFloat,
+        ),
         (
             281_474_976_710,
             655_000_000,
             281474976710.65497,
-            Differs::Yes,
+            PartsSum::OtherFloat,
         ),
-        (253_402_300_799, 999_999_999, 253402300800.0, Differs::No),
+        (
+            253_402_300_799,
+            999_999_999,
+            253402300800.0,
+            PartsSum::SameFloat,
+        ),
         (
             LAST_PYTHON_SECONDS,
             LAST_PYTHON_NANOS,
             9223372036.854776,
-            Differs::No,
+            PartsSum::SameFloat,
         ),
     ];
 
-    /// Whether the sum of the seconds and of the fraction gives another
-    /// float than CPython gives.
+    /// What the sum of the seconds and of the fraction gives for one time.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum Differs {
-        Yes,
-        No,
+    enum PartsSum {
+        /// The float that CPython gives.
+        SameFloat,
+        /// Another float than CPython gives.
+        OtherFloat,
     }
 
     /// The seconds of a time as the sum of the whole seconds and of the
@@ -430,12 +480,12 @@ mod tests {
 
     #[test]
     fn a_time_from_1970_is_the_float_of_python() {
-        for (seconds, nanos, float, differs) in PYTHON_SECONDS {
+        for (seconds, nanos, float, parts_sum) in PYTHON_SECONDS {
             let found = unix_seconds(after_1970(seconds, nanos)).unwrap();
-            let sum_differs = if sum_of_parts(seconds, nanos).to_bits() == float.to_bits() {
-                Differs::No
+            let sum_found = if sum_of_parts(seconds, nanos).to_bits() == float.to_bits() {
+                PartsSum::SameFloat
             } else {
-                Differs::Yes
+                PartsSum::OtherFloat
             };
 
             assert_eq!(
@@ -443,7 +493,7 @@ mod tests {
                 float.to_bits(),
                 "{seconds} s and {nanos} ns"
             );
-            assert_eq!(sum_differs, differs, "{seconds} s and {nanos} ns");
+            assert_eq!(sum_found, parts_sum, "{seconds} s and {nanos} ns");
         }
     }
 
@@ -482,51 +532,25 @@ mod tests {
         );
     }
 
-    /// One difference from the Python code on purpose. No vector covers a
-    /// clock, so each row names a Python line.
-    struct Deviation {
-        /// The Python line.
-        python: &'static str,
-        /// What the Python line does, and what this module does.
-        difference: &'static str,
-        /// Whether this module does what `difference` says.
-        holds: fn() -> bool,
+    /// `datetime.now(UTC)` of Python gives a time before 1970 when the clock
+    /// of the host shows one.
+    #[test]
+    fn one_nanosecond_before_1970_has_no_microseconds() {
+        assert_eq!(unix_micros(before_1970(0, 1)), None);
     }
 
-    const DEVIATIONS: [Deviation; 3] = [
-        Deviation {
-            python: "attendance/src/attendance/clock.py:17",
-            difference: "`datetime.now(UTC)` gives a time before 1970 when the clock of the host \
-                         shows one. `unix_micros` gives `None`.",
-            holds: || unix_micros(before_1970(0, 1)).is_none(),
-        },
-        Deviation {
-            python: "door-trigger/src/agent_door_trigger/ulid.py:30",
-            difference: "`time.time()` gives a float below zero when the clock of the host shows \
-                         a time before 1970. `unix_seconds` gives `None`.",
-            holds: || unix_seconds(before_1970(0, 1)).is_none(),
-        },
-        Deviation {
-            python: "door-trigger/src/agent_door_trigger/ulid.py:30",
-            difference: "CPython holds a time as 63 bits of nanoseconds, so `time.time()` gives \
-                         no float after 2262-04-11. `unix_seconds` gives a float for each later \
-                         time, by the same rule.",
-            holds: || {
-                unix_seconds(after_1970(LAST_PYTHON_SECONDS, LAST_PYTHON_NANOS + 1))
-                    .is_some_and(|seconds| seconds.to_bits() == 9223372036.854776_f64.to_bits())
-            },
-        },
-    ];
-
+    /// `time.time()` of Python gives a float below zero for such a time.
     #[test]
-    fn each_deviation_names_a_python_line_and_holds() {
-        for row in &DEVIATIONS {
-            let (file, line) = row.python.rsplit_once(':').unwrap();
+    fn one_nanosecond_before_1970_has_no_seconds() {
+        assert_eq!(unix_seconds(before_1970(0, 1)), None);
+    }
 
-            assert!(file.ends_with(".py"), "{}", row.python);
-            assert!(line.parse::<u32>().is_ok(), "{}", row.python);
-            assert!(row.difference.ends_with('.'), "{}", row.python);
-            assert!((row.holds)(), "{}: {}", row.python, row.difference);
-        }
+    /// CPython holds a time as 63 bits of nanoseconds, so `time.time()`
+    /// gives no float for this time.
+    #[test]
+    fn a_time_past_63_bits_of_nanoseconds_has_seconds() {
+        let found = unix_seconds(after_1970(LAST_PYTHON_SECONDS, LAST_PYTHON_NANOS + 1)).unwrap();
+
+        assert_eq!(found.to_bits(), 9223372036.854776_f64.to_bits());
     }
 }
