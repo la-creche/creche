@@ -73,6 +73,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/noticeboard_cases.py` | the written inputs of the noticeboard surfaces |
 | `surfaces/noticeboard.py` | the noticeboard: `noticeboard.security.*`, `noticeboard.urlform`, `noticeboard.app.query`, `noticeboard.route.*`, `noticeboard.sessions.*`, `noticeboard.transcript.fold`, `noticeboard.audit.page`, `noticeboard.statusdocs.report`, `noticeboard.verify.envfile`, `noticeboard.cli.check`, `noticeboard.static.css` |
 | `surfaces/library.py` | the index builder: `library.chunk_text`, `library.file_hash`, `library.read_document`, `library.report`, `library.tei_url`, `library.embedding`, `library.schema`, `library.index_scope` |
+| `surfaces/tomlfile.py` | the syntax of a TOML file: `tomlfile.syntax` |
 
 ## Known gaps
 
@@ -490,3 +491,23 @@ directory is not a workspace package, so a change here does not change
 - No vector covers `main` of `library.__main__` or its TEI client: the
   command line, the exit status, the preflight and the calls of the
   embedder. The embedder of each vector is a stub of the generator.
+- The entry point of `tomlfile.syntax` is in no product package. The
+  surface calls `tomllib.loads` of the Python standard library, because no
+  product code reads TOML yet. Packet `toml-syntax-vectors` changes the
+  entry point to the product reader.
+- `tomlfile.syntax` holds no text of four kinds. For such a text, `tomllib`
+  does not give the answer of a reader of a file kind, or its answer can
+  change with the Python version (rule 7). A plain Rust test of the module
+  `tomlfile` holds each kind. Packet `toml-syntax-vectors` adds the kinds
+  when the entry point is the product reader.
+  1. A form that TOML 1.1 added. A reader of a file kind takes TOML 1.0.
+     The documentation of Python 3.15 says that its `tomllib` reads TOML
+     1.1.
+  2. An integer outside 64 bits. `tomllib` reads an integer of each size.
+  3. A float whose text is outside the range of a float, for example
+     `1e999`. `tomllib` reads it as an infinity.
+  4. A text with more than 8 levels. `tomllib` reads it.
+- A vector of `tomlfile.syntax` holds the kind of a date-time and no part
+  of its value. No file kind has a field for a date-time.
+- A refused vector of `tomlfile.syntax` holds no reason. The entry point
+  has one error type for each refusal.
