@@ -13,11 +13,14 @@
 //! 3. A row does not hold exactly one of the keys `text` and `base64`, or
 //!    its `base64` text is no base64 with padding.
 //! 4. The registry or the path of a row is no path of names: a part is
-//!    empty, `.` or `..`.
+//!    empty, `.` or `..`, or the text holds a NUL character.
 //! 5. Two rows have the same registry and the same path.
+//! 6. The path of a row is a directory of another row of its registry. One
+//!    name is then a file and a directory.
 //!
 //! A test writes each file below a directory of its own. Case 4 thus keeps
-//! each write inside that directory.
+//! each write inside that directory. Cases 4, 5 and 6 refuse a row that the
+//! test cannot write beside the other rows.
 //!
 //! The reader has no Python origin. `render_registries` of
 //! `vectors/surfaces/family_file.py` writes the file.
@@ -37,6 +40,9 @@ const REGISTRIES_FILE: &str = "family_file.registries.json";
 const REGISTRIES_KIND: &str = "registries";
 
 /// One file of one registry that a vector names.
+///
+/// The paths of one registry make one tree of files: no path is there two
+/// times, and no path is a directory of another one.
 ///
 /// ```
 /// use creche_vectors::RegistryFile;
@@ -95,10 +101,10 @@ impl RegistryFile {
 
     /// The row of a raw row. The error is the reason of a refusal.
     fn checked(raw: RawRegistryFile) -> Result<Self, String> {
-        if !is_data_path(&raw.registry) {
+        if !is_name_path(&raw.registry) {
             return Err(format!("{:?} is no path of a registry", raw.registry));
         }
-        if !is_data_path(&raw.path) {
+        if !is_name_path(&raw.path) {
             return Err(format!(
                 "{:?} is no path of a file in the registry {}",
                 raw.path, raw.registry
@@ -122,6 +128,13 @@ impl RegistryFile {
             bytes,
         })
     }
+}
+
+/// Whether a test can write `path` below a directory of its own: a path of
+/// names ([`is_data_path`]) with no NUL character. `std::fs` refuses a path
+/// with that character.
+fn is_name_path(path: &str) -> bool {
+    is_data_path(path) && !path.contains('\0')
 }
 
 /// The file, as `serde` reads it. It checks no rule.
@@ -199,8 +212,31 @@ fn registries_of(text: &str) -> Result<Vec<RegistryFile>, VectorsError> {
             twice.path, twice.registry
         )));
     }
+    if let Some((above, below)) = files
+        .iter()
+        .find_map(|file| Some((file_above(file, &places)?, file)))
+    {
+        return Err(refused(format!(
+            "{above} of {} is a file, and it is a directory of the file {}",
+            below.registry, below.path
+        )));
+    }
 
     Ok(files)
+}
+
+/// The directory of `file` that is also a file of its registry, if `places`
+/// holds one. `places` holds the registry and the path of each row.
+fn file_above<'a>(file: &'a RegistryFile, places: &HashSet<(&str, &str)>) -> Option<&'a str> {
+    let mut below = file.path.as_str();
+    while let Some((above, _name)) = below.rsplit_once('/') {
+        if places.contains(&(file.registry.as_str(), above)) {
+            return Some(above);
+        }
+        below = above;
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -252,12 +288,36 @@ mod tests {
         assert_eq!(registries_of(&file(&json!([]))), Ok(Vec::new()));
     }
 
+    /// A name is a file in one registry and a directory in another one. A
+    /// name that only starts with the name of a file is no directory of it.
+    #[test]
+    fn a_file_name_can_start_a_longer_name_and_can_be_a_directory_elsewhere() {
+        let text = file(&json!([
+            {"registry": "made/registry", "path": "a", "text": ""},
+            {"registry": "made/registry", "path": "ab/c", "text": ""},
+            {"registry": "made/registry", "path": "b/a", "text": ""},
+            {"registry": "made/other", "path": "a/b", "text": ""},
+        ]));
+        let files = registries_of(&text).unwrap();
+        let paths: Vec<&str> = files.iter().map(RegistryFile::path).collect();
+
+        assert_eq!(paths, ["a", "ab/c", "b/a", "a/b"]);
+    }
+
     #[test]
     fn a_file_that_breaks_a_rule_is_refused() {
         let no_form = json!([{"registry": "made/registry", "path": "a.yaml"}]);
         let two_forms =
             json!([{"registry": "made/registry", "path": "a.yaml", "text": "a", "base64": "YQ=="}]);
-        let refused: [(String, &str); 22] = [
+        let file_and_directory = json!([
+            {"registry": "made/registry", "path": "a/b/c.yaml", "text": ""},
+            {"registry": "made/registry", "path": "a", "text": ""},
+        ]);
+        let directory_and_file = json!([
+            {"registry": "made/registry", "path": "a/b", "text": ""},
+            {"registry": "made/registry", "path": "a/b/c.yaml", "text": ""},
+        ]);
+        let refused: [(String, &str); 27] = [
             (
                 file_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
@@ -267,7 +327,12 @@ mod tests {
                 file_with("kind", json!("index")),
                 "the kind is \"index\", and the kind of the file is \"registries\"",
             ),
+            // A key of a row that the format does not name, then one of the file.
             (file_with("extra", json!(1)), "unknown field `extra`"),
+            (
+                String::from(r#"{"format": 1, "kind": "registries", "files": [], "extra": 1}"#),
+                "unknown field `extra`",
+            ),
             (
                 String::from(r#"{"format": 1, "kind": "registries"}"#),
                 "missing field `files`",
@@ -333,6 +398,23 @@ mod tests {
             (
                 file_with("registry", json!("")),
                 "\"\" is no path of a registry",
+            ),
+            (
+                file_with("path", json!("a\u{0}b")),
+                "\"a\\0b\" is no path of a file in the registry made/registry",
+            ),
+            (
+                file_with("registry", json!("made/regi\u{0}stry")),
+                "\"made/regi\\0stry\" is no path of a registry",
+            ),
+            // One name is a file and a directory, in each order of the rows.
+            (
+                file(&file_and_directory),
+                "a of made/registry is a file, and it is a directory of the file a/b/c.yaml",
+            ),
+            (
+                file(&directory_and_file),
+                "a/b of made/registry is a file, and it is a directory of the file a/b/c.yaml",
             ),
         ];
 

@@ -152,3 +152,7 @@ comment of each reader function names its writer.
      object below such a key.
 - The reader compares no digest of a frozen file. `vectors/AGENTS.md`,
   "Known gaps", has the entry.
+- `registries` does not refuse two paths of one registry that differ only
+  in letter case. A file system that ignores case keeps one file for the
+  two rows. No registry of the committed file holds such a pair. No packet
+  has that part yet.
