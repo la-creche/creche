@@ -22,9 +22,10 @@ silent pass would be worse than a skip. Every test is marked `slow` in
 
 ## CI
 
-The `suites` job of `.github/workflows/gate.yml` runs both suites for each
-code change. No hook runs them. Run the two commands before you push a
-change to this directory.
+The `suites` job runs both suites for each code change. Two workflow files
+have the job: `.github/workflows/gate.yml` and
+`.github/workflows/release.yml`. No hook runs the two suites. Run the two
+commands before you push a change to this directory.
 
 1. The job builds the playpen, as the `proc` job does.
 2. It runs each suite in a pytest run of its own, with the two commands
@@ -38,10 +39,14 @@ change to this directory.
 - The last step prints one line for each suite: the tests that ran, the
   total, the tests that skipped and the seconds.
 - The job has a time limit of 20 minutes.
-- `.github/workflows/release.yml` does not run the job yet. That file gets
-  the job after the job passed 20 runs of the merge queue in a row.
+- `gate.yml` runs the job for a pull request and for a merge group.
+  `release.yml` runs the job again after the merge, before it mints a tag.
+- When the job fails in `release.yml`, that run mints no tag. The next green
+  run of `release.yml` mints a tag for each component that changed after its
+  newest tag.
 - `bin/tests/test_gate_workflow.py` pins the job, both commands and the last
-  step.
+  step. It also holds the job of `release.yml` equal to the job of
+  `gate.yml`.
 
 ## What runs
 
