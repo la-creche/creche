@@ -847,7 +847,9 @@ mod tests {
     use serde_json::{Map, Value, json};
 
     use super::*;
-    use crate::ids::{ComponentName, ContractVersion, FamilyNameError, GateId, Ulid};
+    use crate::ids::{
+        ComponentName, ContractVersion, FamilyNameError, GateId, Ulid, Version, VersionError,
+    };
 
     /// Each surface of this module, and the type or the function that the
     /// surface is the oracle of.
@@ -867,51 +869,7 @@ mod tests {
 
     /// Each vector that the Python code accepts and the Rust code refuses, on
     /// purpose: the surface, the vector, the contract section and the reason.
-    const DEVIATIONS: [(&str, &str, &str, &str); 11] = [
-        (
-            "manifest.component",
-            "yaml-nested-200-replaced",
-            "contract 06 §10",
-            "the YAML reader refuses a text past 128 levels, also in a value that a later key \
-             replaces",
-        ),
-        (
-            "manifest.component",
-            "yaml-tag-int-arabic-indic",
-            "contract 06 §8",
-            "a tagged number has ASCII digits (rust/AGENTS.md, rule 9)",
-        ),
-        (
-            "manifest.component",
-            "yaml-tag-int-no-break-space",
-            "contract 06 §8",
-            "a tagged number has ASCII spaces around it (rust/AGENTS.md, rule 9)",
-        ),
-        (
-            "manifest.component",
-            "build-word-lone-surrogate",
-            "contract 06 §8",
-            "a word of a command is a string, and a lone surrogate is in no string",
-        ),
-        (
-            "manifest.component",
-            "install-lone-surrogate",
-            "contract 06 §8",
-            "an install path is a string, and a lone surrogate is in no string",
-        ),
-        (
-            "manifest.request.ulid",
-            "negative-time",
-            "contract 06 §9",
-            "a ULID holds 48 bits of milliseconds (contract 02 §2), and a time below zero has none",
-        ),
-        (
-            "manifest.request.ulid",
-            "past-48-bits",
-            "contract 06 §9",
-            "a ULID holds 48 bits of milliseconds (contract 02 §2), and the mint refuses a later \
-             time",
-        ),
+    const DEVIATIONS: [(&str, &str, &str, &str); 3] = [
         (
             "manifest.resolved",
             "resolved-at-nan",
@@ -930,28 +888,13 @@ mod tests {
             "contract 06 §9",
             "resolved_at is a number, and JSON has no infinity",
         ),
-        (
-            "manifest.resolved",
-            "version-arabic-indic",
-            "contract 06 §2",
-            "a version has ASCII digits (rust/AGENTS.md, rule 9)",
-        ),
     ];
 
-    /// Each vector that both languages refuse with a different detail, on
-    /// purpose: the surface, the vector, the contract section and the reason.
-    const DETAILS: [(&str, &str, &str, &str); 1] = [(
-        "manifest.component",
-        "yaml-nested-200",
-        "contract 06 §10",
-        "the YAML reader refuses a text past 128 levels, and PyYAML has no such limit",
-    )];
-
-    /// The vectors of one surface on which the Rust code differs, by table.
+    /// The vectors of one surface that the Python code accepts and the Rust
+    /// code refuses.
     #[derive(Default)]
     struct Found {
         deviations: BTreeSet<String>,
-        details: BTreeSet<String>,
     }
 
     fn rows_of(table: &[(&str, &str, &str, &str)], surface: &str) -> BTreeSet<String> {
@@ -963,19 +906,14 @@ mod tests {
     }
 
     impl Found {
-        /// Stops the test when the differences are not the rows of the two
-        /// tables.
+        /// Stops the test when the differences are not the rows of the table.
+        /// A surface with no row must have no difference.
         fn check(&self, surface: &str) {
             assert_eq!(
                 self.deviations,
                 rows_of(&DEVIATIONS, surface),
                 "{surface}: the vectors that Python accepts and Rust refuses are not the rows of \
                  DEVIATIONS"
-            );
-            assert_eq!(
-                self.details,
-                rows_of(&DETAILS, surface),
-                "{surface}: the vectors with another detail are not the rows of DETAILS"
             );
         }
     }
@@ -1045,7 +983,7 @@ mod tests {
             .collect();
 
         assert_eq!(indexed, named);
-        for (surface, id, section, reason) in DEVIATIONS.iter().chain(&DETAILS) {
+        for (surface, id, section, reason) in &DEVIATIONS {
             assert!(named.contains(surface), "{surface} {id}");
             assert!(section.starts_with("contract 06 §"), "{surface} {id}");
             assert!(!reason.is_empty(), "{surface} {id}");
@@ -1157,9 +1095,7 @@ mod tests {
                         continue;
                     }
 
-                    if error.detail() != detail {
-                        found.details.insert(id.to_owned());
-                    }
+                    assert_eq!(error.detail(), detail, "{id}");
                 }
                 (Outcome::Raised, Err(_)) => {}
                 (Outcome::Refused | Outcome::Raised, Ok(_)) => {
@@ -1278,6 +1214,124 @@ mod tests {
             Err(ManifestFault::Yaml(YamlFault::Deep)),
             "a nesting past the limit"
         );
+    }
+
+    /// The valid manifest of the written vectors of `manifest.component`.
+    /// Such a vector holds this text with the lines of one field replaced.
+    const ATTENDANCE_MANIFEST: &str = r#"manifest_version: "0.6"
+name: attendance
+repo: agent-control
+path: attendance
+kind: venv
+unit: creche-attendance.service
+runs_as: operator
+build:
+  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable", "--package", "attendance"]
+install:
+  to: ~/.local/components/attendance
+  prev: ~/.local/components/attendance.prev
+provides:
+  - { contract: session-api, major: 1, minor: 4 }
+requires:
+  - { contract: channel, major: 1, min_minor: 3 }
+  - { contract: pep-grant, major: 2, min_minor: 0 }
+depends_on: [chaperone]
+verify:
+  command: ["~/.local/components/attendance/bin/attendance-verify", "--json"]
+  user: operator
+  timeout_s: 60
+restore:
+  mode: automatic
+  keep: 1
+secrets: [session_key]
+release: yes
+"#;
+
+    /// [`ATTENDANCE_MANIFEST`] with the text `lines` in the place of the text
+    /// `own`, which the manifest holds one time.
+    fn attendance_manifest_with(own: &str, lines: &str) -> String {
+        assert_eq!(ATTENDANCE_MANIFEST.matches(own).count(), 1, "{own}");
+
+        ATTENDANCE_MANIFEST.replace(own, lines)
+    }
+
+    /// Six manifests that the reader refuses. The Python reader
+    /// `handover.manifest.parse_manifest` gives a manifest for five of them.
+    /// It refuses the sixth, `yaml-nested-200`, with another detail: a
+    /// `unit` that is no string.
+    ///
+    /// Each text was a vector of the surface `manifest.component`. The input
+    /// left that surface under resolution (c) of `rust/AGENTS.md`, "When the
+    /// two results differ". Contract 06 gives the YAML of a manifest no
+    /// nesting limit, no rule for a tagged number and no set of characters
+    /// for a string. A person writes each `component.yaml`, and no manifest
+    /// of this repository holds one of these texts. This test holds the six
+    /// inputs.
+    #[test]
+    fn the_reader_refuses_six_manifests_that_the_python_reader_reads() {
+        let operator = Operator::new("keeper", "/home/keeper").unwrap();
+        let nested = format!("unit: {}{}", "[".repeat(200), "]".repeat(200));
+        let unit = "unit: creche-attendance.service";
+        let keep = "  keep: 1";
+        let argv = concat!(
+            r#"  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable", "#,
+            r#""--package", "attendance"]"#
+        );
+        let install = concat!(
+            "  to: ~/.local/components/attendance\n",
+            "  prev: ~/.local/components/attendance.prev"
+        );
+        // The YAML escape of one half of a surrogate pair, in a text with
+        // double quotes.
+        let lone_surrogate = concat!("\\", "ud800");
+        let refused = [
+            (
+                "yaml-nested-200",
+                attendance_manifest_with(unit, &nested),
+                ManifestFault::Yaml(YamlFault::Deep),
+            ),
+            // A later key replaces the value, and the reader stops before it.
+            (
+                "yaml-nested-200-replaced",
+                attendance_manifest_with(unit, &format!("{nested}\n{unit}")),
+                ManifestFault::Yaml(YamlFault::Deep),
+            ),
+            // The Arabic-Indic digit four. Python reads it as 4.
+            (
+                "yaml-tag-int-arabic-indic",
+                attendance_manifest_with(keep, "  keep: !!int \"\u{664}\""),
+                ManifestFault::Yaml(YamlFault::Line(25)),
+            ),
+            // A no-break space after the digit. Python reads the text as 4.
+            (
+                "yaml-tag-int-no-break-space",
+                attendance_manifest_with(keep, "  keep: !!int \"4\u{a0}\""),
+                ManifestFault::Yaml(YamlFault::Line(25)),
+            ),
+            (
+                "build-word-lone-surrogate",
+                attendance_manifest_with(argv, &format!("  - [\"/bin/a\", \"{lone_surrogate}\"]")),
+                ManifestFault::NotUnicode { field: "build" },
+            ),
+            (
+                "install-lone-surrogate",
+                attendance_manifest_with(
+                    install,
+                    &format!("  to: \"/opt/{lone_surrogate}\"\n  prev: /opt/x.prev"),
+                ),
+                ManifestFault::NotUnicode {
+                    field: "install.to",
+                },
+            ),
+        ];
+
+        assert!(ComponentManifest::parse(ATTENDANCE_MANIFEST, Some(&operator)).is_ok());
+        for (id, text, fault) in refused {
+            let error = ComponentManifest::parse(&text, Some(&operator)).unwrap_err();
+
+            assert_eq!(error.fault(), &fault, "{id}: {}", error.detail());
+            assert_eq!(error.code(), RefusalCode::Manifest, "{id}");
+        }
     }
 
     #[test]
@@ -1798,15 +1852,45 @@ mod tests {
         }
 
         found.check("manifest.request.ulid");
+    }
 
+    /// Two times for which the mint gives no id. The Python requester
+    /// `handover.requester.file.new_ulid` gives 26 characters for each one,
+    /// and their first ten characters are no time of 48 bits.
+    ///
+    /// Each time was a vector of the surface `manifest.request.ulid`. The
+    /// input left that surface under resolution (c) of `rust/AGENTS.md`,
+    /// "When the two results differ". Contract 02 §2 gives a ULID 48 bits of
+    /// milliseconds, and no rule for a clock outside them. The requester
+    /// gives the mint the time of the system clock. A time before 1970 and a
+    /// time past the year 10889 are no time of a host that files a request.
+    /// This test holds the two inputs: the bits of each time, and ten random
+    /// bytes of zero.
+    #[test]
+    fn the_mint_gives_no_id_for_two_times_that_the_python_requester_takes() {
+        // `negative-time`: one millisecond before 1970. A time below zero is
+        // no `Timestamp`, so the mint cannot get it.
+        let negative = float_of("bf50624dd2f1a9fc");
+
+        assert_eq!(negative.to_bits(), (-0.001_f64).to_bits());
+        assert_eq!(Timestamp::new(negative), Err(TimestampError));
+
+        // `past-48-bits`: 2^48 milliseconds after 1970.
+        let past_48_bits = float_of("4250624dd2f1a9fc");
+
+        assert_eq!(past_48_bits.to_bits(), 281_474_976_710.656_f64.to_bits());
+        assert_eq!(
+            mint_ulid(Timestamp::new(past_48_bits).unwrap(), [0; 10]),
+            Err(MintError)
+        );
+
+        // The time one millisecond before it is the largest time of an id.
         let largest = Timestamp::new(281_474_976_710.655).unwrap();
-        let past_48_bits = Timestamp::new(281_474_976_710.656).unwrap();
 
         assert_eq!(
             mint_ulid(largest, [0xff; 10]).unwrap().as_str(),
             "7ZZZZZZZZZZZZZZZZZZZZZZZZZ"
         );
-        assert_eq!(mint_ulid(past_48_bits, [0; 10]), Err(MintError));
     }
 
     // --- the live-state document ---
@@ -2090,6 +2174,40 @@ mod tests {
         }
 
         found.check("manifest.resolved");
+    }
+
+    /// One version that a row of a resolved manifest cannot hold. The Python
+    /// builder `handover.resolve.build_document` checks no version, and it
+    /// writes a manifest and a tag with this one.
+    ///
+    /// The version was the `to_version` of the vector `version-arabic-indic`
+    /// of the surface `manifest.resolved`. The input left that surface under
+    /// resolution (c) of `rust/AGENTS.md`, "When the two results differ". No
+    /// contract says what the builder does with a text that is no version.
+    /// The resolver gives the builder each version. The Python parsers of a
+    /// request and of the live state refuse this text, so no caller of the
+    /// platform sends it. This test holds the input.
+    #[test]
+    fn a_resolved_row_takes_no_version_with_a_digit_that_is_not_ascii() {
+        // The digits one, two and three of the Arabic-Indic script.
+        let version = "\u{661}.\u{662}.\u{663}";
+
+        assert_eq!(
+            version.parse::<Version>(),
+            Err(VersionError::BadByte { at: 0 })
+        );
+
+        // The same row with ASCII digits is a row of a manifest.
+        let to_version: Version = "1.2.3".parse().unwrap();
+        let row = ResolvedComponent::new(
+            "chaperone".parse().unwrap(),
+            "deploy".parse().unwrap(),
+            None,
+            Some(to_version),
+            SourceFacts::default(),
+        );
+
+        assert_eq!(row.tag().as_deref(), Some("chaperone-v1.2.3"));
     }
 
     #[test]

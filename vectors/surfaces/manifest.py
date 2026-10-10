@@ -858,6 +858,10 @@ ENTROPY_BYTES: Final = 10
 #: The largest time that fits the 48 bits of a ULID, in milliseconds.
 ULID_MS_MAX: Final = 2**48 - 1
 
+# No row here holds a time below zero or past `ULID_MS_MAX`. The entry point
+# gives an id for such a time, and the Rust mint refuses it.
+# `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds those
+# inputs.
 ULIDS: Final[tuple[tuple[str, float, bytes], ...]] = (
     ("zero", 0.0, bytes(ENTROPY_BYTES)),
     ("zero-time-full-entropy", 0.0, b"\xff" * ENTROPY_BYTES),
@@ -869,8 +873,6 @@ ULIDS: Final[tuple[tuple[str, float, bytes], ...]] = (
     ("whole-seconds", 1758153590.0, b"\x01" * ENTROPY_BYTES),
     ("largest-time", ULID_MS_MAX / 1000, b"\xff" * ENTROPY_BYTES),
     ("every-letter", 1469918176.385, bytes.fromhex("0123456789abcdef0f1e")),
-    ("past-48-bits", (ULID_MS_MAX + 1) / 1000, bytes(ENTROPY_BYTES)),
-    ("negative-time", -0.001, bytes(ENTROPY_BYTES)),
 )
 
 
@@ -896,8 +898,8 @@ def _ulid_surface() -> Surface:
             "value.ulid is the id. Its first ten characters hold the time in milliseconds: "
             "the product of the time and 1000, with the fraction cut.",
             "The entry point does not check that the milliseconds fit the 48 bits of a ULID. "
-            "For past-48-bits and negative-time they do not fit. The first ten characters of "
-            "value.ulid are then not a time of 48 bits.",
+            "For a time below zero or past 48 bits of milliseconds, the first ten characters "
+            "of the id are not a time of 48 bits. No vector holds such a time.",
         ),
         vectors=tuple(_ulid_vector(*row) for row in ULIDS),
     )
@@ -1245,6 +1247,10 @@ _TIMES: Final[tuple[tuple[str, float], ...]] = (
     ("two-to-the-53", 9007199254740992.0),
 )
 
+# No case here holds a version with a digit that is not ASCII. The entry
+# point writes each version, and the Rust type refuses that one.
+# `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds that
+# input.
 RESOLVED: Final[tuple[Resolved, ...]] = (
     Resolved(
         "release-one",
@@ -1293,7 +1299,6 @@ RESOLVED: Final[tuple[Resolved, ...]] = (
     Resolved("resolved-at-nan", _ONE_ROW, resolved_at_bits=_bits(float("nan"))),
     Resolved("resolved-at-infinity", _ONE_ROW, resolved_at_bits=_bits(float("inf"))),
     Resolved("resolved-at-negative-infinity", _ONE_ROW, resolved_at_bits=_bits(float("-inf"))),
-    Resolved("version-arabic-indic", (("chaperone", "deploy", None, ARABIC_INDIC_VERSION),)),
     Resolved("id-lower", _ONE_ROW, release_id=ULID.lower()),
     Resolved("id-25-chars", _ONE_ROW, release_id=ULID[:-1]),
     Resolved("id-final-newline", _ONE_ROW, release_id=ULID + "\n"),
@@ -1348,7 +1353,8 @@ def _resolved_surface() -> Surface:
             "each field but manifest_sha256. Its UTF-8 bytes are the input of SHA-256.",
             "value.manifest_sha256 is `sha256:` and the hash of output in lower-case hex.",
             "The entry point checks the id and requested_by. It does not check another "
-            "argument: the resolver made each one.",
+            "argument: the resolver made each one. No vector holds a version with a digit "
+            "that is not ASCII.",
         ),
         vectors=tuple(_resolved_vector(case) for case in RESOLVED),
     )

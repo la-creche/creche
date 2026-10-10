@@ -101,8 +101,10 @@ directory is not a workspace package, so a change here does not change
   copy leave `ids/disagreements.json`.
 - No vector covers a scalar of `component.yaml` that PyYAML cannot build,
   such as a word with the tag `!!int`. The Python code refuses it and names
-  no line. The Rust reader refuses it and names a line. Such a vector first
-  needs a row in the Rust table of details.
+  no line. The Rust reader refuses it and names a line. The two details
+  differ, so such an input is a plain Rust test and not a vector. The test
+  `a_scalar_that_gives_no_value_is_refused` in
+  `rust/crates/creche-contracts/src/manifest.rs` holds those inputs.
 - `status.write` builds the `reconcile` block and the `spend` block by hand.
   `caregiver` builds them in two private functions of `caregiver.reconcile`.
   The generator copies the key order of those functions.
@@ -262,11 +264,12 @@ directory is not a workspace package, so a change here does not change
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
   reads that file. `noticeboard.cli.check` holds the vectors of a key file.
-- Some surfaces hold no input of a kind that the Python code accepts and the
-  Rust type refuses. Each such input left its surface under resolution (c)
-  of `rust/AGENTS.md`. A plain Rust test holds each one, with the input in
-  the test. The table names the file of that test, below
-  `rust/crates/creche-contracts/src/`.
+- Some kinds of input have no vector, because the Rust result differs from
+  the Python result. In most cases the Python code accepts the input and
+  the Rust type refuses it. Each such input left its surface under
+  resolution (c) of `rust/AGENTS.md`. A plain Rust test holds each one, with
+  the input in the test. The table names each kind and the file of its
+  test, below `rust/crates/creche-contracts/src/`.
 
   | Surface | Inputs with no vector | File of the test |
   |---|---|---|
@@ -279,6 +282,9 @@ directory is not a workspace package, so a change here does not change
   | `config.attendance.env` | A bind host that is no host. An IPv6 address as the LAN address of the site. A relative path. A socket path of 108 bytes. A digit that is not ASCII. A count of seconds that is no duration. A command that does not split into words. A URL with no scheme or with a password. | `config/attendance.rs` |
   | `config.noticeboard.env` | A bind that is no host. The bind `0`. The long form of the bind `::`. A relative path. A URL with no scheme. | `config/noticeboard.rs` |
   | `config.chaperone.site` | A call of a reader that accepts one of these values: a LAN address that is no IPv4 address and no host name, the LAN address `0.0.0.0`, the port 0, a URL with no scheme. | `config/chaperone.rs` |
+  | `manifest.component` | A nesting of more than 128 levels. A tagged integer with a digit or a space that is not ASCII. A word of a command or an install path with a lone surrogate. | `manifest.rs` |
+  | `manifest.request.ulid` | A time below zero. A time past 48 bits of milliseconds. | `manifest.rs` |
+  | `manifest.resolved` | A version with a digit that is not ASCII. | `manifest.rs` |
 - The group `runtime` covers the lenient readers, the token files, the
   bearer of a request and the answers of the web framework. No vector
   covers an atomic write, a read with a size cap or a path under the state
