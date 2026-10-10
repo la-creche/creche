@@ -80,6 +80,7 @@ name = "creche-contracts"
 version = "0.0.0"
 dependencies = [
  "creche-util",
+ "creche-vectors",
  "serde",
  "serde_json",
 ]

@@ -1434,11 +1434,12 @@ impl From<&Server> for RawServer {
 mod tests {
     use std::str::FromStr;
 
+    use creche_vectors::{self as vectors, Outcome};
+
     use super::{
         Entrypoint, EnvValue, FenceArg, GithubRepo, Identity, InstallSource, LockPath,
         LockPathError, Pin, RawInstall, RawRun, RawServer, Server, StateDir,
     };
-    use crate::vectors::{self, Outcome};
 
     /// Each text of `accepted` parses, and each text of `refused` does not.
     fn check_tables<T: FromStr>(accepted: &[&str], refused: &[&str]) {
@@ -1639,20 +1640,20 @@ mod tests {
     /// `agent-family` compares the report of each vector.
     #[test]
     fn each_accepted_vector_is_a_server_with_the_python_fields() {
-        let surface = vectors::surface("server_file");
+        let surface = vectors::surface("server_file").unwrap();
         let mut deviations = 0;
-        for vector in &surface.vectors {
+        for vector in surface.vectors() {
             let Some(value) = vector
                 .value()
-                .filter(|_| vector.result == Outcome::Accepted)
+                .filter(|_| vector.result() == Outcome::Accepted)
             else {
                 continue;
             };
 
-            let id = &vector.id;
+            let id = vector.id();
             let raw: RawServer = serde_json::from_value(value.clone()).unwrap();
             assert_eq!(&serde_json::to_value(&raw).unwrap(), value, "{id}");
-            let deviates = DEVIATIONS.iter().any(|(vector, _)| vector == id);
+            let deviates = DEVIATIONS.iter().any(|(vector, _)| *vector == id);
             deviations += usize::from(deviates);
             let server = Server::try_from(raw);
             assert_eq!(server.is_err(), deviates, "{id}: {server:?}");

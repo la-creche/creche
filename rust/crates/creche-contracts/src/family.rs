@@ -3773,6 +3773,8 @@ impl From<&Family> for RawFamily {
 mod tests {
     use std::str::FromStr;
 
+    use creche_vectors::{self as vectors, Outcome};
+
     use super::{
         Cpus, Cron, CronError, DailyBudget, Description, EgressHost, EgressHostError, Family,
         FloorHours, HaEntityId, HaIdentifier, InflightCap, JobTimeout, JobTimeoutError, Kind,
@@ -3781,7 +3783,6 @@ mod tests {
         ResidentProcs, RunningTurns, Section, Severity, Slot, collapse, duration_s, is_under,
         memory_mb, python_float_text,
     };
-    use crate::vectors::{self, Outcome};
 
     /// Each text of `accepted` parses, and each text of `refused` does not.
     fn check_tables<T: FromStr>(accepted: &[&str], refused: &[&str]) {
@@ -4268,20 +4269,20 @@ mod tests {
     fn each_accepted_vector_is_a_family_with_the_python_fields() {
         let mut deviations = 0;
         for name in SURFACES {
-            let surface = vectors::surface(name);
-            for vector in &surface.vectors {
+            let surface = vectors::surface(name).unwrap();
+            for vector in surface.vectors() {
                 let Some(value) = vector
                     .value()
-                    .filter(|_| vector.result == Outcome::Accepted)
+                    .filter(|_| vector.result() == Outcome::Accepted)
                 else {
                     continue;
                 };
 
-                let id = &vector.id;
+                let id = vector.id();
                 let raw = serde_json::from_value::<RawFamily>(value.clone());
                 let stop = DEVIATIONS
                     .iter()
-                    .find(|(surface, vector, _, _)| *surface == name && vector == id)
+                    .find(|(surface, vector, _, _)| *surface == name && *vector == id)
                     .map(|(_, _, stop, _)| *stop);
                 if stop == Some(Stop::NoRawValue) {
                     assert!(raw.is_err(), "{name} {id}: the row names no difference");
