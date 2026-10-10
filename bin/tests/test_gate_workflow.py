@@ -68,9 +68,9 @@ each code change, with the toolchain of the `rust` job and the venv of the
 
 The `suites` job runs the two old suites of `integration/`, each one in a
 pytest run of its own. It has the setup of the `proc` job. Its last step reads
-the JUnit report of each run, and it fails for a test that skipped. Only
-`gate.yml` has the job: `ONLY_IN` names that one difference between the two
-files.
+the JUnit report of each run, and it fails for a test that skipped. Both
+workflows have the job. The last job of each file has a name of its own, and
+each other job name is in both files.
 
 The `systemd-proof` job runs `bin/systemd-proof.sh` for a change that touches
 a file of the proof: `systemd/` or the script.
@@ -112,6 +112,15 @@ RELEASE_NAME = "release"
 #: Each workflow's jobs with the name of its last one, the one that judges.
 WORKFLOW_JOBS = [(JOBS, GATE_NAME), (RELEASE_JOBS, RELEASE_NAME)]
 BY_NAME = [GATE_NAME, RELEASE_NAME]
+
+#: Each key of each of the two files, by the name of its workflow. PyYAML
+#: reads the key `on` as the boolean. One more key can change each job of one
+#: file, for example `defaults` with a shell that runs no line of a step, or
+#: `env`. The tests that hold a job equal in the two files read `jobs` only.
+FILE_KEYS = {
+    GATE_NAME: {"name", True, "permissions", "concurrency", "jobs"},
+    RELEASE_NAME: {"name", True, "permissions", "jobs"},
+}
 
 #: What starts the gate: a pull request, and a merge queue's group.
 GATE_EVENTS = ["pull_request", "merge_group"]
@@ -508,14 +517,6 @@ BUILD_ENV = {"AGENT_LAN_ADDRESS": "192.0.2.10"}
 #: The job that runs the two old suites of `integration/`.
 SUITES_JOB = "suites"
 
-#: The jobs that one workflow has and the other one lacks. This is the one
-#: named exception to "the release runs the jobs of the gate". The `suites`
-#: job is new to CI, and one red run of it in `release.yml` stops the tags of
-#: that merge. So the release gets the job after it passed 20 runs of the
-#: merge queue in a row. The pull request that adds the job to `release.yml`
-#: empties this table.
-ONLY_IN: dict[str, set[str]] = {GATE_NAME: {SUITES_JOB}, RELEASE_NAME: set()}
-
 #: The whole test command of each suite, as `integration/AGENTS.md` gives it,
 #: by the name of its report. The job runs each command as it is, in a step of
 #: its own.
@@ -701,11 +702,17 @@ def test_the_docs_scope_runs_no_shard_no_playpen_and_no_rust(
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
     only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
 
-    code_jobs = {"tests", "playpen", "proc", PROC_RUST_JOB, "rust", COVERAGE_JOB, SYSTEMD_JOB}
-    elsewhere = set().union(*(names for name, names in ONLY_IN.items() if name != last))
-
-    assert only_code == code_jobs | ONLY_IN[last]
-    assert only_code == set(DOCS) - elsewhere, "the verdict table of this file names other jobs"
+    assert only_code == {
+        "tests",
+        "playpen",
+        "proc",
+        PROC_RUST_JOB,
+        SUITES_JOB,
+        "rust",
+        COVERAGE_JOB,
+        SYSTEMD_JOB,
+    }
+    assert only_code == set(DOCS), "the verdict table of this file names other jobs"
     assert {name for name, rule in by_scope.items() if rule is None} == {"scope", "lint"}
 
 
@@ -720,20 +727,39 @@ def test_lint_runs_the_docs_tests_on_a_docs_change_and_no_test_beside_the_shards
 
 def test_the_release_runs_the_gates_test_jobs() -> None:
     """A change to one file's shards, playpen steps, process suite, Rust
-    judge, Rust steps, coverage steps or systemd proof that misses the other
-    would let a merge pass a release its PR could not, or the reverse."""
-    for name in ("tests", "playpen", "proc", PROC_RUST_JOB, "rust", COVERAGE_JOB, SYSTEMD_JOB):
+    judge, old suites, Rust steps, coverage steps or systemd proof that
+    misses the other would let a merge pass a release its PR could not, or
+    the reverse."""
+    for name in (
+        "tests",
+        "playpen",
+        "proc",
+        PROC_RUST_JOB,
+        SUITES_JOB,
+        "rust",
+        COVERAGE_JOB,
+        SYSTEMD_JOB,
+    ):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
 
 
-def test_the_two_workflows_differ_only_by_the_jobs_of_the_exception() -> None:
-    """`ONLY_IN` is the whole difference. A job that enters one file alone
-    fails here, and so does a job of the table that both files have."""
-    gate = set(JOBS) - {GATE_NAME}
-    release = set(RELEASE_JOBS) - {RELEASE_NAME}
+def test_the_two_workflows_have_the_same_jobs() -> None:
+    """The release runs each job of the gate before its last job, and no
+    other job. A job that enters one file alone fails here."""
+    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME}
 
-    assert gate - release == ONLY_IN[GATE_NAME]
-    assert release - gate == ONLY_IN[RELEASE_NAME]
+
+@pytest.mark.parametrize(
+    ("workflow", "name"), [(GATE, GATE_NAME), (RELEASE, RELEASE_NAME)], ids=BY_NAME
+)
+def test_a_workflow_file_has_no_key_that_changes_each_job(
+    workflow: dict[Any, Any], name: str
+) -> None:
+    """A job that is equal in the two files runs the same steps only when no
+    key beside `jobs` changes them. A `defaults` key of one file gives each
+    `run` step another shell, and an `env` key gives each step a variable.
+    Only the gate has a `concurrency` key."""
+    assert set(workflow) == FILE_KEYS[name]
 
 
 def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
@@ -888,60 +914,72 @@ def _setup_of(job: dict[str, Any], run: str) -> list[dict[str, Any]]:
     return job["steps"][: runs.index(run)]
 
 
-def _suite_steps() -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """The steps of the `suites` job after its setup: one for each suite, and
-    the last one."""
-    suites = JOBS[SUITES_JOB]
+def _suite_steps(jobs: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The steps of the `suites` job of one workflow after its setup: one for
+    each suite, and the last one."""
+    suites = jobs[SUITES_JOB]
     first = next(iter(SUITE_RUNS.values()))
     *runs, last = suites["steps"][len(_setup_of(suites, first)) :]
 
     return runs, last
 
 
-def test_the_suites_job_has_the_setup_of_the_proc_job() -> None:
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_suites_job_has_the_setup_of_the_proc_job(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
     """Each step before the first suite is a step of the `proc` job, in the
     same order: the checkout, node and pnpm, the build of the playpen, then
     the venv. The two jobs then judge the bundle of one build command."""
-    suites = JOBS[SUITES_JOB]
+    suites = jobs[SUITES_JOB]
     setup = _setup_of(suites, next(iter(SUITE_RUNS.values())))
 
     assert set(suites) == SUITES_KEYS
     assert suites["needs"] == "scope"
     assert suites["if"] == ONLY_CODE
-    assert suites["runs-on"] == JOBS["proc"]["runs-on"]
-    assert setup == _setup_of(JOBS["proc"], PROC_RUN)
+    assert suites["runs-on"] == jobs["proc"]["runs-on"]
+    assert setup == _setup_of(jobs["proc"], PROC_RUN)
     assert [step.get("uses") or step["run"] for step in setup][-2:] == [PLAYPEN_BUILD, UV_SYNC]
 
 
-def test_the_suites_job_runs_each_suite_in_a_pytest_run_of_its_own() -> None:
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_suites_job_runs_each_suite_in_a_pytest_run_of_its_own(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
     """After the setup the job has one step for each suite, then the last
     step. A suite step holds the whole command of `integration/AGENTS.md`,
     with no path of one test and no `-k`. Its one other key is the variable
     that names its report."""
-    runs, last = _suite_steps()
+    runs, no_skip = _suite_steps(jobs)
 
     assert len(runs) == len(SUITE_RUNS)
     for step, (name, run) in zip(runs, SUITE_RUNS.items(), strict=True):
         assert step == {"run": run, "env": {REPORT_VARIABLE: REPORT_OPTION + _report_of(name)}}
-    assert last["name"] == NO_SKIP_STEP
+    assert no_skip["name"] == NO_SKIP_STEP
 
 
-def test_the_last_step_of_the_suites_job_reads_the_report_of_each_suite() -> None:
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_last_step_of_the_suites_job_reads_the_report_of_each_suite(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
     """The step gets one path for each suite, on a line of its own. A path
     that differs from the path of a run would judge a report that no run
     wrote. No `if` and no `continue-on-error` can hold the step back."""
-    _, last = _suite_steps()
+    _, no_skip = _suite_steps(jobs)
 
-    assert set(last) == NO_SKIP_KEYS
-    assert last["shell"] == NO_SKIP_SHELL
-    assert last["env"] == {REPORTS_VARIABLE: "\n".join(_report_of(name) for name in SUITE_RUNS)}
+    assert set(no_skip) == NO_SKIP_KEYS
+    assert no_skip["shell"] == NO_SKIP_SHELL
+    assert no_skip["env"] == {REPORTS_VARIABLE: "\n".join(_report_of(name) for name in SUITE_RUNS)}
 
 
-def test_the_suites_job_has_the_time_limit_of_the_proc_job() -> None:
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_suites_job_has_the_time_limit_of_the_proc_job(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
     """The stack of a test waits for each listener and for each child at its
     teardown. A fault there can cost each test that wait."""
-    assert JOBS[SUITES_JOB]["timeout-minutes"] == SUITES_MINUTES
-    assert JOBS["proc"]["timeout-minutes"] == SUITES_MINUTES
+    assert jobs[SUITES_JOB]["timeout-minutes"] == SUITES_MINUTES
+    assert jobs["proc"]["timeout-minutes"] == SUITES_MINUTES
 
 
 @pytest.fixture(scope="module")
@@ -983,8 +1021,10 @@ def reports(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
 
 
 def _no_skip(paths: list[Path]) -> subprocess.CompletedProcess[str]:
-    """Runs the last step of the `suites` job over `paths`."""
-    _, last = _suite_steps()
+    """Runs the last step of the `suites` job over `paths`. The step is the
+    one of `gate.yml`. `test_the_release_runs_the_gates_test_jobs` holds the
+    job of `release.yml` equal to that job, so one run judges both copies."""
+    _, last = _suite_steps(JOBS)
 
     return subprocess.run(
         [sys.executable, "-c", last["run"]],
@@ -1581,17 +1621,13 @@ def test_a_shard_outside_one_to_n_is_refused(text: str) -> None:
         _root_conftest().parse_shard(text)
 
 
-def _needs(
-    scope: str | None,
-    results: dict[str, str],
-    jobs: dict[str, dict[str, Any]] = JOBS,
-    last: str = GATE_NAME,
-) -> str:
-    """`toJSON(needs)` as the last job of a workflow sees it: every job a
-    success but for the ones `results` names. The gate needs each job of the
-    release and the jobs of `ONLY_IN`. A name in `results` that the workflow
-    lacks is left out."""
-    names = sorted(set(jobs) - {last})
+def _needs(scope: str | None, results: dict[str, str]) -> str:
+    """`toJSON(needs)` as the last job sees it: every job a success but for
+    the ones `results` names. Both workflows need the same jobs:
+    `test_the_two_workflows_have_the_same_jobs` and
+    `test_the_last_job_needs_every_other_job_and_always_runs` hold that. So
+    one text is the needs of the gate and of the release."""
+    names = sorted(set(JOBS) - {GATE_NAME})
     needs = {name: {"result": results.get(name, "success"), "outputs": {}} for name in names}
     if scope is not None:
         needs["scope"]["outputs"] = {"scope": scope}
@@ -1654,13 +1690,6 @@ VERDICTS = [
     (_needs("docs", DOCS | {PROC_RUST_JOB: "success"}), False),
     (_needs("docs", DOCS | {SUITES_JOB: "success"}), False),
     (_needs("docs", DOCS | {SYSTEMD_JOB: "success"}), False),
-    # The release has no `suites` job yet (`ONLY_IN`), and its verdict asks
-    # for none.
-    (_needs("code", {}, RELEASE_JOBS, RELEASE_NAME), True),
-    (_needs("docs", DOCS, RELEASE_JOBS, RELEASE_NAME), True),
-    (_needs("code", {"proc": "failure"}, RELEASE_JOBS, RELEASE_NAME), False),
-    (_needs("code", {PROC_RUST_JOB: "failure"}, RELEASE_JOBS, RELEASE_NAME), False),
-    (_needs("docs", DOCS | {"proc": "success"}, RELEASE_JOBS, RELEASE_NAME), False),
     # No scope: the scope job failed and everything behind it was skipped.
     (_needs(None, DOCS | {"scope": "failure"}), False),
 ]
