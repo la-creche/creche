@@ -860,7 +860,7 @@ ULID_MS_MAX: Final = 2**48 - 1
 
 # No row here holds a time below zero or past `ULID_MS_MAX`. The entry point
 # gives an id for such a time, and the Rust mint refuses it.
-# `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds those
+# `vectors/AGENTS.md`, "Known gaps", names the Rust file that holds those
 # inputs.
 ULIDS: Final[tuple[tuple[str, float, bytes], ...]] = (
     ("zero", 0.0, bytes(ENTROPY_BYTES)),
@@ -1249,7 +1249,7 @@ _TIMES: Final[tuple[tuple[str, float], ...]] = (
 
 # No case here holds a version with a digit that is not ASCII. The entry
 # point writes each version, and the Rust type refuses that one.
-# `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds that
+# `vectors/AGENTS.md`, "Known gaps", names the Rust file that holds that
 # input.
 RESOLVED: Final[tuple[Resolved, ...]] = (
     Resolved(

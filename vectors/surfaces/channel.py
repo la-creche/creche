@@ -873,7 +873,7 @@ _HOST_DELEGATION_NO_CALLER: Final = Delegation(_DELEGATION_ID, "chat").to_channe
 # Each object in an argument here is one of the objects above. A builder
 # writes each other object as it is, and it writes an epoch of each size.
 # The Rust types hold no such object and no epoch past 64 bits.
-# `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds those
+# `vectors/AGENTS.md`, "Known gaps", names the Rust file that holds those
 # inputs.
 #
 # A vector file sorts the keys of an object, and a builder keeps the order

@@ -202,7 +202,7 @@ SITE_DOCUMENTS: Final[tuple[SiteDocument, ...]] = (
     # No file here gives an address that ends in a number and is not one
     # IPv4 address, or the address of each interface. The reader takes such
     # a text, and the Rust type refuses it. `vectors/AGENTS.md`, "Known
-    # gaps", names the Rust test that holds those inputs.
+    # gaps", names the Rust file that holds those inputs.
     # --- the name of a repository ---
     _with("repo-renamed", "AGENT_GITHUB_REPO_AGENT_CONTROL", "creche"),
     _with("repo-plain-bytes", "AGENT_GITHUB_REPO_AGENT_CONTROL", "_a.b-c"),
@@ -497,7 +497,7 @@ RUNTIMES: Final[tuple[Runtime, ...]] = (
     # that is not in the set, a tool two times, an alias with another byte
     # or an unknown system prompt. The writer takes each text, and the Rust
     # type refuses it. `vectors/AGENTS.md`, "Known gaps", names the Rust
-    # test that holds those inputs.
+    # file that holds those inputs.
 )
 
 
@@ -615,7 +615,7 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     # No document here gives an epoch outside 64 bits with a sign, as an
     # integer or as a float, or a text with a digit that is not ASCII. The
     # reader takes such an epoch, and the Rust type refuses it.
-    # `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds
+    # `vectors/AGENTS.md`, "Known gaps", names the Rust file that holds
     # those inputs.
     _creds("epoch-zero", epoch="0"),
     _creds("epoch-negative", epoch="-3"),
@@ -653,7 +653,7 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     # No document here gives a key, a token or a time of the write that is
     # no JSON string, or an empty key or token. The reader makes text of
     # each value, and the Rust type refuses it. `vectors/AGENTS.md`, "Known
-    # gaps", names the Rust test that holds those inputs.
+    # gaps", names the Rust file that holds those inputs.
     _creds("key-missing", litellm_key=""),
     _creds("key-not-ascii", litellm_key='"cl\\u00e9"'),
     _creds("key-lone-surrogate", litellm_key='"\\ud800"'),
@@ -725,7 +725,7 @@ CREDS_WRITES: Final[tuple[CredsWrite, ...]] = (
     # No set here holds an epoch outside 64 bits with a sign, or an empty
     # key or token. The writer takes each value, and the Rust writer has no
     # argument for it. `vectors/AGENTS.md`, "Known gaps", names the Rust
-    # test that holds those inputs.
+    # file that holds those inputs.
 )
 
 
@@ -797,7 +797,7 @@ ENV_WRITES: Final[tuple[EnvWrite, ...]] = (
     # No set here holds a relative state root, the sandbox of another family
     # or a sandbox with no number. The writer takes each value, and the Rust
     # writer has no argument for it. `vectors/AGENTS.md`, "Known gaps",
-    # names the Rust test that holds those inputs.
+    # names the Rust file that holds those inputs.
 )
 
 
@@ -930,7 +930,7 @@ def _attendance(env_id: str, **variables: str) -> Environment:
 # of the site, a relative path, a socket path of 108 bytes, a digit that is
 # not ASCII, a count of seconds that is no duration, a command that does
 # not split into words, or a URL with no scheme or with a password.
-# `vectors/AGENTS.md`, "Known gaps", names the Rust test that holds those
+# `vectors/AGENTS.md`, "Known gaps", names the Rust file that holds those
 # inputs.
 ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("site-only"),
@@ -1063,7 +1063,7 @@ def _lan_board(env_id: str, **variables: str) -> Environment:
 # No environment here holds a value that the reader takes and the Rust type
 # refuses: a bind that is no host, the bind `0`, the long form of the bind
 # `::`, a relative path, or a URL with no scheme. `vectors/AGENTS.md`,
-# "Known gaps", names the Rust test that holds those inputs.
+# "Known gaps", names the Rust file that holds those inputs.
 NOTICEBOARD_ENVS: Final[tuple[Environment, ...]] = (
     _noticeboard("loopback-no-key"),
     _lan_board("lan-with-key"),
@@ -1180,7 +1180,7 @@ def _pep(
 # is left out is one that the reader takes and the Rust type refuses: a LAN
 # address that is no IPv4 address and no host name, the LAN address
 # `0.0.0.0`, the port 0, and a URL with no scheme. `vectors/AGENTS.md`,
-# "Known gaps", names the Rust test that holds those inputs.
+# "Known gaps", names the Rust file that holds those inputs.
 CHAPERONE_ENVS: Final[tuple[SiteCalls, ...]] = (
     _pep("site-only", AGENT_LAN_ADDRESS=LAN),
     _pep("no-variable"),

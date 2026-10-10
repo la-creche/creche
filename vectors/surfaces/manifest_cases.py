@@ -12,7 +12,7 @@ Three kinds of text are not in this list, because the Rust reader refuses
 them and `parse_manifest` does not: a nesting of more than 128 levels, a
 tagged integer with a digit or a space that is not ASCII, and a word or an
 install path with a lone surrogate. `vectors/AGENTS.md`, "Known gaps", names
-the Rust test that holds those inputs.
+the Rust file that holds those inputs.
 """
 
 from __future__ import annotations
