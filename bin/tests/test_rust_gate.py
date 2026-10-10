@@ -27,11 +27,15 @@ line, and each gets a check here:
    vectors and must still push.
 7. **A product change that moves a vector, found first in CI.** A scoped run
    for a product package carries `vectors/tests` too.
-8. **A locked crate that no check read.** `cargo deny` reads the advisories,
-   the licenses and the sources of the locked crates (`rust/deny.toml`). It
-   needs `cargo-deny`, which rustup does not install. A developer machine
-   without it passes with one line. In CI the same gate fails, so a `rust`
-   job that lost its install step is red.
+8. **A locked crate that no check read.** `cargo deny` holds the locked
+   crates to `rust/deny.toml`. The gate makes three of its checks: the bans,
+   the licenses and the sources. It needs `cargo-deny`, which rustup does
+   not install. A developer machine without it passes with one line. In CI
+   the same gate fails, so a `rust` job that lost its install step is red.
+   The fourth check reads the advisories. A new advisory must not fail a
+   change that touches no dependency, so the gate does not make that check.
+   `bin/rust-gate.sh --advisories` makes it and runs no other step. The two
+   modes together make each check of the policy.
 9. **A panic boundary that no reviewer knows.** Only three places can hold
    `catch_unwind`: the runtime crate, the entry file of a crate with no
    runtime, and test code (`rust/AGENTS.md`, "The panic rule").
@@ -52,6 +56,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,9 +82,14 @@ TEST = "test --workspace --locked"
 LINT_STEPS = [FMT, CLIPPY]
 TEST_STEPS = [FMT, CLIPPY, TEST]
 
-#: The supply-chain check. It runs after clippy, on a machine that has
-#: `cargo-deny` on PATH.
-DENY = "deny --locked check"
+#: The start of each `cargo deny` step. A check name after it limits the step
+#: to that check. With no name, the step makes each check.
+DENY_CHECK = "deny --locked check"
+
+#: The supply-chain check of the gate. It runs after clippy, on a machine
+#: that has `cargo-deny` on PATH. It names three checks and not the
+#: advisories.
+DENY = f"{DENY_CHECK} bans licenses sources"
 DENY_LINT_STEPS = [FMT, CLIPPY, DENY]
 DENY_TEST_STEPS = [FMT, CLIPPY, DENY, TEST]
 
@@ -88,6 +98,22 @@ NO_DENY = "rust-gate: cargo-deny not on PATH: no `cargo deny` check. CI runs the
 
 #: The one line of CI with no `cargo-deny`, on stderr.
 NO_DENY_IN_CI = "rust-gate: cargo-deny not on PATH: CI must run the `cargo deny` check"
+
+#: The flag that runs the advisory check and no other step, and the one cargo
+#: step of that mode.
+ADVISORIES_FLAG = "--advisories"
+ADVISORIES = f"{DENY_CHECK} advisories"
+
+#: The last line of that mode. It differs from the last line of the gate.
+ADVISORIES_PASSED = "rust-gate: PASS, for the advisory check only"
+
+#: The one line of that mode for a program that is not on PATH, on stderr.
+NO_PROGRAM_FOR_ADVISORIES = "rust-gate: {program} not on PATH: --advisories needs it"
+
+#: The policy that `cargo deny` reads, and its one table that is no check: the
+#: table that says which crates each check reads.
+DENY_FILE = BIN.parent / "rust" / "deny.toml"
+NOT_A_CHECK = "graph"
 
 #: What a runner sets `CI` to.
 IN_CI = "true"
@@ -904,6 +930,91 @@ def test_a_failed_cargo_deny_fails_the_gate(tree: Tree) -> None:
     assert "quality-gate: PASS" not in done.out
     assert done.cargo == DENY_LINT_STEPS
     assert _pytest_calls(done) == []
+
+
+# --- the advisory check: a mode of its own, and no step of the gate ----------
+
+
+def _checks_of(step: str) -> set[str]:
+    """The checks that one `cargo deny` step names."""
+    assert step.startswith(f"{DENY_CHECK} "), f"`{step}` names no check, so it makes each one"
+
+    return set(step.removeprefix(DENY_CHECK).split())
+
+
+def test_the_advisory_mode_runs_the_advisory_check_and_no_other_step(tree: Tree) -> None:
+    """The scheduled workflow runs this mode. It runs no lint and no test:
+    the gate ran those for the commit."""
+    done = tree.run(RUST_GATE, ADVISORIES_FLAG, deny=True)
+
+    assert done.code == 0, done.out + done.err
+    assert done.cargo == [ADVISORIES]
+    assert done.cargo_dirs == {str(tree.root / "rust")}
+    assert done.out.splitlines() == [ADVISORIES_PASSED]
+    assert done.err == ""
+
+
+@pytest.mark.parametrize("args", [(), ("--tests",)], ids=["no flag", "--tests"])
+@pytest.mark.parametrize("ci", ["", IN_CI], ids=["a machine", "CI"])
+def test_the_gate_never_runs_the_advisory_check(tree: Tree, args: tuple[str, ...], ci: str) -> None:
+    """A new advisory changes the result of that check while the tree stays
+    the same. In the gate it would fail a change that touches no dependency.
+    A `cargo deny` step that names no check would make the four checks."""
+    done = tree.run(RUST_GATE, *args, deny=True, ci=ci)
+
+    assert done.code == 0, done.out + done.err
+    assert [step for step in done.cargo if step.startswith(DENY_CHECK)] == [DENY]
+    assert ADVISORIES not in done.cargo
+
+
+def test_the_two_modes_together_make_each_check_of_the_policy(tree: Tree) -> None:
+    """Each table of `rust/deny.toml` but one is the policy of one check. A
+    check that neither mode names is a table that no run reads. A check that
+    both modes name brings the advisories back into the gate."""
+    policy = set(tomllib.loads(DENY_FILE.read_text(encoding="utf-8"))) - {NOT_A_CHECK}
+    (in_gate,) = [step for step in tree.run(RUST_GATE, deny=True).cargo if step not in LINT_STEPS]
+    (scheduled,) = tree.run(RUST_GATE, ADVISORIES_FLAG, deny=True).cargo
+
+    assert _checks_of(in_gate) | _checks_of(scheduled) == policy
+    assert _checks_of(in_gate) & _checks_of(scheduled) == set()
+
+
+@pytest.mark.parametrize("ci", ["", IN_CI], ids=["a machine", "CI"])
+def test_the_advisory_mode_with_no_cargo_deny_fails_on_each_machine(tree: Tree, ci: str) -> None:
+    """The gate passes on a developer machine without `cargo-deny`, because
+    CI makes its checks for the same change. No other run makes the advisory
+    check, so this mode has no such pass."""
+    done = tree.run(RUST_GATE, ADVISORIES_FLAG, ci=ci)
+
+    assert done.code == 1
+    assert done.cargo == []
+    assert done.err.splitlines() == [NO_PROGRAM_FOR_ADVISORIES.format(program="cargo-deny")]
+    assert done.out == ""
+
+
+def test_the_advisory_mode_with_no_cargo_fails_with_one_line(tree: Tree) -> None:
+    done = tree.run(RUST_GATE, ADVISORIES_FLAG, cargo=False)
+
+    assert done.code == 1
+    assert done.err.splitlines() == [NO_PROGRAM_FOR_ADVISORIES.format(program="cargo")]
+    assert done.out == ""
+
+
+def test_a_failed_advisory_check_fails_its_mode(tree: Tree) -> None:
+    done = tree.run(RUST_GATE, ADVISORIES_FLAG, deny=True, fail="deny")
+
+    assert done.code != 0
+    assert done.cargo == [ADVISORIES]
+    assert ADVISORIES_PASSED not in done.out
+
+
+def test_the_quality_gate_has_no_advisory_mode(tree: Tree) -> None:
+    """No hook and no job of the gate can ask for the advisory check: only
+    `bin/rust-gate.sh` takes the flag."""
+    done = tree.run(GATE, ADVISORIES_FLAG, deny=True)
+
+    assert done.code == 2
+    assert done.cargo == []
 
 
 #: Crate files that do not take the lint gate.

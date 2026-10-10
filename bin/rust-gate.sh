@@ -6,15 +6,24 @@
 #                              panic check, the public-field check, cargo
 #                              fmt, cargo clippy and cargo deny
 #   bin/rust-gate.sh --tests   the same, then cargo test
+#   bin/rust-gate.sh --advisories
+#                              the advisory check of cargo deny, and no other
+#                              step. The gate does not make that check.
+#                              .github/workflows/advisories-daily.yml runs
+#                              this mode one time a day
 # Needs cargo on PATH. rustup takes the toolchain from
 # rust/rust-toolchain.toml, so every cargo step runs inside rust/.
 # `cargo deny` needs cargo-deny on PATH. CI installs it. A developer machine
-# without it prints one line and runs the other steps.
+# without it prints one line and runs the other steps. `--advisories` fails
+# without it on each machine.
 set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/../rust"
 
 #: The flag that adds the tests.
 WITH_TESTS="--tests"
+
+#: The flag that runs the advisory check of `cargo deny` and no other step.
+ADVISORIES_ONLY="--advisories"
 
 #: The file of the workspace itself. Every other Cargo.toml is a crate.
 WORKSPACE_MANIFEST="./Cargo.toml"
@@ -408,6 +417,18 @@ FIELD_SCAN_AWK='
 #: name.
 DENY_PROGRAM="cargo-deny"
 
+#: The checks of `cargo deny` that the gate makes for each change. Each one
+#: reads the locked crates and rust/deny.toml, and no data of another place.
+#: Its result thus changes only when the tree changes.
+DENY_GATE_CHECKS=(bans licenses sources)
+
+#: The check of `cargo deny` that the gate does not make. It reads the
+#: advisory database from the network, so its result can change while the
+#: tree stays the same. ADVISORIES_ONLY makes this check. The two lists
+#: together name each check of rust/deny.toml: bin/tests/test_rust_gate.py
+#: holds that.
+DENY_SCHEDULED_CHECKS=(advisories)
+
 # inherits_lints MANIFEST: whether the crate takes the lint gate of
 # rust/Cargo.toml. Only one spelling passes: a `[lints]` table that holds the
 # line `workspace = true`.
@@ -569,9 +590,10 @@ no_public_field() {
 }
 
 # deny_checked: the supply-chain check of the locked crates, against
-# rust/deny.toml: the advisories, the bans, the licenses and the sources.
+# rust/deny.toml: the bans, the licenses and the sources (DENY_GATE_CHECKS).
 # `--locked` refuses a Cargo.lock that the manifests no longer match. The
-# advisory check reads its database from the network.
+# advisories are not in this check: a new advisory would fail a change that
+# touches no dependency. advisories_checked reads them.
 #
 # The check needs cargo-deny, which rustup does not install. Without it on
 # PATH, a developer machine prints one line and passes: CI runs the check for
@@ -579,7 +601,7 @@ no_public_field() {
 # `rust` job that lost its install step must not pass with no check.
 deny_checked() {
   if command -v "$DENY_PROGRAM" >/dev/null; then
-    cargo deny --locked check
+    cargo deny --locked check "${DENY_GATE_CHECKS[@]}"
     return
   fi
 
@@ -591,14 +613,41 @@ deny_checked() {
   echo "rust-gate: $DENY_PROGRAM not on PATH: no \`cargo deny\` check. CI runs the check"
 }
 
+# advisories_checked: the advisory check of the locked crates, against
+# rust/deny.toml (DENY_SCHEDULED_CHECKS). It fails for a locked crate with an
+# advisory that the policy refuses, and for a locked version that its author
+# removed from crates.io. It reads the advisory database from the network.
+#
+# The check is the whole of its mode, so a machine without cargo or without
+# cargo-deny fails: a run that passed there would be a run that read no
+# advisory.
+advisories_checked() {
+  local program
+
+  for program in cargo "$DENY_PROGRAM"; do
+    if ! command -v "$program" >/dev/null; then
+      echo "rust-gate: $program not on PATH: $ADVISORIES_ONLY needs it" >&2
+      return 1
+    fi
+  done
+
+  cargo deny --locked check "${DENY_SCHEDULED_CHECKS[@]}"
+}
+
 MODE="${1:-}"
 case "$MODE" in
-  "" | "$WITH_TESTS") ;;
+  "" | "$WITH_TESTS" | "$ADVISORIES_ONLY") ;;
   *)
-    echo "usage: bin/rust-gate.sh [$WITH_TESTS]" >&2
+    echo "usage: bin/rust-gate.sh [$WITH_TESTS | $ADVISORIES_ONLY]" >&2
     exit 2
     ;;
 esac
+
+if [[ "$MODE" == "$ADVISORIES_ONLY" ]]; then
+  advisories_checked
+  echo "rust-gate: PASS, for the advisory check only"
+  exit 0
+fi
 
 command -v cargo >/dev/null || {
   echo "rust-gate: cargo not on PATH: a change under rust/ needs the Rust toolchain" >&2
