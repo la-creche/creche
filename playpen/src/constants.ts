@@ -2,6 +2,8 @@
 // a free parameter: each line names the section that fixes it, so a reader can
 // check the code against the contract without reading the code.
 
+import { DEPTH_MAX } from "./strict-json.js";
+
 /** Contract 03 §3. Only `major` has to match; a `minor` difference is legal. */
 export const PROTOCOL_VERSION = "1.0";
 
@@ -16,11 +18,11 @@ export const MAX_EVENT_BYTES = 262144;
 
 /**
  * Not in contract 03: see the CONTRACT-QUESTION in `pi-record.ts`. A pi line
- * nested deeper than this is cut to its scalar fields. `JSON.stringify`
- * overflows the stack at about 6000 levels on Node 22 and Node 24, and no pi
- * event comes near this number, so the margin is wide on both sides.
+ * nested deeper than this is cut to its scalar fields. A line of the channel
+ * is strict JSON, so it nests `DEPTH_MAX` levels at most, and the line
+ * object around a pi event is one of those levels. The value is 63.
  */
-export const MAX_PI_NESTING = 256;
+export const MAX_PI_NESTING = DEPTH_MAX - 1;
 
 /**
  * Contract 03 §5.1. `turn_seq` counts from 1 in each turn. A turn that sent

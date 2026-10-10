@@ -7,13 +7,20 @@
 
 import { MAX_EVENT_BYTES } from "./constants.js";
 import { byteLength } from "./framing.js";
+import { stringifyStrict } from "./strict-json.js";
 
 type Event = Record<string, unknown>;
 
 const KEEP = new Set(["type", "truncated", "original_bytes"]);
 
+/**
+ * The bytes of the text that the channel writes for `value`. A value with
+ * no strict text counts 0 bytes: the channel sends no line that holds it.
+ */
 function sizeOf(value: unknown): number {
-  return byteLength(JSON.stringify(value) ?? "");
+  const written = stringifyStrict(value);
+
+  return written.ok ? byteLength(written.text) : 0;
 }
 
 /** The name of the largest droppable field, or null when none is left. */
