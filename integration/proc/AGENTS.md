@@ -257,6 +257,7 @@ each one, and each one runs to its end.
 | `test_proc_owui_start.py` | door and `attendance` | a start, a refused start, the socket mode, a token reload |
 | `test_proc_switch.py` | door and `attendance` | the switch call of contract 05 §5, with a test in the place of `caregiver` |
 | `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
+| `test_proc_pi_events.py` | door and `attendance` | the journal line of a pi event that holds a lone surrogate |
 | `test_proc_delegate.py` | chaperone and `attendance` | the delegate path of contract 04 §7, the manifest and the audit |
 | `test_proc_caregiver_stage2.py` | the house | the stage 2 scenarios, with the names of the old suite |
 | `test_proc_caregiver_start.py` | `caregiver` alone, and the house | a start, a refused start, a signal, a kill, and the verbs that run to an end |
@@ -512,6 +513,10 @@ that the suite cannot run. Add one only when a scenario needs it.
 
 Do not grow `fake-pi.mjs` here. It belongs to `playpen/`.
 
+`set_pi_env` gives the pi stand-in its tunings. A number tunes a turn, for
+example `events` and `delay_ms`. The tuning `raw_line` is a text. The pi
+stand-in writes that text as one record in each turn, with no change.
+
 The `sbx` wrapper does two more things for the terminal door. It drops `-it`
 after it recorded the call, because `fake_sbx.py` takes no such word. It
 sets `SESSIOND_SANDBOX_SESSIONS_MOUNT` from the family of the sandbox id,
@@ -633,6 +638,11 @@ the text of the failure. Work down this list.
   session keeps. A new `config_rev` is not one of them. The playpen starts a
   new process at the next turn, and `test_proc_status.py` checks that. A
   change costs one count in that file.
+- **CONTRACT-QUESTION, a pi event with a lone surrogate.** Contract 03 §8
+  cuts an event by its size. It names no event that holds one half of a
+  surrogate pair. The suite holds what the playpen does: the cut event keeps
+  its type and its scalar fields. A change costs the assertions of the one
+  scenario in `test_proc_pi_events.py`.
 - **CONTRACT-QUESTION, the model list and a family that was never valid.**
   Contract 05 §3.1 and contract 02 §5.1 give only the refusal
   `family_invalid` by `attendance`. No contract says what the door lists.
