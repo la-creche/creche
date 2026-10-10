@@ -185,7 +185,7 @@ CRATES_DIR = "crates"
 #: The crates whose tests still hold a table of differences. The test of
 #: check 6 reads each other crate. The change that removes the last table of
 #: a crate deletes its name here.
-TABLE_CRATES = ("agent-family", "creche-contracts", "creche-runtime", "creche-testkit")
+TABLE_CRATES = ("agent-family", "creche-contracts", "creche-testkit")
 
 #: The name of a table of differences, and the start of the struct of one
 #: row. A longer name that holds one of the two counts too.

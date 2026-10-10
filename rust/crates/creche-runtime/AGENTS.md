@@ -68,8 +68,8 @@ The answer types of contract 02 need the readers, and they are in
    `creche_testkit::vectors`. Name each surface in a table of the test.
 6. Some differences from the Python origin are in no vector. Describe such
    a difference in the doc comment of the Rust function. Pin it with one
-   plain test. Packet `decisions-runtime-tables` removes the `DEVIATIONS`
-   tables of this crate. Until then, add no row to one.
+   plain test. Do not record a difference in a table. A test of
+   `bin/tests/test_rust_workspace.py` fails for such a table in this crate.
    - A new `Command` has an empty standard input and an output cap of 1 MiB.
      `subprocess.run` of Python gives the child the standard input of the
      process and has no cap.

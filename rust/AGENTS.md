@@ -1556,8 +1556,7 @@ To make the fifth check on your machine, for example before a merge:
     `crates/creche-vectors/AGENTS.md` has the cause and the change that
     removes the copy. No packet has that part yet.
   - Tables of differences. Some tests still have one. Add no table and no
-    row. The packets `decisions-tables-*`, `decisions-ids` and
-    `decisions-runtime-tables` delete them.
+    row. The packets `decisions-tables-*` and `decisions-ids` delete them.
   - "The differential test". Two parts of the test of `token` in
     `creche-runtime` do not hold the rule. The test walks no vector of
     `runtime.bearer.chaperone`, and the constant `NO_PORT_HERE` names that
@@ -1597,18 +1596,18 @@ To make the fifth check on your machine, for example before a merge:
   costs one step with a token that can write.
 - GitHub can delay or drop a run of the nightly job. It turns the schedule of
   a public repository off after 60 days with no activity in the repository.
-- Two checks do not read four crates yet: `agent-family`,
-  `creche-contracts`, `creche-runtime` and `creche-testkit`. Each check has
-  a list of its own with the four names. No list names a new crate, so both
-  checks read a new crate from its first commit. Add no name to a list.
-  - The public-field check of `bin/rust-gate.sh`. Packet
-    `decisions-runtime-private` deletes `creche-runtime` and
-    `creche-testkit` from the list of the script. Packet
-    `decisions-private-fields-gate` deletes that list.
+- Two checks do not read each crate yet. Each check has a list of its own
+  with the crates that it skips. No list names a new crate, so both checks
+  read a new crate from its first commit. Add no name to a list.
+  - The public-field check of `bin/rust-gate.sh`. Its list has four names:
+    `agent-family`, `creche-contracts`, `creche-runtime` and
+    `creche-testkit`. Packet `decisions-runtime-private` deletes
+    `creche-runtime` and `creche-testkit` from the list of the script.
+    Packet `decisions-private-fields-gate` deletes that list.
   - The table test of `bin/tests/test_rust_workspace.py`. In each `.rs`
     file, it looks for the name `DEVIATIONS` and for a struct whose name
-    starts with `Deviation`. Packet `decisions-runtime-tables` deletes
-    `creche-runtime` from the list of the test. Packet
+    starts with `Deviation`. Its list has three names: `agent-family`,
+    `creche-contracts` and `creche-testkit`. Packet
     `decisions-tables-guard` deletes that list.
   - The public-field check reads the source text and expands no macro. It
     does not find a field that a macro adds to a struct. It finds a struct
