@@ -290,10 +290,10 @@ pub(super) fn framed(mut body: String, max_line_bytes: usize) -> Result<String, 
 
 #[cfg(test)]
 mod tests {
+    use creche_vectors::{self as vectors, Input, Outcome};
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::vectors::{self, Chunk, Input, Outcome};
 
     const SURFACE: &str = "channel.frame";
 
@@ -388,15 +388,15 @@ mod tests {
 
     #[test]
     fn the_splitter_frames_each_stream_as_the_python_host_does() {
-        let surface = vectors::surface(SURFACE);
+        let surface = vectors::surface(SURFACE).unwrap();
 
-        assert_eq!(surface.entry, "attendance.wire.LineSplitter.feed");
-        assert!(surface.contract.starts_with("contract 03"));
-        assert!(!surface.notes.is_empty());
-        assert!(surface.context.is_empty());
-        for vector in &surface.vectors {
-            let Input::Chunks(chunks) = &vector.input else {
-                panic!("{}: the input is no list of chunks", vector.id);
+        assert_eq!(surface.entry(), "attendance.wire.LineSplitter.feed");
+        assert!(surface.contract().starts_with("contract 03"));
+        assert!(!surface.notes().is_empty());
+        assert!(surface.context().is_empty());
+        for vector in surface.vectors() {
+            let Input::Chunks(chunks) = vector.input() else {
+                panic!("{}: the input is no list of chunks", vector.id());
             };
             let limit = vector.field("params").unwrap()["max_line_bytes"]
                 .as_u64()
@@ -404,17 +404,13 @@ mod tests {
             let mut splitter = LineSplitter::with_limit(usize::try_from(limit).unwrap());
             let feeds: Vec<Value> = chunks
                 .iter()
-                .map(Chunk::bytes)
-                .map(|chunk| splitter.feed(&chunk).iter().map(raw_line).collect())
+                .map(|chunk| splitter.feed(chunk).iter().map(raw_line).collect())
                 .collect();
             let value = json!({"feeds": feeds, "pending_bytes": splitter.pending_bytes()});
 
-            assert_eq!(vector.result, Outcome::Accepted, "{}", vector.id);
-            assert_eq!(Some(&value), vector.value(), "{}", vector.id);
-            assert_eq!(
-                vector.input.bytes().unwrap(),
-                chunks.iter().flat_map(Chunk::bytes).collect::<Vec<u8>>()
-            );
+            assert_eq!(vector.result(), Outcome::Accepted, "{}", vector.id());
+            assert_eq!(Some(&value), vector.value(), "{}", vector.id());
+            assert_eq!(vector.input().bytes().unwrap(), chunks.concat());
         }
     }
 }

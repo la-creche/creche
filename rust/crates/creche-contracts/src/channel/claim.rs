@@ -1368,10 +1368,10 @@ fn fatal(record: &JsonObject) -> FatalLine {
 
 #[cfg(test)]
 pub(super) mod tests {
+    use creche_vectors::{self as vectors, Outcome};
     use serde_json::{Map, Value, json};
 
     use super::*;
-    use crate::vectors::{self, Outcome};
 
     const SURFACE: &str = "channel.parse";
 
@@ -1616,24 +1616,22 @@ pub(super) mod tests {
 
     #[test]
     fn the_parser_does_with_each_line_what_the_python_host_does() {
-        let surface = vectors::surface(SURFACE);
+        let surface = vectors::surface(SURFACE).unwrap();
         let mut accepted = 0;
         let mut differed = Vec::new();
 
-        assert_eq!(surface.entry, "attendance.wire.parse");
-        for vector in &surface.vectors {
-            let id = &vector.id;
+        assert_eq!(surface.entry(), "attendance.wire.parse");
+        for vector in surface.vectors() {
+            let id = vector.id();
             let input = vector
-                .input
+                .input()
                 .text()
                 .unwrap_or_else(|| panic!("{id}: no text"));
-            let parsed = parse(&input);
+            let parsed = parse(input);
 
-            match vector.result {
+            match vector.result() {
                 // The one difference on purpose: the reader gives `malformed`.
-                Outcome::Accepted if parsed == Err(Refusal::Malformed) => {
-                    differed.push(id.as_str())
-                }
+                Outcome::Accepted if parsed == Err(Refusal::Malformed) => differed.push(id),
                 Outcome::Accepted => {
                     let line = parsed.unwrap_or_else(|refusal| panic!("{id}: {refusal}"));
                     let expected = vector.value().unwrap_or_else(|| panic!("{id}: no value"));

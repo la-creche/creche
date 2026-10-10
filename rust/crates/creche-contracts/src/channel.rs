@@ -31,9 +31,10 @@ pub mod vocabulary;
 
 #[cfg(test)]
 mod tests {
+    use creche_vectors as vectors;
+
     use super::claim::{PlaypenLine, parse};
     use super::frame::{LineSplitter, Refusal};
-    use crate::vectors;
 
     /// What each surface of contract 03 starts with.
     const PREFIX: &str = "channel.";
@@ -58,15 +59,19 @@ mod tests {
     #[test]
     fn a_test_walks_each_surface_of_the_channel() {
         let named: Vec<&str> = SURFACES.iter().map(|(surface, _)| *surface).collect();
-        let held: Vec<String> = vectors::index()
-            .into_iter()
-            .map(|row| row.surface)
+        let index = vectors::index().unwrap();
+        let held: Vec<&str> = index
+            .iter()
+            .map(|row| row.surface())
             .filter(|surface| surface.starts_with(PREFIX))
             .collect();
 
         assert_eq!(held, named, "the surfaces of the index and of the table");
         for (surface, test) in SURFACES {
-            assert!(!vectors::surface(surface).vectors.is_empty(), "{surface}");
+            assert!(
+                !vectors::surface(surface).unwrap().vectors().is_empty(),
+                "{surface}"
+            );
             assert!(!test.is_empty(), "{surface}");
         }
     }
