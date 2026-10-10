@@ -1,9 +1,9 @@
 //! The differential test against the Python implementation.
 //!
-//! `vectors/data/chaperone` records what the Python code accepts, refuses and
-//! writes. Each test here walks each vector of each surface of one type. A
-//! vector on which the Rust code differs on purpose is a row of
-//! [`DEVIATIONS`].
+//! The vectors of the `grants.` surfaces and of the `chaperone.` surfaces
+//! record what the Python code accepts, refuses and writes. Each test here
+//! walks each vector of each surface of one type. A vector on which the Rust
+//! code differs on purpose is a row of [`DEVIATIONS`].
 
 use std::collections::{BTreeMap, HashSet};
 use std::time::{Duration, UNIX_EPOCH};

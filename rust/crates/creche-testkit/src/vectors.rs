@@ -1,5 +1,4 @@
-//! The reader of the vector files under `vectors/data`, for a differential
-//! test.
+//! The reader of the vector files, for a differential test.
 //!
 //! The crate `creche-vectors` holds the reader and its tests. This module
 //! gives each item of that crate under the path `creche_testkit::vectors`,

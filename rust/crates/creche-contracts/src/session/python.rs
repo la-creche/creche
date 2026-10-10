@@ -1,5 +1,5 @@
 //! The differential test of the session module: each vector of each surface
-//! `session.*` of `vectors/data`, against the Rust types.
+//! `session.*`, against the Rust types.
 //!
 //! `SURFACES` names each surface and the function that replays one vector of
 //! it. A vector outside `DEVIATIONS` must be equal: the Rust code accepts and

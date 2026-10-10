@@ -14,9 +14,9 @@
 //! [`Tag`], holds its text and each part.
 //!
 //! The Python implementation holds more than one copy of most grammars.
-//! `vectors/data/ids` records what each copy does. Where two copies disagree,
-//! the type here takes the strictest copy, and a `CONTRACT-QUESTION` comment
-//! marks the type. `rust/AGENTS.md` holds the rule.
+//! The vectors of the `id.` surfaces record what each copy does. Where two
+//! copies disagree, the type here takes the strictest copy, and a
+//! `CONTRACT-QUESTION` comment marks the type. `rust/AGENTS.md` holds the rule.
 
 use std::error::Error;
 use std::fmt;

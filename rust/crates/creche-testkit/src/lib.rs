@@ -12,7 +12,7 @@
 //! | [`program`] | `write_program`: a script that stands in for a child program. |
 //! | [`stub`] | `HttpStub` and `RawHttp`: a server and a client that a test scripts byte by byte. |
 //! | [`router`] | `call`: one request through a router, with no socket. |
-//! | [`vectors`] | A reader of the vector files under `vectors/data`. |
+//! | [`vectors`] | The reader of the vector files: each item of the crate `creche-vectors`. |
 //!
 //! One more module is no stand-in. [`probe`] holds the program
 //! `creche-probe`: a program on each module of `creche-runtime`, which the

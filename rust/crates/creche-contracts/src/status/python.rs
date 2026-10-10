@@ -1,7 +1,8 @@
 //! The differential test of this module against the Python implementation.
 //!
-//! `vectors/data/status` holds what each Python reader and each Python writer
-//! of contract 05 does. Each test here walks each vector of its surfaces.
+//! The vectors of the `status.` surfaces hold what each Python reader and each
+//! Python writer of contract 05 does. Each test here walks each vector of its
+//! surfaces.
 
 use std::collections::HashSet;
 

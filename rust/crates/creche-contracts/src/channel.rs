@@ -18,7 +18,7 @@
 //! the Python host keeps. The playpen writes only what the contract permits.
 //!
 //! The host side accepts and refuses what the Python implementation does.
-//! The vector files under `vectors/data/channel` hold that behavior.
+//! The vectors of the `channel.` surfaces hold that behavior.
 
 pub mod claim;
 pub mod frame;
@@ -39,8 +39,8 @@ mod tests {
     /// What each surface of contract 03 starts with.
     const PREFIX: &str = "channel.";
 
-    /// Each surface of contract 03 in `vectors/data/index.json`, and the test
-    /// that walks each vector of the surface.
+    /// Each surface of contract 03 in the index of the vector files, and the
+    /// test that walks each vector of the surface.
     const SURFACES: &[(&str, &str)] = &[
         (
             "channel.parse",

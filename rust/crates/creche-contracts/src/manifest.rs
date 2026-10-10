@@ -839,7 +839,7 @@ impl Error for DigestError {}
 #[cfg(test)]
 mod tests {
     //! The differential test of the `manifest` module: each type against the
-    //! vectors of the Python release tool (`vectors/data/manifest`).
+    //! vectors of the Python release tool, the `manifest.` surfaces.
 
     use std::collections::{BTreeMap, BTreeSet};
 

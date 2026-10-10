@@ -103,10 +103,10 @@
 //!   clients that give bytes read the half. The doors read U+FFFD three
 //!   times.
 //!
-//! The differential test at the end of this file walks the vectors
-//! `runtime.untrusted.*` and `runtime.parse_object.*` of `vectors/data`. Its
-//! table `DEVIATIONS` holds each of these differences, and each other
-//! difference from a Python copy.
+//! The differential test at the end of this file walks the vectors of the
+//! surfaces `runtime.untrusted.*` and `runtime.parse_object.*`. Its table
+//! `DEVIATIONS` holds each of these differences, and each other difference
+//! from a Python copy.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -2368,8 +2368,8 @@ mod tests {
     // --- each reader against the Python implementation ---
 
     /// The differential test: each vector of each surface
-    /// `runtime.untrusted.*` and `runtime.parse_object.*` of `vectors/data`,
-    /// against the functions of this module.
+    /// `runtime.untrusted.*` and `runtime.parse_object.*`, against the
+    /// functions of this module.
     ///
     /// `SURFACES` names each surface and the function that replays one vector
     /// of it. A vector outside `DEVIATIONS` must be equal: the Rust reader

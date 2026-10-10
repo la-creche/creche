@@ -1,5 +1,5 @@
 //! The differential test of the config types: each vector of each `config.`
-//! surface under `vectors/data/config`.
+//! surface.
 //!
 //! A vector is one input and what the Python implementation did with it.
 //! The Rust code does the same with each vector, with two exceptions that
