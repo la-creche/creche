@@ -1708,7 +1708,7 @@ mod tests {
 
     #[test]
     fn an_index_that_breaks_a_rule_is_refused() {
-        let refused: [(String, &str); 36] = [
+        let refused: [(String, &str); 40] = [
             (
                 index_with("format", json!(2)),
                 "the format is 2, and the reader takes 1",
@@ -1743,11 +1743,33 @@ mod tests {
                 index_with("raised", json!(usize::MAX)),
                 "the three counts of the surface runtime.test do not add up to its 2 vectors",
             ),
+            // A sum that wraps gives exactly the 2 vectors of the row here:
+            // 1 and 2 and the largest count.
+            (
+                index_with("raised", json!(usize::MAX)).replace(r#""refused":1"#, r#""refused":2"#),
+                "the three counts of the surface runtime.test do not add up to its 2 vectors",
+            ),
             (
                 index_with("surfaces", json!([index_row_json(), index_row_json()])),
                 "two rows have the surface runtime.test",
             ),
             (index_with("extra", json!(1)), "unknown field `extra`"),
+            // A key of the index itself that the format does not name. The
+            // reader refuses it before it reads the value. A raw type that
+            // skips such a member also skips the rules of a strict text for
+            // each byte of its value.
+            (
+                index_text(r#""frozen": {}, "extra": 1"#),
+                "unknown field `extra`",
+            ),
+            (
+                index_text(r#""frozen": {}, "extra": "\udcff""#),
+                "unknown field `extra`",
+            ),
+            (
+                index_text(r#""frozen": {}, "extra": {"a": 1, "a": 2}"#),
+                "unknown field `extra`",
+            ),
             (index_with("vectors", json!(-1)), "invalid value"),
             (String::from("{"), "EOF while parsing an object"),
             (
