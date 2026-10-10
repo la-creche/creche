@@ -843,11 +843,11 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
 
+    use creche_vectors::{self as vectors, Outcome, Vector};
     use serde_json::{Map, Value, json};
 
     use super::*;
     use crate::ids::{ComponentName, ContractVersion, FamilyNameError, GateId, Ulid};
-    use crate::vectors::{self, Input, Outcome, Vector};
 
     /// Each surface of this module, and the type or the function that the
     /// surface is the oracle of.
@@ -1000,7 +1000,7 @@ mod tests {
         let refusal = vector
             .refusal()
             .and_then(Value::as_object)
-            .unwrap_or_else(|| panic!("{}: no refusal", vector.id));
+            .unwrap_or_else(|| panic!("{}: no refusal", vector.id()));
 
         (
             text_field(refusal, "check"),
@@ -1029,25 +1029,22 @@ mod tests {
         f64::from_bits(u64::from_str_radix(bits, 16).unwrap())
     }
 
-    fn bytes_of(vector: &Vector, key: &str) -> Vec<u8> {
-        let input: Input = serde_json::from_value(vector.field(key).unwrap().clone()).unwrap();
-
-        input.bytes().unwrap()
+    /// The bytes of the `output` of a vector.
+    fn output_of(vector: &Vector) -> Vec<u8> {
+        vector.output().unwrap().bytes().unwrap()
     }
 
     #[test]
     fn each_surface_of_the_module_is_in_the_table() {
         let named: BTreeSet<&str> = SURFACES.iter().map(|(surface, _)| *surface).collect();
-        let indexed: BTreeSet<String> = vectors::index()
-            .into_iter()
-            .map(|row| row.surface)
+        let index = vectors::index().unwrap();
+        let indexed: BTreeSet<&str> = index
+            .iter()
+            .map(|row| row.surface())
             .filter(|surface| surface.starts_with("manifest."))
             .collect();
 
-        assert_eq!(
-            indexed,
-            named.iter().map(|surface| (*surface).to_owned()).collect()
-        );
+        assert_eq!(indexed, named);
         for (surface, id, section, reason) in DEVIATIONS.iter().chain(&DETAILS) {
             assert!(named.contains(surface), "{surface} {id}");
             assert!(section.starts_with("contract 06 §"), "{surface} {id}");
@@ -1120,10 +1117,10 @@ mod tests {
 
     #[test]
     fn a_component_manifest_reads_as_the_python_reader_reads_it() {
-        let surface = vectors::surface("manifest.component");
-        let label = text_field(&surface.context, "subject");
+        let surface = vectors::surface("manifest.component").unwrap();
+        let label = text_field(surface.context(), "subject");
         let account = surface
-            .context
+            .context()
             .get("operator")
             .unwrap()
             .as_object()
@@ -1131,22 +1128,22 @@ mod tests {
         let operator =
             Operator::new(text_field(account, "user"), text_field(account, "home")).unwrap();
         let mut found = Found::default();
-        for vector in &surface.vectors {
-            let id = &vector.id;
-            let text = vector.input.text().unwrap();
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let text = vector.input().text().unwrap();
             let site = text_field(vector.field("params").unwrap().as_object().unwrap(), "site");
             let operator = match site {
                 "set" => Some(&operator),
                 "missing" => None,
                 other => panic!("{id}: the site {other}"),
             };
-            let read = ComponentManifest::parse(&text, operator);
-            match (vector.result, read) {
+            let read = ComponentManifest::parse(text, operator);
+            match (vector.result(), read) {
                 (Outcome::Accepted, Ok(manifest)) => {
                     assert_eq!(&manifest_json(&manifest), vector.value().unwrap(), "{id}");
                 }
                 (Outcome::Accepted, Err(_)) => {
-                    found.deviations.insert(id.clone());
+                    found.deviations.insert(id.to_owned());
                 }
                 (Outcome::Refused, Err(error)) => {
                     let (check, subject, detail) = refusal(vector);
@@ -1161,7 +1158,7 @@ mod tests {
                     }
 
                     if error.detail() != detail {
-                        found.details.insert(id.clone());
+                        found.details.insert(id.to_owned());
                     }
                 }
                 (Outcome::Raised, Err(_)) => {}
@@ -1316,12 +1313,12 @@ mod tests {
 
     #[test]
     fn the_operator_account_is_checked_as_the_site_file_reader_checks_it() {
-        let surface = vectors::surface("manifest.operator");
-        for vector in &surface.vectors {
-            let id = &vector.id;
-            let args = vector.input.args().unwrap();
+        let surface = vectors::surface("manifest.operator").unwrap();
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let args = vector.input().args().unwrap();
             let made = Operator::new(text_field(args, "user"), text_field(args, "home"));
-            match (vector.result, made) {
+            match (vector.result(), made) {
                 (Outcome::Accepted, Ok(operator)) => {
                     let value = json!({"user": operator.user(), "home": operator.home()});
 
@@ -1438,14 +1435,14 @@ mod tests {
 
     #[test]
     fn the_catalog_and_each_closed_set_are_the_python_ones() {
-        let surface = vectors::surface("manifest.catalog");
-        for vector in &surface.vectors {
-            assert_eq!(vector.result, Outcome::Accepted, "{}", vector.id);
+        let surface = vectors::surface("manifest.catalog").unwrap();
+        for vector in surface.vectors() {
+            assert_eq!(vector.result(), Outcome::Accepted, "{}", vector.id());
             assert_eq!(
-                &catalog_value(&vector.id),
+                &catalog_value(vector.id()),
                 vector.value().unwrap(),
                 "{}",
-                vector.id
+                vector.id()
             );
         }
 
@@ -1474,22 +1471,22 @@ mod tests {
 
     #[test]
     fn a_refusal_code_is_one_of_the_python_codes() {
-        let surface = vectors::surface("manifest.refusal_code");
+        let surface = vectors::surface("manifest.refusal_code").unwrap();
         let mut accepted = Vec::new();
-        for vector in &surface.vectors {
-            let text = vector.input.text().unwrap();
-            match (vector.result, text.parse::<RefusalCode>()) {
+        for vector in surface.vectors() {
+            let text = vector.input().text().unwrap();
+            match (vector.result(), text.parse::<RefusalCode>()) {
                 (Outcome::Accepted, Ok(code)) => {
                     assert_eq!(
                         &json!(code.as_str()),
                         vector.value().unwrap(),
                         "{}",
-                        vector.id
+                        vector.id()
                     );
                     accepted.push(code);
                 }
                 (Outcome::Refused | Outcome::Raised, Err(UnknownRefusalCode)) => {}
-                (outcome, code) => panic!("{}: Python {outcome:?}, Rust {code:?}", vector.id),
+                (outcome, code) => panic!("{}: Python {outcome:?}, Rust {code:?}", vector.id()),
             }
         }
 
@@ -1549,7 +1546,7 @@ mod tests {
     /// Compares an accepted request with its vector: each field, the exact bits
     /// of `ts`, the bytes of the writer, and the parse of those bytes.
     fn check_request(vector: &Vector, request: &Request) {
-        let id = &vector.id;
+        let id = vector.id();
         let mut value = vector.value().unwrap().clone();
         value.as_object_mut().unwrap().remove("ts");
         let bits = vector.field("ts_bits").unwrap().as_str().unwrap();
@@ -1561,7 +1558,7 @@ mod tests {
             float_of(bits).to_bits(),
             "{id}"
         );
-        assert_eq!(written, bytes_of(vector, "output"), "{id}");
+        assert_eq!(written, output_of(vector), "{id}");
         assert_eq!(
             &Request::parse(&written, request.id()).unwrap(),
             request,
@@ -1572,18 +1569,18 @@ mod tests {
     fn check_request_refusal(vector: &Vector, error: RequestError) {
         let (check, subject, detail) = refusal(vector);
 
-        assert_eq!(error.code().as_str(), check, "{}", vector.id);
-        assert_eq!(error.subject(), subject, "{}", vector.id);
-        assert_eq!(error.detail(), detail, "{}", vector.id);
+        assert_eq!(error.code().as_str(), check, "{}", vector.id());
+        assert_eq!(error.subject(), subject, "{}", vector.id());
+        assert_eq!(error.detail(), detail, "{}", vector.id());
     }
 
     #[test]
     fn a_request_file_parses_as_the_executor_parses_it() {
-        let surface = vectors::surface("manifest.request.parse");
+        let surface = vectors::surface("manifest.request.parse").unwrap();
         let mut found = Found::default();
-        for vector in &surface.vectors {
-            let id = &vector.id;
-            let raw = vector.input.bytes().unwrap();
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let raw = vector.input().bytes().unwrap();
             let params = vector.field("params").unwrap().as_object().unwrap();
             // The parser takes the id of the file name as a `Ulid`. A file name
             // that is no ULID has no request in Rust, and the Python parser
@@ -1592,10 +1589,10 @@ mod tests {
                 .parse::<Ulid>()
                 .ok()
                 .map(|request_id| Request::parse(&raw, &request_id));
-            match (vector.result, parsed) {
+            match (vector.result(), parsed) {
                 (Outcome::Accepted, Some(Ok(request))) => check_request(vector, &request),
                 (Outcome::Accepted, Some(Err(_)) | None) => {
-                    found.deviations.insert(id.clone());
+                    found.deviations.insert(id.to_owned());
                 }
                 (Outcome::Refused, Some(Err(error))) => check_request_refusal(vector, error),
                 (Outcome::Raised, Some(Err(_))) | (Outcome::Refused | Outcome::Raised, None) => {}
@@ -1663,15 +1660,16 @@ mod tests {
 
     #[test]
     fn a_requester_plans_the_request_that_the_python_requester_writes() {
-        let surface = vectors::surface("manifest.request.plan");
+        let surface = vectors::surface("manifest.request.plan").unwrap();
         let mut found = Found::default();
-        for vector in &surface.vectors {
-            let id = &vector.id;
-            let planned = draft_of(vector.input.args().unwrap()).map(|draft| Request::plan(&draft));
-            match (vector.result, planned) {
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let planned =
+                draft_of(vector.input().args().unwrap()).map(|draft| Request::plan(&draft));
+            match (vector.result(), planned) {
                 (Outcome::Accepted, Some(Ok(request))) => check_request(vector, &request),
                 (Outcome::Accepted, Some(Err(_)) | None) => {
-                    found.deviations.insert(id.clone());
+                    found.deviations.insert(id.to_owned());
                 }
                 (Outcome::Refused, Some(Err(error))) => check_request_refusal(vector, error),
                 // A draft holds its id as a `Ulid`. An id that is no ULID has
@@ -1707,7 +1705,7 @@ mod tests {
                 for requester_session in &sessions {
                     let draft = with_optional_parts(
                         Draft::new(
-                            id.clone(),
+                            id.to_owned(),
                             (*kind).to_owned(),
                             releasable_names()
                                 .map(|name| (name.to_owned(), "latest".to_owned()))
@@ -1733,7 +1731,7 @@ mod tests {
         assert_eq!(
             Request::parse(
                 &Request::plan(&Draft::new(
-                    id.clone(),
+                    id.to_owned(),
                     "release".to_owned(),
                     BTreeMap::from([("chaperone".to_owned(), "1.2.3".to_owned())]),
                     "human".to_owned(),
@@ -1769,11 +1767,11 @@ mod tests {
 
     #[test]
     fn a_request_id_is_minted_as_the_python_requester_mints_it() {
-        let surface = vectors::surface("manifest.request.ulid");
+        let surface = vectors::surface("manifest.request.ulid").unwrap();
         let mut found = Found::default();
-        for vector in &surface.vectors {
-            let id = &vector.id;
-            let args = vector.input.args().unwrap();
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let args = vector.input().args().unwrap();
             let hex = text_field(args, "entropy");
             let bytes: Vec<u8> = hex
                 .as_bytes()
@@ -1786,7 +1784,7 @@ mod tests {
                 .ok()
                 .and_then(|now| mint_ulid(now, entropy).ok());
 
-            assert_eq!(vector.result, Outcome::Accepted, "{id}");
+            assert_eq!(vector.result(), Outcome::Accepted, "{id}");
             match minted {
                 Some(minted) => assert_eq!(
                     &json!({"ulid": minted.as_str()}),
@@ -1794,7 +1792,7 @@ mod tests {
                     "{id}"
                 ),
                 None => {
-                    found.deviations.insert(id.clone());
+                    found.deviations.insert(id.to_owned());
                 }
             }
         }
@@ -1866,18 +1864,18 @@ mod tests {
 
     #[test]
     fn a_live_state_document_parses_as_the_python_parser_parses_it() {
-        let surface = vectors::surface("manifest.state");
-        let label = text_field(&surface.context, "subject");
+        let surface = vectors::surface("manifest.state").unwrap();
+        let label = text_field(surface.context(), "subject");
         let mut found = Found::default();
-        for vector in &surface.vectors {
-            let id = &vector.id;
-            let text = vector.input.text().unwrap();
-            match (vector.result, ReleaseState::parse(&text)) {
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let text = vector.input().text().unwrap();
+            match (vector.result(), ReleaseState::parse(text)) {
                 (Outcome::Accepted, Ok(state)) => {
                     assert_eq!(&state_json(&state), vector.value().unwrap(), "{id}");
                 }
                 (Outcome::Accepted, Err(_)) => {
-                    found.deviations.insert(id.clone());
+                    found.deviations.insert(id.to_owned());
                 }
                 (Outcome::Refused, Err(error)) => {
                     let (check, subject, detail) = refusal(vector);
@@ -2061,25 +2059,25 @@ mod tests {
 
     #[test]
     fn a_resolved_manifest_has_the_bytes_and_the_hash_of_the_python_one() {
-        let surface = vectors::surface("manifest.resolved");
+        let surface = vectors::surface("manifest.resolved").unwrap();
         let mut found = Found::default();
-        for vector in &surface.vectors {
-            let id = &vector.id;
-            let built = resolved_of(vector.input.args().unwrap());
-            match (vector.result, built) {
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let built = resolved_of(vector.input().args().unwrap());
+            match (vector.result(), built) {
                 (Outcome::Accepted, Some(manifest)) => {
                     let mut value = vector.value().unwrap().clone();
                     let fields = value.as_object_mut().unwrap();
                     let hash = fields.remove("manifest_sha256").unwrap();
                     fields.remove("resolved_at").unwrap();
-                    let output = String::from_utf8(bytes_of(vector, "output")).unwrap();
+                    let output = String::from_utf8(output_of(vector)).unwrap();
 
                     assert_eq!(manifest.canonical_json(), output, "{id}");
                     assert_eq!(json!(manifest.sha256().as_str()), hash, "{id}");
                     assert_eq!(resolved_json(&manifest), value, "{id}");
                 }
                 (Outcome::Accepted, None) => {
-                    found.deviations.insert(id.clone());
+                    found.deviations.insert(id.to_owned());
                 }
                 // The Python builder checks the id and `requested_by`. In Rust
                 // the type of each argument holds its check, so a refused vector
@@ -2096,10 +2094,10 @@ mod tests {
 
     #[test]
     fn the_gate_and_the_action_are_the_python_ones() {
-        let surface = vectors::surface("manifest.gate");
-        for vector in &surface.vectors {
-            let id = &vector.id;
-            let args = vector.input.args().unwrap();
+        let surface = vectors::surface("manifest.gate").unwrap();
+        for vector in surface.vectors() {
+            let id = vector.id();
+            let args = vector.input().args().unwrap();
             let hash: Digest = text_field(args, "manifest_sha256").parse().unwrap();
             let request: Ulid = text_field(args, "id").parse().unwrap();
             let gate: GateId = gate_id(&hash).unwrap();
@@ -2128,9 +2126,9 @@ mod tests {
 
     #[test]
     fn a_summary_is_cut_as_the_python_summary_is_cut() {
-        let surface = vectors::surface("manifest.summary");
-        for vector in &surface.vectors {
-            let args = vector.input.args().unwrap();
+        let surface = vectors::surface("manifest.summary").unwrap();
+        for vector in surface.vectors() {
+            let args = vector.input().args().unwrap();
             let field = |key: &str| text_field(args, key).to_owned();
             let summary = Summary::new(SummaryFields::new(
                 field("review"),
@@ -2151,7 +2149,7 @@ mod tests {
                 &Value::Object(value),
                 vector.value().unwrap(),
                 "{}",
-                vector.id
+                vector.id()
             );
         }
     }

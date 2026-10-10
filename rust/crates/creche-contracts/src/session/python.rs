@@ -8,12 +8,12 @@
 
 use std::collections::HashSet;
 
+use creche_vectors::{self as vectors, Marker, Outcome, Vector};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 use super::*;
 use crate::ids::{FamilyName, SandboxName, SessionId, Ulid};
-use crate::vectors::{self, Marker, Outcome, Vector};
 
 /// What the code did with one input, in the fields of a vector.
 #[derive(Debug, Clone, PartialEq)]
@@ -86,7 +86,7 @@ fn object(value: Value) -> Map<String, Value> {
 }
 
 fn args(vector: &Vector) -> &Map<String, Value> {
-    vector.input.args().unwrap()
+    vector.input().args().unwrap()
 }
 
 /// One argument that is a text or null.
@@ -144,7 +144,7 @@ fn python_iso(instant: Timestamp) -> String {
 /// A value of a vector with each `$int` marker as a float: what a reader with
 /// no integer past 64 bits holds.
 fn unmark(value: &Value) -> Value {
-    match (Marker::of(value), value) {
+    match (Marker::of(value).unwrap(), value) {
         (Some(Marker::Int(digits)), _) => json!(digits.parse::<f64>().unwrap()),
         (Some(marker), _) => panic!("{marker:?} has no value here"),
         (None, Value::Array(items)) => items.iter().map(unmark).collect(),
@@ -162,7 +162,7 @@ fn unmark(value: &Value) -> Value {
 /// marker stays when its text nests deeper than this reader goes.
 fn value_of(vector: &Vector) -> Option<Value> {
     let value = vector.value()?;
-    let Some(Marker::Json(text)) = Marker::of(value) else {
+    let Some(Marker::Json(text)) = Marker::of(value).unwrap() else {
         return Some(value.clone());
     };
 
@@ -171,7 +171,7 @@ fn value_of(vector: &Vector) -> Option<Value> {
 
 /// What the Python code did with one input.
 fn python_did(vector: &Vector, surface: &str) -> Did {
-    if vector.result != Outcome::Accepted {
+    if vector.result() != Outcome::Accepted {
         return Did::Refused(vector.refusal().cloned());
     }
 
@@ -204,7 +204,7 @@ fn readable(python: Did, rust: &Did) -> Did {
     else {
         return python;
     };
-    match Marker::of(marker) {
+    match Marker::of(marker).unwrap() {
         Some(Marker::Json(text)) if serde_json::to_string(value).unwrap() == text => {
             Did::Accepted {
                 value: Some(value.clone()),
@@ -282,7 +282,7 @@ fn path<'a>(context: &'a Context, name: &str) -> &'a str {
 // --- the request bodies ---
 
 fn body(vector: &Vector) -> Vec<u8> {
-    vector.input.bytes().unwrap()
+    vector.input().bytes().unwrap()
 }
 
 fn create(vector: &Vector, _: &Context) -> Did {
@@ -483,7 +483,7 @@ fn error_body(vector: &Vector, _: &Context) -> Did {
         refusal = refusal.in_turn(turn);
     }
     // A detail whose keys are not in sorted order is an `$entries` marker.
-    match (Marker::of(&args["detail"]), &args["detail"]) {
+    match (Marker::of(&args["detail"]).unwrap(), &args["detail"]) {
         (Some(Marker::Entries(members)), _) => {
             let members = members
                 .into_iter()
@@ -992,7 +992,7 @@ fn accepted_value(did: &Did, at: &str) -> Map<String, Value> {
 /// Makes sure that the Rust code differs from the vector as the decision says,
 /// and in no other way.
 fn differs_as_decided(differs: Differs, vector: &Vector, rust: &Did, python: &Did, at: &str) {
-    assert_eq!(vector.result, Outcome::Accepted, "{at}: the Python code");
+    assert_eq!(vector.result(), Outcome::Accepted, "{at}: the Python code");
     match differs {
         Differs::Refuses => assert!(
             matches!(rust, Did::Refused(_)),
@@ -1043,19 +1043,19 @@ fn differs_as_decided(differs: Differs, vector: &Vector, rust: &Did, python: &Di
 /// Walks each vector of one surface. It prints the counts, and a run with
 /// `--nocapture` shows them.
 fn walk(against: &Against) {
-    let surface = vectors::surface(against.surface);
+    let surface = vectors::surface(against.surface).unwrap();
     let mut equal = 0;
     let mut deviated = 0;
-    for vector in &surface.vectors {
-        let at = format!("{} {}", against.surface, vector.id);
-        let rust = (against.replay)(vector, &surface.context);
+    for vector in surface.vectors() {
+        let at = format!("{} {}", against.surface, vector.id());
+        let rust = (against.replay)(vector, surface.context());
         let python = python_did(vector, against.surface);
 
-        if let Some(deviation) = deviation_of(against.surface, &vector.id) {
+        if let Some(deviation) = deviation_of(against.surface, vector.id()) {
             assert!(!deviation.contract.is_empty() && !deviation.decision.is_empty());
             differs_as_decided(deviation.differs, vector, &rust, &python, &at);
             deviated += 1;
-        } else if vector.result == Outcome::Raised {
+        } else if vector.result() == Outcome::Raised {
             assert!(
                 matches!(rust, Did::Refused(_)),
                 "{at}: the Python code raises"
@@ -1084,10 +1084,10 @@ fn walk(against: &Against) {
 fn the_table_holds_each_session_surface_of_the_index_one_time() {
     let listed: Vec<&str> = SURFACES.iter().map(|against| against.surface).collect();
     let unique: HashSet<&str> = listed.iter().copied().collect();
-    let index = vectors::index();
+    let index = vectors::index().unwrap();
     let in_index: HashSet<&str> = index
         .iter()
-        .map(|row| row.surface.as_str())
+        .map(|row| row.surface())
         .filter(|surface| surface.starts_with("session."))
         .collect();
 
@@ -1124,20 +1124,20 @@ fn each_vector_of_each_surface_is_what_the_python_code_does() {
 fn a_line_that_python_wrote_reads_back_as_the_same_bytes() {
     let read_at = time("2000-01-01T00:00:00Z");
     for name in ["session.journal.write", "session.stream.encode"] {
-        for vector in vectors::surface(name).vectors {
+        for vector in vectors::surface(name).unwrap().vectors() {
             let Did::Accepted {
                 output: Some(written),
                 ..
-            } = python_did(&vector, name)
+            } = python_did(vector, name)
             else {
-                panic!("{name} {}: no output", vector.id);
+                panic!("{name} {}: no output", vector.id());
             };
             let Ok(line) = StoredLine::parse(written.as_bytes()) else {
                 // A record that the stream makes itself has no sequence number.
                 assert!(
                     written.starts_with(r#"{"journal_seq":null"#),
                     "{name} {}",
-                    vector.id
+                    vector.id()
                 );
                 continue;
             };
@@ -1146,7 +1146,7 @@ fn a_line_that_python_wrote_reads_back_as_the_same_bytes() {
                 utf8(line.encode(read_at).unwrap()),
                 written,
                 "{name} {}",
-                vector.id
+                vector.id()
             );
         }
     }
@@ -1156,24 +1156,24 @@ fn a_line_that_python_wrote_reads_back_as_the_same_bytes() {
 /// kind, and it is written back as the same bytes.
 #[test]
 fn the_typed_body_of_a_line_that_python_wrote_is_of_its_kind() {
-    for vector in vectors::surface("session.journal.write").vectors {
-        if deviation_of("session.journal.write", &vector.id).is_some() {
+    for vector in vectors::surface("session.journal.write").unwrap().vectors() {
+        if deviation_of("session.journal.write", vector.id()).is_some() {
             continue;
         }
 
         let Did::Accepted {
             output: Some(written),
             ..
-        } = python_did(&vector, "")
+        } = python_did(vector, "")
         else {
-            panic!("{}: no output", vector.id);
+            panic!("{}: no output", vector.id());
         };
         let stored = StoredLine::parse(written.as_bytes()).unwrap();
         let body = stored.body().unwrap();
         let turn = stored.turn().map(|turn| turn.id().unwrap().clone());
         let line = JournalLine::new(stored.journal_seq(), stored.ts().unwrap(), turn, body);
 
-        assert_eq!(line.kind(), stored.kind(), "{}", vector.id);
-        assert_eq!(utf8(line.encode().unwrap()), written, "{}", vector.id);
+        assert_eq!(line.kind(), stored.kind(), "{}", vector.id());
+        assert_eq!(utf8(line.encode().unwrap()), written, "{}", vector.id());
     }
 }
