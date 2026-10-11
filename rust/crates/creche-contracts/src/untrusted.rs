@@ -5,22 +5,22 @@
 //! type. Each field of that type names one function of this module:
 //!
 //! ```
-//! use creche_contracts::untrusted;
+//! use creche_contracts::{json, untrusted};
 //! use serde::Deserialize;
 //!
 //! #[derive(Deserialize)]
 //! struct RawTurn {
 //!     #[serde(default, deserialize_with = "untrusted::text")]
 //!     state: String,
-//!     #[serde(default, deserialize_with = "untrusted::int")]
-//!     turn_seq: i64,
+//!     #[serde(default = "untrusted::zero", deserialize_with = "untrusted::int")]
+//!     turn_seq: json::Integer,
 //!     #[serde(default, deserialize_with = "untrusted::list_first::<8, _, _>")]
 //!     notes: Vec<String>,
 //! }
 //!
 //! let turn: RawTurn = untrusted::parse_object(br#"{"state": 7, "turn_seq": "x"}"#)?;
 //! assert_eq!(turn.state, "");
-//! assert_eq!(turn.turn_seq, 0);
+//! assert_eq!(turn.turn_seq, untrusted::zero());
 //! assert!(turn.notes.is_empty());
 //! # Ok::<(), untrusted::NotAnObject>(())
 //! ```
@@ -104,9 +104,15 @@
 //!   times.
 //!
 //! The differential test at the end of this file walks the vectors of the
-//! surfaces `runtime.untrusted.*` and `runtime.parse_object.*`. Its table
-//! `DEVIATIONS` holds each of these differences, and each other difference
-//! from a Python copy.
+//! surfaces `runtime.untrusted.*` and `runtime.parse_object.*`. On each
+//! vector of a surface `runtime.untrusted.*`, a reader gives what the Python
+//! helper gives. Each input of those surfaces is strict JSON.
+//!
+//! The table `DEVIATIONS` of that test holds only vectors of
+//! `runtime.parse_object.noticeboard`: each text on which [`parse_object`]
+//! and the Python reader differ. A plain test holds each other difference
+//! from a Python copy, with its input in the test. The doc comment of the
+//! function, or this doc comment, names that difference.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -118,10 +124,15 @@ use serde::de::{
 };
 use serde::{Deserialize, Deserializer};
 
+use crate::json;
+
 /// A text. A value that is not a JSON string reads as the empty text.
 ///
 /// Use it with `#[serde(default, deserialize_with = "untrusted::text")]`. The
 /// `default` gives the empty text for a field that is absent.
+///
+/// Use [`text_or_none`] when the reader must tell a value that is no text
+/// from an empty text.
 ///
 /// The function keeps each character of the text. Give the result to [`cut`]
 /// where the Python reader has a cap.
@@ -137,11 +148,56 @@ pub fn text<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
+    Ok(text_or_none(deserializer)?.unwrap_or_default())
+}
+
+/// A text, or `None`. A value that is absent, `null` or not a JSON string
+/// reads as `None`.
+///
+/// `None` means that the field holds no text. `Some` with the empty text
+/// means that the field holds a text with no character. [`text`] reads the
+/// two cases as one.
+///
+/// Use it with
+/// `#[serde(default, deserialize_with = "untrusted::text_or_none")]`. The
+/// `default` gives `None` for a field that is absent.
+///
+/// The function keeps each character of the text. Give the text to [`cut`]
+/// where the Python reader has a cap.
+///
+/// ```
+/// use creche_contracts::untrusted;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct RawReply {
+///     #[serde(default, deserialize_with = "untrusted::text_or_none")]
+///     content: Option<String>,
+///     #[serde(default, deserialize_with = "untrusted::text_or_none")]
+///     error: Option<String>,
+/// }
+///
+/// let reply: RawReply = untrusted::parse_object(br#"{"content": "", "error": 7}"#)?;
+/// assert_eq!(reply.content.as_deref(), Some(""));
+/// assert_eq!(reply.error, None);
+/// # Ok::<(), untrusted::NotAnObject>(())
+/// ```
+///
+/// The Python origin is `_text` of
+/// `chaperone/src/chaperone/delegate.py:226-232`.
+///
+/// # Errors
+///
+/// Only the error of the deserializer itself, for a text that is not JSON.
+pub fn text_or_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
     let Json::Text(text) = read(deserializer)? else {
-        return Ok(String::new());
+        return Ok(None);
     };
 
-    Ok(text)
+    Ok(Some(text))
 }
 
 /// A whole number. A value that is not a JSON integer reads as 0.
@@ -151,7 +207,18 @@ where
 /// number with a fraction or an exponent is not an integer, so `2.0` reads
 /// as 0.
 ///
-/// An integer that does not fit an `i64` reads as 0 too.
+/// The result holds each integer of a strict JSON text: a value from the
+/// smallest `i64` to the largest `u64`. The Python copies keep such a value
+/// too. The conversion to the valid type gives a count its range.
+///
+/// Use it with
+/// `#[serde(default = "untrusted::zero", deserialize_with = "untrusted::int")]`.
+/// [`json::Integer`] has no `Default`, so [`zero`] gives the value of a field
+/// that is absent.
+///
+/// An integer outside that range is not strict JSON (`rust/AGENTS.md`,
+/// "JSON"). [`parse_object`] still reads such an integer, as a float, and
+/// this function then gives 0. The Python copies keep each digit of it.
 ///
 /// The Python origin is `field_int` of
 /// `door-tui/src/agent_door_tui/untrusted.py:45-52` and `integer` of
@@ -160,21 +227,35 @@ where
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
-//
-// CONTRACT-QUESTION: contracts 02, 04 and 05 give a count no range. The
-// Python readers keep an integer of each size. This reader holds 64 bits with
-// a sign, and it reads a larger integer as 0, the value of a field of a wrong
-// type. A reader that keeps each size costs a type for a large integer in
-// each raw type.
-pub fn int<'de, D>(deserializer: D) -> Result<i64, D::Error>
+pub fn int<'de, D>(deserializer: D) -> Result<json::Integer, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let Json::Int(whole) = read(deserializer)? else {
-        return Ok(0);
-    };
+    Ok(match read(deserializer)? {
+        Json::Int(whole) => json::Integer::from(whole),
+        Json::Large(whole) => json::Integer::from(whole),
+        Json::Null
+        | Json::Bool(_)
+        | Json::Float(_)
+        | Json::Text(_)
+        | Json::List(_)
+        | Json::Object(_) => zero(),
+    })
+}
 
-    Ok(whole)
+/// The whole number 0: what [`int`] gives for a value that is no integer.
+///
+/// Name it as the default of a field that [`int`] reads. The field is then 0
+/// when the object does not hold its key.
+///
+/// ```
+/// use creche_contracts::{json, untrusted};
+///
+/// assert_eq!(untrusted::zero(), json::Integer::from(0_u64));
+/// ```
+#[must_use]
+pub fn zero() -> json::Integer {
+    json::Integer::from(0_i64)
 }
 
 /// A number: an integer or a float. A value of another type, `true` and
@@ -184,12 +265,26 @@ where
 /// result is always finite: the JSON reader refuses a text with a number
 /// outside the range of a float.
 ///
+/// The integer `-0` reads as `-0.0`. `serde_json` gives that text as the
+/// float `-0.0`, so this function cannot tell it from the text `-0.0`.
+/// `number` of the noticeboard gives `0.0` for the integer and `-0.0` for
+/// the float. The two results are equal in each comparison of two floats.
+/// No writer of the platform writes the text `-0`: `json.dumps` of Python,
+/// `JSON.stringify` and `serde_json` each write the integer zero as `0`.
+///
 /// The Python origin is `number` of
 /// `noticeboard/src/noticeboard/jsonfiles.py:126-137`.
 ///
 /// # Errors
 ///
 /// Only the error of the deserializer itself, for a text that is not JSON.
+//
+// CONTRACT-QUESTION: contracts 02, 04 and 05 give a number no rule for the
+// sign of a zero. This reader keeps the sign that `serde_json` gives, so the
+// integer `-0` reads as `-0.0`. `number` of the noticeboard gives `0.0` for
+// that integer. A reader that gives `0.0` for each zero differs from that
+// helper on the float `-0.0`. A reader that tells the two texts apart costs a
+// read of the text of each number, as `json::Number` reads it.
 pub fn number<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where
     D: Deserializer<'de>,
@@ -879,19 +974,30 @@ mod tests {
 
     /// The raw type of a small object. Each field names a function of this
     /// module and has `default`, so the type refuses no object.
-    #[derive(Debug, Default, PartialEq, Deserialize)]
+    #[derive(Debug, PartialEq, Deserialize)]
     struct Part {
         #[serde(default, deserialize_with = "text")]
         name: String,
-        #[serde(default, deserialize_with = "int")]
-        count: i64,
+        #[serde(default = "zero", deserialize_with = "int")]
+        count: json::Integer,
+    }
+
+    impl Default for Part {
+        fn default() -> Self {
+            part("", 0)
+        }
     }
 
     fn part(name: &str, count: i64) -> Part {
         Part {
             name: name.to_owned(),
-            count,
+            count: whole(count),
         }
+    }
+
+    /// The value that `int` gives for the digits of `value`.
+    fn whole(value: i64) -> json::Integer {
+        json::Integer::from(value)
     }
 
     /// A raw type with a field that names no function. It refuses an object
@@ -952,25 +1058,122 @@ mod tests {
         assert_eq!(cut(&read, 500).len(), 500);
     }
 
+    // --- text_or_none ---
+
+    #[test]
+    fn a_text_reads_as_some_text_with_each_character() {
+        let texts = [
+            (r#""family""#, "family"),
+            (r#""""#, ""),
+            (r#""  a  ""#, "  a  "),
+            (r#""7""#, "7"),
+            (r#""null""#, "null"),
+            (r#""a\"b\\c\ndé""#, "a\"b\\c\nd\u{e9}"),
+        ];
+
+        for (input, wanted) in texts {
+            assert_eq!(
+                direct(input, |reader| text_or_none(reader)).unwrap(),
+                Some(wanted.to_owned()),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_that_is_no_text_reads_as_none() {
+        let others = [
+            "null",
+            "true",
+            "false",
+            "7",
+            "-3",
+            "1.5",
+            "[]",
+            r#"["a"]"#,
+            "{}",
+            r#"{"a":"b"}"#,
+        ];
+
+        for input in others {
+            assert_eq!(
+                direct(input, |reader| text_or_none(reader)).unwrap(),
+                None,
+                "{input}"
+            );
+        }
+    }
+
+    /// The raw type of a reply with one text field, as the delegate client
+    /// of the chaperone reads one.
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct Reply {
+        #[serde(default, deserialize_with = "text_or_none")]
+        field: Option<String>,
+    }
+
+    /// What `_text` of that client gives for one body, with a cap of 3
+    /// characters: the text of the field up to the cap, or `None`.
+    fn capped_at_3(body: &[u8]) -> Option<String> {
+        let reply: Reply = parse_object(body).unwrap();
+
+        reply.field.as_deref().map(|text| cut(text, 3).to_owned())
+    }
+
+    #[test]
+    fn a_field_that_is_no_text_is_none_and_an_empty_text_is_some() {
+        let family = capped_at_3(br#"{"field":"family"}"#);
+
+        assert_eq!(family.as_deref(), Some("fam"));
+        assert_eq!(capped_at_3(br#"{"field":"fa"}"#).as_deref(), Some("fa"));
+        assert_eq!(capped_at_3(br#"{"field":""}"#).as_deref(), Some(""));
+        assert_eq!(capped_at_3(br#"{"field":7}"#), None);
+        assert_eq!(capped_at_3(br#"{"field":null}"#), None);
+        assert_eq!(capped_at_3(br#"{"field":["family"]}"#), None);
+        assert_eq!(capped_at_3(br#"{"other":"family"}"#), None);
+        assert_eq!(capped_at_3(b"{}"), None);
+    }
+
+    /// `text` gives the empty text where `text_or_none` gives `None`, and
+    /// the same text for each other value.
+    #[test]
+    fn the_two_text_readers_differ_only_for_a_value_that_is_no_text() {
+        for input in EACH_KIND {
+            let held = direct(input, |reader| text_or_none(reader)).unwrap();
+            let read = direct(input, |reader| text(reader)).unwrap();
+
+            assert_eq!(read, held.unwrap_or_default(), "{input}");
+        }
+    }
+
     // --- int ---
 
     #[test]
     fn an_integer_reads_as_its_value() {
         let integers = [
-            ("7", 7),
-            ("0", 0),
-            ("-3", -3),
-            ("9223372036854775807", i64::MAX),
-            ("-9223372036854775808", i64::MIN),
+            ("7", whole(7)),
+            ("0", whole(0)),
+            ("-3", whole(-3)),
+            ("9223372036854775807", whole(i64::MAX)),
+            ("-9223372036854775808", whole(i64::MIN)),
+            ("9223372036854775808", json::Integer::from(1_u64 << 63)),
+            ("18446744073709551615", json::Integer::from(u64::MAX)),
         ];
 
         for (input, wanted) in integers {
-            assert_eq!(
-                direct(input, |reader| int(reader)).unwrap(),
-                wanted,
-                "{input}"
-            );
+            let read = direct(input, |reader| int(reader)).unwrap();
+
+            assert_eq!(read, wanted, "{input}");
+            // The value has the digits of the text.
+            assert_eq!(read.to_string(), input);
         }
+    }
+
+    /// `serde_json` gives the text `-0` as a float. The result is still the
+    /// value of that integer.
+    #[test]
+    fn the_integer_zero_with_a_minus_sign_reads_as_zero() {
+        assert_eq!(direct("-0", |reader| int(reader)).unwrap(), zero());
     }
 
     #[test]
@@ -989,23 +1192,38 @@ mod tests {
         ];
 
         for input in others {
-            assert_eq!(direct(input, |reader| int(reader)).unwrap(), 0, "{input}");
+            assert_eq!(
+                direct(input, |reader| int(reader)).unwrap(),
+                zero(),
+                "{input}"
+            );
         }
     }
 
+    /// The difference that the doc comment of `int` names. `serde_json`
+    /// gives an integer outside 64 bits as a float, and a float is no
+    /// integer.
     #[test]
-    fn an_integer_that_no_i64_holds_reads_as_zero() {
-        let large = [
-            "9223372036854775808",
-            "18446744073709551615",
+    fn an_integer_outside_64_bits_reads_as_zero() {
+        let outside = [
             "18446744073709551616",
             "-9223372036854775809",
             "123456789012345678901234567890",
         ];
 
-        for input in large {
-            assert_eq!(direct(input, |reader| int(reader)).unwrap(), 0, "{input}");
+        for input in outside {
+            assert_eq!(
+                direct(input, |reader| int(reader)).unwrap(),
+                zero(),
+                "{input}"
+            );
         }
+    }
+
+    #[test]
+    fn the_default_of_an_integer_field_is_zero() {
+        assert_eq!(zero().to_i64(), Some(0));
+        assert_eq!(zero().to_string(), "0");
     }
 
     // --- number ---
@@ -1078,6 +1296,19 @@ mod tests {
 
             assert_eq!(read.to_bits(), wanted.to_bits(), "{input}");
         }
+    }
+
+    /// The difference that the doc comment of `number` names: the integer
+    /// zero with a minus sign. `number` of the noticeboard gives `0.0` for
+    /// it.
+    #[test]
+    fn the_integer_zero_with_a_minus_sign_reads_as_the_float_with_that_sign() {
+        let negative_zero = Some((-0.0_f64).to_bits());
+        let alone = direct("-0", |reader| number(reader)).unwrap();
+        let field = parse_object::<Each>(br#"{"number":-0}"#).unwrap().number;
+
+        assert_eq!(alone.map(f64::to_bits), negative_zero);
+        assert_eq!(field.map(f64::to_bits), negative_zero);
     }
 
     // --- flag ---
@@ -1445,12 +1676,14 @@ mod tests {
     // --- parse_object ---
 
     /// A raw type with each field reader of this module.
-    #[derive(Debug, Default, PartialEq, Deserialize)]
+    #[derive(Debug, PartialEq, Deserialize)]
     struct Each {
         #[serde(default, deserialize_with = "text")]
         text: String,
-        #[serde(default, deserialize_with = "int")]
-        int: i64,
+        #[serde(default, deserialize_with = "text_or_none")]
+        text_or_none: Option<String>,
+        #[serde(default = "zero", deserialize_with = "int")]
+        int: json::Integer,
         #[serde(default, deserialize_with = "number")]
         number: Option<f64>,
         #[serde(default, deserialize_with = "flag")]
@@ -1465,9 +1698,33 @@ mod tests {
         first: Vec<String>,
     }
 
+    impl Default for Each {
+        fn default() -> Self {
+            Self {
+                text: String::new(),
+                text_or_none: None,
+                int: zero(),
+                number: None,
+                flag: false,
+                object: Part::default(),
+                block: None,
+                list: Vec::new(),
+                first: Vec::new(),
+            }
+        }
+    }
+
     /// The names of the fields of `Each`.
-    const FIELDS: [&str; 8] = [
-        "text", "int", "number", "flag", "object", "block", "list", "first",
+    const FIELDS: [&str; 9] = [
+        "text",
+        "text_or_none",
+        "int",
+        "number",
+        "flag",
+        "object",
+        "block",
+        "list",
+        "first",
     ];
 
     /// A document that gives each field of `Each` the same JSON value.
@@ -1484,6 +1741,7 @@ mod tests {
     fn a_document_with_each_field_of_its_type_reads_each_value() {
         let document = br#"{
             "text": "family",
+            "text_or_none": "",
             "int": -3,
             "number": 1.5,
             "flag": true,
@@ -1494,7 +1752,8 @@ mod tests {
         }"#;
         let wanted = Each {
             text: "family".to_owned(),
-            int: -3,
+            text_or_none: Some(String::new()),
+            int: whole(-3),
             number: Some(1.5),
             flag: true,
             object: part("o", 1),
@@ -1534,7 +1793,7 @@ mod tests {
         assert_eq!(
             read("7"),
             Each {
-                int: 7,
+                int: whole(7),
                 number: Some(7.0),
                 ..Each::default()
             }
@@ -1550,6 +1809,7 @@ mod tests {
             read(r#""true""#),
             Each {
                 text: "true".to_owned(),
+                text_or_none: Some("true".to_owned()),
                 ..Each::default()
             }
         );
@@ -1628,7 +1888,7 @@ mod tests {
     fn a_document_is_strict_json_in_each_member() {
         let deep = format!(r#"{{"other":{}{}}}"#, "[".repeat(127), "]".repeat(127));
         let past_every_float = format!(r#"{{"other":{}}}"#, "9".repeat(400));
-        let refused: [&[u8]; 12] = [
+        let refused: [&[u8]; 14] = [
             br#"{"text": NaN}"#,
             br#"{"other": NaN}"#,
             br#"{"other": [Infinity, -Infinity]}"#,
@@ -1640,6 +1900,10 @@ mod tests {
             // The bytes of one half of a surrogate pair, which are no UTF-8.
             b"{\"other\": \"\xed\xa0\x80\"}",
             b"{\"other\": \"\xff\"}",
+            // The same bytes as the one member of a file.
+            b"{\"a\": \"\xed\xa0\x80\"}",
+            // One byte that is not UTF-8 between two letters of an answer.
+            b"{\"field\": \"a\xffb\"}",
             // A byte order mark.
             b"\xef\xbb\xbf{}",
             deep.as_bytes(),
@@ -1669,7 +1933,7 @@ mod tests {
         let document = br#"{"text": "first", "int": 1, "text": 7, "int": 2, "text": "last"}"#;
         let wanted = Each {
             text: "last".to_owned(),
-            int: 2,
+            int: whole(2),
             ..Each::default()
         };
 
@@ -1741,6 +2005,130 @@ mod tests {
         for body in refused {
             assert_eq!(lossy(body), Err(NotAnObject::NotJson), "{body:?}");
         }
+    }
+
+    // --- the inputs that left the vectors ---
+
+    /// A cap above the size of each input of the three tests below.
+    const SAMPLE_CAP: json::ByteCap = json::ByteCap::new(1024);
+
+    /// The rule of the strict reader of this crate that one text breaks.
+    fn rule_against(text: &str) -> json::Rule {
+        json::check(text.as_bytes(), SAMPLE_CAP).unwrap_err().rule()
+    }
+
+    /// Whether each field reader gives the error of the deserializer for
+    /// one JSON text.
+    fn each_reader_refuses(value: &str) -> bool {
+        direct(value, |reader| text(reader)).is_err()
+            && direct(value, |reader| text_or_none(reader)).is_err()
+            && direct(value, |reader| int(reader)).is_err()
+            && direct(value, |reader| number(reader)).is_err()
+            && direct(value, |reader| flag(reader)).is_err()
+            && direct(value, |reader| object::<_, Part>(reader)).is_err()
+            && direct(value, |reader| block::<_, Part>(reader)).is_err()
+            && direct(value, |reader| list::<_, String>(reader)).is_err()
+            && direct(value, |reader| list_first::<2, _, String>(reader)).is_err()
+    }
+
+    /// Six inputs that left each surface `runtime.untrusted.*`, with the id
+    /// that each one had there. None is strict JSON: the strict reader of
+    /// this crate refuses each one for the rule of its row. A Python helper
+    /// got the value that `json.loads` reads from such a text, and it gave a
+    /// value for it. Each reader of this module refuses the text, alone and
+    /// as a member of an object.
+    #[test]
+    fn six_inputs_that_left_the_vectors_are_no_json_for_each_reader() {
+        let digits_400 = "9".repeat(400);
+        let inputs = [
+            ("float-nan", "NaN", json::Rule::Constant),
+            ("float-infinity", "Infinity", json::Rule::Constant),
+            ("float-negative-infinity", "-Infinity", json::Rule::Constant),
+            ("float-too-large", "1e400", json::Rule::FloatRange),
+            (
+                "integer-400-digits",
+                digits_400.as_str(),
+                json::Rule::IntegerRange,
+            ),
+            (
+                "string-lone-surrogate",
+                r#""\ud800""#,
+                json::Rule::LoneSurrogate,
+            ),
+        ];
+
+        for (id, value, rule) in inputs {
+            let document = each_field_is(value);
+
+            assert_eq!(rule_against(value), rule, "{id}");
+            assert!(each_reader_refuses(value), "{id}");
+            assert_eq!(
+                parse_object::<Each>(&document),
+                Err(NotAnObject::NotJson),
+                "{id}"
+            );
+        }
+    }
+
+    /// Three more inputs that left those surfaces: an integer outside the
+    /// range of 64 bits. The strict reader of this crate refuses each one.
+    /// `serde_json` reads such an integer as the nearest float. `number`
+    /// gives that float, as `number` of the noticeboard does. Each other
+    /// reader gives its empty value. `field_int` of the terminal door and
+    /// `integer` of the noticeboard keep each digit of the integer.
+    #[test]
+    fn three_integers_that_left_the_vectors_read_as_a_float() {
+        let inputs = [
+            (
+                "integer-i64-min-minus-one",
+                "-9223372036854775809",
+                -9_223_372_036_854_775_808.0_f64,
+            ),
+            (
+                "integer-u64-max-plus-one",
+                "18446744073709551616",
+                18_446_744_073_709_551_616.0_f64,
+            ),
+            (
+                "integer-30-digits",
+                "123456789012345678901234567890",
+                1.234_567_890_123_456_8e29_f64,
+            ),
+        ];
+
+        for (id, value, float) in inputs {
+            let wanted = Each {
+                number: Some(float),
+                ..Each::default()
+            };
+
+            assert_eq!(rule_against(value), json::Rule::IntegerRange, "{id}");
+            assert_eq!(
+                parse_object::<Each>(&each_field_is(value)),
+                Ok(wanted),
+                "{id}"
+            );
+        }
+    }
+
+    /// The tenth input that left those surfaces, `key-two-times`: an object
+    /// with its key two times. The strict reader of this crate refuses it.
+    /// `parse_object` keeps the last value of the key, as `json.loads` does,
+    /// so a reader of the field gets that value.
+    #[test]
+    fn a_key_two_times_left_the_vectors_and_reads_as_its_last_value() {
+        /// A raw type with the one field of the input.
+        #[derive(Deserialize)]
+        struct OneField {
+            #[serde(default, deserialize_with = "text")]
+            field: String,
+        }
+
+        let twice = r#"{"field":"first","field":"last"}"#;
+        let read: OneField = parse_object(twice.as_bytes()).unwrap();
+
+        assert_eq!(rule_against(twice), json::Rule::DuplicateKey);
+        assert_eq!(read.field, "last");
     }
 
     // --- the tree of one value ---
@@ -2294,6 +2682,7 @@ mod tests {
         for levels in [DEPTH_MAX + 1, DEPTH_MAX + 2, 1_000_000, usize::MAX] {
             let failed = [
                 text(Nest(levels)).unwrap_err(),
+                text_or_none(Nest(levels)).unwrap_err(),
                 int(Nest(levels)).unwrap_err(),
                 number(Nest(levels)).unwrap_err(),
                 flag(Nest(levels)).unwrap_err(),
@@ -2479,6 +2868,10 @@ mod tests {
         /// The prefix of the surfaces of the reader of a whole document.
         const DOCUMENTS: &str = "runtime.parse_object.";
 
+        /// A cap above the size of each input of a surface of the field
+        /// readers: 1 MiB.
+        const INPUT_CAP: json::ByteCap = json::ByteCap::new(1024 * 1024);
+
         const SURFACES: &[Against] = &[
             kind("runtime.untrusted.door_owui.is_object", any_block, "null"),
             kind("runtime.untrusted.door_owui.is_list", any_list, "[]"),
@@ -2572,7 +2965,6 @@ mod tests {
         }
 
         probe!(TextField, "text", String);
-        probe!(IntField, "int", i64);
         probe!(NumberField, "number", Option<f64>);
         probe!(FlagField, "flag", bool);
         probe!(ObjectField, "object", AnyObject);
@@ -2581,6 +2973,14 @@ mod tests {
         probe!(FiftyObjects, "list_first::<50, _, _>", Vec<AnyObject>);
         probe!(TwoTexts, "list_first::<2, _, _>", Vec<String>);
         probe!(FiftyTexts, "list_first::<50, _, _>", Vec<String>);
+
+        /// The raw type for `int`. Its default is a function of the module:
+        /// `json::Integer` has no `Default`.
+        #[derive(Deserialize)]
+        struct IntField {
+            #[serde(default = "zero", deserialize_with = "int")]
+            field: json::Integer,
+        }
 
         /// What a raw type gives for a vector whose input is one object. The
         /// raw type reads through `parse_object`.
@@ -2699,46 +3099,25 @@ mod tests {
         /// The surfaces that a decision holds for.
         #[derive(Debug, Clone, Copy)]
         enum Surfaces {
-            /// Each surface of a field reader: each row of `SURFACES` with the
-            /// prefix `READERS`.
-            EachReader,
             /// These surfaces.
             Named(&'static [&'static str]),
         }
 
         impl Surfaces {
             fn hold(self, surface: &str) -> bool {
-                match self {
-                    Self::EachReader => surface.starts_with(READERS),
-                    Self::Named(names) => names.contains(&surface),
-                }
+                let Self::Named(names) = self;
+
+                names.contains(&surface)
             }
         }
 
-        /// Where the Python side of a decision is.
+        /// Where the Python side of a decision is. Each row that is left
+        /// names vectors.
         #[derive(Clone, Copy)]
         enum At {
             /// Each vector with one of these ids, in each of the surfaces. For
             /// a helper with a cap, an id stands for the vector of each cap.
             Vectors(Surfaces, &'static [&'static str]),
-            /// No vector covers the case. The row names the Python file and
-            /// the line, and it holds the case itself.
-            Line(Line),
-        }
-
-        /// One case that no vector covers.
-        #[derive(Clone, Copy)]
-        struct Line {
-            /// The Python file and the line.
-            python: &'static str,
-            /// The bytes that the Python line reads. For a door, they are the
-            /// body of the answer, and the line reads the text of `httpx`.
-            input: &'static [u8],
-            /// What the Python line gives for the bytes, as JSON text. A run
-            /// of the Python code gave this text. No test holds it.
-            python_gives: &'static str,
-            /// What the Rust code does with the bytes.
-            replay: fn(&[u8]) -> Did,
         }
 
         /// One decision to differ from the Python code.
@@ -2754,21 +3133,11 @@ mod tests {
         /// The surface of the reader of a whole document.
         const DOCUMENT: &[&str] = &["runtime.parse_object.noticeboard"];
 
-        /// The two surfaces of a reader of a whole number.
-        const INTEGERS: &[&str] = &[
-            "runtime.untrusted.door_tui.field_int",
-            "runtime.untrusted.noticeboard.integer",
-        ];
-
         const STRICT_JSON: &str = "contract 02 §3 rule 3";
 
         const NOT_FINITE: &str = "The contract says that a body is JSON. JSON has no word for a \
             number that is not finite. json.loads of Python reads NaN, Infinity and -Infinity. \
             The Rust reader is serde_json, which refuses the text.";
-
-        const PAST_A_FLOAT: &str = "The contract says that a body is JSON and gives a number no \
-            range. Python reads 1e400 as infinity and keeps an integer of 400 digits. serde_json \
-            refuses a text with a number outside the range of a float.";
 
         const LONE_SURROGATE: &str = "The contract says that a body is JSON. Python keeps one \
             half of a surrogate pair in a text, from an escape or from its bytes. A Rust text \
@@ -2786,90 +3155,17 @@ mod tests {
             json.loads of Python finds UTF-32 from the first bytes, with a byte order mark and \
             without. serde_json reads UTF-8 only.";
 
-        const NOT_UTF_8: &str = "The contract says that a body is JSON and names no encoding. \
-            A Python door gives json.loads the text that httpx makes from the body, and httpx \
-            reads a byte that is not UTF-8 as U+FFFD. The noticeboard, the delegate client and \
-            caregiver give json.loads the bytes, and they refuse the byte. The Rust reader \
-            refuses it too.";
-
         const DEPTH_LIMIT: &str = "The contract gives no nesting limit. Python reads a text \
             until the recursion limit of the interpreter, which differs between two versions. \
             serde_json stops at 128 levels.";
-
-        const FITS_64_BITS: &str = "No contract gives a count a range. The Python helper keeps \
-            an integer of each size. The Rust reader gives an i64, and it reads an integer that \
-            no i64 holds as 0, the value of a field of a wrong type.";
 
         const PAST_64_BITS_IS_A_FLOAT: &str = "No difference in what the reader accepts. \
             Python keeps each digit of an integer. serde_json gives an integer past 64 bits as \
             the nearest float, and the raw type of this test keeps that float.";
 
-        const ZERO_SIGN: &str = "JSON has one number form. Python reads -0 as the int 0, and \
-            float(0) is 0.0. serde_json reads -0 as the float -0.0, so the reader cannot tell -0 \
-            from -0.0 and gives -0.0 for both. The two floats are equal in each comparison.";
-
-        const ABSENT_IS_EMPTY: &str = "The Python helper gives None for a field that is no \
-            text, and its caller writes None into the reply. The reader `text` gives the empty \
-            text, so a raw type cannot tell a field that is no text from an empty text. The \
-            port of the delegate client decides what an empty text means.";
-
-        /// `number` of the noticeboard, for the field `field` of an object.
-        fn line_number(input: &[u8]) -> Did {
-            parse_object::<NumberField>(input).map_or(Did::Refuses, |probe| gives(probe.field))
-        }
-
-        /// `_text` of the delegate client, with a cap of 3 characters.
-        fn line_text_cut(input: &[u8]) -> Did {
-            parse_object::<TextField>(input)
-                .map_or(Did::Refuses, |probe| gives(cut(&probe.field, 3)))
-        }
-
-        fn line_document(input: &[u8]) -> Did {
-            parse_object::<AnyObject>(input).map_or(Did::Refuses, gives)
-        }
-
         /// Each input on which the Rust code differs from the Python code on
         /// purpose. A vector outside this table must be equal.
         const DEVIATIONS: &[Deviation] = &[
-            Deviation {
-                at: At::Vectors(
-                    Surfaces::EachReader,
-                    &["float-nan", "float-infinity", "float-negative-infinity"],
-                ),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: NOT_FINITE,
-            },
-            Deviation {
-                at: At::Vectors(
-                    Surfaces::EachReader,
-                    &["float-too-large", "integer-400-digits"],
-                ),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: PAST_A_FLOAT,
-            },
-            Deviation {
-                at: At::Vectors(Surfaces::EachReader, &["string-lone-surrogate"]),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: LONE_SURROGATE,
-            },
-            Deviation {
-                at: At::Vectors(
-                    Surfaces::Named(INTEGERS),
-                    &[
-                        "integer-i64-max-plus-one",
-                        "integer-i64-min-minus-one",
-                        "integer-u64-max",
-                        "integer-u64-max-plus-one",
-                        "integer-30-digits",
-                    ],
-                ),
-                differs: Differs::Gives("0"),
-                contract: "contracts 02, 04 and 05",
-                decision: FITS_64_BITS,
-            },
             Deviation {
                 at: At::Vectors(Surfaces::Named(DOCUMENT), &["nan", "infinity"]),
                 differs: Differs::Refuses,
@@ -2918,50 +3214,6 @@ mod tests {
                 contract: "contracts 02, 04 and 05",
                 decision: PAST_64_BITS_IS_A_FLOAT,
             },
-            Deviation {
-                at: At::Line(Line {
-                    python: "noticeboard/src/noticeboard/jsonfiles.py:77",
-                    input: b"{\"a\": \"\xed\xa0\x80\"}",
-                    python_gives: r#"{"a":{"$utf16":[55296]}}"#,
-                    replay: line_document,
-                }),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: LONE_SURROGATE,
-            },
-            Deviation {
-                at: At::Line(Line {
-                    python: "door-owui/src/agent_door_owui/attendance.py:315-323",
-                    input: b"{\"field\": \"a\xffb\"}",
-                    python_gives: r#"{"field":"a\ufffdb"}"#,
-                    replay: line_document,
-                }),
-                differs: Differs::Refuses,
-                contract: STRICT_JSON,
-                decision: NOT_UTF_8,
-            },
-            Deviation {
-                at: At::Line(Line {
-                    python: "noticeboard/src/noticeboard/jsonfiles.py:133",
-                    input: br#"{"field":-0}"#,
-                    python_gives: "0.0",
-                    replay: line_number,
-                }),
-                differs: Differs::Gives("-0.0"),
-                contract: "contracts 02, 04 and 05",
-                decision: ZERO_SIGN,
-            },
-            Deviation {
-                at: At::Line(Line {
-                    python: "chaperone/src/chaperone/delegate.py:226-232",
-                    input: br#"{"field":7}"#,
-                    python_gives: "null",
-                    replay: line_text_cut,
-                }),
-                differs: Differs::Gives(r#""""#),
-                contract: "contract 04 §7.3",
-                decision: ABSENT_IS_EMPTY,
-            },
         ];
 
         /// The id of the input of a vector: the id with no cap.
@@ -2983,9 +3235,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .filter_map(|(place, deviation)| {
-                    let At::Vectors(surfaces, vectors) = deviation.at else {
-                        return None;
-                    };
+                    let At::Vectors(surfaces, vectors) = deviation.at;
                     let named = vectors.iter().find(|named| **named == input)?;
 
                     surfaces.hold(surface).then_some((place, *named, deviation))
@@ -2998,11 +3248,12 @@ mod tests {
             DEVIATIONS
                 .iter()
                 .enumerate()
-                .filter_map(|(place, deviation)| match deviation.at {
-                    At::Vectors(surfaces, vectors) if surfaces.hold(surface) => {
-                        Some(vectors.iter().map(move |vector| (place, *vector)))
-                    }
-                    At::Vectors(..) | At::Line(_) => None,
+                .filter_map(|(place, deviation)| {
+                    let At::Vectors(surfaces, vectors) = deviation.at;
+
+                    surfaces
+                        .hold(surface)
+                        .then(|| vectors.iter().map(move |vector| (place, *vector)))
                 })
                 .flatten()
                 .collect()
@@ -3028,6 +3279,10 @@ mod tests {
 
         /// Walks each vector of one surface. It prints the counts, and a run
         /// with `--nocapture` shows them.
+        ///
+        /// Each input of a surface of the field readers must be strict JSON.
+        /// A text outside those rules is an input for the reader of a whole
+        /// document.
         fn walk(against: &Against) {
             let surface = vectors::surface(against.surface).unwrap();
             let mut equal = 0;
@@ -3037,6 +3292,12 @@ mod tests {
                 let rust = (against.replay)(vector);
                 let decisions = deviations_of(against.surface, vector.id());
 
+                if against.surface.starts_with(READERS) {
+                    let input = vector.input().bytes().unwrap();
+                    let strict = json::check(&input, INPUT_CAP);
+
+                    assert!(strict.is_ok(), "{at}: the input is not strict JSON");
+                }
                 assert!(decisions.len() <= 1, "{at}: two rows name the vector");
                 if let Some((place, named, deviation)) = decisions.first() {
                     let python = Did::Gives(vector.value().cloned().unwrap_or(Value::Null));
@@ -3092,19 +3353,13 @@ mod tests {
         fn each_deviation_names_a_surface_of_the_table_and_its_reason() {
             let listed: HashSet<&str> = SURFACES.iter().map(|against| against.surface).collect();
             for deviation in DEVIATIONS {
+                let At::Vectors(Surfaces::Named(surfaces), vectors) = deviation.at;
+
                 assert!(deviation.contract.starts_with("contract"));
                 assert!(!deviation.decision.is_empty());
-                match deviation.at {
-                    At::Vectors(Surfaces::Named(surfaces), vectors) => {
-                        assert!(!surfaces.is_empty() && !vectors.is_empty());
-                        for surface in surfaces {
-                            assert!(listed.contains(surface), "{surface}");
-                        }
-                    }
-                    At::Vectors(Surfaces::EachReader, vectors) => assert!(!vectors.is_empty()),
-                    At::Line(line) => {
-                        assert!(line.python.contains(".py:"), "{}", line.python);
-                    }
+                assert!(!surfaces.is_empty() && !vectors.is_empty());
+                for surface in surfaces {
+                    assert!(listed.contains(surface), "{surface}");
                 }
             }
         }
@@ -3115,26 +3370,6 @@ mod tests {
             for against in SURFACES {
                 walk(against);
             }
-        }
-
-        /// A row with no vector holds its case. The test makes sure that the
-        /// Rust code does what the row says, and that the row names a
-        /// difference.
-        #[test]
-        fn each_deviation_with_no_vector_is_a_difference() {
-            let mut lines = 0;
-            for deviation in DEVIATIONS {
-                let At::Line(line) = deviation.at else {
-                    continue;
-                };
-                let python = Did::Gives(json_of(line.python_gives));
-                let rust = (line.replay)(line.input);
-
-                differs_as_decided(deviation.differs, &python, &rust, line.python);
-                lines += 1;
-            }
-
-            assert!(lines > 0, "the table holds no row with no vector");
         }
 
         /// A test of the test: a row that names no difference fails.
