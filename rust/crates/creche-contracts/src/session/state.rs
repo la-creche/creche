@@ -567,7 +567,12 @@ impl fmt::Display for IllegalMove {
 impl Error for IllegalMove {}
 
 /// The two states of a refused move that `attendance` writes into a journal
-/// as the note `illegal_transition` (contract 02 §4.3).
+/// as the note `illegal_transition`.
+///
+/// No contract names this note. Contract 02 §8.1 gives the body of a note no
+/// form. Contract 02 §4.3 holds the state table of a turn and names no note.
+/// The word of the note, its two members and the set of pairs thus follow
+/// what `attendance` writes.
 ///
 /// `attendance` writes that note when it ends a turn and its state table
 /// refuses the move. The turn then keeps its state. A move that ends a turn
@@ -587,8 +592,8 @@ impl Error for IllegalMove {}
 /// pair. The writer gives the two members in that order.
 ///
 /// The set is closed. A newer `attendance` can write another pair. The
-/// reader of a journal body does not refuse such a note: it keeps the body
-/// as a note of free form, a [`Note::Other`](super::Note::Other).
+/// reader of a journal body does not refuse such a note. The body then reads
+/// as a [`Note::Other`](super::Note::Other), with each of its members.
 ///
 /// ```
 /// use creche_contracts::session::{RefusedMove, Step, Turn, TurnState};
@@ -642,7 +647,8 @@ impl TryFrom<RawRefusedMove> for RefusedMove {
 }
 
 impl RefusedMove {
-    /// The pair of a refused move, for the note.
+    /// What a service writes as the note of a move that [`Turn::apply`]
+    /// refused.
     ///
     /// `None` is a refused move that gets no note. Two kinds exist: a move of
     /// a turn in a terminal state, and a move to a state that is not

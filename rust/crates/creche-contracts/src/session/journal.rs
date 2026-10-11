@@ -1731,8 +1731,8 @@ mod tests {
     /// keys of the body in the order `note`, `from`, `to`. Contract 02 §4.3
     /// permits the move from `running` to `settled`, so `attendance` writes no
     /// note for it. The Python writer of a line checks no body and keeps the
-    /// order of the keys. The typed reader refuses the pair, the body has free
-    /// form, and the writer sorts its keys.
+    /// order of the keys. The typed reader refuses the pair. The body is then
+    /// a `Note::Other`, and its keys go out in sorted order.
     #[test]
     fn the_note_of_a_move_that_the_contract_permits_has_free_form() {
         let body: Value = serde_json::from_str(
