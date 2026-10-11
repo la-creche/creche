@@ -1,7 +1,8 @@
 """The strict JSON reader and writer (`strictjson.py`).
 
 Each table holds texts for one rule of the module docstring. A refused text
-of a table breaks that rule and no other rule.
+breaks the rule of its table. Most of them break no other rule. A comment
+marks a text that also breaks a later rule of the sequence.
 """
 
 from __future__ import annotations

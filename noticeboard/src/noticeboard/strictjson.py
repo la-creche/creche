@@ -319,6 +319,16 @@ def _has_lone_surrogate(data: bytes, value: object) -> bool:
     return False
 
 
+# CONTRACT-QUESTION: `rust/AGENTS.md`, "JSON", gives the Rust check one
+# sequence: the fault at the lowest byte offset names the rule, and each rule
+# has an offset. It does not say what a copy of the reader in another
+# language names for a text that breaks two rules. This copy names the fault
+# that it finds first, in the sequence of the module docstring, and it has
+# an offset for four rules. The vector surface `runtime.strict_json` holds
+# the two readers to one result and one word for each text that breaks one
+# rule. A copy with the sequence and each offset of the Rust check costs a
+# reader that takes each character in Python code. Such a reader is slower
+# than the cost limit that the tests of this module hold.
 def _read(text: str, data: bytes) -> object:
     """The value of `text`, which is the text of the bytes `data`.
 

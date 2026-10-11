@@ -154,6 +154,12 @@ prefixed `test_noticeboard_`.
   UTF-16 and UTF-32, as `json.loads` does.
 - No contract gives a range for a count. `jsonfiles.integer` takes an integer
   of any size.
+- `rust/AGENTS.md`, "JSON", does not say which rule a copy of the strict
+  reader names for a text that breaks two rules. `strictjson.py` names the
+  fault that it finds first. The Rust reader names the fault at the lowest
+  byte offset, so the two words can differ. `strictjson.py` has an offset
+  for four rules only. No module of this package imports `strictjson.py`
+  yet.
 - `spec.md` §8.1 names no answer for a route parameter that is not an id.
   The route answers the 404 of a path that has no route (`app.py`).
 - `spec.md` §8.3 names no answer for an exception that no reader predicted.
