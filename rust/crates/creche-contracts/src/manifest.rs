@@ -1132,6 +1132,16 @@ mod tests {
         found.check("manifest.component");
     }
 
+    /// The text of a list of fields, with the lines of one field replaced.
+    fn with_field(fields: &[(&str, &str)], field: &str, lines: &str) -> String {
+        assert!(fields.iter().any(|(name, _)| *name == field), "{field}");
+
+        fields
+            .iter()
+            .map(|(name, own)| if *name == field { lines } else { own })
+            .fold(String::new(), |text, lines| text + lines + "\n")
+    }
+
     /// A valid manifest with the line of one field replaced.
     fn manifest_with(field: &str, line: &str) -> String {
         let lines = [
@@ -1151,12 +1161,7 @@ mod tests {
             ("release", "release: yes"),
         ];
 
-        assert!(lines.iter().any(|(name, _)| *name == field), "{field}");
-
-        lines
-            .iter()
-            .map(|(name, own)| if *name == field { line } else { own })
-            .fold(String::new(), |text, line| text + line + "\n")
+        with_field(&lines, field, line)
     }
 
     #[test]
@@ -1311,12 +1316,7 @@ mod tests {
         let mut fields = vec![("manifest_version", version.as_str())];
         fields.extend(GENERATOR_FIELDS);
 
-        assert!(fields.iter().any(|(name, _)| *name == field), "{field}");
-
-        fields
-            .iter()
-            .map(|(name, own)| if *name == field { lines } else { own })
-            .fold(String::new(), |text, lines| text + lines + "\n")
+        with_field(&fields, field, lines)
     }
 
     #[test]
