@@ -1223,9 +1223,9 @@ def test_the_coverage_job_takes_cargo_llvm_cov_from_an_archive_that_it_checked(
     """No commit pin holds `cargo-llvm-cov`. The SHA-256 of the archive is
     the pin, as for `cargo-deny`. One local action holds the step. The step
     of the job is its name, the rule of the job and the path of that action,
-    and no other key: a `with` or an `env` here cannot change what the action
-    takes. The action holds the whole text of the step and the two
-    constants."""
+    and no other key. One more key can change what the step does, for example
+    `env` or `continue-on-error`. The action holds the whole text of the step
+    and the two constants."""
     _checkout, _toolchain, install, _script = jobs[COVERAGE_JOB]["steps"]
     (step,) = COVERAGE_ACTION_DATA["runs"]["steps"]
 
