@@ -574,8 +574,8 @@ again after a change of the version.
    a date-time is `Slot::Null`, and its kind in an `Unknown` is
    `Found::Null`. TOML has no null, so no other value reads so. No file
    kind has a field for a date-time. Report a wrong type for it.
-4. **A text with a byte order mark is refused.** The crate reads such a
-   text. Check 3 refuses it.
+4. **`read` refuses a text that starts with a byte order mark.** The crate
+   reads such a text. Check 3 refuses it.
 5. **An integer outside 64 bits is `NotToml`.** The range is that of an
    `i64`. The crate refuses the text in check 4.
 6. **A deep text is a refusal and no crash.** The crate stops at 80 levels
