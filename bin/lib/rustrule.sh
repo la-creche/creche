@@ -11,8 +11,9 @@
 # Rust change: the cargo checks are the safe answer.
 #
 # CI takes a wider answer than the hooks: rust_touched also counts a file of
-# the Rust checks themselves (rust_gate_path). A runner always has cargo, so
-# the wider answer costs no session its commit.
+# the Rust checks themselves, and the one file outside rust/ that a build
+# script reads (rust_gate_path). A runner always has cargo, so the wider
+# answer costs no session its commit.
 #
 # The Rust tests read vectors/data (vectors/README.md), so a vector that moves
 # can break one. rust_touched counts a path under vectors/ too (vectors_path).
@@ -62,11 +63,19 @@ vectors_path() {
 # bin/tests/test_rust_coverage.py run the scripts with a fake cargo, so a
 # wrong cargo flag passes every test. Only a run with the real cargo proves a
 # change to one of these files.
+#
+# The manifest of the release tool counts too. The build script of
+# creche-contracts reads the version of the manifest contract from it
+# (rust/crates/creche-contracts/build.rs), so a change of that file alone
+# changes a Rust constant and can stop the Rust build. The file has the
+# name component.yaml today, and component.toml is the name of its TOML
+# form.
 rust_gate_path() {
   case "$1" in
     bin/rust-gate.sh | bin/rust-coverage.sh | bin/lib/rustrule.sh | \
       .github/workflows/gate.yml | .github/workflows/release.yml | \
-      .github/actions/scope/*)
+      .github/actions/scope/* | \
+      handover/component.yaml | handover/component.toml)
       return 0
       ;;
   esac
@@ -75,8 +84,8 @@ rust_gate_path() {
 }
 
 # rust_touched FROM TO: whether CI runs the Rust checks for FROM..TO: a path
-# it changes is under rust/, is a file of the Rust checks, or is under
-# vectors/.
+# it changes is under rust/, is a file that rust_gate_path names, or is
+# under vectors/.
 rust_touched() {
   local paths path
 

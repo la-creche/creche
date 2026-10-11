@@ -10,8 +10,9 @@
 // Credentials go here and nowhere else. argv is world-readable through
 // /proc/<pid>/cmdline for the whole life of the process (invariant 13).
 
-import { INDEX_ROOT, LITELLM_BASE_URL, PEP_URL } from "./constants.js";
+import { INDEX_ROOT } from "./constants.js";
 import type { FamilyCreds } from "./creds.js";
+import type { PlaneUrls } from "./planes.js";
 
 export interface TurnEnvSpec {
   readonly sessionDir: string;
@@ -25,6 +26,8 @@ export interface TurnEnvSpec {
   /** Where the bridge states its tool count. See `tool-state.ts`. */
   readonly toolStateFile?: string;
   readonly creds: FamilyCreds;
+  /** Where the chaperone and LiteLLM listen. See `planes.ts`. */
+  readonly planes: PlaneUrls;
 }
 
 /** The image supplies these; the playpen passes them through unchanged. */
@@ -40,9 +43,9 @@ export function buildTurnEnv(spec: TurnEnvSpec): NodeJS.ProcessEnv {
   }
 
   env["PI_CODING_AGENT_DIR"] = spec.sessionDir;
-  env["LITELLM_BASE_URL"] = LITELLM_BASE_URL;
+  env["LITELLM_BASE_URL"] = spec.planes.litellm.text;
   env["LITELLM_VIRTUAL_KEY"] = spec.creds.litellm_key;
-  env["PEP_URL"] = PEP_URL;
+  env["PEP_URL"] = spec.planes.pep.text;
   env["PEP_TOKEN"] = spec.creds.pep_token;
   env["AGENT_FAMILY"] = spec.family;
   env["AGENT_SANDBOX"] = spec.sandbox;

@@ -69,7 +69,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/manifest.py` | the eleven `manifest.<name>` surfaces of contract 06 |
 | `surfaces/session_cases.py` | the written inputs of the session API surfaces |
 | `surfaces/session.py` | the session API: `session.request.*`, `session.query.*`, `session.error_body`, `session.answer.*`, `session.journal.*`, `session.stream.*`, `session.turn.move`, `session.state.derive`, `session.outcome.*` |
-| `surfaces/runtime.py` | the helper code that each service copies: `runtime.untrusted.<copy>.<helper>`, `runtime.parse_object.noticeboard`, `runtime.token.<reader>`, `runtime.bearer.<copy>`, `runtime.edge.<service>` |
+| `surfaces/runtime.py` | the helper code that each service copies: `runtime.untrusted.<copy>.<helper>`, `runtime.parse_object.noticeboard`, `runtime.strict_json`, `runtime.token.<reader>`, `runtime.bearer.<copy>`, `runtime.edge.<service>` |
 | `surfaces/noticeboard_cases.py` | the written inputs of the noticeboard surfaces |
 | `surfaces/noticeboard.py` | the noticeboard: `noticeboard.security.*`, `noticeboard.urlform`, `noticeboard.app.query`, `noticeboard.route.*`, `noticeboard.sessions.*`, `noticeboard.transcript.fold`, `noticeboard.audit.page`, `noticeboard.statusdocs.report`, `noticeboard.verify.envfile`, `noticeboard.cli.check`, `noticeboard.static.css` |
 | `surfaces/library.py` | the index builder: `library.chunk_text`, `library.file_hash`, `library.read_document`, `library.report`, `library.tei_url`, `library.embedding`, `library.schema`, `library.index_scope` |
@@ -262,10 +262,11 @@ directory is not a workspace package, so a change here does not change
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
   reads that file. `noticeboard.cli.check` holds the vectors of a key file.
-- The group `runtime` covers the lenient readers, the token files, the
-  bearer of a request and the answers of the web framework. No vector
-  covers an atomic write, a read with a size cap or a path under the state
-  root. No vector covers the mint of a random token or a signal.
+- The group `runtime` covers the lenient readers and the strict JSON
+  reader. It also covers the token files, the bearer of a request and the
+  answers of the web framework. No vector covers an atomic write, a read
+  with a size cap or a path under the state root. No vector covers the mint
+  of a random token or a signal.
 - No vector covers the text that a service decodes from the output of a
   child program. The locale gives the encoding of that decode, and the
   locale is a value of the machine.
@@ -279,6 +280,16 @@ directory is not a workspace package, so a change here does not change
   optional argument: the limit of `text` and the fallback of `integer`.
 - A refused vector of `runtime.parse_object.noticeboard` holds no reason. The
   problem text of the entry point holds a message of the interpreter.
+- `runtime.strict_json` holds no text that breaks more than one rule. For
+  such a text, the Python reader names the fault that it finds first. The
+  Rust reader names the fault at the lowest byte offset. The two words can
+  thus differ. The docstring of `noticeboard/src/noticeboard/strictjson.py`
+  has the sequence of the Python reader.
+- A refused vector of `runtime.strict_json` holds no offset. The Python
+  reader has an offset for four rules only. `noticeboard/tests` holds those
+  offsets.
+- No vector covers the strict writer, `dumps` of `noticeboard.strictjson`.
+  `noticeboard/tests` holds that writer.
 - Two token readers are private functions: `_read_token` of
   `attendance.auth` and `_read_key` of `agent_door_owui.config`. A
   `runtime.token` surface calls the public caller of each one:

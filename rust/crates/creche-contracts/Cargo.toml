@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+# The build script reads one file outside rust/: the manifest of the release
+# tool, handover/component.yaml. It writes the version of the manifest
+# contract as constants for the `manifest` module (rust/AGENTS.md, "The
+# version of the manifest contract").
+build = "build.rs"
 
 [lints]
 workspace = true

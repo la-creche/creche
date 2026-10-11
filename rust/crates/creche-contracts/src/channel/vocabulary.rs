@@ -35,13 +35,21 @@ macro_rules! words {
             $($(#[$variant_attribute])* $variant,)+
         }
 
+        impl $name {
+            /// The name as the wire holds it. A `const fn` can call this
+            /// function, and it cannot call [`Word::as_str`].
+            pub(super) const fn text(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $text,)+
+                }
+            }
+        }
+
         impl Word for $name {
             const ALL: &'static [Self] = &[$(Self::$variant,)+];
 
             fn as_str(self) -> &'static str {
-                match self {
-                    $(Self::$variant => $text,)+
-                }
+                self.text()
             }
         }
 
@@ -108,6 +116,8 @@ words! {
         Entries => "entries",
         /// The playpen cannot serve and exits.
         Fatal => "fatal",
+        /// The playpen handled a stop that had an id.
+        ProcessStopped => "process_stopped",
     }
 }
 
@@ -233,6 +243,9 @@ words! {
         WorkspaceLink => "workspace_link",
         /// The playpen answers `get_entries` (§4.8).
         GetEntries => "get_entries",
+        /// The playpen sends `process_stopped` for each stop that has an id
+        /// (§4.5).
+        StopAck => "stop_ack",
     }
 }
 
@@ -249,6 +262,9 @@ words! {
         ControlMountUnwritable => "control_mount_unwritable",
         /// The environment does not name one of the three directories.
         MountDirUnset => "mount_dir_unset",
+        /// The environment gives no valid URL of a plane
+        /// ([`PlaneUrl`](crate::config::endpoints::PlaneUrl)).
+        PlaneUrlInvalid => "plane_url_invalid",
     }
 }
 
@@ -307,6 +323,7 @@ mod tests {
             "log",
             "entries",
             "fatal",
+            "process_stopped",
         ]);
         round_trip::<FailReason>(&[
             "no_resident_process",
@@ -330,8 +347,18 @@ mod tests {
         round_trip::<ExitReason>(&["reaped", "stopped", "crashed", "shutdown"]);
         round_trip::<LogLevel>(&["debug", "info", "warn", "error"]);
         round_trip::<Role>(&["user", "assistant"]);
-        round_trip::<Cap>(&["steer", "coalesce", "workspace_link", "get_entries"]);
-        round_trip::<FatalReason>(&["control_mount_unwritable", "mount_dir_unset"]);
+        round_trip::<Cap>(&[
+            "steer",
+            "coalesce",
+            "workspace_link",
+            "get_entries",
+            "stop_ack",
+        ]);
+        round_trip::<FatalReason>(&[
+            "control_mount_unwritable",
+            "mount_dir_unset",
+            "plane_url_invalid",
+        ]);
         round_trip::<WorkspaceKind>(&["code-sandbox"]);
     }
 
