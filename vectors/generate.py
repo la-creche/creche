@@ -54,6 +54,7 @@ from vectors.surfaces import (
     session,
     status,
     status_files,
+    tomlfile,
 )
 
 DATA_DIR: Final = Path(__file__).resolve().parent / "data"
@@ -111,6 +112,7 @@ GROUPS: Final[dict[str, Callable[[], tuple[Surface, ...]]]] = {
     "runtime": runtime.surfaces,
     "noticeboard": noticeboard.surfaces,
     "library": library.surfaces,
+    "tomlfile": tomlfile.surfaces,
 }
 
 
