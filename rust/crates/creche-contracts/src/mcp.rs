@@ -95,6 +95,7 @@ const RESULT: &str = "result";
 const ERROR: &str = "error";
 const CODE: &str = "code";
 const MESSAGE: &str = "message";
+const DATA: &str = "data";
 
 // The members of a result that the code names in more than one place.
 const PROTOCOL_VERSION: &str = "protocolVersion";
@@ -787,7 +788,7 @@ impl RawLine {
             Slot::Missing => None,
             Slot::Null => Some(opaque_of(&())?),
             Slot::Value(data) => Some(data),
-            Slot::Other(_) => return Err(WireError::Member("data")),
+            Slot::Other(_) => return Err(WireError::Member(DATA)),
         };
 
         Ok(Line::Error {
