@@ -2322,13 +2322,12 @@ fn is_platform_mirror(raw: &RawFamily, path: &str) -> bool {
             .all(|mount| mount.mode == Mode::Ro.as_str())
 }
 
-/// The form of a tool name, as the message of the Python validator shows it.
-/// `ids::ToolName` holds the grammar.
-const TOOL_NAME_FORM: &str = "[A-Za-z][A-Za-z0-9_-]{0,63}";
-
-/// The message for a text that is no tool name.
+/// The message for a text that is no tool name. It shows the form that
+/// `ids::ToolName` holds, as the message of the Python validator does.
 pub(crate) fn tool_name_issue(tool: &str) -> String {
-    format!("'{tool}' is not a tool name; use {TOOL_NAME_FORM}")
+    let form = ToolName::form();
+
+    format!("'{tool}' is not a tool name; use {form}")
 }
 
 fn slot(section: Section) -> Slot {

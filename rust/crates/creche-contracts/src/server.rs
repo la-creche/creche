@@ -71,14 +71,6 @@ const ARG_NAME_MAX: usize = 64;
 
 const DEFAULT_PYTHON: &str = "3.12";
 
-/// The form of the name of an environment variable, as the message of the
-/// Python validator shows it. `ids::EnvName` holds the grammar.
-const ENV_NAME_FORM: &str = "[A-Z][A-Z0-9_]{0,63}";
-
-/// The form of an exact version, as the message of the Python validator shows
-/// it. `ids::PackageVersion` holds the grammar.
-const VERSION_FORM: &str = "[0-9][0-9A-Za-z.]{0,63}";
-
 fn default_python() -> String {
     DEFAULT_PYTHON.to_owned()
 }
@@ -816,10 +808,13 @@ fn vet_version(install: &RawInstall, at: Slot, out: &mut Issues) -> Option<Packa
     match text.parse::<PackageVersion>() {
         Ok(version) => Some(version),
         Err(_) => {
+            // The message shows the form that `ids::PackageVersion` holds, as
+            // the message of the Python validator does.
+            let form = PackageVersion::form();
             out.error(
                 at,
                 "install.version",
-                format!("'{text}' is not an exact version; use {VERSION_FORM}"),
+                format!("'{text}' is not an exact version; use {form}"),
             );
 
             None
@@ -957,10 +952,13 @@ fn vet_env_entry(
     let env_name = match name.parse::<EnvName>() {
         Ok(env_name) => Some(env_name),
         Err(_) => {
+            // The message shows the form that `ids::EnvName` holds, as the
+            // message of the Python validator does.
+            let form = EnvName::form();
             out.error(
                 at,
                 &loc,
-                format!("'{name}' is not an environment variable name; use {ENV_NAME_FORM}"),
+                format!("'{name}' is not an environment variable name; use {form}"),
             );
 
             None
