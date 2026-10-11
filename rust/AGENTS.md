@@ -1046,6 +1046,17 @@ to 5 give a Rust service the Python behavior on purpose.
 14. **For a write to stdout or to stderr, use only `log::out_line`,
     `log::err_line` and the log macros.**
     Reason: a closed stream makes `println!` and `eprintln!` panic.
+    The exit status of some commands tells the caller that a write to
+    stdout failed. `log::out_line` returns no error when its write fails,
+    so such a command cannot use that function for stdout. The list below
+    applies to that command:
+    - The command locks stdout and stderr. It gives the two locks to one
+      function as writers.
+    - That function writes each of its texts with `write_all` or with
+      `writeln!` on a writer.
+    - For a write that fails, `write_all` and `writeln!` return the error.
+      They do not panic.
+    - The command uses no `println!` and no `eprintln!`.
 15. **State the `AtShutdown` of each `Command`. Select `Finish` when the
     step of the child must end whole.**
     Reason: `subprocess.run` of Python runs to its end at a stop of the
@@ -1805,11 +1816,6 @@ adds a crate:
     `2750` of the directory of a socket. `atomic::DirMode` of
     `creche-runtime` holds it, and `http::server` holds a copy. No packet
     has that change yet.
-  - "The panic rule", clauses 2, 3 and 7. The program `agent-family` does
-    not hold them. Its `main` sets no panic hook and parses the command
-    line itself. Its library has no entry function that catches a panic.
-    No packet has this change yet. `creche-probe` of `creche-testkit` is
-    the other program of the workspace, and it holds the three clauses.
   - The address of another service. `config::chaperone` and
     `config::caregiver` define the port of another service as a constant.
     `config::endpoints` holds the names of the variables. The packet that
