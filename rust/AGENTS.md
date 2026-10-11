@@ -1551,9 +1551,6 @@ To make the fifth check on your machine, for example before a merge:
   - Rule 10. `time::Timestamp` has no differential test. No Python reader
     has its grammar today. Packet `strict-noticeboard-time` adds that
     reader, its vectors and the test.
-  - Rule 10. The `json` module has no differential test. No Python reader
-    has its rules today. Packet `strict-noticeboard-json-1` adds that
-    reader, its vectors and the test.
   - Rule 10. The `mcp` module has no differential test. The Python
     chaperone reads the MCP wire with a third-party package, and no vector
     records a message. The tests of the module hold each type against lines

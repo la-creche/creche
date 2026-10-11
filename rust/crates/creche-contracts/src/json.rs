@@ -718,4 +718,163 @@ mod tests {
 
         assert_eq!(strict.parse::<Named<'_>>(), Ok(Named { name: "thin" }));
     }
+
+    /// The differential test: each vector of the surface
+    /// `runtime.strict_json`, against [`check`].
+    ///
+    /// The surface records `loads` of `strictjson.py`, the strict reader of
+    /// the Python packages. Each vector must be equal. For an accepted
+    /// text, the two readers give the same value. For a refused text, they
+    /// give the same rule word. The surface holds only texts that break one
+    /// rule, so the word does not depend on the order of the checks.
+    mod python {
+        use std::collections::HashSet;
+
+        use creche_vectors::{self as vectors, Outcome, Surface, Vector};
+        use serde::Serialize;
+        use serde_json::Value;
+
+        use super::super::*;
+
+        /// Each surface that this module implements.
+        const SURFACES: [&str; 1] = ["runtime.strict_json"];
+
+        /// The start of the name of each such surface in the index.
+        const GROUP: &str = "runtime.strict_json";
+
+        /// The key of the cap in the context of a surface.
+        const CAP_KEY: &str = "cap";
+
+        /// One form for each value: no white space, ASCII only and each key
+        /// in sorted order. A vector file holds the keys of a value in
+        /// sorted order, so the comparison does not hold the order of the
+        /// keys of a text.
+        const ONE_FORM: Style = Style::new(Layout::Compact, Charset::Ascii, KeyOrder::Sorted);
+
+        /// What a reader did with one text.
+        #[derive(Debug, PartialEq)]
+        enum Did {
+            /// The reader takes the text. The field is the value of the text
+            /// in [`ONE_FORM`], which holds the kind of each number and the
+            /// sign of a zero.
+            Takes(String),
+            /// The reader refuses the text, and it names this rule.
+            Refuses(Rule),
+        }
+
+        fn one_form<T: Serialize>(value: &T) -> String {
+            String::from_utf8(write(value, ONE_FORM).unwrap()).unwrap()
+        }
+
+        /// The cap that the generator gave the Python reader.
+        fn cap_of(surface: &Surface) -> ByteCap {
+            let cap = surface.context().get(CAP_KEY).and_then(Value::as_u64);
+
+            ByteCap::new(usize::try_from(cap.unwrap()).unwrap())
+        }
+
+        /// What [`check`] does with the text. The value of a strict text is
+        /// its [`Opaque`], which reads each number from its token.
+        fn rust_did(bytes: &[u8], cap: ByteCap) -> Did {
+            match check(bytes, cap) {
+                Ok(strict) => Did::Takes(one_form(&strict.parse::<Opaque>().unwrap())),
+                Err(refused) => Did::Refuses(refused.rule()),
+            }
+        }
+
+        /// What the Python reader did with the text of a vector. `None` for
+        /// a text on which the Python reader raised.
+        fn python_did(vector: &Vector, at: &str) -> Option<Did> {
+            match vector.result() {
+                Outcome::Accepted => {
+                    let Some(value) = vector.value() else {
+                        panic!("{at}: the vector holds no value");
+                    };
+
+                    Some(Did::Takes(one_form(value)))
+                }
+                Outcome::Refused => {
+                    let word = vector.refusal().and_then(Value::as_str);
+                    let Some(rule) = word.and_then(Rule::from_word) else {
+                        panic!("{at}: the refusal {word:?} is the word of no rule");
+                    };
+
+                    Some(Did::Refuses(rule))
+                }
+                Outcome::Raised => None,
+            }
+        }
+
+        #[test]
+        fn each_vector_of_the_python_reader_is_equal() {
+            for name in SURFACES {
+                let surface = vectors::surface(name).unwrap();
+                let cap = cap_of(&surface);
+
+                for vector in surface.vectors() {
+                    let at = format!("{name} {}", vector.id());
+                    let bytes = vector.input().bytes().unwrap();
+                    let rust = rust_did(&bytes, cap);
+
+                    match python_did(vector, &at) {
+                        Some(python) => assert_eq!(rust, python, "{at}"),
+                        // The Rust reader refuses a text on which the
+                        // Python reader raised.
+                        None => assert!(matches!(rust, Did::Refuses(_)), "{at}"),
+                    }
+                }
+                println!(
+                    "{name}: {} vectors, each one equal",
+                    surface.vectors().len()
+                );
+            }
+        }
+
+        #[test]
+        fn the_surfaces_hold_a_refused_text_for_each_rule() {
+            let refused: HashSet<Rule> = SURFACES
+                .iter()
+                .flat_map(|name| vectors::surface(name).unwrap().vectors().to_vec())
+                .filter_map(|vector| vector.refusal().and_then(Value::as_str).map(str::to_owned))
+                .filter_map(|word| Rule::from_word(&word))
+                .collect();
+
+            for rule in Rule::ALL {
+                assert!(refused.contains(&rule), "no vector for {}", rule.word());
+            }
+        }
+
+        #[test]
+        fn the_table_holds_each_surface_of_the_strict_reader() {
+            let index = vectors::index().unwrap();
+            let in_index: Vec<&str> = index
+                .iter()
+                .map(|row| row.surface())
+                .filter(|surface| surface.starts_with(GROUP))
+                .collect();
+
+            assert_eq!(in_index, SURFACES);
+        }
+
+        #[test]
+        fn the_comparison_holds_the_kind_of_a_number_and_the_sign_of_a_zero() {
+            let cap = ByteCap::new(64);
+            let took = |text: &str| rust_did(text.as_bytes(), cap);
+
+            assert_ne!(took("1"), took("1.0"));
+            assert_ne!(took("0.0"), took("-0.0"));
+            assert_ne!(took("\"1\""), took("1"));
+            assert_ne!(took("[]"), took("{}"));
+            // `-0` is the integer 0, and white space is no part of a value.
+            assert_eq!(took("-0"), took("0"));
+            assert_eq!(took("1e3"), took(" 1000.0 "));
+            assert_eq!(took(r#"{"b":1,"a":2}"#), took(r#"{ "a" : 2 , "b" : 1 }"#));
+            // The form of a vector value and the form of a text are one form.
+            assert_eq!(
+                Did::Takes(one_form(&serde_json::json!({"a": [0, -0.0, 1.5]}))),
+                took(r#"{"a":[-0,-0.0,15e-1]}"#)
+            );
+            assert_eq!(took("[1,]"), Did::Refuses(Rule::Syntax));
+        }
+    }
 }
