@@ -42,7 +42,7 @@ a check here:
    size limits, the TOML 1.0 check and the level limit. Code in another file
    that calls the crate `toml` holds none of them (`rust/AGENTS.md`,
    "TOML"). Only the two files of that module name the crate `toml` or the
-   crate `toml_parser`.
+   crate `toml_parser`, by a path or by another name.
 
 A push that changes only `rust/` runs no pytest suite (`bin/lib/rustrule.sh`),
 so for such a change these checks run in CI.
@@ -65,6 +65,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+import pytest
 from handover.allocate import touched
 from handover.catalog import Repo
 
@@ -193,6 +194,10 @@ TOML_FILES = {
 #: names it.
 TOML_PATHS = ("toml::", "toml_parser::")
 
+#: A TOML crate with another name, for example `use toml as t;`. A path with
+#: that name holds no text of `TOML_PATHS`.
+TOML_ALIAS = re.compile(r"\b(?:toml|toml_parser)\s+as\b")
+
 #: Paths a Rust commit changes: a manifest, a source file and a document.
 RUST_PATHS = ("rust/Cargo.lock", "rust/crates/creche-contracts/src/ids.rs", "rust/AGENTS.md")
 
@@ -208,6 +213,11 @@ TABLE_CRATES = ("agent-family", "creche-contracts", "creche-runtime", "creche-te
 #: row. A longer name that holds one of the two counts too.
 TABLE_NAME = "DEVIATIONS"
 TABLE_ROW = re.compile(r"\bstruct\s+Deviation")
+
+
+def _names_a_toml_crate(text: str) -> bool:
+    """Whether the text of a Rust source file names a TOML crate."""
+    return any(path in text for path in TOML_PATHS) or TOML_ALIAS.search(text) is not None
 
 
 def _toml(name: str) -> dict[str, Any]:
@@ -393,9 +403,41 @@ def test_only_the_vector_reader_names_the_vector_directory() -> None:
     assert elsewhere == [], f"a file outside {READER_CRATE} names {DATA_DIR_TEXT}: {elsewhere}"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "let table: toml::Table = text.parse()?;",
+        "use toml_parser::Source;",
+        "// toml::from_str reads a text with no limit",
+        "use toml as t;",
+        "use toml_parser as p;",
+        "extern crate toml as t;",
+        "use toml\n    as t;",
+    ],
+)
+def test_a_text_that_names_a_toml_crate_is_found(text: str) -> None:
+    """The last four texts give a crate another name. A path with that name
+    holds no text of `TOML_PATHS`."""
+    assert _names_a_toml_crate(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "let roster = tomlfile::read(bytes, FileKind::Roster)?;",
+        "use crate::tomlfile as reader;",
+        "// The roster is a TOML text.",
+        "let as_toml = text;",
+    ],
+)
+def test_a_text_that_names_no_toml_crate_is_not_found(text: str) -> None:
+    assert not _names_a_toml_crate(text)
+
+
 def test_only_the_toml_reader_names_a_toml_crate() -> None:
     """The test reads the text of each file, test code too. A comment that
-    holds such a path counts.
+    holds such a path counts. A line that gives a TOML crate another name
+    counts too.
 
     A reader file that is absent, or that names no TOML crate, shows a wrong
     path or a wrong text here, and the search then proves nothing. The test
@@ -404,7 +446,7 @@ def test_only_the_toml_reader_names_a_toml_crate() -> None:
     named: set[str] = set()
     for source in crates.rglob("*.rs"):
         text = source.read_text(encoding="utf-8")
-        if any(path in text for path in TOML_PATHS):
+        if _names_a_toml_crate(text):
             named.add(source.relative_to(crates).as_posix())
 
     assert named >= TOML_FILES, f"a file of the reader names no TOML crate: {TOML_FILES - named}"

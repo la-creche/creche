@@ -490,6 +490,8 @@ module. Do not name the crates `toml` and `toml_parser` in another file.
 - Only `src/tomlfile.rs` and `src/tomlfile/toml10.rs` name the two crates.
 - `bin/tests/test_rust_workspace.py` fails for another `.rs` file that
   holds the text `toml::` or `toml_parser::`. A comment counts too.
+- The test also fails for a line that gives one of the two crates another
+  name, for example `use toml as t;`.
 
 Reason: the module holds the size limits, the TOML 1.0 check and the level
 limit. Code that calls the crate `toml` directly holds none of the three.
