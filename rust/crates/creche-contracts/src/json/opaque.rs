@@ -1324,6 +1324,13 @@ mod tests {
         );
         assert_eq!(Opaque::of(&u128::MAX), Err(WriteError::NoJsonForm));
 
+        // A `RawValue` brings a text of its own, with white space and a
+        // number in another form. A value that kept such a text would not
+        // hold its compact form.
+        let raw = RawValue::from_string(String::from("{ \"a\" : 1.50 }")).unwrap();
+        assert_eq!(Opaque::of(&raw), Err(WriteError::NoJsonForm));
+        assert_eq!(Opaque::of(&[&raw]), Err(WriteError::NoJsonForm));
+
         // The error holds no part of the value.
         let login = Login {
             token: "hunter2",
