@@ -74,6 +74,14 @@ host where something has gone wrong.
   running turns, so it does not.
 - Read the fault files after the grant file lands, not only before.
 - The grant file follows what it should hold, not the family file's diff.
+- `write_grant_file` builds the bytes of the file first. For a file over
+  the cap of contract 04 §1.2, it writes nothing and raises
+  `GrantFileTooLargeError`. The last file stays.
+- A pass turns that refusal into one error of the validation report. The
+  family reads `invalid`, and the pass raises no fault for it.
+- The cap has one source: `GRANT_FILE_MAX_BYTES` of the Rust crate
+  `creche-contracts`. `grants.py` holds a copy with the same name.
+  `bin/tests/test_grant_file_cap.py` fails when the copy differs.
 - `apply_once` creates a sandbox once. `classify()` decides whether a change
   needs a new one.
 - The applied snapshot moves at the end of a successful pass. An interrupted
@@ -235,6 +243,24 @@ Nothing here touches a real sandbox or LiteLLM.
   defines the ledger file (`sandboxes.py`).
 - No contract gives the encoding of the grant file. The reader takes each
   encoding that `json.loads` finds in bytes (`grants.py`).
+- `CONTRACT-QUESTION` in `reconcile.py`, `_refuse_grant_file`. Contract 04
+  §1.2 gives the cap of a grant file. No contract says what a family reads
+  when its grant file is over that cap. A pass adds one error to the
+  validation report, and the family reads `invalid`. Contract 05 §3.3 has
+  no fault code for this case.
+- `CONTRACT-QUESTION` in `reconcile.py`, `WHOLE_FILE`. Contract 01 §7 gives
+  `loc` as a field path. No one field owns the size of a grant file, so
+  that error has the place `<document>`.
+- The cap applies to `write_grant_file` only. `rewrite_digests` writes the
+  file that it read with other digests, and it checks no size
+  (`grants.py`).
+- `apply-once` and `rotate` have no handler for `GrantFileTooLargeError`.
+  For a grant file over the cap, each verb ends with a traceback and exit
+  code 1. `rotate` writes `creds.json` before that step (`apply.py`,
+  `rotate.py`).
+- A pass runs the key step before the grant step. A pass that refuses the
+  grant file can thus mint a key first. It can also send the model and the
+  budget of that file to LiteLLM (`reconcile.py`).
 - No pass manages a sandbox whose ledger row does not read. The row stays
   in the file, and the log names the family at each rewrite
   (`sandboxes.py`).

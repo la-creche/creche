@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
@@ -36,8 +36,10 @@ from agent_family import (
     FamilyFile,
     FamilyState,
     Index,
+    Issue,
     Registry,
     Report,
+    Severity,
     Step,
     SwitchMode,
     classify,
@@ -51,6 +53,7 @@ from .credentials import Credentials
 from .driver import SandboxDriver
 from .egress import EgressConfig
 from .faults import FaultEntry
+from .grants import GrantFileTooLargeError
 from .images import SandboxImages
 from .litellm_keys import SPEND_WINDOW, LiteLLMError, LiteLLMKeys, Spend
 from .mcp_wire import McpReport
@@ -105,6 +108,16 @@ TIMERS_STEP: Final = "write_timers"
 #: Contract 05 §3.3. A generated timer systemd does not report as enabled.
 #: It never fires, and a schedule that does not run leaves no other trace.
 TIMER_ENABLE_FAILED: Final = "timer_enable_failed"
+
+#: The place of an issue that no one field of the family file owns. The
+#: validator of `agent_family` writes the same text for an issue of the
+#: whole file.
+#:
+#: CONTRACT-QUESTION: contract 01 §7 gives `loc` as a field path, and it
+#: has no rule for an issue with no field. The reading taken is the text of
+#: the validator. A reader that takes a field path alone finds no field of
+#: this name. Another text costs this constant and one test.
+WHOLE_FILE: Final = "<document>"
 
 #: Contract 05 §4.3 step 5b. `_replace` calls this with the steps it has
 #: run so far, to publish the status document BEFORE the §5 call. The
@@ -344,7 +357,13 @@ def _converge(
     # each call, and the loop looks every two seconds.
     index = _index_of(registry)
     if _needs(diff, Step.WRITE_GRANTS) or not steps.grants_current(family, index, state_root):
-        steps.write_grants(family, index, state_root, creds)
+        try:
+            steps.write_grants(family, index, state_root, creds)
+        except GrantFileTooLargeError as refusal:
+            return _refuse_grant_file(
+                state_root, report, registry.revision, folded, applied, chaperone, refusal, ran
+            )
+
         ran.append(str(Step.WRITE_GRANTS))
 
     if steps.write_config(family, state_root, *_config_text(registry, family)):
@@ -698,7 +717,7 @@ def _replace(
     return promoted or incoming, (), tuple(ran)
 
 
-# --- the two refusals ---------------------------------------------------------
+# --- the three refusals -------------------------------------------------------
 
 
 def _keep_last_good(
@@ -792,6 +811,42 @@ def _refuse_immutable(
     )
     write_status(paths.status_path(state_root, family.name), doc)
     return ReconcileResult(family.name, doc, (), "refused: immutable field moved")
+
+
+def _refuse_grant_file(
+    state_root: Path,
+    report: Report,
+    revision: str,
+    folded: tuple[FaultEntry, ...],
+    applied: AppliedState | None,
+    chaperone: PepReport,
+    refusal: GrantFileTooLargeError,
+    ran: list[str],
+) -> ReconcileResult:
+    """The grant file of this revision is over the cap of contract 04 §1.2,
+    and the writer wrote nothing.
+
+    The refusal is one more error of the validation report, and the report
+    names the size. The family reads `invalid`, and the last applied grant
+    file keeps serving, as for each other file that a pass cannot apply
+    (contract 05 §3.1). `ran` holds each step that ran before the refusal.
+
+    CONTRACT-QUESTION: contract 04 §1.3 rule 1 says that `caregiver` writes
+    no grant file that it knows to be wrong. No contract says what the
+    family reads then. The reading taken is contract 01 §7 rule 3: an
+    error stops the apply, and the last good state stays. The other
+    reading is a fault, and contract 05 §3.3 has no code for it. A new code
+    costs each reader with a closed set of codes."""
+    issue = Issue(Severity.ERROR, WHOLE_FILE, str(refusal))
+    refused = Report(
+        family=report.family,
+        file=report.file,
+        issues=(*report.issues, issue),
+        state=FamilyState.INVALID,
+    )
+    write_validation_report(paths.validation_path(state_root, report.family), refused)
+    kept = _keep_last_good(state_root, report.family, refused, revision, folded, applied, chaperone)
+    return replace(kept, ran=tuple(ran), note="refused: grant file over the cap")
 
 
 # --- publishing ---------------------------------------------------------------
