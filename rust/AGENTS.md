@@ -1349,8 +1349,8 @@ Rules for a macro in a listed file:
   `assert_ne!`. In each other place of the file, return an error.
 - No check of the script finds an assertion macro outside such a module.
   The lint `panic_in_result_fn` of the lint gate refuses one only when its
-  function returns `Result`. In each other function, only the reviewer
-  can refuse it.
+  function returns `Result`. In each other function, the reviewer refuses
+  it.
 
 Reason for the list: the bodies of `format!`, `vec!`, `write!` and
 `writeln!` hold no condition. They thus hold no side that the report hides.
@@ -1801,10 +1801,10 @@ adds a crate:
     call with no path in the listed file then names that macro. A macro of
     a module below `#[macro_use]` gives the same result. So does a macro
     of another crate below `#[macro_use] extern crate`.
-  - In `chaperone-policy`, check 4 puts each `.rs` file of the `src`
-    directory in the list. Case 3b thus refuses each macro that a file of
-    that directory defines. No check refuses a `#[macro_use] extern crate`
-    line.
+  - In `chaperone-policy`, check 4 fails for a `.rs` file of the `src`
+    directory that is not in the list. Each `.rs` file of that directory is
+    thus a listed file, and case 3b refuses each macro that it defines. No
+    check refuses a `#[macro_use] extern crate` line.
   - The check reads the form that `cargo fmt` writes. Text in another form
     can hide a call, for example a space before the `!` or a comment after
     it. `cargo fmt` does not format an item below `#[rustfmt::skip]`.
