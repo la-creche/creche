@@ -35,6 +35,7 @@ from attendance.wire import (
     MAX_EVENT_DEPTH,
     MAX_LINE_BYTES,
     REFUSAL_BUDGET,
+    STOP_GRACE_MS,
     EventLine,
     FailedLine,
     FatalLine,
@@ -47,11 +48,13 @@ from attendance.wire import (
     Ready,
     Refusal,
     SettledLine,
+    StoppedLine,
     cap_event,
     encode,
     host_reason,
     parse,
     read_usage,
+    stop_process,
 )
 from attendance_harness import (
     FAMILY,
@@ -65,6 +68,9 @@ from attendance_harness import (
 SESSION = "owui-3f2a9c41"
 TURN = "01JBQ7WZ0X4T9V6K2H8M3N5PQR"
 ENV_FILE = PLAYPEN_ENV
+
+# The id that the host gives one `stop_process`. The answer holds it again.
+STOP_REQUEST = "01JBQ7WZ0X4T9V6K2H8M3N5PQS"
 
 # Contract 03 §10 rule 3's 120 seconds, shrunk so a test watches it pass.
 IDLE_TTL_S = 0.05
@@ -298,6 +304,58 @@ def test_parse_reads_each_playpen_line() -> None:
     assert settled.leaf_id == "e5f6"
     assert isinstance(failed, FailedLine)
     assert failed.reason is PlaypenReason.PROCESS_DIED
+
+
+def _stopped(**fields: object) -> str:
+    """One `process_stopped` line. A field of `fields` replaces a good one."""
+    good = {"type": "process_stopped", "request": STOP_REQUEST, "session": SESSION, "held": True}
+
+    return json.dumps({**good, **fields})
+
+
+def test_a_stop_holds_a_request_only_when_the_caller_gives_one() -> None:
+    plain = stop_process(SESSION)
+    asked = stop_process(SESSION, 250, STOP_REQUEST)
+
+    assert plain == {"type": "stop_process", "session": SESSION, "grace_ms": STOP_GRACE_MS}
+    assert encode(asked) == (
+        f'{{"type":"stop_process","session":"{SESSION}","grace_ms":250,'
+        f'"request":"{STOP_REQUEST}"}}\n'
+    )
+
+
+def test_parse_reads_the_answer_to_a_stop() -> None:
+    held = parse(_stopped())
+    idle = parse(_stopped(held=False, later="a newer playpen"))
+
+    assert held == StoppedLine(request=STOP_REQUEST, session=SESSION, held=True)
+    assert idle == StoppedLine(request=STOP_REQUEST, session=SESSION, held=False)
+
+
+@pytest.mark.parametrize(
+    "request_id",
+    ["", "not a ulid", STOP_REQUEST.lower(), STOP_REQUEST + "0", STOP_REQUEST + "\n", 7, None],
+)
+def test_parse_refuses_a_stop_answer_whose_request_is_no_ulid(request_id: object) -> None:
+    assert parse(_stopped(request=request_id)) is Refusal.MALFORMED
+
+
+@pytest.mark.parametrize("session", ["", "..", "../x", "a b", SESSION + "\n", "s" * 129, 7, None])
+def test_parse_refuses_a_stop_answer_whose_session_is_no_session_id(session: object) -> None:
+    assert parse(_stopped(session=session)) is Refusal.MALFORMED
+
+
+@pytest.mark.parametrize("held", [1, 0, 1.0, "true", None, [True]])
+def test_parse_refuses_a_stop_answer_whose_held_is_no_boolean(held: object) -> None:
+    assert parse(_stopped(held=held)) is Refusal.MALFORMED
+
+
+@pytest.mark.parametrize("absent", ["request", "session", "held"])
+def test_parse_refuses_a_stop_answer_with_an_absent_field(absent: str) -> None:
+    record = json.loads(_stopped())
+    del record[absent]
+
+    assert parse(json.dumps(record)) is Refusal.MALFORMED
 
 
 def test_an_unknown_failure_reason_reads_as_internal() -> None:
@@ -786,6 +844,24 @@ async def test_session_opened_never_spends_the_refusal_budget(tmp_path: Path) ->
     assert link.is_open is True
     assert events.lost == []
     assert events.opened[0].resident is True
+    await link.close()
+
+
+async def test_a_stop_answer_never_spends_the_refusal_budget(tmp_path: Path) -> None:
+    """The host knows the line. A channel stays open after more answers than
+    the refusal budget holds."""
+    events = Recorder()
+    link, playpens = make_link(tmp_path, events)
+    await link.ensure_open(dial(), 7)
+
+    for _ in range(REFUSAL_BUDGET + 2):
+        await playpens[SANDBOX].send_raw(_stopped())
+
+    await playpens[SANDBOX].open_session(SESSION)
+    await asyncio.wait_for(_until(lambda: bool(events.opened)), 2.0)
+
+    assert link.is_open is True
+    assert events.lost == []
     await link.close()
 
 

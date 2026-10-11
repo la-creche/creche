@@ -32,7 +32,7 @@ mod yaml;
 mod zones;
 
 pub use classify::{Diff, Direction, FieldChange, Landing, Step, SwitchMode, classify};
-pub use cli::{EXIT_INVALID, EXIT_OK, EXIT_USAGE, run};
+pub use cli::{EXIT_INVALID, EXIT_OK, EXIT_USAGE, NAME, entry, run};
 pub use crossref::{HostFacts, Index, check_family, check_server};
 pub use parse::{DOCUMENT, parse_family, parse_server};
 pub use registry::{Registry, load_registry, revision_of};

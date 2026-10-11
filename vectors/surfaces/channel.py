@@ -44,6 +44,9 @@ SESSION: Final = "tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK"
 TURN: Final = "01JBQ7WZ0X4T9V6K2H8M3N5PQR"
 SANDBOX: Final = "chat-s1"
 
+#: The id that the host gives one `stop_process`. The answer holds it again.
+STOP_REQUEST: Final = "01JBQ7WZ0X4T9V6K2H8M3N5PQT"
+
 #: Deeper than any supported interpreter parses before it stops: a JSON
 #: reader here gives up near 10,000 levels on Python 3.12 and 3.13 and near
 #: 120,000 on 3.14. The line still fits under `MAX_LINE_BYTES`.
@@ -555,7 +558,7 @@ LINES: Final[tuple[Line, ...]] = (
                 '"entries":[{"id":"e-1","role":"user","text":"',
                 1,
             ),
-            ("a", wire.MAX_ENTRY_CHARS - 1),
+            ("a", wire.MAX_ENTRY_BYTES - 1),
             ("\u00e9\u00e9", 1),
             ('"}]}', 1),
         ),
@@ -582,6 +585,23 @@ LINES: Final[tuple[Line, ...]] = (
     _l("fatal-reason-number", _line(type="fatal", reason=5, message=5)),
     _l("fatal-message-4097", _line(type="fatal", message="m" * 4097)),
     _l("fatal-mount-dir-unset", _line(type="fatal", reason="mount_dir_unset")),
+    # --- process_stopped (§4.5) ---
+    _l(
+        "stopped-full",
+        _line(type="process_stopped", request=STOP_REQUEST, session=SESSION, held=True),
+    ),
+    _l(
+        "stopped-request-not-a-ulid",
+        _line(type="process_stopped", request="not a ulid", session=SESSION, held=True),
+    ),
+    _l(
+        "stopped-session-not-an-id",
+        _line(type="process_stopped", request=STOP_REQUEST, session="../x y", held=True),
+    ),
+    _l(
+        "stopped-held-not-a-boolean",
+        _line(type="process_stopped", request=STOP_REQUEST, session=SESSION, held=1),
+    ),
     # --- the type field (§13 rule 2) ---
     _l("type-missing", "{}"),
     _l("type-missing-with-fields", _line(session=SESSION, nonce="x")),
@@ -978,6 +998,7 @@ BUILDS: Final[tuple[Build, ...]] = (
     Build("abort", "abort", {"session": SESSION, "turn": TURN}),
     Build("stop-process-default", "stop_process", {"session": SESSION}),
     Build("stop-process-grace", "stop_process", {"session": SESSION, "grace_ms": 0}),
+    Build("stop-process-request", "stop_process", {"session": SESSION, "request": STOP_REQUEST}),
     Build("ping", "ping", {"nonce": "5f3a9c1e"}),
     Build("ping-empty-nonce", "ping", {"nonce": ""}),
     Build("shutdown-default", "shutdown", {}),

@@ -56,6 +56,7 @@ from .grammar import (
     SKILL_NAME,
     SURVEY_TOOL,
     TOOL_NAME,
+    TOOL_NAME_FORM,
     EgressProblem,
     Kind,
     Mode,
@@ -414,7 +415,7 @@ def _check_named_tools(
 
         seen.add(tool)
         if TOOL_NAME.fullmatch(tool) is None:
-            issues.error(at, f"'{tool}' is not a tool name; use [A-Za-z][A-Za-z0-9_-]*")
+            issues.error(at, f"'{tool}' is not a tool name; use {TOOL_NAME_FORM}")
             continue
 
         if declared is not None and tool not in declared.tool_names():

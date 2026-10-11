@@ -134,8 +134,15 @@ You need rustup. It installs the toolchain at the first cargo command under
      names the two forms that pass.
 3. `cargo fmt --all --check`.
 4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
-5. `cargo deny --locked check`, where `cargo-deny` is on `PATH`.
+5. `cargo deny --locked check bans licenses sources`, where `cargo-deny` is
+   on `PATH`.
 6. `cargo test --workspace --locked`, with `--tests` only.
+
+With the flag `--advisories`, the script runs none of these steps. It runs
+`cargo deny --locked check advisories` and no other command.
+
+The script takes one flag at most. It refuses a second word with the usage
+line, and it then runs no step.
 
 The panic check and the public-field check read each `.rs` file under
 `crates/`. Both checks use one definition of test code:
@@ -192,7 +199,9 @@ Step 5 needs the program `cargo-deny`. rustup does not install it.
 - In CI, the script fails without `cargo-deny`. The `rust` job installs it
   before the script runs. `.github/workflows/gate.yml` names the version.
 - To run step 5 on your machine, install that version of `cargo-deny`.
-- Step 5 reads the advisory database from the network.
+- Step 5 does not make the `advisories` check of `cargo deny`. A workflow
+  makes that check one time a day, with the flag `--advisories`. "The check
+  of the locked crates" below has the rule.
 
 `bin/quality-gate.sh` starts `bin/rust-gate.sh` only for a change that
 touches `rust/`. `bin/AGENTS.md` has the table. Every path under `rust/`
@@ -605,6 +614,26 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
+A stop of a pi process can get an answer. `stop_process` can hold a
+`request`, which is a ULID that the host makes. Only a playpen that lists
+`stop_ack` in the `caps` of `ready` answers such a stop. The answer is one
+`process_stopped` line that holds the same id. A stop with no `request` gets
+no answer.
+
+| Item | What it is |
+|---|---|
+| `host::StopProcess` | The stop. `with_request` gives it the id. |
+| `playpen::ProcessStopped` | The answer, as the playpen writes it. |
+| `claim::StoppedLine` | The answer, as the host reads it. It holds a `Ulid` and a `SessionId`, because the Python host refuses each other text in the two fields. |
+| `vocabulary::Cap::StopAck` | The name `stop_ack` in the `caps` of `ready`. A playpen that lists it answers such a stop. |
+
+`channel.rs` holds `MAX_LOG_BYTES`, the cap of the free text of a line.
+`claim` and `playpen` read that one constant.
+
+The host side cuts three kinds of text: a `message`, the text of an entry
+and a reason name. Each cut counts bytes of UTF-8, as the Python host does.
+Each cut is between two characters. `Text::cut_bytes` is that cut.
+
 Rule 1 names a raw `serde` type. The `channel` module does not hold rule 1
 yet ("Known gaps").
 Its raw type is `channel::json::Json`, from a reader of its own. The Python
@@ -858,6 +887,17 @@ to 5 give a Rust service the Python behavior on purpose.
 14. **For a write to stdout or to stderr, use only `log::out_line`,
     `log::err_line` and the log macros.**
     Reason: a closed stream makes `println!` and `eprintln!` panic.
+    The exit status of some commands tells the caller that a write to
+    stdout failed. `log::out_line` returns no error when its write fails,
+    so such a command cannot use that function for stdout. The list below
+    applies to that command:
+    - The command locks stdout and stderr. It gives the two locks to one
+      function as writers.
+    - That function writes each of its texts with `write_all` or with
+      `writeln!` on a writer.
+    - For a write that fails, `write_all` and `writeln!` return the error.
+      They do not panic.
+    - The command uses no `println!` and no `eprintln!`.
 15. **State the `AtShutdown` of each `Command`. Select `Finish` when the
     step of the child must end whole.**
     Reason: `subprocess.run` of Python runs to its end at a stop of the
@@ -1478,15 +1518,30 @@ To make the fifth check on your machine, for example before a merge:
 
 ### The check of the locked crates
 
-`deny.toml` is the policy for the crates of `Cargo.lock`.
-`cargo deny --locked check` makes four checks against it:
+`deny.toml` is the policy for the crates of `Cargo.lock`. `cargo deny` makes
+four checks against it:
 
-| Check | What fails |
-|---|---|
-| `licenses` | A crate that needs a license outside this list: `MIT`, `Apache-2.0`, `BSD-3-Clause`, `Unicode-3.0`. |
-| `sources` | A crate from a registry that is not crates.io. A crate from a git repository. |
-| `bans` | Two versions of one crate. A dependency with the version `*`. |
-| `advisories` | A crate with a vulnerability advisory or with an `unmaintained` advisory. A direct dependency with an `unsound` advisory. A version that its author removed from crates.io. |
+| Check | What fails | Where it runs |
+|---|---|---|
+| `licenses` | A crate that needs a license outside this list: `MIT`, `Apache-2.0`, `BSD-3-Clause`, `Unicode-3.0`. | Step 5 of `bin/rust-gate.sh`, for each change. |
+| `sources` | A crate from a registry that is not crates.io. A crate from a git repository. | Step 5, for each change. |
+| `bans` | Two versions of one crate. A dependency with the version `*`. | Step 5, for each change. |
+| `advisories` | A crate with a vulnerability advisory or with an `unmaintained` advisory. A direct dependency with an `unsound` advisory. A version that its author removed from crates.io. | `bin/rust-gate.sh --advisories`, one time a day. |
+
+The gate makes three of the four checks: `bans`, `licenses` and `sources`.
+Each one reads the locked crates and `deny.toml`. Its result changes only
+when the tree changes. A pull request that fails one of the three does not
+merge.
+
+The gate does not make the `advisories` check. That check reads the advisory
+database, and the database changes while the tree stays the same. A gate
+with this check can fail a change that touches no dependency. The owner of
+the repository decided that a workflow with a schedule makes this check.
+"The advisory run" below has its rules.
+
+`bin/rust-gate.sh` names the checks in two lists: one for the gate and one
+for the flag `--advisories`. `bin/tests/test_rust_gate.py` fails when a check
+of `deny.toml` is in no list, and when a check is in both lists.
 
 - `bin/tests/test_rust_workspace.py` pins each table of `deny.toml`, entry
   for entry.
@@ -1507,8 +1562,55 @@ To make the fifth check on your machine, for example before a merge:
   each run. For a version that its author removed, it reads only the copy
   of the crates.io index that cargo keeps on the machine. "Known gaps" has
   the limits of that copy.
-- The check does not read the code of a crate. A crate that passes is not a
-  crate that a person here reviewed.
+- No check reads the code of a crate. A crate that passes is not a crate
+  that a person here reviewed.
+
+#### The advisory run
+
+`.github/workflows/advisories-daily.yml` runs `bin/rust-gate.sh --advisories`
+one time a day, on the newest commit of `main`. The run makes the
+`advisories` check and no other check.
+
+The job installs the toolchain that `rust-toolchain.toml` names. It takes
+`cargo-deny` with the two constants of the `rust` job.
+`bin/tests/test_gate_workflow.py` holds that step equal in the three workflow
+files.
+
+The job blocks no merge and no release, because the check `gate` does not
+need it. A pull request that adds a crate with an advisory can thus merge.
+The next run of the job is then red.
+
+The job keeps no cache. Its runner thus holds no copy of the crates.io index
+before the run, and cargo writes that copy in the run itself.
+
+A red run reaches a person through GitHub only. "The nightly job" above says
+which account gets the notification of a failed scheduled run. The same
+applies to this workflow.
+
+When a run is red:
+
+1. Read the log of the run. It names each crate that failed. It also names
+   the cause: an advisory, or a version that its author removed.
+2. Change the lock file in a pull request. Move the crate to a version that
+   passes: run `cargo update -p <crate>` in `rust/`. If no such version
+   exists, remove the dependency.
+3. If neither change is possible, ask the owner of the repository.
+   `deny.toml` ignores no advisory, and `bin/tests/test_rust_workspace.py`
+   pins that.
+4. After the merge, start the workflow by hand on `main`.
+
+Start the workflow by hand on `main` only. The release executor reads each
+workflow run on the head of a merged pull request, and each one must be a
+success. On another ref, the workflow thus skips the job that checks, and
+the run is a success. Do not cancel such a run.
+
+To make the check on your machine, for example before a pull request that
+adds a crate:
+
+1. Install the version of `cargo-deny` that `.github/workflows/gate.yml`
+   names.
+2. Run `bin/rust-gate.sh --advisories`. Without `cargo-deny` on `PATH`, the
+   script fails on each machine.
 
 ## Known gaps
 
@@ -1539,11 +1641,6 @@ To make the fifth check on your machine, for example before a merge:
     `2750` of the directory of a socket. `atomic::DirMode` of
     `creche-runtime` holds it, and `http::server` holds a copy. No packet
     has that change yet.
-  - "The panic rule", clauses 2, 3 and 7. The program `agent-family` does
-    not hold them. Its `main` sets no panic hook and parses the command
-    line itself. Its library has no entry function that catches a panic.
-    No packet has this change yet. `creche-probe` of `creche-testkit` is
-    the other program of the workspace, and it holds the three clauses.
   - The address of another service. `config::chaperone` and
     `config::caregiver` define the port of another service as a constant.
     `config::endpoints` holds the names of the variables. The packet that
@@ -1566,8 +1663,7 @@ To make the fifth check on your machine, for example before a merge:
     `crates/creche-vectors/AGENTS.md` has the cause and the change that
     removes the copy. No packet has that part yet.
   - Tables of differences. Some tests still have one. Add no table and no
-    row. The packets `decisions-tables-*`, `decisions-ids` and
-    `decisions-runtime-tables` delete them.
+    row. The packets `decisions-tables-*` and `decisions-ids` delete them.
   - "The differential test". Two parts of the test of `token` in
     `creche-runtime` do not hold the rule. The test walks no vector of
     `runtime.bearer.chaperone`, and the constant `NO_PORT_HERE` names that
@@ -1607,18 +1703,19 @@ To make the fifth check on your machine, for example before a merge:
   costs one step with a token that can write.
 - GitHub can delay or drop a run of the nightly job. It turns the schedule of
   a public repository off after 60 days with no activity in the repository.
-- Two checks do not read four crates yet: `agent-family`,
-  `creche-contracts`, `creche-runtime` and `creche-testkit`. Each check has
-  a list of its own with the four names. No list names a new crate, so both
-  checks read a new crate from its first commit. Add no name to a list.
-  - The public-field check of `bin/rust-gate.sh`. Packet
-    `decisions-runtime-private` deletes `creche-runtime` and
-    `creche-testkit` from the list of the script. Packet
-    `decisions-private-fields-gate` deletes that list.
+  The same applies to the advisory run.
+- Two checks still skip some crates. Each check has a list of its own
+  with the crates that it skips. No list names a new crate, so both checks
+  read a new crate from its first commit. Add no name to a list.
+  - The public-field check of `bin/rust-gate.sh`. Its list has four names:
+    `agent-family`, `creche-contracts`, `creche-runtime` and
+    `creche-testkit`. Packet `decisions-runtime-private` deletes
+    `creche-runtime` and `creche-testkit` from the list of the script.
+    Packet `decisions-private-fields-gate` deletes that list.
   - The table test of `bin/tests/test_rust_workspace.py`. In each `.rs`
     file, it looks for the name `DEVIATIONS` and for a struct whose name
-    starts with `Deviation`. Packet `decisions-runtime-tables` deletes
-    `creche-runtime` from the list of the test. Packet
+    starts with `Deviation`. Its list has three names: `agent-family`,
+    `creche-contracts` and `creche-testkit`. Packet
     `decisions-tables-guard` deletes that list.
   - The public-field check reads the source text and expands no macro. It
     does not find a field that a macro adds to a struct. It finds a struct
@@ -1732,13 +1829,25 @@ To make the fifth check on your machine, for example before a merge:
   example the raw forms of `status`. The other reading makes each such
   field private too. If the owner selects it, change the third sentence of
   rule 12.
-- The owner did not decide if the advisory check blocks a merge. Today it
-  does: step 5 of `bin/rust-gate.sh` makes the four checks. A change with no
-  new dependency can thus fail on a new advisory. The other choice is an
-  advisory check on a schedule.
-- `release.yml` runs the same step after a merge that touches `rust/` or
-  `vectors/`. A new advisory there fails the `rust` job, and that push gets
-  no tag. The next push that passes gets the tags of both.
+- The `advisories` check blocks no merge and no release. A pull request can
+  add a crate that has an advisory, and a crate of the lock file can get a
+  new advisory. The next advisory run is the first check that finds either
+  one. Until then, `main` holds that crate, and a release can hold it too.
+- No job of the gate runs `bin/rust-gate.sh --advisories` with the real
+  `cargo-deny`. The tests of that mode use a fake `cargo`. Only a run of the
+  advisory workflow proves a change to the mode. After such a change merges,
+  start the workflow by hand on `main`.
+- This `CONTRACT-QUESTION` comment is open in
+  `.github/workflows/advisories-daily.yml`: no rule says how a red advisory
+  run must reach a person, and no rule names that person. The workflow holds
+  the read-only token and sends nothing by itself. A red run thus reaches a
+  person only through the notification of GitHub and through the Actions
+  page. No job of this repository reads the result. A change costs one step
+  with a token that can write.
+- This `CONTRACT-QUESTION` comment is open in the same file: the decision
+  for the `advisories` check names a schedule and no period. The workflow
+  starts one time a day. A change costs the `cron` line of the workflow and
+  its pin in `bin/tests/test_gate_workflow.py`.
 - The check of the locked crates reads four targets. A crate that only a
   build for another target uses gets no check, for example a build for Linux
   with musl or for Windows. `Cargo.lock` holds such crates.
@@ -1749,18 +1858,18 @@ To make the fifth check on your machine, for example before a merge:
   on the machine. With a complete `Cargo.lock`, cargo does not read
   crates.io again for a crate that the copy holds. A version that its
   author removes after cargo wrote the copy thus passes the check.
-- The `rust` job keeps that copy in its cache. The key of the cache holds a
-  hash of the toolchain file and of the lock file. A run can thus read the
-  copy that an earlier run saved, until one of the two files changes.
-  `bin/tests/test_gate_workflow.py` pins the path of the copy and the key.
-  The other choice is a `rust` job that keeps no copy of the index in its
-  cache. cargo then reads crates.io at each run.
+- The job of the advisory run keeps no cache, so its runner has no copy of
+  the index before the run. cargo then reads crates.io for each locked crate
+  in that run. `bin/tests/test_gate_workflow.py` fails when the job gets a
+  cache step. The limit of the copy thus applies to a run of
+  `bin/rust-gate.sh --advisories` on a development machine. No run on a
+  runner measured yet that the copy of the job is new.
 - `cargo-deny` prints the warning `index-failure` for a crate when it cannot
   read the index entry of that crate. The check then cannot find a removed
-  version of that crate. The warning does not fail step 5. An advisory for
-  that crate still fails the check. The flag `-D index-failure` of
-  `cargo deny check` makes the warning an error. Step 5 does not have the
-  flag.
+  version of that crate. The warning does not fail the `advisories` check.
+  An advisory for that crate still fails the check. The flag
+  `-D index-failure` of `cargo deny check` makes the warning an error. The
+  script does not give the flag.
 - No release uses Rust code.
 - The process-level suite judges one Rust program today: `creche-probe`,
   which is no service.
@@ -1857,12 +1966,6 @@ To make the fifth check on your machine, for example before a merge:
 - No check holds the rules of "The rules for a service", except a part of
   rule 2 and a part of rule 13. A service crate that breaks one of the
   other rules builds and passes the lint gate.
-- `family` and `server` use the id types of `ids`. They refuse three texts
-  that the Python package `agent_family` accepts. Each vector with such a
-  text is a row of `DEVIATIONS` in `crates/agent-family/tests/vectors.rs`.
-  1. A tool name of more than 64 bytes.
-  2. The name of an environment variable of more than 64 bytes.
-  3. A package version with `+`, with `-` or of more than 64 bytes.
 - `crates/agent-family/AGENTS.md` lists the `CONTRACT-QUESTION` comments
   and the known gaps of the family file and of the server file.
 - This `CONTRACT-QUESTION` comment is open in
@@ -1881,13 +1984,13 @@ To make the fifth check on your machine, for example before a merge:
      Python, `$` also matches before a final newline. Each Python copy
      refuses a final newline, and the type refuses it.
   2. `ToolName`, contract 01 §3.4 and contract 01b §5. The contracts give no
-     cap. The three Python copies have no cap, a cap of 128 and a cap of 64.
-     The type has the cap of 64.
-  3. `EnvName`, contract 01b §4.1. The contract gives no grammar. One Python
-     copy has no cap, and one has a cap of 64. The type has the cap of 64.
-  4. `PackageVersion`, contract 01b §3.1. The contract gives no grammar. One
-     Python copy permits `+` and `-` and has no cap. The type takes the other
-     copy: no `+`, no `-` and a cap of 64.
+     cap. Two Python copies have a cap of 64, and one has a cap of 128. The
+     type has the cap of 64.
+  3. `EnvName`, contract 01b §4.1. The contract gives no grammar. Each of
+     the two Python copies has a cap of 64. The type has that cap.
+  4. `PackageVersion`, contract 01b §3.1. The contract gives no grammar.
+     Each of the two Python copies permits no `+` and no `-` and has a cap
+     of 64. The type has that grammar.
   5. `OwuiChatId`, contract 02 §2. The contract gives no cap for a chat id.
      The Python door refuses a chat id of more than 123 bytes, because the
      session id `owui-<chat id>` has 128 bytes or less. The type has that
@@ -2057,11 +2160,7 @@ To make the fifth check on your machine, for example before a merge:
   14. `TurnView`, contract 02 §4.4. The Python code writes the empty text
       as the sandbox of a turn that no sandbox served. The type does the
       same.
-  15. `ServiceNote::IllegalTransition`, contract 02 §4.3 and §8.1. No
-      contract names the note for a refused move of a turn. The Python
-      `attendance` writes that note only for a move that its state table
-      refuses. The type takes each pair of turn states.
-  16. `StreamRecord`, contract 02 §8.1. The contract says that the set of
+  15. `StreamRecord`, contract 02 §8.1. The contract says that the set of
       kinds is closed. It does not say what a reader of the stream does
       with a record of another kind. The type has no variant for such a
       record, so a reader that makes the type refuses it. The Python
@@ -2135,17 +2234,19 @@ To make the fifth check on your machine, for example before a merge:
   1. `parse_object`, contract 02 §3 rule 3. The contract says that a body is
      JSON. It does not say if a reader takes what `json.loads` of Python
      takes past strict JSON in UTF-8. Each Python client takes a part of it.
-     Difference 1 and difference 6 below say which part. The reader is
+     Difference 1 and difference 4 below say which part. The reader is
      `serde_json`, which refuses each part.
   2. `DEPTH_MAX`, contract 02 §3 rule 3. The contract gives a body no nesting
      limit. `parse_object` reads 127 levels, the limit of `serde_json`. The
      tree of the module stops at 128 levels, for a deserializer with no
      limit.
-  3. `int`, contracts 02, 04 and 05. No contract gives a count a range. The
-     Python readers keep an integer of each size. The reader gives an `i64`,
-     and it reads a larger integer as 0.
-- The module `untrusted` differs from the Python helpers on purpose in six
-  ways. Each one is a row of `DEVIATIONS` in the test of the module.
+  3. `number`, contracts 02, 04 and 05. No contract gives a zero a sign. The
+     reader keeps the sign that `serde_json` gives. Difference 3 below says
+     what that sign is and what a change costs.
+- The module `untrusted` differs from the Python helpers on purpose in four
+  ways. The test of the module holds each one. A row of `DEVIATIONS` holds
+  each vector of `runtime.parse_object.noticeboard` on which the two sides
+  differ. A plain test holds each other input.
   1. An answer is strict JSON in UTF-8, with no byte order mark. It holds no
      `NaN`, no `Infinity`, no number outside the range of a float and no half
      of a surrogate pair. Each Python client reads `NaN`, `Infinity`, such a
@@ -2155,20 +2256,24 @@ To make the fifth check on your machine, for example before a merge:
      a half. The three doors give `json.loads` the text of `httpx`, and they
      refuse the first three.
   2. An answer nests 127 levels at most.
-  3. `int` reads an integer that no `i64` holds as 0.
-  4. `number` reads the integer `-0` as `-0.0`. Python reads it as `0.0`.
-  5. `text` reads a field that is no text as the empty text. `_text` of the
-     delegate client of the chaperone reads it as `None`.
-  6. An answer holds no byte that is not UTF-8. The three doors read such a
+  3. `number` reads the integer `-0` as `-0.0`, and Python reads it as
+     `0.0`. `serde_json` gives the text `-0` and the text `-0.0` as one
+     float, so the reader cannot tell the two apart. No writer of the
+     platform writes the text `-0`. `json::Number` reads the text of a token
+     and tells the two apart. The reader can use that type after the module
+     reads a text through `json`. No packet has that change yet.
+  4. An answer holds no byte that is not UTF-8. The three doors read such a
      byte as U+FFFD, because `httpx` makes a text of the body first. The
      three other clients refuse the answer, and `parse_object` refuses it
      too. The port of a door gives `parse_object` the lossy text of the body,
      or it names the difference in its pull request.
 
   One more row is a vector on which the two sides accept the same document.
-  The raw type of the test keeps an integer past 64 bits as a float.
+  The raw type of the test keeps an integer past 64 bits as a float. `int`
+  reads such an integer as 0, and the Python helpers keep each digit of it.
+  Such an integer is not strict JSON. A plain test holds that result.
 - `untrusted::parse_object` refuses the whole answer for difference 1, for
-  difference 2 and for difference 6. The Python services write the JSON body
+  difference 2 and for difference 4. The Python services write the JSON body
   of an answer with the JSON response class of their web framework. That
   class writes no `NaN`, no `Infinity` and no half of a surrogate pair. It
   writes an integer of each size. The owner of the crate decides if the
@@ -2202,9 +2307,10 @@ To make the fifth check on your machine, for example before a merge:
   2. `claim::MAX_EVENT_DEPTH`, contract 03 §13 rule 6. The contract gives no
      nesting limit for an event. The Python host keeps only the type of an
      event that nests more than 64 levels. The reader does the same.
-  3. `claim::MAX_LOG_CHARS`, contract 03 §8. The contract caps a message at
-     4 KiB. The Python host cuts at 4096 code points. The reader does the
-     same.
+  3. `text::Text::cut_bytes`, contract 03 §8. The contract gives each cap
+     of a text in bytes. It gives no count of bytes for a lone surrogate.
+     The reader counts three bytes for it and keeps it in the text, as the
+     Python host does.
   4. `host::ConfigRev` and `host::EntryId`, contract 03 §4.1. The contract
      gives no grammar. The types take the rule of the playpen: 1 to 200
      bytes.
@@ -2218,6 +2324,10 @@ To make the fifth check on your machine, for example before a merge:
   8. `claim::Event`, contract 03 §13 rule 5. The contract names no event that
      the host cannot record. The Python host keeps only the type of an event
      with a lone surrogate. The reader does the same.
+  9. `HostMessage::parse`, contract 03 §4.5. The contract does not say what
+     the playpen does with a `request` of `stop_process` that is no text. The
+     reader refuses the line, as it refuses a text that is no ULID. An absent
+     `request` and `null` give a stop with no id.
 - The host side of `channel` accepts what the Python host accepts, also
   where a stricter reading of contract 03 is possible. The owner decides each
   case. Four examples:
@@ -2230,7 +2340,7 @@ To make the fifth check on your machine, for example before a merge:
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of
   the other side. `HostMessage::parse` is stricter than the TypeScript
-  playpen in nine places:
+  playpen in ten places:
   1. A required number with a fraction or an exponent is a fault: `600.0`.
      The same applies to `grace_ms`. The playpen reads `600.0` as 600.
   2. A sandbox number has 9 digits at most.
@@ -2244,6 +2354,8 @@ To make the fifth check on your machine, for example before a merge:
      float.
   9. A line with an integer of more than 4300 digits is not JSON, in each
      field. The playpen reads that integer as a float.
+  10. A `request` of `stop_process` is a ULID or `null`. Each other value is
+      a fault. The playpen does not read that field.
 - `HostMessage::parse` and the playpen accept two lines with different
   values:
   1. An empty `model` is no model. The playpen keeps the empty text.

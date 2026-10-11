@@ -135,6 +135,9 @@ def _string(sample_id: str, char: str, count: int) -> Sample:
 
 
 #: One JSON value for each kind that a reader meets, and each edge of a kind.
+#: Each text is strict JSON, as "JSON" of `rust/AGENTS.md` states it. A text
+#: outside those rules is an input for the reader of a whole text: `DOCUMENTS`
+#: holds such texts.
 SAMPLES: Final[tuple[Sample, ...]] = (
     # --- a string ---
     Sample("string", '"family"'),
@@ -146,7 +149,6 @@ SAMPLES: Final[tuple[Sample, ...]] = (
     _string("string-501", "a", CUT + 1),
     _string("string-600", "a", 600),
     _string("string-600-outside-the-bmp", "\U0001f600", 600),
-    Sample("string-lone-surrogate", r'"\ud800"'),
     # --- an integer ---
     Sample("integer", "7"),
     Sample("integer-zero", "0"),
@@ -154,11 +156,7 @@ SAMPLES: Final[tuple[Sample, ...]] = (
     Sample("integer-i64-max", str(2**63 - 1)),
     Sample("integer-i64-max-plus-one", str(2**63)),
     Sample("integer-i64-min", str(-(2**63))),
-    Sample("integer-i64-min-minus-one", str(-(2**63) - 1)),
     Sample("integer-u64-max", str(2**64 - 1)),
-    Sample("integer-u64-max-plus-one", str(2**64)),
-    Sample("integer-30-digits", "123456789012345678901234567890"),
-    Sample("integer-400-digits", parts=(("9", 400),)),
     # --- a bool, a float, null ---
     Sample("bool-true", "true"),
     Sample("bool-false", "false"),
@@ -166,10 +164,6 @@ SAMPLES: Final[tuple[Sample, ...]] = (
     Sample("float-whole", "2.0"),
     Sample("float-negative-zero", "-0.0"),
     Sample("float-exponent", "1e3"),
-    Sample("float-too-large", "1e400"),
-    Sample("float-nan", "NaN"),
-    Sample("float-infinity", "Infinity"),
-    Sample("float-negative-infinity", "-Infinity"),
     Sample("null", "null"),
     # --- an object ---
     Sample("object", '{"a":1,"b":"two"}'),
@@ -184,12 +178,8 @@ SAMPLES: Final[tuple[Sample, ...]] = (
     Sample("list-long-string", parts=(('["', 1), ("a", 600), ('","b"]', 1))),
 )
 
-#: Two objects that only a helper for one field gets: no field, and the
-#: field two times.
-FIELD_ONLY: Final[tuple[Sample, ...]] = (
-    Sample("absent", "{}"),
-    Sample("key-two-times", f'{{"{FIELD}":"first","{FIELD}":"last"}}'),
-)
+#: The one object that only a helper for one field gets: no field.
+FIELD_ONLY: Final[tuple[Sample, ...]] = (Sample("absent", "{}"),)
 
 
 class Shape(enum.Enum):
@@ -340,8 +330,9 @@ def _helper_vectors(helper: Helper) -> tuple[Vector, ...]:
 
 _NOTE_PARSED: Final = (
     "The generator reads the input with json.loads of Python and gives the helper the result. "
-    f"That reader takes NaN, Infinity, an integer of {INT_DIGITS_MAX} digits or less and an "
-    "escape of one half of a surrogate pair."
+    "Each input is strict JSON. It holds no NaN and no Infinity. Each integer is in the range "
+    "of 64 bits, and each float is finite. No string holds one half of a surrogate pair, and "
+    "no object holds a key two times."
 )
 _NOTE_RETURNS: Final = (
     "Each vector is accepted: the helper returns a value for each input. value is what the "
@@ -351,8 +342,7 @@ _SHAPE_NOTES: Final[dict[Shape, tuple[str, ...]]] = {
     Shape.VALUE: ("The input is the JSON text of one value. The helper takes that value.",),
     Shape.FIELD: (
         f"The input is the JSON text of one object. The helper takes the object and the key "
-        f"{FIELD}. The vector absent has no such key. The vector key-two-times has the key two "
-        "times, and json.loads keeps the last value.",
+        f"{FIELD}. The vector absent has no such key.",
     ),
     Shape.CAPPED: (
         f"The input is the JSON text of one object. The helper takes the object, the key "
