@@ -20,7 +20,7 @@ use super::number::{Cost, Count, Integer, TurnSeq};
 use super::playpen::MAX_ENTRY_BYTES;
 use super::text::Text;
 use super::vocabulary::{
-    Cap, ExitReason, FailReason, LogLevel, OpenReason, PlaypenType, Role, Word,
+    Cap, ExitReason, FailReason, FatalReason, LogLevel, OpenReason, PlaypenType, Role, Word,
 };
 use crate::ids::{SessionId, Ulid};
 
@@ -165,24 +165,27 @@ pub enum FatalClaim {
 }
 
 impl FatalClaim {
-    /// The name of the reason, as the Python host writes it.
+    /// The name of the reason, as the Python host writes it. The name of a
+    /// reason of the contract comes from [`FatalReason`].
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ControlMountUnwritable => "control_mount_unwritable",
-            Self::MountDirUnset => "mount_dir_unset",
-            Self::PlaneUrlInvalid => "plane_url_invalid",
+            Self::ControlMountUnwritable => FatalReason::ControlMountUnwritable.text(),
+            Self::MountDirUnset => FatalReason::MountDirUnset.text(),
+            Self::PlaneUrlInvalid => FatalReason::PlaneUrlInvalid.text(),
             Self::Unknown => "unknown",
         }
     }
 
-    /// The reason that a name of the playpen stands for.
+    /// The reason that a name of the playpen stands for. The match names each
+    /// reason of [`FatalReason`]. A new reason there thus needs an arm here
+    /// before the crate builds.
     fn of(name: &str) -> Self {
-        match name {
-            "control_mount_unwritable" => Self::ControlMountUnwritable,
-            "mount_dir_unset" => Self::MountDirUnset,
-            "plane_url_invalid" => Self::PlaneUrlInvalid,
-            _ => Self::Unknown,
+        match FatalReason::from_wire(name) {
+            Some(FatalReason::ControlMountUnwritable) => Self::ControlMountUnwritable,
+            Some(FatalReason::MountDirUnset) => Self::MountDirUnset,
+            Some(FatalReason::PlaneUrlInvalid) => Self::PlaneUrlInvalid,
+            None => Self::Unknown,
         }
     }
 }

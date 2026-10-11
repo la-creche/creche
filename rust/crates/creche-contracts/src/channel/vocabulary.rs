@@ -35,13 +35,21 @@ macro_rules! words {
             $($(#[$variant_attribute])* $variant,)+
         }
 
+        impl $name {
+            /// The name as the wire holds it. A `const fn` can call this
+            /// function, and it cannot call [`Word::as_str`].
+            pub(super) const fn text(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $text,)+
+                }
+            }
+        }
+
         impl Word for $name {
             const ALL: &'static [Self] = &[$(Self::$variant,)+];
 
             fn as_str(self) -> &'static str {
-                match self {
-                    $(Self::$variant => $text,)+
-                }
+                self.text()
             }
         }
 
