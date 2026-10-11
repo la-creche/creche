@@ -112,11 +112,11 @@ Rules for the program:
 3. A test that starts the program goes to `tests/process.rs`. Such a test
    reads the exit status and the two output streams of the built program.
 4. `run` writes each text to one of its two writers, with `write_all` or
-   with `writeln!`. The entry function gives it the lock of stdout and the
-   lock of stderr. Rule 14 of "The rules for a service" in `rust/AGENTS.md`
-   has the text for such a command. When a write to stdout fails, `run`
-   returns exit status 1. `run` drops the error of a write to stderr. Use
-   no `println!` and no `eprintln!` in this crate.
+   with `writeln!`. In the program, the two writers are the lock of stdout
+   and the lock of stderr. Rule 14 of "The rules for a service" in
+   `rust/AGENTS.md` has the text for such a command. When a write to stdout
+   fails, `run` returns exit status 1. `run` drops the error of a write to
+   stderr. Use no `println!` and no `eprintln!` in this crate.
 
 ## Known gaps
 
