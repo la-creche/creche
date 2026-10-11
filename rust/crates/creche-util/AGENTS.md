@@ -101,6 +101,15 @@ function of the caller.
   `session`. Rule 3 permits that with its sentence on the functions of one
   published rule. The owner confirms that sentence with the six rules. The
   other choice makes `words` a private function of `family`.
+- This `CONTRACT-QUESTION` comment is open in `src/base64.rs`: RFC 4648
+  section 3.5 says that a decoder can refuse a text with a pad bit that is
+  not zero. It does not demand that refusal. `base64::decode` refuses such a
+  text, for example `Zh==`, so each run of bytes has one text. The decoder
+  of `creche-vectors` that moved here took such a text. The owner did not
+  confirm the refusal yet. The generator of the vector files writes each
+  `base64` text with `base64.b64encode` of Python, and that function sets
+  each pad bit to zero. A change costs one condition, the variant
+  `DecodeError::PadBits` and the rows of that variant in the tests.
 - `is_header_space` in `crates/creche-contracts/src/ids.rs` holds the set of
   `pytext::is_space` as a written list. `OwuiChatId::from_header` trims a
   header value with it. It is a second copy of the set. A change to `ids`

@@ -127,6 +127,14 @@ pub fn decode(text: &str) -> Result<Vec<u8>, DecodeError> {
             word = (word << CHAR_BITS) | value_of(character).ok_or(DecodeError::Character)?;
         }
         let [_, bytes @ ..] = word.to_be_bytes();
+        // CONTRACT-QUESTION: RFC 4648 section 3.5 says that a decoder can
+        // refuse a text with a pad bit that is not zero. It does not demand
+        // that refusal. The reading here refuses such a text, so each run of
+        // bytes has one text. The owner did not confirm this reading yet
+        // (`AGENTS.md` of this crate, "Known gaps"). A change costs this
+        // condition, the variant `DecodeError::PadBits` and the rows of that
+        // variant in the tests.
+        //
         // A byte that the group does not keep holds only pad bits.
         if bytes.iter().skip(kept).any(|byte| *byte != 0) {
             return Err(DecodeError::PadBits);
