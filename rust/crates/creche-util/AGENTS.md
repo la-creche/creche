@@ -13,6 +13,7 @@ the function.
 |---|---|
 | `src/sha256.rs` | `digest`: the SHA-256 of FIPS 180-4, as 32 bytes. |
 | `src/hex.rs` | `lower`: bytes as hex text in lower case. The text is the base 16 form of RFC 4648 section 8. |
+| `src/base64.rs` | `decode`: the bytes of a base64 text in the standard alphabet, with padding. The text is the base 64 form of RFC 4648 section 4. `encode_url`: bytes as base64 text in the URL-safe alphabet, with no padding. The text is the form of section 5 of that RFC. `URL_SAFE`: the alphabet of section 5. |
 | `src/pytext.rs` | `is_space`, `strip` and `words`: the white space rules of `str.isspace`, `str.strip` and `str.split` of Python. `universal_newlines`: the line end rule of the text mode of Python. |
 
 ## What the crate takes
@@ -70,6 +71,11 @@ function of the caller.
   at each length where the pad changes its form: 55, 56, 63, 64 and 65 bytes.
 - `hex` holds the examples of RFC 4648 section 10 in lower case, and each
   value of a byte.
+- `base64` holds the examples of RFC 4648 section 10 for the decoder and for
+  the encoder. The examples have each length of a last group. The tests of
+  the decoder also hold each kind of refused text. The kinds are a wrong
+  count of characters, a wrong pad, a character outside the alphabet and a
+  pad bit that is not zero.
 - `pytext` compares `is_space` with the full list of the characters that
   Python 3.13 calls space. The list has 29 characters. Four of them are the
   separators U+001C to U+001F, which Rust does not call white space.
@@ -90,9 +96,6 @@ function of the caller.
 - The owner did not confirm the name `creche-util` and the six rules yet. A
   new name changes the directory, the `name` key, each path dependency and
   each `creche_util::` path.
-- The crate holds no base64 yet. The workspace has more than one base64
-  decoder and one base64 encoder. Packet `decisions-util-runtime` moves them
-  here.
 - `pytext::words` has one user module today: `family`. It is here as a part
   of the white space rule, which has users in `config`, `family` and
   `session`. Rule 3 permits that with its sentence on the functions of one

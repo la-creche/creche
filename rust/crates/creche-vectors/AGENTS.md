@@ -138,8 +138,6 @@ comment of each reader function names its writer.
   of the committed files fails in the `rust` job. `vectors/README.md` does
   not name the rule yet. No packet has that part yet. A change costs one
   check and one test.
-- The reader holds a base64 decoder of its own. The workspace has more than
-  one. Packet `decisions-util-runtime` moves them to `creche-util`.
 - In three places of a vector file, the reader does not refuse a key that
   an object holds two times. `serde_json` keeps the last value of such a
   key there. The reader refuses such a key in each other object of each
