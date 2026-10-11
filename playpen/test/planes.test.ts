@@ -212,7 +212,7 @@ describe("readPlaneUrls", () => {
 
     expect(reading.urls.pep.text).toBe(PEP_URL);
     expect(reading.urls.litellm.text).toBe(LITELLM);
-    expect(reading.notices).toEqual([{ variable: PEP_PLANE_ENV, state: PlaneState.Unset }]);
+    expect(reading.notices).toEqual([{ plane: Plane.Pep, state: PlaneState.Unset }]);
   });
 
   it("takes the URL of the build for LiteLLM when its variable is absent", () => {
@@ -220,14 +220,14 @@ describe("readPlaneUrls", () => {
 
     expect(reading.urls.pep.text).toBe(PEP);
     expect(reading.urls.litellm.text).toBe(LITELLM_BASE_URL);
-    expect(reading.notices).toEqual([{ variable: LITELLM_PLANE_ENV, state: PlaneState.Unset }]);
+    expect(reading.notices).toEqual([{ plane: Plane.Litellm, state: PlaneState.Unset }]);
   });
 
   it("reads an empty value as an absent variable", () => {
     const reading = readPlaneUrls({ [PEP_PLANE_ENV]: "", [LITELLM_PLANE_ENV]: LITELLM });
 
     expect(reading.urls.pep.text).toBe(PEP_URL);
-    expect(reading.notices).toEqual([{ variable: PEP_PLANE_ENV, state: PlaneState.Unset }]);
+    expect(reading.notices).toEqual([{ plane: Plane.Pep, state: PlaneState.Unset }]);
   });
 
   it("takes the URL of the build for a variable that is not valid", () => {
@@ -236,7 +236,7 @@ describe("readPlaneUrls", () => {
     expect(reading.urls.pep.text).toBe(PEP_URL);
     expect(reading.urls.litellm.text).toBe(LITELLM);
     expect(reading.notices).toEqual([
-      { variable: PEP_PLANE_ENV, state: PlaneState.NotValid, fault: PlaneUrlFault.AfterAuthority },
+      { plane: Plane.Pep, state: PlaneState.NotValid, fault: PlaneUrlFault.AfterAuthority },
     ]);
   });
 
@@ -245,7 +245,7 @@ describe("readPlaneUrls", () => {
 
     expect(reading.urls.litellm.text).toBe(LITELLM_BASE_URL);
     expect(reading.notices).toEqual([
-      { variable: LITELLM_PLANE_ENV, state: PlaneState.NotValid, fault: PlaneUrlFault.NotHttp },
+      { plane: Plane.Litellm, state: PlaneState.NotValid, fault: PlaneUrlFault.NotHttp },
     ]);
   });
 
@@ -255,15 +255,25 @@ describe("readPlaneUrls", () => {
     expect(reading.urls.pep.text).toBe(PEP_URL);
     expect(reading.urls.litellm.text).toBe(LITELLM_BASE_URL);
     expect(reading.notices).toEqual([
-      { variable: PEP_PLANE_ENV, state: PlaneState.Unset },
-      { variable: LITELLM_PLANE_ENV, state: PlaneState.NotValid, fault: PlaneUrlFault.NoPort },
+      { plane: Plane.Pep, state: PlaneState.Unset },
+      { plane: Plane.Litellm, state: PlaneState.NotValid, fault: PlaneUrlFault.NoPort },
     ]);
   });
 });
 
+/** Each notice that the type permits: for each plane, one absent state and each fault. */
+const EACH_NOTICE: readonly PlaneNotice[] = Object.values(Plane).flatMap(
+  (plane): PlaneNotice[] => [
+    { plane, state: PlaneState.Unset },
+    ...Object.values(PlaneUrlFault).map(
+      (fault): PlaneNotice => ({ plane, state: PlaneState.NotValid, fault }),
+    ),
+  ],
+);
+
 describe("planeLog", () => {
   it("writes a warn line that names an absent variable", () => {
-    const line = planeLog({ variable: PEP_PLANE_ENV, state: PlaneState.Unset });
+    const line = planeLog({ plane: Plane.Pep, state: PlaneState.Unset });
 
     expect(line.type).toBe("log");
     expect(line.level).toBe("warn");
@@ -274,7 +284,7 @@ describe("planeLog", () => {
 
   it("writes an error line that names a variable that is not valid", () => {
     const notice: PlaneNotice = {
-      variable: LITELLM_PLANE_ENV,
+      plane: Plane.Litellm,
       state: PlaneState.NotValid,
       fault: PlaneUrlFault.PortForm,
     };
@@ -301,9 +311,17 @@ describe("planeLog", () => {
     expect(JSON.stringify(reading.notices)).not.toContain("FIXTURE-WORD");
   });
 
-  it.each(Object.values(PlaneUrlFault))("stays inside the cap of a log message for %s", (why) => {
-    const line = planeLog({ variable: LITELLM_PLANE_ENV, state: PlaneState.NotValid, fault: why });
+  it.each(EACH_NOTICE)("stays inside the cap of a log message for %j", (notice) => {
+    expect(byteLength(planeLog(notice).message)).toBeLessThanOrEqual(MAX_LOG_BYTES);
+  });
 
-    expect(byteLength(line.message)).toBeLessThanOrEqual(MAX_LOG_BYTES);
+  it("takes a plane of the closed set, so a notice has no place for a value", () => {
+    // The type check is the test: `pnpm run typecheck` fails when the marked
+    // line builds.
+    const value = "http://operator:FIXTURE-WORD@192.0.2.20:8301";
+    // @ts-expect-error A notice names a plane, not a text.
+    const line = planeLog({ plane: value, state: PlaneState.Unset });
+
+    expect(line.message).not.toContain("FIXTURE-WORD");
   });
 });

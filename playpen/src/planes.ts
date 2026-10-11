@@ -208,11 +208,14 @@ export enum PlaneState {
   NotValid = "not_valid",
 }
 
-/** One variable that gave no URL. It names the variable and never the value. */
+/**
+ * One plane whose variable gave no URL. A notice holds members of closed
+ * sets only, so it has no place for the value of a variable.
+ */
 export type PlaneNotice =
-  | { readonly variable: string; readonly state: PlaneState.Unset }
+  | { readonly plane: Plane; readonly state: PlaneState.Unset }
   | {
-      readonly variable: string;
+      readonly plane: Plane;
       readonly state: PlaneState.NotValid;
       readonly fault: PlaneUrlFault;
     };
@@ -230,17 +233,16 @@ interface PlaneRead {
 }
 
 function readPlane(env: NodeJS.ProcessEnv, plane: Plane): PlaneRead {
-  const variable = VARIABLE_OF[plane];
-  const value = env[variable] ?? "";
+  const value = env[VARIABLE_OF[plane]] ?? "";
   if (value.length === 0) {
-    return { url: PlaneUrl.ofBuild(plane), notice: { variable, state: PlaneState.Unset } };
+    return { url: PlaneUrl.ofBuild(plane), notice: { plane, state: PlaneState.Unset } };
   }
 
   const parsed = PlaneUrl.parse(value);
   if (!parsed.ok) {
     return {
       url: PlaneUrl.ofBuild(plane),
-      notice: { variable, state: PlaneState.NotValid, fault: parsed.fault },
+      notice: { plane, state: PlaneState.NotValid, fault: parsed.fault },
     };
   }
 
@@ -268,14 +270,18 @@ const USES_BUILD_URL = "The playpen uses the URL of its build.";
  * Contract 03 §5.5. The `log` line for one notice: `warn` for a variable
  * that is absent, `error` for a value that is not valid. The line belongs to
  * the process, so it names no session.
+ *
+ * The message holds the name of one of the two variables and, for a value
+ * that is not valid, one fault word. Each one is a member of a closed set.
  */
 export function planeLog(notice: PlaneNotice): LogMessage {
+  const variable = VARIABLE_OF[notice.plane];
   if (notice.state === PlaneState.Unset) {
     return {
       type: "log",
       level: "warn",
       session: null,
-      message: `${notice.variable} is not set. ${USES_BUILD_URL}`,
+      message: `${variable} is not set. ${USES_BUILD_URL}`,
     };
   }
 
@@ -283,6 +289,6 @@ export function planeLog(notice: PlaneNotice): LogMessage {
     type: "log",
     level: "error",
     session: null,
-    message: `${notice.variable} is not a plane URL: ${notice.fault}. ${USES_BUILD_URL}`,
+    message: `${variable} is not a plane URL: ${notice.fault}. ${USES_BUILD_URL}`,
   };
 }

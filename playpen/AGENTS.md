@@ -223,7 +223,8 @@ LiteLLM.
     when the playpen builds it. Each pi process of that pool gets the same
     two URLs.
 62. A `log` line for a plane variable names the variable and the fault. It
-    never holds the value. A value can hold a user part.
+    never holds the value. A value can hold a user part. `PlaneNotice` holds
+    a plane and a fault, each from a closed set, and no free text.
 63. Write the `log` lines of the planes after `hello`. `ready` is the first
     line of the channel.
 
