@@ -13,6 +13,7 @@ the function.
 |---|---|
 | `src/sha256.rs` | `digest`: the SHA-256 of FIPS 180-4, as 32 bytes. |
 | `src/hex.rs` | `lower`: bytes as hex text in lower case. The text is the base 16 form of RFC 4648 section 8. |
+| `src/base64.rs` | `decode`: the bytes of a base64 text in the standard alphabet, with padding. The text is the base 64 form of RFC 4648 section 4. `encode_url`: bytes as base64 text in the URL-safe alphabet, with no padding. The text is the form of section 5 of that RFC. `URL_SAFE`: the alphabet of section 5. |
 | `src/pytext.rs` | `is_space`, `strip` and `words`: the white space rules of `str.isspace`, `str.strip` and `str.split` of Python. `universal_newlines`: the line end rule of the text mode of Python. |
 
 ## What the crate takes
@@ -70,6 +71,11 @@ function of the caller.
   at each length where the pad changes its form: 55, 56, 63, 64 and 65 bytes.
 - `hex` holds the examples of RFC 4648 section 10 in lower case, and each
   value of a byte.
+- `base64` holds the examples of RFC 4648 section 10 for the decoder and for
+  the encoder. The examples have each length of a last group. The tests of
+  the decoder also hold each kind of refused text. The kinds are a wrong
+  count of characters, a wrong pad, a character outside the alphabet and a
+  pad bit that is not zero.
 - `pytext` compares `is_space` with the full list of the characters that
   Python 3.13 calls space. The list has 29 characters. Four of them are the
   separators U+001C to U+001F, which Rust does not call white space.
@@ -90,14 +96,26 @@ function of the caller.
 - The owner did not confirm the name `creche-util` and the six rules yet. A
   new name changes the directory, the `name` key, each path dependency and
   each `creche_util::` path.
-- The crate holds no base64 yet. The workspace has more than one base64
-  decoder and one base64 encoder. Packet `decisions-util-runtime` moves them
-  here.
 - `pytext::words` has one user module today: `family`. It is here as a part
   of the white space rule, which has users in `config`, `family` and
   `session`. Rule 3 permits that with its sentence on the functions of one
   published rule. The owner confirms that sentence with the six rules. The
   other choice makes `words` a private function of `family`.
+- `base64::decode` has one user crate today: `creche-vectors`.
+  `base64::encode_url` has one user crate too: `creche-runtime`. The two
+  functions are here as one helper, the base64 text of RFC 4648. Rule 3
+  permits that with its sentence on the functions of one published rule. The
+  owner confirms that sentence with the six rules. The other choice moves
+  each function back to the module of its user.
+- This `CONTRACT-QUESTION` comment is open in `src/base64.rs`: RFC 4648
+  section 3.5 says that a decoder can refuse a text with a pad bit that is
+  not zero. It does not demand that refusal. `base64::decode` refuses such a
+  text, for example `Zh==`, so each run of bytes has one text. The decoder
+  of `creche-vectors` that moved here took such a text. The owner did not
+  confirm the refusal yet. The generator of the vector files writes each
+  `base64` text with `base64.b64encode` of Python, and that function sets
+  each pad bit to zero. A change costs one condition, the variant
+  `DecodeError::PadBits` and the rows of that variant in the tests.
 - `is_header_space` in `crates/creche-contracts/src/ids.rs` holds the set of
   `pytext::is_space` as a written list. `OwuiChatId::from_header` trims a
   header value with it. It is a second copy of the set. A change to `ids`
@@ -108,5 +126,13 @@ function of the caller.
   that text. The rule for a number is not the rule of `pytext::strip`. The
   module doc of `pytext` gives the difference. No packet changes `py_strip`
   yet.
+- Two base64 decoders stay outside this crate. Each one reads a `!!binary`
+  value of YAML by a rule of Python, and that rule is not the rule of
+  `base64::decode`. `decode_base64` is in
+  `crates/agent-family/src/yaml/construct.rs`. Packet
+  `toml-drop-yaml-validator` removes it with the YAML reader of that crate.
+  `base64_decodes` is in `crates/creche-contracts/src/manifest/yaml.rs`.
+  Packet `toml-drop-yaml-manifest` removes it with the YAML reader of the
+  manifest.
 - `sha256::digest` has no branch and no index that depends on a byte of the
   message. No test and no compiler check proves that its time is constant.

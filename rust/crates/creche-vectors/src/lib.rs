@@ -6,8 +6,9 @@
 //! differential test", says how a test uses a reader.
 //!
 //! Each crate of the workspace can take this crate as a dev dependency. The
-//! crate uses `serde` and `serde_json` only, and no other crate of the
-//! workspace. `creche-testkit` gives the crate to its users as
+//! crate uses `serde`, `serde_json` and the helper crate `creche-util`, which
+//! has no dependency. It uses no other crate of the workspace.
+//! `creche-testkit` gives the crate to its users as
 //! `creche_testkit::vectors`. The file `AGENTS.md` of the crate holds the
 //! rules for a change here.
 //!
@@ -79,6 +80,7 @@ use std::fs;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 
+use creche_util::base64;
 use serde::de::value::MapAccessDeserializer;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
@@ -651,14 +653,14 @@ impl Input {
     fn checked(raw: RawInput) -> Result<Self, String> {
         match raw {
             RawInput::Text(text) => Ok(Self::Text(text)),
-            RawInput::Base64(encoded) => base64_decode(&encoded).map(Self::Base64),
+            RawInput::Base64(encoded) => decoded(&encoded).map(Self::Base64),
             RawInput::Repeat(parts) => expand(&parts).map(Self::Repeat),
             RawInput::Args(arguments) => Ok(Self::Args(arguments)),
             RawInput::Chunks(chunks) => chunks
                 .into_iter()
                 .map(|chunk| match chunk {
                     RawChunk::Text(text) => Ok(text.into_bytes()),
-                    RawChunk::Base64(encoded) => base64_decode(&encoded),
+                    RawChunk::Base64(encoded) => decoded(&encoded),
                 })
                 .collect::<Result<_, _>>()
                 .map(Self::Chunks),
@@ -795,7 +797,7 @@ impl Marker {
             "$int" => integer_text(content).map(Self::Int),
             "$float" => not_finite(content).map(Self::Float),
             "$utf16" => code_units(content).map(Self::Utf16),
-            "$base64" => text_of(content).and_then(base64_decode).map(Self::Base64),
+            "$base64" => text_of(content).and_then(decoded).map(Self::Base64),
             "$entries" => pairs(content).map(Self::Entries),
             "$json" => text_of(content).map(|text| Self::Json(text.to_owned())),
             _ => return Ok(None),
@@ -1266,58 +1268,15 @@ fn expand(parts: &[(String, usize)]) -> Result<String, String> {
         .collect())
 }
 
-/// The count of characters in one group of a base64 text.
-const BASE64_GROUP: usize = 4;
+/// The reason of a refusal for a `base64` text that the decoder does not
+/// take.
+const NO_BASE64: &str = "the text is no base64 with padding";
 
-/// The character that fills the last group of a base64 text.
-const BASE64_PAD: u8 = b'=';
-
-/// The bytes of a base64 text in the standard alphabet, with padding. The
-/// error is the reason of a refusal.
-fn base64_decode(encoded: &str) -> Result<Vec<u8>, String> {
-    let no_base64 = || String::from("the text is no base64 with padding");
-    let mut groups = encoded.as_bytes().chunks_exact(BASE64_GROUP);
-    let mut decoded = Vec::new();
-
-    while let Some(group) = groups.next() {
-        let [first, second, third, fourth] = *group else {
-            return Err(no_base64());
-        };
-        let last = groups.len() == 0;
-        let (values, kept): ([u8; 4], usize) = match (third, fourth) {
-            (BASE64_PAD, BASE64_PAD) if last => ([first, second, b'A', b'A'], 1),
-            (_, BASE64_PAD) if last => ([first, second, third, b'A'], 2),
-            _ => ([first, second, third, fourth], 3),
-        };
-
-        let mut word = 0_u32;
-        for character in values {
-            word = (word << 6) | base64_value(character).ok_or_else(no_base64)?;
-        }
-        let [_, bytes @ ..] = word.to_be_bytes();
-        decoded.extend(bytes.into_iter().take(kept));
-    }
-
-    if !groups.remainder().is_empty() {
-        return Err(no_base64());
-    }
-
-    Ok(decoded)
-}
-
-/// The value of one character of the standard base64 alphabet. `None` for
-/// each other byte, and for the padding character.
-fn base64_value(character: u8) -> Option<u32> {
-    let value = match character {
-        b'A'..=b'Z' => character - b'A',
-        b'a'..=b'z' => character - b'a' + 26,
-        b'0'..=b'9' => character - b'0' + 52,
-        b'+' => 62,
-        b'/' => 63,
-        _ => return None,
-    };
-
-    Some(u32::from(value))
+/// The bytes of a `base64` text of a file: the standard alphabet, with
+/// padding. `base64.b64encode` of Python writes that text. The error is the
+/// reason of a refusal.
+fn decoded(encoded: &str) -> Result<Vec<u8>, String> {
+    base64::decode(encoded).map_err(|_| String::from(NO_BASE64))
 }
 
 #[cfg(test)]
@@ -1390,45 +1349,14 @@ mod tests {
     }
 
     #[test]
-    fn base64_decodes_each_length_of_the_last_group() {
-        assert_eq!(base64_decode("").unwrap(), b"");
-        assert_eq!(base64_decode("Zg==").unwrap(), b"f");
-        assert_eq!(base64_decode("Zm8=").unwrap(), b"fo");
-        assert_eq!(base64_decode("Zm9v").unwrap(), b"foo");
-        assert_eq!(base64_decode("Zm9vYg==").unwrap(), b"foob");
-        assert_eq!(base64_decode("Zm9vYmE=").unwrap(), b"fooba");
-        assert_eq!(base64_decode("Zm9vYmFy").unwrap(), b"foobar");
-        assert_eq!(base64_decode("+/8=").unwrap(), [0xfb, 0xff]);
-        assert_eq!(
-            base64_decode("AAAA////").unwrap(),
-            [0, 0, 0, 0xff, 0xff, 0xff]
-        );
-    }
+    fn a_base64_text_gives_its_bytes_or_the_one_reason() {
+        assert_eq!(decoded("+/8="), Ok(vec![0xfb, 0xff]));
+        assert_eq!(decoded(""), Ok(Vec::new()));
 
-    #[test]
-    fn base64_refuses_a_text_that_is_no_base64_with_padding() {
-        for text in [
-            "Z",
-            "Zg",
-            "Zg=",
-            "Zm8",
-            "Zg==Zg==",
-            "Zm8=Zm9v",
-            "=g==",
-            "Z===",
-            "====",
-            "Zm=v",
-            "Zm9v\n",
-            "Zm 9",
-            "Zm9-",
-            "Zm9_",
-            "Zm9\u{e9}",
-        ] {
-            assert_eq!(
-                base64_decode(text),
-                Err(String::from("the text is no base64 with padding")),
-                "{text:?}"
-            );
+        // One text for each refusal of the decoder of `creche-util`: the
+        // count of the characters, a character and a pad bit.
+        for text in ["Zg", "Zm9_", "Zh=="] {
+            assert_eq!(decoded(text), Err(String::from(NO_BASE64)), "{text:?}");
         }
     }
 
