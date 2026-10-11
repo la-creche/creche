@@ -50,6 +50,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use rustix::fs::{CWD, RenameFlags, renameat_with};
 use rustix::io::Errno;
 
 use crate::readfile::os_text;
@@ -57,7 +58,8 @@ use crate::readfile::os_text;
 /// The end of the name of a temporary file.
 const TEMP_SUFFIX: &str = ".tmp";
 
-/// The end of the name of the old tree that [`replace_dir`] moves away.
+/// The end of the name where a swap with two renames keeps the old tree.
+/// [`replace_dir`] makes no such name. It removes a directory that has it.
 const OLD_SUFFIX: &str = ".old";
 
 /// The directory of a path that has one part only, for example `status.json`.
@@ -67,7 +69,7 @@ const THIS_DIR: &str = ".";
 const NO_FILE_NAME: &str = "the path has no file name";
 
 /// What an error says when the old name of [`replace_dir`] holds a file or a
-/// symlink to an entry.
+/// symlink.
 const OLD_NAME_TAKEN: &str = "the old name holds an entry that is not a directory";
 
 /// The count of the temporary files that this process named.
@@ -178,6 +180,8 @@ pub enum WriteStep {
     SetMode,
     /// Rename a file or a directory onto its target.
     Rename,
+    /// Exchange the entries of two names in one call of the system.
+    Exchange,
     /// Link the temporary file to a name that must not exist.
     Link,
     /// Sync the directory of the target.
@@ -196,6 +200,7 @@ impl fmt::Display for WriteStep {
             Self::SyncTemp => "sync the temporary file",
             Self::SetMode => "set the mode",
             Self::Rename => "rename onto the target",
+            Self::Exchange => "exchange with the target",
             Self::Link => "link the new name",
             Self::SyncDir => "sync the directory",
             Self::RemoveOld => "remove the old copy",
@@ -399,42 +404,73 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 /// Puts the directory `staging` in the place of the directory `target`.
 ///
 /// The caller fills `staging` first. A reader then finds the old tree or the
-/// new tree at `target`. No reader finds a tree with a part of its files.
+/// new tree at `target`. No reader finds a tree with a part of its files, and
+/// no reader finds `target` absent.
 ///
 /// The kernel renames a directory only onto a name that is absent or onto
-/// an empty directory. The function thus makes two renames, and `target` is
-/// absent between the two.
+/// an empty directory. For a `target` that exists, the function thus asks
+/// the system to exchange the entries of the two names in one call.
+/// `target` names a whole tree before that call and after it.
 ///
 /// The steps, in this order:
 ///
 /// 1. Make each directory above `target` that is absent.
-/// 2. When `target` exists, remove the directory `<target>.old` that an
-///    earlier call left. Then rename `target` to `<target>.old`.
-/// 3. Rename `staging` to `target`.
-/// 4. Sync the directory of `target`.
-/// 5. Remove `<target>.old`. The function drops an error of this step.
+/// 2. When `target` exists, remove a directory `<target>.old`. A swap with
+///    two renames keeps the old tree at that name, and it can leave the
+///    tree there.
+/// 3. When `target` is absent, rename `staging` to `target`.
+/// 4. When `target` exists, exchange `staging` and `target`. The name of
+///    `staging` then holds the old tree.
+/// 5. Sync the directory of `target`.
+/// 6. Remove the old tree at the name of `staging`. After step 3, no tree is
+///    there, and the function removes a directory `<target>.old` in its
+///    place. The function drops an error of this step.
 ///
-/// When step 3 fails, the old tree stays at `<target>.old`, and `target` is
-/// absent. The next call that succeeds removes that old tree.
+/// The function has no second way to swap. Some file systems do not make
+/// an exchange. The call is then an error at [`WriteStep::Exchange`]. The
+/// old tree stays at `target`, and the new tree stays at `staging`.
+///
+/// When step 5 fails, the new tree is at `target`, and the old tree stays at
+/// the name of `staging`. An old tree also stays there when its remove
+/// fails. The caller removes a tree at that name before it fills `staging`
+/// one more time.
 ///
 /// The function removes `<target>.old` only when it is a directory. With a
-/// file there, or a symlink to an entry, a call for a `target` that exists
-/// is an error at step 2, and no entry moves. A `target` that is a file, or
-/// a symlink to an entry, goes to `<target>.old` in step 2 and stays there.
+/// file or a symlink there, a call for a `target` that exists is an error
+/// at step 2, and no entry moves. A `target` that is a file, or a symlink
+/// to an entry, goes to the name of `staging` in step 4 and stays there.
 /// The function moves the symlink itself, and not the tree that the symlink
 /// names.
 ///
 /// The function looks at `target` and at `<target>.old` through a symlink.
 /// The system can refuse that look, for example in a directory that the
-/// process cannot enter. The call is then an error at step 2, and no entry
-/// moves.
+/// process cannot enter. The call is then an error, and no entry moves. A
+/// `target` that is a symlink to no entry is absent for that look. The
+/// system then refuses the rename of step 3.
 ///
-/// The Python origin is `caregiver/src/caregiver/atomic.py:47-69`. On
-/// Python 3.14, that origin reads each error of a look at the target or at
-/// the old name as no entry (`:61-62`). On Python 3.12 and on Python 3.13,
-/// it raises for an error such as a directory that the process cannot
-/// enter. This function is an error for such a look, as the origin is on
-/// Python 3.12 and on Python 3.13.
+/// The Python origin is `caregiver/src/caregiver/atomic.py:47-69`. That
+/// origin does not make the same swap. The function differs from it in
+/// these ways:
+///
+/// - The origin makes two renames: `target` to `<target>.old`, then
+///   `staging` to `target` (`:65-67`). `target` is absent between the two.
+///   The function makes one exchange.
+/// - When the second rename of the origin fails, `target` is absent, and
+///   the old tree is at `<target>.old`. When the exchange fails, the old
+///   tree is at `target`.
+/// - The origin removes the old tree at `<target>.old` (`:69`). A `target`
+///   that is a file, or a symlink to an entry, stays at that name. The
+///   function removes the old tree at the name of `staging`, and such a
+///   `target` stays at that name.
+/// - `<target>.old` can hold a symlink to no entry. The origin then raises
+///   for a `target` that is a directory. For a `target` that is a file, or
+///   a symlink to an entry, its first rename replaces that symlink. The
+///   function is an error for each `target` that exists.
+/// - On Python 3.14, the origin reads each error of a look at the target or
+///   at the old name as no entry (`:61-62`). On Python 3.12 and on Python
+///   3.13, it raises for an error such as a directory that the process
+///   cannot enter. This function is an error for such a look, as the origin
+///   is on Python 3.12 and on Python 3.13.
 ///
 /// # Errors
 ///
@@ -463,9 +499,9 @@ pub fn ensure_dir(path: &Path, mode: DirMode) -> Result<(), WriteError> {
 /// The calls of the operating system that this module makes, one for each
 /// step of a write.
 ///
-/// [`Host`] makes each call with the standard library. A test gives a value
-/// that fails at one named [`WriteStep`], so a test can show what a write
-/// leaves behind when the disk is full.
+/// [`Host`] makes each call with the standard library, and the exchange with
+/// `rustix`. A test gives a value that fails at one named [`WriteStep`], so
+/// a test can show what a write leaves behind when the disk is full.
 trait Steps {
     /// The count that the next temporary name holds.
     fn next_count(&self) -> u64;
@@ -492,6 +528,11 @@ trait Steps {
     /// [`WriteStep::Rename`]: renames `from` onto `to`.
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
 
+    /// [`WriteStep::Exchange`]: gives the name `a` the entry of `b`, and the
+    /// name `b` the entry of `a`, in one call of the system. The call
+    /// refuses a name that holds no entry.
+    fn exchange(&self, a: &Path, b: &Path) -> io::Result<()>;
+
     /// [`WriteStep::Link`]: gives the file `from` the second name `to`, and
     /// refuses a name that exists.
     fn link(&self, from: &Path, to: &Path) -> io::Result<()>;
@@ -508,6 +549,8 @@ trait Steps {
 }
 
 /// The [`Steps`] of the host: each call is a call of the standard library.
+/// The exchange is the one exception. The standard library has no such
+/// call, so that step is a call of `rustix`.
 struct Host;
 
 impl Steps for Host {
@@ -541,6 +584,10 @@ impl Steps for Host {
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
         fs::rename(from, to)
+    }
+
+    fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
+        renameat_with(CWD, a, CWD, b, RenameFlags::EXCHANGE).map_err(io::Error::from)
     }
 
     fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
@@ -747,6 +794,11 @@ fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
 }
 
+/// Whether the entry at `path` is a symlink.
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+}
+
 // CONTRACT-QUESTION: contract 01 §6.1 rule 1 says what a reader of the tree
 // gets. It gives the swap no rule for a look at `target` or at
 // `<target>.old` that the system refuses, for example through a symlink
@@ -780,9 +832,10 @@ fn says_no_entry(error: &io::Error) -> bool {
     ) || Errno::from_io_error(error) == Some(Errno::LOOP)
 }
 
-/// The error for an old name that holds a file or a symlink to an entry.
-/// [`replace_dir`] removes only a directory there. Python raises for such an
-/// entry (`shutil.rmtree`), so the swap refuses it.
+/// The error for an old name that holds a file or a symlink.
+/// [`replace_dir`] removes only a directory there. Python raises for a file
+/// and for a symlink to an entry (`shutil.rmtree`), so the swap refuses
+/// each one. It also refuses a symlink to no entry.
 fn old_name_taken(displaced: &Path) -> WriteError {
     WriteError {
         step: WriteStep::Rename,
@@ -807,40 +860,48 @@ fn replace_dir_with(steps: &impl Steps, staging: &Path, target: &Path) -> Result
         .map_err(|error| failed(WriteStep::MakeParents, dir, &error))?;
 
     // Each look follows a symlink, as `Path.exists` of Python does. A look
-    // that the system refuses stops the swap before the first rename.
+    // that the system refuses stops the swap before an entry moves.
     let looked =
         |path: &Path| entry_at(path).map_err(|error| failed(WriteStep::Rename, path, &error));
 
-    if looked(target)? {
+    // The name that can hold an old tree after the new tree is in its place.
+    let old_tree = if looked(target)? {
         if is_real_dir(&displaced) {
-            // A call that stopped after its first rename left this tree.
+            // A swap with two renames left this tree.
             steps
                 .remove_tree(&displaced)
                 .map_err(|error| failed(WriteStep::RemoveOld, &displaced, &error))?;
-        } else if looked(&displaced)? {
-            // The old name holds a file, or a symlink to an entry. Only a
-            // directory is removed. The rename of a directory refuses such
-            // an entry. The rename of a file or of a symlink replaces it, so
-            // the refusal is here, for each kind of target.
+        } else if looked(&displaced)? || is_symlink(&displaced) {
+            // The old name holds a file or a symlink. Only a directory is
+            // removed. The exchange does not use the old name, so no call
+            // of the system refuses such an entry. The refusal is here, for
+            // each kind of target.
             return Err(old_name_taken(&displaced));
         }
 
+        // One call: the target names the old tree before it and the new
+        // tree after it.
         steps
-            .rename(target, &displaced)
-            .map_err(|error| failed(WriteStep::Rename, &displaced, &error))?;
-    }
+            .exchange(staging, target)
+            .map_err(|error| failed(WriteStep::Exchange, target, &error))?;
 
-    steps
-        .rename(staging, target)
-        .map_err(|error| failed(WriteStep::Rename, target, &error))?;
+        staging
+    } else {
+        steps
+            .rename(staging, target)
+            .map_err(|error| failed(WriteStep::Rename, target, &error))?;
+
+        displaced.as_path()
+    };
+
     steps
         .sync_dir(dir)
         .map_err(|error| failed(WriteStep::SyncDir, dir, &error))?;
 
     // The new tree is in its place. An old tree that stays costs disk space
-    // only, and the next call removes it.
-    if is_real_dir(&displaced) {
-        let _ = steps.remove_tree(&displaced);
+    // only.
+    if is_real_dir(old_tree) {
+        let _ = steps.remove_tree(old_tree);
     }
 
     Ok(())
@@ -865,6 +926,9 @@ mod tests {
     use std::os::fd::OwnedFd;
     use std::os::unix::fs::{MetadataExt, symlink};
     use std::os::unix::net::UnixStream;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::mpsc;
+    use std::thread;
 
     use creche_testkit::root::TempRoot;
 
@@ -904,10 +968,15 @@ mod tests {
         /// What another process does to a file before the write removes
         /// that file.
         before_remove: Option<fn(&Path)>,
+        /// The target of a swap. Before each step, the value asserts that a
+        /// whole tree is at this path.
+        whole_at: Option<PathBuf>,
         /// Each step, in the order of the calls.
         seen: RefCell<Vec<WriteStep>>,
         /// The path of each temporary file that the code asked for.
         temps: RefCell<Vec<PathBuf>>,
+        /// The text of the tree at `whole_at` before each step.
+        texts: RefCell<Vec<String>>,
     }
 
     impl Probe {
@@ -919,8 +988,10 @@ mod tests {
                 umask: 0,
                 before_mode: None,
                 before_remove: None,
+                whole_at: None,
                 seen: RefCell::new(Vec::new()),
                 temps: RefCell::new(Vec::new()),
+                texts: RefCell::new(Vec::new()),
             }
         }
 
@@ -938,9 +1009,24 @@ mod tests {
             }
         }
 
+        /// With a `whole_at`, reads the tree at that path before the step
+        /// `step` and keeps its text. The test fails when no tree is there.
+        fn look_at_the_target(&self, step: WriteStep) {
+            let Some(target) = &self.whole_at else {
+                return;
+            };
+
+            match tree_text(target) {
+                Ok(text) => self.texts.borrow_mut().push(text),
+                Err(error) => panic!("no whole tree is at the target before \"{step}\": {error}"),
+            }
+        }
+
         /// Keeps the step. Gives the error of a full disk for the step that
         /// this value fails.
         fn pass(&self, step: WriteStep) -> io::Result<()> {
+            self.look_at_the_target(step);
+
             let earlier = self.count_of(step);
             self.seen.borrow_mut().push(step);
 
@@ -962,6 +1048,12 @@ mod tests {
 
         fn steps(&self) -> Vec<WriteStep> {
             self.seen.borrow().clone()
+        }
+
+        /// The count of the calls that move an entry to another name: each
+        /// rename and each exchange.
+        fn moves(&self) -> usize {
+            self.count_of(WriteStep::Rename) + self.count_of(WriteStep::Exchange)
         }
     }
 
@@ -1015,6 +1107,12 @@ mod tests {
             self.pass(WriteStep::Rename)?;
 
             Host.rename(from, to)
+        }
+
+        fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
+            self.pass(WriteStep::Exchange)?;
+
+            Host.exchange(a, b)
         }
 
         fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
@@ -1104,6 +1202,7 @@ mod tests {
             WriteStep::SyncTemp,
             WriteStep::SetMode,
             WriteStep::Rename,
+            WriteStep::Exchange,
             WriteStep::Link,
             WriteStep::SyncDir,
             WriteStep::RemoveOld,
@@ -1838,9 +1937,15 @@ mod tests {
         fs::write(dir.join("instructions.md"), text).unwrap();
     }
 
+    /// The text of `instructions.md` in the directory `dir`, or the error
+    /// of the read.
+    fn tree_text(dir: &Path) -> io::Result<String> {
+        fs::read_to_string(dir.join("instructions.md"))
+    }
+
     /// The text of `instructions.md` in the directory `dir`.
     fn text_in(dir: &Path) -> String {
-        fs::read_to_string(dir.join("instructions.md")).unwrap()
+        tree_text(dir).unwrap()
     }
 
     #[test]
@@ -1904,7 +2009,7 @@ mod tests {
     // --- replace_dir: the steps ---
 
     #[test]
-    fn a_swap_renames_two_times_then_syncs_then_removes_the_old_tree() {
+    fn a_swap_exchanges_one_time_then_syncs_then_removes_the_old_tree() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("chat/config");
         tree_with(&target, "current");
@@ -1923,44 +2028,104 @@ mod tests {
             [
                 WriteStep::MakeParents,
                 WriteStep::RemoveOld,
-                WriteStep::Rename,
-                WriteStep::Rename,
+                WriteStep::Exchange,
                 WriteStep::SyncDir,
                 WriteStep::RemoveOld,
             ]
         );
+        assert_eq!(text_in(&target), "newest");
         assert_eq!(names_in(&root.path().join("chat")), ["config"]);
     }
 
     #[test]
-    fn a_swap_that_fails_at_its_first_rename_keeps_the_old_tree_in_place() {
+    fn a_whole_tree_is_at_the_target_before_each_step_of_a_swap() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("config");
         tree_with(&target, "current");
+        tree_with(&root.path().join("config.old"), "from a crashed attempt");
         let staging = root.path().join("config.tmp");
         tree_with(&staging, "newest");
+        let probe = Probe {
+            whole_at: Some(target.clone()),
+            ..Probe::new()
+        };
 
-        let error =
-            replace_dir_with(&Probe::failing(WriteStep::Rename), &staging, &target).unwrap_err();
+        replace_dir_with(&probe, &staging, &target).unwrap();
 
+        // The probe reads the tree at the target before each call, and it
+        // fails the test when no tree is there. Only the exchange changes
+        // the tree that the target names.
         assert_eq!(
-            error,
-            no_space(WriteStep::Rename, &root.path().join("config.old"))
+            probe.steps(),
+            [
+                WriteStep::MakeParents,
+                WriteStep::RemoveOld,
+                WriteStep::Exchange,
+                WriteStep::SyncDir,
+                WriteStep::RemoveOld,
+            ]
         );
-        assert_eq!(text_in(&target), "current");
-        assert_eq!(text_in(&staging), "newest");
+        assert_eq!(
+            *probe.texts.borrow(),
+            ["current", "current", "current", "newest", "newest"]
+        );
+        assert_eq!(text_in(&target), "newest");
     }
 
     #[test]
-    fn a_swap_that_fails_at_its_second_rename_leaves_the_old_tree_aside() {
-        // The target is absent until the next call, and the old tree is not
-        // lost.
+    fn a_swap_onto_an_absent_target_renames_one_time_and_exchanges_nothing() {
+        let root = TempRoot::new().unwrap();
+        let staging = root.path().join("config.tmp");
+        tree_with(&staging, "newest");
+        let target = root.path().join("config");
+        let probe = Probe::new();
+
+        replace_dir_with(&probe, &staging, &target).unwrap();
+
+        assert_eq!(
+            probe.steps(),
+            [
+                WriteStep::MakeParents,
+                WriteStep::Rename,
+                WriteStep::SyncDir
+            ]
+        );
+        assert_eq!(text_in(&target), "newest");
+        assert_eq!(names_in(root.path()), ["config"]);
+    }
+
+    #[test]
+    fn a_swap_that_fails_at_its_exchange_keeps_the_old_tree_in_place() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("config");
         tree_with(&target, "current");
         let staging = root.path().join("config.tmp");
         tree_with(&staging, "newest");
-        let probe = Probe::failing_after(WriteStep::Rename, 1);
+        let probe = Probe::failing(WriteStep::Exchange);
+
+        let error = replace_dir_with(&probe, &staging, &target).unwrap_err();
+
+        assert_eq!(error, no_space(WriteStep::Exchange, &target));
+        assert_eq!(text_in(&target), "current");
+        assert_eq!(text_in(&staging), "newest");
+        assert_eq!(names_in(root.path()), ["config", "config.tmp"]);
+
+        // The swap has no second way: no rename follows the exchange that
+        // failed.
+        assert_eq!(probe.steps(), [WriteStep::MakeParents, WriteStep::Exchange]);
+    }
+
+    #[test]
+    fn a_failed_rename_onto_an_absent_target_keeps_the_tree_at_the_old_name() {
+        // A swap with two renames that stopped after its first rename left
+        // these entries: the target is absent, and the old tree is at the
+        // old name.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+        tree_with(&root.path().join("config.old"), "current");
+        let staging = root.path().join("config.tmp");
+        tree_with(&staging, "newest");
+        let probe = Probe::failing(WriteStep::Rename);
 
         let error = replace_dir_with(&probe, &staging, &target).unwrap_err();
 
@@ -1989,6 +2154,22 @@ mod tests {
     }
 
     #[test]
+    fn the_system_refuses_an_exchange_with_no_staging_tree() {
+        // The exchange of the host itself, with no test value between.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+        tree_with(&target, "current");
+
+        let error = replace_dir(&root.path().join("config.tmp"), &target).unwrap_err();
+
+        assert_eq!(error.step, WriteStep::Exchange);
+        assert_eq!(error.path, target);
+        assert_eq!(error.kind, io::ErrorKind::NotFound);
+        assert_eq!(text_in(&target), "current");
+        assert_eq!(names_in(root.path()), ["config"]);
+    }
+
+    #[test]
     fn a_failed_directory_sync_of_a_swap_leaves_the_new_tree_in_place() {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("config");
@@ -2001,7 +2182,7 @@ mod tests {
 
         assert_eq!(error, no_space(WriteStep::SyncDir, root.path()));
         assert_eq!(text_in(&target), "newest");
-        assert_eq!(text_in(&root.path().join("config.old")), "current");
+        assert_eq!(text_in(&staging), "current");
     }
 
     #[test]
@@ -2035,7 +2216,7 @@ mod tests {
         replace_dir_with(&Probe::failing(WriteStep::RemoveOld), &staging, &target).unwrap();
 
         assert_eq!(text_in(&target), "newest");
-        assert_eq!(text_in(&root.path().join("config.old")), "current");
+        assert_eq!(text_in(&staging), "current");
     }
 
     #[test]
@@ -2057,11 +2238,6 @@ mod tests {
             fs::read(root.path().join("config.old")).unwrap(),
             b"not a tree"
         );
-    }
-
-    /// Whether the entry at `path` is a symlink.
-    fn is_symlink(path: &Path) -> bool {
-        fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
     }
 
     #[test]
@@ -2113,8 +2289,8 @@ mod tests {
     }
 
     #[test]
-    fn an_old_name_that_holds_no_tree_is_refused_before_each_rename() {
-        // The target is a file. The system renames a file onto a file, so
+    fn an_old_name_that_holds_no_tree_is_refused_before_an_entry_moves() {
+        // The target is a file. The system exchanges a file and a tree, so
         // this refusal is not an answer of the system.
         let root = TempRoot::new().unwrap();
         let target = root.path().join("config");
@@ -2136,7 +2312,7 @@ mod tests {
                 os_text: String::from("the old name holds an entry that is not a directory"),
             }
         );
-        assert_eq!(probe.count_of(WriteStep::Rename), 0);
+        assert_eq!(probe.moves(), 0);
         assert_eq!(fs::read(&target).unwrap(), b"current");
         assert_eq!(fs::read(&old).unwrap(), b"stale");
     }
@@ -2144,8 +2320,8 @@ mod tests {
     /// Runs a swap of `config.tmp` onto `config` in the directory `root`,
     /// with a symlink at `link` whose aim the system refuses to look at.
     /// The aim is in a directory that the process cannot enter. The result
-    /// is the result of the swap, the count of its renames, and the entries
-    /// before and after it.
+    /// is the result of the swap, the count of its renames and exchanges,
+    /// and the entries before and after it.
     fn swap_past_a_closed_aim(
         root: &Path,
         link: &Path,
@@ -2162,11 +2338,7 @@ mod tests {
         let result = replace_dir_with(&probe, &staging, &root.join("config"));
         fs::set_permissions(&closed, Permissions::from_mode(0o700)).unwrap();
 
-        (
-            result,
-            probe.count_of(WriteStep::Rename),
-            [before, entries_in(root)],
-        )
+        (result, probe.moves(), [before, entries_in(root)])
     }
 
     /// The error of a swap for a look at `path` that the system refused.
@@ -2187,17 +2359,17 @@ mod tests {
             return;
         }
 
-        // The target is a file. The system renames a file onto a symlink,
-        // so a swap that reads the refusal as "no entry" replaces the
-        // symlink at the old name.
+        // The error is the answer of the system. A swap that reads the
+        // refusal as "no entry" gives the error for a symlink at the old
+        // name.
         let root = TempRoot::new().unwrap();
         fs::write(root.path().join("config"), b"current").unwrap();
         let old = root.path().join("config.old");
 
-        let (result, renames, [before, after]) = swap_past_a_closed_aim(root.path(), &old);
+        let (result, moves, [before, after]) = swap_past_a_closed_aim(root.path(), &old);
 
         assert_eq!(result, Err(no_permission(&old)));
-        assert_eq!(renames, 0);
+        assert_eq!(moves, 0);
         assert_eq!(after, before);
     }
 
@@ -2210,10 +2382,10 @@ mod tests {
         let root = TempRoot::new().unwrap();
         let target = root.path().join("config");
 
-        let (result, renames, [before, after]) = swap_past_a_closed_aim(root.path(), &target);
+        let (result, moves, [before, after]) = swap_past_a_closed_aim(root.path(), &target);
 
         assert_eq!(result, Err(no_permission(&target)));
-        assert_eq!(renames, 0);
+        assert_eq!(moves, 0);
         assert_eq!(after, before);
     }
 
@@ -2262,13 +2434,14 @@ mod tests {
     enum After {
         /// The call is an error. Each entry is as it was before the call.
         Refused,
-        /// The new tree is at the target. The old name is absent.
+        /// The new tree is at the target. The staging name and the old name
+        /// are absent.
         Swapped,
-        /// The new tree is at the target. The old name holds the entry that
-        /// was at the target.
+        /// The new tree is at the target. The staging name holds the entry
+        /// that was at the target. The old name is absent.
         MovedAside,
-        /// The new tree is at the target. The old name holds the entry that
-        /// it held before the call.
+        /// The new tree is at the target. The staging name is absent. The
+        /// old name holds the entry that it held before the call.
         OldKept,
     }
 
@@ -2317,13 +2490,14 @@ mod tests {
     }
 
     /// The entries after a swap that put the new tree at the target. The
-    /// staging tree is gone, and the old name holds `old`. Each other entry
-    /// of `before` stays, for example the tree that a symlink names.
-    fn swapped(before: &Entries, old: Option<&String>) -> Entries {
+    /// staging name holds `aside`, and the old name holds `old`. Each other
+    /// entry of `before` stays, for example the tree that a symlink names.
+    fn swapped(before: &Entries, aside: Option<&String>, old: Option<&String>) -> Entries {
         let mut after = before.clone();
         after.remove("config.tmp");
         after.remove("config.old");
         after.insert(String::from("config"), String::from("tree of newest"));
+        after.extend(aside.map(|holds| (String::from("config.tmp"), holds.clone())));
         after.extend(old.map(|holds| (String::from("config.old"), holds.clone())));
 
         after
@@ -2332,9 +2506,9 @@ mod tests {
     /// What [`replace_dir`] leaves for each kind of entry at the target
     /// `config` and at the old name `config.old`.
     ///
-    /// No vector covers a swap. A run of the Python copy on the same
-    /// entries gave each row (`caregiver/src/caregiver/atomic.py:47-69`).
-    /// `Refused` is a call for which the copy raises.
+    /// No vector covers a swap. The doc comment of [`replace_dir`] says
+    /// where the Python copy leaves other entries
+    /// (`caregiver/src/caregiver/atomic.py:47-69`).
     const SWAPS: &[(Entry, Entry, After)] = &[
         (Entry::Tree, Entry::Absent, After::Swapped),
         (Entry::Tree, Entry::Tree, After::Swapped),
@@ -2345,12 +2519,12 @@ mod tests {
         (Entry::File, Entry::Tree, After::MovedAside),
         (Entry::File, Entry::File, After::Refused),
         (Entry::File, Entry::LinkToTree, After::Refused),
-        (Entry::File, Entry::LinkToNothing, After::MovedAside),
+        (Entry::File, Entry::LinkToNothing, After::Refused),
         (Entry::LinkToTree, Entry::Absent, After::MovedAside),
         (Entry::LinkToTree, Entry::Tree, After::MovedAside),
         (Entry::LinkToTree, Entry::File, After::Refused),
         (Entry::LinkToTree, Entry::LinkToTree, After::Refused),
-        (Entry::LinkToTree, Entry::LinkToNothing, After::MovedAside),
+        (Entry::LinkToTree, Entry::LinkToNothing, After::Refused),
         (Entry::LinkToNothing, Entry::Absent, After::Refused),
         (Entry::LinkToNothing, Entry::Tree, After::Refused),
         (Entry::LinkToNothing, Entry::File, After::Refused),
@@ -2364,7 +2538,7 @@ mod tests {
     ];
 
     #[test]
-    fn a_swap_leaves_what_the_python_copy_leaves_for_each_kind_of_entry() {
+    fn a_swap_leaves_these_entries_for_each_kind_of_entry() {
         // The table has each pair of the five kinds one time.
         let pairs: BTreeSet<String> = SWAPS
             .iter()
@@ -2386,9 +2560,9 @@ mod tests {
 
             let expected = match after {
                 After::Refused => before.clone(),
-                After::Swapped => swapped(&before, None),
-                After::MovedAside => swapped(&before, Some(&before["config"])),
-                After::OldKept => swapped(&before, Some(&before["config.old"])),
+                After::Swapped => swapped(&before, None, None),
+                After::MovedAside => swapped(&before, Some(&before["config"]), None),
+                After::OldKept => swapped(&before, None, Some(&before["config.old"])),
             };
             let case = format!("{at_target:?} at the target, {at_old:?} at the old name");
             assert_eq!(
@@ -2413,6 +2587,84 @@ mod tests {
         assert_eq!(error.kind, io::ErrorKind::InvalidInput);
         assert!(probe.steps().is_empty());
         assert!(staging.is_dir());
+    }
+
+    /// Sets a flag when it drops, so a test that fails still stops its
+    /// second thread.
+    struct SetOnDrop<'flag>(&'flag AtomicBool);
+
+    impl Drop for SetOnDrop<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// The count of the swaps that the test with a reader makes.
+    const READER_SWAPS: usize = 300;
+
+    /// The text of the tree of one swap of that test.
+    fn revision_text(revision: usize) -> String {
+        format!("revision {revision} of the tree, as one whole text")
+    }
+
+    #[test]
+    fn a_reader_finds_a_whole_tree_at_the_target_during_300_swaps() {
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+        tree_with(&target, &revision_text(0));
+        let whole: BTreeSet<String> = (0..=READER_SWAPS).map(revision_text).collect();
+
+        // Each swap has a staging name of its own, and the probe fails the
+        // last remove of each swap. Each old tree thus stays whole at its
+        // staging name. A reader that found the old tree a moment before the
+        // exchange then still reads its file. A read that fails is thus a
+        // read that found no tree at the target.
+        let probe = Probe::failing(WriteStep::RemoveOld);
+        let swaps_done = AtomicBool::new(false);
+        let (first_read, reader_runs) = mpsc::sync_channel(1);
+
+        let (reads, odd, last) = thread::scope(|scope| {
+            let (target, whole, swaps_done) = (&target, &whole, &swaps_done);
+            let reader = scope.spawn(move || {
+                let mut reads = 0_u64;
+                let mut odd = None;
+
+                loop {
+                    // The flag is read before the file. The last read is
+                    // thus a read after the last swap.
+                    let last_read = swaps_done.load(Ordering::SeqCst);
+                    let read = tree_text(target);
+                    reads += 1;
+
+                    if reads == 1 {
+                        first_read.send(()).unwrap();
+                    }
+                    if !read.as_ref().is_ok_and(|text| whole.contains(text)) {
+                        odd.get_or_insert(format!("read {reads}: {read:?}"));
+                    }
+                    if last_read {
+                        return (reads, odd, read.ok());
+                    }
+                }
+            });
+
+            let stop = SetOnDrop(swaps_done);
+            reader_runs.recv().unwrap();
+
+            for revision in 1..=READER_SWAPS {
+                let staging = root.path().join(format!("config.{revision}.tmp"));
+                tree_with(&staging, &revision_text(revision));
+
+                replace_dir_with(&probe, &staging, target).unwrap();
+            }
+            drop(stop);
+
+            reader.join().unwrap()
+        });
+
+        assert_eq!(odd, None, "of {reads} reads");
+        assert_eq!(last, Some(revision_text(READER_SWAPS)));
+        assert_eq!(probe.count_of(WriteStep::Exchange), READER_SWAPS);
     }
 
     // --- ensure_dir ---
@@ -2495,8 +2747,19 @@ mod tests {
 
     // No vector covers a write. The doc comment of `write`, of `write_new`
     // and of `replace_dir` names the Python lines of each test below. The
-    // test for the look of `replace_dir` that the system refuses is
-    // `an_old_name_that_the_system_refuses_to_look_at_stops_the_swap`.
+    // tests for `replace_dir` are above:
+    //
+    // - The one exchange:
+    //   `a_whole_tree_is_at_the_target_before_each_step_of_a_swap` and
+    //   `a_reader_finds_a_whole_tree_at_the_target_during_300_swaps`.
+    // - An exchange that fails:
+    //   `a_swap_that_fails_at_its_exchange_keeps_the_old_tree_in_place`.
+    // - The name that holds the old tree:
+    //   `the_last_remove_of_a_swap_can_fail_and_the_swap_succeeds`.
+    // - A target that is no tree, and a symlink to no entry at the old
+    //   name: `a_swap_leaves_these_entries_for_each_kind_of_entry`.
+    // - A look that the system refuses:
+    //   `an_old_name_that_the_system_refuses_to_look_at_stops_the_swap`.
 
     /// The Python copies give the temporary file five other names.
     #[test]
