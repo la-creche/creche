@@ -242,14 +242,14 @@ The answer types of contract 02 need the readers, and they are in
     that answer before its cutover release.
 - The Python `caregiver` swaps a directory with two renames
   (`caregiver/src/caregiver/atomic.py:47-69`). The doc comment of
-  `atomic::replace_dir` names each difference. A swap that stops leaves the
-  old tree at one of two names:
-  - A swap of the Python copy leaves it at `<target>.old`. `replace_dir`
-    removes a directory with that name.
-  - A swap of `replace_dir` leaves it at the staging name. The caller
-    removes a tree at that name before it fills the name again.
-    `caregiver/src/caregiver/config_mount.py:69-71` is that step of the
-    Python copy.
+  `atomic::replace_dir` names each difference. A swap that stops can leave
+  the old tree at a name that is not the target:
+  - A swap of the Python copy that stops after its first rename leaves it
+    at `<target>.old`. `replace_dir` removes a directory with that name.
+  - A swap of `replace_dir` that stops after its exchange leaves it at the
+    staging name. The caller removes a tree at that name before it fills
+    the name again. `caregiver/src/caregiver/config_mount.py:69-71` is that
+    step of the Python copy.
 - This `CONTRACT-QUESTION` comment is open in `src/signals.rs`: contract 02
   §3 rule 8 gives SIGHUP its job and does not say how many reloads follow
   two signals. `Hangups` gives one item for all the signals that arrive

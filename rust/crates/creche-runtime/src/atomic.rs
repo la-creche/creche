@@ -408,13 +408,13 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 /// Puts the directory `staging` in the place of the directory `target`.
 ///
 /// The caller fills `staging` first. A reader then finds the old tree or the
-/// new tree at `target`. No reader finds a tree with a part of its files, and
-/// no reader finds `target` absent.
+/// new tree at `target`. No reader finds a tree with a part of its files.
 ///
 /// The kernel renames a directory only onto a name that is absent or onto
 /// an empty directory. For a `target` that exists, the function thus asks
-/// the system to exchange the entries of the two names in one call.
-/// `target` names a whole tree before that call and after it.
+/// the system to exchange the entries of the two names in one call. Before
+/// that call, `target` holds the old tree. After it, `target` holds the new
+/// tree. The name `target` thus holds a tree at each moment.
 ///
 /// The steps, in this order:
 ///
