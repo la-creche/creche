@@ -70,18 +70,12 @@ use serde::de::DeserializeOwned;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::json::{
-    self, ByteCap, Charset, Found, Integer, KeyOrder, Layout, NotStrict, Opaque, ReadError, Shape,
-    Style, WriteError,
-};
+use crate::json::{self, ByteCap, Found, Integer, NotStrict, Opaque, ReadError, Shape, WriteError};
 use crate::slot::{Nested, Slot};
 
 /// The value of the member `jsonrpc` of each message (JSON-RPC 2.0,
 /// sections 4 and 5).
 pub const JSONRPC_VERSION: &str = "2.0";
-
-/// The style of the text that the module writes to read a value again.
-const COMPACT: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGiven);
 
 /// The `type` of a content block that holds a text.
 const TEXT_BLOCK: &str = "text";
@@ -348,34 +342,13 @@ impl<'de> Deserialize<'de> for Slot<RequestId> {
             Slot::Other(found) => return Ok(Self::Other(found)),
         };
         let id = match value.kind() {
-            Found::Text => reread(&value).map(RequestId::Text).ok(),
-            Found::Integer => reread(&value).map(RequestId::Integer).ok(),
+            Found::Text => value.parse().map(RequestId::Text).ok(),
+            Found::Integer => value.parse().map(RequestId::Integer).ok(),
             Found::Null | Found::Boolean | Found::Float | Found::List | Found::Table => None,
         };
 
         Ok(id.map_or(Self::Other(value.kind()), Self::Value))
     }
-}
-
-/// Reads `value` again as a `T`.
-///
-/// An [`Opaque`] gives no member of its value. The function thus writes the
-/// value in its compact form and gives that text to the strict reader. The
-/// writer holds each rule of the reader, so the check accepts the text.
-fn reread<T: DeserializeOwned>(value: &Opaque) -> Result<T, WireError> {
-    let text = json::write(value, COMPACT).map_err(WireError::NoJsonForm)?;
-
-    Ok(json::read(&text, ByteCap::new(text.len()))?)
-}
-
-/// The opaque value that `value` writes.
-///
-/// Only a read makes an [`Opaque`]. The function thus gives the text of the
-/// writer to the strict reader, as [`reread`] does.
-fn opaque_of<T: Serialize + ?Sized>(value: &T) -> Result<Opaque, WireError> {
-    let text = json::write(value, COMPACT).map_err(WireError::NoJsonForm)?;
-
-    Ok(Opaque::read(&text, ByteCap::new(text.len()))?)
 }
 
 /// A JSON object that the module keeps whole and does not read.
@@ -449,7 +422,7 @@ impl Object {
     /// [`WireError::NoJsonForm`] for a value that the writer refuses, and
     /// [`WireError::NotObject`] for a value that writes no object.
     pub fn of<T: Serialize + ?Sized>(value: &T) -> Result<Self, WireError> {
-        Self::try_from(opaque_of(value)?)
+        Self::try_from(Opaque::of(value).map_err(WireError::NoJsonForm)?)
     }
 
     /// The members of the object as a `T`. A caller reads the parameters of
@@ -459,7 +432,7 @@ impl Object {
     ///
     /// [`WireError::Shape`] when `T` does not take the object.
     pub fn parse<T: DeserializeOwned>(&self) -> Result<T, WireError> {
-        reread(&self.value)
+        self.value.parse().map_err(WireError::Shape)
     }
 
     /// The object as the opaque value that it is.
@@ -788,7 +761,7 @@ impl RawLine {
         // and it gives no `Other`.
         let data = match error.data {
             Slot::Missing => None,
-            Slot::Null => Some(opaque_of(&())?),
+            Slot::Null => Some(Opaque::null()),
             Slot::Value(data) => Some(data),
             Slot::Other(_) => return Err(WireError::Member(DATA)),
         };
@@ -1645,10 +1618,14 @@ struct RawCallTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json::Rule;
+    use crate::json::{Charset, KeyOrder, Layout, Rule, Style};
     use crate::slot::tests::reads_empty_table;
 
     const CAP: ByteCap = ByteCap::new(4096);
+
+    /// The style of each text that a test compares: no white space, and
+    /// each character as it is.
+    const COMPACT: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGiven);
 
     /// The text of a message with these members after the version word.
     fn message(members: &str) -> String {

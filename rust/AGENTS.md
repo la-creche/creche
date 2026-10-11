@@ -1810,13 +1810,6 @@ adds a crate:
   cannot give. The variant `Member` holds three reasons. "Where a new type
   goes" gives each type an error type of its own, in item 8. No packet has
   that part yet.
-- Against rule 13, `mcp` holds a second copy of one value of `json`. That
-  value is the compact style, `COMPACT`. `json::Opaque` gives no member of
-  its value and takes no typed value. The functions `reread` and
-  `opaque_of` of `mcp` thus write a value in that style and read the text
-  again. A packet that can change `json` gives `Opaque` those two
-  conversions, and then deletes the copy and the two functions. No packet
-  has that part yet.
 - An `mcp::Object` can nest 64 levels, the limit of the reader. An
   `mcp::Line` adds one level to its object. The writer thus refuses a
   message that holds the deepest object. The `CONTRACT-QUESTION` comment of
