@@ -522,7 +522,9 @@ impl ChaperoneConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BindAddressError, BindHostError, PortError, SecondsError};
+    use crate::config::{
+        BindAddressError, BindHostError, HttpUrlError, LanAddressError, PortError, SecondsError,
+    };
 
     /// The variables that `systemd/creche-chaperone.service` gives the
     /// daemon: each `Environment=` line and the site file.
@@ -696,6 +698,61 @@ mod tests {
                 error: BindAddressError::Host(BindHostError::Empty)
             }]
         );
+    }
+
+    #[test]
+    fn a_site_reader_refuses_a_value_that_the_python_reader_takes() {
+        // A reader of `chaperone.site` takes each of these environments. No
+        // vector holds one for that reader: the daemon calls it at its start.
+        type Reader = fn(&Env) -> Option<ConfigErrors>;
+        let bind_of: Reader = |env| bind(env).err();
+        let address_of: Reader = |env| env.require::<LanAddress>(LAN_ADDRESS).err();
+        let tei_of: Reader = |env| tei_url(env).err();
+        let ha_of: Reader = |env| ha_url(env).err();
+        let no_address = |error| ConfigError::Address {
+            variable: LAN_ADDRESS,
+            error,
+        };
+        for (pairs, readers, error) in [
+            (
+                [(LAN_ADDRESS, "0.0.0.0")],
+                vec![address_of, tei_of],
+                no_address(LanAddressError::EachInterface),
+            ),
+            (
+                [(LAN_ADDRESS, "::1")],
+                vec![bind_of, address_of, tei_of],
+                no_address(LanAddressError::BadLabel { at: 0 }),
+            ),
+            (
+                [(LAN_ADDRESS, "not a host")],
+                vec![bind_of, address_of, tei_of],
+                no_address(LanAddressError::BadLabel { at: 0 }),
+            ),
+            (
+                [(BIND, "127.0.0.1:0")],
+                vec![bind_of],
+                ConfigError::Bind {
+                    variable: BIND,
+                    error: BindAddressError::Port(PortError::OutOfRange),
+                },
+            ),
+            (
+                [(HA_URL, "192.0.2.21:8123")],
+                vec![ha_of],
+                ConfigError::Url {
+                    variable: HA_URL,
+                    error: HttpUrlError::NoScheme,
+                },
+            ),
+        ] {
+            let env = Env::from_pairs(pairs);
+            for reader in readers {
+                let errors = reader(&env).unwrap();
+
+                assert_eq!(errors.as_slice(), [error], "{pairs:?}");
+            }
+        }
     }
 
     #[test]

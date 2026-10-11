@@ -556,7 +556,9 @@ impl AttendanceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BindHostError, PathError, PortError, SecondsError};
+    use crate::config::{
+        BindHostError, HttpUrlError, LanAddressError, PathError, PortError, SecondsError,
+    };
 
     /// The variables that `systemd/creche-attendance.service` gives the
     /// daemon: the site file, and no line of `sessiond.env`.
@@ -786,6 +788,130 @@ mod tests {
             one_error(&[(OWUI_URL, "192.0.2.10:8181")]).variable(),
             OWUI_URL
         );
+    }
+
+    #[test]
+    fn the_type_of_a_variable_refuses_a_value_that_the_python_reader_takes() {
+        // `attendance.config.from_env` takes each of these environments. No
+        // vector holds one: the daemon calls that reader at its start.
+        let socket_of_108_bytes = format!("/{}", "a".repeat(107));
+        for (pairs, error) in [
+            (
+                vec![(LAN_ADDRESS, "192.0.2.10"), (BIND_ADDRESS, "not a host")],
+                ConfigError::Host {
+                    variable: BIND_ADDRESS,
+                    error: BindHostError::NotAHost,
+                },
+            ),
+            (
+                vec![(LAN_ADDRESS, "::1")],
+                ConfigError::Address {
+                    variable: LAN_ADDRESS,
+                    error: LanAddressError::BadLabel { at: 0 },
+                },
+            ),
+            (
+                vec![(LAN_ADDRESS, "192.0.2.10"), (STATE_ROOT, "state")],
+                ConfigError::Path {
+                    variable: STATE_ROOT,
+                    error: PathError::NotAbsolute,
+                },
+            ),
+            (
+                vec![
+                    (LAN_ADDRESS, "192.0.2.10"),
+                    (SOCKET, socket_of_108_bytes.as_str()),
+                ],
+                ConfigError::Path {
+                    variable: SOCKET,
+                    error: PathError::TooLong,
+                },
+            ),
+            (
+                vec![(LAN_ADDRESS, "192.0.2.10"), (OWUI_KEY_FILE, "owui-api.key")],
+                ConfigError::Path {
+                    variable: OWUI_KEY_FILE,
+                    error: PathError::NotAbsolute,
+                },
+            ),
+            // The digits U+FF18, U+FF13, U+FF15 and U+FF10. Python reads 8350.
+            (
+                vec![
+                    (LAN_ADDRESS, "192.0.2.10"),
+                    (LAN_PORT, "\u{ff18}\u{ff13}\u{ff15}\u{ff10}"),
+                ],
+                ConfigError::Port {
+                    variable: LAN_PORT,
+                    error: PortError::NotANumber,
+                },
+            ),
+            // The digits U+0662 and U+0660. Python reads 20.0.
+            (
+                vec![
+                    (LAN_ADDRESS, "192.0.2.10"),
+                    (LOCK_STALE_S, "\u{662}\u{660}"),
+                ],
+                ConfigError::Seconds {
+                    variable: LOCK_STALE_S,
+                    error: SecondsError::NotANumber,
+                },
+            ),
+            (
+                vec![(LAN_ADDRESS, "192.0.2.10"), (LOCK_STALE_S, "1e30")],
+                ConfigError::Seconds {
+                    variable: LOCK_STALE_S,
+                    error: SecondsError::TooLong,
+                },
+            ),
+            (
+                vec![(LAN_ADDRESS, "192.0.2.10"), (LOCK_POLL_S, "1e-12")],
+                ConfigError::Seconds {
+                    variable: LOCK_POLL_S,
+                    error: SecondsError::NotPositive,
+                },
+            ),
+            (
+                vec![
+                    (LAN_ADDRESS, "192.0.2.10"),
+                    (CHANNEL_COMMAND, "sbx 'exec {sandbox}"),
+                ],
+                ConfigError::BadForm {
+                    variable: CHANNEL_COMMAND,
+                    form: "a command that splits into words",
+                },
+            ),
+            (
+                vec![
+                    (LAN_ADDRESS, "192.0.2.10"),
+                    (CHANNEL_COMMAND, "sbx exec \\"),
+                ],
+                ConfigError::BadForm {
+                    variable: CHANNEL_COMMAND,
+                    form: "a command that splits into words",
+                },
+            ),
+            (
+                vec![(LAN_ADDRESS, "192.0.2.10"), (OWUI_URL, "192.0.2.10:8181")],
+                ConfigError::Url {
+                    variable: OWUI_URL,
+                    error: HttpUrlError::NoScheme,
+                },
+            ),
+            (
+                vec![
+                    (LAN_ADDRESS, "192.0.2.10"),
+                    (OWUI_URL, "http://user:password@192.0.2.10:8181"),
+                ],
+                ConfigError::Url {
+                    variable: OWUI_URL,
+                    error: HttpUrlError::UserPart,
+                },
+            ),
+        ] {
+            let errors = AttendanceConfig::from_env(&Env::from_pairs(pairs)).unwrap_err();
+
+            assert_eq!(errors.as_slice(), [error]);
+        }
     }
 
     #[test]
