@@ -31,6 +31,9 @@ const COMMAND_TIMEOUT_MS = 30000;
 /** VmRSS is reported in kilobytes. */
 const KB_PER_MB = 1024;
 
+/** The pi command whose answer is its `data`: the entries of the session. */
+const PI_GET_ENTRIES = "get_entries";
+
 export interface PiSpawnSpec {
   readonly args: readonly string[];
   readonly cwd: string;
@@ -49,9 +52,27 @@ export interface PiHandlers {
 /** Why a command did not get a usable answer. Callers map these to reasons. */
 export class PiCommandError extends Error {}
 
+/** One caller that waits for the answer to a command. */
+interface Waiting {
+  /** The `type` of the command that the caller sent. */
+  readonly command: string;
+  readonly settle: (answer: PiResponse) => void;
+}
+
+/**
+ * The answer that a caller gets from a `response` record that was cut.
+ *
+ * A cut record holds its scalars and no `data`. The answer to `get_entries`
+ * is its `data`, so a cut answer to that command is a failure: the caller
+ * read no entry. Each other command reads `success`, and that scalar stays.
+ */
+function answerOfCut(command: string, response: PiResponse): PiResponse {
+  return command === PI_GET_ENTRIES ? { ...response, success: false } : response;
+}
+
 export class PiProcess {
   private readonly child: ChildProcess;
-  private readonly pending = new Map<string, (answer: PiResponse) => void>();
+  private readonly pending = new Map<string, Waiting>();
   private nextCommandId = 1;
   private stdinClosed = false;
   private exited = false;
@@ -134,9 +155,12 @@ export class PiProcess {
         reject(new PiCommandError(`pi did not answer ${command.type} in time`));
       }, COMMAND_TIMEOUT_MS);
 
-      this.pending.set(id, (response) => {
-        clearTimeout(timer);
-        resolve(response);
+      this.pending.set(id, {
+        command: command.type,
+        settle: (response) => {
+          clearTimeout(timer);
+          resolve(response);
+        },
       });
     });
 
@@ -233,7 +257,12 @@ export class PiProcess {
 
     const waiting = this.pending.get(id);
     this.pending.delete(id);
-    waiting?.(response);
+    if (waiting === undefined) {
+      return;
+    }
+
+    // `boundRecord` gives the same object back when it cut nothing.
+    waiting.settle(record === parsed ? response : answerOfCut(waiting.command, response));
   }
 
   private wireStderr(): void {
@@ -273,7 +302,7 @@ export class PiProcess {
 
     // Every caller still waiting learns the process is gone instead of hanging.
     for (const [, waiting] of this.pending) {
-      waiting({ type: "response", success: false, error: "pi process exited" });
+      waiting.settle({ type: "response", success: false, error: "pi process exited" });
     }
     this.pending.clear();
 

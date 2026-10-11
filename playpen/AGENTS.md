@@ -195,6 +195,9 @@ it on a development machine.
     `JSON.stringify`.
     - `boundRecord` cuts a pi record that holds a lone surrogate, or that
       nests deeper than 63 levels. The cut record keeps its place.
+    - A cut `response` record holds no `data`. `PiProcess` gives a cut
+      answer to `get_entries` as a failure. The playpen then sends
+      `entry_count: null` in `turn_settled` and `ok: false` in `entries`.
     - `Channel.send` puts U+FFFD in the place of a lone surrogate in a
       `message` text of the playpen.
     - `stringifyStrict` writes an integer outside 64 bits with an exponent.
@@ -244,6 +247,10 @@ delivers them. Three test seams exist and nothing in the image sets them:
   surrogate. The playpen cuts a pi line to its scalar fields in two cases:
   the line nests deeper than 63 levels, or it holds a lone surrogate
   (`src/pi-record.ts`).
+- pi can answer `get_entries` with a record that the playpen cuts. That
+  read is a failure, and each later read that holds the same entry is one
+  too. For each turn with such a read, the playpen sends no entry id and
+  no entry count (`src/pi-process.ts`).
 - The verify hook does not start an image. The image build runs each bundle
   once and stops on a bundle that does not load (`bin/playpen-verify`).
 - No test builds an image. The tests give `bin/playpen-build` a stub

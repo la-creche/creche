@@ -44,7 +44,9 @@ function staysInCut(key: string, value: unknown): boolean {
  * scalars stay, `truncated` and `original_bytes` mark it. A scalar that holds
  * a lone surrogate does not stay, and neither does a field whose key holds
  * one. A cut line keeps its place, so a cut `agent_settled` still settles its
- * turn and a cut `response` still answers its command.
+ * turn and a cut `response` still answers its command. A cut `response`
+ * holds no `data`, so `PiProcess` gives a cut answer to `get_entries` as a
+ * failure.
  *
  * CONTRACT-QUESTION: contract 03 §8 cuts a wrapped event by size. It names
  * no depth and no lone surrogate. The reading taken is that a line the

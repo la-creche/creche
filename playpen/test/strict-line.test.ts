@@ -6,7 +6,12 @@
 // the bytes of the text that the channel writes. `Channel.send` is the last
 // guard: it makes its own texts whole, and it sends no line that the rule
 // refuses.
+//
+// A cut `response` holds no `data`. `PiProcess` gives a cut answer to
+// `get_entries` as a failure, so the playpen reports no entry that it did
+// not read.
 
+import { spawn } from "node:child_process";
 import { Writable } from "node:stream";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +19,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Channel } from "../src/channel.js";
 import { MAX_LOG_BYTES, MAX_PI_NESTING } from "../src/constants.js";
 import { byteLength, cutToBytes } from "../src/framing.js";
+import { PiProcess } from "../src/pi-process.js";
 import { boundRecord, readResponse } from "../src/pi-record.js";
 import type { PlaypenMessage } from "../src/protocol.js";
 import { capEvent } from "../src/wrap.js";
@@ -34,6 +40,33 @@ const PAST_U64 = 18446744073709551616;
 
 const SESSION = "owui-strict";
 const TURN = "01JBQ7WZ0X4T9V6K2H8M3N0001";
+const SECOND_TURN = "01JBQ7WZ0X4T9V6K2H8M3N0002";
+const REQUEST = "01JBQ7WZ0X4T9V6K2H8M3N5PQR";
+
+/** One entry of a pi store. Its text holds one half of a surrogate pair. */
+const ODD_ENTRY = `{"id":"odd","message":{"role":"toolResult","content":"a${HIGH_ESCAPE}"}}`;
+
+/**
+ * A program in the place of pi. It answers each command with a `response`
+ * that says `success: true`, and whose `data` holds a lone surrogate. Each
+ * answer names the command `prompt`, whatever the command was.
+ */
+const ODD_ANSWERS = `
+  process.stdin.setEncoding("utf8");
+  let inbox = "";
+  process.stdin.on("data", (chunk) => {
+    inbox += chunk;
+    const parts = inbox.split("\\n");
+    inbox = parts.pop();
+    for (const part of parts) {
+      const command = JSON.parse(part);
+      const data = { text: "${HIGH_ESCAPE}" };
+      const answer = { type: "response", id: command.id, command: "prompt", success: true, data };
+      process.stdout.write(JSON.stringify(answer) + "\\n");
+    }
+  });
+  process.stdin.on("end", () => process.exit(0));
+`;
 
 /** `levels` arrays, each one inside the one before. */
 function nested(levels: number): unknown {
@@ -383,6 +416,94 @@ describe("a pi line that is not strict JSON", () => {
     await until(() => harness.of("turn_settled").length === 1, "the turn");
 
     expect(eventOf(harness, "tool_execution_update")).toEqual(JSON.parse(line));
+    expectStrictLines(harness);
+  });
+});
+
+describe("a pi answer that is not strict JSON", () => {
+  /** A playpen after two turns. The fake pi stores `ODD_ENTRY` in the second one. */
+  async function afterTwoTurns(): Promise<Harness> {
+    const harness = new Harness({ piEnv: { [SESSION]: { FAKE_PI_LATE_ENTRY: ODD_ENTRY } } });
+    live.push(harness);
+    harness.start();
+    harness.hello();
+    harness.startTurn(SESSION, TURN);
+
+    await until(() => harness.of("turn_settled").length === 1, "the first turn");
+    harness.startTurn(SESSION, SECOND_TURN);
+
+    await until(() => harness.of("turn_settled").length === 2, "the second turn");
+
+    return harness;
+  }
+
+  it("is a failure for get_entries, and keeps its success for each other command", async () => {
+    const pi = new PiProcess(
+      () => spawn(process.execPath, ["-e", ODD_ANSWERS], { stdio: ["pipe", "pipe", "pipe"] }),
+      { args: [], cwd: process.cwd(), env: {} },
+      { onEvent: () => undefined, onLog: () => undefined, onExit: () => undefined },
+    );
+
+    try {
+      // The `data` of each answer is cut, and the scalars stay.
+      expect(await pi.call({ type: "prompt", message: "x" })).toEqual({
+        type: "response",
+        id: "c1",
+        command: "prompt",
+        success: true,
+      });
+      expect(await pi.call({ type: "fork", entryId: "e1" })).toEqual({
+        type: "response",
+        id: "c2",
+        command: "prompt",
+        success: true,
+      });
+      // The playpen goes by the command that it sent, not by the name in
+      // the answer.
+      expect(await pi.call({ type: "get_entries" })).toEqual({
+        type: "response",
+        id: "c3",
+        command: "prompt",
+        success: false,
+      });
+    } finally {
+      pi.kill();
+    }
+  });
+
+  it("gives a turn_settled line with no entry id and no entry count", async () => {
+    const harness = await afterTwoTurns();
+    const [first, second] = harness.of("turn_settled");
+
+    // The first read is whole, so the playpen holds a cursor for the second.
+    expect(first).toMatchObject({ user_entry_id: "e1", leaf_id: "e2" });
+    // §5.2: a count that the playpen does not know is null.
+    expect(second).toMatchObject({ user_entry_id: null, leaf_id: null, entry_count: null });
+    expect(harness.of("turn_failed")).toHaveLength(0);
+    expectStrictLines(harness);
+  });
+
+  it("gives an entries line that says that nothing was read", async () => {
+    const harness = await afterTwoTurns();
+    harness.send({
+      type: "get_entries",
+      request: REQUEST,
+      session: SESSION,
+      cwd: harness.cwd(SESSION),
+      session_dir: harness.sessionDir(SESSION),
+      env_epoch: 1,
+      config_rev: "reg-test",
+    });
+
+    await until(() => harness.of("entries").length === 1, "the answer");
+
+    // §5.8: `ok: false` carries no entry and a null `leaf_id`.
+    expect(harness.of("entries")[0]).toMatchObject({
+      request: REQUEST,
+      ok: false,
+      leaf_id: null,
+      entries: [],
+    });
     expectStrictLines(harness);
   });
 });
