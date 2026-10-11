@@ -46,7 +46,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::{self, File, OpenOptions, Permissions};
 use std::io::{self, Write as _};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -71,6 +71,10 @@ const NO_FILE_NAME: &str = "the path has no file name";
 /// What an error says when the old name of [`replace_dir`] holds a file or a
 /// symlink.
 const OLD_NAME_TAKEN: &str = "the old name holds an entry that is not a directory";
+
+/// What an error says when the staging name of [`replace_dir`] holds the
+/// entry of the target.
+const ONE_ENTRY: &str = "the staging name and the target hold one entry";
 
 /// The count of the temporary files that this process named.
 static NAMED: AtomicU64 = AtomicU64::new(0);
@@ -435,6 +439,12 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 /// fails. The caller removes a tree at that name before it fills `staging`
 /// one more time.
 ///
+/// `staging` and a `target` that exists can hold one entry: the same inode
+/// on the same device. An example is one path for the two. The call is then
+/// an error at [`WriteStep::Exchange`], before step 2, and no entry moves.
+/// Reason: the system gives no error for the exchange of an entry with
+/// itself. Without the refusal, step 6 removes the tree of `target`.
+///
 /// The function removes `<target>.old` only when it is a directory. With a
 /// file or a symlink there, a call for a `target` that exists is an error
 /// at step 2, and no entry moves. A `target` that is a file, or a symlink
@@ -466,6 +476,10 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 ///   for a `target` that is a directory. For a `target` that is a file, or
 ///   a symlink to an entry, its first rename replaces that symlink. The
 ///   function is an error for each `target` that exists.
+/// - `staging` can hold the entry of a `target` that exists. The origin then
+///   makes its first rename, and its second rename raises: `target` is
+///   absent, and the tree is at `<target>.old`. The function is an error
+///   before an entry moves.
 /// - On Python 3.14, the origin reads each error of a look at the target or
 ///   at the old name as no entry (`:61-62`). On Python 3.12 and on Python
 ///   3.13, it raises for an error such as a directory that the process
@@ -845,6 +859,31 @@ fn old_name_taken(displaced: &Path) -> WriteError {
     }
 }
 
+/// Whether the names `a` and `b` hold one entry: the same inode on the same
+/// device. The look does not follow a symlink, as the exchange does not.
+/// When the system refuses the look at a name, the answer is no. The
+/// exchange then gives the error of the system for that name.
+fn one_entry(a: &Path, b: &Path) -> bool {
+    let (Ok(a), Ok(b)) = (fs::symlink_metadata(a), fs::symlink_metadata(b)) else {
+        return false;
+    };
+
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+/// The error for a staging name that holds the entry of the target. The
+/// system gives no error for the exchange of an entry with itself. Without
+/// this refusal, the last remove of [`replace_dir`] removes the tree of the
+/// target.
+fn staging_is_target(staging: &Path) -> WriteError {
+    WriteError {
+        step: WriteStep::Exchange,
+        path: staging.to_owned(),
+        kind: io::ErrorKind::InvalidInput,
+        os_text: String::from(ONE_ENTRY),
+    }
+}
+
 /// [`replace_dir`] on the given [`Steps`].
 fn replace_dir_with(steps: &impl Steps, staging: &Path, target: &Path) -> Result<(), WriteError> {
     let Some(name) = target.file_name() else {
@@ -866,6 +905,10 @@ fn replace_dir_with(steps: &impl Steps, staging: &Path, target: &Path) -> Result
 
     // The name that can hold an old tree after the new tree is in its place.
     let old_tree = if looked(target)? {
+        if one_entry(staging, target) {
+            return Err(staging_is_target(staging));
+        }
+
         if is_real_dir(&displaced) {
             // A swap with two renames left this tree.
             steps
@@ -2114,6 +2157,42 @@ mod tests {
         // The swap has no second way: no rename follows the exchange that
         // failed.
         assert_eq!(probe.steps(), [WriteStep::MakeParents, WriteStep::Exchange]);
+    }
+
+    #[test]
+    fn a_staging_name_that_holds_the_entry_of_the_target_is_refused() {
+        // Three forms of a staging path that names the entry of the target:
+        // the path of the target, a path through a symlink to the directory
+        // above, and the path of the target with a `/` at its end.
+        for form in ["chat/config", "link/config", "chat/config/"] {
+            let root = TempRoot::new().unwrap();
+            let chat = root.path().join("chat");
+            let target = chat.join("config");
+            tree_with(&target, "current");
+            tree_with(&chat.join("config.old"), "from a crashed attempt");
+            symlink(&chat, root.path().join("link")).unwrap();
+            let staging = root.path().join(form);
+            let probe = Probe::new();
+
+            let result = replace_dir_with(&probe, &staging, &target);
+
+            assert_eq!(
+                result,
+                Err(WriteError {
+                    step: WriteStep::Exchange,
+                    path: staging.clone(),
+                    kind: io::ErrorKind::InvalidInput,
+                    os_text: String::from("the staging name and the target hold one entry"),
+                }),
+                "{form}"
+            );
+
+            // The refusal comes before the remove at the old name, and no
+            // entry moves.
+            assert_eq!(probe.steps(), [WriteStep::MakeParents], "{form}");
+            assert_eq!(text_in(&target), "current", "{form}");
+            assert_eq!(names_in(&chat), ["config", "config.old"], "{form}");
+        }
     }
 
     #[test]
