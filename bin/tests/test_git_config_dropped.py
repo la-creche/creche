@@ -15,14 +15,14 @@ The root `conftest.py` names a global file of its own and no system file
 when pytest imports it, before pytest imports a test. That file holds two
 settings and nothing of a person
 (`bin/tests/test_git_background_dropped.py`). It also names an empty ignore
-file and an empty attributes file. Each `git` child of the run gets those
-variables.
+file and an empty attributes file. Each `git` child that inherits the
+environment of the run gets those variables.
 
-One `git` child gets none of those variables. The registry writer of the
-noticeboard starts `git` with four variables, and `HOME` is one of them. That
-child reads the global config file below `HOME`. The root `conftest.py` thus
-gives each test under `noticeboard/tests` an empty home directory. Each other
-test keeps its `HOME`.
+The registry writer of the noticeboard builds the environment of its `git`
+child from four variables, and `HOME` is one of them. That child gets none of
+the variables above, so it reads the global config file below `HOME`. The
+root `conftest.py` thus gives each test under `noticeboard/tests` an empty
+home directory. Each other test keeps its `HOME`.
 
 Each test here starts pytest as a child, with a file of a person or of the
 system in the environment of the child.
