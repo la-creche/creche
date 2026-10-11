@@ -24,8 +24,11 @@ same messages.
 | `src/classify.rs` | `classify`: live or replacement, field by field. |
 | `src/zones.rs` | Whether the host knows a time zone. |
 | `src/scratch.rs` | Test code only: a directory that one test fills. |
-| `src/report.rs`, `src/json.rs`, `src/cli.rs`, `src/main.rs` | The report, and the program that prints it. |
+| `src/report.rs`, `src/json.rs` | The report, and its JSON text. |
+| `src/cli.rs` | The command line of the program. `run` prints the report. `entry` is the entry function of the program. |
+| `src/main.rs` | The `main` of the program: three steps and no other code. |
 | `tests/vectors.rs` | The differential test against the Python package. |
+| `tests/process.rs` | The tests that start the program as a process. |
 
 The types are in `creche-contracts`: `family` holds `RawFamily`, `Family` and
 the report types, and `server` holds `RawServer` and `Server`.
@@ -89,6 +92,31 @@ output.
 
 A file that the loader cannot read or cannot parse gets a report with an
 error. The program does not stop on such a file.
+
+`main` calls `entry`, and the body of `entry` is one call of
+`service::enter` of `creche-runtime`. A panic thus ends the program with
+exit status 1. The log then holds the place of the panic and never its
+message.
+
+Only `main` reads the environment, one time. `entry` gets the result and
+uses no variable of it today.
+
+Rules for the program:
+
+1. Keep the three steps of `main`: `log::init`, `Env::from_os` and the call
+   of `entry`. Add no other code there (`rust/AGENTS.md`, "The panic rule",
+   clause 2).
+2. Do not call `entry` in the process of a test. The function sets the
+   panic hook of the process. A later test that fails then prints no
+   message.
+3. A test that starts the program goes to `tests/process.rs`. Such a test
+   reads the exit status and the two output streams of the built program.
+4. `run` writes each text to one of its two writers, with `write_all` or
+   with `writeln!`. In the program, the two writers are the lock of stdout
+   and the lock of stderr. Rule 14 of "The rules for a service" in
+   `rust/AGENTS.md` has the text for such a command. When a write to stdout
+   fails, `run` returns exit status 1. `run` drops the error of a write to
+   stderr. Use no `println!` and no `eprintln!` in this crate.
 
 ## Known gaps
 
