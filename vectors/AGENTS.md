@@ -79,9 +79,6 @@ directory is not a workspace package, so a change here does not change
 
 - An input that makes the Python code raise has no vector until its fix
   merges. Rule 5 states why.
-- Rule 10 depends on resolution (c) of `rust/AGENTS.md`. That text waits
-  for a confirmation of the owner. "Known gaps" of `rust/AGENTS.md` has the
-  open point.
 - No file is frozen yet. The pull request that removes the first Python
   package freezes the first files.
 - No Rust code compares the bytes of a frozen file with its digest. The

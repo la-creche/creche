@@ -2246,10 +2246,6 @@ adds a crate:
   `mcp::Line` adds one level to its object. The writer thus refuses a
   message that holds the deepest object. The `CONTRACT-QUESTION` comment of
   `json/write.rs` above has the cause.
-- Two texts of "When the two results differ" wait for a confirmation of the
-  owner. One is resolution (c). The other is the paragraph on a Python
-  reader that a daemon calls at its start. Rule 10 of `vectors/AGENTS.md`
-  depends on resolution (c). If the owner says no, change those texts.
 - Rule 12 permits a field with `pub(crate)` or `pub(super)`. The owner did
   not confirm that reading yet. Some structs have such a field today, for
   example the raw forms of `status`. The other reading makes each such
