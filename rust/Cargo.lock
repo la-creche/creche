@@ -129,6 +129,7 @@ version = "0.0.0"
 name = "creche-vectors"
 version = "0.0.0"
 dependencies = [
+ "creche-util",
  "serde",
  "serde_json",
 ]

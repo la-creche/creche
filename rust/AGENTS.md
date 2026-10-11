@@ -23,11 +23,11 @@ defect that a test finds late.
 
 | Crate | What it holds |
 |---|---|
-| `creche-util` | Each shared helper: SHA-256, the hex text of bytes, the white space rules of Python `str` and the line end rule of the Python text mode. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
+| `creche-util` | Each shared helper: SHA-256, the hex text of bytes and base64 text. It also holds the white space rules of Python `str` and the line end rule of the Python text mode. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
-| `creche-vectors` | The one reader of the files under `vectors/data`, for each differential test. It uses `serde` and `serde_json` only, so each other crate can take it for its tests. `creche-testkit` gives it to its users as `creche_testkit::vectors`. No release holds it. `crates/creche-vectors/AGENTS.md` holds its rules. |
+| `creche-vectors` | The one reader of the files under `vectors/data`, for each differential test. It uses `serde`, `serde_json` and `creche-util` only, so each other crate can take it for its tests. `creche-testkit` gives it to its users as `creche_testkit::vectors`. No release holds it. `crates/creche-vectors/AGENTS.md` holds its rules. |
 | `creche-testkit` | Test helpers for each crate, and the program `creche-probe`. No release holds it. `crates/creche-testkit/AGENTS.md` holds its rules. |
 
 | Module of `creche-contracts` | What it holds |
@@ -137,8 +137,9 @@ writes the two numbers and their text to a file in `OUT_DIR`, and
 
 A shared helper is a pure function with two users. The users are two crates,
 or two modules that hold two contracts. `creche-util` holds each shared
-helper. Today it holds SHA-256, the hex text of bytes, the white space
-rules of Python `str` and the line end rule of the Python text mode.
+helper. Today it holds SHA-256, the hex text of bytes and base64 text. It
+also holds the white space rules of Python `str` and the line end rule of
+the Python text mode.
 
 1. Put a shared helper in `creche-util`.
 2. Write no second copy of a helper that `creche-util` holds. Call the
@@ -1695,10 +1696,8 @@ adds a crate:
     in the form of the two specifications. No packet has that part yet.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
-  - Shared helpers. Base64 has more than one copy. Packet
-    `decisions-util-runtime` moves it to `creche-util`. "Known gaps" of
-    `crates/creche-util/AGENTS.md` names each other function that is
-    still open. No packet has that part yet.
+  - Shared helpers. "Known gaps" of `crates/creche-util/AGENTS.md` names
+    each function that is still open. No packet has that part yet.
   - Vector reader. Against rule 13, the crate `creche-vectors` holds a
     second copy of the digest grammar of `ids`. "Known gaps" of
     `crates/creche-vectors/AGENTS.md` has the cause and the change that
