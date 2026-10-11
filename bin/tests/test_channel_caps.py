@@ -39,9 +39,9 @@ NAME = "MAX_LOG_BYTES"
 TYPESCRIPT_LINE = re.compile(rf"export const {NAME} = ([0-9_]+);")
 RUST_LINE = re.compile(rf"pub const {NAME}: usize = ([0-9_]+);")
 
-#: A Rust line that declares a constant whose name starts with the name of a
-#: log cap, at each visibility.
-RUST_LOG_CAP = re.compile(r"\s*(?:pub(?:\([a-z]+\))? )?const MAX_LOG_[A-Z_]*:.*")
+#: A Rust line that declares a `const` or a `static` whose name starts with
+#: the name of a log cap, at each visibility.
+RUST_LOG_CAP = re.compile(r"\s*(?:pub(?:\([^)]*\))? )?(?:const|static) MAX_LOG_[A-Z_]*:.*")
 
 
 def _declared(path: Path, line_form: re.Pattern[str]) -> list[int]:
@@ -76,6 +76,8 @@ def test_the_pattern_finds_a_log_cap_at_each_visibility() -> None:
         "const MAX_LOG_BYTES: usize = 4_096;",
         "    pub(super) const MAX_LOG_BYTES: usize = 4096;",
         "pub(crate) const MAX_LOG_UNITS: u64 = 1;",
+        "pub(in crate::channel) const MAX_LOG_BYTES: usize = 4096;",
+        "static MAX_LOG_BYTES: usize = 4096;",
     ]
     not_held = [
         "use super::MAX_LOG_BYTES;",
