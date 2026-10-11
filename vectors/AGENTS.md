@@ -102,8 +102,8 @@ directory is not a workspace package, so a change here does not change
   copy leave `ids/disagreements.json`.
 - No vector covers a scalar of `component.yaml` that PyYAML cannot build,
   such as a word with the tag `!!int`. The Python code refuses it and names
-  no line. The Rust reader refuses it and names a line. Such a vector first
-  needs a row in the Rust table of details.
+  no line. The Rust reader refuses it and names a line. A plain Rust test
+  holds such an input, with the input in the test.
 - `status.write` builds the `reconcile` block and the `spend` block by hand.
   `caregiver` builds them in two private functions of `caregiver.reconcile`.
   The generator copies the key order of those functions.
