@@ -65,6 +65,14 @@ interface Waiting {
  * A cut record holds its scalars and no `data`. The answer to `get_entries`
  * is its `data`, so a cut answer to that command is a failure: the caller
  * read no entry. Each other command reads `success`, and that scalar stays.
+ *
+ * CONTRACT-QUESTION: contract 03 §5.2 and §5.8 name a read that pi refuses.
+ * They name no answer that the playpen cut. The reading taken is that such
+ * a read gave nothing, so the playpen sends `entry_count: null` and
+ * `ok: false`. The other reading takes the id of each entry and gives no
+ * text for an entry whose text holds a lone surrogate. It needs a reader
+ * of entries that takes a record with such a text. A change costs this
+ * function and its three tests.
  */
 function answerOfCut(command: string, response: PiResponse): PiResponse {
   return command === PI_GET_ENTRIES ? { ...response, success: false } : response;

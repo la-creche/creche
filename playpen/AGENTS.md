@@ -247,10 +247,10 @@ delivers them. Three test seams exist and nothing in the image sets them:
   surrogate. The playpen cuts a pi line to its scalar fields in two cases.
   In the first case, the line nests deeper than 63 levels. In the second
   case, the line holds a lone surrogate (`src/pi-record.ts`).
-- pi can answer `get_entries` with a record that the playpen cuts. That
-  read is a failure, and each later read that holds the same entry is one
-  too. For each turn with such a read, the playpen sends no entry id and
-  no entry count (`src/pi-process.ts`).
+- Contract 03 §5.2 and §5.8 name no `get_entries` answer that the playpen
+  cut. The playpen reads such an answer as a failure, and each later read
+  that holds the same entry is one too. For each turn with such a read,
+  the playpen sends no entry id and no entry count (`src/pi-process.ts`).
 - The verify hook does not start an image. The image build runs each bundle
   once and stops on a bundle that does not load (`bin/playpen-verify`).
 - No test builds an image. The tests give `bin/playpen-build` a stub
