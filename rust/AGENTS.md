@@ -1005,6 +1005,11 @@ one panic can stop and what it can damage.
    - A pass of a loop: the boundary is `Tasks::spawn_loop`.
    - A tracked task: the boundary is `Tasks::spawn_must_complete` or
      `Tasks::spawn_blocking`.
+   - A unit of work on the thread of the caller: the boundary is
+     `tasks::caught`. An example is a loop in a task of
+     `Tasks::spawn_blocking`. Each item that the loop handles is one unit
+     of work. A service crate calls that function. Outside test code,
+     clause 8 permits no `catch_unwind` in a service crate.
    - A program without the runtime: a unit of work is a step, a pass or a
      connection.
 5. **After a panic, a boundary ends that unit of work and starts the next

@@ -12,8 +12,9 @@ are the authority until a release of a service uses a Rust binary.
 
 ## Layout
 
-Each module is one file. One packet of the port owns each file. No stub is
-left: each function of this crate has its body.
+Each module is one file. One packet of the port owns each file. A row that
+names a function gives the packet that added that function to the file. No
+stub is left: each function of this crate has its body.
 
 | File | What it holds | Packet |
 |---|---|---|
@@ -25,6 +26,7 @@ left: each function of this crate has its body.
 | `src/clock.rs` | The `Clock` seam and the clock of the host. | `foundation-clock-entropy` |
 | `src/entropy.rs` | The `Entropy` seam. The mint of a ULID and of a random token. | `foundation-clock-entropy` |
 | `src/tasks.rs` | The stop signal, the tracked tasks and the lock helper. | `foundation-tasks-signals` |
+| `src/tasks.rs`, the function `caught` | The panic boundary for a unit of work on the thread of its caller. | `decisions-runtime-panic` |
 | `src/signals.rs` | SIGTERM, SIGINT and SIGHUP. | `foundation-tasks-signals` |
 | `src/token.rs` | A token file into a `Secret`. The bearer of a request. | `foundation-token-faults` |
 | `src/faults.rs` | The fault file of contract 05 §3.3.1, onto the disk. | `foundation-token-faults` |
