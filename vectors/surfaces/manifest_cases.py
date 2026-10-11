@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from handover.catalog import MANIFEST_CONTRACT_MAJOR, MANIFEST_CONTRACT_MINOR
+
 #: The site file a case is read with. `SITE_SET` names an operator account
 #: and its home. `SITE_MISSING` is a host with no site file.
 SITE_SET: Final = "set"
@@ -26,6 +28,12 @@ OPERATOR_HOME: Final = "/home/keeper"
 
 #: The largest `component.yaml` that `parse_manifest` reads, in bytes.
 MAX_BYTES: Final = 16 * 1024
+
+#: The newest version of the manifest contract that `parse_manifest` takes,
+#: and the version one minor above it. Each case that needs one of the two
+#: takes it from here, so the cases follow the two constants of the reader.
+NEWEST_VERSION: Final = f"{MANIFEST_CONTRACT_MAJOR}.{MANIFEST_CONTRACT_MINOR}"
+NEXT_VERSION: Final = f"{MANIFEST_CONTRACT_MAJOR}.{MANIFEST_CONTRACT_MINOR + 1}"
 
 ARABIC_INDIC_ZERO: Final = "\u0660"
 ARABIC_INDIC_FOUR: Final = "\u0664"
@@ -44,7 +52,7 @@ class Case:
 
 #: One valid manifest, field by field. A case replaces the lines of a field.
 FIELDS: Final[dict[str, str]] = {
-    "manifest_version": 'manifest_version: "0.6"',
+    "manifest_version": f'manifest_version: "{NEWEST_VERSION}"',
     "name": "name: attendance",
     "repo": "repo: agent-control",
     "path": "path: attendance",
@@ -266,14 +274,14 @@ CASES: Final[tuple[Case, ...]] = (
     Case("size-two-byte-chars-over-cap", parts=((FULL, 1), ("# ", 1), ("\u00e9", MAX_BYTES // 2))),
     # --- manifest_version ---------------------------------------------------
     _with("version-zero-zero", manifest_version='manifest_version: "0.0"'),
-    _with("version-above-minor", manifest_version='manifest_version: "0.7"'),
+    _with("version-above-minor", manifest_version=f'manifest_version: "{NEXT_VERSION}"'),
     _with("version-major-one", manifest_version='manifest_version: "1.0"'),
     _with("version-leading-zero", manifest_version='manifest_version: "0.06"'),
-    _with("version-float", manifest_version="manifest_version: 0.6"),
+    _with("version-float", manifest_version=f"manifest_version: {NEWEST_VERSION}"),
     _with("version-single-quoted", manifest_version="manifest_version: '0.4'"),
     _with("version-one-number", manifest_version='manifest_version: "0"'),
-    _with("version-three-numbers", manifest_version='manifest_version: "0.6.1"'),
-    _with("version-final-newline", manifest_version='manifest_version: "0.6\\n"'),
+    _with("version-three-numbers", manifest_version=f'manifest_version: "{NEWEST_VERSION}.1"'),
+    _with("version-final-newline", manifest_version=f'manifest_version: "{NEWEST_VERSION}\\n"'),
     _with("version-space", manifest_version='manifest_version: "0. 6"'),
     _with("version-empty", manifest_version='manifest_version: ""'),
     _with("version-null", manifest_version="manifest_version:"),
@@ -821,7 +829,7 @@ CASES: Final[tuple[Case, ...]] = (
         "{"
         + ", ".join(
             [
-                'manifest_version: "0.6"',
+                f'manifest_version: "{NEWEST_VERSION}"',
                 "name: attendance",
                 "repo: agent-control",
                 "path: attendance",

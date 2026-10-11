@@ -69,6 +69,45 @@ type of a request that a requester plans. The reason is the reason of
 `channel`: no `serde` reader reads what `yaml.safe_load` and `json.loads`
 read.
 
+## The version of the manifest contract
+
+The `provides` row for `component-manifest` in `handover/component.yaml`
+is the one source of that version (rule 13). The build script of
+`creche-contracts` reads the row: `crates/creche-contracts/build.rs`. It
+writes the two numbers and their text to a file in `OUT_DIR`, and
+`src/manifest.rs` includes that file.
+
+- Three constants of `manifest` come from that file:
+  `MANIFEST_CONTRACT_MAJOR`, `MANIFEST_CONTRACT_MINOR` and
+  `MANIFEST_VERSION`. Give none of the three a literal value in a Rust
+  file.
+- The script holds no YAML reader. It reads the key `provides:` at the
+  start of a line, and one row on each line below it. A row has the form
+  `- { contract: <name>, major: <number>, minor: <number> }`.
+- The three keys of a row can be in each order. One space or more follows
+  the `-` and each `:`. Each other count of spaces between two words of a
+  row is permitted, also zero.
+- A block in another form fails the build with one line. A manifest with
+  no row for the contract fails the build, and a manifest with two such
+  rows does too.
+- Each number of the row is a number of a contract version. The script
+  holds no bound for a number. `src/manifest.rs` gives the two numbers to
+  `ContractNumber` in a constant assertion. A number that the type refuses
+  thus fails the build.
+- The script names the manifest with `cargo::rerun-if-changed`. cargo runs
+  the script again after a change of that file.
+- `rust_gate_path` of `bin/lib/rustrule.sh` names the manifest, as
+  `component.yaml` and as `component.toml`. CI thus runs the Rust checks
+  for a change of the manifest alone. A hook starts no cargo step for
+  that change.
+- The test build of the crate reads `build.rs` as a module. `cargo test`
+  thus runs the tests of the script.
+- The script reads the YAML form of the manifest only. When the manifest
+  gets another name or another format, change the script in the same pull
+  request.
+- The Python release tool holds the two numbers as typed constants. A test
+  of `handover` compares them with the row (`handover/AGENTS.md`).
+
 ## Where a new type goes
 
 1. Put the types of one contract in the module of that contract. The table
@@ -614,6 +653,19 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
+A stop of a pi process can get an answer. `stop_process` can hold a
+`request`, which is a ULID that the host makes. Only a playpen that lists
+`stop_ack` in the `caps` of `ready` answers such a stop. The answer is one
+`process_stopped` line that holds the same id. A stop with no `request` gets
+no answer.
+
+| Item | What it is |
+|---|---|
+| `host::StopProcess` | The stop. `with_request` gives it the id. |
+| `playpen::ProcessStopped` | The answer, as the playpen writes it. |
+| `claim::StoppedLine` | The answer, as the host reads it. It holds a `Ulid` and a `SessionId`, because the Python host refuses each other text in the two fields. |
+| `vocabulary::Cap::StopAck` | The name `stop_ack` in the `caps` of `ready`. A playpen that lists it answers such a stop. |
+
 `channel.rs` holds `MAX_LOG_BYTES`, the cap of the free text of a line.
 `claim` and `playpen` read that one constant.
 
@@ -1060,6 +1112,8 @@ commit message.
   runs cargo only for a change under `rust/` or `vectors/`, so a change to a
   file elsewhere does not run the test. If a later change needs such a file,
   add its directory to `bin/lib/rustrule.sh` first.
+- One build script reads one file outside those two directories. "The
+  version of the manifest contract" names the file and its rule.
 - A Rust source file includes no Markdown file. A push of Markdown files
   only runs no cargo step. `bin/rust-gate.sh` refuses a line that holds
   `include_str!`, `include_bytes!` or `include!` and a name that ends in
@@ -1639,9 +1693,6 @@ adds a crate:
     makes a service read a variable deletes the constant of that service.
   - Rule 10. `time::Timestamp` has no differential test. No Python reader
     has its grammar today. Packet `strict-noticeboard-time` adds that
-    reader, its vectors and the test.
-  - Rule 10. The `json` module has no differential test. No Python reader
-    has its rules today. Packet `strict-noticeboard-json-1` adds that
     reader, its vectors and the test.
   - Rule 10. The `mcp` module has no differential test. The Python
     chaperone reads the MCP wire with a third-party package, and no vector
@@ -2319,6 +2370,10 @@ adds a crate:
   8. `claim::Event`, contract 03 §13 rule 5. The contract names no event that
      the host cannot record. The Python host keeps only the type of an event
      with a lone surrogate. The reader does the same.
+  9. `HostMessage::parse`, contract 03 §4.5. The contract does not say what
+     the playpen does with a `request` of `stop_process` that is no text. The
+     reader refuses the line, as it refuses a text that is no ULID. An absent
+     `request` and `null` give a stop with no id.
 - The host side of `channel` accepts what the Python host accepts, also
   where a stricter reading of contract 03 is possible. The owner decides each
   case. Four examples:
@@ -2331,7 +2386,7 @@ adds a crate:
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of
   the other side. `HostMessage::parse` is stricter than the TypeScript
-  playpen in nine places:
+  playpen in ten places:
   1. A required number with a fraction or an exponent is a fault: `600.0`.
      The same applies to `grace_ms`. The playpen reads `600.0` as 600.
   2. A sandbox number has 9 digits at most.
@@ -2345,6 +2400,8 @@ adds a crate:
      float.
   9. A line with an integer of more than 4300 digits is not JSON, in each
      field. The playpen reads that integer as a float.
+  10. A `request` of `stop_process` is a ULID or `null`. Each other value is
+      a fault. The playpen does not read that field.
 - `HostMessage::parse` and the playpen accept two lines with different
   values:
   1. An empty `model` is no model. The playpen keeps the empty text.
