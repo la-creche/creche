@@ -28,10 +28,11 @@ file.
 
 Each rule has its reason.
 
-1. **The crate depends on `serde` and `serde_json` only.** It can also take
-   `creche-util`, when a helper of that crate replaces code here. It names
-   no other crate of the workspace. `bin/tests/test_rust_workspace.py` fails
-   for each other dependency.
+1. **The crate depends on `serde`, `serde_json` and `creche-util` only.** It
+   takes `creche-util` for a helper that replaces code here. The base64
+   decoder is such a helper. The crate names no other crate of the
+   workspace. `bin/tests/test_rust_workspace.py` fails for each other
+   dependency.
    Reason: each crate of the workspace can take this crate for its tests,
    `creche-contracts` too. A dependency on such a crate makes a circle. cargo
    then builds that crate two times for one test run. A type of one build is

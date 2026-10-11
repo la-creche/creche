@@ -101,6 +101,12 @@ function of the caller.
   `session`. Rule 3 permits that with its sentence on the functions of one
   published rule. The owner confirms that sentence with the six rules. The
   other choice makes `words` a private function of `family`.
+- `base64::decode` has one user crate today: `creche-vectors`.
+  `base64::encode_url` has one user crate too: `creche-runtime`. The two
+  functions are here as one helper, the base64 text of RFC 4648. Rule 3
+  permits that with its sentence on the functions of one published rule. The
+  owner confirms that sentence with the six rules. The other choice moves
+  each function back to the module of its user.
 - This `CONTRACT-QUESTION` comment is open in `src/base64.rs`: RFC 4648
   section 3.5 says that a decoder can refuse a text with a pad bit that is
   not zero. It does not demand that refusal. `base64::decode` refuses such a
@@ -120,5 +126,13 @@ function of the caller.
   that text. The rule for a number is not the rule of `pytext::strip`. The
   module doc of `pytext` gives the difference. No packet changes `py_strip`
   yet.
+- Two base64 decoders stay outside this crate. Each one reads a `!!binary`
+  value of YAML by a rule of Python, and that rule is not the rule of
+  `base64::decode`. `decode_base64` is in
+  `crates/agent-family/src/yaml/construct.rs`. Packet
+  `toml-drop-yaml-validator` removes it with the YAML reader of that crate.
+  `base64_decodes` is in `crates/creche-contracts/src/manifest/yaml.rs`.
+  Packet `toml-drop-yaml-manifest` removes it with the YAML reader of the
+  manifest.
 - `sha256::digest` has no branch and no index that depends on a byte of the
   message. No test and no compiler check proves that its time is constant.
