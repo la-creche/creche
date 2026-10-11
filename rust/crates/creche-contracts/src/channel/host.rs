@@ -2461,7 +2461,7 @@ impl Record<'_> {
 #[cfg(test)]
 mod tests {
     use creche_vectors::{self as vectors, Marker, Outcome, Vector};
-    use serde_json::{Map, Value};
+    use serde_json::{Map, Value, json};
 
     use super::*;
 
@@ -2473,51 +2473,6 @@ mod tests {
 
     /// The id that the host gives one `stop_process`.
     const REQUEST: &str = "01JBQ7WZ0X4T9V6K2H8M3N5PQT";
-
-    /// One vector on which the types differ from the Python host on purpose.
-    struct Deviation {
-        vector: &'static str,
-        /// The section of contract 03 that the types hold.
-        section: &'static str,
-        difference: &'static str,
-    }
-
-    /// The Python builders write each object and each integer that a caller
-    /// gives them. The types hold the form that the contract names, so they
-    /// cannot hold the arguments of these vectors. A vector with `host` in its
-    /// id holds the same message with the objects that the host makes.
-    const DEVIATIONS: &[Deviation] = &[
-        Deviation {
-            vector: "open-session-every-argument",
-            section: "§7.2",
-            difference: "workspace has no kind and no owner_session",
-        },
-        Deviation {
-            vector: "open-session-empty-model",
-            section: "§7.2",
-            difference: "workspace is the empty object",
-        },
-        Deviation {
-            vector: "get-entries-every-argument",
-            section: "§7.2",
-            difference: "workspace has no kind and no owner_session",
-        },
-        Deviation {
-            vector: "start-turn-every-argument",
-            section: "§4.1, §7.2, §7.4",
-            difference: "workspace, branch and delegation have other keys",
-        },
-        Deviation {
-            vector: "start-turn-empty-optionals",
-            section: "§4.1, §7.2",
-            difference: "workspace and branch are the empty object",
-        },
-        Deviation {
-            vector: "start-turn-numbers",
-            section: "§4.1, §7.2",
-            difference: "env_epoch is 2^64 and workspace holds floats",
-        },
-    ];
 
     /// Why the arguments of a vector are no value of the types.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2746,7 +2701,6 @@ mod tests {
     fn each_host_line_has_the_bytes_of_the_python_host() {
         let surface = vectors::surface(SURFACE).unwrap();
         let mut equal = 0;
-        let mut differed = Vec::new();
 
         for vector in surface.vectors() {
             let id = vector.id();
@@ -2762,7 +2716,6 @@ mod tests {
                     assert_eq!(output["text"].as_str(), Some(line.as_str()), "{id}");
                     equal += 1;
                 }
-                (Outcome::Accepted, Err(Unbuildable::NotInType)) => differed.push(id),
                 (Outcome::Refused, Ok(Err(error))) => {
                     let refusal = vector.refusal().unwrap();
 
@@ -2783,13 +2736,140 @@ mod tests {
             }
         }
 
-        let listed: Vec<&str> = DEVIATIONS.iter().map(|row| row.vector).collect();
-
-        assert_eq!(differed, listed, "the vectors that differ and the rows");
         assert!(equal > 0, "{SURFACE} holds no accepted vector");
-        for row in DEVIATIONS {
-            assert!(row.section.starts_with('§'), "{}", row.vector);
-            assert!(!row.difference.is_empty(), "{}", row.vector);
+    }
+
+    #[test]
+    fn the_types_hold_no_argument_that_the_host_does_not_make() {
+        // A builder of `attendance.wire` writes each object and each integer
+        // that its caller gives. The host gives a builder only the three
+        // objects of §7.2, §4.1 and §7.4, and an epoch of a status document.
+        // So no vector holds one of these six calls. A row is the builder,
+        // its arguments, the line that the builder writes and the first field
+        // of that line that the reader of the playpen refuses.
+        let open = json!({
+            "config_rev": "reg-9f21c4",
+            "cwd": "/workspace",
+            "epoch": 3,
+            "session": SESSION,
+            "session_dir": format!("/sessions/{SESSION}"),
+        });
+        let start = json!({
+            "config_rev": "reg-9f21c4",
+            "cwd": "/workspace",
+            "deadline_s": 600,
+            "epoch": 3,
+            "prompt": "Is the door locked?",
+            "session": SESSION,
+            "session_dir": format!("/sessions/{SESSION}"),
+            "turn": TURN,
+        });
+        let with = |base: &Value, more: Value| {
+            let mut args = base.as_object().unwrap().clone();
+            args.extend(more.as_object().unwrap().clone());
+
+            args
+        };
+        let open_line = format!(
+            r#""session":"{SESSION}","cwd":"/workspace","session_dir":"/sessions/{SESSION}","env_epoch":3,"config_rev":"reg-9f21c4""#
+        );
+        let start_line = |deadline: &str, epoch: &str| {
+            format!(
+                r#"{{"type":"start_turn","turn":"{TURN}","session":"{SESSION}","cwd":"/workspace","session_dir":"/sessions/{SESSION}","prompt":"Is the door locked?","deadline_s":{deadline},"env_epoch":{epoch},"config_rev":"reg-9f21c4""#
+            )
+        };
+        let not_of_the_host = json!({"ref": "main", "repo": "example/project"});
+        let field = HostLineFault::Field;
+        let calls = [
+            // A workspace with no kind and no owner session.
+            (
+                "open_session",
+                with(
+                    &open,
+                    json!({"model": "code-router", "workspace": not_of_the_host}),
+                ),
+                format!(
+                    r#"{{"type":"open_session",{open_line},"model":"code-router","workspace":{{"ref":"main","repo":"example/project"}}}}"#
+                ),
+                (field("workspace.kind"), false),
+            ),
+            // A workspace that is the empty object.
+            (
+                "open_session",
+                with(&open, json!({"model": "", "workspace": {}})),
+                format!(r#"{{"type":"open_session",{open_line},"workspace":{{}}}}"#),
+                (field("workspace.kind"), false),
+            ),
+            (
+                "get_entries",
+                with(
+                    &open,
+                    json!({"request": TURN, "since": "e-7", "workspace": not_of_the_host}),
+                ),
+                format!(
+                    r#"{{"type":"get_entries","request":"{TURN}",{open_line},"since":"e-7","workspace":{{"ref":"main","repo":"example/project"}}}}"#
+                ),
+                (field("workspace.kind"), false),
+            ),
+            // A workspace, a branch and a delegation with other keys.
+            (
+                "start_turn",
+                with(
+                    &start,
+                    json!({
+                        "attachments": ["notes.txt", "plan-2.pdf"],
+                        "branch": {"from_entry": "e-4"},
+                        "delegation": {"caller": "chat", "id": "01JBQ7WZ0X4T9V6K2H8M3N5PQS"},
+                        "persona": "Answer in one sentence.",
+                        "workspace": not_of_the_host,
+                    }),
+                ),
+                format!(
+                    r#"{},"persona":"Answer in one sentence.","attachments":["notes.txt","plan-2.pdf"],"workspace":{{"ref":"main","repo":"example/project"}},"branch":{{"from_entry":"e-4"}},"delegation":{{"caller":"chat","id":"01JBQ7WZ0X4T9V6K2H8M3N5PQS"}}}}"#,
+                    start_line("600", "3")
+                ),
+                (field("workspace.kind"), true),
+            ),
+            // A workspace and a branch that are the empty object.
+            (
+                "start_turn",
+                with(
+                    &start,
+                    json!({"attachments": [], "branch": {}, "persona": "", "workspace": {}}),
+                ),
+                format!(
+                    r#"{},"workspace":{{}},"branch":{{}}}}"#,
+                    start_line("600", "3")
+                ),
+                (field("workspace.kind"), true),
+            ),
+            // An epoch of 2^64, and a workspace of three floats. The reader
+            // also refuses the deadline of zero seconds, which the types hold.
+            (
+                "start_turn",
+                with(
+                    &start,
+                    json!({
+                        "deadline_s": 0,
+                        "epoch": {"$int": "18446744073709551616"},
+                        "workspace": {"f": 1.0, "g": 1e100, "h": 0.1},
+                    }),
+                ),
+                format!(
+                    r#"{},"workspace":{{"f":1.0,"g":1e+100,"h":0.1}}}}"#,
+                    start_line("0", "18446744073709551616")
+                ),
+                (field("deadline_s"), true),
+            ),
+        ];
+
+        for (builder, args, line, refusal) in calls {
+            assert_eq!(
+                build(builder, &Args(&args)),
+                Err(Unbuildable::NotInType),
+                "{line}"
+            );
+            assert_eq!(fault(&line), refusal, "{line}");
         }
     }
 
