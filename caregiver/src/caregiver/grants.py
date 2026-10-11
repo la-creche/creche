@@ -20,6 +20,12 @@ from .atomic import atomic_write
 GRANT_FILE_VERSION: Final = 2
 GRANT_FILE_MODE: Final = 0o640
 
+#: Contract 04 section 1.2: the largest count of bytes in a grant file. The
+#: PEP reads no larger file. The source of this number is the constant
+#: `GRANT_FILE_MAX_BYTES` of the Rust crate `creche-contracts`.
+#: `bin/tests/test_grant_file_cap.py` holds this copy equal to it.
+GRANT_FILE_MAX_BYTES: Final = 256 * 1024
+
 #: Contract 01 section 3.11's entry grammar: "<server>__<tool>" or
 #: "<server>__*". Spelled here rather than imported: `agent_family.validate`
 #: keeps its own copies private to its own checks (one meaning per module).
@@ -39,6 +45,18 @@ DEFAULT_MAX_OPEN_GATES: Final = 10
 #: `creds.json` and then the file from its own process, so a pass holding
 #: the older credentials must not write the new digest away.
 UNCOMPARED: Final = frozenset({"rev", "token_sha256"})
+
+
+class GrantFileTooLargeError(ValueError):
+    """The refusal of `grant_file_bytes`: the file would have `size` bytes,
+    and that is more than `GRANT_FILE_MAX_BYTES`. The text names both
+    counts and no content of the file."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__(
+            f"the grant file would have {size} bytes, and the cap is {GRANT_FILE_MAX_BYTES} bytes"
+        )
+        self.size = size
 
 
 @dataclass(frozen=True)
@@ -138,10 +156,27 @@ def _expand_approval(family: FamilyFile, index: Index) -> list[str]:
     return expanded
 
 
+def grant_file_bytes(grant: GrantFile) -> bytes:
+    """The bytes of the file that `write_grant_file` writes for `grant`.
+
+    For more than `GRANT_FILE_MAX_BYTES` bytes it raises
+    `GrantFileTooLargeError`: the PEP reads no larger file (contract 04
+    section 1.2). A caller that asks for the size alone writes nothing."""
+    data = _body_bytes(grant.as_json())
+    if len(data) > GRANT_FILE_MAX_BYTES:
+        raise GrantFileTooLargeError(len(data))
+
+    return data
+
+
 def write_grant_file(path: Path, grant: GrantFile) -> None:
     """Contract 04 section 1.3: `caregiver` validates first (the caller's
-    job), then writes atomically, mode 0640."""
-    _write_body(path, grant.as_json())
+    job), then writes atomically, mode 0640.
+
+    The bytes come first, from `grant_file_bytes`. For a file over the cap
+    it writes nothing, and `GrantFileTooLargeError` passes to the caller.
+    The file of the last write stays as it is."""
+    atomic_write(path, grant_file_bytes(grant), mode=GRANT_FILE_MODE)
 
 
 def rewrite_digests(path: Path, family: str, *, rev: str, token_sha256: tuple[str, ...]) -> bool:
@@ -178,7 +213,12 @@ def grant_file_matches(path: Path, grant: GrantFile) -> bool:
 
 
 def _write_body(path: Path, body: dict[str, Any]) -> None:
-    atomic_write(path, json.dumps(body, indent=2).encode("utf-8") + b"\n", mode=GRANT_FILE_MODE)
+    atomic_write(path, _body_bytes(body), mode=GRANT_FILE_MODE)
+
+
+def _body_bytes(body: dict[str, Any]) -> bytes:
+    """The bytes of a grant file: the one form for each writer."""
+    return json.dumps(body, indent=2).encode("utf-8") + b"\n"
 
 
 def _read_body(path: Path) -> dict[str, Any] | None:

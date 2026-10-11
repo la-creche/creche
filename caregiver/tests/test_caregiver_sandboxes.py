@@ -13,9 +13,11 @@ from typing import Any
 
 import caregiver.sandboxes as sandboxes_module
 import pytest
-from agent_family import FamilyFile, parse_family
+from agent_family import FamilyFile, load_registry, parse_family
 from caregiver.driver import DriverError, FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
+from caregiver.litellm_keys import FakeLiteLLMKeys
+from caregiver.reconcile import Actors, reconcile_family
 from caregiver.sandboxes import (
     create_sandbox,
     destroy_sandbox,
@@ -29,7 +31,16 @@ from caregiver.sandboxes import (
     write_ledger,
 )
 from caregiver.status import SandboxLifecycle
-from caregiver_helpers import DEEPER_THAN_STR, UNREADABLE_JSON, NoText, chat_family
+from caregiver.switch import FakeSwitchClient
+from caregiver.timers import FakeUnits
+from caregiver_helpers import (
+    DEEPER_THAN_STR,
+    UNREADABLE_JSON,
+    NoText,
+    chat_family,
+    published,
+    write_registry,
+)
 
 from caregiver import paths
 
@@ -612,6 +623,117 @@ def test_a_row_that_cannot_be_written_again_does_not_stop_a_rewrite(
     # The row that the encoder can write stays, whatever the other one did.
     assert spoiled in ledger_rows(state_root)
     assert caplog.records
+
+
+# --- the env file path of a row ---------------------------------------------------
+
+
+def env_path(state_root: Path, sandbox_id: str = "chat-s1") -> str:
+    """The one path of the env file of a sandbox."""
+    return str(paths.playpen_env_path(state_root, "chat", sandbox_id))
+
+
+def test_a_row_of_the_ledger_file_holds_the_env_file_path(
+    state_root: Path, family: FamilyFile
+) -> None:
+    """The writer keeps the field in each row. The reader of another
+    release of this package finds the path there."""
+    create(state_root, family, FakeDriver())
+    assert ledger_rows(state_root)[0]["supervisor_env"] == env_path(state_root)
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["", "supervisor-chat-s1.env", "/another/root/families/chat/supervisor-chat-s1.env", None, 7],
+    ids=["empty", "relative", "another-path", "null", "number"],
+)
+def test_a_row_reads_as_the_env_file_path_of_its_sandbox(
+    state_root: Path, family: FamilyFile, written: object
+) -> None:
+    """The reader computes the path from the state root, the family and
+    the id of the row. It reads no path from the row."""
+    create(state_root, family, FakeDriver())
+    spoil(state_root, "chat-s1", supervisor_env=written)
+
+    assert [one.playpen_env for one in read_ledger(state_root, "chat")] == [env_path(state_root)]
+
+
+def test_a_row_with_no_path_reads_as_the_env_file_path_of_its_sandbox(
+    state_root: Path, family: FamilyFile
+) -> None:
+    create(state_root, family, FakeDriver())
+    path = paths.sandboxes_path(state_root, "chat")
+    body = json.loads(path.read_text(encoding="utf-8"))
+    del body["sandboxes"][0]["supervisor_env"]
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+    assert [one.playpen_env for one in read_ledger(state_root, "chat")] == [env_path(state_root)]
+
+
+def test_each_row_reads_as_the_env_file_path_of_its_own_sandbox(
+    state_root: Path, family: FamilyFile
+) -> None:
+    create(state_root, family, FakeDriver())
+    create(state_root, family, FakeDriver())
+    spoil(state_root, "chat-s2", supervisor_env=env_path(state_root, "chat-s1"))
+
+    assert [one.playpen_env for one in read_ledger(state_root, "chat")] == [
+        env_path(state_root, "chat-s1"),
+        env_path(state_root, "chat-s2"),
+    ]
+
+
+def test_a_ledger_under_another_state_root_reads_as_a_path_under_that_root(
+    tmp_path: Path, state_root: Path, family: FamilyFile
+) -> None:
+    """A create writes the env file below the state root of its run. A
+    ledger that moved with its state root names the file at the new place."""
+    create(state_root, family, FakeDriver())
+    moved = tmp_path / "moved"
+    state_root.rename(moved)
+
+    [record] = read_ledger(moved, "chat")
+
+    assert record.playpen_env == env_path(moved)
+    assert Path(record.playpen_env).is_file()
+
+
+def test_a_rewrite_writes_the_env_file_path_of_the_sandbox_into_the_row(
+    state_root: Path, family: FamilyFile
+) -> None:
+    create(state_root, family, FakeDriver())
+    spoil(state_root, "chat-s1", supervisor_env="")
+
+    write_ledger(state_root, "chat", read_ledger(state_root, "chat"))
+
+    assert ledger_rows(state_root)[0]["supervisor_env"] == env_path(state_root)
+
+
+def test_a_pass_publishes_an_absolute_env_file_path_for_a_ready_sandbox(
+    tmp_path: Path, state_root: Path
+) -> None:
+    """`attendance` gives the published path to `sbx exec --env-file`. The
+    document of a ready sandbox holds the path of its env file, also when
+    the row of the ledger file holds none."""
+    registry_root = write_registry(tmp_path / "registry")
+    actors = Actors(
+        FakeDriver(), FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits()
+    )
+
+    def one_pass() -> None:
+        reconcile_family(
+            load_registry(registry_root), "chat", state_root=state_root, image=IMAGE, actors=actors
+        )
+
+    one_pass()
+    spoil(state_root, "chat-s1", supervisor_env="")
+    one_pass()
+
+    [sandbox] = published(state_root)["sandboxes"]
+    assert sandbox["state"] == SandboxLifecycle.READY
+    assert sandbox["supervisor_env"] == env_path(state_root)
+    assert Path(sandbox["supervisor_env"]).is_absolute()
+    assert Path(sandbox["supervisor_env"]).is_file()
 
 
 # --- a live egress edit moves the rows a destroy must remove --------------------

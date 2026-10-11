@@ -74,6 +74,17 @@ host where something has gone wrong.
   running turns, so it does not.
 - Read the fault files after the grant file lands, not only before.
 - The grant file follows what it should hold, not the family file's diff.
+- `write_grant_file` builds the bytes of the file first. For a file over
+  the cap of contract 04 §1.2, it writes nothing and raises
+  `GrantFileTooLargeError`. The last file stays.
+- A pass turns that refusal into one error of the validation report. The
+  family reads `invalid`, and the pass raises no fault for it.
+- A pass checks the size of the grant file before the key step, with
+  `steps.check_grants`. A pass that refuses the file runs no step. It mints
+  no key, sends nothing to LiteLLM and writes no `creds.json`.
+- The cap has one source: `GRANT_FILE_MAX_BYTES` of the Rust crate
+  `creche-contracts`. `grants.py` holds a copy with the same name.
+  `bin/tests/test_grant_file_cap.py` fails when the copy differs.
 - `apply_once` creates a sandbox once. `classify()` decides whether a change
   needs a new one.
 - The applied snapshot moves at the end of a successful pass. An interrupted
@@ -103,6 +114,11 @@ host where something has gone wrong.
   retires it at the top of every pass.
 - A sandbox row that does not read stays in the ledger file. A rewrite
   removes it only when the JSON encoder cannot write it again.
+- `paths.playpen_env_path` is the one source for the path of an env file.
+  The ledger reader computes the path of a row from the state root, the
+  family and the id of that row.
+- The ledger writer keeps the field `supervisor_env` in each row. Another
+  release of this package reads the path from that field.
 - An empty registry deletes no family.
 - A directory under `families/` with no `family.yaml` gets no pass and no
   delete. `reconcile.has_family_file` is the test for it. `apply.apply_once`
@@ -230,6 +246,26 @@ Nothing here touches a real sandbox or LiteLLM.
   defines the ledger file (`sandboxes.py`).
 - No contract gives the encoding of the grant file. The reader takes each
   encoding that `json.loads` finds in bytes (`grants.py`).
+- `CONTRACT-QUESTION` in `reconcile.py`, `_refuse_grant_file`. Contract 04
+  §1.2 gives the cap of a grant file. No contract says what a family reads
+  when its grant file is over that cap. A pass adds one error to the
+  validation report, and the family reads `invalid`. Contract 05 §3.3 has
+  no fault code for this case. A family with no applied file then reads
+  `never_valid: true`, although its family file has no error.
+- `CONTRACT-QUESTION` in `reconcile.py`, `WHOLE_FILE`. Contract 01 §7 gives
+  `loc` as a field path. No one field owns the size of a grant file, so
+  that error has the place `<document>`.
+- The cap applies to `grant_file_bytes` only: to `write_grant_file` and to
+  the size check of a pass. `rewrite_digests` writes the file that it read
+  with other digests, and it checks no size (`grants.py`).
+- `grants_current` compares the content of the grant file on disk and not
+  its size. A file over the cap that holds the grants of the family counts
+  as current. A pass then writes no grant file, and the family can read
+  `in_sync` (`steps.py`).
+- `apply-once` and `rotate` have no handler for `GrantFileTooLargeError`.
+  For a grant file over the cap, each verb ends with a traceback and exit
+  code 1. `rotate` writes `creds.json` before that step (`apply.py`,
+  `rotate.py`).
 - No pass manages a sandbox whose ledger row does not read. The row stays
   in the file, and the log names the family at each rewrite
   (`sandboxes.py`).
