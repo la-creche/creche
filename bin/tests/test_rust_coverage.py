@@ -963,6 +963,27 @@ def test_one_run_reports_each_case_of_the_third_check(tree: Tree) -> None:
     ), done.out + done.err
 
 
+#: The sizes of the two files of the time test: the names of one path, and
+#: the letters of one name.
+PATH_NAMES = 100_000
+NAME_LETTERS = 300_000
+
+
+def test_the_search_time_grows_with_the_size_and_no_faster(tree: Tree) -> None:
+    """One file is one path with no call at its end. The other file is one
+    name. A pattern that also starts a match inside a path or inside a name
+    reads the rest of that text at each such start. Its time then grows with
+    the square of the size, and the run takes more time than `Tree.run`
+    permits."""
+    tree.names(FULL, PART)
+    tree.write(FULL, "a::" * PATH_NAMES)
+    tree.write(PART, "a" * NAME_LETTERS)
+
+    done = tree.check(ALL_RAN)
+
+    assert _passed(done), done.out + done.err
+
+
 def test_the_script_holds_the_macros_of_this_file() -> None:
     """The closed list has a copy here. A name that only the script holds
     would pass with no test of it, and with no measurement."""

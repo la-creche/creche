@@ -180,7 +180,7 @@ LETTER = rb"[A-Za-z0-9_\x80-\xff]"
 #: Group 2 is the name. The pattern finds no call in `a != (b)`, in
 #: `if !(ok)` and in `macro_rules! name {`. A match starts at the start of a
 #: path and not inside one, so the time of the search grows with the size of
-#: the file and no faster.
+#: the file and no faster. A test holds that time.
 CALL = re.compile(
     rb"(?<!" + LETTER + rb")(?<!::)"
     rb"((?:::)?(?:" + LETTER + rb"+::)*)(" + LETTER + rb"+)![ \t\r\n]*[(\[{]"
