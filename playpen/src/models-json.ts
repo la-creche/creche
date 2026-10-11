@@ -13,7 +13,8 @@
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { LITELLM_BASE_URL, MODELS_FILE, PI_PROVIDER } from "./constants.js";
+import { MODELS_FILE, PI_PROVIDER } from "./constants.js";
+import type { PlaneUrl } from "./planes.js";
 
 /**
  * The shape this LiteLLM has answered in production. `baseUrl` carries no
@@ -71,13 +72,20 @@ function modelEntry(alias: string): Record<string, unknown> {
  * Listing an alias grants nothing. The family key carries exactly one alias
  * (contract 01 §3.2), so LiteLLM refuses anything else. The perimeter stays
  * where invariant 12 puts it, outside the sandbox.
+ *
+ * `litellm` is the `baseUrl` of the one provider. The caller reads it with
+ * `planes.ts`.
  */
-export function writeModelsJson(sessionDir: string, modelIds: readonly string[]): void {
+export function writeModelsJson(
+  sessionDir: string,
+  modelIds: readonly string[],
+  litellm: PlaneUrl,
+): void {
   const aliases = [...new Set(modelIds.map(aliasOf))].filter((alias) => alias.length > 0);
   const document = {
     providers: {
       [PI_PROVIDER]: {
-        baseUrl: LITELLM_BASE_URL,
+        baseUrl: litellm.text,
         api: PROVIDER_API,
         apiKey: API_KEY_REFERENCE,
         models: aliases.map(modelEntry),

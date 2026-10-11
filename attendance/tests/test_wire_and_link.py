@@ -787,7 +787,7 @@ async def test_a_fatal_in_place_of_ready_raises_a_fault(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("reason", list(FatalReason))
 def test_parse_keeps_each_fatal_reason_of_the_contract(reason: FatalReason) -> None:
-    """Contract 03 §5.7 names two reasons. The host reads each by its name."""
+    """The host reads each reason of contract 03 §5.7 by its name."""
     fatal = parse(json.dumps({"type": "fatal", "reason": reason.value}))
 
     assert isinstance(fatal, FatalLine)
@@ -798,8 +798,31 @@ def test_the_fatal_reasons_are_the_reasons_of_the_contract() -> None:
     assert {reason.value for reason in FatalReason} == {
         "control_mount_unwritable",
         "mount_dir_unset",
+        "plane_url_invalid",
         "unknown",
     }
+
+
+def test_parse_reads_the_fatal_reason_of_a_plane_url() -> None:
+    """A playpen with no usable URL of a plane names that cause."""
+    fatal = parse(json.dumps({"type": "fatal", "reason": "plane_url_invalid"}))
+
+    assert isinstance(fatal, FatalLine)
+    assert fatal.reason is FatalReason.PLANE_URL_INVALID
+
+
+async def test_a_fatal_for_a_plane_url_names_its_cause(tmp_path: Path) -> None:
+    """§5.7 rule 5: the operator learns the cause from the status document."""
+    events = Recorder()
+    link, _ = make_link(tmp_path, events, plan=PlaypenPlan(fatal="plane_url_invalid"))
+
+    with pytest.raises(PlaypenFatal):
+        await link.ensure_open(dial(), 7)
+
+    faults = json.loads((tmp_path / "faults" / "sessiond" / f"{FAMILY}.json").read_text())
+
+    assert "plane_url_invalid" in faults["faults"][0]["message"]
+    await link.close()
 
 
 async def test_a_fatal_for_an_unset_mount_names_its_cause(tmp_path: Path) -> None:
