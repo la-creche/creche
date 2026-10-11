@@ -505,12 +505,12 @@ fault, the event of a channel line and the arguments of a tool call.
 - The order of the keys is a part of an `Opaque`. Two objects with the same
   members in another order are not equal.
 - `Opaque::parse` reads the value into a type of the caller, for example a
-  raw type. The function compares no kind, and a derived struct also reads
-  a list by position. Before the call, compare `Opaque::kind` with the kind
-  that the type takes. The function reads the compact form and makes no
-  second check. A `Shape` of this function thus names a place on line 1 of
-  that form. A number field gets the token that the writer gave: `0` where
-  the first text had `-0`.
+  raw type. The function compares no kind, and a struct that derives
+  `Deserialize` also reads a list by position. Before the call, compare
+  `Opaque::kind` with the kind that the type takes. The function reads the
+  compact form and makes no second check. A `Shape` of this function thus
+  names a place on line 1 of that form. A number field gets the token that
+  the writer gave: `0` where the first text had `-0`.
 - `Opaque::of` makes the value from a typed value, with one call of the
   writer. It refuses each value that `write` refuses. A module that needs
   the `Opaque` of a typed value calls this function. It does not give a
@@ -519,11 +519,11 @@ fault, the event of a channel line and the arguments of a tool call.
   value for that word, so a conversion that needs the value calls this
   function.
 
-Only `session` and `mcp` call the writer today. Only `mcp` calls the
-reader. The index of the vector files is a strict text too. The crate
-`creche-vectors` reads it and does not use `creche-contracts`, so its raw
-types hold the rules for the index. "Known gaps" names the packet that moves
-each module to the two.
+Only `session` calls the writer today. `mcp` gets the writer through
+`Opaque::of`. Only `mcp` calls the reader. The index of the vector files is
+a strict text too. The crate `creche-vectors` reads it and does not use
+`creche-contracts`, so its raw types hold the rules for the index. "Known
+gaps" names the packet that moves each module to the two.
 Until then, these parts stay:
 
 - Five older functions format a float: `float_text` of `channel`, of
