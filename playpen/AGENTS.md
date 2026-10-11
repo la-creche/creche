@@ -211,20 +211,20 @@ it on a development machine.
 A plane is a service of the host that each sandbox calls: the chaperone and
 LiteLLM.
 
-58. `src/planes.ts` is the only reader of `AGENT_PEP_URL` and
+59. `src/planes.ts` is the only reader of `AGENT_PEP_URL` and
     `AGENT_LITELLM_BASE_URL`. `env.ts` and `models-json.ts` take the two
     URLs as parameters. They import no URL constant.
-59. A plane URL is `http://<host>:<port>` and no other byte. The Rust type
+60. A plane URL is `http://<host>:<port>` and no other byte. The Rust type
     `PlaneUrl` holds the same grammar
     (`rust/crates/creche-contracts/src/config/endpoints.rs`). Change one
     side, change both. `test/planes.test.ts` holds the tables of the Rust
     tests.
-60. Read the two variables one time for each process. The pool reads them
+61. Read the two variables one time for each process. The pool reads them
     when the playpen builds it. Each pi process of that pool gets the same
     two URLs.
-61. A `log` line for a plane variable names the variable and the fault. It
+62. A `log` line for a plane variable names the variable and the fault. It
     never holds the value. A value can hold a user part.
-62. Write the `log` lines of the planes after `hello`. `ready` is the first
+63. Write the `log` lines of the planes after `hello`. `ready` is the first
     line of the channel.
 
 ## Environment the playpen expects
