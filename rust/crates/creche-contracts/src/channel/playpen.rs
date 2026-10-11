@@ -1936,6 +1936,15 @@ mod tests {
     }
 
     #[test]
+    fn the_host_reads_each_fatal_reason_by_its_name() {
+        for reason in FatalReason::ALL {
+            let fatal = PlaypenMessage::Fatal(Fatal::new(*reason, LogText::cut("")));
+
+            assert_eq!(read(&fatal)["message"]["reason"], reason.as_str());
+        }
+    }
+
+    #[test]
     fn a_free_text_is_cut_between_two_characters() {
         let long = format!("{}\u{e9}", "m".repeat(MAX_LOG_BYTES - 1));
         let astral = format!("{}\u{1f600}", "m".repeat(MAX_LOG_BYTES - 3));

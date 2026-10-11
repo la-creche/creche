@@ -124,6 +124,9 @@ class FatalReason(StrEnum):
 
     CONTROL_MOUNT_UNWRITABLE = "control_mount_unwritable"
     MOUNT_DIR_UNSET = "mount_dir_unset"
+    # The environment gives no valid URL of a plane. A plane is a service of
+    # the host that each sandbox calls: the chaperone and LiteLLM.
+    PLANE_URL_INVALID = "plane_url_invalid"
     # §3 version rule 2: neither side may make an unknown field fatal, so a
     # reason a newer image invents still lands as a fault the operator sees.
     UNKNOWN = "unknown"
