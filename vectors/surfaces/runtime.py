@@ -569,6 +569,9 @@ STRICT_ACCEPTED: Final[tuple[Document, ...]] = (
     _doc("float-largest", "1.7976931348623157e308"),
     _doc("float-rounds-to-the-largest", "1.7976931348623158e308"),
     _doc("float-of-an-integer-past-64-bits", "18446744073709551616.0"),
+    _doc("float-zero-with-a-large-exponent", "0e999"),
+    _doc("float-zero-with-an-exponent-of-20-digits", "0e99999999999999999999"),
+    _doc("float-exponent-minus-of-20-digits", "1e-99999999999999999999"),
     # --- a string ---
     _doc("string-empty", '""'),
     _doc("string", '"a"'),
@@ -776,6 +779,7 @@ STRICT_REFUSED: Final[dict[strictjson.Rule, tuple[Document, ...]]] = {
         _doc("float-past-the-largest", "1e999"),
         _doc("float-negative-past-the-largest", "-1e999"),
         _doc("float-exponent-309", "1e309"),
+        _doc("float-exponent-of-20-digits", "1e99999999999999999999"),
         _doc("float-rounds-to-infinity", "1.7976931348623159e308"),
         Document("float-310-digits-before-the-point", parts=(("1", 1), ("0", 309), (".0", 1))),
         _doc("float-past-the-largest-in-array", "[1.0,1e400]"),
