@@ -15,8 +15,15 @@ The root `conftest.py` names a global file of its own and no system file
 when pytest imports it, before pytest imports a test. That file holds two
 settings and nothing of a person
 (`bin/tests/test_git_background_dropped.py`). It also names an empty ignore
-file and an empty attributes file. Each `git` child of the run gets those
-variables.
+file and an empty attributes file. Each `git` child that inherits the
+environment of the run gets those variables.
+
+The registry writer of the noticeboard builds the environment of its `git`
+child from four variables, and `HOME` is one of them. That child gets none of
+the variables above, so it reads the global config file below `HOME`. The
+root `conftest.py` thus gives each test under `noticeboard/tests` an empty
+home directory. That child still reads the config file of the system. Each
+other test keeps its `HOME`.
 
 Each test here starts pytest as a child, with a file of a person or of the
 system in the environment of the child.
@@ -67,6 +74,18 @@ SYSTEM_FILE_ENV = "GIT_CONFIG_SYSTEM"
 #: environment it inherits. When this id moves, name another test of that file.
 HANDOVER_TEST = "handover/tests/test_handover_tag_script.py::test_an_unknown_argument_stops_the_run"
 
+#: A test whose code under test starts `git` with `HOME` and with no variable
+#: of git: the registry writer of the noticeboard. When this id moves, name
+#: another test of that file.
+NOTICEBOARD_TEST = (
+    "noticeboard/tests/test_noticeboard_registrywrite.py"
+    "::test_a_valid_edit_makes_exactly_one_commit"
+)
+
+#: The two places below a home directory where `git` reads a global config
+#: file. `git` reads the second place when `XDG_CONFIG_HOME` is not set.
+HOME_CONFIG_PLACES = (".gitconfig", ".config/git/config")
+
 #: The two probes below, as the child names them.
 PROBE = "bin/tests/test_git_config_dropped.py::test_git_reads_no_config_file_of_a_person"
 FILES_PROBE = "bin/tests/test_git_config_dropped.py::test_git_reads_no_ignore_file_of_a_person"
@@ -99,12 +118,15 @@ AT_IMPORT = {name: os.environ.get(name) for name in NO_CONFIG}
 GLOBAL_AT_IMPORT = os.environ.get(GLOBAL_ENV, "")
 
 
-def _pytest(tmp_path: Path, test: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _pytest(
+    tmp_path: Path, test: str, env: dict[str, str], *more: str
+) -> subprocess.CompletedProcess[str]:
     """Runs one test of this repository in a child pytest.
 
     The child gets the environment of this process without the variables of
     `SET`, then `env`. So it starts as a run from the shell of a person
-    starts. The child keeps its temporary files under `tmp_path`.
+    starts. The child keeps its temporary files under `tmp_path`. Each text
+    of `more` is one more argument of the child.
     """
     inherited = {name: value for name, value in os.environ.items() if name not in SET}
 
@@ -119,6 +141,7 @@ def _pytest(tmp_path: Path, test: str, env: dict[str, str]) -> subprocess.Comple
             "-p",
             "no:cacheprovider",
             f"--basetemp={tmp_path / 'child'}",
+            *more,
         ],
         cwd=REPO,
         env=inherited | env,
@@ -164,23 +187,78 @@ def _git_files(directory: Path) -> Path:
     return directory
 
 
+def _program_config(tmp_path: Path) -> tuple[str, Path]:
+    """A config text that names a program for `core.fsmonitor`, and the file
+    to which that program appends a line each time `git` runs it."""
+    started = tmp_path / "started"
+    program = tmp_path / "fsmonitor-program"
+    program.write_text(f'#!/bin/sh\necho run >> "{started}"\n', encoding="utf-8")
+    program.chmod(0o755)
+
+    return f"[core]\n\tfsmonitor = {program}\n", started
+
+
+def _home_with_program(tmp_path: Path, place: str) -> tuple[Path, Path]:
+    """A home directory whose config file at `place` holds the text of
+    `_program_config`. Returns the directory, and the file of that program."""
+    config, started = _program_config(tmp_path)
+    home = tmp_path / "home"
+    path = home / place
+    path.parent.mkdir(parents=True)
+    path.write_text(config, encoding="utf-8")
+
+    return home, started
+
+
 def test_a_fixture_that_runs_git_starts_no_program_of_a_person(tmp_path: Path) -> None:
     """The config file of a person names a program for `core.fsmonitor`. `git`
     runs that program when a command reads the index. A fixture of the
     handover test runs such commands in a throwaway repository. The program
     must not run."""
-    started = tmp_path / "started"
-    program = tmp_path / "fsmonitor-program"
-    program.write_text(f'#!/bin/sh\necho run >> "{started}"\n', encoding="utf-8")
-    program.chmod(0o755)
+    config, started = _program_config(tmp_path)
     person = tmp_path / "person.gitconfig"
-    person.write_text(f"[core]\n\tfsmonitor = {program}\n", encoding="utf-8")
+    person.write_text(config, encoding="utf-8")
 
     done = _pytest(tmp_path, HANDOVER_TEST, {"GIT_CONFIG_GLOBAL": str(person)})
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert ONE_PASSED in done.stdout, done.stdout + done.stderr
     assert not started.exists(), "a fixture ran git with the config file of a person"
+
+
+@pytest.mark.parametrize("place", HOME_CONFIG_PLACES)
+def test_the_git_child_of_the_noticeboard_starts_no_program_of_a_person(
+    tmp_path: Path, place: str
+) -> None:
+    """A config file below the home directory of a person names a program for
+    `core.fsmonitor`. The registry writer of the noticeboard starts `git` with
+    `HOME` and with no variable of git, so no variable of the root
+    `conftest.py` reaches that child. The child runs `git add` and
+    `git commit` in a throwaway repository. The program must not run: the
+    test of the noticeboard gets an empty home directory."""
+    home, started = _home_with_program(tmp_path, place)
+
+    done = _pytest(tmp_path, NOTICEBOARD_TEST, {"HOME": str(home)})
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert ONE_PASSED in done.stdout, done.stdout + done.stderr
+    assert not started.exists(), "the code under test ran git with the config file of a person"
+
+
+def test_another_root_of_the_run_keeps_the_empty_home(tmp_path: Path) -> None:
+    """A run can name a root directory outside this repository, with
+    `--rootdir`. The root `conftest.py` compares the file of a test with its
+    own directory and not with that root. The test of the noticeboard thus
+    still gets an empty home directory, and the program must not run."""
+    home, started = _home_with_program(tmp_path, HOME_CONFIG_PLACES[0])
+    root = tmp_path / "root"
+    root.mkdir()
+
+    done = _pytest(tmp_path, NOTICEBOARD_TEST, {"HOME": str(home)}, f"--rootdir={root}")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert ONE_PASSED in done.stdout, done.stdout + done.stderr
+    assert not started.exists(), "the code under test ran git with the config file of a person"
 
 
 @pytest.mark.parametrize("source", ["global", "home", "xdg", "system"])
