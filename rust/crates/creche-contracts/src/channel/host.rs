@@ -2395,17 +2395,22 @@ impl Record<'_> {
         self.addressed().map(Abort::new)
     }
 
-    /// An optional request. A request that is no text counts as absent. A
-    /// text that is no ULID is a fault: to read it as absent ends the
-    /// process and sends no answer to a host that waits for one.
+    /// An optional request. An absent field and `null` give no request. Each
+    /// other value that is no ULID is a fault, also a number: to read it as
+    /// absent ends the process and sends no answer to a host that waits for
+    /// one.
+    // CONTRACT-QUESTION: contract 03 §4.5 does not say what the playpen does
+    // with a `request` that is no text. This reader takes the conservative
+    // reading: it refuses the line, as it refuses a text that is no ULID. The
+    // other reading counts such a value as absent, as this reader does for a
+    // `nonce`. A change costs one branch of this function and four rows of a
+    // test table.
     fn request(&self) -> Read<Option<Ulid>> {
-        let Some(text) = self.fields.get("request").and_then(Json::as_text) else {
+        if self.absent("request") {
             return Ok(None);
-        };
+        }
 
-        let request = text.as_str().and_then(|text| text.parse().ok());
-
-        request.map(Some).ok_or_else(|| self.refuse("request"))
+        self.required("request").map(Some)
     }
 
     fn stop_process(&self) -> Read<StopProcess> {
@@ -3252,6 +3257,14 @@ mod tests {
             (format!("{stop},\"request\":\"{REQUEST}0\"}}"), field("request"), false),
             (format!("{stop},\"request\":\"{REQUEST}\\n\"}}"), field("request"), false),
             (format!("{stop},\"request\":\"\\ud800\"}}"), field("request"), false),
+            (format!("{stop},\"request\":7}}"), field("request"), false),
+            (format!("{stop},\"request\":true}}"), field("request"), false),
+            (format!("{stop},\"request\":[\"{REQUEST}\"]}}"), field("request"), false),
+            (
+                format!("{stop},\"request\":{{\"id\":\"{REQUEST}\"}}}}"),
+                field("request"),
+                false,
+            ),
             (format!("{{\"type\":\"ping\",\"nonce\":\"{long}\"}}"), field("nonce"), false),
         ];
 
@@ -3291,14 +3304,6 @@ mod tests {
             (
                 "{\"type\":\"shutdown\",\"grace_ms\":0}",
                 HostMessage::Shutdown(Shutdown::new(Millis::new(0))),
-            ),
-            (
-                "{\"type\":\"stop_process\",\"session\":\"tui-1\",\"request\":7}",
-                HostMessage::StopProcess(StopProcess {
-                    session: "tui-1".parse().unwrap(),
-                    grace_ms: None,
-                    request: None,
-                }),
             ),
             (
                 "{\"type\":\"stop_process\",\"session\":\"tui-1\",\"request\":null}",

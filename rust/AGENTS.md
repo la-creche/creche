@@ -2330,6 +2330,10 @@ adds a crate:
   8. `claim::Event`, contract 03 §13 rule 5. The contract names no event that
      the host cannot record. The Python host keeps only the type of an event
      with a lone surrogate. The reader does the same.
+  9. `HostMessage::parse`, contract 03 §4.5. The contract does not say what
+     the playpen does with a `request` of `stop_process` that is no text. The
+     reader refuses the line, as it refuses a text that is no ULID. An absent
+     `request` and `null` give a stop with no id.
 - The host side of `channel` accepts what the Python host accepts, also
   where a stricter reading of contract 03 is possible. The owner decides each
   case. Four examples:
@@ -2342,7 +2346,7 @@ adds a crate:
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of
   the other side. `HostMessage::parse` is stricter than the TypeScript
-  playpen in nine places:
+  playpen in ten places:
   1. A required number with a fraction or an exponent is a fault: `600.0`.
      The same applies to `grace_ms`. The playpen reads `600.0` as 600.
   2. A sandbox number has 9 digits at most.
@@ -2356,6 +2360,8 @@ adds a crate:
      float.
   9. A line with an integer of more than 4300 digits is not JSON, in each
      field. The playpen reads that integer as a float.
+  10. A `request` of `stop_process` is a ULID or `null`. Each other value is
+      a fault. The playpen does not read that field.
 - `HostMessage::parse` and the playpen accept two lines with different
   values:
   1. An empty `model` is no model. The playpen keeps the empty text.
