@@ -28,10 +28,11 @@ file.
 
 Each rule has its reason.
 
-1. **The crate depends on `serde` and `serde_json` only.** It can also take
-   `creche-util`, when a helper of that crate replaces code here. It names
-   no other crate of the workspace. `bin/tests/test_rust_workspace.py` fails
-   for each other dependency.
+1. **The crate depends on `serde`, `serde_json` and `creche-util` only.** It
+   takes `creche-util` for a helper that replaces code here. The base64
+   decoder is such a helper. The crate names no other crate of the
+   workspace. `bin/tests/test_rust_workspace.py` fails for each other
+   dependency.
    Reason: each crate of the workspace can take this crate for its tests,
    `creche-contracts` too. A dependency on such a crate makes a circle. cargo
    then builds that crate two times for one test run. A type of one build is
@@ -138,8 +139,6 @@ comment of each reader function names its writer.
   of the committed files fails in the `rust` job. `vectors/README.md` does
   not name the rule yet. No packet has that part yet. A change costs one
   check and one test.
-- The reader holds a base64 decoder of its own. The workspace has more than
-  one. Packet `decisions-util-runtime` moves them to `creche-util`.
 - In three places of a vector file, the reader does not refuse a key that
   an object holds two times. `serde_json` keeps the last value of such a
   key there. The reader refuses such a key in each other object of each
