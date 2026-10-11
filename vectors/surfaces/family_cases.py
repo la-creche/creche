@@ -205,7 +205,7 @@ triggers:
   - cron: "@daily"
 """
 
-#: A tool name of 65 characters. `agent_family` has no limit for a tool name.
+#: A tool name of 65 characters, one more than the limit of a tool name.
 LONG_TOOL_NAME: Final = "a" * 65
 
 #: A server file that declares the tool `LONG_TOOL_NAME`.
@@ -964,7 +964,7 @@ approval:
         "nest-129-levels",
         HEAD + "egress: " + "[" * (NEST_INNER + 1) + "]" * (NEST_INNER + 1) + "\n",
     ),
-    # --- a tool name with no limit (contract 01 §3.4) ---
+    # --- a tool name past the limit (contract 01 §3.4) ---
     _case(
         "long-tool-name",
         HEAD + f"tools:\n  long-tool-server: [{LONG_TOOL_NAME}]\n",

@@ -13,7 +13,31 @@ import type { Writable } from "node:stream";
 
 import { MAX_LINE_BYTES, MAX_PENDING_LINES, RESUME_PENDING_LINES } from "./constants.js";
 import { byteLength } from "./framing.js";
-import type { PlaypenMessage } from "./protocol.js";
+import type { LogMessage, PlaypenMessage } from "./protocol.js";
+import { stringifyStrict } from "./strict-json.js";
+
+/**
+ * The first words of the `log` line for a record that is not strict JSON.
+ * The word of the broken rule follows them, and the message holds no other
+ * text. `playpen.pi_line` names the surface: a line that came from pi.
+ */
+const NOT_STRICT_WORDS = "json_not_strict playpen.pi_line";
+
+/**
+ * The message with a text that holds no lone surrogate.
+ *
+ * Four kinds of line carry a `message` text that the playpen wrote itself:
+ * `log`, `turn_failed`, `fatal` and `session_opened`. U+FFFD takes the place
+ * of each lone surrogate. Both count three bytes of UTF-8, so a text that
+ * was cut to a byte limit stays inside it.
+ */
+function withWholeText(message: PlaypenMessage): PlaypenMessage {
+  if (!("message" in message) || message.message.isWellFormed()) {
+    return message;
+  }
+
+  return { ...message, message: message.message.toWellFormed() };
+}
 
 export enum Pressure {
   Full = "full",
@@ -44,18 +68,29 @@ export class Channel {
   /**
    * Queues one protocol record.
    *
+   * Each line is strict JSON, and `stringifyStrict` writes it. A record
+   * that is not strict is never emitted. `boundRecord` cuts a pi record
+   * upstream.
+   *
    * A line the playpen knows is over `MAX_LINE_BYTES` is never emitted
-   * (§2 rule 6). Event bodies are truncated upstream, in `wrapEvent`; this is
-   * the last guard, and it reports the drop rather than hiding it.
+   * (§2 rule 6). `capEvent` truncates an event body upstream.
+   *
+   * This is the last guard for both, and it reports the drop rather than
+   * hiding it.
    */
   public send(message: PlaypenMessage): void {
-    const line = `${JSON.stringify(message)}\n`;
-    if (byteLength(line) - 1 > MAX_LINE_BYTES) {
-      this.push(`${JSON.stringify(this.oversizeLog(message))}\n`);
+    const written = stringifyStrict(withWholeText(message));
+    if (!written.ok) {
+      this.report(`${NOT_STRICT_WORDS} ${written.rule}`);
       return;
     }
 
-    this.push(line);
+    if (byteLength(written.text) > MAX_LINE_BYTES) {
+      this.report(`a ${message.type} line passed MAX_LINE_BYTES and was dropped`);
+      return;
+    }
+
+    this.push(`${written.text}\n`);
   }
 
   /** Free text for the operator. It leaves by stderr, never by the protocol. */
@@ -63,13 +98,17 @@ export class Channel {
     process.stderr.write(`${text}\n`);
   }
 
-  private oversizeLog(message: PlaypenMessage): PlaypenMessage {
-    return {
-      type: "log",
-      level: "error",
-      session: null,
-      message: `a ${message.type} line passed MAX_LINE_BYTES and was dropped`,
-    };
+  /**
+   * Queues one `log` line of level `error` for a record that was dropped.
+   * The line names no session. `text` is fixed words of this file, so the
+   * line is strict JSON and inside the size limit.
+   */
+  private report(text: string): void {
+    const log: LogMessage = { type: "log", level: "error", session: null, message: text };
+    const written = stringifyStrict(log);
+    if (written.ok) {
+      this.push(`${written.text}\n`);
+    }
   }
 
   private push(line: string): void {

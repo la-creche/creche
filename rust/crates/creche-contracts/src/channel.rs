@@ -29,6 +29,11 @@ pub mod playpen;
 pub mod text;
 pub mod vocabulary;
 
+/// The largest count of bytes of UTF-8 of one free text of a line: a
+/// `message` (contract 03 §8). The playpen cuts a longer text before it
+/// writes the line, and the host cuts the text of a line that it reads.
+pub const MAX_LOG_BYTES: usize = 4096;
+
 #[cfg(test)]
 mod tests {
     use creche_vectors as vectors;
