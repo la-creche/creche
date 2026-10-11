@@ -711,8 +711,8 @@ mod tests {
             );
             let read = caregiver(text.as_bytes(), FaultSource::Sessiond, now).unwrap();
 
-            assert_eq!(read.written_at, written_at);
-            assert_eq!(read.faults[0].stale, stale, "{written_at}");
+            assert_eq!(read.written_at(), written_at);
+            assert_eq!(read.faults()[0].stale(), stale, "{written_at}");
         }
     }
 
