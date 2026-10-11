@@ -514,12 +514,27 @@ reader.
 `to_rfc3339_millis_plus_00_00` is a third writer. It writes milliseconds
 and the offset `+00:00`. The chaperone keeps a log of each request that
 names no family, and the lines of that log have this offset today. Use the
-writer for that log only. Delete the writer when that log writes `Z`.
+writer for that log only. `grants::UnidentifiedRecord` is the record of
+that log. Delete the writer when that log writes `Z`.
 
 `manifest::Timestamp` is a count of seconds and not a time text. This
 section does not apply to it.
 
-Six older parts of the workspace still hold a time type or date arithmetic
+`grants::AuditTime` is the time of an audit record. It holds a `Timestamp`
+of whole milliseconds that is not before 1970. It reads no time text. A
+writer of `Timestamp` writes each text of a record, and the name of a day
+file comes from such a text.
+
+The `status` module has no time type. Each time of contract 05 is a
+`Timestamp`. The staleness rule of that contract is in `status::views`:
+`STALE_AFTER_SECONDS`, `Age` and `Freshness`.
+
+`status::time` is an older path. It holds no type. It gives `Timestamp` and
+`status::views::Freshness` to code that still names them there. Add no user
+of that path. Packet `decisions-runtime-time` changes each user and deletes
+the path.
+
+Four older parts of the workspace still hold a time type or date arithmetic
 of their own. Add no user of them. One packet moves each part to
 `Timestamp` or deletes the part. The pull request of that packet deletes
 the row of the part. The pull request that deletes the last row also
@@ -527,8 +542,6 @@ deletes this paragraph and the table.
 
 | Part | Packet |
 |---|---|
-| `status::time` | `decisions-time` |
-| `AuditTime` of `grants` | `decisions-time` |
 | `session::Timestamp` | `strict-attendance-time` |
 | The stamp of a log line in `creche-runtime` | `decisions-runtime-time` |
 | The `!!timestamp` value of the YAML reader of `agent-family` | `toml-drop-yaml-validator` |
@@ -1556,8 +1569,7 @@ To make the fifth check on your machine, for example before a merge:
     `crates/creche-vectors/AGENTS.md` has the cause and the change that
     removes the copy. No packet has that part yet.
   - Tables of differences. Some tests still have one. Add no table and no
-    row. The packets `decisions-tables-*`, `decisions-ids` and
-    `decisions-runtime-tables` delete them.
+    row. The packets `decisions-tables-*` and `decisions-ids` delete them.
   - "The differential test". Two parts of the test of `token` in
     `creche-runtime` do not hold the rule. The test walks no vector of
     `runtime.bearer.chaperone`, and the constant `NO_PORT_HERE` names that
@@ -1597,18 +1609,18 @@ To make the fifth check on your machine, for example before a merge:
   costs one step with a token that can write.
 - GitHub can delay or drop a run of the nightly job. It turns the schedule of
   a public repository off after 60 days with no activity in the repository.
-- Two checks do not read four crates yet: `agent-family`,
-  `creche-contracts`, `creche-runtime` and `creche-testkit`. Each check has
-  a list of its own with the four names. No list names a new crate, so both
-  checks read a new crate from its first commit. Add no name to a list.
-  - The public-field check of `bin/rust-gate.sh`. Packet
-    `decisions-runtime-private` deletes `creche-runtime` and
-    `creche-testkit` from the list of the script. Packet
-    `decisions-private-fields-gate` deletes that list.
+- Two checks still skip some crates. Each check has a list of its own
+  with the crates that it skips. No list names a new crate, so both checks
+  read a new crate from its first commit. Add no name to a list.
+  - The public-field check of `bin/rust-gate.sh`. Its list has four names:
+    `agent-family`, `creche-contracts`, `creche-runtime` and
+    `creche-testkit`. Packet `decisions-runtime-private` deletes
+    `creche-runtime` and `creche-testkit` from the list of the script.
+    Packet `decisions-private-fields-gate` deletes that list.
   - The table test of `bin/tests/test_rust_workspace.py`. In each `.rs`
     file, it looks for the name `DEVIATIONS` and for a struct whose name
-    starts with `Deviation`. Packet `decisions-runtime-tables` deletes
-    `creche-runtime` from the list of the test. Packet
+    starts with `Deviation`. Its list has three names: `agent-family`,
+    `creche-contracts` and `creche-testkit`. Packet
     `decisions-tables-guard` deletes that list.
   - The public-field check reads the source text and expands no macro. It
     does not find a field that a macro adds to a struct. It finds a struct
@@ -2125,17 +2137,19 @@ To make the fifth check on your machine, for example before a merge:
   1. `parse_object`, contract 02 §3 rule 3. The contract says that a body is
      JSON. It does not say if a reader takes what `json.loads` of Python
      takes past strict JSON in UTF-8. Each Python client takes a part of it.
-     Difference 1 and difference 6 below say which part. The reader is
+     Difference 1 and difference 4 below say which part. The reader is
      `serde_json`, which refuses each part.
   2. `DEPTH_MAX`, contract 02 §3 rule 3. The contract gives a body no nesting
      limit. `parse_object` reads 127 levels, the limit of `serde_json`. The
      tree of the module stops at 128 levels, for a deserializer with no
      limit.
-  3. `int`, contracts 02, 04 and 05. No contract gives a count a range. The
-     Python readers keep an integer of each size. The reader gives an `i64`,
-     and it reads a larger integer as 0.
-- The module `untrusted` differs from the Python helpers on purpose in six
-  ways. Each one is a row of `DEVIATIONS` in the test of the module.
+  3. `number`, contracts 02, 04 and 05. No contract gives a zero a sign. The
+     reader keeps the sign that `serde_json` gives. Difference 3 below says
+     what that sign is and what a change costs.
+- The module `untrusted` differs from the Python helpers on purpose in four
+  ways. The test of the module holds each one. A row of `DEVIATIONS` holds
+  each vector of `runtime.parse_object.noticeboard` on which the two sides
+  differ. A plain test holds each other input.
   1. An answer is strict JSON in UTF-8, with no byte order mark. It holds no
      `NaN`, no `Infinity`, no number outside the range of a float and no half
      of a surrogate pair. Each Python client reads `NaN`, `Infinity`, such a
@@ -2145,20 +2159,24 @@ To make the fifth check on your machine, for example before a merge:
      a half. The three doors give `json.loads` the text of `httpx`, and they
      refuse the first three.
   2. An answer nests 127 levels at most.
-  3. `int` reads an integer that no `i64` holds as 0.
-  4. `number` reads the integer `-0` as `-0.0`. Python reads it as `0.0`.
-  5. `text` reads a field that is no text as the empty text. `_text` of the
-     delegate client of the chaperone reads it as `None`.
-  6. An answer holds no byte that is not UTF-8. The three doors read such a
+  3. `number` reads the integer `-0` as `-0.0`, and Python reads it as
+     `0.0`. `serde_json` gives the text `-0` and the text `-0.0` as one
+     float, so the reader cannot tell the two apart. No writer of the
+     platform writes the text `-0`. `json::Number` reads the text of a token
+     and tells the two apart. The reader can use that type after the module
+     reads a text through `json`. No packet has that change yet.
+  4. An answer holds no byte that is not UTF-8. The three doors read such a
      byte as U+FFFD, because `httpx` makes a text of the body first. The
      three other clients refuse the answer, and `parse_object` refuses it
      too. The port of a door gives `parse_object` the lossy text of the body,
      or it names the difference in its pull request.
 
   One more row is a vector on which the two sides accept the same document.
-  The raw type of the test keeps an integer past 64 bits as a float.
+  The raw type of the test keeps an integer past 64 bits as a float. `int`
+  reads such an integer as 0, and the Python helpers keep each digit of it.
+  Such an integer is not strict JSON. A plain test holds that result.
 - `untrusted::parse_object` refuses the whole answer for difference 1, for
-  difference 2 and for difference 6. The Python services write the JSON body
+  difference 2 and for difference 4. The Python services write the JSON body
   of an answer with the JSON response class of their web framework. That
   class writes no `NaN`, no `Infinity` and no half of a surrogate pair. It
   writes an integer of each size. The owner of the crate decides if the
@@ -2263,10 +2281,12 @@ To make the fifth check on your machine, for example before a merge:
      noticeboard also takes UTF-16 and UTF-32.
   3. `JsonError::LoneSurrogate`, contract 05 §2. The Python reader keeps an
      escape of one half of a surrogate pair. The reader refuses the file.
-  4. `time::Timestamp`, contract 05 §2.1. The contract names RFC 3339. The
-     Python readers take each text that `datetime.fromisoformat` takes, and
-     three of them read a time with no offset as UTC. The type takes RFC 3339
-     with an offset.
+  4. `views::freshness`, contract 05 §2.1. The contract names RFC 3339 for
+     a time and gives no grammar. The Python readers take each text that
+     `datetime.fromisoformat` takes, and three of them read a time with no
+     offset as UTC. Each view reads a time with `time::Timestamp` of the
+     crate, which takes the `date-time` of RFC 3339, section 5.6. A view
+     reads each other text as no time.
   5. `document::HostPath`, contract 05 §3.2, §4.1.1 and §6.4. The contract
      gives no grammar for a host path. The type takes an absolute path with
      no control character.
@@ -2314,6 +2334,36 @@ To make the fifth check on your machine, for example before a merge:
   years 1 to 9999 as no time. It reads a number above the range of a float as
   no number. The document is then stale, or it shows no spend. A unit test
   covers each value, and no vector holds one.
+- Three inputs left the vectors of contract 05 under resolution (c) of "When
+  the two results differ". For each one, the Python code of today and
+  `time::Timestamp` give two results. A plain test of `status::views` or of
+  `status::document` holds each input, and the test table of `time` holds
+  each text. Packet `decisions-time-vectors` writes the inputs of the
+  readers again. It waits for the packets that give the Python readers the
+  grammar of `Timestamp`.
+  1. The vector `written-space` of each of the five reader surfaces. Its
+     `written_at` is `2999-01-01 00:00:00Z`. Each Python reader that reads
+     the field reads a time. A view reads no time.
+  2. The vector `written-lower-z` of the same surfaces. Its `written_at` is
+     `2999-01-01T00:00:00z`. Each Python reader that reads the field reads
+     no time. A view reads a time.
+  3. The vector `lax-written-at-no-offset` of `status.write`. Its
+     `written_at` is `2999-01-01T00:00:00`. The Python writer writes the
+     document. The valid type refuses it.
+- The readers of `status.door_owui` and `status.door_trigger` do not read
+  `written_at`. Their vectors `written-space` and `written-lower-z` left
+  with equal results, because the five reader surfaces share one document
+  list.
+- The view `fault_file::caregiver` also reads `written_at` with
+  `time::Timestamp`. For three forms of that text, the Python reader of
+  today gives another result. No vector of `status.fault_file.caregiver`
+  holds one of them. A plain test of `status::fault_file` holds each one.
+  1. A space in place of the `T`. The Python reader reads a time. The view
+     reads no time, so the file is stale.
+  2. A lower-case `z`. The Python reader reads no time. The view reads a
+     time.
+  3. A fraction of more than 9 digits. The Python reader reads a time. The
+     view reads no time, so the file is stale.
 - `status::outcome` holds the view of the noticeboard and no valid type.
   Contract 02 §13.1 owns the outcome record and its writer.
 - `status` holds no code for `rescope_by_fleet` and `drop_superseded` of

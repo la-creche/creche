@@ -31,12 +31,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import pytest
+from chaperone.family_ids import FAMILY_NAME_RE
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO_ROOT / "bin" / "rework-watchdog.sh"
@@ -63,6 +69,44 @@ HOOK_URL: Final = "http://192.0.2.10:1881/endpoint/approval"
 DIR_MODE: Final = 0o700
 FILE_MODE: Final = 0o600
 STUB_MODE: Final = 0o755
+
+#: The two ids of the outage notice, and the two ids of the notice of a
+#: refused JSON text. The pairs differ, so one card does not replace the
+#: other on the phone.
+OUTAGE_IDS: Final = ("yyyyyyyyyyyyyyyyyyyyyyyyyy", "0000000000000001")
+JSON_IDS: Final = ("xxxxxxxxxxxxxxxxxxxxxxxxxx", "0000000000000002")
+
+#: The first word of the summary of a notice of a refused JSON text.
+JSON_WORD: Final = "json_not_strict"
+SUMMARY: Final = re.compile(r'"summary":"([^"]*)"')
+
+#: The modes that a service gives its notice file and the directory of it.
+NOTICE_DIR_MODE: Final = 0o750
+NOTICE_FILE_MODE: Final = 0o640
+
+#: The most bytes of a notice file that the script reads.
+NOTICE_READ_CAP: Final = 65536
+#: The most bytes of its own record that the script reads.
+SENT_READ_CAP: Final = 262144
+
+MINUTE_S: Final = 60
+HOUR_S: Final = 3600
+DAY_S: Final = 86400
+
+#: The time of a refusal in a token: a count of seconds from 1970.
+REFUSED_AT: Final = 1_760_000_000
+
+#: Seven pairs of a surface and a rule, one more than the script sends in
+#: one hour.
+SEVEN_PAIRS: Final = (
+    "status.document:syntax",
+    "status.document:not_utf8",
+    "status.fault_file:byte_order_mark",
+    "status.outcome:constant",
+    "audit.line:trailing_data",
+    "session.answer:too_deep",
+    "session.journal_line:lone_surrogate",
+)
 
 STUB: Final = """#!/bin/sh
 printf '%s\\n' "{name} $*" >> "$WD_STUB_LOG"
@@ -101,7 +145,23 @@ exec "$@"
 #: `is-enabled` and `show -p Result` are the registry sync's half (check
 #: 5). The defaults are a host that took the cutover and whose last sync
 #: run ended well.
+#:
+#: `list-units` and `show -p ExecMainStatus` are the firing units' half of
+#: check 4. `WD_FIRINGS` holds one word for each instance, in the form
+#: `<unit>=<status of its last run>`. `list-units` prints one line for each
+#: word, in the column form of `--plain --no-legend`. `WD_SHOW_EXIT` is the
+#: status of each `show -p ExecMainStatus` call: 124 is what `timeout` gives
+#: for a call that it stopped.
 SYSTEMCTL_BODY: Final = """case "$*" in
+  *list-units*)
+    for one in ${WD_FIRINGS:-}; do
+      printf '%s loaded failed failed Fire one cron trigger\\n' "${one%%=*}"
+    done ;;
+  *ExecMainStatus*)
+    for one in ${WD_FIRINGS:-}; do
+      case " $* " in *" ${one%%=*} "*) printf '%s\\n' "${one##*=}" ;; esac
+    done
+    exit "${WD_SHOW_EXIT:-0}" ;;
   *is-failed*)
     for one in ${WD_FAILED_UNITS:-}; do
       case "$*" in *"$one"*) exit 0 ;; esac
@@ -117,12 +177,27 @@ esac
 #: The `date` the script parses stamps with. GNU `-d` first, BSD `-j -f`
 #: second, and `+%s` on its own is the real clock: a case computes an age
 #: against the moment it runs, never against a frozen one.
+#:
+#: `WD_CLOCK_AHEAD_S` moves that clock: `date -u +%s` then answers the real
+#: time plus that count of seconds. A case uses it to run the script one hour
+#: or one day later. `Rig.run_later` sets it.
+#:
+#: `WD_DATE_FAIL_AT` makes one `date -u +%s` call fail with no output: the
+#: call with that number, from 1. The stub counts the calls in its log, so
+#: the number counts each run of one rig. Check 2 makes one such call in a
+#: run, before the notice step.
 DATE_BODY: Final = """case "$1" in
   -u)
     shift
     case "${1:-}" in
       -d) shift; parsed="$1"; shift ;;
       -j) shift; shift; shift; parsed="$1"; shift ;;
+      +%s)
+        calls="$(grep -c '^date -u +%s$' "$WD_STUB_LOG")"
+        [ "$calls" = "${WD_DATE_FAIL_AT:-}" ] && exit 1
+        real="$(/bin/date -u +%s)"
+        printf '%s\\n' "$(( real + ${WD_CLOCK_AHEAD_S:-0} ))"
+        exit 0 ;;
       *) exec /bin/date -u "$@" ;;
     esac
     # The stub's own backend must be portable too: CI is Linux, whose `date`
@@ -132,6 +207,31 @@ DATE_BODY: Final = """case "$1" in
 esac
 exec /bin/date "$@"
 """
+
+#: `mktemp` and `awk` are the real programs. `WD_MKTEMP_EXIT` makes `mktemp`
+#: fail with that status and no file: the script then cannot write its
+#: record of sent notices. `WD_AWK_EXIT` makes `awk` fail with that status
+#: and no output: the script then has no answer on the two limits.
+REAL_BODY: Final = """[ -n "${{{switch}:-}}" ] && exit "${switch}"
+{more}
+exec {real} "$@"
+"""
+
+#: `WD_MKTEMP_FAIL_AT` makes one `mktemp` call for the record fail: the call
+#: with that number, from 1. The stub counts the calls in its log, so the
+#: number counts each run of one rig.
+MKTEMP_MORE: Final = """case "$*" in
+  *notices-sent.*)
+    calls="$(grep -c '^mktemp .*notices-sent[.]' "$WD_STUB_LOG")"
+    [ "$calls" = "${WD_MKTEMP_FAIL_AT:-}" ] && exit 1 ;;
+esac"""
+
+#: `WD_AWK_KEY_EXIT` makes one kind of `awk` call fail with that status: the
+#: call that gets the variable `key`. That call makes the new record after a
+#: send.
+AWK_MORE: Final = """case "$*" in
+  *"key="*) [ -n "${WD_AWK_KEY_EXIT:-}" ] && exit "$WD_AWK_KEY_EXIT" ;;
+esac"""
 
 
 def _stub(directory: Path, name: str, body: str = ":") -> None:
@@ -146,6 +246,47 @@ def _write(path: Path, body: str) -> None:
     path.parent.chmod(DIR_MODE)
     path.write_text(body, encoding="utf-8")
     path.chmod(FILE_MODE)
+
+
+def token(pair: str, seconds: int = REFUSED_AT) -> str:
+    """One token of the text `push`: `<surface>:<rule>:<seconds>`."""
+    return f"{pair}:{seconds}"
+
+
+def notice_document(service: str, tokens: Sequence[str]) -> str:
+    """The document of a notice file, as its writer shapes it: one row for
+    each pair, the text `push` with one token for each pair, sorted keys and
+    an indent of one space. The text `push` is then one line of the file."""
+    rows: list[dict[str, object]] = []
+    for one in tokens:
+        surface, rule, seconds = one.split(":")
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(seconds)))
+        rows.append(
+            {
+                "surface": surface,
+                "rule": rule,
+                "family": None,
+                "count": 1,
+                "first_at": at,
+                "last_at": at,
+            }
+        )
+
+    document = {"kind": "notices", "service": service, "rows": rows, "push": " ".join(tokens)}
+
+    return json.dumps(document, indent=1, sort_keys=True) + "\n"
+
+
+def push_line(value: str) -> str:
+    """The line of the key `push` in a notice file."""
+    return f' "push": "{value}",'
+
+
+def _write_notice(path: Path, body: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.chmod(NOTICE_DIR_MODE)
+    path.write_bytes(body)
+    path.chmod(NOTICE_FILE_MODE)
 
 
 def _stamp(seconds_ago: int) -> str:
@@ -174,6 +315,10 @@ class Rig:
 
         self.sync_stamp = self.state / "registry-sync/last-success"
 
+        self.notices = self.state / "notices"
+        self.pep_notices = self.state / "faults/pep/_notices.json"
+        self.sent = self.state / "watchdog/notices-sent"
+
         self.hooks = self.state / "hooks.env"
         self.old_env = self.prefix / "srv/agents/state/materializer/env"
         _write(self.hooks, f"APPROVAL_URL={HOOK_URL}\nAPPROVAL_TOKEN={TOKEN}\n")
@@ -188,6 +333,15 @@ class Rig:
         _stub(self.stubs, "systemctl", SYSTEMCTL_BODY)
         _stub(self.stubs, "date", DATE_BODY)
         _stub(self.stubs, "timeout", TIMEOUT_BODY)
+        for name, switch, more in (
+            ("mktemp", "WD_MKTEMP_EXIT", MKTEMP_MORE),
+            ("awk", "WD_AWK_EXIT", AWK_MORE),
+        ):
+            body = REAL_BODY.format(switch=switch, more=more, real=shutil.which(name))
+            _stub(self.stubs, name, body)
+
+        #: The script of a run. One case runs a changed copy.
+        self.script = SCRIPT
 
     def publish(self, family: str, seconds_ago: int) -> None:
         """One status document, as contract 05 §2.1 shapes it."""
@@ -239,8 +393,49 @@ class Rig:
         env.update(overrides)
 
         return subprocess.run(
-            ["bash", str(SCRIPT), *args], capture_output=True, text=True, env=env, timeout=120
+            ["bash", str(self.script), *args], capture_output=True, text=True, env=env, timeout=120
         )
+
+    def run_later(self, ahead_s: int, **overrides: str) -> subprocess.CompletedProcess[str]:
+        """One run with the clock that many seconds ahead. The status
+        document gets a stamp of that moment, so check 2 reads it as fresh."""
+        self.publish("chat", 5 - ahead_s)
+
+        return self.run(WD_CLOCK_AHEAD_S=str(ahead_s), **overrides)
+
+    def notice(self, service: str, *tokens: str) -> Path:
+        """The notice file of one service, with one token for each pair."""
+        path = self.notices / f"{service}.json"
+        _write_notice(path, notice_document(service, tokens).encode())
+
+        return path
+
+    def notice_with_line(self, service: str, line: bytes) -> Path:
+        """A notice file whose line of the key `push` is these bytes."""
+        whole = notice_document(service, [token("status.document:syntax")]).encode()
+        valid = push_line(token("status.document:syntax")).encode()
+        assert valid in whole
+        path = self.notices / f"{service}.json"
+        _write_notice(path, whole.replace(valid, line))
+
+        return path
+
+    def pep_notice(self, *tokens: str) -> None:
+        """The notice file of the chaperone, in its fault directory."""
+        _write_notice(self.pep_notices, notice_document("chaperone", tokens).encode())
+
+    def json_summaries(self) -> list[str]:
+        """The summary of each notice of a refused JSON text, in send order."""
+        found = [SUMMARY.search(one) for one in self.posts()]
+
+        return [one.group(1) for one in found if one and one.group(1).startswith(JSON_WORD)]
+
+    def sent_lines(self) -> list[str]:
+        """The record of sent notices: one line for each sent pair."""
+        if not self.sent.exists():
+            return []
+
+        return self.sent.read_text(encoding="utf-8").splitlines()
 
     def posts(self) -> list[str]:
         if not self.post_log.exists():
@@ -758,3 +953,1121 @@ def test_an_unknown_argument_is_refused(rig: Rig) -> None:
 
     assert done.returncode == 2
     assert rig.posts() == []
+
+
+# --- check 4: a firing unit that ended with status 78 -------------------------
+
+FIRING: Final = "creche-trigger@standup.service"
+
+
+def test_check_4_reads_each_firing_unit(rig: Rig) -> None:
+    """The words of the two calls, and one `show` call for each instance."""
+    other = "creche-trigger@ops.service"
+
+    done = rig.run(WD_FIRINGS=f"{FIRING}=0 {other}=0")
+    lines = rig.stub_log.read_text(encoding="utf-8").splitlines()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    listing = "systemctl --user list-units --all --plain --no-legend creche-trigger@*.service"
+    assert lines.count(listing) == 1
+    for unit in (FIRING, other):
+        assert lines.count(f"systemctl --user show {unit} -p ExecMainStatus --value") == 1
+
+
+def test_a_firing_that_ended_with_78_is_a_failed_unit(rig: Rig) -> None:
+    """Status 78 is the status of a start that the config refuses. The rule
+    of two runs in a row holds for it as for each other check."""
+    first = rig.run(WD_FIRINGS=f"{FIRING}=78")
+
+    assert first.returncode == 1
+    assert "units: " in first.stdout
+    assert ", 1 of 2" in first.stdout
+    assert rig.posts() == []
+
+    second = rig.run(WD_FIRINGS=f"{FIRING}=78")
+
+    assert second.returncode == 1
+    assert rig.stored() == "units"
+    assert len(rig.posts()) == 1
+    assert "rework DOWN" in rig.posts()[0]
+    assert FIRING in rig.posts()[0]
+    assert "78" in rig.posts()[0]
+
+
+@pytest.mark.parametrize("status", ["0", "1", "2", "143", "780", "", "seventy-eight"])
+def test_a_firing_with_another_status_is_no_failure(rig: Rig, status: str) -> None:
+    """A firing ends with status 1 when the session service refuses the job.
+    Only status 78 names a config."""
+    rig.run(WD_FIRINGS=f"{FIRING}={status}")
+    done = rig.run(WD_FIRINGS=f"{FIRING}={status}")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert rig.stored() == "up"
+
+
+def test_a_show_call_with_no_answer_ends_the_read(rig: Rig) -> None:
+    """Each call has the time limit of the other checks. After one call that
+    the limit stopped, the run reads no other firing unit: a user manager
+    that does not answer costs the run one time limit, not one for each
+    instance. A call with no answer is no failure, as in the rest of check 4."""
+    units = ("creche-trigger@ops.service", FIRING, "creche-trigger@vault.service")
+
+    done = rig.run(WD_FIRINGS=" ".join(f"{one}=78" for one in units), WD_SHOW_EXIT="124")
+    calls = [
+        one
+        for one in rig.stub_log.read_text(encoding="utf-8").splitlines()
+        if one.startswith("systemctl ") and "ExecMainStatus" in one
+    ]
+
+    assert len(calls) == 1
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.count("no answer") == 1
+    assert rig.posts() == []
+
+
+def test_a_firing_and_a_failed_unit_are_one_units_failure(rig: Rig) -> None:
+    states = {"WD_FIRINGS": f"{FIRING}=78", "WD_FAILED_UNITS": "creche-caregiver.service"}
+    rig.run(**states)
+    rig.run(**states)
+
+    assert rig.stored() == "units"
+    assert len(rig.posts()) == 1
+    assert FIRING in rig.posts()[0]
+    assert "creche-caregiver.service" in rig.posts()[0]
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "creche-trigger@Standup.service",
+        "creche-trigger@s.service",
+        "creche-trigger@-standup.service",
+        "creche-trigger@standup.timer",
+        "creche-trigger@stand.up.service",
+        "creche-trigger@" + "a" * 32 + ".service",
+        "creche-other@standup.service",
+        "--version",
+    ],
+)
+def test_a_listed_name_that_is_no_firing_unit_is_not_read(rig: Rig, unit: str) -> None:
+    """The instance of a firing unit is the name of a family. The script
+    gives no other listed word to `systemctl show`."""
+    done = rig.run(WD_FIRINGS=f"{unit}=78")
+    called = rig.stub_log.read_text(encoding="utf-8")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "ExecMainStatus" not in called
+    assert done.stdout.count("is no firing unit") == 1, done.stdout
+    assert rig.posts() == []
+
+
+def _constant(name: str) -> str:
+    """The one line of the script that sets a constant."""
+    start = f"{name}="
+    lines = [
+        one for one in SCRIPT.read_text(encoding="utf-8").splitlines() if one.startswith(start)
+    ]
+    assert len(lines) == 1, name
+
+    return lines[0]
+
+
+def _number(name: str) -> int:
+    """The value of a constant of the script that is a count."""
+    return int(_constant(name).partition("=")[2])
+
+
+def test_the_family_pattern_equals_its_source() -> None:
+    """The instance of a firing unit is the name of a family. The script
+    cannot import the chaperone, so it has a copy of the pattern of a family
+    name. This case fails when the pattern of the chaperone moves."""
+    source = FAMILY_NAME_RE.pattern
+    assert source.startswith("^")
+    assert source.endswith(r"\Z")
+
+    family = source.removeprefix("^").removesuffix(r"\Z")
+
+    assert _constant("FAMILY_NAME") == f"FAMILY_NAME='{family}'"
+
+
+def test_both_unit_patterns_come_from_the_same_constants() -> None:
+    """The pattern for `list-units` and the exact form of a unit name have
+    one head, one tail and one pattern of a family name."""
+    names = ("FIRING_UNIT_HEAD", "FIRING_UNIT_TAIL", "FAMILY_NAME", "FIRING_UNITS")
+    program = "\n".join(_constant(one) for one in (*names, "FIRING_UNIT_NAME"))
+    program += '\nprintf \'%s\\n\' "$FIRING_UNITS" "$FIRING_UNIT_NAME"\n'
+    family = FAMILY_NAME_RE.pattern.removeprefix("^").removesuffix(r"\Z")
+
+    done = subprocess.run(["bash", "-c", program], capture_output=True, text=True, timeout=60)
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == [
+        "creche-trigger@*.service",
+        f"creche-trigger@{family}\\.service",
+    ]
+
+
+# --- the notice of a refused JSON text ----------------------------------------
+
+
+def test_one_token_gives_one_json_notice(rig: Rig) -> None:
+    """A notice file from before the first run of the script counts too:
+    the script sends each token that it never sent."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert len(rig.posts()) == 1
+
+
+def test_a_second_run_with_the_same_file_sends_nothing(rig: Rig) -> None:
+    rig.notice("noticeboard", token("status.document:syntax"))
+    rig.run()
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(rig.posts()) == 1
+
+
+def test_a_newer_refusal_waits_for_24_hours(rig: Rig) -> None:
+    """One notice for one service, surface and rule in 24 hours. A run after
+    that time sends the newer refusal."""
+    pair = "status.document:syntax"
+    summary = f"{JSON_WORD} noticeboard status.document syntax"
+    rig.notice("noticeboard", token(pair))
+    rig.run()
+    rig.notice("noticeboard", token(pair, REFUSED_AT + MINUTE_S))
+
+    rig.run()
+    rig.run_later(DAY_S - HOUR_S)
+
+    assert rig.json_summaries() == [summary]
+
+    rig.run_later(DAY_S + MINUTE_S)
+
+    assert rig.json_summaries() == [summary, summary]
+
+    rig.run_later(DAY_S + 2 * MINUTE_S)
+
+    assert rig.json_summaries() == [summary, summary]
+
+
+def test_an_older_time_for_a_sent_pair_sends_nothing(rig: Rig) -> None:
+    pair = "status.document:syntax"
+    rig.notice("noticeboard", token(pair))
+    rig.run()
+    rig.notice("noticeboard", token(pair, REFUSED_AT - MINUTE_S))
+
+    rig.run_later(DAY_S + MINUTE_S)
+
+    assert len(rig.json_summaries()) == 1
+
+
+def test_a_time_far_after_now_gets_no_notice(rig: Rig) -> None:
+    """The clock of a host can jump. A token whose time is more than one
+    hour after now gets no notice and no record line, and the journal gets
+    one line with the count. A later refusal of the same service, surface
+    and rule with a time before now then gets its notice."""
+    pair = "status.document:syntax"
+    now = int(time.time())
+    near = token("audit.line:syntax", now + 30 * MINUTE_S)
+    rig.notice("noticeboard", token(pair, now + 400 * DAY_S), near)
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard audit.line syntax"]
+    assert done.stdout.count("after now (no notice): 1") == 1, done.stdout
+    assert [one.split()[1] for one in rig.sent_lines()] == ["audit.line"]
+
+    rig.notice("noticeboard", token(pair, now - MINUTE_S), near)
+    done = rig.run()
+
+    assert rig.json_summaries()[1:] == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert "after now" not in done.stdout
+
+
+def test_a_second_token_in_the_file_sends_one_more(rig: Rig) -> None:
+    first = token("status.document:syntax")
+    rig.notice("noticeboard", first)
+    rig.run()
+    rig.notice("noticeboard", first, token("audit.line:lone_surrogate", REFUSED_AT + 1))
+
+    rig.run()
+
+    assert rig.json_summaries() == [
+        f"{JSON_WORD} noticeboard status.document syntax",
+        f"{JSON_WORD} noticeboard audit.line lone_surrogate",
+    ]
+
+
+def test_one_pair_two_times_in_a_line_is_one_notice(rig: Rig) -> None:
+    """The pattern of the line permits one pair two times. The second token
+    is no news with the same time. With a newer time, the limit of one
+    service, surface and rule holds it, also in the same run. The file of
+    the chaperone and a file with the name of the chaperone are one service."""
+    pair = "status.document:syntax"
+    rig.notice("noticeboard", token(pair), token(pair), token(pair, REFUSED_AT + MINUTE_S))
+    rig.pep_notice(token("grants.file:syntax"))
+    _write_notice(
+        rig.notices / "chaperone.json",
+        notice_document("chaperone", [token("grants.file:syntax", REFUSED_AT + 1)]).encode(),
+    )
+
+    first = rig.run()
+
+    assert rig.json_summaries() == [
+        f"{JSON_WORD} chaperone grants.file syntax",
+        f"{JSON_WORD} noticeboard status.document syntax",
+    ]
+    assert "2 sent, 1 held" in first.stdout
+
+    rig.run_later(DAY_S + MINUTE_S)
+
+    assert len(rig.json_summaries()) == 3
+    assert rig.json_summaries()[2] == f"{JSON_WORD} noticeboard status.document syntax"
+
+
+def test_the_same_pair_of_two_services_is_two_notices(rig: Rig) -> None:
+    rig.notice("noticeboard", token("status.document:syntax"))
+    rig.notice("door-owui", token("status.document:syntax"))
+
+    rig.run()
+
+    assert sorted(rig.json_summaries()) == [
+        f"{JSON_WORD} door-owui status.document syntax",
+        f"{JSON_WORD} noticeboard status.document syntax",
+    ]
+
+
+@pytest.mark.parametrize("spread", [(7,), (3, 2, 2), (0, 1, 6)])
+def test_six_json_notices_in_one_hour_for_all_services(rig: Rig, spread: tuple[int, ...]) -> None:
+    """Seven tokens in one run are six notices. A run 61 minutes later sends
+    the seventh. The limit counts the notices of all services together."""
+    pairs = list(SEVEN_PAIRS)
+    expected: set[str] = set()
+    for service, count in zip(("attendance", "caregiver", "noticeboard"), spread, strict=False):
+        mine, pairs = pairs[:count], pairs[count:]
+        if not mine:
+            continue
+
+        rig.notice(service, *[token(one) for one in mine])
+        expected |= {f"{JSON_WORD} {service} {one.replace(':', ' ')}" for one in mine}
+
+    first = rig.run()
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert len(rig.json_summaries()) == 6
+
+    rig.run()
+    rig.run_later(30 * MINUTE_S)
+
+    assert len(rig.json_summaries()) == 6
+
+    rig.run_later(61 * MINUTE_S)
+
+    assert len(rig.json_summaries()) == 7
+    assert set(rig.json_summaries()) == expected
+
+
+def test_the_chaperone_file_is_read_as_the_chaperone(rig: Rig) -> None:
+    """The chaperone keeps its notice file in its fault directory. The
+    service name of that file is the word `chaperone`."""
+    rig.pep_notice(token("grants.file:duplicate_key"))
+
+    rig.run()
+
+    assert rig.json_summaries() == [f"{JSON_WORD} chaperone grants.file duplicate_key"]
+
+
+def test_a_run_that_moves_the_verdict_sends_the_json_notice(rig: Rig) -> None:
+    """The notice step runs at each end of the script. The run that moves
+    the verdict sends the outage notice first, then the notice of a refused
+    text."""
+    rig.run(WD_PEP_CODE="000")
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_PEP_CODE="000")
+
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "verdict moved" in done.stdout
+    assert len(rig.posts()) == 2
+    assert "rework DOWN" in rig.posts()[0]
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert len(rig.sent_lines()) == 1
+    assert rig.stored() == "chaperone"
+
+
+def test_a_moved_verdict_with_the_hook_away_tries_both_notices(rig: Rig) -> None:
+    """The outage notice fails, so the stored verdict stays. The notice step
+    still runs: it tries one notice and writes no record line."""
+    rig.run(WD_PEP_CODE="000")
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_PEP_CODE="000", WD_POST_EXIT="7")
+
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "verdict moved" in done.stdout
+    assert len(rig.posts()) == 2
+    assert "rework DOWN" in rig.posts()[0]
+    assert JSON_WORD in rig.posts()[1]
+    assert rig.sent_lines() == []
+    assert rig.stored() == "up"
+
+
+def test_a_json_notice_has_ids_of_its_own(rig: Rig) -> None:
+    """The outage notice and the notice of a refused text are two cards."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+    rig.run(WD_PEP_CODE="000")
+    rig.run(WD_PEP_CODE="000")
+
+    outage = [one for one in rig.posts() if "rework DOWN" in one]
+    refused = [one for one in rig.posts() if JSON_WORD in one]
+
+    assert len(outage) == 1
+    assert len(refused) == 1
+    for (job, gate), post in ((OUTAGE_IDS, outage[0]), (JSON_IDS, refused[0])):
+        assert f'"job_id":"{job}"' in post
+        assert f'"gate_id":"{gate}"' in post
+
+    assert set(OUTAGE_IDS).isdisjoint(JSON_IDS)
+
+
+#: Each line is the line of the key `push` in a notice file, and each one
+#: breaks the exact pattern of that line.
+BROKEN_PUSH_LINES: Final = {
+    "upper-case": b' "push": "Status.document:syntax:1760000000",',
+    "hyphen": b' "push": "status-document:syntax:1760000000",',
+    "two-spaces": b' "push": "audit.line:syntax:1760000000  status.outcome:syntax:1760000000",',
+    "tab": b' "push": "audit.line:syntax:1760000000\tstatus.outcome:syntax:1760000000",',
+    "space-first": b' "push": " status.document:syntax:1760000000",',
+    "space-last": b' "push": "status.document:syntax:1760000000 ",',
+    "thirteen-digits": b' "push": "status.document:syntax:1760000000000",',
+    "no-digit": b' "push": "status.document:syntax:",',
+    "sign": b' "push": "status.document:syntax:-1760000000",',
+    "two-fields": b' "push": "status.document:1760000000",',
+    "four-fields": b' "push": "status.document:syntax:1760000000:7",',
+    "no-surface": b' "push": ":syntax:1760000000",',
+    "long-surface": b' "push": "' + b"s" * 65 + b':syntax:1760000000",',
+    "long-rule": b' "push": "status.document:' + b"r" * 65 + b':1760000000",',
+    "nul-byte": b' "push": "status.document:syntax:1760000000\x00",',
+    "escape": b' "push": "\\u0073tatus.document:syntax:1760000000",',
+    "not-ascii": ' "push": "stätus.document:syntax:1760000000",'.encode(),
+    "not-utf-8": b' "push": "st\xfftus.document:syntax:1760000000",',
+    "carriage-return": b' "push": "status.document:syntax:1760000000",\r',
+    "no-indent": b'"push": "status.document:syntax:1760000000",',
+    "more-indent": b'  "push": "status.document:syntax:1760000000",',
+    "no-space": b' "push":"status.document:syntax:1760000000",',
+    "number": b' "push": 1760000000,',
+    "null": b' "push": null,',
+    "no-end-quote": b' "push": "status.document:syntax:1760000000,',
+    "text-after": b' "push": "status.document:syntax:1760000000", "rows": [],',
+    "two-lines": (
+        b' "push": "status.document:syntax:1760000000",\n "push": "audit.line:syntax:1760000000",'
+    ),
+    "after-a-key": b' "kind": "notices", "push": "status.document:syntax:1760000000",',
+    "in-braces": b'{"push": "status.document:syntax:1760000000"}',
+}
+
+
+@pytest.mark.parametrize("name", sorted(BROKEN_PUSH_LINES))
+def test_a_push_line_that_breaks_its_pattern_is_one_line(rig: Rig, name: str) -> None:
+    """One line in the journal, no notice, and the run ends as it would
+    without the file."""
+    path = rig.notice_with_line("caregiver", BROKEN_PUSH_LINES[name])
+
+    done = rig.run()
+    said = [one for one in done.stdout.splitlines() if "breaks its pattern" in one]
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert len(said) == 1, done.stdout
+    assert str(path) in said[0]
+    assert rig.sent_lines() == []
+
+
+@pytest.mark.parametrize("separators", [(", ", ": "), (",", ":")])
+def test_a_document_on_one_line_breaks_its_pattern(rig: Rig, separators: tuple[str, str]) -> None:
+    """A writer can put the whole document on one line. The key `push` is
+    then at no start of a line. The file gets one line in the journal and
+    no notice, as each other file whose key is not in the exact form."""
+    spread = json.loads(notice_document("caregiver", [token("status.document:syntax")]))
+    path = rig.notices / "caregiver.json"
+    _write_notice(path, json.dumps(spread, sort_keys=True, separators=separators).encode() + b"\n")
+
+    done = rig.run()
+    said = [one for one in done.stdout.splitlines() if "breaks its pattern" in one]
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert len(said) == 1, done.stdout
+    assert str(path) in said[0]
+    assert rig.sent_lines() == []
+
+
+def test_a_broken_file_does_not_stop_the_other_files(rig: Rig) -> None:
+    rig.notice_with_line("caregiver", BROKEN_PUSH_LINES["upper-case"])
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    rig.run()
+
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+
+
+def test_no_byte_of_a_notice_file_is_evaluated(rig: Rig, tmp_path: Path) -> None:
+    """A notice file comes from another program. The script reads a value
+    with an exact pattern and gives no byte of the file to a shell."""
+    marker = tmp_path / "evaluated"
+    for service, text in (
+        ("caregiver", f"$(touch {marker}):syntax:1760000000"),
+        ("noticeboard", f"`touch {marker}`:syntax:1760000000"),
+        ("attendance", f"a:b:1; touch {marker}"),
+        ("door-owui", "*:*:1"),
+    ):
+        rig.notice_with_line(service, push_line(text).encode())
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert not marker.exists()
+    assert rig.posts() == []
+    assert done.stdout.count("breaks its pattern") == 4
+
+
+@pytest.mark.parametrize(
+    "line",
+    [b' "push": "",', b' "push": ""', b' "pushed": "status.document:syntax:1760000000",'],
+)
+def test_an_empty_push_value_asks_for_no_notice(rig: Rig, line: bytes) -> None:
+    rig.notice_with_line("caregiver", line)
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert "breaks its pattern" not in done.stdout
+
+
+@pytest.mark.parametrize(
+    "body", [b"", b"\n", b"{}\n", b'{\n "kind": "notices",\n "rows": [],\n "service": "x"\n}\n']
+)
+def test_a_file_with_no_push_line_asks_for_no_notice(rig: Rig, body: bytes) -> None:
+    _write_notice(rig.notices / "caregiver.json", body)
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert "breaks its pattern" not in done.stdout
+
+
+def test_the_last_key_of_a_document_needs_no_comma(rig: Rig) -> None:
+    """The key `push` can be the last key of the object. Its line then ends
+    with the quote."""
+    rig.notice_with_line("caregiver", b' "push": "status.document:syntax:1760000000"')
+
+    rig.run()
+
+    assert rig.json_summaries() == [f"{JSON_WORD} caregiver status.document syntax"]
+
+
+def test_a_file_with_no_final_newline_is_read(rig: Rig) -> None:
+    whole = notice_document("caregiver", [token("status.document:syntax")]).rstrip("\n")
+    _write_notice(rig.notices / "caregiver.json", whole.encode())
+
+    rig.run()
+
+    assert rig.json_summaries() == [f"{JSON_WORD} caregiver status.document syntax"]
+
+
+def test_leading_zeros_in_a_time_are_a_decimal_number(rig: Rig) -> None:
+    """`<seconds>` has 1 to 12 digits. A value with a zero in front is no
+    octal number: `0900` is above `0899`."""
+    pair = "status.document:syntax"
+    rig.notice("caregiver", f"{pair}:000000000899")
+    rig.run()
+    rig.notice("caregiver", f"{pair}:0900")
+
+    done = rig.run_later(DAY_S + MINUTE_S)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(rig.json_summaries()) == 2
+    assert [one.split()[3] for one in rig.sent_lines()] == ["900"]
+
+
+def test_a_lock_file_and_a_temporary_file_are_not_read(rig: Rig, tmp_path: Path) -> None:
+    """A writer keeps a lock file and a temporary file beside its notice
+    file. The script reads only a regular file whose name ends in `.json`.
+    It reads no file whose name starts with a dot."""
+    whole = notice_document("door-owui", [token("status.document:syntax")]).encode()
+    names = ("door-owui.json.lock", "door-owui.json.tmp", ".door-owui.json.7.tmp", "door-owui")
+    for name in (*names, ".json", ".door-owui.json"):
+        _write_notice(rig.notices / name, whole)
+
+    _write_notice(rig.notices / "folder.json" / "inner.json", whole)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(whole)
+    (rig.notices / "link.json").symlink_to(outside)
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert "breaks its pattern" not in done.stdout
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Noticeboard.json",
+        "notice_board.json",
+        "notice board.json",
+        "notice.board.json",
+        "n" * 65 + ".json",
+        "caregiver\nnoticeboard.json",
+    ],
+)
+def test_a_file_name_that_is_no_service_name_is_not_read(rig: Rig, name: str) -> None:
+    whole = notice_document("caregiver", [token("status.document:syntax")]).encode()
+    _write_notice(rig.notices / name, whole)
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert done.stdout.count("is no service name") == 1, done.stdout
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a file of each mode")
+def test_a_notice_file_that_the_run_cannot_read_is_one_line(rig: Rig) -> None:
+    """One line in the journal names the file. The other files are read."""
+    closed = rig.notice("caregiver", token("status.document:syntax"))
+    closed.chmod(0)
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert done.stdout.count(f"cannot read {closed}") == 1
+
+
+def test_a_push_line_past_the_byte_cap_is_not_read(rig: Rig) -> None:
+    """The script reads the first 65,536 bytes of a file and no more."""
+    whole = notice_document("caregiver", [token("status.document:syntax")])
+    padded = whole.replace(' "push"', ' "pad": "' + "p" * NOTICE_READ_CAP + '",\n "push"')
+    _write_notice(rig.notices / "caregiver.json", padded.encode())
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+
+
+def test_a_push_line_that_the_byte_cap_cuts_breaks_its_pattern(rig: Rig) -> None:
+    line = ' "push": "status.document:syntax:1760000000",'
+    head = '{\n "kind": "notices",\n "pad": "'
+    pad = "p" * (NOTICE_READ_CAP - len(head) - len('",\n') - len(line) + 5)
+    body = head + pad + '",\n' + line + '\n "rows": [],\n "service": "caregiver"\n}\n'
+    assert body.index(line) < NOTICE_READ_CAP < body.index(line) + len(line)
+    _write_notice(rig.notices / "caregiver.json", body.encode())
+
+    done = rig.run()
+
+    assert rig.posts() == []
+    assert done.stdout.count("breaks its pattern") == 1
+
+
+def test_a_large_file_with_an_early_push_line_is_read(rig: Rig) -> None:
+    """The keys of a notice file are sorted, so the line of `push` stands
+    before the rows. A file with many rows is larger than the byte cap."""
+    whole = notice_document("caregiver", [token("status.document:syntax")])
+    padded = whole.replace(' "rows"', ' "pushed": "' + "p" * (2 * NOTICE_READ_CAP) + '",\n "rows"')
+    assert padded.index(' "push"') < 100
+    _write_notice(rig.notices / "caregiver.json", padded.encode())
+
+    rig.run()
+
+    assert rig.json_summaries() == [f"{JSON_WORD} caregiver status.document syntax"]
+
+
+def test_a_push_line_holds_256_tokens_at_most(rig: Rig) -> None:
+    """A service has fewer than 256 pairs of a surface and a rule. A line
+    with more tokens breaks its pattern."""
+    tokens = [token(f"surface.s{number}:syntax") for number in range(257)]
+    rig.notice("caregiver", *tokens)
+    rig.notice("noticeboard", *tokens[:256])
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.count("breaks its pattern") == 1
+    assert len(rig.json_summaries()) == 6
+    assert all(one.startswith(f"{JSON_WORD} noticeboard ") for one in rig.json_summaries())
+
+
+def test_a_json_notice_that_fails_is_sent_by_the_next_run(rig: Rig) -> None:
+    """A notice that the hook did not take leaves the record as it was."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    first = rig.run(WD_POST_EXIT="7")
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "NOTICE NOT SENT" in first.stdout
+    assert len(rig.posts()) == 1, "one try"
+    assert rig.sent_lines() == []
+
+    second = rig.run()
+
+    assert "phone alert sent" in second.stdout
+    assert len(rig.posts()) == 2
+    assert len(rig.sent_lines()) == 1
+
+    rig.run()
+
+    assert len(rig.posts()) == 2
+
+
+def test_a_run_stops_at_the_first_json_notice_that_fails(rig: Rig) -> None:
+    """A hook that is away costs a run the time limit of one notice, not of
+    six. The next run sends each notice."""
+    rig.notice("noticeboard", *[token(one) for one in SEVEN_PAIRS[:3]])
+
+    rig.run(WD_POST_EXIT="7")
+
+    assert len(rig.posts()) == 1
+
+    rig.run()
+
+    assert len(rig.json_summaries()) == 4
+    assert len(rig.sent_lines()) == 3
+
+
+def test_no_hook_leaves_each_json_notice_for_a_later_run(rig: Rig) -> None:
+    hook = rig.hooks.read_text(encoding="utf-8")
+    _write(rig.hooks, "LITELLM_MASTER_KEY=other\n")
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "NOTICE NOT SENT" in done.stdout
+    assert rig.posts() == []
+    assert rig.sent_lines() == []
+
+    _write(rig.hooks, hook)
+    rig.run()
+
+    assert len(rig.json_summaries()) == 1
+
+
+def test_the_record_of_sent_notices_has_one_line_for_each_pair(rig: Rig) -> None:
+    """The service, the surface, the rule, the `<seconds>` that the script
+    sent and the time of the send. The file has the modes of the verdict
+    file: 0700 for the directory and 0600 for the file."""
+    pair = "status.document:syntax"
+    rig.notice("noticeboard", token(pair))
+    before = int(time.time())
+    rig.run()
+    rig.notice("noticeboard", token(pair, REFUSED_AT + MINUTE_S))
+    rig.run_later(DAY_S + MINUTE_S)
+    after = int(time.time())
+
+    lines = rig.sent_lines()
+
+    assert len(lines) == 1
+    service, surface, rule, seconds, sent_at = lines[0].split(" ")
+    assert (service, surface, rule) == ("noticeboard", "status.document", "syntax")
+    assert int(seconds) == REFUSED_AT + MINUTE_S
+    assert before + DAY_S + MINUTE_S <= int(sent_at) <= after + DAY_S + MINUTE_S
+    assert rig.sent.stat().st_mode & 0o777 == FILE_MODE
+    assert rig.sent.parent.stat().st_mode & 0o777 == DIR_MODE
+    assert sorted(one.name for one in rig.sent.parent.iterdir()) == ["notices-sent", "verdict"]
+
+
+def test_a_send_time_far_from_now_holds_no_notice(rig: Rig) -> None:
+    """The clock of a host can jump. A record line whose send time is more
+    than the limit away from now, before or after, holds no notice."""
+    pair = "status.document:syntax"
+    ahead = int(time.time()) + 10 * DAY_S
+    lines = [f"noticeboard {pair.replace(':', ' ')} {REFUSED_AT - MINUTE_S} {ahead}"]
+    lines += [f"caregiver {one.replace(':', ' ')} {REFUSED_AT} {ahead}" for one in SEVEN_PAIRS[:6]]
+    _write(rig.sent, "\n".join(lines) + "\n")
+    rig.notice("noticeboard", token(pair))
+
+    rig.run()
+
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert len(rig.sent_lines()) == 7
+
+
+def test_a_record_line_that_breaks_its_pattern_is_not_read(rig: Rig) -> None:
+    """The record is the own file of the script. The script still reads it
+    with an exact pattern, and it keeps each line that holds the pattern."""
+    now = int(time.time())
+    good = f"noticeboard status.document syntax {REFUSED_AT} {now}"
+    _write(rig.sent, f"noticeboard audit.line syntax $(id) {now}\n{good}\nnot a record line\n")
+    rig.notice("noticeboard", token("status.document:syntax"), token("audit.line:syntax"))
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard audit.line syntax"]
+    assert "break the record pattern: 2" in done.stdout
+    assert good in rig.sent_lines()
+    assert len(rig.sent_lines()) == 2
+
+
+def test_a_record_over_its_byte_cap_sends_nothing(rig: Rig) -> None:
+    """The limits come from the record. With a record that the script does
+    not read, it sends no notice of this kind and says so in one line."""
+    line = f"noticeboard audit.line syntax {REFUSED_AT} {int(time.time())}\n"
+    _write(rig.sent, line * (SENT_READ_CAP // len(line) + 1))
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert done.stdout.count(str(rig.sent)) == 1
+
+
+def _fill_record(rig: Rig, room: int) -> list[str]:
+    """Writes a record with room for that count of bytes under its cap.
+    Each line is one week old. Gives the lines."""
+    old = int(time.time()) - 7 * DAY_S
+    lines: list[str] = []
+    size = 0
+    while size < SENT_READ_CAP - room - 105:
+        lines.append(f"attendance surface.s{len(lines)} syntax {REFUSED_AT} {old}")
+        size += len(lines[-1]) + 1
+
+    last = f"attendance  syntax {REFUSED_AT} {old}"
+    pad = SENT_READ_CAP - room - size - len(last) - 1
+    assert 1 <= pad <= 64
+    lines.append(last.replace("attendance ", "attendance " + "p" * pad))
+    _write(rig.sent, "\n".join(lines) + "\n")
+    assert rig.sent.stat().st_size == SENT_READ_CAP - room
+
+    return lines
+
+
+def test_the_script_keeps_its_record_under_the_byte_cap(rig: Rig) -> None:
+    """A notice that would take the record past its byte cap is not sent.
+    The script can then read its record in each later run. This record has
+    room for 10 bytes."""
+    lines = _fill_record(rig, 10)
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    for _ in range(2):
+        done = rig.run()
+
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert rig.posts() == []
+        assert done.stdout.count(str(rig.sent)) == 1
+        assert rig.sent_lines() == lines
+
+
+@pytest.mark.parametrize("spare", [0, -1])
+def test_a_record_line_that_fits_exactly_is_sent(rig: Rig, spare: int) -> None:
+    """The edge of the byte cap. A new line that fills the record to the
+    cap is sent. A new line that is 1 byte longer is not sent."""
+    new_line = f"noticeboard status.document syntax {REFUSED_AT} {int(time.time())}\n"
+    lines = _fill_record(rig, len(new_line) + spare)
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run()
+    sent = 1 if spare == 0 else 0
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(rig.posts()) == sent
+    assert len(rig.sent_lines()) == len(lines) + sent
+    assert rig.sent.stat().st_size == SENT_READ_CAP - len(new_line) - spare + sent * len(new_line)
+
+    again = rig.run()
+
+    assert len(rig.posts()) == sent
+    assert "is over" not in again.stdout
+
+
+def test_a_failed_record_update_keeps_each_old_line(rig: Rig) -> None:
+    """`awk` makes the new record after a send. When that call fails, the
+    record keeps each line, and the run sends no more notices of this kind."""
+    old = int(time.time()) - 7 * DAY_S
+    lines = [f"attendance {one.replace(':', ' ')} {REFUSED_AT} {old}" for one in SEVEN_PAIRS[:5]]
+    _write(rig.sent, "\n".join(lines) + "\n")
+    rig.notice("noticeboard", token("status.document:syntax"), token("audit.line:syntax"))
+
+    done = rig.run(WD_AWK_KEY_EXIT="2")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(rig.posts()) == 1
+    assert done.stdout.count("awk gave no answer after a send") == 1, done.stdout
+    assert rig.sent_lines() == lines
+
+
+def test_a_record_write_that_fails_after_a_send_stops_the_step(rig: Rig) -> None:
+    """The run proves the record with one write before the first send. This
+    case fails the second write, the one after the send. The run then sends
+    no more notices of this kind, and the next run sends each one."""
+    rig.notice("noticeboard", *[token(one) for one in SEVEN_PAIRS[:3]])
+
+    done = rig.run(WD_MKTEMP_FAIL_AT="2")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(rig.posts()) == 1
+    assert done.stdout.count("after a send") == 1, done.stdout
+    assert rig.sent_lines() == []
+
+    rig.run()
+
+    assert len(rig.json_summaries()) == 4
+    assert len(rig.sent_lines()) == 3
+
+
+def test_no_time_from_date_sends_nothing(rig: Rig) -> None:
+    """Both limits need the time of the run. A run in which `date` gives no
+    time sends no notice of this kind, and the next run sends each one."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_DATE_FAIL_AT="2")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert done.stdout.count("date gave no time") == 1, done.stdout
+    assert rig.sent_lines() == []
+
+    rig.run()
+
+    assert len(rig.json_summaries()) == 1
+
+
+def test_no_answer_on_the_limits_sends_nothing(rig: Rig) -> None:
+    """`awk` holds the two limits. A run in which it gives no answer sends
+    no notice of this kind, and the next run sends each one."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_AWK_EXIT="2")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert rig.sent_lines() == []
+
+    rig.run()
+
+    assert len(rig.json_summaries()) == 1
+
+
+@pytest.mark.parametrize("blocked", ["record", "directory"])
+def test_a_record_that_cannot_be_written_sends_nothing(rig: Rig, blocked: str) -> None:
+    """A notice with no record line has no limit. The script proves that it
+    can write the record before it sends the first notice of a run."""
+    if blocked == "record":
+        rig.sent.mkdir(parents=True)
+    else:
+        _write(rig.sent.parent, "a file in the place of the state directory\n")
+
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    rig.run()
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert str(rig.sent) in done.stdout
+
+
+#: What the host does in a run: nothing, one check that fails, or a hook
+#: that takes no notice.
+HOST_STATES: Final = (
+    {},
+    {"WD_PEP_CODE": "000"},
+    {"WD_SOCK_CODE": "000", "WD_POST_EXIT": "7"},
+    {"WD_POST_EXIT": "7"},
+    {"WD_MKTEMP_EXIT": "1"},
+    {"WD_PEP_CODE": "000", "WD_MKTEMP_EXIT": "1"},
+    {"WD_AWK_EXIT": "2"},
+)
+
+
+@pytest.mark.parametrize("state", HOST_STATES)
+def test_the_notice_step_changes_no_verdict_and_no_status(
+    tmp_path: Path, state: dict[str, str]
+) -> None:
+    """Two hosts in the same state. One has notice files, a file that breaks
+    its pattern among them. Each run ends with the same status on both, and
+    both store the same verdict."""
+    bare = Rig(tmp_path / "bare")
+    full = Rig(tmp_path / "full")
+    full.notice("noticeboard", *[token(one) for one in SEVEN_PAIRS])
+    full.notice_with_line("caregiver", BROKEN_PUSH_LINES["nul-byte"])
+    full.pep_notice(token("grants.file:syntax"))
+
+    for _ in range(3):
+        expected = bare.run(**state)
+        done = full.run(**state)
+
+        assert done.returncode == expected.returncode, done.stdout + done.stderr
+        assert full.stored() == bare.stored()
+        assert full.raw() == bare.raw()
+
+
+#: The first line of the function that holds the notice step.
+STEP_OPENING: Final = "send_json_notices() {\n"
+
+#: The line of the script that sets the time budget of the notice step.
+BUDGET_LINE: Final = re.compile(r"^NOTICE_STEP_BUDGET_S=[0-9]+$", re.MULTILINE)
+
+
+def _script_copy(tmp_path: Path, text: str) -> Path:
+    """A copy of the script with this text, beside a copy of its library."""
+    copy = tmp_path / "bin" / SCRIPT.name
+    shutil.copytree(SCRIPT.parent / "lib", copy.parent / "lib")
+    copy.write_text(text, encoding="utf-8")
+
+    return copy
+
+
+def test_a_run_past_its_time_budget_starts_no_send(rig: Rig, tmp_path: Path) -> None:
+    """The unit of the script gives a run a start limit, and a hook can
+    answer slowly. A run that is older than the budget of the step starts no
+    send and says so in one line. This case runs a copy of the script with a
+    budget that each run is past. The next run of the script sends the
+    notice."""
+    text, found = BUDGET_LINE.subn("NOTICE_STEP_BUDGET_S=-1", SCRIPT.read_text(encoding="utf-8"))
+    assert found == 1
+    rig.script = _script_copy(tmp_path, text)
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert done.stdout.count("so it sends no more of this kind") == 1, done.stdout
+    assert rig.sent_lines() == []
+
+    rig.script = SCRIPT
+    rig.run()
+
+    assert len(rig.json_summaries()) == 1
+
+
+@pytest.mark.parametrize("fault", ["exit 9", ': "$NO_SUCH_VARIABLE"', ": $(( 10#x ))"])
+def test_a_fault_in_the_notice_step_does_not_end_the_run(
+    rig: Rig, tmp_path: Path, fault: str
+) -> None:
+    """The step runs in a shell of its own. This case runs a copy of the
+    script whose step starts with a command that ends its shell. The run
+    still ends with the status of the five checks."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert text.count(STEP_OPENING) == 1
+    rig.script = _script_copy(tmp_path, text.replace(STEP_OPENING, f"{STEP_OPENING}  {fault}\n"))
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    well = rig.run()
+    down = rig.run(WD_PEP_CODE="000")
+
+    assert well.returncode == 0, well.stdout + well.stderr
+    assert down.returncode == 1, down.stdout + down.stderr
+    assert rig.stored() == "up"
+    assert rig.raw() == "chaperone"
+    assert rig.posts() == []
+
+
+def test_the_bearer_of_a_json_notice_never_reaches_argv(rig: Rig) -> None:
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run()
+
+    assert len(rig.json_summaries()) == 1
+    assert TOKEN not in done.stdout
+    assert TOKEN not in done.stderr
+    assert TOKEN not in rig.stub_log.read_text(encoding="utf-8")
+    assert all(TOKEN not in one for one in rig.posts())
+
+
+def test_last_reads_no_notice_file(rig: Rig) -> None:
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run("--last")
+
+    assert done.returncode == 0
+    assert rig.posts() == []
+    assert rig.sent_lines() == []
+
+
+# --- what the script is made of -------------------------------------------------
+
+
+def _code_lines() -> list[str]:
+    """Each line of the script that is no comment."""
+    return [
+        one
+        for one in SCRIPT.read_text(encoding="utf-8").splitlines()
+        if not one.lstrip().startswith("#")
+    ]
+
+
+def test_the_script_is_valid_bash() -> None:
+    done = subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True, text=True, timeout=60)
+
+    assert done.returncode == 0, done.stderr
+
+
+def test_the_script_calls_no_json_program_and_no_python() -> None:
+    """The script runs while a component tree is in a release, so it needs
+    no program of a component and no `jq`."""
+    words = re.compile(r"\b(jq|python[0-9.]*|uv|node)\b")
+
+    assert not [one for one in _code_lines() if words.search(one)]
+
+
+def test_the_script_stays_clean_for_bash_3_2() -> None:
+    """`bin/AGENTS.md` names the four forms that bash 3.2 does not have."""
+    forms = re.compile(r"declare -A|local -A|\bmapfile\b|\breadarray\b|\$\{[A-Za-z_]+,,|&>>")
+
+    assert not [one for one in _code_lines() if forms.search(one)]
+
+
+def _one_line(text: str) -> str:
+    """A text with one space in the place of each run of white space."""
+    return " ".join(text.split())
+
+
+def test_the_prose_holds_the_numbers_of_the_script() -> None:
+    """The comments of the script and `bin/AGENTS.md` name the limits of the
+    notice step as numbers. Each number equals its constant in the script."""
+    script = SCRIPT.read_text(encoding="utf-8").splitlines()
+    comments = _one_line(" ".join(one.lstrip("# ") for one in script if one.startswith("#")))
+    rules = _one_line((SCRIPT.parent / "AGENTS.md").read_text(encoding="utf-8"))
+    longest = re.search(r"\{1,([0-9]+)\}'$", _constant("SERVICE_NAME"))
+    assert longest is not None
+
+    phrases = (
+        f"{_number('NOTICE_READ_CAP'):,} bytes of a file",
+        f"{_number('SENT_READ_CAP'):,} bytes of the record",
+        f"rule in {_number('SAME_NOTICE_EVERY_S') // HOUR_S} hours",
+        f"{_number('NOTICES_PER_HOUR')} notices of this kind",
+        f"name has {longest.group(1)} characters at most",
+    )
+    for phrase in phrases:
+        assert phrase in comments, phrase
+        assert phrase in rules, phrase
+
+    assert f"one line has {_number('NOTICE_TOKENS_MAX')} tokens at most" in rules
+    assert _number("HOUR_S") == HOUR_S
+
+
+def test_the_header_names_each_command_of_the_script() -> None:
+    """The header has one line with the programs that the script needs. The
+    line holds each program that the notice step and check 4 start."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    listed = next(one for one in text.splitlines() if one.startswith("#   command -v "))
+
+    programs = ("curl", "date", "grep", "systemctl", "mktemp", "timeout", "head", "tr", "awk", "mv")
+    for program in programs:
+        assert program in listed.split(), program
