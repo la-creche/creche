@@ -1240,7 +1240,11 @@ def test_the_cargo_llvm_cov_action_is_one_step_and_no_other_key() -> None:
     The test holds the file as a whole: each key at the top, the kind, one
     step, each key of that step and each value. A second step can put
     another program on PATH after the compare. One more key of the step can
-    hide a compare that failed."""
+    hide a compare that failed.
+
+    The text of the file sets each constant one time. PyYAML keeps the last
+    value of a key that a table holds two times, so the data alone does not
+    show a second line."""
     runs = COVERAGE_ACTION_DATA["runs"]
 
     assert set(COVERAGE_ACTION_DATA) == COVERAGE_ACTION_KEYS
@@ -1251,6 +1255,8 @@ def test_the_cargo_llvm_cov_action_is_one_step_and_no_other_key() -> None:
     assert len(runs["steps"]) == 1, "the action has more than one step"
     assert set(runs["steps"][0]) == set(COVERAGE_ACTION_STEP)
     assert runs["steps"] == [COVERAGE_ACTION_STEP]
+    for name in COVERAGE_ENV:
+        assert COVERAGE_ACTION_TEXT.count(f"{name}:") == 1, f"the action sets {name} two times"
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
