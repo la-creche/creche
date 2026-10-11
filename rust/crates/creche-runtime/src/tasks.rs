@@ -881,8 +881,9 @@ impl Error for Panicked {}
 ///
 /// The drop of the payload of a panic can panic too. The function drops the
 /// payload inside a second catch, so that second panic does not reach the
-/// caller. A stack overflow and an abort end the program: no catch holds
-/// either one.
+/// caller. The payload of that second panic drops with no catch. A panic of
+/// that drop reaches the caller. A stack overflow and an abort end the
+/// program: no catch holds either one.
 ///
 /// ```
 /// use creche_runtime::tasks::{Panicked, caught};
