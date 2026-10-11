@@ -350,6 +350,8 @@ SYNTAX: tuple[bytes, ...] = (
     "\xa01".encode(),
     "\u20281".encode(),
     "[1,\u30002]".encode(),
+    # A byte order mark after the first character.
+    " \N{BOM}1".encode(),
     # A separator alone, and a character that starts no value.
     b":",
     b",",
@@ -384,6 +386,10 @@ CONSTANT: tuple[bytes, ...] = (
     b"[1,-Infinity]",
     b'{"a":Infinity}',
     b'{"a": -Infinity}',
+    # In a text that also holds an integer of 20 digits or an exponent of
+    # three digits.
+    b"[NaN,18446744073709551615]",
+    b'{"f":1e100,"x":Infinity}',
 )
 
 
@@ -492,6 +498,9 @@ def test_a_number_out_of_range_before_another_fault_keeps_its_rule() -> None:
     assert rule_of(b'[1e999, "1e999"e]') is Rule.FLOAT_RANGE
     assert rule_of(b"[1e999, NaN]") is Rule.FLOAT_RANGE
     assert rule_of(b'{"a": 1e999, "a": 2}') is Rule.FLOAT_RANGE
+    assert rule_of(b"[1e999}") is Rule.FLOAT_RANGE
+    assert rule_of(b'{"a":1e999,"a":"x"}') is Rule.FLOAT_RANGE
+    assert rule_of(b"[1e999,18446744073709551616]") is Rule.FLOAT_RANGE
 
 
 # --- rule 4: the strings ---------------------------------------------------------------
@@ -608,6 +617,10 @@ DUPLICATE_KEY: tuple[bytes, ...] = (
     rb'{"x":{"a":1,"a":2}}',
     rb'[{"a":1,"a":1}]',
     rb'[{}, {"b": [{"k": null, "k": null}]}]',
+    # In a text that also holds an integer of 20 digits, and in a text with
+    # a string of 19 digits.
+    rb'{"a":1,"a":2,"n":18446744073709551615}',
+    rb'{"t":"1234567890123456789","a":1,"a":2}',
 )
 
 
@@ -638,6 +651,10 @@ def test_keys_that_differ_in_a_code_point_are_two_keys() -> None:
 
 
 # --- rule 6: the depth -----------------------------------------------------------------
+
+
+def test_the_depth_limit_is_64_levels() -> None:
+    assert strictjson.DEPTH_MAX == 64
 
 
 def test_a_text_of_64_levels_is_strict() -> None:

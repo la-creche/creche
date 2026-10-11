@@ -669,6 +669,7 @@ STRICT_REFUSED: Final[dict[strictjson.Rule, tuple[Document, ...]]] = {
         # --- white space outside the four characters ---
         _doc("form-feed-first", "\x0c1"),
         _doc("no-break-space-first", "\xa01"),
+        _doc("mark-after-a-space", " \N{BYTE ORDER MARK}1"),
         # --- a string ---
         _doc("string-no-end", '"abc'),
         _doc("string-raw-tab", '"a\tb"'),
@@ -709,6 +710,8 @@ STRICT_REFUSED: Final[dict[strictjson.Rule, tuple[Document, ...]]] = {
         _doc("negative-infinity", "-Infinity"),
         _doc("nan-in-object", '{"a": NaN}'),
         _doc("negative-infinity-in-array", "[1, -Infinity]"),
+        _doc("nan-before-an-integer-of-20-digits", "[NaN,18446744073709551615]"),
+        _doc("infinity-after-an-exponent-of-3-digits", '{"f":1e100,"x":Infinity}'),
     ),
     strictjson.Rule.TRAILING_DATA: (
         _doc("one-byte-after", f"{_SMALL}x"),
@@ -746,6 +749,14 @@ STRICT_REFUSED: Final[dict[strictjson.Rule, tuple[Document, ...]]] = {
         _doc("key-two-times-through-a-pair", '{"\U0001f600":1,"\\ud83d\\ude00":2}'),
         _doc("key-two-times-in-inner-object", '{"x":{"a":1,"a":2}}'),
         _doc("key-two-times-in-item", '[{"a":1,"a":1}]'),
+        _doc(
+            "key-two-times-before-an-integer-of-20-digits",
+            '{"a":1,"a":2,"n":18446744073709551615}',
+        ),
+        _doc(
+            "key-two-times-after-a-string-of-19-digits",
+            '{"t":"1234567890123456789","a":1,"a":2}',
+        ),
     ),
     strictjson.Rule.LONE_SURROGATE: (
         _doc("surrogate-first-half", r'"\ud800"'),
