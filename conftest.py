@@ -189,10 +189,13 @@ _drop_git_config()
 #: The variable that names the home directory.
 HOME_ENV = "HOME"
 
+#: The directory of this file: the root of the repository.
+REPO_ROOT = Path(__file__).resolve().parent
+
 #: The test directories whose code under test starts `git` with `HOME` and
-#: with no variable of git. Each one is a path below the root of the run. Such
-#: a child gets no variable of `_drop_git_config`, so it reads the global
-#: config file below `HOME`: `.gitconfig`, and `.config/git/config`.
+#: with no variable of git. Each one is a path below the directory of this
+#: file. Such a child gets no variable of `_drop_git_config`, so it reads the
+#: global config file below `HOME`: `.gitconfig`, and `.config/git/config`.
 #:
 #: * `noticeboard/tests`: the registry writer gives its `git` child four
 #:   variables, and `HOME` is one (noticeboard/src/noticeboard/registrywrite.py).
@@ -221,16 +224,18 @@ def _empty_home() -> str:
 
 
 @functools.cache
-def _starts_git_with_home(test_file: Path, root: Path) -> bool:
+def _starts_git_with_home(test_file: Path) -> bool:
     """Whether `test_file` is below a directory of `GIT_WITH_HOME`.
 
-    The answer comes from the two paths and not from the id of a test: a run
-    can start from another directory. Each path is resolved first, because a
-    run can name the tree through a link.
+    The answer comes from two paths and not from the id of a test: a run can
+    start from another directory. The second path is below the directory of
+    this file and not below the root of the run, because a run can name
+    another root. The function resolves each path first, because a run can
+    name the tree through a link.
     """
     resolved = test_file.resolve()
 
-    return any(resolved.is_relative_to((root / one).resolve()) for one in GIT_WITH_HOME)
+    return any(resolved.is_relative_to((REPO_ROOT / one).resolve()) for one in GIT_WITH_HOME)
 
 
 @pytest.fixture(autouse=True)
@@ -259,7 +264,7 @@ def _home_holds_no_git_config(
     Remove the entry `noticeboard/tests` from `GIT_WITH_HOME` when the Python
     noticeboard leaves the repository.
     """
-    if not _starts_git_with_home(request.path, request.config.rootpath):
+    if not _starts_git_with_home(request.path):
         return
 
     monkeypatch.setenv(HOME_ENV, _empty_home())
