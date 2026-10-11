@@ -1005,6 +1005,8 @@ mod tests {
             // The second item of `a` has no list `b`.
             "[[a]]\n[[a.b]]\n[[a]]\nb.c.d = 1\n",
             "[[a]]\n[[a.b.c]]\n[[a]]\n[a.b]\nc.d.e = 1\n",
+            // The second item of `a.b` has no list `c`.
+            "[[a]]\n[[a.b]]\n[[a.b.c]]\n[[a.b]]\nc.d.e = 1\n",
             // A key of an inline table starts at that table.
             "[[a.b]]\n[a]\nx = {b.c.d = 1}\ny = 2\n",
             "[[a.b]]\n[a]\nx = [{b.c.d = 1}]\ny = 2\n",

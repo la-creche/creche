@@ -494,6 +494,9 @@ mod tests {
     #[test]
     fn a_key_through_a_list_of_tables_is_refused() {
         let refused = [
+            // The whole key is the path of the list. The crate refuses this
+            // text and the next one too.
+            "[[a.b]]\n[a]\nb = 1\n",
             "[[a.b]]\n[a]\nb.c = 1\n",
             "[[a.b]]\n[a]\nb.c.d = 1\n",
             // Each form of one key part is that part.
@@ -512,6 +515,10 @@ mod tests {
         let passed = [
             "[[a]]\n[[a.b.c]]\n[[a]]\n[a.b]\nc.d.e = 1\n",
             "[[a]]\n[[a.b]]\n[[a]]\nb.c.d = 1\n",
+            // A new item of the list `a.b` removes the list `a.b.c`. The
+            // path of the list `a` is before the path of that item, and it
+            // stays.
+            "[[a]]\n[[a.b]]\n[[a.b.c]]\n[[a.b]]\nc.d.e = 1\n",
             // A key of an inline table starts at that table.
             "[[a.b]]\n[a]\nx = {b.c.d = 1}\ny = 2\n",
             "[[a.b]]\n[a]\nx = [{b.c.d = 1}]\ny = 2\n",
