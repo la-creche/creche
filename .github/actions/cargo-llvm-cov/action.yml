@@ -1,0 +1,65 @@
+# cargo-llvm-cov: the program behind the `cargo llvm-cov` step of
+# bin/rust-coverage.sh. rustup does not install it. Written once: the
+# `rust-coverage` job of gate.yml, the same job of release.yml and the
+# `branch-coverage` job of coverage-nightly.yml each call this action. The
+# three jobs thus cannot take two versions of the program, and the script
+# reads the report form of one version.
+#
+# The one step takes the archive of one release of the cargo-llvm-cov
+# repository, for the system of the runner. It computes the SHA-256 of the
+# archive and compares it with the constant. After a compare that passes, it
+# unpacks the program and puts its directory on PATH for each later step of
+# the job. The archive holds the program and no directory, so the unpack
+# names the one member that it takes. The last line prints the version of the
+# program into the log.
+#
+# THE SHA-256 OF THE ARCHIVE IS THE PIN. An action of another repository has
+# a commit as its pin. This program comes from no action, so no commit holds
+# it. A version alone is no pin: the owner of that repository can replace the
+# archive of a release and keep its name. An archive with another SHA-256
+# stops the job before the unpack, and nothing of it reaches PATH.
+#
+# The step runs in rust/. Its last line starts cargo, and rustup reads
+# rust/rust-toolchain.toml from that directory. The action sets no variable
+# but the two constants. Each variable of the job that calls it reaches the
+# step. A job that names a toolchain of its own in RUSTUP_TOOLCHAIN thus gets
+# that toolchain in the last line too.
+#
+# The action has no input and no output. The job that calls it checks the
+# repository out first: a local action is read from the checkout. That job
+# also decides with its own `if` whether the step runs.
+#
+# TO TAKE ANOTHER VERSION, change the two constants below together. This
+# file is the one place in .github/ that holds them. Compute the SHA-256 of
+# the new archive, and compare it with the digest that the release page shows
+# for that archive. Then change the two values in
+# bin/tests/test_gate_workflow.py, which pins each key of this file. Measure
+# the facts of rust/AGENTS.md, "The coverage rule", again: they are
+# measurements with one version.
+name: cargo-llvm-cov
+description: Take cargo-llvm-cov from a release archive, after a check of the SHA-256 of that archive
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: rust
+      env:
+        LLVM_COV_VERSION: "0.9.1"
+        LLVM_COV_SHA256: "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522"
+      run: |
+        set -euo pipefail
+        name="cargo-llvm-cov-x86_64-unknown-linux-musl"
+        archive="$RUNNER_TEMP/$name.tar.gz"
+        curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+          --output "$archive" \
+          "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v$LLVM_COV_VERSION/$name.tar.gz"
+        found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+        if [[ "$found" != "$LLVM_COV_SHA256" ]]; then
+          echo "cargo-llvm-cov: the archive has the SHA-256 $found, not $LLVM_COV_SHA256" >&2
+          exit 1
+        fi
+        mkdir -p "$RUNNER_TEMP/cargo-llvm-cov"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-llvm-cov" cargo-llvm-cov
+        echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
+        PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version

@@ -264,6 +264,35 @@ echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
 PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
 """
 
+#: The one home of that step: a local composite action. A job names the
+#: action by this path, and the runner reads it from the checkout. The file
+#: is here as text and as data.
+COVERAGE_ACTION = "./.github/actions/cargo-llvm-cov"
+COVERAGE_ACTION_FILE = REPO / COVERAGE_ACTION / "action.yml"
+COVERAGE_ACTION_TEXT = COVERAGE_ACTION_FILE.read_text(encoding="utf-8")
+COVERAGE_ACTION_DATA: dict[str, Any] = yaml.safe_load(COVERAGE_ACTION_TEXT)
+
+#: Each key of the action file, and each key of its `runs` table. One more
+#: key at the top gives the action an input or an output. The action has
+#: neither: a job cannot give it another version.
+COVERAGE_ACTION_KEYS = {"name", "description", "runs"}
+COVERAGE_RUNS_KEYS = {"using", "steps"}
+
+#: The kind of the action. Its step runs in the job that calls it, with the
+#: variables of that job.
+COMPOSITE = "composite"
+
+#: The one step of the action, as a whole: the text and the two constants
+#: above. A `run` step of a composite action needs the `shell` key. Without
+#: it, the workflow does not start. One more key can make a red step green,
+#: for example `continue-on-error`.
+COVERAGE_ACTION_STEP = {
+    "shell": "bash",
+    "working-directory": RUST_DIR,
+    "env": COVERAGE_ENV,
+    "run": COVERAGE_INSTALL_RUN,
+}
+
 #: Each key of the job, and each key of its three steps after the checkout.
 #: One more key can make a red step green, for example `continue-on-error`.
 COVERAGE_JOB_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
@@ -1193,6 +1222,24 @@ def test_the_coverage_job_takes_cargo_llvm_cov_from_an_archive_that_it_checked(
     assert install["run"] == COVERAGE_INSTALL_RUN
 
 
+def test_the_cargo_llvm_cov_action_is_one_step_and_no_other_key() -> None:
+    """The action is the one copy of the step that takes `cargo-llvm-cov`.
+    The test holds the file as a whole: each key at the top, the kind, one
+    step, each key of that step and each value. A second step can put
+    another program on PATH after the compare. One more key of the step can
+    hide a compare that failed."""
+    runs = COVERAGE_ACTION_DATA["runs"]
+
+    assert set(COVERAGE_ACTION_DATA) == COVERAGE_ACTION_KEYS
+    assert COVERAGE_ACTION_DATA["name"] == COVERAGE_STEP
+    assert COVERAGE_ACTION_DATA["description"].strip(), "the action has no description"
+    assert set(runs) == COVERAGE_RUNS_KEYS
+    assert runs["using"] == COMPOSITE
+    assert len(runs["steps"]) == 1, "the action has more than one step"
+    assert set(runs["steps"][0]) == set(COVERAGE_ACTION_STEP)
+    assert runs["steps"] == [COVERAGE_ACTION_STEP]
+
+
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
 def test_the_coverage_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: str) -> None:
     """A test that does not end under the measurement holds the job, and a
@@ -1727,11 +1774,12 @@ SCOPES = [
     (["bin/rust-gate.sh"], ("code", "true", "false")),
     (["bin/rust-coverage.sh"], ("code", "true", "false")),
     (["bin/lib/rustrule.sh"], ("code", "true", "false")),
-    # The three CI files are files of the Rust checks. They are no files of
+    # The four CI files are files of the Rust checks. They are no files of
     # the systemd proof: the tests of this file hold the `systemd-proof` job.
     ([".github/workflows/gate.yml"], ("code", "true", "false")),
     ([".github/workflows/release.yml"], ("code", "true", "false")),
     ([".github/actions/scope/action.yml"], ("code", "true", "false")),
+    ([".github/actions/cargo-llvm-cov/action.yml"], ("code", "true", "false")),
     # The Rust tests read vectors/data, so a vector that moves runs them.
     (["vectors/data/index.json"], ("code", "true", "false")),
     (["vectors/generate.py"], ("code", "true", "false")),

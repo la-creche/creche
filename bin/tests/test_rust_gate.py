@@ -2110,6 +2110,7 @@ def test_a_change_to_the_rust_checks_needs_no_cargo_here(tree: Tree) -> None:
         (".github/workflows/gate.yml", True),
         (".github/workflows/release.yml", True),
         (".github/actions/scope/action.yml", True),
+        (".github/actions/cargo-llvm-cov/action.yml", True),
         ("bin/quality-gate.sh", False),
         ("bin/lib/docsrule.sh", False),
         (".github/workflows/retest.yml", False),
