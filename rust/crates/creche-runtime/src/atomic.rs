@@ -954,7 +954,8 @@ mod tests {
     /// it gives each temporary file a count that the test knows, it narrows
     /// the mode of a create as a umask does, and it lets a test change the
     /// directory in the middle of a write. It keeps each step and each
-    /// temporary path that it saw.
+    /// temporary path that it saw. For a swap, it can read the tree at the
+    /// target before each step.
     struct Probe {
         /// The step that fails, and how many calls of that step pass first.
         fails: Option<(WriteStep, usize)>,
@@ -2217,6 +2218,26 @@ mod tests {
 
         assert_eq!(text_in(&target), "newest");
         assert_eq!(text_in(&staging), "current");
+    }
+
+    #[test]
+    fn the_last_remove_of_a_swap_can_fail_after_the_remove_at_the_old_name() {
+        // The first remove takes the tree at the old name away. The last
+        // remove fails, and the old tree stays at the staging name.
+        let root = TempRoot::new().unwrap();
+        let target = root.path().join("config");
+        tree_with(&target, "current");
+        tree_with(&root.path().join("config.old"), "from a crashed attempt");
+        let staging = root.path().join("config.tmp");
+        tree_with(&staging, "newest");
+        let probe = Probe::failing_after(WriteStep::RemoveOld, 1);
+
+        replace_dir_with(&probe, &staging, &target).unwrap();
+
+        assert_eq!(probe.count_of(WriteStep::RemoveOld), 2);
+        assert_eq!(text_in(&target), "newest");
+        assert_eq!(text_in(&staging), "current");
+        assert_eq!(names_in(root.path()), ["config", "config.tmp"]);
     }
 
     #[test]
