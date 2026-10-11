@@ -333,10 +333,15 @@ pub fn url_token(entropy: &dyn Entropy, bytes: NonZeroUsize) -> Result<Secret, E
 /// [`base64::encode_url`] makes the text. This function gives each failure
 /// of that call as an [`EntropyError`].
 fn token_text(raw: &[u8]) -> Result<String, EntropyError> {
-    base64::encode_url(raw).map_err(|error| match error {
+    base64::encode_url(raw).map_err(encode_failed)
+}
+
+/// The [`EntropyError`] of one failure of [`base64::encode_url`].
+fn encode_failed(error: EncodeError) -> EntropyError {
+    match error {
         EncodeError::NoMemory => no_memory(),
         EncodeError::NoCharacter => token_not_complete(),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -829,6 +834,24 @@ mod tests {
             EntropyError {
                 kind: io::ErrorKind::OutOfMemory,
                 os_text: String::from("Cannot allocate memory"),
+            }
+        );
+    }
+
+    #[test]
+    fn each_failure_of_the_encoder_has_its_own_error() {
+        assert_eq!(
+            encode_failed(EncodeError::NoMemory),
+            EntropyError {
+                kind: io::ErrorKind::OutOfMemory,
+                os_text: String::from(NO_MEMORY),
+            }
+        );
+        assert_eq!(
+            encode_failed(EncodeError::NoCharacter),
+            EntropyError {
+                kind: io::ErrorKind::InvalidData,
+                os_text: String::from(TOKEN_NOT_COMPLETE),
             }
         );
     }

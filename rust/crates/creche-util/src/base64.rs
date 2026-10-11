@@ -510,6 +510,12 @@ mod tests {
     fn a_text_that_no_process_holds_is_an_error() {
         // The count of the characters does not fit `usize`.
         assert_eq!(with_room_for(usize::MAX), Err(EncodeError::NoMemory));
+        // The count of the characters is one more than `usize::MAX`. A count
+        // that wraps is then 0, and a text of no character needs no memory.
+        assert_eq!(
+            with_room_for(3 << (usize::BITS - 2)),
+            Err(EncodeError::NoMemory)
+        );
         // The count fits `usize`, and no text holds that many bytes.
         assert_eq!(with_room_for(usize::MAX / 2), Err(EncodeError::NoMemory));
         assert_eq!(with_room_for(0), Ok(String::new()));
