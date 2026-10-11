@@ -122,6 +122,22 @@ directory is not a workspace package, so a change here does not change
   values has no vector.
 - `manifest.resolved` gives `resolved_at` as a float only. With an integer,
   Python writes no `.0`.
+- Three `manifest.` surfaces hold no input of the list below. The Python
+  release tool accepts each one, and the Rust code refuses it. Each one
+  stays out under resolution (c) of `rust/AGENTS.md`. A plain test of the
+  Rust `manifest` module holds each one.
+  1. `manifest.component`: a number with the tag `!!int` that has a digit
+     or a space outside ASCII.
+  2. `manifest.component`: a lone surrogate in a word of a command or in an
+     install path.
+  3. `manifest.component`: a flow sequence of more than 128 levels in a key
+     that a later key replaces.
+  4. `manifest.request.ulid`: a time before 1970, and a time past 48 bits
+     of milliseconds.
+  5. `manifest.resolved`: a version with a decimal digit outside ASCII.
+- `manifest.component` holds no text that nests more than 128 levels. The
+  Rust reader refuses such a text. PyYAML has no such limit. The Python
+  reader thus gives another refusal, or it accepts the manifest.
 - `family_file.cli` holds no text that `argparse` writes: no usage line and
   no help text. That text differs between two Python versions. A vector for
   such a command line holds the exit status only.
@@ -173,6 +189,11 @@ directory is not a workspace package, so a change here does not change
   generator calls Python.
 - `channel.build` has no vector for `prompt`. `attendance.wire` has no
   builder for that message.
+- `channel.build` holds a `workspace`, a `branch` and a `delegation` only as
+  the host makes them. It holds no `epoch` of 2^64 or more. A builder of
+  `attendance.wire` writes each object and each integer that its caller
+  gives, and the Rust types hold no other form. A plain test of the Rust
+  `channel::host` module holds the calls that have no vector.
 - `status.door_trigger` lists only an autonomous family, and a refused
   vector holds no reason. Most status documents are attended, so that
   reader refuses them on `kind` alone. The surface pins little of how that
@@ -263,6 +284,35 @@ directory is not a workspace package, so a change here does not change
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
   reads that file. `noticeboard.cli.check` holds the vectors of a key file.
+- Four `config.` surfaces hold no value that the Python reader takes and
+  the Rust config type refuses: `config.site_file`, `config.attendance.env`,
+  `config.noticeboard.env` and `config.chaperone.site`. A daemon calls each
+  of those readers at its start. Such a value stays out under resolution
+  (c) of `rust/AGENTS.md`. A plain test of the Rust config type holds it.
+  Five examples of such a value:
+  1. A LAN address that is `0.0.0.0`, or that ends in a number and is not
+     one IPv4 address.
+  2. A relative path, and a socket path of more than 107 bytes.
+  3. A port or a count of seconds with a decimal digit outside ASCII.
+  4. A count of seconds that no duration can hold.
+  5. A URL with no scheme or with a user part.
+- An environment of `config.chaperone.site` has no vector for a reader
+  whose Rust type refuses that environment. `_pep_without` in
+  `surfaces/config.py` names those readers.
+- Three writer surfaces hold only arguments that the caregiver gives the
+  entry point: `config.runtime_json.write`, `config.creds_json.write` and
+  `config.playpen_env.write`. The entry point checks no argument, and the
+  Rust writer takes typed values. A plain test of the Rust module
+  `config::mounts` holds each argument that has no vector. One example is a
+  tool that the family file check refuses.
+- `config.creds_json.read` holds no file that the Python reader takes with
+  a value of the list below. The Rust type refuses each one, and the one
+  writer of the file writes none. A plain test of `config::mounts` holds
+  each file.
+  1. A key, a token or a time of the write that is no JSON string.
+  2. An empty key, or an empty token.
+  3. An epoch outside 64 bits with a sign.
+  4. An epoch that is the text of a decimal digit outside ASCII.
 - The group `runtime` covers the lenient readers, the strict JSON reader
   and the time reader. It also covers the token files, the bearer of a
   request and the answers of the web framework. No vector covers an atomic

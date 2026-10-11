@@ -2537,6 +2537,19 @@ adds a crate:
 - The types of `manifest` accept what the Python code accepts, also where
   a stricter reading of a contract is possible. The owner decides each
   case. The pull request of the module lists them.
+- Nine inputs left the `manifest.` vectors under resolution (c) of "When the
+  two results differ". Case 1 holds for each one. A plain test of the
+  module holds each input, with the input inline.
+  1. Six texts of `manifest.component`: the inputs of questions 2, 4 and 11
+     above.
+  2. Two times of `manifest.request.ulid`: a time before 1970, and the time
+     of question 12 above.
+  3. One row of `manifest.resolved`: a version with a decimal digit outside
+     ASCII.
+- The test of `manifest` still has one table of differences, with three
+  rows. Each row is a `resolved_at` that is NaN or an infinity. The Python
+  builder writes a manifest for each one. The change that makes the Python
+  builder refuse those numbers removes the rows and deletes the table.
 - `manifest::Operator` holds two values of the site file. `config::site`
   holds the site file and has the types `OperatorUser` and `OperatorHome`.
   `ComponentManifest::parse` does not use them yet. A change to those two
@@ -2764,6 +2777,12 @@ adds a crate:
   3. A text outside an event can hold a lone surrogate.
   4. `turn_failed` with no session, no turn and the `turn_seq` 0 is
      `malformed`. Contract 03 §5.1 permits that line.
+- Six calls left the vectors of `channel.build` under resolution (c) of
+  "When the two results differ". Case 1 holds for each one. A builder of the
+  Python host writes each object and each integer that its caller gives.
+  The types of `channel::host` hold a `workspace`, a `branch` and a
+  `delegation` only in the form of contract 03, and an epoch of 64 bits.
+  One plain test of `channel::host` holds the six calls.
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of
   the other side. `HostMessage::parse` is stricter than the TypeScript
@@ -2978,6 +2997,25 @@ adds a crate:
   2. A roster row with an empty `command`, or with a name that is no server
      name.
   3. A `VIEW_COOKIE_SECURE` of `off`, which leaves the switch on.
+- 66 inputs left the `config.` vectors under resolution (c) of "When the
+  two results differ". The Python code takes each one, and a config type
+  refuses it. A plain test in the module of that type holds each input,
+  with the input inline. "Known gaps" of `vectors/AGENTS.md` lists the
+  kinds of input.
+  1. Case 2 holds for 36 inputs of four surfaces: `config.site_file`,
+     `config.attendance.env`, `config.noticeboard.env` and
+     `config.chaperone.site`. A daemon calls each Python reader at its
+     start.
+  2. Case 1 holds for 30 inputs of four surfaces:
+     `config.runtime_json.write`, `config.creds_json.read`,
+     `config.creds_json.write` and `config.playpen_env.write`.
+  3. One of the 30 inputs has no refusal in Rust: the arguments of the env
+     file writer with the sandbox of another family.
+     `mounts::PlaypenEnv::for_sandbox` has no argument for a family. Its
+     test holds that the writer takes the family of the sandbox name.
+- The table `DEVIATIONS` of `config/python.rs` holds one row: three JSON
+  texts of `creds.json` that the Python reader takes. The change that gives
+  that reader the rules of "JSON" removes the row and deletes the table.
 - No vector covers five configs: the chaperone without its `site` readers,
   the caregiver, the two doors and the intake. No Python entry point takes
   their variables as a map. The tests of those types use a copy of the
