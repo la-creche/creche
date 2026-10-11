@@ -86,7 +86,9 @@ const COMPACT: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGi
 /// The `type` of a content block that holds a text.
 const TEXT_BLOCK: &str = "text";
 
-// The members of a message. The writer and the errors name each one.
+// The members of a message. An error of the reader names each one. The
+// writer of `Line` names the first six. The derive of `ErrorBody` writes
+// the last three from the names of its fields.
 const JSONRPC: &str = "jsonrpc";
 const ID: &str = "id";
 const METHOD: &str = "method";
