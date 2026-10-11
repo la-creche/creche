@@ -1140,6 +1140,68 @@ mod tests {
         assert_eq!(rows::<i64>("a = 2.0\n"), Err(TomlFault::Shape));
     }
 
+    #[test]
+    fn a_read_that_leaves_a_value_of_a_list_or_of_a_table_fails() {
+        /// The first entry of a table, and no other entry.
+        #[derive(Debug, PartialEq)]
+        struct FirstEntry(String, i64);
+
+        impl<'de> Deserialize<'de> for FirstEntry {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                struct First;
+
+                impl<'de> Visitor<'de> for First {
+                    type Value = FirstEntry;
+
+                    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        f.write_str("a table")
+                    }
+
+                    fn visit_map<A: MapAccess<'de>>(
+                        self,
+                        mut table: A,
+                    ) -> Result<FirstEntry, A::Error> {
+                        let (key, value) = table
+                            .next_entry()?
+                            .ok_or_else(|| de::Error::custom("an empty table"))?;
+
+                        Ok(FirstEntry(key, value))
+                    }
+                }
+
+                deserializer.deserialize_map(First)
+            }
+        }
+
+        // A tuple of two reads a list of two items, and no longer list.
+        assert_eq!(
+            rows::<(i64, i64)>("a = [1, 2]\n").unwrap().get("a"),
+            Some(&(1, 2))
+        );
+        assert_eq!(rows::<(i64, i64)>("a = [1, 2, 3]\n"), Err(TomlFault::Shape));
+
+        assert_eq!(
+            read::<FirstEntry>(b"a = 1\n", FileKind::Roster),
+            Ok(FirstEntry("a".to_owned(), 1))
+        );
+        assert_eq!(
+            read::<FirstEntry>(b"a = 1\nb = 2\n", FileKind::Roster),
+            Err(TomlFault::Shape)
+        );
+    }
+
+    #[test]
+    fn a_newtype_struct_reads_the_value_that_it_wraps() {
+        #[derive(Debug, PartialEq, Deserialize)]
+        struct Name(String);
+
+        assert_eq!(
+            rows::<Name>("a = \"x\"\n").unwrap().get("a"),
+            Some(&Name("x".to_owned()))
+        );
+        assert_eq!(rows::<Name>("a = 1\n"), Err(TomlFault::Shape));
+    }
+
     // --- the writer ----------------------------------------------------------
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
