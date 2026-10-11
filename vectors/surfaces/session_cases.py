@@ -1652,11 +1652,26 @@ APPENDS: Final[tuple[Append, ...]] = (
     _note("note-process-exit", "process_exit", reason="killed", code=137),
     _note("note-process-exit-no-code", "process_exit", reason="idle", code=None),
     _note("note-playpen-log", "playpen_log", level="warn", message="pi wrote to stderr"),
+    # The service writes the note of a refused move for three pairs of states.
     _note(
-        "note-illegal-transition",
+        "note-illegal-transition-queued-settled",
         "illegal_transition",
         TURN,
-        **{"from": "running"},
+        **{"from": "queued"},
+        to="settled",
+    ),
+    _note(
+        "note-illegal-transition-queued-failed",
+        "illegal_transition",
+        TURN,
+        **{"from": "queued"},
+        to="failed",
+    ),
+    _note(
+        "note-illegal-transition-waiting-settled",
+        "illegal_transition",
+        TURN,
+        **{"from": "waiting-approval"},
         to="settled",
     ),
     # --- a note of another form: the contract leaves the body free ---
@@ -1665,6 +1680,13 @@ APPENDS: Final[tuple[Append, ...]] = (
     _free_note("note-word-and-other-fields", extra=1, note="process_exit"),
     _free_note("note-word-is-a-number", note=5),
     _free_note("note-empty-body"),
+    # Contract 02 §4.3 permits this move, so the service writes no note for it.
+    _free_note(
+        "note-illegal-transition-permitted-pair",
+        **{"from": "running"},
+        note="illegal_transition",
+        to="settled",
+    ),
     # --- a pi event, which the host does not change ---
     _event("pi-event-text-forms", delta='caf\u00e9 "quoted" \\ / \u2028 \U0001f600 \x7f\x00\n'),
     _event("pi-event-key-forms", **{"": 1, "caf\u00e9": 2, "A": 3, "a": 4, "_": 5, "1": 6}),
