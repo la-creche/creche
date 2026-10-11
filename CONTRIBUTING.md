@@ -46,7 +46,8 @@ package.
   receives a push. When one of these two fixtures pushes, write
   `maintenance.auto=false` to the config of that repository.
 - Some code under test starts `git` with `HOME` and with no variable of
-  git. The registry writer of the noticeboard is such code. The root
+  git. The registry writer of the noticeboard,
+  `noticeboard/src/noticeboard/registrywrite.py`, is such code. The root
   `conftest.py` gives each test under `noticeboard/tests` an empty home
   directory. That `git` child then finds no config file of a person below
   `HOME`. It still reads the config file of the system. Each other test

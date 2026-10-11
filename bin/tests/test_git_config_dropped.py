@@ -22,7 +22,8 @@ The registry writer of the noticeboard builds the environment of its `git`
 child from four variables, and `HOME` is one of them. That child gets none of
 the variables above, so it reads the global config file below `HOME`. The
 root `conftest.py` thus gives each test under `noticeboard/tests` an empty
-home directory. Each other test keeps its `HOME`.
+home directory. That child still reads the config file of the system. Each
+other test keeps its `HOME`.
 
 Each test here starts pytest as a child, with a file of a person or of the
 system in the environment of the child.
