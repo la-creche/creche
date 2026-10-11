@@ -98,22 +98,24 @@ error. The program does not stop on such a file.
 exit status 1. The log then holds the place of the panic and never its
 message.
 
-`main` makes the one read of the environment. The program reads no variable
-yet.
+Only `main` reads the environment, one time. `entry` gets the result and
+uses no variable of it today.
 
 Rules for the program:
 
 1. Keep the three steps of `main`: `log::init`, `Env::from_os` and the call
-   of `entry`. Add no other code there. Clause 2 of "The panic rule" in
-   `rust/AGENTS.md` gives the reason.
-2. Do not call `entry` from a test in the test process. The function sets
-   the panic hook of the process. A later test that fails then prints no
+   of `entry`. Add no other code there (`rust/AGENTS.md`, "The panic rule",
+   clause 2).
+2. Do not call `entry` in the process of a test. The function sets the
+   panic hook of the process. A later test that fails then prints no
    message.
-3. Put a test of the process into `tests/process.rs`. Such a test starts
-   the built program. It reads the exit status and the two output streams.
-4. `run` writes its report with `write_all` on the locked stream. Rule 14 of
-   "The rules for a service" in `rust/AGENTS.md` has the sentence for such
-   a program. A write of the report that fails gives exit status 1. Write
+3. A test that starts the program goes to `tests/process.rs`. Such a test
+   reads the exit status and the two output streams of the built program.
+4. `run` writes each text to one of its two writers, with `write_all` or
+   with `writeln!`. The entry function gives it the lock of stdout and the
+   lock of stderr. Rule 14 of "The rules for a service" in `rust/AGENTS.md`
+   has the text for such a command. When a write to stdout fails, `run`
+   returns exit status 1. `run` drops the error of a write to stderr. Use
    no `println!` and no `eprintln!` in this crate.
 
 ## Known gaps

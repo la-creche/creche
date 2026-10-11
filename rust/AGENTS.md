@@ -874,9 +874,17 @@ to 5 give a Rust service the Python behavior on purpose.
 14. **For a write to stdout or to stderr, use only `log::out_line`,
     `log::err_line` and the log macros.**
     Reason: a closed stream makes `println!` and `eprintln!` panic.
-    A program whose exit status reports a failed write of its report
-    writes that report with `write_all` on the locked stream. Such a
-    program still writes no `println!` and no `eprintln!`.
+    The exit status of some commands tells the caller that a write to
+    stdout failed. `log::out_line` returns no error when its write fails,
+    so such a command cannot use that function for stdout. The list below
+    applies to that command:
+    - The command locks stdout and stderr. It gives the two locks to one
+      function as writers.
+    - That function writes each of its texts with `write_all` or with
+      `writeln!` on a writer.
+    - For a write that fails, `write_all` and `writeln!` return the error.
+      They do not panic.
+    - The command uses no `println!` and no `eprintln!`.
 15. **State the `AtShutdown` of each `Command`. Select `Finish` when the
     step of the child must end whole.**
     Reason: `subprocess.run` of Python runs to its end at a stop of the
