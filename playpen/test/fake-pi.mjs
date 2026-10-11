@@ -28,12 +28,13 @@
 //   FAKE_PI_DIE_ON_ENTRIES  exit hard when a get_entries arrives    default off
 //   FAKE_PI_ERROR_TEXT  refuse every prompt with this error text    default off
 //
-// Five more make this process misbehave, as an untrusted pi may (invariant 12):
+// Six more make this process misbehave, as an untrusted pi may (invariant 12):
 //   FAKE_PI_RAW_BOOT    write this text as one record at start-up    default off
 //   FAKE_PI_RAW_LINE    write this text as one record in each turn   default off
 //   FAKE_PI_NULL_ENTRY  put a null first in every get_entries list   default off
 //   FAKE_PI_ODD_ERROR   refuse every prompt with an error that is not text  default off
 //   FAKE_PI_STDERR      write this text to stderr as one line at start-up  default off
+//   FAKE_PI_LATE_ENTRY  store this JSON text as one more entry in each turn after the first  default off
 
 const DELTAS = Number(process.env.FAKE_PI_EVENTS || 6);
 const DELAY_MS = Number(process.env.FAKE_PI_DELAY_MS || 8);
@@ -49,6 +50,7 @@ const RAW_LINE = process.env.FAKE_PI_RAW_LINE || "";
 const NULL_ENTRY = process.env.FAKE_PI_NULL_ENTRY === "1";
 const ODD_ERROR = process.env.FAKE_PI_ODD_ERROR === "1";
 const STDERR_LINE = process.env.FAKE_PI_STDERR || "";
+const LATE_ENTRY = process.env.FAKE_PI_LATE_ENTRY || "";
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -124,12 +126,23 @@ function addEntry(role, text) {
   return id;
 }
 
+// The entry is the value of the text, as it is. A test needs this for an
+// entry that the playpen cannot write again: the first turn gives the playpen
+// a cursor, and a later read then holds the entry.
+function addRawEntry(text) {
+  entries.push(JSON.parse(text));
+  saveEntries();
+}
+
 // One clean turn, in the order observed from the real thing.
 async function runTurn(text, prompt) {
   running = true;
   aborted = false;
   turns += 1;
   addEntry("user", prompt);
+  if (LATE_ENTRY && turns > 1) {
+    addRawEntry(LATE_ENTRY);
+  }
   // What the deltas spell, so the assistant entry's content matches the
   // stream a door saw. Contract 02 §10.5 copies both into Open WebUI.
   let answer = "";
