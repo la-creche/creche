@@ -11,7 +11,8 @@
 //! 2. The file or a row holds a key that the format does not name, or lacks
 //!    a required one.
 //! 3. A row does not hold exactly one of the keys `text` and `base64`, or
-//!    its `base64` text is no base64 with padding.
+//!    its `base64` text is no base64 with padding. A text with a pad bit
+//!    that is not zero is no such text.
 //! 4. The registry or the path of a row is no path of names: a part is
 //!    empty, `.` or `..`, or the text holds a NUL character.
 //! 5. Two rows have the same registry and the same path.
@@ -30,7 +31,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Deserializer};
 
 use super::{
-    FORMAT, VectorsError, base64_decode, is_data_path, object_of, objects, read_text, wrong_format,
+    FORMAT, VectorsError, decoded, is_data_path, object_of, objects, read_text, wrong_format,
 };
 
 /// The file, relative to `vectors/data`.
@@ -114,7 +115,7 @@ impl RegistryFile {
         let at = |reason: &str| format!("the file {} of {}: {reason}", raw.path, raw.registry);
         let bytes = match (raw.text, raw.base64) {
             (Some(text), None) => text.into_bytes(),
-            (None, Some(encoded)) => base64_decode(&encoded).map_err(|reason| at(&reason))?,
+            (None, Some(encoded)) => decoded(&encoded).map_err(|reason| at(&reason))?,
             (Some(_), Some(_)) | (None, None) => {
                 return Err(at(
                     "a row holds exactly one of the keys `text` and `base64`",

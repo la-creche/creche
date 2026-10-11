@@ -391,7 +391,9 @@ A reader refuses the file in each of these cases:
 - The file or a row holds a key that this section does not name.
 - The file lacks a key, or a row lacks its `registry` or its `path`.
 - A row does not hold exactly one of the keys `text` and `base64`.
-- The `base64` text of a row is no base64 with padding.
+- The `base64` text of a row is no base64 with padding, or a pad bit of its
+  last group is not zero. A pad bit is a bit of the last character before
+  the pad that belongs to no byte.
 - A `registry` or a `path` has another form.
 - Two rows have the same `registry` and the same `path`.
 - The `path` of a row is a directory of another row of its registry. One
