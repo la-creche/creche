@@ -605,6 +605,18 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
+A stop of a pi process can get an answer. `stop_process` can hold a
+`request`, which is a ULID that the host makes. The playpen answers such a
+stop with one `process_stopped` line that holds the same id. A stop with no
+`request` gets no answer.
+
+| Item | What it is |
+|---|---|
+| `host::StopProcess` | The stop. `with_request` gives it the id. |
+| `playpen::ProcessStopped` | The answer, as the playpen writes it. |
+| `claim::StoppedLine` | The answer, as the host reads it. It holds a `Ulid` and a `SessionId`, because the Python host refuses each other text in the two fields. |
+| `vocabulary::Cap::StopAck` | The name `stop_ack` in the `caps` of `ready`. A playpen that lists it answers such a stop. |
+
 Rule 1 names a raw `serde` type. The `channel` module does not hold rule 1
 yet ("Known gaps").
 Its raw type is `channel::json::Json`, from a reader of its own. The Python
