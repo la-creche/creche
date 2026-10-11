@@ -1056,8 +1056,21 @@ impl Hint {
 ///
 /// Annotations with no member are a value too. A tool that has them is not
 /// a tool with no annotations: [`Tool::annotations`] gives `Some` for the
-/// first tool and `None` for the second one. The writer gives each tool
-/// back as it came.
+/// first tool and `None` for the second one. The writer keeps that
+/// difference. It writes the `annotations` member of the first tool as an
+/// empty object. It writes no such member for the second tool.
+///
+/// The text of the writer is not always the text that the reader took.
+/// These rules are three of the causes:
+///
+/// - The reader drops a member of the annotations that is not one of the
+///   five. The writer thus has no such member to give.
+/// - The writer puts `title` before the hints, and it puts the hints in the
+///   order of the variants of [`Hint`]. It does not keep the order of the
+///   members in the text that the reader took.
+/// - The reader also drops each member of the tool that [`Tool`] does not
+///   keep. Two examples are the output schema and the `title` that is a
+///   member of the tool itself.
 ///
 /// ```
 /// use creche_contracts::mcp::{Annotations, Hint};
@@ -2554,7 +2567,8 @@ mod tests {
             assert_eq!((bare.hint(hint), empty.hint(hint)), (None, None));
         }
 
-        // The writer gives each tool back as it came.
+        // For these two tools, the writer gives the text that the reader
+        // took.
         assert_eq!(written(&bare), r#"{"name":"a","inputSchema":{}}"#);
         assert_eq!(
             written(&empty),
@@ -2591,6 +2605,28 @@ mod tests {
         // annotations.
         let outside = listed(r#","title":"Sum","annotations":{}"#);
         assert_eq!(outside.annotations(), Some(&Annotations::new()));
+    }
+
+    #[test]
+    fn the_writer_gives_the_kept_members_in_its_own_order() {
+        // The tool has two members that `Tool` does not keep. Its
+        // annotations have one member with a name that MCP does not have,
+        // and the hint that the writer puts last is the first member.
+        let taken = listed(
+            r#","title":"Sum","outputSchema":{"type":"object"},"annotations":{"openWorldHint":false,"laterHint":7,"title":"Add","readOnlyHint":true}"#,
+        );
+        let said = Annotations::new()
+            .with_title("Add".to_owned())
+            .with_hint(Hint::ReadOnly)
+            .with_hint_denied(Hint::OpenWorld);
+        assert_eq!(taken.annotations(), Some(&said));
+
+        // The writer gives the kept members only. In the annotations, the
+        // title is first and the hints follow in the order of `Hint::ALL`.
+        assert_eq!(
+            written(&taken),
+            r#"{"name":"a","inputSchema":{},"annotations":{"title":"Add","readOnlyHint":true,"openWorldHint":false}}"#
+        );
     }
 
     #[test]
