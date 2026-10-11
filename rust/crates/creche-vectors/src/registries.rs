@@ -30,7 +30,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Deserializer};
 
 use super::{
-    FORMAT, VectorsError, base64_decode, is_data_path, object_of, objects, read_text, wrong_format,
+    FORMAT, VectorsError, decoded, is_data_path, object_of, objects, read_text, wrong_format,
 };
 
 /// The file, relative to `vectors/data`.
@@ -114,7 +114,7 @@ impl RegistryFile {
         let at = |reason: &str| format!("the file {} of {}: {reason}", raw.path, raw.registry);
         let bytes = match (raw.text, raw.base64) {
             (Some(text), None) => text.into_bytes(),
-            (None, Some(encoded)) => base64_decode(&encoded).map_err(|reason| at(&reason))?,
+            (None, Some(encoded)) => decoded(&encoded).map_err(|reason| at(&reason))?,
             (Some(_), Some(_)) | (None, None) => {
                 return Err(at(
                     "a row holds exactly one of the keys `text` and `base64`",
