@@ -45,6 +45,14 @@ package.
   and each setting of `git -c`, from the environment of a repository that
   receives a push. When one of these two fixtures pushes, write
   `maintenance.auto=false` to the config of that repository.
+- Some code under test starts `git` with `HOME` and with no variable of
+  git. The registry writer of the noticeboard,
+  `noticeboard/src/noticeboard/registrywrite.py`, is such code. The root
+  `conftest.py` gives each test under `noticeboard/tests` an empty home
+  directory. That `git` child then finds no config file of a person below
+  `HOME`. It still reads the config file of the system. Each other test
+  keeps its `HOME`, because some tests give it to a real tool such as
+  `cargo`.
 
 ## Hooks
 
@@ -89,8 +97,11 @@ The cargo steps are `bin/rust-gate.sh`. The rule that starts them is
 - The `cargo deny` step needs the program `cargo-deny`. rustup does not
   install it. Without it on `PATH`, the gate prints one line and runs each
   other step. In CI, the gate fails without it.
-- The `cargo deny` step reads the advisory database from the network.
-  `rust/AGENTS.md` has what the step checks.
+- The `cargo deny` step makes three checks: `bans`, `licenses` and
+  `sources`. It does not read the advisory database.
+  `.github/workflows/advisories-daily.yml` makes the `advisories` check one
+  time a day, and that run blocks no merge. `rust/AGENTS.md` has the rules of
+  both.
 
 No hook checks a commit message. Check the subject against the seven rules
 in `AGENTS.md` yourself.

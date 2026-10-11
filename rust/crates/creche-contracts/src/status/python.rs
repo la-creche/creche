@@ -494,24 +494,24 @@ fn replay_fault_reader(_: &Surface, vector: &Vector) -> Replay {
         return Err(None);
     };
     let faults: Vec<Value> = read
-        .faults
+        .faults()
         .iter()
         .map(|fault| {
             json!({
-                "code": fault.code.as_str(),
-                "blocks_turns": fault.blocks_turns,
-                "since": fault.since,
-                "source": fault.source.as_str(),
-                "stale": fault.stale,
-                "detail": to_value(&Json::Object(fault.detail.clone())),
+                "code": fault.code().as_str(),
+                "blocks_turns": fault.blocks_turns(),
+                "since": fault.since(),
+                "source": fault.source().as_str(),
+                "stale": fault.stale(),
+                "detail": to_value(&Json::Object(fault.detail().clone())),
             })
         })
         .collect();
 
     Ok(Some(json!({
-        "family": read.family,
-        "source": read.source.as_str(),
-        "written_at": read.written_at,
+        "family": read.family(),
+        "source": read.source().as_str(),
+        "written_at": read.written_at(),
         "faults": faults,
     })))
 }
@@ -520,21 +520,21 @@ fn replay_outcome(surface: &Surface, vector: &Vector) -> Replay {
     let stem = surface.context()["stem"].as_str().unwrap();
     let row = outcome::noticeboard(&vector.input().bytes().unwrap(), stem);
     let value = Some(json!({
-        "id": row.id,
-        "family": row.family,
-        "session": row.session,
-        "trigger": row.trigger,
-        "started_at": row.started_at,
-        "ended_at": row.ended_at,
-        "status": row.status,
-        "error": row.error,
-        "turns": integer_value(&row.turns),
-        "spend_usd": row.spend_usd.map(float_value),
-        "sandbox": row.sandbox,
-        "problem": row.problem.map(problem_class).unwrap_or_default(),
+        "id": row.id(),
+        "family": row.family(),
+        "session": row.session(),
+        "trigger": row.trigger(),
+        "started_at": row.started_at(),
+        "ended_at": row.ended_at(),
+        "status": row.status(),
+        "error": row.error(),
+        "turns": integer_value(row.turns()),
+        "spend_usd": row.spend_usd().map(float_value),
+        "sandbox": row.sandbox(),
+        "problem": row.problem().map(problem_class).unwrap_or_default(),
     }));
 
-    if row.problem.is_some() {
+    if row.problem().is_some() {
         Err(value)
     } else {
         Ok(value)
