@@ -1596,7 +1596,7 @@ To make the fifth check on your machine, for example before a merge:
   costs one step with a token that can write.
 - GitHub can delay or drop a run of the nightly job. It turns the schedule of
   a public repository off after 60 days with no activity in the repository.
-- Two checks do not read each crate yet. Each check has a list of its own
+- Two checks still skip some crates. Each check has a list of its own
   with the crates that it skips. No list names a new crate, so both checks
   read a new crate from its first commit. Add no name to a list.
   - The public-field check of `bin/rust-gate.sh`. Its list has four names:
