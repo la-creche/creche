@@ -483,24 +483,24 @@ fn replay_fault_reader(_: &Surface, vector: &Vector) -> Replay {
         return Err(None);
     };
     let faults: Vec<Value> = read
-        .faults
+        .faults()
         .iter()
         .map(|fault| {
             json!({
-                "code": fault.code.as_str(),
-                "blocks_turns": fault.blocks_turns,
-                "since": fault.since,
-                "source": fault.source.as_str(),
-                "stale": fault.stale,
-                "detail": to_value(&Json::Object(fault.detail.clone())),
+                "code": fault.code().as_str(),
+                "blocks_turns": fault.blocks_turns(),
+                "since": fault.since(),
+                "source": fault.source().as_str(),
+                "stale": fault.stale(),
+                "detail": to_value(&Json::Object(fault.detail().clone())),
             })
         })
         .collect();
 
     Ok(Some(json!({
-        "family": read.family,
-        "source": read.source.as_str(),
-        "written_at": read.written_at,
+        "family": read.family(),
+        "source": read.source().as_str(),
+        "written_at": read.written_at(),
         "faults": faults,
     })))
 }

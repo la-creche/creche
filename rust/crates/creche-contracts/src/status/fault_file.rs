@@ -299,41 +299,146 @@ impl Error for FaultFileError {}
 /// The largest fault file that the reader parses: 1 MiB.
 pub const FAULT_FILE_CAP_BYTES: usize = 1 << 20;
 
-/// One fault that `caregiver` takes from a fault file.
+/// One fault that `caregiver` takes from a fault file. Only [`caregiver`]
+/// builds a value.
+///
+/// ```
+/// use creche_contracts::status::fault_file::{FoldedFault, caregiver};
+/// use creche_contracts::status::words::FaultSource;
+///
+/// let bytes = br#"{"family": "chat", "written_at": "2031-04-18T06:43:10Z",
+///     "faults": [{"code": "grants_stale", "since": "2031-04-18T06:42:58Z"}]}"#;
+/// let now = "2031-04-18T06:43:33Z".parse().unwrap();
+/// let read = caregiver(bytes, FaultSource::Pep, now).unwrap();
+/// let fault: FoldedFault = read.faults()[0].clone();
+/// assert_eq!(fault.source(), FaultSource::Pep);
+/// assert!(!fault.stale());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::fault_file::{FoldedFault, caregiver};
+/// use creche_contracts::status::words::FaultSource;
+///
+/// let bytes = br#"{"family": "chat", "written_at": "2031-04-18T06:43:10Z",
+///     "faults": [{"code": "grants_stale", "since": "2031-04-18T06:42:58Z"}]}"#;
+/// let now = "2031-04-18T06:43:33Z".parse().unwrap();
+/// let read = caregiver(bytes, FaultSource::Pep, now).unwrap();
+/// let fault: FoldedFault = read.faults()[0].clone();
+/// let fault = FoldedFault { stale: false, ..fault };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct FoldedFault {
+    code: FaultCode,
+    blocks_turns: bool,
+    since: String,
+    source: FaultSource,
+    stale: bool,
+    detail: Object,
+}
+
+impl FoldedFault {
     /// The code. It is a code that the source detects.
-    pub code: FaultCode,
+    #[must_use]
+    pub fn code(&self) -> FaultCode {
+        self.code
+    }
+
     /// Whether the fault stops new turns: the table of §3.3, and not what the
     /// file says.
-    pub blocks_turns: bool,
+    #[must_use]
+    pub fn blocks_turns(&self) -> bool {
+        self.blocks_turns
+    }
+
     /// The `since` text of the entry. The reader does not check that it is a
     /// time.
-    pub since: String,
+    #[must_use]
+    pub fn since(&self) -> &str {
+        &self.since
+    }
+
     /// The service whose directory holds the file, and not what the entry
     /// says.
-    pub source: FaultSource,
+    #[must_use]
+    pub fn source(&self) -> FaultSource {
+        self.source
+    }
+
     /// Whether the file is stale (§3.3.1 rule 7), and not what the entry
     /// says.
-    pub stale: bool,
+    #[must_use]
+    pub fn stale(&self) -> bool {
+        self.stale
+    }
+
     /// Each key of the entry that §3.3 does not name, in the order of the
     /// file.
-    pub detail: Object,
+    #[must_use]
+    pub fn detail(&self) -> &Object {
+        &self.detail
+    }
 }
 
 /// What `caregiver` takes from one fault file:
-/// `caregiver.faults.read_fault_file`.
+/// `caregiver.faults.read_fault_file`. Only [`caregiver`] builds a value.
+///
+/// ```
+/// use creche_contracts::status::fault_file::{FoldedFaults, caregiver};
+/// use creche_contracts::status::words::FaultSource;
+///
+/// let bytes = br#"{"family": "chat", "written_at": "2031-04-18T06:43:10Z", "faults": []}"#;
+/// let now = "2031-04-18T06:43:33Z".parse().unwrap();
+/// let read: FoldedFaults = caregiver(bytes, FaultSource::Pep, now).unwrap();
+/// assert_eq!(read.family(), "chat");
+/// assert!(read.faults().is_empty());
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::fault_file::{FoldedFaults, caregiver};
+/// use creche_contracts::status::words::FaultSource;
+///
+/// let bytes = br#"{"family": "chat", "written_at": "2031-04-18T06:43:10Z", "faults": []}"#;
+/// let now = "2031-04-18T06:43:33Z".parse().unwrap();
+/// let read: FoldedFaults = caregiver(bytes, FaultSource::Pep, now).unwrap();
+/// let read = FoldedFaults { source: FaultSource::Sessiond, ..read };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct FoldedFaults {
+    family: String,
+    source: FaultSource,
+    written_at: String,
+    faults: Vec<FoldedFault>,
+}
+
+impl FoldedFaults {
     /// The `family` text of the file. The reader does not check it.
-    pub family: String,
+    #[must_use]
+    pub fn family(&self) -> &str {
+        &self.family
+    }
+
     /// The service whose directory holds the file.
-    pub source: FaultSource,
+    #[must_use]
+    pub fn source(&self) -> FaultSource {
+        self.source
+    }
+
     /// The `written_at` text of the file.
-    pub written_at: String,
+    #[must_use]
+    pub fn written_at(&self) -> &str {
+        &self.written_at
+    }
+
     /// Each entry with a code that the source detects and a `since` text. The
     /// reader drops each other entry and keeps the file (§3.3.1 rule 6).
-    pub faults: Vec<FoldedFault>,
+    #[must_use]
+    pub fn faults(&self) -> &[FoldedFault] {
+        &self.faults
+    }
 }
 
 /// Why `caregiver` does not use a fault file.
@@ -554,14 +659,16 @@ mod tests {
         .unwrap();
         let read = caregiver(&written.encode(), FaultSource::Sessiond, now).unwrap();
 
-        assert_eq!(read.family, "chat");
-        assert_eq!(read.written_at, "2031-04-18T06:43:10Z");
-        assert_eq!(read.faults.len(), 1);
-        assert_eq!(read.faults[0].code, FaultCode::SandboxStartFailed);
-        assert!(read.faults[0].blocks_turns);
-        assert!(!read.faults[0].stale);
-        assert_eq!(read.faults[0].since, "2031-04-18T06:42:58Z");
-        assert_eq!(&read.faults[0].detail, written.faults()[0].detail());
+        assert_eq!(read.family(), "chat");
+        assert_eq!(read.source(), FaultSource::Sessiond);
+        assert_eq!(read.written_at(), "2031-04-18T06:43:10Z");
+        assert_eq!(read.faults().len(), 1);
+        assert_eq!(read.faults()[0].code(), FaultCode::SandboxStartFailed);
+        assert!(read.faults()[0].blocks_turns());
+        assert_eq!(read.faults()[0].source(), FaultSource::Sessiond);
+        assert!(!read.faults()[0].stale());
+        assert_eq!(read.faults()[0].since(), "2031-04-18T06:42:58Z");
+        assert_eq!(read.faults()[0].detail(), written.faults()[0].detail());
         assert_eq!(written.faults()[0].since(), time("2031-04-18T06:42:58Z"));
     }
 
@@ -572,7 +679,7 @@ mod tests {
             "faults": [{"code": "orphan_processes", "since": "2031-04-18T06:42:58Z"}]}"#;
         let read = caregiver(bytes, FaultSource::Sessiond, now).unwrap();
 
-        assert!(read.faults[0].stale);
+        assert!(read.faults()[0].stale());
     }
 
     #[test]
