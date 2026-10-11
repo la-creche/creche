@@ -7,10 +7,14 @@
 //! The Python program reads its arguments with `argparse`. This module reads
 //! the same command lines and writes the same text, as Python 3.13 writes it.
 
-use std::io::Write;
+use std::ffi::OsString;
+use std::io::{self, Write};
 use std::path::Path;
+use std::process::ExitCode;
 
+use creche_contracts::config::Env;
 use creche_contracts::family::Severity;
+use creche_runtime::{log, service};
 
 use crate::json;
 use crate::registry::load_registry;
@@ -24,7 +28,9 @@ pub const EXIT_INVALID: u8 = 1;
 /// The command line is wrong.
 pub const EXIT_USAGE: u8 = 2;
 
-const PROG: &str = "agent-family";
+/// The name of the program: the start of each line that the program writes
+/// for a refused command line, and the target of the line of a panic.
+pub const NAME: &str = "agent-family";
 const COMMAND: &str = "validate";
 
 const MAIN_USAGE: &str = "usage: agent-family [-h] {validate} ...";
@@ -78,12 +84,12 @@ enum Asked {
 }
 
 fn main_error(msg: &str) -> Asked {
-    Asked::Usage(format!("{MAIN_USAGE}\n{PROG}: error: {msg}\n"))
+    Asked::Usage(format!("{MAIN_USAGE}\n{NAME}: error: {msg}\n"))
 }
 
 fn validate_error(msg: &str) -> Asked {
     Asked::Usage(format!(
-        "{VALIDATE_USAGE}\n{PROG} {COMMAND}: error: {msg}\n"
+        "{VALIDATE_USAGE}\n{NAME} {COMMAND}: error: {msg}\n"
     ))
 }
 
@@ -417,7 +423,7 @@ pub fn run(args: &[String], out: &mut impl Write, err: &mut impl Write) -> u8 {
     let shown = python_path(&registry);
     let root = Path::new(&shown);
     if !root.is_dir() {
-        let _ = writeln!(err, "{PROG}: {shown} is not a directory");
+        let _ = writeln!(err, "{NAME}: {shown} is not a directory");
 
         return EXIT_USAGE;
     }
@@ -431,7 +437,7 @@ pub fn run(args: &[String], out: &mut impl Write, err: &mut impl Write) -> u8 {
     if let Some(only) = &family
         && reports.is_empty()
     {
-        let _ = writeln!(err, "{PROG}: no family or server named '{only}'");
+        let _ = writeln!(err, "{NAME}: no family or server named '{only}'");
 
         return EXIT_USAGE;
     }
@@ -449,6 +455,56 @@ pub fn run(args: &[String], out: &mut impl Write, err: &mut impl Write) -> u8 {
     } else {
         EXIT_INVALID
     }
+}
+
+/// The entry function of the program. The `main` of `agent-family` calls it
+/// with the words of its command line and the variables of its environment.
+///
+/// The body is one call of `creche_runtime::service::enter`. A panic of the
+/// program thus ends it with exit status 1. The log then holds the place of
+/// the panic and never its message. Each other end of the program has an
+/// exit status that the module doc names.
+///
+/// `main` makes the one read of the environment and gives the result to this
+/// function. The program reads no variable yet, so the function does not
+/// read `_env`.
+///
+/// The program has no task and no listener, so it builds no async runtime.
+///
+/// The function sets the panic hook of the process. A test thus does not
+/// call it: the tests of `tests/process.rs` start the program as a process.
+pub fn entry<I>(words: I, _env: &Env) -> ExitCode
+where
+    I: IntoIterator<Item = OsString>,
+{
+    service::enter(NAME, || start(words))
+}
+
+/// The work of [`entry`], behind its boundary for a panic.
+///
+/// The first word is the path of the program, and the function drops it. A
+/// word that is not UTF-8 text names no registry and no family that this
+/// program can print. The function refuses such a command line with
+/// [`EXIT_USAGE`] and one line on stderr. For each other command line, it
+/// calls [`run`] with the locked stdout and the locked stderr.
+fn start<I>(words: I) -> ExitCode
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let args: Option<Vec<String>> = words
+        .into_iter()
+        .skip(1)
+        .map(|word| word.into_string().ok())
+        .collect();
+    let Some(args) = args else {
+        log::err_line(&format!("{NAME}: an argument is not UTF-8 text"));
+
+        return ExitCode::from(EXIT_USAGE);
+    };
+
+    let status = run(&args, &mut io::stdout().lock(), &mut io::stderr().lock());
+
+    ExitCode::from(status)
 }
 
 #[cfg(test)]
