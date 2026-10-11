@@ -122,6 +122,7 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 |---|---|
 | `config.py`, `security.py` | the environment and the two starts it refuses, the key and CSRF checks |
 | `jsonfiles.py`, `statusdocs.py`, `auditfiles.py` | reading another process's files without raising |
+| `strictjson.py` | the strict reader and the strict writer of a JSON text. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `sessions.py`, `attendancehttp.py`, `transcript.py` | `attendance` as `view-ro`, the wire, journal lines folded for a reader |
 | `familyform.py`, `yamlout.py`, `yamlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
 | `pages.py`, `app.py` | what each page needs, and the routes |

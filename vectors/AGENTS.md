@@ -262,11 +262,11 @@ directory is not a workspace package, so a change here does not change
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
   reads that file. `noticeboard.cli.check` holds the vectors of a key file.
-- The group `runtime` covers the lenient readers, the strict JSON reader,
-  the token files, the bearer of a request and the answers of the web
-  framework. No vector covers an atomic write, a read with a size cap or a
-  path under the state root. No vector covers the mint of a random token or
-  a signal.
+- The group `runtime` covers the lenient readers and the strict JSON
+  reader. It also covers the token files, the bearer of a request and the
+  answers of the web framework. No vector covers an atomic write, a read
+  with a size cap or a path under the state root. No vector covers the mint
+  of a random token or a signal.
 - No vector covers the text that a service decodes from the output of a
   child program. The locale gives the encoding of that decode, and the
   locale is a value of the machine.
