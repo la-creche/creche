@@ -17,10 +17,12 @@
 //! 2. The encoding. The bytes are UTF-8. An overlong form is not UTF-8, and
 //!    the three bytes of a surrogate are not.
 //! 3. The start. The first character is not U+FEFF, the byte order mark.
-//! 4. The parse. The crate `toml` reads the text. It refuses a key that a
-//!    table holds two times and an integer outside 64 bits.
-//! 5. TOML 1.0. The crate reads TOML 1.1 and has no switch. The child module
-//!    `toml10` refuses each of the six forms that TOML 1.1 added.
+//! 4. TOML 1.0. The crate `toml` reads TOML 1.1 and has no switch. The
+//!    child module `toml10` refuses each of the six forms that TOML 1.1
+//!    added. It also refuses a text that is too deep for the stack of the
+//!    crate, before the crate gets it.
+//! 5. The parse. The crate reads the text. It refuses a key that a table
+//!    holds two times and an integer outside 64 bits.
 //! 6. The levels. The top table has level 1. A table or a list inside a
 //!    table or a list of level n has level n + 1. No table and no list has
 //!    a level above 8. The walk uses no recursion.
@@ -30,6 +32,10 @@
 //! parser of the Python standard library stops at a depth that is no fixed
 //! number. A syntax fault and a level fault thus share one text in each
 //! language.
+//!
+//! Check 4 comes before check 5 for the stack. The parser of the crate uses
+//! the stack for each table of a deep text, and check 4 refuses that text
+//! first. A stack that overflows ends the process, and no fault says so.
 //!
 //! No limit counts the values of a file. A TOML text has no alias, so the
 //! size limit bounds the count. Each grammar holds its own caps.
@@ -324,10 +330,10 @@ enum Node {
 // infinity, so no vector holds one. The other reading costs a float parser
 // in this module, because the crate has no switch.
 fn tree_of(text: &str) -> Result<Node, TomlFault> {
-    let table: toml::Table = text.parse().map_err(|_| TomlFault::NotToml)?;
     if !toml10::holds(text, u32::from(LEVEL_MAX)) {
         return Err(TomlFault::NotToml);
     }
+    let table: toml::Table = text.parse().map_err(|_| TomlFault::NotToml)?;
 
     levelled(table).ok_or(TomlFault::NotToml)
 }
@@ -740,7 +746,7 @@ mod tests {
         );
     }
 
-    // --- checks 4 to 6: the parse, TOML 1.0 and the levels -------------------
+    // --- checks 4 to 6: TOML 1.0, the parse and the levels -------------------
 
     /// Reads `text`. The fault of a text that the reader refuses must be
     /// `NotToml`.
@@ -869,18 +875,32 @@ mod tests {
         }
     }
 
+    /// `count` inline tables, one inside the other. Each one is the value of
+    /// a dotted key with `parts` parts.
+    fn keyed_tables(count: usize, parts: usize) -> String {
+        let key = vec!["a"; parts].join(".");
+        let opens = format!("{{{key} = ").repeat(count);
+
+        format!("{key} = {opens}1{}\n", "}".repeat(count))
+    }
+
     #[test]
     fn the_crate_stops_at_80_levels_of_each_form() {
         for form in [lists, inline_tables, header, dotted_key] {
             assert!(form(80).parse::<toml::Table>().is_ok());
             assert!(form(81).parse::<toml::Table>().is_err());
         }
+
+        // The two limits are apart: the crate reads a text with both. Each
+        // inline table of this text is 3 tables deep.
+        assert!(keyed_tables(2, 3).parse::<toml::Table>().is_ok());
     }
 
     #[test]
     fn a_very_deep_text_is_a_refusal_on_a_small_stack() {
         const STACK_BYTES: usize = 2 * 1024 * 1024;
         const PARTS: usize = 30_000;
+        const CRATE_LIMIT: usize = 80;
 
         let refused = std::thread::Builder::new()
             .stack_size(STACK_BYTES)
@@ -896,6 +916,22 @@ mod tests {
                         assert!(!is_toml(&text), "{count} levels");
                     }
                 }
+
+                // The crate counts the open inline tables and the parts of
+                // one key apart, so the two limits multiply. The last text
+                // has more than 6,400 tables in 13,284 bytes. The crate
+                // reads it on a stack that is large enough.
+                for count in [7, 40, CRATE_LIMIT] {
+                    let text = keyed_tables(count, CRATE_LIMIT);
+
+                    assert!(!is_toml(&text), "{count} inline tables");
+                }
+
+                // The deepest text that reaches the crate: each key has 8
+                // parts, and 8 inline tables are open. It is 80 tables deep.
+                let deepest = format!("{}{}", header(8), keyed_tables(8, 8));
+                assert!(deepest.parse::<toml::Table>().is_ok());
+                assert!(!is_toml(&deepest));
             })
             .unwrap()
             .join();

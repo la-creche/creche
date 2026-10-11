@@ -514,9 +514,10 @@ contract holds the raw type of its file kind, and that module calls `read`
 1. The size. A file has the bytes of its kind at most.
 2. The encoding. The bytes are UTF-8.
 3. The start. The text starts with no byte order mark.
-4. The parse of the crate `toml`.
-5. TOML 1.0. The child module `toml10` refuses each form that TOML 1.1
-   added.
+4. TOML 1.0. The child module `toml10` refuses each form that TOML 1.1
+   added. It also refuses a text that is too deep for the crate `toml`,
+   before the crate gets it.
+5. The parse of the crate `toml`.
 6. The levels. No table and no list has a level above 8. The walk uses no
    recursion.
 7. The shape. `serde` fills the raw type.
@@ -559,6 +560,15 @@ refuses these six forms. Its doc comment holds the rule of each one.
 Reason: a text must not become valid because a parser is new. Each reader
 of a file kind refuses the six forms with a check of its own.
 
+`toml10` reads the events of the crate `toml_parser`. In the same pass, it
+refuses a text that is too deep for the crate `toml`. Fact 6 of the list
+below gives the cause. Such a text has a key with more than 8 parts, or
+more than 8 lists and inline tables that are open inside each other. It
+thus has a level above 8.
+
+Do not move check 4 behind check 5. Check 4 bounds the stack that the
+parser of the crate uses.
+
 A raw type of a TOML file gets its values in this form. Each line is a
 measurement with `toml` 1.1.8, and a test of the module holds it. Measure
 again after a change of the version.
@@ -579,10 +589,17 @@ again after a change of the version.
 4. **`read` refuses a text that starts with a byte order mark.** The crate
    reads such a text. Check 3 refuses it.
 5. **An integer outside 64 bits is `NotToml`.** The range is that of an
-   `i64`. The crate refuses the text in check 4.
-6. **A deep text is a refusal and no crash.** The crate stops at 80 levels
-   of a list, of an inline table, of a table header and of a dotted key. A
-   header of 30,000 parts is a refusal on a stack of 2 MiB.
+   `i64`. The crate refuses the text in check 5.
+6. **The crate alone does not stop a deep text.** It stops at 80 lists and
+   inline tables that are open inside each other. It also stops at 80
+   parts of one key. It counts the two apart, so 80 inline tables can each
+   have a key of 80 parts. That text has more than 6,400 tables in 13,284
+   bytes. The parser of the crate uses the stack for each table. On a stack
+   of 2 MiB, 40 such inline tables overflow the stack in a release build,
+   and 7 do in a debug build. The process then ends. Check 4 thus comes
+   first. The deepest text that reaches the crate has 8 open inline tables,
+   each under a key of 8 parts. A header of 30,000 parts is a refusal on a
+   stack of 2 MiB.
 
 More rules for a raw type of a TOML file:
 

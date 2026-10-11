@@ -26,6 +26,18 @@
 //! A Python version can read TOML 1.1 in its standard library. The Python
 //! reader of a file kind thus has a check of its own for the same six
 //! forms. No reader takes a text because its parser is new.
+//!
+//! # A text that is too deep
+//!
+//! The same walk refuses a text that is too deep for the stack of the crate
+//! `toml`, before the crate gets it. The crate stops at 80 open lists and
+//! inline tables, and at 80 parts of one key. It counts the two apart, so
+//! 80 inline tables can each have a key of 80 parts. Its parser uses the
+//! stack for each table of such a text, and a stack that overflows ends the
+//! process. [`holds`] refuses a key with more parts than its limit, and
+//! more open lists and inline tables than that limit. The reader calls
+//! [`holds`] before the crate. Each such text has more levels than the
+//! reader permits.
 
 use toml_parser::decoder::Encoding;
 use toml_parser::parser::{Event, EventKind, RecursionGuard, parse_document};
@@ -38,15 +50,17 @@ enum Open {
     InlineTable,
 }
 
-/// Whether `text` holds none of the six forms that TOML 1.1 added.
+/// Whether `text` holds none of the six forms that TOML 1.1 added, and is
+/// not too deep for the stack of the crate `toml`.
 ///
-/// Call it for a text that the crate `toml` read. The check of a time reads
-/// the place of a colon, and only a valid time has its colons in a fixed
-/// place.
+/// The answer for a text that is no TOML can be `true`: the caller then
+/// gives the text to the crate `toml`. The check of a time reads the place
+/// of a colon, and only a valid time has its colons in a fixed place.
 ///
 /// `depth_max` is the most lists and inline tables that the parser opens
-/// inside each other. The answer for a deeper text is `false`. The parser
-/// calls itself for each one, so the limit bounds its stack.
+/// inside each other, and the most parts of one key. The answer for a
+/// deeper text is `false`. The parser calls itself for each list and for
+/// each inline table, so the limit bounds its stack.
 pub(super) fn holds(text: &str, depth_max: u32) -> bool {
     let source = Source::new(text);
     let tokens = source.lex().into_vec();
@@ -63,6 +77,7 @@ pub(super) fn holds(text: &str, depth_max: u32) -> bool {
 
     let mut open: Vec<Open> = Vec::new();
     let mut after_comma = false;
+    let mut key_parts: u32 = 0;
 
     for event in &events {
         let kind = event.kind();
@@ -101,14 +116,22 @@ pub(super) fn holds(text: &str, depth_max: u32) -> bool {
                 if newer {
                     return false;
                 }
+
+                if kind == EventKind::SimpleKey {
+                    key_parts = key_parts.saturating_add(1);
+                    if key_parts > depth_max {
+                        return false;
+                    }
+                }
+            }
+            // The end of a key.
+            EventKind::KeyValSep | EventKind::StdTableClose | EventKind::ArrayTableClose => {
+                key_parts = 0;
             }
             EventKind::Error => return false,
             EventKind::StdTableOpen
-            | EventKind::StdTableClose
             | EventKind::ArrayTableOpen
-            | EventKind::ArrayTableClose
             | EventKind::KeySep
-            | EventKind::KeyValSep
             | EventKind::ValueSep => {}
         }
 
@@ -332,6 +355,44 @@ mod tests {
         for text in ["a = {b = 1", "a = [1", "a = {b = 1}}"] {
             assert!(!crate_reads(text), "the crate refuses {text:?}");
             assert!(!holds(text, DEPTH), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_key_with_more_parts_than_the_limit_is_refused() {
+        let key = |parts: usize| vec!["a"; parts].join(".");
+        let quoted = |parts: usize| vec!["\"a\""; parts].join(" . ");
+        // Each place of a key: a key/value pair, the two kinds of header and
+        // a pair of an inline table.
+        let places: [fn(&str) -> String; 4] = [
+            |key| format!("{key} = 1\n"),
+            |key| format!("[{key}]\n"),
+            |key| format!("[[{key}]]\n"),
+            |key| format!("t = {{{key} = 1}}\n"),
+        ];
+
+        for place in places {
+            assert!(holds(&place(&key(8)), DEPTH));
+            assert!(!holds(&place(&key(9)), DEPTH));
+            assert!(holds(&place(&quoted(8)), DEPTH));
+            assert!(!holds(&place(&quoted(9)), DEPTH));
+        }
+    }
+
+    #[test]
+    fn the_count_of_the_parts_starts_again_at_each_key() {
+        // Each text has more than 8 parts in two keys that follow each
+        // other, and no key with more than 5.
+        let texts = [
+            "a.b = 1\nc.d = 2\ne.f = 3\ng.h = 4\ni.j = 5\n",
+            "t = {a.b = 1, c.d = 2, e.f = 3, g.h = 4, i.j = 5}\n",
+            "[a.b.c.d.e]\n[f.g.h.i]\n[[j.k.l.m.n]]\no.p.q.r = 1\n",
+            "[a.b.c.d]\ne.f.g = {h.i.j = [{k.l.m = 1}]}\n",
+        ];
+
+        for text in texts {
+            assert!(crate_reads(text), "the crate reads {text:?}");
+            assert!(holds(text, DEPTH), "{text:?}");
         }
     }
 }
