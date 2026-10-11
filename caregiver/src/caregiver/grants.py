@@ -48,7 +48,7 @@ UNCOMPARED: Final = frozenset({"rev", "token_sha256"})
 
 
 class GrantFileTooLargeError(ValueError):
-    """The refusal of `write_grant_file`: the file would have `size` bytes,
+    """The refusal of `grant_file_bytes`: the file would have `size` bytes,
     and that is more than `GRANT_FILE_MAX_BYTES`. The text names both
     counts and no content of the file."""
 
@@ -156,19 +156,27 @@ def _expand_approval(family: FamilyFile, index: Index) -> list[str]:
     return expanded
 
 
-def write_grant_file(path: Path, grant: GrantFile) -> None:
-    """Contract 04 section 1.3: `caregiver` validates first (the caller's
-    job), then writes atomically, mode 0640.
+def grant_file_bytes(grant: GrantFile) -> bytes:
+    """The bytes of the file that `write_grant_file` writes for `grant`.
 
-    The bytes come first. For more than `GRANT_FILE_MAX_BYTES` bytes it
-    writes nothing and raises `GrantFileTooLargeError`: the PEP reads no
-    larger file (contract 04 section 1.2). The file of the last write
-    stays as it is."""
+    For more than `GRANT_FILE_MAX_BYTES` bytes it raises
+    `GrantFileTooLargeError`: the PEP reads no larger file (contract 04
+    section 1.2). A caller that asks for the size alone writes nothing."""
     data = _body_bytes(grant.as_json())
     if len(data) > GRANT_FILE_MAX_BYTES:
         raise GrantFileTooLargeError(len(data))
 
-    atomic_write(path, data, mode=GRANT_FILE_MODE)
+    return data
+
+
+def write_grant_file(path: Path, grant: GrantFile) -> None:
+    """Contract 04 section 1.3: `caregiver` validates first (the caller's
+    job), then writes atomically, mode 0640.
+
+    The bytes come first, from `grant_file_bytes`. For a file over the cap
+    it writes nothing, and `GrantFileTooLargeError` passes to the caller.
+    The file of the last write stays as it is."""
+    atomic_write(path, grant_file_bytes(grant), mode=GRANT_FILE_MODE)
 
 
 def rewrite_digests(path: Path, family: str, *, rev: str, token_sha256: tuple[str, ...]) -> bool:

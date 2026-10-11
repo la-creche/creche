@@ -325,6 +325,26 @@ def _converge(
     ran: list[str] = []
     faults = list(folded)
 
+    # A missing grant file is the PEP refusing every call for this family,
+    # so it is rewritten whether or not the diff asked. So is a stale one: a
+    # server file moves what `all` grants while the family file stays put.
+    # It is not rewritten on every pass: `write_grants` mints a fresh `rev`
+    # each call, and the loop looks every two seconds.
+    index = _index_of(registry)
+    grants_due = _needs(diff, Step.WRITE_GRANTS) or not steps.grants_current(
+        family, index, state_root
+    )
+    if grants_due:
+        # The size check comes before the key step. A pass that refuses the
+        # grant file then ran no step: LiteLLM, `creds.json` and the last
+        # grant file stay as they are (contract 05 §3.1).
+        try:
+            steps.check_grants(family, index, state_root)
+        except GrantFileTooLargeError as refusal:
+            return _refuse_grant_file(
+                state_root, report, registry.revision, folded, applied, chaperone, refusal
+            )
+
     refresh = KeyRefresh.UPDATE if _needs(diff, Step.UPDATE_KEY) else KeyRefresh.KEEP
     creds, block, key_faults = steps.ensure_credentials(family, state_root, actors.litellm, refresh)
     faults.extend(key_faults)
@@ -350,18 +370,17 @@ def _converge(
     if refresh is KeyRefresh.UPDATE and applied is not None:
         ran.append(str(Step.UPDATE_KEY))
 
-    # A missing grant file is the PEP refusing every call for this family,
-    # so it is rewritten whether or not the diff asked. So is a stale one: a
-    # server file moves what `all` grants while the family file stays put.
-    # It is not rewritten on every pass: `write_grants` mints a fresh `rev`
-    # each call, and the loop looks every two seconds.
-    index = _index_of(registry)
-    if _needs(diff, Step.WRITE_GRANTS) or not steps.grants_current(family, index, state_root):
+    if grants_due:
+        # The check above counted the digests that `creds.json` gave then.
+        # A rotation of another process can add one digest after the check.
+        # A key step that writes `creds.json` writes one token, so its grant
+        # file is no larger than the count. Only a pass that kept the key
+        # can thus get this refusal, and that pass ran no step before it.
         try:
             steps.write_grants(family, index, state_root, creds)
         except GrantFileTooLargeError as refusal:
             return _refuse_grant_file(
-                state_root, report, registry.revision, folded, applied, chaperone, refusal, ran
+                state_root, report, registry.revision, folded, applied, chaperone, refusal
             )
 
         ran.append(str(Step.WRITE_GRANTS))
@@ -821,15 +840,14 @@ def _refuse_grant_file(
     applied: AppliedState | None,
     chaperone: PepReport,
     refusal: GrantFileTooLargeError,
-    ran: list[str],
 ) -> ReconcileResult:
     """The grant file of this revision is over the cap of contract 04 §1.2,
-    and the writer wrote nothing.
+    and the pass wrote no grant file.
 
     The refusal is one more error of the validation report, and the report
     names the size. The family reads `invalid`, and the last applied grant
     file keeps serving, as for each other file that a pass cannot apply
-    (contract 05 §3.1). `ran` holds each step that ran before the refusal.
+    (contract 05 §3.1). The pass ran no step before the refusal.
 
     CONTRACT-QUESTION: contract 04 §1.3 rule 1 says that `caregiver` writes
     no grant file that it knows to be wrong. No contract says what the
@@ -846,7 +864,7 @@ def _refuse_grant_file(
     )
     write_validation_report(paths.validation_path(state_root, report.family), refused)
     kept = _keep_last_good(state_root, report.family, refused, revision, folded, applied, chaperone)
-    return replace(kept, ran=tuple(ran), note="refused: grant file over the cap")
+    return replace(kept, note="refused: grant file over the cap")
 
 
 # --- publishing ---------------------------------------------------------------

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import stat
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,7 @@ import yaml
 from agent_family import FamilyFile, FamilyState, Index, load_registry, parse_family
 from agent_family.grammar import DEFAULT_MAX_INFLIGHT_DELEGATIONS, TOOL_NAME
 from agent_family.server import McpServerFile
+from caregiver.credentials import mint_token, read_creds, write_creds
 from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
 from caregiver.grants import (
@@ -41,7 +42,7 @@ from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
 from caregiver_helpers import UNREADABLE_JSON, published, write_registry
 
-from caregiver import paths
+from caregiver import paths, steps
 
 KAGI = McpServerFile.model_validate(
     {
@@ -372,6 +373,26 @@ MANY_TOOLS = tuple(
 
 TOO_LARGE_NOTE = "refused: grant file over the cap"
 
+#: The count of characters of each name of `fill_tool`. One such name is one
+#: line of 60 bytes in a grant file, so a last name of 60 characters or less
+#: gives the file each size.
+FILL_CHARS = 50
+
+#: Long after each clock that this suite runs under.
+FAR_FUTURE = "2999-01-01T00:00:00Z"
+
+
+class CountedKeys(FakeLiteLLMKeys):
+    """The fake of LiteLLM, with a count of the `update_key` calls."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.updates = 0
+
+    def update_key(self, key: str, models: list[str], budget_usd_per_day: float) -> None:
+        self.updates += 1
+        super().update_key(key, models, budget_usd_per_day)
+
 
 @dataclass
 class Host:
@@ -381,7 +402,7 @@ class Host:
     registry_root: Path
     state_root: Path
     driver: FakeDriver = field(default_factory=FakeDriver)
-    litellm: FakeLiteLLMKeys = field(default_factory=FakeLiteLLMKeys)
+    litellm: CountedKeys = field(default_factory=CountedKeys)
 
     def serve(self, *tools: str) -> None:
         """Write the server file with these tools."""
@@ -415,18 +436,60 @@ class Host:
         path = paths.validation_path(self.state_root, "chat")
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def refused_size(self, scratch: Path) -> int:
-        """The size that the writer names for the grant file of the registry.
-        A pass writes a `rev` of 32 characters and one digest."""
+    @property
+    def creds_path(self) -> Path:
+        return paths.creds_path(self.state_root, "chat")
+
+    def rotate_token(self) -> None:
+        """Write `creds.json` as a graceful rotation of the token leaves it
+        during the overlap: a new token, and the last one until
+        `FAR_FUTURE`. A grant file for it holds two digests."""
+        creds = read_creds(self.creds_path)
+        assert creds is not None
+        rotated = replace(
+            creds,
+            epoch=creds.epoch + 1,
+            pep_token=mint_token(),
+            previous_pep_token=creds.pep_token,
+            previous_expires_at=FAR_FUTURE,
+        )
+        write_creds(self.creds_path, rotated)
+
+    def pass_grant(self) -> GrantFile:
+        """The grant of the registry, with the sizes that a pass writes: a
+        `rev` of 32 characters and one digest."""
         registry = load_registry(self.registry_root)
         servers = Index(kinds={}, servers=registry.servers, skills=registry.skills)
-        grant = build_grant_file(
+        return build_grant_file(
             registry.families["chat"], servers, rev="0" * 32, token_sha256=("0" * 64,)
         )
+
+    def refused_size(self, scratch: Path) -> int:
+        """The size that the writer names for the grant file of the registry."""
         with pytest.raises(GrantFileTooLargeError) as refusal:
-            write_grant_file(scratch / "scratch.json", grant)
+            write_grant_file(scratch / "scratch.json", self.pass_grant())
 
         return refusal.value.size
+
+    def tools_for(self, scratch: Path, size: int) -> list[str]:
+        """Tool names that give the grant file of a pass `size` bytes. Each
+        name is one line of the file. The last name fills the file: one
+        character is one byte."""
+
+        def measured(*tools: str) -> int:
+            self.serve(*tools)
+            path = scratch / "measured.json"
+            write_grant_file(path, self.pass_grant())
+            return path.stat().st_size
+
+        smallest = measured(fill_tool(0), "f")
+        line = measured(fill_tool(0), fill_tool(1), "f") - smallest
+        lines, rest = divmod(size - smallest, line)
+        return [*(fill_tool(index) for index in range(lines + 1)), "f" * (rest + 1)]
+
+
+def fill_tool(index: int) -> str:
+    return f"t{index:0{FILL_CHARS - 1}d}"
 
 
 @pytest.fixture
@@ -527,3 +590,126 @@ def test_a_pass_writes_the_grant_file_when_it_fits_again(host: Host) -> None:
     assert granted["tools"] == {SERVER: ["search", "extract"]}
     assert host.report()["errors"] == 0
     assert published(host.state_root)["validation"]["ok"] is True
+
+
+# --- the size check runs before the key step ----------------------------------
+
+
+def test_a_first_pass_writes_a_grant_file_of_the_cap(host: Host, tmp_path: Path) -> None:
+    """The size check counts the bytes that the write then has: a family
+    with no `creds.json` gets one digest."""
+    at_cap = host.tools_for(tmp_path, GRANT_FILE_MAX_BYTES)
+    host.serve(*at_cap)
+
+    result = host.one_pass()
+
+    assert result.status.state is FamilyState.IN_SYNC
+    assert host.grant_path.stat().st_size == GRANT_FILE_MAX_BYTES
+    granted = json.loads(host.grant_path.read_text(encoding="utf-8"))
+    assert granted["tools"] == {SERVER: at_cap}
+
+
+def test_a_first_pass_of_one_byte_more_mints_no_key(host: Host, tmp_path: Path) -> None:
+    """A refused pass runs no step. The family gets no key from LiteLLM, no
+    `creds.json` and no grant file."""
+    host.serve(*host.tools_for(tmp_path, GRANT_FILE_MAX_BYTES + 1))
+
+    result = host.one_pass()
+
+    assert result.status.state is FamilyState.INVALID
+    assert result.note == TOO_LARGE_NOTE
+    assert result.ran == ()
+    assert host.report()["issues"][-1]["msg"] == (
+        f"the grant file would have {GRANT_FILE_MAX_BYTES + 1} bytes, "
+        f"and the cap is {GRANT_FILE_MAX_BYTES} bytes"
+    )
+    assert host.litellm.minted == 0
+    assert host.litellm.keys == {}
+    assert not host.creds_path.exists()
+    assert result.status.credentials is None
+    assert not host.grant_path.parent.exists()
+
+
+def test_a_refused_pass_leaves_the_key_as_it_is(host: Host) -> None:
+    """One edit moves the router and the budget, and its grant file is over
+    the cap. LiteLLM keeps the models and the budget of the applied file,
+    and no pass writes `creds.json`."""
+    host.serve("search")
+    host.one_pass()
+    key = dict(host.litellm.budgets)
+    creds = host.creds_path.read_bytes()
+    written = host.creds_path.stat().st_mtime_ns
+
+    moved = {"router": "other-router", "budget_usd_per_day": 99}
+    write_registry(host.registry_root, tools={SERVER: "all"}, model=moved)
+    host.serve("search", *MANY_TOOLS)
+    result = host.one_pass()
+    again = host.one_pass()
+
+    assert result.status.state is FamilyState.INVALID
+    assert again.status.state is FamilyState.INVALID
+    assert result.ran == ()
+    assert again.ran == ()
+    assert host.litellm.updates == 0
+    assert host.litellm.minted == 1
+    assert host.litellm.budgets == key
+    assert host.creds_path.read_bytes() == creds
+    assert host.creds_path.stat().st_mtime_ns == written
+
+
+def test_the_size_check_counts_each_digest_of_the_creds_file(host: Host, tmp_path: Path) -> None:
+    """During the overlap of a token rotation, `creds.json` gives two
+    digests. A grant file of the cap with one digest is over the cap with
+    two. The pass refuses it before the key step, also when the edit moves
+    the router and the budget."""
+    at_cap = host.tools_for(tmp_path, GRANT_FILE_MAX_BYTES)
+    host.serve(*at_cap)
+    host.one_pass()
+    before = host.grant_path.read_bytes()
+    key = dict(host.litellm.budgets)
+    host.rotate_token()
+    creds = host.creds_path.read_bytes()
+
+    moved = {"router": "other-router", "budget_usd_per_day": 99}
+    write_registry(host.registry_root, tools={SERVER: "all"}, model=moved)
+    result = host.one_pass()
+
+    assert result.status.state is FamilyState.INVALID
+    assert result.note == TOO_LARGE_NOTE
+    assert result.ran == ()
+    assert host.litellm.updates == 0
+    assert host.litellm.budgets == key
+    assert host.creds_path.read_bytes() == creds
+    assert host.grant_path.read_bytes() == before
+
+
+def test_a_digest_after_the_size_check_is_refused_at_the_write(
+    host: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another process can rotate the token between the size check and the
+    key step. The grant file then holds one more digest than the check
+    counted. The writer refuses it, and the family reads `invalid`."""
+    at_cap = host.tools_for(tmp_path, GRANT_FILE_MAX_BYTES)
+    host.serve(*at_cap)
+    host.one_pass()
+    before = host.grant_path.read_bytes()
+    check = steps.check_grants
+
+    def check_then_rotate(family: FamilyFile, index: Index, state_root: Path) -> None:
+        check(family, index, state_root)
+        host.rotate_token()
+
+    monkeypatch.setattr(steps, "check_grants", check_then_rotate)
+    # The same names in another order: a file of the same size to write.
+    host.serve(*reversed(at_cap))
+    result = host.one_pass()
+
+    assert result.status.state is FamilyState.INVALID
+    assert result.note == TOO_LARGE_NOTE
+    assert result.ran == ()
+    assert host.grant_path.read_bytes() == before
+    assert host.report()["errors"] == 1
+    assert host.litellm.updates == 0
+    credentials = result.status.credentials
+    assert credentials is not None
+    assert credentials.epoch == 2

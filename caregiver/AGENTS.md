@@ -79,6 +79,9 @@ host where something has gone wrong.
   `GrantFileTooLargeError`. The last file stays.
 - A pass turns that refusal into one error of the validation report. The
   family reads `invalid`, and the pass raises no fault for it.
+- A pass checks the size of the grant file before the key step, with
+  `steps.check_grants`. A pass that refuses the file runs no step. It mints
+  no key, sends nothing to LiteLLM and writes no `creds.json`.
 - The cap has one source: `GRANT_FILE_MAX_BYTES` of the Rust crate
   `creche-contracts`. `grants.py` holds a copy with the same name.
   `bin/tests/test_grant_file_cap.py` fails when the copy differs.
@@ -258,9 +261,6 @@ Nothing here touches a real sandbox or LiteLLM.
   For a grant file over the cap, each verb ends with a traceback and exit
   code 1. `rotate` writes `creds.json` before that step (`apply.py`,
   `rotate.py`).
-- A pass runs the key step before the grant step. A pass that refuses the
-  grant file can thus mint a key first. It can also send the model and the
-  budget of that file to LiteLLM (`reconcile.py`).
 - No pass manages a sandbox whose ledger row does not read. The row stays
   in the file, and the log names the family at each rewrite
   (`sandboxes.py`).
