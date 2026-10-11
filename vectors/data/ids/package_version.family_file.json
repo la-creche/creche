@@ -16,12 +16,12 @@
   {"id":"probe-nul-inside","input":{"text":"1\u0000.2.3"},"result":"refused"},
   {"id":"probe-arabic-digit","input":{"text":"1.2.\u0661"},"result":"refused"},
   {"id":"probe-fullwidth-digit","input":{"text":"1.2.\uff11"},"result":"refused"},
-  {"id":"probe-overlong","input":{"text":"1.2.31111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"},"result":"accepted"},
+  {"id":"probe-overlong","input":{"text":"1.2.31111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"},"result":"refused"},
   {"id":"one-digit","input":{"text":"1"},"result":"accepted"},
   {"id":"date","input":{"text":"2024.1.1"},"result":"accepted"},
   {"id":"pre-release","input":{"text":"1.0.0rc1"},"result":"accepted"},
-  {"id":"hyphen","input":{"text":"1.0.0-rc1"},"result":"accepted"},
-  {"id":"plus","input":{"text":"1.0.0+local"},"result":"accepted"},
+  {"id":"hyphen","input":{"text":"1.0.0-rc1"},"result":"refused"},
+  {"id":"plus","input":{"text":"1.0.0+local"},"result":"refused"},
   {"id":"v-prefix","input":{"text":"v1.0"},"result":"refused"},
   {"id":"caret","input":{"text":"^1.0"},"result":"refused"},
   {"id":"tilde","input":{"text":"~1.0"},"result":"refused"},
@@ -31,6 +31,6 @@
   {"id":"space-inside","input":{"text":"1 .0"},"result":"refused"},
   {"id":"latest","input":{"text":"latest"},"result":"refused"},
   {"id":"len-64","input":{"text":"1000000000000000000000000000000000000000000000000000000000000000"},"result":"accepted"},
-  {"id":"len-65","input":{"text":"10000000000000000000000000000000000000000000000000000000000000000"},"result":"accepted"}
+  {"id":"len-65","input":{"text":"10000000000000000000000000000000000000000000000000000000000000000"},"result":"refused"}
  ]
 }
