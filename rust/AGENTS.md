@@ -2147,12 +2147,12 @@ To make the fifth check on your machine, for example before a merge:
      a half. The three doors give `json.loads` the text of `httpx`, and they
      refuse the first three.
   2. An answer nests 127 levels at most.
-  3. `number` reads the integer `-0` as `-0.0`. Python reads it as `0.0`.
-     `serde_json` gives the text `-0` and the text `-0.0` as one float, so
-     the reader cannot tell the two apart. No writer of the platform writes
-     the text `-0`. `json::Number` reads the text of a token and tells the
-     two apart. The reader can use that type after the module reads a text
-     through `json`. No packet has that change yet.
+  3. `number` reads the integer `-0` as `-0.0`, and Python reads it as
+     `0.0`. `serde_json` gives the text `-0` and the text `-0.0` as one
+     float, so the reader cannot tell the two apart. No writer of the
+     platform writes the text `-0`. `json::Number` reads the text of a token
+     and tells the two apart. The reader can use that type after the module
+     reads a text through `json`. No packet has that change yet.
   4. An answer holds no byte that is not UTF-8. The three doors read such a
      byte as U+FFFD, because `httpx` makes a text of the body first. The
      three other clients refuse the answer, and `parse_object` refuses it
