@@ -465,11 +465,13 @@ fault, the event of a channel line and the arguments of a tool call.
   thus equal, and so are `1.50` and `1.5`.
 - The order of the keys is a part of an `Opaque`. Two objects with the same
   members in another order are not equal.
-- `Opaque::parse` reads the value into a type of the caller. Use it with a
-  raw type when code must read a member of the value. It reads the compact
-  form and makes no second check. A `Shape` of this function thus names a
-  place on line 1 of that form. A number field gets the token that the
-  writer gave: `0` where the first text had `-0`.
+- `Opaque::parse` reads the value into a type of the caller, for example a
+  raw type. The function compares no kind, and a derived struct also reads
+  a list by position. Before the call, compare `Opaque::kind` with the kind
+  that the type takes. The function reads the compact form and makes no
+  second check. A `Shape` of this function thus names a place on line 1 of
+  that form. A number field gets the token that the writer gave: `0` where
+  the first text had `-0`.
 - `Opaque::of` makes the value from a typed value, with one call of the
   writer. It refuses each value that `write` refuses. A module that needs
   the `Opaque` of a typed value calls this function. It does not give a

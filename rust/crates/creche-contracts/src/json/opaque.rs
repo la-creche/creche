@@ -264,6 +264,11 @@ impl Opaque {
     /// that breaks one. The read thus fails only when `T` refuses the value.
     /// A raw type with a `Slot` at each field refuses no object.
     ///
+    /// The function does not compare the kind of the value with the kind
+    /// that `T` takes. A struct that derives `Deserialize` also takes a list,
+    /// and `serde` then fills its fields by position. A caller that takes an
+    /// object only compares [`Opaque::kind`] with [`Found::Table`] first.
+    ///
     /// The read sees the compact form only. That form can differ from the
     /// text that a peer sent:
     ///
@@ -1365,6 +1370,16 @@ mod tests {
         assert_eq!(other.arguments, Slot::Null);
         assert_eq!(opaque("{}").parse(), Ok(RawParams::default()));
         assert!(reads_empty_table::<RawParams>());
+
+        // The function compares no kind. The derived reader of a struct
+        // also takes a list, by position. A caller that takes an object
+        // only reads the kind first.
+        let listed = opaque(r#"["add"]"#);
+        assert_eq!(listed.kind(), Found::List);
+        assert_eq!(
+            listed.parse::<RawParams>().map(|raw| raw.name),
+            Ok(Slot::Value(String::from("add")))
+        );
 
         // A type with no `Slot` reads a value of its own kind.
         assert_eq!(opaque(" [1, 2] ").parse::<Vec<u8>>(), Ok(vec![1, 2]));
