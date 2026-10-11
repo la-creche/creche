@@ -509,21 +509,21 @@ fn replay_outcome(surface: &Surface, vector: &Vector) -> Replay {
     let stem = surface.context()["stem"].as_str().unwrap();
     let row = outcome::noticeboard(&vector.input().bytes().unwrap(), stem);
     let value = Some(json!({
-        "id": row.id,
-        "family": row.family,
-        "session": row.session,
-        "trigger": row.trigger,
-        "started_at": row.started_at,
-        "ended_at": row.ended_at,
-        "status": row.status,
-        "error": row.error,
-        "turns": integer_value(&row.turns),
-        "spend_usd": row.spend_usd.map(float_value),
-        "sandbox": row.sandbox,
-        "problem": row.problem.map(problem_class).unwrap_or_default(),
+        "id": row.id(),
+        "family": row.family(),
+        "session": row.session(),
+        "trigger": row.trigger(),
+        "started_at": row.started_at(),
+        "ended_at": row.ended_at(),
+        "status": row.status(),
+        "error": row.error(),
+        "turns": integer_value(row.turns()),
+        "spend_usd": row.spend_usd().map(float_value),
+        "sandbox": row.sandbox(),
+        "problem": row.problem().map(problem_class).unwrap_or_default(),
     }));
 
-    if row.problem.is_some() {
+    if row.problem().is_some() {
         Err(value)
     } else {
         Ok(value)
