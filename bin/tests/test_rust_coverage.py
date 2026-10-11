@@ -14,6 +14,9 @@ wrong without one red line, and each gets a check here:
    listed path that the report does not hold.
 3. **A listed file that takes code out of the measurement.** The text
    `coverage(off)` in a listed file fails, in each attribute that holds it.
+   The text `macro_rules!` fails too, and so does a call of a macro that the
+   closed list of the script does not hold. The report shows no side of an
+   `if` in the body of a macro, so a test that takes one side would pass.
 4. **A file of the pure decision crate that the list does not name.** When
    `rust/crates/chaperone-policy/src` exists, each `.rs` file there must be
    in the list.
@@ -40,12 +43,15 @@ tools the script calls.
 
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -704,6 +710,287 @@ def test_a_file_outside_the_list_can_hold_the_text(tree: Tree) -> None:
     done = tree.check(ALL_RAN)
 
     assert _passed(done), done.out + done.err
+
+
+#: The macros that a listed file can call. `MEASURED_MACROS` of the script
+#: holds the same names, and so does "The coverage rule" of rust/AGENTS.md. A
+#: new name goes into the three places in one pull request, after a
+#: measurement of the macro.
+MEASURED_MACROS = ("assert", "assert_eq", "assert_ne", "format", "vec", "write", "writeln")
+
+#: The file that holds the rule text, and how its paragraph with the closed
+#: list starts.
+RULE_TEXT = "rust/AGENTS.md"
+RULE_HEAD = "\n## The coverage rule\n"
+CLOSED_LIST = "The closed list of case 3c holds seven macros:"
+
+#: A macro of `macro_rules!` whose body holds no call of a macro, and a
+#: function that holds it.
+TWICE = "macro_rules! twice {\n    ($n:expr) => {\n        $n * 2\n    };\n}\n"
+TWICE_INSIDE = f"pub fn double(n: u32) -> u32 {{\n{textwrap.indent(TWICE, '    ')}    n * 2\n}}\n"
+
+#: What the script says for the text that defines a macro.
+DEFINES = "the file holds the text `macro_rules!`. The lines are"
+
+#: The two ends of the failure line of a call outside the closed list. The
+#: second one is for `matches!` only.
+SEE_RULE = 'rust/AGENTS.md, "The coverage rule", has the list.'
+TWO_ARMS = "Write a `match` with two arms in its place."
+
+
+def _calls(call: str, lines: str, end: str = SEE_RULE) -> str:
+    """The failure line for the call `call` of the first file, on `lines`."""
+    return (
+        f"{FULL}: the file calls `{call}!`, which the closed list of the macros does not "
+        f"permit. {end} The lines are {lines}"
+    )
+
+
+def _source(*lines: str) -> str:
+    """A Rust file with one function whose body holds `lines`. The first one
+    is line 2 of the file."""
+    body = "".join(f"    {line}\n" for line in lines)
+
+    return f"pub fn decide(n: u32) -> u32 {{\n{body}    n\n}}\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "line"),
+    [
+        (TWICE, 1),
+        (f"#[macro_export]\n{TWICE}", 2),
+        (TWICE_INSIDE, 2),
+    ],
+    ids=["at the start of a line", "below #[macro_export]", "inside a function"],
+)
+def test_a_listed_file_that_defines_a_macro_fails(tree: Tree, source: str, line: int) -> None:
+    """The report holds no region for the blocks of an `if` in the body of a
+    macro, so no check sees a side of it that no test took."""
+    assert source.splitlines()[line - 1].lstrip() == "macro_rules! twice {"
+    tree.names(FULL)
+    tree.write(FULL, source)
+
+    done = tree.check(ALL_RAN)
+
+    assert _failed(done, f"{FULL}: {DEFINES} {line}"), done.out + done.err
+
+
+#: (a call of a macro outside the closed list, the failure line of a file that
+#: holds it on line 2)
+OUTSIDE_THE_LIST = {
+    "matches!(n, 2)": _calls("matches", "2", TWO_ARMS),
+    "std::matches!(n, 2)": _calls("std::matches", "2", TWO_ARMS),
+    "crate::rule!(n)": _calls("crate::rule", "2"),
+    'log::info!("n")': _calls("log::info", "2"),
+    'json!({ "n": 2 })': _calls("json", "2"),
+    "own![n]": _calls("own", "2"),
+    "own! { n }": _calls("own", "2"),
+    "own!\n(n)": _calls("own", "2"),
+    "größe!(n)": _calls(r"gr\xc3\xb6\xc3\x9fe", "2"),
+}
+
+
+@pytest.mark.parametrize("call", OUTSIDE_THE_LIST)
+def test_a_listed_file_that_calls_a_macro_outside_the_list_fails(tree: Tree, call: str) -> None:
+    """The body of such a macro can hold an `if`, as the body of a macro of
+    the file can. `matches!` is the macro that the measurement refused: its
+    arm that matches is no region."""
+    tree.names(FULL)
+    tree.write(FULL, _source(f"let _ = {call};"))
+
+    done = tree.check(ALL_RAN)
+
+    assert _failed(done, OUTSIDE_THE_LIST[call]), done.out + done.err
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        *(f"{name}!(n)" for name in MEASURED_MACROS),
+        "vec![n]",
+        'std::format!("{n}")',
+        "core::assert!(n < 3)",
+        "alloc::vec![n]",
+        '::std::write!(text, "{n}")',
+        "::core::assert_ne!(n, 3)",
+        "::alloc::vec![n]",
+    ],
+)
+def test_a_listed_file_can_call_each_macro_of_the_list(tree: Tree, call: str) -> None:
+    """A call has no path, or the path of one of the three crates of the
+    toolchain that hold these macros."""
+    tree.names(FULL)
+    tree.write(FULL, _source(f"let _ = {call};"))
+
+    done = tree.check(ALL_RAN)
+
+    assert _passed(done), done.out + done.err
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "crate::write",
+        "other::assert",
+        "self::vec",
+        "std::fmt::format",
+        "::assert_eq",
+        "x::std::vec",
+    ],
+)
+def test_a_listed_name_with_another_path_fails(tree: Tree, call: str) -> None:
+    """Such a call can name a macro of this workspace or of another crate.
+    The failure line holds the call with its path."""
+    tree.names(FULL)
+    tree.write(FULL, _source(f"let _ = {call}!(n);"))
+
+    done = tree.check(ALL_RAN)
+
+    assert _failed(done, _calls(call, "2")), done.out + done.err
+
+
+def test_a_file_outside_the_list_can_hold_each_text(tree: Tree) -> None:
+    tree.names(FULL)
+    tree.write(PART, f"{TWICE}{_source('let _ = matches!(n, 2);', 'crate::rule!(n);')}")
+
+    done = tree.check(ALL_RAN)
+
+    assert _passed(done), done.out + done.err
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "let differs = a != (b);",
+        "let differs = a!=(b);",
+        "if !(ok) {}",
+        "/// Says if `n` matches the pattern. The word matches is no call here.",
+        "#![forbid(unsafe_code)]",
+        "#[derive(Debug)]",
+        "#[test]",
+    ],
+)
+def test_text_that_is_no_call_passes(tree: Tree, line: str) -> None:
+    """`!` is also the operator that negates a value, and it starts `!=`. An
+    attribute is no call: the check reads no code that an attribute adds."""
+    tree.names(FULL)
+    tree.write(FULL, _source(line))
+
+    done = tree.check(ALL_RAN)
+
+    assert _passed(done), done.out + done.err
+
+
+@pytest.mark.parametrize(
+    ("line", "call", "end"),
+    [
+        ("// matches!(n, 2) is no code of this file", "matches", TWO_ARMS),
+        ('let text = "all done!(n)";', "done", SEE_RULE),
+    ],
+    ids=["a comment", "a string"],
+)
+def test_a_call_in_a_comment_or_in_a_string_fails(
+    tree: Tree, line: str, call: str, end: str
+) -> None:
+    """The check reads the text of a file and does not parse it, as the check
+    for `coverage(off)` does."""
+    tree.names(FULL)
+    tree.write(FULL, _source(line))
+
+    done = tree.check(ALL_RAN)
+
+    assert _failed(done, _calls(call, "2", end)), done.out + done.err
+
+
+def test_each_macro_outside_the_list_has_one_failure_line(tree: Tree) -> None:
+    """Line 4 calls `matches!` two times, and the failure line names it one
+    time."""
+    tree.names(FULL)
+    tree.write(
+        FULL,
+        _source(
+            "let first = matches!(n, 2);",
+            "own![n];",
+            "let last = matches!(n, 3) || matches!(n, 4);",
+        ),
+    )
+
+    done = tree.check(ALL_RAN)
+
+    assert _failed(done, _calls("matches", "2, 4", TWO_ARMS), _calls("own", "3")), (
+        done.out + done.err
+    )
+
+
+@pytest.mark.parametrize(
+    ("line", "said"),
+    [
+        ("// macro_rules! in a comment", f"{FULL}: {DEFINES} {{lines}}"),
+        ("own![0];", _calls("own", "{lines}")),
+    ],
+    ids=["macro_rules!", "a call"],
+)
+def test_a_line_of_the_third_check_names_twenty_places_at_most(
+    tree: Tree, line: str, said: str
+) -> None:
+    """The file holds the text on 25 lines."""
+    tree.names(FULL)
+    tree.write(FULL, f"{line}\n" * 25)
+    first = ", ".join(str(number) for number in range(1, 21))
+
+    done = tree.check(ALL_RAN)
+
+    assert _failed(done, said.format(lines=f"{first} and 5 more")), done.out + done.err
+
+
+def test_one_run_reports_each_case_of_the_third_check(tree: Tree) -> None:
+    """The file also has two regions that no test ran. The run reports each
+    failure of each check, and not only the first one."""
+    tree.names(FULL)
+    tree.write(FULL, f"#[coverage(off)]\n{TWICE}{_source('matches!(n, 2);')}")
+
+    done = tree.check(_report(_entry(FULL, segments=MISSED)))
+
+    assert _failed(
+        done,
+        f"{FULL}: the file holds the text `coverage(off)`",
+        f"{FULL}: {DEFINES} 2",
+        _calls("matches", "8", TWO_ARMS),
+        f"{FULL}: {MISSED_REGIONS}",
+        f"{FULL}: {MISSED_LINES}",
+    ), done.out + done.err
+
+
+def test_the_script_holds_the_macros_of_this_file() -> None:
+    """The closed list has a copy here. A name that only the script holds
+    would pass with no test of it, and with no measurement."""
+    found = [
+        node.value
+        for node in ast.parse(_program()).body
+        if isinstance(node, ast.Assign)
+        and [target.id for target in node.targets if isinstance(target, ast.Name)]
+        == ["MEASURED_MACROS"]
+    ]
+
+    assert len(found) == 1
+    (made,) = found
+    assert isinstance(made, ast.Call)
+    assert ast.unparse(made.func) == "frozenset"
+    (names,) = made.args
+    assert ast.literal_eval(names) == set(MEASURED_MACROS)
+    assert len(MEASURED_MACROS) == len(set(MEASURED_MACROS))
+
+
+@pytest.mark.docs
+def test_the_rule_text_names_each_macro_of_the_list() -> None:
+    """The rule text has the third copy of the closed list, in one paragraph
+    that names no other macro."""
+    text = (BIN.parent / RULE_TEXT).read_text(encoding="utf-8")
+    section = text.split(RULE_HEAD, 1)[1].split("\n## ", 1)[0]
+    paragraphs = [one for one in section.split("\n\n") if one.startswith(CLOSED_LIST)]
+
+    assert len(paragraphs) == 1
+    assert sorted(re.findall(r"`([a-z_]+)!`", paragraphs[0])) == sorted(MEASURED_MACROS)
 
 
 # --- rule 4: the list names each file of the pure decision crate --------------

@@ -21,7 +21,12 @@
 # rust/coverage-files.txt is the list. The check fails in four cases:
 #   1. a region or a line of a listed file ran in no test
 #   2. a listed file is not in the report
-#   3. a listed file holds the text `coverage(off)`
+#   3. a listed file holds text that takes code out of the measurement:
+#      a. the text `coverage(off)`
+#      b. the text `macro_rules!`
+#      c. a call of a macro that the closed list MEASURED_MACROS does not
+#         hold, or a call of a listed macro through another path than that
+#         of `std`, `core` or `alloc`
 #   4. rust/crates/chaperone-policy/src holds a .rs file that is not in the
 #      list. Before that directory exists, this case cannot occur
 # The check reads counts and no percent: a percent can round to 100. It takes
@@ -97,6 +102,7 @@ check_report() {
   python3 -I - "$@" <<'PY'
 from __future__ import annotations
 
+import bisect
 import enum
 import json
 import os
@@ -131,6 +137,54 @@ RUST_FILE = ".rs"
 #: The text that takes an item out of the measurement, in each attribute
 #: that holds it: `#[coverage(off)]`, `#![coverage(off)]` and `cfg_attr`.
 NO_COVERAGE = "coverage(off)"
+
+#: The text that defines a macro. The report holds no region for a block in
+#: the body of a macro, so it shows no side of an `if` there.
+MACRO_RULES = "macro_rules!"
+
+#: The closed list: each macro that a listed file can call. A measurement on
+#: the toolchain of rust/rust-toolchain.toml gave each name its place here,
+#: and the rule file holds the results. Add a name only after such a
+#: measurement.
+#:
+#: The bodies of `format`, `vec`, `write` and `writeln` hold no condition, so
+#: they hold no side that the report hides. Each assertion macro has a
+#: condition on its arguments. The false side is a panic, and the report
+#: holds no region for it. The three assertion macros are in the list for
+#: test code only: there, the false side ends the test. In code outside a
+#: test, that side is a path that no check finds, so the reviewer refuses an
+#: assertion there.
+MEASURED_MACROS = frozenset(
+    {"assert", "assert_eq", "assert_ne", "format", "vec", "write", "writeln"}
+)
+
+#: The paths that a call of a listed macro can have: none, or one of the
+#: three crates of the toolchain that hold those macros, also with `::` at
+#: the start. Each other path can name another macro with a listed name, in
+#: this workspace or in another crate.
+MACRO_PATHS = frozenset({"", "std::", "core::", "alloc::", "::std::", "::core::", "::alloc::"})
+
+#: The macro whose failure line says what to write in its place. Its arm
+#: that matches is no region of the report.
+TWO_ARMS_MACRO = "matches"
+TWO_ARMS = "Write a `match` with two arms in its place"
+
+#: One byte of a name. Each byte outside ASCII counts as a letter. A name
+#: with such a character is then one name, and the closed list does not hold
+#: it.
+LETTER = rb"[A-Za-z0-9_\x80-\xff]"
+
+#: A call of a macro, in the form that `cargo fmt` writes: a path or none,
+#: the name, `!` with no space before it, then the bracket. Group 1 is the
+#: path: each of its names with `::` after it, also with `::` at the start.
+#: Group 2 is the name. `a != (b)` and `if !(ok)` are no call, and
+#: `macro_rules! name {` is none. A match starts at the start of a path and
+#: not inside one, so the time of the search grows with the size of the file
+#: and no faster.
+CALL = re.compile(
+    rb"(?<!" + LETTER + rb")(?<!::)"
+    rb"((?:::)?(?:" + LETTER + rb"+::)*)(" + LETTER + rb"+)![ \t\r\n]*[(\[{]"
+)
 
 #: What follows the Rust directory in a path of the list: one segment or
 #: more, then the name of a `.rs` file. A segment starts with a letter, a
@@ -188,6 +242,13 @@ class Counts(NamedTuple):
 NOTHING = Counts(0, 0)
 
 
+def shown(places: tuple[str, ...]) -> str:
+    """The first places of a failure line, and how many more there are."""
+    more = len(places) - MOST_PLACES
+
+    return ", ".join(places[:MOST_PLACES]) + (f" and {more} more" if more > 0 else "")
+
+
 class Sums(NamedTuple):
     """The counts of one file of the report, or of some files together."""
 
@@ -219,9 +280,7 @@ class Part(NamedTuple):
 
     def shown(self) -> str:
         """The first places, and how many more the file has."""
-        more = len(self.places) - MOST_PLACES
-
-        return ", ".join(self.places[:MOST_PLACES]) + (f" and {more} more" if more > 0 else "")
+        return shown(self.places)
 
 
 class File(NamedTuple):
@@ -480,12 +539,53 @@ def read_list(root: str, rust_dir: str) -> tuple[list[str], list[str]]:
     return paths, problems
 
 
-def _holds_text(path: str, text: str) -> bool:
+def _bytes(path: str) -> bytes:
     try:
         with open(path, "rb") as file:
-            return text.encode("ascii") in file.read()
+            return file.read()
     except OSError as why:
         raise Refused(f"cannot read a file of the list: {why}") from why
+
+
+def _lines_at(ends: list[int], places: list[int]) -> tuple[str, ...]:
+    """The line number of each byte offset of `places`, in the order of the
+    file. `ends` holds the offset of each newline. A line that holds two
+    places has its number one time."""
+    return tuple(dict.fromkeys(str(bisect.bisect_left(ends, at) + 1) for at in places))
+
+
+def check_text(name: str, text: bytes, rule_text: str) -> list[str]:
+    """Each case of the third check that the text of one listed file breaks.
+    The check reads bytes and parses no Rust, so a comment and a string count
+    too. `rule_text` says where the closed list is."""
+    problems: list[str] = []
+    if NO_COVERAGE.encode("ascii") in text:
+        problems.append(f"{name}: the file holds the text `{NO_COVERAGE}`")
+
+    ends = [found.start() for found in re.finditer(rb"\n", text)]
+    defined = [found.start() for found in re.finditer(re.escape(MACRO_RULES.encode("ascii")), text)]
+    if defined:
+        problems.append(
+            f"{name}: the file holds the text `{MACRO_RULES}`. "
+            f"The lines are {shown(_lines_at(ends, defined))}"
+        )
+
+    # One failure line for each call outside the closed list, in the order of
+    # the file. The key is the path and the name of the call.
+    outside: dict[tuple[str, str], list[int]] = {}
+    for found in CALL.finditer(text):
+        path, macro = (part.decode("ascii", "backslashreplace") for part in found.groups())
+        if macro not in MEASURED_MACROS or path not in MACRO_PATHS:
+            outside.setdefault((path, macro), []).append(found.start())
+
+    for (path, macro), places in outside.items():
+        advice = TWO_ARMS if macro == TWO_ARMS_MACRO else rule_text
+        problems.append(
+            f"{name}: the file calls `{path}{macro}!`, which the closed list of the macros "
+            f"does not permit. {advice}. The lines are {shown(_lines_at(ends, places))}"
+        )
+
+    return problems
 
 
 def check_listed(
@@ -496,9 +596,8 @@ def check_listed(
     if not os.path.isfile(on_disk):
         return [f"{name}: the list names this path, and it is not a file"]
 
-    problems: list[str] = []
-    if _holds_text(on_disk, NO_COVERAGE):
-        problems.append(f"{name}: the file holds the text `{NO_COVERAGE}`")
+    rule_text = f'{rust_dir}/{RULE_FILE}, "{RULE_SECTION}", has the list'
+    problems = check_text(name, _bytes(on_disk), rule_text)
 
     # CONTRACT-QUESTION: rust/AGENTS.md, "The coverage rule", check 2. The
     # rule does not say what a listed file with no function is. A report
