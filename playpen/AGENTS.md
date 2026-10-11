@@ -308,6 +308,10 @@ Three test seams exist and nothing in the image sets them: `AGENT_PI_BIN`,
   playpen takes the grammar of the Rust type `PlaneUrl`. A test table holds
   the two readers equal, and no check compares the two tables
   (`test/planes.test.ts`).
+- Contract 03 §7 does not say if a reader removes the space at the two ends
+  of a plane variable. The playpen removes none, so a value with such a
+  space is not a plane URL. The Rust config reader of a daemon removes that
+  space before its parse (`src/planes.ts`).
 - The terminal launcher writes no line for a plane variable that gives no
   URL. It has no channel. The playpen of the same sandbox reads the same env
   file and writes the line (`src/pi-launch.ts`).

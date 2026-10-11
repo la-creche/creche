@@ -255,6 +255,12 @@ function readPlane(env: NodeJS.ProcessEnv, plane: Plane): PlaneRead {
  * An empty value counts as an absent variable, as it does for the three
  * directories of `mounts.ts`. A value keeps each byte: the reader removes no
  * space, so a value with a space is not valid.
+ *
+ * CONTRACT-QUESTION: contract 03 §7 does not say if a reader removes the
+ * space at the two ends of a value. The reading here is the strict one: the
+ * reader removes none. The Rust config reader of a daemon removes that space
+ * before its parse (`rust/crates/creche-contracts/src/config.rs`). The other
+ * reading costs one `trim` here and each test row with such a space.
  */
 export function readPlaneUrls(env: NodeJS.ProcessEnv): PlaneReading {
   const pep = readPlane(env, Plane.Pep);
