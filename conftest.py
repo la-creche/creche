@@ -246,11 +246,12 @@ def _home_holds_no_git_config(
     writer has a time limit, and under load such a child can run for longer.
     bin/tests/test_git_config_dropped.py holds the proof.
 
-    Each other test keeps its `HOME`, so this fixture does not bind each test.
+    This fixture does not give each test of the repository an empty `HOME`.
     Some tests give the `HOME` of the process to a real tool, and that tool
     finds its own files there. One test starts `cargo` that way, and rustup
     finds its toolchains below `HOME`
-    (handover/tests/test_handover_bin_cargo_guard.py).
+    (handover/tests/test_handover_bin_cargo_guard.py). Each test outside
+    `GIT_WITH_HOME` thus keeps its `HOME`.
 
     This fixture cannot change the config file of the system. The child keeps
     no variable that names another file, so it still reads that file.
