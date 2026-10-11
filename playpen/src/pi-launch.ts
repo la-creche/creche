@@ -42,6 +42,7 @@ import { writeModelsJson } from "./models-json.js";
 import { readMountDirs, MountState } from "./mounts.js";
 import { bridgeAt, buildPiStart, PiMode } from "./pi-args.js";
 import { writePiSettings } from "./pi-settings.js";
+import { readPlaneUrls } from "./planes.js";
 import { ProcessRecords } from "./process-record.js";
 import { readRuntimeConfig } from "./runtime-config.js";
 
@@ -269,13 +270,18 @@ export async function planLaunch(options: LaunchOptions): Promise<LaunchPlan> {
     PiMode.Interactive,
   );
 
+  // The same two variables that the pool reads, through the same reader. A
+  // variable that gives no URL gives the URL of the build, and the playpen of
+  // this sandbox reports it on the channel. A terminal has no channel.
+  const planes = readPlaneUrls(options.env).urls;
+
   // The same two documents the pool writes, in the same directory, from the
   // same family config: a terminal whose `defaultTools` differed would have a
   // different set of built-ins from the chat, which is the hole `pi-args.ts`
   // exists to close. Neither file has a flag pointing elsewhere, so both have
   // to be there before pi starts.
   mkdirSync(sessionDir, { recursive: true });
-  writeModelsJson(sessionDir, start.models);
+  writeModelsJson(sessionDir, start.models, planes.litellm);
   writePiSettings(sessionDir, config);
 
   return {
@@ -292,6 +298,7 @@ export async function planLaunch(options: LaunchOptions): Promise<LaunchPlan> {
       sandbox: args.sandbox,
       session: args.session,
       creds,
+      planes,
     }),
   };
 }
