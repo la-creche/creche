@@ -35,13 +35,21 @@ macro_rules! words {
             $($(#[$variant_attribute])* $variant,)+
         }
 
+        impl $name {
+            /// The name as the wire holds it. A `const fn` can call this
+            /// function, and it cannot call [`Word::as_str`].
+            pub(super) const fn text(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $text,)+
+                }
+            }
+        }
+
         impl Word for $name {
             const ALL: &'static [Self] = &[$(Self::$variant,)+];
 
             fn as_str(self) -> &'static str {
-                match self {
-                    $(Self::$variant => $text,)+
-                }
+                self.text()
             }
         }
 
@@ -254,6 +262,9 @@ words! {
         ControlMountUnwritable => "control_mount_unwritable",
         /// The environment does not name one of the three directories.
         MountDirUnset => "mount_dir_unset",
+        /// The environment gives no valid URL of a plane
+        /// ([`PlaneUrl`](crate::config::endpoints::PlaneUrl)).
+        PlaneUrlInvalid => "plane_url_invalid",
     }
 }
 
@@ -343,7 +354,11 @@ mod tests {
             "get_entries",
             "stop_ack",
         ]);
-        round_trip::<FatalReason>(&["control_mount_unwritable", "mount_dir_unset"]);
+        round_trip::<FatalReason>(&[
+            "control_mount_unwritable",
+            "mount_dir_unset",
+            "plane_url_invalid",
+        ]);
         round_trip::<WorkspaceKind>(&["code-sandbox"]);
     }
 

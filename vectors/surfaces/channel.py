@@ -585,6 +585,7 @@ LINES: Final[tuple[Line, ...]] = (
     _l("fatal-reason-number", _line(type="fatal", reason=5, message=5)),
     _l("fatal-message-4097", _line(type="fatal", message="m" * 4097)),
     _l("fatal-mount-dir-unset", _line(type="fatal", reason="mount_dir_unset")),
+    _l("fatal-plane-url-invalid", _line(type="fatal", reason="plane_url_invalid")),
     # --- process_stopped (§4.5) ---
     _l(
         "stopped-full",
