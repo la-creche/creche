@@ -522,6 +522,11 @@ contract holds the raw type of its file kind, and that module calls `read`
    recursion.
 7. The shape. `serde` fills the raw type.
 
+Before check 4, `read` replaces each CR LF of the text with an LF. A CR
+that is left gives `NotToml`: only a CR LF is a line end. A CR LF inside a
+multi-line string is thus one LF in the value. "Known gaps" has the
+question.
+
 | `FileKind` | The limit in bytes |
 |---|---|
 | `Family` | 65536 |
@@ -608,6 +613,8 @@ again after a change of the version.
    table `c` into the last item of the list. No TOML version permits that
    key, and the TOML reader of the Python standard library refuses it.
    Check 4 refuses it.
+8. **The crate keeps the CR of a CR LF inside a multi-line string.** `read`
+   gives the crate a text with no CR, so a raw type gets one LF there.
 
 More rules for a raw type of a TOML file:
 
@@ -1845,6 +1852,14 @@ To make the fifth check on your machine, for example before a merge:
      `read` refuses. `write` takes the strict reading: it gives
      `TomlWriteFault::NotReadable`. The other reading writes each value
      that the crate writes. A change costs one call in `write`.
+  4. `tree_of`, TOML 1.0. The specification lets a reader change a line
+     end inside a multi-line string. The value of a CR LF there is thus
+     CR LF for one reader and LF for another. The crate `toml` keeps the
+     CR, and the TOML reader of the Python standard library gives one LF.
+     `read` gives one LF, so each reader of a file kind gives one value.
+     The other reading refuses a CR LF inside a multi-line string. It
+     costs one check in the module and one check in each Python reader.
+     Three vectors of `tomlfile.syntax` then move.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. One function of `crates/creche-contracts/src/json/scan.rs`

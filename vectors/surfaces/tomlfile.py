@@ -65,6 +65,9 @@ TAKEN: Final[tuple[Text, ...]] = (
     Text("comment-only", "# a comment\n"),
     Text("no-final-line-end", "a = 1"),
     Text("line-ends-cr-lf", "a = 1\r\nb = 2\r\n"),
+    Text("cr-lf-in-a-multi-line-basic-string", 'a = """one\r\ntwo"""\r\n'),
+    Text("cr-lf-in-a-multi-line-literal-string", "a = '''one\r\ntwo'''\r\n"),
+    Text("cr-lf-after-the-opening-quotes", 'a = """\r\none"""\r\n'),
     Text("keys-not-in-sorted-order", "zeta = 1\nalpha = 2\nmiddle = 3\n"),
     Text("key-forms", 'bare-key_1 = 1\n"quoted key" = 2\n\'literal.key\' = 3\n"" = 4\n1 = 5\n'),
     Text("dotted-keys", "a.b.c = 1\na.b.d = 2\na.e = 3\n"),
@@ -159,6 +162,10 @@ NOT_TAKEN: Final[tuple[Text, ...]] = (
     Text("list-with-no-end", "a = [1, 2\n"),
     Text("inline-table-with-no-end", "a = {b = 1\n"),
     Text("date-that-no-month-has", "a = 1979-02-30\n"),
+    # --- a CR that is no part of a CR LF ---
+    Text("cr-before-a-cr-lf", "a = 1\r\r\n"),
+    Text("cr-with-no-lf", "a = 1\rb = 2\n"),
+    Text("cr-with-no-lf-in-a-multi-line-string", 'a = """one\rtwo"""\n'),
 )
 
 
@@ -233,6 +240,8 @@ def surfaces() -> tuple[Surface, ...]:
                 f"the kind of the date-time: {OFFSET_DATE_TIME}, {LOCAL_DATE_TIME}, {LOCAL_DATE} "
                 f"or {LOCAL_TIME}. TOML has no null, so no table of a text has that form. No "
                 "vector holds a part of the value of a date-time.",
+                "A CR LF is one line end. In value, a CR LF inside a multi-line string is one "
+                "LF. A CR with no LF after it is in no accepted text.",
                 "A float that is not finite is a $float marker. The sign of a zero is a part of "
                 "a float: compare 0.0 and -0.0 as two values.",
                 "No vector holds a form that TOML 1.1 added, an integer outside 64 bits, a float "

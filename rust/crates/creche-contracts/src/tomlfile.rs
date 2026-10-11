@@ -38,6 +38,12 @@
 //! the stack for each table of a deep text, and check 4 refuses that text
 //! first. A stack that overflows ends the process, and no fault says so.
 //!
+//! Before check 4, `read` replaces each CR LF of the text with an LF. A CR
+//! that is left gives `NotToml`: only a CR LF is a line end. A CR LF inside
+//! a multi-line string is thus one LF in the value. The crate keeps the CR
+//! there. The TOML reader of the Python standard library gives one LF, as
+//! `read` does.
+//!
 //! No limit counts the values of a file. A TOML text has no alias, so the
 //! size limit bounds the count. Each grammar holds its own caps.
 //!
@@ -112,6 +118,14 @@ const ROSTER_BYTES: usize = 1048576;
 /// The most levels of a text, for each file kind. The deepest file of the
 /// four kinds in this repository has 5 levels.
 const LEVEL_MAX: u8 = 8;
+
+/// The line end of two characters, and the line end that the reader gives
+/// to the checks in its place.
+const CR_LF: &str = "\r\n";
+const LF: &str = "\n";
+
+/// A carriage return. Outside a CR LF it is no part of a TOML text.
+const CR: char = '\r';
 
 impl FileKind {
     /// The most bytes of a file of this kind.
@@ -321,7 +335,8 @@ enum Node {
     Table(BTreeMap<String, Node>),
 }
 
-/// The checks 4, 5 and 6 of `read`: the tree of a text.
+/// The checks 4, 5 and 6 of `read`: the tree of a text. Each check reads
+/// the text with an LF in the place of each CR LF.
 //
 // CONTRACT-QUESTION: TOML 1.0 gives a float 64 bits. It does not say what a
 // reader does with a text outside that range, for example `1e999`. The
@@ -330,8 +345,18 @@ enum Node {
 // The TOML reader of the Python standard library reads the text as an
 // infinity, so no vector holds one. The other reading costs a float parser
 // in this module, because the crate has no switch.
+//
+// CONTRACT-QUESTION: TOML 1.0, the multi-line strings. A reader can change
+// a line end inside such a string to the line end of its platform. The
+// value of a CR LF there is thus CR LF for one reader and LF for another:
+// the crate keeps the CR, and the TOML reader of the Python standard
+// library gives an LF. The reading here is one LF, so each reader of a file
+// kind gives one value. The other reading refuses a CR LF inside a
+// multi-line string. It costs a check here and a check in each Python
+// reader, and three vectors of the surface `tomlfile.syntax` move.
 fn tree_of(text: &str) -> Result<Node, TomlFault> {
-    if !toml10::holds(text, u32::from(LEVEL_MAX)) {
+    let text = text.replace(CR_LF, LF);
+    if text.contains(CR) || !toml10::holds(&text, u32::from(LEVEL_MAX)) {
         return Err(TomlFault::NotToml);
     }
     let table: toml::Table = text.parse().map_err(|_| TomlFault::NotToml)?;
@@ -1003,6 +1028,42 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_cr_lf_is_one_line_feed_and_each_other_cr_is_refused() {
+        let text_of = |value: &str| Ok(table([("a", Seen::Text(value.to_owned()))]));
+
+        // The crate keeps the CR of a CR LF inside a multi-line string.
+        let by_crate: toml::Table = "a = \"\"\"one\r\ntwo\"\"\"\n".parse().unwrap();
+        assert_eq!(
+            by_crate.get("a"),
+            Some(&toml::Value::String("one\r\ntwo".to_owned()))
+        );
+
+        assert_eq!(seen("a = \"\"\"one\r\ntwo\"\"\"\r\n"), text_of("one\ntwo"));
+        assert_eq!(seen("a = '''one\r\ntwo'''\r\n"), text_of("one\ntwo"));
+        assert_eq!(seen("a = \"\"\"\r\none\"\"\"\n"), text_of("one"));
+        assert_eq!(
+            seen("a = \"\"\"one \\\r\n   two\"\"\"\n"),
+            text_of("one two")
+        );
+        // The escape of a CR is no CR of the text.
+        assert_eq!(seen("a = \"one\\r\\ntwo\"\n"), text_of("one\r\ntwo"));
+
+        // The first text is a CR and then a CR LF. With each CR LF as one LF,
+        // the text is `a = 1` and a CR LF, which the crate reads.
+        let refused = [
+            "a = 1\r\r\n",
+            "a = 1\r",
+            "a = \"\"\"one\rtwo\"\"\"\n",
+            "a = '''one\rtwo'''\n",
+            "a = [1,\r 2]\n",
+            "# one\rtwo\n",
+        ];
+        for text in refused {
+            assert!(!is_toml(text), "{text:?}");
+        }
+    }
+
     // --- check 7: what a raw type gets ---------------------------------------
 
     #[test]
@@ -1518,8 +1579,10 @@ mod tests {
                     "{id}"
                 );
 
-                // The reader gives no kind of a date-time. The crate does.
-                let table: toml::Table = std::str::from_utf8(&bytes).unwrap().parse().unwrap();
+                // The reader gives no kind of a date-time. The crate does,
+                // for the text that the reader gives it: each CR LF is an LF.
+                let text = std::str::from_utf8(&bytes).unwrap().replace(CR_LF, LF);
+                let table: toml::Table = text.parse().unwrap();
                 assert_eq!(
                     text_of(&crate_json(&toml::Value::Table(table))),
                     text_of(wanted),

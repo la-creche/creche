@@ -3,7 +3,7 @@
  "contract": "TOML 1.0.0",
  "entry": "tomllib.loads",
  "format": 1,
- "notes": ["The input is the text of one file. The entry point takes that text. A reader that takes bytes gets the UTF-8 bytes of the text.","The entry point is the TOML reader of the Python standard library. No product code reads TOML yet.","An accepted vector is a text that the entry point reads. value is the table that it gives.","A refused vector is a text for which the entry point raises TOMLDecodeError. No vector holds the message.","A date-time in value is an object with one key and the value null. The key is the kind of the date-time: offset date-time, local date-time, local date or local time. TOML has no null, so no table of a text has that form. No vector holds a part of the value of a date-time.","A float that is not finite is a $float marker. The sign of a zero is a part of a float: compare 0.0 and -0.0 as two values.","No vector holds a form that TOML 1.1 added, an integer outside 64 bits, a float whose text is outside the range of a float or a text with more than 8 levels. A reader of a file kind refuses each one."],
+ "notes": ["The input is the text of one file. The entry point takes that text. A reader that takes bytes gets the UTF-8 bytes of the text.","The entry point is the TOML reader of the Python standard library. No product code reads TOML yet.","An accepted vector is a text that the entry point reads. value is the table that it gives.","A refused vector is a text for which the entry point raises TOMLDecodeError. No vector holds the message.","A date-time in value is an object with one key and the value null. The key is the kind of the date-time: offset date-time, local date-time, local date or local time. TOML has no null, so no table of a text has that form. No vector holds a part of the value of a date-time.","A CR LF is one line end. In value, a CR LF inside a multi-line string is one LF. A CR with no LF after it is in no accepted text.","A float that is not finite is a $float marker. The sign of a zero is a part of a float: compare 0.0 and -0.0 as two values.","No vector holds a form that TOML 1.1 added, an integer outside 64 bits, a float whose text is outside the range of a float or a text with more than 8 levels. A reader of a file kind refuses each one."],
  "surface": "tomlfile.syntax",
  "vectors": [
   {"id":"empty","input":{"text":""},"result":"accepted","value":{}},
@@ -11,6 +11,9 @@
   {"id":"comment-only","input":{"text":"# a comment\n"},"result":"accepted","value":{}},
   {"id":"no-final-line-end","input":{"text":"a = 1"},"result":"accepted","value":{"a":1}},
   {"id":"line-ends-cr-lf","input":{"text":"a = 1\r\nb = 2\r\n"},"result":"accepted","value":{"a":1,"b":2}},
+  {"id":"cr-lf-in-a-multi-line-basic-string","input":{"text":"a = \"\"\"one\r\ntwo\"\"\"\r\n"},"result":"accepted","value":{"a":"one\ntwo"}},
+  {"id":"cr-lf-in-a-multi-line-literal-string","input":{"text":"a = '''one\r\ntwo'''\r\n"},"result":"accepted","value":{"a":"one\ntwo"}},
+  {"id":"cr-lf-after-the-opening-quotes","input":{"text":"a = \"\"\"\r\none\"\"\"\r\n"},"result":"accepted","value":{"a":"one"}},
   {"id":"keys-not-in-sorted-order","input":{"text":"zeta = 1\nalpha = 2\nmiddle = 3\n"},"result":"accepted","value":{"alpha":2,"middle":3,"zeta":1}},
   {"id":"key-forms","input":{"text":"bare-key_1 = 1\n\"quoted key\" = 2\n'literal.key' = 3\n\"\" = 4\n1 = 5\n"},"result":"accepted","value":{"":4,"1":5,"bare-key_1":1,"literal.key":3,"quoted key":2}},
   {"id":"dotted-keys","input":{"text":"a.b.c = 1\na.b.d = 2\na.e = 3\n"},"result":"accepted","value":{"a":{"b":{"c":1,"d":2},"e":3}}},
@@ -80,6 +83,9 @@
   {"id":"table-header-with-no-end","input":{"text":"[a\nb = 1\n"},"result":"refused"},
   {"id":"list-with-no-end","input":{"text":"a = [1, 2\n"},"result":"refused"},
   {"id":"inline-table-with-no-end","input":{"text":"a = {b = 1\n"},"result":"refused"},
-  {"id":"date-that-no-month-has","input":{"text":"a = 1979-02-30\n"},"result":"refused"}
+  {"id":"date-that-no-month-has","input":{"text":"a = 1979-02-30\n"},"result":"refused"},
+  {"id":"cr-before-a-cr-lf","input":{"text":"a = 1\r\r\n"},"result":"refused"},
+  {"id":"cr-with-no-lf","input":{"text":"a = 1\rb = 2\n"},"result":"refused"},
+  {"id":"cr-with-no-lf-in-a-multi-line-string","input":{"text":"a = \"\"\"one\rtwo\"\"\"\n"},"result":"refused"}
  ]
 }
