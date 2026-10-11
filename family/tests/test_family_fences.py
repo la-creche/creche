@@ -78,6 +78,26 @@ def test_a_pattern_takes_no_final_newline(name: str) -> None:
     assert pattern.match(SAMPLES[name] + "\n") is None
 
 
+#: The longest text that each pattern with a size limit takes.
+LONGEST = {
+    "TOOL_NAME": "a" * 64,
+    "ENV_VAR_NAME": "A" * 64,
+    "EXACT_VERSION": "1" * 64,
+}
+
+
+@pytest.mark.parametrize("name", LONGEST)
+def test_a_pattern_takes_64_characters_at_most(name: str) -> None:
+    pattern: re.Pattern[str] = getattr(grammar, name)
+    assert pattern.fullmatch(LONGEST[name]) is not None
+    assert pattern.fullmatch(LONGEST[name] + LONGEST[name][0]) is None
+
+
+@pytest.mark.parametrize("version", ["1.0.0-rc1", "1.0.0+local"])
+def test_a_version_holds_no_sign(version: str) -> None:
+    assert grammar.EXACT_VERSION.fullmatch(version) is None
+
+
 # --- 3.1 name, kind, description -------------------------------------------
 
 IDENTITY_CASES = (
@@ -208,6 +228,16 @@ TOOLS_CASES: tuple[tuple[dict[str, Any], str], ...] = (
 def test_tools_fences(tools: dict[str, object], expect: str) -> None:
     report = check("chat", tools=tools)
     assert expect in messages(report)
+
+
+def test_a_granted_tool_name_has_64_characters_at_most() -> None:
+    """The family file and the server file read one grammar for a tool name."""
+    short, long = "a" * 64, "a" * 65
+    report = check("chat", tools={"kagi": [short]})
+    assert "is not a tool name" not in messages(report)
+
+    report = check("chat", tools={"kagi": [long]})
+    assert f"'{long}' is not a tool name; use [A-Za-z][A-Za-z0-9_-]{{0,63}}" in messages(report)
 
 
 def test_all_is_refused_on_an_autonomous_family() -> None:

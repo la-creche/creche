@@ -106,6 +106,7 @@ async def test_a_dropped_client_still_settles(stack: Stack) -> None:
     frames = await _run_stream(stack, chat, "second")
 
     assert frames.ends_with_done
+    await _await_settled(stack, session, 2)
     kinds = _kinds(stack, session)
     assert kinds.count(TURN_STARTED) == 2
     assert kinds.count(TURN_SETTLED) == 2
@@ -374,7 +375,7 @@ async def _read_rest(chunks: AsyncIterator[str]) -> str:
     return "".join([chunk async for chunk in chunks])
 
 
-async def _await_settled(stack: Stack, session: str) -> None:
+async def _await_settled(stack: Stack, session: str, count: int = 1) -> None:
     """Wait for the host journal, which lands AFTER the client's `[DONE]`.
 
     The door closes its stream on pi's own `agent_settled` event.
@@ -382,10 +383,13 @@ async def _await_settled(stack: Stack, session: str) -> None:
     `turn_settled` message arrives, which is later. A test that reads the
     journal the instant a stream ends is reading too early, and so is any
     other reader.
+
+    The wait ends when the journal holds `count` lines of `turn_settled` or
+    more. A test that ran `count` turns in one session gives that number.
     """
     await until(
-        lambda: TURN_SETTLED in _kinds(stack, session),
-        f"{session} to reach {TURN_SETTLED}",
+        lambda: _kinds(stack, session).count(TURN_SETTLED) >= count,
+        f"{session} to reach a count of {count} for {TURN_SETTLED}",
         SETTLE_TIMEOUT_S,
     )
 

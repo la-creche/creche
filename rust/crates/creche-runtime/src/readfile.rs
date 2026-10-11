@@ -10,7 +10,8 @@
 //! `noticeboard/src/noticeboard/jsonfiles.py:41-67` and
 //! `attendance/src/attendance/atomic.py:64-91`. They differ in the cap, in
 //! the order of the stat and the read, and in what they do with a symlink.
-//! The table `DEVIATIONS` in the tests of this module names each difference.
+//! The doc comment of [`read_capped`] says what the function does in another
+//! way than each copy.
 //!
 //! [`read_capped`] opens the path one time. It reads the facts and the bytes
 //! from that open file, so the facts and the bytes are of one file.
@@ -303,6 +304,40 @@ impl Error for ReadRefusal {}
 ///   `caregiver/src/caregiver/faults.py:116` calls, and
 ///   `caregiver/src/caregiver/mcp_release.py:890-894`.
 ///
+/// The function differs from those readers in these ways:
+///
+/// - `attendance/src/attendance/atomic.py:71-82` reads the size with a stat
+///   of the path and then opens the path for the read. This function opens
+///   the path one time, and the facts and the bytes come from that open
+///   file.
+/// - The same reader checks the size of the stat and then reads the file to
+///   its end (`:76-80`). `caregiver/src/caregiver/released.py:104-107` takes
+///   the bytes of one read call of the cap. This function reads to the end
+///   of the file. It stops one byte past the cap and refuses a file that
+///   gives that byte.
+/// - The open of `noticeboard/src/noticeboard/jsonfiles.py:49-52` waits for
+///   a writer when the path is a FIFO. The open here does not wait. A FIFO
+///   is not a regular file, and the function refuses it.
+/// - The same open fails for a directory, and the reader gives the text of
+///   the system error, `Is a directory` (`:49-58`). The open here succeeds
+///   for a directory. The function refuses it with
+///   [`ReadRefusal::NotAFile`], which holds no text of the system.
+/// - The same reader reads a device as a file: `/dev/null` reads as a file
+///   with no byte. This function refuses a device with
+///   [`ReadRefusal::NotAFile`].
+/// - `handover/src/handover/executor/spool.py:311-351` also checks the owner
+///   of the open file, and it opens the name relative to a directory
+///   descriptor. This function takes a path, and [`FileFacts`] holds no
+///   owner.
+/// - `caregiver/src/caregiver/atomic.py:79-82` and
+///   `caregiver/src/caregiver/mcp_release.py:890-894` have no cap. Each read
+///   here has a cap of 1 byte or more: no value of [`ByteCap`] means no cap.
+/// - `caregiver/src/caregiver/live_manifest.py:158-165` and
+///   `caregiver/src/caregiver/mcp_release.py:832-842` ask if the path is a
+///   symlink with a call of their own, before the stat and the open. With
+///   [`Follow::Refuse`], the open itself refuses a symlink: the check and
+///   the open are one call.
+///
 /// ```
 /// use std::path::Path;
 ///
@@ -438,6 +473,11 @@ fn unreadable(error: &io::Error) -> ReadRefusal {
 /// The `stat` follows a symlink. The Python origin is the `stat` of a cache
 /// that reads a file again only after a change:
 /// `chaperone/src/chaperone/family_grants.py:219-223`.
+///
+/// That cache compares the device, the inode, the size and the time of the
+/// last change (`:226-236`). [`FileFacts`] also holds the mode. A change of
+/// the mode alone makes two values differ, and a cache on the facts then
+/// reads the file again.
 ///
 /// ```
 /// use std::path::Path;
@@ -1059,112 +1099,14 @@ mod tests {
         assert_eq!(os_text(&plain), plain.to_string());
     }
 
-    /// One difference between this module and a Python copy of the read.
-    struct Deviation {
-        /// The Python file and the lines of the copy.
-        python: &'static str,
-        /// What the copy does.
-        copy: &'static str,
-        /// What this module does.
-        here: &'static str,
-        /// The check that this module does what the row says.
-        holds: fn(),
-    }
+    // --- the differences from the Python copies ---
+    //
+    // No vector covers a read of a file. The doc comment of `read_capped`
+    // and of `facts` names the Python lines of each test below.
 
-    const SYMLINK_ASKED_FIRST: &str = "The copy asks if the path is a symlink with a call of \
-        its own, before the stat and the open.";
-
-    const SYMLINK_AT_THE_OPEN: &str = "With Follow::Refuse, the open itself refuses a symlink. \
-        The check and the open are one call.";
-
-    /// Each difference on purpose between [`read_capped`] and a Python copy.
-    /// No vector covers a read of a file, so a row names the Python lines.
-    const DEVIATIONS: &[Deviation] = &[
-        Deviation {
-            python: "attendance/src/attendance/atomic.py:71-82",
-            copy: "The copy reads the size with a stat of the path. Then it opens the path for \
-                   the read.",
-            here: "One open. The facts and the bytes come from that open file.",
-            holds: the_facts_are_of_the_open_file_and_not_of_the_path,
-        },
-        Deviation {
-            python: "attendance/src/attendance/atomic.py:76-80",
-            copy: "The copy checks the size of the stat. Then it reads the file to its end.",
-            here: "The read also stops one byte past the cap, and it refuses a file that gives \
-                   that byte.",
-            holds: a_read_stops_one_byte_past_the_cap,
-        },
-        Deviation {
-            python: "noticeboard/src/noticeboard/jsonfiles.py:49-52",
-            copy: "The open waits for a writer when the path is a FIFO.",
-            here: "The open does not wait. A FIFO is not a regular file, and the read refuses \
-                   it.",
-            holds: a_fifo_is_refused_at_once,
-        },
-        Deviation {
-            python: "noticeboard/src/noticeboard/jsonfiles.py:49-58",
-            copy: "The open of a directory fails, and the copy gives the text of the system \
-                   error: Is a directory.",
-            here: "The open of a directory succeeds. The read refuses it with NotAFile, which \
-                   holds no text of the system.",
-            holds: a_directory_has_no_system_text,
-        },
-        Deviation {
-            python: "noticeboard/src/noticeboard/jsonfiles.py:49-52",
-            copy: "The copy reads a device as a file. The device /dev/null reads as a file \
-                   with no byte.",
-            here: "A device is not a regular file, and the read refuses it with NotAFile.",
-            holds: a_device_is_refused_and_not_read,
-        },
-        Deviation {
-            python: "handover/src/handover/executor/spool.py:311-351",
-            copy: "The copy also checks the owner of the open file, and it opens the name \
-                   relative to a directory descriptor.",
-            here: "read_capped takes a path, and FileFacts holds no owner.",
-            holds: the_facts_hold_no_owner,
-        },
-        Deviation {
-            python: "caregiver/src/caregiver/atomic.py:79-82",
-            copy: "The copy has no cap. caregiver/src/caregiver/faults.py:116 reads a fault \
-                   file of each size with it.",
-            here: "Each read has a cap of 1 byte or more. No value of ByteCap means no cap.",
-            holds: each_read_has_a_cap,
-        },
-        Deviation {
-            python: "caregiver/src/caregiver/mcp_release.py:890-894",
-            copy: "The copy has no cap.",
-            here: "Each read has a cap of 1 byte or more. No value of ByteCap means no cap.",
-            holds: each_read_has_a_cap,
-        },
-        Deviation {
-            python: "caregiver/src/caregiver/live_manifest.py:158-165",
-            copy: SYMLINK_ASKED_FIRST,
-            here: SYMLINK_AT_THE_OPEN,
-            holds: the_open_refuses_a_symlink,
-        },
-        Deviation {
-            python: "caregiver/src/caregiver/mcp_release.py:832-842",
-            copy: SYMLINK_ASKED_FIRST,
-            here: SYMLINK_AT_THE_OPEN,
-            holds: the_open_refuses_a_symlink,
-        },
-        Deviation {
-            python: "caregiver/src/caregiver/released.py:104-107",
-            copy: "The copy takes the bytes of one read call of the cap.",
-            here: "The read continues to the end of the file, and it reads one byte past the \
-                   cap at most.",
-            holds: a_read_stops_one_byte_past_the_cap,
-        },
-        Deviation {
-            python: "chaperone/src/chaperone/family_grants.py:226-236",
-            copy: "The cache compares the device, the inode, the size and the time of the last \
-                   change.",
-            here: "FileFacts also holds the mode. A change of the mode alone makes two values \
-                   differ, and a cache on the facts reads the file again.",
-            holds: a_new_mode_moves_the_facts,
-        },
-    ];
-
+    /// A Python copy reads the size with a stat of the path. Then it opens
+    /// the path for the read.
+    #[test]
     fn the_facts_are_of_the_open_file_and_not_of_the_path() {
         let (root, path) = file_with(b"first");
         let first = facts(&path).unwrap();
@@ -1182,6 +1124,9 @@ mod tests {
         assert_ne!(Some(read_facts), facts(&path));
     }
 
+    /// A Python copy fails at the open of a directory, and it gives the text
+    /// of the system error.
+    #[test]
     fn a_directory_has_no_system_text() {
         let root = TempRoot::new().unwrap();
 
@@ -1193,6 +1138,8 @@ mod tests {
         );
     }
 
+    /// A Python copy reads a device as a file.
+    #[test]
     fn a_device_is_refused_and_not_read() {
         assert_eq!(
             read_capped(Path::new("/dev/null"), cap(8), Follow::Follow),
@@ -1200,12 +1147,15 @@ mod tests {
         );
     }
 
+    /// A Python copy also checks the owner of the open file.
+    #[test]
     fn the_facts_hold_no_owner() {
         let (_root, path) = file_with(b"{}");
         let (_bytes, read_facts) = taken(read_capped(&path, cap(8), Follow::Refuse));
 
         // The pattern names each field of the facts. A new field, for
-        // example an owner, does not build here, and the row then changes.
+        // example an owner, does not build here. The doc comment of
+        // `read_capped` then changes too.
         let FileFacts {
             dev: _,
             ino: _,
@@ -1215,6 +1165,9 @@ mod tests {
         } = read_facts;
     }
 
+    /// One Python copy checks the size of the stat and reads the file to its
+    /// end. Another one takes the bytes of one read call of the cap.
+    #[test]
     fn a_read_stops_one_byte_past_the_cap() {
         /// A source with no end. It counts the bytes that a reader took.
         struct Endless(usize);
@@ -1237,6 +1190,8 @@ mod tests {
         assert_eq!(source.0, 4097);
     }
 
+    /// The open of a Python copy waits for a writer when the path is a FIFO.
+    #[test]
     fn a_fifo_is_refused_at_once() {
         let root = TempRoot::new().unwrap();
         let path = root.path().join("fifo");
@@ -1246,6 +1201,8 @@ mod tests {
         assert_eq!(read, Some(FileRead::Refused(ReadRefusal::NotAFile)));
     }
 
+    /// Two Python copies have no cap.
+    #[test]
     fn each_read_has_a_cap() {
         let (_root, path) = file_with(b"0123456789");
 
@@ -1256,6 +1213,9 @@ mod tests {
         );
     }
 
+    /// Two Python copies ask if the path is a symlink with a call of their
+    /// own, before the stat and the open.
+    #[test]
     fn the_open_refuses_a_symlink() {
         let (root, path) = file_with(b"{}");
         let link = root.path().join("link.json");
@@ -1269,6 +1229,9 @@ mod tests {
         assert!(!open_flags(Follow::Follow).contains(OFlags::NOFOLLOW));
     }
 
+    /// The cache of the Python chaperone compares four facts, and the mode is
+    /// not one of them.
+    #[test]
     fn a_new_mode_moves_the_facts() {
         let (_root, path) = file_with(b"0123456789");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
@@ -1286,30 +1249,6 @@ mod tests {
                 second.modified_ns()
             )
         );
-    }
-
-    #[test]
-    fn each_deviation_names_its_python_lines_and_holds() {
-        for row in DEVIATIONS {
-            let (file, lines) = row.python.rsplit_once(':').unwrap();
-
-            assert!(file.ends_with(".py"), "{}", row.python);
-            assert!(
-                lines
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || byte == b'-'),
-                "{}",
-                row.python
-            );
-            assert!(
-                !row.copy.is_empty() && !row.here.is_empty(),
-                "{}",
-                row.python
-            );
-            assert_ne!(row.copy, row.here, "{}", row.python);
-
-            (row.holds)();
-        }
     }
 
     #[test]
