@@ -114,31 +114,11 @@ jobs:
           rustc --version
           cargo --version
 
-      # cargo-llvm-cov: the step of the `rust-coverage` job of gate.yml, word
-      # for word, with the same two constants. bin/tests/test_gate_workflow.py
-      # holds the three copies equal: gate.yml, release.yml and this file. To
-      # take another version, change the two constants in the three files
-      # together.
+      # cargo-llvm-cov: the action of the `rust-coverage` job of gate.yml.
+      # .github/actions/cargo-llvm-cov/action.yml holds the step, the version
+      # and the SHA-256 of the release archive. The last line of that step
+      # starts cargo, so it runs with the toolchain of `RUSTUP_TOOLCHAIN`.
       - name: cargo-llvm-cov
-        working-directory: rust
-        env:
-          LLVM_COV_VERSION: "0.9.1"
-          LLVM_COV_SHA256: "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522"
-        run: |
-          set -euo pipefail
-          name="cargo-llvm-cov-x86_64-unknown-linux-musl"
-          archive="$RUNNER_TEMP/$name.tar.gz"
-          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
-            --output "$archive" \
-            "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v$LLVM_COV_VERSION/$name.tar.gz"
-          found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
-          if [[ "$found" != "$LLVM_COV_SHA256" ]]; then
-            echo "cargo-llvm-cov: the archive has the SHA-256 $found, not $LLVM_COV_SHA256" >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/cargo-llvm-cov"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-llvm-cov" cargo-llvm-cov
-          echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
-          PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
+        uses: ./.github/actions/cargo-llvm-cov
 
       - run: bin/rust-coverage.sh --branch

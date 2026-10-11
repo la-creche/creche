@@ -506,41 +506,12 @@ jobs:
           cargo --version
 
       # cargo-llvm-cov: the program behind the `cargo llvm-cov` step of
-      # bin/rust-coverage.sh. rustup does not install it, and no action does
-      # here. The step takes the archive from a release of the cargo-llvm-cov
-      # repository. It checks the SHA-256 of the archive against the constant
-      # before the unpack, so an archive that changed stops the job. The
-      # archive holds the program and no directory.
-      #
-      # To take another version, change the two constants together. Three
-      # workflow files hold this step: gate.yml, release.yml and
-      # coverage-nightly.yml. Change each one. Compute the SHA-256 of the new
-      # archive, and compare it with the digest that the release page shows
-      # for that archive.
-      # bin/tests/test_gate_workflow.py pins both, and holds the three files
-      # equal.
+      # bin/rust-coverage.sh. .github/actions/cargo-llvm-cov/action.yml holds
+      # the step, the version and the SHA-256 of the release archive. The
+      # rule of the step stays here: the action has none.
       - name: cargo-llvm-cov
         if: needs.scope.outputs.rust != 'false'
-        working-directory: rust
-        env:
-          LLVM_COV_VERSION: "0.9.1"
-          LLVM_COV_SHA256: "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522"
-        run: |
-          set -euo pipefail
-          name="cargo-llvm-cov-x86_64-unknown-linux-musl"
-          archive="$RUNNER_TEMP/$name.tar.gz"
-          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
-            --output "$archive" \
-            "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v$LLVM_COV_VERSION/$name.tar.gz"
-          found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
-          if [[ "$found" != "$LLVM_COV_SHA256" ]]; then
-            echo "cargo-llvm-cov: the archive has the SHA-256 $found, not $LLVM_COV_SHA256" >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/cargo-llvm-cov"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-llvm-cov" cargo-llvm-cov
-          echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
-          PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
+        uses: ./.github/actions/cargo-llvm-cov
 
       - run: bin/rust-coverage.sh
         if: needs.scope.outputs.rust != 'false'
