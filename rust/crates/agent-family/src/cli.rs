@@ -460,16 +460,17 @@ pub fn run(args: &[String], out: &mut impl Write, err: &mut impl Write) -> u8 {
 /// The entry function of the program. The `main` of `agent-family` calls it
 /// with the words of its command line and the variables of its environment.
 ///
-/// The body is one call of `creche_runtime::service::enter`. A panic of the
-/// program thus ends it with exit status 1. The log then holds the place of
-/// the panic and never its message. Each other end of the program has an
-/// exit status that the module doc names.
+/// The body calls `creche_runtime::service::enter` and has no other code. A
+/// panic of the program thus ends it with exit status 1. The log then holds
+/// the place of the panic and never its message. Each other end of the
+/// program has an exit status that the module doc names.
 ///
-/// `main` makes the one read of the environment and gives the result to this
-/// function. The program reads no variable yet, so the function does not
-/// read `_env`.
+/// Only `main` reads the environment, and it gives this function the
+/// result. No code of the program uses a variable today, so the function
+/// leaves `_env` unread.
 ///
-/// The program has no task and no listener, so it builds no async runtime.
+/// The program starts no task and binds no listener, so it builds no async
+/// runtime.
 ///
 /// The function sets the panic hook of the process. A test thus does not
 /// call it: the tests of `tests/process.rs` start the program as a process.
@@ -486,7 +487,7 @@ where
 /// word that is not UTF-8 text names no registry and no family that this
 /// program can print. The function refuses such a command line with
 /// [`EXIT_USAGE`] and one line on stderr. For each other command line, it
-/// calls [`run`] with the locked stdout and the locked stderr.
+/// locks stdout and stderr and gives the two locks to [`run`] as its writers.
 fn start<I>(words: I) -> ExitCode
 where
     I: IntoIterator<Item = OsString>,
