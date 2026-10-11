@@ -615,9 +615,10 @@ each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
 A stop of a pi process can get an answer. `stop_process` can hold a
-`request`, which is a ULID that the host makes. The playpen answers such a
-stop with one `process_stopped` line that holds the same id. A stop with no
-`request` gets no answer.
+`request`, which is a ULID that the host makes. Only a playpen that lists
+`stop_ack` in the `caps` of `ready` answers such a stop. The answer is one
+`process_stopped` line that holds the same id. A stop with no `request` gets
+no answer.
 
 | Item | What it is |
 |---|---|

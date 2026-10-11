@@ -1306,14 +1306,14 @@ impl Fatal {
 /// What the playpen held for the session of a stop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Held {
-    /// A pi process of the session. It ended for the stop.
+    /// A pi process of the session. The stop ended it.
     Process,
     /// No pi process of the session.
     Nothing,
 }
 
-/// `process_stopped`: the answer to a `stop_process` that holds a `request`
-/// (contract 03 §4.5). It names no turn.
+/// `process_stopped`: the playpen reports that it handled one stop that had
+/// an id (contract 03 §4.5). The line names no turn.
 ///
 /// ```
 /// use creche_contracts::channel::playpen::{Held, PlaypenMessage, ProcessStopped};

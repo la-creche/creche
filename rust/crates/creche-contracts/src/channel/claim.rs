@@ -1062,8 +1062,8 @@ impl FatalLine {
     }
 }
 
-/// The answer to a `stop_process` that holds a `request` (contract 03
-/// §4.5). It names no turn.
+/// The line `process_stopped`: a playpen reports that it handled one stop
+/// that had an id (contract 03 §4.5). The line names no turn.
 ///
 /// The host makes the id of a request and the id of a session. A line with
 /// another text in one of the two fields is thus no answer to a stop of the
@@ -1101,14 +1101,14 @@ impl StoppedLine {
         &self.request
     }
 
-    /// The session that the `stop_process` named.
+    /// The session whose pi process the host asked the playpen to end.
     #[must_use]
     pub fn session(&self) -> &SessionId {
         &self.session
     }
 
-    /// Whether a pi process of the session ended for the stop. `false` when
-    /// the playpen held no process of the session.
+    /// `true` when the stop ended a pi process of the session. `false` when
+    /// the playpen had no such process.
     #[must_use]
     pub fn held(&self) -> bool {
         self.held
@@ -1143,8 +1143,7 @@ pub enum PlaypenLine {
     Entries(EntriesLine),
     /// `fatal`: the playpen cannot serve and exits.
     Fatal(FatalLine),
-    /// `process_stopped`: the answer to a `stop_process` that holds a
-    /// `request`.
+    /// `process_stopped`: the playpen handled a stop that had an id.
     Stopped(StoppedLine),
 }
 

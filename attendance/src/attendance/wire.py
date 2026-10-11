@@ -320,10 +320,11 @@ class FatalLine:
 
 @dataclass(slots=True)
 class StoppedLine:
-    """The answer to a `stop_process` that holds a `request` (contract 03 §4.5).
+    """A playpen reports that it handled one stop that had an id (contract 03 §4.5).
 
-    `request` is the id that the host gave the stop. `held` says whether a
-    pi process of the session ended for that stop. The line names no turn.
+    `request` is the id that the host gave the stop. `held` is true when the
+    stop ended a pi process of the session, and false when the playpen had no
+    such process. The line names no turn.
     """
 
     request: str
@@ -997,7 +998,9 @@ def stop_process(
 ) -> dict[str, Any]:
     """End the pi process of one session (§4.5).
 
-    With a `request`, the playpen answers `process_stopped` with the same id.
+    A stop can hold a `request`. Only a playpen whose `ready` lists the cap
+    `stop_ack` answers such a stop, with one `process_stopped` line that
+    holds the same id.
     """
     message: dict[str, Any] = {
         "type": HostType.STOP_PROCESS.value,

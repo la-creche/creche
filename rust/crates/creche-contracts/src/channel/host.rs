@@ -1752,9 +1752,10 @@ impl Abort {
 
 /// `stop_process`: end the pi process of one session (contract 03 §4.5).
 ///
-/// A stop can hold a `request`, which is an id that the host makes. The
-/// playpen answers such a stop with one `process_stopped` line that holds
-/// the same id. A stop with no `request` gets no answer.
+/// A stop can hold a `request`, which is an id that the host makes. Only a
+/// playpen whose `ready` lists the cap `stop_ack` answers such a stop. Its
+/// answer is one `process_stopped` line with the same id. A stop with no
+/// `request` gets no answer.
 ///
 /// ```
 /// use creche_contracts::channel::host::{Millis, StopProcess};
@@ -1791,8 +1792,8 @@ impl StopProcess {
         }
     }
 
-    /// The same stop with the id `request`. The playpen sends that id back
-    /// in `process_stopped`.
+    /// The same stop with the id `request`. A `process_stopped` line for
+    /// this stop holds that id.
     #[must_use]
     pub fn with_request(mut self, request: Ulid) -> Self {
         self.request = Some(request);

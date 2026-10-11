@@ -108,7 +108,7 @@ words! {
         Entries => "entries",
         /// The playpen cannot serve and exits.
         Fatal => "fatal",
-        /// The answer to a `stop_process` that holds a `request`.
+        /// The playpen handled a stop that had an id.
         ProcessStopped => "process_stopped",
     }
 }
@@ -235,8 +235,8 @@ words! {
         WorkspaceLink => "workspace_link",
         /// The playpen answers `get_entries` (§4.8).
         GetEntries => "get_entries",
-        /// The playpen answers a `stop_process` that holds a `request` with
-        /// `process_stopped` (§4.5).
+        /// The playpen sends `process_stopped` for each stop that has an id
+        /// (§4.5).
         StopAck => "stop_ack",
     }
 }
