@@ -452,7 +452,19 @@ def dumps(
     examples are a float that is not finite, a string with a lone surrogate
     and an integer outside the range. A value that `json.dumps` has no text
     for gets the `TypeError` of `json.dumps`.
+
+    A string with a surrogate code point is not strict, also when a first
+    half is directly before a second half. `json.dumps` gives those two the
+    escapes of one character, and the reader then gives another value.
+
+    `separators` holds two texts. Another count is a fault of the call and
+    not of the value, so the error of that unpack leaves the function as it
+    is.
     """
+    if separators is not None:
+        item, key = separators
+        separators = (item, key)
+
     text = ""
     rule: Rule | None = None
     try:
@@ -475,6 +487,11 @@ def dumps(
 
     if rule is None:
         rule = _broken_rule(text)
+
+    # The check of the text reads the escapes of a pair as one character. The
+    # value of the caller shows two surrogate code points that made them.
+    if rule is None and ensure_ascii and _has_lone_surrogate(text.encode("utf-8"), value):
+        rule = Rule.LONE_SURROGATE
 
     if rule is not None:
         raise NotStrictJson(rule, None)

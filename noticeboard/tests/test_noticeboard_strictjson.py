@@ -1008,6 +1008,10 @@ NOT_WRITTEN: tuple[tuple[Callable[[], object], Rule], ...] = (
     (lambda: ["a", "\udfff"], Rule.LONE_SURROGATE),
     (lambda: {"\udc00": 1}, Rule.LONE_SURROGATE),
     (lambda: "\ud83d \ude00", Rule.LONE_SURROGATE),
+    # The two halves of a pair as two code points. The reader gives one
+    # character for the escapes of a pair, and that is another value.
+    (lambda: chr(0xD83D) + chr(0xDE00), Rule.LONE_SURROGATE),
+    (lambda: {"a": ["x" + chr(0xDBFF) + chr(0xDFFF)]}, Rule.LONE_SURROGATE),
     (lambda: deep_list(ONE_MORE), Rule.TOO_DEEP),
     (lambda: deep_list(100_000), Rule.TOO_DEEP),
     (circle, Rule.TOO_DEEP),
@@ -1054,6 +1058,20 @@ def test_the_writer_refuses_separators_that_make_no_json_text() -> None:
         strictjson.dumps({"a": [1, 2]}, separators=("; ", " = "))
 
     assert caught.value.rule is Rule.SYNTAX
+
+
+def test_a_wrong_count_of_separators_is_no_refusal_of_the_value() -> None:
+    """The fault is in the call, so the error of the call stays."""
+    dumps: Callable[..., str] = strictjson.dumps
+
+    for separators in ((",",), (",", ":", "x"), ()):
+        with pytest.raises(ValueError) as caught:
+            dumps({"a": 1}, separators=separators)
+
+        assert type(caught.value) is ValueError, separators
+
+    with pytest.raises(TypeError):
+        dumps({"a": 1}, separators=1)
 
 
 def test_a_value_with_no_json_text_keeps_the_error_of_the_standard_writer() -> None:
