@@ -15,6 +15,11 @@ path = "src/main.rs"
 
 [dependencies]
 creche-contracts = { path = "../creche-contracts" }
+# The program takes two functions from this dependency. `log::init` sets the
+# panic hook. `service::enter` ends the program with status 1 after a panic.
+# A copy of either one in this crate can drift from its source
+# (rust/AGENTS.md, rule 13, and "The panic rule", clauses 3 and 7).
+creche-runtime = { path = "../creche-runtime" }
 creche-util = { path = "../creche-util" }
 
 [dev-dependencies]

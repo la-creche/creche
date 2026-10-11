@@ -84,6 +84,8 @@ function fakeLauncher(piEnv: EnvBySession, seen: PiSpawnSpec[]): PiLauncher {
 export class Harness {
   public readonly root: string;
   public readonly lines: PlaypenMessage[] = [];
+  /** The text of each line, as the playpen wrote it. */
+  public readonly rawLines: string[] = [];
   public readonly notes: string[] = [];
   /** Every pi process the pool asked for, in order. Its argv and its env. */
   public readonly spawns: PiSpawnSpec[] = [];
@@ -114,7 +116,10 @@ export class Harness {
     }
 
     const reader = new LineReader(
-      (line) => this.lines.push(JSON.parse(line) as PlaypenMessage),
+      (line) => {
+        this.rawLines.push(line);
+        this.lines.push(JSON.parse(line) as PlaypenMessage);
+      },
       () => this.notes.push("the playpen emitted an oversize line"),
     );
 

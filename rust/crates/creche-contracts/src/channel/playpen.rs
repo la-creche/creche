@@ -11,6 +11,7 @@ use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU64;
 
+use super::MAX_LOG_BYTES;
 use super::claim::{Event, EventError, MAX_ENTRIES_PER_READ, TurnAddress};
 use super::frame::{EncodeError, MAX_LINE_BYTES, framed};
 use super::host::{EntryId, Nonce, ProcessCap, ProtocolVersion};
@@ -19,10 +20,6 @@ use super::vocabulary::{
     Cap, ExitReason, FailReason, FatalReason, LogLevel, OpenReason, PlaypenType, Word,
 };
 use crate::ids::{SandboxName, SessionId, Ulid};
-
-/// The largest count of bytes of one free text of a line: a `message`
-/// (contract 03 §8).
-pub const MAX_LOG_BYTES: usize = 4096;
 
 /// The largest count of bytes of the text of one entry (contract 03 §8).
 pub const MAX_ENTRY_BYTES: usize = 65_536;

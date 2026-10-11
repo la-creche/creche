@@ -16,8 +16,9 @@
 //! other types than the testkit sees. A test with a clock or a source of the
 //! testkit is thus in this directory.
 //!
-//! No difference from the Python code is new here. The `DEVIATIONS` tables of
-//! `src/clock.rs` and of `src/entropy.rs` hold each one.
+//! No difference from the Python code is new here. The doc comments of
+//! `src/clock.rs` and of `src/entropy.rs` name each one, and a plain test of
+//! those files holds each one.
 
 #[cfg(test)]
 mod tests {
