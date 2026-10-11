@@ -1984,10 +1984,40 @@ def test_a_change_to_the_rust_checks_needs_no_cargo_here(tree: Tree) -> None:
         (".github/actions/verdict/action.yml", False),
         ("rust/Cargo.toml", False),
         ("docs/bin/rust-gate.sh", False),
+        ("handover/component.yaml", True),
+        ("handover/component.toml", True),
+        ("handover/component.json", False),
+        ("handover/tests/handover_bin_component.yaml", False),
+        ("chaperone/component.yaml", False),
+        ("docs/handover/component.yaml", False),
     ],
 )
 def test_only_these_files_are_the_rust_checks(tree: Tree, path: str, of_checks: bool) -> None:
     assert (tree.rule(f"rust_gate_path '{path}'") == 0) == of_checks
+
+
+#: The manifest of the release tool, under the name that it has today and
+#: under the name of its TOML form.
+TOOL_MANIFESTS = ("handover/component.yaml", "handover/component.toml")
+
+#: The manifest of another component.
+OTHER_MANIFEST = "chaperone/component.yaml"
+
+
+@pytest.mark.parametrize("manifest", TOOL_MANIFESTS)
+def test_a_change_of_the_tool_manifest_runs_the_rust_checks_in_ci(
+    tree: Tree, manifest: str
+) -> None:
+    """The build script of `creche-contracts` reads the version of the
+    manifest contract from this file. A change of the file alone thus
+    changes a Rust constant, and it can stop the Rust build. So CI counts
+    the file as a Rust change. The manifest of another component does not."""
+    base = tree.git("rev-parse", "HEAD")
+    other = tree.commit(OTHER_MANIFEST, "provides: []\n")
+    changed = tree.commit(manifest, "provides: []\n")
+
+    assert tree.rule(f"rust_touched {base} {other}") == 1
+    assert tree.rule(f"rust_touched {other} {changed}") == 0
 
 
 def test_a_change_git_cannot_read_is_a_rust_change(tree: Tree) -> None:
