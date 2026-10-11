@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 
 import pytest
+from agent_family.grammar import TOOL_NAME
 from caregiver.grants import (
     GRANT_FILE_MAX_BYTES,
     GrantFile,
@@ -38,9 +39,10 @@ RUST_CAP = re.compile(r"pub const GRANT_FILE_MAX_BYTES: usize = (\d+) \* (\d+);"
 FAMILY = "chat"
 SERVER = "kagi"
 
-#: The count of characters of each tool name but the last one. The
-#: chaperone reads a tool name of 128 characters at most.
-TOOL_CHARS = 100
+#: The count of characters of each tool name but the last one. One such
+#: name is one line of 60 bytes in the file, so the last name has 60
+#: characters at most. The tool name form takes 64 characters at most.
+TOOL_CHARS = 50
 
 
 def rust_cap() -> int:
@@ -102,6 +104,8 @@ def test_the_chaperone_reads_the_largest_grant_file_of_the_caregiver(tmp_path: P
     grants_dir = tmp_path / "grants"
     path = grants_dir / f"{FAMILY}.json"
     at_cap = tools_for(scratch, GRANT_FILE_MAX_BYTES)
+    over_cap = [*at_cap[:-1], at_cap[-1] + "f"]
+    assert all(TOOL_NAME.fullmatch(name) is not None for name in over_cap)
 
     write_grant_file(path, grant(at_cap))
 
@@ -112,6 +116,6 @@ def test_the_chaperone_reads_the_largest_grant_file_of_the_caregiver(tmp_path: P
     assert served.tools == {SERVER: tuple(at_cap)}
 
     with pytest.raises(GrantFileTooLargeError):
-        write_grant_file(path, grant([*at_cap[:-1], at_cap[-1] + "f"]))
+        write_grant_file(path, grant(over_cap))
 
     assert path.stat().st_size == GRANT_FILE_MAX_BYTES
