@@ -44,6 +44,30 @@ mod resolved;
 mod state;
 mod yaml;
 
+/// The version of the `component-manifest` contract that the manifest of the
+/// release tool provides: the two numbers, and their text.
+///
+/// The build script of the crate writes the file of this module. It reads
+/// the `provides` row for the contract in `handover/component.yaml`, so that
+/// row is the one source of the version (rust/AGENTS.md, rule 13).
+mod provided {
+    include!(concat!(env!("OUT_DIR"), "/manifest_contract.rs"));
+}
+
+// Each number of the row is a number of a contract version. The build script
+// holds no bound of its own, so the build fails here for a number that
+// `ContractNumber` refuses.
+const _: () = assert!(
+    ContractNumber::new(provided::MAJOR).is_ok() && ContractNumber::new(provided::MINOR).is_ok(),
+    "a number of the `provides` row is no number of a contract version"
+);
+
+/// The build script of the crate, as a module of the test build. Its tests
+/// hold the reader of the `provides` row.
+#[cfg(test)]
+#[path = "../build.rs"]
+mod build_script;
+
 pub use component::{
     AbsolutePath, AbsolutePathError, Argv, ComponentManifest, Install, Keep, KeepError,
     MAX_MANIFEST_BYTES, ManifestError, ManifestFault, Operator, OperatorError, PathField, Provided,
@@ -655,13 +679,15 @@ pub const BINARY_BUILD_FILES: [&str; 3] = [
     "rust/rust-toolchain.toml",
 ];
 
-/// The first number of the `component-manifest` contract version that this
-/// code speaks.
-pub const MANIFEST_CONTRACT_MAJOR: u16 = 0;
+/// The first number of the newest `component-manifest` contract version
+/// that this code takes. It is the number of the `provides` row in the
+/// manifest of the release tool.
+pub const MANIFEST_CONTRACT_MAJOR: u16 = provided::MAJOR;
 
-/// The second number of that version. A manifest written against `0.MINOR`
-/// with a `MINOR` at or below this one is accepted (contract 06 §3.1).
-pub const MANIFEST_CONTRACT_MINOR: u16 = 6;
+/// The second number of that version, from the same row. A manifest that
+/// declares `0.MINOR` with a `MINOR` at or below this one reads (contract
+/// 06 §3.1).
+pub const MANIFEST_CONTRACT_MINOR: u16 = provided::MINOR;
 
 /// The component that deploys last, whatever `depends_on` says (contract 06
 /// §1.1).
@@ -1196,6 +1222,29 @@ mod tests {
             .iter()
             .map(|(name, own)| if *name == field { line } else { own })
             .fold(String::new(), |text, line| text + line + "\n")
+    }
+
+    #[test]
+    fn a_manifest_reads_up_to_the_version_of_the_provides_row() {
+        let read = |minor: u16| {
+            let line = format!("manifest_version: \"{MANIFEST_CONTRACT_MAJOR}.{minor}\"");
+
+            ComponentManifest::parse(&manifest_with("manifest_version", &line), None)
+        };
+        let next = MANIFEST_CONTRACT_MINOR + 1;
+
+        let newest = read(MANIFEST_CONTRACT_MINOR).unwrap();
+        let refused = read(next).unwrap_err();
+
+        assert_eq!(newest.manifest_version().as_str(), MANIFEST_VERSION);
+        assert_eq!(refused.code(), RefusalCode::Manifest);
+        assert_eq!(
+            refused.detail(),
+            format!(
+                "manifest_version {MANIFEST_CONTRACT_MAJOR}.{next} is outside \
+                 {MANIFEST_CONTRACT_MAJOR}.0 to {MANIFEST_VERSION}"
+            )
+        );
     }
 
     #[test]

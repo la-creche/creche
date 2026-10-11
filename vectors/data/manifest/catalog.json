@@ -12,7 +12,7 @@
   {"id":"retiring","input":{"args":{}},"result":"accepted","value":["infra"]},
   {"id":"arriving","input":{"args":{}},"result":"accepted","value":[]},
   {"id":"binary-build-files","input":{"args":{}},"result":"accepted","value":["rust/Cargo.lock","rust/Cargo.toml","rust/rust-toolchain.toml"]},
-  {"id":"manifest-contract-version","input":{"args":{}},"result":"accepted","value":{"major":0,"minor":6}},
+  {"id":"manifest-contract-version","input":{"args":{}},"result":"accepted","value":{"major":0,"minor":18}},
   {"id":"last-in-order","input":{"args":{}},"result":"accepted","value":"handover"},
   {"id":"max-request-components","input":{"args":{}},"result":"accepted","value":8},
   {"id":"set-repo","input":{"args":{}},"result":"accepted","value":["agent-control","agent-mcp","agent-registry"]},

@@ -179,12 +179,13 @@ CONTRACT_OWNER: dict[ContractId, str] = {
     ContractId.COMPONENT_MANIFEST: "handover",
 }
 
-#: The `component-manifest` contract version this code speaks: contract 06's
-#: own `Version:` line, first two numbers (contract 06 §3). A manifest written
-#: against `0.MINOR` for MINOR at or below this one is accepted, which is what
-#: §3.1's `provides` means.
+#: The newest version of the `component-manifest` contract that this reader
+#: takes, as its two numbers. A manifest that declares `0.MINOR` reads when
+#: its MINOR is at or below this one (contract 06 §3.1). The one source of
+#: the two numbers is the `provides` row of `handover/component.yaml`.
+#: `tests/test_handover_contract_version.py` fails when they differ from it.
 MANIFEST_CONTRACT_MAJOR = 0
-MANIFEST_CONTRACT_MINOR = 6
+MANIFEST_CONTRACT_MINOR = 18
 
 #: `handover` deploys last whatever `depends_on` says (contract 06 §1.1).
 LAST_IN_ORDER = "handover"
