@@ -455,7 +455,7 @@ def _read_rows(state_root: Path, family_name: str) -> tuple[SandboxRecord | _Unr
     if rows is None:
         return ()
 
-    return tuple(_one_record(raw) or _Unread(raw) for raw in rows)
+    return tuple(_one_record(raw, state_root, family_name) or _Unread(raw) for raw in rows)
 
 
 def _row_list(path: Path) -> list[Any] | None:
@@ -596,7 +596,7 @@ def _drop(state_root: Path, family_name: str, sandbox_id: str) -> None:
     _write_rows(state_root, family_name, kept)
 
 
-def _one_record(raw: Any) -> SandboxRecord | None:
+def _one_record(raw: Any, state_root: Path, family_name: str) -> SandboxRecord | None:
     if not isinstance(raw, dict):
         return None
 
@@ -613,8 +613,9 @@ def _one_record(raw: Any) -> SandboxRecord | None:
     # takes today, and a row that does not read is a sandbox that no pass
     # manages.
     try:
+        sandbox_id = str(row["id"])
         return SandboxRecord(
-            id=str(row["id"]),
+            id=sandbox_id,
             state=SandboxLifecycle(str(row["state"])),
             image=str(row["image"]),
             spec_hash=str(row["spec_hash"]),
@@ -623,7 +624,9 @@ def _one_record(raw: Any) -> SandboxRecord | None:
             created_at=str(row["created_at"]),
             ready_at=_optional_text(row.get("ready_at")),
             allow=tuple(str(one) for one in cast("list[Any]", allow)),
-            playpen_env=str(row.get("supervisor_env", "")),
+            # `paths.playpen_env_path` is the one source of this path. The
+            # row keeps a `supervisor_env` field, and no reader here uses it.
+            playpen_env=str(paths.playpen_env_path(state_root, family_name, sandbox_id)),
         )
     except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
         # OverflowError is `int` of a float that is not finite.

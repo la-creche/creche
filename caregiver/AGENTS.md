@@ -103,6 +103,11 @@ host where something has gone wrong.
   retires it at the top of every pass.
 - A sandbox row that does not read stays in the ledger file. A rewrite
   removes it only when the JSON encoder cannot write it again.
+- `paths.playpen_env_path` is the one source for the path of an env file.
+  The ledger reader computes the path of a row from the state root, the
+  family and the id of that row.
+- The ledger writer keeps the field `supervisor_env` in each row. Another
+  release of this package reads the path from that field.
 - An empty registry deletes no family.
 - A directory under `families/` with no `family.yaml` gets no pass and no
   delete. `reconcile.has_family_file` is the test for it. `apply.apply_once`
