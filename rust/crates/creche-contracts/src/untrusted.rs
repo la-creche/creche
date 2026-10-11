@@ -2868,6 +2868,10 @@ mod tests {
         /// The prefix of the surfaces of the reader of a whole document.
         const DOCUMENTS: &str = "runtime.parse_object.";
 
+        /// A cap above the size of each input of a surface of the field
+        /// readers: 1 MiB.
+        const INPUT_CAP: json::ByteCap = json::ByteCap::new(1024 * 1024);
+
         const SURFACES: &[Against] = &[
             kind("runtime.untrusted.door_owui.is_object", any_block, "null"),
             kind("runtime.untrusted.door_owui.is_list", any_list, "[]"),
@@ -3275,6 +3279,10 @@ mod tests {
 
         /// Walks each vector of one surface. It prints the counts, and a run
         /// with `--nocapture` shows them.
+        ///
+        /// Each input of a surface of the field readers must be strict JSON.
+        /// A text outside those rules is an input for the reader of a whole
+        /// document.
         fn walk(against: &Against) {
             let surface = vectors::surface(against.surface).unwrap();
             let mut equal = 0;
@@ -3284,6 +3292,12 @@ mod tests {
                 let rust = (against.replay)(vector);
                 let decisions = deviations_of(against.surface, vector.id());
 
+                if against.surface.starts_with(READERS) {
+                    let input = vector.input().bytes().unwrap();
+                    let strict = json::check(&input, INPUT_CAP);
+
+                    assert!(strict.is_ok(), "{at}: the input is not strict JSON");
+                }
                 assert!(decisions.len() <= 1, "{at}: two rows name the vector");
                 if let Some((place, named, deviation)) = decisions.first() {
                     let python = Did::Gives(vector.value().cloned().unwrap_or(Value::Null));
