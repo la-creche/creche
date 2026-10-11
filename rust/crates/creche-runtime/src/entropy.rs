@@ -269,8 +269,8 @@ impl Error for MintError {
 /// milliseconds of `time.time()`, and [`clock::unix_seconds`] gives that
 /// float.
 ///
-/// The function differs from those copies in two ways. The line of the first
-/// copy is `door-trigger/src/agent_door_trigger/ulid.py:36`.
+/// The function differs from those copies in two ways. The first copy takes
+/// the time at `door-trigger/src/agent_door_trigger/ulid.py:36`.
 ///
 /// - For a time before 1970, a copy mints 26 characters from a count below
 ///   zero. This function gives [`MintError::TimeOutOfRange`].
