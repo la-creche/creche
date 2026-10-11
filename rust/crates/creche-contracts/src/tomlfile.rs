@@ -19,8 +19,9 @@
 //! 3. The start. The first character is not U+FEFF, the byte order mark.
 //! 4. TOML 1.0. The crate `toml` reads TOML 1.1 and has no switch. The
 //!    child module `toml10` refuses each of the six forms that TOML 1.1
-//!    added. It also refuses a text that is too deep for the stack of the
-//!    crate, before the crate gets it.
+//!    added. It also refuses two more kinds of text before the crate gets
+//!    them: a text that is too deep for the stack of the crate, and a
+//!    dotted key that goes through a list of tables.
 //! 5. The parse. The crate reads the text. It refuses a key that a table
 //!    holds two times and an integer outside 64 bits.
 //! 6. The levels. The top table has level 1. A table or a list inside a
@@ -958,6 +959,48 @@ mod tests {
         }
 
         assert!(is_toml("a = 0001-01-01T23:59:59Z\n"));
+    }
+
+    #[test]
+    fn a_dotted_key_adds_no_table_to_a_list_of_tables() {
+        // A key of 2 parts: the crate refuses the text.
+        let two_parts = "[[a.b]]\n[a]\nb.c = 1\n";
+        // A key of 3 parts or more: the crate reads the text. It puts the
+        // new table into the last item of the list.
+        let more_parts = [
+            "[[a.b]]\n[a]\nb.c.d = 1\n",
+            "[[a.b]]\n[a]\n\"b\".c.d = 1\n",
+            "[[a.b]]\n[a]\n\"\\u0062\" . c . d = 1\n",
+            "[[a.b]]\n[[a.b]]\n[a]\nx = 1\nb.c.d = 1\n",
+            "[[a.b.c]]\n[a]\nb.c.d.e = 1\n",
+            "[[a]]\n[[a.b.c]]\n[a.b]\nc.d.e = 1\n",
+        ];
+        // No key of these texts goes through a list of tables.
+        let taken = [
+            // The second item of `a` has no list `b`.
+            "[[a]]\n[[a.b]]\n[[a]]\nb.c.d = 1\n",
+            "[[a]]\n[[a.b.c]]\n[[a]]\n[a.b]\nc.d.e = 1\n",
+            // A key of an inline table starts at that table.
+            "[[a.b]]\n[a]\nx = {b.c.d = 1}\ny = 2\n",
+            "[[a.b]]\n[a]\nx = [{b.c.d = 1}]\ny = 2\n",
+            // A key below the header of a list is a key of its last item.
+            "[[a.b]]\nb.c.d = 1\n",
+            "[[a.b]]\n[a]\nc.d.e = 1\n",
+            "[[a.b]]\n[c]\nb.c.d = 1\n",
+        ];
+
+        assert!(two_parts.parse::<toml::Table>().is_err());
+        assert!(!is_toml(two_parts));
+        for text in more_parts {
+            assert!(
+                text.parse::<toml::Table>().is_ok(),
+                "the crate reads {text:?}"
+            );
+            assert!(!is_toml(text), "{text:?}");
+        }
+        for text in taken {
+            assert!(is_toml(text), "{text:?}");
+        }
     }
 
     // --- check 7: what a raw type gets ---------------------------------------

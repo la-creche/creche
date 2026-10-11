@@ -515,8 +515,8 @@ contract holds the raw type of its file kind, and that module calls `read`
 2. The encoding. The bytes are UTF-8.
 3. The start. The text starts with no byte order mark.
 4. TOML 1.0. The child module `toml10` refuses each form that TOML 1.1
-   added. It also refuses a text that is too deep for the crate `toml`,
-   before the crate gets it.
+   added. It also refuses two more kinds of text before the crate `toml`
+   gets them.
 5. The parse of the crate `toml`.
 6. The levels. No table and no list has a level above 8. The walk uses no
    recursion.
@@ -561,10 +561,12 @@ Reason: a text must not become valid because a parser is new. Each reader
 of a file kind refuses the six forms with a check of its own.
 
 `toml10` reads the events of the crate `toml_parser`. In the same pass, it
-refuses a text that is too deep for the crate `toml`. Fact 6 of the list
-below gives the cause. Such a text has a key with more than 8 parts, or
-more than 8 lists and inline tables that are open inside each other. It
-thus has a level above 8.
+refuses two more kinds of text. Facts 6 and 7 of the list below give the
+cause of each one.
+
+1. A key with more than 8 parts, or more than 8 lists and inline tables
+   that are open inside each other. Each such text has a level above 8.
+2. A key/value pair whose key names a list of tables, or goes through one.
 
 Do not move check 4 behind check 5. Check 4 bounds the stack that the
 parser of the crate uses.
@@ -600,6 +602,12 @@ again after a change of the version.
    first. The deepest text that reaches the crate has 8 open inline tables,
    each under a key of 8 parts. A header of 30,000 parts is a refusal on a
    stack of 2 MiB.
+7. **The crate reads a dotted key that goes through a list of tables.** A
+   `[[a.b]]` header makes the list of tables `a.b`. Under the header `[a]`,
+   the crate refuses the key `b.c`. It reads the key `b.c.d`, and puts the
+   table `c` into the last item of the list. No TOML version permits that
+   key, and the TOML reader of the Python standard library refuses it.
+   Check 4 refuses it.
 
 More rules for a raw type of a TOML file:
 

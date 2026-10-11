@@ -76,6 +76,7 @@ TAKEN: Final[tuple[Text, ...]] = (
         "list-of-tables",
         '[[rows]]\nname = "a"\n\n[[rows]]\nname = "b"\n\n[[rows.fences]]\ntool = "t"\n',
     ),
+    Text("dotted-key-in-a-new-item-of-a-list", "[[a]]\n\n[[a.b]]\n\n[[a]]\nb.c = 1\n"),
     Text("inline-table", "a = {b = 1, c = {d = 2}, e = []}\n"),
     Text("list-of-each-kind", 'a = [1, "two", 3.0, true, [4], {five = 5}]\n'),
     Text("list-on-more-lines", "a = [\n  1, # a comment\n  2,\n]\n"),
@@ -119,6 +120,13 @@ NOT_TAKEN: Final[tuple[Text, ...]] = (
     Text("key-two-times-in-two-forms", 'a = 1\n"a" = 2\n'),
     Text("inline-table-with-a-later-key", "a = {b = 1}\na.c = 2\n"),
     Text("list-with-a-later-table", "a = []\n\n[[a]]\nb = 1\n"),
+    # --- a dotted key and a list of tables ---
+    Text("dotted-key-over-a-list-of-tables", "[[a.b]]\n\n[a]\nb.c = 1\n"),
+    Text("dotted-key-through-a-list-of-tables", "[[a.b]]\n\n[a]\nb.c.d = 1\n"),
+    Text(
+        "dotted-key-through-a-list-below-a-list",
+        "[[a]]\n\n[[a.b.c]]\n\n[a.b]\nc.d.e = 1\n",
+    ),
     # --- the encoding ---
     Text("byte-order-mark", "\ufeffa = 1\n"),
     Text("byte-order-mark-only", "\ufeff"),

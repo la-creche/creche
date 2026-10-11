@@ -27,21 +27,31 @@
 //! reader of a file kind thus has a check of its own for the same six
 //! forms. No reader takes a text because its parser is new.
 //!
-//! # A text that is too deep
+//! # Two more refusals
 //!
-//! The same walk refuses a text that is too deep for the stack of the crate
-//! `toml`, before the crate gets it. The crate stops at 80 open lists and
-//! inline tables, and at 80 parts of one key. It counts the two apart, so
-//! 80 inline tables can each have a key of 80 parts. Its parser uses the
-//! stack for each table of such a text, and a stack that overflows ends the
-//! process. [`holds`] refuses a key with more parts than its limit, and
-//! more open lists and inline tables than that limit. The reader calls
-//! [`holds`] before the crate. Each such text has more levels than the
-//! reader permits.
+//! The same walk refuses two more kinds of text, before the crate `toml`
+//! gets them:
+//!
+//! - **A text that is too deep for the stack of the crate.** The crate
+//!   stops at 80 open lists and inline tables, and at 80 parts of one key.
+//!   It counts the two apart, so 80 inline tables can each have a key of 80
+//!   parts. Its parser uses the stack for each table of such a text, and a
+//!   stack that overflows ends the process. [`holds`] refuses a key with
+//!   more parts than its limit, and more open lists and inline tables than
+//!   that limit. The reader calls [`holds`] before the crate. Each such
+//!   text has more levels than the reader permits.
+//! - **A dotted key that goes through a list of tables.** A `[[a.b]]`
+//!   header makes the list of tables `a.b`. Under the header `[a]`, the key
+//!   `b.c.d` then names a table in that list. No TOML version permits that
+//!   key. The crate refuses the key `b.c`, and it reads a key of three
+//!   parts or more.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 
 use toml_parser::decoder::Encoding;
 use toml_parser::parser::{Event, EventKind, RecursionGuard, parse_document};
-use toml_parser::{ParseError, Source};
+use toml_parser::{ParseError, Raw, Source};
 
 /// A list or an inline table that is open at an event.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -50,8 +60,82 @@ enum Open {
     InlineTable,
 }
 
-/// Whether `text` holds none of the six forms that TOML 1.1 added, and is
-/// not too deep for the stack of the crate `toml`.
+/// The keys of a text that are in no inline table: the keys of the headers
+/// and of the key/value pairs below them.
+///
+/// A number stands for each part of a key. Two parts with one text have one
+/// number. The walk compares and copies numbers, so the length of a key
+/// adds nothing to the cost of a path.
+#[derive(Default)]
+struct Keys {
+    /// The number of each part that the walk read.
+    numbers: BTreeMap<String, usize>,
+    /// The parts of the key that the walk reads.
+    key: Vec<usize>,
+    /// The path of the open header. The path of the top table is empty.
+    header: Vec<usize>,
+    /// The path of each list of tables. A `[[...]]` header adds its path.
+    lists: BTreeSet<Vec<usize>>,
+}
+
+impl Keys {
+    /// Adds one part to the key that the walk reads. `false` for a part
+    /// that is no key.
+    fn part(&mut self, raw: Raw<'_>) -> bool {
+        let mut part = String::new();
+        let mut fault: Option<ParseError> = None;
+        raw.decode_key(&mut part, &mut fault);
+
+        let next = self.numbers.len();
+        self.key.push(*self.numbers.entry(part).or_insert(next));
+
+        fault.is_none()
+    }
+
+    /// The end of a `[...]` header: its key is the path of the open header.
+    fn table_header(&mut self) {
+        self.header = std::mem::take(&mut self.key);
+    }
+
+    /// The end of a `[[...]]` header: it adds one item to the list at its
+    /// path. That item holds no list yet, so each path below it leaves.
+    ///
+    /// The paths below a path come directly after it in the set. The walk
+    /// reads only those, and not the whole set: a text can hold a header on
+    /// each line.
+    fn list_header(&mut self) {
+        self.table_header();
+
+        let after = (Bound::Excluded(&self.header), Bound::Unbounded);
+        let below: Vec<Vec<usize>> = self
+            .lists
+            .range::<Vec<usize>, _>(after)
+            .take_while(|path| path.starts_with(&self.header))
+            .cloned()
+            .collect();
+        for path in &below {
+            self.lists.remove(path);
+        }
+        self.lists.insert(self.header.clone());
+    }
+
+    /// The end of the key of a key/value pair. Whether the key names a list
+    /// of tables, or goes through one. The crate refuses the first kind.
+    ///
+    /// The key of a pair of an inline table has no part here, so the answer
+    /// for that pair is `false`.
+    fn pair_enters_list(&mut self) -> bool {
+        let mut path = self.header.clone();
+
+        std::mem::take(&mut self.key).into_iter().any(|part| {
+            path.push(part);
+            self.lists.contains(&path)
+        })
+    }
+}
+
+/// Whether `text` holds none of the six forms that TOML 1.1 added, and
+/// neither of the two other forms that the doc comment of the module names.
 ///
 /// The answer for a text that is no TOML can be `true`: the caller then
 /// gives the text to the crate `toml`. The check of a time reads the place
@@ -78,6 +162,7 @@ pub(super) fn holds(text: &str, depth_max: u32) -> bool {
     let mut open: Vec<Open> = Vec::new();
     let mut after_comma = false;
     let mut key_parts: u32 = 0;
+    let mut keys = Keys::default();
 
     for event in &events {
         let kind = event.kind();
@@ -119,14 +204,24 @@ pub(super) fn holds(text: &str, depth_max: u32) -> bool {
 
                 if kind == EventKind::SimpleKey {
                     key_parts = key_parts.saturating_add(1);
-                    if key_parts > depth_max {
+                    if key_parts > depth_max || (open.is_empty() && !keys.part(raw)) {
                         return false;
                     }
                 }
             }
-            // The end of a key.
-            EventKind::KeyValSep | EventKind::StdTableClose | EventKind::ArrayTableClose => {
+            EventKind::KeyValSep => {
                 key_parts = 0;
+                if keys.pair_enters_list() {
+                    return false;
+                }
+            }
+            EventKind::StdTableClose => {
+                key_parts = 0;
+                keys.table_header();
+            }
+            EventKind::ArrayTableClose => {
+                key_parts = 0;
+                keys.list_header();
             }
             EventKind::Error => return false,
             EventKind::StdTableOpen
@@ -393,6 +488,54 @@ mod tests {
         for text in texts {
             assert!(crate_reads(text), "the crate reads {text:?}");
             assert!(holds(text, DEPTH), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_key_through_a_list_of_tables_is_refused() {
+        let refused = [
+            "[[a.b]]\n[a]\nb.c = 1\n",
+            "[[a.b]]\n[a]\nb.c.d = 1\n",
+            // Each form of one key part is that part.
+            "[[a.b]]\n[a]\n\"b\".c.d = 1\n",
+            "[[a.b]]\n[a]\n'b'.c.d = 1\n",
+            "[[a.\"\\u0062\"]]\n[a]\nb.c.d = 1\n",
+            // The list `a.b` has two items.
+            "[[a.b]]\n[[a.b]]\n[a]\nb.c.d = 1\n",
+            // A list below an item of another list.
+            "[[a]]\n[[a.b.c]]\n[a.b]\nc.d.e = 1\n",
+            // A new item of the list `a` removes the list `a.b.c`, and no
+            // list at another path.
+            "[[a]]\n[[a.b.c]]\n[[x.y]]\n[[a]]\n[x]\ny.z.w = 1\n",
+            "[[x.y]]\n[[a]]\n[[a.b.c]]\n[[a]]\n[x]\ny.z.w = 1\n",
+        ];
+        let passed = [
+            "[[a]]\n[[a.b.c]]\n[[a]]\n[a.b]\nc.d.e = 1\n",
+            "[[a]]\n[[a.b]]\n[[a]]\nb.c.d = 1\n",
+            // A key of an inline table starts at that table.
+            "[[a.b]]\n[a]\nx = {b.c.d = 1}\ny = 2\n",
+            "[[a.b]]\n[a]\nx = [{b.c.d = 1}]\ny = 2\n",
+            // A key below the header of a list is a key of its last item.
+            "[[a.b]]\nb.c.d = 1\n",
+            "[[a.b]]\n[a]\nc.d.e = 1\n",
+            "[[a.b]]\n[c]\nb.c.d = 1\n",
+            "[[a.b]]\n[a]\n\"B\".c.d = 1\n",
+        ];
+
+        for text in refused {
+            assert!(!holds(text, DEPTH), "{text:?}");
+        }
+        for text in passed {
+            assert!(crate_reads(text), "the crate reads {text:?}");
+            assert!(holds(text, DEPTH), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_key_part_that_is_no_key_is_refused() {
+        for text in ["\"\\q\" = 1\n", "[\"\\q\"]\n", "[[a.\"\\q\"]]\n"] {
+            assert!(!crate_reads(text), "the crate refuses {text:?}");
+            assert!(!holds(text, DEPTH), "{text:?}");
         }
     }
 }
