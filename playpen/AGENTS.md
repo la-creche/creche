@@ -190,6 +190,27 @@ it on a development machine.
 57. Send the code of a launcher error, not its text. Node writes the refused
     value in that text, and the environment of pi holds the credentials.
 
+## The planes
+
+A plane is a service of the host that each sandbox calls: the chaperone and
+LiteLLM.
+
+58. `src/planes.ts` is the only reader of `AGENT_PEP_URL` and
+    `AGENT_LITELLM_BASE_URL`. `env.ts` and `models-json.ts` take the two
+    URLs as parameters. They import no URL constant.
+59. A plane URL is `http://<host>:<port>` and no other byte. The Rust type
+    `PlaneUrl` holds the same grammar
+    (`rust/crates/creche-contracts/src/config/endpoints.rs`). Change one
+    side, change both. `test/planes.test.ts` holds the tables of the Rust
+    tests.
+60. Read the two variables one time for each process. The pool reads them
+    when the playpen builds it. Each pi process of that pool gets the same
+    two URLs.
+61. A `log` line for a plane variable names the variable and the fault. It
+    never holds the value. A value can hold a user part.
+62. Write the `log` lines of the planes after `hello`. `ready` is the first
+    line of the channel.
+
 ## Environment the playpen expects
 
 | Variable | Meaning | Absent |
@@ -198,10 +219,20 @@ it on a development machine.
 | `AGENT_FAMILY_CONFIG_DIR` | the family config directory | `fatal`, `mount_dir_unset` |
 | `AGENT_CONTROL_DIR` | the control directory | `fatal`, `mount_dir_unset` |
 | `AGENT_SANDBOX` | the sandbox id | exit 2, unless `--sandbox` names it |
+| `AGENT_PEP_URL` | the URL of the chaperone | the URL of the build, and one `log` line of level `warn` |
+| `AGENT_LITELLM_BASE_URL` | the base URL of LiteLLM | the URL of the build, and one `log` line of level `warn` |
 
-`caregiver` writes all four into the env file. `sbx exec --env-file`
-delivers them. Three test seams exist and nothing in the image sets them:
-`AGENT_PI_BIN`, `AGENT_LOCK_BEAT_MS` and `AGENT_CODE_SANDBOX_ROOT`.
+`caregiver` writes the env file. `sbx exec --env-file` delivers each
+variable of that file. Each env file holds the first four variables. An env
+file that holds no plane variable is valid: the playpen then uses the two
+URLs of its build.
+
+A plane variable with a value that is not a plane URL also gives the URL of
+the build. The playpen then writes one `log` line of level `error` for that
+variable.
+
+Three test seams exist and nothing in the image sets them: `AGENT_PI_BIN`,
+`AGENT_LOCK_BEAT_MS` and `AGENT_CODE_SANDBOX_ROOT`.
 
 ## Layout
 
@@ -212,6 +243,7 @@ delivers them. Three test seams exist and nothing in the image sets them:
 | `src/playpen.ts`, `src/pool.ts`, `src/session.ts`, `src/pi-process.ts`, `src/pi-record.ts` | the handshake and dispatch, the hold and reap rules, one session, one pi child, every line that child writes |
 | `src/channel.ts`, `src/framing.ts`, `src/validate.ts`, `src/protocol.ts`, `src/constants.ts` | the one stdout, LF records, every inbound line, the wire types, every fixed number |
 | `src/mounts.ts`, `src/creds.ts`, `src/runtime-config.ts`, `src/models-json.ts`, `src/pi-settings.ts`, `src/env.ts` | the three directories, `creds.json`, the config mount, the two files pi reads, the per-turn environment |
+| `src/planes.ts` | the two plane URLs: the grammar, the two variables and the `log` line for each one |
 | `src/lock.ts`, `src/turn-file.ts`, `src/tool-state.ts`, `src/workspace.ts`, `src/sandbox-facts.ts`, `src/launcher.ts` | the lock, the turn file, the tool state (read), the `code-sandbox` link, `ready`, the one spawn |
 | `bridge/index.ts`, `bridge/pep.ts`, `bridge/tools.ts`, `bridge/tool-set.ts` | the factory, `GET /manifest` and `POST /call`, one pi tool per entry |
 | `bridge/codemode.ts`, `bridge/untrusted.ts`, `bridge/turn-context.ts`, `bridge/pi-api.ts` | the frame, the marker, the three headers, the declared pi slice |
@@ -246,3 +278,14 @@ delivers them. Three test seams exist and nothing in the image sets them:
 - Contract 03 §4.6 does not say that a `ping` needs a nonce. The playpen
   answers a `ping` with no nonce with a null nonce. The host refuses that
   `pong` (`src/playpen.ts`).
+- Contract 03 §7 gives the two plane URLs as fixed values and names no
+  variable for them. The playpen takes each URL from its variable. For a
+  variable that is absent or not valid, it takes the URL of its build and
+  does not stop (`src/planes.ts`).
+- No contract gives a plane URL a grammar, and no vector covers it. The
+  playpen takes the grammar of the Rust type `PlaneUrl`. A test table holds
+  the two readers equal, and no check compares the two tables
+  (`test/planes.test.ts`).
+- The terminal launcher writes no line for a plane variable that gives no
+  URL. It has no channel. The playpen of the same sandbox reads the same env
+  file and writes the line (`src/pi-launch.ts`).
