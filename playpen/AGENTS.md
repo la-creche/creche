@@ -244,9 +244,9 @@ delivers them. Three test seams exist and nothing in the image sets them:
 - The playpen reads three shapes for an entry's text and answers `""` for any
   other (`src/entry-text.ts`).
 - Contract 03 §8 cuts an event by size. It names no depth and no lone
-  surrogate. The playpen cuts a pi line to its scalar fields in two cases:
-  the line nests deeper than 63 levels, or it holds a lone surrogate
-  (`src/pi-record.ts`).
+  surrogate. The playpen cuts a pi line to its scalar fields in two cases.
+  In the first case, the line nests deeper than 63 levels. In the second
+  case, the line holds a lone surrogate (`src/pi-record.ts`).
 - pi can answer `get_entries` with a record that the playpen cuts. That
   read is a failure, and each later read that holds the same entry is one
   too. For each turn with such a read, the playpen sends no entry id and
