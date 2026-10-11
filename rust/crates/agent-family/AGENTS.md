@@ -24,8 +24,11 @@ same messages.
 | `src/classify.rs` | `classify`: live or replacement, field by field. |
 | `src/zones.rs` | Whether the host knows a time zone. |
 | `src/scratch.rs` | Test code only: a directory that one test fills. |
-| `src/report.rs`, `src/json.rs`, `src/cli.rs`, `src/main.rs` | The report, and the program that prints it. |
+| `src/report.rs`, `src/json.rs` | The report, and its JSON text. |
+| `src/cli.rs` | The command line of the program. `run` prints the report. `entry` is the entry function of the program. |
+| `src/main.rs` | The `main` of the program: three steps and no other code. |
 | `tests/vectors.rs` | The differential test against the Python package. |
+| `tests/process.rs` | The tests that start the program as a process. |
 
 The types are in `creche-contracts`: `family` holds `RawFamily`, `Family` and
 the report types, and `server` holds `RawServer` and `Server`.
@@ -89,6 +92,29 @@ output.
 
 A file that the loader cannot read or cannot parse gets a report with an
 error. The program does not stop on such a file.
+
+`main` calls `entry`, and the body of `entry` is one call of
+`service::enter` of `creche-runtime`. A panic thus ends the program with
+exit status 1. The log then holds the place of the panic and never its
+message.
+
+`main` makes the one read of the environment. The program reads no variable
+yet.
+
+Rules for the program:
+
+1. Keep the three steps of `main`: `log::init`, `Env::from_os` and the call
+   of `entry`. Add no other code there. Clause 2 of "The panic rule" in
+   `rust/AGENTS.md` gives the reason.
+2. Do not call `entry` from a test in the test process. The function sets
+   the panic hook of the process. A later test that fails then prints no
+   message.
+3. Put a test of the process into `tests/process.rs`. Such a test starts
+   the built program. It reads the exit status and the two output streams.
+4. `run` writes its report with `write_all` on the locked stream. Rule 14 of
+   "The rules for a service" in `rust/AGENTS.md` has the sentence for such
+   a program. A write of the report that fails gives exit status 1. Write
+   no `println!` and no `eprintln!` in this crate.
 
 ## Known gaps
 
