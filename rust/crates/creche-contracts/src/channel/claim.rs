@@ -7,10 +7,13 @@
 //! The types here hold what the Python host holds after its parse. A session
 //! id of a line is a [`Text`], not a `SessionId`: the Python parse accepts
 //! each text there, and the check of rule 3 of §13 refuses an unknown one
-//! later. [`TurnAddress`] is that later step as a type.
+//! later. [`TurnAddress`] is that later step as a type. [`StoppedLine`]
+//! holds a `SessionId` and a `Ulid`: for that line the Python parse refuses
+//! each other text.
 
 use std::error::Error;
 use std::fmt;
+use std::str::FromStr;
 
 use super::MAX_LOG_BYTES;
 use super::frame::Refusal;
@@ -20,7 +23,7 @@ use super::number::{Cost, Count, Integer, TurnSeq};
 use super::playpen::MAX_ENTRY_BYTES;
 use super::text::Text;
 use super::vocabulary::{
-    Cap, ExitReason, FailReason, LogLevel, OpenReason, PlaypenType, Role, Word,
+    Cap, ExitReason, FailReason, FatalReason, LogLevel, OpenReason, PlaypenType, Role, Word,
 };
 use crate::ids::{SessionId, Ulid};
 
@@ -157,27 +160,35 @@ pub enum FatalClaim {
     ControlMountUnwritable,
     /// The environment does not name one of the three directories.
     MountDirUnset,
+    /// The environment gives no valid URL of a plane
+    /// ([`PlaneUrl`](crate::config::endpoints::PlaneUrl)).
+    PlaneUrlInvalid,
     /// Each other value, and no value.
     Unknown,
 }
 
 impl FatalClaim {
-    /// The name of the reason, as the Python host writes it.
+    /// The name of the reason, as the Python host writes it. The name of a
+    /// reason of the contract comes from [`FatalReason`].
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ControlMountUnwritable => "control_mount_unwritable",
-            Self::MountDirUnset => "mount_dir_unset",
+            Self::ControlMountUnwritable => FatalReason::ControlMountUnwritable.text(),
+            Self::MountDirUnset => FatalReason::MountDirUnset.text(),
+            Self::PlaneUrlInvalid => FatalReason::PlaneUrlInvalid.text(),
             Self::Unknown => "unknown",
         }
     }
 
-    /// The reason that a name of the playpen stands for.
+    /// The reason that a name of the playpen stands for. The match names each
+    /// reason of [`FatalReason`]. A new reason there thus needs an arm here
+    /// before the crate builds.
     fn of(name: &str) -> Self {
-        match name {
-            "control_mount_unwritable" => Self::ControlMountUnwritable,
-            "mount_dir_unset" => Self::MountDirUnset,
-            _ => Self::Unknown,
+        match FatalReason::from_wire(name) {
+            Some(FatalReason::ControlMountUnwritable) => Self::ControlMountUnwritable,
+            Some(FatalReason::MountDirUnset) => Self::MountDirUnset,
+            Some(FatalReason::PlaneUrlInvalid) => Self::PlaneUrlInvalid,
+            None => Self::Unknown,
         }
     }
 }
@@ -1059,6 +1070,59 @@ impl FatalLine {
     }
 }
 
+/// The line `process_stopped`: a playpen reports that it handled one stop
+/// that had an id (contract 03 §4.5). The line names no turn.
+///
+/// The host makes the id of a request and the id of a session. A line with
+/// another text in one of the two fields is thus no answer to a stop of the
+/// host, and [`parse`] refuses it.
+///
+/// ```
+/// use creche_contracts::channel::claim::{PlaypenLine, StoppedLine, parse};
+///
+/// let line: Option<StoppedLine> = match parse(r#"{"type":"process_stopped","request":"01JBQ7WZ0X4T9V6K2H8M3N5PQT","session":"tui-1","held":true}"#) {
+///     Ok(PlaypenLine::Stopped(line)) => Some(line),
+///     _ => None,
+/// };
+/// assert!(line.is_some_and(|line| line.held()));
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::channel::claim::{PlaypenLine, StoppedLine, parse};
+///
+/// let Ok(PlaypenLine::Stopped(line)) = parse("{}") else { return };
+/// let line = StoppedLine { held: true, ..line };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoppedLine {
+    request: Ulid,
+    session: SessionId,
+    held: bool,
+}
+
+impl StoppedLine {
+    /// The id of the `stop_process` that the line answers.
+    #[must_use]
+    pub fn request(&self) -> &Ulid {
+        &self.request
+    }
+
+    /// The session whose pi process the host asked the playpen to end.
+    #[must_use]
+    pub fn session(&self) -> &SessionId {
+        &self.session
+    }
+
+    /// `true` when the stop ended a pi process of the session. `false` when
+    /// the playpen had no such process.
+    #[must_use]
+    pub fn held(&self) -> bool {
+        self.held
+    }
+}
+
 /// One message from the playpen, as the host reads it (contract 03 §5).
 ///
 /// The set of message types is closed. A reader refuses a line with an
@@ -1087,6 +1151,8 @@ pub enum PlaypenLine {
     Entries(EntriesLine),
     /// `fatal`: the playpen cannot serve and exits.
     Fatal(FatalLine),
+    /// `process_stopped`: the playpen handled a stop that had an id.
+    Stopped(StoppedLine),
 }
 
 /// Reads one record from the playpen (contract 03 §13 rule 1).
@@ -1139,6 +1205,7 @@ pub fn parse(text: &str) -> Result<PlaypenLine, Refusal> {
         PlaypenType::Log => Ok(PlaypenLine::Log(log(&record))),
         PlaypenType::Entries => entries(&record).map(PlaypenLine::Entries),
         PlaypenType::Fatal => Ok(PlaypenLine::Fatal(fatal(&record))),
+        PlaypenType::ProcessStopped => stopped(&record).map(PlaypenLine::Stopped),
     }
 }
 
@@ -1355,6 +1422,27 @@ fn fatal(record: &JsonObject) -> FatalLine {
     }
 }
 
+/// The field `key` when it is a text that has the form of the id `T`.
+fn id_of<T: FromStr>(record: &JsonObject, key: &str) -> Option<T> {
+    let text = record.get(key).and_then(Json::as_text)?;
+
+    text.as_str()?.parse().ok()
+}
+
+fn stopped(record: &JsonObject) -> Result<StoppedLine, Refusal> {
+    // A value that is no boolean is no answer, also 1 and `null`.
+    let held = match record.get("held") {
+        Some(Json::Bool(held)) => Some(*held),
+        _ => None,
+    };
+
+    Ok(StoppedLine {
+        request: id_of(record, "request").ok_or(Refusal::Malformed)?,
+        session: id_of(record, "session").ok_or(Refusal::Malformed)?,
+        held: held.ok_or(Refusal::Malformed)?,
+    })
+}
+
 #[cfg(test)]
 pub(super) mod tests {
     use creche_vectors::{self as vectors, Outcome};
@@ -1561,6 +1649,14 @@ pub(super) mod tests {
                 json!({
                     "reason": line.reason().as_str(),
                     "message": text(line.message()),
+                }),
+            ),
+            PlaypenLine::Stopped(line) => (
+                "StoppedLine",
+                json!({
+                    "request": line.request().as_str(),
+                    "session": line.session().as_str(),
+                    "held": line.held(),
                 }),
             ),
         };
@@ -1962,6 +2058,54 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn the_answer_to_a_stop_holds_two_ids_and_a_flag() {
+        const REQUEST: &str = "01JBQ7WZ0X4T9V6K2H8M3N5PQT";
+        let stopped = |fields: &str| parse(&format!(r#"{{"type":"process_stopped"{fields}}}"#));
+        let good = format!(r#","request":"{REQUEST}","session":"tui-1""#);
+        let Ok(PlaypenLine::Stopped(held)) = stopped(&format!(r#"{good},"held":true"#)) else {
+            panic!("no stopped line");
+        };
+        let Ok(PlaypenLine::Stopped(idle)) =
+            stopped(&format!(r#"{good},"held":false,"later":[1]"#))
+        else {
+            panic!("no stopped line");
+        };
+        let refused = [
+            String::new(),
+            good.clone(),
+            format!(r#"{good},"held":1"#),
+            format!(r#"{good},"held":0"#),
+            format!(r#"{good},"held":"true""#),
+            format!(r#"{good},"held":null"#),
+            r#","session":"tui-1","held":true"#.to_owned(),
+            format!(r#","request":"{REQUEST}","held":true"#),
+            r#","request":7,"session":"tui-1","held":true"#.to_owned(),
+            r#","request":"","session":"tui-1","held":true"#.to_owned(),
+            format!(r#","request":"{REQUEST}0","session":"tui-1","held":true"#),
+            format!(r#","request":"{REQUEST}\n","session":"tui-1","held":true"#),
+            format!(
+                r#","request":"{}","session":"tui-1","held":true"#,
+                REQUEST.to_lowercase()
+            ),
+            r#","request":"\ud800","session":"tui-1","held":true"#.to_owned(),
+            format!(r#","request":"{REQUEST}","session":7,"held":true"#),
+            format!(r#","request":"{REQUEST}","session":"","held":true"#),
+            format!(r#","request":"{REQUEST}","session":"..","held":true"#),
+            format!(r#","request":"{REQUEST}","session":"../x","held":true"#),
+            format!(r#","request":"{REQUEST}","session":"tui-1\n","held":true"#),
+            format!(r#","request":"{REQUEST}","session":"\udc00","held":true"#),
+        ];
+
+        assert_eq!(held.request().as_str(), REQUEST);
+        assert_eq!(held.session().as_str(), "tui-1");
+        assert!(held.held());
+        assert!(!idle.held());
+        for fields in refused {
+            assert_eq!(stopped(&fields), Err(Refusal::Malformed), "{fields}");
+        }
+    }
+
+    #[test]
     fn a_claimed_name_is_known_or_kept_as_text() {
         let PlaypenLine::Log(log) = line(r#"{"type":"log","level":"LOUD"}"#) else {
             panic!("no log line");
@@ -1984,5 +2128,16 @@ pub(super) mod tests {
         assert_eq!(exit.reason().to_text(), "crashed");
         assert_eq!(fatal.reason(), FatalClaim::MountDirUnset);
         assert_eq!(other.reason(), FatalClaim::Unknown);
+    }
+
+    #[test]
+    fn a_fatal_line_names_a_plane_url_that_is_not_valid() {
+        let PlaypenLine::Fatal(fatal) = line(r#"{"type":"fatal","reason":"plane_url_invalid"}"#)
+        else {
+            panic!("no fatal line");
+        };
+
+        assert_eq!(fatal.reason(), FatalClaim::PlaneUrlInvalid);
+        assert_eq!(fatal.reason().as_str(), "plane_url_invalid");
     }
 }

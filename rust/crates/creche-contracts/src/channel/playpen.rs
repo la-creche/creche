@@ -1303,6 +1303,70 @@ impl Fatal {
     }
 }
 
+/// What the playpen held for the session of a stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Held {
+    /// A pi process of the session. The stop ended it.
+    Process,
+    /// No pi process of the session.
+    Nothing,
+}
+
+/// `process_stopped`: the playpen reports that it handled one stop that had
+/// an id (contract 03 §4.5). The line names no turn.
+///
+/// ```
+/// use creche_contracts::channel::playpen::{Held, PlaypenMessage, ProcessStopped};
+///
+/// let stopped = ProcessStopped::new(
+///     "01JBQ7WZ0X4T9V6K2H8M3N5PQT".parse().unwrap(),
+///     "tui-1".parse().unwrap(),
+///     Held::Process,
+/// );
+/// assert!(PlaypenMessage::ProcessStopped(stopped).encode().is_ok());
+/// ```
+///
+/// Code outside this module cannot build a value from raw parts:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::channel::playpen::{Held, PlaypenMessage, ProcessStopped};
+///
+/// let stopped = ProcessStopped::new(
+///     "01JBQ7WZ0X4T9V6K2H8M3N5PQT".parse().unwrap(),
+///     "tui-1".parse().unwrap(),
+///     Held::Process,
+/// );
+/// let stopped = ProcessStopped { held: false, ..stopped };
+/// let none: Option<PlaypenMessage> = None;
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessStopped {
+    request: Ulid,
+    session: SessionId,
+    held: bool,
+}
+
+impl ProcessStopped {
+    /// The answer to the `stop_process` of `session` that holds the id
+    /// `request`.
+    #[must_use]
+    pub fn new(request: Ulid, session: SessionId, held: Held) -> Self {
+        Self {
+            request,
+            session,
+            held: held == Held::Process,
+        }
+    }
+
+    fn body(&self) -> String {
+        writer(PlaypenType::ProcessStopped)
+            .text("request", self.request.as_str())
+            .text("session", self.session.as_str())
+            .raw("held", flag_text(self.held))
+            .finish()
+    }
+}
+
 /// The text of an optional pi entry id.
 fn id_text(id: Option<&EntryId>) -> Option<&str> {
     id.map(EntryId::as_str)
@@ -1373,6 +1437,8 @@ pub enum PlaypenMessage {
     Entries(Entries),
     /// `fatal`.
     Fatal(Fatal),
+    /// `process_stopped`.
+    ProcessStopped(ProcessStopped),
 }
 
 impl PlaypenMessage {
@@ -1390,6 +1456,7 @@ impl PlaypenMessage {
             Self::Log(_) => PlaypenType::Log,
             Self::Entries(_) => PlaypenType::Entries,
             Self::Fatal(_) => PlaypenType::Fatal,
+            Self::ProcessStopped(_) => PlaypenType::ProcessStopped,
         }
     }
 
@@ -1413,6 +1480,7 @@ impl PlaypenMessage {
             Self::Log(message) => message.body(),
             Self::Entries(message) => message.body(),
             Self::Fatal(message) => message.body(),
+            Self::ProcessStopped(message) => message.body(),
         };
 
         framed(body, MAX_LINE_BYTES)
@@ -1427,9 +1495,13 @@ mod tests {
     use crate::channel::claim::tests::normalized;
     use crate::channel::claim::{PlaypenLine, parse};
     use crate::channel::frame::Refusal;
+    use crate::channel::host::{HostMessage, Millis, StopProcess};
 
     const SESSION: &str = "tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK";
     const TURN: &str = "01JBQ7WZ0X4T9V6K2H8M3N5PQR";
+
+    /// The id that the host gives one `stop_process`.
+    const REQUEST: &str = "01JBQ7WZ0X4T9V6K2H8M3N5PQT";
 
     fn session() -> SessionId {
         SESSION.parse().unwrap()
@@ -1524,7 +1596,7 @@ mod tests {
                     "protocol": "1.0", "sandbox": "chat-s3", "playpen": "agent-supervisor/0.1.0",
                     "pi": "0.99.1", "node": "24.1.0", "max_resident_processes": 8,
                     "foreign_pi_processes": 0,
-                    "caps": ["steer", "coalesce", "workspace_link", "get_entries"],
+                    "caps": ["steer", "coalesce", "workspace_link", "get_entries", "stop_ack"],
                 }}),
             ),
             (
@@ -1646,6 +1718,26 @@ mod tests {
                     "message": "cannot write the lock: EACCES",
                 }}),
             ),
+            (
+                PlaypenMessage::ProcessStopped(ProcessStopped::new(
+                    REQUEST.parse().unwrap(),
+                    session(),
+                    Held::Process,
+                )),
+                json!({"kind": "StoppedLine", "message": {
+                    "request": REQUEST, "session": SESSION, "held": true,
+                }}),
+            ),
+            (
+                PlaypenMessage::ProcessStopped(ProcessStopped::new(
+                    REQUEST.parse().unwrap(),
+                    session(),
+                    Held::Nothing,
+                )),
+                json!({"kind": "StoppedLine", "message": {
+                    "request": REQUEST, "session": SESSION, "held": false,
+                }}),
+            ),
         ];
         let mut kinds = Vec::new();
 
@@ -1733,7 +1825,19 @@ mod tests {
             ExitReason::Reaped,
         ));
         let pong = PlaypenMessage::Pong(Pong::new(None, 5, 0, None));
+        let stopped = PlaypenMessage::ProcessStopped(ProcessStopped::new(
+            REQUEST.parse().unwrap(),
+            session(),
+            Held::Process,
+        ));
 
+        assert_eq!(
+            record(&stopped),
+            format!(
+                "{{\"type\":\"process_stopped\",\"request\":\"{REQUEST}\",\
+                 \"session\":\"{SESSION}\",\"held\":true}}"
+            )
+        );
         assert_eq!(
             record(&settled()),
             format!(
@@ -1761,8 +1865,47 @@ mod tests {
             "{\"type\":\"ready\",\"protocol\":\"1.0\",\"supervisor\":\"agent-supervisor/0.1.0\",\
              \"pi\":\"0.99.1\",\"node\":\"24.1.0\",\"sandbox\":\"chat-s3\",\
              \"max_resident_processes\":8,\"foreign_pi_processes\":0,\
-             \"caps\":[\"steer\",\"coalesce\",\"workspace_link\",\"get_entries\"]}"
+             \"caps\":[\"steer\",\"coalesce\",\"workspace_link\",\"get_entries\",\
+             \"stop_ack\"]}"
         );
+    }
+
+    #[test]
+    fn the_answer_to_a_stop_holds_the_two_ids_that_the_host_wrote() {
+        // The host writes the stop, and the playpen reads it.
+        let request: Ulid = REQUEST.parse().unwrap();
+        let stop = HostMessage::StopProcess(
+            StopProcess::new(session(), Millis::STOP_GRACE).with_request(request.clone()),
+        );
+        let line = stop.encode().unwrap();
+        let Ok(HostMessage::StopProcess(asked)) = HostMessage::parse(line.trim_end()) else {
+            panic!("{line}");
+        };
+
+        // The playpen writes the answer, and the host reads it.
+        for (held, flag) in [(Held::Process, true), (Held::Nothing, false)] {
+            let answer = PlaypenMessage::ProcessStopped(ProcessStopped::new(
+                asked.request().unwrap().clone(),
+                asked.session().clone(),
+                held,
+            ));
+            let Ok(PlaypenLine::Stopped(read)) = parse(&record(&answer)) else {
+                panic!("{answer:?}");
+            };
+
+            assert_eq!(read.request(), &request);
+            assert_eq!(read.session(), &session());
+            assert_eq!(read.held(), flag);
+        }
+
+        // A stop with no request gives the playpen no id for an answer.
+        let plain = HostMessage::StopProcess(StopProcess::new(session(), Millis::STOP_GRACE));
+        let line = plain.encode().unwrap();
+        let Ok(HostMessage::StopProcess(plain)) = HostMessage::parse(line.trim_end()) else {
+            panic!("{line}");
+        };
+
+        assert_eq!(plain.request(), None);
     }
 
     #[test]
@@ -1790,6 +1933,15 @@ mod tests {
         assert_eq!(parse(&record(&no_nonce)), Err(Refusal::Malformed));
 
         assert_eq!(read(&unset)["message"]["reason"], "mount_dir_unset");
+    }
+
+    #[test]
+    fn the_host_reads_each_fatal_reason_by_its_name() {
+        for reason in FatalReason::ALL {
+            let fatal = PlaypenMessage::Fatal(Fatal::new(*reason, LogText::cut("")));
+
+            assert_eq!(read(&fatal)["message"]["reason"], reason.as_str());
+        }
     }
 
     #[test]

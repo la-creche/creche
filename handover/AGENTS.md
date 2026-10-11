@@ -95,6 +95,15 @@ The console script is `handover`. The verify hook and the operator's
 5. The site file holds everything that differs between deployments. `site.py`
    reads it. A missing value refuses with the `site` code. It never falls back
    to a default.
+6. The version of the manifest contract has one source: the `provides` row
+   for `component-manifest` in `handover/component.yaml`. `catalog.py` holds
+   the same two numbers as constants that a person types:
+   `MANIFEST_CONTRACT_MAJOR` and `MANIFEST_CONTRACT_MINOR`. They are the
+   newest version that the reader takes.
+   `tests/test_handover_contract_version.py` fails when the constants and
+   the row differ. Only the Rust code takes the two numbers from the row
+   with a program: a build script (`rust/AGENTS.md`). Change the row and
+   the constants in one commit.
 
 ## Rules `executor/` adds
 
