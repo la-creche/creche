@@ -116,7 +116,8 @@ uv run pytest family/tests
      - Each other cap on a length and on a count.
 
      The two readers have one form for a tool name, for the name of a
-     variable and for a version. `grammar.py` holds the three forms.
+     variable and for a version. `grammar.py` holds the three forms of this
+     validator. `handover.mcpserver` holds the three patterns of root.
   4. `parse.py`, `_MERGE_DEPTH_MAX` and `_MERGED_ENTRIES_MAX`, contract 01
      §1 and contract 01b §1. The contracts give no limit for merge keys. The
      reader follows a chain of 400 merge keys at most. It makes 100,000
