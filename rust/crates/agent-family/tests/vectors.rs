@@ -46,11 +46,6 @@ mod walk {
         /// The Python code accepts the file. The Rust report holds one error
         /// for the whole file, with this message.
         Refused(&'static str),
-        /// The stance `stricter` of `rust/AGENTS.md`. The Python code accepts
-        /// the file. An id type of `creche_contracts::ids` refuses one text
-        /// of the file, so the Rust report holds one error more: this
-        /// location and this message.
-        Stricter(&'static str, &'static str),
         /// The Python code refuses the file with other issues. The Rust
         /// report holds one error for the whole file, with this message.
         OtherRefusal(&'static str),
@@ -64,11 +59,6 @@ mod walk {
         contract: &'static str,
         difference: Difference,
     }
-
-    /// The error for the tool name of the two vectors `long-tool-name`. The
-    /// name has 65 characters.
-    const LONG_TOOL_ERROR: &str = "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
-                                   is not a tool name; a tool name has 64 bytes or less";
 
     /// A row for a text that has no value. The Python reader gives one
     /// message for each such text. The Rust reader gives the cause, in
@@ -84,7 +74,7 @@ mod walk {
 
     /// Each vector on which the Rust code differs from the Python code on
     /// purpose.
-    const DEVIATIONS: [Deviation; 16] = [
+    const DEVIATIONS: [Deviation; 10] = [
         no_value(
             "yaml-huge-int",
             "YAML will not parse: an integer has more than 4300 digits",
@@ -143,65 +133,6 @@ mod walk {
             // cannot use up the stack of its caller.
             difference: Difference::OtherRefusal(
                 "YAML will not parse: the text nests deeper than 128 levels",
-            ),
-        },
-        Deviation {
-            surface: "family_file",
-            vector: "long-tool-name",
-            contract: "contract 01 §3.4: no limit for the size of a tool name",
-            // `agent_family` has no limit. `ids::ToolName` takes the limit
-            // of 64 bytes of the strictest Python copy.
-            difference: Difference::Stricter("tools.long-tool-server[0]", LONG_TOOL_ERROR),
-        },
-        Deviation {
-            surface: "server_file",
-            vector: "long-tool-name",
-            contract: "contract 01b §5: no limit for the size of a tool name",
-            difference: Difference::Stricter("tools[0]", LONG_TOOL_ERROR),
-        },
-        Deviation {
-            surface: "server_file",
-            vector: "long-version-hyphen",
-            contract: "contract 01b §3.1: no grammar for a version",
-            // `agent_family` permits `+` and `-` in a version and has no
-            // limit. `ids::PackageVersion` takes the strictest Python copy:
-            // no `+`, no `-` and 64 bytes at most.
-            difference: Difference::Stricter(
-                "install.version",
-                "'1.0.0-rc1' is not an exact version; byte 5 of a package version is not A to Z, a \
-                 to z, 0 to 9 or .",
-            ),
-        },
-        Deviation {
-            surface: "server_file",
-            vector: "long-version-plus",
-            contract: "contract 01b §3.1: no grammar for a version",
-            difference: Difference::Stricter(
-                "install.version",
-                "'1.0.0+local' is not an exact version; byte 5 of a package version is not A to Z, \
-                 a to z, 0 to 9 or .",
-            ),
-        },
-        Deviation {
-            surface: "server_file",
-            vector: "long-version",
-            contract: "contract 01b §3.1: no grammar for a version",
-            difference: Difference::Stricter(
-                "install.version",
-                "'11111111111111111111111111111111111111111111111111111111111111111' is not an \
-                 exact version; a package version has 64 bytes or less",
-            ),
-        },
-        Deviation {
-            surface: "server_file",
-            vector: "long-env-name",
-            contract: "contract 01b §4.1: no grammar for the name of a variable",
-            // `agent_family` has no limit. `ids::EnvName` takes the limit of
-            // 64 bytes of the strictest Python copy.
-            difference: Difference::Stricter(
-                "run.env.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' is not an \
-                 environment variable name; an environment variable name has 64 bytes or less",
             ),
         },
     ];
@@ -320,8 +251,6 @@ mod walk {
     enum Reach {
         /// The file has a valid value, as in Python.
         Valid,
-        /// The file has the Python shape, and a stricter id type refuses it.
-        Parsed,
         /// The file has no value.
         Refused,
     }
@@ -329,7 +258,6 @@ mod walk {
     fn reach(surface: &str, vector: &str) -> Reach {
         match deviation(surface, vector).map(|row| &row.difference) {
             Some(Difference::Refused(_)) => Reach::Refused,
-            Some(Difference::Stricter(..)) => Reach::Parsed,
             _ => Reach::Valid,
         }
     }
@@ -343,21 +271,11 @@ mod walk {
         json!(report.state().as_str())
     }
 
-    /// `issues` with no issue `extra`. The row of `id` names no difference
-    /// when the list does not hold that issue.
-    fn without(issues: &mut Value, extra: &Value, id: &str, contract: &str) {
-        let list = issues.as_array_mut().unwrap();
-        let at = list.iter().position(|issue| issue == extra);
-        let at =
-            at.unwrap_or_else(|| panic!("{id}: the deviation row names no difference: {contract}"));
-        list.remove(at);
-    }
-
     /// Compares one report with one vector. For a vector with a deviation
     /// row, the report must hold the difference that the row names.
     fn check_report(surface: &str, vector: &Vector, report: &Report) {
         let id = vector.id();
-        let mut issues = serde_json::to_value(report.issues()).unwrap();
+        let issues = serde_json::to_value(report.issues()).unwrap();
         match deviation(surface, id).map(|row| (&row.difference, row.contract)) {
             Some((Difference::Refused(msg), contract)) => {
                 assert_eq!(vector.result(), Outcome::Accepted, "{id}: {contract}");
@@ -379,14 +297,6 @@ mod walk {
                 );
                 assert_eq!(issues, wanted, "{id}: {contract}");
                 assert_eq!(Some(&state_json(report)), vector.field(STATUS_KEY), "{id}");
-
-                return;
-            }
-            Some((Difference::Stricter(loc, msg), contract)) => {
-                assert_eq!(vector.result(), Outcome::Accepted, "{id}: {contract}");
-                without(&mut issues, &error_json(loc, msg), id, contract);
-                assert_eq!(Some(&issues), vector.field(ISSUES_KEY), "{surface} {id}");
-                assert!(!report.ok(), "{id}: {contract}");
 
                 return;
             }
@@ -441,11 +351,6 @@ mod walk {
                 vector.value(),
                 "{id}"
             );
-            if reach == Reach::Parsed {
-                assert!(!loaded.families().contains_key(directory), "{id}");
-                continue;
-            }
-
             let family = &loaded.families()[directory];
             assert_eq!(
                 Some(&serde_json::to_value(RawFamily::from(family)).unwrap()),
@@ -492,11 +397,6 @@ mod walk {
                 vector.value(),
                 "{id}"
             );
-            if reach("server_file", id) == Reach::Parsed {
-                assert!(!loaded.servers().contains_key(directory), "{id}");
-                continue;
-            }
-
             let server = &loaded.servers()[directory];
             assert_eq!(
                 Some(&serde_json::to_value(RawServer::from(server)).unwrap()),
