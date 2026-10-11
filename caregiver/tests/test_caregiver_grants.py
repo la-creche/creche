@@ -16,8 +16,8 @@ from typing import Any
 
 import pytest
 import yaml
-from agent_family import FamilyFile, FamilyState, Index, load_registry
-from agent_family.grammar import DEFAULT_MAX_INFLIGHT_DELEGATIONS
+from agent_family import FamilyFile, FamilyState, Index, load_registry, parse_family
+from agent_family.grammar import DEFAULT_MAX_INFLIGHT_DELEGATIONS, TOOL_NAME
 from agent_family.server import McpServerFile
 from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
@@ -36,7 +36,7 @@ from caregiver.grants import (
     write_grant_file,
 )
 from caregiver.litellm_keys import FakeLiteLLMKeys
-from caregiver.reconcile import Actors, ReconcileResult, reconcile_family
+from caregiver.reconcile import WHOLE_FILE, Actors, ReconcileResult, reconcile_family
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
 from caregiver_helpers import UNREADABLE_JSON, published, write_registry
@@ -359,9 +359,16 @@ def test_a_refused_grant_file_leaves_the_file_of_the_last_write(tmp_path: Path) 
 
 SERVER = "kagi"
 
-#: One tool name with as many bytes as the cap. A grant file that holds it
-#: is larger than the cap.
-LONG_TOOL = "t" * GRANT_FILE_MAX_BYTES
+#: The count of characters of each name of `MANY_TOOLS`: the largest count
+#: that the tool name form takes.
+TOOL_CHARS = 64
+
+#: Tool names that the server file takes, and more of them than a grant file
+#: holds. One name is one line of the file, so one line has more bytes than
+#: `TOOL_CHARS`. Only the cap refuses a registry with these tools.
+MANY_TOOLS = tuple(
+    f"t{index:0{TOOL_CHARS - 1}d}" for index in range(GRANT_FILE_MAX_BYTES // TOOL_CHARS + 1)
+)
 
 TOO_LARGE_NOTE = "refused: grant file over the cap"
 
@@ -428,6 +435,18 @@ def host(tmp_path: Path) -> Host:
     return Host(registry_root, tmp_path / "state")
 
 
+def test_only_the_cap_refuses_the_registry_of_many_tools(host: Host) -> None:
+    """Each name has the tool name form. The report of the server file and
+    the report of the family file hold no error."""
+    host.serve("search", *MANY_TOOLS)
+
+    registry = load_registry(host.registry_root)
+
+    assert all(TOOL_NAME.fullmatch(name) is not None for name in MANY_TOOLS)
+    assert registry.server_reports[SERVER].ok
+    assert registry.reports["chat"].ok
+
+
 def test_a_pass_keeps_the_last_grant_file_when_the_next_one_is_over_the_cap(host: Host) -> None:
     """The family reads `invalid`, as for each file that a pass cannot
     apply. The last grant file stays, so the family keeps what it had."""
@@ -437,7 +456,7 @@ def test_a_pass_keeps_the_last_grant_file_when_the_next_one_is_over_the_cap(host
     before = host.grant_path.read_bytes()
     host.driver.calls.clear()
 
-    host.serve("search", LONG_TOOL)
+    host.serve("search", *MANY_TOOLS)
     result = host.one_pass()
 
     assert result.status.state is FamilyState.INVALID
@@ -456,7 +475,7 @@ def test_a_grant_file_over_the_cap_is_an_issue_and_no_fault(host: Host, tmp_path
     host.serve("search")
     host.one_pass()
 
-    host.serve("search", LONG_TOOL)
+    host.serve("search", *MANY_TOOLS)
     result = host.one_pass()
 
     size = host.refused_size(tmp_path)
@@ -464,17 +483,27 @@ def test_a_grant_file_over_the_cap_is_an_issue_and_no_fault(host: Host, tmp_path
     report = host.report()
     assert report["status"] == "invalid"
     assert report["errors"] == 1
-    issue = {"severity": "error", "loc": "<document>", "msg": said, "downgraded": False}
+    issue = {"severity": "error", "loc": WHOLE_FILE, "msg": said, "downgraded": False}
     assert issue in report["issues"]
     validation = published(host.state_root)["validation"]
     assert validation["ok"] is False
     assert validation["error_count"] == 1
-    assert validation["first_error"] == f"<document>: {said}"
+    assert validation["first_error"] == f"{WHOLE_FILE}: {said}"
     assert result.status.faults == ()
 
 
+def test_the_place_of_the_cap_issue_is_the_place_of_a_whole_file_issue() -> None:
+    """The validator gives one place to each issue of a whole family file.
+    `WHOLE_FILE` is a copy of that text. A family file that is no mapping
+    has such an issue."""
+    parsed, issues = parse_family("- chat\n")
+
+    assert parsed is None
+    assert [one.loc for one in issues] == [WHOLE_FILE]
+
+
 def test_a_first_pass_writes_no_grant_file_over_the_cap(host: Host) -> None:
-    host.serve("search", LONG_TOOL)
+    host.serve("search", *MANY_TOOLS)
 
     result = host.one_pass()
 
@@ -487,7 +516,7 @@ def test_a_first_pass_writes_no_grant_file_over_the_cap(host: Host) -> None:
 def test_a_pass_writes_the_grant_file_when_it_fits_again(host: Host) -> None:
     host.serve("search")
     host.one_pass()
-    host.serve("search", LONG_TOOL)
+    host.serve("search", *MANY_TOOLS)
     host.one_pass()
 
     host.serve("search", "extract")
