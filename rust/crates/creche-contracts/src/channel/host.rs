@@ -1752,11 +1752,17 @@ impl Abort {
 
 /// `stop_process`: end the pi process of one session (contract 03 §4.5).
 ///
+/// A stop can hold a `request`, which is an id that the host makes. Only a
+/// playpen whose `ready` lists the cap `stop_ack` answers such a stop. Its
+/// answer is one `process_stopped` line with the same id. A stop with no
+/// `request` gets no answer.
+///
 /// ```
 /// use creche_contracts::channel::host::{Millis, StopProcess};
 ///
 /// let stop = StopProcess::new("tui-1".parse().unwrap(), Millis::STOP_GRACE);
 /// assert_eq!(stop.grace_ms(), Some(Millis::new(5000)));
+/// assert_eq!(stop.request(), None);
 /// ```
 ///
 /// Code outside this module cannot build a value from raw parts:
@@ -1771,6 +1777,7 @@ impl Abort {
 pub struct StopProcess {
     session: SessionId,
     grace_ms: Option<Millis>,
+    request: Option<Ulid>,
 }
 
 impl StopProcess {
@@ -1781,7 +1788,17 @@ impl StopProcess {
         Self {
             session,
             grace_ms: Some(grace_ms),
+            request: None,
         }
+    }
+
+    /// The same stop with the id `request`. A `process_stopped` line for
+    /// this stop holds that id.
+    #[must_use]
+    pub fn with_request(mut self, request: Ulid) -> Self {
+        self.request = Some(request);
+
+        self
     }
 
     /// The session.
@@ -1797,11 +1814,19 @@ impl StopProcess {
         self.grace_ms
     }
 
+    /// The id that the answer of the playpen holds. `None` for a stop that
+    /// gets no answer.
+    #[must_use]
+    pub fn request(&self) -> Option<&Ulid> {
+        self.request.as_ref()
+    }
+
     fn body(&self) -> String {
         ObjectWriter::new()
             .text("type", HostType::StopProcess.as_str())
             .text("session", self.session.as_str())
             .raw_if("grace_ms", self.grace_ms.map(|grace| grace.to_string()))
+            .text_if("request", self.request.as_ref().map(Ulid::as_str))
             .finish()
     }
 }
@@ -2371,10 +2396,29 @@ impl Record<'_> {
         self.addressed().map(Abort::new)
     }
 
+    /// An optional request. An absent field and `null` give no request. Each
+    /// other value that is no ULID is a fault, also a number: to read it as
+    /// absent ends the process and sends no answer to a host that waits for
+    /// one.
+    // CONTRACT-QUESTION: contract 03 §4.5 does not say what the playpen does
+    // with a `request` that is no text. This reader takes the conservative
+    // reading: it refuses the line, as it refuses a text that is no ULID. The
+    // other reading counts such a value as absent, as this reader does for a
+    // `nonce`. A change costs one branch of this function and four rows of a
+    // test table.
+    fn request(&self) -> Read<Option<Ulid>> {
+        if self.absent("request") {
+            return Ok(None);
+        }
+
+        self.required("request").map(Some)
+    }
+
     fn stop_process(&self) -> Read<StopProcess> {
         Ok(StopProcess {
             session: self.required("session")?,
             grace_ms: self.grace()?,
+            request: self.request()?,
         })
     }
 
@@ -2426,6 +2470,9 @@ mod tests {
     const SESSION: &str = "tui-01J9ZQ5V7Y8X4W3T2S1R0QPNMK";
     const TURN: &str = "01JBQ7WZ0X4T9V6K2H8M3N5PQR";
     const OWNER: &str = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33";
+
+    /// The id that the host gives one `stop_process`.
+    const REQUEST: &str = "01JBQ7WZ0X4T9V6K2H8M3N5PQT";
 
     /// One vector on which the types differ from the Python host on purpose.
     struct Deviation {
@@ -2605,6 +2652,15 @@ mod tests {
                 .map_or(Millis::STOP_GRACE, Millis::new))
         }
 
+        fn stop(&self) -> Built<StopProcess> {
+            let stop = StopProcess::new(self.required("session")?, self.grace()?);
+
+            Ok(match self.optional("request")? {
+                Some(request) => stop.with_request(request),
+                None => stop,
+            })
+        }
+
         fn turn_request(&self) -> Built<TurnRequest> {
             let mut request = TurnRequest::new(
                 self.required("turn")?,
@@ -2663,9 +2719,7 @@ mod tests {
             }
             "steer" => HostMessage::Steer(Steer::new(args.address()?, args.required("message")?)),
             "abort" => HostMessage::Abort(Abort::new(args.address()?)),
-            "stop_process" => {
-                HostMessage::StopProcess(StopProcess::new(args.required("session")?, args.grace()?))
-            }
+            "stop_process" => HostMessage::StopProcess(args.stop()?),
             "ping" => HostMessage::Ping(Ping::new(args.required("nonce")?)),
             "shutdown" => HostMessage::Shutdown(Shutdown::new(args.grace()?)),
             _ => return Err(Unbuildable::NoConstructor),
@@ -2812,6 +2866,10 @@ mod tests {
                 SESSION.parse().unwrap(),
                 Millis::STOP_GRACE,
             )),
+            HostMessage::StopProcess(
+                StopProcess::new(SESSION.parse().unwrap(), Millis::STOP_GRACE)
+                    .with_request(REQUEST.parse().unwrap()),
+            ),
             HostMessage::GetEntries(GetEntries::new(TURN.parse().unwrap(), binding())),
             HostMessage::GetEntries(
                 GetEntries::new(TURN.parse().unwrap(), full_binding())
@@ -2856,7 +2914,18 @@ mod tests {
             GetEntries::new(TURN.parse().unwrap(), full_binding())
                 .with_since("e4".parse().unwrap()),
         );
+        let stop = HostMessage::StopProcess(
+            StopProcess::new(SESSION.parse().unwrap(), Millis::new(250))
+                .with_request(REQUEST.parse().unwrap()),
+        );
 
+        assert_eq!(
+            stop.encode().unwrap(),
+            format!(
+                "{{\"type\":\"stop_process\",\"session\":\"{SESSION}\",\"grace_ms\":250,\
+                 \"request\":\"{REQUEST}\"}}\n"
+            )
+        );
         assert_eq!(
             prompt.encode().unwrap(),
             format!(
@@ -3100,6 +3169,7 @@ mod tests {
              \"session_dir\":\"/w/pi\",\"config_rev\":\"r1\""
         );
         let read = format!("{open},\"type\":\"get_entries\",\"env_epoch\":7");
+        let stop = format!("{{\"type\":\"stop_process\",\"session\":\"{SESSION}\"");
         let refused = [
             ("{\"type\":\"hello\"}".to_owned(), field("protocol"), false),
             (
@@ -3178,6 +3248,24 @@ mod tests {
                 field("grace_ms"),
                 false,
             ),
+            (format!("{stop},\"request\":\"\"}}"), field("request"), false),
+            (format!("{stop},\"request\":\"not a ulid\"}}"), field("request"), false),
+            (
+                format!("{stop},\"request\":\"{}\"}}", REQUEST.to_lowercase()),
+                field("request"),
+                false,
+            ),
+            (format!("{stop},\"request\":\"{REQUEST}0\"}}"), field("request"), false),
+            (format!("{stop},\"request\":\"{REQUEST}\\n\"}}"), field("request"), false),
+            (format!("{stop},\"request\":\"\\ud800\"}}"), field("request"), false),
+            (format!("{stop},\"request\":7}}"), field("request"), false),
+            (format!("{stop},\"request\":true}}"), field("request"), false),
+            (format!("{stop},\"request\":[\"{REQUEST}\"]}}"), field("request"), false),
+            (
+                format!("{stop},\"request\":{{\"id\":\"{REQUEST}\"}}}}"),
+                field("request"),
+                false,
+            ),
             (format!("{{\"type\":\"ping\",\"nonce\":\"{long}\"}}"), field("nonce"), false),
         ];
 
@@ -3217,6 +3305,14 @@ mod tests {
             (
                 "{\"type\":\"shutdown\",\"grace_ms\":0}",
                 HostMessage::Shutdown(Shutdown::new(Millis::new(0))),
+            ),
+            (
+                "{\"type\":\"stop_process\",\"session\":\"tui-1\",\"request\":null}",
+                HostMessage::StopProcess(StopProcess {
+                    session: "tui-1".parse().unwrap(),
+                    grace_ms: None,
+                    request: None,
+                }),
             ),
         ];
 
@@ -3365,6 +3461,17 @@ mod tests {
                 .session()
                 .as_str(),
             SESSION
+        );
+        assert_eq!(
+            StopProcess::new(SESSION.parse().unwrap(), Millis::new(1)).request(),
+            None
+        );
+        assert_eq!(
+            StopProcess::new(SESSION.parse().unwrap(), Millis::new(1))
+                .with_request(REQUEST.parse().unwrap())
+                .request()
+                .map(Ulid::as_str),
+            Some(REQUEST)
         );
         assert_eq!(
             Ping::new("n".parse().unwrap()).nonce().unwrap().as_str(),

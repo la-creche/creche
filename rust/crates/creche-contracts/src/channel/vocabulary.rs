@@ -116,6 +116,8 @@ words! {
         Entries => "entries",
         /// The playpen cannot serve and exits.
         Fatal => "fatal",
+        /// The playpen handled a stop that had an id.
+        ProcessStopped => "process_stopped",
     }
 }
 
@@ -241,6 +243,9 @@ words! {
         WorkspaceLink => "workspace_link",
         /// The playpen answers `get_entries` (§4.8).
         GetEntries => "get_entries",
+        /// The playpen sends `process_stopped` for each stop that has an id
+        /// (§4.5).
+        StopAck => "stop_ack",
     }
 }
 
@@ -318,6 +323,7 @@ mod tests {
             "log",
             "entries",
             "fatal",
+            "process_stopped",
         ]);
         round_trip::<FailReason>(&[
             "no_resident_process",
@@ -341,7 +347,13 @@ mod tests {
         round_trip::<ExitReason>(&["reaped", "stopped", "crashed", "shutdown"]);
         round_trip::<LogLevel>(&["debug", "info", "warn", "error"]);
         round_trip::<Role>(&["user", "assistant"]);
-        round_trip::<Cap>(&["steer", "coalesce", "workspace_link", "get_entries"]);
+        round_trip::<Cap>(&[
+            "steer",
+            "coalesce",
+            "workspace_link",
+            "get_entries",
+            "stop_ack",
+        ]);
         round_trip::<FatalReason>(&[
             "control_mount_unwritable",
             "mount_dir_unset",

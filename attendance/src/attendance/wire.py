@@ -20,6 +20,7 @@ from typing import Any
 
 from .atomic import as_array, as_object
 from .errors import TurnReason
+from .ids import is_session, is_ulid
 from .models import Usage
 
 PROTOCOL_VERSION = "1.0"
@@ -115,6 +116,7 @@ class PlaypenType(StrEnum):
     LOG = "log"
     ENTRIES = "entries"
     FATAL = "fatal"
+    PROCESS_STOPPED = "process_stopped"
 
 
 class FatalReason(StrEnum):
@@ -319,6 +321,20 @@ class FatalLine:
     message: str = ""
 
 
+@dataclass(slots=True)
+class StoppedLine:
+    """A playpen reports that it handled one stop that had an id (contract 03 §4.5).
+
+    `request` is the id that the host gave the stop. `held` is true when the
+    stop ended a pi process of the session, and false when the playpen had no
+    such process. The line names no turn.
+    """
+
+    request: str
+    session: str
+    held: bool
+
+
 PlaypenMessage = (
     Ready
     | OpenedLine
@@ -330,6 +346,7 @@ PlaypenMessage = (
     | LogLine
     | EntriesLine
     | FatalLine
+    | StoppedLine
 )
 
 
@@ -513,6 +530,9 @@ def _parse_typed(kind: PlaypenType, record: dict[str, Any]) -> PlaypenMessage | 
     if kind is PlaypenType.FATAL:
         return _parse_fatal(record)
 
+    if kind is PlaypenType.PROCESS_STOPPED:
+        return _parse_stopped(record)
+
     return _parse_turn_line(kind, record)
 
 
@@ -592,6 +612,24 @@ def _parse_fatal(record: dict[str, Any]) -> FatalLine:
         reason=reason,
         message=cut_bytes(_text(record.get("message")) or "", MAX_LOG_BYTES),
     )
+
+
+def _parse_stopped(record: dict[str, Any]) -> StoppedLine | Refusal:
+    """The host made the two ids of the stop. An answer holds them again."""
+    request = _text(record.get("request"))
+    session = _text(record.get("session"))
+    held = record.get("held")
+
+    if request is None or not is_ulid(request):
+        return Refusal.MALFORMED
+
+    if session is None or not is_session(session):
+        return Refusal.MALFORMED
+
+    if not isinstance(held, bool):
+        return Refusal.MALFORMED
+
+    return StoppedLine(request=request, session=session, held=held)
 
 
 def _parse_ready(record: dict[str, Any]) -> Ready | Refusal:
@@ -958,13 +996,25 @@ def abort(session: str, turn: str) -> dict[str, Any]:
     return {"type": HostType.ABORT.value, "session": session, "turn": turn}
 
 
-def stop_process(session: str, grace_ms: int = STOP_GRACE_MS) -> dict[str, Any]:
-    """End the pi process of one session (§4.5)."""
-    return {
+def stop_process(
+    session: str, grace_ms: int = STOP_GRACE_MS, request: str | None = None
+) -> dict[str, Any]:
+    """End the pi process of one session (§4.5).
+
+    A stop can hold a `request`. Only a playpen whose `ready` lists the cap
+    `stop_ack` answers such a stop, with one `process_stopped` line that
+    holds the same id.
+    """
+    message: dict[str, Any] = {
         "type": HostType.STOP_PROCESS.value,
         "session": session,
         "grace_ms": grace_ms,
     }
+
+    if request is not None:
+        message["request"] = request
+
+    return message
 
 
 def ping(nonce: str) -> dict[str, Any]:

@@ -614,6 +614,19 @@ The direction from the playpen to the host has two types. The host reads
 each field as a claim and keeps what the Python host keeps. The playpen
 writes only what the contract permits.
 
+A stop of a pi process can get an answer. `stop_process` can hold a
+`request`, which is a ULID that the host makes. Only a playpen that lists
+`stop_ack` in the `caps` of `ready` answers such a stop. The answer is one
+`process_stopped` line that holds the same id. A stop with no `request` gets
+no answer.
+
+| Item | What it is |
+|---|---|
+| `host::StopProcess` | The stop. `with_request` gives it the id. |
+| `playpen::ProcessStopped` | The answer, as the playpen writes it. |
+| `claim::StoppedLine` | The answer, as the host reads it. It holds a `Ulid` and a `SessionId`, because the Python host refuses each other text in the two fields. |
+| `vocabulary::Cap::StopAck` | The name `stop_ack` in the `caps` of `ready`. A playpen that lists it answers such a stop. |
+
 `channel.rs` holds `MAX_LOG_BYTES`, the cap of the free text of a line.
 `claim` and `playpen` read that one constant.
 
@@ -2314,6 +2327,10 @@ adds a crate:
   8. `claim::Event`, contract 03 §13 rule 5. The contract names no event that
      the host cannot record. The Python host keeps only the type of an event
      with a lone surrogate. The reader does the same.
+  9. `HostMessage::parse`, contract 03 §4.5. The contract does not say what
+     the playpen does with a `request` of `stop_process` that is no text. The
+     reader refuses the line, as it refuses a text that is no ULID. An absent
+     `request` and `null` give a stop with no id.
 - The host side of `channel` accepts what the Python host accepts, also
   where a stricter reading of contract 03 is possible. The owner decides each
   case. Four examples:
@@ -2326,7 +2343,7 @@ adds a crate:
 - No vector covers the side of the playpen: `HostMessage::parse` and
   `PlaypenMessage`. The tests read each line of one side with the parser of
   the other side. `HostMessage::parse` is stricter than the TypeScript
-  playpen in nine places:
+  playpen in ten places:
   1. A required number with a fraction or an exponent is a fault: `600.0`.
      The same applies to `grace_ms`. The playpen reads `600.0` as 600.
   2. A sandbox number has 9 digits at most.
@@ -2340,6 +2357,8 @@ adds a crate:
      float.
   9. A line with an integer of more than 4300 digits is not JSON, in each
      field. The playpen reads that integer as a float.
+  10. A `request` of `stop_process` is a ULID or `null`. Each other value is
+      a fault. The playpen does not read that field.
 - `HostMessage::parse` and the playpen accept two lines with different
   values:
   1. An empty `model` is no model. The playpen keeps the empty text.
