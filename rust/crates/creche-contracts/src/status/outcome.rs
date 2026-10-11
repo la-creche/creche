@@ -218,6 +218,29 @@ mod tests {
     }
 
     #[test]
+    fn each_text_accessor_gives_the_text_of_its_own_field() {
+        // Each text of the record is different. An accessor that returns
+        // another field then fails the test.
+        let row = noticeboard(
+            br#"{"id": "an id", "family": "a family", "session": "a session",
+                "trigger": {"kind": "a kind", "name": "a name"},
+                "started_at": "a start", "ended_at": "an end",
+                "status": "a status", "error": "an error", "sandbox": "a sandbox"}"#,
+            STEM,
+        );
+
+        assert_eq!(row.id(), "an id");
+        assert_eq!(row.family(), "a family");
+        assert_eq!(row.session(), "a session");
+        assert_eq!(row.trigger(), "a kind a name");
+        assert_eq!(row.started_at(), "a start");
+        assert_eq!(row.ended_at(), "an end");
+        assert_eq!(row.status(), "a status");
+        assert_eq!(row.error(), "an error");
+        assert_eq!(row.sandbox(), "a sandbox");
+    }
+
+    #[test]
     fn a_record_with_no_id_takes_the_stem_of_its_file() {
         assert_eq!(noticeboard(b"{}", STEM).id(), STEM);
         assert_eq!(noticeboard(br#"{"id": ""}"#, STEM).id(), STEM);
