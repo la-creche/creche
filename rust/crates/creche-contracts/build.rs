@@ -15,11 +15,12 @@
 //!   - { contract: component-manifest, major: 0, minor: 18 }
 //! ```
 //!
-//! The three keys of a row can stand in each order. Each count of spaces can
-//! stand between two words of a row. A comment and an empty line can stand
-//! between two rows. A block in another form fails the build. A manifest
-//! with no row for the contract fails the build, and so does a manifest with
-//! two such rows.
+//! The three keys of a row can stand in each order. One space or more
+//! follows the `-` and each `:`. Each other count of spaces can stand
+//! between two words of a row, also none. A comment and an empty line can
+//! stand between two rows. A block in another form fails the build. A
+//! manifest with no row for the contract fails the build, and so does a
+//! manifest with two such rows.
 //!
 //! The test build of the crate reads this file a second time, as a module.
 //! The tests at the end of the file run there. That build holds no program

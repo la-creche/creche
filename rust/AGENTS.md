@@ -84,8 +84,9 @@ writes the two numbers and their text to a file in `OUT_DIR`, and
 - The script holds no YAML reader. It reads the key `provides:` at the
   start of a line, and one row on each line below it. A row has the form
   `- { contract: <name>, major: <number>, minor: <number> }`.
-- The three keys of a row can be in each order. Each count of spaces can
-  be between two words of a row.
+- The three keys of a row can be in each order. One space or more follows
+  the `-` and each `:`. Each other count of spaces between two words of a
+  row is permitted, also zero.
 - A block in another form fails the build with one line. A manifest with
   no row for the contract fails the build, and a manifest with two such
   rows does too.
