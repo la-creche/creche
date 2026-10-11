@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { PassThrough, Writable } from "node:stream";
 
 import { Channel } from "../src/channel.js";
-import { LOCK_BEAT_MS } from "../src/constants.js";
+import { LITELLM_BASE_URL, LOCK_BEAT_MS, PEP_URL } from "../src/constants.js";
 import { CredReader } from "../src/creds.js";
 import { LineReader } from "../src/framing.js";
 import { PlaypenLock } from "../src/lock.js";
@@ -49,8 +49,8 @@ export type PlaneEnv = Readonly<Record<string, string | undefined>>;
  * the URLs of the test build (`vitest.config.ts`).
  */
 const PLANE_ENV: PlaneEnv = {
-  [PEP_PLANE_ENV]: "http://192.0.2.10:8300",
-  [LITELLM_PLANE_ENV]: "http://192.0.2.10:4000",
+  [PEP_PLANE_ENV]: PEP_URL,
+  [LITELLM_PLANE_ENV]: LITELLM_BASE_URL,
 };
 
 const PLANE_VARIABLES = [PEP_PLANE_ENV, LITELLM_PLANE_ENV] as const;

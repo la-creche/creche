@@ -160,6 +160,10 @@ describe("the plane URLs of a pi process", () => {
     harness.hello();
 
     await spawnEnv(harness, "owui-first", 1);
+
+    // A variable that changes after the first read changes no URL. `dispose`
+    // puts the variable back.
+    process.env[PEP_PLANE_ENV] = PEP;
     const second = await spawnEnv(harness, "owui-second", 2);
 
     expect(second["PEP_URL"]).toBe(PEP_URL);
