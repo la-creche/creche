@@ -2871,6 +2871,23 @@ mod tests {
             );
             assert_eq!(fault(&line), refusal, "{line}");
         }
+
+        // The last line has three faults, and the reader names only the
+        // deadline. With a valid deadline it names the epoch. With a valid
+        // epoch too, it names the workspace.
+        let floats = r#","workspace":{"f":1.0,"g":1e+100,"h":0.1}}"#;
+
+        assert_eq!(
+            fault(&format!(
+                "{}{floats}",
+                start_line("600", "18446744073709551616")
+            )),
+            (field("env_epoch"), true)
+        );
+        assert_eq!(
+            fault(&format!("{}{floats}", start_line("600", "3"))),
+            (field("workspace.kind"), true)
+        );
     }
 
     fn binding() -> Binding {
