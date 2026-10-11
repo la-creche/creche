@@ -19,6 +19,10 @@ use std::path::Path;
 use creche_contracts::ids::Ulid;
 use creche_contracts::manifest::{self, Timestamp};
 use creche_contracts::secret::Secret;
+use creche_util::base64::{self, EncodeError};
+// The tests of this module name the alphabet of a token.
+#[cfg(test)]
+use creche_util::base64::URL_SAFE;
 
 use crate::clock::{self, Clock};
 use crate::readfile::os_text;
@@ -28,22 +32,6 @@ const DEVICE: &str = "/dev/urandom";
 
 /// The count of random bytes of a ULID: 80 bits (contract 02 §2).
 const ULID_RANDOM_BYTES: usize = 10;
-
-/// The alphabet of URL-safe base64 (RFC 4648 §5).
-const URL_SAFE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-/// The count of bytes that one group of base64 holds.
-const GROUP_BYTES: usize = 3;
-
-/// The count of characters of one full group of base64.
-const GROUP_CHARS: usize = 4;
-
-/// The shift of each character in the 24 bits of one group, first character
-/// first.
-const CHAR_SHIFTS: [u32; GROUP_CHARS] = [18, 12, 6, 0];
-
-/// The bits of one character of base64.
-const CHAR_MASK: u32 = 0b11_1111;
 
 /// What an error says when the device ends before the fill is complete. No
 /// error of the operating system holds that case.
@@ -202,7 +190,7 @@ fn no_memory() -> EntropyError {
 }
 
 /// The error for a token that lacks a character. No input gives it: each
-/// group of bytes has its characters in [`URL_SAFE`].
+/// group of bytes has its characters in [`base64::URL_SAFE`].
 fn token_not_complete() -> EntropyError {
     EntropyError {
         kind: io::ErrorKind::InvalidData,
@@ -337,40 +325,18 @@ pub fn url_token(entropy: &dyn Entropy, bytes: NonZeroUsize) -> Result<Secret, E
     raw.resize(count, 0_u8);
     entropy.fill(&mut raw)?;
 
-    Secret::try_from(base64_url(&raw)?).map_err(|_| token_not_complete())
+    Secret::try_from(token_text(&raw)?).map_err(|_| token_not_complete())
 }
 
 /// The text of `raw` as URL-safe base64 with no padding, as
 /// `base64.urlsafe_b64encode(raw).rstrip(b"=")` of Python gives it.
-///
-/// A group of 3 bytes gives 4 characters. A last group of 1 byte gives 2
-/// characters, and a last group of 2 bytes gives 3.
-fn base64_url(raw: &[u8]) -> Result<String, EntropyError> {
-    let chars = raw
-        .len()
-        .div_ceil(GROUP_BYTES)
-        .checked_mul(GROUP_CHARS)
-        .ok_or_else(no_memory)?;
-    let mut text = String::new();
-    text.try_reserve_exact(chars).map_err(|_| no_memory())?;
-
-    for group in raw.chunks(GROUP_BYTES) {
-        // The bytes of the group are the first bytes of 24 bits. A short
-        // group has zero bits after its last byte.
-        let bits = (0..GROUP_BYTES).fold(0_u32, |bits, place| {
-            (bits << u8::BITS) | group.get(place).map_or(0, |byte| u32::from(*byte))
-        });
-
-        for shift in CHAR_SHIFTS.iter().take(group.len() + 1) {
-            let byte = usize::try_from((bits >> shift) & CHAR_MASK)
-                .ok()
-                .and_then(|digit| URL_SAFE.get(digit))
-                .ok_or_else(token_not_complete)?;
-            text.push(char::from(*byte));
-        }
-    }
-
-    Ok(text)
+/// [`base64::encode_url`] makes the text. This function gives each failure
+/// of that call as an [`EntropyError`].
+fn token_text(raw: &[u8]) -> Result<String, EntropyError> {
+    base64::encode_url(raw).map_err(|error| match error {
+        EncodeError::NoMemory => no_memory(),
+        EncodeError::NoCharacter => token_not_complete(),
+    })
 }
 
 #[cfg(test)]
