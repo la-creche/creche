@@ -1304,7 +1304,12 @@ file. A region is one span of code with one count, for example one arm of a
 
 1. A region or a line of a listed file ran in no test.
 2. A listed file is not in the report, or the report holds no region of it.
-3. A listed file holds the text `coverage(off)`.
+3. The text of a listed file takes code out of the measurement. This check
+   has three cases:
+   - 3a. The text `coverage(off)` is in the file.
+   - 3b. The text `macro_rules!` is in the file.
+   - 3c. A call in the file names a macro that is not in the closed list of
+     the script.
 4. `crates/chaperone-policy/src` holds a `.rs` file that is not in the list.
    Before that directory exists, this check does nothing.
 
@@ -1345,6 +1350,69 @@ More facts about the checks:
 - The script stops for a report in another form, for example a segment that
   is not three numbers and three flags.
 
+How check 3 reads a listed file:
+
+- The check reads the text of the file and parses no Rust. A comment and a
+  string count too. A file thus fails when a comment holds a call that the
+  closed list does not permit.
+- Case 3b finds the text `macro_rules!` in each place of the file.
+- For case 3c, a call is a name, then `!`, then a bracket: `(`, `[` or `{`.
+  No space is between the name and the `!`. Spaces, tabs and line breaks
+  can be between the `!` and the bracket.
+- `cargo fmt` writes a call in that form. "Known gaps" has the exceptions,
+  for example a call with a comment between its tokens.
+- A line break after a comment counts too. A file thus fails for a comment
+  that ends with a word and `!`, when a bracket starts the code of the next
+  line. An example is the comment `// Stop here!` above a line that holds
+  only `{`.
+- A name holds only letters, digits and `_`. Each character outside ASCII
+  counts as a letter. The closed list holds no name with such a character,
+  so a call of such a name fails.
+- The path of a call is the text before its name, for example the `std::`
+  of `std::write!(`. A path is one name or more, each with `::` after it. It
+  can start with `::`.
+- The texts `a != (b)` and `if !(ok)` hold no call. Case 3b finds
+  `macro_rules! name {`, and case 3c does not.
+- An attribute is no call, for example `#[derive(Debug)]` or `#[test]`.
+  Code that comes from an attribute or from a derive is outside the check
+  ("Known gaps").
+- The failure line of case 3b names the file and each line with the text.
+- Case 3c has one failure line for each call outside the closed list. That
+  line names the file, the call with its path and each line of the call.
+- A failure line of case 3b or of case 3c names 20 lines at most.
+
+The closed list of case 3c holds seven macros: `assert!`, `assert_eq!`,
+`assert_ne!`, `format!`, `vec!`, `write!` and `writeln!`. The constant
+`MEASURED_MACROS` of the script holds the seven names.
+
+Rules for a macro in a listed file:
+
+- Define no macro in a listed file. The report holds no region for a block
+  in the body of a macro.
+- Call only a macro of the closed list. Give the call no path, or the path
+  `std::`, `core::` or `alloc::`. Each of the three paths can start with
+  `::`, for example `::std::write!(`.
+- Each other path fails, also with a name of the list. `crate::write!(` can
+  name a macro of this workspace, and `other::assert!(` can name a macro of
+  another crate. The body of such a macro can hide a side.
+- A call with no path can also name a macro that is not of the standard
+  library. The check does not find such a call ("Known gaps").
+- Do not call `matches!`. Write a `match` with two arms in its place. The
+  failure line for `matches!` says so.
+- Keep each assertion macro of a listed file inside a `#[cfg(test)]`
+  module. The three assertion macros are `assert!`, `assert_eq!` and
+  `assert_ne!`. In each other place of the file, return an error.
+- No check of the script finds an assertion macro outside such a module.
+  The lint `panic_in_result_fn` of the lint gate refuses one only when its
+  function returns `Result`. In each other function, the reviewer refuses
+  it.
+
+Reason for the list: the bodies of `format!`, `vec!`, `write!` and
+`writeln!` hold no condition. They thus hold no side that the report hides.
+An assertion macro has a condition on its arguments, and the false side is
+a panic. In a test, the panic stops the test. The list thus holds the three
+assertion macros for test code only.
+
 Rules for the list:
 
 - A line is a comment or one path. A comment starts with `#`. The list has no
@@ -1375,10 +1443,9 @@ These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
 - The report counts the test code of a listed file too. The message of an
   assertion is a region that runs only when the assertion fails. An example
   is `assert!(ok, "text")`. An assertion with no message has no such region.
-- `assert!(matches!(...))` in a listed file fails check 1. The arm of
-  `matches!` that does not match is a region. That arm does not run while
-  the assertion holds. Use `assert_eq!` in its place, or put the test under
-  `tests/`.
+- Case 3c refuses each `matches!` of a listed file, so
+  `assert!(matches!(...))` fails there too. Use `assert_eq!` in its place,
+  or put the test under `tests/`.
 - The report holds no file of the `tests/` directory of a crate. Put a test
   that needs a message there.
 - A `const fn` that only the compiler evaluates counts as code that no test
@@ -1387,8 +1454,54 @@ These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
 - The run sets neither `cfg(coverage)` nor `cfg(coverage_nightly)`. It thus
   compiles the code that `cargo test` compiles.
 - The toolchain 1.92.0 refuses the attribute `#[coverage(off)]` with a
-  compile error. Check 3 is the guard for a later toolchain that takes the
-  attribute.
+  compile error. Case 3a of check 3 is the guard for a later toolchain that
+  takes the attribute.
+
+These facts about a macro are measurements with the compiler of the
+toolchain 1.92.0. The steps were `rustc -C instrument-coverage`, one run of
+the program and `llvm-cov export`. Each form had a function of its own in
+the program, and the program called each function one time. A change of the
+toolchain makes a new measurement necessary.
+
+- A function calls a macro of `macro_rules!` whose body is an `if` with an
+  `else`. The line of the call then has two regions. One covers the macro
+  name and the `!`. The other covers the argument. The two regions ran. The
+  report has no region for the block that the call did not take.
+- A macro that another file defines gives the same two regions. The report
+  holds no file that has only the definition of a macro.
+- `matches!(value, Some(1))` has a region at its name and a region at its
+  argument. The region at the name counts each call whose value does not
+  match. The report has no region for a call whose value matches. Check 1
+  thus passes although no test gave the macro a value that matches.
+- In a `match` with one arm for `Some(1)` and one arm for `_`, each arm is a
+  region. An arm that did not run has the count 0.
+- Each macro of the closed list has a region at its name, and that region
+  ran. `assert!`, `format!`, `vec!`, `write!` and `writeln!` also have a
+  region for each argument. `assert_eq!` and `assert_ne!` have no region for
+  an argument that is a plain value.
+- A condition in an argument of each of the seven macros has a region for
+  each of its two blocks. A block that did not run has the count 0.
+- In the standard library of that toolchain, the bodies of `format!`,
+  `vec!`, `write!` and `writeln!` hold no condition.
+- Each assertion macro has one condition on its arguments. When that
+  condition is false, the macro panics, and the panic is no region. A
+  function with `assert!(value < 100)` shows each of its regions as run
+  after one call with a small value.
+- In a test, the panic stops the test, and the report then hides no code.
+  Outside a test, a run of the program can take the false side. No test took
+  it, and no check reports that.
+
+To add a macro to the closed list:
+
+1. Measure the macro with the same three steps. The macro passes when its
+   body hides no side from the report.
+2. Add the name to `MEASURED_MACROS` in `bin/rust-coverage.sh`.
+3. Add the name to the paragraph of this section that holds the closed
+   list.
+4. Add the name to `MEASURED_MACROS` in `bin/tests/test_rust_coverage.py`.
+
+Do the four steps in one pull request. Put the commands of the measurement
+and its regions into that pull request.
 
 To run the script on your machine:
 
@@ -1438,9 +1551,9 @@ side:
      first check then passes when `b` was never false.
    - For the value `a && b`, a test with a true `a` runs `b`. The first
      check then passes when `a` was never false.
-2. The guard of a `match` arm, also in `matches!`. A value that does not
-   match the pattern of the arm runs the next arm. The first check then
-   passes when the guard was never false.
+2. The guard of a `match` arm. A value that does not match the pattern of
+   the arm runs the next arm. The first check then passes when the guard was
+   never false.
 3. The condition of a `while` and the pattern of a `while let`, when the
    loop also ends at a `break`. A test that ends the loop at the `break`
    runs the code after the loop. The first check then passes when the
@@ -1461,11 +1574,13 @@ each path is a region:
 - The error path of `?`.
 - The body of a `for` loop.
 
-It writes no branch and no region for these forms. No check finds a side of
-them that no test took ("Known gaps"):
+It writes no branch and no region for these forms. Check 3 thus refuses
+each one in a listed file:
 
-- An `if` in the body of a macro of the file, with its two blocks.
-- The arm of `matches!` that matches. The other arm is a region.
+- An `if` in the body of a macro of the file, with its two blocks. Case 3b
+  refuses the macro.
+- The arm of `matches!` that matches. The other arm is a region. Case 3c
+  refuses `matches!`.
 
 How the fifth check counts:
 
@@ -1725,15 +1840,38 @@ adds a crate:
   each `.rs` file of `chaperone-policy` thus needs a function that a test
   runs. A change costs one check of the script.
 - Check 3 of "The coverage rule" reads the text of a listed file only. It
-  finds the spelling `coverage(off)`, which `cargo fmt` writes. A macro of
-  another file can put the attribute on an item of a listed file.
+  expands no macro. An attribute or a derive can add code to the file, and
+  the check does not read that code. Such code can hold the attribute
+  `coverage(off)`, a condition or a call of a macro.
+  - The check does not read a `use` line. Such a line can give a name of
+    the closed list to another macro. An example is
+    `use other::rule as write;`.
+  - The check does not read another file. A macro of `macro_rules!` above
+    the `mod` line of a listed file can have a name of the closed list. A
+    call with no path in the listed file then names that macro. A macro of
+    a module below `#[macro_use]` gives the same result. So does a macro
+    of another crate below `#[macro_use] extern crate`.
+  - In `chaperone-policy`, check 4 fails for a `.rs` file of the `src`
+    directory that is not in the list. Each `.rs` file of that directory is
+    thus a listed file, and case 3b refuses each macro that it defines. No
+    check refuses a `#[macro_use] extern crate` line.
+  - The check reads the form that `cargo fmt` writes. Text in another form
+    can hide a call, for example a space before the `!` or a comment after
+    it. `cargo fmt` does not format an item below `#[rustfmt::skip]`.
+  - `cargo fmt` keeps a comment between two tokens of a call in some
+    places, for example in the value of a `let` statement. Such a call
+    passes `cargo fmt --check` and case 3c. Two examples are
+    `let a = own /* y */ !(n);` and
+    `let b = crate::/* z */write!(text, n);`.
+- The measurements of the seven macros of the closed list ran on the
+  toolchain 1.92.0 only. A later toolchain can change the body of a macro.
+  Measure each macro again after a change of `rust-toolchain.toml`.
+- A listed file can hold an assertion macro outside each `#[cfg(test)]`
+  module. The false side of that macro is a panic, which is no region of
+  the report. No check finds such a macro. The reviewer refuses it.
 - "The coverage rule" binds only code that the run compiles. Code of a
   listed file behind a `cfg` that no build of the run sets is in no report.
   No check finds such code.
-- "The coverage rule" finds no side of an `if` in the body of a macro. The
-  report holds no region and no branch for the two blocks of such an `if`.
-  The same applies to the arm of `matches!` that matches. A listed file
-  passes each check although no test ran such code.
 - This `CONTRACT-QUESTION` comment is open in
   `.github/workflows/coverage-nightly.yml`: no rule says how a red run of
   the nightly job must reach a person. No rule names that person. The
