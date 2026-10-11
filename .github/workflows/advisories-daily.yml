@@ -47,8 +47,8 @@
 # CONTRACT-QUESTION: rust/AGENTS.md, "The check of the locked crates". The
 # decision for this check names a schedule and no period. The reading here:
 # one run a day. A crate of `main` with a new advisory then stays unreported
-# for one day at most, unless GitHub skips a run. A change costs the `cron`
-# line below and its pin in bin/tests/test_gate_workflow.py.
+# for about one day. GitHub can start a run some hours late. A change costs
+# the `cron` line below and its pin in bin/tests/test_gate_workflow.py.
 #
 # GITHUB CAN SKIP A RUN. It can delay or drop a scheduled run when its load
 # is high. It turns the schedule of a public repository off after 60 days
