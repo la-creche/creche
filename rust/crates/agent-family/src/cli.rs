@@ -28,17 +28,31 @@ pub const EXIT_INVALID: u8 = 1;
 /// The command line is wrong.
 pub const EXIT_USAGE: u8 = 2;
 
+/// The one source of the name of the program. `concat!` takes a literal and
+/// no constant, so a macro gives the text to [`NAME`], to the two usage
+/// texts and to the two help texts.
+macro_rules! name {
+    () => {
+        "agent-family"
+    };
+}
+
 /// The name of the program: the start of each line that the program writes
 /// for a refused command line, and the target of the line of a panic.
-pub const NAME: &str = "agent-family";
+pub const NAME: &str = name!();
 const COMMAND: &str = "validate";
 
-const MAIN_USAGE: &str = "usage: agent-family [-h] {validate} ...";
-const VALIDATE_USAGE: &str =
-    "usage: agent-family validate [-h] [--family FAMILY] [--json] registry";
+const MAIN_USAGE: &str = concat!("usage: ", name!(), " [-h] {validate} ...");
+const VALIDATE_USAGE: &str = concat!(
+    "usage: ",
+    name!(),
+    " validate [-h] [--family FAMILY] [--json] registry"
+);
 
-const MAIN_HELP: &str = "\
-usage: agent-family [-h] {validate} ...
+const MAIN_HELP: &str = concat!(
+    "usage: ",
+    name!(),
+    " [-h] {validate} ...
 
 Validate a family registry (docs/rework/contracts/01).
 
@@ -48,10 +62,13 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
-";
+"
+);
 
-const VALIDATE_HELP: &str = "\
-usage: agent-family validate [-h] [--family FAMILY] [--json] registry
+const VALIDATE_HELP: &str = concat!(
+    "usage: ",
+    name!(),
+    " validate [-h] [--family FAMILY] [--json] registry
 
 positional arguments:
   registry         the registry root, holding families/
@@ -60,7 +77,8 @@ options:
   -h, --help       show this help message and exit
   --family FAMILY  report this family only
   --json           print the report as JSON
-";
+"
+);
 
 /// How the program prints the reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
