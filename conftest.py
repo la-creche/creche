@@ -15,6 +15,10 @@ no config file of the system, and no ignore file and no attributes file of a
 person. Those settings stop the maintenance that `git` starts and does not
 wait for.
 
+It also gives each test of some directories an empty home directory. The code
+under test there starts `git` with `HOME` and with none of those variables,
+so that child reads the global config file below `HOME`.
+
 A run that starts with a signal ignored, from a background job or under
 `nohup`, passes the same tests and keeps that signal ignored.
 """
@@ -23,6 +27,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import functools
 import os
 import pwd
 import shutil
@@ -141,7 +146,9 @@ def _settings_file() -> str:
 
 
 def _remove_settings(directory: Path, owner: int) -> None:
-    """Remove the directory of `_settings_file`, in the process that made it.
+    """Remove a directory that this file made, in the process that made it.
+
+    The directory is the one of `_settings_file` or the one of `_empty_home`.
 
     A fork of that process holds the same exit handler. It must not remove a
     file that its parent still names. A directory that is gone is no error.
@@ -178,6 +185,84 @@ def _drop_git_config() -> None:
 # each one runs `git` with no config file of a person.
 _drop_git_env()
 _drop_git_config()
+
+#: The variable that names the home directory.
+HOME_ENV = "HOME"
+
+#: The test directories whose code under test starts `git` with `HOME` and
+#: with no variable of git. Each one is a path below the root of the run. Such
+#: a child gets no variable of `_drop_git_config`, so it reads the global
+#: config file below `HOME`: `.gitconfig`, and `.config/git/config`.
+#:
+#: * `noticeboard/tests`: the registry writer gives its `git` child four
+#:   variables, and `HOME` is one (noticeboard/src/noticeboard/registrywrite.py).
+GIT_WITH_HOME = ("noticeboard/tests",)
+
+#: The start of the name of the empty home directory.
+HOME_PREFIX = "empty-home-"
+
+
+@functools.cache
+def _empty_home() -> str:
+    """Make an empty home directory for this process. Return its path.
+
+    The first call makes the directory, and each later call returns the same
+    path. Under pytest-xdist each worker is a process and makes its own. The
+    directory takes no new file, so it stays empty.
+
+    This process removes the directory when it ends. A process that a signal
+    ends leaves the directory, as `_settings_file` says.
+    """
+    directory = Path(tempfile.mkdtemp(prefix=HOME_PREFIX))
+    directory.chmod(READ_ONLY)
+    atexit.register(_remove_settings, directory, os.getpid())
+
+    return str(directory)
+
+
+@functools.cache
+def _starts_git_with_home(test_file: Path, root: Path) -> bool:
+    """Whether `test_file` is below a directory of `GIT_WITH_HOME`.
+
+    The answer comes from the two paths and not from the id of a test: a run
+    can start from another directory. Each path is resolved first, because a
+    run can name the tree through a link.
+    """
+    resolved = test_file.resolve()
+
+    return any(resolved.is_relative_to((root / one).resolve()) for one in GIT_WITH_HOME)
+
+
+@pytest.fixture(autouse=True)
+def _home_holds_no_git_config(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Give a test below a directory of `GIT_WITH_HOME` an empty `HOME`.
+
+    The code under test there starts `git` with `HOME` and with no variable of
+    git. With the `HOME` of the person who runs the suite, that child reads
+    the global config file of that person. One setting there, `core.fsmonitor`,
+    starts a program for each throwaway repository. The child of the registry
+    writer has a time limit, and under load such a child can run for longer.
+    bin/tests/test_git_config_dropped.py holds the proof.
+
+    Each other test keeps its `HOME`, so this fixture does not bind each test.
+    Some tests give the `HOME` of the process to a real tool, and that tool
+    finds its own files there. One test starts `cargo` that way, and rustup
+    finds its toolchains below `HOME`
+    (handover/tests/test_handover_bin_cargo_guard.py).
+
+    This fixture cannot change the config file of the system. The child keeps
+    no variable that names another file, so it still reads that file.
+
+    Remove the entry `noticeboard/tests` from `GIT_WITH_HOME` when the Python
+    noticeboard leaves the repository.
+    """
+    if not _starts_git_with_home(request.path, request.config.rootpath):
+        return
+
+    monkeypatch.setenv(HOME_ENV, _empty_home())
+
 
 #: Every signal this platform names. Linux's unnamed real-time signals are
 #: left out: no test here touches them.

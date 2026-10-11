@@ -45,6 +45,13 @@ package.
   and each setting of `git -c`, from the environment of a repository that
   receives a push. When one of these two fixtures pushes, write
   `maintenance.auto=false` to the config of that repository.
+- Some code under test starts `git` with `HOME` and with no variable of
+  git. The registry writer of the noticeboard is such code. The root
+  `conftest.py` gives each test under `noticeboard/tests` an empty home
+  directory. That `git` child then finds no config file of a person below
+  `HOME`. It still reads the config file of the system. Each other test
+  keeps its `HOME`, because some tests give it to a real tool such as
+  `cargo`.
 
 ## Hooks
 
