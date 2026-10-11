@@ -6,6 +6,8 @@ The surfaces, by what each one pins:
   lenient field reader returns for it.
 - `runtime.parse_object.noticeboard`: the bytes of a file to the JSON object
   that the noticeboard reads from them, or to a refusal.
+- `runtime.strict_json`: the bytes of one JSON text to its value, or to the
+  word of the rule that makes the text not strict.
 - `runtime.token.<reader>`: the bytes and the mode of one token file to
   accepted or refused.
 - `runtime.bearer.<copy>`: the bytes of one `Authorization` header to
@@ -62,7 +64,7 @@ from starlette.testclient import TestClient
 from starlette.types import ASGIApp, Message
 
 from attendance import atomic as attendance_atomic
-from noticeboard import jsonfiles
+from noticeboard import jsonfiles, strictjson
 from vectors.core import (
     Json,
     Raised,
@@ -513,6 +515,331 @@ def _parse_surface() -> Surface:
             "an object holds two times.",
         ),
         vectors=tuple(_document_vector(document) for document in DOCUMENTS),
+    )
+
+
+# --- the strict reader --------------------------------------------------------
+
+#: The cap that the strict reader gets, in bytes.
+STRICT_CAP: Final = 1 << 20
+
+#: The most levels of a strict text, and one level more.
+STRICT_LEVELS: Final = strictjson.DEPTH_MAX
+ONE_LEVEL_MORE: Final = STRICT_LEVELS + 1
+
+_ARRAY: Final = ("[", "]")
+_OBJECT: Final = ('{"a":', "}")
+_ARRAY_OF_OBJECT: Final = ('[{"a":', "}]")
+
+#: A text of 63 levels, for a value inside one more array.
+_LEVELS_63: Final = "[" * (STRICT_LEVELS - 1) + "]" * (STRICT_LEVELS - 1)
+
+
+def _levels(doc_id: str, count: int, around: tuple[str, str], inside: str) -> Document:
+    """`inside` in `count` arrays or objects, as the parts of a long text."""
+    opener, closer = around
+
+    return Document(doc_id, parts=((opener, count), (inside, 1), (closer, count)))
+
+
+#: Each text that the strict reader takes. The text is the whole input.
+STRICT_ACCEPTED: Final[tuple[Document, ...]] = (
+    # --- the three literals ---
+    _doc("null", "null"),
+    _doc("true", "true"),
+    _doc("false", "false"),
+    # --- an integer: a number with no fraction and no exponent ---
+    _doc("integer-zero", "0"),
+    _doc("integer-minus-zero", "-0"),
+    _doc("integer-negative", "-7"),
+    _doc("integer-past-53-bits", "9007199254740993"),
+    _doc("integer-19-digits", "1234567890123456789"),
+    _doc("integer-past-63-bits", "9223372036854775808"),
+    _doc("integer-largest", "18446744073709551615"),
+    _doc("integer-least", "-9223372036854775808"),
+    # --- a float: each other number ---
+    _doc("float", "1.5"),
+    _doc("float-minus-zero", "-0.0"),
+    _doc("float-exponent", "1e3"),
+    _doc("float-exponent-upper-case-plus", "1E+3"),
+    _doc("float-exponent-minus", "1E-3"),
+    _doc("float-exponent-zeros-first", "1e007"),
+    _doc("float-below-the-least", "1e-999"),
+    _doc("float-negative-below-the-least", "-1e-999"),
+    _doc("float-largest", "1.7976931348623157e308"),
+    _doc("float-rounds-to-the-largest", "1.7976931348623158e308"),
+    _doc("float-of-an-integer-past-64-bits", "18446744073709551616.0"),
+    # --- a string ---
+    _doc("string-empty", '""'),
+    _doc("string", '"a"'),
+    _doc("string-each-short-escape", r'"\"\\\/\b\f\n\r\t"'),
+    _doc("string-hex-escapes", r'"\u0041\u00e9\u00E9\uabcd\uABCD"'),
+    _doc("string-escape-of-nul", r'"\u0000"'),
+    _doc("string-escapes-of-noncharacters", r'"\ufffe\uffff"'),
+    _doc("string-surrogate-pair", r'"\ud83d\ude00"'),
+    _doc("string-surrogate-pair-upper-case", r'"\uD83D\uDE00"'),
+    _doc("string-first-surrogate-pair", r'"\ud800\udc00"'),
+    _doc("string-last-surrogate-pair", r'"\udbff\udfff"'),
+    _doc("string-escapes-beside-the-surrogates", r'"\ud7ff\ue000"'),
+    _doc("string-backslash-then-surrogate-text", r'"\\ud800 \\uDFFF"'),
+    _doc("string-not-ascii", '"caf\xe9 \U0001f600"'),
+    _doc("string-delete-and-line-separators", '"\x7f\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}"'),
+    _doc("string-mark-inside", '"\N{BYTE ORDER MARK}"'),
+    _doc("string-words-of-other-rules", '"NaN Infinity // [1,] 01 1e999"'),
+    _doc("string-brackets-and-quotes", r'"[[{{ \" ]]}} \\"'),
+    _doc("string-20-digits", '"12345678901234567890"'),
+    # --- an array and an object ---
+    _doc("array-empty", "[]"),
+    _doc("array-empty-with-space", "[ ]"),
+    _doc("array", "[1,2]"),
+    _doc("array-with-spaces", "[ 1 , 2 ]"),
+    _doc("array-each-kind", '[null,true,false,0,-0.0,"",[],{}]'),
+    _doc("object-empty", "{}"),
+    _doc("object-empty-with-space", "{ }"),
+    _doc("object", '{"a":1}'),
+    _doc("object-with-spaces", '{ "a" : 1 , "b" : 2 }'),
+    _doc("object-nested", '{"a": {"b": [1, {"c": null}]}}'),
+    _doc("key-empty", '{"":1}'),
+    _doc("keys-differ-in-case", '{"a":1,"A":2}'),
+    _doc("keys-differ-in-a-space", '{"a":1,"a ":2}'),
+    _doc("keys-number-forms", '{"1":1,"1.0":2,"01":3,"true":4}'),
+    _doc("keys-composed-and-decomposed", '{"\xe9":1,"e\N{COMBINING ACUTE ACCENT}":2}'),
+    _doc("key-in-two-objects", '{"a":{"a":{"a":1}}}'),
+    _doc("key-in-two-items", '[{"a":1},{"a":2}]'),
+    # --- white space ---
+    _doc("white-space-each-kind", " \t\n\r1 \t\n\r"),
+    _doc("white-space-inside", '\n{\n\t"a" :\r\n[ 1 ,\n2 ]\n}\n'),
+    # --- the depth ---
+    _levels("arrays-64", STRICT_LEVELS, _ARRAY, "1"),
+    _levels("objects-64", STRICT_LEVELS, _OBJECT, "1"),
+    _levels("arrays-of-objects-64", STRICT_LEVELS // 2, _ARRAY_OF_OBJECT, "null"),
+    _levels("arrays-64-brackets-in-a-string", STRICT_LEVELS, _ARRAY, r'"[[[{{{\"[["'),
+    Document(
+        "siblings-of-63-levels", parts=(("[", 1), (f"{_LEVELS_63},", 2), (f"{_LEVELS_63}]", 1))
+    ),
+    # --- the size ---
+    Document("at-the-cap", parts=(("1", 1), (" ", STRICT_CAP - 1))),
+)
+
+#: Each text that the strict reader refuses, by the rule that the text
+#: breaks. A text breaks that one rule and no other rule.
+STRICT_REFUSED: Final[dict[strictjson.Rule, tuple[Document, ...]]] = {
+    strictjson.Rule.TOO_LARGE: (Document("over-the-cap", parts=(("1", 1), (" ", STRICT_CAP))),),
+    strictjson.Rule.NOT_UTF8: (
+        Document("not-utf8", b'{"a": "\xff"}'),
+        Document("not-utf8-bytes-of-a-surrogate", b'"\xed\xa0\x80"'),
+        Document("not-utf8-long-form", b'"\xc0\xaf"'),
+        Document("not-utf8-cut-character", b'"\xc3"'),
+        Document("utf16-with-mark", b"\xff\xfe" + _SMALL.encode("utf-16-le")),
+        Document("utf16-big-endian-with-mark", b"\xfe\xff" + _SMALL.encode("utf-16-be")),
+        Document("utf32-with-mark", b"\xff\xfe\x00\x00" + _SMALL.encode("utf-32-le")),
+        Document("utf32-big-endian-with-mark", b"\x00\x00\xfe\xff" + _SMALL.encode("utf-32-be")),
+    ),
+    strictjson.Rule.BYTE_ORDER_MARK: (
+        _doc("byte-order-mark", f"\N{BYTE ORDER MARK}{_SMALL}"),
+        _doc("byte-order-mark-before-a-number", "\N{BYTE ORDER MARK}1"),
+    ),
+    strictjson.Rule.SYNTAX: (
+        # --- no value ---
+        _doc("empty", ""),
+        _doc("spaces-only", "   "),
+        # --- a word that is no literal ---
+        _doc("word", "nope"),
+        _doc("literal-cut-short", "nul"),
+        _doc("literal-upper-case", "True"),
+        _doc("word-lower-case-nan", "nan"),
+        # --- a part that is absent ---
+        _doc("cut-short", '{"a": '),
+        _doc("array-cut-short", "[1"),
+        _doc("comma-last-in-array", "[1,]"),
+        _doc("comma-last-in-object", '{"a": 1,}'),
+        _doc("comma-first", "[,1]"),
+        _doc("no-comma", "[1 2]"),
+        _doc("no-colon", '{"a" 1}'),
+        _doc("no-member-value", '{"a":}'),
+        _doc("bracket-of-another-kind", "[1}"),
+        _doc("closing-bracket-alone", "]"),
+        _doc("key-no-string", "{1: 2}"),
+        _doc("single-quotes", "{'a': 1}"),
+        _doc("comment", "/* c */ 1"),
+        _doc("comment-to-the-line-end", "// c\n1"),
+        # --- white space outside the four characters ---
+        _doc("form-feed-first", "\x0c1"),
+        _doc("no-break-space-first", "\xa01"),
+        # --- a string ---
+        _doc("string-no-end", '"abc'),
+        _doc("string-raw-tab", '"a\tb"'),
+        _doc("string-raw-line-feed", '"a\nb"'),
+        _doc("string-raw-nul", '"a\x00b"'),
+        _doc("escape-outside-the-list", r'"\x41"'),
+        _doc("escape-short", r'"\u12"'),
+        _doc("escape-no-hex-digit", r'"\u12G4"'),
+        # --- a number that starts with no digit ---
+        _doc("number-plus-first", "+1"),
+        _doc("number-point-first", ".5"),
+        _doc("minus-alone", "-"),
+        _doc("digit-not-ascii", "\N{ARABIC-INDIC DIGIT ONE}"),
+        # --- UTF-16 and UTF-32 with no mark: each U+0000 is a character ---
+        Document("utf16-little-endian", _SMALL.encode("utf-16-le")),
+        Document("utf16-big-endian", _SMALL.encode("utf-16-be")),
+        Document("utf32-little-endian", _SMALL.encode("utf-32-le")),
+        Document("utf32-big-endian", _SMALL.encode("utf-32-be")),
+        # --- a run of number characters that is no number ---
+        _doc("run-zero-first", "01"),
+        _doc("run-point-last", "1."),
+        _doc("run-two-points", "1.5.2"),
+        _doc("run-two-exponents", "1e5e3"),
+        _doc("run-plus-inside", "1+2"),
+        _doc("run-zero-first-in-array", "[01]"),
+        _doc("run-point-last-in-array", "[1.]"),
+        _doc("run-two-points-in-array", "[1.5.2]"),
+        _doc("run-two-exponents-in-array", "[1e5e3]"),
+        _doc("run-plus-inside-in-array", "[1+2]"),
+        _doc("run-after-a-wide-float", "1e999e5"),
+        _doc("run-after-a-wide-integer", "18446744073709551616."),
+        _doc("run-after-a-wide-float-in-array", "[1e999e5]"),
+        _doc("run-after-a-wide-integer-in-object", '{"a": 18446744073709551616.}'),
+    ),
+    strictjson.Rule.CONSTANT: (
+        _doc("nan", "NaN"),
+        _doc("infinity", "Infinity"),
+        _doc("negative-infinity", "-Infinity"),
+        _doc("nan-in-object", '{"a": NaN}'),
+        _doc("negative-infinity-in-array", "[1, -Infinity]"),
+    ),
+    strictjson.Rule.TRAILING_DATA: (
+        _doc("one-byte-after", f"{_SMALL}x"),
+        _doc("two-values", "1 2"),
+        _doc("two-documents", '{"a": 1}{"b": 2}'),
+        _doc("bracket-after", "[]]"),
+        _doc("literal-then-letter", "truex"),
+        _doc("literal-then-digit", "true1"),
+        _doc("literal-then-number-letter", "truee"),
+        _doc("number-then-letter", "1x"),
+        _doc("number-then-hex", "0x10"),
+        _doc("comment-after", "1 // c"),
+        _doc("nul-after", "1\x00"),
+        _doc("digit-not-ascii-after", "1\N{ARABIC-INDIC DIGIT ONE}"),
+        Document("utf16-number", "7".encode("utf-16-le")),
+    ),
+    strictjson.Rule.TOO_DEEP: (
+        _levels("arrays-65", ONE_LEVEL_MORE, _ARRAY, "1"),
+        _levels("objects-65", ONE_LEVEL_MORE, _OBJECT, "1"),
+        _levels("object-in-64-arrays", STRICT_LEVELS, _ARRAY, "{}"),
+        _levels("array-in-64-objects", STRICT_LEVELS, _OBJECT, "[]"),
+        _levels("arrays-65-brackets-in-a-string", ONE_LEVEL_MORE, _ARRAY, r'"]]]}}}\"]]"'),
+        _levels("arrays-200", DEEP, _ARRAY, "1"),
+        _levels("objects-5000", 5_000, _OBJECT, "1"),
+        _levels("arrays-400000", VERY_DEEP, _ARRAY, "1"),
+    ),
+    strictjson.Rule.DUPLICATE_KEY: (
+        _doc("key-two-times", '{"a": 1, "a": 2}'),
+        _doc("key-two-times-one-value", '{"a":1,"a":1}'),
+        _doc("key-two-times-with-a-key-between", '{"a":1,"b":2,"a":3}'),
+        _doc("key-empty-two-times", '{"":1,"":2}'),
+        _doc("key-two-times-through-an-escape", r'{"a":1,"\u0061":2}'),
+        _doc("key-two-times-through-two-escapes", r'{"\u00e9":1,"\u00E9":2}'),
+        _doc("key-two-times-through-a-short-escape", r'{"a/b":1,"a\/b":2}'),
+        _doc("key-two-times-through-a-pair", '{"\U0001f600":1,"\\ud83d\\ude00":2}'),
+        _doc("key-two-times-in-inner-object", '{"x":{"a":1,"a":2}}'),
+        _doc("key-two-times-in-item", '[{"a":1,"a":1}]'),
+    ),
+    strictjson.Rule.LONE_SURROGATE: (
+        _doc("surrogate-first-half", r'"\ud800"'),
+        _doc("surrogate-first-half-upper-case", r'"\uD800"'),
+        _doc("surrogate-last-first-half", r'"\udbff"'),
+        _doc("surrogate-second-half", r'"\udc00"'),
+        _doc("surrogate-last-second-half-upper-case", r'"\uDFFF"'),
+        _doc("surrogate-first-half-then-escape", r'"\ud800\u0041"'),
+        _doc("surrogate-first-half-then-letter", r'"\ud800a"'),
+        _doc("surrogate-first-half-then-short-escape", r'"\ud800\n"'),
+        _doc("surrogate-halves-with-a-space-between", r'"\ud800 \udc00"'),
+        _doc("surrogate-first-half-then-backslash", r'"\ud800\\udc00"'),
+        _doc("surrogate-halves-in-wrong-order", r'"\udc00\ud800"'),
+        _doc("surrogate-second-half-two-times", r'"\udc00\udc00"'),
+        _doc("surrogate-first-half-before-a-pair", r'"\ud83d\ud83d\ude00"'),
+        _doc("surrogate-second-half-after-a-pair", r'"a\ud83d\ude00\ude00"'),
+        _doc("surrogate-in-key", r'{"\ud800":1}'),
+        _doc("surrogate-in-item", r'["\ud800"]'),
+        _doc("surrogate-deep-in-a-value", r'{"a":1,"b":{"c":["\udc00"]}}'),
+    ),
+    strictjson.Rule.INTEGER_RANGE: (
+        _doc("integer-past-the-largest", "18446744073709551616"),
+        _doc("integer-below-the-least", "-9223372036854775809"),
+        _doc("integer-30-digits", "123456789012345678901234567890"),
+        _doc("integer-negative-30-digits", "-123456789012345678901234567890"),
+        Document("integer-4301-digits", parts=(("9", TOO_MANY_DIGITS),)),
+        _doc("integer-past-the-largest-in-array", "[1,18446744073709551616]"),
+        _doc("integer-below-the-least-in-object", '{"a":-9223372036854775809}'),
+    ),
+    strictjson.Rule.FLOAT_RANGE: (
+        _doc("float-past-the-largest", "1e999"),
+        _doc("float-negative-past-the-largest", "-1e999"),
+        _doc("float-exponent-309", "1e309"),
+        _doc("float-rounds-to-infinity", "1.7976931348623159e308"),
+        Document("float-310-digits-before-the-point", parts=(("1", 1), ("0", 309), (".0", 1))),
+        _doc("float-past-the-largest-in-array", "[1.0,1e400]"),
+        _doc("float-past-the-largest-in-object", '{"a":-1E+999}'),
+    ),
+}
+
+
+def _strict_read(raw: bytes) -> tuple[strictjson.Rule | None, object]:
+    """The rule that `raw` breaks, or no rule and the value of the text."""
+    try:
+        return None, strictjson.loads(raw, cap=STRICT_CAP)
+    except strictjson.NotStrictJson as refusal:
+        return refusal.rule, None
+
+
+def _strict_vector(document: Document, wanted: strictjson.Rule | None) -> Vector:
+    """The vector of one text. `wanted` is what the list of the text says.
+
+    A text that the reader puts under another rule stops the build. The lists
+    then hold a text in a wrong place, and a vector does not record that.
+    """
+    given = document.given()
+    raw = document.data()
+    outcome = attempt(lambda: _strict_read(raw))
+    if isinstance(outcome, Raised):
+        return raised(document.id, given, outcome.exc)
+
+    rule, value = outcome
+    if rule is not wanted:
+        raise ValueError(f"the strict text {document.id} is in the list of another rule")
+
+    if rule is None:
+        return _returned(document.id, given, value, None)
+
+    return refused(document.id, given, rule.value)
+
+
+def _strict_surface() -> Surface:
+    tail = "strict_json"
+    refusals = [(text, rule) for rule in strictjson.Rule for text in STRICT_REFUSED[rule]]
+
+    return Surface(
+        name=f"{GROUP}.{tail}",
+        path=f"{GROUP}/{tail}.json",
+        entry="noticeboard.strictjson.loads",
+        contract='no contract: the rules of rust/AGENTS.md, "JSON"',
+        notes=(
+            "The input is the bytes of one JSON text. The entry point also takes the most "
+            "bytes of a text. The generator gives it context.cap.",
+            "An accepted vector is a strict text. value is the value of the text. A value of "
+            "null is the value of the text null.",
+            "A number of a value is an integer when its token has no fraction and no exponent. "
+            "Each other number is a float. The token -0 is the integer 0.",
+            "A refused vector is a text that is not strict. refusal is the word of the rule "
+            "that the text breaks. The text breaks that one rule and no other rule.",
+            "The words are the words of the enum Rule of the Rust module creche_contracts::json. "
+            "Each copy of the strict reader gives the same result and the same word.",
+        ),
+        context={"cap": STRICT_CAP},
+        vectors=(
+            *(_strict_vector(text, None) for text in STRICT_ACCEPTED),
+            *(_strict_vector(text, rule) for text, rule in refusals),
+        ),
     )
 
 
@@ -1704,6 +2031,7 @@ def surfaces() -> tuple[Surface, ...]:
         return (
             *(_untrusted_surface(helper) for helper in HELPERS),
             _parse_surface(),
+            _strict_surface(),
             *(_token_surface(reader, scratch / "token") for reader in TOKEN_READERS),
             *(_bearer_surface(copy, scratch / "bearer") for copy in COPIES),
             *(_edge_surface(service, scratch / "edge") for service in SERVICES),
