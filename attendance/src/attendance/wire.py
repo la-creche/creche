@@ -739,11 +739,12 @@ def cut_bytes(text: str, cap: int) -> str:
     characters, so the result holds no part of a character. A text that fits
     is returned as it is.
 
-    CONTRACT-QUESTION: §8 counts bytes and does not say what one half of a
-    surrogate pair counts. Such a half has no UTF-8 form. It counts as three
-    bytes here, as in `_utf8_size`, and it stays in the text: the reading
-    that changes no character of a text. The other reading puts U+FFFD in
-    the place of the half. A change costs one step of this function.
+    CONTRACT-QUESTION: §8 counts bytes and gives no count of bytes for one
+    half of a surrogate pair. Such a half has no UTF-8 form. It counts as
+    three bytes here, as in `_utf8_size`, and it stays in the text: the
+    reading that changes no character of a text. The other reading puts
+    U+FFFD in the place of the half. A change costs one step of this
+    function.
     """
     data = text.encode("utf-8", _KEEP_HALF_PAIRS)
 

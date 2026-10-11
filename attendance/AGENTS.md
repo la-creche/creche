@@ -197,8 +197,8 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 03 §13 rule 5 names no event that the host cannot record. An
   event with one half of a surrogate pair has no UTF-8 form. `cap_event`
   reads it as oversized (`wire.py`).
-- Contract 03 §8 gives each cap of a text in bytes. It does not say what
-  one half of a surrogate pair counts. Such a half has no UTF-8 form.
+- Contract 03 §8 gives each cap of a text in bytes. It gives no count of
+  bytes for one half of a surrogate pair. Such a half has no UTF-8 form.
   `cut_bytes` counts it as three bytes and keeps it in the text (`wire.py`).
 - Contract 05 §2.1 does not say what a reader does with a `kind` that is
   not one of its three words. `served_kind` refuses each door with

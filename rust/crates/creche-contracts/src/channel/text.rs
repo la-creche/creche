@@ -102,7 +102,7 @@ impl Text {
     /// (contract 03 §8). The cut is between two characters, so the result
     /// holds no part of a character.
     // CONTRACT-QUESTION: contract 03 §8 gives each cap of a text in bytes and
-    // does not say what a lone surrogate counts. A lone surrogate has no
+    // gives no count of bytes for a lone surrogate. A lone surrogate has no
     // UTF-8 form. It counts as `LONE_SURROGATE_BYTES` here and stays in the
     // text, as in the Python host. A change costs one arm of this function.
     pub(super) fn cut_bytes(self, max: usize) -> Self {

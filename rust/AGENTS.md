@@ -2200,8 +2200,8 @@ To make the fifth check on your machine, for example before a merge:
      nesting limit for an event. The Python host keeps only the type of an
      event that nests more than 64 levels. The reader does the same.
   3. `text::Text::cut_bytes`, contract 03 §8. The contract gives each cap
-     of a text in bytes. It does not say what a lone surrogate counts. The
-     reader counts three bytes for it and keeps it in the text, as the
+     of a text in bytes. It gives no count of bytes for a lone surrogate.
+     The reader counts three bytes for it and keeps it in the text, as the
      Python host does.
   4. `host::ConfigRev` and `host::EntryId`, contract 03 §4.1. The contract
      gives no grammar. The types take the rule of the playpen: 1 to 200
