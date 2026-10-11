@@ -69,6 +69,45 @@ type of a request that a requester plans. The reason is the reason of
 `channel`: no `serde` reader reads what `yaml.safe_load` and `json.loads`
 read.
 
+## The version of the manifest contract
+
+The `provides` row for `component-manifest` in `handover/component.yaml`
+is the one source of that version (rule 13). The build script of
+`creche-contracts` reads the row: `crates/creche-contracts/build.rs`. It
+writes the two numbers and their text to a file in `OUT_DIR`, and
+`src/manifest.rs` includes that file.
+
+- Three constants of `manifest` come from that file:
+  `MANIFEST_CONTRACT_MAJOR`, `MANIFEST_CONTRACT_MINOR` and
+  `MANIFEST_VERSION`. Give none of the three a literal value in a Rust
+  file.
+- The script holds no YAML reader. It reads the key `provides:` at the
+  start of a line, and one row on each line below it. A row has the form
+  `- { contract: <name>, major: <number>, minor: <number> }`.
+- The three keys of a row can be in each order. One space or more follows
+  the `-` and each `:`. Each other count of spaces between two words of a
+  row is permitted, also zero.
+- A block in another form fails the build with one line. A manifest with
+  no row for the contract fails the build, and a manifest with two such
+  rows does too.
+- Each number of the row is a number of a contract version. The script
+  holds no bound for a number. `src/manifest.rs` gives the two numbers to
+  `ContractNumber` in a constant assertion. A number that the type refuses
+  thus fails the build.
+- The script names the manifest with `cargo::rerun-if-changed`. cargo runs
+  the script again after a change of that file.
+- `rust_gate_path` of `bin/lib/rustrule.sh` names the manifest, as
+  `component.yaml` and as `component.toml`. CI thus runs the Rust checks
+  for a change of the manifest alone. A hook starts no cargo step for
+  that change.
+- The test build of the crate reads `build.rs` as a module. `cargo test`
+  thus runs the tests of the script.
+- The script reads the YAML form of the manifest only. When the manifest
+  gets another name or another format, change the script in the same pull
+  request.
+- The Python release tool holds the two numbers as typed constants. A test
+  of `handover` compares them with the row (`handover/AGENTS.md`).
+
 ## Where a new type goes
 
 1. Put the types of one contract in the module of that contract. The table
@@ -1082,6 +1121,8 @@ commit message.
   runs cargo only for a change under `rust/` or `vectors/`, so a change to a
   file elsewhere does not run the test. If a later change needs such a file,
   add its directory to `bin/lib/rustrule.sh` first.
+- One build script reads one file outside those two directories. "The
+  version of the manifest contract" names the file and its rule.
 - A Rust source file includes no Markdown file. A push of Markdown files
   only runs no cargo step. `bin/rust-gate.sh` refuses a line that holds
   `include_str!`, `include_bytes!` or `include!` and a name that ends in
