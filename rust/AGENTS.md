@@ -363,7 +363,7 @@ also names the byte offset of each refusal. The module has five files:
 | `Charset` | `Ascii` gives a `\u` escape for each character that is not printable ASCII. `Utf8` writes such a character as it is. |
 | `KeyOrder` | `AsGiven` keeps the order of the value. `Sorted` sorts the keys of each object by their code points. |
 | `WriteError` | The refusal of `write`. `NotFinite` is for a float that is not finite. `NoJsonForm` is for each other value that strict JSON cannot hold. |
-| `Opaque` | The value of a field that a contract calls opaque. It holds its compact form and keeps the order of its keys. It has three conversions. `parse` gives the value as a typed value. `of` gives the value that a typed value writes. `null` gives the value of the word `null`. |
+| `Opaque` | The value of a field that a contract calls opaque. It holds its compact form and keeps the order of its keys. It has three conversions. `parse` reads the value into a type of the caller. `of` makes the value from a typed value. `null` is the value of the word `null`. |
 
 `check` applies the rules in this sequence:
 
@@ -465,16 +465,17 @@ fault, the event of a channel line and the arguments of a tool call.
   thus equal, and so are `1.50` and `1.5`.
 - The order of the keys is a part of an `Opaque`. Two objects with the same
   members in another order are not equal.
-- `Opaque::parse` gives the value as a typed value. Use it with a raw type
-  when code must read a member of the value. It reads the compact form and
-  makes no second check. The place in its `Shape` thus counts in that form,
-  which has one line. A number has the token of that form: `0` for `-0`.
-- `Opaque::of` gives the value that a typed value writes. It refuses each
-  value that `write` refuses. A module that needs the `Opaque` of a typed
-  value calls this function. It does not give a text of its own to the
-  reader.
-- `Opaque::null` gives the value of the word `null`. A `Slot<Opaque>` keeps
-  no value for that word, so a conversion that needs the value calls this
+- `Opaque::parse` reads the value into a type of the caller. Use it with a
+  raw type when code must read a member of the value. It reads the compact
+  form and makes no second check. A `Shape` of this function thus names a
+  place on line 1 of that form. A number field gets the token that the
+  writer gave: `0` where the first text had `-0`.
+- `Opaque::of` makes the value from a typed value, with one call of the
+  writer. It refuses each value that `write` refuses. A module that needs
+  the `Opaque` of a typed value calls this function. It does not give a
+  text of its own to the reader.
+- `Opaque::null` is the value of the word `null`. A `Slot<Opaque>` keeps no
+  value for that word, so a conversion that needs the value calls this
   function.
 
 Only `session` and `mcp` call the writer today. Only `mcp` calls the

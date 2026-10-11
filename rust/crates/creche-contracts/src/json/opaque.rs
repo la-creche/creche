@@ -176,10 +176,10 @@ impl Opaque {
     /// number has the kind that the writer gives it: an integer type gives
     /// [`Found::Integer`], and a float type gives [`Found::Float`].
     ///
-    /// The writer holds each rule of the reader, so the text is strict JSON.
-    /// The pass of the reader runs over the text one time and gives the kind
-    /// of the value. No size rule applies: the writer has no cap, and this
-    /// function has none.
+    /// Each rule of the reader is a rule of the writer too, so the text is
+    /// strict JSON. The pass of the reader runs over the text one time and
+    /// gives the kind of the value. No size rule applies: the writer has no
+    /// cap, and this function has none.
     ///
     /// ```
     /// use creche_contracts::json::{ByteCap, Found, Opaque, WriteError};
@@ -259,19 +259,20 @@ impl Opaque {
     /// The value as a `T`, through `serde_json`. A caller that must read
     /// the members of a value gives a raw type of its own.
     ///
-    /// The read takes the compact form of the value. It runs no second
-    /// check, because each constructor of the type holds that form to the
-    /// rules. The read fails only when `T` refuses the value. A raw type
-    /// with a `Slot` at each field refuses no object.
+    /// The read takes the compact form of the value as it is. The function
+    /// checks no rule again, because no constructor of the type keeps a form
+    /// that breaks one. The read thus fails only when `T` refuses the value.
+    /// A raw type with a `Slot` at each field refuses no object.
     ///
-    /// The compact form is not the text that the value came from:
+    /// The read sees the compact form only. That form can differ from the
+    /// text that a peer sent:
     ///
-    /// - The line and the column of the [`Shape`] count in the compact form.
-    ///   That form has one line.
-    /// - A `T` can hold a [`Number`](super::Number), an
-    ///   [`Integer`](super::Integer) or an `Opaque`. Each of the three reads
-    ///   the tokens of the compact form. The token `-0` of the first text is
-    ///   `0` there.
+    /// - A [`Shape`] names a place in the compact form. The whole form is on
+    ///   line 1, so the place is not a place in the text of the peer.
+    /// - [`Number`](super::Number), [`Integer`](super::Integer) and `Opaque`
+    ///   decide from the characters of a token. Inside `T`, each of them
+    ///   gets the characters that the writer gave. For example, a peer sends
+    ///   `-0`. The value holds `0`, and a `Number` reads the integer 0.
     ///
     /// ```
     /// use creche_contracts::json::{ByteCap, Integer, Number, Opaque};
