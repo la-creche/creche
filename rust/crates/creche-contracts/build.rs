@@ -206,6 +206,9 @@ fn name_of(text: &str) -> Option<&str> {
 }
 
 /// One number of a version: ASCII digits, with no zero before another digit.
+/// The `manifest` module holds the bound of such a number. It gives each
+/// constant of the script to `ContractNumber`, and the build fails for a
+/// number that the type refuses.
 fn number_of(text: &str) -> Option<u16> {
     let digits_only = text.bytes().all(|byte| byte.is_ascii_digit());
     let zero_first = text.len() > 1 && text.starts_with('0');

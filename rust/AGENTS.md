@@ -89,6 +89,10 @@ writes the two numbers and their text to a file in `OUT_DIR`, and
 - A block in another form fails the build with one line. A manifest with
   no row for the contract fails the build, and a manifest with two such
   rows does too.
+- Each number of the row is a number of a contract version. The script
+  holds no bound for a number. `src/manifest.rs` gives the two numbers to
+  `ContractNumber` in a constant assertion. A number that the type refuses
+  thus fails the build.
 - The script names the manifest with `cargo::rerun-if-changed`. cargo runs
   the script again after a change of that file.
 - `rust_gate_path` of `bin/lib/rustrule.sh` names the manifest, as

@@ -54,6 +54,14 @@ mod provided {
     include!(concat!(env!("OUT_DIR"), "/manifest_contract.rs"));
 }
 
+// Each number of the row is a number of a contract version. The build script
+// holds no bound of its own, so the build fails here for a number that
+// `ContractNumber` refuses.
+const _: () = assert!(
+    ContractNumber::new(provided::MAJOR).is_ok() && ContractNumber::new(provided::MINOR).is_ok(),
+    "a number of the `provides` row is no number of a contract version"
+);
+
 /// The build script of the crate, as a module of the test build. Its tests
 /// hold the reader of the `provides` row.
 #[cfg(test)]
