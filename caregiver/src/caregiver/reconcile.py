@@ -852,7 +852,9 @@ def _refuse_grant_file(
     CONTRACT-QUESTION: contract 04 §1.3 rule 1 says that `caregiver` writes
     no grant file that it knows to be wrong. No contract says what the
     family reads then. The reading taken is contract 01 §7 rule 3: an
-    error stops the apply, and the last good state stays. The other
+    error stops the apply, and the last good state stays. A family with no
+    applied file has no such state, so its document holds `never_valid`
+    (contract 05 §3.1), although its family file has no error. The other
     reading is a fault, and contract 05 §3.3 has no code for it. A new code
     costs each reader with a closed set of codes."""
     issue = Issue(Severity.ERROR, WHOLE_FILE, str(refusal))

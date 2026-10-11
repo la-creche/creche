@@ -250,13 +250,18 @@ Nothing here touches a real sandbox or LiteLLM.
   §1.2 gives the cap of a grant file. No contract says what a family reads
   when its grant file is over that cap. A pass adds one error to the
   validation report, and the family reads `invalid`. Contract 05 §3.3 has
-  no fault code for this case.
+  no fault code for this case. A family with no applied file then reads
+  `never_valid: true`, although its family file has no error.
 - `CONTRACT-QUESTION` in `reconcile.py`, `WHOLE_FILE`. Contract 01 §7 gives
   `loc` as a field path. No one field owns the size of a grant file, so
   that error has the place `<document>`.
-- The cap applies to `write_grant_file` only. `rewrite_digests` writes the
-  file that it read with other digests, and it checks no size
-  (`grants.py`).
+- The cap applies to `grant_file_bytes` only: to `write_grant_file` and to
+  the size check of a pass. `rewrite_digests` writes the file that it read
+  with other digests, and it checks no size (`grants.py`).
+- `grants_current` compares the content of the grant file on disk and not
+  its size. A file over the cap that holds the grants of the family counts
+  as current. A pass then writes no grant file, and the family can read
+  `in_sync` (`steps.py`).
 - `apply-once` and `rotate` have no handler for `GrantFileTooLargeError`.
   For a grant file over the cap, each verb ends with a traceback and exit
   code 1. `rotate` writes `creds.json` before that step (`apply.py`,
