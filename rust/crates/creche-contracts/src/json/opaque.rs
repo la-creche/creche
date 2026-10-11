@@ -13,14 +13,16 @@
 use std::cell::Cell;
 use std::fmt;
 
-use serde::de::{self, Deserialize, Deserializer};
+use serde::de::{self, Deserialize, DeserializeOwned, Deserializer};
 use serde::ser::{self, Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::value::RawValue;
 
 use super::scan::{
     FALSE, NULL, TRUE, float_value, in_number, integer_value, is_integer, is_space, pass, string_at,
 };
-use super::{ByteCap, Charset, Found, KeyOrder, Layout, ReadError, Style, read, write};
+use super::{
+    ByteCap, Charset, Found, KeyOrder, Layout, ReadError, Shape, Style, WriteError, read, write,
+};
 use crate::slot::Slot;
 
 /// What the error of `serde` says for a member that is not strict JSON. The
@@ -41,13 +43,23 @@ const COMPACT: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGi
 /// The value of a field that a contract calls opaque: strict JSON of each
 /// kind, which the code keeps whole.
 ///
-/// A value exists only through [`Opaque::read`] or through its
-/// `Deserialize`. Each of the two checks the text against each rule of the
-/// module doc, so code that holds a value needs no second check. The value
-/// then keeps its compact form and not the text that it came from. The
-/// compact form is the text that [`write`](super::write) gives with
-/// [`Layout::Compact`], [`Charset::Utf8`] and [`KeyOrder::AsGiven`]. It has
-/// each key of an object in the order of the first text.
+/// A value exists only through one of four constructors:
+///
+/// - [`Opaque::read`] and the `Deserialize` of the type. Each of the two
+///   checks a text against each rule of the module doc.
+/// - [`Opaque::of`], for a typed value. It takes the text of the writer,
+///   which holds each of those rules, and the pass of the reader accepts
+///   that text.
+/// - [`Opaque::null`], for the word `null`.
+///
+/// Code that holds a value thus needs no second check. The value keeps its
+/// compact form and not the text that it came from. The compact form is the
+/// text that [`write`](super::write) gives with [`Layout::Compact`],
+/// [`Charset::Utf8`] and [`KeyOrder::AsGiven`]. It has each key of an object
+/// in the order of the first text, or in the order that a typed value gives.
+///
+/// Some callers must read a value, for example the parameters of a request.
+/// [`Opaque::parse`] gives such a caller the value as a typed value.
 ///
 /// # How the value reads
 ///
@@ -138,8 +150,8 @@ const COMPACT: Style = Style::new(Layout::Compact, Charset::Utf8, KeyOrder::AsGi
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct Opaque {
-    /// The compact form of the value. It is strict JSON: the writer gives
-    /// it for a text that passed each rule.
+    /// The compact form of the value. It is strict JSON: the type doc says
+    /// how each constructor holds that rule.
     text: Box<str>,
     kind: Found,
 }
@@ -156,6 +168,82 @@ impl Opaque {
         read(bytes, cap)
     }
 
+    /// The value that `value` writes: a typed value as an opaque value.
+    ///
+    /// [`write`](super::write) gives the compact form of `value`, and the
+    /// new value keeps that text. The function writes the text one time
+    /// only. A struct thus gives its keys in the order of its fields, and a
+    /// number has the kind that the writer gives it: an integer type gives
+    /// [`Found::Integer`], and a float type gives [`Found::Float`].
+    ///
+    /// Each rule of the reader is a rule of the writer too, so the text is
+    /// strict JSON. The pass of the reader runs over the text one time and
+    /// gives the kind of the value. No size rule applies: the writer has no
+    /// cap, and this function has none.
+    ///
+    /// ```
+    /// use creche_contracts::json::{ByteCap, Found, Opaque, WriteError};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct Usage {
+    ///     kind: &'static str,
+    ///     cost: f64,
+    /// }
+    ///
+    /// let event = Opaque::of(&Usage { kind: "usage", cost: 1.5 })?;
+    /// assert_eq!(event.kind(), Found::Table);
+    /// assert_eq!(event, Opaque::read(br#" {"kind": "usage", "cost": 1.50} "#, ByteCap::new(64))?);
+    ///
+    /// assert_eq!(Opaque::of(&7_i64)?.kind(), Found::Integer);
+    /// assert_eq!(Opaque::of(&7.0_f64)?.kind(), Found::Float);
+    /// assert_eq!(Opaque::of(&f64::NAN), Err(WriteError::NotFinite));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The [`WriteError`] of the writer, for a value that
+    /// [`write`](super::write) refuses: [`WriteError::NotFinite`] for a float
+    /// that is not finite, and [`WriteError::NoJsonForm`] for each other
+    /// such value. The error holds no part of the value.
+    pub fn of<T: Serialize + ?Sized>(value: &T) -> Result<Self, WriteError> {
+        let compact = write(value, COMPACT)?;
+        let text = String::from_utf8(compact).map_err(|_| WriteError::NoJsonForm)?;
+        // The pass accepts each text of the writer. A text that it refuses
+        // becomes no value.
+        let kind = pass(&text).map_err(|_| WriteError::NoJsonForm)?;
+
+        Ok(Self {
+            text: text.into(),
+            kind,
+        })
+    }
+
+    /// The value of the word `null`. Its kind is [`Found::Null`]. It equals
+    /// the value that [`Opaque::read`] gives for the text `null`.
+    ///
+    /// A `Slot<Opaque>` of a raw type keeps no value for the word `null`:
+    /// it is `Slot::Null`. A conversion that needs the value of that word
+    /// takes it from this function.
+    ///
+    /// ```
+    /// use creche_contracts::json::{ByteCap, Found, Opaque, ReadError};
+    ///
+    /// let null = Opaque::null();
+    /// assert_eq!(null.kind(), Found::Null);
+    /// assert_eq!(null.compact_len(), 4);
+    /// assert_eq!(null, Opaque::read(b" null ", ByteCap::new(8))?);
+    /// # Ok::<(), ReadError>(())
+    /// ```
+    #[must_use]
+    pub fn null() -> Self {
+        Self {
+            text: NULL.into(),
+            kind: Found::Null,
+        }
+    }
+
     /// The value that has this text. `None` for a text that is not strict
     /// JSON.
     fn of_text(text: &str) -> Option<Self> {
@@ -166,6 +254,59 @@ impl Opaque {
             text: String::from_utf8(compact).ok()?.into(),
             kind,
         })
+    }
+
+    /// The value as a `T`, through `serde_json`. A caller that must read
+    /// the members of a value gives a raw type of its own.
+    ///
+    /// The read takes the compact form of the value as it is. The function
+    /// checks no rule again, because no constructor of the type keeps a form
+    /// that breaks one. The read thus fails only when `T` refuses the value.
+    /// A raw type with a `Slot` at each field refuses no object.
+    ///
+    /// The function does not compare the kind of the value with the kind
+    /// that `T` takes. A struct that derives `Deserialize` also takes a list,
+    /// and `serde` then fills its fields by position. A caller that takes an
+    /// object only compares [`Opaque::kind`] with [`Found::Table`] first.
+    ///
+    /// The read sees the compact form only. That form can differ from the
+    /// text that a peer sent:
+    ///
+    /// - A [`Shape`] names a place in the compact form. The whole form is on
+    ///   line 1, so the place is not a place in the text of the peer.
+    /// - [`Number`](super::Number), [`Integer`](super::Integer) and `Opaque`
+    ///   decide from the characters of a token. Inside `T`, each of them
+    ///   gets the characters that the writer gave. For example, a peer sends
+    ///   `-0`. The value holds `0`, and a `Number` reads the integer 0.
+    ///
+    /// ```
+    /// use creche_contracts::json::{ByteCap, Integer, Number, Opaque};
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct RawCall {
+    ///     name: Option<String>,
+    ///     depth: Option<Number>,
+    /// }
+    ///
+    /// let arguments = Opaque::read(b"{\"name\": \"add\",\n \"depth\": -0}", ByteCap::new(64))?;
+    /// let raw: RawCall = arguments.parse()?;
+    /// assert_eq!(raw.name.as_deref(), Some("add"));
+    /// assert_eq!(raw.depth, Some(Number::Integer(Integer::from(0_u64))));
+    ///
+    /// // The first text of this list has two lines. The compact form has one.
+    /// let list = Opaque::read(b"[\"add\",\n 7]", ByteCap::new(64))?;
+    /// let refused = list.parse::<Vec<String>>().unwrap_err();
+    /// assert_eq!((refused.line(), refused.column()), (1, 8));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Shape`] when `T` does not take the value. The error holds no byte
+    /// of the value.
+    pub fn parse<T: DeserializeOwned>(&self) -> Result<T, Shape> {
+        serde_json::from_str(&self.text).map_err(|error| Shape::of(&error))
     }
 
     /// The JSON type of the value. A number is [`Found::Integer`] when its
@@ -407,11 +548,11 @@ impl Serialize for Walk<'_> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use serde::Deserialize;
     use serde::de::{IgnoredAny, MapAccess, Visitor};
+    use serde::{Deserialize, Serialize};
 
     use super::super::write::tests::SAMPLE_TEXTS;
-    use super::super::{DEPTH_MAX, Rule, WriteError};
+    use super::super::{DEPTH_MAX, Integer, Number, Rule};
     use super::*;
     use crate::slot::tests::reads_empty_table;
 
@@ -992,6 +1133,322 @@ mod tests {
         assert_eq!(line.event, Slot::Value(opaque(r#"{"cost": 1.50}"#)));
         assert_eq!(text_of(&line.detail, COMPACT), "0");
         assert_eq!(keys, ["later", "more"]);
+    }
+
+    // --- the three conversions: `parse`, `of` and `null` ---
+
+    #[test]
+    fn each_sample_text_gives_its_value_back_through_parse_and_through_of() {
+        for (layout, charset, key_order, text) in SAMPLE_TEXTS {
+            let style = Style::new(layout, charset, key_order);
+            let value = opaque(text);
+
+            assert_eq!(value.parse::<Opaque>().as_ref(), Ok(&value), "{style:?}");
+            assert_eq!(Opaque::of(&value).as_ref(), Ok(&value), "{style:?}");
+        }
+
+        // A value of each kind, a text with white space and escapes, and
+        // each number token of the table above.
+        let texts = [SAMPLE, KEYED, "null", "true", "\"\"", "[]", "{}"];
+        let tokens = NUMBERS.iter().map(|(token, _)| *token);
+        for text in texts.into_iter().chain(tokens) {
+            let value = opaque(text);
+
+            assert_eq!(value.parse::<Opaque>().as_ref(), Ok(&value), "{text}");
+            assert_eq!(Opaque::of(&value).as_ref(), Ok(&value), "{text}");
+        }
+    }
+
+    /// A typed value with a member of each kind. Its keys are not in sorted
+    /// order.
+    #[derive(Serialize)]
+    struct Typed<'a> {
+        zone: &'a str,
+        at: i64,
+        cost: f64,
+        tags: Vec<Option<&'a str>>,
+        done: bool,
+        nothing: (),
+        inner: BTreeMap<&'a str, u64>,
+    }
+
+    fn typed() -> Typed<'static> {
+        Typed {
+            zone: "caf\u{e9} \u{7f}\n\u{0}",
+            at: -7,
+            cost: 1e21,
+            tags: vec![Some("a"), None],
+            done: true,
+            nothing: (),
+            inner: BTreeMap::from([("b", u64::MAX)]),
+        }
+    }
+
+    /// What `json.dumps` gives for the value of `typed` in the compact
+    /// style, with each character as it is.
+    const TYPED: &str = "{\"zone\":\"caf\u{e9} \u{7f}\\n\\u0000\",\"at\":-7,\"cost\":1e+21,\"tags\":[\"a\",null],\"done\":true,\"nothing\":null,\"inner\":{\"b\":18446744073709551615}}";
+
+    #[test]
+    fn a_typed_value_keeps_the_order_of_its_fields_and_the_kind_of_each_number() {
+        let made = Opaque::of(&typed()).unwrap();
+
+        assert_eq!(made.kind(), Found::Table);
+        assert_eq!(text_of(&made, COMPACT), TYPED);
+        assert_eq!(made.compact_len(), TYPED.len());
+
+        let kinds = [
+            (Opaque::of(&7_i64), Found::Integer),
+            (Opaque::of(&-7_i64), Found::Integer),
+            (Opaque::of(&u64::MAX), Found::Integer),
+            (Opaque::of(&7.0_f64), Found::Float),
+            (Opaque::of(&-0.0_f64), Found::Float),
+            (Opaque::of(&1e21_f64), Found::Float),
+            (Opaque::of(&()), Found::Null),
+            (Opaque::of(&None::<u8>), Found::Null),
+            (Opaque::of(&true), Found::Boolean),
+            (Opaque::of("7"), Found::Text),
+            (Opaque::of(&[7_u8]), Found::List),
+            (Opaque::of(&BTreeMap::from([("count", 7_u8)])), Found::Table),
+        ];
+        for (made, kind) in kinds {
+            assert_eq!(made.map(|value| value.kind()), Ok(kind));
+        }
+
+        // A float with a whole value stays a float.
+        assert_eq!(text_of(&Opaque::of(&7.0_f64).unwrap(), COMPACT), "7.0");
+        assert_ne!(Opaque::of(&7.0_f64), Opaque::of(&7_i64));
+    }
+
+    #[test]
+    fn the_text_of_a_typed_value_is_the_text_that_a_read_keeps() {
+        // `of` keeps the text of the writer and writes it no second time. A
+        // read keeps the text of a second write. The two texts must be the
+        // same. With two texts, a typed value does not equal the read of
+        // its own text.
+        let made = Opaque::of(&typed()).unwrap();
+        assert_eq!(&*made.text, TYPED);
+        assert_eq!(&*opaque(TYPED).text, TYPED);
+        assert_eq!(Opaque::read(TYPED.as_bytes(), CAP), Ok(made));
+
+        let floats = [
+            0.0,
+            -0.0,
+            0.1,
+            1.5,
+            -2.5,
+            1e16,
+            1e21,
+            1e-5,
+            1e-7,
+            123_456_789.125,
+            9_007_199_254_740_992.0,
+            5e-324,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::MIN,
+        ];
+        for float in floats {
+            let made = Opaque::of(&float).unwrap();
+            let read = opaque(&made.text);
+
+            assert_eq!(&*made.text, &*read.text, "{float}");
+            assert_eq!(made, read, "{float}");
+        }
+
+        for integer in [i64::MIN, -1, 0, 1, i64::MAX] {
+            let made = Opaque::of(&integer).unwrap();
+
+            assert_eq!(&*made.text, integer.to_string());
+            assert_eq!(made, opaque(&made.text), "{integer}");
+        }
+        let large = Opaque::of(&u64::MAX).unwrap();
+        assert_eq!(large, opaque("18446744073709551615"));
+
+        let strings = [
+            "",
+            "caf\u{e9}",
+            "\u{0}\u{1}\u{1f} \u{7f}\u{80}",
+            "\"\\/\u{8}\u{c}\n\r\t",
+            "\u{2028}\u{2029}\u{ffff}\u{1f600}",
+        ];
+        for string in strings {
+            let made = Opaque::of(string).unwrap();
+            let read = opaque(&made.text);
+
+            assert_eq!(&*made.text, &*read.text, "{string:?}");
+            assert_eq!(made, read, "{string:?}");
+            // The value holds the string, and not only a text that reads.
+            assert_eq!(made.parse::<String>().as_deref(), Ok(string));
+        }
+
+        for text in [SAMPLE, KEYED, " [1.50, -0, 1e21] ", "\"\\u00e9\""] {
+            let read = opaque(text);
+            let made = Opaque::of(&read).unwrap();
+
+            assert_eq!(&*made.text, &*read.text, "{text}");
+            assert_eq!(made.kind, read.kind, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_typed_value_that_the_writer_refuses_gives_no_value() {
+        /// A value with a text that no error can show.
+        #[derive(Serialize)]
+        struct Login<'a> {
+            token: &'a str,
+            cost: f64,
+        }
+
+        for float in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(Opaque::of(&float), Err(WriteError::NotFinite), "{float}");
+            assert_eq!(
+                Opaque::of(&[Some(float)]),
+                Err(WriteError::NotFinite),
+                "{float}"
+            );
+        }
+
+        // A value of 64 levels has a text. One more level has none.
+        let deepest = opaque(&format!(
+            "{}{}",
+            "[".repeat(DEPTH_MAX),
+            "]".repeat(DEPTH_MAX)
+        ));
+        assert_eq!(Opaque::of(&deepest).as_ref(), Ok(&deepest));
+        assert_eq!(Opaque::of(&[&deepest]), Err(WriteError::NoJsonForm));
+
+        // A key that is a number, and an integer outside 64 bits.
+        assert_eq!(
+            Opaque::of(&BTreeMap::from([(7_u8, 1_u8)])),
+            Err(WriteError::NoJsonForm)
+        );
+        assert_eq!(Opaque::of(&u128::MAX), Err(WriteError::NoJsonForm));
+
+        // A `RawValue` brings a text of its own, with white space and a
+        // number in another form. A value that kept such a text would not
+        // hold its compact form.
+        let raw = RawValue::from_string(String::from("{ \"a\" : 1.50 }")).unwrap();
+        assert_eq!(Opaque::of(&raw), Err(WriteError::NoJsonForm));
+        assert_eq!(Opaque::of(&[&raw]), Err(WriteError::NoJsonForm));
+
+        // The error holds no part of the value.
+        let login = Login {
+            token: "hunter2",
+            cost: f64::NAN,
+        };
+        let refused = Opaque::of(&login).unwrap_err();
+        assert_eq!(refused.to_string(), "a float that is not finite");
+        assert_eq!(format!("{refused:?}"), "NotFinite");
+    }
+
+    /// A raw type with a `Slot` at each field.
+    #[derive(Debug, Default, PartialEq, Deserialize)]
+    #[serde(default)]
+    struct RawParams {
+        name: Slot<String>,
+        depth: Slot<Number>,
+        arguments: Slot<Opaque>,
+        cursor: Slot<String>,
+    }
+
+    #[test]
+    fn a_raw_type_reads_the_members_of_a_value() {
+        let params = opaque(
+            " {\"name\": \"add\", \"depth\": -0,\n \"arguments\": {\"b\": 1.50, \"a\": null}, \"later\": [1]} ",
+        );
+        let raw: RawParams = params.parse().unwrap();
+
+        assert_eq!(raw.name, Slot::Value(String::from("add")));
+        // The read takes the tokens of the compact form: `-0` is `0` there.
+        assert_eq!(
+            raw.depth,
+            Slot::Value(Number::Integer(Integer::from(0_u64)))
+        );
+        assert_eq!(raw.arguments, Slot::Value(opaque(r#"{"b":1.5,"a":null}"#)));
+        assert_eq!(raw.cursor, Slot::Missing);
+
+        // A member of another kind fails no read. Neither does the word
+        // `null`, and neither does an object with no member.
+        let other: RawParams = opaque(r#"{"name": 7, "depth": "2", "arguments": null}"#)
+            .parse()
+            .unwrap();
+        assert_eq!(other.name, Slot::Other(Found::Integer));
+        assert_eq!(other.depth, Slot::Other(Found::Text));
+        assert_eq!(other.arguments, Slot::Null);
+        assert_eq!(opaque("{}").parse(), Ok(RawParams::default()));
+        assert!(reads_empty_table::<RawParams>());
+
+        // The function compares no kind. The derived reader of a struct
+        // also takes a list, by position. A caller that takes an object
+        // only reads the kind first.
+        let listed = opaque(r#"["add"]"#);
+        assert_eq!(listed.kind(), Found::List);
+        assert_eq!(
+            listed.parse::<RawParams>().map(|raw| raw.name),
+            Ok(Slot::Value(String::from("add")))
+        );
+
+        // A type with no `Slot` reads a value of its own kind.
+        assert_eq!(opaque(" [1, 2] ").parse::<Vec<u8>>(), Ok(vec![1, 2]));
+        assert_eq!(
+            opaque("\"\\u00e9\"").parse::<String>().as_deref(),
+            Ok("\u{e9}")
+        );
+    }
+
+    #[test]
+    fn a_type_that_refuses_the_value_gives_a_shape_with_no_byte_of_it() {
+        let login = opaque(r#" {"token": "hunter2"} "#);
+        let shape = login.parse::<Vec<u8>>().unwrap_err();
+
+        assert_eq!((shape.line(), shape.column()), (1, 0));
+        assert_eq!(shape.to_string(), "line 1, column 0");
+        assert_eq!(format!("{shape:?}"), "Shape { line: 1, column: 0 }");
+
+        // The error of `serde_json` for this item holds the text of the
+        // item. The shape keeps the place only. The place counts in the
+        // compact form, which has one line: the first text has the item on
+        // its line 2.
+        let list = opaque("[1,\n \"hunter2\"]");
+        let shape = list.parse::<Vec<u8>>().unwrap_err();
+
+        assert!(
+            serde_json::from_str::<Vec<u8>>(&list.text)
+                .unwrap_err()
+                .to_string()
+                .contains("hunter2")
+        );
+        assert_eq!((shape.line(), shape.column()), (1, 12));
+        assert_eq!(shape.to_string(), "line 1, column 12");
+        assert_eq!(format!("{shape:?}"), "Shape { line: 1, column: 12 }");
+    }
+
+    #[test]
+    fn the_null_value_is_the_value_of_the_word_null() {
+        let null = Opaque::null();
+
+        assert_eq!(null.kind(), Found::Null);
+        assert_eq!(null.compact_len(), 4);
+        assert_eq!(null, opaque(" null "));
+        assert_eq!(Opaque::of(&()).as_ref(), Ok(&null));
+        assert_eq!(null.parse::<Opaque>().as_ref(), Ok(&null));
+        assert_eq!(null.parse::<Option<u8>>(), Ok(None));
+        for (layout, charset, key_order, _) in SAMPLE_TEXTS {
+            let style = Style::new(layout, charset, key_order);
+
+            assert_eq!(text_of(&null, style), "null", "{style:?}");
+        }
+        assert_ne!(null, opaque("false"));
+        assert_ne!(null, opaque("\"null\""));
+
+        // The word `null` in an opaque field of a raw type is still no
+        // value of the slot.
+        assert_eq!(read::<Slot<Opaque>>(b"null", CAP), Ok(Slot::Null));
+        assert_eq!(null.parse::<Slot<Opaque>>(), Ok(Slot::Null));
+        assert_eq!(
+            opaque("[null]").parse::<Vec<Slot<Opaque>>>(),
+            Ok(vec![Slot::Null])
+        );
     }
 
     #[test]

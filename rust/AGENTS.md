@@ -403,7 +403,7 @@ also names the byte offset of each refusal. The module has five files:
 | `Charset` | `Ascii` gives a `\u` escape for each character that is not printable ASCII. `Utf8` writes such a character as it is. |
 | `KeyOrder` | `AsGiven` keeps the order of the value. `Sorted` sorts the keys of each object by their code points. |
 | `WriteError` | The refusal of `write`. `NotFinite` is for a float that is not finite. `NoJsonForm` is for each other value that strict JSON cannot hold. |
-| `Opaque` | The value of a field that a contract calls opaque. It holds its compact form and keeps the order of its keys. |
+| `Opaque` | The value of a field that a contract calls opaque. It holds its compact form and keeps the order of its keys. It has three conversions. `parse` reads the value into a type of the caller. `of` makes the value from a typed value. `null` is the value of the word `null`. |
 
 `check` applies the rules in this sequence:
 
@@ -505,12 +505,26 @@ fault, the event of a channel line and the arguments of a tool call.
   thus equal, and so are `1.50` and `1.5`.
 - The order of the keys is a part of an `Opaque`. Two objects with the same
   members in another order are not equal.
+- `Opaque::parse` reads the value into a type of the caller, for example a
+  raw type. The function compares no kind, and a struct that derives
+  `Deserialize` also reads a list by position. Before the call, compare
+  `Opaque::kind` with the kind that the type takes. The function reads the
+  compact form and makes no second check. A `Shape` of this function thus
+  names a place on line 1 of that form. A number field gets the token that
+  the writer gave: `0` where the first text had `-0`.
+- `Opaque::of` makes the value from a typed value, with one call of the
+  writer. It refuses each value that `write` refuses. A module that needs
+  the `Opaque` of a typed value calls this function. It does not give a
+  text of its own to the reader.
+- `Opaque::null` is the value of the word `null`. A `Slot<Opaque>` keeps no
+  value for that word, so a conversion that needs the value calls this
+  function.
 
-Only `session` and `mcp` call the writer today. Only `mcp` calls the
-reader. The index of the vector files is a strict text too. The crate
-`creche-vectors` reads it and does not use `creche-contracts`, so its raw
-types hold the rules for the index. "Known gaps" names the packet that moves
-each module to the two.
+Only `session` calls the writer today. `mcp` gets the writer through
+`Opaque::of`. Only `mcp` calls the reader. The index of the vector files is
+a strict text too. The crate `creche-vectors` reads it and does not use
+`creche-contracts`, so its raw types hold the rules for the index. "Known
+gaps" names the packet that moves each module to the two.
 Until then, these parts stay:
 
 - Five older functions format a float: `float_text` of `channel`, of
@@ -1992,13 +2006,6 @@ adds a crate:
   cannot give. The variant `Member` holds three reasons. "Where a new type
   goes" gives each type an error type of its own, in item 8. No packet has
   that part yet.
-- Against rule 13, `mcp` holds a second copy of one value of `json`. That
-  value is the compact style, `COMPACT`. `json::Opaque` gives no member of
-  its value and takes no typed value. The functions `reread` and
-  `opaque_of` of `mcp` thus write a value in that style and read the text
-  again. A packet that can change `json` gives `Opaque` those two
-  conversions, and then deletes the copy and the two functions. No packet
-  has that part yet.
 - An `mcp::Object` can nest 64 levels, the limit of the reader. An
   `mcp::Line` adds one level to its object. The writer thus refuses a
   message that holds the deepest object. The `CONTRACT-QUESTION` comment of
