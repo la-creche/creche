@@ -97,7 +97,9 @@ writes the two numbers and their text to a file in `OUT_DIR`, and
   that change.
 - The test build of the crate reads `build.rs` as a module. `cargo test`
   thus runs the tests of the script.
-- When the manifest gets another name, change the name in the script.
+- The script reads the YAML form of the manifest only. When the manifest
+  gets another name or another format, change the script in the same pull
+  request.
 - The Python release tool holds the two numbers as typed constants. A test
   of `handover` compares them with the row (`handover/AGENTS.md`).
 
