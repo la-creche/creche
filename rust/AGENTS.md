@@ -1391,8 +1391,8 @@ These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
 
 To run the script on your machine:
 
-1. Install the version of `cargo-llvm-cov` that `.github/workflows/gate.yml`
-   names.
+1. Install the version of `cargo-llvm-cov` that
+   `.github/actions/cargo-llvm-cov/action.yml` names.
 2. Run `rustup component add llvm-tools-preview` in `rust/`.
 3. Run `bin/rust-coverage.sh`.
 
@@ -1416,9 +1416,12 @@ checks. Only a nightly compiler measures a branch, so the job installs one
 nightly toolchain. The variable `RUSTUP_TOOLCHAIN` of the workflow names that
 toolchain by its date. Do not name a nightly in `rust-toolchain.toml`.
 
-The job takes `cargo-llvm-cov` with the two constants of the `rust-coverage`
-job. `bin/tests/test_gate_workflow.py` pins the date. It also holds the two
-constants equal in the three workflow files.
+The job takes `cargo-llvm-cov` through the action
+`.github/actions/cargo-llvm-cov`, as the `rust-coverage` job does. Only that
+action holds the version of the tool and the SHA-256 of its archive. The
+nightly job and the `rust-coverage` job thus measure with one tool version.
+`bin/tests/test_gate_workflow.py` pins the date and the action. It fails when
+a workflow file holds a copy of the two values.
 
 The job blocks no merge and no release, because the check `gate` does not
 need it. A pull request that breaks the fifth check can thus merge. The next
