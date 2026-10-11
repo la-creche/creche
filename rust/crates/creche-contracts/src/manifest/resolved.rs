@@ -13,15 +13,13 @@ use creche_util::{hex, sha256};
 
 use super::json::{self, Charset};
 use super::state::SourceFacts;
-use super::{
-    Action, ContractId, ContractNumber, Digest, MANIFEST_CONTRACT_MAJOR, MANIFEST_CONTRACT_MINOR,
-    Requester,
-};
+use super::{Action, ContractId, ContractNumber, Digest, Requester, provided};
 use crate::ids::{ComponentName, GateId, GateIdError, GitObjectId, Ulid, Version};
 
 /// The `component-manifest` contract version that root writes into each
-/// resolved manifest.
-pub const MANIFEST_VERSION: &str = "0.6";
+/// resolved manifest: the two numbers of the `provides` row in the manifest
+/// of the release tool, as one text.
+pub const MANIFEST_VERSION: &str = provided::TEXT;
 
 /// What the hash of a manifest is joined with before the hash of the gate, so
 /// that the gate id of a release is never the gate id of a tool call.
@@ -340,7 +338,7 @@ impl ContractRow {
 /// never holds a hash of other fields.
 ///
 /// ```
-/// use creche_contracts::manifest::{ResolvedAt, ResolvedManifest};
+/// use creche_contracts::manifest::{MANIFEST_VERSION, ResolvedAt, ResolvedManifest};
 ///
 /// let manifest = ResolvedManifest::new(
 ///     "01K5J8M2Q7V3X9R4T6N0B8C2DE".parse()?,
@@ -352,7 +350,9 @@ impl ContractRow {
 /// );
 /// assert_eq!(
 ///     manifest.canonical_json(),
-///     r#"{"components":[],"contracts":[],"id":"01K5J8M2Q7V3X9R4T6N0B8C2DE","manifest_version":"0.6","order":[],"requested_by":"human","resolved_at":1758153600.0}"#
+///     format!(
+///         r#"{{"components":[],"contracts":[],"id":"01K5J8M2Q7V3X9R4T6N0B8C2DE","manifest_version":"{MANIFEST_VERSION}","order":[],"requested_by":"human","resolved_at":1758153600.0}}"#
+///     )
 /// );
 /// assert!(manifest.sha256().as_str().starts_with("sha256:"));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -829,6 +829,3 @@ impl Summary {
         ]
     }
 }
-
-// `MANIFEST_VERSION` is the two numbers of the contract version, as one text.
-const _: () = assert!(MANIFEST_CONTRACT_MAJOR == 0 && MANIFEST_CONTRACT_MINOR == 6);

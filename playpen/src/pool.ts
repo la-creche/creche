@@ -20,6 +20,8 @@ import { bridgeAt, buildPiStart, PiMode } from "./pi-args.js";
 import type { PiArgsSpec, PiStart } from "./pi-args.js";
 import { writePiSettings } from "./pi-settings.js";
 import type { PiLauncher } from "./pi-process.js";
+import { planeLog, readPlaneUrls } from "./planes.js";
+import type { PlaneReading } from "./planes.js";
 import type {
   GetEntriesMessage,
   OpenSessionMessage,
@@ -165,6 +167,13 @@ export class SessionPool {
    */
   private readonly waitingTurns = new Set<string>();
 
+  /**
+   * Where the chaperone and LiteLLM listen, read one time from the
+   * environment that the env file carries. Each pi process of this pool gets
+   * the same two URLs.
+   */
+  private readonly planes: PlaneReading = readPlaneUrls(process.env);
+
   private readonly links: CodeSandboxLinks;
   private sweep: NodeJS.Timeout | null = null;
   private throttled: SandboxSession | null = null;
@@ -185,7 +194,17 @@ export class SessionPool {
   }
 
   public start(): void {
-    this.sweep ??= setInterval(() => this.reapIdle(), REAP_SWEEP_MS);
+    if (this.sweep !== null) {
+      return;
+    }
+
+    // One `log` line for each plane variable that gave no URL. The pool
+    // starts after `hello`, so `ready` stays the first line (§3 rule 2).
+    for (const notice of this.planes.notices) {
+      this.deps.emit(planeLog(notice));
+    }
+
+    this.sweep = setInterval(() => this.reapIdle(), REAP_SWEEP_MS);
   }
 
   public stopSweep(): void {
@@ -633,7 +652,7 @@ export class SessionPool {
     // this family was granted, and rewriting it is also what removes whatever
     // the last session left in its own store (`pi-settings.ts`).
     try {
-      writeModelsJson(spec.session_dir, models);
+      writeModelsJson(spec.session_dir, models, this.planes.urls.litellm);
       writePiSettings(spec.session_dir, config);
     } catch (error) {
       return {
@@ -663,6 +682,7 @@ export class SessionPool {
       ...(turnFilePath === null ? {} : { turnFile: turnFilePath }),
       ...(toolStatePath === null ? {} : { toolStateFile: toolStatePath }),
       creds,
+      planes: this.planes.urls,
     });
 
     let session: SandboxSession;

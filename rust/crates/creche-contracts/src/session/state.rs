@@ -566,6 +566,147 @@ impl fmt::Display for IllegalMove {
 
 impl Error for IllegalMove {}
 
+/// The two states of a refused move that `attendance` writes into a journal
+/// as the note `illegal_transition`.
+///
+/// No contract names this note. Contract 02 §8.1 gives the body of a note no
+/// form. Contract 02 §4.3 holds the state table of a turn and names no note.
+/// The word of the note, its two members and the set of pairs thus follow
+/// what `attendance` writes.
+///
+/// `attendance` writes that note when it ends a turn and its state table
+/// refuses the move. The turn then keeps its state. A move that ends a turn
+/// leads to a terminal state: `settled`, `failed` or `aborted`. A turn in a
+/// terminal state gets no note. The table has each pair that is left, and a
+/// value holds one of them:
+///
+/// | The state of the turn | The terminal state that it did not take |
+/// |---|---|
+/// | `queued` | `settled` |
+/// | `queued` | `failed` |
+/// | `waiting-approval` | `settled` |
+///
+/// A service gets a value only from [`RefusedMove::of`], so only a move that
+/// [`Turn::apply`] refused becomes a note. A reader gets a value through
+/// `serde`, which takes the members `from` and `to` and refuses each other
+/// pair. The writer gives the two members in that order.
+///
+/// The set is closed. A newer `attendance` can write another pair. The
+/// reader of a journal body does not refuse such a note. The body then reads
+/// as a [`Note::Other`](super::Note::Other), with each of its members.
+///
+/// ```
+/// use creche_contracts::session::{RefusedMove, Step, Turn, TurnState};
+///
+/// let at = "2026-10-05T19:22:31Z".parse()?;
+/// let refused = Turn::Queued.apply(Step::Settle { at });
+/// let noted = refused.as_ref().err().and_then(|refused| RefusedMove::of(refused));
+/// assert_eq!(
+///     noted.map(|noted| (noted.from(), noted.to())),
+///     Some((TurnState::Queued, TurnState::Settled))
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this module cannot build one from two states:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::session::{RefusedMove, Step, Turn, TurnState};
+///
+/// fn noted(turn: &Turn, step: &Step) -> RefusedMove {
+///     let to: TurnState = step.target();
+///     RefusedMove { from: turn.state(), to }
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawRefusedMove")]
+pub struct RefusedMove {
+    from: TurnState,
+    to: TurnState,
+}
+
+/// The two members of the note of a refused move, before the check of the
+/// pair. Only `serde` makes a value. The read refuses a third member and a
+/// word that [`TurnState`] does not have.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRefusedMove {
+    from: TurnState,
+    to: TurnState,
+}
+
+impl TryFrom<RawRefusedMove> for RefusedMove {
+    type Error = NoNote;
+
+    fn try_from(raw: RawRefusedMove) -> Result<Self, Self::Error> {
+        Self::noted(raw.from, raw.to).ok_or(NoNote {
+            from: raw.from,
+            to: raw.to,
+        })
+    }
+}
+
+impl RefusedMove {
+    /// What a service writes as the note of a move that [`Turn::apply`]
+    /// refused.
+    ///
+    /// `None` is a refused move that gets no note. Two kinds exist: a move of
+    /// a turn in a terminal state, and a move to a state that is not
+    /// terminal. The two states of the second kind can be a pair that the
+    /// contract permits for another [`Step`]. For example, [`Step::CloseGate`]
+    /// on a turn in the queue asks for `queued` to `running`.
+    #[must_use]
+    pub fn of(refused: &IllegalMove) -> Option<Self> {
+        Self::noted(refused.state(), refused.wanted())
+    }
+
+    /// The state that the turn has.
+    #[must_use]
+    pub const fn from(&self) -> TurnState {
+        self.from
+    }
+
+    /// The terminal state that the turn did not take.
+    #[must_use]
+    pub const fn to(&self) -> TurnState {
+        self.to
+    }
+
+    /// The one copy of the set of pairs. The table of the type shows them.
+    ///
+    /// The set is each move from a state that is not terminal to a terminal
+    /// state that [`Turn::apply`] refuses. A test holds the two equal.
+    fn noted(from: TurnState, to: TurnState) -> Option<Self> {
+        let noted = match from {
+            TurnState::Queued => matches!(to, TurnState::Settled | TurnState::Failed),
+            TurnState::WaitingApproval => matches!(to, TurnState::Settled),
+            TurnState::Running | TurnState::Settled | TurnState::Failed | TurnState::Aborted => {
+                false
+            }
+        };
+
+        noted.then_some(Self { from, to })
+    }
+}
+
+/// Why two states are not a pair of a [`RefusedMove`]: `attendance` writes
+/// no note for that move.
+#[derive(Debug)]
+struct NoNote {
+    from: TurnState,
+    to: TurnState,
+}
+
+impl fmt::Display for NoNote {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "no note holds a turn in the state {} that did not become {}",
+            self.from, self.to
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,6 +717,51 @@ mod tests {
 
     fn run() -> Run {
         Run::new(at("2026-10-05T19:22:05Z"), "chat-s2".parse().unwrap())
+    }
+
+    /// A turn in one state.
+    fn turn_in(state: TurnState) -> Turn {
+        let at = at("2026-10-05T19:22:31Z");
+        let reason = TurnReason::Internal;
+        let step = match state {
+            TurnState::Queued => return Turn::Queued,
+            TurnState::Running => return Turn::Running(run()),
+            TurnState::WaitingApproval => Step::OpenGate,
+            TurnState::Settled => Step::Settle { at },
+            TurnState::Failed => Step::Fail { at, reason },
+            TurnState::Aborted => Step::Abort { at, reason },
+        };
+
+        Turn::Running(run()).apply(step).unwrap()
+    }
+
+    /// The three moves that end a turn.
+    fn end_steps() -> [Step; 3] {
+        let at = at("2026-10-05T19:23:00Z");
+
+        [
+            Step::Settle { at },
+            Step::Fail {
+                at,
+                reason: TurnReason::Internal,
+            },
+            Step::Abort {
+                at,
+                reason: TurnReason::UserStopped,
+            },
+        ]
+    }
+
+    /// Each move: the three that end a turn, and the three that do not.
+    fn each_step() -> Vec<Step> {
+        let mut steps = vec![Step::Start(run()), Step::OpenGate, Step::CloseGate];
+        steps.extend(end_steps());
+
+        steps
+    }
+
+    fn pair(noted: Option<RefusedMove>) -> Option<(TurnState, TurnState)> {
+        noted.map(|noted| (noted.from(), noted.to()))
     }
 
     #[test]
@@ -680,6 +866,129 @@ mod tests {
             let error = ended.clone().apply(step).unwrap_err();
 
             assert_eq!(error.into_turn(), ended);
+        }
+    }
+
+    /// The set of [`RefusedMove`] against the state table: a change of
+    /// `Turn::apply` that moves one of the nine results fails here.
+    #[test]
+    fn the_noted_pairs_are_the_ends_that_apply_refuses_a_live_turn() {
+        use TurnState::{Queued, Running, WaitingApproval};
+
+        for from in [Queued, Running, WaitingApproval] {
+            for step in end_steps() {
+                let to = step.target();
+                let refused = turn_in(from).apply(step).is_err();
+
+                assert!(!from.is_terminal() && to.is_terminal());
+                assert_eq!(
+                    RefusedMove::noted(from, to).is_some(),
+                    refused,
+                    "{from} to {to}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_refused_end_of_a_live_turn_gives_its_pair() {
+        use TurnState::{Failed, Queued, Settled, WaitingApproval};
+
+        let at = at("2026-10-05T19:23:00Z");
+        let reason = TurnReason::Internal;
+        let moves = [
+            (Queued, Step::Settle { at }, Settled),
+            (Queued, Step::Fail { at, reason }, Failed),
+            (WaitingApproval, Step::Settle { at }, Settled),
+        ];
+
+        for (from, step, to) in moves {
+            let error = turn_in(from).apply(step).unwrap_err();
+
+            assert_eq!(pair(RefusedMove::of(&error)), Some((from, to)));
+        }
+    }
+
+    #[test]
+    fn a_refused_move_of_another_kind_gives_no_pair() {
+        use TurnState::{Aborted, Failed, Queued, Running, Settled, WaitingApproval};
+
+        // A turn that ended refuses each move, and no move of it has a note.
+        for ended in [Settled, Failed, Aborted] {
+            for step in each_step() {
+                let error = turn_in(ended).apply(step).unwrap_err();
+
+                assert_eq!(RefusedMove::of(&error), None, "{error}");
+            }
+        }
+
+        // The two states of the last two moves are a pair that the contract
+        // permits for another step.
+        let no_end = [
+            (Running, Step::Start(run()), Running),
+            (Running, Step::CloseGate, Running),
+            (WaitingApproval, Step::OpenGate, WaitingApproval),
+            (Queued, Step::OpenGate, WaitingApproval),
+            (Queued, Step::CloseGate, Running),
+            (WaitingApproval, Step::Start(run()), Running),
+        ];
+        for (from, step, to) in no_end {
+            let error = turn_in(from).apply(step).unwrap_err();
+
+            assert_eq!((error.state(), error.wanted()), (from, to));
+            assert_eq!(RefusedMove::of(&error), None, "{error}");
+        }
+    }
+
+    #[test]
+    fn three_of_the_36_pairs_of_states_are_noted() {
+        use TurnState::{Failed, Queued, Settled, WaitingApproval};
+
+        let noted: Vec<(TurnState, TurnState)> = TurnState::ALL
+            .iter()
+            .flat_map(|from| TurnState::ALL.iter().map(move |to| (*from, *to)))
+            .filter(|(from, to)| RefusedMove::noted(*from, *to).is_some())
+            .collect();
+
+        assert_eq!(
+            noted,
+            [
+                (Queued, Settled),
+                (Queued, Failed),
+                (WaitingApproval, Settled)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_refused_move_reads_two_members_and_refuses_each_other_pair() {
+        let read = |text: &str| serde_json::from_str::<RefusedMove>(text);
+        let noted = read(r#"{"to":"settled","from":"waiting-approval"}"#).unwrap();
+
+        assert_eq!(
+            pair(Some(noted)),
+            Some((TurnState::WaitingApproval, TurnState::Settled))
+        );
+        assert_eq!(
+            serde_json::to_string(&noted).unwrap(),
+            r#"{"from":"waiting-approval","to":"settled"}"#
+        );
+        assert_eq!(
+            read(r#"{"from":"running","to":"settled"}"#)
+                .unwrap_err()
+                .to_string(),
+            "no note holds a turn in the state running that did not become settled"
+        );
+        for refused in [
+            r#"{"from":"queued","to":"aborted"}"#,
+            r#"{"from":"waiting_approval","to":"settled"}"#,
+            r#"{"from":"queued","to":"done"}"#,
+            r#"{"from":"queued"}"#,
+            r#"{"to":"settled"}"#,
+            r#"{"from":"queued","to":"settled","turn":"x"}"#,
+            r#"{"from":"queued","to":null}"#,
+        ] {
+            assert!(read(refused).is_err(), "{refused}");
         }
     }
 
