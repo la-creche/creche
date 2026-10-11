@@ -110,6 +110,10 @@ ADVISORIES_PASSED = "rust-gate: PASS, for the advisory check only"
 #: The one line of that mode for a program that is not on PATH, on stderr.
 NO_PROGRAM_FOR_ADVISORIES = "rust-gate: {program} not on PATH: --advisories needs it"
 
+#: The one line of `bin/rust-gate.sh` for a call that it refuses, on stderr.
+#: The script takes one word at most, and that word is one of its two flags.
+USAGE = "usage: bin/rust-gate.sh [--tests | --advisories]"
+
 #: The policy that `cargo deny` reads, and its one table that is no check: the
 #: table that says which crates each check reads.
 DENY_FILE = BIN.parent / "rust" / "deny.toml"
@@ -847,6 +851,23 @@ def test_the_rust_gate_refuses_an_unknown_flag(tree: Tree) -> None:
 
     assert done.code == 2
     assert done.cargo == []
+
+
+@pytest.mark.parametrize(
+    "words",
+    [("--tests", ADVISORIES_FLAG), (ADVISORIES_FLAG, "--tests"), ("", ADVISORIES_FLAG)],
+    ids=["tests, then advisories", "advisories, then tests", "empty, then advisories"],
+)
+def test_the_rust_gate_refuses_a_second_word(tree: Tree, words: tuple[str, ...]) -> None:
+    """The script reads one word, its mode. With a second word it would run
+    the mode of the first word only and print its pass line. A caller that
+    gave two flags would read that line as a pass of both."""
+    done = tree.run(RUST_GATE, *words, deny=True)
+
+    assert done.code == 2
+    assert done.cargo == []
+    assert done.err.splitlines() == [USAGE]
+    assert done.out == ""
 
 
 def test_the_rust_gate_without_cargo_fails_with_one_line(tree: Tree) -> None:

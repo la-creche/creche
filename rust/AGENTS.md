@@ -141,6 +141,9 @@ You need rustup. It installs the toolchain at the first cargo command under
 With the flag `--advisories`, the script runs none of these steps. It runs
 `cargo deny --locked check advisories` and no other command.
 
+The script takes one flag at most. It refuses a second word with the usage
+line, and it then runs no step.
+
 The panic check and the public-field check read each `.rs` file under
 `crates/`. Both checks use one definition of test code:
 

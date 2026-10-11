@@ -11,6 +11,8 @@
 #                              step. The gate does not make that check.
 #                              .github/workflows/advisories-daily.yml runs
 #                              this mode one time a day
+# The script takes one flag at most. A second word is a usage error, with
+# exit status 2.
 # Needs cargo on PATH. rustup takes the toolchain from
 # rust/rust-toolchain.toml, so every cargo step runs inside rust/.
 # `cargo deny` needs cargo-deny on PATH. CI installs it. A developer machine
@@ -634,13 +636,21 @@ advisories_checked() {
   cargo deny --locked check "${DENY_SCHEDULED_CHECKS[@]}"
 }
 
+# usage_refused: the one line for a call that the script refuses, and the
+# exit status of a usage error.
+usage_refused() {
+  echo "usage: bin/rust-gate.sh [$WITH_TESTS | $ADVISORIES_ONLY]" >&2
+  exit 2
+}
+
+# The script takes one word at most. It would run the mode of the first word
+# only, and its PASS line would then stand for a second flag that ran nothing.
+[[ "$#" -le 1 ]] || usage_refused
+
 MODE="${1:-}"
 case "$MODE" in
   "" | "$WITH_TESTS" | "$ADVISORIES_ONLY") ;;
-  *)
-    echo "usage: bin/rust-gate.sh [$WITH_TESTS | $ADVISORIES_ONLY]" >&2
-    exit 2
-    ;;
+  *) usage_refused ;;
 esac
 
 if [[ "$MODE" == "$ADVISORIES_ONLY" ]]; then
