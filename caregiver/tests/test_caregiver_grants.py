@@ -40,7 +40,13 @@ from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.reconcile import WHOLE_FILE, Actors, ReconcileResult, reconcile_family
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import UNREADABLE_JSON, published, write_registry
+from caregiver_helpers import (
+    UNREADABLE_JSON,
+    accepted_digests,
+    current_digest,
+    published,
+    write_registry,
+)
 
 from caregiver import paths, steps
 
@@ -710,6 +716,37 @@ def test_a_digest_after_the_size_check_is_refused_at_the_write(
     assert host.grant_path.read_bytes() == before
     assert host.report()["errors"] == 1
     assert host.litellm.updates == 0
+    credentials = result.status.credentials
+    assert credentials is not None
+    assert credentials.epoch == 2
+
+
+def test_a_key_step_after_the_size_check_writes_one_digest(
+    host: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key step that sends the key to LiteLLM writes `creds.json` with one
+    token. A rotation of another process between the size check and that
+    key step thus adds no digest to the grant file. The pass writes a file
+    of the cap, and its result names the key step first."""
+    host.serve("search")
+    host.one_pass()
+    check = steps.check_grants
+
+    def check_then_rotate(family: FamilyFile, index: Index, state_root: Path) -> None:
+        check(family, index, state_root)
+        host.rotate_token()
+
+    monkeypatch.setattr(steps, "check_grants", check_then_rotate)
+    moved = {"router": "other-router", "budget_usd_per_day": 99}
+    write_registry(host.registry_root, tools={SERVER: "all"}, model=moved)
+    # The grant file holds the router, so the names are measured after the edit.
+    host.serve(*host.tools_for(tmp_path, GRANT_FILE_MAX_BYTES))
+    result = host.one_pass()
+
+    assert host.litellm.updates == 1
+    assert result.ran[:2] == ("update_key", "write_grants")
+    assert host.grant_path.stat().st_size == GRANT_FILE_MAX_BYTES
+    assert accepted_digests(host.state_root) == [current_digest(host.state_root)]
     credentials = result.status.credentials
     assert credentials is not None
     assert credentials.epoch == 2
