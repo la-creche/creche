@@ -21,7 +21,7 @@
 # rust/coverage-files.txt is the list. The check fails in four cases:
 #   1. a region or a line of a listed file ran in no test
 #   2. a listed file is not in the report
-#   3. a listed file holds text that takes code out of the measurement:
+#   3. the text of a listed file takes code out of the measurement:
 #      a. the text `coverage(off)`
 #      b. the text `macro_rules!`
 #      c. a call of a macro that the closed list MEASURED_MACROS does not
@@ -149,11 +149,11 @@ MACRO_RULES = "macro_rules!"
 #:
 #: The bodies of `format`, `vec`, `write` and `writeln` hold no condition, so
 #: they hold no side that the report hides. Each assertion macro has a
-#: condition on its arguments. The false side is a panic, and the report
-#: holds no region for it. The three assertion macros are in the list for
-#: test code only: there, the false side ends the test. In code outside a
-#: test, that side is a path that no check finds, so the reviewer refuses an
-#: assertion there.
+#: condition on its arguments, and its false side is a panic with no region
+#: in the report. The list holds the three assertion macros for test code
+#: only: there, the panic stops the test. In code outside a test, the false
+#: side is a path that no check finds, so the reviewer refuses an assertion
+#: there.
 MEASURED_MACROS = frozenset(
     {"assert", "assert_eq", "assert_ne", "format", "vec", "write", "writeln"}
 )
@@ -177,10 +177,10 @@ LETTER = rb"[A-Za-z0-9_\x80-\xff]"
 #: A call of a macro, in the form that `cargo fmt` writes: a path or none,
 #: the name, `!` with no space before it, then the bracket. Group 1 is the
 #: path: each of its names with `::` after it, also with `::` at the start.
-#: Group 2 is the name. `a != (b)` and `if !(ok)` are no call, and
-#: `macro_rules! name {` is none. A match starts at the start of a path and
-#: not inside one, so the time of the search grows with the size of the file
-#: and no faster.
+#: Group 2 is the name. The pattern finds no call in `a != (b)`, in
+#: `if !(ok)` and in `macro_rules! name {`. A match starts at the start of a
+#: path and not inside one, so the time of the search grows with the size of
+#: the file and no faster.
 CALL = re.compile(
     rb"(?<!" + LETTER + rb")(?<!::)"
     rb"((?:::)?(?:" + LETTER + rb"+::)*)(" + LETTER + rb"+)![ \t\r\n]*[(\[{]"

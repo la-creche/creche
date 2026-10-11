@@ -14,9 +14,10 @@ wrong without one red line, and each gets a check here:
    listed path that the report does not hold.
 3. **A listed file that takes code out of the measurement.** The text
    `coverage(off)` in a listed file fails, in each attribute that holds it.
-   The text `macro_rules!` fails too, and so does a call of a macro that the
-   closed list of the script does not hold. The report shows no side of an
-   `if` in the body of a macro, so a test that takes one side would pass.
+   The text `macro_rules!` fails too, and so does a call of a macro outside
+   the closed list of the script. When the body of a macro has an `if`, the
+   report shows neither of its sides, so a test that takes one side would
+   pass.
 4. **A file of the pure decision crate that the list does not name.** When
    `rust/crates/chaperone-policy/src` exists, each `.rs` file there must be
    in the list.
@@ -761,7 +762,7 @@ def _source(*lines: str) -> str:
         (f"#[macro_export]\n{TWICE}", 2),
         (TWICE_INSIDE, 2),
     ],
-    ids=["at the start of a line", "below #[macro_export]", "inside a function"],
+    ids=["in column 1", "after an attribute line", "in the body of a function"],
 )
 def test_a_listed_file_that_defines_a_macro_fails(tree: Tree, source: str, line: int) -> None:
     """The report holds no region for the blocks of an `if` in the body of a
@@ -839,8 +840,9 @@ def test_a_listed_file_can_call_each_macro_of_the_list(tree: Tree, call: str) ->
     ],
 )
 def test_a_listed_name_with_another_path_fails(tree: Tree, call: str) -> None:
-    """Such a call can name a macro of this workspace or of another crate.
-    The failure line holds the call with its path."""
+    """The macro behind such a call can come from this workspace or from a
+    crate that is not of the toolchain. The path is a part of the call that
+    the failure line names."""
     tree.names(FULL)
     tree.write(FULL, _source(f"let _ = {call}!(n);"))
 
@@ -872,7 +874,7 @@ def test_a_file_outside_the_list_can_hold_each_text(tree: Tree) -> None:
 )
 def test_text_that_is_no_call_passes(tree: Tree, line: str) -> None:
     """`!` is also the operator that negates a value, and it starts `!=`. An
-    attribute is no call: the check reads no code that an attribute adds."""
+    attribute is no call, and the code that it adds is outside the check."""
     tree.names(FULL)
     tree.write(FULL, _source(line))
 
