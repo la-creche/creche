@@ -22,6 +22,7 @@ import { CredReader } from "../src/creds.js";
 import { LineReader } from "../src/framing.js";
 import { PlaypenLock } from "../src/lock.js";
 import type { PiLauncher, PiSpawnSpec } from "../src/pi-process.js";
+import { LITELLM_PLANE_ENV, PEP_PLANE_ENV } from "../src/planes.js";
 import { ProcessRecords } from "../src/process-record.js";
 import type { HelloMessage, PlaypenMessage } from "../src/protocol.js";
 import { Playpen } from "../src/playpen.js";
@@ -39,6 +40,42 @@ export const FIXTURE_LITELLM_KEY = "FIXTURE-LITELLM-KEY";
 export const FIXTURE_PEP_TOKEN = "FIXTURE-PEP-TOKEN";
 
 export type EnvBySession = Readonly<Record<string, Readonly<Record<string, string>>>>;
+
+/** The plane variables of one environment. A name that is absent is unset. */
+export type PlaneEnv = Readonly<Record<string, string | undefined>>;
+
+/**
+ * The two plane variables as the env file of a sandbox carries them, with
+ * the URLs of the test build (`vitest.config.ts`).
+ */
+const PLANE_ENV: PlaneEnv = {
+  [PEP_PLANE_ENV]: "http://192.0.2.10:8300",
+  [LITELLM_PLANE_ENV]: "http://192.0.2.10:4000",
+};
+
+const PLANE_VARIABLES = [PEP_PLANE_ENV, LITELLM_PLANE_ENV] as const;
+
+/**
+ * Sets the two plane variables of this process and returns what they held.
+ *
+ * The pool reads them from the environment of its process, as it does in a
+ * sandbox, so a test cannot give them as an argument.
+ */
+function swapPlaneEnv(next: PlaneEnv): PlaneEnv {
+  const before: Record<string, string | undefined> = {};
+  for (const name of PLANE_VARIABLES) {
+    before[name] = process.env[name];
+
+    const value = next[name];
+    if (value === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
+  }
+
+  return before;
+}
 
 export interface HarnessOptions {
   readonly sandbox?: string;
@@ -58,6 +95,11 @@ export interface HarnessOptions {
   readonly launcher?: (real: PiLauncher) => PiLauncher;
   /** How long a start waits for the credential file, for a start that a test holds open. */
   readonly credRetryMs?: number;
+  /**
+   * The plane variables of this process, from the constructor to `dispose`.
+   * Both URLs of the test build when absent.
+   */
+  readonly planeEnv?: PlaneEnv;
 }
 
 /**
@@ -94,9 +136,11 @@ export class Harness {
   private readonly stdin = new PassThrough();
   private readonly playpen: Playpen;
   private readonly sandboxId: string;
+  private readonly planeEnvBefore: PlaneEnv;
 
   public constructor(options: HarnessOptions = {}) {
     this.sandboxId = options.sandbox ?? "chat-s1";
+    this.planeEnvBefore = swapPlaneEnv(options.planeEnv ?? PLANE_ENV);
     this.root = mkdtempSync(join(tmpdir(), "playpen-test-"));
 
     for (const dir of ["creds", "config", "control", "sessions", "code-sandbox"]) {
@@ -254,6 +298,7 @@ export class Harness {
   public async dispose(): Promise<void> {
     await this.playpen.shutdown(0, 0);
     this.stdin.destroy();
+    swapPlaneEnv(this.planeEnvBefore);
     rmSync(this.root, { recursive: true, force: true });
   }
 }
