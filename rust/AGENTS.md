@@ -501,6 +501,12 @@ module. Do not name the crates `toml` and `toml_parser` in another file.
   holds the text `toml::` or `toml_parser::`. A comment counts too.
 - The test also fails for a line that gives one of the two crates another
   name, for example `use toml as t;`.
+- A Cargo file can also give a crate another name, with the key `package`
+  of an entry. `bin/tests/test_rust_workspace.py` fails for such an entry
+  of one of the two crates, in `[workspace.dependencies]` and in each
+  crate file.
+- The same test fails when a crate file other than that of
+  `creche-contracts` takes one of the two crates.
 
 Reason: the module holds the size limits, the TOML 1.0 check and the level
 limit. Code that calls the crate `toml` directly holds none of the three.
