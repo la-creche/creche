@@ -440,10 +440,12 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 /// one more time.
 ///
 /// `staging` and a `target` that exists can hold one entry: the same inode
-/// on the same device. An example is one path for the two. The call is then
-/// an error at [`WriteStep::Exchange`], before step 2, and no entry moves.
-/// Reason: the system gives no error for the exchange of an entry with
-/// itself. Without the refusal, step 6 removes the tree of `target`.
+/// on the same device. The function looks at the two names through a
+/// symlink. Two examples are one path for the two names, and a `staging`
+/// that is the tree of a symlink at `target`. The call is then an error at
+/// [`WriteStep::Exchange`], before step 2, and no entry moves. Reason: the
+/// system gives no error for the exchange of an entry with itself. Without
+/// the refusal, step 6 can remove the tree of `target`.
 ///
 /// The function removes `<target>.old` only when it is a directory. With a
 /// file or a symlink there, a call for a `target` that exists is an error
@@ -476,10 +478,12 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: FileMode) -> Result<(), WriteE
 ///   for a `target` that is a directory. For a `target` that is a file, or
 ///   a symlink to an entry, its first rename replaces that symlink. The
 ///   function is an error for each `target` that exists.
-/// - `staging` can hold the entry of a `target` that exists. The origin then
-///   makes its first rename, and its second rename raises: `target` is
-///   absent, and the tree is at `<target>.old`. The function is an error
-///   before an entry moves.
+/// - `staging` can hold the entry of a `target` that exists. With one path
+///   for the two names, the origin makes its first rename, and its second
+///   rename raises: `target` is absent, and its entry is at `<target>.old`.
+///   With a `staging` that is the tree of a symlink at `target`, the origin
+///   puts that tree at `target` and leaves the symlink at `<target>.old`.
+///   The function is an error for each one, before an entry moves.
 /// - On Python 3.14, the origin reads each error of a look at the target or
 ///   at the old name as no entry (`:61-62`). On Python 3.12 and on Python
 ///   3.13, it raises for an error such as a directory that the process
@@ -860,11 +864,15 @@ fn old_name_taken(displaced: &Path) -> WriteError {
 }
 
 /// Whether the names `a` and `b` hold one entry: the same inode on the same
-/// device. The look does not follow a symlink, as the exchange does not.
-/// When the system refuses the look at a name, the answer is no. The
-/// exchange then gives the error of the system for that name.
+/// device.
+///
+/// Each look follows a symlink, as the look at the target of a swap does.
+/// A name that holds the tree of a symlink at the other name thus holds
+/// one entry with it. When the system refuses the look at a name, the
+/// answer is no. The exchange then gives the error of the system for that
+/// name.
 fn one_entry(a: &Path, b: &Path) -> bool {
-    let (Ok(a), Ok(b)) = (fs::symlink_metadata(a), fs::symlink_metadata(b)) else {
+    let (Ok(a), Ok(b)) = (fs::metadata(a), fs::metadata(b)) else {
         return false;
     };
 
@@ -2159,6 +2167,17 @@ mod tests {
         assert_eq!(probe.steps(), [WriteStep::MakeParents, WriteStep::Exchange]);
     }
 
+    /// The error of a swap whose staging name `staging` holds the entry of
+    /// the target.
+    fn one_entry_error(staging: &Path) -> WriteError {
+        WriteError {
+            step: WriteStep::Exchange,
+            path: staging.to_owned(),
+            kind: io::ErrorKind::InvalidInput,
+            os_text: String::from("the staging name and the target hold one entry"),
+        }
+    }
+
     #[test]
     fn a_staging_name_that_holds_the_entry_of_the_target_is_refused() {
         // Three forms of a staging path that names the entry of the target:
@@ -2176,16 +2195,7 @@ mod tests {
 
             let result = replace_dir_with(&probe, &staging, &target);
 
-            assert_eq!(
-                result,
-                Err(WriteError {
-                    step: WriteStep::Exchange,
-                    path: staging.clone(),
-                    kind: io::ErrorKind::InvalidInput,
-                    os_text: String::from("the staging name and the target hold one entry"),
-                }),
-                "{form}"
-            );
+            assert_eq!(result, Err(one_entry_error(&staging)), "{form}");
 
             // The refusal comes before the remove at the old name, and no
             // entry moves.
@@ -2671,6 +2681,28 @@ mod tests {
                 "{case}: {result:?}"
             );
             assert_eq!(entries_in(root.path()), expected, "{case}");
+        }
+    }
+
+    #[test]
+    fn a_staging_name_that_holds_the_tree_of_a_symlink_target_is_refused() {
+        // The target is a symlink to a tree. Two forms of a staging path
+        // name that tree: the path of the tree, and the path of the target
+        // with a `/` at its end. A look that follows a symlink finds one
+        // entry at the two names.
+        for form in ["current-aim", "config/"] {
+            let root = TempRoot::new().unwrap();
+            let target = root.path().join("config");
+            plant(&target, Entry::LinkToTree, "current");
+            let staging = root.path().join(form);
+            let before = entries_in(root.path());
+            let probe = Probe::new();
+
+            let result = replace_dir_with(&probe, &staging, &target);
+
+            assert_eq!(result, Err(one_entry_error(&staging)), "{form}");
+            assert_eq!(probe.steps(), [WriteStep::MakeParents], "{form}");
+            assert_eq!(entries_in(root.path()), before, "{form}");
         }
     }
 
