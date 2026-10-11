@@ -304,13 +304,19 @@ def install_pi(tree: Tree) -> None:
     _write_program(tree, PI, f'{head}exec {target} "$@"\n')
 
 
-def set_pi_env(tree: Tree, **values: int) -> None:
+def set_pi_env(tree: Tree, **values: int | str) -> None:
     """Tune the fake pi for the next process that starts.
 
     `events` is the delta count and `delay_ms` is the gap between two
     deltas. A scenario that acts during a turn makes the turn long first.
+
+    `raw_line` is a text. The fake pi writes it as one record in each turn,
+    with no change. The shell that reads the file gets the text in quotes,
+    so each character of it reaches the fake pi.
     """
-    lines = [f"export FAKE_PI_{name.upper()}={number}" for name, number in values.items()]
+    lines = [
+        f"export FAKE_PI_{name.upper()}={shlex.quote(str(value))}" for name, value in values.items()
+    ]
     temp = _pi_env_file(tree).with_suffix(".tmp")
     temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
     temp.replace(_pi_env_file(tree))

@@ -25,7 +25,9 @@ until the prose is fixed. This is the most important rule in this file.
   The pre-commit hook runs it. Do not use `--no-verify`.
 - A commit that changes a path under `rust/` also passes `cargo fmt` and
   `cargo clippy`. It also passes `cargo deny` where `cargo-deny` is on
-  `PATH`. A change with no path under `rust/` needs no `cargo`.
+  `PATH`. That step does not read the advisories. A workflow with a schedule
+  reads them, and it blocks no merge. A change with no path under `rust/`
+  needs no `cargo`.
 - A push runs the tests of the packages it touches. CI runs the full suite
   and is the merge gate. Read the one check named `gate`.
 - Fix a bug in this order: write the test, watch it fail, write the fix,

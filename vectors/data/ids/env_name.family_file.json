@@ -16,7 +16,7 @@
   {"id":"probe-nul-inside","input":{"text":"A\u0000PI_KEY2"},"result":"refused"},
   {"id":"probe-arabic-digit","input":{"text":"API_KEY\u0661"},"result":"refused"},
   {"id":"probe-fullwidth-digit","input":{"text":"API_KEY\uff11"},"result":"refused"},
-  {"id":"probe-overlong","input":{"text":"API_KEY2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"result":"accepted"},
+  {"id":"probe-overlong","input":{"text":"API_KEY2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"result":"refused"},
   {"id":"one-letter","input":{"text":"A"},"result":"accepted"},
   {"id":"word","input":{"text":"HOME"},"result":"accepted"},
   {"id":"trailing-underscore","input":{"text":"A_"},"result":"accepted"},
@@ -30,7 +30,7 @@
   {"id":"equals","input":{"text":"A=B"},"result":"refused"},
   {"id":"latin-letter","input":{"text":"\u00c0B"},"result":"refused"},
   {"id":"len-64","input":{"text":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"result":"accepted"},
-  {"id":"len-65","input":{"text":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"result":"accepted"},
+  {"id":"len-65","input":{"text":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"result":"refused"},
   {"id":"crlf","input":{"text":"A\r\n"},"result":"refused"}
  ]
 }

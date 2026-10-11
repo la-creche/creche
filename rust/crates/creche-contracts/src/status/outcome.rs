@@ -15,36 +15,115 @@ pub const OUTCOME_CAP_BYTES: usize = 1 << 20;
 /// `noticeboard.statusdocs.read_outcomes`.
 ///
 /// The noticeboard checks no field. A field that is missing or of another
-/// JSON type reads as empty.
+/// JSON type reads as empty. Only [`noticeboard`] builds a value.
+///
+/// ```
+/// use creche_contracts::status::outcome::{OutcomeRow, noticeboard};
+///
+/// let row: OutcomeRow = noticeboard(br#"{"family": "chat"}"#, "01JBQ7WZ0X4T9V6K2H8M3N5PQR");
+/// assert_eq!(row.id(), "01JBQ7WZ0X4T9V6K2H8M3N5PQR");
+/// assert_eq!(row.family(), "chat");
+/// ```
+///
+/// Code outside this module cannot set a field:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::status::outcome::{OutcomeRow, noticeboard};
+///
+/// let row: OutcomeRow = noticeboard(br#"{"family": "chat"}"#, "01JBQ7WZ0X4T9V6K2H8M3N5PQR");
+/// let row = OutcomeRow { family: String::from("code"), ..row };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutcomeRow {
+    id: String,
+    family: String,
+    session: String,
+    trigger: String,
+    started_at: String,
+    ended_at: String,
+    status: String,
+    error: String,
+    turns: Integer,
+    spend_usd: Option<f64>,
+    sandbox: String,
+    problem: Option<ReadError>,
+}
+
+impl OutcomeRow {
     /// The `id` text. The stem of the file name when the record has none.
-    pub id: String,
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
     /// The `family` text.
-    pub family: String,
+    #[must_use]
+    pub fn family(&self) -> &str {
+        &self.family
+    }
+
     /// The `session` text.
-    pub session: String,
+    #[must_use]
+    pub fn session(&self) -> &str {
+        &self.session
+    }
+
     /// The kind and the name of the trigger, with one space between them.
     /// One of the two when the record has only one.
-    pub trigger: String,
+    #[must_use]
+    pub fn trigger(&self) -> &str {
+        &self.trigger
+    }
+
     /// The `started_at` text.
-    pub started_at: String,
+    #[must_use]
+    pub fn started_at(&self) -> &str {
+        &self.started_at
+    }
+
     /// The `ended_at` text.
-    pub ended_at: String,
+    #[must_use]
+    pub fn ended_at(&self) -> &str {
+        &self.ended_at
+    }
+
     /// The `status` text.
-    pub status: String,
+    #[must_use]
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
     /// The `error` text: 500 characters at most.
-    pub error: String,
+    #[must_use]
+    pub fn error(&self) -> &str {
+        &self.error
+    }
+
     /// The count of turns: each integer. 0 when the record has none.
-    pub turns: Integer,
+    #[must_use]
+    pub fn turns(&self) -> &Integer {
+        &self.turns
+    }
+
     /// The spend. `None` when the field is not a number. The number can be
     /// `NaN` or an infinity.
-    pub spend_usd: Option<f64>,
+    #[must_use]
+    pub fn spend_usd(&self) -> Option<f64> {
+        self.spend_usd
+    }
+
     /// The `sandbox` text.
-    pub sandbox: String,
+    #[must_use]
+    pub fn sandbox(&self) -> &str {
+        &self.sandbox
+    }
+
     /// Why the noticeboard cannot read the file. `None` for a file that is
     /// one JSON object.
-    pub problem: Option<ReadError>,
+    #[must_use]
+    pub fn problem(&self) -> Option<ReadError> {
+        self.problem
+    }
 }
 
 /// A text field of the record, as the noticeboard shows it.
@@ -129,25 +208,48 @@ mod tests {
             STEM,
         );
 
-        assert_eq!(row.id, "A");
-        assert_eq!(row.family, "chat");
-        assert_eq!(row.trigger, "timer morning");
-        assert_eq!(row.turns, Integer::from(3));
-        assert_eq!(row.spend_usd, Some(2.0));
-        assert_eq!(row.error, "");
-        assert_eq!(row.problem, None);
+        assert_eq!(row.id(), "A");
+        assert_eq!(row.family(), "chat");
+        assert_eq!(row.trigger(), "timer morning");
+        assert_eq!(row.turns(), &Integer::from(3));
+        assert_eq!(row.spend_usd(), Some(2.0));
+        assert_eq!(row.error(), "");
+        assert_eq!(row.problem(), None);
+    }
+
+    #[test]
+    fn each_text_accessor_gives_the_text_of_its_own_field() {
+        // Each text of the record is different. An accessor that returns
+        // another field then fails the test.
+        let row = noticeboard(
+            br#"{"id": "an id", "family": "a family", "session": "a session",
+                "trigger": {"kind": "a kind", "name": "a name"},
+                "started_at": "a start", "ended_at": "an end",
+                "status": "a status", "error": "an error", "sandbox": "a sandbox"}"#,
+            STEM,
+        );
+
+        assert_eq!(row.id(), "an id");
+        assert_eq!(row.family(), "a family");
+        assert_eq!(row.session(), "a session");
+        assert_eq!(row.trigger(), "a kind a name");
+        assert_eq!(row.started_at(), "a start");
+        assert_eq!(row.ended_at(), "an end");
+        assert_eq!(row.status(), "a status");
+        assert_eq!(row.error(), "an error");
+        assert_eq!(row.sandbox(), "a sandbox");
     }
 
     #[test]
     fn a_record_with_no_id_takes_the_stem_of_its_file() {
-        assert_eq!(noticeboard(b"{}", STEM).id, STEM);
-        assert_eq!(noticeboard(br#"{"id": ""}"#, STEM).id, STEM);
-        assert_eq!(noticeboard(br#"{"id": 5}"#, STEM).id, STEM);
+        assert_eq!(noticeboard(b"{}", STEM).id(), STEM);
+        assert_eq!(noticeboard(br#"{"id": ""}"#, STEM).id(), STEM);
+        assert_eq!(noticeboard(br#"{"id": 5}"#, STEM).id(), STEM);
     }
 
     #[test]
     fn a_trigger_with_one_part_shows_that_part() {
-        let trigger = |text: &str| noticeboard(text.as_bytes(), STEM).trigger;
+        let trigger = |text: &str| noticeboard(text.as_bytes(), STEM).trigger().to_owned();
 
         assert_eq!(trigger(r#"{"trigger": {"kind": "timer"}}"#), "timer");
         assert_eq!(trigger(r#"{"trigger": {"name": "morning"}}"#), "morning");
@@ -160,7 +262,7 @@ mod tests {
     fn a_spend_past_the_range_of_a_float_reads_as_no_number() {
         let text = format!(r#"{{"spend_usd": 1{}}}"#, "0".repeat(400));
 
-        assert_eq!(noticeboard(text.as_bytes(), STEM).spend_usd, None);
+        assert_eq!(noticeboard(text.as_bytes(), STEM).spend_usd(), None);
     }
 
     #[test]
@@ -174,8 +276,8 @@ mod tests {
         for (bytes, problem) in problems {
             let row = noticeboard(bytes, STEM);
 
-            assert_eq!(row.problem, Some(problem));
-            assert_eq!(row.id, STEM);
+            assert_eq!(row.problem(), Some(problem));
+            assert_eq!(row.id(), STEM);
         }
     }
 
@@ -189,9 +291,9 @@ mod tests {
         let over_cap = format!(r#"{{"x": "{}"}}"#, "a".repeat(padding + 1));
 
         assert_eq!(at_cap.len(), cap);
-        assert_eq!(noticeboard(at_cap.as_bytes(), STEM).problem, None);
+        assert_eq!(noticeboard(at_cap.as_bytes(), STEM).problem(), None);
         assert_eq!(
-            noticeboard(over_cap.as_bytes(), STEM).problem,
+            noticeboard(over_cap.as_bytes(), STEM).problem(),
             Some(ReadError::TooLarge { cap })
         );
     }
