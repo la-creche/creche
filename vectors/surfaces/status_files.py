@@ -478,7 +478,6 @@ WRITTEN: Final[tuple[Written, ...]] = (
     # --- what the writer takes and contract 05 does not ----------------------
     Written("lax-kind-unknown", _document(kind="robot")),
     Written("lax-written-at-not-a-time", _document(written_at="soon")),
-    Written("lax-written-at-no-offset", _document(written_at="2999-01-01T00:00:00")),
     Written("lax-epoch-zero", _document(credentials=_credentials(epoch=0))),
     Written("lax-epoch-negative", _document(credentials=_credentials(epoch=-1))),
     Written("lax-count-negative", _document(validation=_validation(warning_count=-1))),

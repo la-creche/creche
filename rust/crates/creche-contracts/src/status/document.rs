@@ -40,7 +40,6 @@ use super::raw::{
     FAULT_KEYS, Number, RawCredentials, RawFault, RawLimits, RawPep, RawReconcile, RawSandbox,
     RawSpend, RawStatus, RawTriggers, RawValidation, RawWebhook, ReadError, Reader, json_kind,
 };
-use super::time::{Timestamp, TimestampError};
 use super::words::{
     ChannelState, FamilyState, FaultCode, FaultSource, Kind, ReconcileStep, RotationState,
     SandboxLifecycle, SandboxPower, SpendSource, SpendWindow, WatchState,
@@ -49,6 +48,7 @@ use crate::ids::{
     FamilyName, FamilyNameError, SandboxName, SandboxNameError, WebhookName, WebhookNameError,
 };
 use crate::slot::Slot;
+use crate::time::{Timestamp, TimestampError};
 
 // --- three small types ---
 
@@ -1198,7 +1198,7 @@ impl FaultParts {
 /// let wrong_source = FaultParts::new(FaultCode::GrantsStale, since, FaultSource::Sessiond);
 /// assert!(Fault::new(parts).is_ok());
 /// assert!(Fault::new(wrong_source).is_err());
-/// # Ok::<(), creche_contracts::status::time::TimestampError>(())
+/// # Ok::<(), creche_contracts::time::TimestampError>(())
 /// ```
 ///
 /// Code outside this module cannot build a value from raw parts:
@@ -2702,6 +2702,16 @@ mod tests {
             (
                 with(&["written_at"], r#""2031-04-18T10:20:30""#),
                 field("written_at", NotATime(TimestampError::NoOffset)),
+            ),
+            // No vector of `status.write` holds a time with no UTC offset,
+            // or a time with a space in place of the `T`.
+            (
+                with(&["written_at"], r#""2999-01-01T00:00:00""#),
+                field("written_at", NotATime(TimestampError::NoOffset)),
+            ),
+            (
+                with(&["written_at"], r#""2999-01-01 00:00:00Z""#),
+                field("written_at", NotATime(TimestampError::Form)),
             ),
             (
                 with(&["written_at"], "1934705230"),

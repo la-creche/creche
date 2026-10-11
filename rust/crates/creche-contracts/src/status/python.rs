@@ -14,10 +14,10 @@ use super::fault_file::{self, FaultFile, OpenFault};
 use super::json::{Integer, Json, JsonKind, Object};
 use super::outcome;
 use super::raw::{RawStatus, ReadError, Reader};
-use super::time::{Freshness, Timestamp, TimestampError};
-use super::views::{self, FamilyRow, Reason, TuiExit, TuiRefusal};
+use super::views::{self, FamilyRow, Freshness, Reason, TuiExit, TuiRefusal};
 use super::words::{FaultCode, FaultSource};
 use crate::ids::FamilyName;
+use crate::time::{Timestamp, TimestampError};
 
 /// The family of each vector.
 const FAMILY: &str = "chat";
@@ -113,9 +113,20 @@ fn optional_integer(integer: Option<&Integer>) -> Value {
     integer.map_or(Value::Null, integer_value)
 }
 
-/// A time as `datetime.isoformat` of Python writes a time in UTC.
+/// The microseconds of one second.
+const MICROS_PER_SECOND: i64 = 1_000_000;
+
+/// A time as `datetime.isoformat` of Python writes a time in UTC: the offset
+/// `+00:00`, and six digits of a fraction when the fraction is not zero.
 fn isoformat(instant: Timestamp) -> String {
-    format!("{}+00:00", instant.to_string().trim_end_matches('Z'))
+    let whole_seconds = instant.to_rfc3339();
+    let seconds = whole_seconds.trim_end_matches('Z');
+    let micros = instant.unix_micros().rem_euclid(MICROS_PER_SECOND);
+    if micros == 0 {
+        return format!("{seconds}+00:00");
+    }
+
+    format!("{seconds}.{micros:06}+00:00")
 }
 
 /// What a Python reader calls the type of a JSON value.
@@ -687,11 +698,6 @@ const DEVIATIONS: &[Deviation] = &[
         "lax-written-at-not-a-time",
         "§2.1",
         field("written_at", FieldFault::NotATime(TimestampError::Form)),
-    ),
-    deviation(
-        "lax-written-at-no-offset",
-        "§2.1",
-        field("written_at", FieldFault::NotATime(TimestampError::NoOffset)),
     ),
     deviation(
         "lax-epoch-zero",
