@@ -281,12 +281,16 @@ impl Tasks {
     /// [`TaskLost::Cancelled`].
     ///
     /// The Python origin is the done-callback of
-    /// `attendance/src/attendance/tasks.py:17-31`. It writes one line for a
-    /// task that ended with an error.
+    /// `attendance/src/attendance/tasks.py:17-31`. The function differs from
+    /// that origin in two ways:
     ///
-    /// This function writes a line only for a panic. A task whose value is
-    /// an `Err` writes its own line: a caller that dropped the
-    /// [`Completion`] does not read that value.
+    /// - The callback writes a line for each task that ended with an error
+    ///   (`:26-31`). This function writes a line only for a panic. A task
+    ///   whose value is an `Err` writes its own line: a caller that dropped
+    ///   the [`Completion`] does not read that value.
+    /// - The callback writes the error of the task and its trace (`:31`).
+    ///   The line of this function holds only the name of the task: the
+    ///   message of a panic can hold a part of a request.
     pub fn spawn_must_complete<F>(&self, name: &'static str, work: F) -> Completion<F::Output>
     where
         F: Future + Send + 'static,
@@ -363,10 +367,20 @@ impl Tasks {
     /// no runtime, the function starts nothing and writes one `ERROR` line.
     ///
     /// The Python origin is the upkeep loop of
-    /// `attendance/src/attendance/service.py:297-319`, where each step has
-    /// its own guard. The refresh loop of
+    /// `attendance/src/attendance/service.py:297-319`. The refresh loop of
     /// `door-trigger/src/agent_door_trigger/webhooks.py:212-226` has the same
-    /// form.
+    /// form. The function differs from those origins in three ways:
+    ///
+    /// - Each of the two Python loops waits before its first pass
+    ///   (`service.py:304` and `webhooks.py:214`). This function runs a pass
+    ///   first.
+    /// - The upkeep loop gives each step of a pass its own guard
+    ///   (`service.py:305-307`), so the step after a failure runs in the
+    ///   same pass. A panic here ends the pass. A service gives each such
+    ///   step its own loop.
+    /// - The upkeep loop writes the trace of the step that failed
+    ///   (`service.py:319`). The line of a pass here holds only the name of
+    ///   the loop.
     pub fn spawn_loop<F, Fut>(&self, name: &'static str, pause: Duration, mut body: F)
     where
         F: FnMut() -> Fut + Send + 'static,
@@ -823,40 +837,6 @@ mod tests {
 
     use super::*;
 
-    /// Each difference from a Python copy, on purpose. No vector covers this
-    /// module, so a row names the Python file and the line.
-    const DEVIATIONS: [(&str, &str); 6] = [
-        (
-            "attendance/src/attendance/tasks.py:31",
-            "Python writes the error of the task and its trace. The line here holds only the \
-             name of the task: the message of a panic can hold a part of a request.",
-        ),
-        (
-            "attendance/src/attendance/tasks.py:26-31",
-            "Python writes a line for each task that ended with an error. `Tasks` writes a \
-             line only for a panic. A task whose value is an `Err` writes its own line.",
-        ),
-        (
-            "attendance/src/attendance/service.py:319",
-            "Python writes the trace of the step that failed. The line here holds only the \
-             name of the loop.",
-        ),
-        (
-            "attendance/src/attendance/service.py:304",
-            "The Python loop waits before its first pass. `spawn_loop` runs a pass first.",
-        ),
-        (
-            "door-trigger/src/agent_door_trigger/webhooks.py:214",
-            "The Python loop waits before its first pass. `spawn_loop` runs a pass first.",
-        ),
-        (
-            "attendance/src/attendance/service.py:305-307",
-            "Python gives each step of a pass its own guard, so the step after a failure \
-             runs in the same pass. A panic ends a pass of `spawn_loop`. A service gives each \
-             such step its own loop.",
-        ),
-    ];
-
     /// The longest time that a test waits for a step. The time is real in
     /// most tests, and a host with much load is slow.
     const LIMIT: Duration = Duration::from_secs(60);
@@ -911,11 +891,16 @@ mod tests {
         lines: &'static [&'static str],
     }
 
-    const SCENARIOS: [Scenario; 16] = [
+    const SCENARIOS: [Scenario; 17] = [
         Scenario {
             name: "task",
             run: a_task_panics,
             lines: &[LEDGER_LINE],
+        },
+        Scenario {
+            name: "error-value",
+            run: a_task_gives_an_error_as_its_value,
+            lines: &[],
         },
         Scenario {
             name: "dropped",
@@ -1084,22 +1069,6 @@ mod tests {
 
         sendable(tasks.shutdown().cancelled());
         sendable(tasks.drain(SHORT));
-    }
-
-    #[test]
-    fn each_deviation_names_a_python_file_and_a_line() {
-        for (place, difference) in DEVIATIONS {
-            let (file, lines) = place.rsplit_once(':').unwrap();
-
-            assert!(file.ends_with(".py"), "{place}");
-            assert!(
-                lines
-                    .split('-')
-                    .all(|line| !line.is_empty() && line.bytes().all(|byte| byte.is_ascii_digit())),
-                "{place}"
-            );
-            assert!(difference.ends_with('.'), "{place}");
-        }
     }
 
     #[test]
@@ -1698,6 +1667,24 @@ mod tests {
 
             trigger.trigger();
 
+            assert_eq!(tasks.drain(LIMIT).await, Drained::Clean);
+        });
+    }
+
+    /// The value of a task is an `Err`. The caller gets that value, and this
+    /// module writes no line for it. The Python callback writes a line for
+    /// each task that ended with an error.
+    fn a_task_gives_an_error_as_its_value() {
+        runtime().block_on(async {
+            let (_trigger, tasks) = new_tasks();
+
+            let written = tasks.spawn_must_complete("ledger-write", async {
+                tokio::task::yield_now().await;
+
+                Err::<(), &str>("the disk is full")
+            });
+
+            assert_eq!(written.await, Ok(Err("the disk is full")));
             assert_eq!(tasks.drain(LIMIT).await, Drained::Clean);
         });
     }

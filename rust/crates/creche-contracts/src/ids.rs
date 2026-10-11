@@ -31,31 +31,39 @@ use serde::{Deserialize, Serialize, Serializer};
 struct ByteClass {
     holds: fn(u8) -> bool,
     said: &'static str,
+    /// The class as one bracket of a pattern: `[a-z0-9-]`. The text is for a
+    /// person. No check reads it.
+    form: &'static str,
 }
 
 const LOWER: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_lowercase(),
     said: "a to z",
+    form: "[a-z]",
 };
 
 const UPPER: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_uppercase(),
     said: "A to Z",
+    form: "[A-Z]",
 };
 
 const LETTER: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_alphabetic(),
     said: "A to Z or a to z",
+    form: "[A-Za-z]",
 };
 
 const DIGIT: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_digit(),
     said: "0 to 9",
+    form: "[0-9]",
 };
 
 const LETTER_OR_DIGIT: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_alphanumeric(),
     said: "A to Z, a to z or 0 to 9",
+    form: "[A-Za-z0-9]",
 };
 
 /// A byte that can follow the first byte of a name: no underscore, because a
@@ -63,32 +71,38 @@ const LETTER_OR_DIGIT: ByteClass = ByteClass {
 const NAME_TAIL: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-',
     said: "a to z, 0 to 9 or -",
+    form: "[a-z0-9-]",
 };
 
 /// A byte that is safe in one path segment.
 const SEGMENT: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'),
     said: "A to Z, a to z, 0 to 9, ., _ or -",
+    form: "[A-Za-z0-9._-]",
 };
 
 const TOOL_TAIL: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'),
     said: "A to Z, a to z, 0 to 9, _ or -",
+    form: "[A-Za-z0-9_-]",
 };
 
 const ENV_TAIL: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_',
     said: "A to Z, 0 to 9 or _",
+    form: "[A-Z0-9_]",
 };
 
 const SECRET_TAIL: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_',
     said: "a to z, 0 to 9 or _",
+    form: "[a-z0-9_]",
 };
 
 const PACKAGE_TAIL: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_alphanumeric() || byte == b'.',
     said: "A to Z, a to z, 0 to 9 or .",
+    form: "[0-9A-Za-z.]",
 };
 
 /// Upper-case Crockford base32: no `I`, `L`, `O` or `U`.
@@ -98,11 +112,13 @@ const CROCKFORD: ByteClass = ByteClass {
             || (byte.is_ascii_uppercase() && !matches!(byte, b'I' | b'L' | b'O' | b'U'))
     },
     said: "0 to 9 or A to Z without I, L, O and U",
+    form: "[0-9A-HJKMNP-TV-Z]",
 };
 
 const LOWER_HEX: ByteClass = ByteClass {
     holds: |byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'),
     said: "0 to 9 or a to f",
+    form: "[0-9a-f]",
 };
 
 // --- an id that is one run of bytes ---
@@ -118,6 +134,19 @@ struct Run {
     max: usize,
     first: ByteClass,
     tail: ByteClass,
+}
+
+impl Run {
+    /// The grammar as the text of a pattern: `[a-z][a-z0-9-]{1,30}`. A message
+    /// shows the text to a person. No check reads it.
+    fn form(&self) -> String {
+        let first = self.first.form;
+        let tail = self.tail.form;
+        let least = self.min.saturating_sub(1);
+        let most = self.max.saturating_sub(1);
+
+        format!("{first}{tail}{{{least},{most}}}")
+    }
 }
 
 /// Which rule of a [`Run`] a text breaks.
@@ -1034,9 +1063,9 @@ impl Error for McpUserError {}
 
 // CONTRACT-QUESTION: contract 01 §3.4 and contract 01b §5 give a tool name the
 // form `[A-Za-z][A-Za-z0-9_-]*` and no cap. The three Python copies disagree:
-// `agent_family.grammar.TOOL_NAME` has no cap, the grant file parser of the
-// chaperone caps a name at 128 characters, and `handover.mcpserver` caps it at
-// 64. This type takes the strictest copy: 64 bytes. A server file must pass
+// `agent_family.grammar.TOOL_NAME` and `handover.mcpserver` cap a name at 64
+// characters, and the grant file parser of the chaperone caps it at 128. This
+// type takes the strictest copy: 64 bytes. A server file must pass
 // `handover.mcpserver` before a tool exists, so no tool has a longer name. A
 // change to a larger cap costs the one number `max` here.
 const TOOL_NAME: Run = Run {
@@ -1077,12 +1106,19 @@ run_id! {
     TOOL_NAME
 }
 
+impl ToolName {
+    /// The grammar of a tool name as the text of a pattern. The message for a
+    /// text that is no tool name shows it.
+    pub(crate) fn form() -> String {
+        TOOL_NAME.form()
+    }
+}
+
 // CONTRACT-QUESTION: contract 01b §4.1 gives no grammar for the name of an
-// environment variable. The two Python copies disagree:
-// `agent_family.grammar.ENV_VAR_NAME` is `[A-Z][A-Z0-9_]*` with no cap, and
-// `handover.mcpserver.ENV_NAME_RE` caps the name at 64 characters. This type
-// takes the strictest copy: 64 bytes. A change to a larger cap costs the one
-// number `max` here.
+// environment variable. The two Python copies take one form,
+// `[A-Z][A-Z0-9_]{0,63}`: `agent_family.grammar.ENV_VAR_NAME` and
+// `handover.mcpserver.ENV_NAME_RE`. This type takes that form. A change to a
+// larger cap costs the one number `max` here.
 const ENV_NAME: Run = Run {
     noun: "an environment variable name",
     min: 1,
@@ -1115,6 +1151,14 @@ run_id! {
     /// Why a text is not the name of an environment variable.
     EnvNameError,
     ENV_NAME
+}
+
+impl EnvName {
+    /// The grammar of the name of an environment variable as the text of a
+    /// pattern. The message for a text that is no such name shows it.
+    pub(crate) fn form() -> String {
+        ENV_NAME.form()
+    }
 }
 
 const SECRET_NAME: Run = Run {
@@ -1154,12 +1198,12 @@ run_id! {
 }
 
 // CONTRACT-QUESTION: contract 01b §3.1 says that the version of a package is
-// exact and never a range. It gives no grammar. The two Python copies
-// disagree: `agent_family.grammar.EXACT_VERSION` is `[0-9][0-9A-Za-z.+-]*`
-// with no cap, and `handover.mcpserver.VERSION_RE` is `[0-9][0-9A-Za-z.]{0,63}`.
-// This type takes the strictest copy: no `+`, no `-`, 64 bytes. A server file
-// must pass both copies before a release installs the package. A change to
-// permit `+` or `-` costs the one byte class `PACKAGE_TAIL` here.
+// exact and never a range. It gives no grammar. The two Python copies take one
+// form, `[0-9][0-9A-Za-z.]{0,63}`: `agent_family.grammar.EXACT_VERSION` and
+// `handover.mcpserver.VERSION_RE`. This type takes that form: no `+`, no `-`,
+// 64 bytes. A server file must pass both copies before a release installs the
+// package. A change to permit `+` or `-` costs the one byte class
+// `PACKAGE_TAIL` here.
 const PACKAGE_VERSION: Run = Run {
     noun: "a package version",
     min: 1,
@@ -1194,6 +1238,14 @@ run_id! {
     /// Why a text is not a package version.
     PackageVersionError,
     PACKAGE_VERSION
+}
+
+impl PackageVersion {
+    /// The grammar of a package version as the text of a pattern. The message
+    /// for a text that is no package version shows it.
+    pub(crate) fn form() -> String {
+        PACKAGE_VERSION.form()
+    }
 }
 
 // --- digests ---
@@ -1798,6 +1850,66 @@ mod tests {
         let error: Box<dyn Error + Send + Sync> = Box::new(FamilyNameError::TooShort);
 
         assert!(error.source().is_none());
+    }
+
+    /// The bytes that one bracket of a pattern names. `a-z` is a range, and
+    /// each other byte names itself.
+    fn bytes_of(form: &str) -> Vec<u8> {
+        let inner = form
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+            .unwrap();
+        let mut named = Vec::new();
+        let mut rest = inner.as_bytes();
+        while let Some((&low, after)) = rest.split_first() {
+            if let [b'-', high, later @ ..] = after {
+                named.extend(low..=*high);
+                rest = later;
+            } else {
+                named.push(low);
+                rest = after;
+            }
+        }
+
+        named
+    }
+
+    #[test]
+    fn the_bracket_of_a_class_names_the_bytes_that_the_class_holds() {
+        let classes = [
+            LOWER,
+            UPPER,
+            LETTER,
+            DIGIT,
+            LETTER_OR_DIGIT,
+            NAME_TAIL,
+            SEGMENT,
+            TOOL_TAIL,
+            ENV_TAIL,
+            SECRET_TAIL,
+            PACKAGE_TAIL,
+            CROCKFORD,
+            LOWER_HEX,
+        ];
+        for class in classes {
+            let named = bytes_of(class.form);
+            for byte in u8::MIN..=u8::MAX {
+                assert_eq!(
+                    named.contains(&byte),
+                    (class.holds)(byte),
+                    "{} and the byte {byte}",
+                    class.form
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_form_of_a_run_is_its_pattern() {
+        assert_eq!(FAMILY_NAME.form(), "[a-z][a-z0-9-]{1,30}");
+        assert_eq!(ToolName::form(), "[A-Za-z][A-Za-z0-9_-]{0,63}");
+        assert_eq!(EnvName::form(), "[A-Z][A-Z0-9_]{0,63}");
+        assert_eq!(PackageVersion::form(), "[0-9][0-9A-Za-z.]{0,63}");
     }
 
     // --- each later type: one table of accepted texts, one of refused texts ---
@@ -2721,12 +2833,12 @@ mod tests {
 
         const TOOL_NAME: &[Against] = &[
             stricter("id.tool_name.chaperone_grants", takes::<ToolName>),
-            stricter("id.tool_name.family_file", takes::<ToolName>),
+            equal("id.tool_name.family_file", takes::<ToolName>),
             equal("id.tool_name.handover_mcpserver", takes::<ToolName>),
         ];
 
         const ENV_NAME: &[Against] = &[
-            stricter("id.env_name.family_file", takes::<EnvName>),
+            equal("id.env_name.family_file", takes::<EnvName>),
             equal("id.env_name.handover_mcpserver", takes::<EnvName>),
         ];
 
@@ -2763,7 +2875,7 @@ mod tests {
         ];
 
         const PACKAGE_VERSION: &[Against] = &[
-            stricter("id.package_version.family_file", takes::<PackageVersion>),
+            equal("id.package_version.family_file", takes::<PackageVersion>),
             equal(
                 "id.package_version.handover_mcpserver",
                 takes::<PackageVersion>,
