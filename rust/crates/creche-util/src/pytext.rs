@@ -6,10 +6,10 @@
 //! not hold for the four separators U+001C to U+001F, and `str::trim` keeps
 //! them.
 //!
-//! Python has more than one white space set. This module holds the set of
-//! `str` only. `int` and `float` of Python remove another set around a
-//! number, and they keep the four separators. Such a set stays with its
-//! reader.
+//! Python has more than one white space set. This module holds two of them.
+//! One is the set of `str`. The other is the set that `int` and `float` of
+//! Python remove around a number: [`number_strip`]. That set does not hold
+//! the four separators, so a separator stays at the end of a number text.
 //!
 //! The module also holds the line end rule of the text mode of Python:
 //! [`universal_newlines`]. The Python code reads a file and the output of a
@@ -48,6 +48,29 @@ pub fn is_space(character: char) -> bool {
 #[must_use]
 pub fn strip(text: &str) -> &str {
     text.trim_matches(is_space)
+}
+
+/// The text without the space at its two ends, as `int` and `float` of
+/// Python remove that space before they read a number.
+///
+/// The set has 25 characters: U+0009 to U+000D, U+0020, U+0085, U+00A0,
+/// U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F and U+3000. It
+/// is `White_Space` of Unicode, the set of `char::is_whitespace`.
+///
+/// The set of [`strip`] has four characters more: the separators U+001C to
+/// U+001F. This function keeps a separator at each end. `int` and `float`
+/// then refuse the text, because a separator is no digit.
+///
+/// ```
+/// use creche_util::pytext;
+///
+/// assert_eq!(pytext::number_strip(" \t7\u{a0}\n"), "7");
+/// assert_eq!(pytext::number_strip("\u{1c}7\u{1f}"), "\u{1c}7\u{1f}");
+/// assert_eq!(pytext::strip("\u{1c}7\u{1f}"), "7");
+/// ```
+#[must_use]
+pub fn number_strip(text: &str) -> &str {
+    text.trim()
 }
 
 /// The words of the text, as `str.split` of Python gives them with no
@@ -130,6 +153,65 @@ mod tests {
             assert_eq!(strip(&text), "a", "{separator:?}");
             assert_eq!(text.trim(), text, "{separator:?}");
         }
+    }
+
+    /// Each answer is what `int` of Python 3.13 gives for the text: the
+    /// number 7 for each space that is no separator, and a refusal for each
+    /// separator. `float` gives the same answers for `7.5`.
+    #[test]
+    fn the_number_space_set_is_the_set_of_python_without_the_separators() {
+        for code in PYTHON_SPACES {
+            let space = char::from_u32(code).unwrap();
+            let text = format!("{space}7{space}");
+            let removed = !SEPARATORS.contains(&space);
+
+            assert_eq!(number_strip(&text) == "7", removed, "{code:#x}");
+        }
+
+        // The walk of each character finds the same 25, and no other one.
+        let found: Vec<u32> = (0..=u32::from(char::MAX))
+            .filter(|code| {
+                char::from_u32(*code)
+                    .is_some_and(|character| number_strip(&character.to_string()).is_empty())
+            })
+            .collect();
+        let wanted: Vec<u32> = PYTHON_SPACES
+            .into_iter()
+            .filter(|code| {
+                !SEPARATORS
+                    .iter()
+                    .any(|separator| u32::from(*separator) == *code)
+            })
+            .collect();
+
+        assert_eq!(found, wanted);
+        assert_eq!(found.len(), 25);
+    }
+
+    #[test]
+    fn a_separator_stays_at_each_end_of_a_number() {
+        for separator in SEPARATORS {
+            let at_the_start = format!("{separator}7");
+            let at_the_end = format!("7{separator}");
+            let at_both_ends = format!(" {separator}7{separator}\n");
+
+            assert_eq!(number_strip(&at_the_start), at_the_start, "{separator:?}");
+            assert_eq!(number_strip(&at_the_end), at_the_end, "{separator:?}");
+            // The space outside a separator leaves, and the separator stays.
+            assert_eq!(
+                number_strip(&at_both_ends),
+                format!("{separator}7{separator}"),
+                "{separator:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn number_strip_keeps_a_character_that_is_no_space() {
+        assert_eq!(number_strip("a7a"), "a7a");
+        assert_eq!(number_strip(" 1 0\t"), "1 0");
+        assert_eq!(number_strip("\u{200b}7"), "\u{200b}7");
+        assert_eq!(number_strip(""), "");
     }
 
     #[test]
