@@ -55,7 +55,7 @@ DEFAULT_MAX_INFLIGHT_DELEGATIONS: Final = 2
 DEFAULT_MAX_OPEN_GATES: Final = 10
 
 _ServerName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{1,30}$")]
-_ToolName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$", max_length=128)]
+_ToolName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$", max_length=64)]
 _ActionName = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 _VerbName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
 _FamilyName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{1,30}$")]
