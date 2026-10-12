@@ -74,6 +74,7 @@ has no site file, so the build fixes the embedder's address.
 |---|---|
 | `src/library/library.py` | walk, hash, chunk, embed, write, atomic publish |
 | `src/library/__main__.py` | the `index-scope` CLI, the TEI client and its preflight |
+| `src/library/strictjson.py` | the strict reader and the strict writer of a JSON text. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `Dockerfile` | the sandbox image |
 
 ## Tests
@@ -83,3 +84,12 @@ uv run pytest library/tests
 ```
 
 A fake embedder. No TEI, no sandbox.
+
+## Known gaps
+
+- `rust/AGENTS.md`, "JSON", does not say which rule a copy of the strict
+  reader names for a text that breaks two rules. `strictjson.py` names the
+  fault that it finds first. The Rust reader names the fault at the lowest
+  byte offset, so the two words can differ. `strictjson.py` has an offset
+  for four rules only. No module of this package imports `strictjson.py`
+  yet.
