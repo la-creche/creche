@@ -70,6 +70,64 @@ def test_a_document_with_no_written_at_reads_unknown(tmp_path: Path) -> None:
     assert "may not be running" in row.reason
 
 
+def test_a_written_at_with_no_offset_reads_unknown(tmp_path: Path) -> None:
+    """A text with no UTC offset is not a time, so the document has no age."""
+    root = tmp_path / "state"
+    doc = status_doc()
+    doc["written_at"] = "2026-09-19T11:59:55"
+    write_json(root / "families" / "chat" / "status.json", doc)
+
+    row = read_family(root / "families", "chat", NOW)
+
+    assert row.health is Health.UNKNOWN
+    assert row.age_s is None
+    assert "may not be running" in row.reason
+    assert row.written_at == "2026-09-19T11:59:55"
+
+
+def test_a_written_at_outside_the_one_grammar_reads_unknown(tmp_path: Path) -> None:
+    root = tmp_path / "state"
+    for text in ("2026-09-19 11:59:55Z", "2026-09-19", "2026-09-19T11:59:55+0000"):
+        doc = status_doc()
+        doc["written_at"] = text
+        write_json(root / "families" / "chat" / "status.json", doc)
+
+        row = read_family(root / "families", "chat", NOW)
+
+        assert row.health is Health.UNKNOWN, text
+        assert row.age_s is None, text
+
+
+def test_a_written_at_with_an_offset_reads_its_age(tmp_path: Path) -> None:
+    """Five seconds before the clock of the test, in three forms."""
+    root = tmp_path / "state"
+    for text in ("2026-09-19T11:59:55Z", "2026-09-19t13:59:55+02:00", "2026-09-19T11:59:55.25z"):
+        doc = status_doc()
+        doc["written_at"] = text
+        write_json(root / "families" / "chat" / "status.json", doc)
+
+        row = read_family(root / "families", "chat", NOW)
+
+        assert row.health is Health.IN_SYNC, text
+        assert row.age_s is not None, text
+        assert 4.0 < row.age_s <= 5.0, text
+
+
+def test_a_spend_time_with_no_offset_reads_stale(tmp_path: Path) -> None:
+    """A spend number with no time is not current (contract 05 section 7, rule 4)."""
+    root = tmp_path / "state"
+    doc = status_doc()
+    doc["spend"]["as_of"] = "2026-09-19T11:59:55"
+    write_json(root / "families" / "chat" / "status.json", doc)
+
+    row = read_family(root / "families", "chat", NOW)
+
+    assert row.health is Health.IN_SYNC
+    assert row.spend is not None
+    assert row.spend.stale
+    assert row.spend.as_of == "2026-09-19T11:59:55"
+
+
 def test_a_missing_document_reports_and_does_not_raise(tmp_path: Path) -> None:
     (tmp_path / "families" / "ghost").mkdir(parents=True)
 

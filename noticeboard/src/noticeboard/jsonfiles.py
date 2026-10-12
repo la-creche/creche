@@ -14,9 +14,11 @@ neighbours do that, one layer up.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Final, cast
+
+from . import rfc3339
 
 #: One parsed JSON object. Nothing below it is typed: every field is read
 #: through a helper here, which is the point.
@@ -182,23 +184,14 @@ def strings(body: Json, key: str, limit: int) -> tuple[str, ...]:
 
 
 def moment(body: Json, key: str) -> datetime | None:
-    """An RFC 3339 timestamp, or None when the field is absent or unreadable.
+    """The instant of a time field in UTC, or None when the field holds no time.
 
-    A naive value is read as UTC. Every writer in these contracts stamps UTC
-    with a `Z`, and treating a missing offset as local time would make
-    staleness depend on the reader's timezone.
+    A time is a `date-time` of RFC 3339, section 5.6. `rfc3339.parse` holds
+    that grammar. A field that is absent, a value that is no text and a text
+    outside the grammar read as None. A text with no UTC offset is outside
+    the grammar: each writer of these contracts writes UTC with a `Z`.
     """
-    raw = text(body, key)
-
-    if not raw:
-        return None
-
-    try:
-        parsed = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return rfc3339.parse(text(body, key))
 
 
 def age_s(stamp: datetime | None, now: datetime) -> float | None:
