@@ -45,6 +45,14 @@ import re
 from datetime import UTC, datetime
 from typing import Final
 
+# CONTRACT-QUESTION: the contracts name RFC 3339 for a time and give no more
+# of its grammar, for example contract 05 §2.1. Section 5.6 of RFC 3339
+# permits three texts that this reader refuses: a fraction of more than 9
+# digits, second 60 and the year 0000. The reader takes the grammar of the
+# Rust type `creche_contracts::time::Timestamp`, which refuses the three. To
+# take one of them costs a change in each copy of this file, the same change
+# of the Rust type and the vectors of that text.
+
 #: The form of a time and the bounds of each field. The pattern does not know
 #: which days a month has. It takes day 01 to 31 for each month.
 _TIME: Final = re.compile(
