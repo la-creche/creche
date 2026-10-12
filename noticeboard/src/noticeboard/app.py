@@ -99,6 +99,7 @@ def _renderer(config: Config) -> Callable[[Request, str, dict[str, object]], HTM
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    environment.filters["rfc3339"] = _rfc3339
 
     def render(request: Request, name: str, body: dict[str, object]) -> HTMLResponse:
         template = environment.get_template(name)
@@ -434,3 +435,15 @@ def _offset_of(query: Mapping[str, str]) -> int:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _rfc3339(moment: datetime) -> str:
+    """A time in the one form that a writer writes: UTC, `Z` and whole seconds.
+
+    `2031-04-18T06:43:10Z` is such a text. The writer drops the fraction of
+    the second. It does not round. A template calls it as the filter
+    `rfc3339`.
+    """
+    in_utc = moment.astimezone(UTC).replace(tzinfo=None)
+
+    return f"{in_utc.isoformat(timespec='seconds')}Z"
