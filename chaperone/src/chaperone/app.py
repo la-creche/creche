@@ -259,10 +259,13 @@ def _args_digest(args: dict[str, object]) -> tuple[int, str]:
 def _unidentified_record(tool: str, reason: str, detail: str | None) -> dict[str, object]:
     """The trusted half of a record for a request that named no family.
 
+    `family` is the first key, and its value is `None`: the record says
+    that no family matched the request. The writer puts `ts` before it.
+
     No `instance` and no `agent` key: a line that carries one was written
     by the retired instance path.
     """
-    return {"tool": tool, "decision": "deny", "reason": reason, "detail": detail}
+    return {"family": None, "tool": tool, "decision": "deny", "reason": reason, "detail": detail}
 
 
 class BodySizeLimitMiddleware:
