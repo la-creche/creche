@@ -576,14 +576,17 @@ mod tests {
 
     #[test]
     fn the_two_ends_of_the_clock_of_the_host_have_the_stamp_of_a_bound() {
-        let seconds = u64::try_from(i64::MAX).unwrap();
+        // On Linux and on macOS, the clock of a host counts whole seconds in
+        // 64 bits with a sign, and the nanoseconds of the second apart. Its
+        // first reading is thus the lowest count of seconds. Its last
+        // reading is the highest count of seconds with the last nanosecond.
         let ends = [
             (
-                UNIX_EPOCH.checked_sub(Duration::new(seconds, 0)),
+                UNIX_EPOCH.checked_sub(Duration::new(i64::MIN.unsigned_abs(), 0)),
                 FIRST_STAMP,
             ),
             (
-                UNIX_EPOCH.checked_add(Duration::new(seconds, 999_999_999)),
+                UNIX_EPOCH.checked_add(Duration::new(i64::MAX.unsigned_abs(), 999_999_999)),
                 LAST_STAMP,
             ),
         ];
