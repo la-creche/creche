@@ -288,8 +288,8 @@ COMPOSITE = "composite"
 
 #: The one step of the action, as a whole: the text and the two constants
 #: above. A `run` step of a composite action needs the `shell` key. Without
-#: it, the workflow does not start. One more key can make a red step green,
-#: for example `continue-on-error`.
+#: that key, the runner refuses the action file. One more key can make a red
+#: step green, for example `continue-on-error`.
 COVERAGE_ACTION_STEP = {
     "shell": "bash",
     "working-directory": RUST_DIR,

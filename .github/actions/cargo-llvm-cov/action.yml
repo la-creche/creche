@@ -25,9 +25,9 @@
 # step. A job that names a toolchain of its own in RUSTUP_TOOLCHAIN thus gets
 # that toolchain in the last line too.
 #
-# The action has no input and no output. The job that calls it checks the
-# repository out first: a local action is read from the checkout. That job
-# also decides with its own `if` whether the step runs.
+# The action takes no input and gives no output. The job that calls it checks
+# the repository out first: a local action is read from the checkout. That
+# job also decides with its own `if` whether the step runs.
 #
 # TO TAKE ANOTHER VERSION, change the two constants below together. This
 # file is the one place in .github/ that holds them. Compute the SHA-256 of
