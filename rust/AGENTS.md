@@ -542,9 +542,9 @@ Until then, these parts stay:
 `python_float_text` of `family` gives the text that `repr` of Python gives
 for a float. It holds no code that formats a float. For a finite float, it
 returns the text of the one function that formats a float, in
-`src/json/write.rs`. The writer refuses a float that is not finite. The
-function thus adds the three words of `repr` for such a float: `nan`, `inf`
-and `-inf`.
+`src/json/write.rs`. That function refuses a float that is not finite.
+`python_float_text` thus adds the three words of `repr` for such a float:
+`nan`, `inf` and `-inf`.
 
 ## TOML
 

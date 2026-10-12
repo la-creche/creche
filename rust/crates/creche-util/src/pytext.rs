@@ -1,4 +1,4 @@
-//! The white space rules of `str` in Python.
+//! The white space rules of `str` and of a number in Python.
 //!
 //! The Python code calls `str.isspace`, `str.strip` and `str.split` on text
 //! that a Rust reader reads too. The functions here give the Python result.
@@ -9,7 +9,7 @@
 //! Python has more than one white space set. This module holds two of them.
 //! One is the set of `str`. The other is the set that `int` and `float` of
 //! Python remove around a number: [`number_strip`]. That set does not hold
-//! the four separators, so a separator stays at the end of a number text.
+//! the four separators, so a separator stays at each end of a number text.
 //!
 //! The module also holds the line end rule of the text mode of Python:
 //! [`universal_newlines`]. The Python code reads a file and the output of a
@@ -53,9 +53,12 @@ pub fn strip(text: &str) -> &str {
 /// The text without the space at its two ends, as `int` and `float` of
 /// Python remove that space before they read a number.
 ///
-/// The set has 25 characters: U+0009 to U+000D, U+0020, U+0085, U+00A0,
-/// U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F and U+3000. It
-/// is `White_Space` of Unicode, the set of `char::is_whitespace`.
+/// The function removes each character of `White_Space` of Unicode, which is
+/// the set of `char::is_whitespace`. That set has 25 characters:
+///
+/// - Six ASCII characters: U+0009 to U+000D, and U+0020.
+/// - U+0085 and U+00A0.
+/// - U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F and U+3000.
 ///
 /// The set of [`strip`] has four characters more: the separators U+001C to
 /// U+001F. This function keeps a separator at each end. `int` and `float`
