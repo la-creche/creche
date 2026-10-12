@@ -9,14 +9,15 @@
 //! never goes back: use it for an age, a limit and a pause.
 //!
 //! This module holds no format of a time stamp. The contract types hold each
-//! format, for example `creche_contracts::status::time::Timestamp`.
+//! format, for example `creche_contracts::time::Timestamp`. That type takes
+//! a reading of [`Clock::now`] through its `TryFrom<SystemTime>`.
 //!
 //! The Python services pass a clock as a callable, for example
 //! `chaperone/src/chaperone/faults.py:51`, or call
 //! `attendance/src/attendance/clock.py`.
 //!
-//! [`unix_micros`] and [`unix_seconds`] give the two counts that a contract
-//! type takes: whole microseconds, and the seconds of Python `time.time()`.
+//! [`unix_seconds`] gives the one count that a contract type takes: the
+//! seconds of Python `time.time()`.
 
 use std::fmt::Debug;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -145,36 +146,6 @@ impl Clock for SystemClock {
     }
 }
 
-/// The microseconds from 1970-01-01T00:00:00Z to `at`. `None` for a time
-/// before that moment and for a time whose count does not fit 64 bits.
-///
-/// The function cuts the part of `at` below one microsecond. A Python
-/// `datetime` holds microseconds, and `attendance/src/attendance/clock.py:15-17`
-/// gives one for each time stamp.
-///
-/// `datetime.now(UTC)` of that origin (`:17`) gives a time before 1970 when
-/// the clock of the host shows one. This function gives `None` for such a
-/// time.
-///
-/// The result is the input of
-/// `creche_contracts::session::time::Timestamp::from_unix_micros`.
-///
-/// ```
-/// use std::time::{Duration, UNIX_EPOCH};
-///
-/// use creche_runtime::clock::unix_micros;
-///
-/// let at = UNIX_EPOCH + Duration::new(1, 500_000_999);
-/// assert_eq!(unix_micros(at), Some(1_500_000));
-/// assert_eq!(unix_micros(UNIX_EPOCH - Duration::from_secs(1)), None);
-/// ```
-#[must_use]
-pub fn unix_micros(at: SystemTime) -> Option<i64> {
-    let since = at.duration_since(UNIX_EPOCH).ok()?;
-
-    i64::try_from(since.as_micros()).ok()
-}
-
 /// The seconds from 1970-01-01T00:00:00Z to `at`, as Python `time.time()`
 /// gives them. `None` for a time before that moment.
 ///
@@ -233,19 +204,13 @@ fn nearest_float(count: u128) -> f64 {
 #[cfg(test)]
 mod tests {
     use creche_contracts::manifest;
-    use creche_contracts::session;
-    use creche_contracts::status;
+    use creche_contracts::time::Timestamp;
 
     use super::*;
 
-    /// The count of microseconds from 1970 to 2020-01-01T00:00:00Z. The
-    /// clock of a host that runs this test shows a later time.
-    const YEAR_2020_MICROS: i64 = 1_577_836_800_000_000;
-
-    /// The largest count of whole seconds that fits 64 bits of microseconds,
-    /// and the microseconds of the largest count above those seconds.
-    const LAST_MICROS_SECONDS: u64 = 9_223_372_036_854;
-    const LAST_MICROS_REST: u32 = 775_807;
+    /// The first instant of the year 2020. The clock of a host that runs
+    /// this test shows a later time.
+    const YEAR_2020: &str = "2020-01-01T00:00:00Z";
 
     /// The largest count of whole seconds that fits 63 bits of nanoseconds,
     /// and the nanoseconds of the largest count above those seconds. CPython
@@ -295,12 +260,10 @@ mod tests {
     #[test]
     fn the_clock_of_the_host_shows_a_time_that_each_contract_type_takes() {
         let now = SystemClock::new().now();
-        let micros = unix_micros(now).unwrap();
+        let instant = Timestamp::try_from(now).unwrap();
         let seconds = unix_seconds(now).unwrap();
 
-        assert!(micros > YEAR_2020_MICROS);
-        assert!(session::Timestamp::from_unix_micros(micros).is_ok());
-        assert!(status::time::Timestamp::try_from(now).is_ok());
+        assert!(instant > YEAR_2020.parse().unwrap());
         assert!(manifest::Timestamp::new(seconds).is_ok());
     }
 
@@ -335,53 +298,11 @@ mod tests {
     }
 
     #[test]
-    fn a_time_from_1970_is_a_count_of_whole_microseconds() {
-        let accepted: [(u64, u32, i64); 8] = [
-            (0, 0, 0),
-            (0, 999, 0),
-            (0, 1_000, 1),
-            (0, 1_999, 1),
-            (1, 500_000_000, 1_500_000),
-            (1_934_260_990, 123_456_789, 1_934_260_990_123_456),
-            (LAST_MICROS_SECONDS, LAST_MICROS_REST * 1_000, i64::MAX),
-            (
-                LAST_MICROS_SECONDS,
-                LAST_MICROS_REST * 1_000 + 999,
-                i64::MAX,
-            ),
-        ];
+    fn a_reading_of_a_clock_is_the_instant_of_a_journal_line() {
+        let instant = Timestamp::try_from(after_1970(1_934_260_990, 123_456_789)).unwrap();
 
-        for (seconds, nanos, micros) in accepted {
-            assert_eq!(
-                unix_micros(after_1970(seconds, nanos)),
-                Some(micros),
-                "{seconds} s and {nanos} ns"
-            );
-        }
-    }
-
-    #[test]
-    fn a_time_outside_64_bits_of_microseconds_is_refused() {
-        let refused: [SystemTime; 5] = [
-            before_1970(0, 1),
-            before_1970(0, 999),
-            before_1970(1, 0),
-            after_1970(LAST_MICROS_SECONDS, (LAST_MICROS_REST + 1) * 1_000),
-            after_1970(LAST_MICROS_SECONDS + 1, 0),
-        ];
-
-        for at in refused {
-            assert_eq!(unix_micros(at), None, "{at:?}");
-        }
-    }
-
-    #[test]
-    fn the_microseconds_are_the_instant_of_a_journal_line() {
-        let micros = unix_micros(after_1970(1_934_260_990, 123_456_789)).unwrap();
-        let instant = session::Timestamp::from_unix_micros(micros).unwrap();
-
-        assert_eq!(instant.rfc3339(), "2031-04-18T06:43:10Z");
-        assert_eq!(instant.rfc3339_millis(), "2031-04-18T06:43:10.123Z");
+        assert_eq!(instant.to_rfc3339(), "2031-04-18T06:43:10Z");
+        assert_eq!(instant.to_rfc3339_millis(), "2031-04-18T06:43:10.123Z");
     }
 
     /// A time and the float that CPython gives for it. The float of each row
@@ -479,7 +400,6 @@ mod tests {
 
         assert!(found.is_finite());
         assert_eq!(found.to_bits(), 9223372036854775808.0_f64.to_bits());
-        assert_eq!(unix_micros(latest), None);
     }
 
     #[test]
@@ -490,13 +410,6 @@ mod tests {
             manifest::Timestamp::new(seconds).unwrap().get(),
             1758153590.5
         );
-    }
-
-    /// `datetime.now(UTC)` of Python gives a time before 1970 when the clock
-    /// of the host shows one.
-    #[test]
-    fn one_nanosecond_before_1970_has_no_microseconds() {
-        assert_eq!(unix_micros(before_1970(0, 1)), None);
     }
 
     /// `time.time()` of Python gives a float below zero for such a time.

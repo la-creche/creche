@@ -26,8 +26,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use creche_contracts::{manifest, session, status};
-    use creche_runtime::clock::{Clock, unix_micros, unix_seconds};
+    use creche_contracts::manifest;
+    use creche_contracts::time::Timestamp;
+    use creche_runtime::clock::{Clock, unix_seconds};
     use creche_runtime::entropy::{Entropy, MintError, new_ulid, url_token};
     use creche_testkit::clock::{FixedClock, PausedClock};
     use creche_testkit::entropy::CountingEntropy;
@@ -210,25 +211,22 @@ mod tests {
     fn each_time_stamp_of_the_test_clock_is_the_python_text() {
         let clock = FixedClock::new(start());
         let now = clock.now();
-        let journal = session::Timestamp::from_unix_micros(unix_micros(now).unwrap()).unwrap();
-        let status = status::time::Timestamp::try_from(now).unwrap();
+        let instant = Timestamp::try_from(now).unwrap();
         let request = manifest::Timestamp::new(unix_seconds(now).unwrap()).unwrap();
 
         // `rfc3339` and `rfc3339_ms` of `attendance/src/attendance/clock.py:20-34`.
-        assert_eq!(journal.rfc3339(), "2026-10-01T15:50:49Z");
-        assert_eq!(journal.rfc3339_millis(), "2026-10-01T15:50:49.637Z");
-        // `rfc3339` of `caregiver/src/caregiver/clock.py:20-23` and
-        // `rfc3339_s` of `chaperone/src/chaperone/family_ids.py:39-41`.
-        assert_eq!(status.to_rfc3339(), "2026-10-01T15:50:49Z");
+        // The first text is also the text of `rfc3339` of
+        // `caregiver/src/caregiver/clock.py:20-23` and of `rfc3339_s` of
+        // `chaperone/src/chaperone/family_ids.py:39-41`.
+        assert_eq!(instant.to_rfc3339(), "2026-10-01T15:50:49Z");
+        assert_eq!(instant.to_rfc3339_millis(), "2026-10-01T15:50:49.637Z");
         // `time.time()` of `handover/src/handover/cli.py:144`.
         assert_eq!(request.get().to_bits(), START_PYTHON_FLOAT.to_bits());
 
         clock.advance(Duration::from_secs(90));
-        let later = clock.now();
-        let journal = session::Timestamp::from_unix_micros(unix_micros(later).unwrap()).unwrap();
-        let status = status::time::Timestamp::try_from(later).unwrap();
+        let later = Timestamp::try_from(clock.now()).unwrap();
 
-        assert_eq!(journal.rfc3339_millis(), "2026-10-01T15:52:19.637Z");
-        assert_eq!(status.to_rfc3339(), "2026-10-01T15:52:19Z");
+        assert_eq!(later.to_rfc3339_millis(), "2026-10-01T15:52:19.637Z");
+        assert_eq!(later.to_rfc3339(), "2026-10-01T15:52:19Z");
     }
 }
