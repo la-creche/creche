@@ -28,6 +28,7 @@ from .egress import EgressConfig
 from .faults import FaultEntry, drop_superseded, read_fault_file, rescope_by_fleet
 from .grants import (
     build_grant_file,
+    grant_file_bytes,
     grant_file_matches,
     holds_grants,
     rewrite_digests,
@@ -48,6 +49,10 @@ log = logging.getLogger("caregiver.steps")
 
 #: Contract 05 §3.3.1: the two services that write a fault file.
 FAULT_SOURCES: Final = ("sessiond", "pep")
+
+#: A digest for a count of bytes: the key step gives a family with no
+#: `creds.json` one token, and each digest has the length of this one.
+_ONE_DIGEST: Final = token_sha256("")
 
 
 def read_faults(
@@ -186,11 +191,31 @@ def write_grants(family: FamilyFile, index: Index, state_root: Path, creds: Cred
     Every digest the file lists is accepted (contract 04 §2.2). During a
     graceful token rotation that is two: the new one and the one the
     previous epoch used, until its overlap runs out (contract 05 §6.3
-    step 5). `accepted_tokens` decides which, from `creds.json` alone."""
+    step 5). `accepted_tokens` decides which, from `creds.json` alone.
+
+    A file over the cap of contract 04 §1.2 is not written:
+    `write_grant_file` raises `GrantFileTooLargeError`, and this step does
+    not catch it. A pass turns it into an issue of the family."""
     grant = build_grant_file(
         family, index, rev=grant_revision(), token_sha256=_accepted_digests(creds)
     )
     write_grant_file(paths.grant_path(state_root, family.name), grant)
+
+
+def check_grants(family: FamilyFile, index: Index, state_root: Path) -> None:
+    """The size check of `write_grants`, with no write and no key.
+
+    It raises `GrantFileTooLargeError` for a grant file over the cap of
+    contract 04 §1.2. A pass calls it before the key step. A family whose
+    file is refused thus keeps its key, its `creds.json` and its last grant
+    file as they are.
+
+    The count holds a `rev` of `grant_revision` and each digest that
+    `creds.json` gives now. A family with no `creds.json` that reads gets
+    one token at the key step, so the count holds one digest for it."""
+    creds = read_creds(paths.creds_path(state_root, family.name))
+    digests = _accepted_digests(creds) if creds is not None else (_ONE_DIGEST,)
+    grant_file_bytes(build_grant_file(family, index, rev=grant_revision(), token_sha256=digests))
 
 
 def write_digests(family_name: str, state_root: Path, creds: Credentials) -> bool:

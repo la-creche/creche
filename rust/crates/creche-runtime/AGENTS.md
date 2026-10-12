@@ -12,19 +12,21 @@ are the authority until a release of a service uses a Rust binary.
 
 ## Layout
 
-Each module is one file. One packet of the port owns each file. No stub is
-left: each function of this crate has its body.
+Each module is one file. One packet of the port owns each file. A row that
+names a function gives the packet that added that function to the file. No
+stub is left: each function of this crate has its body.
 
 | File | What it holds | Packet |
 |---|---|---|
 | `src/lib.rs` | The list of the modules. | `foundation-skeleton` |
 | `src/log.rs` | One line on stderr for each event. The panic hook. The writers for stdout and stderr. | `foundation-skeleton` |
-| `src/atomic.rs` | A file write through a temporary file, a sync and a rename. | `foundation-files` |
+| `src/atomic.rs` | A file write through a temporary file, a sync and a rename. The swap of a directory through one exchange of two names. | `foundation-files` |
 | `src/readfile.rs` | A file read with a size cap. The read gives each failure as a value and does not panic. | `foundation-files` |
 | `src/layout.rs` | The paths under the state root that more than one service uses. | `foundation-files` |
 | `src/clock.rs` | The `Clock` seam and the clock of the host. | `foundation-clock-entropy` |
 | `src/entropy.rs` | The `Entropy` seam. The mint of a ULID and of a random token. | `foundation-clock-entropy` |
 | `src/tasks.rs` | The stop signal, the tracked tasks and the lock helper. | `foundation-tasks-signals` |
+| `src/tasks.rs`, the function `caught` | The panic boundary for a unit of work on the thread of its caller. | `decisions-runtime-panic` |
 | `src/signals.rs` | SIGTERM, SIGINT and SIGHUP. | `foundation-tasks-signals` |
 | `src/token.rs` | A token file into a `Secret`. The bearer of a request. | `foundation-token-faults` |
 | `src/faults.rs` | The fault file of contract 05 §3.3.1, onto the disk. | `foundation-token-faults` |
@@ -229,6 +231,27 @@ The answer types of contract 02 need the readers, and they are in
   on Python 3.13. On Python 3.14 it reads the refusal as "no entry".
   `replace_dir` is an error there, and no entry moves. A change costs one
   function, `says_no_entry`.
+- `atomic::replace_dir` swaps a directory that exists with one call of the
+  system. The call exchanges the entries of two names. The function has no
+  second way to swap.
+  - On Linux the call is `renameat2` with the exchange flag. On macOS it is
+    `renameatx_np` with the swap flag.
+  - A file system without that call refuses each such swap. The function
+    then gives an error with the step `Exchange`, and the target keeps the
+    old tree.
+  - No test runs on the file system of a host. No test thus shows that
+    the state root of a host has the call. The port of `caregiver` needs
+    that answer before its cutover release.
+- The Python `caregiver` swaps a directory with two renames
+  (`caregiver/src/caregiver/atomic.py:47-69`). The doc comment of
+  `atomic::replace_dir` names each difference. A swap that stops can leave
+  the old tree at a name that is not the target:
+  - A swap of the Python copy that stops after its first rename leaves it
+    at `<target>.old`. `replace_dir` removes a directory with that name.
+  - A swap of `replace_dir` that stops after its exchange leaves it at the
+    staging name. The caller removes a tree at that name before it fills
+    the name again. `caregiver/src/caregiver/config_mount.py:69-71` is that
+    step of the Python copy.
 - This `CONTRACT-QUESTION` comment is open in `src/signals.rs`: contract 02
   §3 rule 8 gives SIGHUP its job and does not say how many reloads follow
   two signals. `Hangups` gives one item for all the signals that arrive

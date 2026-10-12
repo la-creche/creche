@@ -1,6 +1,6 @@
 """The Cargo workspace stays where it is and keeps its lint gate.
 
-Seven things about `rust/` could change without one red line, and each gets
+Eight things about `rust/` could change without one red line, and each gets
 a check here:
 
 1. **A lint lifted for every crate at once.** `[workspace.lints]` in
@@ -37,6 +37,14 @@ a check here:
    of its checks, and two readers of one file drift (`rust/AGENTS.md`, "The
    differential test"). No Rust source file of another crate holds the name
    of that directory.
+8. **A second reader of a TOML text.** The module `tomlfile` of
+   `creche-contracts` is the one TOML reader of the workspace. It holds the
+   size limits, the TOML 1.0 check and the level limit. Code in another file
+   that calls the crate `toml` holds none of them (`rust/AGENTS.md`,
+   "TOML"). Only the two files of that module name the crate `toml` or the
+   crate `toml_parser`, by a path or by another name. A Cargo file can give
+   a crate another name too. No Cargo file does that for one of the two
+   crates, and only the crate file of `creche-contracts` takes one.
 
 A push that changes only `rust/` runs no pytest suite (`bin/lib/rustrule.sh`),
 so for such a change these checks run in CI.
@@ -59,6 +67,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+import pytest
 from handover.allocate import touched
 from handover.catalog import Repo
 
@@ -158,9 +167,13 @@ CARGO_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchai
 #: The crate of the shared helpers. Each other crate can depend on it.
 HELPER_CRATE = "creche-util"
 
-#: Each table of a crate file that can name a dependency. `target` holds the
-#: dependencies of one platform.
-DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies", "target")
+#: The table of a crate file that holds the dependencies of each platform. It
+#: has one table for each platform, and that table holds the three other
+#: tables of `DEPENDENCY_TABLES`.
+PLATFORM_TABLE = "target"
+
+#: Each table of a crate file that can name a dependency.
+DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies", PLATFORM_TABLE)
 
 #: The crate of the vector reader. Each other crate can take it for its tests.
 READER_CRATE = "creche-vectors"
@@ -175,6 +188,27 @@ READER_TABLES = ("dependencies", "dev-dependencies")
 #: The directory of the vector files, as a Rust source file names it. Only
 #: the source files of `READER_CRATE` hold this text.
 DATA_DIR_TEXT = "vectors/data"
+
+#: The two files of the one TOML reader, as paths below `CRATES_DIR`. Only
+#: these two files name a TOML crate.
+TOML_FILES = {
+    "creche-contracts/src/tomlfile.rs",
+    "creche-contracts/src/tomlfile/toml10.rs",
+}
+
+#: The two TOML crates, as Rust code names them.
+TOML_CRATES = ("toml", "toml_parser")
+
+#: The one crate file that takes a TOML crate, as a path below `CRATES_DIR`.
+TOML_CRATE_FILE = "creche-contracts/Cargo.toml"
+
+#: The start of the path of an item of a TOML crate, as a Rust source file
+#: names it.
+TOML_PATHS = tuple(f"{crate}::" for crate in TOML_CRATES)
+
+#: A TOML crate with another name, for example `use toml as t;`. A path with
+#: that name holds no text of `TOML_PATHS`.
+TOML_ALIAS = re.compile(rf"\b(?:{'|'.join(TOML_CRATES)})\s+as\b")
 
 #: Paths a Rust commit changes: a manifest, a source file and a document.
 RUST_PATHS = ("rust/Cargo.lock", "rust/crates/creche-contracts/src/ids.rs", "rust/AGENTS.md")
@@ -191,6 +225,33 @@ TABLE_CRATES = ("agent-family", "creche-contracts", "creche-testkit")
 #: row. A longer name that holds one of the two counts too.
 TABLE_NAME = "DEVIATIONS"
 TABLE_ROW = re.compile(r"\bstruct\s+Deviation")
+
+
+def _names_a_toml_crate(text: str) -> bool:
+    """Whether the text of a Rust source file names a TOML crate."""
+    return any(path in text for path in TOML_PATHS) or TOML_ALIAS.search(text) is not None
+
+
+def _toml_entries(manifest: dict[str, Any]) -> list[tuple[str, str]]:
+    """Each entry of a Cargo file that takes a TOML crate, as the name of the
+    entry and the name of its package.
+
+    The name of an entry is the name of its package, unless the entry has
+    the key `package`. Rust code names a package with `_` in the place of
+    each `-`. The table `target` holds the dependency tables of each
+    platform, one level down."""
+    holders = [manifest, *manifest.get(PLATFORM_TABLE, {}).values()]
+    entries = [
+        (name, entry.get("package", name) if isinstance(entry, dict) else name)
+        for holder in holders
+        for table in DEPENDENCY_TABLES
+        if table != PLATFORM_TABLE
+        for name, entry in holder.get(table, {}).items()
+    ]
+
+    return [
+        (name, package) for name, package in entries if package.replace("-", "_") in TOML_CRATES
+    ]
 
 
 def _toml(name: str) -> dict[str, Any]:
@@ -374,6 +435,131 @@ def test_only_the_vector_reader_names_the_vector_directory() -> None:
 
     assert len(named) > len(elsewhere), f"{READER_CRATE} does not name {DATA_DIR_TEXT}"
     assert elsewhere == [], f"a file outside {READER_CRATE} names {DATA_DIR_TEXT}: {elsewhere}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "let table: toml::Table = text.parse()?;",
+        "use toml_parser::Source;",
+        "// toml::from_str reads a text with no limit",
+        "use toml as t;",
+        "use toml_parser as p;",
+        "extern crate toml as t;",
+        "use toml\n    as t;",
+    ],
+)
+def test_a_text_that_names_a_toml_crate_is_found(text: str) -> None:
+    """The last four texts give a crate another name. A path with that name
+    holds no text of `TOML_PATHS`."""
+    assert _names_a_toml_crate(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "let roster = tomlfile::read(bytes, FileKind::Roster)?;",
+        "use crate::tomlfile as reader;",
+        "// The roster is a TOML text.",
+        "let as_toml = text;",
+    ],
+)
+def test_a_text_that_names_no_toml_crate_is_not_found(text: str) -> None:
+    assert not _names_a_toml_crate(text)
+
+
+def test_only_the_toml_reader_names_a_toml_crate() -> None:
+    """The test reads the text of each file, test code too. A comment that
+    holds such a path counts. A line that gives a TOML crate another name
+    counts too.
+
+    A reader file that is absent, or that names no TOML crate, shows a wrong
+    path or a wrong text here, and the search then proves nothing. The test
+    fails for it."""
+    crates = REPO / RUST_DIR / CRATES_DIR
+    named: set[str] = set()
+    for source in crates.rglob("*.rs"):
+        text = source.read_text(encoding="utf-8")
+        if _names_a_toml_crate(text):
+            named.add(source.relative_to(crates).as_posix())
+
+    assert named >= TOML_FILES, f"a file of the reader names no TOML crate: {TOML_FILES - named}"
+    assert named == TOML_FILES, f"another file names a TOML crate: {named - TOML_FILES}"
+
+
+@pytest.mark.parametrize(
+    ("text", "taken"),
+    [
+        ('[dependencies]\ntoml = "1.1.8"\n', [("toml", "toml")]),
+        (
+            "[dependencies]\ntoml_parser = { workspace = true, optional = true }\n",
+            [("toml_parser", "toml_parser")],
+        ),
+        ('[dependencies]\nt = { package = "toml", version = "1.1.8" }\n', [("t", "toml")]),
+        (
+            '[dev-dependencies]\np = { package = "toml_parser", version = "1.1.5" }\n',
+            [("p", "toml_parser")],
+        ),
+        ('[build-dependencies.t]\npackage = "toml"\nversion = "1.1.8"\n', [("t", "toml")]),
+        (
+            '[target."cfg(unix)".dependencies]\nt = { package = "toml", version = "1.1.8" }\n',
+            [("t", "toml")],
+        ),
+        ('[target."cfg(unix)".dev-dependencies]\ntoml = "1.1.8"\n', [("toml", "toml")]),
+        (
+            '[dependencies]\np = { package = "toml-parser", version = "1.1.5" }\n',
+            [("p", "toml-parser")],
+        ),
+        ('[dependencies]\nserde = { workspace = true }\ntomlfile = { path = "../t" }\n', []),
+        ('[features]\ntomlfile = ["dep:toml"]\n\n[package.metadata]\ntoml = "a text"\n', []),
+    ],
+)
+def test_a_cargo_file_shows_each_toml_crate_that_it_takes(
+    text: str, taken: list[tuple[str, str]]
+) -> None:
+    """An entry is a version text or a table. It is in one of three tables,
+    at the top of the file or below the table of one platform. The last two
+    texts take no TOML crate: a key of another table is no entry."""
+    assert _toml_entries(tomllib.loads(text)) == taken
+
+
+def test_no_cargo_file_hides_a_toml_crate() -> None:
+    """A Cargo file can give a crate another name:
+    `t = { package = "toml" }`. A source file then names the crate `t`, and
+    the text search of `test_only_the_toml_reader_names_a_toml_crate` finds
+    no line of it. So no entry gives a TOML crate another name, in the
+    table of the workspace and in each crate file. Only the crate file of
+    the reader takes a TOML crate.
+
+    A crate file can take the entry of the workspace with
+    `workspace = true`. Its own entry then has the name of the workspace
+    entry, so a name that the workspace table refuses reaches no crate.
+
+    `[workspace.dependencies]` has the form of the `[dependencies]` table of
+    a crate file. A workspace table or a reader file that takes no TOML
+    crate shows a wrong path or a wrong name here, and the search then
+    proves nothing. The test fails for both."""
+    crates = REPO / RUST_DIR / CRATES_DIR
+    shared = _toml_entries(WORKSPACE)
+    taken = {
+        manifest.relative_to(crates).as_posix(): _toml_entries(
+            tomllib.loads(manifest.read_text(encoding="utf-8"))
+        )
+        for manifest in sorted(crates.glob("*/Cargo.toml"))
+    }
+    every = {f"{RUST_DIR}/Cargo.toml": shared + _toml_entries(_toml("Cargo.toml")), **taken}
+    renamed = [
+        f"{file}: {name} is {package}"
+        for file, entries in every.items()
+        for name, package in entries
+        if name != package
+    ]
+    elsewhere = [file for file, entries in taken.items() if entries and file != TOML_CRATE_FILE]
+
+    assert {package for _, package in shared} == set(TOML_CRATES), shared
+    assert {package for _, package in taken.get(TOML_CRATE_FILE, [])} == set(TOML_CRATES), taken
+    assert renamed == [], f"an entry gives a TOML crate another name: {renamed}"
+    assert elsewhere == [], f"another crate file takes a TOML crate: {elsewhere}"
 
 
 def test_a_change_under_rust_mints_no_tag() -> None:

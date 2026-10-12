@@ -46,6 +46,7 @@ release replaces that surface.
 | `data/runtime/` | the helper code that each service copies: the lenient field readers, the strict JSON reader, the token files, the bearer of a request and the answers of the web framework |
 | `data/noticeboard/` | the noticeboard: the checks of its perimeter, the form body, the route parameters, the readers of `attendance`, of the audit files and of a validation report, the verify hook and `noticeboard --check` |
 | `data/library/` | the index builder: the chunks of a text, the hash of a file, the text of a file, the report, the URL of the embedder, the bytes of a vector in a store, the schema of a store and the rows of a store after each run |
+| `data/tomlfile/` | the syntax of a TOML file: the text of one file to the table that a reader gives, or to a refusal |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 
 ## Regenerate
@@ -390,7 +391,9 @@ A reader refuses the file in each of these cases:
 - The file or a row holds a key that this section does not name.
 - The file lacks a key, or a row lacks its `registry` or its `path`.
 - A row does not hold exactly one of the keys `text` and `base64`.
-- The `base64` text of a row is no base64 with padding.
+- The `base64` text of a row is no base64 with padding, or a pad bit of its
+  last group is not zero. A pad bit is a bit of the last character before
+  the pad that belongs to no byte.
 - A `registry` or a `path` has another form.
 - Two rows have the same `registry` and the same `path`.
 - The `path` of a row is a directory of another row of its registry. One

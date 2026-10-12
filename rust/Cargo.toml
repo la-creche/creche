@@ -23,6 +23,20 @@ serde = { version = "1.0", features = ["derive"] }
 # float, as Python does. Without it, a float of 16 digits or more can differ
 # from the Python value in its last bit.
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
+# The one TOML parser and writer. Only the module `tomlfile` of
+# creche-contracts names the two crates (rust/AGENTS.md, "TOML").
+#
+# No `preserve_order`: the crate then gives the keys of each table in sorted
+# order, and its feature would add three crates to the build.
+toml = { version = "1.1.8", default-features = false, features = [
+    "std",
+    "serde",
+    "parse",
+    "display",
+] }
+# The events of a TOML text, for the check that holds a text to TOML 1.0.
+# `toml` brings this crate already.
+toml_parser = { version = "1.1.5", default-features = false, features = ["std"] }
 
 # The common stack of a service. creche-runtime uses each crate below, and
 # rust/AGENTS.md, "The rules for a service", says how. Each entry turns the

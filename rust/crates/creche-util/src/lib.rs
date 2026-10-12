@@ -11,8 +11,10 @@
 //! |---|---|
 //! | [`sha256`] | the SHA-256 digest of FIPS 180-4 |
 //! | [`hex`] | bytes as lower-case hex text |
+//! | [`base64`] | the base64 text of RFC 4648: a decoder for the standard form, and an encoder for the URL-safe form |
 //! | [`pytext`] | the white space rules of `str` in Python, and the line end rule of its text mode |
 
+pub mod base64;
 pub mod hex;
 pub mod pytext;
 pub mod sha256;

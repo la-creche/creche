@@ -12,6 +12,8 @@
 //! - [`Tasks`] tracks each task that must end before the process exits. A
 //!   caller that drops its [`Completion`] does not stop the task.
 //! - [`locked`] takes a lock also after a panic poisoned it.
+//! - [`caught`] runs one unit of work on the thread of its caller. A panic
+//!   of that work is a value and one line in the log.
 //!
 //! `rust/AGENTS.md`, "The rules for a service", holds the rules that use
 //! these parts.
@@ -21,8 +23,9 @@
 //! is a new design and not a translation of them.
 //!
 //! A panic of a tracked task writes one `ERROR` line with the target `tasks`
-//! and the name of the task. The line never holds the message of the panic:
-//! that message can hold a part of a request or of a file.
+//! and the name of the task. A panic of the work of [`caught`] writes such a
+//! line with the name of that work. The line never holds the message of the
+//! panic: that message can hold a part of a request or of a file.
 //!
 //! Call each function of [`Tasks`] inside the runtime that `service::run`
 //! builds. [`Tasks::spawn_loop`] and [`Tasks::drain`] use the timer of that
@@ -822,6 +825,110 @@ pub fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 
+/// What [`caught`] gives for a unit of work that panicked.
+///
+/// The value has no field. The log holds one `ERROR` line with the name of
+/// the unit of work, and no code keeps the message of the panic.
+///
+/// ```
+/// use creche_runtime::tasks::{Panicked, caught};
+///
+/// let lost: Result<u8, Panicked> = caught("gate-poll", || panic!("a defect"));
+///
+/// assert_eq!(lost, Err(Panicked));
+/// assert_eq!(Panicked.to_string(), "the unit of work panicked");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Panicked;
+
+impl fmt::Display for Panicked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the unit of work panicked")
+    }
+}
+
+impl Error for Panicked {}
+
+/// Runs `work` on the thread of the caller as one unit of work, and catches
+/// its panic.
+///
+/// The function gives the value of `work`. For a panic of `work`, it writes
+/// one `ERROR` line with `name` and gives [`Panicked`]. That line never holds
+/// the message of the panic.
+///
+/// Use it where one thread runs many units of work, one after the other. An
+/// example is a loop in a task of [`Tasks::spawn_blocking`]: the boundary of
+/// that task ends the whole loop at the first panic. With this function, a
+/// panic ends one unit of work, and the loop continues with the next one.
+///
+/// A unit of work that is one request, one pass of [`Tasks::spawn_loop`] or
+/// one tracked task needs no call of this function. Each of those has its
+/// boundary.
+///
+/// The rules for the caller (`rust/AGENTS.md`, "The panic rule", clauses 5
+/// and 6):
+///
+/// - After [`Panicked`], end that unit of work and continue with the next
+///   one. A panic can leave the values of that unit of work in a wrong
+///   state.
+/// - Do not call this function to continue the same unit of work after its
+///   panic.
+/// - Leave each value that `work` shares with later work in a valid state
+///   after each statement. The function does not ask for `UnwindSafe`, so
+///   the compiler does not check this rule.
+/// - In `work`, write a file only with the atomic writer, and take a std
+///   `Mutex` only with [`locked`].
+///
+/// The drop of the payload of a panic can panic too. The function drops the
+/// payload inside a second catch, so that second panic does not reach the
+/// caller. The payload of that second panic drops with no catch. A panic of
+/// that drop reaches the caller. A stack overflow and an abort end the
+/// program: no catch holds either one.
+///
+/// ```
+/// use creche_runtime::tasks::{Panicked, caught};
+///
+/// let mut done = Vec::new();
+///
+/// for step in [1_u8, 2, 3] {
+///     let value = caught("upkeep-step", || {
+///         assert!(step != 2, "a defect of step 2");
+///
+///         step * 10
+///     });
+///
+///     done.push(value);
+/// }
+///
+/// // Step 2 panicked, and step 3 ran after it.
+/// assert_eq!(done, [Ok(10), Err(Panicked), Ok(30)]);
+/// ```
+///
+/// The Python origin is `_upkeep_step` of
+/// `attendance/src/attendance/service.py:309-319`. The function differs from
+/// that origin in two ways:
+///
+/// - The origin guards each exception of a step (`:316-318`). This function
+///   guards a panic only. A failure that `work` gives as an `Err` is its
+///   value: it comes back inside `Ok`, and this function writes no line for
+///   it. The caller reads that value.
+/// - The origin writes the trace of the failure (`:319`). The line of this
+///   function holds only `name`: the message of a panic can hold a part of
+///   a request or of a file.
+pub fn caught<T>(name: &'static str, work: impl FnOnce() -> T) -> Result<T, Panicked> {
+    match panic::catch_unwind(AssertUnwindSafe(work)) {
+        Ok(value) => Ok(value),
+        Err(payload) => {
+            crate::error!(LOG_TARGET, "the unit of work {name} stopped with a panic");
+            // The drop of a payload can panic too. That panic must not reach
+            // the caller.
+            let _ = panic::catch_unwind(AssertUnwindSafe(move || drop(payload)));
+
+            Err(Panicked)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::{Command, Output, Stdio};
@@ -880,6 +987,9 @@ mod tests {
     /// The line of a drain in a runtime with no timer.
     const NO_TIMER_LINE: &str = "the drain did not wait: the runtime of this thread has no timer";
 
+    /// The line of a unit of work of `caught` that panicked.
+    const GATE_POLL_LINE: &str = "the unit of work gate-poll stopped with a panic";
+
     /// A scenario that writes to the log. It runs in a child, so its lines do
     /// not go to the output of this test program, and the test can read them.
     struct Scenario {
@@ -891,7 +1001,7 @@ mod tests {
         lines: &'static [&'static str],
     }
 
-    const SCENARIOS: [Scenario; 17] = [
+    const SCENARIOS: [Scenario; 20] = [
         Scenario {
             name: "task",
             run: a_task_panics,
@@ -981,6 +1091,21 @@ mod tests {
             run: the_payload_of_a_task_panics,
             lines: &[LEDGER_LINE],
         },
+        Scenario {
+            name: "caught",
+            run: a_unit_of_work_panics,
+            lines: &[GATE_POLL_LINE],
+        },
+        Scenario {
+            name: "caught-payload",
+            run: the_payload_of_a_unit_of_work_panics,
+            lines: &[GATE_POLL_LINE],
+        },
+        Scenario {
+            name: "caught-value",
+            run: a_unit_of_work_gives_its_value,
+            lines: &[],
+        },
     ];
 
     fn runtime() -> Runtime {
@@ -1046,6 +1171,11 @@ mod tests {
     fn a_lost_task_names_its_reason() {
         assert_eq!(TaskLost::Panicked.to_string(), "the task panicked");
         assert_eq!(TaskLost::Cancelled.to_string(), "the task gave no value");
+    }
+
+    #[test]
+    fn a_caught_panic_names_its_reason() {
+        assert_eq!(Panicked.to_string(), "the unit of work panicked");
     }
 
     #[test]
@@ -2071,5 +2201,51 @@ mod tests {
             assert_eq!(lost, Err(TaskLost::Panicked));
             assert_eq!(tasks.drain(LIMIT).await, Drained::Clean);
         });
+    }
+
+    /// A unit of work panics on the thread of its caller. The caller gets
+    /// `Panicked` and one line. The next unit of work runs on that thread and
+    /// gives its value.
+    fn a_unit_of_work_panics() {
+        let caller = thread::current().id();
+        let mut steps = Vec::new();
+
+        let lost: Result<u8, Panicked> = caught("gate-poll", || {
+            steps.push(thread::current().id());
+
+            panic!("{PANIC_MESSAGE}")
+        });
+
+        assert_eq!(lost, Err(Panicked));
+
+        let next = caught("queue-pump", || {
+            steps.push(thread::current().id());
+
+            7_u8
+        });
+
+        assert_eq!(next, Ok(7));
+        assert_eq!(steps, [caller, caller]);
+    }
+
+    /// A unit of work panics with a payload whose drop panics. The second
+    /// panic does not leave `caught`: the caller gets `Panicked` and one line,
+    /// and the next unit of work runs.
+    fn the_payload_of_a_unit_of_work_panics() {
+        let lost: Result<(), Panicked> = caught("gate-poll", || panic::panic_any(LoudPayload));
+
+        assert_eq!(lost, Err(Panicked));
+        assert_eq!(caught("queue-pump", || 7_u8), Ok(7));
+    }
+
+    /// A unit of work gives its value. An `Err` is a value too: it comes back
+    /// inside `Ok`, and `caught` writes no line for it. The Python guard
+    /// writes a line for each step that failed.
+    fn a_unit_of_work_gives_its_value() {
+        let polled = caught("gate-poll", || String::from("polled"));
+        let full = caught("queue-pump", || Err::<(), &str>("the queue is full"));
+
+        assert_eq!(polled, Ok(String::from("polled")));
+        assert_eq!(full, Ok(Err("the queue is full")));
     }
 }

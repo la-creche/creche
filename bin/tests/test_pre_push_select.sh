@@ -89,8 +89,10 @@ exit 1
 FAKE
 chmod 0755 "$WORK/bin/cargo-deny"
 
-#: The cargo subcommands of a run that tests Rust, in order.
-RUST_STEPS="fmt clippy deny test"
+#: The cargo subcommands of a run that tests Rust, in order. clippy runs two
+#: times: for the workspace, and for the one crate with a default cargo
+#: feature, with that feature off.
+RUST_STEPS="fmt clippy clippy deny test"
 
 # gate ARG...: the real gate, with the fake uv and the fake cargo. Sets RC,
 # PYTEST to the pytest lines uv was asked for, one per pytest process (""

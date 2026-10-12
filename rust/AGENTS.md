@@ -23,11 +23,11 @@ defect that a test finds late.
 
 | Crate | What it holds |
 |---|---|
-| `creche-util` | Each shared helper: SHA-256, the hex text of bytes, the white space rules of Python `str` and the line end rule of the Python text mode. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
+| `creche-util` | Each shared helper: SHA-256, the hex text of bytes and base64 text. It also holds the white space rules of Python `str` and the line end rule of the Python text mode. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
-| `creche-vectors` | The one reader of the files under `vectors/data`, for each differential test. It uses `serde` and `serde_json` only, so each other crate can take it for its tests. `creche-testkit` gives it to its users as `creche_testkit::vectors`. No release holds it. `crates/creche-vectors/AGENTS.md` holds its rules. |
+| `creche-vectors` | The one reader of the files under `vectors/data`, for each differential test. It uses `serde`, `serde_json` and `creche-util` only, so each other crate can take it for its tests. `creche-testkit` gives it to its users as `creche_testkit::vectors`. No release holds it. `crates/creche-vectors/AGENTS.md` holds its rules. |
 | `creche-testkit` | Test helpers for each crate, and the program `creche-probe`. No release holds it. `crates/creche-testkit/AGENTS.md` holds its rules. |
 
 | Module of `creche-contracts` | What it holds |
@@ -37,6 +37,7 @@ defect that a test finds late.
 | `secret` | `Secret`, the type of a token or a key. |
 | `slot` | `Slot` is the one lenient field type for a raw type: a value of a wrong kind does not fail the read. `MapOnly` wraps a nested table in a raw type whose read can fail: it refuses a value that is not a table. |
 | `time` | `Timestamp`, the one type of a time in a file or in a wire message. "Time" below holds its rules. |
+| `tomlfile` | The one reader and the one writer of a TOML file. Its main items are `FileKind`, `read`, `TomlFault`, `write` and `Unknown`. The module is behind the cargo feature `tomlfile`, which is on by default. "TOML" below holds its rules. |
 | `family` | The family file: contract 01. |
 | `server` | The MCP server file: contract 01b. |
 | `session` | The session API: contract 02. `session.rs` declares the files under `session/`. |
@@ -137,8 +138,9 @@ writes the two numbers and their text to a file in `OUT_DIR`, and
 
 A shared helper is a pure function with two users. The users are two crates,
 or two modules that hold two contracts. `creche-util` holds each shared
-helper. Today it holds SHA-256, the hex text of bytes, the white space
-rules of Python `str` and the line end rule of the Python text mode.
+helper. Today it holds SHA-256, the hex text of bytes and base64 text. It
+also holds the white space rules of Python `str` and the line end rule of
+the Python text mode.
 
 1. Put a shared helper in `creche-util`.
 2. Write no second copy of a helper that `creche-util` holds. Call the
@@ -172,7 +174,9 @@ You need rustup. It installs the toolchain at the first cargo command under
    - The public-field check. No field of a struct has `pub`. Rule 12
      names the two forms that pass.
 3. `cargo fmt --all --check`.
-4. `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+4. `cargo clippy --workspace --all-targets --locked -- -D warnings`. Then
+   the same command with `-p creche-contracts --no-default-features` in the
+   place of `--workspace`. "TOML" below has the reason.
 5. `cargo deny --locked check bans licenses sources`, where `cargo-deny` is
    on `PATH`.
 6. `cargo test --workspace --locked`, with `--tests` only.
@@ -402,7 +406,7 @@ also names the byte offset of each refusal. The module has five files:
 | `Charset` | `Ascii` gives a `\u` escape for each character that is not printable ASCII. `Utf8` writes such a character as it is. |
 | `KeyOrder` | `AsGiven` keeps the order of the value. `Sorted` sorts the keys of each object by their code points. |
 | `WriteError` | The refusal of `write`. `NotFinite` is for a float that is not finite. `NoJsonForm` is for each other value that strict JSON cannot hold. |
-| `Opaque` | The value of a field that a contract calls opaque. It holds its compact form and keeps the order of its keys. |
+| `Opaque` | The value of a field that a contract calls opaque. It holds its compact form and keeps the order of its keys. It has three conversions. `parse` reads the value into a type of the caller. `of` makes the value from a typed value. `null` is the value of the word `null`. |
 
 `check` applies the rules in this sequence:
 
@@ -504,12 +508,26 @@ fault, the event of a channel line and the arguments of a tool call.
   thus equal, and so are `1.50` and `1.5`.
 - The order of the keys is a part of an `Opaque`. Two objects with the same
   members in another order are not equal.
+- `Opaque::parse` reads the value into a type of the caller, for example a
+  raw type. The function compares no kind, and a struct that derives
+  `Deserialize` also reads a list by position. Before the call, compare
+  `Opaque::kind` with the kind that the type takes. The function reads the
+  compact form and makes no second check. A `Shape` of this function thus
+  names a place on line 1 of that form. A number field gets the token that
+  the writer gave: `0` where the first text had `-0`.
+- `Opaque::of` makes the value from a typed value, with one call of the
+  writer. It refuses each value that `write` refuses. A module that needs
+  the `Opaque` of a typed value calls this function. It does not give a
+  text of its own to the reader.
+- `Opaque::null` is the value of the word `null`. A `Slot<Opaque>` keeps no
+  value for that word, so a conversion that needs the value calls this
+  function.
 
-Only `session` and `mcp` call the writer today. Only `mcp` calls the
-reader. The index of the vector files is a strict text too. The crate
-`creche-vectors` reads it and does not use `creche-contracts`, so its raw
-types hold the rules for the index. "Known gaps" names the packet that moves
-each module to the two.
+Only `session` calls the writer today. `mcp` gets the writer through
+`Opaque::of`. Only `mcp` calls the reader. The index of the vector files is
+a strict text too. The crate `creche-vectors` reads it and does not use
+`creche-contracts`, so its raw types hold the rules for the index. "Known
+gaps" names the packet that moves each module to the two.
 Until then, these parts stay:
 
 - Five older functions format a float: `float_text` of `channel`, of
@@ -522,6 +540,181 @@ Until then, these parts stay:
   crate can call keeps such a text: `write_raw_kept`. The writer counts no
   level of that text and compares none of its keys. Add no second user of
   the function. No packet deletes `write_raw_kept` yet.
+
+## TOML
+
+Four file kinds are TOML texts: the family file, the server file, the
+component manifest and the roster. A text of a file kind must be TOML 1.0.
+
+`creche-contracts` must have one TOML reader and one TOML writer, in its
+`tomlfile` module. The module holds both. Write no TOML parser in another
+module. Do not name the crates `toml` and `toml_parser` in another file.
+
+- Only `src/tomlfile.rs` and `src/tomlfile/toml10.rs` name the two crates.
+- `bin/tests/test_rust_workspace.py` fails for another `.rs` file that
+  holds the text `toml::` or `toml_parser::`. A comment counts too.
+- The test also fails for a line that gives one of the two crates another
+  name, for example `use toml as t;`.
+- A Cargo file can also give a crate another name, with the key `package`
+  of an entry. `bin/tests/test_rust_workspace.py` fails for such an entry
+  of one of the two crates, in `[workspace.dependencies]` and in each
+  crate file.
+- The same test fails when a crate file other than that of
+  `creche-contracts` takes one of the two crates.
+
+Reason: the module holds the size limits, the TOML 1.0 check and the level
+limit. Code that calls the crate `toml` directly holds none of the three.
+
+| Item of `tomlfile` | What it is |
+|---|---|
+| `FileKind` | The closed set of the four file kinds. Each kind has one size limit. A limit is no public number, so a caller cannot give another one. |
+| `read` | The function that reads the bytes of a file into a raw type. It gives the raw type or a `TomlFault`. |
+| `TomlFault` | The refusal of `read`. Its text holds no line, no column and no byte of the file. |
+| `write` | The function that writes a value as a TOML text. It gives the text or a `TomlWriteFault`. |
+| `TomlWriteFault` | The refusal of `write`. `NoTomlForm` is for a value that the crate cannot write. `NotReadable` is for a text that `read` refuses. |
+| `Unknown` | The target of `#[serde(flatten)]` in a raw type. It keeps each key that the raw type does not name, with the kind of its value. |
+
+`read`, `write` and `Unknown` are private to the crate. The module of a
+contract holds the raw type of its file kind, and that module calls `read`
+(rule 1).
+
+`read` applies the checks in this sequence:
+
+1. The size. A file has the bytes of its kind at most.
+2. The encoding. The bytes are UTF-8.
+3. The start. The text starts with no byte order mark.
+4. TOML 1.0. The child module `toml10` refuses each form that TOML 1.1
+   added. It also refuses two more kinds of text before the crate `toml`
+   gets them.
+5. The parse of the crate `toml`.
+6. The levels. No table and no list has a level above 8. The walk uses no
+   recursion.
+7. The shape. `serde` fills the raw type.
+
+Before check 4, `read` replaces each CR LF of the text with an LF. A CR
+that is left gives `NotToml`: only a CR LF is a line end. A CR LF inside a
+multi-line string is thus one LF in the value. "Known gaps" has the
+question.
+
+| `FileKind` | The limit in bytes |
+|---|---|
+| `Family` | 65536 |
+| `Server` | 65536 |
+| `Manifest` | 16384 |
+| `Roster` | 1048576 |
+
+| `TomlFault` | The check | The text |
+|---|---|---|
+| `TooLarge` | 1 | `the file has more than <limit> bytes` |
+| `NotUtf8` | 2 | `the file is not UTF-8 text` |
+| `ByteOrderMark` | 3 | `the file starts with a byte order mark` |
+| `NotToml` | 4, 5 and 6 | `the text is not TOML 1.0, or it nests deeper than 8 levels` |
+| `Shape` | 7 | `the text does not have the shape of the file` |
+
+- The top table has level 1. A table or a list inside a table or a list of
+  level n has level n + 1. The deepest file of the four kinds in this
+  repository has 5 levels.
+- No limit counts the values of a file. A TOML text has no alias, so the
+  size limit bounds the count. Each grammar holds its own caps.
+- Only a raw type that is not total can give `Shape`.
+- This module is the one source of the four limits, of the level limit and
+  of the first four texts (rule 13). A Python reader of a file kind copies
+  them.
+
+The crate `toml` reads TOML 1.1 and has no switch for TOML 1.0. `toml10`
+refuses these six forms. Its doc comment holds the rule of each one.
+
+1. A line end inside an inline table.
+2. A comma as the last sign before the `}` of an inline table.
+3. The escape `\e` in a basic string.
+4. The escape `\x` in a basic string.
+5. A time with no seconds.
+6. A date-time with no seconds.
+
+Reason: a text must not become valid because a parser is new. Each reader
+of a file kind refuses the six forms with a check of its own.
+
+`toml10` reads the events of the crate `toml_parser`. In the same pass, it
+refuses two more kinds of text. Facts 6 and 7 of the list below give the
+cause of each one.
+
+1. A key with more than 8 parts, or more than 8 lists and inline tables
+   that are open inside each other. Each such text has a level above 8.
+2. A key/value pair whose key names a list of tables, or goes through one.
+
+Do not move check 4 behind check 5. Check 4 bounds the stack that the
+parser of the crate uses.
+
+A raw type of a TOML file gets its values in this form. Each line is a
+measurement with `toml` 1.1.8, and a test of the module holds it. Measure
+again after a change of the version.
+
+1. **The keys of a table come in sorted order.** The crate gives them so
+   without its feature `preserve_order`. Do not turn the feature on. Hold a
+   table with free keys in a `BTreeMap`. The conversion to the valid type
+   then reports the faults of one text in one sequence.
+2. **A struct reads a table only.** The derived reader of a struct also
+   takes a list, and gives the first item to the first field. `read` gives
+   a list to no struct, so that read fails with `Shape`. A raw type that is
+   total puts each nested table in a `Slot`. A list there is `Slot::Other`.
+3. **A date-time comes as the unit value.** The crate gives a date-time to
+   `serde` as a table with one private key. `read` does not. Under a `Slot`
+   a date-time is `Slot::Null`, and its kind in an `Unknown` is
+   `Found::Null`. TOML has no null, so no other value reads so. No file
+   kind has a field for a date-time. Report a wrong type for it.
+4. **`read` refuses a text that starts with a byte order mark.** The crate
+   reads such a text. Check 3 refuses it.
+5. **An integer outside 64 bits is `NotToml`.** The range is that of an
+   `i64`. The crate refuses the text in check 5.
+6. **The crate alone does not stop a deep text.** It stops at 80 lists and
+   inline tables that are open inside each other. It also stops at 80
+   parts of one key. It counts the two apart, so 80 inline tables can each
+   have a key of 80 parts. That text has more than 6,400 tables in 13,284
+   bytes. The parser of the crate uses the stack for each table. On a stack
+   of 2 MiB, 40 such inline tables overflow the stack in a release build,
+   and 7 do in a debug build. The process then ends. Check 4 thus comes
+   first. The deepest text that reaches the crate has 8 open inline tables,
+   each under a key of 8 parts. A header of 30,000 parts is a refusal on a
+   stack of 2 MiB.
+7. **The crate reads a dotted key that goes through a list of tables.** A
+   `[[a.b]]` header makes the list of tables `a.b`. Under the header `[a]`,
+   the crate refuses the key `b.c`. It reads the key `b.c.d`, and puts the
+   table `c` into the last item of the list. No TOML version permits that
+   key, and the TOML reader of the Python standard library refuses it.
+   Check 4 refuses it.
+8. **The crate keeps the CR of a CR LF inside a multi-line string.** `read`
+   gives the crate a text with no CR, so a raw type gets one LF there.
+
+More rules for a raw type of a TOML file:
+
+- Give a closed set a text field. `read` gives no enum. The conversion to
+  the valid type makes the enum.
+- A float field takes an integer as the nearest float.
+- An `Option` field is `Some` for each value. TOML has no null.
+
+Rules for the writer:
+
+- `write` calls the crate and then reads its own text with the checks 4, 5
+  and 6. A text of `write` thus passes each check of `read` but the size
+  check. The writer has no file kind.
+- The crate writes an integer above the range of an `i64`. `write` gives
+  `TomlWriteFault::NotReadable` for it. Give an integer field of a written
+  type the type `i64`.
+- The crate writes the scalars of a table first. It then writes each nested
+  table under a header, and each list of tables as `[[header]]` blocks.
+- The crate writes no line for a `None` field of a struct.
+
+The module is behind the cargo feature `tomlfile` of `creche-contracts`.
+The feature is on by default.
+
+- A workspace that takes `creche-contracts` and reads no TOML file sets
+  `default-features = false` for it. Its lock file then gains no TOML
+  crate.
+- `cargo clippy --workspace` builds the crate with the feature only. Step 4
+  of `bin/rust-gate.sh` thus has a second clippy command, for the crate
+  with no default feature.
+- Code of another module that calls `read` or `write` must build with the
+  feature off. Put that code behind `#[cfg(feature = "tomlfile")]`.
 
 ## Time
 
@@ -1004,6 +1197,11 @@ one panic can stop and what it can damage.
    - A pass of a loop: the boundary is `Tasks::spawn_loop`.
    - A tracked task: the boundary is `Tasks::spawn_must_complete` or
      `Tasks::spawn_blocking`.
+   - A unit of work on the thread of the caller: the boundary is
+     `tasks::caught`. An example is a loop in a task of
+     `Tasks::spawn_blocking`. Each item that the loop handles is one unit
+     of work. A service crate calls that function. Outside test code,
+     clause 8 permits no `catch_unwind` in a service crate.
    - A program without the runtime: a unit of work is a step, a pass or a
      connection.
 5. **After a panic, a boundary ends that unit of work and starts the next
@@ -1303,7 +1501,12 @@ file. A region is one span of code with one count, for example one arm of a
 
 1. A region or a line of a listed file ran in no test.
 2. A listed file is not in the report, or the report holds no region of it.
-3. A listed file holds the text `coverage(off)`.
+3. The text of a listed file takes code out of the measurement. This check
+   has three cases:
+   - 3a. The text `coverage(off)` is in the file.
+   - 3b. The text `macro_rules!` is in the file.
+   - 3c. A call in the file names a macro that is not in the closed list of
+     the script.
 4. `crates/chaperone-policy/src` holds a `.rs` file that is not in the list.
    Before that directory exists, this check does nothing.
 
@@ -1344,6 +1547,69 @@ More facts about the checks:
 - The script stops for a report in another form, for example a segment that
   is not three numbers and three flags.
 
+How check 3 reads a listed file:
+
+- The check reads the text of the file and parses no Rust. A comment and a
+  string count too. A file thus fails when a comment holds a call that the
+  closed list does not permit.
+- Case 3b finds the text `macro_rules!` in each place of the file.
+- For case 3c, a call is a name, then `!`, then a bracket: `(`, `[` or `{`.
+  No space is between the name and the `!`. Spaces, tabs and line breaks
+  can be between the `!` and the bracket.
+- `cargo fmt` writes a call in that form. "Known gaps" has the exceptions,
+  for example a call with a comment between its tokens.
+- A line break after a comment counts too. A file thus fails for a comment
+  that ends with a word and `!`, when a bracket starts the code of the next
+  line. An example is the comment `// Stop here!` above a line that holds
+  only `{`.
+- A name holds only letters, digits and `_`. Each character outside ASCII
+  counts as a letter. The closed list holds no name with such a character,
+  so a call of such a name fails.
+- The path of a call is the text before its name, for example the `std::`
+  of `std::write!(`. A path is one name or more, each with `::` after it. It
+  can start with `::`.
+- The texts `a != (b)` and `if !(ok)` hold no call. Case 3b finds
+  `macro_rules! name {`, and case 3c does not.
+- An attribute is no call, for example `#[derive(Debug)]` or `#[test]`.
+  Code that comes from an attribute or from a derive is outside the check
+  ("Known gaps").
+- The failure line of case 3b names the file and each line with the text.
+- Case 3c has one failure line for each call outside the closed list. That
+  line names the file, the call with its path and each line of the call.
+- A failure line of case 3b or of case 3c names 20 lines at most.
+
+The closed list of case 3c holds seven macros: `assert!`, `assert_eq!`,
+`assert_ne!`, `format!`, `vec!`, `write!` and `writeln!`. The constant
+`MEASURED_MACROS` of the script holds the seven names.
+
+Rules for a macro in a listed file:
+
+- Define no macro in a listed file. The report holds no region for a block
+  in the body of a macro.
+- Call only a macro of the closed list. Give the call no path, or the path
+  `std::`, `core::` or `alloc::`. Each of the three paths can start with
+  `::`, for example `::std::write!(`.
+- Each other path fails, also with a name of the list. `crate::write!(` can
+  name a macro of this workspace, and `other::assert!(` can name a macro of
+  another crate. The body of such a macro can hide a side.
+- A call with no path can also name a macro that is not of the standard
+  library. The check does not find such a call ("Known gaps").
+- Do not call `matches!`. Write a `match` with two arms in its place. The
+  failure line for `matches!` says so.
+- Keep each assertion macro of a listed file inside a `#[cfg(test)]`
+  module. The three assertion macros are `assert!`, `assert_eq!` and
+  `assert_ne!`. In each other place of the file, return an error.
+- No check of the script finds an assertion macro outside such a module.
+  The lint `panic_in_result_fn` of the lint gate refuses one only when its
+  function returns `Result`. In each other function, the reviewer refuses
+  it.
+
+Reason for the list: the bodies of `format!`, `vec!`, `write!` and
+`writeln!` hold no condition. They thus hold no side that the report hides.
+An assertion macro has a condition on its arguments, and the false side is
+a panic. In a test, the panic stops the test. The list thus holds the three
+assertion macros for test code only.
+
 Rules for the list:
 
 - A line is a comment or one path. A comment starts with `#`. The list has no
@@ -1374,10 +1640,9 @@ These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
 - The report counts the test code of a listed file too. The message of an
   assertion is a region that runs only when the assertion fails. An example
   is `assert!(ok, "text")`. An assertion with no message has no such region.
-- `assert!(matches!(...))` in a listed file fails check 1. The arm of
-  `matches!` that does not match is a region. That arm does not run while
-  the assertion holds. Use `assert_eq!` in its place, or put the test under
-  `tests/`.
+- Case 3c refuses each `matches!` of a listed file, so
+  `assert!(matches!(...))` fails there too. Use `assert_eq!` in its place,
+  or put the test under `tests/`.
 - The report holds no file of the `tests/` directory of a crate. Put a test
   that needs a message there.
 - A `const fn` that only the compiler evaluates counts as code that no test
@@ -1386,8 +1651,54 @@ These facts are measurements with `cargo-llvm-cov` 0.9.1 on the toolchain
 - The run sets neither `cfg(coverage)` nor `cfg(coverage_nightly)`. It thus
   compiles the code that `cargo test` compiles.
 - The toolchain 1.92.0 refuses the attribute `#[coverage(off)]` with a
-  compile error. Check 3 is the guard for a later toolchain that takes the
-  attribute.
+  compile error. Case 3a of check 3 is the guard for a later toolchain that
+  takes the attribute.
+
+These facts about a macro are measurements with the compiler of the
+toolchain 1.92.0. The steps were `rustc -C instrument-coverage`, one run of
+the program and `llvm-cov export`. Each form had a function of its own in
+the program, and the program called each function one time. A change of the
+toolchain makes a new measurement necessary.
+
+- A function calls a macro of `macro_rules!` whose body is an `if` with an
+  `else`. The line of the call then has two regions. One covers the macro
+  name and the `!`. The other covers the argument. The two regions ran. The
+  report has no region for the block that the call did not take.
+- A macro that another file defines gives the same two regions. The report
+  holds no file that has only the definition of a macro.
+- `matches!(value, Some(1))` has a region at its name and a region at its
+  argument. The region at the name counts each call whose value does not
+  match. The report has no region for a call whose value matches. Check 1
+  thus passes although no test gave the macro a value that matches.
+- In a `match` with one arm for `Some(1)` and one arm for `_`, each arm is a
+  region. An arm that did not run has the count 0.
+- Each macro of the closed list has a region at its name, and that region
+  ran. `assert!`, `format!`, `vec!`, `write!` and `writeln!` also have a
+  region for each argument. `assert_eq!` and `assert_ne!` have no region for
+  an argument that is a plain value.
+- A condition in an argument of each of the seven macros has a region for
+  each of its two blocks. A block that did not run has the count 0.
+- In the standard library of that toolchain, the bodies of `format!`,
+  `vec!`, `write!` and `writeln!` hold no condition.
+- Each assertion macro has one condition on its arguments. When that
+  condition is false, the macro panics, and the panic is no region. A
+  function with `assert!(value < 100)` shows each of its regions as run
+  after one call with a small value.
+- In a test, the panic stops the test, and the report then hides no code.
+  Outside a test, a run of the program can take the false side. No test took
+  it, and no check reports that.
+
+To add a macro to the closed list:
+
+1. Measure the macro with the same three steps. The macro passes when its
+   body hides no side from the report.
+2. Add the name to `MEASURED_MACROS` in `bin/rust-coverage.sh`.
+3. Add the name to the paragraph of this section that holds the closed
+   list.
+4. Add the name to `MEASURED_MACROS` in `bin/tests/test_rust_coverage.py`.
+
+Do the four steps in one pull request. Put the commands of the measurement
+and its regions into that pull request.
 
 To run the script on your machine:
 
@@ -1441,9 +1752,9 @@ side:
      first check then passes when `b` was never false.
    - For the value `a && b`, a test with a true `a` runs `b`. The first
      check then passes when `a` was never false.
-2. The guard of a `match` arm, also in `matches!`. A value that does not
-   match the pattern of the arm runs the next arm. The first check then
-   passes when the guard was never false.
+2. The guard of a `match` arm. A value that does not match the pattern of
+   the arm runs the next arm. The first check then passes when the guard was
+   never false.
 3. The condition of a `while` and the pattern of a `while let`, when the
    loop also ends at a `break`. A test that ends the loop at the `break`
    runs the code after the loop. The first check then passes when the
@@ -1464,11 +1775,13 @@ each path is a region:
 - The error path of `?`.
 - The body of a `for` loop.
 
-It writes no branch and no region for these forms. No check finds a side of
-them that no test took ("Known gaps"):
+It writes no branch and no region for these forms. Check 3 thus refuses
+each one in a listed file:
 
-- An `if` in the body of a macro of the file, with its two blocks.
-- The arm of `matches!` that matches. The other arm is a region.
+- An `if` in the body of a macro of the file, with its two blocks. Case 3b
+  refuses the macro.
+- The arm of `matches!` that matches. The other arm is a region. Case 3c
+  refuses `matches!`.
 
 How the fifth check counts:
 
@@ -1560,6 +1873,22 @@ To make the fifth check on your machine, for example before a merge:
   float as the nearest float, as Python does. Without the feature, a float of
   16 digits or more can differ from the Python value in its last bit. Do not
   remove the feature.
+- `toml` is the one TOML parser and writer. Its version is 1.1.8, with the
+  features `std`, `serde`, `parse` and `display`. Do not turn on its
+  feature `preserve_order`.
+- `toml_parser` gives the events of a TOML text to the TOML 1.0 check. Its
+  version is 1.1.5, with the feature `std`. `toml` brings this crate
+  already.
+- Only the `tomlfile` module of `creche-contracts` names the two crates
+  ("TOML"). They are optional dependencies of that crate, behind its cargo
+  feature `tomlfile`.
+- The two crates add 9 packages to `Cargo.lock`: `toml`, `toml_parser`,
+  `toml_datetime`, `toml_writer`, `serde_spanned`, `winnow`, `indexmap`,
+  `hashbrown` and `equivalent`.
+- A build uses 6 of the 9 packages. `cargo tree -e normal` shows no
+  `indexmap`, no `hashbrown` and no `equivalent`. The feature `std` of
+  `toml` names `indexmap?/std`, and cargo locks a package that such a
+  feature names.
 
 ### The check of the locked crates
 
@@ -1699,10 +2028,8 @@ adds a crate:
     in the form of the two specifications. No packet has that part yet.
   - Epoch. The crate needs a single epoch type with the range 1 to
     2^53 - 1. Packet `decisions-epoch` adds it.
-  - Shared helpers. Base64 has more than one copy. Packet
-    `decisions-util-runtime` moves it to `creche-util`. "Known gaps" of
-    `crates/creche-util/AGENTS.md` names each other function that is
-    still open. No packet has that part yet.
+  - Shared helpers. "Known gaps" of `crates/creche-util/AGENTS.md` names
+    each function that is still open. No packet has that part yet.
   - Vector reader. Against rule 13, the crate `creche-vectors` holds a
     second copy of the digest grammar of `ids`. "Known gaps" of
     `crates/creche-vectors/AGENTS.md` has the cause and the change that
@@ -1730,15 +2057,38 @@ adds a crate:
   each `.rs` file of `chaperone-policy` thus needs a function that a test
   runs. A change costs one check of the script.
 - Check 3 of "The coverage rule" reads the text of a listed file only. It
-  finds the spelling `coverage(off)`, which `cargo fmt` writes. A macro of
-  another file can put the attribute on an item of a listed file.
+  expands no macro. An attribute or a derive can add code to the file, and
+  the check does not read that code. Such code can hold the attribute
+  `coverage(off)`, a condition or a call of a macro.
+  - The check does not read a `use` line. Such a line can give a name of
+    the closed list to another macro. An example is
+    `use other::rule as write;`.
+  - The check does not read another file. A macro of `macro_rules!` above
+    the `mod` line of a listed file can have a name of the closed list. A
+    call with no path in the listed file then names that macro. A macro of
+    a module below `#[macro_use]` gives the same result. So does a macro
+    of another crate below `#[macro_use] extern crate`.
+  - In `chaperone-policy`, check 4 fails for a `.rs` file of the `src`
+    directory that is not in the list. Each `.rs` file of that directory is
+    thus a listed file, and case 3b refuses each macro that it defines. No
+    check refuses a `#[macro_use] extern crate` line.
+  - The check reads the form that `cargo fmt` writes. Text in another form
+    can hide a call, for example a space before the `!` or a comment after
+    it. `cargo fmt` does not format an item below `#[rustfmt::skip]`.
+  - `cargo fmt` keeps a comment between two tokens of a call in some
+    places, for example in the value of a `let` statement. Such a call
+    passes `cargo fmt --check` and case 3c. Two examples are
+    `let a = own /* y */ !(n);` and
+    `let b = crate::/* z */write!(text, n);`.
+- The measurements of the seven macros of the closed list ran on the
+  toolchain 1.92.0 only. A later toolchain can change the body of a macro.
+  Measure each macro again after a change of `rust-toolchain.toml`.
+- A listed file can hold an assertion macro outside each `#[cfg(test)]`
+  module. The false side of that macro is a panic, which is no region of
+  the report. No check finds such a macro. The reviewer refuses it.
 - "The coverage rule" binds only code that the run compiles. Code of a
   listed file behind a `cfg` that no build of the run sets is in no report.
   No check finds such code.
-- "The coverage rule" finds no side of an `if` in the body of a macro. The
-  report holds no region and no branch for the two blocks of such an `if`.
-  The same applies to the arm of `matches!` that matches. A listed file
-  passes each check although no test ran such code.
 - This `CONTRACT-QUESTION` comment is open in
   `.github/workflows/coverage-nightly.yml`: no rule says how a red run of
   the nightly job must reach a person. No rule names that person. The
@@ -1782,6 +2132,48 @@ adds a crate:
     change costs one condition in the scan. The same condition holds the
     two forms that pass, so a change to the third sentence of rule 12
     also changes it.
+- No raw type calls `tomlfile::read` yet, and no type calls
+  `tomlfile::write`. `read`, `write` and the accessor of `Unknown` each
+  have an `expect(dead_code)` line for a build that is no test build. The
+  packet that adds the first caller of an item deletes the line of that
+  item. Three packets add a caller of `read`: `toml-family-read-rust`,
+  `toml-manifest-read-rust` and `toml-roster-read-chaperone`.
+- No Python reader of a file kind holds the limits and the fault texts of
+  `tomlfile` yet. Packet `toml-family-read-python` adds the first one, and
+  the test that holds its numbers and its texts equal to the Rust file.
+- The differential test of `tomlfile` walks the surface `tomlfile.syntax`.
+  The entry point of that surface is the TOML reader of the Python standard
+  library, because no product code reads TOML yet. The surface holds no
+  text of four kinds, and a plain test of the module holds each kind.
+  "Known gaps" of `vectors/AGENTS.md` lists them. Packet
+  `toml-syntax-vectors` changes the entry point and adds the four kinds.
+- These `CONTRACT-QUESTION` comments are open in
+  `crates/creche-contracts/src/tomlfile.rs`:
+  1. `tree_of`, TOML 1.0. The specification gives a float 64 bits. It does
+     not say what a reader does with a text outside that range, for example
+     `1e999`. The crate `toml` refuses the text, and the reader keeps that
+     refusal, as "JSON" does for a float token. The TOML reader of the
+     Python standard library reads the text as an infinity. A Python reader
+     of a file kind thus needs a check of its own. No packet has that part
+     yet. The other reading costs a float parser in the module.
+  2. `both_take`, TOML 1.0. The specification takes the second 60 and the
+     year 0000 in a date-time. The crate reads both. The TOML reader of the
+     Python standard library refuses both. The reader refuses both, as
+     `time::Timestamp` does. No file kind holds a date-time. A change costs
+     one function and four vectors of `tomlfile.syntax`. A Python reader
+     then needs a date-time parser of its own.
+  3. `write`. No rule says what the writer does with a value whose text
+     `read` refuses. `write` takes the strict reading: it gives
+     `TomlWriteFault::NotReadable`. The other reading writes each value
+     that the crate writes. A change costs one call in `write`.
+  4. `tree_of`, TOML 1.0. The specification lets a reader change a line
+     end inside a multi-line string. The value of a CR LF there is thus
+     CR LF for one reader and LF for another. The crate `toml` keeps the
+     CR, and the TOML reader of the Python standard library gives one LF.
+     `read` gives one LF, so each reader of a file kind gives one value.
+     The other reading refuses a CR LF inside a multi-line string. It
+     costs one check in the module and one check in each Python reader.
+     Three vectors of `tomlfile.syntax` then move.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. One function of `crates/creche-contracts/src/json/scan.rs`
@@ -1854,13 +2246,6 @@ adds a crate:
   cannot give. The variant `Member` holds three reasons. "Where a new type
   goes" gives each type an error type of its own, in item 8. No packet has
   that part yet.
-- Against rule 13, `mcp` holds a second copy of one value of `json`. That
-  value is the compact style, `COMPACT`. `json::Opaque` gives no member of
-  its value and takes no typed value. The functions `reread` and
-  `opaque_of` of `mcp` thus write a value in that style and read the text
-  again. A packet that can change `json` gives `Opaque` those two
-  conversions, and then deletes the copy and the two functions. No packet
-  has that part yet.
 - An `mcp::Object` can nest 64 levels, the limit of the reader. An
   `mcp::Line` adds one level to its object. The writer thus refuses a
   message that holds the deepest object. The `CONTRACT-QUESTION` comment of
