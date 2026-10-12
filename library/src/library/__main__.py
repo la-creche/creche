@@ -11,10 +11,14 @@ import os
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import httpx
 
+from . import strictjson
 from .library import DIMS, EMBED_MAX_BATCH, PROFILES, Corpus, index_scope
+
+log = logging.getLogger("library")
 
 #: An explicit TEI base URL. It wins over the address below.
 TEI_URL_ENV = "TEI_URL"
@@ -25,6 +29,12 @@ LAN_ADDRESS_ENV = "AGENT_LAN_ADDRESS"
 
 #: TEI's port on that address (`infra/compose.yaml`).
 TEI_PORT = 8085
+
+#: The most bytes of one answer of TEI: 16 MiB.
+ANSWER_MAX_BYTES = 16_777_216
+
+#: The name of an answer of TEI in a log line.
+ANSWER_SURFACE = "embedding.answer"
 
 
 class ConfigError(Exception):
@@ -45,13 +55,37 @@ def tei_url(environ: Mapping[str, str]) -> str:
     return f"http://{address}:{TEI_PORT}"
 
 
+# CONTRACT-QUESTION: `rust/AGENTS.md`, "JSON", says that a service records a
+# notice for the operator when the strict reader refuses a text. It does not
+# say what a program in a sandbox does. Reading taken: the log line below is
+# the one report of a refused answer. A sandbox of the index builder has no
+# state root and no hook, so this program can write no notice file. A notice
+# from this program costs a path from the sandbox to the host.
+def _answer(response: httpx.Response) -> Any:
+    """The value of one answer of TEI, read as strict JSON.
+
+    For an answer that is not strict, the function writes one log line with
+    the rule that the answer breaks. The refusal then leaves the function.
+    In the preflight, `main` ends the run for it. In the walk, `index_scope`
+    reports it as the error of one file. The line and the refusal hold no
+    byte of the answer.
+
+    The value has the type `Any`: each caller reads the form that it needs.
+    """
+    try:
+        return strictjson.loads(response.content, cap=ANSWER_MAX_BYTES)
+    except strictjson.NotStrictJson as refusal:
+        log.error("json_not_strict %s %s", ANSWER_SURFACE, refusal.rule.value)
+        raise
+
+
 class TeiEmbedder:
     def __init__(self, url: str) -> None:
         self._url = url.rstrip("/")
         self._client = httpx.Client(timeout=60)
         info = self._client.get(f"{self._url}/info")
         info.raise_for_status()
-        self.model = str(info.json().get("model_id", "unknown"))
+        self.model = str(_answer(info).get("model_id", "unknown"))
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
@@ -60,7 +94,7 @@ class TeiEmbedder:
                 f"{self._url}/embed", json={"inputs": texts[start : start + EMBED_MAX_BATCH]}
             )
             resp.raise_for_status()
-            vectors.extend(resp.json())
+            vectors.extend(_answer(resp))
         return vectors
 
 

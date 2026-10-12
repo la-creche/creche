@@ -68,6 +68,22 @@ corpus untouched.
 The image build needs `--build-arg AGENT_LAN_ADDRESS=<address>`. A sandbox
 has no site file, so the build fixes the embedder's address.
 
+## The answers of TEI
+
+`index-scope` reads each answer of TEI with `strictjson.loads`. The
+docstring of `src/library/strictjson.py` holds the rules of a strict text.
+
+- An answer has `ANSWER_MAX_BYTES` bytes at most. That is 16,777,216 bytes.
+- For an answer that is not strict, the program writes one log line of
+  level `ERROR`: `json_not_strict embedding.answer <rule>`. `<rule>` is the
+  word of the rule that the answer breaks.
+- The line holds no byte of the answer.
+- An answer that is not strict in the preflight ends the run with status 2.
+  That run publishes no store.
+- An answer that is not strict for one file is an error of that file
+  (rule 4). The report lists the file, and the run publishes each other
+  file.
+
 ## Layout
 
 | File | Owns |
@@ -91,5 +107,8 @@ A fake embedder. No TEI, no sandbox.
   reader names for a text that breaks two rules. `strictjson.py` names the
   fault that it finds first. The Rust reader names the fault at the lowest
   byte offset, so the two words can differ. `strictjson.py` has an offset
-  for four rules only. No module of this package imports `strictjson.py`
-  yet.
+  for four rules only.
+- `rust/AGENTS.md`, "JSON", says that a service records a notice for the
+  operator when the strict reader refuses a text. It does not say what a
+  program in a sandbox does. `index-scope` writes the log line of "The
+  answers of TEI" and no notice. Its sandbox has no state root and no hook.
