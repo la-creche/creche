@@ -68,6 +68,19 @@ corpus untouched.
 The image build needs `--build-arg AGENT_LAN_ADDRESS=<address>`. A sandbox
 has no site file, so the build fixes the embedder's address.
 
+`index-scope` returns one of three statuses:
+
+| Status | Cause |
+|---|---|
+| 0 | The run published the store. |
+| 2 | The program refuses its command line: a wrong count of words, an unknown profile, or a corpus path that is no directory. A preflight that fails has this status too. |
+| 78 | The environment names no address of TEI. 78 is `EX_CONFIG`, the status of a config that is not valid. |
+
+The program reads its command line before its environment. Each other run
+that the program does not complete ends with a status that is not 0. Each
+index unit is a `oneshot` unit of a timer, so no unit starts the program
+again because of a status.
+
 ## The answers of TEI
 
 `index-scope` reads each answer of TEI with `strictjson.loads`. The

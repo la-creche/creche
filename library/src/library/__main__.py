@@ -117,8 +117,9 @@ def main() -> int:
     try:
         url = tei_url(os.environ)
     except ConfigError as exc:
+        # `EX_CONFIG` is status 78: the status of a config that is not valid.
         print(f"no TEI: {exc}", file=sys.stderr)
-        return 2
+        return os.EX_CONFIG
 
     try:
         embedder = TeiEmbedder(url)
