@@ -1244,8 +1244,14 @@ def test_the_cargo_llvm_cov_action_is_one_step_and_no_other_key() -> None:
 
     The text of the file sets each constant one time. PyYAML keeps the last
     value of a key that a table holds two times, so the data alone does not
-    show a second line."""
+    show a second line. The test thus counts the start of the two names in
+    the text. The `run` text holds that start in some places, and each
+    constant adds one place. A second line for a constant adds one more, also
+    with a quote or a space before its colon. The header comment of the
+    action must not hold that start."""
     runs = COVERAGE_ACTION_DATA["runs"]
+    named = COVERAGE_INSTALL_RUN.count(COVERAGE_PREFIX) + len(COVERAGE_ENV)
+    found = COVERAGE_ACTION_TEXT.count(COVERAGE_PREFIX)
 
     assert set(COVERAGE_ACTION_DATA) == COVERAGE_ACTION_KEYS
     assert COVERAGE_ACTION_DATA["name"] == COVERAGE_STEP
@@ -1255,8 +1261,8 @@ def test_the_cargo_llvm_cov_action_is_one_step_and_no_other_key() -> None:
     assert len(runs["steps"]) == 1, "the action has more than one step"
     assert set(runs["steps"][0]) == set(COVERAGE_ACTION_STEP)
     assert runs["steps"] == [COVERAGE_ACTION_STEP]
-    for name in COVERAGE_ENV:
-        assert COVERAGE_ACTION_TEXT.count(f"{name}:") == 1, f"the action sets {name} two times"
+    assert all(name.startswith(COVERAGE_PREFIX) for name in COVERAGE_ENV)
+    assert found == named, f"the action holds {COVERAGE_PREFIX} {found} times, not {named}"
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
