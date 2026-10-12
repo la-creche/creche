@@ -1248,4 +1248,113 @@ mod tests {
             assert_eq!(boxed.to_string(), message);
         }
     }
+
+    /// The differential test: each vector of the surface `runtime.time`,
+    /// against the reader of [`Timestamp`].
+    ///
+    /// The surface records `parse` of `rfc3339.py`, the time reader of the
+    /// Python packages. Each vector must be equal. The two readers take the
+    /// same texts, and for each such text they give the same count of
+    /// microseconds. The Python reader gives no reason for a refusal, so the
+    /// test compares none.
+    mod python {
+        use std::collections::HashSet;
+
+        use creche_vectors::{self as vectors, Outcome, Vector};
+        use serde_json::Value;
+
+        use super::super::Timestamp;
+        use super::{ACCEPTED, REFUSED};
+
+        /// Each surface that this module implements.
+        const SURFACES: [&str; 1] = ["runtime.time"];
+
+        /// The start of the name of each such surface in the index.
+        const GROUP: &str = "runtime.time";
+
+        /// What the reader of [`Timestamp`] gives for a text: the count of
+        /// microseconds from 1970-01-01T00:00:00Z, or `None` for a refusal.
+        fn rust_count(text: &str) -> Option<i64> {
+            text.parse::<Timestamp>().ok().map(Timestamp::unix_micros)
+        }
+
+        /// What the Python reader gave for the text of a vector, in the form
+        /// of [`rust_count`]. A text on which the Python reader raised counts
+        /// as a refusal: the Rust reader refuses such a text.
+        fn python_count(vector: &Vector, at: &str) -> Option<i64> {
+            match vector.result() {
+                Outcome::Accepted => {
+                    let count = vector.value().and_then(Value::as_i64);
+                    assert!(count.is_some(), "{at}: the vector holds no count");
+
+                    count
+                }
+                Outcome::Refused | Outcome::Raised => None,
+            }
+        }
+
+        #[test]
+        fn each_vector_of_the_python_reader_is_equal() {
+            for name in SURFACES {
+                let surface = vectors::surface(name).unwrap();
+
+                for vector in surface.vectors() {
+                    let at = format!("{name} {}", vector.id());
+                    let text = vector.input().text().unwrap();
+
+                    assert_eq!(rust_count(text), python_count(vector, &at), "{at}");
+                }
+                println!(
+                    "{name}: {} vectors, each one equal",
+                    surface.vectors().len()
+                );
+            }
+        }
+
+        #[test]
+        fn the_surfaces_hold_each_text_of_the_two_tables() {
+            let inputs: HashSet<String> = SURFACES
+                .iter()
+                .flat_map(|name| vectors::surface(name).unwrap().vectors().to_vec())
+                .filter_map(|vector| vector.input().text().map(str::to_owned))
+                .collect();
+            let texts = ACCEPTED
+                .iter()
+                .map(|(text, _)| *text)
+                .chain(REFUSED.iter().map(|(text, _)| *text));
+
+            for text in texts {
+                assert!(inputs.contains(text), "no vector for {text:?}");
+            }
+        }
+
+        #[test]
+        fn the_table_holds_each_surface_of_the_time_reader() {
+            let index = vectors::index().unwrap();
+            let in_index: Vec<&str> = index
+                .iter()
+                .map(|row| row.surface())
+                .filter(|surface| surface.starts_with(GROUP))
+                .collect();
+
+            assert_eq!(in_index, SURFACES);
+        }
+
+        #[test]
+        fn the_comparison_holds_the_count_and_the_refusal() {
+            let surface = vectors::surface("runtime.time").unwrap();
+            let count_of = |id: &str| python_count(surface.vector(id).unwrap(), id);
+
+            // An accepted vector gives its count, and a refused vector none.
+            assert_eq!(count_of("epoch"), Some(0));
+            assert_eq!(count_of("before-the-epoch"), Some(-1));
+            assert_eq!(count_of("hour-24-at-midnight"), None);
+            // Two texts of one instant are equal. Two instants that differ in
+            // one microsecond are not, and a count of zero is no refusal.
+            assert_eq!(rust_count("1970-01-01T01:00:00+01:00"), Some(0));
+            assert_ne!(rust_count("1970-01-01T00:00:00.000001Z"), Some(0));
+            assert_ne!(rust_count("1970-01-01T00:00:00Z"), None);
+            assert_eq!(rust_count("2999-01-01T24:00:00Z"), None);
+        }
+    }
 }
