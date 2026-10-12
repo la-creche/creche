@@ -9,7 +9,7 @@
 //! never goes back: use it for an age, a limit and a pause.
 //!
 //! This module holds no format of a time stamp. The contract types hold each
-//! format, for example `creche_contracts::status::time::Timestamp`.
+//! format, for example `creche_contracts::time::Timestamp`.
 //!
 //! The Python services pass a clock as a callable, for example
 //! `chaperone/src/chaperone/faults.py:51`, or call
@@ -233,14 +233,13 @@ fn nearest_float(count: u128) -> f64 {
 #[cfg(test)]
 mod tests {
     use creche_contracts::manifest;
-    use creche_contracts::session;
-    use creche_contracts::status;
+    use creche_contracts::time::Timestamp;
 
     use super::*;
 
-    /// The count of microseconds from 1970 to 2020-01-01T00:00:00Z. The
-    /// clock of a host that runs this test shows a later time.
-    const YEAR_2020_MICROS: i64 = 1_577_836_800_000_000;
+    /// The first instant of the year 2020. The clock of a host that runs
+    /// this test shows a later time.
+    const YEAR_2020: &str = "2020-01-01T00:00:00Z";
 
     /// The largest count of whole seconds that fits 64 bits of microseconds,
     /// and the microseconds of the largest count above those seconds.
@@ -295,12 +294,10 @@ mod tests {
     #[test]
     fn the_clock_of_the_host_shows_a_time_that_each_contract_type_takes() {
         let now = SystemClock::new().now();
-        let micros = unix_micros(now).unwrap();
+        let instant = Timestamp::try_from(now).unwrap();
         let seconds = unix_seconds(now).unwrap();
 
-        assert!(micros > YEAR_2020_MICROS);
-        assert!(session::Timestamp::from_unix_micros(micros).is_ok());
-        assert!(status::time::Timestamp::try_from(now).is_ok());
+        assert!(instant > YEAR_2020.parse().unwrap());
         assert!(manifest::Timestamp::new(seconds).is_ok());
     }
 
@@ -376,12 +373,11 @@ mod tests {
     }
 
     #[test]
-    fn the_microseconds_are_the_instant_of_a_journal_line() {
-        let micros = unix_micros(after_1970(1_934_260_990, 123_456_789)).unwrap();
-        let instant = session::Timestamp::from_unix_micros(micros).unwrap();
+    fn a_reading_of_a_clock_is_the_instant_of_a_journal_line() {
+        let instant = Timestamp::try_from(after_1970(1_934_260_990, 123_456_789)).unwrap();
 
-        assert_eq!(instant.rfc3339(), "2031-04-18T06:43:10Z");
-        assert_eq!(instant.rfc3339_millis(), "2031-04-18T06:43:10.123Z");
+        assert_eq!(instant.to_rfc3339(), "2031-04-18T06:43:10Z");
+        assert_eq!(instant.to_rfc3339_millis(), "2031-04-18T06:43:10.123Z");
     }
 
     /// A time and the float that CPython gives for it. The float of each row
