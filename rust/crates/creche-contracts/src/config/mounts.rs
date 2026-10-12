@@ -1256,7 +1256,8 @@ impl PlaypenEnv {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaypenEnvError {
     /// The file does not set the variable, or sets it to the empty text.
-    /// The playpen answers `fatal` with `mount_dir_unset`.
+    /// For one of the three directories, the playpen answers `fatal` with
+    /// `mount_dir_unset`.
     Unset {
         /// The name of the variable.
         variable: &'static str,
@@ -1363,8 +1364,10 @@ fn dir_of(raw: &RawPlaypenEnv, variable: &'static str) -> Result<DirPath, Plaype
 // what a reader does with an env file that sets no plane variable. The
 // type takes the strict reading: each of the two variables is required,
 // as each other variable of the file is. The conversion thus refuses a
-// file of four lines. The other reading keeps such a file and takes each
-// URL from another source. It costs two `Option` fields in `PlaypenEnv`.
+// file of four lines. The TypeScript playpen reads such a file and then
+// uses the two URLs of its build. The other reading keeps such a file and
+// takes each URL from another source. It costs two `Option` fields in
+// `PlaypenEnv`.
 /// The URL of the plane that one variable names. `refused` makes the error
 /// for a value that is not the URL of a plane.
 fn plane_of(
