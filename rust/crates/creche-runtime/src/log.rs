@@ -73,23 +73,7 @@ use std::io::{self, Write};
 use std::panic::{self, Location};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The nanoseconds of one millisecond.
-const NANOS_PER_MILLI: i128 = 1_000_000;
-
-/// The milliseconds of one second, one minute, one hour and one day.
-const MILLIS_PER_SECOND: i128 = 1000;
-const MILLIS_PER_MINUTE: i128 = 60 * MILLIS_PER_SECOND;
-const MILLIS_PER_HOUR: i128 = 60 * MILLIS_PER_MINUTE;
-const MILLIS_PER_DAY: i128 = 24 * MILLIS_PER_HOUR;
-
-/// The days from 0000-03-01 to 1970-01-01, in the Gregorian calendar.
-const DAYS_TO_EPOCH: i128 = 719_468;
-
-/// The days of 400 years, of 100 years, of 4 years and of 1 year.
-const DAYS_PER_ERA: i128 = 146_097;
-const DAYS_PER_CENTURY: i128 = 36_524;
-const DAYS_PER_4_YEARS: i128 = 1460;
-const DAYS_PER_YEAR: i128 = 365;
+use creche_contracts::time::Timestamp;
 
 /// The line separator and the paragraph separator of Unicode. Each one ends
 /// a line, for example in `str.splitlines` of Python, and `char::is_control`
@@ -213,6 +197,11 @@ pub fn line(level: Level, target: &str, message: fmt::Arguments<'_>) {
 /// result is thus always one line. Each control of the bidirectional
 /// algorithm becomes an escape, so the parts of the line keep their order.
 ///
+/// `creche_contracts::time::Timestamp` writes the time. That type holds the
+/// years 0001 to 9999. A time before those years has the text of the first
+/// instant of the type, and a time after them has the text of the last one.
+/// The function thus gives a line for each time.
+///
 /// ```
 /// use std::time::{Duration, UNIX_EPOCH};
 ///
@@ -274,62 +263,34 @@ pub(crate) fn escape_into(line: &mut String, text: &str) {
     }
 }
 
-/// The milliseconds from 1970-01-01T00:00:00Z to `at`. The count is negative
-/// for a time before that moment. A part of a millisecond is cut toward the
-/// earlier millisecond.
-fn unix_millis(at: SystemTime) -> i128 {
-    let nanos = match at.duration_since(UNIX_EPOCH) {
-        Ok(after) => i128::try_from(after.as_nanos()).unwrap_or(i128::MAX),
-        Err(before) => {
-            i128::try_from(before.duration().as_nanos()).map_or(i128::MIN, |nanos| -nanos)
-        }
-    };
-
-    nanos.div_euclid(NANOS_PER_MILLI)
-}
-
-/// The year, the month and the day of a count of days from 1970-01-01, in the
-/// Gregorian calendar. The steps are the steps of the algorithm
-/// `civil_from_days` of Howard Hinnant.
-fn civil_from_days(days: i128) -> (i128, i128, i128) {
-    // The count starts at 0000-03-01, so the leap day is the last day of a
-    // year of the count.
-    let shifted = days.saturating_add(DAYS_TO_EPOCH);
-    let era = shifted.div_euclid(DAYS_PER_ERA);
-    let day_of_era = shifted.rem_euclid(DAYS_PER_ERA);
-    let year_of_era = (day_of_era - day_of_era / DAYS_PER_4_YEARS + day_of_era / DAYS_PER_CENTURY
-        - day_of_era / (DAYS_PER_ERA - 1))
-        / DAYS_PER_YEAR;
-    let day_of_year =
-        day_of_era - (DAYS_PER_YEAR * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_from_march = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_from_march + 2) / 5 + 1;
-    let month = if month_from_march < 10 {
-        month_from_march + 3
-    } else {
-        month_from_march - 9
-    };
-    let year = year_of_era + era.saturating_mul(400) + i128::from(month <= 2);
-
-    (year, month, day)
-}
-
 /// The time in UTC, in the form of RFC 3339, with milliseconds:
 /// `2031-04-18T06:43:10.123Z`.
 ///
-/// The standard library has no calendar, and the workspace takes no crate
-/// for one. A year past 9999 has more than four digits, and RFC 3339 does
-/// not define that form. No clock of a host gives such a time.
+/// [`Timestamp`] takes the time and writes the text. This module holds no
+/// date arithmetic. A part of a millisecond is cut toward the earlier
+/// millisecond.
+///
+/// The function has no error. A service writes to its log before it has a
+/// valid config, so the function must give a text for each time. For a time
+/// that [`Timestamp`] refuses, the text is the text of [`nearest_bound`].
 fn stamp(at: SystemTime) -> String {
-    let millis = unix_millis(at);
-    let (year, month, day) = civil_from_days(millis.div_euclid(MILLIS_PER_DAY));
-    let of_day = millis.rem_euclid(MILLIS_PER_DAY);
-    let hour = of_day / MILLIS_PER_HOUR;
-    let minute = of_day % MILLIS_PER_HOUR / MILLIS_PER_MINUTE;
-    let second = of_day % MILLIS_PER_MINUTE / MILLIS_PER_SECOND;
-    let milli = of_day % MILLIS_PER_SECOND;
+    Timestamp::try_from(at)
+        .unwrap_or_else(|_| nearest_bound(at))
+        .to_rfc3339_millis()
+}
 
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{milli:03}Z")
+/// The bound of [`Timestamp`] that is nearest to a time outside the range
+/// of that type.
+///
+/// The first instant of the type is before 1970, and the last one is after
+/// 1970. A time before 1970 that the type refuses is thus before the first
+/// instant. Each other time that the type refuses is after the last one.
+fn nearest_bound(outside: SystemTime) -> Timestamp {
+    if outside < UNIX_EPOCH {
+        Timestamp::MIN
+    } else {
+        Timestamp::MAX
+    }
 }
 
 /// Writes `text` and one newline to stdout, with one write call. The function
@@ -460,6 +421,22 @@ mod tests {
         '\n', '\u{b}', '\u{c}', '\r', '\u{85}', '\u{2028}', '\u{2029}',
     ];
 
+    /// The seconds from the first instant of the year 0001 to 1970, and the
+    /// seconds from 1970 to the first instant of the year 10000. The two
+    /// instants are the bounds of the time type: the first one is its first
+    /// instant, and the second one is the first instant after its last one.
+    const YEAR_0001_SECONDS_BEFORE: u64 = 62_135_596_800;
+    const YEAR_10000_SECONDS_AFTER: u64 = 253_402_300_800;
+
+    /// A count of seconds that is far outside the range of the time type and
+    /// inside the range of the clock of a host: 2^62.
+    const FAR_SECONDS: u64 = 1 << 62;
+
+    /// The stamp of the first instant of the time type and the stamp of its
+    /// last one.
+    const FIRST_STAMP: &str = "0001-01-01T00:00:00.000Z";
+    const LAST_STAMP: &str = "9999-12-31T23:59:59.999Z";
+
     /// Each control of the bidirectional algorithm of Unicode: the three
     /// marks, then the two embeddings and the two overrides with their end,
     /// then the three isolates with their end.
@@ -569,6 +546,58 @@ mod tests {
             let line = format_line(UNIX_EPOCH - before, Level::Info, "probe", "m");
 
             assert_eq!(line, format!("{stamp} INFO probe m"));
+        }
+    }
+
+    #[test]
+    fn a_time_outside_the_years_0001_to_9999_has_the_stamp_of_the_nearest_bound() {
+        let first = UNIX_EPOCH - Duration::from_secs(YEAR_0001_SECONDS_BEFORE);
+        let after_last = UNIX_EPOCH + Duration::from_secs(YEAR_10000_SECONDS_AFTER);
+        let table: [(SystemTime, &str); 8] = [
+            // The two bounds are inside the range.
+            (first, FIRST_STAMP),
+            (after_last - Duration::from_nanos(1), LAST_STAMP),
+            // A time before the first instant.
+            (first - Duration::from_nanos(1), FIRST_STAMP),
+            (first - Duration::from_secs(1), FIRST_STAMP),
+            (UNIX_EPOCH - Duration::from_secs(FAR_SECONDS), FIRST_STAMP),
+            // A time after the last instant.
+            (after_last, LAST_STAMP),
+            (after_last + Duration::from_secs(1), LAST_STAMP),
+            (UNIX_EPOCH + Duration::from_secs(FAR_SECONDS), LAST_STAMP),
+        ];
+
+        for (at, stamp) in table {
+            let line = format_line(at, Level::Info, "probe", "m");
+
+            assert_eq!(line, format!("{stamp} INFO probe m"), "{at:?}");
+        }
+    }
+
+    #[test]
+    fn the_two_ends_of_the_clock_of_the_host_have_the_stamp_of_a_bound() {
+        let seconds = u64::try_from(i64::MAX).unwrap();
+        let ends = [
+            (
+                UNIX_EPOCH.checked_sub(Duration::new(seconds, 0)),
+                FIRST_STAMP,
+            ),
+            (
+                UNIX_EPOCH.checked_add(Duration::new(seconds, 999_999_999)),
+                LAST_STAMP,
+            ),
+        ];
+
+        for (end, stamp) in ends {
+            let Some(at) = end else {
+                // The clock of this host holds no such time.
+                continue;
+            };
+
+            assert_eq!(
+                format_line(at, Level::Info, "probe", "m"),
+                format!("{stamp} INFO probe m")
+            );
         }
     }
 
