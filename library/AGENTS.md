@@ -68,7 +68,7 @@ corpus untouched.
 The image build needs `--build-arg AGENT_LAN_ADDRESS=<address>`. A sandbox
 has no site file, so the build fixes the embedder's address.
 
-`index-scope` returns one of three statuses:
+`index-scope` sets three statuses:
 
 | Status | Cause |
 |---|---|
@@ -76,10 +76,10 @@ has no site file, so the build fixes the embedder's address.
 | 2 | The program refuses its command line: a wrong count of words, an unknown profile, or a corpus path that is no directory. A preflight that fails has this status too. |
 | 78 | The environment names no address of TEI. 78 is `EX_CONFIG`, the status of a config that is not valid. |
 
-The program reads its command line before its environment. Each other run
-that the program does not complete ends with a status that is not 0. Each
-index unit is a `oneshot` unit of a timer, so no unit starts the program
-again because of a status.
+The program reads its command line before its environment. A run that ends
+in another way has a status that is not 0. Two examples are a signal and a
+store file that the program cannot read. Each index unit is a `oneshot` unit
+of a timer, so no unit starts the program again because of a status.
 
 ## The answers of TEI
 
@@ -112,7 +112,8 @@ docstring of `src/library/strictjson.py` holds the rules of a strict text.
 uv run pytest library/tests
 ```
 
-A fake embedder. No TEI, no sandbox.
+A fake embedder. No TEI, no sandbox. The tests of the TEI client give
+`httpx` a mock transport, so no test opens a socket.
 
 ## Known gaps
 
