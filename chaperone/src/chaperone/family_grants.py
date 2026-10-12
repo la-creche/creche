@@ -55,6 +55,10 @@ DEFAULT_MAX_INFLIGHT_DELEGATIONS: Final = 2
 DEFAULT_MAX_OPEN_GATES: Final = 10
 
 _ServerName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{1,30}$")]
+#: A tool name has 64 characters at most. The validator of a family file and
+#: of a server file has the same cap (`agent_family.grammar.TOOL_NAME_FORM`),
+#: and root has it too (`handover.mcpserver.TOOL_NAME_RE`). The id vectors
+#: record the three copies, and a Rust test fails when two of them differ.
 _ToolName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$", max_length=64)]
 _ActionName = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 _VerbName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
