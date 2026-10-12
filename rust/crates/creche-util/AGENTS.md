@@ -124,11 +124,6 @@ function of the caller.
   header value with it. It is a second copy of the set. A change to `ids`
   needs the owner of the crate (`rust/AGENTS.md`, "Where a new type goes").
   No packet has this change yet.
-- `py_strip` in `crates/agent-family/src/yaml/construct.rs` holds a white
-  space set of its own. It trims a text before the reader makes a number of
-  that text. The rule for a number is not the rule of `pytext::strip`. The
-  module doc of `pytext` gives the difference. No packet changes `py_strip`
-  yet.
 - Two base64 decoders stay outside this crate. Each one reads a `!!binary`
   value of YAML by a rule of Python, and that rule is not the rule of
   `base64::decode`. `decode_base64` is in

@@ -10,6 +10,8 @@
 
 use std::collections::HashMap;
 
+use creche_util::pytext;
+
 use super::compose::{Composer, Content, NodeId, tag};
 use super::mark::{Mark, marked};
 use super::text::repr_str;
@@ -754,11 +756,6 @@ fn key_class(obj: &Obj) -> Option<KeyClass> {
 
 // --- scalars ---
 
-/// The spaces that Python strips from a text before it reads a number.
-fn py_strip(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
-}
-
 fn construct_bool(value: &str) -> Result<Obj, LoadError> {
     match value.to_lowercase().as_str() {
         "yes" | "true" | "on" => Ok(Obj::Bool(true)),
@@ -842,7 +839,7 @@ fn magnitude_of(text: &str, base: u32) -> Result<Magnitude, LoadError> {
 /// on a quoted text. This reader refuses such a digit. To read such a digit
 /// costs a table of the decimal digits of Unicode here.
 fn py_int(text: &str, base: u32) -> Result<(Sign, Magnitude), LoadError> {
-    let text = py_strip(text);
+    let text = pytext::number_strip(text);
     let sign = Sign::of(text);
     let text = text.strip_prefix(['+', '-']).unwrap_or(text);
     let prefixes: &[&str] = match base {
@@ -937,7 +934,7 @@ fn base60_int(sign: Sign, value: &str) -> Result<Int, LoadError> {
 /// CONTRACT-QUESTION: as for [`py_int`], this reader refuses a decimal digit
 /// that is not ASCII. A change costs the same table.
 fn py_float(text: &str) -> Result<f64, LoadError> {
-    let text = py_strip(text);
+    let text = pytext::number_strip(text);
     let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
     let word = unsigned.to_ascii_lowercase();
     let number = unsigned
@@ -1254,8 +1251,8 @@ fn construct_timestamp(value: &str) -> Result<Obj, LoadError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Date, DateTime, Obj, construct_float, construct_int, construct_timestamp, decode_base64,
-        instant, key_class, load_all, whole_number,
+        Date, DateTime, LoadError, Obj, construct_float, construct_int, construct_timestamp,
+        decode_base64, instant, key_class, load_all, whole_number,
     };
 
     fn int_text(value: &str) -> Option<String> {
@@ -1389,6 +1386,8 @@ mod tests {
             ("99999999999999999999999", "99999999999999999999999"),
             ("0xFFFFFFFFFFFFFFFFFFFF", "1208925819614629174706175"),
             ("1_0:5", "605"),
+            // A space outside ASCII leaves the two ends of the text.
+            ("\u{a0}12\u{3000}", "12"),
         ];
         for (text, wanted) in cases {
             assert_eq!(int_text(text).as_deref(), Some(wanted), "{text}");
@@ -1420,6 +1419,8 @@ mod tests {
             ("-1:00.", -60.0),
             (".inf", f64::INFINITY),
             ("-.INF", f64::NEG_INFINITY),
+            // A space outside ASCII leaves the two ends of the text.
+            (" 1.5\u{2028}", 1.5),
         ];
         for (text, wanted) in cases {
             assert_eq!(
@@ -1432,6 +1433,43 @@ mod tests {
         assert_eq!(construct_float(".NaN").ok(), Some(Obj::SharedNan));
         assert_eq!(construct_float("abc").ok(), None);
         assert_eq!(construct_float("").ok(), None);
+    }
+
+    /// `int` and `float` of Python do not remove the four separators U+001C
+    /// to U+001F around a number: `creche_util::pytext::number_strip` holds
+    /// that rule. A separator is thus a character that is no digit, and the
+    /// text has no value.
+    #[test]
+    fn a_separator_at_an_end_of_a_number_is_a_character_that_is_no_digit() {
+        let no_integer =
+            LoadError::Unreadable("an integer holds a character that is no digit".to_owned());
+        // One row for each form of an integer: decimal, base 16 and base 60.
+        for text in ["\u{1c}5", "5\u{1f}", "0x\u{1d}1F", "1:\u{1e}30"] {
+            assert_eq!(
+                construct_int(text).err(),
+                Some(no_integer.clone()),
+                "{text:?}"
+            );
+        }
+
+        let no_float =
+            LoadError::Unreadable("a float holds a character that is no digit".to_owned());
+        for text in ["\u{1c}5.5", "5.5\u{1f}"] {
+            assert_eq!(
+                construct_float(text).err(),
+                Some(no_float.clone()),
+                "{text:?}"
+            );
+        }
+
+        // A file gives such a text with a tag and an escape in quotes.
+        assert_eq!(load_all("!!int \"\\x1c5\"\n").err(), Some(no_integer));
+        assert_eq!(load_all("!!float \"5.5\\x1f\"\n").err(), Some(no_float));
+
+        let documents = load_all("!!int \"\\xa012\\u3000\"\n").unwrap();
+        let twelve = Obj::Int(construct_int("12").unwrap());
+
+        assert_eq!(documents.first().unwrap().obj(), &twelve);
     }
 
     #[test]

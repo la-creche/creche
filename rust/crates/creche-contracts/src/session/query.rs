@@ -16,29 +16,21 @@ fn bad(message: impl Into<String>) -> ApiError {
     ApiError::new(ErrorCode::BadRequest, message)
 }
 
-/// The white space that Python's `int` drops around a number: the white space
-/// of C in ASCII, and each white space character outside ASCII.
-fn is_int_space(character: char) -> bool {
-    match character {
-        ' ' | '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' => true,
-        _ => !character.is_ascii() && character.is_whitespace(),
-    }
-}
-
 /// The digit separator that Python's `int` permits between two digits.
 const UNDERSCORE: u8 = b'_';
 
 /// The whole number that Python's `int` reads from a text. `None` for a text
 /// that it refuses.
 ///
-/// The text can have white space around it and one sign. One underscore can
-/// stand between two digits. A number has 4300 digits at most. A number
-/// outside `i128` becomes the nearest end of `i128`.
+/// The text can have white space around it and one sign. That white space is
+/// the set of `pytext::number_strip`. One underscore can stand between two
+/// digits. A number has 4300 digits at most. A number outside `i128` becomes
+/// the nearest end of `i128`.
 ///
 /// Python reads a decimal digit of each script. This function reads the
 /// digits 0 to 9 only (`rust/AGENTS.md`, rule 9).
 fn python_int(text: &str) -> Option<i128> {
-    let trimmed = text.trim_matches(is_int_space);
+    let trimmed = pytext::number_strip(text);
     let (negative, digits) = match trimmed.strip_prefix('-') {
         Some(digits) => (true, digits),
         None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
