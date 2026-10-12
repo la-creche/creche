@@ -224,7 +224,8 @@ Each line is an open contract question and the module it lives in.
 - A deleted family keeps its fault and one `stat` per sweep until restart
   (`family_grants.py`, `fault_sweep.py`).
 - A request that resolves to no family goes to `PEP_AUDIT_DIR` in a shape of
-  its own (`app.py`).
+  its own (`app.py`). The second key of each line there is `family`, and its
+  value is `null`: no family matched the request.
 - The chaperone holds no `CAP_KILL`, so an MCP server that ignores stdin EOF
   outlives its retirement until the unit stops (`mcp_client.py`, `run_as.py`).
 - A call held at a gate across a reload runs under the fences its decision
