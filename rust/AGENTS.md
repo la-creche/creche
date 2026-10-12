@@ -1417,11 +1417,12 @@ nightly toolchain. The variable `RUSTUP_TOOLCHAIN` of the workflow names that
 toolchain by its date. Do not name a nightly in `rust-toolchain.toml`.
 
 The job takes `cargo-llvm-cov` through the action
-`.github/actions/cargo-llvm-cov`, as the `rust-coverage` job does. Only that
-action holds the version of the tool and the SHA-256 of its archive. The
-nightly job and the `rust-coverage` job thus measure with one tool version.
-`bin/tests/test_gate_workflow.py` pins the date and the action. It fails when
-a workflow file holds a copy of the two values.
+`.github/actions/cargo-llvm-cov`, as the `rust-coverage` job does. Under
+`.github/`, only that action holds the version of the tool and the SHA-256
+of its archive, as two constants. The nightly job and the `rust-coverage`
+job thus measure with one tool version. `bin/tests/test_gate_workflow.py`
+pins the date and the action. It fails when another file under `.github/`
+holds the name of one of the two constants.
 
 The job blocks no merge and no release, because the check `gate` does not
 need it. A pull request that breaks the fifth check can thus merge. The next
