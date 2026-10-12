@@ -300,6 +300,11 @@ directory is not a workspace package, so a change here does not change
 - `runtime.time` takes each text of `TIMES` in `surfaces/session_cases.py`,
   and more texts from a list of its own. A text that enters `TIMES` thus
   also enters `runtime.time`.
+- `runtime.time` holds two of the five forms on which
+  `datetime.fromisoformat` differs between versions: a fraction with no
+  digit, and hour 24. The pattern of the time reader refuses each of the
+  two before `datetime.fromisoformat` gets the text. Each supported Python
+  version thus gives the same result for them.
 - Two token readers are private functions: `_read_token` of
   `attendance.auth` and `_read_key` of `agent_door_owui.config`. A
   `runtime.token` surface calls the public caller of each one:

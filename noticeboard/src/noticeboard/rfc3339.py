@@ -1,7 +1,7 @@
 """The one reader of a time text: the `date-time` of RFC 3339, section 5.6.
 
-`parse` gives the instant of a text as an aware `datetime` in UTC. For each
-other text it gives `None`. It raises for no text.
+`parse` gives the instant of a time text as an aware `datetime` in UTC. For
+each other text it gives `None`. No text makes it raise an exception.
 
 A time has these parts, in this sequence, and no other character:
 
