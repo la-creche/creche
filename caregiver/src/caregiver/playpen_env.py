@@ -11,6 +11,8 @@ both gaps:
         AGENT_FAMILY_CONFIG_DIR=.../families/<family>/config
         AGENT_CONTROL_DIR=.../families/<family>/control/<family>-s<N>
         AGENT_SANDBOX=<family>-s<N>
+        AGENT_PEP_URL=http://<host>:<port>
+        AGENT_LITELLM_BASE_URL=http://<host>:<port>
 
 One file per SANDBOX, not per family: it names the sandbox id and that
 sandbox's own control directory, and contract 05 §5 keeps the outgoing
@@ -20,8 +22,13 @@ It sits BESIDE the control directory, not inside it: a create empties the
 sandbox's control directory (contract 05 §4.3 rule 5), and that directory
 is mounted read-write into the untrusted sandbox.
 
-It holds no secret. Every value is a path or an identifier, which is why
-mode 0640 is enough and `creds.json` still needs 0600 (invariant 13)."""
+The last two lines name the two planes, the services of the host that each
+sandbox calls: the chaperone and LiteLLM. The caller gives the two URLs.
+This module holds no address and no port.
+
+It holds no secret. Every value is a path, an identifier or the URL of a
+plane, which is why mode 0640 is enough and `creds.json` still needs 0600
+(invariant 13)."""
 
 from __future__ import annotations
 
@@ -42,21 +49,38 @@ CONFIG_DIR_VAR: Final = "AGENT_FAMILY_CONFIG_DIR"
 CONTROL_DIR_VAR: Final = "AGENT_CONTROL_DIR"
 # Contract 05 §4.1.1's spelling.
 SANDBOX_VAR: Final = "AGENT_SANDBOX"
+#: The names `playpen/src/planes.ts` reads: the URL of the chaperone and the
+#: base URL of LiteLLM.
+PEP_URL_VAR: Final = "AGENT_PEP_URL"
+LITELLM_BASE_URL_VAR: Final = "AGENT_LITELLM_BASE_URL"
 
 _ASSIGN: Final = "="
 
 
-def write_playpen_env(path: Path, *, state_root: Path, family: str, sandbox: str) -> None:
+def write_playpen_env(
+    path: Path,
+    *,
+    state_root: Path,
+    family: str,
+    sandbox: str,
+    pep_url: str,
+    litellm_base_url: str,
+) -> None:
     """Write the file for one sandbox. Called once per create.
 
     Each directory is written as its HOST path, because that is also its
     path inside the VM. Nothing here rewrites a path into a `/run/...`
-    target: no such directory exists under sbx."""
+    target: no such directory exists under sbx.
+
+    `pep_url` and `litellm_base_url` are the URLs of the two planes. Each
+    one goes into the file as the caller gave it."""
     lines = [
         f"{CRED_DIR_VAR}{_ASSIGN}{paths.creds_dir(state_root, family)}",
         f"{CONFIG_DIR_VAR}{_ASSIGN}{paths.config_dir(state_root, family)}",
         f"{CONTROL_DIR_VAR}{_ASSIGN}{paths.control_dir(state_root, family, sandbox)}",
         f"{SANDBOX_VAR}{_ASSIGN}{sandbox}",
+        f"{PEP_URL_VAR}{_ASSIGN}{pep_url}",
+        f"{LITELLM_BASE_URL_VAR}{_ASSIGN}{litellm_base_url}",
     ]
     body = ("\n".join(lines) + "\n").encode("utf-8")
     atomic_write(path, body, mode=PLAYPEN_ENV_MODE)

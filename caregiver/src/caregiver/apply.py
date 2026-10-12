@@ -23,6 +23,7 @@ from .driver import SandboxDriver
 from .egress import EgressConfig
 from .faults import FaultEntry
 from .images import SandboxImages
+from .lan import Port, url
 from .litellm_keys import LiteLLMKeys
 from .playpen_env import write_playpen_env
 from .sandboxes import SandboxRecord
@@ -329,6 +330,8 @@ def _write_playpen_env(state_root: Path, family_name: str, sandbox: str) -> None
         state_root=state_root,
         family=family_name,
         sandbox=sandbox,
+        pep_url=url(Port.PEP),
+        litellm_base_url=url(Port.LITELLM),
     )
 
 

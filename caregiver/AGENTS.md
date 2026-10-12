@@ -155,6 +155,14 @@ host where something has gone wrong.
 - Never name a fixed in-VM path. `sbx create` mounts a host directory at the
   same path inside the VM. `playpen_env.py` writes the three host paths into
   the env file, per sandbox, beside `control/` and never inside it.
+- The env file of a sandbox has six lines: three host paths, the sandbox id
+  and the URL of each plane. The two plane variables are `AGENT_PEP_URL` and
+  `AGENT_LITELLM_BASE_URL`.
+- Each caller of `write_playpen_env` gives the two URLs, from `lan.url`.
+  `playpen_env.py` holds no address and no port.
+- A sandbox keeps the env file of its create. `caregiver` writes the file
+  again in two cases only: a pass finds the replacement that an earlier pass
+  left, or a person runs `apply-once`.
 - `config_rev` and `applied_rev` are the same value: the registry revision.
 - A webhook's bearer is never logged and never published. The status document
   carries `token_path` alone.

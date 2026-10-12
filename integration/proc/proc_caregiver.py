@@ -90,6 +90,13 @@ WRITE_FLAG: Final = "--write"
 #: §4.3 step 3): LiteLLM and the chaperone, on the LAN address of the site.
 PLANE_ENDPOINTS: Final = (f"{LAN_ADDRESS}:4000", f"{LAN_ADDRESS}:8300")
 
+#: The two plane variables of the env file of a sandbox, each with its URL:
+#: the endpoint of the plane behind `http://`.
+PLANE_URLS: Final = {
+    "AGENT_PEP_URL": f"http://{PLANE_ENDPOINTS[1]}",
+    "AGENT_LITELLM_BASE_URL": f"http://{PLANE_ENDPOINTS[0]}",
+}
+
 #: The three hosts that each sandbox must not reach (contract 05 §4.3 step 2).
 CANARIES: Final = ("example.com:443", "openrouter.ai", f"{LAN_ADDRESS}:8181")
 

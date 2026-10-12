@@ -2948,6 +2948,13 @@ adds a crate:
       byte. The port has no sign and no zero at its start. A host name
       keeps its letter case. No Python reader holds this grammar, so no
       vector covers the type.
+  15. `mounts::PlaypenEnv`, contract 03 §7 and §7.1. The first section gives
+      the two plane URLs as fixed values. The second section names four
+      variables of the env file. No contract says what a reader does with an
+      env file that sets no plane variable. The type demands the two plane
+      variables, so the conversion refuses a file of four lines. A sandbox
+      keeps the env file of its create, so a host can hold such a file. The
+      other reading costs two `Option` fields.
 - No type reads the text of a roster file, and no type writes it. PyYAML
   reads YAML 1.1, and no Rust YAML reader is in the workspace. The owner of
   the crate selects one. `roster::RawRoster` then takes its tree.

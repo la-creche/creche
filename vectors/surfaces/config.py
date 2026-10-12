@@ -791,6 +791,10 @@ PLAYPEN_ENV_CONTRACT: Final = "contract 03 §7.1"
 
 _STATE_ROOT: Final = "/srv/agents/state/rework"
 
+#: The URL of each plane in an env file, on a TEST-NET-1 address (RFC 5737).
+_PEP_URL: Final = "http://192.0.2.10:8300"
+_LITELLM_BASE_URL: Final = "http://192.0.2.10:4000"
+
 
 @dataclass(frozen=True)
 class EnvWrite:
@@ -800,6 +804,8 @@ class EnvWrite:
     state_root: str = _STATE_ROOT
     family: str = "chat"
     sandbox: str = "chat-s3"
+    pep_url: str = _PEP_URL
+    litellm_base_url: str = _LITELLM_BASE_URL
 
 
 ENV_WRITES: Final[tuple[EnvWrite, ...]] = (
@@ -817,12 +823,23 @@ ENV_WRITES: Final[tuple[EnvWrite, ...]] = (
 
 
 def _env_write_vector(write: EnvWrite, scratch: Path) -> Vector:
-    args = {"state_root": write.state_root, "family": write.family, "sandbox": write.sandbox}
+    args = {
+        "state_root": write.state_root,
+        "family": write.family,
+        "sandbox": write.sandbox,
+        "pep_url": write.pep_url,
+        "litellm_base_url": write.litellm_base_url,
+    }
     given: dict[str, Json] = {"args": normalize(args)}
     target = scratch / "write" / write.id / "supervisor.env"
     outcome = attempt(
         lambda: playpen_env.write_playpen_env(
-            target, state_root=Path(write.state_root), family=write.family, sandbox=write.sandbox
+            target,
+            state_root=Path(write.state_root),
+            family=write.family,
+            sandbox=write.sandbox,
+            pep_url=write.pep_url,
+            litellm_base_url=write.litellm_base_url,
         )
     )
     if isinstance(outcome, Raised):
@@ -844,6 +861,8 @@ _ENV_FILE: Final = (
     f"AGENT_FAMILY_CONFIG_DIR={_STATE_ROOT}/families/chat/config\n"
     f"AGENT_CONTROL_DIR={_STATE_ROOT}/families/chat/control/chat-s3\n"
     "AGENT_SANDBOX=chat-s3\n"
+    f"AGENT_PEP_URL={_PEP_URL}\n"
+    f"AGENT_LITELLM_BASE_URL={_LITELLM_BASE_URL}\n"
 )
 
 ENV_TEXTS: Final[tuple[EnvText, ...]] = (
@@ -883,8 +902,9 @@ def _playpen_env_surfaces(scratch: Path) -> tuple[Surface, ...]:
             entry="caregiver.playpen_env.write_playpen_env",
             contract=PLAYPEN_ENV_CONTRACT,
             notes=(
-                "The input is the three named arguments of the entry point, as args. "
-                "state_root is a path.",
+                "The input is the five named arguments of the entry point, as args. "
+                "state_root is a path. pep_url and litellm_base_url are the URLs of the "
+                "two planes.",
                 "output is the exact bytes of the file that the entry point writes.",
                 "The entry point checks no argument.",
             ),
