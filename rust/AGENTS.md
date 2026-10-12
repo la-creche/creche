@@ -530,16 +530,21 @@ a strict text too. The crate `creche-vectors` reads it and does not use
 gaps" names the packet that moves each module to the two.
 Until then, these parts stay:
 
-- Five older functions format a float: `float_text` of `channel`, of
-  `status` and of `manifest`, `float_repr` of `grants`, and
-  `python_float_text` of `family`. Add no user of them. The packets
-  `decisions-raw-serde-*` delete the first four. No packet has the fifth
-  one yet.
+- Four older functions format a float: `float_text` of `channel`, of
+  `status` and of `manifest`, and `float_repr` of `grants`. Add no user of
+  them. The packets `decisions-raw-serde-*` delete them.
 - The `session` module writes the body of a stored journal line as the text
   of the journal file. That text is a `RawValue`. A function that only this
   crate can call keeps such a text: `write_raw_kept`. The writer counts no
   level of that text and compares none of its keys. Add no second user of
   the function. No packet deletes `write_raw_kept` yet.
+
+`python_float_text` of `family` gives the text that `repr` of Python gives
+for a float. It holds no code that formats a float. For a finite float, it
+returns the text of the one function that formats a float, in
+`src/json/write.rs`. The writer refuses a float that is not finite. The
+function thus adds the three words of `repr` for such a float: `nan`, `inf`
+and `-inf`.
 
 ## TOML
 
