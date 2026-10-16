@@ -17,8 +17,10 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
-from agent_family import FamilyState, SwitchMode, load_registry
+from agent_family import FamilyState, Markup, SwitchMode, load_registry
+from agent_family.registry import FAMILY_FILE, FAMILY_FILE_YAML
 from caregiver.applied import read_applied, write_applied
+from caregiver.atomic import atomic_write
 from caregiver.clock import seconds_from_now
 from caregiver.driver import DriverError, FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
@@ -35,8 +37,9 @@ from caregiver.reconcile import (
 )
 from caregiver.switch import FakeSwitchClient, SwitchRequest
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_no_file_dir, write_registry
+from caregiver_helpers import FAMILY_TOML, write_no_file_dir, write_registry
 
+from caregiver import applied as applied_module
 from caregiver import paths, sandboxes
 
 FAMILY: str = "chat"
@@ -198,7 +201,9 @@ def family_text(fleet: Fleet) -> str:
 def roll_back(fleet: Fleet, *, rev: str, text: str) -> None:
     """Put the applied snapshot back where a crash would have left it: the
     steps ran, the snapshot did not move."""
-    write_applied(fleet.state_root, FAMILY, rev=rev, image=IMAGE, family_text=text)
+    write_applied(
+        fleet.state_root, FAMILY, rev=rev, image=IMAGE, family_text=text, markup=Markup.YAML
+    )
 
 
 # --- a first pass brings the family up ------------------------------------------
@@ -1145,3 +1150,90 @@ def test_a_stopped_pass_with_no_slow_step_to_run_is_a_whole_pass(fleet: Fleet) -
 
     assert result.halted is False
     assert result.status.state is FamilyState.IN_SYNC
+
+
+# --- the applied copy keeps the name of the format of the registry file ----------
+
+
+def copy_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Each path that the applied snapshot writes from now on, in order."""
+    written: list[Path] = []
+
+    def record(path: Path, data: bytes, *, mode: int) -> None:
+        written.append(path)
+        atomic_write(path, data, mode=mode)
+
+    monkeypatch.setattr(applied_module, "atomic_write", record)
+    return written
+
+
+def to_toml(fleet: Fleet) -> str:
+    """Replace the YAML registry file of the family with a TOML file of
+    equal value. Give the TOML text."""
+    directory = fleet.registry_root / "families" / FAMILY
+    (directory / FAMILY_FILE_YAML).unlink()
+    (directory / FAMILY_FILE).write_text(FAMILY_TOML, encoding="utf-8")
+    return FAMILY_TOML
+
+
+def test_a_toml_registry_file_of_equal_value_moves_the_copy_to_its_name(
+    fleet: Fleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The YAML copy and the TOML registry file hold one value, so the pass
+    changes nothing. It writes the TOML copy one time, and the YAML copy is
+    then gone."""
+    fleet.run()
+    toml_text = to_toml(fleet)
+    written = copy_writes(monkeypatch)
+    fleet.forget_calls()
+
+    result = fleet.run()
+
+    assert result.note == "no change"
+    assert result.status.state is FamilyState.IN_SYNC
+    assert fleet.ops() == ()
+    toml_copy = paths.applied_family_path(fleet.state_root, FAMILY, Markup.TOML)
+    yaml_copy = paths.applied_family_path(fleet.state_root, FAMILY, Markup.YAML)
+    assert [one for one in written if one.parent == toml_copy.parent] == [
+        toml_copy,
+        paths.applied_meta_path(fleet.state_root, FAMILY),
+    ]
+    assert toml_copy.read_text(encoding="utf-8") == toml_text
+    assert not yaml_copy.exists()
+
+
+def test_a_pass_after_the_move_reads_the_toml_copy(fleet: Fleet) -> None:
+    """The next pass diffs the TOML registry file against the TOML copy."""
+    fleet.run()
+    to_toml(fleet)
+    fleet.run()
+    fleet.forget_calls()
+
+    result = fleet.run()
+
+    assert result.note == "no change"
+    assert fleet.ops() == ()
+    applied = read_applied(fleet.state_root, FAMILY)
+    assert applied is not None
+    assert applied.rev == result.status.registry_rev
+
+
+def test_a_yaml_copy_and_a_yaml_registry_file_act_as_before(
+    fleet: Fleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The YAML copy keeps its name, and no TOML copy appears."""
+    fleet.run()
+    written = copy_writes(monkeypatch)
+    fleet.forget_calls()
+
+    result = fleet.run()
+
+    assert result.note == "no change"
+    assert fleet.ops() == ()
+    yaml_copy = paths.applied_family_path(fleet.state_root, FAMILY, Markup.YAML)
+    assert [one for one in written if one.parent == yaml_copy.parent] == [
+        yaml_copy,
+        paths.applied_meta_path(fleet.state_root, FAMILY),
+    ]
+    assert yaml_copy.read_text(encoding="utf-8") == family_text(fleet)
+    assert not paths.applied_family_path(fleet.state_root, FAMILY, Markup.TOML).exists()

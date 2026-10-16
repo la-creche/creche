@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from agent_family import FamilyFile, Index, load_registry
+from agent_family import FamilyFile, Index, Markup, load_registry
 from caregiver.applied import write_applied
 from caregiver.credentials import Credentials, read_creds, token_sha256, write_creds
 from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, Spend, key_alias
@@ -290,7 +290,14 @@ def test_a_settle_with_no_grant_file_leaves_the_overlap_on_record(
 
 def applied(state_root: Path) -> None:
     """The default `chat` family as the snapshot of a pass that succeeded."""
-    write_applied(state_root, FAMILY, rev="reg-1", image="sha256:abc", family_text=family_yaml())
+    write_applied(
+        state_root,
+        FAMILY,
+        rev="reg-1",
+        image="sha256:abc",
+        family_text=family_yaml(),
+        markup=Markup.YAML,
+    )
 
 
 def serving(tmp_path: Path, state_root: Path) -> FamilyFile:
@@ -331,7 +338,12 @@ def test_a_family_the_registry_does_not_hold_has_no_serving_definition(
 
 def test_a_snapshot_under_another_name_serves_nobody(tmp_path: Path, state_root: Path) -> None:
     write_applied(
-        state_root, FAMILY, rev="reg-1", image="sha256:abc", family_text=family_yaml(name="ops")
+        state_root,
+        FAMILY,
+        rev="reg-1",
+        image="sha256:abc",
+        family_text=family_yaml(name="ops"),
+        markup=Markup.YAML,
     )
     registry = load_registry(write_registry(tmp_path / "registry"))
     assert serving_family(registry, FAMILY, state_root=state_root) is None

@@ -37,6 +37,7 @@ from agent_family import (
     FamilyState,
     Index,
     Issue,
+    Markup,
     Registry,
     Report,
     Severity,
@@ -44,6 +45,7 @@ from agent_family import (
     SwitchMode,
     classify,
 )
+from agent_family.registry import FAMILY_FILE
 
 from . import paths, sandboxes, steps
 from .applied import AppliedState, read_applied, write_applied
@@ -474,12 +476,14 @@ def _converge(
     # fault, and a fault is not done. The second half is what lets the
     # type say so.
     if done and image is not None:
+        text, markup = _family_text(registry, report)
         write_applied(
             state_root,
             family.name,
             rev=registry.revision,
             image=image,
-            family_text=_family_text(registry, family.name),
+            family_text=text,
+            markup=markup,
             model_live_at=settled,
         )
 
@@ -1111,8 +1115,13 @@ def _config_text(registry: Registry, family: FamilyFile) -> tuple[str, dict[str,
     return _text(registry.instructions(family.name)), skills
 
 
-def _family_text(registry: Registry, family_name: str) -> str:
-    return _text(registry.root / "families" / family_name / "family.yaml")
+def _family_text(registry: Registry, report: Report) -> tuple[str, Markup]:
+    """The text of the family file that the loader read, and its markup.
+    The report of the family names that file. The loader names the TOML
+    file when it is there, else the YAML file."""
+    path = registry.root / report.file
+    markup = Markup.TOML if path.name == FAMILY_FILE else Markup.YAML
+    return _text(path), markup
 
 
 def _text(path: Path) -> str:
