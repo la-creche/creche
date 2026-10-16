@@ -23,8 +23,9 @@
 # `artifacts` is a fourth answer on the same change: `true` when the change
 # touches an input of the archive of a binary component, and `false` when it
 # does not (bin/lib/artifactrule.sh). Each change that `rust` counts counts
-# here too. So does the manifest of a component, a path under handover/ and
-# the script that builds. A change the rule cannot read answers `true`.
+# here too. So does the manifest of a component, a path under handover/, the
+# script that builds and the reader of its rows. A change the rule cannot
+# read answers `true`.
 name: scope
 description: Say whether the pull request changes docs only or code
 

@@ -2537,8 +2537,9 @@ SCOPES = [
     (["handover/AGENTS.md"], ("docs", "false", "false", "true")),
     (['handover/src/handover/one "x".py'], ("code", "false", "false", "true")),
     (["handover-notes.txt"], ("code", "false", "false", "false")),
-    # The script that builds, and the rule itself.
+    # The script that builds, the reader of its rows, and the rule itself.
     (["bin/build-artifacts.sh"], ("code", "false", "false", "true")),
+    (["bin/lib/artifactrows.sh"], ("code", "false", "false", "true")),
     (["bin/lib/artifactrule.sh"], ("code", "false", "false", "true")),
     # The probe uses the build script, and no archive of a release holds a
     # file of the probe.

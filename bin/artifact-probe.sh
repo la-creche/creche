@@ -9,7 +9,8 @@
 #
 # The probe uses the real parts. `handover artifacts --crate-row` gives the
 # row of the crate: the target, the names of the two assets, the install
-# variable and the build words. bin/build-artifacts.sh builds, walks and
+# variable and the build words. bin/lib/artifactrows.sh reads the row, the
+# one reader of that line form. bin/build-artifacts.sh builds, walks and
 # packs with that row, as the job `artifacts` of release.yml does for a
 # binary component. `handover artifacts --verify-words` gives the words of
 # each check, as the tag script and root use them. So the probe holds no copy
@@ -131,6 +132,9 @@ UNKNOWN="unknown"
 
 #: The `handover` command, as bin/build-artifacts.sh starts it.
 SELF_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+
+# shellcheck source=lib/artifactrows.sh
+. "$SELF_ROOT/bin/lib/artifactrows.sh"
 if [[ -n "${RELEASE_CLI:-}" ]]; then
   # shellcheck disable=SC2206
   CLI=(${RELEASE_CLI})
@@ -186,69 +190,33 @@ value() {
   note "$1: $2"
 }
 
-#: What the probe reads from the row of the crate.
-ROW_TARGET=""
-ROW_ARCHIVE=""
-ROW_BUNDLE=""
-ROW_ENV=""
-ROW_WORDS=()
-
-#: The grammar of a name that goes into a path or a command line.
-PLAIN_NAME='^[A-Za-z0-9][A-Za-z0-9._-]*$'
-
 # read_row FILE: asks `handover artifacts --crate-row` for the row of the
-# crate and writes it to FILE. Then it reads the target, the names of the
-# two assets, the install variable and the one build command from the row.
-# Status 1 for a command that fails and for a row in another form.
+# crate and writes it to FILE. bin/lib/artifactrows.sh reads the file into
+# its arrays. The file holds exactly one row: the row of the crate, with one
+# command. Status 1, with the reason in ROWS_FAULT, for a command that fails
+# and for each other text.
 read_row() {
-  local file="$1" line key value pending=0 commands=0
+  local file="$1"
 
-  "${CLI[@]}" artifacts --crate-row "$COMPONENT" --crate-dir "$CRATE_DIR" \
-    < /dev/null > "$file" || return 1
+  if ! "${CLI[@]}" artifacts --crate-row "$COMPONENT" --crate-dir "$CRATE_DIR" \
+    < /dev/null > "$file"; then
+    ROWS_FAULT="the command failed"
+    return 1
+  fi
 
-  ROW_TARGET=""
-  ROW_ARCHIVE=""
-  ROW_BUNDLE=""
-  ROW_ENV=""
-  ROW_WORDS=()
-  while IFS= read -r line; do
-    if [[ "$pending" -gt 0 ]]; then
-      ROW_WORDS+=("$line")
-      pending=$((pending - 1))
-      continue
-    fi
-
-    key="${line%% *}"
-    value="${line#* }"
-    case "$key" in
-      target)
-        [[ -z "$ROW_TARGET" ]] || return 1
-        ROW_TARGET="$value"
-        ;;
-      archive)
-        [[ -z "$ROW_ARCHIVE" ]] || return 1
-        ROW_ARCHIVE="$value"
-        ;;
-      bundle)
-        [[ -z "$ROW_BUNDLE" ]] || return 1
-        ROW_BUNDLE="$value"
-        ;;
-      install-env)
-        [[ -z "$ROW_ENV" ]] || return 1
-        ROW_ENV="$value"
-        ;;
-      argv)
-        [[ "$commands" -eq 0 && "$value" =~ ^[1-9][0-9]{0,3}$ ]] || return 1
-        pending="$value"
-        commands=1
-        ;;
-    esac
-  done < "$file"
-
-  [[ "$pending" -eq 0 && "$commands" -eq 1 ]] || return 1
-  [[ "$ROW_TARGET" =~ $PLAIN_NAME && "$ROW_ARCHIVE" =~ $PLAIN_NAME ]] || return 1
-  [[ "$ROW_BUNDLE" =~ $PLAIN_NAME && "$ROW_ENV" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
-  [[ -n "${ROW_WORDS[0]}" ]]
+  read_rows "$file" || return 1
+  if [[ "${#ROW_COMPONENT[@]}" -ne 1 ]]; then
+    ROWS_FAULT="the text holds ${#ROW_COMPONENT[@]} rows, not 1"
+    return 1
+  fi
+  if [[ "${ROW_COMPONENT[0]}" != "$COMPONENT" ]]; then
+    ROWS_FAULT="the row names another component"
+    return 1
+  fi
+  if [[ "${ROW_COMMANDS[0]}" -ne 1 ]]; then
+    ROWS_FAULT="the row holds ${ROW_COMMANDS[0]} commands, not 1"
+    return 1
+  fi
 }
 
 # bytes_of FILE: the size of FILE.
@@ -282,20 +250,21 @@ run_build() {
 
 # install_plain ROOT: builds the crate into ROOT with no remap flag, from the
 # repository root. The words, the target and the install variable come from
-# the row. cargo reads the toolchain from RUSTUP_TOOLCHAIN: a rustup proxy
-# does not read the toolchain file of rust/ from the repository root. No
-# shell reads a word: the words go to `exec` as a list.
+# the row. The row has one command, so COMMAND_WORD holds its words. cargo
+# reads the toolchain from RUSTUP_TOOLCHAIN: a rustup proxy does not read
+# the toolchain file of rust/ from the repository root. No shell reads a
+# word: the words go to `exec` as a list.
 install_plain() {
   local root="$1"
 
   mkdir -p "$root" || return 1
   (
     unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
-    export "$ROW_ENV=$root"
-    export CARGO_BUILD_TARGET="$ROW_TARGET"
+    export "${ROW_ENV[0]}=$root"
+    export CARGO_BUILD_TARGET="${ROW_TARGET[0]}"
     export RUSTUP_TOOLCHAIN="$TOOLCHAIN"
     export CARGO_INCREMENTAL=0
-    exec -- "${ROW_WORDS[@]}"
+    exec -- "${COMMAND_WORD[@]}"
   ) < /dev/null
 }
 
@@ -363,9 +332,9 @@ build() {
   cd "$workspace" || die "cannot enter the checkout"
 
   # 1. The row of the crate.
-  read_row "$row" || die "handover gave no row of $COMPONENT in the line form"
-  name="$ROW_ARCHIVE"
-  note "target: $ROW_TARGET"
+  read_row "$row" || die "handover gave no row of $COMPONENT in the line form: $ROWS_FAULT"
+  name="${ROW_ARCHIVE[0]}"
+  note "target: ${ROW_TARGET[0]}"
 
   # 2. The real build: bin/build-artifacts.sh with the row. It installs the
   # toolchain of rust/rust-toolchain.toml and the target. It builds from the
@@ -631,18 +600,19 @@ verify() {
   [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
     die "GITHUB_REPOSITORY is not an owner and a repository"
 
-  read_row "$RUNNER_TEMP/probe-row" || die "handover gave no row of $COMPONENT in the line form"
-  name="$ROW_ARCHIVE"
+  read_row "$RUNNER_TEMP/probe-row" ||
+    die "handover gave no row of $COMPONENT in the line form: $ROWS_FAULT"
+  name="${ROW_ARCHIVE[0]}"
   archive="$PROBE_SIGNED/$name"
-  bundle="$PROBE_SIGNED/$ROW_BUNDLE"
+  bundle="$PROBE_SIGNED/${ROW_BUNDLE[0]}"
   copy="$COPY_DIR/$name"
-  copy_bundle="$COPY_DIR/$ROW_BUNDLE"
+  copy_bundle="$COPY_DIR/${ROW_BUNDLE[0]}"
   changed="$copy.changed"
   report="$RUNNER_TEMP/probe-report.json"
   WORDS_FILE="$RUNNER_TEMP/probe-words"
 
   [[ -f "$archive" ]] || die "the job sign gave no file $name"
-  [[ -f "$bundle" ]] || die "the job sign gave no file $ROW_BUNDLE"
+  [[ -f "$bundle" ]] || die "the job sign gave no file ${ROW_BUNDLE[0]}"
 
   # The words of the first check. A command that gives no such words stops
   # the run here, before the first child.
@@ -665,7 +635,7 @@ verify() {
 
   # 2. The words that start each child are RUN, above.
 
-  text target "$ROW_TARGET"
+  text target "${ROW_TARGET[0]}"
   text toolchain "${PROBE_TOOLCHAIN:-$UNKNOWN}"
   text remap_needed "${PROBE_REMAP_NEEDED:-$UNKNOWN}"
 

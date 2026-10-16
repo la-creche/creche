@@ -7,11 +7,10 @@
 #
 # The rows come from `handover artifacts --repo "$ARTIFACT_REPO"`: one row
 # for each binary component of the catalog, with the build commands of its
-# manifest. The line form is `ArtifactRow.lines` of
-# handover/src/handover/artifacts.py. A row holds the component, the target,
-# the names of the two assets, the name of the install variable, three
-# limits and each command, one word on each line. This script holds no copy
-# of a target, a name or a limit.
+# manifest. bin/lib/artifactrows.sh is the one reader of that line form. A
+# row holds the component, the target, the names of the two assets, the
+# name of the install variable, three limits and each command, one word on
+# each line. This script holds no copy of a target, a name or a limit.
 #
 # Variables:
 #   ARTIFACT_REPO       the catalog name of the repository.
@@ -54,6 +53,8 @@ SELF_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 
 # shellcheck source=lib/rustrule.sh
 . "$SELF_ROOT/bin/lib/rustrule.sh"
+# shellcheck source=lib/artifactrows.sh
+. "$SELF_ROOT/bin/lib/artifactrows.sh"
 
 #: The file of the digests, in the output directory.
 DIGEST_FILE="SHA256SUMS"
@@ -66,18 +67,6 @@ OUTPUT_END="END_OF_DIGESTS"
 REMAP_WORKSPACE="/build/workspace"
 REMAP_CARGO_HOME="/build/cargo-home"
 REMAP_TEMP="/build/temp"
-
-#: The keys of a row before its first command, in their order.
-HEAD_KEYS="component target archive bundle install-env max-archive-bytes max-members max-unpacked-bytes"
-
-#: The grammar of a name that goes into a path or a command line: it starts
-#: with a letter or a digit, so no program reads it as an option.
-PLAIN_NAME='^[A-Za-z0-9][A-Za-z0-9._-]*$'
-
-#: The grammar of the name of a variable, of a limit and of a word count.
-VARIABLE_NAME='^[A-Za-z_][A-Za-z0-9_]*$'
-LIMIT='^[1-9][0-9]{0,17}$'
-WORD_COUNT='^[1-9][0-9]{0,3}$'
 
 say() { printf 'build-artifacts: %s\n' "$*"; }
 die() {
@@ -96,131 +85,16 @@ need() {
   done
 }
 
-# ------------------------------------------------------------------ rows ----
+# absolute NAME...: stops the run when a variable holds no absolute path.
+# The script changes its directory, so a relative path would name another
+# file after the change.
+absolute() {
+  local name
 
-#: One entry for each row.
-ROW_COMPONENT=()
-ROW_TARGET=()
-ROW_ARCHIVE=()
-ROW_ENV=()
-ROW_MAX_ARCHIVE=()
-ROW_MAX_MEMBERS=()
-ROW_MAX_UNPACKED=()
-ROW_FIRST=()
-ROW_COMMANDS=()
-
-#: One entry for each command: the index of its first word in WORDS, and
-#: its count of words.
-COMMAND_FIRST=()
-COMMAND_WORDS=()
-WORDS=()
-
-#: The lines of the rows, and the index of the next line to read.
-LINES=()
-POS=0
-LINE=""
-
-# next_line: sets LINE to the next line. The rows must not end there.
-next_line() {
-  [[ "$POS" -lt "${#LINES[@]}" ]] || die "the rows end inside a row"
-  LINE="${LINES[$POS]}"
-  POS=$((POS + 1))
-}
-
-# value_of KEY: the value of the next line, which must have the key KEY.
-VALUE=""
-value_of() {
-  next_line
-  [[ "$LINE" == "$1 "* ]] || die "a row has no key $1 where the line form puts it"
-  VALUE="${LINE#"$1 "}"
-}
-
-# read_head: reads the keys of a row before its first command into the
-# arrays of the rows.
-read_head() {
-  local key
-
-  for key in $HEAD_KEYS; do
-    value_of "$key"
-    case "$key" in
-      component | target | archive | bundle)
-        [[ "$VALUE" =~ $PLAIN_NAME ]] || die "the $key of a row is not a plain name"
-        ;;
-      install-env)
-        [[ "$VALUE" =~ $VARIABLE_NAME ]] || die "the install-env of a row is not a variable name"
-        ;;
-      *)
-        [[ "$VALUE" =~ $LIMIT ]] || die "the $key of a row is not a count above 0"
-        ;;
-    esac
-
-    case "$key" in
-      component) ROW_COMPONENT+=("$VALUE") ;;
-      target) ROW_TARGET+=("$VALUE") ;;
-      archive) ROW_ARCHIVE+=("$VALUE") ;;
-      install-env) ROW_ENV+=("$VALUE") ;;
-      max-archive-bytes) ROW_MAX_ARCHIVE+=("$VALUE") ;;
-      max-members) ROW_MAX_MEMBERS+=("$VALUE") ;;
-      max-unpacked-bytes) ROW_MAX_UNPACKED+=("$VALUE") ;;
-    esac
-  done
-}
-
-# read_commands: reads the commands of a row and its `end` line. A row has
-# one command or more, and a command has one word or more.
-read_commands() {
-  local count commands=0 index
-
-  ROW_FIRST+=("${#COMMAND_FIRST[@]}")
-  while true; do
-    next_line
-    if [[ "$LINE" == "end" && "$commands" -gt 0 ]]; then
-      break
+  for name in "$@"; do
+    if [[ "${!name}" != /* ]]; then
+      die "the variable $name is not an absolute path"
     fi
-
-    [[ "$LINE" == "argv "* ]] || die "a row has no command where the line form puts one"
-    count="${LINE#argv }"
-    [[ "$count" =~ $WORD_COUNT ]] || die "a command of a row has no count of words"
-
-    COMMAND_FIRST+=("${#WORDS[@]}")
-    COMMAND_WORDS+=("$count")
-    for ((index = 0; index < count; index++)); do
-      next_line
-      WORDS+=("$LINE")
-    done
-    [[ -n "${WORDS[${COMMAND_FIRST[${#COMMAND_FIRST[@]} - 1]}]}" ]] ||
-      die "a command of a row has an empty first word"
-    commands=$((commands + 1))
-  done
-  ROW_COMMANDS+=("$commands")
-}
-
-# read_rows FILE: reads each row of FILE. Two rows with one component, or
-# with one archive name, stop the run: the second archive would replace the
-# first. No archive has the name of the digest file.
-read_rows() {
-  local line row other
-
-  LINES=()
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    LINES+=("$line")
-  done < "$1"
-
-  POS=0
-  while [[ "$POS" -lt "${#LINES[@]}" ]]; do
-    read_head
-    read_commands
-  done
-
-  for ((row = 0; row < ${#ROW_COMPONENT[@]}; row++)); do
-    [[ "${ROW_ARCHIVE[$row]}" != "$DIGEST_FILE" ]] ||
-      die "the archive of ${ROW_COMPONENT[$row]} has the name of the digest file"
-    for ((other = 0; other < row; other++)); do
-      [[ "${ROW_COMPONENT[$other]}" != "${ROW_COMPONENT[$row]}" ]] ||
-        die "two rows name the component ${ROW_COMPONENT[$row]}"
-      [[ "${ROW_ARCHIVE[$other]}" != "${ROW_ARCHIVE[$row]}" ]] ||
-        die "two rows name the archive ${ROW_ARCHIVE[$row]}"
-    done
   done
 }
 
@@ -331,9 +205,9 @@ build_row() {
   # 1. Each command of the row.
   first="${ROW_FIRST[$row]}"
   for ((command = first; command < first + ROW_COMMANDS[row]; command++)); do
-    count="${COMMAND_WORDS[$command]}"
+    count="${COMMAND_COUNT[$command]}"
     run_words "${ROW_ENV[$row]}" "$tree" "${ROW_TARGET[$row]}" \
-      "${WORDS[@]:${COMMAND_FIRST[$command]}:$count}" ||
+      "${COMMAND_WORD[@]:${COMMAND_FIRST[$command]}:$count}" ||
       die "$component: a build command failed"
   done
 
@@ -422,7 +296,11 @@ else
   "${CLI[@]}" artifacts --repo "$ARTIFACT_REPO" < /dev/null > "$ROWS" ||
     die "handover gave no rows"
 fi
-read_rows "$ROWS"
+read_rows "$ROWS" || die "$ROWS_FAULT"
+for ((ROW = 0; ROW < ${#ROW_ARCHIVE[@]}; ROW++)); do
+  [[ "${ROW_ARCHIVE[$ROW]}" != "$DIGEST_FILE" ]] ||
+    die "the archive of ${ROW_COMPONENT[$ROW]} has the name of the digest file"
+done
 
 if [[ "${#ROW_COMPONENT[@]}" -eq 0 ]]; then
   say "no binary component"

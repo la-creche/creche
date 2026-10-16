@@ -38,21 +38,28 @@ from handover.catalog import (
     ARCHIVE_MAX_BYTES,
     ARCHIVE_MAX_MEMBERS,
     ARCHIVE_MAX_UNPACKED_BYTES,
+    ARCHIVE_SUFFIX,
     BINARY_INSTALL_ENV,
     BINARY_TARGET,
+    BUNDLE_SUFFIX,
+    Repo,
 )
 
 REPO: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO / "bin" / "build-artifacts.sh"
 
+#: The one reader of the line form, and each script that sources it.
+READER: Final = REPO / "bin" / "lib" / "artifactrows.sh"
+READER_USERS: Final = [SCRIPT, REPO / "bin" / "artifact-probe.sh"]
+
 #: The catalog name of the repository, as the two workflows give it.
-THIS_REPOSITORY: Final = "agent-control"
+THIS_REPOSITORY: Final = str(Repo.AGENT_CONTROL)
 
 #: The crate of the row of each case, and its build words.
 COMPONENT: Final = "agent-family"
 CRATE_DIR: Final = "rust/crates/agent-family"
 INSTALL_WORDS: Final = ["cargo", "install", "--locked", "--no-track", "--path", CRATE_DIR]
-ARCHIVE: Final = f"{COMPONENT}-{BINARY_TARGET}.tar.gz"
+ARCHIVE: Final = f"{COMPONENT}-{BINARY_TARGET}{ARCHIVE_SUFFIX}"
 
 #: The toolchain that the stand-in `rustup` names.
 TOOLCHAIN: Final = "1.92.0-x86_64-unknown-linux-gnu"
@@ -423,17 +430,15 @@ def test_no_word_of_a_command_passes_through_a_shell(tmp_path: Path) -> None:
 
 @needs_sha256sum
 def test_two_rows_add_one_target_and_write_two_lines(tmp_path: Path) -> None:
-    second = _row(component="other", archive=f"other-{BINARY_TARGET}.tar.gz")
+    other = f"other-{BINARY_TARGET}{ARCHIVE_SUFFIX}"
+    second = _row(component="other", archive=other, bundle=f"{other}{BUNDLE_SUFFIX}")
     run = Build(tmp_path, _row() + second)
     adds = [call for call in run.calls("rustup") if call[2:4] == ["target", "add"]]
 
     assert run.done.returncode == 0, run.said
     assert len(adds) == 1
     assert len(run.calls("cargo")) == 2
-    assert [line.split("  ")[1] for line in run.digests.splitlines()] == [
-        ARCHIVE,
-        f"other-{BINARY_TARGET}.tar.gz",
-    ]
+    assert [line.split("  ")[1] for line in run.digests.splitlines()] == [ARCHIVE, other]
 
 
 def test_the_build_takes_no_rustflags_of_its_caller(tmp_path: Path) -> None:
@@ -585,8 +590,11 @@ BROKEN_ROWS: Final = {
     "a-short-command": _row().replace("argv 6\n", "argv 9\n"),
     "an-empty-first-word": _row().replace("argv 6\ncargo\n", "argv 6\n\n"),
     "a-variable-that-is-no-name": _row(install_env="CARGO INSTALL"),
-    "two-rows-with-one-component": _row() + _row(archive="other.tar.gz"),
-    "two-rows-with-one-archive": _row() + _row(component="other"),
+    "two-rows-with-one-component": _row() + _row(archive="other.tar.gz", bundle="other.json"),
+    "two-rows-with-one-archive": _row() + _row(component="other", bundle="other.json"),
+    "two-rows-with-one-bundle": _row() + _row(component="other", archive="other.tar.gz"),
+    "a-junk-line-first": f"junk line\n{_row()}",
+    "a-line-after-the-end-with-no-line-feed": f"{_row()}component other",
     "the-name-of-the-digest-file": _row(archive="SHA256SUMS"),
     "a-blank-line": f"{_row()}\n",
 }
@@ -599,6 +607,36 @@ def test_a_row_that_is_not_in_the_line_form_stops_the_run(tmp_path: Path, rows: 
     _refused(run)
     assert len(run.done.stderr.splitlines()) == 1
     assert run.calls("rustup") == []
+
+
+@needs_sha256sum
+def test_a_last_row_with_no_line_feed_is_a_whole_row(tmp_path: Path) -> None:
+    """The reader reads the last line also when no line feed ends it."""
+    run = Build(tmp_path, _row().removesuffix("\n"))
+
+    assert run.done.returncode == 0, run.said
+    assert len(run.calls("cargo")) == 1
+
+
+def test_the_line_form_has_one_reader() -> None:
+    """`bin/lib/artifactrows.sh` reads the rows for the build script and for
+    the probe. No other file under `bin/` holds the keys of the form or a
+    reader of it, so the two scripts read one row in one way."""
+    sourced = '. "$SELF_ROOT/bin/lib/artifactrows.sh"\n'
+    others = [
+        path
+        for path in sorted((REPO / "bin").rglob("*"))
+        if path.is_file() and "tests" not in path.relative_to(REPO / "bin").parts
+        if path != READER and path.suffix != ".md"
+    ]
+
+    for user in READER_USERS:
+        assert sourced in user.read_text(encoding="utf-8"), f"{user.name} reads no row"
+    for path in others:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        assert "read_rows()" not in text, f"{path.name} holds a second reader"
+        assert "max-unpacked-bytes" not in text, f"{path.name} holds a key of the form"
+    assert "read_rows() {" in READER.read_text(encoding="utf-8")
 
 
 def test_a_command_that_gives_no_rows_stops_the_run(tmp_path: Path) -> None:

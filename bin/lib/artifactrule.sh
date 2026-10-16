@@ -18,6 +18,7 @@
 #   a path under handover/              the release tool gives the rows, the
 #                                       limits and the walk of a tree
 #   bin/build-artifacts.sh              the build itself
+#   bin/lib/artifactrows.sh             the reader of the rows of the build
 #   this file                           the rule itself
 #
 # What this cannot read counts as a change: the build is the safe answer.
@@ -28,8 +29,8 @@
 ARTIFACT_TOOL_DIR="handover"
 ARTIFACT_MANIFESTS="component.yaml component.toml"
 
-#: The script that builds, and this rule.
-ARTIFACT_FILES="bin/build-artifacts.sh bin/lib/artifactrule.sh"
+#: The script that builds, the reader of its rows, and this rule.
+ARTIFACT_FILES="bin/build-artifacts.sh bin/lib/artifactrows.sh bin/lib/artifactrule.sh"
 
 # artifact_path PATH: whether PATH is an input of an archive that
 # rust_touched does not count. git writes a path with an unusual byte inside

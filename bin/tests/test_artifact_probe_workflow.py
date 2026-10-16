@@ -1397,17 +1397,33 @@ def _text_cli(tmp_path: Path, text: str) -> dict[str, str]:
     return {"RELEASE_CLI": str(cli), "STUB_TEXT": text}
 
 
-#: Texts of a command that gives no row of the crate in the line form.
+#: The row of the crate in the line form, as `handover artifacts
+#: --crate-row` gives it, and the lines of its one command.
+CRATE: Final = crate_row("agent-family", "rust/crates/agent-family")
+CRATE_ROW: Final = "".join(f"{line}\n" for line in CRATE.lines())
+(CRATE_WORDS,) = CRATE.commands
+CRATE_COMMAND: Final = "".join(f"{line}\n" for line in (f"argv {len(CRATE_WORDS)}", *CRATE_WORDS))
+
+#: Texts of a command that gives no row of the crate in the line form. The
+#: probe reads each text with `bin/lib/artifactrows.sh`, the reader of the
+#: build script, and it takes exactly one row of the crate with one command.
 NO_ROWS: Final = {
     "empty": "",
-    "two-targets": "".join(
-        f"{line}\n" for line in crate_row("agent-family", "rust/crates/agent-family").lines()
-    )
-    + f"target {TARGET}\n",
-    "a-target-that-is-a-path": (
-        "target ../x\narchive a.tar.gz\nbundle b\ninstall-env V\nargv 1\ncargo\nend\n"
+    "two-targets": f"{CRATE_ROW}target {TARGET}\n",
+    "a-target-that-is-a-path": CRATE_ROW.replace(f"target {TARGET}\n", "target ../x\n"),
+    "no-command": CRATE_ROW.replace(CRATE_COMMAND, ""),
+    "a-junk-line-first": f"junk line\n{CRATE_ROW}",
+    "another-component": CRATE_ROW.replace("component agent-family\n", "component other\n"),
+    "keys-in-another-order": CRATE_ROW.replace(
+        f"component agent-family\ntarget {TARGET}\n", f"target {TARGET}\ncomponent agent-family\n"
     ),
-    "no-command": "target t\narchive a.tar.gz\nbundle b\ninstall-env V\nend\n",
+    "no-end": CRATE_ROW.removesuffix("end\n"),
+    "a-key-after-the-end-with-no-line-feed": f"{CRATE_ROW}target {TARGET}",
+    "two-rows": CRATE_ROW
+    + CRATE_ROW.replace("component agent-family\n", "component other\n")
+    .replace("archive agent-family-", "archive other-")
+    .replace("bundle agent-family-", "bundle other-"),
+    "two-commands": CRATE_ROW.replace("end\n", f"{CRATE_COMMAND}end\n"),
 }
 
 
@@ -1437,9 +1453,7 @@ def test_verify_stops_when_not_one_word_names_the_release_workflow(
     """The probe signs as its own workflow file, and it replaces the release
     workflow in one word. Other words are not the words of the check that
     root makes."""
-    row = "".join(
-        f"{line}\n" for line in crate_row("agent-family", "rust/crates/agent-family").lines()
-    )
+    row = CRATE_ROW
     cli = _stub(
         tmp_path / "cli",
         "handover",
