@@ -14,7 +14,7 @@ the function.
 | `src/sha256.rs` | `digest`: the SHA-256 of FIPS 180-4, as 32 bytes. |
 | `src/hex.rs` | `lower`: bytes as hex text in lower case. The text is the base 16 form of RFC 4648 section 8. |
 | `src/base64.rs` | `decode`: the bytes of a base64 text in the standard alphabet, with padding. The text is the base 64 form of RFC 4648 section 4. `encode_url`: bytes as base64 text in the URL-safe alphabet, with no padding. The text is the form of section 5 of that RFC. `URL_SAFE`: the alphabet of section 5. |
-| `src/pytext.rs` | `is_space`, `strip` and `words`: the white space rules of `str.isspace`, `str.strip` and `str.split` of Python. `universal_newlines`: the line end rule of the text mode of Python. |
+| `src/pytext.rs` | `is_space`, `strip` and `words`: the white space rules of `str.isspace`, `str.strip` and `str.split` of Python. `number_strip`: the white space rule of `int` and `float` of Python, for the two ends of a number text. `universal_newlines`: the line end rule of the text mode of Python. |
 
 ## What the crate takes
 
@@ -79,6 +79,9 @@ function of the caller.
 - `pytext` compares `is_space` with the full list of the characters that
   Python 3.13 calls space. The list has 29 characters. Four of them are the
   separators U+001C to U+001F, which Rust does not call white space.
+- `pytext` compares `number_strip` with the same list. `int` and `float` of
+  Python 3.13 remove 25 of the 29 characters at the two ends of a number
+  text. They keep the four separators, and the function keeps them too.
 - `pytext` compares `universal_newlines` with the text that
   `Path.read_text` of Python 3.13 gives for a file. The table holds a CR LF,
   a CR alone and both in one text. It also holds line breaks that do not
@@ -121,11 +124,6 @@ function of the caller.
   header value with it. It is a second copy of the set. A change to `ids`
   needs the owner of the crate (`rust/AGENTS.md`, "Where a new type goes").
   No packet has this change yet.
-- `py_strip` in `crates/agent-family/src/yaml/construct.rs` holds a white
-  space set of its own. It trims a text before the reader makes a number of
-  that text. The rule for a number is not the rule of `pytext::strip`. The
-  module doc of `pytext` gives the difference. No packet changes `py_strip`
-  yet.
 - Two base64 decoders stay outside this crate. Each one reads a `!!binary`
   value of YAML by a rule of Python, and that rule is not the rule of
   `base64::decode`. `decode_base64` is in

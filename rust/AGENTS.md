@@ -23,7 +23,7 @@ defect that a test finds late.
 
 | Crate | What it holds |
 |---|---|
-| `creche-util` | Each shared helper: SHA-256, the hex text of bytes and base64 text. It also holds the white space rules of Python `str` and the line end rule of the Python text mode. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
+| `creche-util` | Each shared helper: SHA-256, the hex text of bytes and base64 text. It also holds the white space rules of Python `str` and the white space rule of a Python number. It holds the line end rule of the Python text mode too. It has no dependency. `crates/creche-util/AGENTS.md` holds its rules. |
 | `creche-contracts` | The wire types and the config types of the contracts. `ids::FamilyName` is the pattern for each new type. |
 | `agent-family` | The validator of the family file and of the server file, the registry loader and the `agent-family` program. `crates/agent-family/AGENTS.md` holds its rules. |
 | `creche-runtime` | The runtime that each Rust service shares: file writes, token files, the log, tasks, signals, child programs and HTTP. `crates/creche-runtime/AGENTS.md` holds its rules. |
@@ -139,8 +139,8 @@ writes the two numbers and their text to a file in `OUT_DIR`, and
 A shared helper is a pure function with two users. The users are two crates,
 or two modules that hold two contracts. `creche-util` holds each shared
 helper. Today it holds SHA-256, the hex text of bytes and base64 text. It
-also holds the white space rules of Python `str` and the line end rule of
-the Python text mode.
+also holds the white space rules of Python `str` and the white space rule of
+a Python number. It holds the line end rule of the Python text mode too.
 
 1. Put a shared helper in `creche-util`.
 2. Write no second copy of a helper that `creche-util` holds. Call the
@@ -530,16 +530,21 @@ a strict text too. The crate `creche-vectors` reads it and does not use
 gaps" names the packet that moves each module to the two.
 Until then, these parts stay:
 
-- Five older functions format a float: `float_text` of `channel`, of
-  `status` and of `manifest`, `float_repr` of `grants`, and
-  `python_float_text` of `family`. Add no user of them. The packets
-  `decisions-raw-serde-*` delete the first four. No packet has the fifth
-  one yet.
+- Four older functions format a float: `float_text` of `channel`, of
+  `status` and of `manifest`, and `float_repr` of `grants`. Add no user of
+  them. The packets `decisions-raw-serde-*` delete them.
 - The `session` module writes the body of a stored journal line as the text
   of the journal file. That text is a `RawValue`. A function that only this
   crate can call keeps such a text: `write_raw_kept`. The writer counts no
   level of that text and compares none of its keys. Add no second user of
   the function. No packet deletes `write_raw_kept` yet.
+
+`python_float_text` of `family` gives the text that `repr` of Python gives
+for a float. It holds no code that formats a float. For a finite float, it
+returns the text of the one function that formats a float, in
+`src/json/write.rs`. That function refuses a float that is not finite.
+`python_float_text` thus adds the three words of `repr` for such a float:
+`nan`, `inf` and `-inf`.
 
 ## TOML
 
@@ -770,12 +775,7 @@ The `status` module has no time type. Each time of contract 05 is a
 `Timestamp`. The staleness rule of that contract is in `status::views`:
 `STALE_AFTER_SECONDS`, `Age` and `Freshness`.
 
-`status::time` is an older path. It holds no type. It gives `Timestamp` and
-`status::views::Freshness` to code that still names them there. Add no user
-of that path. Packet `decisions-runtime-time` changes each user and deletes
-the path.
-
-Four older parts of the workspace still hold a time type or date arithmetic
+Three older parts of the workspace still hold a time type or date arithmetic
 of their own. Add no user of them. One packet moves each part to
 `Timestamp` or deletes the part. The pull request of that packet deletes
 the row of the part. The pull request that deletes the last row also
@@ -784,7 +784,6 @@ deletes this paragraph and the table.
 | Part | Packet |
 |---|---|
 | `session::Timestamp` | `strict-attendance-time` |
-| The stamp of a log line in `creche-runtime` | `decisions-runtime-time` |
 | The `!!timestamp` value of the YAML reader of `agent-family` | `toml-drop-yaml-validator` |
 | The `!!timestamp` check of `manifest::yaml` | `toml-drop-yaml-manifest` |
 
@@ -792,7 +791,8 @@ deletes this paragraph and the table.
 
 The Python code holds more than one copy of most id grammars.
 `vectors/data/ids/disagreements.json` lists each input on which two copies of
-one grammar give different results.
+one grammar give different results. The file holds no row today. A test of
+`ids` fails when the file holds a row.
 
 1. The Rust type takes the strictest copy. It refuses each input that one
    copy refuses.
@@ -800,9 +800,8 @@ one grammar give different results.
    copy and what the copy does.
 3. List the question under "Known gaps".
 4. A surface in the test table of the type has the stance `equal`: the type
-   and the copy give the same result for each vector. `stricter` is an old
-   second stance. Do not use it for a new surface. Packet `decisions-ids`
-   deletes it from `ids`.
+   and the copy give the same result for each vector. `ids` has no second
+   stance. Do not add one.
 
 Reason: a value passes more than one copy before the platform uses it. The
 strictest copy is thus the grammar that holds on the host. A type that takes
@@ -2407,8 +2406,8 @@ adds a crate:
      Python, `$` also matches before a final newline. Each Python copy
      refuses a final newline, and the type refuses it.
   2. `ToolName`, contract 01 §3.4 and contract 01b §5. The contracts give no
-     cap. Two Python copies have a cap of 64, and one has a cap of 128. The
-     type has the cap of 64.
+     cap. Each of the three Python copies has a cap of 64. The type has that
+     cap.
   3. `EnvName`, contract 01b §4.1. The contract gives no grammar. Each of
      the two Python copies has a cap of 64. The type has that cap.
   4. `PackageVersion`, contract 01b §3.1. The contract gives no grammar.

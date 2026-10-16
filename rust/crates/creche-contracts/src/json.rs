@@ -192,8 +192,8 @@ use serde::Deserialize;
 
 pub use self::opaque::Opaque;
 pub use self::read::{Integer, Number, ReadError, Shape, read};
-pub(crate) use self::write::write_raw_kept;
 pub use self::write::{Charset, KeyOrder, Layout, Style, WriteError, write};
+pub(crate) use self::write::{float_repr, write_raw_kept};
 /// The kind of a JSON value. The module `slot` of this crate defines it, and
 /// this module adds no second enum for a kind.
 pub use crate::slot::Found;

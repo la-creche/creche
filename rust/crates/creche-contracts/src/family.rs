@@ -48,6 +48,7 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::ids::{FamilyName, ServerName, SkillName, ToolName, WebhookName};
+use crate::json;
 
 // --- constants of contract 01 ---
 
@@ -402,6 +403,11 @@ impl Error for Refused {}
 /// A message of the Python validator holds a budget in this form, for
 /// example `1e+22 is outside 0 to 500.0`. A message of this crate holds the
 /// same text.
+///
+/// The digits of a finite float come from the one float writer of the crate,
+/// in the `json` module. That writer refuses a float that is not finite, so
+/// this function adds the three words of `repr` for such a float: `nan`,
+/// `inf` and `-inf`.
 #[must_use]
 pub fn python_float_text(value: f64) -> String {
     if value.is_nan() {
@@ -412,43 +418,9 @@ pub fn python_float_text(value: f64) -> String {
         return if value > 0.0 { "inf" } else { "-inf" }.to_owned();
     }
 
-    // `{:e}` gives the shortest digits that read back as the same float, as
-    // Python does: `1.2345e-5`.
-    let scientific = format!("{value:e}");
-    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    let exponent: i32 = exponent.parse().unwrap_or(0);
-    let (sign, mantissa) = match mantissa.strip_prefix('-') {
-        Some(rest) => ("-", rest),
-        None => ("", mantissa),
-    };
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
-    if !(-4..16).contains(&exponent) {
-        let (first, rest) = digits.split_at_checked(1).unwrap_or((&digits, ""));
-        let point = if rest.is_empty() { "" } else { "." };
-        let exponent_sign = if exponent < 0 { '-' } else { '+' };
-
-        return format!(
-            "{sign}{first}{point}{rest}e{exponent_sign}{:02}",
-            exponent.unsigned_abs()
-        );
-    }
-
-    if exponent < 0 {
-        let zeros = "0".repeat(usize::try_from(-exponent - 1).unwrap_or(0));
-
-        return format!("{sign}0.{zeros}{digits}");
-    }
-
-    let whole = usize::try_from(exponent).unwrap_or(0) + 1;
-    if digits.len() <= whole {
-        let zeros = "0".repeat(whole - digits.len());
-
-        return format!("{sign}{digits}{zeros}.0");
-    }
-
-    let (first, rest) = digits.split_at_checked(whole).unwrap_or((&digits, ""));
-
-    format!("{sign}{first}.{rest}")
+    // The writer refuses only a float that is not finite, and the two checks
+    // above returned for each such float. The error arm thus cannot run.
+    json::float_repr(value).unwrap_or_default()
 }
 
 /// The text with each run of spaces as one space: `" ".join(text.split())`.
@@ -3862,6 +3834,15 @@ mod tests {
             (f64::INFINITY, "inf"),
             (f64::NEG_INFINITY, "-inf"),
             (f64::NAN, "nan"),
+            // The exact value of each float below is in the middle of two
+            // shortest texts. Python takes the text with the even last
+            // digit, and so does the one float writer of the crate. These
+            // rows prove that the digits come from that writer.
+            (5_261_963_047_596_905.0 / 4.0, "1315490761899226.2"),
+            (16_842_045_457_081.0 / 64.0, "263156960266.89062"),
+            (1_673_733_205_695_233.0 + 0.25, "1673733205695233.2"),
+            (-146_656_950_681_247.0 - 0.625, "-146656950681247.62"),
+            (2.0_f64.powi(-25), "2.9802322387695312e-08"),
         ];
         for (value, wanted) in cases {
             assert_eq!(python_float_text(value), wanted);
