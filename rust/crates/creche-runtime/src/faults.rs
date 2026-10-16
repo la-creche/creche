@@ -164,8 +164,8 @@ mod tests {
     use creche_contracts::ids::FamilyName;
     use creche_contracts::status::fault_file::{FaultFileError, OpenFault};
     use creche_contracts::status::json::{Json, Object};
-    use creche_contracts::status::time::Timestamp;
     use creche_contracts::status::words::{FaultCode, FaultSource};
+    use creche_contracts::time::Timestamp;
     use creche_testkit::root::TempRoot;
 
     use super::*;
