@@ -162,7 +162,7 @@ host where something has gone wrong.
   `playpen_env.py` holds no address and no port.
 - A sandbox keeps the env file of its create. `caregiver` writes the file
   again in two cases only: a pass finds the replacement that an earlier pass
-  left, or a person runs `apply-once`.
+  left, or the operator runs `apply-once`.
 - `config_rev` and `applied_rev` are the same value: the registry revision.
 - A webhook's bearer is never logged and never published. The status document
   carries `token_path` alone.
