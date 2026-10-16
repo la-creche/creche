@@ -105,10 +105,14 @@
 #   - /srv/agents/state/rework/watchdog/notices-sent is the record of the
 #     sent notices, one line for each service, surface and rule. Both limits
 #     come from it. The line of a notice goes to the record before the
-#     send, so a fault after the send gives no second notice. A notice that
-#     the hook did not take leaves the record as it was, so the next run
-#     sends it. A run stops this step at the first notice that the hook did
-#     not take.
+#     send, so a fault after the send gives no second notice. A run stops
+#     this step at the first send that fails.
+#   - A send that surely did not reach the hook puts the old record back,
+#     so the next run sends that notice. That is a host with no hook, or
+#     curl status 6 or 7. After each other failed send, the hook can have
+#     taken the notice. The record then keeps its line, and that notice is
+#     missed. When the old record cannot go back, that notice is missed
+#     too.
 #   - The script reads 262,144 bytes of the record at most, and it writes no
 #     larger record. A record that it cannot read, or cannot write, stops
 #     the step for that run: a notice with no record line has no limit. A
@@ -241,6 +245,20 @@ UNIT_RESULT_OK=success
 CHECK_TIMEOUT_S=5
 # The notice itself, which reaches Node-RED over the LAN.
 NOTICE_TIMEOUT_S=10
+
+# The status of `send_notice` for a notice that surely did not reach the
+# hook: the host has no hook, or curl ends with a status of
+# NOT_REACHED_CURL. 6 is no address for the name of the host, and 7 is no
+# connection. Each other curl status can come after the hook took the
+# notice. The outage notice tries again after each failed send.
+# CONTRACT-QUESTION: no contract text says which failed send the hook can
+# have taken. The reading here: only these cases prove that it took none.
+# So a JSON notice keeps its record line after each other status, 22 (an
+# HTTP error) too, and a hook that refuses the bearer misses each JSON
+# notice. A change costs NOT_REACHED_CURL, a read of the HTTP status and
+# their tests in bin/tests/test_rework_watchdog.py.
+NOT_REACHED=2
+NOT_REACHED_CURL=' 6 7 '
 
 # The verdict when nothing is down. A word, so the state file is readable.
 ALL_WELL=up
@@ -641,14 +659,15 @@ plain() {  # plain <text>
 
 # The phone push. `-H @file`, never the bearer on argv: /proc/<pid>/cmdline
 # is world readable for the life of the curl process on a host that sets no
-# hidepid (bin/AGENTS.md §Secrets).
+# hidepid (bin/AGENTS.md §Secrets). Status NOT_REACHED means that the
+# notice surely did not reach the hook. Status 1 is each other failure.
 send_notice() {  # send_notice <summary> [<job id> <gate id>]
   local header status job gate
   job="${2:-$NOTICE_JOB_ID}"
   gate="${3:-$NOTICE_GATE_ID}"
   if [[ -z "${APPROVAL_URL:-}" || -z "${APPROVAL_TOKEN:-}" ]]; then
     say "NOTICE NOT SENT (no APPROVAL_URL/APPROVAL_TOKEN in $HOOKS_ENV): $1"
-    return 1
+    return "$NOT_REACHED"
   fi
 
   header="$(mktemp)"
@@ -665,7 +684,8 @@ send_notice() {  # send_notice <summary> [<job id> <gate id>]
     return 0
   fi
 
-  say "NOTICE NOT SENT (curl exit $status), retrying next run: $1"
+  say "NOTICE NOT SENT (curl exit $status): $1"
+  [[ "$NOT_REACHED_CURL" == *" $status "* ]] && return "$NOT_REACHED"
   return 1
 }
 
@@ -860,7 +880,7 @@ notice_file() {  # notice_file <service> <file>
 # sends that notice again. A stop between the write and the send gives a
 # missed notice instead.
 json_notice() {  # json_notice <service> <surface> <rule> <seconds>
-  local key kept before
+  local key kept before status
   key="$1 $2 $3 "
   before="$SENT_LINES"
 
@@ -879,11 +899,20 @@ json_notice() {  # json_notice <service> <surface> <rule> <seconds>
     return 1
   fi
 
-  send_notice "$JSON_NOTICE_WORD $1 $2 $3" "$JSON_NOTICE_JOB_ID" "$JSON_NOTICE_GATE_ID" && return 0
+  send_notice "$JSON_NOTICE_WORD $1 $2 $3" "$JSON_NOTICE_JOB_ID" "$JSON_NOTICE_GATE_ID"
+  status=$?
+  [[ "$status" == 0 ]] && return 0
 
-  # A hook that takes no notice costs the time limit of one notice. The old
-  # record goes back, and the next run sends this notice again. When the
-  # old record cannot go back, this notice is missed.
+  # The hook can have taken the notice. The record keeps its line, so a
+  # fault gives a missed notice and never a second one.
+  if [[ "$status" != "$NOT_REACHED" ]]; then
+    say "json notices: the hook can have taken the notice, so $SENT_FILE keeps its line and no later run sends it"
+    return 1
+  fi
+
+  # The notice did not reach the hook. The old record goes back, and the
+  # next run sends this notice again. When the old record cannot go back,
+  # this notice is missed.
   SENT_LINES="$before"
   remember_sent || say "json notices: cannot write the old $SENT_FILE back after a failed send"
 

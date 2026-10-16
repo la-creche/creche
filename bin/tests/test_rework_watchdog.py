@@ -1762,6 +1762,72 @@ def test_a_json_notice_that_fails_is_sent_by_the_next_run(rig: Rig) -> None:
     assert len(rig.posts()) == 2
 
 
+#: The curl statuses of a send that never reached the hook. 6: no address
+#: for the name of the host. 7: no connection to the hook.
+UNREACHED_STATUSES: Final = ("6", "7")
+
+#: Some curl statuses of a send that the hook can have taken. 22: an HTTP
+#: error as the answer. 28: no full answer in the time limit. 52: no
+#: answer at all. 56: a connection that broke during the answer.
+TAKEN_STATUSES: Final = ("22", "28", "52", "56")
+
+
+@pytest.mark.parametrize("status", UNREACHED_STATUSES)
+def test_a_send_that_never_reached_the_hook_is_sent_again(rig: Rig, status: str) -> None:
+    """The old record goes back, and the next run sends the notice one
+    more time."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_POST_EXIT=status)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.sent_lines() == []
+    assert "the hook can have taken" not in done.stdout
+
+    rig.run()
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES[:1] * 2
+    assert len(rig.sent_lines()) == 1
+
+
+@pytest.mark.parametrize("status", TAKEN_STATUSES)
+def test_a_send_that_the_hook_can_have_taken_is_not_sent_again(rig: Rig, status: str) -> None:
+    """curl can fail after the hook took a notice. Such a notice keeps its
+    record line, and no later run sends it. So a fault gives a missed
+    notice, never a second one. The run sends no more notices of this kind
+    and says so in one line. A later run sends each other pair."""
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
+
+    done = rig.run(WD_POST_EXIT=status)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+    assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
+    assert done.stdout.count("the hook can have taken") == 1, done.stdout
+
+    rig.run()
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES
+    assert len(rig.sent_lines()) == 3
+
+
+@pytest.mark.parametrize("status", UNREACHED_STATUSES + TAKEN_STATUSES)
+def test_an_outage_notice_that_fails_is_tried_again(rig: Rig, status: str) -> None:
+    """The outage notice keeps its rule: each failed send leaves the old
+    verdict, and the next run sends the notice again."""
+    rig.run(WD_PEP_CODE="000")
+    rig.run(WD_PEP_CODE="000", WD_POST_EXIT=status)
+
+    assert rig.stored() == "up"
+
+    rig.run(WD_PEP_CODE="000")
+
+    assert rig.stored() == "chaperone"
+    assert len(rig.posts()) == 2
+
+
 def test_a_run_stops_at_the_first_json_notice_that_fails(rig: Rig) -> None:
     """A hook that is away costs a run the time limit of one notice, not of
     six. The next run sends each notice."""
