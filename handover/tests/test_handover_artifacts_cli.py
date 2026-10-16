@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from handover.artifacts import (
     CODE_HOST,
     TOKEN_ISSUER,
+    ArtifactRow,
     archive_expected,
     asset_names,
     crate_row,
@@ -60,7 +62,7 @@ from handover import artifacts
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-COMMIT = "57110f0007da5665e6e3fdfddfd7454d8217c73e"
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
 OWNER = "example-owner"
 HOSTED = "creche"
 ARCHIVE = f"/srv/assets/{BINARY_NAME}-{BINARY_TARGET}.tar.gz"
@@ -246,6 +248,44 @@ def test_the_longest_owner_and_name_make_a_policy() -> None:
     assert policy.repository() == f"{'o' * 39}/{'c' * 100}"
 
 
+@pytest.mark.parametrize(
+    ("change", "code", "subject"),
+    [
+        ({"_owner": "-bad"}, RefusalCode.REQUEST, "owner"),
+        ({"_repo": ".creche"}, RefusalCode.REQUEST, "repository"),
+        ({"_commit": "--x"}, RefusalCode.REQUEST, "commit"),
+        ({"_workflow": "other.yml"}, RefusalCode.CATALOG, "workflow"),
+    ],
+)
+def test_a_copy_of_a_policy_holds_the_rules_of_the_maker(
+    change: dict[str, str], code: RefusalCode, subject: str
+) -> None:
+    """`dataclasses.replace` makes a policy through the type, and the type
+    checks each field."""
+    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+
+    refusal = _refusal(lambda: replace(policy, made=artifacts._MADE, **change))
+
+    assert refusal.code is code
+    assert refusal.subject == subject
+
+
+def test_a_valid_copy_of_a_policy_is_a_policy() -> None:
+    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+    other = "f" * 40
+
+    assert replace(policy, made=artifacts._MADE, _commit=other).commit == other
+
+
+@pytest.mark.parametrize("made", [None, artifacts._Made()])
+def test_only_the_maker_makes_a_policy(made: object) -> None:
+    """The private value of the module is the one key to the type."""
+    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+
+    with pytest.raises(TypeError):
+        replace(policy, made=made)
+
+
 def test_the_words_without_a_trust_root() -> None:
     policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
 
@@ -272,11 +312,14 @@ def test_the_words_with_a_trust_root() -> None:
         ("-a.tar.gz", BUNDLE, None, "archive"),
         ("", BUNDLE, None, "archive"),
         (f"{ARCHIVE}\n", BUNDLE, None, "archive"),
+        (f"{ARCHIVE}\x00", BUNDLE, None, "archive"),
         (ARCHIVE, "a.tar.gz.sigstore.json", None, "bundle"),
         (ARCHIVE, "--bundle", None, "bundle"),
         (ARCHIVE, f"/srv/a\n{BUNDLE}", None, "bundle"),
+        (ARCHIVE, f"/srv/a\x00{BUNDLE}", None, "bundle"),
         (ARCHIVE, BUNDLE, "trusted_root.json", "trusted root"),
         (ARCHIVE, BUNDLE, "", "trusted root"),
+        (ARCHIVE, BUNDLE, f"{TRUSTED_ROOT}\x00", "trusted root"),
     ],
 )
 def test_the_words_refuse_a_path_that_is_not_absolute_or_not_one_line(
@@ -471,9 +514,12 @@ def test_a_manifest_of_another_kind_makes_no_row(
     assert refusal.subject == BINARY_NAME
 
 
-def test_a_component_that_leaves_the_catalog_has_no_row(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("moving", ["RETIRING", "ARRIVING"])
+def test_a_component_that_leaves_or_comes_into_the_catalog_has_no_row(
+    monkeypatch: pytest.MonkeyPatch, moving: str
+) -> None:
     use_binary_catalog(monkeypatch)
-    monkeypatch.setattr(artifacts, "RETIRING", frozenset({BINARY_NAME}))
+    monkeypatch.setattr(artifacts, moving, frozenset({BINARY_NAME}))
 
     assert artifacts.archive_components(Repo.AGENT_CONTROL) == ()
     assert rows({}, Repo.AGENT_CONTROL) == ()
@@ -567,6 +613,54 @@ def test_a_crate_row_refuses_a_name_that_is_no_component_name(name: str) -> None
     assert refusal.subject == "crate row"
 
 
+def test_a_row_reads_each_constant_of_the_catalog() -> None:
+    """The target, the names, the variable and the limits are no field of
+    a row, so no caller gives a row other values."""
+    row = ArtifactRow(BINARY_NAME, (("cargo", "build"),))
+
+    assert (row.target, row.names, row.install_env) == (
+        BINARY_TARGET,
+        asset_names(BINARY_NAME),
+        BINARY_INSTALL_ENV,
+    )
+    assert (row.max_archive_bytes, row.max_members, row.max_unpacked_bytes) == (
+        ARCHIVE_MAX_BYTES,
+        ARCHIVE_MAX_MEMBERS,
+        ARCHIVE_MAX_UNPACKED_BYTES,
+    )
+
+
+@pytest.mark.parametrize(
+    ("component", "commands"),
+    [
+        ("a\nb", (("cargo",),)),
+        ("Agent", (("cargo",),)),
+        ("", (("cargo",),)),
+        (BINARY_NAME, ()),
+        (BINARY_NAME, ((),)),
+        (BINARY_NAME, (("cargo",), ())),
+        (BINARY_NAME, (("cargo", "a\nb"),)),
+        (BINARY_NAME, (("cargo", "a\x00b"),)),
+        (BINARY_NAME, (("cargo",), ("cargo", "x\n"))),
+    ],
+)
+def test_a_row_refuses_what_its_line_form_cannot_hold(
+    component: str, commands: tuple[tuple[str, ...], ...]
+) -> None:
+    refusal = _refusal(lambda: ArtifactRow(component, commands))
+
+    assert refusal.code is RefusalCode.REQUEST
+    assert refusal.subject == "artifact row"
+
+
+def test_a_copy_of_a_row_holds_the_same_rules() -> None:
+    row = crate_row("agent-family", "rust/crates/agent-family")
+
+    refusal = _refusal(lambda: replace(row, component="a\nb"))
+
+    assert refusal.subject == "artifact row"
+
+
 def test_the_command_refuses_a_bad_crate_directory(capsys: pytest.CaptureFixture[str]) -> None:
     code = main(["artifacts", "--crate-row", "agent-family", "--crate-dir", "family"])
 
@@ -652,7 +746,17 @@ def test_a_name_that_the_catalog_of_the_repository_does_not_hold_is_refused(
     assert capsys.readouterr().err.startswith("refused [catalog]")
 
 
-@pytest.mark.parametrize("extra", [["--paths", "x"], ["--cut", "x"], ["--json"]])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--paths", "x"],
+        ["--tags", "x"],
+        ["--at-sha", "x"],
+        ["--levels", "x"],
+        ["--cut", "x"],
+        ["--json"],
+    ],
+)
 def test_the_assets_take_no_input_of_a_plan(
     capsys: pytest.CaptureFixture[str], extra: list[str]
 ) -> None:

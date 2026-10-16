@@ -151,7 +151,8 @@ def download_url(owner: str, repo: str, tag: str, asset: str) -> str:
 class _Made:
     """No module but this one names this type. `SignerPolicy` takes a value
     of it first, so only `signer_policy` makes a policy: pyright refuses the
-    private name in each other module."""
+    private name in each other module, and the type refuses each other
+    value."""
 
 
 _MADE: Final = _Made()
@@ -164,7 +165,8 @@ class SignerPolicy:
     `commit`. The ref is no field: it is the same for each policy.
 
     `signer_policy` is the one maker. The fields are private to this module,
-    and the accessors read them.
+    and the accessors read them. The type checks each field itself, so a
+    copy that `dataclasses.replace` makes holds the same rules.
     """
 
     made: InitVar[_Made]
@@ -172,6 +174,23 @@ class SignerPolicy:
     _repo: str
     _workflow: str
     _commit: str
+
+    def __post_init__(self, made: _Made) -> None:
+        """An owner or a name that the site file would refuse, and a commit
+        that is not 40 lower-case hex digits, refuse with the `request` code.
+        A workflow that `catalog.RELEASE_WORKFLOW` does not hold refuses with
+        the `catalog` code."""
+        if made is not _MADE:
+            raise TypeError("only signer_policy makes a SignerPolicy")
+
+        _require_owner(self._owner)
+        _require_repo(self._repo)
+        if self._workflow not in RELEASE_WORKFLOW.values():
+            detail = f"the catalog names no such release workflow: {safe_token(self._workflow)}"
+            raise Refusal(RefusalCode.CATALOG, "workflow", detail)
+
+        if not SHA_RE.fullmatch(self._commit):
+            raise _refuse("commit", f"not 40 lower-case hex digits: {safe_token(self._commit)}")
 
     @property
     def owner(self) -> str:
@@ -205,19 +224,12 @@ def signer_policy(repo: Repo, owner: str, name: str, commit: str) -> SignerPolic
 
     The workflow file comes from `catalog.RELEASE_WORKFLOW`. A repository
     that the map does not hold refuses with the `catalog` code: no workflow
-    of it signs. An owner or a name that the site file would refuse, and a
-    commit that is not 40 lower-case hex digits, refuse with the `request`
-    code.
+    of it signs. The type checks the owner, the name and the commit.
     """
     workflow = RELEASE_WORKFLOW.get(repo)
     if workflow is None:
         detail = "the catalog names no release workflow for this repository"
         raise Refusal(RefusalCode.CATALOG, str(repo), detail)
-
-    _require_owner(owner)
-    _require_repo(name)
-    if not SHA_RE.fullmatch(commit):
-        raise _refuse("commit", f"not 40 lower-case hex digits: {safe_token(commit)}")
 
     return SignerPolicy(_MADE, owner, name, workflow, commit)
 
@@ -275,16 +287,54 @@ def install_words(crate_dir: str) -> tuple[str, ...]:
 class ArtifactRow:
     """What CI builds and packs for one archive, and the limits it holds
     the archive to. `commands` are the build commands, each a list of words.
+
+    The target, the asset names, the variable and the limits are no field.
+    Each one reads its constant, so no row holds another value.
     """
 
     component: str
-    target: str
-    names: AssetNames
-    install_env: str
-    max_archive_bytes: int
-    max_members: int
-    max_unpacked_bytes: int
     commands: tuple[tuple[str, ...], ...]
+
+    def __post_init__(self) -> None:
+        """The component has the grammar of a component name. The row has
+        one command or more, and each command has one word or more. No word
+        holds a line feed or a NUL. A row that breaks a rule refuses with
+        the `request` code: CI would build nothing, or the line form would
+        have more than one reading."""
+        if not NAME_RE.fullmatch(self.component):
+            detail = f"not a component name: {safe_token(self.component)}"
+            raise _refuse("artifact row", detail)
+
+        if not self.commands or not all(self.commands):
+            raise _refuse("artifact row", "a row needs one command or more, each with a word")
+
+        words = (word for command in self.commands for word in command)
+        if any("\n" in word or "\x00" in word for word in words):
+            raise _refuse("artifact row", "a word of a command holds a line feed or a NUL")
+
+    @property
+    def target(self) -> str:
+        return BINARY_TARGET
+
+    @property
+    def names(self) -> AssetNames:
+        return asset_names(self.component)
+
+    @property
+    def install_env(self) -> str:
+        return BINARY_INSTALL_ENV
+
+    @property
+    def max_archive_bytes(self) -> int:
+        return ARCHIVE_MAX_BYTES
+
+    @property
+    def max_members(self) -> int:
+        return ARCHIVE_MAX_MEMBERS
+
+    @property
+    def max_unpacked_bytes(self) -> int:
+        return ARCHIVE_MAX_UNPACKED_BYTES
 
     def lines(self) -> tuple[str, ...]:
         """The line form, for a `read` loop of bash 3.2: one key and one
@@ -337,7 +387,7 @@ def rows(manifests: Mapping[str, ComponentManifest], repo: Repo) -> tuple[Artifa
         if not manifest.build:
             raise Refusal(RefusalCode.MANIFEST, name, "a binary component with no build command")
 
-        found.append(_row(name, manifest.build))
+        found.append(ArtifactRow(name, manifest.build))
 
     return tuple(found)
 
@@ -349,20 +399,7 @@ def crate_row(name: str, crate_dir: str) -> ArtifactRow:
     if not NAME_RE.fullmatch(name):
         raise _refuse("crate row", f"not a component name: {safe_token(name)}")
 
-    return _row(name, (install_words(crate_dir),))
-
-
-def _row(component: str, commands: tuple[tuple[str, ...], ...]) -> ArtifactRow:
-    return ArtifactRow(
-        component=component,
-        target=BINARY_TARGET,
-        names=asset_names(component),
-        install_env=BINARY_INSTALL_ENV,
-        max_archive_bytes=ARCHIVE_MAX_BYTES,
-        max_members=ARCHIVE_MAX_MEMBERS,
-        max_unpacked_bytes=ARCHIVE_MAX_UNPACKED_BYTES,
-        commands=commands,
-    )
+    return ArtifactRow(name, (install_words(crate_dir),))
 
 
 def _require_owner(owner: str) -> None:
