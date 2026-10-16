@@ -1,0 +1,26 @@
+name = "ha"
+identity = "The same Home Assistant user as ha-read, non-admin, with the same entity read allowlist. Its write reach is bounded by that HA user's own permissions."
+
+install.source = "pypi"
+install.package = "ha-mcp"
+install.version = "8.4.3"
+install.lock = "mcp/ha/install.lock"
+install.python = "3.13"
+
+run.entrypoint = "ha-mcp"
+run.env.HOMEASSISTANT_URL = "http://192.0.2.20:8123"
+run.env.HOMEASSISTANT_TOKEN = "secret:ha_read_token"
+run.env.READ_ONLY_MODE = "false"
+run.env.ENABLE_WEBSOCKET = "true"
+run.env.HA_MCP_DISABLE_SETTINGS_UI = "true"
+run.env.HA_MCP_DISABLE_UPDATE_CHECK = "true"
+run.state_dir = true
+run.state_dir_env = "HA_MCP_CONFIG_DIR"
+
+tools = [
+    { name = "ha_call_service", description = "Call one Home Assistant service on one entity.", write = true },
+]
+
+shared_secrets = [
+    { secret = "ha_read_token", server = "ha-read" },
+]
