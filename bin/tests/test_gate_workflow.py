@@ -43,10 +43,14 @@ checked in the same way. `gate` needs the job, so a file of
 `.github/workflows/coverage-nightly.yml` is a workflow of its own. One time a
 day it runs the same script with `--branch`, on one nightly toolchain that
 its one constant names by a date. No job of the two other files needs it, so
-it blocks no merge. It takes `cargo-llvm-cov` with the step and the two
-constants of the `rust-coverage` job, and the tests hold the three copies
-equal. The job that measures runs on `main` only. A run that a person starts
-on another ref is then a success, and it cannot block a release.
+it blocks no merge. The job that measures runs on `main` only. A run that a
+person starts on another ref is then a success, and it cannot block a release.
+
+The three jobs that measure take `cargo-llvm-cov` through one local action,
+`.github/actions/cargo-llvm-cov`. That file is the one home of the step and
+of its two constants: the version, and the SHA-256 of the release archive.
+The tests hold the action as a whole. They also fail when a workflow file
+holds a copy of the constants.
 
 `.github/workflows/advisories-daily.yml` is a workflow of its own too. One
 time a day it runs `bin/rust-gate.sh --advisories`: the advisory check of
@@ -235,8 +239,8 @@ COVERAGE_STEP = "cargo-llvm-cov"
 #: `cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz` of the release
 #: `v<version>`. To take another version, compute the SHA-256 of the new
 #: archive and compare it with the digest that the release page shows. Then
-#: change the two values here and in the three workflow files: the gate, the
-#: release and the nightly run.
+#: change the two values here and in the action file. No workflow file holds
+#: them.
 COVERAGE_ENV = {
     "LLVM_COV_VERSION": "0.9.1",
     "LLVM_COV_SHA256": "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522",
@@ -264,6 +268,40 @@ echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
 PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
 """
 
+#: The one home of that step: a local composite action. A job names the
+#: action by this path, and the runner reads it from the checkout. The file
+#: is here as text and as data.
+COVERAGE_ACTION = "./.github/actions/cargo-llvm-cov"
+COVERAGE_ACTION_FILE = REPO / COVERAGE_ACTION / "action.yml"
+COVERAGE_ACTION_TEXT = COVERAGE_ACTION_FILE.read_text(encoding="utf-8")
+COVERAGE_ACTION_DATA: dict[str, Any] = yaml.safe_load(COVERAGE_ACTION_TEXT)
+
+#: Each key of the action file, and each key of its `runs` table. One more
+#: key at the top gives the action an input or an output. The action has
+#: neither: a job cannot give it another version.
+COVERAGE_ACTION_KEYS = {"name", "description", "runs"}
+COVERAGE_RUNS_KEYS = {"using", "steps"}
+
+#: The kind of the action. Its step runs in the job that calls it, with the
+#: variables of that job.
+COMPOSITE = "composite"
+
+#: The one step of the action, as a whole: the text and the two constants
+#: above. A `run` step of a composite action needs the `shell` key. Without
+#: that key, the runner refuses the action file. One more key can make a red
+#: step green, for example `continue-on-error`.
+COVERAGE_ACTION_STEP = {
+    "shell": "bash",
+    "working-directory": RUST_DIR,
+    "env": COVERAGE_ENV,
+    "run": COVERAGE_INSTALL_RUN,
+}
+
+#: The start of the name of each of the two constants. Under `.github`, only
+#: the action file holds this text. A copy of the step in a workflow file
+#: holds it too.
+COVERAGE_PREFIX = "LLVM_COV_"
+
 #: Each key of the job, and each key of its three steps after the checkout.
 #: One more key can make a red step green, for example `continue-on-error`.
 COVERAGE_JOB_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
@@ -276,7 +314,7 @@ COVERAGE_RUNNER = "ubuntu-latest"
 COVERAGE_JOB_ENV = {"CARGO_INCREMENTAL": 0}
 COVERAGE_STEP_KEYS = [
     {"name", "if", "working-directory", "run"},
-    {"name", "if", "working-directory", "env", "run"},
+    {"name", "if", "uses"},
     {"if", "run"},
 ]
 
@@ -363,7 +401,7 @@ NIGHTLY_KEYS = {
 NIGHTLY_STEP_KEYS = [
     {"uses", "with"},
     {"name", "working-directory", "run"},
-    {"name", "working-directory", "env", "run"},
+    {"name", "uses"},
     {"run"},
 ]
 
@@ -1182,15 +1220,49 @@ def test_the_coverage_job_runs_the_script_on_the_pinned_toolchain(
 def test_the_coverage_job_takes_cargo_llvm_cov_from_an_archive_that_it_checked(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
-    """No action installs `cargo-llvm-cov`, so no commit pin holds the
-    program. The SHA-256 of the archive is the pin, as for `cargo-deny`. The
-    test holds the whole text of the step and the two constants."""
+    """No commit pin holds `cargo-llvm-cov`. The SHA-256 of the archive is
+    the pin, as for `cargo-deny`. One local action holds the step. The step
+    of the job is its name, the rule of the job and the path of that action,
+    and no other key. One more key can change what the step does, for example
+    `env` or `continue-on-error`. The action holds the whole text of the step
+    and the two constants."""
     _checkout, _toolchain, install, _script = jobs[COVERAGE_JOB]["steps"]
+    (step,) = COVERAGE_ACTION_DATA["runs"]["steps"]
 
-    assert install["name"] == COVERAGE_STEP
-    assert install["env"] == COVERAGE_ENV
-    assert install["working-directory"] == RUST_DIR
-    assert install["run"] == COVERAGE_INSTALL_RUN
+    assert install == {"name": COVERAGE_STEP, "if": ONLY_RUST, "uses": COVERAGE_ACTION}
+    assert step["env"] == COVERAGE_ENV
+    assert step["working-directory"] == RUST_DIR
+    assert step["run"] == COVERAGE_INSTALL_RUN
+
+
+def test_the_cargo_llvm_cov_action_is_one_step_and_no_other_key() -> None:
+    """The action is the one copy of the step that takes `cargo-llvm-cov`.
+    The test holds the file as a whole: each key at the top, the kind, one
+    step, each key of that step and each value. A second step can put
+    another program on PATH after the compare. One more key of the step can
+    hide a compare that failed.
+
+    The text of the file sets each constant one time. PyYAML keeps the last
+    value of a key that a table holds two times, so the data alone does not
+    show a second line. The test thus counts the start of the two names in
+    the text. The `run` text holds that start in some places, and each
+    constant adds one place. A second line for a constant adds one more, also
+    with a quote or a space before its colon. The header comment of the
+    action must not hold that start."""
+    runs = COVERAGE_ACTION_DATA["runs"]
+    named = COVERAGE_INSTALL_RUN.count(COVERAGE_PREFIX) + len(COVERAGE_ENV)
+    found = COVERAGE_ACTION_TEXT.count(COVERAGE_PREFIX)
+
+    assert set(COVERAGE_ACTION_DATA) == COVERAGE_ACTION_KEYS
+    assert COVERAGE_ACTION_DATA["name"] == COVERAGE_STEP
+    assert COVERAGE_ACTION_DATA["description"].strip(), "the action has no description"
+    assert set(runs) == COVERAGE_RUNS_KEYS
+    assert runs["using"] == COMPOSITE
+    assert len(runs["steps"]) == 1, "the action has more than one step"
+    assert set(runs["steps"][0]) == set(COVERAGE_ACTION_STEP)
+    assert runs["steps"] == [COVERAGE_ACTION_STEP]
+    assert all(name.startswith(COVERAGE_PREFIX) for name in COVERAGE_ENV)
+    assert found == named, f"the action holds {COVERAGE_PREFIX} {found} times, not {named}"
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -1292,20 +1364,31 @@ def test_the_nightly_toolchain_is_in_the_nightly_workflow_only() -> None:
 
 def test_the_three_workflows_take_the_same_cargo_llvm_cov() -> None:
     """The nightly run and the merge gate must read a report of one tool
-    version: the script reads the form of that report. The nightly step is
-    the step of the `rust-coverage` job of each other file, without the rule
-    of that job. So the two constants and the whole text are equal in the
-    three files."""
+    version: the script reads the form of that report. So the three jobs name
+    one action. The nightly step is the step of the `rust-coverage` job of
+    each other file, without the rule of that job. Each of the three files
+    calls the action one time. Under `.github`, the action file alone holds
+    the two constants: a copy of the step in a workflow file fails here."""
     _checkout, _toolchain, install, _script = NIGHTLY_JOBS[NIGHTLY_JOB]["steps"]
 
-    assert install["name"] == COVERAGE_STEP
-    assert install["env"] == COVERAGE_ENV
-    assert install["working-directory"] == RUST_DIR
-    assert install["run"] == COVERAGE_INSTALL_RUN
+    assert install == {"name": COVERAGE_STEP, "uses": COVERAGE_ACTION}
     for jobs, last in WORKFLOW_JOBS:
         _checkout, _toolchain, gated, _script = jobs[COVERAGE_JOB]["steps"]
 
         assert install == {key: value for key, value in gated.items() if key != "if"}, last
+
+    callers = {GATE_NAME: JOBS, RELEASE_NAME: RELEASE_JOBS, NIGHTLY_NAME: NIGHTLY_JOBS}
+    for name, jobs in callers.items():
+        steps = [step for job in jobs.values() for step in job["steps"]]
+        calls = [step for step in steps if step.get("uses") == COVERAGE_ACTION]
+
+        assert len(calls) == 1, f"{name} calls the action {len(calls)} times"
+
+    files = [path for path in sorted((REPO / ".github").rglob("*")) if path.is_file()]
+    holders = [path for path in files if COVERAGE_PREFIX.encode() in path.read_bytes()]
+
+    assert all(name.startswith(COVERAGE_PREFIX) for name in COVERAGE_ENV)
+    assert holders == [COVERAGE_ACTION_FILE]
 
 
 def test_the_nightly_job_runs_the_script_with_the_branch_flag() -> None:
@@ -1727,11 +1810,12 @@ SCOPES = [
     (["bin/rust-gate.sh"], ("code", "true", "false")),
     (["bin/rust-coverage.sh"], ("code", "true", "false")),
     (["bin/lib/rustrule.sh"], ("code", "true", "false")),
-    # The three CI files are files of the Rust checks. They are no files of
+    # The four CI files are files of the Rust checks. They are no files of
     # the systemd proof: the tests of this file hold the `systemd-proof` job.
     ([".github/workflows/gate.yml"], ("code", "true", "false")),
     ([".github/workflows/release.yml"], ("code", "true", "false")),
     ([".github/actions/scope/action.yml"], ("code", "true", "false")),
+    ([".github/actions/cargo-llvm-cov/action.yml"], ("code", "true", "false")),
     # The Rust tests read vectors/data, so a vector that moves runs them.
     (["vectors/data/index.json"], ("code", "true", "false")),
     (["vectors/generate.py"], ("code", "true", "false")),

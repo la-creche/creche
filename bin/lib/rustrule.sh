@@ -64,6 +64,10 @@ vectors_path() {
 # wrong cargo flag passes every test. Only a run with the real cargo proves a
 # change to one of these files.
 #
+# The action .github/actions/cargo-llvm-cov counts too. It gives the
+# `rust-coverage` job its tool. No test downloads the archive, so only a run
+# of that job with the real tool proves a change of the action alone.
+#
 # The manifest of the release tool counts too. The build script of
 # creche-contracts reads the version of the manifest contract from it
 # (rust/crates/creche-contracts/build.rs), so a change of that file alone
@@ -74,7 +78,7 @@ rust_gate_path() {
   case "$1" in
     bin/rust-gate.sh | bin/rust-coverage.sh | bin/lib/rustrule.sh | \
       .github/workflows/gate.yml | .github/workflows/release.yml | \
-      .github/actions/scope/* | \
+      .github/actions/scope/* | .github/actions/cargo-llvm-cov/* | \
       handover/component.yaml | handover/component.toml)
       return 0
       ;;
