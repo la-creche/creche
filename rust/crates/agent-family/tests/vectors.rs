@@ -15,7 +15,8 @@ mod walk {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use agent_family::{
-        Diff, HostFacts, Registry, Report, SystemZones, classify, load_registry, parse_family,
+        Diff, HostFacts, Markup, Registry, Report, SystemZones, classify, load_registry,
+        parse_family,
     };
     use creche_contracts::family::RawFamily;
     use creche_contracts::server::RawServer;
@@ -32,13 +33,24 @@ mod walk {
     const OWN_SURFACES: [&str; 2] = ["family_file", "server_file"];
 
     /// Each surface that a test of this file walks.
-    const SURFACES: [&str; 5] = [
+    const SURFACES: [&str; 6] = [
         "family_file",
         "family_file.host",
+        "family_file.toml",
         "server_file",
         "family_file.classify",
         "family_file.cli",
     ];
+
+    /// The name of the input of a surface of a family file. The surface
+    /// `family_file.toml` stages a TOML text, and each other one a YAML text.
+    fn family_file_of(surface: &str) -> &'static str {
+        if surface == "family_file.toml" {
+            "family.toml"
+        } else {
+            "family.yaml"
+        }
+    }
 
     /// What the Rust report of one vector holds that the Python report does
     /// not hold.
@@ -331,7 +343,7 @@ mod walk {
             let directory = params["directory"].as_str().unwrap();
             let scratch = staged(&registries, params, "");
             scratch.write(
-                &format!("families/{directory}/family.yaml"),
+                &format!("families/{directory}/{}", family_file_of(surface_name)),
                 &vector.input().bytes().unwrap(),
             );
             let loaded: Registry = load_registry(&scratch.0, host, &SystemZones::host());
@@ -368,6 +380,11 @@ mod walk {
     #[test]
     fn a_family_file_on_a_host_has_the_python_report() {
         walk_family_file("family_file.host");
+    }
+
+    #[test]
+    fn a_toml_family_file_has_the_python_report() {
+        walk_family_file("family_file.toml");
     }
 
     #[test]
@@ -443,7 +460,7 @@ mod walk {
             let args = vector.input().args().unwrap();
             let parse = |key: &str| {
                 let text = args[key].as_str().unwrap();
-                let (raw, issues) = parse_family(text);
+                let (raw, issues) = parse_family(text, Markup::Yaml);
 
                 raw.unwrap_or_else(|| panic!("{id} {key}: {issues:?}"))
             };

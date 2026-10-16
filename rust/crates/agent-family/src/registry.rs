@@ -10,14 +10,18 @@ use std::path::{Path, PathBuf};
 
 use creche_contracts::family::{Family, Issue, RawFamily, Severity};
 use creche_contracts::server::{RawServer, Server};
+use creche_contracts::tomlfile::{self, FileKind};
 use creche_util::{hex, pytext, sha256};
 
 use crate::crossref::{HostFacts, Index, check_family, check_server};
-use crate::parse::{DOCUMENT, parse_family, parse_server};
+use crate::parse::{DOCUMENT, Markup, parse_family, parse_family_toml, parse_server};
 use crate::report::Report;
 use crate::zones::ZoneFacts;
 
-const FAMILY_FILE: &str = "family.yaml";
+/// The two names of a family file. The loader reads `FAMILY_FILE` first and
+/// `FAMILY_FILE_YAML` second, and a directory with both is an error.
+const FAMILY_FILE: &str = "family.toml";
+const FAMILY_FILE_YAML: &str = "family.yaml";
 const SERVER_FILE: &str = "server.yaml";
 const SKILL_FILE: &str = "SKILL.md";
 const INSTRUCTIONS_FILE: &str = "instructions.md";
@@ -163,21 +167,34 @@ fn name_of(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// The reason that the loader reports for a file that it cannot read.
+fn cannot_read(name: &str, error: &std::io::Error) -> String {
+    let text = error.to_string();
+    // The text of an operating system error ends with its number.
+    let reason = text.split(" (os error ").next().unwrap_or(&text);
+
+    format!("cannot read {name}: {reason}")
+}
+
 /// The text of a file, as Python reads it: UTF-8, with each line end as one
 /// `\n`. The error is the reason that the loader reports.
 fn read(path: &Path) -> Result<String, String> {
     let name = name_of(path);
-    let bytes = fs::read(path).map_err(|error| {
-        let text = error.to_string();
-        // The text of an operating system error ends with its number.
-        let reason = text.split(" (os error ").next().unwrap_or(&text);
-
-        format!("cannot read {name}: {reason}")
-    })?;
+    let bytes = fs::read(path).map_err(|error| cannot_read(&name, &error))?;
     let text = String::from_utf8(bytes)
         .map_err(|_| format!("cannot read {name}: it is not UTF-8 text"))?;
 
     Ok(pytext::universal_newlines(&text).into_owned())
+}
+
+/// The bytes of a TOML family file. The read stops one byte past the limit
+/// of the file kind, so the TOML reader refuses a larger file with its own
+/// text. The error is the reason that the loader reports.
+fn read_toml(path: &Path) -> Result<Vec<u8>, String> {
+    let name = name_of(path);
+    let file = fs::File::open(path).map_err(|error| cannot_read(&name, &error))?;
+
+    tomlfile::take_bytes(file, FileKind::Family).map_err(|error| cannot_read(&name, &error))
 }
 
 /// Each directory under `base`, in the order of the names.
@@ -313,29 +330,82 @@ fn read_servers(root: &Path) -> Servers {
     servers
 }
 
-/// The family files with the right shape, and the issues of each other
-/// directory.
-fn read_families(root: &Path) -> (BTreeMap<String, RawFamily>, BTreeMap<String, Vec<Issue>>) {
-    let mut parsed = BTreeMap::new();
-    let mut issues_by_name = BTreeMap::new();
+/// One family file, read and parsed. A file that the loader cannot read
+/// gives one error.
+fn read_family(path: &Path, markup: Markup) -> (Option<RawFamily>, Vec<Issue>) {
+    let read = match markup {
+        Markup::Toml => read_toml(path).map(|bytes| parse_family_toml(&bytes)),
+        Markup::Yaml => read(path).map(|text| parse_family(&text, Markup::Yaml)),
+    };
+
+    read.unwrap_or_else(|problem| (None, vec![error(problem)]))
+}
+
+/// What one directory under `families/` gives the loader.
+struct Families {
+    /// Each family file with the right shape.
+    parsed: BTreeMap<String, RawFamily>,
+    /// The issues of each other directory.
+    issues: BTreeMap<String, Vec<Issue>>,
+    /// The name of the file that the report of each directory names: the
+    /// TOML name when that file is there, else the YAML name.
+    files: BTreeMap<String, &'static str>,
+}
+
+fn read_families(root: &Path) -> Families {
+    let mut families = Families {
+        parsed: BTreeMap::new(),
+        issues: BTreeMap::new(),
+        files: BTreeMap::new(),
+    };
     for directory in subdirectories(&root.join(FAMILIES_DIR)) {
         let name = name_of(&directory);
-        match find(&directory, FAMILY_FILE) {
-            Found::Issue(issue) => {
-                issues_by_name.insert(name, vec![issue]);
+        let has_toml = directory.join(FAMILY_FILE).is_file();
+        let has_yaml = directory.join(FAMILY_FILE_YAML).is_file();
+        let file = if has_toml {
+            FAMILY_FILE
+        } else {
+            FAMILY_FILE_YAML
+        };
+        families.files.insert(name.clone(), file);
+        if has_toml && has_yaml {
+            // CONTRACT-QUESTION: contract 01 §1 names one file,
+            // `family.toml`. It does not say what a reader does with a
+            // directory that also holds `family.yaml`. The loader takes the
+            // strict reading, as the Python loader does: one error, and it
+            // parses neither file. The report names `family.toml`. The other
+            // reading names `family.yaml`. A change costs the line that
+            // selects `file` and one vector.
+            let issue = error(format!(
+                "two family files: {FAMILY_FILE} and {FAMILY_FILE_YAML}; keep one"
+            ));
+            families.issues.insert(name, vec![issue]);
+            continue;
+        }
+
+        if !has_toml && !has_yaml {
+            // Contract 01 §5.6 rule 3: a warning, and `caregiver` ignores
+            // the directory.
+            let issue = warning(
+                DOCUMENT,
+                format!("no {FAMILY_FILE_YAML}; this directory is ignored"),
+            );
+            families.issues.insert(name, vec![issue]);
+            continue;
+        }
+
+        let markup = if has_toml { Markup::Toml } else { Markup::Yaml };
+        match read_family(&directory.join(file), markup) {
+            (Some(raw), _) => {
+                families.parsed.insert(name, raw);
             }
-            Found::Text(text) => match parse_family(&text) {
-                (Some(raw), _) => {
-                    parsed.insert(name, raw);
-                }
-                (None, issues) => {
-                    issues_by_name.insert(name, issues);
-                }
-            },
+            (None, issues) => {
+                families.issues.insert(name, issues);
+            }
         }
     }
 
-    (parsed, issues_by_name)
+    families
 }
 
 fn read_skills(root: &Path) -> BTreeSet<String> {
@@ -428,7 +498,11 @@ fn check_dispatch(families: &BTreeMap<String, RawFamily>, reports: &mut BTreeMap
 #[must_use]
 pub fn load_registry(root: &Path, host: Option<&dyn HostFacts>, zones: &dyn ZoneFacts) -> Registry {
     let servers = read_servers(root);
-    let (parsed, mut issues_by_name) = read_families(root);
+    let Families {
+        parsed,
+        issues: mut issues_by_name,
+        files,
+    } = read_families(root);
     let skills = read_skills(root);
     let index = Index {
         kinds: parsed
@@ -459,7 +533,8 @@ pub fn load_registry(root: &Path, host: Option<&dyn HostFacts>, zones: &dyn Zone
     let mut reports: BTreeMap<String, Report> = issues_by_name
         .into_iter()
         .map(|(name, issues)| {
-            let file = format!("{FAMILIES_DIR}/{name}/{FAMILY_FILE}");
+            let file = files.get(&name).copied().unwrap_or(FAMILY_FILE_YAML);
+            let file = format!("{FAMILIES_DIR}/{name}/{file}");
             let report = Report::new(&name, &file, issues);
 
             (name, report)

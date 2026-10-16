@@ -1,9 +1,9 @@
 # agent-family
 
-The Rust port of the Python package `agent_family`: the validator of
-`family.yaml` and of `mcp/<name>/server.yaml`, the registry loader and the
-`agent-family` program. `rust/AGENTS.md` and the root `AGENTS.md` apply here
-too.
+The Rust port of the Python package `agent_family`: the validator of the
+family file and of `mcp/<name>/server.yaml`, the registry loader and the
+`agent-family` program. A family file is `family.toml` or `family.yaml`.
+`rust/AGENTS.md` and the root `AGENTS.md` apply here too.
 
 The Python package is the authority until a release of `caregiver` uses this
 crate. This crate replaces nothing. Each function gives the answer of its
@@ -18,7 +18,7 @@ same messages.
 | `src/lax.rs` | A value to a number, a boolean or a string, as pydantic reads it. |
 | `src/shape.rs` | A YAML value to a raw file. It reports each wrong type and each unknown field. |
 | `src/difflib.rs` | The nearest known name for an unknown field. |
-| `src/parse.rs` | `parse_family` and `parse_server`: YAML text to a raw file, or to issues. |
+| `src/parse.rs` | `parse_family` and `parse_server`: YAML or TOML text to a raw file, or to issues. |
 | `src/crossref.rs` | `check_family` and `check_server`: the rules that need the registry or the host. |
 | `src/registry.rs` | `load_registry` and `revision_of`. |
 | `src/classify.rs` | `classify`: live or replacement, field by field. |
@@ -32,6 +32,7 @@ same messages.
 
 The types are in `creche-contracts`: `family` holds `RawFamily`, `Family` and
 the report types, and `server` holds `RawServer` and `Server`.
+`RawFamily::from_toml` of `family` reads a TOML family file.
 
 ## How one file becomes a report
 
@@ -48,10 +49,25 @@ the report types, and `server` holds `RawServer` and `Server`.
 A `Family` exists only through step 3. `Registry::families` holds a family
 only when steps 3 and 4 give no error.
 
+A TOML family file takes another path for steps 1 and 2:
+
+1. `RawFamily::from_toml` of `creche-contracts` reads the bytes with the TOML
+   reader of that crate. It gives a raw file, a refusal of the reader or
+   each fault of the shape. A fault holds no message.
+2. `parse.rs` writes the message of each fault with the texts of the YAML
+   path. The TOML path reads each field in the strict mode of pydantic: a
+   field takes the kind of its type, and a float field also takes an
+   integer.
+3. Steps 3 to 5 are the same for both formats.
+
+The loader reads `family.toml` first and `family.yaml` second. A directory
+with both files gets one error, and the loader parses neither file. The
+loader reads `server.yaml` only.
+
 ## Rules
 
 1. Change no rule here without a vector. `tests/vectors.rs` walks each
-   vector of the five surfaces of this crate.
+   vector of the six surfaces of this crate.
 2. For a difference from the Python code, do what "The differential test"
    of `rust/AGENTS.md` says.
 3. Keep the message of an issue equal to the Python message. The operator
@@ -150,7 +166,12 @@ Rules for the program:
      more. The Python validator reads more levels. A debug build reads a
      text of 128 levels on a stack of 1 MiB. The vectors are
      `nest-128-levels` and `nest-129-levels`.
-  7. `creche-contracts/src/ids.rs`, `ToolName`, `EnvName` and
+  7. `registry.rs`, `read_families`, contract 01 §1. The contract names one
+     family file. It does not say what a loader does with a directory that
+     holds `family.toml` and `family.yaml`. The loader gives one error and
+     parses neither file, as the Python loader does. The vector is
+     `toml-two-names` of `family_file.toml`.
+  8. `creche-contracts/src/ids.rs`, `ToolName`, `EnvName` and
      `PackageVersion`, contract 01 §3.4 and contract 01b §3.1, §4.1 and §5.
      `rust/AGENTS.md` lists the three questions. The Python validator and
      this crate have one form for each of the three texts. A tool name and
