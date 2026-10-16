@@ -373,7 +373,6 @@ def test_a_text_that_is_no_value_breaks_the_grammar() -> None:
         refused = refusal(data)
 
         assert refused.rule is Rule.SYNTAX, data
-        assert refused.offset is None
 
 
 #: Each word that some JSON readers take as a number.
@@ -398,7 +397,6 @@ def test_a_word_for_a_number_that_is_not_finite_is_no_value() -> None:
         refused = refusal(data)
 
         assert refused.rule is Rule.CONSTANT, data
-        assert refused.offset is None
 
 
 #: A character after the value that is not white space, with its offset.
@@ -575,7 +573,6 @@ def test_each_form_of_a_lone_surrogate_is_refused() -> None:
         refused = refusal(data)
 
         assert refused.rule is Rule.LONE_SURROGATE, data
-        assert refused.offset is None
 
 
 def test_a_whole_surrogate_pair_is_one_character() -> None:
@@ -629,7 +626,6 @@ def test_an_object_with_a_key_two_times_is_refused() -> None:
         refused = refusal(data)
 
         assert refused.rule is Rule.DUPLICATE_KEY, data
-        assert refused.offset is None
 
 
 def test_keys_that_differ_in_a_code_point_are_two_keys() -> None:
@@ -682,7 +678,6 @@ def test_a_text_of_65_levels_is_too_deep() -> None:
         refused = refusal(data)
 
         assert refused.rule is Rule.TOO_DEEP, data
-        assert refused.offset is None
 
 
 def test_a_deeper_text_is_too_deep() -> None:
@@ -784,7 +779,6 @@ def test_an_integer_outside_the_range_is_refused() -> None:
         refused = refusal(data)
 
         assert refused.rule is Rule.INTEGER_RANGE, data
-        assert refused.offset is None
 
 
 def test_an_integer_with_more_digits_than_int_reads_is_out_of_range() -> None:
@@ -854,7 +848,6 @@ def test_a_float_that_is_not_finite_is_refused() -> None:
         refused = refusal(data)
 
         assert refused.rule is Rule.FLOAT_RANGE, data
-        assert refused.offset is None
 
 
 def test_a_float_with_many_digits_before_its_fraction_is_refused() -> None:
@@ -873,31 +866,326 @@ def test_a_long_float_token_counts_each_digit_of_its_exponent() -> None:
     assert repr(strictjson.loads(one.encode(), cap=ROOMY)) == "1.0"
 
 
+# --- the rule and the offset of the Rust check ----------------------------------------
+
+#: Each refused text of the tests of the Rust check, `json/scan.rs` of the crate
+#: `creche-contracts`, with the rule and the offset that the Rust check gives.
+RUST_REFUSALS: tuple[tuple[bytes, Rule, int], ...] = (
+    (b"", Rule.SYNTAX, 0),
+    (b" ", Rule.SYNTAX, 1),
+    (b"\n\t \r", Rule.SYNTAX, 4),
+    (b"nope", Rule.SYNTAX, 1),
+    (b"nul", Rule.SYNTAX, 3),
+    (b"nulL", Rule.SYNTAX, 3),
+    (b"tru", Rule.SYNTAX, 3),
+    (b"trUe", Rule.SYNTAX, 2),
+    (b"fals", Rule.SYNTAX, 4),
+    (b"falsy", Rule.SYNTAX, 4),
+    (b"nan", Rule.SYNTAX, 1),
+    (b"Null", Rule.SYNTAX, 0),
+    (b"NULL", Rule.SYNTAX, 0),
+    (b"True", Rule.SYNTAX, 0),
+    (b"TRUE", Rule.SYNTAX, 0),
+    (b"False", Rule.SYNTAX, 0),
+    (b"Nan", Rule.SYNTAX, 0),
+    (b"NAN", Rule.SYNTAX, 0),
+    (b"inf", Rule.SYNTAX, 0),
+    (b"Inf", Rule.SYNTAX, 0),
+    (b"infinity", Rule.SYNTAX, 0),
+    (b"-inf", Rule.SYNTAX, 1),
+    (b"-Inf", Rule.SYNTAX, 1),
+    (b"-NaN", Rule.SYNTAX, 1),
+    (b"+Infinity", Rule.SYNTAX, 0),
+    (b"undefined", Rule.SYNTAX, 0),
+    (b"None", Rule.SYNTAX, 0),
+    (b"01", Rule.SYNTAX, 1),
+    (b"00", Rule.SYNTAX, 1),
+    (b"-01", Rule.SYNTAX, 2),
+    (b"1.", Rule.SYNTAX, 2),
+    (b"0.", Rule.SYNTAX, 2),
+    (b"-0.", Rule.SYNTAX, 3),
+    (b".5", Rule.SYNTAX, 0),
+    (b"-.5", Rule.SYNTAX, 1),
+    (b"-", Rule.SYNTAX, 1),
+    (b"--1", Rule.SYNTAX, 1),
+    (b"+1", Rule.SYNTAX, 0),
+    (b"1e", Rule.SYNTAX, 2),
+    (b"1E", Rule.SYNTAX, 2),
+    (b"1e+", Rule.SYNTAX, 3),
+    (b"1E-", Rule.SYNTAX, 3),
+    (b"1.e3", Rule.SYNTAX, 2),
+    (b"1.0e", Rule.SYNTAX, 4),
+    (b"1.5.2", Rule.SYNTAX, 3),
+    (b"1e5e3", Rule.SYNTAX, 3),
+    (b"1e5.3", Rule.SYNTAX, 3),
+    (b"1+2", Rule.SYNTAX, 1),
+    (b"1-2", Rule.SYNTAX, 1),
+    (b"1e5-", Rule.SYNTAX, 3),
+    (b"[01]", Rule.SYNTAX, 2),
+    (b"[1.]", Rule.SYNTAX, 3),
+    (b"[0x10]", Rule.SYNTAX, 2),
+    (b"[1_000]", Rule.SYNTAX, 2),
+    (b"[1 000]", Rule.SYNTAX, 3),
+    (b"\xd9\xa1", Rule.SYNTAX, 0),
+    (b"[1\xd9\xa1]", Rule.SYNTAX, 2),
+    (b'"', Rule.SYNTAX, 1),
+    (b'"abc', Rule.SYNTAX, 4),
+    (b"'a'", Rule.SYNTAX, 0),
+    (b'["a]', Rule.SYNTAX, 4),
+    (b'"a\tb"', Rule.SYNTAX, 2),
+    (b'"a\nb"', Rule.SYNTAX, 2),
+    (b'"a\rb"', Rule.SYNTAX, 2),
+    (b'"a\x00b"', Rule.SYNTAX, 2),
+    (b'"a\x1fb"', Rule.SYNTAX, 2),
+    (b'"\x08"', Rule.SYNTAX, 1),
+    (b'"\\a"', Rule.SYNTAX, 1),
+    (b'"\\\'"', Rule.SYNTAX, 1),
+    (b'"\\0"', Rule.SYNTAX, 1),
+    (b'"\\v"', Rule.SYNTAX, 1),
+    (b'"\\x41"', Rule.SYNTAX, 1),
+    (b'"\\U0041"', Rule.SYNTAX, 1),
+    (b'"\\N"', Rule.SYNTAX, 1),
+    (b'"ab\\ "', Rule.SYNTAX, 3),
+    (b'"\\\n"', Rule.SYNTAX, 1),
+    (b'"\\u"', Rule.SYNTAX, 1),
+    (b'"\\u1"', Rule.SYNTAX, 1),
+    (b'"\\u12"', Rule.SYNTAX, 1),
+    (b'"\\u123"', Rule.SYNTAX, 1),
+    (b'"\\u12G4"', Rule.SYNTAX, 1),
+    (b'"\\u+123"', Rule.SYNTAX, 1),
+    (b'"\\u 123"', Rule.SYNTAX, 1),
+    (b'"\\u-123"', Rule.SYNTAX, 1),
+    (b'"a\\u00zz"', Rule.SYNTAX, 2),
+    (b'"\\u00\xc3\xa90"', Rule.SYNTAX, 1),
+    (b'"\\', Rule.SYNTAX, 1),
+    (b'"\\u', Rule.SYNTAX, 1),
+    (b'"\\u123', Rule.SYNTAX, 1),
+    (b"[", Rule.SYNTAX, 1),
+    (b"[1", Rule.SYNTAX, 2),
+    (b"[1,", Rule.SYNTAX, 3),
+    (b"[1,]", Rule.SYNTAX, 3),
+    (b"[,1]", Rule.SYNTAX, 1),
+    (b"[,]", Rule.SYNTAX, 1),
+    (b"[1,,2]", Rule.SYNTAX, 3),
+    (b"[1 2]", Rule.SYNTAX, 3),
+    (b"[1:2]", Rule.SYNTAX, 2),
+    (b"]", Rule.SYNTAX, 0),
+    (b"[}", Rule.SYNTAX, 1),
+    (b"[1}", Rule.SYNTAX, 2),
+    (b"[truex]", Rule.SYNTAX, 5),
+    (b"{", Rule.SYNTAX, 1),
+    (b'{"a"', Rule.SYNTAX, 4),
+    (b'{"a":', Rule.SYNTAX, 5),
+    (b'{"a":1', Rule.SYNTAX, 6),
+    (b'{"a":1,', Rule.SYNTAX, 7),
+    (b'{"a":1,}', Rule.SYNTAX, 7),
+    (b"{,}", Rule.SYNTAX, 1),
+    (b'{"a"}', Rule.SYNTAX, 4),
+    (b'{"a" 1}', Rule.SYNTAX, 5),
+    (b'{"a":}', Rule.SYNTAX, 5),
+    (b'{"a":1 "b":2}', Rule.SYNTAX, 7),
+    (b'{"a":1]', Rule.SYNTAX, 6),
+    (b'{"a",1}', Rule.SYNTAX, 4),
+    (b"}", Rule.SYNTAX, 0),
+    (b"{a:1}", Rule.SYNTAX, 1),
+    (b"{1:2}", Rule.SYNTAX, 1),
+    (b"{null:1}", Rule.SYNTAX, 1),
+    (b"{'a':1}", Rule.SYNTAX, 1),
+    (b"{[]:1}", Rule.SYNTAX, 1),
+    (b'{"a":1,2}', Rule.SYNTAX, 7),
+    (b"/* c */ 1", Rule.SYNTAX, 0),
+    (b"// c\n1", Rule.SYNTAX, 0),
+    (b"# c\n1", Rule.SYNTAX, 0),
+    (b"[1, /* c */ 2]", Rule.SYNTAX, 4),
+    (b"\x0c1", Rule.SYNTAX, 0),
+    (b"\x0b1", Rule.SYNTAX, 0),
+    (b"\xc2\xa01", Rule.SYNTAX, 0),
+    (b"\xe2\x80\xa81", Rule.SYNTAX, 0),
+    (b"[1,\xe3\x80\x802]", Rule.SYNTAX, 3),
+    (b":", Rule.SYNTAX, 0),
+    (b",", Rule.SYNTAX, 0),
+    (b"\xc3\xa9", Rule.SYNTAX, 0),
+    (b"\x00", Rule.SYNTAX, 0),
+    (b"NaN", Rule.CONSTANT, 0),
+    (b"Infinity", Rule.CONSTANT, 0),
+    (b"-Infinity", Rule.CONSTANT, 0),
+    (b" NaN", Rule.CONSTANT, 1),
+    (b"[NaN]", Rule.CONSTANT, 1),
+    (b"[1,-Infinity]", Rule.CONSTANT, 3),
+    (b'{"a":Infinity}', Rule.CONSTANT, 5),
+    (b'{"a": -Infinity}', Rule.CONSTANT, 6),
+    (b"NaN1", Rule.CONSTANT, 0),
+    (b"Infinitys", Rule.CONSTANT, 0),
+    (b"1 2", Rule.TRAILING_DATA, 2),
+    (b"1x", Rule.TRAILING_DATA, 1),
+    (b"1,", Rule.TRAILING_DATA, 1),
+    (b"1]", Rule.TRAILING_DATA, 1),
+    (b"0x10", Rule.TRAILING_DATA, 1),
+    (b"1_000", Rule.TRAILING_DATA, 1),
+    (b"truex", Rule.TRAILING_DATA, 4),
+    (b"true1", Rule.TRAILING_DATA, 4),
+    (b"nullnull", Rule.TRAILING_DATA, 4),
+    (b"falsefalse", Rule.TRAILING_DATA, 5),
+    (b'"a""b"', Rule.TRAILING_DATA, 3),
+    (b'"a"x', Rule.TRAILING_DATA, 3),
+    (b"[]]", Rule.TRAILING_DATA, 2),
+    (b"[][]", Rule.TRAILING_DATA, 2),
+    (b"{}}", Rule.TRAILING_DATA, 2),
+    (b"{}{}", Rule.TRAILING_DATA, 2),
+    (b"[1] 2", Rule.TRAILING_DATA, 4),
+    (b'{"a":1},', Rule.TRAILING_DATA, 7),
+    (b"1 \n x", Rule.TRAILING_DATA, 4),
+    (b"1 // c", Rule.TRAILING_DATA, 2),
+    (b"1 /* c */", Rule.TRAILING_DATA, 2),
+    (b"1\x00", Rule.TRAILING_DATA, 1),
+    (b"1\x0c", Rule.TRAILING_DATA, 1),
+    (b"1\xd9\xa1", Rule.TRAILING_DATA, 1),
+    (b'{"a":1,"a":2}', Rule.DUPLICATE_KEY, 7),
+    (b'{"a":1,"a":1}', Rule.DUPLICATE_KEY, 7),
+    (b'{"a":1, "a":2}', Rule.DUPLICATE_KEY, 8),
+    (b'{"a":1,"b":2,"a":3}', Rule.DUPLICATE_KEY, 13),
+    (b'{"":1,"":2}', Rule.DUPLICATE_KEY, 6),
+    (b'{"a":1,"\\u0061":2}', Rule.DUPLICATE_KEY, 7),
+    (b'{"\\u0061":1,"a":2}', Rule.DUPLICATE_KEY, 12),
+    (b'{"\\u0041":1,"\\u0041":2}', Rule.DUPLICATE_KEY, 12),
+    (b'{"A":1,"\\u0041":2}', Rule.DUPLICATE_KEY, 7),
+    (b'{"a/b":1,"a\\/b":2}', Rule.DUPLICATE_KEY, 9),
+    (b'{"\\n":1,"\\u000a":2}', Rule.DUPLICATE_KEY, 8),
+    (
+        b'{"\\"\\\\\\b\\f\\r\\t":1,"\\u0022\\u005c\\u0008\\u000c\\u000d\\u0009":2}',
+        Rule.DUPLICATE_KEY,
+        18,
+    ),
+    (b'{"\\u00e9":1,"\\u00E9":2}', Rule.DUPLICATE_KEY, 12),
+    (b'{"\xf0\x9f\x98\x80":1,"\\ud83d\\ude00":2}', Rule.DUPLICATE_KEY, 10),
+    (b'{"x":{"a":1,"a":2}}', Rule.DUPLICATE_KEY, 12),
+    (b'[{"a":1,"a":1}]', Rule.DUPLICATE_KEY, 8),
+    (b'"\\ud800"', Rule.LONE_SURROGATE, 1),
+    (b'"\\uD800"', Rule.LONE_SURROGATE, 1),
+    (b'"\\udbff"', Rule.LONE_SURROGATE, 1),
+    (b'"\\udc00"', Rule.LONE_SURROGATE, 1),
+    (b'"\\uDFFF"', Rule.LONE_SURROGATE, 1),
+    (b'"\\ud800\\u0041"', Rule.LONE_SURROGATE, 1),
+    (b'"\\ud800a"', Rule.LONE_SURROGATE, 1),
+    (b'"\\ud800\\n"', Rule.LONE_SURROGATE, 1),
+    (b'"\\ud800\\\\udc00"', Rule.LONE_SURROGATE, 1),
+    (b'"\\ud800 \\udc00"', Rule.LONE_SURROGATE, 1),
+    (b'"\\udc00\\ud800"', Rule.LONE_SURROGATE, 1),
+    (b'"\\udc00\\udc00"', Rule.LONE_SURROGATE, 1),
+    (b'"\\ud83d\\ud83d\\ude00"', Rule.LONE_SURROGATE, 1),
+    (b'"a\\ud83d\\ude00\\ude00"', Rule.LONE_SURROGATE, 14),
+    (b'"\\ud800\\u12G4"', Rule.LONE_SURROGATE, 1),
+    (b'"\\ud800\\udc0"', Rule.LONE_SURROGATE, 1),
+    (b'"\\ud800', Rule.LONE_SURROGATE, 1),
+    (b'"\\ud800\\udc0', Rule.LONE_SURROGATE, 1),
+    (b'{"\\ud800":1}', Rule.LONE_SURROGATE, 2),
+    (b'["\\ud800"]', Rule.LONE_SURROGATE, 2),
+    (b'{"a":1,"b":"\\udc00"}', Rule.LONE_SURROGATE, 12),
+    (b'{"a":1,"b":{"c":["\\ud800"]}}', Rule.LONE_SURROGATE, 18),
+    (b'{"\\udc00":1,"\\udc00":2}', Rule.LONE_SURROGATE, 2),
+    (b"18446744073709551616", Rule.INTEGER_RANGE, 0),
+    (b"-9223372036854775809", Rule.INTEGER_RANGE, 0),
+    (b"-18446744073709551615", Rule.INTEGER_RANGE, 0),
+    (b"99999999999999999999", Rule.INTEGER_RANGE, 0),
+    (b"170141183460469231731687303715884105728", Rule.INTEGER_RANGE, 0),
+    (b"340282366920938463463374607431768211456", Rule.INTEGER_RANGE, 0),
+    (b"-340282366920938463463374607431768211456", Rule.INTEGER_RANGE, 0),
+    (b" 18446744073709551616", Rule.INTEGER_RANGE, 1),
+    (b"[1,18446744073709551616]", Rule.INTEGER_RANGE, 3),
+    (b'{"a":-9223372036854775809}', Rule.INTEGER_RANGE, 5),
+    (b"1e999", Rule.FLOAT_RANGE, 0),
+    (b"-1e999", Rule.FLOAT_RANGE, 0),
+    (b"1E+999", Rule.FLOAT_RANGE, 0),
+    (b"1e309", Rule.FLOAT_RANGE, 0),
+    (b"2e308", Rule.FLOAT_RANGE, 0),
+    (b"1.7976931348623159e308", Rule.FLOAT_RANGE, 0),
+    (b"-1.7976931348623159e308", Rule.FLOAT_RANGE, 0),
+    (b"[1.0,1e400]", Rule.FLOAT_RANGE, 5),
+    (b'{"a":-1E+999}', Rule.FLOAT_RANGE, 5),
+    (b"1e999 x", Rule.FLOAT_RANGE, 0),
+)
+
+
+def test_each_refusal_has_the_rule_and_the_offset_of_the_rust_check() -> None:
+    for data, rule, offset in RUST_REFUSALS:
+        refused = refusal(data)
+
+        assert (refused.rule, refused.offset) == (rule, offset), data
+
+
+def test_the_offset_of_a_text_that_is_too_deep_is_the_bracket_of_level_65() -> None:
+    member = '{"a":'
+    rows: tuple[tuple[bytes, int], ...] = (
+        (nested(ONE_MORE, "[", "", "]"), LEVELS),
+        (b"[" * ONE_MORE, LEVELS),
+        (nested(ONE_MORE, member, "1", "}"), LEVELS * len(member)),
+        (nested(LEVELS, member, "[]", "}"), LEVELS * len(member)),
+        (nested(LEVELS, "[", "{}", "]"), LEVELS),
+        (nested(400_000, "[", "1", "]"), LEVELS),
+    )
+    for data, offset in rows:
+        refused = refusal(data)
+
+        assert (refused.rule, refused.offset) == (Rule.TOO_DEEP, offset), data[:80]
+
+
 # --- a text with two faults ------------------------------------------------------------
 
 
-def test_a_text_with_two_faults_gets_the_word_of_the_first_fault_in_the_sequence() -> None:
-    rows: tuple[tuple[bytes, Rule], ...] = (
+def test_a_text_with_two_faults_gets_the_fault_at_the_lowest_offset() -> None:
+    rows: tuple[tuple[bytes, Rule, int], ...] = (
         # The encoding is before each rule of the grammar.
-        (b"[NaN\xff", Rule.NOT_UTF8),
-        (b"\xef\xbb\xbf[1,]", Rule.BYTE_ORDER_MARK),
-        # The read of the decoder is before a character after the value.
-        (b"[NaN] x", Rule.CONSTANT),
-        (b'{"a": 1, "a": 2} x', Rule.DUPLICATE_KEY),
-        # The decoder gives the keys of an object at the end of the object.
-        (b'{"a": 1, "a": NaN}', Rule.CONSTANT),
-        (b'{"a": 1, "a": }', Rule.SYNTAX),
-        # A character after the value is before the depth.
-        (nested(ONE_MORE, "[", "", "]") + b" x", Rule.TRAILING_DATA),
-        # The depth is before a lone surrogate.
-        (nested(ONE_MORE, "[", r'"\ud800"', "]"), Rule.TOO_DEEP),
-        # A lone surrogate is last.
-        (rb'"\ud800" x', Rule.TRAILING_DATA),
-        (rb'{"\ud800": 1, "\ud800": 2}', Rule.DUPLICATE_KEY),
-        (rb'["\ud800", 1e999]', Rule.FLOAT_RANGE),
+        (b"[NaN\xff", Rule.NOT_UTF8, 4),
+        (b"\xef\xbb\xbf[1,]", Rule.BYTE_ORDER_MARK, 0),
+        # A word of rule 3 at byte 1, a character after the value at byte 6.
+        (b"[NaN] x", Rule.CONSTANT, 1),
+        (b"[NaN,]", Rule.CONSTANT, 1),
+        # A second key before each later fault of its object.
+        (b'{"a": 1, "a": 2} x', Rule.DUPLICATE_KEY, 9),
+        (b'{"a": 1, "a": NaN}', Rule.DUPLICATE_KEY, 9),
+        (b'{"a": 1, "a": }', Rule.DUPLICATE_KEY, 9),
+        (b'{"a":1,"a"', Rule.DUPLICATE_KEY, 7),
+        (b'{"a":1,"a":18446744073709551616}', Rule.DUPLICATE_KEY, 7),
+        # The bracket of level 65 before the end of the text.
+        (nested(ONE_MORE, "[", "", "]") + b" x", Rule.TOO_DEEP, LEVELS),
+        (nested(ONE_MORE, "[", r'"\ud800"', "]"), Rule.TOO_DEEP, LEVELS),
+        # A lone surrogate before a later fault.
+        (rb'"\ud800" x', Rule.LONE_SURROGATE, 1),
+        (rb'{"\ud800": 1, "\ud800": 2}', Rule.LONE_SURROGATE, 2),
+        (rb'["\ud800", 1e999]', Rule.LONE_SURROGATE, 2),
+        # A raw control character before a lone surrogate.
+        (b'"a\x01\\ud800"', Rule.SYNTAX, 2),
+        # A number out of range before a later fault.
+        (b"[18446744073709551616,", Rule.INTEGER_RANGE, 1),
+        (b"18446744073709551616x", Rule.INTEGER_RANGE, 0),
+        (b"1e999 1", Rule.FLOAT_RANGE, 0),
+        (b"[1e999, NaN]", Rule.FLOAT_RANGE, 1),
+        # The run of a number is whole before its range.
+        (b"1e999e5", Rule.SYNTAX, 5),
+        (b"18446744073709551616.", Rule.SYNTAX, 21),
+        # A fault after the value before a lone surrogate after it.
+        (rb'[1, 2] "\ud800"', Rule.TRAILING_DATA, 7),
     )
-    for data, rule in rows:
-        assert rule_of(data) is rule, data
+    for data, rule, offset in rows:
+        refused = refusal(data)
+
+        assert (refused.rule, refused.offset) == (rule, offset), data[:80]
+
+
+def test_the_scan_reads_one_mebibyte_at_most() -> None:
+    assert strictjson.SCAN_MAX == MEBIBYTE
+
+    two_faults = b'{"a": 1, "a": NaN}'
+    room = strictjson.SCAN_MAX - len(two_faults)
+    at_the_limit = b" " * room + two_faults
+    past_the_limit = b" " + at_the_limit
+
+    refused = refusal(at_the_limit)
+    assert (refused.rule, refused.offset) == (Rule.DUPLICATE_KEY, room + 9)
+
+    # A longer text keeps the word of the standard decoder, with no offset.
+    refused = refusal(past_the_limit, cap=2 * MEBIBYTE)
+    assert (refused.rule, refused.offset) == (Rule.CONSTANT, None)
 
 
 # --- the writer ------------------------------------------------------------------------
