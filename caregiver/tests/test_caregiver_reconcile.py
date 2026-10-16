@@ -9,7 +9,7 @@ of the pass left more reach than the target."""
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -1237,3 +1237,27 @@ def test_a_yaml_copy_and_a_yaml_registry_file_act_as_before(
     ]
     assert yaml_copy.read_text(encoding="utf-8") == family_text(fleet)
     assert not paths.applied_family_path(fleet.state_root, FAMILY, Markup.TOML).exists()
+
+
+def test_a_registry_file_of_no_markup_moves_no_copy(fleet: Fleet) -> None:
+    """The name of the registry file gives the markup of the copy. A name
+    that no markup has gives no copy, and the snapshot stays."""
+    fleet.run()
+    fleet.write(description="Changed.")
+    registry = load_registry(fleet.registry_root)
+    report = replace(registry.reports[FAMILY], file=f"families/{FAMILY}/family.json")
+    actors = Actors(fleet.driver, fleet.litellm, fleet.switch, EgressConfig(), fleet.units)
+
+    reconcile_family(
+        replace(registry, reports={**registry.reports, FAMILY: report}),
+        FAMILY,
+        state_root=fleet.state_root,
+        image=IMAGE,
+        actors=actors,
+    )
+
+    applied = read_applied(fleet.state_root, FAMILY)
+    assert applied is not None
+    assert applied.family.description == "Test family."
+    copies = sorted(one.name for one in paths.applied_dir(fleet.state_root, FAMILY).iterdir())
+    assert copies == [paths.APPLIED_META_FILE, FAMILY_FILE_YAML]

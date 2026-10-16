@@ -130,14 +130,19 @@ def applied_dir(root: Path, family: str) -> Path:
     return family_dir(root, family) / APPLIED_DIR
 
 
-def applied_family_path(root: Path, family: str, markup: Markup) -> Path:
-    """The applied copy of a family file in one markup. The copy has the
-    name of a registry file in that markup: `family.toml` or `family.yaml`."""
+def family_file_name(markup: Markup) -> str:
+    """The name of a family file in one markup: `family.toml` or
+    `family.yaml`. A registry file and its applied copy have this name."""
     match markup:
         case Markup.TOML:
-            return applied_dir(root, family) / FAMILY_FILE
+            return FAMILY_FILE
         case Markup.YAML:
-            return applied_dir(root, family) / FAMILY_FILE_YAML
+            return FAMILY_FILE_YAML
+
+
+def applied_family_path(root: Path, family: str, markup: Markup) -> Path:
+    """The applied copy of a family file in one markup."""
+    return applied_dir(root, family) / family_file_name(markup)
 
 
 def applied_meta_path(root: Path, family: str) -> Path:

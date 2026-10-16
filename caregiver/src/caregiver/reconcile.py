@@ -45,7 +45,6 @@ from agent_family import (
     SwitchMode,
     classify,
 )
-from agent_family.registry import FAMILY_FILE
 
 from . import paths, sandboxes, steps
 from .applied import AppliedState, read_applied, write_applied
@@ -476,16 +475,18 @@ def _converge(
     # fault, and a fault is not done. The second half is what lets the
     # type say so.
     if done and image is not None:
-        text, markup = _family_text(registry, report)
-        write_applied(
-            state_root,
-            family.name,
-            rev=registry.revision,
-            image=image,
-            family_text=text,
-            markup=markup,
-            model_live_at=settled,
-        )
+        family_file = _family_text(registry, report)
+        if family_file is not None:
+            text, markup = family_file
+            write_applied(
+                state_root,
+                family.name,
+                rev=registry.revision,
+                image=image,
+                family_text=text,
+                markup=markup,
+                model_live_at=settled,
+            )
 
     # Read spend BEFORE the faults are frozen: a failed read raises
     # `spend_unknown`, and a fault the document does not carry is a fault
@@ -1115,13 +1116,17 @@ def _config_text(registry: Registry, family: FamilyFile) -> tuple[str, dict[str,
     return _text(registry.instructions(family.name)), skills
 
 
-def _family_text(registry: Registry, report: Report) -> tuple[str, Markup]:
+def _family_text(registry: Registry, report: Report) -> tuple[str, Markup] | None:
     """The text of the family file that the loader read, and its markup.
-    The report of the family names that file. The loader names the TOML
-    file when it is there, else the YAML file."""
+    The report of the family names that file, and the name of the file
+    gives its markup. `None` for a name that no markup has: the pass then
+    writes no snapshot, and the old snapshot stays."""
     path = registry.root / report.file
-    markup = Markup.TOML if path.name == FAMILY_FILE else Markup.YAML
-    return _text(path), markup
+    for markup in Markup:
+        if path.name == paths.family_file_name(markup):
+            return _text(path), markup
+
+    return None
 
 
 def _text(path: Path) -> str:
