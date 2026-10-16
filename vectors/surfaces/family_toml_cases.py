@@ -10,8 +10,9 @@ document and a top value that is no mapping.
 
 The cases with an id that starts with `toml-` are the cases of the TOML
 reader: the four refusals of the reader, the size limit, the level limit, a
-form of TOML 1.1, a date-time, `inf` and `nan`, the order of the faults and
-two names of a family file in one directory.
+form of TOML 1.1, a date-time, `inf` and `nan`, a value of a wrong kind at
+each field, the order of the faults and two names of a family file in one
+directory.
 
 No case names a deployment. An address is TEST-NET-1 (RFC 5737).
 """
@@ -774,6 +775,82 @@ kagi = ["kagi_extract"]
     _case("toml-integer-text", HEAD + 'max_inflight_delegations = "2"\n'),
     _case("toml-integer-float", HEAD + "max_inflight_delegations = 2.0\n"),
     _case("toml-integer-boolean", HEAD + "max_inflight_delegations = true\n"),
+    # --- a value of a wrong kind at each field, at each nested table and at
+    # each leaf. A wrong kind at a table hides each fault below it, so each
+    # depth has a case of its own. ----------------------------------------------
+    _case(
+        "toml-wrong-type-each-field",
+        HEAD
+        + """\
+files = "x"
+tools = ["kagi"]
+verbs = 1
+delegates = "x"
+max_inflight_delegations = 1.5
+egress = { x = 1 }
+shell = "x"
+sandbox_tools = 1
+system_prompt = []
+sandbox = [1]
+skills = true
+approval = 1.5
+job = "x"
+triggers = { cron = "@daily" }
+max_running_turns = "1"
+quiet = 1
+""",
+    ),
+    _case(
+        "toml-wrong-type-each-block",
+        HEAD
+        + """\
+files = [1]
+verbs.embed = 1
+verbs.ha_call = "x"
+verbs.enqueue = []
+verbs.job_status = true
+verbs.release = 1.5
+triggers = [
+    { cron = "@daily" },
+    "x",
+]
+quiet.daily = 1
+""",
+    ),
+    _case(
+        "toml-wrong-type-each-leaf",
+        _head(router="1")
+        + """\
+files = [
+    { path = 1, mode = true },
+]
+verbs.ha_call.allow = [
+    { domain = 1, service = 1, entity_id = 1 },
+    1,
+]
+verbs.enqueue.targets = "x"
+verbs.release.components = [1]
+delegates = [1]
+sandbox_tools = [true]
+sandbox.cpus = 1.5
+sandbox.memory = 4
+sandbox.max_resident_processes = "1"
+sandbox.image = 1
+skills = [[]]
+approval = [1.5]
+job.timeout = 1
+triggers = [
+    { cron = 1, webhook = 1, enqueue = "yes" },
+]
+max_running_turns = 1.5
+quiet.board = 1
+quiet.daily.call = 1
+quiet.daily.hour = "1"
+quiet.daily.zone = 1
+quiet.daily.weekdays_only = "yes"
+quiet.floor_hours = "1"
+""",
+    ),
     # --- the order of the faults: the reader sorts the keys of a table -------
     _case("toml-unknown-reverse", HEAD + "zeta = 1\nalpha = 2\n"),
     _case("toml-tools-reverse", HEAD + "tools.zz = 5\ntools.bb = 7\n"),
