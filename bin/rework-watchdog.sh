@@ -849,9 +849,10 @@ notice_file() {  # notice_file <service> <file>
 }
 
 # Puts one notice in the record, then sends it. Status 1 stops the step for
-# this run. The record line comes before the send, so a fault after the
-# send cannot leave a sent notice with no record line. Such a fault gives
-# a missed notice, not the same notice two times.
+# this run. The record line comes before the send. So a fault after the
+# send cannot leave a sent notice with no record line, and no later run
+# sends that notice again. A stop between the write and the send gives a
+# missed notice instead.
 json_notice() {  # json_notice <service> <surface> <rule> <seconds>
   local key kept before
   key="$1 $2 $3 "
