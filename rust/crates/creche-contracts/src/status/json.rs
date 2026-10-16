@@ -360,18 +360,15 @@ impl Json {
     // encoding of bytes. The reader here takes UTF-8 and no other encoding.
     // To take another encoding, the reader must find it from the first bytes
     // of the file, and two readers of one file then read different bytes.
-    /// Reads the bytes of one file. The bytes are UTF-8.
+    /// Reads the bytes of one file. The bytes are UTF-8, and they start with
+    /// no byte order mark.
     ///
     /// # Errors
     ///
     /// [`JsonError::NotUtf8`] for bytes that are not UTF-8, and each error of
     /// [`Json::parse`].
-    pub fn parse_bytes(bytes: &[u8], mark: ByteOrderMark) -> Result<Self, JsonError> {
+    pub fn parse_bytes(bytes: &[u8]) -> Result<Self, JsonError> {
         let text = std::str::from_utf8(bytes).map_err(|_| JsonError::NotUtf8)?;
-        let text = match mark {
-            ByteOrderMark::Refuse => text,
-            ByteOrderMark::Skip => text.strip_prefix(BYTE_ORDER_MARK).unwrap_or(text),
-        };
 
         Self::parse(text)
     }
@@ -387,15 +384,6 @@ impl Json {
 
 /// U+FEFF at the start of a text.
 const BYTE_ORDER_MARK: char = '\u{feff}';
-
-/// What a reader does with a byte order mark at the start of a file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ByteOrderMark {
-    /// The file is not a JSON text.
-    Refuse,
-    /// The reader skips one mark.
-    Skip,
-}
 
 /// Why a text is not one JSON value.
 ///
@@ -1353,21 +1341,14 @@ mod tests {
     }
 
     #[test]
-    fn a_byte_order_mark_is_refused_or_skipped_one_time() {
+    fn a_byte_order_mark_is_refused() {
         let marked = "\u{feff}{}".as_bytes();
         let twice = "\u{feff}\u{feff}{}".as_bytes();
-        let empty = Json::Object(Object::new());
 
         assert_eq!(Json::parse("\u{feff}{}"), Err(JsonError::ByteOrderMark));
-        assert_eq!(
-            Json::parse_bytes(marked, ByteOrderMark::Refuse),
-            Err(JsonError::ByteOrderMark)
-        );
-        assert_eq!(Json::parse_bytes(marked, ByteOrderMark::Skip), Ok(empty));
-        assert_eq!(
-            Json::parse_bytes(twice, ByteOrderMark::Skip),
-            Err(JsonError::ByteOrderMark)
-        );
+        assert_eq!(Json::parse_bytes(marked), Err(JsonError::ByteOrderMark));
+        assert_eq!(Json::parse_bytes(twice), Err(JsonError::ByteOrderMark));
+        assert_eq!(Json::parse_bytes(b"{}"), Ok(Json::Object(Object::new())));
     }
 
     #[test]
@@ -1377,7 +1358,7 @@ mod tests {
             b"\"\xed\xa0\x80\"",
             b"{\0\"\0a\0\"\0:\x001\0}\0",
         ] {
-            let read = Json::parse_bytes(bytes, ByteOrderMark::Skip);
+            let read = Json::parse_bytes(bytes);
 
             assert!(
                 matches!(read, Err(JsonError::NotUtf8 | JsonError::Syntax { .. })),

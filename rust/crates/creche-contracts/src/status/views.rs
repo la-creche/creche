@@ -1873,8 +1873,19 @@ mod tests {
             r#", "spend": {{"spend_usd": 1{}, "budget_usd": 2}}"#,
             "0".repeat(400)
         );
-        let row = noticeboard(&raw(&document(&spend)), "chat", now());
+        let text = document(&spend);
+        // The reader of the noticeboard refuses the integer, so a reader
+        // that is not strict gives the view its raw document.
+        let lax = RawStatus::read(text.as_bytes(), Reader::Attendance).unwrap();
+        let row = noticeboard(&lax, "chat", now());
         let spend = row.spend().unwrap();
+        let refused = read_noticeboard(text.as_bytes(), "chat", now());
+
+        assert!(
+            refused
+                .problem()
+                .is_some_and(|problem| problem.not_strict().is_some())
+        );
 
         assert_eq!(spend.spend_usd(), None);
         assert_eq!(spend.budget_usd(), Some(2.0));
@@ -1912,11 +1923,16 @@ mod tests {
         let bytes = b"{\"kind\": \"attended\", \"x\": \"\xff\"}";
         let not_utf8 = ReadError::NotJson(JsonError::NotUtf8);
         let row = read_noticeboard(bytes, "chat", now());
+        let strict = row.problem().and_then(|problem| {
+            problem
+                .not_strict()
+                .map(|refusal| (refusal.rule(), refusal.at()))
+        });
 
         assert_eq!(read_attendance(bytes, &chat()), Err(not_utf8));
-        assert_eq!(row.problem(), Some(not_utf8));
+        assert_eq!(strict, Some((crate::json::Rule::NotUtf8, 27)));
         assert_eq!(row.health(), Health::Unreadable);
-        assert_eq!(row.reason(), Some(&Reason::Unreadable(not_utf8)));
+        assert!(matches!(row.reason(), Some(Reason::Unreadable(_))));
         assert_eq!(
             read_door_tui(bytes, now()),
             Err(TuiRefusal::Unreadable(not_utf8))
