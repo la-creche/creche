@@ -344,9 +344,9 @@ enum Node {
 // refusal: a strict JSON text of a contract has the same rule for a float.
 // The TOML reader of the Python standard library reads the text as an
 // infinity. The Python reader of a file kind refuses it with a check of its
-// own, and the surface `tomlfile.syntax` holds two such texts. The other
-// reading costs a float parser in this module, because the crate has no
-// switch.
+// own. Vectors of the surface `tomlfile.syntax` hold such texts, for example
+// `float-outside-the-range`. The other reading costs a float parser in this
+// module, because the crate has no switch.
 //
 // CONTRACT-QUESTION: TOML 1.0, the multi-line strings. A reader can change
 // a line end inside such a string to the line end of its platform. The
@@ -470,9 +470,10 @@ fn levelled(top: toml::Table) -> Option<Node> {
 // of the Python standard library refuses both, because the time types of
 // Python hold neither. No file kind holds a date-time. The reading here
 // refuses both, so the two readers refuse the same texts. `time::Timestamp`
-// refuses the same two forms. A change costs this function and its four
-// vectors in the surface `tomlfile.syntax`. The Python reader then needs a
-// parser of its own for a date-time.
+// refuses the same two forms. A change costs this function and each vector
+// of the surface `tomlfile.syntax` that holds such a text, for example
+// `second-60`. The Python reader then needs a parser of its own for a
+// date-time.
 fn both_take(moment: &toml::value::Datetime) -> bool {
     const LEAP_SECOND: u8 = 60;
 

@@ -2178,15 +2178,17 @@ adds a crate:
      `1e999`. The crate `toml` refuses the text, and the reader keeps that
      refusal, as "JSON" does for a float token. The TOML reader of the
      Python standard library reads the text as an infinity. The Python
-     reader of a file kind refuses it with a check of its own, and two
-     vectors of `tomlfile.syntax` hold such a text. The other reading costs
-     a float parser in the module.
+     reader of a file kind refuses it with a check of its own. Vectors of
+     `tomlfile.syntax` hold such texts, for example
+     `float-outside-the-range`. The other reading costs a float parser in
+     the module.
   2. `both_take`, TOML 1.0. The specification takes the second 60 and the
      year 0000 in a date-time. The crate reads both. The TOML reader of the
      Python standard library refuses both. The reader refuses both, as
      `time::Timestamp` does. No file kind holds a date-time. A change costs
-     one function and four vectors of `tomlfile.syntax`. A Python reader
-     then needs a date-time parser of its own.
+     one function and each vector of `tomlfile.syntax` that holds such a
+     text, for example `second-60`. A Python reader then needs a date-time
+     parser of its own.
   3. `write`. No rule says what the writer does with a value whose text
      `read` refuses. `write` takes the strict reading: it gives
      `TomlWriteFault::NotReadable`. The other reading writes each value
