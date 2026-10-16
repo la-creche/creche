@@ -1,7 +1,8 @@
 # family
 
-The one place `family.yaml` and `mcp/<name>/server.yaml` are defined. The
-package is `agent_family`. `caregiver` is its only caller. The root
+The one place the family file and `mcp/<name>/server.yaml` are defined. A
+family file is `family.toml` or `family.yaml`. The package is
+`agent_family`. `caregiver` is its only caller. The root
 `AGENTS.md` applies here too.
 
 Two products come out of it:
@@ -18,7 +19,8 @@ Bad input never raises. A bad definition yields a report, not a crash.
 | `grammar.py` | names, ranges and small parsers. One pattern per identifier. |
 | `model.py` | `family.yaml` shape only: fields, types, `extra="forbid"` |
 | `server.py` | `server.yaml` shape, same rule |
-| `parse.py` | YAML text to a model, or to issues. Never an exception. |
+| `parse.py` | YAML or TOML text to a model, or to issues. Never an exception. |
+| `tomlfile.py` | the TOML reader: the byte limit of each file kind, the level limit, the TOML 1.0 check and the four texts of a refusal |
 | `report.py` | `Issue`, `Report`, `FamilyState` |
 | `validate.py` | `family.yaml` value and cross-reference rules |
 | `serverrules.py` | `server.yaml` value rules |
@@ -48,6 +50,69 @@ instead of the first.
   `approval` like `tools` or `egress`.
 - `all` resolves against the server file at read time, in
   `Index.granted_tools` only.
+
+## The two names of a family file
+
+`registry.py` holds the two names: `FAMILY_FILE` is `family.toml`, and
+`FAMILY_FILE_YAML` is `family.yaml`. These two constants are the one source
+of the names. A package that needs one of the names imports it from
+`registry.py`.
+
+1. The registry reads `family.toml` first and `family.yaml` second.
+2. A directory with both names gets one error at `<document>`. The registry
+   does not parse that family.
+3. A directory with neither name keeps the warning `no family.yaml; this
+   directory is ignored`.
+4. The report names the file that the registry read. With both names, it
+   names `family.toml`.
+
+## The TOML path
+
+`parse_family(text, Markup.TOML)` reads a TOML text. The default markup is
+`Markup.YAML`, so a caller that gives one argument reads YAML as before.
+
+- `tomlfile.loads` reads the bytes of the text with `FileKind.FAMILY`. A
+  refusal is one error at `<document>`. Its message is one of the four
+  texts of the reader. A text holds no line and no character of the file.
+- The doc string of `tomlfile.py` lists the seven checks of `loads` in
+  their sequence. Check 6 refuses an integer outside 64 bits. It also
+  refuses a float text with a digit and a value that is not finite, for
+  example `1e999`.
+- The registry reads a TOML file as bytes, and it reads the byte limit of
+  a family file plus one byte at most. It gives the bytes to
+  `parse_family_toml`, so the reader judges each byte of the file.
+- The model validates in the strict mode of pydantic. A field takes only
+  the type of the model. A float field also takes an integer. The model
+  refuses `"2"` and `2.0` for an integer, `"yes"` for a boolean and a date
+  for a text. The YAML path keeps the lax mode.
+- `loads` gives the keys of each table in code point order. The Rust TOML
+  reader gives sorted keys too, so a port reports the issues of one text
+  in the same order.
+
+`tomlfile.py` uses the standard library only. It names no package and no
+file of this repository, so another package can hold a byte copy of it. It
+copies the four byte limits, the level limit and the four texts from
+`rust/crates/creche-contracts/src/tomlfile.rs`, which is their source.
+`bin/tests/test_tomlfile_numbers.py` holds each copy equal to the Rust file.
+
+### The check of the six forms of TOML 1.1
+
+The `tomllib` of Python 3.12 to 3.14 reads TOML 1.0. The `tomllib` of Python
+3.15 reads TOML 1.1. `_only_toml10` refuses the six forms that TOML 1.1
+added, under each Python version. `loads` calls it after `tomllib` read the
+text.
+
+1. A line end inside an inline table, outside a string and outside an array
+   of that table.
+2. A comma as the last sign before the `}` of an inline table.
+3. The escape `\e` in a basic string.
+4. The escape `\x` in a basic string.
+5. A time with no seconds, for example `07:32`.
+6. A date-time with no seconds, for example `1979-05-27T07:32Z`.
+
+Python 3.12 to 3.14 refuse each form before the check runs. The tests thus
+call `_only_toml10` directly, and one test gives `loads` a stand-in parser
+that reads TOML 1.1.
 
 ## What it enforces
 
@@ -101,8 +166,9 @@ uv run pytest family/tests
      grammar for a cron field. The check takes ASCII digits and `*`, `,`,
      `-`, `/`. It refuses a month name and a day name.
   2. `model.py`, `Strict`, contract 01 §2 and contract 01b. The contracts do
-     not say how strict the read of a type is. The models read `"2"` as the
-     integer 2, `"yes"` as true and `true` as the number 1.
+     not say how strict the read of a type is. The YAML path reads `"2"` as
+     the integer 2, `"yes"` as true and `true` as the number 1. The TOML
+     path reads in the strict mode.
   3. `serverrules.py`, seven comments, contract 01b §3 to §7.
      `handover.mcpserver` reads the same file as root and refuses more
      files. A file can thus pass here, and root can refuse it at a release.
