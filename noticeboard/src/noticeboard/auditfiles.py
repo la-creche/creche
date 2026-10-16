@@ -22,12 +22,13 @@ Three properties this module holds:
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from . import jsonfiles, strictjson
+from . import jsonfiles
 from .jsonfiles import Json, Surface
 
 #: One line said in every rendering of this page.
@@ -60,6 +61,14 @@ MAX_DAYS: Final = 30
 MAX_ARGS_CHARS: Final = 20_000
 
 MAX_CHAIN: Final = 10
+
+#: How a page writes one record's arguments. The strict reader gives each
+#: value, so the text is the text of `strictjson.dumps` with these options.
+#: The encoder stops at the display cap. `strictjson.dumps` builds the whole
+#: text first.
+_ARGS_ENCODER: Final = json.JSONEncoder(
+    indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False
+)
 
 
 @dataclass(frozen=True)
@@ -305,12 +314,24 @@ def _args(body: Json) -> tuple[str, bool]:
     if value is None:
         return "", False
 
+    chunks: list[str] = []
+    size = 0
+
     try:
-        rendered = strictjson.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
+        # The loop stops one chunk past the cap and never builds the rest of
+        # the text.
+        for chunk in _ARGS_ENCODER.iterencode(value):
+            chunks.append(chunk)
+            size += len(chunk)
+
+            if size > MAX_ARGS_CHARS:
+                break
     except ValueError:
         # A guard only. The strict reader gave the value, so the value has a
         # strict text, and no test reaches this branch.
         return "<arguments this noticeboard could not render>", False
+
+    rendered = "".join(chunks)
 
     if len(rendered) <= MAX_ARGS_CHARS:
         return rendered, False

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from noticeboard.auditfiles import (
     ARGS_NOTICE,
+    MAX_ARGS_CHARS,
     MAX_LINE_BYTES,
     AuditFilter,
     known_days,
@@ -21,6 +22,8 @@ from noticeboard_helpers import (
     write_audit_day,
 )
 
+from noticeboard import strictjson
+
 #: A record under `MAX_LINE_BYTES` that nests past the limit of the JSON reader.
 DEEP_RECORD_LEVELS = 250_000
 
@@ -32,6 +35,9 @@ ARABIC_INDIC_ONE = "\u0661"
 #: The deepest arguments of a strict record: the record is one level more.
 DEEP_ARGS_LEVELS = 63
 PAGE_MEMORY_MAX = 4 * 1024 * 1024
+
+#: The items of strict arguments whose record is just under `MAX_LINE_BYTES`.
+WIDE_ARGS_ITEMS = 260_000
 
 #: The problem of a text that is not strict JSON, after the name of the day.
 NOT_STRICT = "is not JSON: the text breaks a rule of strict JSON"
@@ -201,13 +207,30 @@ def test_the_deepest_arguments_of_a_strict_record_render_in_bounded_memory(
     assert peak < PAGE_MEMORY_MAX
 
 
+def test_strict_arguments_past_the_cap_render_in_bounded_memory(tmp_path: Path) -> None:
+    """The render stops at the display cap."""
+    items = ",".join(["0"] * WIDE_ARGS_ITEMS)
+    args = "[" * DEEP_ARGS_LEVELS + items + "]" * DEEP_ARGS_LEVELS
+    line = json.dumps(audit_line(args="@")).replace('"@"', args)
+    assert len(line) < MAX_LINE_BYTES
+    (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
+
+    page, peak = peak_memory_of(lambda: read_page(tmp_path, AuditFilter()))
+
+    row = page.rows[0]
+    assert row.problem == ""
+    assert row.args == json.dumps(json.loads(args), indent=2)[:MAX_ARGS_CHARS]
+    assert row.args_truncated
+    assert peak < PAGE_MEMORY_MAX
+
+
 def test_the_arguments_render_as_the_strict_writer_writes_them(tmp_path: Path) -> None:
     args = {"b": [1, 2.5, None], "a": "caf\xe9 \u2028"}
     write_audit_day(tmp_path, "2026-09-19", [audit_line(args=args)])
 
     page = read_page(tmp_path, AuditFilter())
 
-    assert page.rows[0].args == json.dumps(args, indent=2, sort_keys=True, ensure_ascii=False)
+    assert page.rows[0].args == strictjson.dumps(args, indent=2, sort_keys=True, ensure_ascii=False)
 
 
 def test_a_record_that_will_not_parse_takes_a_row(tmp_path: Path) -> None:
