@@ -306,7 +306,7 @@ fn json_name(family: &FamilyName) -> String {
 mod tests {
     use std::path::Path;
 
-    use creche_contracts::status::time::Timestamp;
+    use creche_contracts::time::Timestamp;
 
     use super::*;
 

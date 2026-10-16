@@ -38,15 +38,5 @@ pub mod raw;
 pub mod views;
 pub mod words;
 
-/// The older path of two items. It holds no item of its own.
-///
-/// New code names [`crate::time::Timestamp`] and [`views::Freshness`]. Code
-/// outside this module still names the two items through this path. Packet
-/// `decisions-runtime-time` changes that code and deletes this module.
-pub mod time {
-    pub use super::views::Freshness;
-    pub use crate::time::Timestamp;
-}
-
 #[cfg(test)]
 mod python;
