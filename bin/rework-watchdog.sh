@@ -95,7 +95,8 @@
 #     the first run of this step counts too: that run sends it.
 #   - Two limits hold a notice for a later run. One notice for one service,
 #     surface and rule in 24 hours. 6 notices of this kind in one hour, for
-#     all services together.
+#     all services together. Both limits count in the wall-clock time of the
+#     host, so a jump of that clock can reset the count of one hour.
 #   - A token whose `<seconds>` is more than one hour after the time of the
 #     run gets no notice. The journal gets one line with the count of them.
 #   - A run that is older than NOTICE_STEP_BUDGET_S seconds starts no send,
@@ -103,17 +104,31 @@
 #     sends the notices that are left.
 #   - /srv/agents/state/rework/watchdog/notices-sent is the record of the
 #     sent notices, one line for each service, surface and rule. Both limits
-#     come from it. A notice that the hook did not take leaves the record as
-#     it was, so the next run sends it. A run stops this step at the first
-#     notice that the hook did not take.
+#     come from it. The line of a notice goes to the record before the
+#     send, so a fault after the send gives no second notice. A run stops
+#     this step at the first send that fails.
+#   - A send that surely did not reach the hook puts the old record back,
+#     so the next run sends that notice. That is a host with no hook, or
+#     curl status 6 or 7. After each other failed send, the hook can have
+#     taken the notice. The record then keeps its line, and that notice is
+#     missed. When the old record cannot go back, that notice is missed
+#     too.
 #   - The script reads 262,144 bytes of the record at most, and it writes no
 #     larger record. A record that it cannot read, or cannot write, stops
-#     the step for that run: a notice with no record line has no limit.
+#     the step for that run: a notice with no record line has no limit. A
+#     record that holds bytes and no record line stops the step too.
 #   - The notice has ids of its own, so its card and the card of an outage
 #     do not replace each other. One notice of this kind replaces the card
 #     of the notice of this kind before it.
 #   - The step changes no verdict and no exit status. It runs after the
 #     verdict is in its file, in a shell of its own.
+#   - Only a run of the unit sends a notice of this kind. systemd gives
+#     each run of a unit an INVOCATION_ID of 32 hex digits. A run with no
+#     value of this form sends no notice and writes one line in the
+#     journal. A shell that systemd started can give its own
+#     INVOCATION_ID to a run by hand. That run then sends. The five checks
+#     and the outage notice of a run by hand are the same as in a run of
+#     the unit.
 #
 # WHERE THE TWO BEARERS COME FROM. `APPROVAL_URL` and `APPROVAL_TOKEN` are
 # read from /srv/agents/state/rework/hooks.env, which `bin/rework-cutover.sh
@@ -139,6 +154,10 @@
 # NOT -e: a failed check must COUNT, not abort the run. A watchdog that
 # stopped at the first thing it found would report one outage out of five.
 set -uo pipefail
+
+# The notice step reads SECONDS as the age of the run. bash takes SECONDS
+# from the environment, so the count starts here, before the five checks.
+SECONDS=0
 
 # A TEST SEAM, not a permission. `bin/tests/test_rework_watchdog.py` points
 # every absolute root inside a temp directory. Empty everywhere else,
@@ -230,6 +249,20 @@ CHECK_TIMEOUT_S=5
 # The notice itself, which reaches Node-RED over the LAN.
 NOTICE_TIMEOUT_S=10
 
+# The status of `send_notice` for a notice that surely did not reach the
+# hook: the host has no hook, or curl ends with a status of
+# NOT_REACHED_CURL. 6 is no address for the name of the host, and 7 is no
+# connection. Each other curl status can come after the hook took the
+# notice. The outage notice tries again after each failed send.
+# CONTRACT-QUESTION: no contract text says which failed send the hook can
+# have taken. The reading here: only these cases prove that it took none.
+# So a JSON notice keeps its record line after each other status, 22 (an
+# HTTP error) too, and a hook that refuses the bearer misses each JSON
+# notice. A change costs NOT_REACHED_CURL, a read of the HTTP status and
+# their tests in bin/tests/test_rework_watchdog.py.
+NOT_REACHED=2
+NOT_REACHED_CURL=' 6 7 '
+
 # The verdict when nothing is down. A word, so the state file is readable.
 ALL_WELL=up
 
@@ -282,6 +315,10 @@ HOUR_S=3600
 # seconds. The unit of this script gives a run a start limit, and one notice
 # can take NOTICE_TIMEOUT_S.
 NOTICE_STEP_BUDGET_S=40
+
+# systemd gives each run of a unit an INVOCATION_ID of 32 hex digits. The
+# step runs only with an INVOCATION_ID of this form.
+UNIT_RUN_ID='[0-9a-f]{32}'
 
 # The first word of the summary, and the ids of this kind of notice. The
 # ids differ from the pair of the outage notice.
@@ -625,14 +662,15 @@ plain() {  # plain <text>
 
 # The phone push. `-H @file`, never the bearer on argv: /proc/<pid>/cmdline
 # is world readable for the life of the curl process on a host that sets no
-# hidepid (bin/AGENTS.md §Secrets).
+# hidepid (bin/AGENTS.md §Secrets). Status NOT_REACHED means that the
+# notice surely did not reach the hook. Status 1 is each other failure.
 send_notice() {  # send_notice <summary> [<job id> <gate id>]
   local header status job gate
   job="${2:-$NOTICE_JOB_ID}"
   gate="${3:-$NOTICE_GATE_ID}"
   if [[ -z "${APPROVAL_URL:-}" || -z "${APPROVAL_TOKEN:-}" ]]; then
     say "NOTICE NOT SENT (no APPROVAL_URL/APPROVAL_TOKEN in $HOOKS_ENV): $1"
-    return 1
+    return "$NOT_REACHED"
   fi
 
   header="$(mktemp)"
@@ -649,7 +687,8 @@ send_notice() {  # send_notice <summary> [<job id> <gate id>]
     return 0
   fi
 
-  say "NOTICE NOT SENT (curl exit $status), retrying next run: $1"
+  say "NOTICE NOT SENT (curl exit $status): $1"
+  [[ "$NOT_REACHED_CURL" == *" $status "* ]] && return "$NOT_REACHED"
   return 1
 }
 
@@ -676,13 +715,14 @@ TOKENS=""
 # record first, then the lines of TOKENS. A record line has five words and
 # a token line has four. It prints one line `send` for each notice, in the
 # order of the tokens, and one last line `held` with two counts: the tokens
-# that a limit holds, and the tokens with a time after `now`.
+# that a limit holds, and the tokens that are news with a time more than
+# `hour` seconds after `now`.
+#   - A token is news when the record has no line for its service, surface
+#     and rule, or when its `<seconds>` is above the `<seconds>` of that
+#     line. A token that is no news gets no notice and no count.
 #   - A token whose `<seconds>` is more than `hour` seconds after `now` gets
 #     no notice. The clock of a host can jump, and the record must hold no
 #     `<seconds>` that is far after `now`.
-#   - A token is news when the record has no line for its service, surface
-#     and rule, or when its `<seconds>` is above the `<seconds>` of that
-#     line.
 #   - The limit of one service, surface and rule holds a token when the
 #     send time of that line is less than `same` seconds away from `now`.
 #   - The limit of all services holds a token when `most` notices have a
@@ -707,12 +747,10 @@ NF == 5 {
   next
 }
 NF == 4 {
-  if ($4 + 0 > now + hour) { ahead++; next }
   key = $1 " " $2 " " $3
-  if (key in known) {
-    if ($4 + 0 <= sent[key]) next
-    if (near(at[key], same + 0)) { held++; next }
-  }
+  if ((key in known) && $4 + 0 <= sent[key]) next
+  if ($4 + 0 > now + hour) { ahead++; next }
+  if ((key in known) && near(at[key], same + 0)) { held++; next }
   if (recent + 0 >= most + 0) { held++; next }
   recent++
   known[key] = 1
@@ -747,16 +785,32 @@ load_sent() {
     return 1
   fi
 
-  blob="$(read_capped "$SENT_FILE" "$SENT_READ_CAP")"
-  [[ -n "$blob" ]] || return 0
+  # A pair with no record line is news again. So a read that fails, or that
+  # stops at its time limit, stops the step. A read that gives nothing from
+  # a file that holds bytes stops it too, and so does a file that holds
+  # bytes and no record line, for example the NUL bytes of a crash.
+  if ! blob="$(read_capped "$SENT_FILE" "$SENT_READ_CAP")"; then
+    say "json notices: the read of $SENT_FILE failed, so this run sends no notice of this kind"
+    return 1
+  fi
+
+  if [[ -z "$blob" ]]; then
+    [[ -s "$SENT_FILE" ]] || return 0
+    say "json notices: the read of $SENT_FILE gave nothing, so this run sends no notice of this kind"
+    return 1
+  fi
+
+  SENT_LINES="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -x -E -e "$SENT_LINE")"
+  if [[ -z "$SENT_LINES" ]]; then
+    say "json notices: $SENT_FILE holds no record line, so this run sends no notice of this kind"
+    return 1
+  fi
 
   broken="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -c -v -x -E -e "$SENT_LINE")"
   [[ "$broken" == 0 ]] \
     || say "json notices: not read from $SENT_FILE, lines that break the record pattern: $broken"
 
-  SENT_LINES="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -x -E -e "$SENT_LINE")"
-  [[ -z "$SENT_LINES" ]] || SENT_LINES="$SENT_LINES$NL"
-
+  SENT_LINES="$SENT_LINES$NL"
   return 0
 }
 
@@ -823,35 +877,61 @@ notice_file() {  # notice_file <service> <file>
   done
 }
 
-# Sends one notice and puts it in the record. Status 1 stops the step for
-# this run.
+# Puts one notice in the record, then sends it. Status 1 stops the step for
+# this run. The record line comes before the send. So a fault after the
+# send cannot leave a sent notice with no record line, and no later run
+# sends that notice again. A stop between the write and the send gives a
+# missed notice instead.
 json_notice() {  # json_notice <service> <surface> <rule> <seconds>
-  local key kept
+  local key kept before status
   key="$1 $2 $3 "
-
-  # A hook that takes no notice costs the time limit of one notice. The
-  # record stays as it is, and the next run sends this notice again.
-  send_notice "$JSON_NOTICE_WORD $1 $2 $3" "$JSON_NOTICE_JOB_ID" "$JSON_NOTICE_GATE_ID" || return 1
+  before="$SENT_LINES"
 
   # The new line takes the place of the line of the same service, surface
   # and rule. `pipefail` gives the status of `awk`. A call that fails must
   # not empty the record, so the record stays as it is.
   if ! kept="$(printf '%s' "$SENT_LINES" | awk -v key="$key" 'index($0, key) != 1')"; then
-    say "json notices: awk gave no answer after a send, so this run sends no more of this kind"
+    say "json notices: awk gave no answer before a send, so this run sends no more of this kind"
     return 1
   fi
 
   SENT_LINES="${kept:+$kept$NL}$key$4 $NOW$NL"
   if ! remember_sent; then
-    say "json notices: cannot write $SENT_FILE after a send, so this run sends no more of this kind"
+    SENT_LINES="$before"
+    say "json notices: cannot write $SENT_FILE before a send, so this run sends no more of this kind"
     return 1
   fi
 
-  return 0
+  send_notice "$JSON_NOTICE_WORD $1 $2 $3" "$JSON_NOTICE_JOB_ID" "$JSON_NOTICE_GATE_ID"
+  status=$?
+  [[ "$status" == 0 ]] && return 0
+
+  # The hook can have taken the notice. The record keeps its line, so a
+  # fault gives a missed notice and never a second one.
+  if [[ "$status" != "$NOT_REACHED" ]]; then
+    say "json notices: the hook can have taken the notice, so $SENT_FILE keeps its line and no later run sends it"
+    return 1
+  fi
+
+  # The notice did not reach the hook. The old record goes back, and the
+  # next run sends this notice again. When the old record cannot go back,
+  # this notice is missed.
+  SENT_LINES="$before"
+  remember_sent || say "json notices: cannot write the old $SENT_FILE back after a failed send"
+
+  return 1
 }
 
 send_json_notices() {
-  local path service plan held ahead sent word surface rule seconds room
+  local path service plan last held ahead sent word surface rule seconds room
+  # systemd starts one run of the unit at a time. A run by hand can overlap
+  # a run of the timer, and both runs would read the same record. So only
+  # a run of the unit sends a notice of this kind.
+  if ! matches "$UNIT_RUN_ID" "${INVOCATION_ID:-}"; then
+    say "json notices: this run has no INVOCATION_ID of systemd, so it sends no notice of this kind"
+    return 0
+  fi
+
   for path in "$NOTICES_DIR"/*"$NOTICE_SUFFIX" "$PEP_NOTICE_FILE"; do
     # A regular file only. A link, a directory and a name with no match are
     # not read.
@@ -882,13 +962,16 @@ send_json_notices() {
 
   plan="$({ printf '%s' "$SENT_LINES"; printf '%s' "$TOKENS"; } | awk -v now="$NOW" \
     -v same="$SAME_NOTICE_EVERY_S" -v hour="$HOUR_S" -v most="$NOTICES_PER_HOUR" "$NOTICE_PLAN")"
-  held="${plan##*held }"
-  ahead="${held#* }"
-  held="${held% *}"
-  if [[ "$plan" != *"held "* ]] || ! matches '[0-9]{1,9} [0-9]{1,9}' "$held $ahead"; then
+  # The whole last line must be the line `held` with two counts.
+  last="${plan##*"$NL"}"
+  if ! matches 'held [0-9]{1,9} [0-9]{1,9}' "$last"; then
     say "json notices: awk gave no answer on the limits, so this run sends no notice of this kind"
     return 0
   fi
+
+  held="${last#held }"
+  ahead="${held#* }"
+  held="${held% *}"
 
   [[ "$ahead" == 0 ]] \
     || say "json notices: tokens with a time more than ${HOUR_S}s after now (no notice): $ahead"
@@ -901,13 +984,6 @@ send_json_notices() {
     if (( SECONDS > NOTICE_STEP_BUDGET_S )); then
       say "json notices: this run is ${SECONDS}s old, so it sends no more of this kind"
       break
-    fi
-
-    # A notice with no record line has no limit. So the run proves one time
-    # that it can write the record, before it sends the first notice.
-    if [[ "$sent" == 0 ]] && ! remember_sent; then
-      say "json notices: cannot write $SENT_FILE, so this run sends no notice of this kind"
-      return 0
     fi
 
     # The script reads SENT_READ_CAP bytes of its record at most, so it

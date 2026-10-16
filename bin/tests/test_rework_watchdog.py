@@ -78,6 +78,9 @@ JSON_IDS: Final = ("xxxxxxxxxxxxxxxxxxxxxxxxxx", "0000000000000002")
 
 #: The first word of the summary of a notice of a refused JSON text.
 JSON_WORD: Final = "json_not_strict"
+
+#: The INVOCATION_ID that systemd gives one run of a unit: 32 hex digits.
+UNIT_RUN: Final = "0123456789abcdef0123456789abcdef"
 SUMMARY: Final = re.compile(r'"summary":"([^"]*)"')
 
 #: The modes that a service gives its notice file and the directory of it.
@@ -108,6 +111,10 @@ SEVEN_PAIRS: Final = (
     "session.journal_line:lone_surrogate",
 )
 
+#: Three pairs of one notice file, and the summary of each one.
+THREE_PAIRS: Final = SEVEN_PAIRS[:3]
+THREE_SUMMARIES: Final = [f"{JSON_WORD} noticeboard {one.replace(':', ' ')}" for one in THREE_PAIRS]
+
 STUB: Final = """#!/bin/sh
 printf '%s\\n' "{name} $*" >> "$WD_STUB_LOG"
 {body}
@@ -121,8 +128,12 @@ exit 0
 #: The POST comes FIRST on purpose. Its `-d` body quotes the very URL the
 #: PEP check names, so a `*/healthz*` pattern ahead of it swallows the
 #: notice and answers it with an HTTP code.
+#:
+#: `WD_POST_SLEEP` makes each POST take that count of seconds: a hook that
+#: answers slowly.
 CURL_BODY: Final = """case "$*" in
   *"-X POST"*)
+    [ -n "${WD_POST_SLEEP:-}" ] && sleep "$WD_POST_SLEEP"
     printf '%s\\n' "$*" >> "$WD_POST_LOG"
     exit "${WD_POST_EXIT:-0}" ;;
   *"--unix-socket"*) printf '%s' "${WD_SOCK_CODE:-401}" ;;
@@ -134,7 +145,21 @@ esac
 #: -in here. It drops the duration and runs the command, which is what the
 #: cases are about: the ceiling itself is a production guard against a hung
 #: mount and there is nothing to hang on a temp directory.
-TIMEOUT_BODY: Final = """shift
+#:
+#: `WD_RECORD_READ` changes the read of the record of sent notices. `fail`
+#: gives no output and status 124, as `timeout` does for a `head` that it
+#: stopped. `cut` gives the first line of the record and status 124: a
+#: `head` that `timeout` stopped in the middle. `empty` gives no output and
+#: status 0.
+TIMEOUT_BODY: Final = """case "$*" in
+  *" head -c "*"/notices-sent")
+    case "${WD_RECORD_READ:-}" in
+      fail) exit 124 ;;
+      cut) head -n 1 "$5"; exit 124 ;;
+      empty) exit 0 ;;
+    esac ;;
+esac
+shift
 exec "$@"
 """
 
@@ -182,6 +207,9 @@ esac
 #: time plus that count of seconds. A case uses it to run the script one hour
 #: or one day later. `Rig.run_later` sets it.
 #:
+#: `WD_CLOCK_AT` stops that clock: `date -u +%s` then answers that count of
+#: seconds. A case uses it to put a time exactly at the edge of a rule.
+#:
 #: `WD_DATE_FAIL_AT` makes one `date -u +%s` call fail with no output: the
 #: call with that number, from 1. The stub counts the calls in its log, so
 #: the number counts each run of one rig. Check 2 makes one such call in a
@@ -195,6 +223,10 @@ DATE_BODY: Final = """case "$1" in
       +%s)
         calls="$(grep -c '^date -u +%s$' "$WD_STUB_LOG")"
         [ "$calls" = "${WD_DATE_FAIL_AT:-}" ] && exit 1
+        if [ -n "${WD_CLOCK_AT:-}" ]; then
+          printf '%s\\n' "$WD_CLOCK_AT"
+          exit 0
+        fi
         real="$(/bin/date -u +%s)"
         printf '%s\\n' "$(( real + ${WD_CLOCK_AHEAD_S:-0} ))"
         exit 0 ;;
@@ -226,12 +258,34 @@ MKTEMP_MORE: Final = """case "$*" in
     [ "$calls" = "${WD_MKTEMP_FAIL_AT:-}" ] && exit 1 ;;
 esac"""
 
-#: `WD_AWK_KEY_EXIT` makes one kind of `awk` call fail with that status: the
-#: call that gets the variable `key`. That call makes the new record after a
-#: send.
+#: `WD_AWK_KEY_FAIL_AT` makes one `awk` call that gets the variable `key`
+#: fail with status 2: the call with that number, from 1. Such a call makes
+#: the new record for one notice. The stub counts the calls in its log, so
+#: the number counts each run of one rig.
+#:
+#: `WD_AWK_HELD` is the last line of the plan, the call that gets the
+#: variable `now`. The stub gives each other line of the real `awk`, then
+#: this line in the place of the line `held`.
 AWK_MORE: Final = """case "$*" in
-  *"key="*) [ -n "${WD_AWK_KEY_EXIT:-}" ] && exit "$WD_AWK_KEY_EXIT" ;;
+  *"key="*)
+    calls="$(grep -c '^awk -v key=' "$WD_STUB_LOG")"
+    [ "$calls" = "${WD_AWK_KEY_FAIL_AT:-}" ] && exit 2 ;;
+  *"now="*)
+    if [ -n "${WD_AWK_HELD:-}" ]; then
+      {real} "$@" | grep -v '^held '
+      printf '%s\\n' "$WD_AWK_HELD"
+      exit 0
+    fi ;;
 esac"""
+
+#: `WD_DISK_FULL` is the model of a full disk for the record of sent
+#: notices. A file of 0 bytes fits, and a file of 1 byte or more does not.
+#: So `mv` fails for a draft of the record that holds a byte.
+MV_BODY: Final = """case "$*" in
+  *"/notices-sent") [ -n "${{WD_DISK_FULL:-}}" ] && [ -s "$2" ] && exit 1 ;;
+esac
+exec {real} "$@"
+"""
 
 
 def _stub(directory: Path, name: str, body: str = ":") -> None:
@@ -337,8 +391,12 @@ class Rig:
             ("mktemp", "WD_MKTEMP_EXIT", MKTEMP_MORE),
             ("awk", "WD_AWK_EXIT", AWK_MORE),
         ):
-            body = REAL_BODY.format(switch=switch, more=more, real=shutil.which(name))
+            real = shutil.which(name)
+            assert real is not None, name
+            body = REAL_BODY.format(switch=switch, more=more.replace("{real}", real), real=real)
             _stub(self.stubs, name, body)
+
+        _stub(self.stubs, "mv", MV_BODY.format(real=shutil.which("mv")))
 
         #: The script of a run. One case runs a changed copy.
         self.script = SCRIPT
@@ -385,11 +443,26 @@ class Rig:
         self.socket.chmod(FILE_MODE)
 
     def run(self, *args: str, **overrides: str) -> subprocess.CompletedProcess[str]:
+        """One run as the unit starts it: with an INVOCATION_ID."""
+        return self._start(args, UNIT_RUN, overrides)
+
+    def run_as(self, invocation: str | None, **overrides: str) -> subprocess.CompletedProcess[str]:
+        """One run with this INVOCATION_ID. `None` is a run with no such
+        variable, as a run by hand."""
+        return self._start((), invocation, overrides)
+
+    def _start(
+        self, args: Sequence[str], invocation: str | None, overrides: dict[str, str]
+    ) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ)
         env["WATCHDOG_TEST_PREFIX"] = str(self.prefix)
         env["WD_STUB_LOG"] = str(self.stub_log)
         env["WD_POST_LOG"] = str(self.post_log)
         env["PATH"] = f"{self.stubs}{os.pathsep}{env['PATH']}"
+        env.pop("INVOCATION_ID", None)
+        if invocation is not None:
+            env["INVOCATION_ID"] = invocation
+
         env.update(overrides)
 
         return subprocess.run(
@@ -1121,6 +1194,21 @@ def test_one_token_gives_one_json_notice(rig: Rig) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
     assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
     assert len(rig.posts()) == 1
+    assert f" -m {_number('NOTICE_TIMEOUT_S')} " in rig.posts()[0]
+
+
+@pytest.mark.parametrize("pair", ["push:syntax", "status.document:push"])
+def test_a_surface_or_rule_named_push_gets_its_notice(rig: Rig, pair: str) -> None:
+    """The key `push` is the word `push` in quotes with a colon after it.
+    The row of such a pair holds the word `push` in quotes with a comma
+    after it. That line is no line of the key."""
+    rig.notice("noticeboard", token(pair))
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard {pair.replace(':', ' ')}"]
+    assert "breaks its pattern" not in done.stdout
 
 
 def test_a_second_run_with_the_same_file_sends_nothing(rig: Rig) -> None:
@@ -1170,24 +1258,66 @@ def test_an_older_time_for_a_sent_pair_sends_nothing(rig: Rig) -> None:
 def test_a_time_far_after_now_gets_no_notice(rig: Rig) -> None:
     """The clock of a host can jump. A token whose time is more than one
     hour after now gets no notice and no record line, and the journal gets
-    one line with the count. A later refusal of the same service, surface
-    and rule with a time before now then gets its notice."""
+    one line with the count. A token one minute before that edge gets its
+    notice. A later refusal of the same service, surface and rule with a
+    time before now then gets its notice."""
     pair = "status.document:syntax"
     now = int(time.time())
     near = token("audit.line:syntax", now + 30 * MINUTE_S)
-    rig.notice("noticeboard", token(pair, now + 400 * DAY_S), near)
+    edge = token("session.answer:too_deep", now + HOUR_S - MINUTE_S)
+    late = (
+        token(pair, now + 400 * DAY_S),
+        token("status.outcome:constant", now + 90 * MINUTE_S),
+        token("audit.line:trailing_data", now + HOUR_S + 2 * MINUTE_S),
+    )
+    rig.notice("noticeboard", late[0], near, edge, *late[1:])
 
     done = rig.run()
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard audit.line syntax"]
-    assert done.stdout.count("after now (no notice): 1") == 1, done.stdout
-    assert [one.split()[1] for one in rig.sent_lines()] == ["audit.line"]
+    assert rig.json_summaries() == [
+        f"{JSON_WORD} noticeboard audit.line syntax",
+        f"{JSON_WORD} noticeboard session.answer too_deep",
+    ]
+    assert done.stdout.count("after now (no notice): 3") == 1, done.stdout
+    assert [one.split()[1] for one in rig.sent_lines()] == ["audit.line", "session.answer"]
 
-    rig.notice("noticeboard", token(pair, now - MINUTE_S), near)
+    rig.notice("noticeboard", token(pair, now - MINUTE_S), near, edge)
     done = rig.run()
 
-    assert rig.json_summaries()[1:] == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert rig.json_summaries()[2:] == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert "after now" not in done.stdout
+
+
+def test_a_time_one_hour_after_now_gets_its_notice(rig: Rig) -> None:
+    """The edge of the rule. A time of exactly one hour after now is not
+    more than one hour after now, so it gets its notice. One second more
+    gets no notice. This case stops the clock of the run."""
+    now = int(time.time())
+    rig.notice(
+        "noticeboard",
+        token("status.document:syntax", now + HOUR_S),
+        token("audit.line:syntax", now + HOUR_S + 1),
+    )
+
+    done = rig.run(WD_CLOCK_AT=str(now))
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert done.stdout.count("after now (no notice): 1") == 1, done.stdout
+
+
+def test_a_sent_token_is_not_ahead_after_the_clock_moves_back(rig: Rig) -> None:
+    """The record check comes before the rule of the hour. A token that the
+    record holds is no news, also when the clock of the host moved back by
+    more than one hour. The journal then counts it as no token ahead."""
+    rig.notice("noticeboard", token("status.document:syntax", int(time.time()) - MINUTE_S))
+    rig.run()
+
+    done = rig.run_later(-2 * HOUR_S)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(rig.json_summaries()) == 1
     assert "after now" not in done.stdout
 
 
@@ -1362,6 +1492,7 @@ BROKEN_PUSH_LINES: Final = {
     "no-indent": b'"push": "status.document:syntax:1760000000",',
     "more-indent": b'  "push": "status.document:syntax:1760000000",',
     "no-space": b' "push":"status.document:syntax:1760000000",',
+    "space-before-colon": b' "push" : "status.document:syntax:1760000000",',
     "number": b' "push": 1760000000,',
     "null": b' "push": null,',
     "no-end-quote": b' "push": "status.document:syntax:1760000000,',
@@ -1632,6 +1763,72 @@ def test_a_json_notice_that_fails_is_sent_by_the_next_run(rig: Rig) -> None:
     assert len(rig.posts()) == 2
 
 
+#: The curl statuses of a send that never reached the hook. 6: no address
+#: for the name of the host. 7: no connection to the hook.
+UNREACHED_STATUSES: Final = ("6", "7")
+
+#: Some curl statuses of a send that the hook can have taken. 22: an HTTP
+#: error as the answer. 28: no full answer in the time limit. 52: no
+#: answer at all. 56: a connection that broke during the answer.
+TAKEN_STATUSES: Final = ("22", "28", "52", "56")
+
+
+@pytest.mark.parametrize("status", UNREACHED_STATUSES)
+def test_a_send_that_never_reached_the_hook_is_sent_again(rig: Rig, status: str) -> None:
+    """The old record goes back, and the next run sends the notice one
+    more time."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_POST_EXIT=status)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.sent_lines() == []
+    assert "the hook can have taken" not in done.stdout
+
+    rig.run()
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES[:1] * 2
+    assert len(rig.sent_lines()) == 1
+
+
+@pytest.mark.parametrize("status", TAKEN_STATUSES)
+def test_a_send_that_the_hook_can_have_taken_is_not_sent_again(rig: Rig, status: str) -> None:
+    """curl can fail after the hook took a notice. Such a notice keeps its
+    record line, and no later run sends it. So a fault gives a missed
+    notice, never a second one. The run sends no more notices of this kind
+    and says so in one line. A later run sends each other pair."""
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
+
+    done = rig.run(WD_POST_EXIT=status)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+    assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
+    assert done.stdout.count("the hook can have taken") == 1, done.stdout
+
+    rig.run()
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES
+    assert len(rig.sent_lines()) == 3
+
+
+@pytest.mark.parametrize("status", UNREACHED_STATUSES + TAKEN_STATUSES)
+def test_an_outage_notice_that_fails_is_tried_again(rig: Rig, status: str) -> None:
+    """The outage notice keeps its rule: each failed send leaves the old
+    verdict, and the next run sends the notice again."""
+    rig.run(WD_PEP_CODE="000")
+    rig.run(WD_PEP_CODE="000", WD_POST_EXIT=status)
+
+    assert rig.stored() == "up"
+
+    rig.run(WD_PEP_CODE="000")
+
+    assert rig.stored() == "chaperone"
+    assert len(rig.posts()) == 2
+
+
 def test_a_run_stops_at_the_first_json_notice_that_fails(rig: Rig) -> None:
     """A hook that is away costs a run the time limit of one notice, not of
     six. The next run sends each notice."""
@@ -1736,6 +1933,54 @@ def test_a_record_over_its_byte_cap_sends_nothing(rig: Rig) -> None:
     assert done.stdout.count(str(rig.sent)) == 1
 
 
+@pytest.mark.parametrize("read", ["fail", "cut", "empty"])
+def test_a_record_read_that_fails_sends_nothing(rig: Rig, read: str) -> None:
+    """A read of the record can fail, or stop at its time limit on a slow
+    disk, with no output or with a part of the record. A read can also give
+    nothing from a record that holds bytes. A pair with no record line is
+    news again. So such a run sends no notice of this kind, says so in one
+    line and keeps the record as it was. The next run sends each pair one
+    time."""
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS[:2]])
+    rig.run()
+    record = rig.sent_lines()
+    assert len(record) == 2
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
+
+    done = rig.run(WD_RECORD_READ=read)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == THREE_SUMMARIES[:2]
+    assert done.stdout.count(str(rig.sent)) == 1, done.stdout
+    assert rig.sent_lines() == record
+
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES
+    assert len(rig.sent_lines()) == 3
+
+
+@pytest.mark.parametrize("kind", ["nul", "text"])
+def test_a_record_with_no_record_line_sends_nothing(rig: Rig, kind: str) -> None:
+    """A record can hold bytes and no line of the record pattern. For
+    example, a crash can leave NUL bytes in the place of the lines. A pair
+    with no record line is news again. So such a run sends no notice of
+    this kind, says so in one line and keeps the record as it was."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+    rig.run()
+    assert len(rig.posts()) == 1
+    body = b"\0" * rig.sent.stat().st_size if kind == "nul" else b"not a record line\n"
+    rig.sent.write_bytes(body)
+
+    for _ in range(2):
+        done = rig.run()
+
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert len(rig.posts()) == 1
+        assert done.stdout.count(str(rig.sent)) == 1, done.stdout
+        assert rig.sent.read_bytes() == body
+
+
 def _fill_record(rig: Rig, room: int) -> list[str]:
     """Writes a record with room for that count of bytes under its cap.
     Each line is one week old. Gives the lines."""
@@ -1794,39 +2039,110 @@ def test_a_record_line_that_fits_exactly_is_sent(rig: Rig, spare: int) -> None:
     assert "is over" not in again.stdout
 
 
-def test_a_failed_record_update_keeps_each_old_line(rig: Rig) -> None:
-    """`awk` makes the new record after a send. When that call fails, the
-    record keeps each line, and the run sends no more notices of this kind."""
+@pytest.mark.parametrize("fail_at", [1, 2])
+def test_a_failed_record_update_sends_each_pair_once(rig: Rig, fail_at: int) -> None:
+    """`awk` makes the new record for each notice. When that call fails, the
+    record keeps each old line and the line of each notice that the run
+    sent, and the run sends no more notices of this kind. The next run
+    sends each other pair one time. Call 2 fails after a send."""
     old = int(time.time()) - 7 * DAY_S
     lines = [f"attendance {one.replace(':', ' ')} {REFUSED_AT} {old}" for one in SEVEN_PAIRS[:5]]
     _write(rig.sent, "\n".join(lines) + "\n")
-    rig.notice("noticeboard", token("status.document:syntax"), token("audit.line:syntax"))
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
 
-    done = rig.run(WD_AWK_KEY_EXIT="2")
+    done = rig.run(WD_AWK_KEY_FAIL_AT=str(fail_at))
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert len(rig.posts()) == 1
-    assert done.stdout.count("awk gave no answer after a send") == 1, done.stdout
-    assert rig.sent_lines() == lines
+    assert rig.json_summaries() == THREE_SUMMARIES[: fail_at - 1]
+    assert done.stdout.count("awk gave no answer") == 1, done.stdout
+    assert rig.sent_lines()[:5] == lines
+    assert [one.split()[1] for one in rig.sent_lines()[5:]] == ["status.document"][: fail_at - 1]
+
+    rig.run()
+
+    assert sorted(rig.json_summaries()) == sorted(THREE_SUMMARIES)
+    assert len(rig.sent_lines()) == 8
 
 
-def test_a_record_write_that_fails_after_a_send_stops_the_step(rig: Rig) -> None:
-    """The run proves the record with one write before the first send. This
-    case fails the second write, the one after the send. The run then sends
-    no more notices of this kind, and the next run sends each one."""
-    rig.notice("noticeboard", *[token(one) for one in SEVEN_PAIRS[:3]])
+def test_a_record_write_that_fails_before_a_send_stops_the_step(rig: Rig) -> None:
+    """The run writes the line of each notice to the record before it sends
+    the notice. This case fails the second write. The run then sends no
+    more notices of this kind, and the next run sends each other pair one
+    time."""
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
 
     done = rig.run(WD_MKTEMP_FAIL_AT="2")
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert len(rig.posts()) == 1
-    assert done.stdout.count("after a send") == 1, done.stdout
-    assert rig.sent_lines() == []
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+    assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
+    assert done.stdout.count(f"cannot write {rig.sent} before a send") == 1, done.stdout
 
     rig.run()
 
-    assert len(rig.json_summaries()) == 4
+    assert rig.json_summaries() == THREE_SUMMARIES
     assert len(rig.sent_lines()) == 3
+
+
+def test_a_full_disk_sends_no_notice(rig: Rig) -> None:
+    """A full disk takes a file of 0 bytes and refuses each byte more. The
+    record has no line until the first notice. The line of a notice goes to
+    the record before the send, so each run with a full disk sends no notice
+    of this kind. The next run with room sends the notice one time."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    for _ in range(3):
+        done = rig.run(WD_DISK_FULL="1")
+
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert done.stdout.count(f"cannot write {rig.sent}") == 1, done.stdout
+
+    assert rig.posts() == []
+    assert rig.sent_lines() == []
+
+    rig.run()
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+
+
+def test_a_failed_send_keeps_each_old_line_of_the_record(rig: Rig) -> None:
+    """A send that did not reach the hook gets the old record back, with
+    each line of it. The next run sends that notice one more time, and it
+    sends no pair of an old line again."""
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS[:2]])
+    rig.run()
+    record = rig.sent_lines()
+    assert len(record) == 2
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
+
+    done = rig.run(WD_POST_EXIT="7")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.sent_lines() == record
+
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES[:2] + [THREE_SUMMARIES[2]] * 2
+    assert len(rig.sent_lines()) == 3
+
+
+def test_a_failed_send_with_no_write_back_is_missed(rig: Rig) -> None:
+    """A send that fails gets the old record back. When that write fails
+    too, the record keeps the line of a notice that the hook did not take.
+    That notice is missed, and no later run sends it."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_POST_EXIT="7", WD_MKTEMP_FAIL_AT="2")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(rig.posts()) == 1
+    assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
+    assert done.stdout.count(f"cannot write the old {rig.sent} back") == 1, done.stdout
+
+    rig.run()
+
+    assert len(rig.posts()) == 1
 
 
 def test_no_time_from_date_sends_nothing(rig: Rig) -> None:
@@ -1860,6 +2176,21 @@ def test_no_answer_on_the_limits_sends_nothing(rig: Rig) -> None:
     rig.run()
 
     assert len(rig.json_summaries()) == 1
+
+
+@pytest.mark.parametrize("held", ["held 0 x", "held 0"])
+def test_a_held_line_with_a_word_that_is_no_count_sends_nothing(rig: Rig, held: str) -> None:
+    """The last line of the plan holds two counts. A second word that is no
+    count is no answer on the limits, and one count is no answer too. The
+    run then sends no notice of this kind and says so in one line."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_AWK_HELD=held)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert done.stdout.count("awk gave no answer on the limits") == 1, done.stdout
+    assert rig.sent_lines() == []
 
 
 @pytest.mark.parametrize("blocked", ["record", "directory"])
@@ -1932,6 +2263,74 @@ def _script_copy(tmp_path: Path, text: str) -> Path:
     return copy
 
 
+#: The line of the step that starts the loop of the sends.
+SEND_LOOP: Final = "  while read -r word service surface rule seconds; do\n"
+
+#: The line of the step that compares the age of the run with the budget.
+BUDGET_CHECK: Final = "NOTICE_STEP_BUDGET_S ))"
+
+#: The longest time that the step can need after the start of its last
+#: send, apart from the send itself: the record write of a send that
+#: failed, and the journal line.
+AFTER_THE_SEND_S: Final = 5
+
+
+def test_the_step_ends_inside_the_start_limit_of_its_unit() -> None:
+    """systemd stops a run at `TimeoutStartSec` of the unit. A stop after
+    a send that the hook took can leave the old record behind. The step
+    starts no send when the run is older than NOTICE_STEP_BUDGET_S. bash
+    counts `SECONDS` in whole seconds, so the last send starts before an
+    age of NOTICE_STEP_BUDGET_S + 1. One send takes NOTICE_TIMEOUT_S at
+    most."""
+    unit = (REPO_ROOT / "systemd" / "creche-watchdog.service").read_text(encoding="utf-8")
+    limits = re.findall(r"^TimeoutStartSec=([0-9]+)$", unit, re.MULTILINE)
+    assert len(limits) == 1
+
+    longest = _number("NOTICE_STEP_BUDGET_S") + 1 + _number("NOTICE_TIMEOUT_S") + AFTER_THE_SEND_S
+
+    assert longest <= int(limits[0])
+
+
+def test_a_slow_hook_stops_the_step_at_its_budget(rig: Rig, tmp_path: Path) -> None:
+    """`SECONDS` keeps its count in the shell of the step, across a send.
+    This case runs a copy of the script with a budget of 1 s and a hook
+    that takes 2 s for each send. The copy sets `SECONDS` to 0 directly
+    before the loop of the sends, so the time of the checks does not
+    count. The first send starts, and the step then stops with one line."""
+    text, found = BUDGET_LINE.subn("NOTICE_STEP_BUDGET_S=1", SCRIPT.read_text(encoding="utf-8"))
+    assert found == 1
+    assert text.count(SEND_LOOP) == 1
+    rig.script = _script_copy(tmp_path, text.replace(SEND_LOOP, f"  SECONDS=0\n{SEND_LOOP}"))
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
+
+    done = rig.run(WD_POST_SLEEP="2")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+    assert done.stdout.count("so it sends no more of this kind") == 1, done.stdout
+    assert len(rig.sent_lines()) == 1
+
+
+@pytest.mark.parametrize("over", [0, 1])
+def test_the_budget_holds_a_run_older_than_it(rig: Rig, tmp_path: Path, over: int) -> None:
+    """A run that is NOTICE_STEP_BUDGET_S seconds old still sends. A run
+    that is one second older starts no send and says so in one line. This
+    case runs a copy of the script that sets `SECONDS` to that age
+    directly before each check of the budget."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    checks = [one for one in text.splitlines(keepends=True) if BUDGET_CHECK in one]
+    assert len(checks) == 1
+    age = f"    SECONDS=$(( NOTICE_STEP_BUDGET_S + {over} ))\n"
+    rig.script = _script_copy(tmp_path, text.replace(checks[0], age + checks[0]))
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == THREE_SUMMARIES[: 3 * (1 - over)]
+    assert done.stdout.count("so it sends no more of this kind") == over, done.stdout
+
+
 def test_a_run_past_its_time_budget_starts_no_send(rig: Rig, tmp_path: Path) -> None:
     """The unit of the script gives a run a start limit, and a hook can
     answer slowly. A run that is older than the budget of the step starts no
@@ -1956,6 +2355,30 @@ def test_a_run_past_its_time_budget_starts_no_send(rig: Rig, tmp_path: Path) -> 
     assert len(rig.json_summaries()) == 1
 
 
+def test_seconds_from_the_environment_is_no_age(rig: Rig) -> None:
+    """bash takes `SECONDS` from the environment. The step reads `SECONDS` as
+    the age of the run, so the script sets it to 0 before the five checks.
+    A run that starts with another value sends its notice."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(SECONDS="1000")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert "s old" not in done.stdout
+
+
+def test_the_age_of_a_run_starts_before_the_five_checks() -> None:
+    """The ceiling of the step counts the five checks in the age of the run.
+    So the script sets `SECONDS` to 0 one time, before the call of the
+    first check."""
+    lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+
+    assert lines.count("SECONDS=0") == 1
+    assert lines.count("check_chaperone") == 1
+    assert lines.index("SECONDS=0") < lines.index("check_chaperone")
+
+
 @pytest.mark.parametrize("fault", ["exit 9", ': "$NO_SUCH_VARIABLE"', ": $(( 10#x ))"])
 def test_a_fault_in_the_notice_step_does_not_end_the_run(
     rig: Rig, tmp_path: Path, fault: str
@@ -1976,6 +2399,35 @@ def test_a_fault_in_the_notice_step_does_not_end_the_run(
     assert rig.stored() == "up"
     assert rig.raw() == "chaperone"
     assert rig.posts() == []
+
+
+@pytest.mark.parametrize(
+    "invocation",
+    [None, "", UNIT_RUN.upper(), UNIT_RUN[1:], f"{UNIT_RUN}0", f"{UNIT_RUN}\n"],
+)
+def test_a_run_by_hand_sends_no_json_notice(rig: Rig, invocation: str | None) -> None:
+    """systemd starts one run of the unit at a time, and it gives each run an
+    INVOCATION_ID of 32 hex digits. A run by hand can overlap a run of the
+    timer, and both runs would read the same record. So a run with no such
+    INVOCATION_ID sends no notice of this kind and says so in one line. Its
+    outage check is the same as in a run of the unit."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    for _ in range(2):
+        done = rig.run_as(invocation, WD_PEP_CODE="000")
+
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert rig.json_summaries() == []
+        assert done.stdout.count("INVOCATION_ID") == 1, done.stdout
+
+    assert len(rig.posts()) == 1
+    assert "rework DOWN" in rig.posts()[0]
+    assert rig.stored() == "chaperone"
+    assert rig.sent_lines() == []
+
+    rig.run()
+
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
 
 
 def test_the_bearer_of_a_json_notice_never_reaches_argv(rig: Rig) -> None:
