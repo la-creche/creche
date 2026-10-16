@@ -39,7 +39,8 @@ from . import paths
 from .atomic import atomic_write
 
 #: Contract 05 §2 rule 3 keeps secrets out of world-readable files. This one
-#: names directories only, so the group that runs the platform may read it.
+#: names three directories, the sandbox id and the URL of each plane. It
+#: holds no secret, so the group that runs the platform may read it.
 PLAYPEN_ENV_MODE: Final = 0o640
 
 #: The names `playpen/src/mounts.ts` reads, and `AGENT_SANDBOX`, which
@@ -66,7 +67,8 @@ def write_playpen_env(
     pep_url: str,
     litellm_base_url: str,
 ) -> None:
-    """Write the file for one sandbox. Called once per create.
+    """Write the file for one sandbox. A create calls it. A pass that adopts
+    the replacement of an earlier pass and `apply-once` call it again.
 
     Each directory is written as its HOST path, because that is also its
     path inside the VM. Nothing here rewrites a path into a `/run/...`
