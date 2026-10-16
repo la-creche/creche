@@ -887,6 +887,10 @@ pub enum UnidentifiedRequest {
 /// The record of one request that names no family. It goes to its own log,
 /// and not to the audit of contract 04 §6: each record there names a family.
 ///
+/// The type has no field for a family: each value of it means that no family
+/// matched the request. A line says so with its second key, `family`, whose
+/// value is `null`.
+///
 /// The record holds no argument of the caller. A caller with no token must
 /// not put its bytes into a file that the host keeps.
 ///
@@ -943,6 +947,9 @@ impl UnidentifiedRecord {
         // writes it with `Z`. The Python chaperone does the same.
         let mut record = Map::new();
         record.insert("ts", text(&self.at.instant.to_rfc3339_millis_plus_00_00()));
+        // No family matched the request. The type holds no family, so each
+        // record writes the same value.
+        record.insert("family", Value::Null);
         match &self.request {
             UnidentifiedRequest::NoFamily {
                 action,
@@ -1411,15 +1418,52 @@ mod tests {
 
         assert_eq!(
             String::from_utf8(refused.to_line()).unwrap(),
-            "{\"ts\": \"2026-09-18T19:41:07.412+00:00\", \"tool\": \"$manifest\", \"decision\": \
-             \"deny\", \"reason\": \"rate_limited\", \"detail\": null, \"args_bytes\": 2, \
-             \"args_sha256\": \"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\"}\n"
+            "{\"ts\": \"2026-09-18T19:41:07.412+00:00\", \"family\": null, \"tool\": \
+             \"$manifest\", \"decision\": \"deny\", \"reason\": \"rate_limited\", \"detail\": null, \
+             \"args_bytes\": 2, \"args_sha256\": \
+             \"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\"}\n"
         );
         assert_eq!(
             String::from_utf8(oversized.to_line()).unwrap(),
-            "{\"ts\": \"1970-01-01T00:00:00.000+00:00\", \"tool\": \"$oversized\", \"decision\": \
-             \"deny\", \"reason\": \"body_too_large\", \"detail\": \"body exceeds 262144 bytes\", \
-             \"args_bytes\": 262145}\n"
+            "{\"ts\": \"1970-01-01T00:00:00.000+00:00\", \"family\": null, \"tool\": \
+             \"$oversized\", \"decision\": \"deny\", \"reason\": \"body_too_large\", \"detail\": \
+             \"body exceeds 262144 bytes\", \"args_bytes\": 262145}\n"
         );
+    }
+
+    #[test]
+    fn a_request_with_no_family_says_that_no_family_matched() {
+        let digest: Sha256Hex = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+            .parse()
+            .unwrap();
+        let no_family = |action, refusal| UnidentifiedRequest::NoFamily {
+            action,
+            refusal,
+            args: ArgsDigest::new(2, digest.clone()),
+        };
+        let requests = [
+            no_family(AuditAction::Manifest, Unidentified::UnknownToken),
+            no_family(
+                AuditAction::Call("embed".parse().unwrap()),
+                Unidentified::RateLimited,
+            ),
+            UnidentifiedRequest::Oversized {
+                seen_bytes: 262_145,
+            },
+        ];
+
+        for request in requests {
+            let line =
+                String::from_utf8(UnidentifiedRecord::new(at(0), request).to_line()).unwrap();
+
+            // `family` is the second key of each line, and its value is null.
+            assert!(
+                line.starts_with(
+                    "{\"ts\": \"1970-01-01T00:00:00.000+00:00\", \"family\": null, \"tool\": \""
+                ),
+                "{line}"
+            );
+            assert_eq!(line.matches("\"family\"").count(), 1, "{line}");
+        }
     }
 }

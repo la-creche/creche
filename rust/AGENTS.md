@@ -2445,7 +2445,8 @@ adds a crate:
      `approval_required`, as the Python chaperone does.
   5. `UnidentifiedRecord`, contract 04 §6. The contract does not describe the
      log of a request that names no family. The type writes what the Python
-     chaperone writes.
+     chaperone writes. The second key of each line is `family`, and its
+     value is `null`: the type has no field for a family.
 - The module `grants` has its own JSON reader and writer, and `serde_json`
   does not read a grant file or a request body. The Python code takes JSON
   that is not strict, and it reports each issue of a document. `grants::Value`
