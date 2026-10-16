@@ -2081,6 +2081,19 @@ def test_a_run_past_its_time_budget_starts_no_send(rig: Rig, tmp_path: Path) -> 
     assert len(rig.json_summaries()) == 1
 
 
+def test_seconds_from_the_environment_is_no_age(rig: Rig) -> None:
+    """bash takes `SECONDS` from the environment. The step reads `SECONDS` as
+    the age of the run, so the script sets it to 0 before the five checks.
+    A run that starts with another value sends its notice."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(SECONDS="1000")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert "s old" not in done.stdout
+
+
 @pytest.mark.parametrize("fault", ["exit 9", ': "$NO_SUCH_VARIABLE"', ": $(( 10#x ))"])
 def test_a_fault_in_the_notice_step_does_not_end_the_run(
     rig: Rig, tmp_path: Path, fault: str

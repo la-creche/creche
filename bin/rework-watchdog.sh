@@ -146,6 +146,10 @@
 # stopped at the first thing it found would report one outage out of five.
 set -uo pipefail
 
+# The notice step reads SECONDS as the age of the run. bash takes SECONDS
+# from the environment, so the count starts here, before the five checks.
+SECONDS=0
+
 # A TEST SEAM, not a permission. `bin/tests/test_rework_watchdog.py` points
 # every absolute root inside a temp directory. Empty everywhere else,
 # including on the host.
