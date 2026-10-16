@@ -89,6 +89,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, cast
 
+from .artifacts import CODE_HOST, HTTPS
 from .boundedyaml import MergeLimits, load
 from .errors import Refusal, RefusalCode, safe_token
 
@@ -247,7 +248,7 @@ class ServerPin:
         """The proven URL shape. `bin/creche-deploy` has fetched
         github-mcp-server from it on every deploy since it was written, and
         the tag is `v` + the declared version."""
-        return f"https://github.com/{self.repo}/releases/download/v{self.version}/{self.asset}"
+        return f"{HTTPS}{CODE_HOST}/{self.repo}/releases/download/v{self.version}/{self.asset}"
 
 
 @dataclass(frozen=True)

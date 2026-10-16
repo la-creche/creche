@@ -263,7 +263,8 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `boundedyaml.py` | the YAML loader of each reader, with its two merge limits |
 | `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | `component.yaml` as hostile input, the walk, the order, rules C1 to C5 |
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, `server.yaml` as hostile bytes, the uninstalled component |
-| `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow` |
+| `artifacts.py`, `treewalk.py` | the names, the limits and the signer of the archive of a binary component, the walk of a tree of compiled programs |
+| `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `check-tree` |
 | `requester/`, `corpus/` | one request file, one `git fetch` |
 | `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P5 |
@@ -375,7 +376,10 @@ that wants a refusal changes one field.
   a path that it only prints. Code that a build script generates can carry
   its own path into a panic message. Such a build must remap the path. That
   path holds the request id, so a fixed cargo configuration cannot name it
-  (`executor/selfcontained.py`).
+  (`treewalk.py`).
+- `handover artifacts` reads a manifest only for a component whose catalog
+  row says `binary`. Such a read needs the site file for a `~/` path, and a
+  CI runner has no site file. No catalog row says `binary` today (`cli.py`).
 - A binary build runs in the root of the fetched tree. A `rustup` proxy
   reads a toolchain file from the working directory and its parents, so it
   does not read `rust/rust-toolchain.toml`. It also downloads a toolchain
