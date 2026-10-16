@@ -124,6 +124,8 @@ root, and `_notices.json` in the fault directory of the chaperone.
 - Two limits apply. The script sends one notice for one service, surface and
   rule in 24 hours. It sends 6 notices of this kind at most in one hour, for
   all services together. A later run sends a notice that a limit holds.
+  Both limits count in the wall-clock time of the host, so a step of that
+  clock can reset the count of one hour.
 - A token whose `<seconds>` is more than one hour after the time of the run
   gets no notice. The journal gets one line with the count of such tokens.
 - A run that is older than `NOTICE_STEP_BUDGET_S` seconds starts no send. A

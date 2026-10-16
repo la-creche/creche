@@ -95,7 +95,8 @@
 #     the first run of this step counts too: that run sends it.
 #   - Two limits hold a notice for a later run. One notice for one service,
 #     surface and rule in 24 hours. 6 notices of this kind in one hour, for
-#     all services together.
+#     all services together. Both limits count in the wall-clock time of the
+#     host, so a step of that clock can reset the count of one hour.
 #   - A token whose `<seconds>` is more than one hour after the time of the
 #     run gets no notice. The journal gets one line with the count of them.
 #   - A run that is older than NOTICE_STEP_BUDGET_S seconds starts no send,
