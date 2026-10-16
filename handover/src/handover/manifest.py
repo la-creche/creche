@@ -102,7 +102,7 @@ REQUIRED_FIELDS = frozenset(
         "release",
     }
 )
-OPTIONAL_FIELDS = frozenset({"build", "provides", "requires", "depends_on", "secrets"})
+OPTIONAL_FIELDS = frozenset({BUILD_FIELD, "provides", "requires", "depends_on", "secrets"})
 KNOWN_FIELDS = REQUIRED_FIELDS | OPTIONAL_FIELDS
 
 StrEnumT = TypeVar("StrEnumT", bound=StrEnum)
