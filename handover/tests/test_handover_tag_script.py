@@ -16,10 +16,19 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from handover.catalog import ARRIVING, CATALOG, RETIRING, Repo
+from handover.artifacts import asset_names
+from handover.catalog import (
+    ARCHIVE_MAX_BYTES,
+    ARRIVING,
+    BUNDLE_MAX_BYTES,
+    CATALOG,
+    RETIRING,
+    Repo,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "handover" / "bin" / "allocate-tags.sh"
@@ -87,6 +96,23 @@ case "$jq" in
   *)        printf '%s\\n' '{"number": 1}' ;;
 esac
 """
+
+
+#: A verifier that writes each word it gets to the file of `COSIGN_LOG`,
+#: one on each line, and ends with the status of `FAKE_COSIGN_STATUS`.
+COSIGN_FAKE = """#!/usr/bin/env bash
+printf '%s\\n' "$@" >> "$COSIGN_LOG"
+exit "${FAKE_COSIGN_STATUS:-0}"
+"""
+
+
+@dataclass(frozen=True)
+class Assets:
+    """The directory of the assets of a run, and the fake verifier."""
+
+    directory: Path
+    cosign: Path
+    log: Path
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -186,11 +212,17 @@ def _run(
     gh_reads: bool = True,
     tag_repo: str | None = None,
     cli: str = RELEASE_CLI,
+    assets: Assets | None = None,
+    cosign_status: int = 0,
+    env_change: dict[str, str | None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """The script in `repo`, tagging `tree` (itself, unless one is given).
 
     `labels` are the bump labels of the pull request that merged the tagged
-    tree's HEAD. `bumps` names any other merge commit's label.
+    tree's HEAD. `bumps` names any other merge commit's label. `assets`
+    gives the run its asset directory and a verifier that ends with
+    `cosign_status`. `env_change` sets each variable last, and removes
+    each one whose value is `None`.
     """
     asked = dict(bumps or {})
     if labels:
@@ -207,14 +239,28 @@ def _run(
     env.pop("GITHUB_REPOSITORY", None)
     env.pop("TAG_REPO_ROOT", None)
     env.pop("TAG_REPO", None)
+    env.pop("ASSET_DIR", None)
+    env.pop("COSIGN", None)
     if repository is not None:
         env["GITHUB_REPOSITORY"] = repository
+
+    if assets is not None:
+        env["ASSET_DIR"] = str(assets.directory)
+        env["COSIGN"] = str(assets.cosign)
+        env["COSIGN_LOG"] = str(assets.log)
+        env["FAKE_COSIGN_STATUS"] = str(cosign_status)
 
     if tag_repo is not None:
         env["TAG_REPO"] = tag_repo
 
     if tree is not None:
         env["TAG_REPO_ROOT"] = str(tree)
+
+    for name, value in (env_change or {}).items():
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = value
 
     return subprocess.run(
         ["bash", str(repo / "handover" / "bin" / "allocate-tags.sh"), *args],
@@ -976,6 +1022,9 @@ def test_a_failed_pull_request_read_is_no_pull_request(
 #: A crate directory that a binary component's build installs.
 NESTED_BUNDLE = "rust/crates/creche-contracts"
 
+#: The component that the planner below makes binary.
+BINARY_COMPONENT = "noticeboard"
+
 #: The planner, with `noticeboard` as a binary component that bundles one
 #: crate directory. The catalog holds no binary component and no nested
 #: directory, so the test gives the script a planner that holds both. The
@@ -990,7 +1039,7 @@ from handover.cli import main
 
 allocate.CATALOG = tuple(
     replace(row, kind=Kind.BINARY, bundles=("{NESTED_BUNDLE}",))
-    if row.name == "noticeboard"
+    if row.name == "{BINARY_COMPONENT}"
     else row
     for row in CATALOG
 )
@@ -1007,9 +1056,26 @@ def binary_cli(tmp_path: Path) -> str:
     return f"{sys.executable} {planner}"
 
 
+@pytest.fixture
+def assets(tmp_path: Path) -> Assets:
+    """The two assets of the binary component, each within its limit, and
+    a verifier that passes each signature."""
+    directory = tmp_path / "assets"
+    directory.mkdir()
+    names = asset_names(BINARY_COMPONENT)
+    (directory / names.archive).write_bytes(b"an archive\n")
+    (directory / names.bundle).write_bytes(b"{}\n")
+    verifier = tmp_path / "verifier" / "cosign"
+    verifier.parent.mkdir()
+    verifier.write_text(COSIGN_FAKE, encoding="utf-8")
+    verifier.chmod(0o755)
+
+    return Assets(directory=directory, cosign=verifier, log=tmp_path / "cosign.log")
+
+
 @pytest.mark.slow
 def test_a_change_under_a_nested_bundle_tags_its_component(
-    repo: Path, shims: Path, tmp_path: Path, binary_cli: str
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
 ) -> None:
     """The script cut every changed path to its first segment, so a change
     under `rust/crates/<crate>/` reached the planner as `rust` and tagged
@@ -1017,7 +1083,7 @@ def test_a_change_under_a_nested_bundle_tags_its_component(
     _seed_first_tags(repo)
     _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
 
-    done = _run(repo, shims, tmp_path, cli=binary_cli)
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
@@ -1025,15 +1091,15 @@ def test_a_change_under_a_nested_bundle_tags_its_component(
 
 @pytest.mark.slow
 def test_a_change_beside_a_nested_bundle_tags_nothing(
-    repo: Path, shims: Path, tmp_path: Path, binary_cli: str
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
 ) -> None:
     """A crate that no build installs is no component's path."""
     _seed_first_tags(repo)
     _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
-    assert _run(repo, shims, tmp_path, cli=binary_cli).returncode == 0
+    assert _run(repo, shims, tmp_path, cli=binary_cli, assets=assets).returncode == 0
     _commit(repo, "rust/crates/other/src/lib.rs", "rust/README.md")
 
-    done = _run(repo, shims, tmp_path, cli=binary_cli)
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert "allocate-tags: 0 created" in done.stdout
@@ -1042,7 +1108,7 @@ def test_a_change_beside_a_nested_bundle_tags_nothing(
 
 @pytest.mark.slow
 def test_the_cargo_lock_file_tags_the_binary_component_alone(
-    repo: Path, shims: Path, tmp_path: Path, binary_cli: str
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
 ) -> None:
     """`rust/Cargo.lock` is a file two segments deep. Cut to `rust`, it
     moved nothing. It moves the binary component, and no venv component."""
@@ -1050,7 +1116,7 @@ def test_the_cargo_lock_file_tags_the_binary_component_alone(
     _seed_first_tags(repo)
     _commit(repo, "rust/Cargo.lock")
 
-    done = _run(repo, shims, tmp_path, cli=binary_cli)
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
@@ -1058,14 +1124,14 @@ def test_the_cargo_lock_file_tags_the_binary_component_alone(
 
 @pytest.mark.slow
 def test_a_label_counts_through_a_nested_bundle(
-    repo: Path, shims: Path, tmp_path: Path, binary_cli: str
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
 ) -> None:
     """The level lines carry the same cut, so a labelled merge that changed
     only a nested bundle raises its component."""
     _seed_first_tags(repo)
     _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
 
-    done = _run(repo, shims, tmp_path, labels="bump:minor", cli=binary_cli)
+    done = _run(repo, shims, tmp_path, labels="bump:minor", cli=binary_cli, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.2.0"])
@@ -1087,3 +1153,261 @@ def test_the_cargo_workspace_tags_no_component_of_todays_catalog(
     assert done.returncode == 0, done.stderr
     assert "allocate-tags: 0 created" in done.stdout
     assert _tags(repo) == FIRST_TAGS
+
+
+# ---- the two assets of a binary component ----------------------------------
+
+
+def _binary_and_chaperone(repo: Path) -> str:
+    """A merge that moves the binary component and `chaperone`, after the
+    first tags. The SHA of the merge."""
+    _seed_first_tags(repo)
+
+    return _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs", "chaperone/src/one.py")
+
+
+def _words(assets: Assets) -> list[str]:
+    return assets.log.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.slow
+def test_a_binary_component_releases_its_two_assets(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
+) -> None:
+    """Both files, each within its limit, and a signature that the
+    verifier passes: one Release, with the archive and the bundle as its
+    two assets."""
+    names = asset_names(BINARY_COMPONENT)
+    archive = assets.directory / names.archive
+    bundle = assets.directory / names.bundle
+    bundle.write_bytes(b"x" * BUNDLE_MAX_BYTES)
+    sha = _binary_and_chaperone(repo)
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "noticeboard-v0.1.1"])
+    releases = (tmp_path / "gh.log").read_text(encoding="utf-8").split("release create ")
+    (attached,) = [one for one in releases if one.startswith("noticeboard-v0.1.1 ")]
+    assert attached.endswith(f" {archive} {bundle}\n")
+    (plain,) = [one for one in releases if one.startswith("chaperone-v0.1.1 ")]
+    assert str(archive) not in plain
+    assert _words(assets) == [
+        "verify-blob",
+        "--bundle",
+        str(bundle),
+        "--certificate-oidc-issuer",
+        "https://token.actions.githubusercontent.com",
+        "--certificate-identity",
+        "https://github.com/example-owner/agent-control/.github/workflows/release.yml"
+        "@refs/heads/main",
+        "--certificate-github-workflow-repository",
+        DEFAULT_REPOSITORY,
+        "--certificate-github-workflow-ref",
+        "refs/heads/main",
+        "--certificate-github-workflow-sha",
+        sha,
+        str(archive),
+    ]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("absent", ["archive", "bundle"])
+def test_an_absent_asset_refuses_that_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets, absent: str
+) -> None:
+    """No tag for the binary component, a tag for each other one, and a
+    red end."""
+    names = asset_names(BINARY_COMPONENT)
+    (assets.directory / getattr(names, absent)).unlink()
+    _binary_and_chaperone(repo)
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
+
+    assert done.returncode != 0
+    assert f"::error::noticeboard refused: {getattr(names, absent)} is not a file" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert not assets.log.exists()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("which", "limit"), [("archive", ARCHIVE_MAX_BYTES), ("bundle", BUNDLE_MAX_BYTES)]
+)
+def test_an_asset_over_its_limit_refuses_that_component_alone(
+    repo: Path,
+    shims: Path,
+    tmp_path: Path,
+    binary_cli: str,
+    assets: Assets,
+    which: str,
+    limit: int,
+) -> None:
+    """One byte over the limit of its line is the same refusal."""
+    name = getattr(asset_names(BINARY_COMPONENT), which)
+    with (assets.directory / name).open("r+b") as file:
+        file.truncate(limit + 1)
+    _binary_and_chaperone(repo)
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
+
+    assert done.returncode != 0
+    assert f"{name} has {limit + 1} bytes, more than its limit of {limit}" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert not assets.log.exists()
+
+
+@pytest.mark.slow
+def test_a_signature_that_the_verifier_refuses_refuses_that_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
+) -> None:
+    """The verifier ends with status 1: the same as an absent file."""
+    _binary_and_chaperone(repo)
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets, cosign_status=1)
+
+    assert done.returncode != 0
+    assert "::error::noticeboard refused: the verifier refused the signature" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _words(assets)[0] == "verify-blob"
+
+
+@pytest.mark.slow
+def test_a_run_with_no_verifier_refuses_that_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
+) -> None:
+    """COSIGN must name a program by an absolute path."""
+    _binary_and_chaperone(repo)
+    assets.cosign.unlink()
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
+
+    assert done.returncode != 0
+    assert "noticeboard refused: COSIGN names no program" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+
+
+@pytest.mark.slow
+def test_a_dry_run_names_the_two_assets_and_checks_no_file(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str
+) -> None:
+    """No asset directory and no verifier: a dry run reads neither."""
+    _binary_and_chaperone(repo)
+
+    done = _run(repo, shims, tmp_path, "--dry-run", cli=binary_cli)
+
+    assert done.returncode == 0, done.stderr
+    names = asset_names(BINARY_COMPONENT)
+    attached = [line for line in done.stdout.splitlines() if line.startswith("would attach")]
+    assert attached == [
+        f"would attach {names.archive} to noticeboard-v0.1.1",
+        f"would attach {names.bundle} to noticeboard-v0.1.1",
+    ]
+    assert "would create chaperone-v0.1.1" in done.stdout
+    assert _tags(repo) == FIRST_TAGS
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("asset_dir", ["", None], ids=["empty", "unset"])
+def test_an_asset_directory_that_names_none_refuses_that_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets, asset_dir: str | None
+) -> None:
+    """An empty ASSET_DIR names no directory. The working directory does
+    not take its place."""
+    _binary_and_chaperone(repo)
+
+    done = _run(
+        repo,
+        shims,
+        tmp_path,
+        cli=binary_cli,
+        assets=assets,
+        env_change={"ASSET_DIR": asset_dir},
+    )
+
+    assert done.returncode != 0
+    assert "::error::noticeboard refused: ASSET_DIR names no directory" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert not assets.log.exists()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("which", ["archive", "bundle"])
+def test_a_link_in_place_of_an_asset_refuses_that_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets, which: str
+) -> None:
+    """A link to a valid file is no file of ASSET_DIR."""
+    name = getattr(asset_names(BINARY_COMPONENT), which)
+    asset = assets.directory / name
+    target = tmp_path / f"elsewhere-{name}"
+    target.write_bytes(asset.read_bytes())
+    asset.unlink()
+    asset.symlink_to(target)
+    _binary_and_chaperone(repo)
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
+
+    assert done.returncode != 0
+    assert f"::error::noticeboard refused: {name} is not a file in ASSET_DIR" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert not assets.log.exists()
+
+
+#: The planner of `binary_cli`, with the answer of `--assets` for the
+#: binary component taken from the variable `FAKE_ASSETS`.
+ANSWER_PLANNER = BINARY_PLANNER.replace(
+    "sys.exit(main())",
+    f"""import os
+
+if sys.argv[-2:] == ["--assets", "{BINARY_COMPONENT}"]:
+    sys.stdout.write(os.environ["FAKE_ASSETS"])
+    sys.exit(0)
+sys.exit(main())""",
+)
+
+
+@pytest.fixture
+def answer_cli(tmp_path: Path) -> str:
+    """`RELEASE_CLI` for a run whose planner gives the `--assets` answer of
+    `FAKE_ASSETS` for the binary component."""
+    assert ANSWER_PLANNER != BINARY_PLANNER
+    planner = tmp_path / "answer_planner.py"
+    planner.write_text(ANSWER_PLANNER, encoding="utf-8")
+
+    return f"{sys.executable} {planner}"
+
+
+_NAMES = asset_names(BINARY_COMPONENT)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "answer",
+    [
+        f"{_NAMES.archive} {ARCHIVE_MAX_BYTES}\n",
+        f"{_NAMES.archive} many\n{_NAMES.bundle} {BUNDLE_MAX_BYTES}\n",
+        f"{_NAMES.archive} {ARCHIVE_MAX_BYTES} x\n{_NAMES.bundle} {BUNDLE_MAX_BYTES}\n",
+        f"{_NAMES.archive} 1\n{_NAMES.bundle} 1\n{_NAMES.archive} 1\n",
+    ],
+    ids=["one-line", "a-limit-that-is-no-number", "a-third-word", "three-lines"],
+)
+def test_an_answer_of_the_planner_in_another_form_refuses_that_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, answer_cli: str, assets: Assets, answer: str
+) -> None:
+    """The answer of `--assets` is no line or two lines of a name and a
+    count. Each other answer is a refusal, and no file is checked."""
+    _binary_and_chaperone(repo)
+
+    done = _run(
+        repo,
+        shims,
+        tmp_path,
+        cli=answer_cli,
+        assets=assets,
+        env_change={"FAKE_ASSETS": answer},
+    )
+
+    assert done.returncode != 0
+    assert "::error::noticeboard refused: the planner gave no list of its assets" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert not assets.log.exists()

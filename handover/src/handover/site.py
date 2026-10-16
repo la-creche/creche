@@ -228,6 +228,16 @@ def github_repo(name: str) -> str:
     return value
 
 
+def is_owner_name(value: str) -> bool:
+    """Whether `value` has the shape that `github_owner` takes."""
+    return _SHAPES[SiteKey.GITHUB_OWNER].fullmatch(value) is not None
+
+
+def is_repo_name(value: str) -> bool:
+    """Whether `value` has the shape that `github_repo` takes from a key."""
+    return _REPO_NAME.fullmatch(value) is not None
+
+
 def operator_user() -> str:
     """The account the user units run as. Never `root`: a release that
     installed the operator's trees as root would hand every service root's

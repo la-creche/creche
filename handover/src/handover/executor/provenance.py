@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Final, cast
 
+from ..catalog import MAIN_BRANCH
 from ..errors import Refusal, RefusalCode
 from ..site import github_owner, github_repo
 from .source import newest_tagged_version
@@ -57,7 +58,7 @@ API_TIMEOUT_S: Final = 20.0
 API_MAX_BYTES: Final = 2 << 20
 USER_AGENT: Final = "handover"
 
-MAIN: Final = "main"
+MAIN: Final = MAIN_BRANCH
 
 #: Only CI can be this author.
 BOT_LOGIN: Final = "github-actions[bot]"
