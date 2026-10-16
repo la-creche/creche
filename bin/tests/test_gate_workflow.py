@@ -709,12 +709,21 @@ SIGN_STEPS = [
     },
 ]
 
+#: The time limit of the cosign step of the `release` job. That job holds
+#: the group of one allocation at a time, so a fetch that hangs would hold
+#: each later release run. The step comes before the tag step, so the limit
+#: stops no allocation half way.
+COSIGN_STEP_MINUTES = 10
+
+#: The cosign step of the `release` job.
+COSIGN_STEP = {"name": "cosign", "timeout-minutes": COSIGN_STEP_MINUTES, "run": COSIGN_RUN}
+
 #: The steps of the `release` job between the verdict and the step that
 #: takes uv: the two workflow artifacts into one directory, then cosign.
 RELEASE_ASSET_STEPS = [
     {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
     {"uses": DOWNLOAD_ACTION, "with": {"name": "bundles", "path": ASSET_DIR}},
-    {"name": "cosign", "run": COSIGN_RUN},
+    COSIGN_STEP,
 ]
 
 #: The variables of the tag step: the token, the catalog name, the assets of
@@ -1871,6 +1880,16 @@ def test_the_tag_step_runs_only_after_the_verdict() -> None:
     assert tag["run"] == TAG_RUN
 
 
+def test_no_time_limit_can_stop_an_allocation_half_way() -> None:
+    """A time limit on the `release` job or on its tag step can stop the
+    tag script between a tag and its Release. The cosign step before the tag
+    step holds the limit of a fetch."""
+    tag = _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)
+
+    assert "timeout-minutes" not in RELEASE_JOBS[RELEASE_NAME]
+    assert "timeout-minutes" not in tag
+
+
 def test_the_tag_step_says_which_catalog_repository_it_tags() -> None:
     """The allocator would otherwise take the name from where the
     repository is hosted, and refuse a name the catalog does not hold
@@ -2041,7 +2060,7 @@ def test_the_sign_job_and_the_release_job_take_one_cosign() -> None:
     (step,) = [one for one in RELEASE_JOBS[RELEASE_NAME]["steps"] if one.get("name") == "cosign"]
 
     assert RELEASE["env"] == COSIGN_ENV
-    assert step == {"name": "cosign", "run": COSIGN_RUN}
+    assert step == COSIGN_STEP
     assert COSIGN_FETCH in SIGN_RUN
     for name, job in RELEASE_JOBS.items():
         for one in job["steps"]:

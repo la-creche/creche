@@ -843,7 +843,12 @@ jobs:
       # The tag script checks the signature of each archive with the words
       # that root uses on the host. The text is the one of the `sign` job:
       # with no archive in ASSET_DIR it prints one line and fetches nothing.
+      # The time limit: this job holds the group of one allocation at a
+      # time, so a fetch that hangs would hold each later release run. The
+      # step comes before the tag step, so the limit stops no allocation
+      # half way. The job and the tag step have no time limit.
       - name: cosign
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           cosign="$RUNNER_TEMP/cosign"
