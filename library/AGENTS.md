@@ -68,12 +68,42 @@ corpus untouched.
 The image build needs `--build-arg AGENT_LAN_ADDRESS=<address>`. A sandbox
 has no site file, so the build fixes the embedder's address.
 
+`index-scope` sets three statuses:
+
+| Status | Cause |
+|---|---|
+| 0 | The run published the store. |
+| 2 | The program refuses its command line: a wrong count of words, an unknown profile, or a corpus path that is no directory. A preflight that fails has this status too. |
+| 78 | The environment names no address of TEI. 78 is `EX_CONFIG`, the status of a config that is not valid. |
+
+The program reads its command line before its environment. A run that ends
+in another way has a status that is not 0. Two examples are a signal and a
+store file that the program cannot read. Each index unit is a `oneshot` unit
+of a timer, so no unit starts the program again because of a status.
+
+## The answers of TEI
+
+`index-scope` reads each answer of TEI with `strictjson.loads`. The
+docstring of `src/library/strictjson.py` holds the rules of a strict text.
+
+- An answer has `ANSWER_MAX_BYTES` bytes at most. That is 16,777,216 bytes.
+- For an answer that is not strict, the program writes one log line of
+  level `ERROR`: `json_not_strict embedding.answer <rule>`. `<rule>` is the
+  word of the rule that the answer breaks.
+- The line holds no byte of the answer.
+- An answer that is not strict in the preflight ends the run with status 2.
+  That run publishes no store.
+- An answer that is not strict for one file is an error of that file
+  (rule 4). The report lists the file, and the run publishes each other
+  file.
+
 ## Layout
 
 | File | Owns |
 |---|---|
 | `src/library/library.py` | walk, hash, chunk, embed, write, atomic publish |
 | `src/library/__main__.py` | the `index-scope` CLI, the TEI client and its preflight |
+| `src/library/strictjson.py` | the strict reader and the strict writer of a JSON text. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `Dockerfile` | the sandbox image |
 
 ## Tests
@@ -82,4 +112,17 @@ has no site file, so the build fixes the embedder's address.
 uv run pytest library/tests
 ```
 
-A fake embedder. No TEI, no sandbox.
+A fake embedder. No TEI, no sandbox. The tests of the TEI client give
+`httpx` a mock transport, so no test opens a socket.
+
+## Known gaps
+
+- `rust/AGENTS.md`, "JSON", does not say which rule a copy of the strict
+  reader names for a text that breaks two rules. `strictjson.py` names the
+  fault that it finds first. The Rust reader names the fault at the lowest
+  byte offset, so the two words can differ. `strictjson.py` has an offset
+  for four rules only.
+- `rust/AGENTS.md`, "JSON", says that a service records a notice for the
+  operator when the strict reader refuses a text. It does not say what a
+  program in a sandbox does. `index-scope` writes the log line of "The
+  answers of TEI" and no notice. Its sandbox has no state root and no hook.

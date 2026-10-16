@@ -38,5 +38,5 @@ def test_main_stops_before_any_call_without_an_address(
     monkeypatch.delenv(TEI_URL_ENV, raising=False)
     monkeypatch.setattr("sys.argv", ["index-scope", str(tmp_path), str(tmp_path / "index")])
 
-    assert main() == 2
+    assert main() == os.EX_CONFIG
     assert LAN_ADDRESS_ENV in capsys.readouterr().err
