@@ -214,13 +214,15 @@ def _run(
     cli: str = RELEASE_CLI,
     assets: Assets | None = None,
     cosign_status: int = 0,
+    env_change: dict[str, str | None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """The script in `repo`, tagging `tree` (itself, unless one is given).
 
     `labels` are the bump labels of the pull request that merged the tagged
     tree's HEAD. `bumps` names any other merge commit's label. `assets`
     gives the run its asset directory and a verifier that ends with
-    `cosign_status`.
+    `cosign_status`. `env_change` sets each variable last, and removes
+    each one whose value is `None`.
     """
     asked = dict(bumps or {})
     if labels:
@@ -253,6 +255,12 @@ def _run(
 
     if tree is not None:
         env["TAG_REPO_ROOT"] = str(tree)
+
+    for name, value in (env_change or {}).items():
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = value
 
     return subprocess.run(
         ["bash", str(repo / "handover" / "bin" / "allocate-tags.sh"), *args],
@@ -1297,3 +1305,109 @@ def test_a_dry_run_names_the_two_assets_and_checks_no_file(
     ]
     assert "would create chaperone-v0.1.1" in done.stdout
     assert _tags(repo) == FIRST_TAGS
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("asset_dir", ["", None], ids=["empty", "unset"])
+def test_an_asset_directory_that_names_none_refuses_that_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets, asset_dir: str | None
+) -> None:
+    """An empty ASSET_DIR names no directory. The working directory does
+    not take its place."""
+    _binary_and_chaperone(repo)
+
+    done = _run(
+        repo,
+        shims,
+        tmp_path,
+        cli=binary_cli,
+        assets=assets,
+        env_change={"ASSET_DIR": asset_dir},
+    )
+
+    assert done.returncode != 0
+    assert "::error::noticeboard refused: ASSET_DIR names no directory" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert not assets.log.exists()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("which", ["archive", "bundle"])
+def test_a_link_in_place_of_an_asset_refuses_that_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets, which: str
+) -> None:
+    """A link to a valid file is no file of ASSET_DIR."""
+    name = getattr(asset_names(BINARY_COMPONENT), which)
+    asset = assets.directory / name
+    target = tmp_path / f"elsewhere-{name}"
+    target.write_bytes(asset.read_bytes())
+    asset.unlink()
+    asset.symlink_to(target)
+    _binary_and_chaperone(repo)
+
+    done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
+
+    assert done.returncode != 0
+    assert f"::error::noticeboard refused: {name} is not a file in ASSET_DIR" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert not assets.log.exists()
+
+
+#: The planner of `binary_cli`, with the answer of `--assets` for the
+#: binary component taken from the variable `FAKE_ASSETS`.
+ANSWER_PLANNER = BINARY_PLANNER.replace(
+    "sys.exit(main())",
+    f"""import os
+
+if sys.argv[-2:] == ["--assets", "{BINARY_COMPONENT}"]:
+    sys.stdout.write(os.environ["FAKE_ASSETS"])
+    sys.exit(0)
+sys.exit(main())""",
+)
+
+
+@pytest.fixture
+def answer_cli(tmp_path: Path) -> str:
+    """`RELEASE_CLI` for a run whose planner gives the `--assets` answer of
+    `FAKE_ASSETS` for the binary component."""
+    assert ANSWER_PLANNER != BINARY_PLANNER
+    planner = tmp_path / "answer_planner.py"
+    planner.write_text(ANSWER_PLANNER, encoding="utf-8")
+
+    return f"{sys.executable} {planner}"
+
+
+_NAMES = asset_names(BINARY_COMPONENT)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "answer",
+    [
+        f"{_NAMES.archive} {ARCHIVE_MAX_BYTES}\n",
+        f"{_NAMES.archive} many\n{_NAMES.bundle} {BUNDLE_MAX_BYTES}\n",
+        f"{_NAMES.archive} {ARCHIVE_MAX_BYTES} x\n{_NAMES.bundle} {BUNDLE_MAX_BYTES}\n",
+        f"{_NAMES.archive} 1\n{_NAMES.bundle} 1\n{_NAMES.archive} 1\n",
+    ],
+    ids=["one-line", "a-limit-that-is-no-number", "a-third-word", "three-lines"],
+)
+def test_an_answer_of_the_planner_in_another_form_refuses_that_component_alone(
+    repo: Path, shims: Path, tmp_path: Path, answer_cli: str, assets: Assets, answer: str
+) -> None:
+    """The answer of `--assets` is no line or two lines of a name and a
+    count. Each other answer is a refusal, and no file is checked."""
+    _binary_and_chaperone(repo)
+
+    done = _run(
+        repo,
+        shims,
+        tmp_path,
+        cli=answer_cli,
+        assets=assets,
+        env_change={"FAKE_ASSETS": answer},
+    )
+
+    assert done.returncode != 0
+    assert "::error::noticeboard refused: the planner gave no list of its assets" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert not assets.log.exists()
