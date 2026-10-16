@@ -317,7 +317,7 @@ impl NoticeboardConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BindHostError;
+    use crate::config::{BindHostError, HttpUrlError, PathError};
 
     /// A key of 32 bytes that no deployment uses.
     const KEY: &str = "0123456789abcdef0123456789abcdef";
@@ -548,6 +548,68 @@ mod tests {
                 max: 500
             }
         );
+    }
+
+    #[test]
+    fn the_type_of_a_variable_refuses_a_value_that_the_python_reader_takes() {
+        // `noticeboard.config.from_env` takes each of these environments. No
+        // vector holds one: the daemon calls that reader at its start.
+        let on_lan = |value| {
+            vec![
+                (LAN_ADDRESS, "192.0.2.10"),
+                (ACCESS_KEY, KEY),
+                (BIND, value),
+            ]
+        };
+        let on_loopback = |variable, value| vec![(BIND, "127.0.0.1"), (variable, value)];
+        for (pairs, error) in [
+            (
+                on_lan("0:0:0:0:0:0:0:0"),
+                ConfigError::Host {
+                    variable: BIND,
+                    error: BindHostError::EachInterface,
+                },
+            ),
+            (
+                on_lan("0"),
+                ConfigError::Host {
+                    variable: BIND,
+                    error: BindHostError::NotAHost,
+                },
+            ),
+            (
+                on_lan("not a host"),
+                ConfigError::Host {
+                    variable: BIND,
+                    error: BindHostError::NotAHost,
+                },
+            ),
+            (
+                on_loopback(SESSIOND_SOCKET, "sessiond.sock"),
+                ConfigError::Path {
+                    variable: SESSIOND_SOCKET,
+                    error: PathError::NotAbsolute,
+                },
+            ),
+            (
+                on_loopback(STATE_ROOT, "state"),
+                ConfigError::Path {
+                    variable: STATE_ROOT,
+                    error: PathError::NotAbsolute,
+                },
+            ),
+            (
+                on_loopback(SESSIOND_URL, "192.0.2.10:8350"),
+                ConfigError::Url {
+                    variable: SESSIOND_URL,
+                    error: HttpUrlError::NoScheme,
+                },
+            ),
+        ] {
+            let errors = NoticeboardConfig::from_env(&Env::from_pairs(pairs)).unwrap_err();
+
+            assert_eq!(errors.as_slice(), [error]);
+        }
     }
 
     #[test]
