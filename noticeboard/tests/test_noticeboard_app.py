@@ -324,6 +324,27 @@ def test_an_issue_field_that_is_no_text_still_renders(board: Harness, tmp_path: 
     assert "[[" not in answer.text
 
 
+def test_a_report_that_is_not_strict_records_a_notice_of_the_family(
+    board: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from noticeboard_helpers import Notices, status_doc, write_json
+
+    recorded = Notices().install(monkeypatch)
+    report = tmp_path / "validation.json"
+    report.write_bytes(b'{"issues": [], "issues": []}')
+    validation = {"ok": False, "error_count": 1, "report_path": str(report)}
+    write_json(
+        board.config.families_dir / "chat" / "status.json",
+        status_doc(state="invalid", validation=validation),
+    )
+
+    answer = board.get("/families/chat")
+
+    assert answer.status_code == 200
+    assert "validation.json is not JSON" in answer.text
+    assert recorded.calls == [("status.report", "duplicate_key", CHAT, True)]
+
+
 def test_the_family_page_lists_sandboxes_and_sessions(board: Harness) -> None:
     answer = board.get("/families/chat")
 

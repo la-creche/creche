@@ -9,6 +9,7 @@ import pytest
 from noticeboard.jsonfiles import MAX_DOC_BYTES
 from noticeboard.sessions import (
     MAX_LIST_BYTES,
+    MAX_STREAM_BYTES,
     MAX_STREAM_LINES,
     SESSION_ID_MAX,
     SessionReader,
@@ -247,6 +248,20 @@ def test_a_refusal_that_is_not_strict_records_a_notice(tmp_path: Path, recorded:
     assert recorded.calls == [("session.answer", "constant", CHAT, True)]
 
 
+def test_a_refusal_past_the_cap_of_the_stream_records_a_notice_of_its_size(
+    tmp_path: Path, recorded: Notices
+) -> None:
+    """A refusal has the cap of the stream."""
+    fake = FakeAttendance()
+    error = {"code": "forbidden", "message": "x" * MAX_STREAM_BYTES}
+    fake.answer(EVENTS_PATH, {"error": error}, status=403)
+
+    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+
+    assert stream.problems == ("attendance answered 403 with no error code",)
+    assert recorded.calls == [("session.answer", "too_large", CHAT, True)]
+
+
 def test_an_answer_past_the_cap_of_a_document_still_reads(tmp_path: Path) -> None:
     """An answer has the cap of the session reader, and not the cap of a file."""
     fake = FakeAttendance()
@@ -340,6 +355,19 @@ def test_a_journal_line_that_nests_too_deep_never_hides_the_rest(tmp_path: Path)
 
     assert len(stream.lines) == 1
     assert stream.problems == (f"a journal line {NOT_STRICT}",)
+
+
+def test_a_journal_line_past_the_cap_of_a_document_still_reads(tmp_path: Path) -> None:
+    """A journal line has the cap of the stream, and not the cap of a file."""
+    fake = FakeAttendance()
+    text = "x" * (MAX_DOC_BYTES + 1)
+    fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {"text": text})]))
+
+    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+
+    assert MAX_DOC_BYTES < len(text) < MAX_STREAM_BYTES
+    assert stream.problems == ()
+    assert len(stream.lines) == 1
 
 
 def test_a_journal_line_that_is_not_strict_records_a_notice_of_the_family(

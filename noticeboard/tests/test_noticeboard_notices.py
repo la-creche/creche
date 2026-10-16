@@ -263,6 +263,27 @@ def test_a_file_that_is_no_notice_document_counts_as_no_rows(notice_file: Path) 
     assert [one["count"] for one in rows(notice_file)] == [5]
 
 
+def test_a_count_at_the_largest_integer_of_63_bits_stays_there(notice_file: Path) -> None:
+    configure(notice_file)
+    full = 2**63 - 1
+    row = {
+        "surface": SURFACE,
+        "rule": "syntax",
+        "family": None,
+        "count": full,
+        "first_at": AT_TEXT,
+        "last_at": AT_TEXT,
+    }
+    notice_file.parent.mkdir()
+    notice_file.write_text(
+        json.dumps({"kind": "notices", "service": SERVICE, "rows": [row], "push": ""})
+    )
+
+    notices.record(SURFACE, Rule.SYNTAX)
+
+    assert [one["count"] for one in rows(notice_file)] == [full]
+
+
 # --- the text `push` -----------------------------------------------------------------
 
 
@@ -365,6 +386,25 @@ def test_the_lock_file_and_the_temporary_file_do_not_end_in_json(notice_file: Pa
 
     names = sorted(one.name for one in notice_file.parent.iterdir())
     assert names == [f"{SERVICE}.json", f"{SERVICE}.json.lock"]
+
+
+def test_the_temporary_file_does_not_end_in_json_before_the_rename(
+    notice_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure(notice_file)
+    seen: list[list[str]] = []
+    rename = os.replace
+
+    def watched(source: str, target: Path) -> None:
+        seen.append(json_names(notice_file.parent))
+        rename(source, target)
+
+    monkeypatch.setattr(notices.os, "replace", watched)
+
+    notices.record(SURFACE, Rule.SYNTAX)
+    notices.record(SURFACE, Rule.SYNTAX)
+
+    assert seen == [[], [f"{SERVICE}.json"]]
 
 
 def test_a_path_that_cannot_be_written_leaves_the_log_line_and_raises_nothing(

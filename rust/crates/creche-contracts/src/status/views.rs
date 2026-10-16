@@ -1928,11 +1928,16 @@ mod tests {
                 .not_strict()
                 .map(|refusal| (refusal.rule(), refusal.at()))
         });
+        let cap = crate::json::ByteCap::new(Reader::Noticeboard.size_cap());
+        let refused = crate::json::check(bytes, cap)
+            .err()
+            .map(|refusal| Reason::Unreadable(ReadError::NotStrict(refusal)));
 
         assert_eq!(read_attendance(bytes, &chat()), Err(not_utf8));
         assert_eq!(strict, Some((crate::json::Rule::NotUtf8, 27)));
         assert_eq!(row.health(), Health::Unreadable);
-        assert!(matches!(row.reason(), Some(Reason::Unreadable(_))));
+        assert!(refused.is_some());
+        assert_eq!(row.reason(), refused.as_ref());
         assert_eq!(
             read_door_tui(bytes, now()),
             Err(TuiRefusal::Unreadable(not_utf8))
