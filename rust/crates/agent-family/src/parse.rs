@@ -327,7 +327,7 @@ pub fn parse_server(text: &str) -> (Option<RawServer>, Vec<Issue>) {
 mod tests {
     use creche_contracts::family::Severity;
 
-    use super::{DOCUMENT, Markup, NO_REASON, closed, error, parse_family};
+    use super::{DOCUMENT, Markup, NO_REASON, closed, error, parse_family, parse_family_toml};
     use crate::yaml::NESTING_MAX;
 
     /// The stack of the thread of the test below. A default thread has two
@@ -370,5 +370,37 @@ mod tests {
         );
         assert_eq!(closed::<u8>(None, vec![issue.clone()]), (None, vec![issue]));
         assert_eq!(closed(Some(1_u8), Vec::new()), (Some(1), Vec::new()));
+    }
+
+    #[test]
+    fn the_toml_markup_reads_the_text_with_the_toml_reader() {
+        let head = "kind = \"thin\"\ndescription = \"x\"\nmodel.router = \"fast\"\n";
+        let valid = format!("name = \"oracle\"\n{head}model.budget_usd_per_day = 1\n");
+        let (raw, issues) = parse_family(&valid, Markup::Toml);
+
+        assert_eq!(
+            (raw.clone(), issues.clone()),
+            parse_family_toml(valid.as_bytes())
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(raw.map(|raw| raw.model.router), Some("fast".to_owned()));
+        // The YAML reader reads no dotted key.
+        assert_eq!(parse_family(&valid, Markup::Yaml).0, None);
+
+        let wrong = format!("name = 1\n{head}model.budget_usd_per_day = true\n");
+        let (raw, issues) = parse_family(&wrong, Markup::Toml);
+        let read: Vec<(&str, &str)> = issues
+            .iter()
+            .map(|issue| (issue.loc.as_str(), issue.msg.as_str()))
+            .collect();
+
+        assert_eq!(raw, None);
+        assert_eq!(
+            read,
+            [
+                ("name", "Input should be a valid string"),
+                ("model.budget_usd_per_day", "Input should be a valid number"),
+            ]
+        );
     }
 }
