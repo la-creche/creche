@@ -138,16 +138,21 @@ root, and `_notices.json` in the fault directory of the chaperone.
   a later run sends that notice. Two cases prove it: the host has no hook,
   or curl ends with status 6 or 7. When the script cannot write the old
   record back, that notice is missed.
-- After each other failed send, the hook can have taken the notice. The
-  record keeps the line of that notice, and that notice is missed. So a
-  fault gives a missed notice of this kind, never a second one. The outage
-  notice keeps its rule: the next run sends it again after each failed
-  send.
+- For each other status the script cannot prove that the hook took none, so
+  it counts the notice as taken. The record keeps the line of that notice,
+  and that notice is missed. So a fault gives a missed notice of this kind,
+  never a second one. The outage notice keeps its rule: the next run sends
+  it again after each failed send.
+- The journal line of a failed send names the curl status and the HTTP
+  code: `(curl exit <status>, HTTP <code>)`.
 - Both limits come from the record. A run that cannot read the record, or
   cannot write it, sends no notice of this kind. A record that holds bytes
   and no record line counts as a record that the run cannot read. The
   script reads 262,144 bytes of the record at most, and it writes no larger
   record.
+- A record that holds bytes and no record line stops the step in each run.
+  To send again, remove `watchdog/notices-sent`. Each pair in the notice
+  files can then get one more notice, 6 in one hour at most.
 - The step changes no verdict and no exit status. It runs in a shell of its
   own, after the script wrote the verdict.
 - Only a run of the unit sends a notice of this kind. systemd gives each run
@@ -403,11 +408,13 @@ stays in the git log.
   gets no notice. A change costs the patterns of the script and their tests.
 - `rework-watchdog.sh`, a failed send of a JSON notice. No contract text
   says which failed send the hook can have taken. The script takes this
-  reading: only a host with no hook and curl status 6 or 7 prove that the
-  hook took no notice. So curl status 22, an HTTP error, keeps the record
-  line too. A hook that refuses the bearer then misses each JSON notice. A
-  change costs the list of statuses, a read of the HTTP status and their
-  tests.
+  reading: only two cases count as proof that the hook took no notice. The
+  two cases are a host with no hook, and curl status 6 or 7. The owner of
+  the repository decided the case of curl status 22, an HTTP error as the
+  answer of the hook. The record keeps the line, so that notice is missed.
+  So a hook that refuses the bearer misses each JSON notice. The journal
+  line of each failed send names the HTTP code. A change costs the list of
+  statuses and its tests.
 - `yaml-to-toml.py`, a null value in a list. TOML has no null. The script
   drops a null value of a mapping key and names it on stderr. No rule says
   what a null item of a list becomes, and no tracked file holds one. The

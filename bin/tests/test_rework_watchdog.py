@@ -2572,6 +2572,45 @@ def test_the_prose_holds_the_numbers_of_the_script() -> None:
     assert _number("HOUR_S") == HOUR_S
 
 
+#: The rule for a failed send of a JSON notice, and the repair of a record
+#: with no record line. The comments of the script and `bin/AGENTS.md` each
+#: hold each text.
+FAILED_SEND_TEXTS: Final = (
+    "For each other status the script cannot prove that the hook took none, so it counts"
+    " the notice as taken.",
+    "So a hook that refuses the bearer misses each JSON notice. The journal line of each"
+    " failed send names the HTTP code.",
+    "A record that holds bytes and no record line stops the step in each run. To send"
+    " again, remove watchdog/notices-sent. Each pair in the notice files can then get one"
+    " more notice, 6 in one hour at most.",
+)
+
+#: A claim that is false for a curl status that ends before a byte leaves,
+#: for example 3 (a URL that curl cannot read) or 127 (no curl).
+FALSE_CLAIMS: Final = (
+    "can come after the hook took the notice",
+    "After each other failed send, the hook can have taken the notice",
+)
+
+
+@pytest.mark.docs
+def test_the_prose_holds_the_rule_of_a_failed_send() -> None:
+    """The comments of the script and `bin/AGENTS.md` say the same rule for
+    a failed send and the same repair of the record. Neither one says that
+    each other curl status can come after the hook took the notice."""
+    script = SCRIPT.read_text(encoding="utf-8").splitlines()
+    comments = _one_line(" ".join(one.lstrip("# ") for one in script if one.startswith("#")))
+    rules = _one_line((SCRIPT.parent / "AGENTS.md").read_text(encoding="utf-8")).replace("`", "")
+
+    for text in FAILED_SEND_TEXTS:
+        assert text in comments, text
+        assert text in rules, text
+
+    for claim in FALSE_CLAIMS:
+        assert claim not in comments, claim
+        assert claim not in rules, claim
+
+
 def test_the_header_names_each_command_of_the_script() -> None:
     """The header has one line with the programs that the script needs. The
     line holds each program that the notice step and check 4 start."""
