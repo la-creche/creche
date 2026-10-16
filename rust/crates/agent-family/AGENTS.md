@@ -15,8 +15,8 @@ same messages.
 | Path | What it holds |
 |---|---|
 | `src/yaml/` | A YAML reader that reads a text as PyYAML 6.0.3 reads it. |
-| `src/lax.rs` | A value to a number, a boolean or a string, as pydantic reads it. |
-| `src/shape.rs` | A YAML value to a raw file. It reports each wrong type and each unknown field. |
+| `src/lax.rs` | A value to a number, a boolean or a string, as pydantic reads it. It also holds the texts of a wrong type in the strict mode, which the TOML path writes. |
+| `src/shape.rs` | A YAML value to a raw file. It reports each wrong type and each unknown field. It also holds the Python class name of each nested model and the texts of the shape, for both paths. |
 | `src/difflib.rs` | The nearest known name for an unknown field. |
 | `src/parse.rs` | `parse_family` and `parse_server`: YAML or TOML text to a raw file, or to issues. |
 | `src/crossref.rs` | `check_family` and `check_server`: the rules that need the registry or the host. |

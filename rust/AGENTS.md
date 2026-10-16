@@ -2134,9 +2134,6 @@ adds a crate:
   caller deletes the line. The raw type of the family file is the one
   caller of `read` today. Two packets add a caller of `read`:
   `toml-manifest-read-rust` and `toml-roster-read-chaperone`.
-- No Python reader of a file kind holds the limits and the fault texts of
-  `tomlfile` yet. Packet `toml-family-read-python` adds the first one, and
-  the test that holds its numbers and its texts equal to the Rust file.
 - The differential test of `tomlfile` walks the surface `tomlfile.syntax`.
   The entry point of that surface is the TOML reader of the Python standard
   library, because no product code reads TOML yet. The surface holds no
