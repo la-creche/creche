@@ -1239,13 +1239,15 @@ def test_a_yaml_copy_and_a_yaml_registry_file_act_as_before(
     assert not paths.applied_family_path(fleet.state_root, FAMILY, Markup.TOML).exists()
 
 
-def test_a_registry_file_of_no_markup_moves_no_copy(fleet: Fleet) -> None:
-    """The name of the registry file gives the markup of the copy. A name
-    that no markup has gives no copy, and the snapshot stays."""
+@pytest.mark.parametrize("name", ["family.json", "other.toml"])
+def test_a_registry_file_of_no_markup_moves_no_copy(fleet: Fleet, name: str) -> None:
+    """The full name of the registry file gives the markup of the copy. A
+    name that no markup has gives no copy. The pass is then not done: the
+    snapshot stays, and the status document names the old revision."""
     fleet.run()
     fleet.write(description="Changed.")
     registry = load_registry(fleet.registry_root)
-    report = replace(registry.reports[FAMILY], file=f"families/{FAMILY}/family.json")
+    report = replace(registry.reports[FAMILY], file=f"families/{FAMILY}/{name}")
     actors = Actors(fleet.driver, fleet.litellm, fleet.switch, EgressConfig(), fleet.units)
 
     reconcile_family(
@@ -1261,3 +1263,7 @@ def test_a_registry_file_of_no_markup_moves_no_copy(fleet: Fleet) -> None:
     assert applied.family.description == "Test family."
     copies = sorted(one.name for one in paths.applied_dir(fleet.state_root, FAMILY).iterdir())
     assert copies == [paths.APPLIED_META_FILE, FAMILY_FILE_YAML]
+    body = json.loads(paths.status_path(fleet.state_root, FAMILY).read_text(encoding="utf-8"))
+    assert body["state"] == str(FamilyState.RECONCILING)
+    assert body["applied_rev"] == applied.rev
+    assert body["applied_rev"] != body["registry_rev"]

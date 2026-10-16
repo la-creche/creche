@@ -96,7 +96,7 @@ host where something has gone wrong.
   names from `agent_family.registry`.
 - A pass copies the registry file that the report of the family names. The
   name of that file gives its markup. A name that no markup has gives no
-  copy, and the old snapshot stays.
+  copy. The pass is then not done, and the old snapshot stays.
 - A write of the snapshot first writes the copy in the markup of that
   registry file. It then removes the other copy and writes `applied.json`.
 - A read of the snapshot takes `applied/family.toml` first and
