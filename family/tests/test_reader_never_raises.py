@@ -18,7 +18,7 @@ def test_revision_reads_a_name_that_is_not_utf8(
 ) -> None:
     """The revision holds the bytes of the file name. Not each file system
     can make such a name, so the test gives the path to the function."""
-    named = tmp_path / registry.FAMILIES_DIR / "bad\udce9name" / registry.FAMILY_FILE
+    named = tmp_path / registry.FAMILIES_DIR / "bad\udce9name" / registry.FAMILY_FILE_YAML
     monkeypatch.setattr(registry, "_registry_files", lambda _root: [named])
     monkeypatch.setattr(registry, "_read", lambda _path: ("text", None))
 
@@ -48,7 +48,7 @@ def _text_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, cod
     `codec` cannot encode. Asserts the exit code of an invalid registry."""
     directory = tmp_path / registry.FAMILIES_DIR / "odd-host"
     directory.mkdir(parents=True)
-    (directory / registry.FAMILY_FILE).write_text(_FAMILY.format(host=host), encoding="utf-8")
+    (directory / registry.FAMILY_FILE_YAML).write_text(_FAMILY.format(host=host), encoding="utf-8")
     written = io.BytesIO()
     terminal = io.TextIOWrapper(written, encoding=codec, errors="strict", newline="")
     monkeypatch.setattr(sys, "stdout", terminal)
