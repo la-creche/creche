@@ -132,15 +132,16 @@ UNKNOWN="unknown"
 
 #: The `handover` command, as bin/build-artifacts.sh starts it.
 SELF_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-
-# shellcheck source=lib/artifactrows.sh
-. "$SELF_ROOT/bin/lib/artifactrows.sh"
 if [[ -n "${RELEASE_CLI:-}" ]]; then
   # shellcheck disable=SC2206
   CLI=(${RELEASE_CLI})
 else
   CLI=(uv run --project "$SELF_ROOT/handover" handover)
 fi
+
+#: The one reader of the line form of `handover artifacts`.
+# shellcheck source=lib/artifactrows.sh
+. "$SELF_ROOT/bin/lib/artifactrows.sh"
 
 FAILS=0
 say() { printf 'artifact-probe: %s\n' "$*"; }
