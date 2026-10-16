@@ -21,8 +21,8 @@ from .serverrules import check_server
 from .validate import HostFacts, Index, check_family
 
 #: The two names of a family file. The registry reads `FAMILY_FILE` first and
-#: `FAMILY_FILE_YAML` second, and a directory with both is an error. These
-#: two constants are the one source of the names.
+#: `FAMILY_FILE_YAML` second, and a directory with both is an error. A package
+#: that imports `agent_family` takes each name from here and keeps no copy.
 FAMILY_FILE: Final = "family.toml"
 FAMILY_FILE_YAML: Final = "family.yaml"
 SERVER_FILE: Final = "server.yaml"
@@ -190,6 +190,12 @@ def _read_families(
         files[name] = FAMILY_FILE if has_toml else FAMILY_FILE_YAML
         issues = Issues()
         if has_toml and has_yaml:
+            # CONTRACT-QUESTION: contract 01 §1 names one file, `family.toml`.
+            # It does not say what a reader does with a directory that also
+            # holds `family.yaml`. The registry takes the strict reading: one
+            # error, and it parses neither file. The report names
+            # `family.toml`. The other reading names `family.yaml`. A change
+            # costs the line that sets `files[name]` and one test.
             issues.error(
                 "<document>", f"two family files: {FAMILY_FILE} and {FAMILY_FILE_YAML}; keep one"
             )
