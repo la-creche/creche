@@ -3,7 +3,11 @@
 `rust/crates/creche-contracts/src/tomlfile.rs` is the one source of the four
 byte limits, of the level limit and of the first four texts of a refusal
 (`rust/AGENTS.md`, "TOML"). `agent_family.tomlfile` copies them. This test
-reads the Rust file as text and holds each copy equal to its source."""
+reads the Rust file as text and holds each copy equal to its source.
+
+`handover.tomlfile` is a second copy of the whole Python module, because
+`handover` imports no module of `agent_family`. The last test holds the two
+files equal, byte for byte."""
 
 from __future__ import annotations
 
@@ -15,6 +19,13 @@ from agent_family.tomlfile import DEPTH, FileKind
 
 REPO = Path(__file__).resolve().parents[2]
 RUST_FILE = REPO / "rust" / "crates" / "creche-contracts" / "src" / "tomlfile.rs"
+
+#: The two copies of the Python module: the reader of `agent_family` and the
+#: reader of the release tool.
+PYTHON_FILES = (
+    REPO / "family" / "src" / "agent_family" / "tomlfile.py",
+    REPO / "handover" / "src" / "handover" / "tomlfile.py",
+)
 
 #: `const FAMILY_BYTES: usize = 65536;`: the byte limit of one file kind.
 BYTE_LIMIT = re.compile(r"^const ([A-Z]+)_BYTES: usize = ([0-9_]+);$", re.MULTILINE)
@@ -97,3 +108,9 @@ def test_the_text_of_a_text_that_is_no_toml_equals_the_rust_text() -> None:
     rust = _rust_fault_texts()["NotToml"]
 
     assert rust.replace("{LEVEL_MAX}", str(_rust_level_max())) == tomlfile.NOT_TOML
+
+
+def test_the_two_python_readers_hold_equal_bytes() -> None:
+    family, handover = (path.read_bytes() for path in PYTHON_FILES)
+
+    assert family == handover
