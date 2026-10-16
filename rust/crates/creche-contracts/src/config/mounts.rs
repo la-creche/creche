@@ -1120,11 +1120,12 @@ impl RawPlaypenEnv {
 /// gives the playpen the URL of each plane: the chaperone and LiteLLM. It
 /// holds no secret.
 ///
-/// FAILURE ACTION. A variable that the file does not set is `fatal` with
-/// `mount_dir_unset` for the playpen, and never a default (contract 03 §7.1
-/// rule 5). The conversion from [`RawPlaypenEnv`] collects each such
-/// variable. The type has no default for the URL of a plane, so the
-/// conversion also collects a plane variable that the file does not set.
+/// FAILURE ACTION. A directory variable that the file does not set is
+/// `fatal` with `mount_dir_unset` for the playpen, and never a default
+/// (contract 03 §7.1 rule 5). For a plane variable that the file does not
+/// set, the playpen uses the URL of its build. The type has no default for
+/// the URL of a plane. The conversion from [`RawPlaypenEnv`] thus collects
+/// each variable that the file does not set, a plane variable too.
 ///
 /// ```
 /// use creche_contracts::config::mounts::PlaypenEnv;
