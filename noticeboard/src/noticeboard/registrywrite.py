@@ -166,8 +166,8 @@ def _new_name(registry_dir: Path) -> str:
 
     `family.toml`, unless a directory of the registry holds a `family.yaml`.
     A registry in the YAML markup thus gets no TOML file before its own
-    change of markup. A list of the families that cannot be read gives the
-    YAML name, and the save of that registry then fails at its copy.
+    change of markup. When the list of the families cannot be read, the
+    name is the YAML name. The copy for the validator reads the same list.
     """
     try:
         held = any((one / FAMILY_FILE_YAML).is_file() for one in _families(registry_dir))
