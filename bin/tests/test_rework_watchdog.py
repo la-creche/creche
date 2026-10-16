@@ -2039,6 +2039,27 @@ def test_a_full_disk_sends_no_notice(rig: Rig) -> None:
     assert rig.json_summaries() == THREE_SUMMARIES[:1]
 
 
+def test_a_failed_send_keeps_each_old_line_of_the_record(rig: Rig) -> None:
+    """A send that did not reach the hook gets the old record back, with
+    each line of it. The next run sends that notice one more time, and it
+    sends no pair of an old line again."""
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS[:2]])
+    rig.run()
+    record = rig.sent_lines()
+    assert len(record) == 2
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
+
+    done = rig.run(WD_POST_EXIT="7")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.sent_lines() == record
+
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES[:2] + [THREE_SUMMARIES[2]] * 2
+    assert len(rig.sent_lines()) == 3
+
+
 def test_a_failed_send_with_no_write_back_is_missed(rig: Rig) -> None:
     """A send that fails gets the old record back. When that write fails
     too, the record keeps the line of a notice that the hook did not take.
