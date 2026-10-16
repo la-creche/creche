@@ -131,10 +131,17 @@ exit 0
 #:
 #: `WD_POST_SLEEP` makes each POST take that count of seconds: a hook that
 #: answers slowly.
+#:
+#: A POST with the word `-w` in its argv writes `WD_POST_CODE`, the HTTP
+#: code of the answer. The default is `000`, which curl writes when no
+#: answer came. An empty `WD_POST_CODE` writes no code.
 CURL_BODY: Final = """case "$*" in
   *"-X POST"*)
     [ -n "${WD_POST_SLEEP:-}" ] && sleep "$WD_POST_SLEEP"
     printf '%s\\n' "$*" >> "$WD_POST_LOG"
+    for one in "$@"; do
+      [ "$one" = -w ] && printf '%s' "${WD_POST_CODE-000}"
+    done
     exit "${WD_POST_EXIT:-0}" ;;
   *"--unix-socket"*) printf '%s' "${WD_SOCK_CODE:-401}" ;;
   *"/healthz"*) printf '%s' "${WD_PEP_CODE:-200}" ;;
@@ -1772,6 +1779,22 @@ UNREACHED_STATUSES: Final = ("6", "7")
 #: answer at all. 56: a connection that broke during the answer.
 TAKEN_STATUSES: Final = ("22", "28", "52", "56")
 
+#: Some HTTP codes of an answer of the hook with curl status 22. 401: the
+#: hook refuses the bearer. 404: the hook has no such path. 502: the hook
+#: cannot reach the phone.
+REFUSED_CODES: Final = ("401", "404", "502")
+
+
+def test_only_status_6_and_7_put_the_old_record_back() -> None:
+    """A curl status in NOT_REACHED_CURL puts the old record back, and the
+    next run sends that notice again. A status that can come after the hook
+    took the notice must not join the list. Each run would then send that
+    notice again, with no limit. So the list holds 6 and 7 and no other
+    status."""
+    statuses = " ".join(UNREACHED_STATUSES)
+
+    assert _constant("NOT_REACHED_CURL") == f"NOT_REACHED_CURL=' {statuses} '"
+
 
 @pytest.mark.parametrize("status", UNREACHED_STATUSES)
 def test_a_send_that_never_reached_the_hook_is_sent_again(rig: Rig, status: str) -> None:
@@ -1806,12 +1829,47 @@ def test_a_send_that_the_hook_can_have_taken_is_not_sent_again(rig: Rig, status:
     assert rig.json_summaries() == THREE_SUMMARIES[:1]
     assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
     assert done.stdout.count("the hook can have taken") == 1, done.stdout
+    assert done.stdout.count(f"NOTICE NOT SENT (curl exit {status}, HTTP 000): ") == 1
 
     rig.run()
     rig.run()
 
     assert rig.json_summaries() == THREE_SUMMARIES
     assert len(rig.sent_lines()) == 3
+
+
+@pytest.mark.parametrize("code", REFUSED_CODES)
+def test_a_send_that_the_hook_refused_is_missed(rig: Rig, code: str) -> None:
+    """curl ends with status 22 when the hook answers with an HTTP error.
+    The record keeps the line of that notice, so the notice is missed and
+    no later run sends it. The journal line of the failed send names the
+    curl status and the HTTP code. A hook that refuses the bearer then
+    shows in the journal."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_POST_EXIT="22", WD_POST_CODE=code)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.count(f"NOTICE NOT SENT (curl exit 22, HTTP {code}): ") == 1, done.stdout
+    assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
+
+    rig.run()
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+    assert len(rig.sent_lines()) == 1
+
+
+def test_a_send_with_no_http_code_says_so(rig: Rig) -> None:
+    """curl writes no HTTP code when it stops before the request, for
+    example when it cannot read the header file. The journal line then
+    says that the send got no code."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_POST_EXIT="26", WD_POST_CODE="")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.count("NOTICE NOT SENT (curl exit 26, HTTP nothing): ") == 1, done.stdout
 
 
 @pytest.mark.parametrize("status", UNREACHED_STATUSES + TAKEN_STATUSES)

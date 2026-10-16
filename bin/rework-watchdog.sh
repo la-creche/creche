@@ -664,8 +664,11 @@ plain() {  # plain <text>
 # is world readable for the life of the curl process on a host that sets no
 # hidepid (bin/AGENTS.md §Secrets). Status NOT_REACHED means that the
 # notice surely did not reach the hook. Status 1 is each other failure.
+# curl writes the HTTP code of the answer. The journal line of a failed
+# send names it and the curl status. The assignment of `code` gives the
+# status of curl, so `status` reads it on the next line.
 send_notice() {  # send_notice <summary> [<job id> <gate id>]
-  local header status job gate
+  local header status job gate code
   job="${2:-$NOTICE_JOB_ID}"
   gate="${3:-$NOTICE_GATE_ID}"
   if [[ -z "${APPROVAL_URL:-}" || -z "${APPROVAL_TOKEN:-}" ]]; then
@@ -675,10 +678,10 @@ send_notice() {  # send_notice <summary> [<job id> <gate id>]
 
   header="$(mktemp)"
   ( umask 077 && printf 'Authorization: Bearer %s\n' "$APPROVAL_TOKEN" > "$header" )
-  curl -sS -f -o /dev/null -m "$NOTICE_TIMEOUT_S" -X POST "$APPROVAL_URL" \
-    -H @"$header" -H 'Content-Type: application/json' \
+  code="$(curl -sS -f -o /dev/null -w '%{http_code}' -m "$NOTICE_TIMEOUT_S" \
+    -X POST "$APPROVAL_URL" -H @"$header" -H 'Content-Type: application/json' \
     -d "{\"kind\":\"notice\",\"job_id\":\"$job\",\"gate_id\":\"$gate\",\
-\"agent\":\"$NOTICE_AGENT\",\"summary\":\"$(plain "$1")\"}"
+\"agent\":\"$NOTICE_AGENT\",\"summary\":\"$(plain "$1")\"}")"
   status=$?
   rm -f "$header"
 
@@ -687,7 +690,7 @@ send_notice() {  # send_notice <summary> [<job id> <gate id>]
     return 0
   fi
 
-  say "NOTICE NOT SENT (curl exit $status): $1"
+  say "NOTICE NOT SENT (curl exit $status, HTTP ${code:-nothing}): $1"
   [[ "$NOT_REACHED_CURL" == *" $status "* ]] && return "$NOT_REACHED"
   return 1
 }
