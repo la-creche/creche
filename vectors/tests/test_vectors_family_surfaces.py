@@ -15,7 +15,12 @@ from vectors.surfaces.family_cli import ARGPARSE_USAGE
 from vectors.surfaces.family_file import REGISTRIES_FILE, copy_registry, registry_files
 
 #: The surfaces whose vectors name a registry of this repository.
-REGISTRY_SURFACES = ("family_file.json", "family_file.host.json", "server_file.json")
+REGISTRY_SURFACES = (
+    "family_file.json",
+    "family_file.host.json",
+    "family_file.toml.json",
+    "server_file.json",
+)
 CLI_FILE = "family_file.cli.json"
 CLASSIFY_FILE = "family_file.classify.json"
 

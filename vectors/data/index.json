@@ -69,6 +69,7 @@
   {"accepted":7,"entry":"attendance.ids.is_attachment","path":"ids/attachment_name.attendance.json","raised":0,"refused":18,"surface":"id.attachment_name.attendance","vectors":25},
   {"accepted":108,"entry":"agent_family.load_registry","path":"family_file.json","raised":0,"refused":188,"surface":"family_file","vectors":296},
   {"accepted":10,"entry":"agent_family.load_registry","path":"family_file.host.json","raised":0,"refused":3,"surface":"family_file.host","vectors":13},
+  {"accepted":38,"entry":"agent_family.load_registry","path":"family_file.toml.json","raised":0,"refused":133,"surface":"family_file.toml","vectors":171},
   {"accepted":28,"entry":"agent_family.load_registry","path":"server_file.json","raised":0,"refused":69,"surface":"server_file","vectors":97},
   {"accepted":86,"entry":"agent_family.classify","path":"family_file.classify.json","raised":0,"refused":0,"surface":"family_file.classify","vectors":86},
   {"accepted":27,"entry":"agent_family.cli.main","path":"family_file.cli.json","raised":0,"refused":19,"surface":"family_file.cli","vectors":46},
