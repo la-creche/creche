@@ -9,7 +9,7 @@ from.
 | `/opt/mcp` `root:root 0755`, EMPTY | the directory, and nothing under it |
 | no `/var/lib/agent-mcp` | the root `0755`, empty, as the visit makes it |
 | `/srv/.../secrets` EMPTY, nine gaps open | no `<name>.enc`, nine `<name>.json` |
-| eleven `mcp/<name>/server.yaml` | **the eleven declarations, comments removed** |
+| eleven `mcp/<name>/server.yaml` | **the eleven declarations in TOML, comments removed** |
 | `mcp-servers-v0.1.0` on agent-mcp `a1b2c3d` | one tag, one SHA, that tag |
 | `caregiver`'s `mcp-servers=latest` request | the same body, alone in the spool |
 | no `/opt/components/mcp-servers` | `handover` and `chaperone` only |
@@ -102,7 +102,7 @@ from handover.intake.run import Wiring as IntakeWiring
 from handover.intake.service import Intake
 from handover.intake.store import SecretStore
 from handover.intake.token import Tokens
-from handover.mcpserver import ServerFile, Source, read_registry
+from handover.mcpserver import SERVER_FILE_NAME, ServerFile, Source, read_registry
 from handover_executor_fixtures import (
     FakeRun,
     GitFake,
@@ -205,6 +205,9 @@ AGENT_MCP_SERVERS: Final = (
     "vikunja-networking",
 )
 DECLARED_REF: Final = "v0.4.6"
+
+#: The line of an `agent-mcp` server file that names its source.
+AGENT_MCP_SOURCE: Final = 'install.source = "agent-mcp"'
 
 #: The two servers whose fence is contract 01b §7.2's composite argument.
 COMPOSITE_SERVERS: Final = ("github-code", "github-platform")
@@ -366,10 +369,10 @@ class Bench:
     # -- what a merged registry pull request would change ----------------
 
     def rewrite(self, name: str, old: str, new: str) -> None:
-        path = self.registry / REGISTRY_MCP_DIR / name / "server.yaml"
+        path = self.registry / REGISTRY_MCP_DIR / name / SERVER_FILE_NAME
         text = path.read_text(encoding="utf-8")
 
-        assert old in text, f"{name}/server.yaml no longer holds {old!r}"
+        assert old in text, f"{name}/{SERVER_FILE_NAME} no longer holds {old!r}"
 
         path.write_text(text.replace(old, new), encoding="utf-8")
 
@@ -406,7 +409,7 @@ def _registry_tree(corpus: Path) -> Path:
     # hashes what `curl` wrote and compares — against a file this module
     # owns rather than one it would have to download.
     for name in COMPOSITE_SERVERS:
-        path = registry / REGISTRY_MCP_DIR / name / "server.yaml"
+        path = registry / REGISTRY_MCP_DIR / name / SERVER_FILE_NAME
         text = path.read_text(encoding="utf-8")
         path.write_text(text.replace(PUBLISHED_SHA256, ASSET_SHA256), encoding="utf-8")
 
@@ -662,8 +665,8 @@ def test_rule_2_the_two_ha_files_declare_their_shared_secret(
 ) -> None:
     """Rule 2, contract 01b §4.3.
 
-    `ha/server.yaml` and `ha-read/server.yaml` both declare
-    `HOMEASSISTANT_TOKEN: secret:ha_read_token` on purpose: they are one
+    `ha/server.toml` and `ha-read/server.toml` both declare
+    `HOMEASSISTANT_TOKEN = "secret:ha_read_token"` on purpose: they are one
     Home Assistant user in two modes, and contract 01b §5 rule 5 is why
     that is two files. `stage7-releases.md` §6 row 8 alone would refuse
     the pair and therefore the whole registry.
@@ -682,7 +685,7 @@ def test_rule_2_the_two_ha_files_declare_their_shared_secret(
 def test_rule_2_an_undeclared_duplicate_is_still_refused(bench: Bench) -> None:
     """§6 row 8 with the declaration taken away again. This is the typo
     case the rule exists for, and the refusal names the file to edit."""
-    bench.rewrite("ha", "    server: ha-read", "    server: kagi")
+    bench.rewrite("ha", 'server = "ha-read"', 'server = "kagi"')
 
     with pytest.raises(Refusal) as refused:
         read_registry(bench.registry / REGISTRY_MCP_DIR, MAX_SERVERS)
@@ -738,7 +741,7 @@ def test_an_agent_mcp_server_that_still_names_a_ref_is_refused(
 ) -> None:
     """The registry pull request, half applied. One file kept its ref, and
     root refuses the whole set rather than installing ten of eleven."""
-    bench.rewrite("board-lead", "  source: agent-mcp", f"  source: agent-mcp\n  ref: {TAG}")
+    bench.rewrite("board-lead", AGENT_MCP_SOURCE, f'{AGENT_MCP_SOURCE}\ninstall.ref = "{TAG}"')
 
     result = _release(bench)
 
@@ -762,7 +765,7 @@ def test_a_refusal_names_the_server_it_refused(bench: Bench) -> None:
     files said it. Every refusal also writes one log line carrying the
     subject, so a line in `log_tail` holds `mcp/board-lead`.
     """
-    bench.rewrite("board-lead", "  source: agent-mcp", f"  source: agent-mcp\n  ref: {TAG}")
+    bench.rewrite("board-lead", AGENT_MCP_SOURCE, f'{AGENT_MCP_SOURCE}\ninstall.ref = "{TAG}"')
 
     _release(bench)
 
