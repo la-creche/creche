@@ -29,7 +29,7 @@ from .model import (
     SandboxBlock,
     ToolGrant,
 )
-from .parse import parse_family, parse_server
+from .parse import Markup, parse_family, parse_server
 from .registry import Registry, load_registry, revision_of
 from .report import FamilyState, Issue, Issues, Report, Severity
 from .server import McpServerFile, ToolEntry
@@ -56,6 +56,7 @@ __all__ = [
     "Issues",
     "Kind",
     "Landing",
+    "Markup",
     "McpServerFile",
     "Mode",
     "ModelBlock",
