@@ -31,9 +31,9 @@ share that text.
 No limit counts the values. A TOML text has no alias, so the byte limit
 bounds the count, and the grammar of each file kind holds its own caps.
 
-`loads` gives each table with its keys in code point order, at each level.
-A reader in another language then reports the faults of one text in one
-order.
+In the result of `loads`, the keys of the top table and of each table below
+it are sorted by code point. A reader in another language that sorts the
+same way thus gives the faults of one text in the same sequence.
 
 The byte limits, the level limit and the four texts are copies. The Rust
 reader of the same file kinds is their source, and a test holds each copy
@@ -67,17 +67,19 @@ _DIGIT: Final = re.compile("[0-9]")
 class FileKind(Enum):
     """A kind of file that is a TOML text, with its byte limit.
 
-    The set is closed. A caller cannot give `loads` another limit. The word
-    of each member keeps two members with one limit apart."""
+    The set is closed. A caller cannot give `loads` another limit, and a
+    caller cannot change the limit of a member. The value of a member is a
+    word and a limit: the word keeps two members with one limit apart."""
 
     FAMILY = ("family", 65536)
     SERVER = ("server", 65536)
     MANIFEST = ("manifest", 16384)
     ROSTER = ("roster", 1048576)
 
-    def __init__(self, word: str, byte_limit: int) -> None:
-        self.word = word
-        self.byte_limit = byte_limit
+    @property
+    def byte_limit(self) -> int:
+        """The most bytes of a file of this kind."""
+        return self.value[1]
 
 
 class TomlRefusal(ValueError):
@@ -239,8 +241,8 @@ def _only_toml10(text: str) -> bool:
 
     The forms:
 
-    a. A line end inside an inline table, between its `{` and its `}`,
-       outside a string and outside an array of that table.
+    a. A line end in an inline table. A line end in a string, or in an
+       array that the inline table holds, does not count.
     b. A comma as the last sign before the `}` of an inline table. Spaces
        and tabs between the two do not count.
     c. The escape `\\e` in a basic string or a multi-line basic string.
@@ -251,12 +253,12 @@ def _only_toml10(text: str) -> bool:
     A sign inside a string or a comment starts no form a, b, e or f. A
     literal string holds no escape.
 
-    The pass reads the text one time, with a state and a stack of the open
-    brackets. In the plain state, `#` starts a comment to the end of the
-    line, a quote sign starts a string, `{` and `[` go on the stack, and
-    `}` and `]` leave it. The pass keeps a plain text in which each sign of
-    a string and of a comment is `_HIDDEN`. The forms e and f are a match of
-    `_NO_SECONDS` in that plain text.
+    The pass reads the text one time. It keeps a state and a stack of the
+    brackets that are open. Outside a string and a comment, the pass opens
+    a comment at `#` and a string at a quote sign. It pushes each `{` and
+    `[`, and it pops at each `}` and `]`. The pass also keeps a plain copy
+    of the text, with `_HIDDEN` in place of each sign of a string and of a
+    comment. The forms e and f are a match of `_NO_SECONDS` in that copy.
 
     The function never raises. Its answer for a text that is no TOML has no
     meaning: `loads` calls it only for a text that `tomllib` read."""

@@ -27,6 +27,9 @@ LIMITS = {
     FileKind.ROSTER: 1048576,
 }
 
+#: The name of the byte limit of a kind, for a write that must fail.
+LIMIT_FIELD = "byte_limit"
+
 #: One text of each of the six forms that TOML 1.1 added.
 TOML11_FORMS = {
     "line-end-in-inline-table": "a = {b = 1,\n c = 2}\n",
@@ -51,6 +54,8 @@ TOML11_FORMS_ELSEWHERE = {
     "date-time-no-seconds-with-offset": "a = 1979-05-27T07:32+01:00\n",
     "local-date-time-no-seconds": "a = 1979-05-27T07:32\n",
     "date-time-no-seconds-with-space": "a = 1979-05-27 07:32\n",
+    "time-no-seconds-then-comment": "a = 07:32#c\n",
+    "date-time-no-seconds-then-comment": "a = 1979-05-27T07:32#c\n",
     "after-a-string-of-four-quotes": 'a = """x""""\nb = 07:32\n',
     "after-a-string-of-five-quotes": "a = '''x'''''\nb = {c = 1,}\n",
 }
@@ -115,6 +120,15 @@ def _sized(size: int) -> bytes:
 
 def test_each_kind_has_its_byte_limit() -> None:
     assert {kind: kind.byte_limit for kind in FileKind} == LIMITS
+
+
+@pytest.mark.parametrize("kind", list(FileKind), ids=lambda kind: kind.name)
+def test_a_caller_cannot_change_the_byte_limit_of_a_kind(kind: FileKind) -> None:
+    with pytest.raises(AttributeError):
+        setattr(kind, LIMIT_FIELD, 10**9)
+
+    assert kind.byte_limit == LIMITS[kind]
+    assert loads(_sized(LIMITS[kind]), kind) == {"a": "x" * (LIMITS[kind] - 7)}
 
 
 def test_the_level_limit_is_8() -> None:
