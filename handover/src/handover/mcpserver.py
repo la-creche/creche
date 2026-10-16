@@ -397,6 +397,13 @@ def _markup_of(directory: Path) -> Markup:
     return Markup.TOML if has_toml else Markup.YAML
 
 
+# CONTRACT-QUESTION: contract 01b §1 names one server file in each directory.
+# It does not say which kind of entry holds a name. Root takes the strict
+# reading: each entry counts, also a link, a link to no file and a directory.
+# A stray entry of the other name thus refuses the directory. The other
+# reading counts only a regular file or a link to one, as the family reader
+# of `agent_family.registry` does. A change costs the body of this function
+# and one test of `tests/test_handover_server_toml.py`.
 def _holds(path: Path) -> bool:
     """Whether the directory has an entry at `path`. A link counts, also a
     link to no file, and the link is not followed."""

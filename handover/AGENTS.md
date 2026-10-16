@@ -358,10 +358,16 @@ that wants a refusal changes one field.
   A whole number of a manifest can thus hold one. Contract 06 §8 names no
   YAML form for a number (`manifest.py`).
 - Contract 06 §8 and §10 and contract 01b give no limit for a merge key. A
-  manifest takes a chain of 128 merge keys and 65,536 copied pairs. A server
-  file takes a chain of 400 and 100,000 copied pairs. Each pair of limits is
-  that of the Rust reader of the same file, so the two readers refuse the
-  same text (`manifest.py`, `mcpserver.py`).
+  manifest takes a chain of 128 merge keys and 65,536 copied pairs. A YAML
+  server file takes a chain of 400 and 100,000 copied pairs. Each pair of
+  limits is that of the Rust reader of the same file, so the two readers
+  refuse the same text (`manifest.py`, `mcpserver.py`).
+- Contract 01b §1 names one server file in each directory. It does not say
+  which kind of entry holds a name. Root counts each entry: a regular file,
+  a link, a link to no file and a directory. A stray entry of the other
+  name thus refuses the directory. The family reader of
+  `agent_family.registry` counts only a regular file or a link to one
+  (`mcpserver.py`).
 - No contract names the sops file. Its reader takes the two merge limits of
   a manifest (`intake/store.py`).
 - A manifest whose chain of merge keys passes the limit gets the refusal
