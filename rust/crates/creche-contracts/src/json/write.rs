@@ -457,7 +457,7 @@ const FIXED_EXPONENT_END: i64 = 16;
 /// # Errors
 ///
 /// [`WriteError::NotFinite`] for `NaN` and for an infinity.
-fn float_repr(value: f64) -> Result<String, WriteError> {
+pub(crate) fn float_repr(value: f64) -> Result<String, WriteError> {
     if !value.is_finite() {
         return Err(WriteError::NotFinite);
     }
