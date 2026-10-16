@@ -1,16 +1,22 @@
-"""YAML text to a model, or to issues. Never an exception (invariant 19).
+"""YAML or TOML text to a model, or to issues. Never an exception (invariant 19).
 
 A parse failure is data: the caller gets `None` plus every issue pydantic and
-the YAML reader could see, and the family keeps its last good state."""
+the reader could see, and the family keeps its last good state.
+
+The YAML path validates in the lax mode of pydantic. The TOML path reads the
+text with `tomlfile.loads` and validates in the strict mode: each field takes
+the type of the model, and a float field also takes an integer."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from enum import StrEnum
 from typing import Any, Final, cast
 
 import yaml
 from pydantic import BaseModel, ValidationError
 
+from . import tomlfile
 from .grammar import closest_name
 from .model import (
     FAMILY_FIELDS,
@@ -35,6 +41,14 @@ from .server import (
     McpServerFile,
     ToolEntry,
 )
+
+
+class Markup(StrEnum):
+    """The markup of the text of a family file."""
+
+    TOML = "toml"
+    YAML = "yaml"
+
 
 #: A list index in a container path. The index does not change which fields
 #: the container knows, so every index collapses onto one key.
@@ -279,8 +293,36 @@ def _load[T: BaseModel](
         return None, issues
 
 
-def parse_family(text: str) -> tuple[FamilyFile | None, list[Issue]]:
+def _load_toml[T: BaseModel](
+    data: bytes,
+    kind: tomlfile.FileKind,
+    model: type[T],
+    containers: dict[tuple[str, ...], tuple[str, ...]],
+) -> tuple[T | None, list[Issue]]:
+    try:
+        body = tomlfile.loads(data, kind)
+    except tomlfile.TomlRefusal as refusal:
+        return None, [Issue(Severity.ERROR, "<document>", str(refusal))]
+
+    try:
+        return model.model_validate(body, strict=True), []
+    except ValidationError as exc:
+        return None, _issues_from(exc, containers)
+
+
+def parse_family(text: str, markup: Markup = Markup.YAML) -> tuple[FamilyFile | None, list[Issue]]:
+    if markup is Markup.TOML:
+        # A lone surrogate has no UTF-8 form. `surrogatepass` gives it the
+        # three bytes of its code point, and the reader refuses those bytes.
+        return parse_family_toml(text.encode("utf-8", "surrogatepass"))
+
     return _load(text, FamilyFile, _FAMILY_CONTAINERS)
+
+
+def parse_family_toml(data: bytes) -> tuple[FamilyFile | None, list[Issue]]:
+    """The TOML path for the bytes of a file. The registry gives the bytes
+    that it read, so the reader judges each byte of the file."""
+    return _load_toml(data, tomlfile.FileKind.FAMILY, FamilyFile, _FAMILY_CONTAINERS)
 
 
 def parse_server(text: str) -> tuple[McpServerFile | None, list[Issue]]:

@@ -12,14 +12,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from . import tomlfile
 from .model import FamilyFile
-from .parse import parse_family, parse_server
+from .parse import Markup, parse_family, parse_family_toml, parse_server
 from .report import FamilyState, Issue, Issues, Report
 from .server import McpServerFile
 from .serverrules import check_server
 from .validate import HostFacts, Index, check_family
 
-FAMILY_FILE: Final = "family.yaml"
+#: The two names of a family file. The registry reads `FAMILY_FILE` first and
+#: `FAMILY_FILE_YAML` second, and a directory with both is an error. A package
+#: that imports `agent_family` takes each name from here and keeps no copy.
+FAMILY_FILE: Final = "family.toml"
+FAMILY_FILE_YAML: Final = "family.yaml"
 SERVER_FILE: Final = "server.yaml"
 SKILL_FILE: Final = "SKILL.md"
 INSTRUCTIONS_FILE: Final = "instructions.md"
@@ -65,7 +70,7 @@ class Registry:
 def load_registry(root: Path, host: HostFacts | None = None) -> Registry:
     """Read, parse and cross-reference one registry. Never raises on content."""
     servers, server_reports = _read_servers(root)
-    parsed, per_family = _read_families(root)
+    parsed, per_family, files = _read_families(root)
     skills = _read_skills(root)
     index = Index(
         kinds={name: family.kind for name, family in parsed.items()},
@@ -77,12 +82,12 @@ def load_registry(root: Path, host: HostFacts | None = None) -> Registry:
     for name, family in parsed.items():
         issues = Issues(list(per_family[name]))
         check_family(family, name, index, issues, host)
-        reports[name] = _report(name, f"{FAMILIES_DIR}/{name}/{FAMILY_FILE}", issues.frozen())
+        reports[name] = _report(name, f"{FAMILIES_DIR}/{name}/{files[name]}", issues.frozen())
 
     # Directories whose file failed to parse still get their report.
     for name, entries in per_family.items():
         if name not in reports:
-            reports[name] = _report(name, f"{FAMILIES_DIR}/{name}/{FAMILY_FILE}", tuple(entries))
+            reports[name] = _report(name, f"{FAMILIES_DIR}/{name}/{files[name]}", tuple(entries))
 
     _check_webhooks(parsed, reports)
     _check_dispatch_triggers(parsed, reports)
@@ -141,32 +146,75 @@ def _subdirectories(base: Path) -> list[Path]:
     return sorted(path for path in base.iterdir() if path.is_dir())
 
 
-def _read_families(root: Path) -> tuple[dict[str, FamilyFile], dict[str, tuple[Issue, ...]]]:
+def _read_toml(path: Path) -> tuple[bytes, str | None]:
+    """The bytes of a TOML family file, or no bytes and the reason it could
+    not be read. The read stops one byte past the byte limit, so the reader
+    refuses a larger file with its own text."""
+    try:
+        with path.open("rb") as handle:
+            return handle.read(tomlfile.FileKind.FAMILY.byte_limit + 1), None
+    except OSError as exc:
+        return b"", f"cannot read {path.name}: {exc.strerror or exc}"
+
+
+def _read_family(path: Path, markup: Markup) -> tuple[FamilyFile | None, list[Issue]]:
+    """One family file, read and parsed. A file that cannot be read gives
+    one error."""
+    if markup is Markup.TOML:
+        data, problem = _read_toml(path)
+        if problem is None:
+            return parse_family_toml(data)
+    else:
+        text, problem = _read(path)
+        if problem is None:
+            return parse_family(text)
+
+    issues = Issues()
+    issues.error("<document>", problem)
+    return None, list(issues.frozen())
+
+
+def _read_families(
+    root: Path,
+) -> tuple[dict[str, FamilyFile], dict[str, tuple[Issue, ...]], dict[str, str]]:
+    """Each parsed family, the issues of each directory, and the name of the
+    file that the report of each directory names: the TOML name when that
+    file is there, else the YAML name."""
     parsed: dict[str, FamilyFile] = {}
     issues_by_name: dict[str, tuple[Issue, ...]] = {}
+    files: dict[str, str] = {}
     for directory in _subdirectories(root / FAMILIES_DIR):
         name = directory.name
-        path = directory / FAMILY_FILE
-        if not path.is_file():
+        has_toml = (directory / FAMILY_FILE).is_file()
+        has_yaml = (directory / FAMILY_FILE_YAML).is_file()
+        files[name] = FAMILY_FILE if has_toml else FAMILY_FILE_YAML
+        issues = Issues()
+        if has_toml and has_yaml:
+            # CONTRACT-QUESTION: contract 01 §1 names one file, `family.toml`.
+            # It does not say what a reader does with a directory that also
+            # holds `family.yaml`. The registry takes the strict reading: one
+            # error, and it parses neither file. The report names
+            # `family.toml`. The other reading names `family.yaml`. A change
+            # costs the line that sets `files[name]` and one test.
+            issues.error(
+                "<document>", f"two family files: {FAMILY_FILE} and {FAMILY_FILE_YAML}; keep one"
+            )
+            issues_by_name[name] = issues.frozen()
+            continue
+
+        if not has_toml and not has_yaml:
             # §5.6 rule 3: a warning, and `caregiver` ignores the directory.
-            issues = Issues()
-            issues.warn("<document>", f"no {FAMILY_FILE}; this directory is ignored")
+            issues.warn("<document>", f"no {FAMILY_FILE_YAML}; this directory is ignored")
             issues_by_name[name] = issues.frozen()
             continue
 
-        text, problem = _read(path)
-        if problem is not None:
-            issues = Issues()
-            issues.error("<document>", problem)
-            issues_by_name[name] = issues.frozen()
-            continue
-
-        family, entries = parse_family(text)
+        markup = Markup.TOML if has_toml else Markup.YAML
+        family, entries = _read_family(directory / files[name], markup)
         issues_by_name[name] = tuple(entries)
         if family is not None:
             parsed[name] = family
 
-    return parsed, issues_by_name
+    return parsed, issues_by_name, files
 
 
 def _read_servers(root: Path) -> tuple[dict[str, McpServerFile], dict[str, Report]]:
