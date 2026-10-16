@@ -7,25 +7,33 @@ not a registry outage (contract 01 §7 rule 5)."""
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
 from . import tomlfile
 from .model import FamilyFile
-from .parse import Markup, parse_family, parse_family_toml, parse_server
+from .parse import (
+    Markup,
+    parse_family,
+    parse_family_toml,
+    parse_server,
+    parse_server_toml,
+)
 from .report import FamilyState, Issue, Issues, Report
 from .server import McpServerFile
 from .serverrules import check_server
 from .validate import HostFacts, Index, check_family
 
-#: The two names of a family file. The registry reads `FAMILY_FILE` first and
-#: `FAMILY_FILE_YAML` second, and a directory with both is an error. A package
-#: that imports `agent_family` takes each name from here and keeps no copy.
+#: The two names of a family file and the two names of a server file. The
+#: registry reads the TOML name first and the YAML name second, and a
+#: directory with both is an error. A package that imports `agent_family`
+#: takes each name from here and keeps no copy.
 FAMILY_FILE: Final = "family.toml"
 FAMILY_FILE_YAML: Final = "family.yaml"
-SERVER_FILE: Final = "server.yaml"
+SERVER_FILE: Final = "server.toml"
+SERVER_FILE_YAML: Final = "server.yaml"
 SKILL_FILE: Final = "SKILL.md"
 INSTRUCTIONS_FILE: Final = "instructions.md"
 FAMILIES_DIR: Final = "families"
@@ -146,104 +154,138 @@ def _subdirectories(base: Path) -> list[Path]:
     return sorted(path for path in base.iterdir() if path.is_dir())
 
 
-def _read_toml(path: Path) -> tuple[bytes, str | None]:
-    """The bytes of a TOML family file, or no bytes and the reason it could
-    not be read. The read stops one byte past the byte limit, so the reader
-    refuses a larger file with its own text."""
+def _read_toml(path: Path, kind: tomlfile.FileKind) -> tuple[bytes, str | None]:
+    """The bytes of a TOML file of one kind, or no bytes and the reason it
+    could not be read. The read stops one byte past the byte limit of the
+    kind, so the reader refuses a larger file with its own text."""
     try:
         with path.open("rb") as handle:
-            return handle.read(tomlfile.FileKind.FAMILY.byte_limit + 1), None
+            return handle.read(kind.byte_limit + 1), None
     except OSError as exc:
         return b"", f"cannot read {path.name}: {exc.strerror or exc}"
 
 
-def _read_family(path: Path, markup: Markup) -> tuple[FamilyFile | None, list[Issue]]:
-    """One family file, read and parsed. A file that cannot be read gives
-    one error."""
-    if markup is Markup.TOML:
-        data, problem = _read_toml(path)
-        if problem is None:
-            return parse_family_toml(data)
-    else:
-        text, problem = _read(path)
-        if problem is None:
-            return parse_family(text)
+@dataclass(frozen=True)
+class _Kind[T]:
+    """One kind of file of the registry: the word of its messages, its two
+    names, its kind for the TOML reader and the parser of each markup."""
 
+    word: str
+    toml_name: str
+    yaml_name: str
+    toml_kind: tomlfile.FileKind
+    parse_toml: Callable[[bytes], tuple[T | None, list[Issue]]]
+    parse_yaml: Callable[[str], tuple[T | None, list[Issue]]]
+
+
+_FAMILY: Final = _Kind[FamilyFile](
+    "family",
+    FAMILY_FILE,
+    FAMILY_FILE_YAML,
+    tomlfile.FileKind.FAMILY,
+    parse_family_toml,
+    parse_family,
+)
+_SERVER: Final = _Kind[McpServerFile](
+    "server",
+    SERVER_FILE,
+    SERVER_FILE_YAML,
+    tomlfile.FileKind.SERVER,
+    parse_server_toml,
+    parse_server,
+)
+
+
+@dataclass(frozen=True)
+class _Read[T]:
+    """What the registry read in one directory: the name of the file that
+    the report names, the parsed model with the markup of its file, and the
+    issues of the read and of the parse."""
+
+    file: str
+    parsed: tuple[T, Markup] | None
+    issues: tuple[Issue, ...]
+
+
+def _read_directory[T](directory: Path, kind: _Kind[T]) -> _Read[T]:
+    """The one file of a directory, read and parsed. The report names the
+    TOML name when that file is there, else the YAML name."""
+    has_toml = (directory / kind.toml_name).is_file()
+    has_yaml = (directory / kind.yaml_name).is_file()
+    file = kind.toml_name if has_toml else kind.yaml_name
     issues = Issues()
+    if has_toml and has_yaml:
+        # CONTRACT-QUESTION: contract 01 §1 and contract 01b §1 each name one
+        # file, `family.toml` and `server.toml`. `spec.md` §12.3 row 5 makes
+        # a directory that also holds the YAML name a refusal. It does not
+        # say which name the report names. The registry gives one error, it
+        # parses neither file, and the report names the TOML name. The other
+        # reading names the YAML name. A change costs the line that sets
+        # `file` and one test of each kind.
+        issues.error(
+            "<document>",
+            f"two {kind.word} files: {kind.toml_name} and {kind.yaml_name}; keep one",
+        )
+        return _Read(file, None, issues.frozen())
+
+    if not has_toml and not has_yaml:
+        # §5.6 rule 3: a warning, and `caregiver` ignores the directory.
+        issues.warn("<document>", f"no {kind.yaml_name}; this directory is ignored")
+        return _Read(file, None, issues.frozen())
+
+    if has_toml:
+        data, problem = _read_toml(directory / file, kind.toml_kind)
+        if problem is None:
+            model, entries = kind.parse_toml(data)
+            return _Read(file, _marked(model, Markup.TOML), tuple(entries))
+    else:
+        text, problem = _read(directory / file)
+        if problem is None:
+            model, entries = kind.parse_yaml(text)
+            return _Read(file, _marked(model, Markup.YAML), tuple(entries))
+
     issues.error("<document>", problem)
-    return None, list(issues.frozen())
+    return _Read(file, None, issues.frozen())
+
+
+def _marked[T](model: T | None, markup: Markup) -> tuple[T, Markup] | None:
+    return None if model is None else (model, markup)
 
 
 def _read_families(
     root: Path,
 ) -> tuple[dict[str, FamilyFile], dict[str, tuple[Issue, ...]], dict[str, str]]:
     """Each parsed family, the issues of each directory, and the name of the
-    file that the report of each directory names: the TOML name when that
-    file is there, else the YAML name."""
+    file that the report of each directory names."""
     parsed: dict[str, FamilyFile] = {}
     issues_by_name: dict[str, tuple[Issue, ...]] = {}
     files: dict[str, str] = {}
     for directory in _subdirectories(root / FAMILIES_DIR):
         name = directory.name
-        has_toml = (directory / FAMILY_FILE).is_file()
-        has_yaml = (directory / FAMILY_FILE_YAML).is_file()
-        files[name] = FAMILY_FILE if has_toml else FAMILY_FILE_YAML
-        issues = Issues()
-        if has_toml and has_yaml:
-            # CONTRACT-QUESTION: contract 01 §1 names one file, `family.toml`.
-            # It does not say what a reader does with a directory that also
-            # holds `family.yaml`. The registry takes the strict reading: one
-            # error, and it parses neither file. The report names
-            # `family.toml`. The other reading names `family.yaml`. A change
-            # costs the line that sets `files[name]` and one test.
-            issues.error(
-                "<document>", f"two family files: {FAMILY_FILE} and {FAMILY_FILE_YAML}; keep one"
-            )
-            issues_by_name[name] = issues.frozen()
-            continue
-
-        if not has_toml and not has_yaml:
-            # §5.6 rule 3: a warning, and `caregiver` ignores the directory.
-            issues.warn("<document>", f"no {FAMILY_FILE_YAML}; this directory is ignored")
-            issues_by_name[name] = issues.frozen()
-            continue
-
-        markup = Markup.TOML if has_toml else Markup.YAML
-        family, entries = _read_family(directory / files[name], markup)
-        issues_by_name[name] = tuple(entries)
-        if family is not None:
-            parsed[name] = family
+        read = _read_directory(directory, _FAMILY)
+        files[name] = read.file
+        issues_by_name[name] = read.issues
+        if read.parsed is not None:
+            parsed[name] = read.parsed[0]
 
     return parsed, issues_by_name, files
 
 
 def _read_servers(root: Path) -> tuple[dict[str, McpServerFile], dict[str, Report]]:
+    """Each parsed server and the report of each directory. The rules of a
+    server file get the markup of the file that the registry read."""
     servers: dict[str, McpServerFile] = {}
     reports: dict[str, Report] = {}
     for directory in _subdirectories(root / MCP_DIR):
         name = directory.name
-        path = directory / SERVER_FILE
-        file = f"{MCP_DIR}/{name}/{SERVER_FILE}"
-        if not path.is_file():
-            issues = Issues()
-            issues.warn("<document>", f"no {SERVER_FILE}; this directory is ignored")
-            reports[name] = _report(name, file, issues.frozen())
-            continue
-
-        text, problem = _read(path)
-        if problem is not None:
-            issues = Issues()
-            issues.error("<document>", problem)
-            reports[name] = _report(name, file, issues.frozen())
-            continue
-
-        server, entries = parse_server(text)
-        issues = Issues(list(entries))
-        if server is not None:
+        read = _read_directory(directory, _SERVER)
+        issues = Issues(list(read.issues))
+        if read.parsed is not None:
+            server, markup = read.parsed
             servers[name] = server
-            check_server(server, name, issues)
+            check_server(server, name, issues, markup)
 
-        reports[name] = _report(name, file, issues.frozen())
+        reports[name] = _report(name, f"{MCP_DIR}/{name}/{read.file}", issues.frozen())
 
     return servers, reports
 
