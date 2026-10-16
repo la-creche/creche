@@ -25,10 +25,13 @@ The second half runs the bash text: the two steps that guard the signature,
 and then the script. Each program that only a runner has is a stub: `curl`,
 `sudo` and what runs behind it, `rustup`, `cargo`, `file` and `systemctl`. A
 stub writes the words that it got to a log, and the tests read the words
-from there. The cases that pack an archive need GNU tar, two cases need
-`sha256sum --check --strict`, and the cases that read a report need jq. On a
-development machine without such a tool, its cases skip. In CI no case
-skips: a case whose tool is absent fails there.
+from there. The probe uses the real parts: the real `handover` command gives
+the row of the crate, walks the tree and gives the words of each check, and
+`build` runs the real `bin/build-artifacts.sh`. The cases that pack an
+archive need GNU tar, two cases need `sha256sum --check --strict`, and the
+cases that read a report need jq. On a development machine without such a
+tool, its cases skip. In CI no case skips: a case whose tool is absent fails
+there.
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
@@ -48,13 +52,25 @@ from typing import Any, Final
 
 import pytest
 import yaml
+from handover.artifacts import crate_row
+from handover.catalog import BINARY_TARGET, RELEASE_WORKFLOW, Repo
 
 REPO: Final = Path(__file__).resolve().parents[2]
 WORKFLOW: Final = REPO / ".github" / "workflows" / "artifact-probe.yml"
+WORKFLOW_TEXT: Final = WORKFLOW.read_text(encoding="utf-8")
 SCRIPT: Final = REPO / "bin" / "artifact-probe.sh"
 SCRIPT_TEXT: Final = SCRIPT.read_text(encoding="utf-8")
-PROBE: Final = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+PROBE: Final = yaml.safe_load(WORKFLOW_TEXT)
 JOBS: Final[dict[str, dict[str, Any]]] = PROBE["jobs"]
+
+#: The release workflow, which holds the cosign pin too.
+RELEASE: Final = yaml.safe_load(
+    (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+)
+
+#: The real `handover` command of the workspace. The probe asks it for the
+#: row of the crate, for the walk and for the words of each check.
+RELEASE_CLI: Final = f"{sys.executable} -m handover.cli"
 
 #: The workflow's name, and the stem of its file. A certificate names the
 #: file, and the script checks for that name.
@@ -77,13 +93,15 @@ JOB_NAMES: Final = ["guard", "build", "sign", "verify"]
 #: The constants of the workflow. To take another cosign, compute the SHA-256
 #: of the asset `cosign-linux-amd64` of the new release and compare it with
 #: the file `cosign_checksums.txt` of that release. Then change the two
-#: values here and in the workflow file.
+#: values here, in the workflow file and in `release.yml`.
 PROBE_ENV: Final = {
-    "PROBE_TARGET": "x86_64-unknown-linux-musl",
     "COSIGN_VERSION": "v3.1.3",
     "COSIGN_SHA256": "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71",
 }
-TARGET: Final = PROBE_ENV["PROBE_TARGET"]
+
+#: The target of the row of the crate. The probe reads it from the row, and
+#: no file of the probe holds the text.
+TARGET: Final = BINARY_TARGET
 
 #: The step that gives a job cosign.
 COSIGN_STEP: Final = "cosign"
@@ -182,14 +200,20 @@ VERIFY_ENV: Final = {
 CHECKOUT: Final = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 UPLOAD: Final = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 DOWNLOAD: Final = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+SETUP_UV: Final = "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
 
-#: The steps of each job that is no `run` text, in their order.
+#: The steps of each job that is no `run` text, in their order. `build` and
+#: `verify` take uv for the `handover` command.
 ACTIONS: Final = {
     "guard": [],
-    "build": [CHECKOUT, UPLOAD],
+    "build": [CHECKOUT, SETUP_UV, UPLOAD],
     "sign": [DOWNLOAD, UPLOAD],
-    "verify": [CHECKOUT, DOWNLOAD, UPLOAD],
+    "verify": [CHECKOUT, SETUP_UV, DOWNLOAD, UPLOAD],
 }
+
+#: The inputs of each step that takes uv. The probe keeps no cache, as the
+#: job `artifacts` of `release.yml` keeps none.
+SETUP_UV_WITH: Final = {"enable-cache": False}
 
 #: Each workflow artifact: the job that writes it and the days that it stays.
 ARTIFACTS: Final = {
@@ -448,10 +472,12 @@ def test_only_a_person_or_an_agent_starts_the_probe() -> None:
 
 def test_a_run_on_another_ref_measures_nothing_and_is_a_success() -> None:
     """`guard` has no rule, so each run has one job that passes. Each other
-    job has the rule and needs `guard`, so it is skipped on another ref."""
+    job has the rule and needs `guard`, so it is skipped on another ref. The
+    words of each check name the ref of `main`: `handover artifacts
+    --verify-words` gives them, and the tests of `verify` hold each word."""
     assert "if" not in JOBS[GUARD]
     assert "needs" not in JOBS[GUARD]
-    assert f'MAIN_REF="{MAIN_REF}"' in SCRIPT_TEXT
+    assert "--verify-words" in SCRIPT_TEXT
 
     for name in JOB_NAMES:
         if name == GUARD:
@@ -540,6 +566,40 @@ def test_no_checkout_leaves_a_credential_in_the_tree() -> None:
     assert len(checkouts) == 2
     for step in checkouts:
         assert step["with"] == {"persist-credentials": False}
+
+
+def test_each_step_that_takes_uv_keeps_no_cache() -> None:
+    steps = [step for name in JOB_NAMES for step in _steps(name) if step.get("uses") == SETUP_UV]
+
+    assert len(steps) == 2
+    for step in steps:
+        assert step["with"] == SETUP_UV_WITH
+
+
+def test_the_probe_and_the_release_hold_one_cosign() -> None:
+    """The probe proves the program that the release signs with. The two
+    constants are equal in the two files."""
+    assert {name: RELEASE["env"][name] for name in PROBE_ENV} == PROBE_ENV
+
+
+def test_no_file_of_the_probe_holds_a_copy_of_the_target() -> None:
+    """The probe reads the target from the row that `handover artifacts
+    --crate-row` gives. So no copy can drift from the constant of the
+    catalog."""
+    assert TARGET not in WORKFLOW_TEXT
+    assert TARGET not in SCRIPT_TEXT
+    assert "PROBE_TARGET" not in WORKFLOW_TEXT
+    assert "PROBE_TARGET" not in SCRIPT_TEXT
+
+
+def test_the_names_of_the_script_are_the_names_of_the_catalog() -> None:
+    """The probe replaces the release workflow of the catalog with its own
+    file in one word of the check. It asks for the words of the catalog
+    repository, and it builds a crate that the workspace holds."""
+    assert f'RELEASE_FILE="{RELEASE_WORKFLOW[Repo.AGENT_CONTROL]}"' in SCRIPT_TEXT
+    assert f'CATALOG_REPO="{Repo.AGENT_CONTROL}"' in SCRIPT_TEXT
+    assert 'CRATE_DIR="rust/crates/agent-family"' in SCRIPT_TEXT
+    assert (REPO / "rust" / "crates" / "agent-family" / "Cargo.toml").is_file()
 
 
 def test_the_constants_of_the_workflow_have_one_place() -> None:
@@ -847,7 +907,7 @@ def test_the_verify_job_runs_the_script_on_the_signed_files() -> None:
     assert _runs("verify") == [COSIGN_RUN, VERIFY_RUN]
     assert set(step) == {"name", "id", "env", "run"}
     assert step["env"] == VERIFY_ENV
-    assert _steps("verify")[1]["id"] == "signed"
+    assert _steps("verify")[2]["id"] == "signed"
 
 
 @pytest.mark.parametrize("artifact", ARTIFACTS)
@@ -987,7 +1047,7 @@ class Verify:
             "GITHUB_STEP_SUMMARY": str(self.summary),
             "GITHUB_REPOSITORY": REPOSITORY,
             "GITHUB_SHA": SHA,
-            "PROBE_TARGET": TARGET,
+            "RELEASE_CLI": RELEASE_CLI,
             "PROBE_SIGNED": str(signed),
             "PROBE_TOOLCHAIN": TOOLCHAIN,
             "PROBE_REMAP_NEEDED": "yes",
@@ -1310,7 +1370,6 @@ def test_verify_stops_before_the_first_child_without_the_signed_files(tmp_path: 
     [
         ("GITHUB_SHA", "main"),
         ("GITHUB_REPOSITORY", "example"),
-        ("PROBE_TARGET", "x86_64 musl"),
         ("COSIGN", ""),
     ],
 )
@@ -1321,6 +1380,76 @@ def test_verify_refuses_a_value_that_cannot_be_a_word_of_a_check(
 
     assert run.done.returncode == 1
     assert name in run.done.stderr
+    assert _calls(run.log, "sudo") == []
+
+
+#: A `handover` command that prints the text of STUB_TEXT for each call.
+TEXT_CLI: Final = """#!/usr/bin/env bash
+printf '%s' "$STUB_TEXT"
+"""
+
+
+def _text_cli(tmp_path: Path, text: str) -> dict[str, str]:
+    """The variables that give the script a `handover` command that prints
+    `text`."""
+    cli = _stub(tmp_path / "cli", "handover", TEXT_CLI)
+
+    return {"RELEASE_CLI": str(cli), "STUB_TEXT": text}
+
+
+#: Texts of a command that gives no row of the crate in the line form.
+NO_ROWS: Final = {
+    "empty": "",
+    "two-targets": "".join(
+        f"{line}\n" for line in crate_row("agent-family", "rust/crates/agent-family").lines()
+    )
+    + f"target {TARGET}\n",
+    "a-target-that-is-a-path": (
+        "target ../x\narchive a.tar.gz\nbundle b\ninstall-env V\nargv 1\ncargo\nend\n"
+    ),
+    "no-command": "target t\narchive a.tar.gz\nbundle b\ninstall-env V\nend\n",
+}
+
+
+@pytest.mark.parametrize("text", NO_ROWS.values(), ids=NO_ROWS)
+def test_verify_stops_before_the_first_child_without_a_row(tmp_path: Path, text: str) -> None:
+    """The names of the two files come from the row. A row of another form
+    names no file that the probe can trust."""
+    run = Verify(tmp_path, **_text_cli(tmp_path, text))
+
+    assert run.done.returncode == 1
+    assert "handover gave no row of agent-family in the line form" in run.done.stderr
+    assert _calls(run.log, "sudo") == []
+
+
+#: Words of `--verify-words` in which not one word names the release
+#: workflow: none, and two.
+NOT_ONE_WORD: Final = {
+    "none": "verify-blob\n--certificate-identity\nhttps://example/one.yml@refs/heads/main\n",
+    "two": "/x/release.yml@a\n/y/release.yml@b\n",
+}
+
+
+@pytest.mark.parametrize("words", NOT_ONE_WORD.values(), ids=NOT_ONE_WORD)
+def test_verify_stops_when_not_one_word_names_the_release_workflow(
+    tmp_path: Path, words: str
+) -> None:
+    """The probe signs as its own workflow file, and it replaces the release
+    workflow in one word. Other words are not the words of the check that
+    root makes."""
+    row = "".join(
+        f"{line}\n" for line in crate_row("agent-family", "rust/crates/agent-family").lines()
+    )
+    cli = _stub(
+        tmp_path / "cli",
+        "handover",
+        '#!/usr/bin/env bash\nif [[ "$2" == "--verify-words" ]]; then\n'
+        "  printf '%s' \"$STUB_WORDS\"\nelse\n  printf '%s' \"$STUB_ROW\"\nfi\n",
+    )
+    run = Verify(tmp_path, RELEASE_CLI=str(cli), STUB_WORDS=words, STUB_ROW=row)
+
+    assert run.done.returncode == 1
+    assert "handover gave no words in which one word names release.yml" in run.done.stderr
     assert _calls(run.log, "sudo") == []
 
 
@@ -1351,7 +1480,8 @@ REAL_GZIP: Final = shutil.which("gzip") or "gzip"
 
 
 class Build:
-    """One run of `bin/artifact-probe.sh build` against the stubs."""
+    """One run of `bin/artifact-probe.sh build` against the stubs. The
+    `handover` command and `bin/build-artifacts.sh` are the real ones."""
 
     def __init__(self, tmp_path: Path, **overrides: str) -> None:
         stubs = tmp_path / "stubs"
@@ -1375,7 +1505,7 @@ class Build:
             "RUNNER_TEMP": str(self.temp),
             "GITHUB_OUTPUT": str(self.output),
             "GITHUB_STEP_SUMMARY": str(self.summary),
-            "PROBE_TARGET": TARGET,
+            "RELEASE_CLI": RELEASE_CLI,
             "STUB_LOG": str(self.log),
             "STUB_FILE": STATIC,
         }
@@ -1402,24 +1532,52 @@ class Build:
 
     @property
     def remap_flags(self) -> str:
+        """The remap flags of `bin/build-artifacts.sh`."""
         return (
-            f"--remap-path-prefix={self.workspace}=/probe/workspace "
-            f"--remap-path-prefix={self.home}/.cargo=/probe/cargo-home "
-            f"--remap-path-prefix={self.temp}=/probe/temp"
+            f"--remap-path-prefix={self.workspace}=/build/workspace "
+            f"--remap-path-prefix={self.home}/.cargo=/build/cargo-home "
+            f"--remap-path-prefix={self.temp}=/build/temp"
         )
 
 
+#: The line of the walk of `handover check-tree` for a program that holds a
+#: path of the runner.
+WALK_FAULT: Final = "bin/agent-family holds the path of the fetched work tree"
+
+
+def test_the_row_of_the_crate_is_the_row_of_handover(tmp_path: Path) -> None:
+    """The probe writes the row that the command gives, and the build script
+    reads that file. The row names the target, so the probe holds no copy of
+    it."""
+    run = Build(tmp_path, STUB_NO_PROGRAM="1")
+    row = run.temp / "artifact-probe" / "row"
+
+    assert row.read_text(encoding="utf-8") == "".join(
+        f"{line}\n" for line in crate_row("agent-family", "rust/crates/agent-family").lines()
+    )
+    assert f"- target: {TARGET}\n" in run.summary.read_text(encoding="utf-8")
+
+
+def test_a_row_in_another_form_stops_the_build_before_the_first_build(tmp_path: Path) -> None:
+    run = Build(tmp_path, **_text_cli(tmp_path, "target only\n"))
+
+    assert run.done.returncode == 1, run.said
+    assert "handover gave no row of agent-family in the line form" in run.done.stderr
+    assert _calls(run.log, "rustup") == []
+    assert _calls(run.log, "cargo") == []
+
+
 def test_a_tree_that_holds_a_path_of_the_runner_stops_the_build(tmp_path: Path) -> None:
-    """The build with the remap flags left a path in the program. The job
-    stops before the pack, so the job `sign` gets no archive."""
+    """The build with the remap flags left a path in the program. The walk
+    of the build script stops the run before the pack, so the job `sign`
+    gets no archive."""
     home = tmp_path / "home"
     run = Build(tmp_path, STUB_REMAP_TEXT=f"{home}/.cargo/registry/src/one.rs")
 
     assert run.done.returncode == 1, run.said
-    assert "bin/agent-family holds HOME" in run.done.stdout
-    assert "bin/agent-family holds the cargo home" in run.done.stdout
-    assert f"\n{home}/.cargo/registry/src/one.rs\n" in run.done.stdout
-    assert "a file of the tree holds a path of the runner" in run.done.stderr
+    assert WALK_FAULT in run.done.stdout
+    assert "agent-family: the walk found a fault in the tree" in run.done.stderr
+    assert "the build failed" in run.done.stderr
     assert "digest" not in run.outputs
     assert len(_calls(run.log, "cargo")) == 1
 
@@ -1433,9 +1591,10 @@ def test_each_path_of_the_runner_is_a_needle(tmp_path: Path, variable: str) -> N
     run = Build(tmp_path, STUB_REMAP_TEXT=str(paths[variable]))
 
     assert run.done.returncode == 1, run.said
-    assert f"bin/agent-family holds {variable}" in run.done.stdout
+    assert WALK_FAULT in run.done.stdout
 
 
+@needs_gnu_tar
 def test_a_program_that_needs_a_library_of_the_host_stops_the_build(tmp_path: Path) -> None:
     run = Build(tmp_path, STUB_FILE=DYNAMIC)
 
@@ -1444,6 +1603,7 @@ def test_a_program_that_needs_a_library_of_the_host_stops_the_build(tmp_path: Pa
     assert "digest" not in run.outputs
 
 
+@needs_gnu_tar
 def test_a_program_for_another_machine_stops_the_build(tmp_path: Path) -> None:
     run = Build(tmp_path, STUB_FILE="ELF 64-bit LSB executable, ARM aarch64, statically linked")
 
@@ -1456,9 +1616,11 @@ def test_a_build_that_made_no_program_in_the_install_root_stops(tmp_path: Path) 
     run = Build(tmp_path, STUB_NO_PROGRAM="1")
 
     assert run.done.returncode == 1, run.said
-    assert "the build made no program at bin/agent-family" in run.done.stderr
+    assert "agent-family: the build put no program in bin/ of its tree" in run.done.stderr
+    assert "the build failed" in run.done.stderr
 
 
+@needs_gnu_tar
 def test_a_program_that_does_not_run_stops_the_build(tmp_path: Path) -> None:
     run = Build(tmp_path, STUB_HELP_STATUS="1")
 
@@ -1468,17 +1630,21 @@ def test_a_program_that_does_not_run_stops_the_build(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "overrides",
-    [{"STUB_PROGRAM_MODE": "0644"}, {"STUB_PROGRAM_LINK": "1"}],
+    ("overrides", "fault"),
+    [
+        ({"STUB_PROGRAM_MODE": "0644"}, "which is no program"),
+        ({"STUB_PROGRAM_LINK": "1"}, "which is no regular file"),
+    ],
     ids=["no-execute-bit", "a-link"],
 )
 def test_a_thing_at_the_program_path_that_is_no_program_stops_the_build(
-    tmp_path: Path, overrides: dict[str, str]
+    tmp_path: Path, overrides: dict[str, str], fault: str
 ) -> None:
     run = Build(tmp_path, **overrides)
 
     assert run.done.returncode == 1, run.said
-    assert "the build made no program at bin/agent-family" in run.done.stderr
+    assert f"the tree holds bin/agent-family, {fault}" in run.done.stderr
+    assert "the build failed" in run.done.stderr
 
 
 def test_build_stops_when_its_work_directory_exists(tmp_path: Path) -> None:
@@ -1493,29 +1659,32 @@ def test_build_stops_when_its_work_directory_exists(tmp_path: Path) -> None:
     assert _calls(run.log, "rustup") == []
 
 
+@needs_gnu_tar
 def test_build_takes_no_rustflags_from_its_environment(tmp_path: Path) -> None:
     """cargo reads CARGO_ENCODED_RUSTFLAGS before RUSTFLAGS. A value of the
-    caller would replace the remap flags of the first build, and it would
-    give flags to the build that must have none."""
+    caller would replace the remap flags of the two runs of the build
+    script, and it would give flags to the build that must have none."""
     run = Build(tmp_path, RUSTFLAGS="--cfg other", CARGO_ENCODED_RUSTFLAGS="--cfg=other")
-    remapped, plain = _calls(run.log, "cargo")
+    first, second, plain = _calls(run.log, "cargo")
 
-    assert remapped[-2:] == [f"RUSTFLAGS={run.remap_flags}", "CARGO_ENCODED_RUSTFLAGS=<unset>"]
+    assert run.done.returncode == 0, run.said
+    for remapped in (first, second):
+        assert remapped[-2:] == [f"RUSTFLAGS={run.remap_flags}", "CARGO_ENCODED_RUSTFLAGS=<unset>"]
     assert plain[-2:] == ["RUSTFLAGS=<unset>", "CARGO_ENCODED_RUSTFLAGS=<unset>"]
 
 
 def test_build_reads_the_cargo_home_of_its_environment(tmp_path: Path) -> None:
     """The cargo home is then a remap flag and a needle. It is not below
-    HOME here, so only its own needle finds the path."""
+    HOME here, nor below another needle, so only its own needle finds the
+    path."""
     cargo_home = tmp_path / "cargo-home"
     text = f"{cargo_home}/registry/src/one.rs"
     run = Build(tmp_path, CARGO_HOME=str(cargo_home), STUB_REMAP_TEXT=text)
     (remapped,) = _calls(run.log, "cargo")
 
     assert run.done.returncode == 1, run.said
-    assert f"--remap-path-prefix={cargo_home}=/probe/cargo-home " in remapped[-2]
-    assert "bin/agent-family holds the cargo home" in run.done.stdout
-    assert "bin/agent-family holds HOME" not in run.done.stdout
+    assert f"--remap-path-prefix={cargo_home}=/build/cargo-home " in remapped[-2]
+    assert WALK_FAULT in run.done.stdout
 
 
 def test_build_stops_when_it_cannot_write_the_step_summary(tmp_path: Path) -> None:
@@ -1534,9 +1703,12 @@ def test_build_stops_for_a_path_that_rustflags_cannot_carry(tmp_path: Path) -> N
     assert _calls(run.log, "cargo") == []
 
 
+@needs_gnu_tar
 def test_build_installs_the_toolchain_of_rust_and_builds_from_the_root(tmp_path: Path) -> None:
-    """The words of each call, and the variables of each build. The pack
-    comes after the two builds, so this case needs no GNU tar."""
+    """The words of each call, and the variables of each build: two runs of
+    the build script, then the build with no remap flag. Each run of the
+    script installs the toolchain and the target, and the probe asks rustup
+    for the name of the toolchain after the first run."""
     run = Build(tmp_path)
     rust = str(run.workspace / "rust")
     work = run.temp / "artifact-probe"
@@ -1546,36 +1718,44 @@ def test_build_installs_the_toolchain_of_rust_and_builds_from_the_root(tmp_path:
         f"RUSTUP_TOOLCHAIN={TOOLCHAIN}",
         "CARGO_INCREMENTAL=0",
     ]
-
-    assert _calls(run.log, "rustup") == [
+    script = [
         ["rustup", rust, "toolchain", "install", "--no-self-update"],
         ["rustup", rust, "show", "active-toolchain"],
         ["rustup", rust, "target", "add", "--toolchain", TOOLCHAIN, TARGET],
     ]
-    assert _calls(run.log, "cargo") == [
-        [
-            "cargo",
-            str(run.workspace),
-            *words,
-            f"CARGO_INSTALL_ROOT={work}/remap/agent-family",
+    first, second, plain = _calls(run.log, "cargo")
+
+    assert run.done.returncode == 0, run.said
+    assert _calls(run.log, "rustup") == [
+        *script,
+        ["rustup", rust, "show", "active-toolchain"],
+        *script,
+    ]
+    for remapped in (first, second):
+        root = remapped[2 + len(words)]
+        assert remapped[: 2 + len(words)] == ["cargo", str(run.workspace), *words]
+        assert re.fullmatch(
+            rf"CARGO_INSTALL_ROOT={run.temp}/build-artifacts\.\w+/agent-family", root
+        )
+        assert remapped[3 + len(words) :] == [
             *shared,
             f"RUSTFLAGS={run.remap_flags}",
             "CARGO_ENCODED_RUSTFLAGS=<unset>",
-        ],
-        [
-            "cargo",
-            str(run.workspace),
-            *words,
-            f"CARGO_INSTALL_ROOT={work}/plain/agent-family",
-            *shared,
-            "RUSTFLAGS=<unset>",
-            "CARGO_ENCODED_RUSTFLAGS=<unset>",
-        ],
+        ]
+    assert first[2 + len(words)] != second[2 + len(words)], "two runs share one tree"
+    assert plain == [
+        "cargo",
+        str(run.workspace),
+        *words,
+        f"CARGO_INSTALL_ROOT={work}/plain/agent-family",
+        *shared,
+        "RUSTFLAGS=<unset>",
+        "CARGO_ENCODED_RUSTFLAGS=<unset>",
     ]
 
 
 @needs_gnu_tar
-def test_the_archive_has_the_same_bytes_for_each_pack_of_one_tree(tmp_path: Path) -> None:
+def test_the_archive_has_the_same_bytes_for_each_run_of_the_build(tmp_path: Path) -> None:
     """Each member is a regular file `agent-family/bin/<program>` with a fixed
     owner, mode and time. gzip keeps no name and no time."""
     run = Build(tmp_path)
@@ -1603,14 +1783,17 @@ def test_the_archive_has_the_same_bytes_for_each_pack_of_one_tree(tmp_path: Path
 @needs_gnu_tar
 def test_the_digest_output_is_one_line_of_sha256sum_for_the_archive(tmp_path: Path) -> None:
     """The job `sign` gives the line to `sha256sum --check --strict` in the
-    directory of the archive, so the line names the file with no directory."""
+    directory of the archive, so the line names the file with no directory.
+    The line is the line of SHA256SUMS of the build script."""
     run = Build(tmp_path)
     archive = Path(run.outputs["archive"])
     digest = run.outputs["digest"]
 
     assert run.done.returncode == 0, run.said
     assert digest == f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}"
+    assert (archive.parent / "SHA256SUMS").read_text(encoding="utf-8") == f"{digest}\n"
     assert run.outputs["toolchain"] == TOOLCHAIN
+    assert sorted(run.outputs) == ["archive", "digest", "remap_needed", "toolchain"]
 
 
 @needs_gnu_tar
@@ -1641,26 +1824,26 @@ def test_a_tree_with_a_second_thing_beside_its_programs_stops_the_build(tmp_path
     run = Build(tmp_path, STUB_RECORD="1")
 
     assert run.done.returncode == 1, run.said
-    assert "no regular file directly in bin/" in run.done.stderr
+    assert "the tree holds .crates.toml, which is no program in bin/" in run.done.stderr
     assert "digest" not in run.outputs
 
 
 @needs_gnu_tar
-def test_two_packs_that_differ_stop_the_build(tmp_path: Path) -> None:
+def test_two_runs_that_give_two_archives_stop_the_build(tmp_path: Path) -> None:
     """An archive that differs from one run to the next has no SHA-256 that
     a second build can prove."""
     _stub(tmp_path / "stubs", "gzip", GZIP_STUB)
     run = Build(tmp_path, STUB_REAL_GZIP=REAL_GZIP, STUB_COUNT=str(tmp_path / "count"))
 
     assert run.done.returncode == 1, run.said
-    assert "two packs of one tree differ" in run.done.stderr
+    assert "two runs of the build script gave two archives" in run.done.stderr
     assert "digest" not in run.outputs
 
 
 @needs_gnu_tar
 def test_an_archive_member_with_another_mode_stops_the_build(tmp_path: Path) -> None:
-    """The script reads the archive that it packed. It does not trust the
-    words that it gave to tar."""
+    """The probe reads the archive that the build script packed. It does not
+    trust the words that the script gave to tar."""
     _stub(tmp_path / "stubs", "tar", TAR_STUB)
     run = Build(tmp_path, STUB_REAL_TAR=REAL_TAR)
 
