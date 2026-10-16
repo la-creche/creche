@@ -19,6 +19,12 @@
 # proof (`--unchanged`). The answer starts as `true`, so a script that fails,
 # or that is absent, runs the proof. The files of the proof are systemd/ and
 # the script.
+#
+# `artifacts` is a fourth answer on the same change: `true` when the change
+# touches an input of the archive of a binary component, and `false` when it
+# does not (bin/lib/artifactrule.sh). Each change that `rust` counts counts
+# here too. So does the manifest of a component, a path under handover/ and
+# the script that builds. A change the rule cannot read answers `true`.
 name: scope
 description: Say whether the pull request changes docs only or code
 
@@ -32,6 +38,9 @@ outputs:
   systemd:
     description: true when the change touches a file of the systemd proof, false when it does not
     value: ${{ steps.scope.outputs.systemd }}
+  artifacts:
+    description: true when the change touches an input of an archive, false when it does not
+    value: ${{ steps.scope.outputs.artifacts }}
 
 runs:
   using: composite
@@ -44,6 +53,7 @@ runs:
         set -euo pipefail
         . bin/lib/docsrule.sh
         . bin/lib/rustrule.sh
+        . bin/lib/artifactrule.sh
         base="$GROUP_BASE"
         if [[ -z "$base" ]]; then
           base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" || base=""
@@ -69,3 +79,10 @@ runs:
         fi
         echo "systemd=$systemd" >> "$GITHUB_OUTPUT"
         echo "systemd: $systemd"
+
+        artifacts=false
+        if artifacts_touched "$base" HEAD; then
+          artifacts=true
+        fi
+        echo "artifacts=$artifacts" >> "$GITHUB_OUTPUT"
+        echo "artifacts: $artifacts"

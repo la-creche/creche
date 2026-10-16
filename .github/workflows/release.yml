@@ -16,10 +16,13 @@
 #           │                      push that touches rust/ or vectors/
 #           ├── rust-coverage  code   the tests with cargo llvm-cov and the
 #           │                      coverage rule, for the same push
-#           └── systemd-proof
-#                           code   the restart rule of the daemon units, on
-#                                  the systemd of the runner, for a push
-#                                  that touches systemd/
+#           ├── systemd-proof
+#           │               code   the restart rule of the daemon units, on
+#           │                      the systemd of the runner, for a push
+#           │                      that touches systemd/
+#           └── artifacts ── sign
+#                           the archive of each binary component, then the
+#                           keyless signature of each archive
 #                                 └── release   tags + Releases, only when
 #                                               every job passed
 #
@@ -71,6 +74,21 @@
 # that touches no file of the proof, onto a commit whose own run passed,
 # skips the one step of that job (`--unchanged` of bin/systemd-proof.sh).
 #
+# A BINARY COMPONENT SHIPS AN ARCHIVE AND ITS SIGNATURE. The `artifacts` job
+# builds the archive of each binary component of the catalog
+# (bin/build-artifacts.sh), at each push and in each scope. The `sign` job
+# signs each archive with a keyless Sigstore signature. The `release` job
+# takes both workflow artifacts, and the tag script attaches the two files to
+# the Release of the component after cosign passed the signature
+# (handover/bin/allocate-tags.sh). With no binary component the two jobs
+# build nothing, sign nothing and pass, and the `release` job fetches no
+# cosign.
+#
+# EACH SIGNATURE IS PUBLIC AND PERMANENT. It writes one record to the
+# transparency log of the public Sigstore instance. The record names this
+# repository, this workflow file and the commit. A run with no archive writes
+# no record.
+#
 # agent-mcp has a SIBLING of the `release` job, in its own
 # rework-component-tags.yml. `mcp-servers` is its component, not
 # agent-control's (contract 06 §1 row 6), and the planner scopes every
@@ -93,6 +111,18 @@ on:
 permissions:
   contents: read
   actions: read # the scope job asks whether the previous push's run passed
+
+# The pin of cosign, for the `sign` job and the `release` job. No action
+# installs the program, so no commit pin holds it: the SHA-256 of the file is
+# the pin. To take another version, change the two constants together.
+# Compute the SHA-256 of the asset `cosign-linux-amd64` of the new release,
+# and compare it with the file `cosign_checksums.txt` of that release.
+# artifact-probe.yml holds the same two values, and
+# bin/tests/test_artifact_probe_workflow.py holds the two files equal. The
+# host has a copy of its own (handover/AGENTS.md).
+env:
+  COSIGN_VERSION: "v3.1.3"
+  COSIGN_SHA256: "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
 
 jobs:
   scope:
@@ -607,12 +637,166 @@ jobs:
       - run: bin/systemd-proof.sh
         if: needs.scope.outputs.systemd != 'false'
 
+  # The archive of each binary component: gate.yml's `artifacts` job, with no
+  # rule on a step. Each push builds each binary row, in each scope, because
+  # each run can tag a component that an older run missed
+  # (handover/bin/allocate-tags.sh). With no binary component the script
+  # prints one line, and the upload holds an empty SHA256SUMS.
+  artifacts:
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      digests: ${{ steps.build.outputs.digests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The `handover` command gives the rows and walks each tree.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+
+      # ARTIFACT_REPO: the catalog's name for this repository. TAG_REPO of the
+      # tag step of release.yml holds the same name.
+      - name: build
+        id: build
+        env:
+          ARTIFACT_REPO: agent-control
+          ARTIFACT_OUT: ${{ runner.temp }}/artifacts
+        run: bin/build-artifacts.sh
+
+      # The script writes SHA256SUMS in each run, so the upload always has
+      # one file. The next job cannot download an artifact that does not
+      # exist.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: artifacts
+          path: ${{ runner.temp }}/artifacts
+          if-no-files-found: error
+          retention-days: 7
+
+  # The keyless signature of each archive. THE JOB HOLDS THE IDENTITY TOKEN
+  # AND NO CODE OF THE REPOSITORY: it has no checkout, no local action, and
+  # no step starts a file of the repository. Each word that it runs is in
+  # this file, and bin/tests/test_gate_workflow.py pins each one.
+  #
+  # The one run step:
+  #   1. Each job of a run can write a workflow artifact. So the step signs
+  #      only the archives that the job output `digests` names, and only when
+  #      each one has the SHA-256 of that output. A file that the output does
+  #      not name stops the job. `dotglob`: a name that starts with a period
+  #      is such a file too.
+  #   2. With no archive it prints one line, signs nothing and uploads an
+  #      empty SHA256SUMS.
+  #   3. It takes cosign from a release of the cosign repository, and
+  #      compares the SHA-256 of the program with the constant before the
+  #      first use. The `release` job holds the same text.
+  #   4. One signature for each archive, in the bundle
+  #      `<archive>.sigstore.json`. The bundles and the checked SHA256SUMS go
+  #      into the workflow artifact `bundles`.
+  #
+  # The certificate of a signature names this workflow file, the ref of the
+  # run and its commit. The words of the check name the ref of `main`, so a
+  # run on another branch gets no tag for a binary component.
+  #
+  # A job that fails here holds back each tag of the run: the `release` job
+  # needs it (a Sigstore service that does not answer, for example). The next
+  # green run tags what this run left.
+  sign:
+    needs: artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: artifacts
+          path: ${{ runner.temp }}/assets
+
+      - name: sign
+        env:
+          DIGESTS: ${{ needs.artifacts.outputs.digests }}
+        run: |
+          set -euo pipefail
+          shopt -s dotglob
+          assets="$RUNNER_TEMP/assets"
+          bundles="$RUNNER_TEMP/bundles"
+          mkdir -p "$bundles"
+          line='^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz$'
+          named=""
+          if [[ -n "$DIGESTS" ]]; then
+            while IFS= read -r one; do
+              if [[ ! "$one" =~ $line ]]; then
+                echo "sign: the job artifacts gave a line that is no SHA-256 line of an archive" >&2
+                exit 1
+              fi
+              named+="${one:66}"$'\n'
+            done <<< "$DIGESTS"
+          fi
+          files=""
+          for file in "$assets"/*; do
+            name="${file##*/}"
+            if [[ ! -e "$file" || "$name" == "SHA256SUMS" ]]; then
+              continue
+            fi
+            if [[ -L "$file" || ! -f "$file" || "$name" != *.tar.gz ]]; then
+              echo "sign: the job artifacts gave $name, which is no archive" >&2
+              exit 1
+            fi
+            files+="$name"$'\n'
+          done
+          if [[ "$(printf '%s' "$named" | sort -u)" != "$(printf '%s' "$named" | sort)" ]]; then
+            echo "sign: the job artifacts named one archive two times" >&2
+            exit 1
+          fi
+          if [[ "$(printf '%s' "$named" | sort)" != "$(printf '%s' "$files" | sort)" ]]; then
+            echo "sign: the archives are not the archives that the job artifacts named" >&2
+            exit 1
+          fi
+          if [[ -z "$named" ]]; then
+            echo "sign: no archive"
+            : > "$bundles/SHA256SUMS"
+            exit 0
+          fi
+          (cd "$assets" && sha256sum --check --strict <<< "$DIGESTS")
+          cosign="$RUNNER_TEMP/cosign"
+          if compgen -G "$RUNNER_TEMP/assets/*.tar.gz" > /dev/null; then
+            curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+              --output "$cosign" \
+              "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
+            found="$(sha256sum "$cosign" | cut -d ' ' -f 1)"
+            if [[ "$found" != "$COSIGN_SHA256" ]]; then
+              echo "cosign: the program has the SHA-256 $found, not $COSIGN_SHA256" >&2
+              exit 1
+            fi
+            chmod 0755 "$cosign"
+            "$cosign" version
+          else
+            echo "cosign: no archive, so no fetch"
+          fi
+          while IFS= read -r one; do
+            name="${one:66}"
+            "$cosign" sign-blob --yes --bundle "$bundles/$name.sigstore.json" "$assets/$name" < /dev/null
+          done <<< "$DIGESTS"
+          printf '%s\n' "$DIGESTS" > "$bundles/SHA256SUMS"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bundles
+          path: ${{ runner.temp }}/bundles
+          if-no-files-found: error
+          retention-days: 7
+
   # `always()`: on a docs push `tests`, `playpen`, `proc`, `proc-rust`,
   # `suites`, `rust`, `rust-coverage` and `systemd-proof` are skipped, and a
   # job that needs a skipped job is skipped by default. The verdict step is
   # what holds the tags back when a job failed.
   release:
-    needs: [scope, lint, tests, playpen, proc, proc-rust, suites, rust, rust-coverage, systemd-proof]
+    needs: [scope, lint, tests, playpen, proc, proc-rust, suites, rust, rust-coverage, systemd-proof, artifacts, sign]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -643,6 +827,42 @@ jobs:
         with:
           needs: ${{ toJSON(needs) }}
 
+      # The archives and the bundles, in the one directory that the tag
+      # script reads as ASSET_DIR. Each workflow artifact holds SHA256SUMS,
+      # and the two files have the same text: the second one replaces the
+      # first.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: artifacts
+          path: ${{ runner.temp }}/assets
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bundles
+          path: ${{ runner.temp }}/assets
+
+      # The tag script checks the signature of each archive with the words
+      # that root uses on the host. The text is the one of the `sign` job:
+      # with no archive in ASSET_DIR it prints one line and fetches nothing.
+      - name: cosign
+        run: |
+          set -euo pipefail
+          cosign="$RUNNER_TEMP/cosign"
+          if compgen -G "$RUNNER_TEMP/assets/*.tar.gz" > /dev/null; then
+            curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+              --output "$cosign" \
+              "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
+            found="$(sha256sum "$cosign" | cut -d ' ' -f 1)"
+            if [[ "$found" != "$COSIGN_SHA256" ]]; then
+              echo "cosign: the program has the SHA-256 $found, not $COSIGN_SHA256" >&2
+              exit 1
+            fi
+            chmod 0755 "$cosign"
+            "$cosign" version
+          else
+            echo "cosign: no archive, so no fetch"
+          fi
+
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       # Idempotent: a component already tagged on this SHA is a no-op, and
@@ -652,8 +872,14 @@ jobs:
       # calls it. Without it the script takes the name from
       # GITHUB_REPOSITORY, and a hosted name the catalog does not hold
       # stops the run.
+      #
+      # ASSET_DIR and COSIGN: the assets of a binary component and the
+      # program that checks their signature. A run with no binary component
+      # reads neither, and COSIGN then names no file.
       - name: tag and release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_REPO: agent-control
+          ASSET_DIR: ${{ runner.temp }}/assets
+          COSIGN: ${{ runner.temp }}/cosign
         run: handover/bin/allocate-tags.sh
