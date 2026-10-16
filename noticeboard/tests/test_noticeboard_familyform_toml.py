@@ -91,7 +91,8 @@ def test_a_block_says_that_it_is_toml() -> None:
 
 
 def test_a_block_with_no_value_shows_no_text() -> None:
-    """TOML has no null. A field with no value has no key."""
+    """A TOML text cannot hold a null, so a field without a value shows no
+    text."""
     assert value_of(toml_form(), "triggers") == ""
     assert value_of(toml_form(), "quiet") == ""
 

@@ -474,8 +474,8 @@ def _rendered(name: str, control: Control, value: object, markup: Markup) -> str
         return "".join(f"{one}\n" for one in cast("list[object]", value))
 
     if control is Control.BLOCK and markup is Markup.TOML:
-        # TOML has no null. A field with no value has no key, and its text
-        # is empty.
+        # A TOML text cannot hold a null, so the text of a field without a
+        # value is empty.
         return to_toml({name: value})
 
     if control is Control.BLOCK:

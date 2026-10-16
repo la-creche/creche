@@ -1,8 +1,8 @@
 """The save of a TOML family file, and the name of the file of a family.
 
-A save writes a family under the name that the registry holds for it. A new
-family gets `family.toml`, unless a directory of the registry holds a
-`family.yaml`.
+A save writes a family under the name that the registry holds for it. The
+file of a new family is `family.yaml` if a directory of the registry holds
+one. Else it is `family.toml`.
 """
 
 from __future__ import annotations

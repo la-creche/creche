@@ -81,8 +81,8 @@ TOML. A block control shows its text in that markup. For a TOML family:
    `[table]` line belongs to that table.
 3. A block that the reader refuses is a problem of the form. The problem
    holds the text of the refusal.
-4. TOML has no null. A block with no value shows no text, and a block with
-   no key gives no value.
+4. A TOML text cannot hold a null. A block without a value thus shows no
+   text. A block without a key gives no value.
 
 ## Writing the registry
 
@@ -107,11 +107,11 @@ TOML. A block control shows its text in that markup. For a TOML family:
     meaning. `app.py` gives the patched text back to `agent_family`. When
     the text does not read as the model of the form, the save writes the
     document of `yamlout.py` or of `tomlout.py`.
-25. Write a family file under the name that the registry holds for it:
-    `family.toml` or `family.yaml`. `agent_family.registry` holds the two
-    names. A new family gets `family.toml` when no directory of the
-    registry holds a `family.yaml`. Each other new family gets
-    `family.yaml`.
+25. Save a family under the file name that the registry read for it:
+    `family.toml` or `family.yaml`. The two names come from
+    `agent_family.registry`. The file of a new family is `family.yaml` if
+    a directory of the registry holds a `family.yaml`. Else it is
+    `family.toml`.
 
 ## Run it
 
@@ -198,9 +198,9 @@ prefixed `test_noticeboard_`.
   on a line past column 100.
 - A save that removes the last key of a block also removes the comment lines
   and the blank lines after that key (`yamlkeep.py`).
-- A save of a TOML file keeps each comment line outside a list that it
-  replaces. A comment line above a key that the save removes thus stays
-  where it was (`tomlkeep.py`).
+- A save that replaces a list of a TOML file removes each comment line
+  inside that list (`tomlkeep.py`). A comment line above a key that the
+  save removes stays where it was.
 - A save that adds a table inside an inline table of a TOML file writes the
   whole document of `tomlout.py`. That document holds no comment
   (`tomlkeep.py`).

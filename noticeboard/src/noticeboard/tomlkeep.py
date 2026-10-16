@@ -33,8 +33,8 @@ How a value that moved reaches the text:
    place of the old value: a scalar, a list or an empty table. A list goes
    whole.
 
-A save keeps each comment line outside a list that it replaces. A comment
-line above a key that the edit removed stays where it was.
+A save that replaces a list removes each comment line inside that list. A
+comment line above a key that the edit removed stays where it was.
 
 This module owns the one TOML library of the noticeboard that keeps a
 layout, and it reads no meaning: it moves values between two structures that
