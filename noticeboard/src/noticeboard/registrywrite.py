@@ -37,6 +37,11 @@ The lock stops the saves of this service and no other program. Git's own
 `index.lock` makes the commit fail while another program writes the index,
 and a failed commit restores. "Fail and roll back" is the behaviour under a
 race, never "corrupt".
+
+A family file has one of two names: `family.toml` or `family.yaml`
+(`agent_family.registry`). A save writes the file under the name that the
+registry holds for the family. A new family gets `family.toml`, unless a
+directory of the registry holds a `family.yaml`.
 """
 
 from __future__ import annotations
@@ -55,8 +60,8 @@ from pathlib import Path
 from typing import Final
 
 from agent_family import Issue, Registry, Report, Severity, load_registry
+from agent_family.registry import FAMILY_FILE, FAMILY_FILE_YAML
 
-FAMILY_FILE: Final = "family.yaml"
 FAMILIES_DIR: Final = "families"
 
 #: A family name, contract 01 §2.
@@ -93,6 +98,9 @@ LOCK_POLL_S: Final = 0.05
 
 #: What a save answers when its wait ends before it has the lock.
 BUSY: Final = "another save holds the registry, and nothing was written: save again"
+
+#: The two names of a family file, TOML first, as the registry reads them.
+_FAMILY_FILES: Final = (FAMILY_FILE, FAMILY_FILE_YAML)
 
 #: The directories of a registry that the validator reads. The copy that it
 #: reads holds these and no other path of the checkout.
@@ -138,12 +146,49 @@ class SaveResult:
 
 def family_path(registry_dir: Path, name: str) -> Path:
     """Where one family's file lives. One spelling, so a caller that wants
-    to read the bytes before a save does not build the path itself."""
-    return registry_dir / FAMILIES_DIR / name / FAMILY_FILE
+    to read the bytes before a save does not build the path itself.
+
+    The name is the one that the registry holds for the family: the TOML
+    name when that file is there, else the YAML name. A family with no file
+    is a new family, and `_new_name` gives its name.
+    """
+    base = registry_dir / FAMILIES_DIR / name
+
+    for one in _FAMILY_FILES:
+        if (base / one).is_file():
+            return base / one
+
+    return base / _new_name(registry_dir)
+
+
+def _new_name(registry_dir: Path) -> str:
+    """The name of the file of a new family.
+
+    `family.toml`, unless a directory of the registry holds a `family.yaml`.
+    A registry in the YAML markup thus gets no TOML file before its own
+    change of markup. A list of the families that cannot be read gives the
+    YAML name, and the save of that registry then fails at its copy.
+    """
+    try:
+        held = any((one / FAMILY_FILE_YAML).is_file() for one in _families(registry_dir))
+    except OSError:
+        return FAMILY_FILE_YAML
+
+    return FAMILY_FILE_YAML if held else FAMILY_FILE
+
+
+def _families(registry_dir: Path) -> list[Path]:
+    """Each directory below `families`. No directory when it is not there."""
+    families = registry_dir / FAMILIES_DIR
+
+    if not families.is_dir():
+        return []
+
+    return [one for one in families.iterdir() if one.is_dir()]
 
 
 def save_family(registry_dir: Path, name: str, text: str, subject: str) -> SaveResult:
-    """Write one `family.yaml` and commit it, or change nothing."""
+    """Write one family file and commit it, or change nothing."""
     refusal = _refuse(registry_dir, name, text)
 
     if refusal:
@@ -199,8 +244,8 @@ def _lock(registry_dir: Path) -> tuple[int | None, str]:
 
 def _save_locked(registry_dir: Path, name: str, text: str, subject: str) -> SaveResult:
     """The save itself. The caller holds the lock."""
-    base = registry_dir / FAMILIES_DIR / name
-    target = base / FAMILY_FILE
+    target = family_path(registry_dir, name)
+    base = target.parent
 
     if target.is_file() and target.read_bytes() == text.encode("utf-8"):
         return SaveResult(ok=True, unchanged=True, commit=head_sha(registry_dir))
@@ -213,7 +258,7 @@ def _write_and_commit(
 ) -> SaveResult:
     """Steps 2 to 6. The snapshot is restored unless the save succeeds."""
     try:
-        registry = _with_new_text(registry_dir, base.name, text)
+        registry = _with_new_text(registry_dir, base.name, target.name, text)
     except OSError as error:
         return SaveResult(
             ok=False, problem=f"cannot copy the registry to validate it: {error.strerror or error}"
@@ -258,7 +303,7 @@ def _write_and_commit(
             _restore(base, existed, snapshot)
 
 
-def _with_new_text(registry_dir: Path, name: str, text: str) -> Registry:
+def _with_new_text(registry_dir: Path, name: str, file: str, text: str) -> Registry:
     """Step 2: the whole registry as it reads with the new text in place.
 
     The validator reads a copy. The checkout keeps its bytes until the new
@@ -279,7 +324,7 @@ def _with_new_text(registry_dir: Path, name: str, text: str) -> Registry:
             raise OSError(f"{FAMILIES_DIR}/{name} resolves outside the copy")
 
         base.mkdir(parents=True, exist_ok=True)
-        (base / FAMILY_FILE).write_text(text, encoding="utf-8")
+        (base / file).write_text(text, encoding="utf-8")
 
         return load_registry(copy)
 
@@ -349,7 +394,7 @@ def _refuse(registry_dir: Path, name: str, text: str) -> str:
     # A symlink anywhere on the last two steps turns a scoped write into
     # a write somewhere else. `resolve()` above does not catch one that
     # points back INSIDE the registry, which is the interesting case.
-    if base.is_symlink() or (base / FAMILY_FILE).is_symlink():
+    if base.is_symlink() or any((base / one).is_symlink() for one in _FAMILY_FILES):
         return f"{name!r} is a symlink; refusing to write through it"
 
     return ""
