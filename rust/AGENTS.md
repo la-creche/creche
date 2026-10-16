@@ -639,12 +639,17 @@ with `FileKind::Roster`. For each vector, it compares three things:
 The surface holds 500 changed texts, `changed-000` to `changed-499`. Each
 one is a written text that the reader takes, with one change.
 `changed_texts` of `vectors/surfaces/tomlfile.py` makes them from a fixed
-seed. The test prints three counts:
+seed. The test puts each vector in one of four counts. It prints the four
+counts:
 
 1. The texts that the two readers read, with an equal value.
 2. The texts that the two readers refuse, with an equal text.
-3. The texts that one reader reads alone. The test fails when this count is
-   not 0.
+3. The texts that one reader reads alone.
+4. The vectors with another difference: another value, another kind of a
+   date-time, another text of a refusal, or the result `raised`.
+
+The test fails when count 3 or count 4 is not 0. It then names each such
+vector.
 
 To make a larger run, do these steps in a work tree:
 

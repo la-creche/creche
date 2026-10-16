@@ -1555,8 +1555,9 @@ mod tests {
         serde_json::to_string(value).unwrap()
     }
 
-    /// The counts of one walk of the vectors. Each vector that the two
-    /// readers judge apart is a line of `apart`.
+    /// The counts of one walk of the vectors. Each vector falls into one
+    /// count. Each vector that the two readers judge apart is also a line of
+    /// `apart`.
     #[derive(Debug, Default)]
     struct Walk {
         /// Both readers read the text, with an equal value.
@@ -1565,8 +1566,10 @@ mod tests {
         equal_refusals: usize,
         /// One reader reads the text, and the other refuses it.
         one_reads_alone: usize,
-        /// Each vector with another value, another refusal or one reader
-        /// that reads the text alone.
+        /// Another difference: another value, another kind of a date-time,
+        /// another text of the refusal, or the result `raised`.
+        other_differences: usize,
+        /// One line for each vector of the last two counts.
         apart: Vec<String>,
     }
 
@@ -1578,10 +1581,14 @@ mod tests {
             let read = read::<Seen>(&bytes, FileKind::Roster);
 
             match (vector.result(), read) {
+                // The surface must hold no vector with the result `raised`.
+                (Outcome::Raised, _) => {
+                    self.differ(format!("{id}: the vector has the result raised"))
+                }
                 (Outcome::Accepted, Ok(seen)) => {
                     let wanted = vector.value().unwrap();
                     if text_of(&read_json(&seen)) != text_of(&without_kinds(wanted)) {
-                        self.apart.push(format!("{id}: another value"));
+                        self.differ(format!("{id}: another value"));
                         return;
                     }
 
@@ -1591,8 +1598,7 @@ mod tests {
                     let text = std::str::from_utf8(&bytes).unwrap().replace(CR_LF, LF);
                     let table: toml::Table = text.parse().unwrap();
                     if text_of(&crate_json(&toml::Value::Table(table))) != text_of(wanted) {
-                        self.apart
-                            .push(format!("{id}: another kind of a date-time"));
+                        self.differ(format!("{id}: another kind of a date-time"));
                         return;
                     }
 
@@ -1601,8 +1607,7 @@ mod tests {
                 (Outcome::Refused, Err(fault)) => {
                     let message = json!(fault.to_string());
                     if vector.refusal() != Some(&message) {
-                        self.apart
-                            .push(format!("{id}: the reader refuses with {message}"));
+                        self.differ(format!("{id}: the reader refuses with {message}"));
                         return;
                     }
 
@@ -1613,14 +1618,17 @@ mod tests {
                     self.apart
                         .push(format!("{id}: the reader refuses with {fault}"));
                 }
-                (Outcome::Refused | Outcome::Raised, Ok(_)) => {
+                (Outcome::Refused, Ok(_)) => {
                     self.one_reads_alone += 1;
                     self.apart.push(format!("{id}: the reader takes the text"));
                 }
-                // No committed vector has the result `raised`. The reader
-                // must refuse such an input.
-                (Outcome::Raised, Err(_)) => self.equal_refusals += 1,
             }
+        }
+
+        /// Records a vector of the count `other_differences`.
+        fn differ(&mut self, line: String) {
+            self.other_differences += 1;
+            self.apart.push(line);
         }
     }
 
@@ -1641,12 +1649,15 @@ mod tests {
                 walk.compare(vector);
             }
 
-            // The three counts of a run. `cargo test -- --nocapture` shows
+            // The four counts of a run. `cargo test -- --nocapture` shows
             // them, for example for a run with more changed texts.
             eprintln!(
                 "{name}: both read with an equal value {}, both refuse with an equal \
-                 message {}, one reads alone {}",
-                walk.equal_values, walk.equal_refusals, walk.one_reads_alone
+                 message {}, one reads alone {}, another difference {}",
+                walk.equal_values,
+                walk.equal_refusals,
+                walk.one_reads_alone,
+                walk.other_differences
             );
             assert!(
                 walk.apart.is_empty(),
