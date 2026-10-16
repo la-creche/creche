@@ -13,9 +13,10 @@ The copy has the name of the markup of its text, as the registry file has.
 A write keeps one copy: it writes the copy of its markup, then it removes
 the other copy, then it writes the meta file. A read takes `family.toml`
 first and `family.yaml` second, and it gives each text to the parser of its
-markup. A copy that is there and does not read is nothing applied, and the
-read then takes no other copy. A stop between the write and the remove
-leaves two copies and the old meta file, and a read takes the TOML copy:
+markup. A copy that is there and that caregiver cannot read gives nothing
+applied, and the read then takes no other copy. A stop between the write
+and the remove leaves two copies and the old meta file, and a read takes
+the TOML copy:
 
 - After the write of a TOML copy, that copy holds the new text.
 - After the write of a YAML copy, the TOML copy holds the old text. The
