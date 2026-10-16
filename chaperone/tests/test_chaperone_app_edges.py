@@ -1,10 +1,9 @@
-"""Five edges of `app.py`.
+"""Four edges of `app.py`.
 
-1. The rate window of one key in a later minute.
-2. A client that leaves in the middle of a body.
-3. The answer to a body over the cap, when the response reads the request.
-4. The dispatch door of a config.
-5. The delegate door at the stop of the app.
+1. A client that leaves in the middle of a body.
+2. The answer to a body over the cap, when the response reads the request.
+3. The dispatch door of a config.
+4. The delegate door at the stop of the app.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ from chaperone.app import (
     MAX_REQUEST_BODY_BYTES,
     BodySizeLimitMiddleware,
     PepConfig,
-    _RateWindow,  # pyright: ignore[reportPrivateUsage]
     build_dispatch_door,
     create_app,
 )
@@ -60,19 +58,6 @@ def lines_of(directory: Path) -> list[str]:
         for path in sorted(directory.glob("*.jsonl"))
         for line in path.read_text(encoding="utf-8").splitlines()
     ]
-
-
-# ---- the rate window ----------------------------------------------------------
-
-
-def test_a_new_minute_starts_the_count_of_a_key_again() -> None:
-    window = _RateWindow()
-
-    assert window.check_and_count("chat", limit=1, now_minute=0) is False
-    assert window.check_and_count("chat", limit=1, now_minute=0) is True
-    # One minute later the entry of the key is not idle, so the window keeps
-    # it. The count of the new minute starts at one.
-    assert window.check_and_count("chat", limit=1, now_minute=1) is False
 
 
 # ---- the body cap ---------------------------------------------------------------

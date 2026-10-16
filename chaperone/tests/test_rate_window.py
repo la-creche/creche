@@ -36,3 +36,13 @@ def test_recently_used_entries_survive_the_sweep() -> None:
     window.check_and_count("other-g2", limit=100, now_minute=1)
 
     assert "recent-g1" in _keys(window)
+
+
+def test_a_new_minute_starts_the_count_of_a_key_again() -> None:
+    window = _RateWindow()
+
+    assert window.check_and_count("chat", limit=1, now_minute=0) is False
+    assert window.check_and_count("chat", limit=1, now_minute=0) is True
+    # One minute later the entry of the key is not idle, so the window keeps
+    # it. The count of the new minute starts at one.
+    assert window.check_and_count("chat", limit=1, now_minute=1) is False
