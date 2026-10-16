@@ -81,6 +81,10 @@ FIRST_NUMBERS = [694, 509, 962, 41, 282]
 #: increment of the linear step.
 FIRST_OF_ZERO = 335903614
 
+#: The count of seeds for which a test makes each change of each text of
+#: `TAKEN`.
+SEEDS_OF_THE_CHANGE_TEST = 50
+
 
 class Given:
     """A fixed sequence of numbers in the place of `tomlfile.Numbers`."""
@@ -239,6 +243,21 @@ def test_a_text_too_short_for_its_change_gets_an_insert() -> None:
 
     numbers = cast("tomlfile.Numbers", Given(1, 0))
     assert tomlfile.changed("a", tomlfile.Change.SWAP, numbers) == f"a{first}"
+
+
+def test_a_swap_of_two_equal_characters_gets_an_insert() -> None:
+    hash_sign = tomlfile.ALPHABET.index("#")
+    numbers = cast("tomlfile.Numbers", Given(1, 1, 5, hash_sign))
+
+    assert tomlfile.changed("a = 1", tomlfile.Change.SWAP, numbers) == "a = 1#"
+
+
+def test_each_change_of_a_taken_text_changes_the_text() -> None:
+    for seed in range(SEEDS_OF_THE_CHANGE_TEST):
+        for text in tomlfile.TAKEN:
+            for change in tomlfile.CHANGES:
+                numbers = tomlfile.Numbers(seed)
+                assert tomlfile.changed(text.text, change, numbers) != text.text, (text.id, change)
 
 
 def test_an_exception_that_is_no_refusal_stops_the_build() -> None:

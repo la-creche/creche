@@ -295,7 +295,7 @@ SEED: Final = 20261016
 CHANGED_COUNT: Final = 500
 
 #: The characters that an insert takes: the signs of TOML, the two line end
-#: characters, a tab, three digits and seven letters.
+#: characters, a space, a tab, three digits and eight letters.
 ALPHABET: Final = "=.,[]{}\"'#\\:-+_ \t\n\r019aeinxzTZ"
 
 #: The constants of the linear step of `Numbers`.
@@ -339,7 +339,8 @@ _SWAP_LENGTH: Final = 2
 def changed(text: str, change: Change, numbers: Numbers) -> str:
     """`text` with one change. A text that is too short for the change gets
     an insert in its place: a delete needs one character, and a swap needs
-    two."""
+    two. A swap of two equal characters makes no change, so it gets an
+    insert in its place too."""
     if change is Change.COPY_LINE:
         lines = text.split("\n")
         line = lines[numbers.below(len(lines))]
@@ -353,9 +354,10 @@ def changed(text: str, change: Change, numbers: Numbers) -> str:
     if change is Change.SWAP and len(text) >= _SWAP_LENGTH:
         first = numbers.below(len(text))
         second = (first + 1 + numbers.below(len(text) - 1)) % len(text)
-        signs = list(text)
-        signs[first], signs[second] = signs[second], signs[first]
-        return "".join(signs)
+        if text[first] != text[second]:
+            signs = list(text)
+            signs[first], signs[second] = signs[second], signs[first]
+            return "".join(signs)
 
     at = numbers.below(len(text) + 1)
     sign = ALPHABET[numbers.below(len(ALPHABET))]
