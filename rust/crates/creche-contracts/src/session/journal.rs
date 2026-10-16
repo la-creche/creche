@@ -28,7 +28,7 @@ use super::state::RefusedMove;
 use super::time::Timestamp;
 use super::view::{SessionView, Usage};
 use crate::ids::{GateId, SandboxName, Sha256Hex, Ulid};
-use crate::status::time::Freshness;
+use crate::status::views::Freshness;
 
 words! {
     /// The kind of one line of the event stream (contract 02 §8.1).
@@ -344,7 +344,7 @@ impl TurnQueued {
 /// ```
 /// use creche_contracts::ids::SandboxName;
 /// use creche_contracts::session::{DeadlineS, Prompt, TurnStarted};
-/// use creche_contracts::status::time::Freshness;
+/// use creche_contracts::status::views::Freshness;
 ///
 /// let prompt: Prompt = "Is the boiler on?".parse()?;
 /// let sandbox: SandboxName = "chat-s2".parse()?;
@@ -360,7 +360,7 @@ impl TurnQueued {
 /// ```compile_fail,E0451
 /// use creche_contracts::ids::SandboxName;
 /// use creche_contracts::session::{DeadlineS, Prompt, TurnStarted};
-/// use creche_contracts::status::time::Freshness;
+/// use creche_contracts::status::views::Freshness;
 ///
 /// fn started(prompt: Prompt, sandbox: SandboxName) -> TurnStarted {
 ///     let status_stale = Freshness::Fresh == Freshness::Stale;
