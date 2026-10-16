@@ -6,14 +6,16 @@ same rules, so a TOML server file that passes the validator passes root.
 `agent_family.grammar` holds a copy of each pattern and each cap that only
 root held, with the name of its source. A copy of a pattern adds the anchors
 `^` and `\\Z`. This test imports both modules and holds each pair equal. It
-also holds equal each value that the two readers hold under two names."""
+also holds equal each value that the two readers hold under two names, and
+the two private patterns of `agent_family.serverrules` that both paths
+apply."""
 
 from __future__ import annotations
 
 import re
 
 import pytest
-from agent_family import grammar
+from agent_family import grammar, serverrules
 
 from handover import mcpserver
 
@@ -64,6 +66,15 @@ SAME_ANCHORED = (
     ("SHA256_HEX", "SHA256_RE"),
 )
 
+#: Each private pattern of `agent_family.serverrules` that is a pattern of
+#: root: the name in `serverrules`, then the name in `handover.mcpserver`.
+#: Contract 01b §7.2 names `serverrules._ARG_NAME`, so each copy keeps its
+#: private name in that module.
+SAME_PRIVATE = (
+    ("_LOCK_PATH", "LOCK_PATH_RE"),
+    ("_ARG_NAME", "ARG_NAME_RE"),
+)
+
 
 @pytest.mark.parametrize("name", COPIES)
 def test_each_copy_equals_its_source_in_root(name: str) -> None:
@@ -98,6 +109,27 @@ def test_each_anchored_pattern_is_the_pattern_of_root(ours: str, root: str) -> N
     source: re.Pattern[str] = getattr(mcpserver, root)
 
     assert anchored.pattern == f"^{source.pattern}\\Z"
+
+
+@pytest.mark.parametrize(("ours", "root"), SAME_PRIVATE)
+def test_each_private_pattern_of_the_rules_is_the_pattern_of_root(ours: str, root: str) -> None:
+    copied: re.Pattern[str] = getattr(serverrules, ours)
+    source: re.Pattern[str] = getattr(mcpserver, root)
+
+    assert copied.pattern == f"^{source.pattern}\\Z"
+    assert copied.flags == source.flags
+
+
+def test_a_fence_argument_has_the_same_parts_in_both_readers() -> None:
+    """Root reads the argument of a fence with one pattern: one argument
+    name, or two joined by `/`. The validator splits the text at each `/`
+    and checks each part with `_ARG_NAME`. The two forms agree only while
+    the pattern of root has this form and the validator takes two parts at
+    most."""
+    name = mcpserver.ARG_NAME_RE.pattern
+
+    assert mcpserver.FENCE_ARG_RE.pattern == f"{name}(/{name})?"
+    assert serverrules._ARG_PARTS_MAX == 2
 
 
 def test_the_identity_cap_of_the_validator_is_not_above_the_cap_of_root() -> None:
