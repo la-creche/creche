@@ -1194,6 +1194,7 @@ def test_one_token_gives_one_json_notice(rig: Rig) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
     assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
     assert len(rig.posts()) == 1
+    assert f" -m {_number('NOTICE_TIMEOUT_S')} " in rig.posts()[0]
 
 
 @pytest.mark.parametrize("pair", ["push:syntax", "status.document:push"])
@@ -2365,6 +2366,17 @@ def test_seconds_from_the_environment_is_no_age(rig: Rig) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
     assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
     assert "s old" not in done.stdout
+
+
+def test_the_age_of_a_run_starts_before_the_five_checks() -> None:
+    """The ceiling of the step counts the five checks in the age of the run.
+    So the script sets `SECONDS` to 0 one time, before the call of the
+    first check."""
+    lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+
+    assert lines.count("SECONDS=0") == 1
+    assert lines.count("check_chaperone") == 1
+    assert lines.index("SECONDS=0") < lines.index("check_chaperone")
 
 
 @pytest.mark.parametrize("fault", ["exit 9", ': "$NO_SUCH_VARIABLE"', ": $(( 10#x ))"])
