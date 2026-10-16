@@ -1893,6 +1893,27 @@ def test_a_record_read_that_fails_sends_nothing(rig: Rig, read: str) -> None:
     assert len(rig.sent_lines()) == 3
 
 
+@pytest.mark.parametrize("kind", ["nul", "text"])
+def test_a_record_with_no_record_line_sends_nothing(rig: Rig, kind: str) -> None:
+    """A record can hold bytes and no line of the record pattern. For
+    example, a crash can leave NUL bytes in the place of the lines. A pair
+    with no record line is news again. So such a run sends no notice of
+    this kind, says so in one line and keeps the record as it was."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+    rig.run()
+    assert len(rig.posts()) == 1
+    body = b"\0" * rig.sent.stat().st_size if kind == "nul" else b"not a record line\n"
+    rig.sent.write_bytes(body)
+
+    for _ in range(2):
+        done = rig.run()
+
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert len(rig.posts()) == 1
+        assert done.stdout.count(str(rig.sent)) == 1, done.stdout
+        assert rig.sent.read_bytes() == body
+
+
 def _fill_record(rig: Rig, room: int) -> list[str]:
     """Writes a record with room for that count of bytes under its cap.
     Each line is one week old. Gives the lines."""

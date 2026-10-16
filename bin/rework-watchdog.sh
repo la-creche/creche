@@ -111,7 +111,8 @@
 #     not take.
 #   - The script reads 262,144 bytes of the record at most, and it writes no
 #     larger record. A record that it cannot read, or cannot write, stops
-#     the step for that run: a notice with no record line has no limit.
+#     the step for that run: a notice with no record line has no limit. A
+#     record that holds bytes and no record line stops the step too.
 #   - The notice has ids of its own, so its card and the card of an outage
 #     do not replace each other. One notice of this kind replaces the card
 #     of the notice of this kind before it.
@@ -761,9 +762,10 @@ load_sent() {
     return 1
   fi
 
-  # With no record, each pair is news again. So a read that fails, or that
-  # stops at its time limit, gives no record. A read that gives nothing
-  # from a file that holds bytes gives no record too.
+  # A pair with no record line is news again. So a read that fails, or that
+  # stops at its time limit, stops the step. A read that gives nothing from
+  # a file that holds bytes stops it too, and so does a file that holds
+  # bytes and no record line, for example the NUL bytes of a crash.
   if ! blob="$(read_capped "$SENT_FILE" "$SENT_READ_CAP")"; then
     say "json notices: the read of $SENT_FILE failed, so this run sends no notice of this kind"
     return 1
@@ -775,13 +777,17 @@ load_sent() {
     return 1
   fi
 
+  SENT_LINES="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -x -E -e "$SENT_LINE")"
+  if [[ -z "$SENT_LINES" ]]; then
+    say "json notices: $SENT_FILE holds no record line, so this run sends no notice of this kind"
+    return 1
+  fi
+
   broken="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -c -v -x -E -e "$SENT_LINE")"
   [[ "$broken" == 0 ]] \
     || say "json notices: not read from $SENT_FILE, lines that break the record pattern: $broken"
 
-  SENT_LINES="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -x -E -e "$SENT_LINE")"
-  [[ -z "$SENT_LINES" ]] || SENT_LINES="$SENT_LINES$NL"
-
+  SENT_LINES="$SENT_LINES$NL"
   return 0
 }
 

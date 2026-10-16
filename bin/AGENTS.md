@@ -135,8 +135,10 @@ root, and `_notices.json` in the fault directory of the chaperone.
   goes to the record before the send. A notice that the hook did not take
   leaves the record as it was.
 - Both limits come from the record. A run that cannot read the record, or
-  cannot write it, sends no notice of this kind. The script reads 262,144
-  bytes of the record at most, and it writes no larger record.
+  cannot write it, sends no notice of this kind. A record that holds bytes
+  and no record line counts as a record that the run cannot read. The
+  script reads 262,144 bytes of the record at most, and it writes no larger
+  record.
 - The step changes no verdict and no exit status. It runs in a shell of its
   own, after the script wrote the verdict.
 - Only a run of the unit sends a notice of this kind. systemd gives each run
