@@ -45,7 +45,11 @@ any use. A value that fails answers 404.
 ## Reading another process's files
 
 7. Nothing that reads a file may raise. `jsonfiles.py` answers a problem
-   string, and the page renders it as a report.
+   string, and the page renders it as a report. Each reader reads strict
+   JSON through `jsonfiles.parse_object`. A text that is not strict JSON
+   gets such a problem string and one notice of `notices.py`, with the
+   surface word of the reader and the rule word. The family of a notice
+   comes from a path, never from the text.
 8. Every list from another process is capped. A cap that bites is reported.
 9. Split NDJSON on LF alone. U+2028 and U+2029 are legal inside a JSON
    string.
@@ -106,7 +110,7 @@ uv run noticeboard-verify --json                # the component's verify hook
 |---|---|
 | `VIEW_BIND`, `VIEW_PORT` | the listen address and port 8370. Never a wildcard. |
 | `VIEW_ACCESS_KEY`, `VIEW_ACCESS_KEY_FILE` | the `X-View-Key` value the proxy injects. The file wins. |
-| `VIEW_STATE_ROOT` | families, audit, outcomes, tokens |
+| `VIEW_STATE_ROOT` | families, audit, outcomes, tokens, and the notice file `notices/noticeboard.json` |
 | `VIEW_REGISTRY_DIR` | the git checkout the form commits in |
 | `VIEW_SESSIOND_SOCKET`, `VIEW_SESSIOND_URL` | `attendance`, over a socket or TCP |
 | `VIEW_PAGE_SIZE` | audit lines and sessions per page |
@@ -123,6 +127,7 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 | `config.py`, `security.py` | the environment and the two starts it refuses, the key and CSRF checks |
 | `jsonfiles.py`, `statusdocs.py`, `auditfiles.py` | reading another process's files without raising |
 | `strictjson.py` | the strict reader and the strict writer of a JSON text. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
+| `notices.py` | the notice of a refused JSON text: one log line, and one row in the notice file that `bin/rework-watchdog.sh` reads. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `rfc3339.py` | the one reader of a time text. The file is a copy, and `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes |
 | `sessions.py`, `attendancehttp.py`, `transcript.py` | `attendance` as `view-ro`, the wire, journal lines folded for a reader |
 | `familyform.py`, `yamlout.py`, `yamlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
@@ -152,16 +157,19 @@ prefixed `test_noticeboard_`.
   (`registrywrite.py`).
 - The family page reads whatever `report_path` the status document names
   (`pages.py`).
-- Contract 05 §2 names no encoding for a file. `jsonfiles.py` takes UTF-8,
-  UTF-16 and UTF-32, as `json.loads` does.
 - No contract gives a range for a count. `jsonfiles.integer` takes an integer
   of any size.
-- `rust/AGENTS.md`, "JSON", does not say which rule a copy of the strict
-  reader names for a text that breaks two rules. `strictjson.py` names the
-  fault that it finds first. The Rust reader names the fault at the lowest
-  byte offset, so the two words can differ. `strictjson.py` has an offset
-  for four rules only. No module of this package imports `strictjson.py`
-  yet.
+- `strictjson.py` names the rule and the offset of the Rust check for a
+  refused text of 1 MiB or less. For a longer refused text, it names the
+  fault that the standard decoder finds, with no offset, and the two words
+  can differ. An answer of `attendance` has a cap of 4 MiB, and a line of
+  the event stream has a cap of 8 MiB.
+- No contract names the surface word of the validation report in a notice.
+  `jsonfiles.Surface` gives the report the word `status.report`
+  (`jsonfiles.py`).
+- Each refused text writes the notice file one time. A page that reads
+  many refused texts, for example the lines of an audit day, writes it one
+  time for each text.
 - The contracts name RFC 3339 for a time and give no more of its grammar.
   `rfc3339.py` takes the grammar of the Rust type
   `creche_contracts::time::Timestamp`. It thus refuses three texts that

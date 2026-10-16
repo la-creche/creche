@@ -355,11 +355,11 @@ impl Json {
     }
 
     // CONTRACT-QUESTION: contract 05 §2 does not name the encoding of a file.
-    // Each Python writer writes UTF-8. The Python reader of the noticeboard
-    // also reads a file in UTF-16 or UTF-32, because `json.loads` finds the
-    // encoding of bytes. The reader here takes UTF-8 and no other encoding.
-    // To take another encoding, the reader must find it from the first bytes
-    // of the file, and two readers of one file then read different bytes.
+    // Each Python writer writes UTF-8, and the reader of the noticeboard reads
+    // strict JSON, which is UTF-8. The reader here takes UTF-8 and no other
+    // encoding. To take another encoding, the reader must find it from the
+    // first bytes of the file, and two readers of one file then read
+    // different bytes.
     /// Reads the bytes of one file. The bytes are UTF-8, and they start with
     /// no byte order mark.
     ///

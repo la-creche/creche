@@ -160,8 +160,9 @@ directory is not a workspace package, so a change here does not change
   before it calls the entry point. `chaperone.unidentified_line` holds two
   vectors of a body over the cap. No vector covers the size cap of a status
   reader, of the fault file reader or of the outcome reader.
-- No vector covers a status document that is UTF-16. The Python noticeboard
-  reads such a document. The Rust view of the noticeboard refuses it.
+- No vector covers a status document that is UTF-16. Each reader of the
+  noticeboard refuses such a document: the Python reader and the Rust view
+  read strict JSON, which is UTF-8.
 - No vector covers a `written_at` with no UTC offset. `attendance` reads
   such a time as UTC. The noticeboard and the Rust views read it as no time.
 - Five patterns have no public entry point: `_ENV_NAME_RE` in the four
@@ -327,15 +328,17 @@ directory is not a workspace package, so a change here does not change
 - A `runtime.untrusted` surface of the noticeboard uses the default of each
   optional argument: the limit of `text` and the fallback of `integer`.
 - A refused vector of `runtime.parse_object.noticeboard` holds no reason. The
-  problem text of the entry point holds a message of the interpreter.
-- `runtime.strict_json` holds no text that breaks more than one rule. For
-  such a text, the Python reader names the fault that it finds first. The
-  Rust reader names the fault at the lowest byte offset. The two words can
-  thus differ. The docstring of `noticeboard/src/noticeboard/strictjson.py`
-  has the sequence of the Python reader.
-- A refused vector of `runtime.strict_json` holds no offset. The Python
-  reader has an offset for four rules only. `noticeboard/tests` holds those
-  offsets.
+  entry point gives one problem text for each text that is not strict JSON.
+  The rule of the refusal goes to the notice only.
+- `runtime.strict_json` holds no text that breaks more than one rule.
+  `noticeboard/tests` holds such texts. For a refused text of 1 MiB or less,
+  the Python reader names the fault at the lowest byte offset, as the Rust
+  reader does. For a longer text, the Python reader names the fault that the
+  standard decoder finds, and the two words can differ. The docstring of
+  `noticeboard/src/noticeboard/strictjson.py` has the rule.
+- A refused vector of `runtime.strict_json` holds no offset.
+  `noticeboard/tests` holds the rule and the offset of each refused text of
+  the tests of the Rust check.
 - No vector covers the strict writer, `dumps` of `noticeboard.strictjson`.
   `noticeboard/tests` holds that writer.
 - `runtime.time` records the copy of the time reader in the noticeboard,
@@ -439,7 +442,7 @@ directory is not a workspace package, so a change here does not change
   scope in a deployment. A query and a path segment of such a surface are
   ASCII.
 - No noticeboard surface holds a JSON text that `json.loads` takes and a
-  strict reader refuses. The Python readers of the noticeboard take each
+  strict reader refuses. The Python readers of the noticeboard refuse each
   of these texts:
   1. A text with `NaN` or `Infinity`.
   2. A text with an integer outside 64 bits.
@@ -448,8 +451,9 @@ directory is not a workspace package, so a change here does not change
   5. A text with more than 64 levels.
   6. A text with one half of a surrogate pair.
 
-  `runtime.parse_object.noticeboard` holds such texts for the reader of one
-  file. `vectors/tests/test_vectors_noticeboard.py` holds this rule for the
+  `runtime.parse_object.noticeboard`, `status.noticeboard` and
+  `status.outcome.noticeboard` hold such texts for the reader of one file.
+  `vectors/tests/test_vectors_noticeboard.py` holds this rule for the
   written inputs.
 - A token that the service keeps in a vector of `noticeboard.security.cookie`
   has 1 to 512 bytes. Each byte of it is a `cookie-octet` of RFC 6265.
@@ -496,9 +500,8 @@ directory is not a workspace package, so a change here does not change
 - `noticeboard.verify.envfile` holds the first check of the hook only. No
   vector covers the exit status or another check: each one reads a path or
   a socket of the machine.
-- A problem of the noticeboard can end with a message of the JSON reader of
-  Python. A noticeboard vector holds the class of such a problem and the
-  start of its sentence, and no message.
+- A noticeboard vector holds the class of a problem of the JSON reader and
+  the start of its sentence. It holds no more of the sentence.
 - The sentence for a token file or an audit directory that does not exist
   ends with the text that the system gives for the error. The vectors hold
   the text `No such file or directory`, which macOS and Linux give.

@@ -57,10 +57,10 @@ class Surface(enum.StrEnum):
     STATUS_DOCUMENT = "status.document"
     #: The validation report that a status document names (contract 05 §3.2).
     #
-    # CONTRACT-QUESTION: no contract and no plan word names the surface of
-    # this report. The reading here gives it a word of its own, so a notice
-    # names the file that broke the rule. The other reading files it under
-    # `status.document`. A change costs this member and its test.
+    # CONTRACT-QUESTION: contract 05 §3.2 names the report and no surface
+    # word of it in a notice. The reading here gives it a word of its own,
+    # so a notice names the file that broke the rule. The other reading files
+    # it under `status.document`. A change costs this member and its test.
     STATUS_REPORT = "status.report"
     #: An outcome record (contract 05 §8).
     STATUS_OUTCOME = "status.outcome"
