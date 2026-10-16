@@ -47,9 +47,9 @@ any use. A value that fails answers 404.
 7. Nothing that reads a file may raise. `jsonfiles.py` answers a problem
    string, and the page renders it as a report. Each reader reads strict
    JSON through `jsonfiles.parse_object`. A text that is not strict JSON
-   gets such a problem string and one notice of `notices.py`, with the
-   surface word of the reader and the rule word. The family of a notice
-   comes from a path, never from the text.
+   gets such a problem string and one notice of `notices.py`. The notice
+   holds the surface word of the reader and the rule word. The family of a
+   notice comes from a path, never from the text.
 8. Every list from another process is capped. A cap that bites is reported.
 9. Split NDJSON on LF alone. U+2028 and U+2029 are legal inside a JSON
    string.
@@ -157,8 +157,9 @@ prefixed `test_noticeboard_`.
   (`registrywrite.py`).
 - The family page reads whatever `report_path` the status document names
   (`pages.py`).
-- No contract gives a range for a count. `jsonfiles.integer` takes an integer
-  of any size.
+- No contract gives a range for a count. `jsonfiles.integer` has no range
+  of its own. Each reader reads strict JSON, so the function gets an integer
+  of 64 bits at most.
 - `strictjson.py` names the rule and the offset of the Rust check for a
   refused text of 1 MiB or less. For a longer refused text, it names the
   fault that the standard decoder finds, with no offset, and the two words
@@ -169,7 +170,12 @@ prefixed `test_noticeboard_`.
   (`jsonfiles.py`).
 - Each refused text writes the notice file one time. A page that reads
   many refused texts, for example the lines of an audit day, writes it one
-  time for each text.
+  time for each text. It also writes one log line for each text, at each
+  view of the page.
+- The pass of `strictjson.py` for a refused text takes time. One refused
+  audit line of 512 KiB took about 0.6 seconds on a development machine.
+  An audit day of 32 MiB with 64 such lines can thus take about 36 seconds
+  for one page.
 - The contracts name RFC 3339 for a time and give no more of its grammar.
   `rfc3339.py` takes the grammar of the Rust type
   `creche_contracts::time::Timestamp`. It thus refuses three texts that

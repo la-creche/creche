@@ -526,9 +526,10 @@ fault, the event of a channel line and the arguments of a tool call.
 Only `session` calls the writer today. `mcp` gets the writer through
 `Opaque::of`. `mcp` calls the reader. The reader of the noticeboard in
 `status` and `untrusted::parse_object` call `check`, and then a parser of
-their own module. The index of the vector files is a strict text too. The crate `creche-vectors` reads it and does not use
-`creche-contracts`, so its raw types hold the rules for the index. "Known
-gaps" names the packet that moves each module to the two.
+their own module. The index of the vector files is a strict text too. The
+crate `creche-vectors` reads it and does not use `creche-contracts`, so its
+raw types hold the rules for the index. "Known gaps" names the packet that
+moves each module to the two.
 Until then, these parts stay:
 
 - Four older functions format a float: `float_text` of `channel`, of
@@ -2688,12 +2689,12 @@ adds a crate:
 - The module `untrusted` differs from the other Python helpers on purpose
   in three ways. A plain test of the module holds each one.
   1. An answer is strict JSON. The delegate client of the chaperone,
-     `caregiver` and the three doors read an answer with `json.loads`, which
-     reads `NaN`, `Infinity`, an integer of each size, a key two times and
-     the escape of one half of a surrogate pair. The delegate client and
-     `caregiver` give `json.loads` the bytes, so they also read a byte order
-     mark, UTF-16, UTF-32 and the bytes of such a half. The three doors give
-     `json.loads` the text of `httpx`, and they refuse the first three.
+     `caregiver` and the three doors read an answer with `json.loads`. That
+     reader takes `NaN`, `Infinity`, an integer of each size, a key two times
+     and the escape of one half of a surrogate pair. The delegate client and
+     `caregiver` give `json.loads` the bytes. They thus also read a byte
+     order mark, UTF-16, UTF-32 and the bytes of such a half. The three doors
+     give `json.loads` the text of `httpx`, and they refuse the first three.
   2. `number` reads the integer `-0` as `-0.0`, and Python reads it as
      `0.0`. `serde_json` gives the text `-0` and the text `-0.0` as one
      float, so the reader cannot tell the two apart. No writer of the
@@ -2869,11 +2870,18 @@ adds a crate:
   five Python readers do not agree. The table `DISAGREEMENTS` in
   `status/python.rs` names each class of such documents, with one or two
   documents of the class. The owner decides which reading each port keeps.
+  The table has no row for one class: a document that is not strict JSON.
+  The view of the noticeboard refuses such a document, and the four other
+  views take it. Two examples are the vectors `spend-nan` and
+  `json-duplicate-kind`. No row is added for this class, because the packet
+  of each other reader makes that reader strict.
 - A view of `status` does not refuse a document for these three values. It
   reads a time with no UTC offset as no time. It reads a time outside the
   years 1 to 9999 as no time. It reads a number above the range of a float as
-  no number. The document is then stale, or it shows no spend. A unit test
-  covers each value, and no vector holds one.
+  no number. The document is then stale, or it shows no spend. The view of
+  the noticeboard is the exception for the number: its reader reads strict
+  JSON, so it refuses the document. A unit test covers each value, and no
+  vector holds one.
 - Three inputs left the vectors of contract 05 under resolution (c) of "When
   the two results differ". For each one, the Python code of today and
   `time::Timestamp` give two results. A plain test of `status::views` or of

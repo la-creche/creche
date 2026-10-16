@@ -441,9 +441,9 @@ directory is not a workspace package, so a change here does not change
   percent escape decoded as UTF-8. The server of the noticeboard makes that
   scope in a deployment. A query and a path segment of such a surface are
   ASCII.
-- No noticeboard surface holds a JSON text that `json.loads` takes and a
-  strict reader refuses. The Python readers of the noticeboard refuse each
-  of these texts:
+- The session, audit and report surfaces of the noticeboard hold no JSON
+  text that `json.loads` takes and a strict reader refuses. The Python
+  readers of the noticeboard refuse each of these texts:
   1. A text with `NaN` or `Infinity`.
   2. A text with an integer outside 64 bits.
   3. A text with a key two times in one object.
