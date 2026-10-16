@@ -260,6 +260,16 @@ def test_a_refused_canary_answer_ends_the_preflight(
     assert not index_dir(corpus).exists()
 
 
+def test_a_canary_of_another_length_ends_the_preflight(
+    tei: FakeTei, corpus: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tei.embed = json.dumps([[0.0, 1.0]]).encode()
+
+    assert main() == EXIT_PREFLIGHT
+    assert f"expected {DIMS}" in capsys.readouterr().err
+    assert not index_dir(corpus).exists()
+
+
 @each_rule
 def test_a_refused_answer_for_one_file_is_an_error_of_that_file(
     rule: Rule,
