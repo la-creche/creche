@@ -195,7 +195,8 @@ The console script is `handover`. The verify hook and the operator's
 2. Root builds it on the host from the manifest's own `build` argv, as it
    builds a venv. The user, the environment and the time limit are the
    same. Every `build` argv carries `--locked`, and `cargo install` carries
-   `--no-track`.
+   `--no-track`. The first word of each `build` argv is the word `cargo`,
+   with no path (`catalog.BINARY_BUILD_PROGRAM`).
 3. The executor sets `CARGO_INSTALL_ROOT` to the staged tree. No venv step
    runs: no `uv venv --relocatable` and no walk of `site-packages`.
 4. The unit rules of a venv apply. The unit must start a program inside

@@ -154,6 +154,12 @@ BINARY_BUILD_FILES: tuple[str, ...] = (
     "rust/rust-toolchain.toml",
 )
 
+#: The first word of each `build` argv of a `kind: binary` manifest, as it
+#: is written: the program name and no path. A CI runner has no fixed path
+#: for this program, so the manifest names it by name only. The `build`
+#: argv of every other kind starts with an absolute path.
+BINARY_BUILD_PROGRAM = "cargo"
+
 #: Components on their way out of the catalog. A checkout may carry such a
 #: component's manifest or not, and both read. A component leaves in two
 #: commits, this entry first and the directory's deletion second, so the

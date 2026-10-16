@@ -310,6 +310,7 @@ def _catalog_values() -> dict[str, object]:
         "retiring": catalog.RETIRING,
         "arriving": catalog.ARRIVING,
         "binary-build-files": catalog.BINARY_BUILD_FILES,
+        "binary-build-program": catalog.BINARY_BUILD_PROGRAM,
         "manifest-contract-version": {
             "major": catalog.MANIFEST_CONTRACT_MAJOR,
             "minor": catalog.MANIFEST_CONTRACT_MINOR,

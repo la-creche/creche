@@ -69,10 +69,10 @@ const _: () = assert!(
 mod build_script;
 
 pub use component::{
-    AbsolutePath, AbsolutePathError, Argv, ComponentManifest, Install, Keep, KeepError,
-    MAX_MANIFEST_BYTES, ManifestError, ManifestFault, Operator, OperatorError, PathField, Provided,
-    RepoPath, RepoPathError, Required, Restore, Scope, Timeout, TimeoutError, UnitName,
-    UnitNameError, Verify, YamlFault,
+    AbsolutePath, AbsolutePathError, Argv, Build, CargoArgv, ComponentManifest, Install, Keep,
+    KeepError, MAX_MANIFEST_BYTES, ManifestError, ManifestFault, Operator, OperatorError,
+    PathField, Provided, RepoPath, RepoPathError, Required, Restore, Scope, Timeout, TimeoutError,
+    UnitName, UnitNameError, Verify, YamlFault,
 };
 pub use request::{
     Draft, MAX_REQUEST_BYTES, MintError, Request, RequestError, RequestField, RequestKind,
@@ -679,6 +679,12 @@ pub const BINARY_BUILD_FILES: [&str; 3] = [
     "rust/rust-toolchain.toml",
 ];
 
+/// The first word of each `build` command of a `binary` component: the name
+/// of the program, with no path. A CI runner has no fixed path for the
+/// program. The `build` command of each other kind starts with an absolute
+/// path (contract 06 §8).
+pub const BINARY_BUILD_PROGRAM: &str = "cargo";
+
 /// The first number of the newest `component-manifest` contract version
 /// that this code takes. It is the number of the `provides` row in the
 /// manifest of the release tool.
@@ -1021,6 +1027,18 @@ mod tests {
         json!(argv.words())
     }
 
+    fn build_json(build: &Build) -> Value {
+        match build {
+            Build::Root(commands) => json!(commands.iter().map(argv_json).collect::<Vec<_>>()),
+            Build::Ci(commands) => json!(
+                commands
+                    .iter()
+                    .map(|command| command.words().collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            ),
+        }
+    }
+
     fn manifest_json(manifest: &ComponentManifest) -> Value {
         let provides: Vec<Value> = manifest
             .provides()
@@ -1056,7 +1074,7 @@ mod tests {
             "kind": manifest.kind().as_str(),
             "unit": manifest.unit().map(UnitName::as_str),
             "runs_as": manifest.runs_as().as_str(),
-            "build": manifest.build().iter().map(argv_json).collect::<Vec<_>>(),
+            "build": build_json(manifest.build()),
             "install": {
                 "to": manifest.install().to().as_str(),
                 "prev": manifest.install().prev().as_str(),
@@ -1162,6 +1180,96 @@ mod tests {
         ];
 
         with_field(&lines, field, line)
+    }
+
+    #[test]
+    fn the_kind_gives_the_variant_of_the_build() {
+        let read = |kind: &str, command: &str| {
+            let text = manifest_with("kind", &format!("kind: {kind}"))
+                + &format!("build: [[{command}, install, \"--locked\"]]\n");
+
+            ComponentManifest::parse(&text, None)
+        };
+
+        let binary = read("binary", "cargo").unwrap();
+        let Build::Ci(commands) = binary.build() else {
+            panic!("a binary build is {:?}", binary.build());
+        };
+        let words: Vec<Vec<&str>> = commands
+            .iter()
+            .map(|command| command.words().collect())
+            .collect();
+        assert_eq!(words, [["cargo", "install", "--locked"]]);
+        assert_eq!(commands[0].program(), BINARY_BUILD_PROGRAM);
+        assert_eq!(commands[0].arguments(), ["install", "--locked"]);
+
+        let venv = read("venv", "/usr/bin/cargo").unwrap();
+        let Build::Root(commands) = venv.build() else {
+            panic!("a venv build is {:?}", venv.build());
+        };
+        assert_eq!(commands[0].program().as_str(), "/usr/bin/cargo");
+
+        let fetched = ComponentManifest::parse(&manifest_with("kind", "kind: binary"), None);
+        assert_eq!(fetched.unwrap().build(), &Build::Ci(Vec::new()));
+    }
+
+    #[test]
+    fn a_binary_build_starts_with_the_word_and_no_other() {
+        let fault = |kind: &str, command: &str| {
+            let text = manifest_with("kind", &format!("kind: {kind}"))
+                + &format!("build: [[\"{command}\", build]]\n");
+
+            ComponentManifest::parse(&text, None).unwrap_err()
+        };
+
+        // `~/cargo` gives no site refusal: the reader expands no `~/` in
+        // that word, and the parse has no operator account.
+        for word in [
+            "/usr/bin/cargo",
+            "~/cargo",
+            "bin/cargo",
+            "Cargo",
+            "cargo-build",
+            "rustc",
+        ] {
+            let error = fault("binary", word);
+
+            assert_eq!(error.code(), RefusalCode::Manifest, "{word}");
+            assert_eq!(error.fault(), &ManifestFault::BuildProgram, "{word}");
+            assert_eq!(
+                error.detail(),
+                "field 'build[0]' must be the word cargo",
+                "{word}"
+            );
+        }
+
+        for kind in ["venv", "oci-image", "compose", "data"] {
+            let error = fault(kind, BINARY_BUILD_PROGRAM);
+
+            assert_eq!(
+                error.detail(),
+                "field 'build[0]' must be an absolute path",
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_binary_build_word_that_is_not_unicode_is_refused_first() {
+        // The Python reader takes each of the two commands. It refuses the
+        // first one as a first word that is not cargo, and accepts the second.
+        for command in [r#"["\ud800", build]"#, r#"[cargo, "\ud800"]"#] {
+            let text = manifest_with("kind", "kind: binary") + &format!("build: [{command}]\n");
+
+            let error = ComponentManifest::parse(&text, None).unwrap_err();
+
+            assert_eq!(error.code(), RefusalCode::Manifest, "{command}");
+            assert_eq!(
+                error.fault(),
+                &ManifestFault::NotUnicode { field: "build" },
+                "{command}"
+            );
+        }
     }
 
     #[test]
@@ -1523,6 +1631,7 @@ mod tests {
             "retiring" => json!(RETIRING),
             "arriving" => json!(ARRIVING),
             "binary-build-files" => json!(BINARY_BUILD_FILES),
+            "binary-build-program" => json!(BINARY_BUILD_PROGRAM),
             "manifest-contract-version" => {
                 json!({"major": MANIFEST_CONTRACT_MAJOR, "minor": MANIFEST_CONTRACT_MINOR})
             }

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from handover.catalog import CATALOG, Kind, RunsAs
+from handover.catalog import BINARY_BUILD_PROGRAM, CATALOG, Kind, RunsAs
 from handover.discovery import MANIFEST_FILENAME, discover
 from handover.errors import Refusal, RefusalCode
 from handover.manifest import ComponentManifest, parse_manifest
@@ -24,6 +24,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 OPERATOR_TREE = "/home/operator/.local/components/noticeboard"
 
+#: The start of the fixture's build argv, as the fixture writes it.
+FIXTURE_WORD = '["cargo", '
+
 
 def _fixture() -> str:
     return FIXTURE.read_text(encoding="utf-8")
@@ -31,6 +34,13 @@ def _fixture() -> str:
 
 def _parse(text: str) -> ComponentManifest:
     return parse_manifest(text, "fixture/component.yaml")
+
+
+def _refusal(text: str) -> Refusal:
+    with pytest.raises(Refusal) as caught:
+        _parse(text)
+
+    return caught.value
 
 
 def test_a_binary_manifest_parses() -> None:
@@ -48,7 +58,7 @@ def test_a_binary_build_is_a_list_of_argv_lists() -> None:
 
     assert parsed.build == (
         (
-            "/usr/local/bin/cargo",
+            "cargo",
             "install",
             "--locked",
             "--no-track",
@@ -56,6 +66,60 @@ def test_a_binary_build_is_a_list_of_argv_lists() -> None:
             "rust/crates/noticeboard",
         ),
     )
+
+
+def test_the_first_word_of_a_binary_build_is_the_program_name() -> None:
+    """A CI runner starts the build, and it has no fixed path for cargo."""
+    (argv,) = _parse(_fixture()).build
+
+    assert argv[0] == BINARY_BUILD_PROGRAM == "cargo"
+
+
+@pytest.mark.parametrize(
+    "word",
+    [
+        "/usr/bin/cargo",
+        "~/.cargo/bin/cargo",
+        "bin/cargo",
+        "Cargo",
+        "cargo-build",
+        "rustc",
+    ],
+)
+def test_a_binary_build_refuses_each_other_first_word(word: str) -> None:
+    """An absolute path is refused too: the word is the program name."""
+    refusal = _refusal(_fixture().replace(FIXTURE_WORD, f'["{word}", '))
+
+    assert refusal.code is RefusalCode.MANIFEST
+    assert refusal.subject == "fixture/component.yaml"
+    assert refusal.detail == "field 'build[0]' must be the word cargo"
+
+
+def test_each_command_of_a_binary_build_starts_with_cargo() -> None:
+    second = '  - ["/usr/bin/true"]\ninstall:'
+    text = _fixture().replace("install:", second, 1)
+
+    assert _refusal(text).detail == "field 'build[0]' must be the word cargo"
+
+
+def test_another_kind_refuses_the_word_cargo() -> None:
+    """Each other kind keeps its rule: the first word is an absolute path."""
+    text = _fixture().replace("kind: binary", "kind: venv")
+
+    refusal = _refusal(text)
+
+    assert refusal.code is RefusalCode.MANIFEST
+    assert refusal.detail == "field 'build[0]' must be an absolute path"
+
+
+def test_the_verify_command_of_a_binary_component_is_an_absolute_path() -> None:
+    """Only `build` gets the word. Root starts the verify command by its
+    path, for each kind."""
+    hook = '"~/.local/components/noticeboard/bin/noticeboard-verify"'
+    refusal = _refusal(_fixture().replace(hook, '"noticeboard-verify"'))
+
+    assert refusal.subject == "fixture/component.yaml: verify"
+    assert refusal.detail == "field 'command[0]' must be an absolute path"
 
 
 def test_a_binary_program_sits_under_the_install_tree() -> None:
@@ -131,8 +195,7 @@ def test_the_fixture_is_not_a_declaration() -> None:
 #: file, and the executor runs a binary build argv as it is, as it runs a
 #: venv build argv. The stricter reading refuses, before the first argv
 #: runs, a binary build that does not carry the flag. It costs a rule about
-#: one build tool in the executor, and it refuses a build step that is not
-#: cargo.
+#: one build tool in the executor.
 LOCKED = "--locked"
 
 

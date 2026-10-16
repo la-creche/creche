@@ -87,9 +87,10 @@ VERIFY_RS: Final = f'fn main() {{\n    println!("{VERIFY_SAYS}");\n}}\n'
 
 
 def _cargo() -> str:
-    """The `cargo` THIS machine has. The manifest names `/usr/local/bin/
-    cargo`, which is the host's. What the test proves is what the argv
-    AFTER `argv[0]` does, so the binary may be wherever it is here."""
+    """The `cargo` THIS machine has. The manifest names the program by its
+    name `cargo`, with no path. What the test proves is what the argv
+    AFTER `argv[0]` does, so the test starts the `cargo` that `PATH` finds
+    here, by its full path."""
     found = shutil.which("cargo")
     if found is None:
         pytest.skip("cargo is not on this machine")
